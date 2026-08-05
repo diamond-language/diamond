@@ -28,6 +28,36 @@ def array_empty(values: Array) -> Bool
   values.length() == 0
 end
 
+def array_include(values: Array, needle) -> Bool
+  index = 0
+  while index < values.length()
+    if values[index] == needle
+      return true
+    end
+    index = index + 1
+  end
+  false
+end
+
+def array_each(values: Array, callback) -> Array
+  index = 0
+  while index < values.length()
+    callback(values[index])
+    index = index + 1
+  end
+  values
+end
+
+def array_map(values: Array, callback) -> Array
+  result = []
+  index = 0
+  while index < values.length()
+    result.push(callback(values[index]))
+    index = index + 1
+  end
+  result
+end
+
 def array_swap_first_two(values: Array) -> Array
   first = values[0]
   second = values[1]

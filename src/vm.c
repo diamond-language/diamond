@@ -96,8 +96,9 @@ void diamond_vm_collect(DiamondVm *vm) {
             const DiamondInstance *instance=(const DiamondInstance *)unreached;
             size=sizeof(DiamondInstance)+instance->field_count*sizeof(DiamondValue);
         } else if(unreached->kind==DIAMOND_OBJECT_ARRAY) {
-            const DiamondArray *array=(const DiamondArray *)unreached;
-            size=sizeof(DiamondArray)+array->count*sizeof(DiamondValue);
+            DiamondArray *array=(DiamondArray *)unreached;
+            size=sizeof(DiamondArray)+array->capacity*sizeof(DiamondValue);
+            free(array->values);
         } else if(unreached->kind==DIAMOND_OBJECT_HASH) {
             DiamondHash *hash=(DiamondHash *)unreached;
             size=sizeof(DiamondHash)+hash->capacity*sizeof(DiamondHashEntry);
@@ -124,6 +125,8 @@ void diamond_vm_free(DiamondVm *vm) {
         DiamondObject *next = object->next;
         if(object->kind==DIAMOND_OBJECT_HASH)
             free(((DiamondHash *)object)->entries);
+        else if(object->kind==DIAMOND_OBJECT_ARRAY)
+            free(((DiamondArray *)object)->values);
         free(object);
         object = next;
     }
@@ -163,10 +166,13 @@ static DiamondInstance *allocate_instance(DiamondVm *vm,const DiamondClass *clas
 static DiamondArray *allocate_array(DiamondVm *vm,const DiamondValue *values,
                                     size_t count) {
     if(vm->stress_gc||vm->bytes_allocated>=vm->next_gc) diamond_vm_collect(vm);
-    const size_t size=sizeof(DiamondArray)+count*sizeof(DiamondValue);
-    DiamondArray *array=malloc(size); if(array==nullptr)return nullptr;
+    const size_t capacity=count;
+    const size_t size=sizeof(DiamondArray)+capacity*sizeof(DiamondValue);
+    DiamondArray *array=malloc(sizeof(DiamondArray)); if(array==nullptr)return nullptr;
+    array->values=capacity==0?nullptr:malloc(capacity*sizeof(DiamondValue));
+    if(capacity>0&&array->values==nullptr){free(array);return nullptr;}
     array->object=(DiamondObject){.next=vm->objects,.kind=DIAMOND_OBJECT_ARRAY};
-    array->count=count;array->constraint_count=0;
+    array->count=count;array->capacity=capacity;array->constraint_count=0;
     for(size_t i=0;i<count;i++) array->values[i]=values[i];
     vm->objects=&array->object;vm->bytes_allocated+=size;return array;
 }
@@ -409,19 +415,32 @@ static bool value_matches_set(const DiamondChunk *chunk,DiamondValue value,
     return false;
 }
 
-static bool array_value_satisfies_constraints(const DiamondArray *array,
+static bool array_value_satisfies_constraints(DiamondArray *array,
                                                DiamondValue value) {
     for(size_t index=0;index<array->constraint_count;index++) {
         const typeof(array->constraints[0]) *constraint=&array->constraints[index];
         const DiamondChunk context={.type_sets=constraint->type_sets,
             .type_set_count=constraint->type_set_count,.classes=constraint->classes,
             .class_count=constraint->class_count};
-        if(!value_matches_set(&context,value,constraint->set_index,false))return false;
+        if(!value_matches_set(&context,value,constraint->set_index,true))return false;
     }
     return true;
 }
 
-static bool hash_entry_satisfies_constraints(const DiamondHash *hash,
+static bool array_push(DiamondVm *vm,DiamondArray *array,DiamondValue value) {
+    if(array->count==array->capacity) {
+        if(array->capacity>SIZE_MAX/2/sizeof(DiamondValue))return false;
+        const size_t old_capacity=array->capacity;
+        const size_t capacity=old_capacity<8?8:old_capacity*2;
+        DiamondValue *values=realloc(array->values,capacity*sizeof(DiamondValue));
+        if(values==nullptr)return false;
+        array->values=values;array->capacity=capacity;
+        vm->bytes_allocated+=(capacity-old_capacity)*sizeof(DiamondValue);
+    }
+    array->values[array->count++]=value;return true;
+}
+
+static bool hash_entry_satisfies_constraints(DiamondHash *hash,
                                               DiamondValue key,
                                               DiamondValue value) {
     for(size_t index=0;index<hash->constraint_count;index++) {
@@ -429,8 +448,8 @@ static bool hash_entry_satisfies_constraints(const DiamondHash *hash,
         const DiamondChunk context={.type_sets=constraint->type_sets,
             .type_set_count=constraint->type_set_count,.classes=constraint->classes,
             .class_count=constraint->class_count};
-        if(!value_matches_set(&context,key,constraint->key_set,false)||
-           !value_matches_set(&context,value,constraint->value_set,false))return false;
+        if(!value_matches_set(&context,key,constraint->key_set,true)||
+           !value_matches_set(&context,value,constraint->value_set,true))return false;
     }
     return true;
 }
@@ -1001,15 +1020,40 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                    receiver_kind==DIAMOND_OBJECT_STRING) {
                     const bool length_method=method_name->length==6&&
                         memcmp(method_name->chars,"length",6)==0;
-                    if(!length_method)VM_RETURN(DIAMOND_VM_TYPE_ERROR);
-                    if(argc!=0)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
-                    size_t length=0;
-                    if(receiver_kind==DIAMOND_OBJECT_ARRAY)
-                        length=((DiamondArray *)registers[recv].as.object)->count;
-                    else if(receiver_kind==DIAMOND_OBJECT_HASH)
-                        length=((DiamondHash *)registers[recv].as.object)->count;
-                    else length=((DiamondString *)registers[recv].as.object)->length;
-                    registers[dest]=DIAMOND_INT((int64_t)length);break;
+                    if(length_method) {
+                        if(argc!=0)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                        size_t length=0;
+                        if(receiver_kind==DIAMOND_OBJECT_ARRAY)
+                            length=((DiamondArray *)registers[recv].as.object)->count;
+                        else if(receiver_kind==DIAMOND_OBJECT_HASH)
+                            length=((DiamondHash *)registers[recv].as.object)->count;
+                        else length=((DiamondString *)registers[recv].as.object)->length;
+                        registers[dest]=DIAMOND_INT((int64_t)length);break;
+                    }
+                    if(receiver_kind!=DIAMOND_OBJECT_ARRAY)
+                        VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                    DiamondArray *array=(DiamondArray *)registers[recv].as.object;
+                    const bool push_method=method_name->length==4&&
+                        memcmp(method_name->chars,"push",4)==0;
+                    const bool pop_method=method_name->length==3&&
+                        memcmp(method_name->chars,"pop",3)==0;
+                    if(push_method) {
+                        if(argc!=1)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                        if(!array_value_satisfies_constraints(array,registers[base])) {
+                            snprintf(vm->error,sizeof vm->error,
+                                     "array element violates its type annotation");
+                            VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                        }
+                        if(!array_push(vm,array,registers[base]))
+                            VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                        registers[dest]=registers[recv];break;
+                    }
+                    if(pop_method) {
+                        if(argc!=0)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                        registers[dest]=array->count==0?DIAMOND_NIL:
+                            array->values[--array->count];break;
+                    }
+                    VM_RETURN(DIAMOND_VM_TYPE_ERROR);
                 }
                 if(receiver_kind!=DIAMOND_OBJECT_INSTANCE)
                     VM_RETURN(DIAMOND_VM_TYPE_ERROR);

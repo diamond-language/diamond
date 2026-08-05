@@ -27,7 +27,7 @@ Implemented today:
 - stop-the-world mark/sweep collection with stress-GC testing;
 - source diagnostics and bytecode disassembly.
 
-The test suite currently contains 105 end-to-end assertions spanning the
+The test suite currently contains 124 end-to-end assertions spanning the
 frontend, compiler, VM, object model, type guards, collections, and collector.
 
 ## Build and run
@@ -161,8 +161,9 @@ key and value annotations, such as `Hash[String, Array[Int]]`.
 The embedded core prelude is ordinary Diamond source from `lib/core.dia`.
 Current helpers include `array_first`, `array_swap_first_two`, and `hash_fetch`;
 the prelude also provides fallback-aware first/last operations and empty
-predicates. Their bytecode appears in `--dump-bytecode` output like user-defined
-functions. Arrays, hashes, and strings expose the native `length()` primitive.
+predicates, membership, callback iteration, and mapping. Their bytecode appears
+in `--dump-bytecode` output like user-defined functions. Arrays expose native
+`push`/`pop`; arrays, hashes, and strings expose native `length()`.
 
 The compiler removes provably redundant guards, rejects provable mismatches,
 retains checks for dynamic values, and propagates generic element/value facts
@@ -218,8 +219,8 @@ Field sites use four-entry polymorphic caches guarded by instance shape.
 - No modules, mixins, singleton methods, or visibility.
 - Classes own immutable shape chains for lazily materialized field prefixes;
   method calls and field access use four-entry polymorphic inline caches.
-- Generic contracts guard indexed mutation. Collection APIs currently comprise
-  indexing, native `length()`, and the Diamond-written prelude helpers.
+- Generic contracts guard indexed mutation and `push`. Collection APIs currently
+  comprise indexing, native `length`/`push`/`pop`, and Diamond prelude helpers.
 - Fixed limits exist for bytecode, constants, functions, classes, fields, and
   registers.
 - Bytecode and language semantics are unstable by design.

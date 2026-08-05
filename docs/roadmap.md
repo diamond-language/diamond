@@ -66,11 +66,12 @@ future work.
 - C23-embedded Diamond core prelude with initial collection helpers.
 - Native collection `length()` with Diamond-written last/fallback/predicate helpers.
 - Flow-sensitive generic result facts for array and hash indexing.
+- Growable arrays with guarded `push`/`pop` and Diamond iteration helpers.
 
 ## Next priorities
 
-1. Broader collection APIs implemented through the Diamond prelude.
-2. Branch-sensitive narrowing of union-typed locals.
+1. Branch-sensitive narrowing of union-typed locals.
+2. Hash iteration primitives and Diamond-written transforms.
 
 ## Later experiments
 

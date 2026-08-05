@@ -84,6 +84,11 @@ Dynamic invocation recognizes one native collection primitive: zero-argument
 Bounds decisions, fallback behavior, and empty predicates are implemented in
 the Diamond prelude using that primitive.
 
+Arrays use a growable separately allocated value buffer whose capacity is part
+of GC accounting. Native `push` grows that buffer and enforces every persistent
+element contract; `pop` returns `nil` when empty. Membership, callback iteration,
+and mapping are Diamond prelude loops built from these primitives.
+
 ## Object model
 
 Classes are immutable module metadata rather than heap objects. Instances point

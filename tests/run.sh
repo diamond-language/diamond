@@ -290,6 +290,30 @@ if "$diamond" -e $'def unsafe(values: Hash[String, Int]) -> Int\n values["missin
     exit 1
 fi
 
+actual="$(DIAMOND_STRESS_GC=1 "$diamond" -e $'values = []\nindex = 0\nwhile index < 20\n values.push(index)\n index = index + 1\nend\nvalues.length()')"
+[[ "$actual" == "20" ]]
+
+actual="$(DIAMOND_STRESS_GC=1 "$diamond" -e $'values = [20, 22]\nlast = values.pop()\nlast + values.length() + 19')"
+[[ "$actual" == "42" ]]
+
+actual="$("$diamond" -e '[].pop()')"
+[[ "$actual" == "nil" ]]
+
+actual="$("$diamond" -e $'def checked(values: Array[Int])\n values\nend\nvalues = []\nchecked(values)\nbegin\n values.push("bad")\nrescue error: TypeError\n 42\nend')"
+[[ "$actual" == "42" ]]
+
+actual="$("$diamond" -e $'def checked(values: Array[Array[Int]])\n values\nend\nouter = []\ninner = []\nchecked(outer)\nouter.push(inner)\nbegin\n inner.push("bad")\nrescue error: TypeError\n 42\nend')"
+[[ "$actual" == "42" ]]
+
+actual="$("$diamond" -e 'array_include([20, 22], 22)')"
+[[ "$actual" == "true" ]]
+
+actual="$(DIAMOND_STRESS_GC=1 "$diamond" -e $'def mapped()\n def double(value)\n  value * 2\n end\n array_map([10, 11], double)\nend\nmapped()')"
+[[ "$actual" == "[20, 22]" ]]
+
+actual="$(DIAMOND_STRESS_GC=1 "$diamond" -e $'def total()\n sum = 0\n def add(value)\n  sum = sum + value\n end\n array_each([20, 22], add)\n sum\nend\ntotal()')"
+[[ "$actual" == "42" ]]
+
 actual="$("$diamond" --dump-bytecode -e $'def maybe(x: String | Nil) -> String | Nil\n x\nend\nmaybe(nil)')"
 grep -q 'String | Nil' <<<"$actual"
 
@@ -652,4 +676,4 @@ if "$diamond" -e $'begin\n raise 1\nrescue error: Int |\n 0\nend' \
     exit 1
 fi
 
-echo "116 tests passed"
+echo "124 tests passed"

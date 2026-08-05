@@ -42,6 +42,7 @@ typedef struct DiamondInstance {
 typedef struct DiamondArray {
     DiamondObject object;
     size_t count;
+    size_t capacity;
     struct {
         const DiamondTypeSet *type_sets;
         size_t type_set_count;
@@ -50,7 +51,7 @@ typedef struct DiamondArray {
         size_t class_count;
     } constraints[4];
     uint8_t constraint_count;
-    DiamondValue values[];
+    DiamondValue *values;
 } DiamondArray;
 
 typedef struct DiamondHashEntry {
