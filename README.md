@@ -28,7 +28,7 @@ Implemented today:
 - stop-the-world mark/sweep collection with stress-GC testing;
 - source diagnostics and bytecode disassembly.
 
-The test suite currently contains 286 end-to-end assertions spanning the
+The test suite currently contains 291 end-to-end assertions spanning the
 frontend, compiler, VM, object model, type guards, collections, and collector.
 
 ## Build and run
@@ -279,6 +279,10 @@ Config.port()
 Singleton functions support defaults, annotations, generics, explicit type
 arguments, nested namespaces, and lexical constants. `include Config` imports
 only Config's ordinary instance methods.
+
+Classes likewise support `def self.name` and qualified calls. Class singleton
+methods inherit through the superclass chain and may be overridden independently
+of instance methods; constructors remain the dedicated `Class.new(...)` path.
 
 Generic function and method declarations may introduce up to eight scoped type
 variables:

@@ -1217,4 +1217,21 @@ fi
 actual="$($diamond --dump-bytecode -e $'module Types\n def self.empty[T]() -> Array[T] = []\nend\nTypes.empty[String]()')"
 grep -q 'CALL_TYPED.*\[String\]' <<<"$actual"
 
-echo "286 tests passed"
+actual="$($diamond -e $'class Factory\n def self.answer() = 42\nend\nFactory.answer()')"
+[[ "$actual" == "42" ]]
+
+actual="$($diamond -e $'class Parent\n def self.answer() = 42\nend\nclass Child < Parent\nend\nChild.answer()')"
+[[ "$actual" == "42" ]]
+
+actual="$($diamond -e $'class Parent\n def self.answer() = 1\nend\nclass Child < Parent\n def self.answer(offset = 1) = 41 + offset\nend\n[Parent.answer(), Child.answer()]')"
+[[ "$actual" == "[1, 42]" ]]
+
+actual="$($diamond -e $'class Factory\n def self.empty[T]() -> Array[T] = []\nend\nresult = Factory.empty[Int]()\nbegin\n result.push("wrong")\nrescue error: TypeError\n 42\nend')"
+[[ "$actual" == "42" ]]
+
+if "$diamond" -e $'class Factory\n def self.answer() = 1\n def self.answer() = 2\nend' >/dev/null 2>&1; then
+    echo "duplicate class singleton method unexpectedly compiled" >&2
+    exit 1
+fi
+
+echo "291 tests passed"

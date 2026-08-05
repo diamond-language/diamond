@@ -176,6 +176,8 @@ struct DiamondClass {
     uint8_t superclass;
     DiamondMethod methods[DIAMOND_MAX_METHODS];
     size_t method_count;
+    DiamondMethod singleton_methods[DIAMOND_MAX_METHODS];
+    size_t singleton_method_count;
     char fields[DIAMOND_MAX_FIELDS][DIAMOND_MAX_FUNCTION_NAME];
     size_t field_count;
     DiamondShape shapes[DIAMOND_MAX_FIELDS + 1];

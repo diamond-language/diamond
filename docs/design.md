@@ -299,6 +299,11 @@ normal arity, defaults, type metadata, generic inference, and explicit generic
 call encoding. Singleton descriptors are deliberately excluded from module
 inclusion.
 
+Classes maintain a parallel singleton descriptor table. `Class.name()` resolves
+that table from the named class through its superclass chain, while `Class.new`
+continues to use constructor allocation and `initialize`. Singleton overrides
+do not alter instance dispatch, and their functions have no receiver slot.
+
 For a direct `value == nil` or `value != nil` condition, the compiler splits a
 union type-set into nil and non-nil branch facts. Facts for locals that existed
 before the branch are merged at the join; disagreement becomes unknown, so

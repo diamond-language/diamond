@@ -109,10 +109,12 @@ future work.
   lookup, arbitrary expression values, cross-frame access, and GC rooting.
 - Module singleton functions with qualified dispatch, defaults, typing,
   generics, nested namespaces, and strict separation from included methods.
+- Class singleton methods with generic specialization, defaults, independent
+  overrides, and superclass-chain lookup alongside dedicated constructors.
 
 ## Next priorities
 
-1. Add class singleton methods and decide constructor-level inheritance rules.
+1. Add method visibility controls beginning with `private`.
 
 ## Later experiments
 

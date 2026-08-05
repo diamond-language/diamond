@@ -1151,23 +1151,14 @@ static uint8_t parse_call(Compiler *compiler, DiamondSpan name) {
     return destination;
 }
 
-static uint8_t parse_module_call(Compiler *compiler,int module_index,
-                                 DiamondSpan namespace_name) {
-    advance_token(compiler);
+static uint8_t parse_singleton_call(Compiler *compiler,
+                                    const DiamondMethod *method,
+                                    DiamondSpan namespace_name) {
     if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER) {
         fail(compiler,compiler->current.span,
              "expected singleton function after module name");return 0;
     }
     const DiamondSpan name=compiler->current.span;
-    const DiamondModule *module=
-        &compiler->program->modules[(size_t)module_index];
-    const DiamondMethod *method=nullptr;
-    for(size_t index=0;index<module->singleton_method_count;index++)
-        if(name_equals(compiler,module->singleton_methods[index].name,name,false))
-            method=&module->singleton_methods[index];
-    if(method==nullptr) {
-        fail(compiler,name,"undefined module singleton function");return 0;
-    }
     const DiamondFunction *function=
         &compiler->program->functions[method->function_index];
     advance_token(compiler);
@@ -1270,8 +1261,22 @@ static uint8_t parse_name(Compiler *compiler) {
             fail(compiler,name,"undefined namespaced class");return 0;
         }
     }
-    if(module_index>=0&&compiler->current.kind==DIAMOND_TOKEN_DOT)
-        return parse_module_call(compiler,module_index,name);
+    if(module_index>=0&&compiler->current.kind==DIAMOND_TOKEN_DOT) {
+        advance_token(compiler);
+        const DiamondModule *module=
+            &compiler->program->modules[(size_t)module_index];
+        const DiamondMethod *method=nullptr;
+        if(compiler->current.kind==DIAMOND_TOKEN_IDENTIFIER)
+            for(size_t index=0;index<module->singleton_method_count;index++)
+                if(name_equals(compiler,module->singleton_methods[index].name,
+                               compiler->current.span,false))
+                    method=&module->singleton_methods[index];
+        if(method==nullptr) {
+            fail(compiler,compiler->current.span,
+                 "undefined module singleton function");return 0;
+        }
+        return parse_singleton_call(compiler,method,name);
+    }
     const int constant=find_namespace_constant(compiler,name);
     if(constant>=0&&find_local(compiler,name)<0) {
         const uint8_t destination=allocate_register(compiler);
@@ -1281,10 +1286,27 @@ static uint8_t parse_name(Compiler *compiler) {
     }
     if (class_index >= 0 && compiler->current.kind == DIAMOND_TOKEN_DOT) {
         advance_token(compiler);
-        if (compiler->current.kind != DIAMOND_TOKEN_IDENTIFIER ||
-            !name_equals(compiler, "new", compiler->current.span, false)) {
-            fail(compiler, compiler->current.span, "expected 'new' after class name");
-            return 0;
+        if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER) {
+            fail(compiler,compiler->current.span,
+                 "expected constructor or singleton method");return 0;
+        }
+        if(!name_equals(compiler,"new",compiler->current.span,false)) {
+            const DiamondMethod *method=nullptr;
+            const DiamondClass *owner=
+                &compiler->program->classes[(size_t)class_index];
+            while(owner!=nullptr&&method==nullptr) {
+                for(size_t index=0;index<owner->singleton_method_count;index++)
+                    if(name_equals(compiler,owner->singleton_methods[index].name,
+                                   compiler->current.span,false))
+                        method=&owner->singleton_methods[index];
+                owner=owner->superclass==UINT8_MAX?nullptr:
+                    &compiler->program->classes[owner->superclass];
+            }
+            if(method==nullptr) {
+                fail(compiler,compiler->current.span,
+                     "undefined class singleton method");return 0;
+            }
+            return parse_singleton_call(compiler,method,name);
         }
         advance_token(compiler);
         if (compiler->current.kind != DIAMOND_TOKEN_LEFT_PAREN) {
@@ -2115,8 +2137,8 @@ static uint8_t compile_definition(Compiler *compiler) {
     const bool at_top_level = compiler->function == &compiler->program->entry;
     advance_token(compiler);
     bool module_singleton=false;
-    if(compiler->current.kind==DIAMOND_TOKEN_SELF&&compiler->current_module>=0&&
-       compiler->current_class<0) {
+    if(compiler->current.kind==DIAMOND_TOKEN_SELF&&
+       (compiler->current_module>=0||compiler->current_class>=0)) {
         module_singleton=true;advance_token(compiler);
         if(compiler->current.kind!=DIAMOND_TOKEN_DOT) {
             fail(compiler,compiler->current.span,"expected '.' after 'self'");
@@ -2148,7 +2170,7 @@ static uint8_t compile_definition(Compiler *compiler) {
     for(size_t index=0;index<16;index++)
         function->parameter_type_sets[index]=UINT8_MAX;
     const size_t function_index = compiler->program->function_count - 1;
-    function->owner_class=compiler->current_class>=0?
+    function->owner_class=compiler->current_class>=0&&!module_singleton?
         (uint8_t)compiler->current_class:
         (compiler->current_module>=0&&!module_singleton?UINT8_MAX-1:UINT8_MAX);
     function->nested=!at_top_level;
@@ -2237,7 +2259,7 @@ static uint8_t compile_definition(Compiler *compiler) {
                 compiler->capture_registers[i]=compiler->enclosing_locals[i].reg;
         }
     }
-    if(compiler->current_class>=0||
+    if((compiler->current_class>=0&&!module_singleton)||
        (compiler->current_module>=0&&!module_singleton)) {
         (void)allocate_register(compiler);
         function->arity = 1;
@@ -2402,7 +2424,8 @@ static uint8_t compile_definition(Compiler *compiler) {
     for(size_t index=0;index<256;index++)
         {compiler->known_types[index]=outer_known_types[index];
          compiler->known_type_sets[index]=outer_known_type_sets[index];}
-    if (compiler->current_class >= 0 && !compiler->failed && at_top_level) {
+    if(compiler->current_class>=0&&!module_singleton&&
+       !compiler->failed&&at_top_level) {
         DiamondClass *class = &compiler->program->classes[(size_t)compiler->current_class];
         bool duplicate=false;
         for(size_t existing=0;existing<class->method_count;existing++)
@@ -2419,6 +2442,23 @@ static uint8_t compile_definition(Compiler *compiler) {
             method->arity=(uint8_t)(function->arity-1);
             method->required_arity=(uint8_t)(function->required_arity-1);
             method->included=false;
+        }
+    } else if(compiler->current_class>=0&&module_singleton&&
+              !compiler->failed&&at_top_level) {
+        DiamondClass *class=
+            &compiler->program->classes[(size_t)compiler->current_class];
+        bool duplicate=false;
+        for(size_t existing=0;existing<class->singleton_method_count;existing++)
+            if(name_equals(compiler,class->singleton_methods[existing].name,
+                           name,false))duplicate=true;
+        if(duplicate||class->singleton_method_count==DIAMOND_MAX_METHODS)
+            fail(compiler,name,"duplicate or excessive class singleton method");
+        else {
+            DiamondMethod *method=
+                &class->singleton_methods[class->singleton_method_count++];
+            for(size_t i=0;i<copy_length;i++)method->name[i]=function->name[i];
+            method->name[copy_length]='\0';method->function_index=(uint8_t)function_index;
+            method->arity=function->arity;method->required_arity=function->required_arity;
         }
     } else if(compiler->current_module>=0&&!module_singleton&&
               !compiler->failed&&at_top_level) {
