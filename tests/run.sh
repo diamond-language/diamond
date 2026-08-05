@@ -1649,4 +1649,6 @@ actual="$($diamond -e $'loop\n break 42\nend')"
 if "$diamond" -e $'loop 42 end' >/dev/null 2>&1; then exit 1; fi
 actual="$($diamond -e $'count=0\nresult=loop do\n count=count+1\n if count<3\n  next\n end\n break count+39\nend\nresult')"
 [[ "$actual" == "42" ]]
-echo "418 tests passed"
+actual="$($diamond -e $'outer=loop do\n inner=loop do\n  break 20\n end\n break inner+22\nend\nouter')"
+[[ "$actual" == "42" ]]
+echo "419 tests passed"

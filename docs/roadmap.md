@@ -149,6 +149,7 @@ future work.
 - Unconditional `loop do` expressions with value-bearing exits.
 - Newline-delimited unconditional loops and delimiter diagnostics.
 - `next` integration for unconditional loops.
+- Nested unconditional-loop target isolation.
 - Chained `elsif` branches in conditional expressions.
 - Optional `then` delimiters for conditional expressions.
 - Optional `do` delimiters for `while` and `until` loops.
