@@ -1408,4 +1408,13 @@ actual="$($diamond -e $'class Box\n attr_reader value: Int\nend\nbegin\n Box.new
 actual="$($diamond -e $'class Pair\n attr_accessor left: Int, right: String\nend\npair=Pair.new()\npair.left=(42)\npair.right=("answer")\n[pair.left(), pair.right()]')"
 [[ "$actual" == "[42, answer]" ]]
 
-echo "343 tests passed"
+actual="$($diamond -e $'class Box\n def empty?() = true\nend\nBox.new().empty?()')"
+[[ "$actual" == "true" ]]
+
+actual="$($diamond -e $'def ready?(value: Int) = value == 42\nready?(42)')"
+[[ "$actual" == "true" ]]
+
+actual="$($diamond -e $'module Query\n def valid?() = true\nend\nclass Box\n include Query\nend\nBox.new().valid?()')"
+[[ "$actual" == "true" ]]
+
+echo "346 tests passed"

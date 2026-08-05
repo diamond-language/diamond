@@ -323,6 +323,8 @@ Ordinary methods may use the same writer spelling with
 private `self.name=(value)` calls.
 Class and module singleton functions may likewise use writer names and qualified
 calls such as `Config.value=(42)`.
+Predicate method and function names may end in `?`, for example
+`def empty?() = length() == 0`.
 
 Generic function and method declarations may introduce up to eight scoped type
 variables:
