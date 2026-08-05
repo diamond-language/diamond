@@ -181,6 +181,10 @@ compiler, disassembler, VM, value representation, and object layouts live under
 `src/`; executable language cases and the shell test harness live under
 `tests/`.
 
+Set `DIAMOND_TRACE_IC=1` to print method inline-cache hit and miss counts after
+execution. Dynamic call sites use VM-owned monomorphic caches guarded by the
+receiver class.
+
 ## Important limitations
 
 - Nested functions are first-class closures. Captured locals use shared mutable
@@ -188,7 +192,9 @@ compiler, disassembler, VM, value representation, and object layouts live under
 - Runtime errors include source-mapped Diamond stack traces; structured
   exceptions are not implemented yet.
 - No modules, mixins, singleton methods, or visibility.
-- No runtime shapes or inline caches yet.
+- Classes currently act as immutable runtime shapes; method calls use
+  monomorphic inline caches. Mutable shapes and polymorphic caches are not
+  implemented yet.
 - No generic arrays/hashes or unrestricted union types.
 - Fixed limits exist for bytecode, constants, functions, classes, fields, and
   registers.

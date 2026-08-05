@@ -238,6 +238,23 @@ static const DiamondMethod *lookup_method(const DiamondChunk *chunk,
     return nullptr;
 }
 
+static const DiamondMethod *lookup_method_cached(
+    DiamondVm *vm, const DiamondChunk *chunk, const uint8_t *site,
+    const DiamondClass *class, const char *name, size_t length) {
+    const size_t slot=((size_t)(uintptr_t)site>>2)%DIAMOND_INLINE_CACHE_COUNT;
+    if(vm->method_caches[slot].site==site &&
+       vm->method_caches[slot].receiver_class==class) {
+        vm->inline_cache_hits++;
+        return vm->method_caches[slot].method;
+    }
+    vm->inline_cache_misses++;
+    const DiamondMethod *method=lookup_method(chunk,class,name,length);
+    vm->method_caches[slot].site=site;
+    vm->method_caches[slot].receiver_class=class;
+    vm->method_caches[slot].method=method;
+    return method;
+}
+
 static bool value_matches_type(const DiamondChunk *chunk, DiamondValue value,
                                uint8_t type) {
     const bool nilable=(type&DIAMOND_TYPE_NILABLE)!=0;
@@ -728,8 +745,9 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                    (size_t)name>=chunk->string_count) VM_RETURN(DIAMOND_VM_TYPE_ERROR);
                 DiamondInstance *instance=(DiamondInstance *)registers[recv].as.object;
                 const DiamondStringConstant *method_name=&chunk->strings[name];
-                const DiamondMethod *method=lookup_method(
-                    chunk,instance->class,method_name->chars,method_name->length);
+                const DiamondMethod *method=lookup_method_cached(
+                    vm,chunk,chunk->code+instruction_offset,instance->class,
+                    method_name->chars,method_name->length);
                 if(method==nullptr) VM_RETURN(DIAMOND_VM_TYPE_ERROR);
                 if(method->arity!=argc) VM_RETURN(DIAMOND_VM_ARITY_ERROR);
                 DiamondValue args[17];args[0]=registers[recv];
@@ -912,6 +930,9 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
 DiamondVmStatus diamond_vm_run(DiamondVm *vm, const DiamondChunk *chunk,
                                DiamondValue *result) {
     vm->error[0]='\0';
+    memset(vm->method_caches,0,sizeof(vm->method_caches));
+    vm->inline_cache_hits=0;
+    vm->inline_cache_misses=0;
     return run_chunk(chunk, vm, nullptr, 0, 0, nullptr, result);
 }
 

@@ -468,4 +468,10 @@ actual="$(DIAMOND_STRESS_GC=1 "$diamond" tests/cases/mutable_closure.dia)"
 actual="$(DIAMOND_STRESS_GC=1 "$diamond" tests/cases/deep_closure.dia)"
 [[ "$actual" == "42" ]]
 
-echo "79 tests passed"
+error_file="$(mktemp)"
+actual="$(DIAMOND_TRACE_IC=1 "$diamond" tests/cases/inline_cache.dia 2>"$error_file")"
+[[ "$actual" == "42" ]]
+grep -q 'inline caches: 4 hits, 1 misses' "$error_file"
+rm -f "$error_file"
+
+echo "80 tests passed"

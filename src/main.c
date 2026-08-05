@@ -58,6 +58,10 @@ static int run_source(const char *name, const char *source, bool dump_bytecode) 
 
     diamond_value_print(result);
     putchar('\n');
+    if (getenv("DIAMOND_TRACE_IC") != nullptr) {
+        fprintf(stderr,"inline caches: %zu hits, %zu misses\n",
+                vm.inline_cache_hits,vm.inline_cache_misses);
+    }
     diamond_vm_free(&vm);
     return 0;
 }

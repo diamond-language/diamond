@@ -51,10 +51,11 @@ future work.
 - Source-mapped runtime stack traces across functions and methods.
 - First-class nested closures with escaping, shared mutable capture cells across
   recursively nested lexical environments.
+- VM-owned monomorphic caches for dynamic method call sites.
 
 ## Next priorities
 
-1. Runtime shapes and monomorphic method/field inline caches.
+1. Explicit mutable shapes and polymorphic method/field inline caches.
 2. Structured runtime exceptions.
 3. Generic collection annotations and general unions.
 4. A small core library implemented partly in Diamond.
