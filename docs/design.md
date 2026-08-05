@@ -248,6 +248,12 @@ class fact. Indexing `Array[T]` produces `T`; indexing `Hash[K, V]` produces
 recursive union/subtype checks, eliminating redundant return guards while
 rejecting a hash lookup used where a non-nil value is required.
 
+Runtime Array and Hash contracts are also inference sources. When a collection
+has no elements or entries to inspect, a later generic call imports the
+contract's element, key, and value graphs—including substitutions captured by
+an earlier generic frame. This preserves nested types across chains of generic
+calls without requiring a sentinel value in an otherwise empty collection.
+
 For a direct `value == nil` or `value != nil` condition, the compiler splits a
 union type-set into nil and non-nil branch facts. Facts for locals that existed
 before the branch are merged at the join; disagreement becomes unknown, so

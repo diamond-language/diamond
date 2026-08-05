@@ -1053,4 +1053,16 @@ actual="$($diamond -e $'def run()\n def accepts(callback: Callable[[Int], String
 actual="$($diamond --dump-bytecode -e $'def accepts(callback: Callable[[Int, String], Bool]) = true\ntrue')"
 grep -q 'Callable\[\[Int, String\], Bool\]' <<<"$actual"
 
-echo "237 tests passed"
+actual="$($diamond -e $'def empty_ints() -> Array[Int] = []\ndef preserve[T](values: Array[T]) -> Array[T] = values\nresult = preserve(empty_ints())\nbegin\n result.push("wrong")\nrescue error: TypeError\n 42\nend')"
+[[ "$actual" == "42" ]]
+
+actual="$($diamond -e $'def empty_scores() -> Hash[String, Int] = {}\ndef preserve[K, V](values: Hash[K, V]) -> Hash[K, V] = values\nresult = preserve(empty_scores())\nbegin\n result["wrong"] = "wrong"\nrescue error: TypeError\n 42\nend')"
+[[ "$actual" == "42" ]]
+
+actual="$($diamond -e $'def empty_ints() -> Array[Int] = []\ndef run()\n def wrong(value: String) -> String = value\n begin\n  array_map_typed(empty_ints(), wrong)\n rescue error: TypeError\n  42\n end\nend\nrun()')"
+[[ "$actual" == "42" ]]
+
+actual="$(DIAMOND_STRESS_GC=1 "$diamond" -e $'def empty_like[T](sample: T) -> Array[T] = []\ndef preserve[T](values: Array[T]) -> Array[T] = values\nresult = preserve(empty_like(["diamond"]))\nbegin\n result.push([42])\nrescue error: TypeError\n 42\nend')"
+[[ "$actual" == "42" ]]
+
+echo "241 tests passed"

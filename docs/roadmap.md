@@ -93,11 +93,12 @@ future work.
 - Bounded recursive generic binding graphs for nested Array and Hash types.
 - Typed Callable parameter signatures with contravariant inputs, covariant
   returns, zero-argument lists, generic inference, and diagnostic rendering.
+- Generic inference from persistent Array and Hash contracts, including empty
+  collections and recursively bound contracts from earlier generic calls.
 
 ## Next priorities
 
-1. Infer generic arguments from persistent contracts on empty collections.
-2. Explore explicit generic call arguments for otherwise ambiguous calls.
+1. Explore explicit generic call arguments for otherwise ambiguous calls.
 
 ## Later experiments
 

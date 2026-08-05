@@ -1147,6 +1147,98 @@ static void bind_known_set(DiamondTypeBinding *binding,uint8_t node,
     }
 }
 
+static void bind_bound_node(DiamondTypeBinding *target,uint8_t target_node,
+                            const DiamondTypeBinding *source,uint8_t source_node) {
+    if(source_node>=source->node_count)return;
+    const DiamondBoundTypeNode *node=&source->nodes[source_node];
+    for(size_t index=0;index<node->count;index++) {
+        const DiamondBoundTypeMember known=node->members[index];
+        DiamondBoundTypeMember *member=
+            binding_member(target,target_node,known.id);
+        if(member==nullptr)continue;
+        if(known.argument_node!=UINT8_MAX) {
+            if(member->argument_node==UINT8_MAX)
+                member->argument_node=binding_node(target);
+            if(member->argument_node!=UINT8_MAX)
+                bind_bound_node(target,member->argument_node,source,
+                                known.argument_node);
+        }
+        if(known.second_argument_node!=UINT8_MAX) {
+            if(member->second_argument_node==UINT8_MAX)
+                member->second_argument_node=binding_node(target);
+            if(member->second_argument_node!=UINT8_MAX)
+                bind_bound_node(target,member->second_argument_node,source,
+                                known.second_argument_node);
+        }
+    }
+}
+
+static void bind_context_set(DiamondTypeBinding *binding,uint8_t node,
+    const DiamondChunk *context,const DiamondTypeSet *sets,uint8_t set_index) {
+    const DiamondTypeSet *set=&sets[set_index];
+    for(size_t index=0;index<set->count;index++) {
+        const DiamondTypeMember known=set->members[index];
+        if(known.id>=DIAMOND_TYPE_VARIABLE_BASE&&
+           known.id<DIAMOND_TYPE_INTERFACE_BASE) {
+            const size_t variable=(size_t)(known.id-DIAMOND_TYPE_VARIABLE_BASE);
+            if(variable<context->type_variable_count&&
+               context->type_variable_bindings!=nullptr)
+                bind_bound_node(binding,node,
+                    &context->type_variable_bindings[variable],0);
+            continue;
+        }
+        DiamondBoundTypeMember *member=binding_member(binding,node,known.id);
+        if(member==nullptr)continue;
+        if(known.argument_set!=UINT8_MAX) {
+            if(member->argument_node==UINT8_MAX)
+                member->argument_node=binding_node(binding);
+            if(member->argument_node!=UINT8_MAX)
+                bind_context_set(binding,member->argument_node,context,sets,
+                                 known.argument_set);
+        }
+        if(known.second_argument_set!=UINT8_MAX) {
+            if(member->second_argument_node==UINT8_MAX)
+                member->second_argument_node=binding_node(binding);
+            if(member->second_argument_node!=UINT8_MAX)
+                bind_context_set(binding,member->second_argument_node,context,sets,
+                                 known.second_argument_set);
+        }
+    }
+}
+
+static void infer_from_context_set(const DiamondChunk *known_context,
+    const DiamondTypeSet *known_sets,uint8_t known_index,
+    const DiamondTypeSet *expected_sets,uint8_t expected_index,
+    DiamondTypeBinding bindings[8]) {
+    const DiamondTypeSet *known=&known_sets[known_index];
+    const DiamondTypeSet *expected=&expected_sets[expected_index];
+    for(size_t target=0;target<expected->count;target++) {
+        const DiamondTypeMember wanted=expected->members[target];
+        if(wanted.id>=DIAMOND_TYPE_VARIABLE_BASE&&
+           wanted.id<DIAMOND_TYPE_INTERFACE_BASE) {
+            const uint8_t variable=
+                (uint8_t)(wanted.id-DIAMOND_TYPE_VARIABLE_BASE);
+            if(bindings[variable].node_count==0)
+                (void)binding_node(&bindings[variable]);
+            bind_context_set(&bindings[variable],0,known_context,known_sets,
+                             known_index);
+            continue;
+        }
+        for(size_t source=0;source<known->count;source++) {
+            const DiamondTypeMember actual=known->members[source];
+            if(actual.id!=wanted.id)continue;
+            if(wanted.argument_set!=UINT8_MAX&&actual.argument_set!=UINT8_MAX)
+                infer_from_context_set(known_context,known_sets,
+                    actual.argument_set,expected_sets,wanted.argument_set,bindings);
+            if(wanted.second_argument_set!=UINT8_MAX&&
+               actual.second_argument_set!=UINT8_MAX)
+                infer_from_context_set(known_context,known_sets,
+                    actual.second_argument_set,expected_sets,
+                    wanted.second_argument_set,bindings);
+        }
+    }
+}
+
 static void infer_from_known_set(const DiamondChunk *chunk,
     const DiamondTypeSet *known_sets,uint8_t known_index,
     const DiamondTypeSet *expected_sets,uint8_t expected_index,
@@ -1194,12 +1286,38 @@ static void infer_from_value(const DiamondChunk *chunk,DiamondValue value,
         if(!value_matches_type(chunk,value,member.id))continue;
         if(member.id==DIAMOND_TYPE_ARRAY&&member.argument_set!=UINT8_MAX) {
             const DiamondArray *array=(const DiamondArray *)value.as.object;
+            for(size_t constraint=0;constraint<array->constraint_count;constraint++) {
+                const typeof(array->constraints[0]) *known=
+                    &array->constraints[constraint];
+                const DiamondChunk context={.type_sets=known->type_sets,
+                    .type_set_count=known->type_set_count,.classes=known->classes,
+                    .class_count=known->class_count,.interfaces=known->interfaces,
+                    .interface_count=known->interface_count,
+                    .type_variable_bindings=known->type_variable_bindings,
+                    .type_variable_count=known->type_variable_count};
+                infer_from_context_set(&context,known->type_sets,known->set_index,
+                    sets,member.argument_set,bindings);
+            }
             for(size_t item=0;item<array->count;item++)
                 infer_from_value(chunk,array->values[item],sets,
                                  member.argument_set,bindings);
         } else if(member.id==DIAMOND_TYPE_HASH&&member.argument_set!=UINT8_MAX&&
                   member.second_argument_set!=UINT8_MAX) {
             const DiamondHash *hash=(const DiamondHash *)value.as.object;
+            for(size_t constraint=0;constraint<hash->constraint_count;constraint++) {
+                const typeof(hash->constraints[0]) *known=
+                    &hash->constraints[constraint];
+                const DiamondChunk context={.type_sets=known->type_sets,
+                    .type_set_count=known->type_set_count,.classes=known->classes,
+                    .class_count=known->class_count,.interfaces=known->interfaces,
+                    .interface_count=known->interface_count,
+                    .type_variable_bindings=known->type_variable_bindings,
+                    .type_variable_count=known->type_variable_count};
+                infer_from_context_set(&context,known->type_sets,known->key_set,
+                    sets,member.argument_set,bindings);
+                infer_from_context_set(&context,known->type_sets,known->value_set,
+                    sets,member.second_argument_set,bindings);
+            }
             for(size_t item=0;item<hash->count;item++) {
                 infer_from_value(chunk,hash->entries[item].key,sets,
                                  member.argument_set,bindings);

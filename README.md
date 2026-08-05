@@ -27,7 +27,7 @@ Implemented today:
 - stop-the-world mark/sweep collection with stress-GC testing;
 - source diagnostics and bytecode disassembly.
 
-The test suite currently contains 237 end-to-end assertions spanning the
+The test suite currently contains 241 end-to-end assertions spanning the
 frontend, compiler, VM, object model, type guards, collections, and collector.
 
 ## Build and run
@@ -237,10 +237,12 @@ def pair[K, V](key: K, value: V) -> Hash[K, V] = {key: value}
 Calls infer variables from scalar, collection, and callable arguments. Primitive,
 nominal, and union bindings participate in callee checks and are copied into
 returned Array/Hash contracts, so mutations remain guarded after the call frame
-ends. The core `array_map_typed` binds its output from the callback's declared
-return type, including for empty inputs. Bindings preserve recursive structures
-such as `Array[String]` and `Hash[String, Array[Int]]`; empty runtime collections
-need another inference source before their inner type can be known.
+ends. Persistent collection contracts also act as inference evidence on later
+calls, allowing empty arrays and hashes to retain concrete or previously bound
+generic arguments. The core `array_map_typed` binds its output from the
+callback's declared return type, including for empty inputs. Bindings preserve
+recursive structures such as `Array[String]` and
+`Hash[String, Array[Int]]`.
 
 Callable contracts may describe only arity and return type with
 `Callable[1, String]`, or carry complete parameter types with
