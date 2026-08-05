@@ -409,6 +409,7 @@ runtime error: expected String | Nil, got Int
 - bare `raise` inside a rescue body to rethrow the current exception
 - `retry` inside rescue to restart the protected body
 - binding-free typed filters such as `rescue : TypeError | IndexError`
+- multiple ordered `rescue` clauses, with an optional final catch-all
 
 ## Architecture
 

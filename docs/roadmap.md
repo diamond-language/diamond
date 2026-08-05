@@ -155,6 +155,7 @@ future work.
 - Bare re-raise of the current rescued exception.
 - Rescue-local `retry` with stable ensure-frame behavior.
 - Binding-free typed rescue filters.
+- Ordered multiple rescue clauses with unmatched re-raise.
 
 ## Next priorities
 

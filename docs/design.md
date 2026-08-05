@@ -395,6 +395,10 @@ The colon introducing rescue filters is independent of the optional local
 binding. Both `rescue error: TypeError` and `rescue : TypeError` therefore emit
 the same handler type table; only the former adds a lexical local.
 
+Multiple rescue clauses share one catch-all VM handler and compile ordered
+`IS_TYPE` dispatch at its target. An exception unmatched by every typed clause
+is re-raised; a catch-all must therefore be last.
+
 `value is Type` emits a non-throwing runtime predicate and has comparison
 precedence. For a direct conditional test, union members accepted by `Type`
 (including nominal subclasses) flow into the true branch and the complement

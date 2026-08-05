@@ -2112,7 +2112,6 @@ static uint8_t compile_begin(Compiler *compiler) {
     const uint8_t exception=allocate_register(compiler);
     const size_t retry_target=compiler->function->code_count;
     const size_t handler_type_operand=compiler->function->code_count+2;
-    const size_t handler_types_operand=compiler->function->code_count+3;
     const size_t handler_operand=compiler->function->code_count+11;
     emit_opcode(compiler,DIAMOND_OP_PUSH_RESCUE);
     emit_byte(compiler,exception);emit_byte(compiler,0x80);
@@ -2124,8 +2123,17 @@ static uint8_t compile_begin(Compiler *compiler) {
     emit_instruction(compiler,DIAMOND_OP_POP_RESCUE,0,0,0,0);
     const size_t end_jump=emit_jump(compiler,DIAMOND_OP_JUMP,0);
     patch_jump(compiler,handler_operand,compiler->function->code_count);
-    size_t rescue_end_jump=SIZE_MAX;
-    if(compiler->current.kind==DIAMOND_TOKEN_RESCUE) {
+    size_t rescue_end_jumps[16];size_t rescue_count=0;
+    bool saw_rescue=false,catch_all=false;
+    while(compiler->current.kind==DIAMOND_TOKEN_RESCUE&&!compiler->failed) {
+        if(catch_all) {
+            fail(compiler,compiler->current.span,
+                 "rescue clause after catch-all is unreachable");break;
+        }
+        if(rescue_count==16) {
+            fail(compiler,compiler->current.span,"too many rescue clauses");break;
+        }
+        saw_rescue=true;
         advance_token(compiler);
         compiler->function->code[handler_type_operand]=0;
         const size_t rescue_local_count=compiler->local_count;
@@ -2138,9 +2146,9 @@ static uint8_t compile_begin(Compiler *compiler) {
                 .name=compiler->current.span,.reg=exception};
             advance_token(compiler);
         }
+        uint8_t rescue_types[8];size_t type_count=0;
         if(compiler->current.kind==DIAMOND_TOKEN_COLON) {
             advance_token(compiler);
-            size_t type_count=0;
             while(!compiler->failed) {
                 if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER) {
                     fail(compiler,compiler->current.span,"expected rescue type");break;
@@ -2155,15 +2163,23 @@ static uint8_t compile_begin(Compiler *compiler) {
                     fail(compiler,compiler->current.span,
                          "generic type variables cannot filter rescue");break;
                 }
-                compiler->function->code[handler_types_operand+type_count++]=
-                    rescue_type;
+                rescue_types[type_count++]=rescue_type;
                 advance_token(compiler);
                 if(compiler->current.kind!=DIAMOND_TOKEN_PIPE)break;
                 advance_token(compiler);
             }
-            compiler->function->code[handler_type_operand]=(uint8_t)type_count;
         }
+        size_t match_jumps[8];size_t mismatch_jump=SIZE_MAX;
+        for(size_t index=0;index<type_count;index++) {
+            const uint8_t matched=allocate_register(compiler);
+            emit_instruction(compiler,DIAMOND_OP_IS_TYPE,matched,exception,
+                             rescue_types[index],3);
+            match_jumps[index]=emit_jump(compiler,DIAMOND_OP_JUMP_IF_TRUE,matched);
+        }
+        if(type_count>0)mismatch_jump=emit_jump(compiler,DIAMOND_OP_JUMP,0);
         if(!consume_block_start(compiler))return destination;
+        for(size_t index=0;index<type_count;index++)
+            patch_jump(compiler,match_jumps[index],compiler->function->code_count);
         const int outer_exception=compiler->current_exception;
         const size_t outer_retry_target=compiler->current_retry_target;
         compiler->current_exception=exception;
@@ -2173,10 +2189,14 @@ static uint8_t compile_begin(Compiler *compiler) {
         compiler->current_retry_target=outer_retry_target;
         emit_instruction(compiler,DIAMOND_OP_MOVE,destination,rescued,0,2);
         compiler->local_count=rescue_local_count;
-        rescue_end_jump=emit_jump(compiler,DIAMOND_OP_JUMP,0);
+        rescue_end_jumps[rescue_count++]=emit_jump(compiler,DIAMOND_OP_JUMP,0);
+        if(mismatch_jump!=SIZE_MAX)
+            patch_jump(compiler,mismatch_jump,compiler->function->code_count);
+        else catch_all=true;
     }
-    if(compiler->current.kind!=DIAMOND_TOKEN_ENSURE &&
-       compiler->function->code[handler_type_operand]==0x80) {
+    if(saw_rescue&&!catch_all)
+        emit_instruction(compiler,DIAMOND_OP_RAISE,exception,0,0,1);
+    if(compiler->current.kind!=DIAMOND_TOKEN_ENSURE&&!saw_rescue) {
         fail(compiler,compiler->current.span,"expected 'rescue' or 'ensure' after begin body");
         return destination;
     }
@@ -2187,8 +2207,8 @@ static uint8_t compile_begin(Compiler *compiler) {
         const uint8_t normal=compile_sequence(compiler);
         emit_instruction(compiler,DIAMOND_OP_MOVE,destination,normal,0,2);
     }
-    if(rescue_end_jump!=SIZE_MAX)
-        patch_jump(compiler,rescue_end_jump,compiler->function->code_count);
+    for(size_t index=0;index<rescue_count;index++)
+        patch_jump(compiler,rescue_end_jumps[index],compiler->function->code_count);
     emit_opcode(compiler,DIAMOND_OP_RUN_ENSURE);
     const size_t continuation_operand=compiler->function->code_count;
     emit_byte(compiler,0);emit_byte(compiler,0);

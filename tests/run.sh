@@ -1591,4 +1591,18 @@ actual="$($diamond -e $'nil or "fallback"')"
 actual="$($diamond -e $'[(false and (1 / 0)), (true or (1 / 0))]')"
 [[ "$actual" == "[false, true]" ]]
 
-echo "400 tests passed"
+actual="$($diamond -e $'begin\n [1][4]\nrescue : TypeError\n 0\nrescue : IndexError\n 42\nend')"
+[[ "$actual" == "42" ]]
+
+actual="$($diamond -e $'begin\n 1 / 0\nrescue type: TypeError\n 0\nrescue division: ZeroDivisionError\n 42\nrescue error\n 1\nend')"
+[[ "$actual" == "42" ]]
+
+actual="$($diamond -e $'begin\n begin\n  raise "text"\n rescue : TypeError\n  0\n rescue : IndexError\n  1\n end\nrescue outer\n 42\nend')"
+[[ "$actual" == "42" ]]
+
+if "$diamond" -e $'begin\n raise "x"\nrescue error\n 1\nrescue : TypeError\n 2\nend' >/dev/null 2>&1; then
+    echo "rescue after catch-all unexpectedly compiled" >&2
+    exit 1
+fi
+
+echo "404 tests passed"
