@@ -380,6 +380,35 @@ if "$diamond" -e '42 is Missing' >/dev/null 2>&1; then
     exit 1
 fi
 
+actual="$("$diamond" -e $'def run()\n def identity(value)\n  value\n end\n array_each([], identity).length()\nend\nrun()')"
+[[ "$actual" == "0" ]]
+
+actual="$("$diamond" -e $'def run()\n def wrong()\n  42\n end\n begin\n  array_each([], wrong)\n rescue error: TypeError\n  42\n end\nend\nrun()')"
+[[ "$actual" == "42" ]]
+
+error_file="$(mktemp)"
+if "$diamond" -e $'def run()\n def wrong()\n  42\n end\n array_map([], wrong)\nend\nrun()' \
+    >/dev/null 2>"$error_file"; then
+    echo "Callable[1] accepted a zero-arity closure" >&2
+    rm -f "$error_file"
+    exit 1
+fi
+grep -q 'expected Callable\[1\], got Callable' "$error_file"
+rm -f "$error_file"
+
+actual="$("$diamond" -e $'def run()\n def pair(key, value)\n  key\n end\n hash_each({}, pair).length()\nend\nrun()')"
+[[ "$actual" == "0" ]]
+
+actual="$("$diamond" --dump-bytecode -e '42')"
+array_each_dump="$(sed -n '/^== array_each ==$/,/^== /p' <<<"$actual")"
+grep -q 'CHECK_TYPE.*Callable\[1\]' <<<"$array_each_dump"
+
+if "$diamond" -e $'def invalid(callback: Callable[17])\n callback\nend' \
+    >/dev/null 2>&1; then
+    echo "oversized Callable arity unexpectedly compiled" >&2
+    exit 1
+fi
+
 actual="$("$diamond" --dump-bytecode -e $'def maybe(x: String | Nil) -> String | Nil\n x\nend\nmaybe(nil)')"
 grep -q 'String | Nil' <<<"$actual"
 
@@ -742,4 +771,4 @@ if "$diamond" -e $'begin\n raise 1\nrescue error: Int |\n 0\nend' \
     exit 1
 fi
 
-echo "143 tests passed"
+echo "149 tests passed"

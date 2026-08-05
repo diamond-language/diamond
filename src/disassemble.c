@@ -49,6 +49,7 @@ static bool print_type_set(FILE *stream,const DiamondChunk *chunk,
         else if(type==DIAMOND_TYPE_NIL) fputs("Nil",stream);
         else if(type==DIAMOND_TYPE_ARRAY) fputs("Array",stream);
         else if(type==DIAMOND_TYPE_HASH) fputs("Hash",stream);
+        else if(type==DIAMOND_TYPE_CALLABLE) fputs("Callable",stream);
         else if((size_t)(type-DIAMOND_TYPE_CLASS_BASE)<chunk->class_count)
             fputs(chunk->classes[type-DIAMOND_TYPE_CLASS_BASE].name,stream);
         else {fputs("<invalid type>",stream);valid=false;}
@@ -60,6 +61,9 @@ static bool print_type_set(FILE *stream,const DiamondChunk *chunk,
                 valid=print_type_set(stream,chunk,member.second_argument_set)&&valid;
             }
             fputc(']',stream);
+        } else if(member.id==DIAMOND_TYPE_CALLABLE&&
+                  member.callable_arity!=UINT8_MAX) {
+            fprintf(stream,"[%u]",member.callable_arity);
         }
     }
     return valid;
@@ -290,6 +294,7 @@ static bool disassemble_chunk(FILE *stream, const char *name,
                 else if(type==DIAMOND_TYPE_NIL) fputs("Nil",stream);
                 else if(type==DIAMOND_TYPE_ARRAY) fputs("Array",stream);
                 else if(type==DIAMOND_TYPE_HASH) fputs("Hash",stream);
+                else if(type==DIAMOND_TYPE_CALLABLE) fputs("Callable",stream);
                 else if((size_t)(type-DIAMOND_TYPE_CLASS_BASE)<chunk->class_count)
                     fputs(chunk->classes[type-DIAMOND_TYPE_CLASS_BASE].name,stream);
                 else {fputs("<invalid type>",stream);valid=false;}

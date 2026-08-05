@@ -343,6 +343,8 @@ static bool value_matches_type(const DiamondChunk *chunk, DiamondValue value,
         value.as.object->kind==DIAMOND_OBJECT_ARRAY;
     if(type==DIAMOND_TYPE_HASH) return value.kind==DIAMOND_VALUE_OBJECT &&
         value.as.object->kind==DIAMOND_OBJECT_HASH;
+    if(type==DIAMOND_TYPE_CALLABLE) return value.kind==DIAMOND_VALUE_OBJECT &&
+        value.as.object->kind==DIAMOND_OBJECT_CLOSURE;
     const size_t class_index=(size_t)(type-DIAMOND_TYPE_CLASS_BASE);
     if(class_index>=chunk->class_count || value.kind!=DIAMOND_VALUE_OBJECT ||
        value.as.object->kind!=DIAMOND_OBJECT_INSTANCE) return false;
@@ -361,6 +363,12 @@ static bool value_matches_set(const DiamondChunk *chunk,DiamondValue value,
 static bool value_matches_member(const DiamondChunk *chunk,DiamondValue value,
                                  DiamondTypeMember member,bool attach) {
     if(!value_matches_type(chunk,value,member.id))return false;
+    if(member.id==DIAMOND_TYPE_CALLABLE) {
+        if(member.callable_arity==UINT8_MAX)return true;
+        const DiamondClosure *closure=(const DiamondClosure *)value.as.object;
+        return closure->function_index<chunk->function_count&&
+            chunk->functions[closure->function_index].arity==member.callable_arity;
+    }
     if(member.argument_set==UINT8_MAX)return true;
     if((size_t)member.argument_set>=chunk->type_set_count)return false;
     if(member.id==DIAMOND_TYPE_ARRAY) {
@@ -512,6 +520,7 @@ static const char *type_name(const DiamondChunk *chunk,uint8_t type) {
     else if(type==DIAMOND_TYPE_NIL) name="Nil";
     else if(type==DIAMOND_TYPE_ARRAY) name="Array";
     else if(type==DIAMOND_TYPE_HASH) name="Hash";
+    else if(type==DIAMOND_TYPE_CALLABLE) name="Callable";
     else {
         const size_t index=(size_t)(type-DIAMOND_TYPE_CLASS_BASE);
         if(index<chunk->class_count) name=chunk->classes[index].name;
@@ -545,6 +554,12 @@ static void format_type_set_index(char *buffer,size_t capacity,
                 second[0]=='\0'?"":", ",second);
             if(close<0)return;
             used+=(size_t)close;
+        } else if(set->members[index].id==DIAMOND_TYPE_CALLABLE&&
+                  set->members[index].callable_arity!=UINT8_MAX&&used<capacity) {
+            const int arity=snprintf(buffer+used,capacity-used,"[%u]",
+                set->members[index].callable_arity);
+            if(arity<0)return;
+            used+=(size_t)arity;
         }
     }
 }
@@ -558,6 +573,7 @@ static void format_value_type(char *buffer, size_t capacity,
     else if(value.as.object->kind==DIAMOND_OBJECT_STRING) name="String";
     else if(value.as.object->kind==DIAMOND_OBJECT_ARRAY) name="Array";
     else if(value.as.object->kind==DIAMOND_OBJECT_HASH) name="Hash";
+    else if(value.as.object->kind==DIAMOND_OBJECT_CLOSURE) name="Callable";
     else {
         const DiamondInstance *instance=(const DiamondInstance *)value.as.object;
         name=instance->class->name;

@@ -160,6 +160,11 @@ Annotations are optional. Parameters are checked on function entry and return
 values on every implicit or explicit exit unless the compiler proves the guard
 redundant.
 
+Closure objects satisfy `Callable`. An optional integer argument, as in
+`Callable[2]`, checks the referenced bytecode function's arity at the typed
+boundary. Core collection callbacks use these contracts, so invalid callbacks
+are rejected even when an empty collection would perform no invocation.
+
 Registers may also carry a type-set fact in addition to an exact primitive or
 class fact. Indexing `Array[T]` produces `T`; indexing `Hash[K, V]` produces
 `V | Nil`. These facts survive ordinary local assignment and participate in

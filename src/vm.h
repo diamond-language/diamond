@@ -78,6 +78,7 @@ typedef enum DiamondTypeId : uint8_t {
     DIAMOND_TYPE_NIL,
     DIAMOND_TYPE_ARRAY,
     DIAMOND_TYPE_HASH,
+    DIAMOND_TYPE_CALLABLE,
     DIAMOND_TYPE_CLASS_BASE,
 } DiamondTypeId;
 
@@ -106,6 +107,7 @@ typedef struct DiamondTypeMember {
     uint8_t id;
     uint8_t argument_set;
     uint8_t second_argument_set;
+    uint8_t callable_arity;
 } DiamondTypeMember;
 
 typedef struct DiamondTypeSet {

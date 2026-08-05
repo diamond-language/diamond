@@ -39,7 +39,7 @@ def array_include(values: Array, needle) -> Bool
   false
 end
 
-def array_each(values: Array, callback) -> Array
+def array_each(values: Array, callback: Callable[1]) -> Array
   index = 0
   while index < values.length()
     callback(values[index])
@@ -48,7 +48,7 @@ def array_each(values: Array, callback) -> Array
   values
 end
 
-def array_map(values: Array, callback) -> Array
+def array_map(values: Array, callback: Callable[1]) -> Array
   result = []
   index = 0
   while index < values.length()
@@ -80,7 +80,7 @@ def hash_empty(values: Hash) -> Bool
   values.length() == 0
 end
 
-def hash_each(values: Hash, callback) -> Hash
+def hash_each(values: Hash, callback: Callable[2]) -> Hash
   index = 0
   count = values.length()
   while index < count
@@ -121,7 +121,7 @@ def hash_include_key(values: Hash, needle) -> Bool
   false
 end
 
-def hash_map_values(values: Hash, callback) -> Hash
+def hash_map_values(values: Hash, callback: Callable[1]) -> Hash
   result = {}
   index = 0
   while index < values.length()

@@ -171,6 +171,9 @@ static bool type_member_satisfies(const Compiler *compiler,
                                   DiamondTypeMember known,
                                   DiamondTypeMember expected) {
     if(!known_type_satisfies_one(compiler,known.id,expected.id))return false;
+    if(expected.id==DIAMOND_TYPE_CALLABLE)
+        return expected.callable_arity==UINT8_MAX||
+            known.callable_arity==expected.callable_arity;
     if(expected.argument_set==UINT8_MAX)return true;
     if(known.argument_set==UINT8_MAX||
        !type_set_satisfies(compiler,known.argument_set,expected.argument_set))
@@ -467,6 +470,7 @@ static int resolve_type(Compiler *compiler, DiamondSpan name) {
     if (name_equals(compiler, "Nil", name, false)) return DIAMOND_TYPE_NIL;
     if (name_equals(compiler, "Array", name, false)) return DIAMOND_TYPE_ARRAY;
     if (name_equals(compiler, "Hash", name, false)) return DIAMOND_TYPE_HASH;
+    if (name_equals(compiler, "Callable", name, false)) return DIAMOND_TYPE_CALLABLE;
     const int class_index = find_class(compiler, name);
     if (class_index >= 0) return DIAMOND_TYPE_CLASS_BASE + class_index;
     fail(compiler, name, "unknown type annotation");
@@ -496,19 +500,39 @@ static int parse_type_annotation(Compiler *compiler) {
         }
         advance_token(compiler);
         uint8_t argument_set=UINT8_MAX,second_argument_set=UINT8_MAX;
+        uint8_t callable_arity=UINT8_MAX;
         if(compiler->current.kind==DIAMOND_TOKEN_LEFT_BRACKET) {
-            if(type!=DIAMOND_TYPE_ARRAY&&type!=DIAMOND_TYPE_HASH) {
-                fail(compiler,member_span,"only Array and Hash accept type arguments");break;
-            }
-            advance_token(compiler);
-            argument_set=(uint8_t)parse_type_annotation(compiler);
-            if(type==DIAMOND_TYPE_HASH) {
-                if(compiler->current.kind!=DIAMOND_TOKEN_COMMA) {
-                    fail(compiler,compiler->current.span,
-                         "expected ',' between Hash key and value types");break;
-                }
+            if(type==DIAMOND_TYPE_CALLABLE) {
                 advance_token(compiler);
-                second_argument_set=(uint8_t)parse_type_annotation(compiler);
+                if(compiler->current.kind!=DIAMOND_TOKEN_INTEGER) {
+                    fail(compiler,compiler->current.span,
+                         "expected Callable arity");break;
+                }
+                size_t arity=0;
+                for(size_t index=0;index<compiler->current.span.length;index++) {
+                    const char ch=compiler->source[compiler->current.span.start+index];
+                    if(ch=='_')continue;
+                    arity=arity*10+(size_t)(ch-'0');
+                }
+                if(arity>16) {
+                    fail(compiler,compiler->current.span,
+                         "Callable arity cannot exceed 16");break;
+                }
+                callable_arity=(uint8_t)arity;advance_token(compiler);
+            } else if(type==DIAMOND_TYPE_ARRAY||type==DIAMOND_TYPE_HASH) {
+                advance_token(compiler);
+                argument_set=(uint8_t)parse_type_annotation(compiler);
+                if(type==DIAMOND_TYPE_HASH) {
+                    if(compiler->current.kind!=DIAMOND_TOKEN_COMMA) {
+                        fail(compiler,compiler->current.span,
+                             "expected ',' between Hash key and value types");break;
+                    }
+                    advance_token(compiler);
+                    second_argument_set=(uint8_t)parse_type_annotation(compiler);
+                }
+            } else {
+                fail(compiler,member_span,
+                     "this type does not accept arguments");break;
             }
             if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_BRACKET) {
                 fail(compiler,compiler->current.span,
@@ -518,7 +542,8 @@ static int parse_type_annotation(Compiler *compiler) {
         }
         set->members[set->count++]=(DiamondTypeMember){
             .id=type,.argument_set=argument_set,
-            .second_argument_set=second_argument_set};
+            .second_argument_set=second_argument_set,
+            .callable_arity=callable_arity};
         if(compiler->current.kind!=DIAMOND_TOKEN_PIPE)break;
         advance_token(compiler);
     }
@@ -856,7 +881,7 @@ static int16_t type_set_with_nil(Compiler *compiler,uint8_t source_index) {
     DiamondTypeSet *set=&compiler->function->type_sets[result];
     set->members[set->count++]=(DiamondTypeMember){
         .id=DIAMOND_TYPE_NIL,.argument_set=UINT8_MAX,
-        .second_argument_set=UINT8_MAX};
+        .second_argument_set=UINT8_MAX,.callable_arity=UINT8_MAX};
     return (int16_t)result;
 }
 
@@ -876,7 +901,8 @@ static bool split_nil_type_set(Compiler *compiler,uint8_t source_index,
     DiamondTypeSet *nil_set=&compiler->function->type_sets[
         compiler->function->type_set_count++];
     *nil_set=(DiamondTypeSet){.members={{.id=DIAMOND_TYPE_NIL,
-        .argument_set=UINT8_MAX,.second_argument_set=UINT8_MAX}},.count=1};
+        .argument_set=UINT8_MAX,.second_argument_set=UINT8_MAX,
+        .callable_arity=UINT8_MAX}},.count=1};
     return true;
 }
 

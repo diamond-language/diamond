@@ -70,10 +70,11 @@ future work.
 - Branch-sensitive nil narrowing with conservative local-fact joins.
 - Ordered hash iteration primitives with Diamond-written transforms.
 - Non-throwing `is` predicates with primitive and nominal union narrowing.
+- Runtime `Callable[n]` contracts for Diamond core callbacks.
 
 ## Next priorities
 
-1. Collection callback contracts and typed transform results.
+1. Callable return signatures and typed collection transforms.
 2. Structural interfaces for shared collection behavior.
 
 ## Later experiments
