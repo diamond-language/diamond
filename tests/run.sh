@@ -1685,4 +1685,13 @@ actual="$($diamond -e $'type_message=begin\n 1+"x"\nrescue error: TypeError\n er
 [[ "$actual" == "[true, true]" ]]
 actual="$($diamond -e $'begin\n begin\n  1/0\n rescue error: ZeroDivisionError\n  raise\n end\nrescue outer: ZeroDivisionError\n outer.message()\nend')"
 [[ "$actual" == "division by zero" ]]
-echo "436 tests passed"
+
+actual="$($diamond -e '42 if true')"
+[[ "$actual" == "42" ]]
+actual="$($diamond -e '42 if false')"
+[[ "$actual" == "nil" ]]
+actual="$($diamond -e '42 unless false')"
+[[ "$actual" == "42" ]]
+actual="$($diamond -e '42 unless true')"
+[[ "$actual" == "nil" ]]
+echo "440 tests passed"
