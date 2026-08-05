@@ -182,8 +182,8 @@ compiler, disassembler, VM, value representation, and object layouts live under
 `tests/`.
 
 Set `DIAMOND_TRACE_IC=1` to print method inline-cache hit and miss counts after
-execution. Dynamic call sites use VM-owned monomorphic caches guarded by the
-receiver class.
+execution. Dynamic call sites use VM-owned four-entry polymorphic caches guarded
+by receiver class.
 
 ## Important limitations
 
@@ -193,8 +193,7 @@ receiver class.
   exceptions are not implemented yet.
 - No modules, mixins, singleton methods, or visibility.
 - Classes currently act as immutable runtime shapes; method calls use
-  monomorphic inline caches. Mutable shapes and polymorphic caches are not
-  implemented yet.
+  four-entry polymorphic inline caches. Mutable shapes are not implemented yet.
 - No generic arrays/hashes or unrestricted union types.
 - Fixed limits exist for bytecode, constants, functions, classes, fields, and
   registers.

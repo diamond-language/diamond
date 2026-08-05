@@ -242,16 +242,27 @@ static const DiamondMethod *lookup_method_cached(
     DiamondVm *vm, const DiamondChunk *chunk, const uint8_t *site,
     const DiamondClass *class, const char *name, size_t length) {
     const size_t slot=((size_t)(uintptr_t)site>>2)%DIAMOND_INLINE_CACHE_COUNT;
-    if(vm->method_caches[slot].site==site &&
-       vm->method_caches[slot].receiver_class==class) {
-        vm->inline_cache_hits++;
-        return vm->method_caches[slot].method;
+    DiamondMethodCache *cache=&vm->method_caches[slot];
+    if(cache->site!=site) {
+        *cache=(DiamondMethodCache){.site=site};
+    } else {
+        for(size_t index=0;index<cache->entry_count;index++) {
+            if(cache->entries[index].receiver_class!=class)continue;
+            vm->inline_cache_hits++;
+            return cache->entries[index].method;
+        }
     }
     vm->inline_cache_misses++;
     const DiamondMethod *method=lookup_method(chunk,class,name,length);
-    vm->method_caches[slot].site=site;
-    vm->method_caches[slot].receiver_class=class;
-    vm->method_caches[slot].method=method;
+    size_t entry=cache->entry_count;
+    if(entry<DIAMOND_INLINE_CACHE_WIDTH) {
+        cache->entry_count++;
+    } else {
+        entry=cache->next_replace;
+        cache->next_replace=(uint8_t)((cache->next_replace+1)%DIAMOND_INLINE_CACHE_WIDTH);
+    }
+    cache->entries[entry]=(DiamondMethodCacheEntry){
+        .receiver_class=class,.method=method};
     return method;
 }
 

@@ -74,6 +74,7 @@ typedef enum DiamondTypeId : uint8_t {
 
 enum { DIAMOND_TYPE_NILABLE = 0x80 };
 enum { DIAMOND_INLINE_CACHE_COUNT = 64 };
+enum { DIAMOND_INLINE_CACHE_WIDTH = 4 };
 
 typedef struct DiamondStringConstant {
     char chars[DIAMOND_MAX_STRING_LENGTH + 1];
@@ -139,17 +140,25 @@ typedef enum DiamondVmStatus : uint8_t {
     DIAMOND_VM_INDEX_ERROR,
 } DiamondVmStatus;
 
+typedef struct DiamondMethodCacheEntry {
+    const DiamondClass *receiver_class;
+    const DiamondMethod *method;
+} DiamondMethodCacheEntry;
+
+typedef struct DiamondMethodCache {
+    const uint8_t *site;
+    DiamondMethodCacheEntry entries[DIAMOND_INLINE_CACHE_WIDTH];
+    uint8_t entry_count;
+    uint8_t next_replace;
+} DiamondMethodCache;
+
 typedef struct DiamondVm {
     DiamondObject *objects;
     size_t bytes_allocated;
     size_t next_gc;
     void *frames;
     bool stress_gc;
-    struct {
-        const uint8_t *site;
-        const DiamondClass *receiver_class;
-        const DiamondMethod *method;
-    } method_caches[DIAMOND_INLINE_CACHE_COUNT];
+    DiamondMethodCache method_caches[DIAMOND_INLINE_CACHE_COUNT];
     size_t inline_cache_hits;
     size_t inline_cache_misses;
     char error[1024];
