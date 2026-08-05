@@ -158,6 +158,7 @@ future work.
 - Ordered multiple rescue clauses with unmatched re-raise.
 - Duplicate rescue-filter type diagnostics.
 - Unreachable repeated-type diagnostics across rescue clauses.
+- Normal-only `else` integration with multiple rescue clauses.
 
 ## Next priorities
 

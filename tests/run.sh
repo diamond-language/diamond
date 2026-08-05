@@ -1615,4 +1615,7 @@ if "$diamond" -e $'begin\n 1 / 0\nrescue : TypeError\n 1\nrescue : TypeError\n 2
     exit 1
 fi
 
-echo "406 tests passed"
+actual="$($diamond -e $'begin\n 40\nrescue : TypeError\n 0\nrescue : IndexError\n 1\nelse\n 42\nend')"
+[[ "$actual" == "42" ]]
+
+echo "407 tests passed"
