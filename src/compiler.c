@@ -19,6 +19,7 @@ typedef enum Precedence {
 typedef struct Local {
     DiamondSpan name;
     uint8_t reg;
+    bool captured;
 } Local;
 
 typedef struct LoopContext {
@@ -356,7 +357,12 @@ static uint8_t parse_identifier(Compiler *compiler) {
         }
         fail(compiler, compiler->previous.span, "undefined local variable"); return 0;
     }
-    return compiler->locals[(size_t)local].reg;
+    if(!compiler->locals[(size_t)local].captured)
+        return compiler->locals[(size_t)local].reg;
+    const uint8_t destination=allocate_register(compiler);
+    emit_instruction(compiler,DIAMOND_OP_GET_CELL,destination,
+                     compiler->locals[(size_t)local].reg,0,2);
+    return destination;
 }
 
 static int find_function(const Compiler *compiler, DiamondSpan name) {
@@ -474,7 +480,12 @@ static int field_index(Compiler *compiler, DiamondSpan name, bool create) {
 static uint8_t parse_call(Compiler *compiler, DiamondSpan name) {
     const int callable_local=find_local(compiler,name);
     if(callable_local>=0) {
-        const uint8_t callable=compiler->locals[(size_t)callable_local].reg;
+        uint8_t callable=compiler->locals[(size_t)callable_local].reg;
+        if(compiler->locals[(size_t)callable_local].captured) {
+            const uint8_t loaded=allocate_register(compiler);
+            emit_instruction(compiler,DIAMOND_OP_GET_CELL,loaded,callable,0,2);
+            callable=loaded;
+        }
         advance_token(compiler);
         uint8_t arguments[16]; size_t argument_count=0;
         while(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN && !compiler->failed) {
@@ -996,7 +1007,12 @@ static uint8_t compile_index_assignment(Compiler *compiler) {
     const DiamondSpan name=compiler->current.span;
     const int local=find_local(compiler,name);
     if(local<0) { fail(compiler,name,"undefined local variable"); return 0; }
-    const uint8_t receiver=compiler->locals[(size_t)local].reg;
+    uint8_t receiver=compiler->locals[(size_t)local].reg;
+    if(compiler->locals[(size_t)local].captured) {
+        const uint8_t loaded=allocate_register(compiler);
+        emit_instruction(compiler,DIAMOND_OP_GET_CELL,loaded,receiver,0,2);
+        receiver=loaded;
+    }
     advance_token(compiler);
     advance_token(compiler);
     const uint8_t index=parse_expression(compiler);
@@ -1124,6 +1140,14 @@ static uint8_t compile_definition(Compiler *compiler) {
     const int outer_return_type=compiler->current_return_type;
     const DiamondSpan outer_return_type_span=compiler->current_return_type_span;
     LoopContext *outer_loop=compiler->current_loop;
+    Local outer_enclosing_locals[DIAMOND_MAX_LOCALS];
+    const size_t outer_enclosing_local_count=compiler->enclosing_local_count;
+    for(size_t i=0;i<outer_enclosing_local_count;i++)
+        outer_enclosing_locals[i]=compiler->enclosing_locals[i];
+    uint8_t outer_capture_registers[16];
+    const size_t outer_capture_count=compiler->capture_count;
+    for(size_t i=0;i<outer_capture_count;i++)
+        outer_capture_registers[i]=compiler->capture_registers[i];
     uint8_t outer_known_types[256];
     for(size_t index=0;index<256;index++)
         outer_known_types[index]=compiler->known_types[index];
@@ -1211,6 +1235,12 @@ static uint8_t compile_definition(Compiler *compiler) {
     compiler->current_return_type=outer_return_type;
     compiler->current_return_type_span=outer_return_type_span;
     compiler->current_loop=outer_loop;
+    compiler->enclosing_local_count=outer_enclosing_local_count;
+    for(size_t i=0;i<outer_enclosing_local_count;i++)
+        compiler->enclosing_locals[i]=outer_enclosing_locals[i];
+    compiler->capture_count=outer_capture_count;
+    for(size_t i=0;i<outer_capture_count;i++)
+        compiler->capture_registers[i]=outer_capture_registers[i];
     for(size_t index=0;index<256;index++)
         compiler->known_types[index]=outer_known_types[index];
     if (compiler->current_class >= 0 && !compiler->failed && at_top_level) {
@@ -1228,6 +1258,16 @@ static uint8_t compile_definition(Compiler *compiler) {
     }
     const uint8_t result = allocate_register(compiler);
     if(!at_top_level) {
+        for(size_t i=0;i<capture_count;i++) {
+            for(size_t local=0;local<compiler->local_count;local++) {
+                if(compiler->locals[local].reg!=captures[i])continue;
+                if(!compiler->locals[local].captured) {
+                    emit_instruction(compiler,DIAMOND_OP_BOX_LOCAL,captures[i],0,0,1);
+                    compiler->locals[local].captured=true;
+                }
+                break;
+            }
+        }
         emit_opcode(compiler,DIAMOND_OP_CLOSURE);emit_byte(compiler,result);
         emit_byte(compiler,(uint8_t)function_index);emit_byte(compiler,(uint8_t)capture_count);
         for(size_t i=0;i<capture_count;i++)emit_byte(compiler,captures[i]);
@@ -1297,6 +1337,25 @@ static uint8_t compile_assignment(Compiler *compiler) {
         return value;
     }
     int local = find_local(compiler, name);
+    if(local>=0 && compiler->locals[(size_t)local].captured) {
+        emit_instruction(compiler,DIAMOND_OP_SET_CELL,
+                         compiler->locals[(size_t)local].reg,value,0,2);
+        return value;
+    }
+    if(local<0) {
+        for(size_t i=compiler->enclosing_local_count;i>0;i--) {
+            if(!spans_equal(compiler,compiler->enclosing_locals[i-1].name,name))continue;
+            size_t capture=0;
+            while(capture<compiler->capture_count &&
+                  compiler->capture_registers[capture]!=compiler->enclosing_locals[i-1].reg)capture++;
+            if(capture==compiler->capture_count) {
+                if(capture==16){fail(compiler,name,"too many captured variables");return 0;}
+                compiler->capture_registers[compiler->capture_count++]=compiler->enclosing_locals[i-1].reg;
+            }
+            emit_instruction(compiler,DIAMOND_OP_SET_CAPTURE,(uint8_t)capture,value,0,2);
+            return value;
+        }
+    }
     const uint8_t destination = local < 0
         ? define_local(compiler, name)
         : compiler->locals[(size_t)local].reg;

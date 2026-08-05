@@ -12,6 +12,7 @@ typedef enum DiamondObjectKind : uint8_t {
     DIAMOND_OBJECT_ARRAY,
     DIAMOND_OBJECT_HASH,
     DIAMOND_OBJECT_CLOSURE,
+    DIAMOND_OBJECT_CELL,
 } DiamondObjectKind;
 
 typedef struct DiamondObject {
@@ -59,5 +60,10 @@ typedef struct DiamondClosure {
     uint8_t capture_count;
     DiamondValue captures[16];
 } DiamondClosure;
+
+typedef struct DiamondCell {
+    DiamondObject object;
+    DiamondValue value;
+} DiamondCell;
 
 #endif

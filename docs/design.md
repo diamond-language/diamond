@@ -56,9 +56,9 @@ anchored to the class that lexically defined the calling method.
 Nested functions compile to heap-allocated closure objects. A closure identifies
 its bytecode function and traces captured values through the garbage collector;
 dynamic closure calls use a separate opcode from statically resolved top-level
-calls. Captures currently snapshot their values when the closure is created.
-Shared mutable capture cells and recursively nested environments are the next
-step in this part of the runtime.
+calls. Locals are boxed only when captured; sibling closures share the resulting
+GC-traced mutable cell, while ordinary locals remain direct registers.
+Recursively nested environments are the next step in this part of the runtime.
 
 See [object-model.md](object-model.md) for layouts and current limitations.
 

@@ -34,6 +34,8 @@ static void mark_object(DiamondObject *object) {
     } else if(object->kind==DIAMOND_OBJECT_CLOSURE) {
         DiamondClosure *closure=(DiamondClosure *)object;
         for(size_t i=0;i<closure->capture_count;i++)mark_value(closure->captures[i]);
+    } else if(object->kind==DIAMOND_OBJECT_CELL) {
+        mark_value(((DiamondCell *)object)->value);
     }
 }
 
@@ -72,8 +74,10 @@ void diamond_vm_collect(DiamondVm *vm) {
             DiamondHash *hash=(DiamondHash *)unreached;
             size=sizeof(DiamondHash)+hash->capacity*sizeof(DiamondHashEntry);
             free(hash->entries);
-        } else {
+        } else if(unreached->kind==DIAMOND_OBJECT_CLOSURE) {
             size=sizeof(DiamondClosure);
+        } else {
+            size=sizeof(DiamondCell);
         }
         vm->bytes_allocated -= size;
         free(unreached);
@@ -153,6 +157,13 @@ static DiamondClosure *allocate_closure(DiamondVm *vm,uint8_t function_index,
       .function_index=function_index,.capture_count=(uint8_t)count};
     for(size_t i=0;i<count;i++)closure->captures[i]=captures[i];
     vm->objects=&closure->object;vm->bytes_allocated+=sizeof(DiamondClosure);return closure;
+}
+
+static DiamondCell *allocate_cell(DiamondVm *vm,DiamondValue value) {
+    if(vm->stress_gc||vm->bytes_allocated>=vm->next_gc)diamond_vm_collect(vm);
+    DiamondCell *cell=malloc(sizeof(DiamondCell));if(cell==nullptr)return nullptr;
+    *cell=(DiamondCell){.object={.next=vm->objects,.kind=DIAMOND_OBJECT_CELL},.value=value};
+    vm->objects=&cell->object;vm->bytes_allocated+=sizeof(DiamondCell);return cell;
 }
 
 static bool values_equal(DiamondValue left, DiamondValue right) {
@@ -622,7 +633,35 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
             case DIAMOND_OP_GET_CAPTURE: {
                 uint8_t dest=0,index=0;READ_BYTE(dest);READ_BYTE(index);
                 if(closure==nullptr||index>=closure->capture_count)VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
-                registers[dest]=closure->captures[index];break;
+                DiamondValue captured=closure->captures[index];
+                if(captured.kind!=DIAMOND_VALUE_OBJECT||captured.as.object->kind!=DIAMOND_OBJECT_CELL)
+                    VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
+                registers[dest]=((DiamondCell *)captured.as.object)->value;break;
+            }
+            case DIAMOND_OP_SET_CAPTURE: {
+                uint8_t index=0,source=0;READ_BYTE(index);READ_BYTE(source);
+                if(closure==nullptr||index>=closure->capture_count)VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
+                DiamondValue captured=closure->captures[index];
+                if(captured.kind!=DIAMOND_VALUE_OBJECT||captured.as.object->kind!=DIAMOND_OBJECT_CELL)
+                    VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
+                ((DiamondCell *)captured.as.object)->value=registers[source];break;
+            }
+            case DIAMOND_OP_BOX_LOCAL: {
+                uint8_t reg=0;READ_BYTE(reg);DiamondCell *cell=allocate_cell(vm,registers[reg]);
+                if(cell==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                registers[reg]=DIAMOND_OBJECT(cell);break;
+            }
+            case DIAMOND_OP_GET_CELL: {
+                uint8_t dest=0,cell_reg=0;READ_BYTE(dest);READ_BYTE(cell_reg);
+                if(registers[cell_reg].kind!=DIAMOND_VALUE_OBJECT||
+                   registers[cell_reg].as.object->kind!=DIAMOND_OBJECT_CELL)VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
+                registers[dest]=((DiamondCell *)registers[cell_reg].as.object)->value;break;
+            }
+            case DIAMOND_OP_SET_CELL: {
+                uint8_t cell_reg=0,source=0;READ_BYTE(cell_reg);READ_BYTE(source);
+                if(registers[cell_reg].kind!=DIAMOND_VALUE_OBJECT||
+                   registers[cell_reg].as.object->kind!=DIAMOND_OBJECT_CELL)VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
+                ((DiamondCell *)registers[cell_reg].as.object)->value=registers[source];break;
             }
             case DIAMOND_OP_CALL_CLOSURE: {
                 uint8_t dest=0,callable=0,base=0,argc=0;

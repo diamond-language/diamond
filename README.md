@@ -183,8 +183,8 @@ compiler, disassembler, VM, value representation, and object layouts live under
 
 ## Important limitations
 
-- Nested functions are first-class closures. Captures currently snapshot values
-  when the closure is created; shared mutable capture cells are still planned.
+- Nested functions are first-class closures. Captured locals use shared mutable
+  cells, including when multiple sibling closures escape their defining call.
 - Runtime errors include source-mapped Diamond stack traces; structured
   exceptions are not implemented yet.
 - No modules, mixins, singleton methods, or visibility.

@@ -462,4 +462,7 @@ grep -Eq '^000[0-9]+ +1:[0-9]+ +ADD' <<<"$actual"
 actual="$(DIAMOND_STRESS_GC=1 "$diamond" tests/cases/closure_capture.dia)"
 [[ "$actual" == "47" ]]
 
-echo "77 tests passed"
+actual="$(DIAMOND_STRESS_GC=1 "$diamond" tests/cases/mutable_closure.dia)"
+[[ "$actual" == "2" ]]
+
+echo "78 tests passed"
