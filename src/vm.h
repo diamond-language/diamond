@@ -101,8 +101,13 @@ typedef struct DiamondStringConstant {
     size_t length;
 } DiamondStringConstant;
 
+typedef struct DiamondTypeMember {
+    uint8_t id;
+    uint8_t argument_set;
+} DiamondTypeMember;
+
 typedef struct DiamondTypeSet {
-    uint8_t types[DIAMOND_MAX_UNION_TYPES];
+    DiamondTypeMember members[DIAMOND_MAX_UNION_TYPES];
     uint8_t count;
 } DiamondTypeSet;
 

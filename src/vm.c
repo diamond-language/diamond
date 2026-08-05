@@ -166,7 +166,7 @@ static DiamondArray *allocate_array(DiamondVm *vm,const DiamondValue *values,
     const size_t size=sizeof(DiamondArray)+count*sizeof(DiamondValue);
     DiamondArray *array=malloc(size); if(array==nullptr)return nullptr;
     array->object=(DiamondObject){.next=vm->objects,.kind=DIAMOND_OBJECT_ARRAY};
-    array->count=count;
+    array->count=count;array->constraint_count=0;
     for(size_t i=0;i<count;i++) array->values[i]=values[i];
     vm->objects=&array->object;vm->bytes_allocated+=size;return array;
 }
@@ -349,6 +349,54 @@ static bool value_matches_type(const DiamondChunk *chunk, DiamondValue value,
     return false;
 }
 
+static bool value_matches_set(const DiamondChunk *chunk,DiamondValue value,
+                              uint8_t set_index,bool attach);
+
+static bool value_matches_member(const DiamondChunk *chunk,DiamondValue value,
+                                 DiamondTypeMember member,bool attach) {
+    if(!value_matches_type(chunk,value,member.id))return false;
+    if(member.id!=DIAMOND_TYPE_ARRAY||member.argument_set==UINT8_MAX)return true;
+    if((size_t)member.argument_set>=chunk->type_set_count)return false;
+    DiamondArray *array=(DiamondArray *)value.as.object;
+    for(size_t index=0;index<array->count;index++)
+        if(!value_matches_set(chunk,array->values[index],member.argument_set,false))
+            return false;
+    if(!attach)return true;
+    for(size_t index=0;index<array->count;index++)
+        if(!value_matches_set(chunk,array->values[index],member.argument_set,true))
+            return false;
+    for(size_t index=0;index<array->constraint_count;index++)
+        if(array->constraints[index].type_sets==chunk->type_sets&&
+           array->constraints[index].set_index==member.argument_set)return true;
+    if(array->constraint_count==4)return false;
+    array->constraints[array->constraint_count++]=(typeof(array->constraints[0])){
+        .type_sets=chunk->type_sets,.type_set_count=chunk->type_set_count,
+        .set_index=member.argument_set,.classes=chunk->classes,
+        .class_count=chunk->class_count};
+    return true;
+}
+
+static bool value_matches_set(const DiamondChunk *chunk,DiamondValue value,
+                              uint8_t set_index,bool attach) {
+    if((size_t)set_index>=chunk->type_set_count)return false;
+    const DiamondTypeSet *set=&chunk->type_sets[set_index];
+    for(size_t index=0;index<set->count;index++)
+        if(value_matches_member(chunk,value,set->members[index],attach))return true;
+    return false;
+}
+
+static bool array_value_satisfies_constraints(const DiamondArray *array,
+                                               DiamondValue value) {
+    for(size_t index=0;index<array->constraint_count;index++) {
+        const typeof(array->constraints[0]) *constraint=&array->constraints[index];
+        const DiamondChunk context={.type_sets=constraint->type_sets,
+            .type_set_count=constraint->type_set_count,.classes=constraint->classes,
+            .class_count=constraint->class_count};
+        if(!value_matches_set(&context,value,constraint->set_index,false))return false;
+    }
+    return true;
+}
+
 static bool catch_exception(DiamondVm *vm,const DiamondChunk *chunk,
                             UnwindHandler *handlers,size_t *handler_count,
                             PendingUnwind *pending,DiamondValue *registers,
@@ -414,14 +462,28 @@ static const char *type_name(const DiamondChunk *chunk,uint8_t type) {
     return name;
 }
 
-static void format_type_set(char *buffer,size_t capacity,
-                            const DiamondChunk *chunk,const DiamondTypeSet *set) {
+static void format_type_set_index(char *buffer,size_t capacity,
+                                  const DiamondChunk *chunk,uint8_t set_index) {
+    if((size_t)set_index>=chunk->type_set_count) {
+        snprintf(buffer,capacity,"<invalid type set>");return;
+    }
+    const DiamondTypeSet *set=&chunk->type_sets[set_index];
     size_t used=0;buffer[0]='\0';
     for(size_t index=0;index<set->count && used<capacity;index++) {
         const int written=snprintf(buffer+used,capacity-used,"%s%s",
-            index==0?"":" | ",type_name(chunk,set->types[index]));
+            index==0?"":" | ",type_name(chunk,set->members[index].id));
         if(written<0)return;
         used+=(size_t)written;
+        if(set->members[index].argument_set!=UINT8_MAX&&used<capacity) {
+            const int open=snprintf(buffer+used,capacity-used,"[");
+            if(open<0)return;
+            used+=(size_t)open;
+            char nested[80];format_type_set_index(nested,sizeof nested,chunk,
+                set->members[index].argument_set);
+            const int close=snprintf(buffer+used,capacity-used,"%s]",nested);
+            if(close<0)return;
+            used+=(size_t)close;
+        }
     }
 }
 
@@ -978,13 +1040,11 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 uint8_t source=0,set_index=0; READ_BYTE(source); READ_BYTE(set_index);
                 if((size_t)set_index>=chunk->type_set_count)
                     VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
-                const DiamondTypeSet *set=&chunk->type_sets[set_index];
-                bool matches=false;
-                for(size_t index=0;index<set->count&&!matches;index++)
-                    matches=value_matches_type(chunk,registers[source],set->types[index]);
+                const bool matches=value_matches_set(chunk,registers[source],
+                                                     set_index,true);
                 if(!matches) {
                     char expected[80]; char actual[80];
-                    format_type_set(expected,sizeof expected,chunk,set);
+                    format_type_set_index(expected,sizeof expected,chunk,set_index);
                     format_value_type(actual,sizeof actual,registers[source]);
                     snprintf(vm->error,sizeof vm->error,"expected %s, got %s",
                              expected,actual);
@@ -1049,6 +1109,11 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                              "index %" PRId64 " out of bounds for Array of length %zu",
                              index,array->count);
                     VM_RETURN(DIAMOND_VM_INDEX_ERROR);
+                }
+                if(!array_value_satisfies_constraints(array,registers[source])) {
+                    snprintf(vm->error,sizeof vm->error,
+                             "array element violates its type annotation");
+                    VM_RETURN(DIAMOND_VM_TYPE_ERROR);
                 }
                 array->values[(size_t)index]=registers[source];
                 break;

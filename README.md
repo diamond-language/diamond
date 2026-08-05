@@ -153,8 +153,8 @@ end
 
 Available annotations are `Int`, `String`, `Bool`, `Nil`, `Array`, `Hash`, and
 declared class names. Pipe-separated unions may contain up to eight types, and
-nominal members accept subclasses. Generic collection element types are not
-implemented.
+nominal members accept subclasses. Arrays accept recursive element annotations,
+such as `Array[Int | Nil]` and `Array[Array[String]]`.
 
 The compiler removes provably redundant guards, rejects provable mismatches,
 and retains checks for dynamic values. Runtime failures preserve source-level
@@ -209,7 +209,7 @@ Field sites use four-entry polymorphic caches guarded by instance shape.
 - No modules, mixins, singleton methods, or visibility.
 - Classes own immutable shape chains for lazily materialized field prefixes;
   method calls and field access use four-entry polymorphic inline caches.
-- No generic array/hash element annotations.
+- Hash key/value annotations are not implemented yet.
 - Fixed limits exist for bytecode, constants, functions, classes, fields, and
   registers.
 - Bytecode and language semantics are unstable by design.

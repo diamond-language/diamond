@@ -33,6 +33,34 @@ static size_t three_registers(FILE *stream, const DiamondChunk *chunk,
     return offset + 4;
 }
 
+static bool print_type_set(FILE *stream,const DiamondChunk *chunk,
+                           uint8_t set_index) {
+    if((size_t)set_index>=chunk->type_set_count) {
+        fputs("<invalid type set>",stream);return false;
+    }
+    bool valid=true;const DiamondTypeSet *set=&chunk->type_sets[set_index];
+    for(size_t index=0;index<set->count;index++) {
+        if(index>0)fputs(" | ",stream);
+        const DiamondTypeMember member=set->members[index];
+        const uint8_t type=member.id;
+        if(type==DIAMOND_TYPE_INT) fputs("Int",stream);
+        else if(type==DIAMOND_TYPE_STRING) fputs("String",stream);
+        else if(type==DIAMOND_TYPE_BOOL) fputs("Bool",stream);
+        else if(type==DIAMOND_TYPE_NIL) fputs("Nil",stream);
+        else if(type==DIAMOND_TYPE_ARRAY) fputs("Array",stream);
+        else if(type==DIAMOND_TYPE_HASH) fputs("Hash",stream);
+        else if((size_t)(type-DIAMOND_TYPE_CLASS_BASE)<chunk->class_count)
+            fputs(chunk->classes[type-DIAMOND_TYPE_CLASS_BASE].name,stream);
+        else {fputs("<invalid type>",stream);valid=false;}
+        if(member.argument_set!=UINT8_MAX) {
+            fputc('[',stream);
+            valid=print_type_set(stream,chunk,member.argument_set)&&valid;
+            fputc(']',stream);
+        }
+    }
+    return valid;
+}
+
 static bool disassemble_chunk(FILE *stream, const char *name,
                               const DiamondChunk *chunk) {
     fprintf(stream, "== %s ==\n", name);
@@ -245,22 +273,7 @@ static bool disassemble_chunk(FILE *stream, const char *name,
                 if(!require_bytes(stream,chunk,offset,3)){valid=false;offset=chunk->code_count;break;}
                 fprintf(stream,"%-18s r%u, ","CHECK_TYPE",chunk->code[offset+1]);
                 const uint8_t set_index=chunk->code[offset+2];
-                if((size_t)set_index>=chunk->type_set_count) {
-                    fputs("<invalid type set>",stream);valid=false;
-                } else for(size_t index=0;
-                           index<chunk->type_sets[set_index].count;index++) {
-                    if(index>0)fputs(" | ",stream);
-                    const uint8_t type=chunk->type_sets[set_index].types[index];
-                    if(type==DIAMOND_TYPE_INT) fputs("Int",stream);
-                    else if(type==DIAMOND_TYPE_STRING) fputs("String",stream);
-                    else if(type==DIAMOND_TYPE_BOOL) fputs("Bool",stream);
-                    else if(type==DIAMOND_TYPE_NIL) fputs("Nil",stream);
-                    else if(type==DIAMOND_TYPE_ARRAY) fputs("Array",stream);
-                    else if(type==DIAMOND_TYPE_HASH) fputs("Hash",stream);
-                    else if((size_t)(type-DIAMOND_TYPE_CLASS_BASE)<chunk->class_count)
-                        fputs(chunk->classes[type-DIAMOND_TYPE_CLASS_BASE].name,stream);
-                    else {fputs("<invalid type>",stream);valid=false;}
-                }
+                valid=print_type_set(stream,chunk,set_index)&&valid;
                 fputc('\n',stream);offset+=3;break;
             case DIAMOND_OP_ARRAY:
                 if(!require_bytes(stream,chunk,offset,4)){valid=false;offset=chunk->code_count;break;}

@@ -138,22 +138,21 @@ static bool known_type_satisfies_one(const Compiler *compiler, uint8_t known,
     return false;
 }
 
-static bool known_type_satisfies(const Compiler *compiler,uint8_t known,
-                                 const DiamondTypeSet *set) {
-    for(size_t index=0;index<set->count;index++)
-        if(known_type_satisfies_one(compiler,known,set->types[index]))return true;
-    return false;
-}
-
 static void emit_type_check(Compiler *compiler, uint8_t reg, uint8_t set_index,
                             DiamondSpan span) {
     const uint8_t known=compiler->known_types[reg];
     if(known==TYPE_UNKNOWN) {
         emit_instruction(compiler,DIAMOND_OP_CHECK_TYPE,reg,set_index,0,2);
-    } else if(!known_type_satisfies(compiler,known,
-              &compiler->function->type_sets[set_index])) {
-        fail(compiler,span,"expression cannot satisfy type annotation");
+        return;
     }
+    const DiamondTypeSet *set=&compiler->function->type_sets[set_index];
+    for(size_t index=0;index<set->count;index++) {
+        if(!known_type_satisfies_one(compiler,known,set->members[index].id))continue;
+        if(set->members[index].argument_set!=UINT8_MAX)
+            emit_instruction(compiler,DIAMOND_OP_CHECK_TYPE,reg,set_index,0,2);
+        return;
+    }
+    fail(compiler,span,"expression cannot satisfy type annotation");
 }
 
 static uint8_t add_constant(Compiler *compiler, DiamondValue value) {
@@ -435,17 +434,31 @@ static int parse_type_annotation(Compiler *compiler) {
         if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER) {
             fail(compiler,compiler->current.span,"expected type annotation");break;
         }
-        const uint8_t type=(uint8_t)resolve_type(compiler,compiler->current.span);
+        const DiamondSpan member_span=compiler->current.span;
+        const uint8_t type=(uint8_t)resolve_type(compiler,member_span);
         for(size_t index=0;index<set->count;index++) {
-            if(set->types[index]==type) {
+            if(set->members[index].id==type) {
                 fail(compiler,compiler->current.span,"duplicate type in union");break;
             }
         }
         if(set->count==DIAMOND_MAX_UNION_TYPES) {
             fail(compiler,compiler->current.span,"too many types in union");break;
         }
-        set->types[set->count++]=type;
         advance_token(compiler);
+        uint8_t argument_set=UINT8_MAX;
+        if(compiler->current.kind==DIAMOND_TOKEN_LEFT_BRACKET) {
+            if(type!=DIAMOND_TYPE_ARRAY) {
+                fail(compiler,member_span,"only Array accepts a type argument");break;
+            }
+            advance_token(compiler);
+            argument_set=(uint8_t)parse_type_annotation(compiler);
+            if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_BRACKET) {
+                fail(compiler,compiler->current.span,"expected ']' after Array element type");break;
+            }
+            advance_token(compiler);
+        }
+        set->members[set->count++]=(DiamondTypeMember){
+            .id=type,.argument_set=argument_set};
         if(compiler->current.kind!=DIAMOND_TOKEN_PIPE)break;
         advance_token(compiler);
     }

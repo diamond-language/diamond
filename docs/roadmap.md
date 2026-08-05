@@ -61,10 +61,11 @@ future work.
 - Built-in exception hierarchy with rescuable VM runtime failures.
 - `ensure` unwinding for normal completion, exceptions, and returns.
 - General union annotations for parameters and returns.
+- Persistent, recursively checked `Array[Element]` annotations.
 
 ## Next priorities
 
-1. Generic collection annotations.
+1. `Hash[Key, Value]` annotations with mutation guards.
 2. A small core library implemented partly in Diamond.
 
 ## Later experiments

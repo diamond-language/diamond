@@ -29,6 +29,7 @@ typedef struct DiamondString {
 
 typedef struct DiamondClass DiamondClass;
 typedef struct DiamondShape DiamondShape;
+typedef struct DiamondTypeSet DiamondTypeSet;
 
 typedef struct DiamondInstance {
     DiamondObject object;
@@ -41,6 +42,14 @@ typedef struct DiamondInstance {
 typedef struct DiamondArray {
     DiamondObject object;
     size_t count;
+    struct {
+        const DiamondTypeSet *type_sets;
+        size_t type_set_count;
+        uint8_t set_index;
+        const DiamondClass *classes;
+        size_t class_count;
+    } constraints[4];
+    uint8_t constraint_count;
     DiamondValue values[];
 } DiamondArray;
 

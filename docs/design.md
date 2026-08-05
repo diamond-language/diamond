@@ -121,6 +121,12 @@ classes. An annotation is a reusable set of up to eight pipe-separated types;
 nominal members accept subclasses. Type-set indexes are bytecode operands, so
 arbitrary unions do not consume opcode bits or alter runtime value layout.
 
+`Array[Element]` members recursively reference another type set. Crossing a
+typed boundary validates every existing element and attaches the element
+contract to the array object. Indexed mutations subsequently check every
+attached contract, preserving the guarantee through aliases; nested array
+checks attach nested contracts as well. Plain `Array` remains fully dynamic.
+
 Annotations are optional. Parameters are checked on function entry and return
 values on every implicit or explicit exit unless the compiler proves the guard
 redundant.
@@ -128,7 +134,7 @@ redundant.
 ## Deliberate constraints
 
 - No Ruby compatibility guarantee.
-- No modules or generic collection annotations yet.
+- No modules or generic hash annotations yet.
 - No native-code generator or JIT.
 - No stable bytecode, embedding API, or package format.
 - No parallel execution.
