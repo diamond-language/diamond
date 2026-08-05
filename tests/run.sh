@@ -1683,4 +1683,6 @@ end')"
 [[ "$actual" == "[wrapped, root]" ]]
 actual="$($diamond -e $'type_message=begin\n 1+"x"\nrescue error: TypeError\n error.message()\nend\nargument_message=begin\n [1].push()\nrescue error: ArgumentError\n error.message()\nend\n[type_message is String, argument_message is String]')"
 [[ "$actual" == "[true, true]" ]]
-echo "435 tests passed"
+actual="$($diamond -e $'begin\n begin\n  1/0\n rescue error: ZeroDivisionError\n  raise\n end\nrescue outer: ZeroDivisionError\n outer.message()\nend')"
+[[ "$actual" == "division by zero" ]]
+echo "436 tests passed"

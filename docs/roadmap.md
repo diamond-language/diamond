@@ -183,11 +183,12 @@ future work.
 - User initializer precedence over native exception construction.
 - Explicit cause preservation through raise and rescue.
 - Message payload coverage across standard runtime error classes.
+- VM message preservation through bare re-raise.
 - Diagnostics for subclass filters shadowed by earlier superclass clauses.
 
 ## Next priorities
 
-1. Add message payloads to VM-generated standard exceptions.
+1. Add postfix `if` and `unless` without compromising direct bytecode emission.
 
 ## Later experiments
 
