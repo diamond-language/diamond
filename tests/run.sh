@@ -1738,4 +1738,10 @@ actual="$($diamond -e $'outer=loop do\n inner=loop do\n  next if false\n  break 
 [[ "$actual" == "42" ]]
 actual="$($diamond -e $'def typed_return(flag: Bool) -> Int\n return 42 if flag\n 7\nend\n[typed_return(true), typed_return(false)]')"
 [[ "$actual" == "[42, 7]" ]]
-echo "461 tests passed"
+actual="$($diamond -e $'def endless_if() = 42 if true\nendless_if()')"
+[[ "$actual" == "42" ]]
+actual="$($diamond -e $'def endless_if() = 42 if false\nendless_if()')"
+[[ "$actual" == "nil" ]]
+actual="$($diamond -e $'def endless_unless() = 42 unless false\nendless_unless()')"
+[[ "$actual" == "42" ]]
+echo "464 tests passed"
