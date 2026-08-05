@@ -332,6 +332,12 @@ static DiamondFieldCacheEntry *lookup_field_cached(
     return &cache->entries[entry];
 }
 
+static bool runtime_set_satisfies(const DiamondChunk *chunk,
+                                  const DiamondTypeSet *known_sets,
+                                  uint8_t known_index,
+                                  const DiamondTypeSet *expected_sets,
+                                  uint8_t expected_index);
+
 static bool value_matches_type(const DiamondChunk *chunk, DiamondValue value,
                                uint8_t type) {
     if(type==DIAMOND_TYPE_INT) return value.kind==DIAMOND_VALUE_INT;
@@ -381,6 +387,18 @@ static bool value_matches_type(const DiamondChunk *chunk, DiamondValue value,
                     (strcmp(method->name,"key_at")==0||
                      strcmp(method->name,"value_at")==0);
                 if(!length&&!array_method&&!hash_method)return false;
+                if(method->return_type_set!=UINT8_MAX) {
+                    uint8_t result=UINT8_MAX;
+                    if(length)result=DIAMOND_TYPE_INT;
+                    else if(builtin==DIAMOND_TYPE_ARRAY&&
+                            strcmp(method->name,"push")==0)result=DIAMOND_TYPE_ARRAY;
+                    if(result==UINT8_MAX)return false;
+                    const DiamondTypeSet native={.members={{.id=result,
+                        .argument_set=UINT8_MAX,.second_argument_set=UINT8_MAX,
+                        .callable_arity=UINT8_MAX,.callable_return_set=UINT8_MAX}},.count=1};
+                    if(!runtime_set_satisfies(chunk,&native,0,chunk->type_sets,
+                        method->return_type_set))return false;
+                }
             }
             return true;
         }
@@ -393,7 +411,27 @@ static bool value_matches_type(const DiamondChunk *chunk, DiamondValue value,
                     if(strcmp(class->methods[method].name,
                               interface->methods[required].name)==0&&
                        class->methods[method].arity==interface->methods[required].arity) {
-                        found=true;break;
+                        const DiamondInterfaceMethod *wanted=
+                            &interface->methods[required];
+                        const DiamondFunction *implementation=
+                            &chunk->functions[class->methods[method].function_index];
+                        found=true;
+                        for(size_t parameter=0;parameter<wanted->arity;parameter++) {
+                            const uint8_t required_set=wanted->parameter_type_sets[parameter];
+                            const uint8_t actual_set=implementation->parameter_type_sets[parameter];
+                            if(required_set==UINT8_MAX) {
+                                if(actual_set!=UINT8_MAX)found=false;
+                            } else if(actual_set!=UINT8_MAX&&
+                                !runtime_set_satisfies(chunk,chunk->type_sets,
+                                    required_set,implementation->type_sets,
+                                    actual_set))found=false;
+                        }
+                        if(wanted->return_type_set!=UINT8_MAX&&
+                           (implementation->return_type_set==UINT8_MAX||
+                            !runtime_set_satisfies(chunk,implementation->type_sets,
+                                implementation->return_type_set,chunk->type_sets,
+                                wanted->return_type_set)))found=false;
+                        if(found)break;
                     }
                 class=class->superclass==UINT8_MAX?nullptr:
                     &chunk->classes[class->superclass];
@@ -457,6 +495,18 @@ static bool runtime_type_id_satisfies(const DiamondChunk *chunk,uint8_t known,
                     (strcmp(method->name,"key_at")==0||
                      strcmp(method->name,"value_at")==0);
                 if(!length&&!array_method&&!hash_method)return false;
+                if(method->return_type_set!=UINT8_MAX) {
+                    uint8_t result=UINT8_MAX;
+                    if(length)result=DIAMOND_TYPE_INT;
+                    else if(known==DIAMOND_TYPE_ARRAY&&
+                            strcmp(method->name,"push")==0)result=DIAMOND_TYPE_ARRAY;
+                    if(result==UINT8_MAX)return false;
+                    const DiamondTypeSet native={.members={{.id=result,
+                        .argument_set=UINT8_MAX,.second_argument_set=UINT8_MAX,
+                        .callable_arity=UINT8_MAX,.callable_return_set=UINT8_MAX}},.count=1};
+                    if(!runtime_set_satisfies(chunk,&native,0,chunk->type_sets,
+                        method->return_type_set))return false;
+                }
             }
             return true;
         }
@@ -470,7 +520,25 @@ static bool runtime_type_id_satisfies(const DiamondChunk *chunk,uint8_t known,
                     if(strcmp(class->methods[method].name,
                               interface->methods[required].name)==0&&
                        class->methods[method].arity==interface->methods[required].arity) {
-                        found=true;break;
+                        const DiamondInterfaceMethod *wanted=&interface->methods[required];
+                        const DiamondFunction *implementation=
+                            &chunk->functions[class->methods[method].function_index];
+                        found=true;
+                        for(size_t parameter=0;parameter<wanted->arity;parameter++) {
+                            const uint8_t required_set=wanted->parameter_type_sets[parameter];
+                            const uint8_t actual_set=implementation->parameter_type_sets[parameter];
+                            if(required_set==UINT8_MAX) {
+                                if(actual_set!=UINT8_MAX)found=false;
+                            } else if(actual_set!=UINT8_MAX&&
+                                !runtime_set_satisfies(chunk,chunk->type_sets,required_set,
+                                    implementation->type_sets,actual_set))found=false;
+                        }
+                        if(wanted->return_type_set!=UINT8_MAX&&
+                           (implementation->return_type_set==UINT8_MAX||
+                            !runtime_set_satisfies(chunk,implementation->type_sets,
+                                implementation->return_type_set,chunk->type_sets,
+                                wanted->return_type_set)))found=false;
+                        if(found)break;
                     }
                 if(found||class->superclass==UINT8_MAX)break;
                 index=class->superclass;

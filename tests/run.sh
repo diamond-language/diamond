@@ -828,4 +828,19 @@ actual="$($diamond -e $'interface Named\n def name()\nend\nclass Person\n def na
 actual="$($diamond --dump-bytecode -e $'interface Named\n def name()\nend\ndef accept(value: Named)\n value\nend')"
 grep -q 'CHECK_TYPE.*Named' <<<"$actual"
 
-echo "168 tests passed"
+actual="$($diamond -e $'class Animal\nend\nclass Dog < Animal\nend\ninterface Maker\n def make(value: Dog) -> Animal\nend\nclass Good\n def make(value: Animal) -> Dog\n  Dog.new()\n end\nend\nclass BadParameter\n def make(value: String) -> Dog\n  Dog.new()\n end\nend\nclass BadReturn\n def make(value: Animal) -> String\n  "no"\n end\nend\n[Good.new() is Maker, BadParameter.new() is Maker, BadReturn.new() is Maker]')"
+[[ "$actual" == "[true, false, false]" ]]
+
+actual="$($diamond -e $'interface Consumer\n def accept(value)\nend\nclass Typed\n def accept(value: Int)\n  value\n end\nend\nclass Dynamic\n def accept(value)\n  value\n end\nend\n[Typed.new() is Consumer, Dynamic.new() is Consumer]')"
+[[ "$actual" == "[false, true]" ]]
+
+actual="$($diamond -e $'interface StringMaker\n def make() -> String\nend\nclass Untyped\n def make()\n  "diamond"\n end\nend\nUntyped.new() is StringMaker')"
+[[ "$actual" == "false" ]]
+
+actual="$($diamond -e $'interface IntegerLength\n def length() -> Int\nend\ninterface StringLength\n def length() -> String\nend\n[[] is IntegerLength, [] is StringLength]')"
+[[ "$actual" == "[true, false]" ]]
+
+actual="$($diamond -e $'interface StringMaker\n def make() -> String\nend\nclass Wrong\n def make() -> Int\n  1\n end\nend\ndef accept(value: StringMaker)\n value\nend\ndef dynamic(values: Array)\n begin\n  accept(values[0])\n rescue error: TypeError\n  42\n end\nend\ndynamic([Wrong.new()])')"
+[[ "$actual" == "42" ]]
+
+echo "173 tests passed"

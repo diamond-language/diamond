@@ -134,6 +134,10 @@ static uint8_t allocate_register(Compiler *compiler) {
     return reg;
 }
 
+static bool type_sets_satisfy_across(const Compiler *compiler,
+    const DiamondTypeSet *known_sets,uint8_t known_index,
+    const DiamondTypeSet *expected_sets,uint8_t expected_index);
+
 static bool known_type_satisfies_one(const Compiler *compiler, uint8_t known,
                                      uint8_t expected) {
     if(known==expected) return true;
@@ -153,6 +157,19 @@ static bool known_type_satisfies_one(const Compiler *compiler, uint8_t known,
                     (strcmp(method->name,"key_at")==0||
                      strcmp(method->name,"value_at")==0);
                 if(!length&&!array_method&&!hash_method)return false;
+                if(method->return_type_set!=UINT8_MAX) {
+                    uint8_t result=UINT8_MAX;
+                    if(length)result=DIAMOND_TYPE_INT;
+                    else if(known==DIAMOND_TYPE_ARRAY&&
+                            strcmp(method->name,"push")==0)result=DIAMOND_TYPE_ARRAY;
+                    if(result==UINT8_MAX)return false;
+                    const DiamondTypeSet native={.members={{.id=result,
+                        .argument_set=UINT8_MAX,.second_argument_set=UINT8_MAX,
+                        .callable_arity=UINT8_MAX,.callable_return_set=UINT8_MAX}},.count=1};
+                    if(!type_sets_satisfy_across(compiler,&native,0,
+                        compiler->program->entry.type_sets,
+                        method->return_type_set))return false;
+                }
             }
             return true;
         }
@@ -167,7 +184,29 @@ static bool known_type_satisfies_one(const Compiler *compiler, uint8_t known,
                     if(strcmp(class->methods[method].name,
                               interface->methods[required].name)==0&&
                        class->methods[method].arity==interface->methods[required].arity) {
-                        found=true;break;
+                        const DiamondInterfaceMethod *wanted=
+                            &interface->methods[required];
+                        const DiamondFunction *implementation=
+                            &compiler->program->functions[class->methods[method].function_index];
+                        found=true;
+                        for(size_t parameter=0;parameter<wanted->arity;parameter++) {
+                            const uint8_t required_set=wanted->parameter_type_sets[parameter];
+                            const uint8_t actual_set=implementation->parameter_type_sets[parameter];
+                            if(required_set==UINT8_MAX) {
+                                if(actual_set!=UINT8_MAX)found=false;
+                            } else if(actual_set!=UINT8_MAX&&
+                                !type_sets_satisfy_across(compiler,
+                                    compiler->program->entry.type_sets,required_set,
+                                    implementation->type_sets,actual_set))found=false;
+                        }
+                        if(wanted->return_type_set!=UINT8_MAX&&
+                           (implementation->return_type_set==UINT8_MAX||
+                            !type_sets_satisfy_across(compiler,
+                                implementation->type_sets,
+                                implementation->return_type_set,
+                                compiler->program->entry.type_sets,
+                                wanted->return_type_set)))found=false;
+                        if(found)break;
                     }
                 if(found||class->superclass==UINT8_MAX)break;
                 class_index=class->superclass;
@@ -217,6 +256,44 @@ static bool type_set_satisfies(const Compiler *compiler,uint8_t known_index,
         for(size_t target=0;target<expected->count&&!accepted;target++)
             accepted=type_member_satisfies(compiler,known->members[source],
                                            expected->members[target]);
+        if(!accepted)return false;
+    }
+    return true;
+}
+
+static bool type_members_satisfy_across(const Compiler *compiler,
+    const DiamondTypeSet *known_sets,DiamondTypeMember known,
+    const DiamondTypeSet *expected_sets,DiamondTypeMember expected) {
+    if(!known_type_satisfies_one(compiler,known.id,expected.id))return false;
+    if(expected.id==DIAMOND_TYPE_CALLABLE) {
+        if(expected.callable_arity!=UINT8_MAX&&
+           known.callable_arity!=expected.callable_arity)return false;
+        return expected.callable_return_set==UINT8_MAX||
+            (known.callable_return_set!=UINT8_MAX&&
+             type_sets_satisfy_across(compiler,known_sets,
+                 known.callable_return_set,expected_sets,
+                 expected.callable_return_set));
+    }
+    if(expected.argument_set==UINT8_MAX)return true;
+    if(known.argument_set==UINT8_MAX||
+       !type_sets_satisfy_across(compiler,known_sets,known.argument_set,
+                                 expected_sets,expected.argument_set))return false;
+    if(expected.id!=DIAMOND_TYPE_HASH)return true;
+    return known.second_argument_set!=UINT8_MAX&&
+        type_sets_satisfy_across(compiler,known_sets,known.second_argument_set,
+                                 expected_sets,expected.second_argument_set);
+}
+
+static bool type_sets_satisfy_across(const Compiler *compiler,
+    const DiamondTypeSet *known_sets,uint8_t known_index,
+    const DiamondTypeSet *expected_sets,uint8_t expected_index) {
+    const DiamondTypeSet *known=&known_sets[known_index];
+    const DiamondTypeSet *expected=&expected_sets[expected_index];
+    for(size_t source=0;source<known->count;source++) {
+        bool accepted=false;
+        for(size_t target=0;target<expected->count&&!accepted;target++)
+            accepted=type_members_satisfy_across(compiler,known_sets,
+                known->members[source],expected_sets,expected->members[target]);
         if(!accepted)return false;
     }
     return true;

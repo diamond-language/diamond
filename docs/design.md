@@ -168,9 +168,12 @@ and the non-throwing `is Sized` predicate.
 
 User declarations generalize that model with `interface Name ... end`. An
 interface body contains bodyless `def` signatures. Conformance is implicit and
-currently compares every required method name and arity against native methods
-or the receiver class's inherited method table. Declared parameter and return
-types are reserved for the next conformance layer.
+compares every required method name and arity against native methods or the
+receiver class's inherited method table. Annotated parameters are checked
+contravariantly and annotated returns covariantly, including unions, nested
+collection types, nominal subclasses, and callable result contracts. An
+unannotated implementation parameter accepts every interface input; an
+unannotated implementation return cannot satisfy a typed result requirement.
 
 Closure objects satisfy `Callable`. An optional integer argument, as in
 `Callable[2]`, checks the referenced bytecode function's arity at the typed

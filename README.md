@@ -27,7 +27,7 @@ Implemented today:
 - stop-the-world mark/sweep collection with stress-GC testing;
 - source diagnostics and bytecode disassembly.
 
-The test suite currently contains 168 end-to-end assertions spanning the
+The test suite currently contains 173 end-to-end assertions spanning the
 frontend, compiler, VM, object model, type guards, collections, and collector.
 
 ## Build and run
@@ -172,8 +172,9 @@ end
 ```
 
 A class satisfies the interface by defining or inheriting the required shape;
-no `implements` declaration is needed. Interface parameter and return variance
-is not enforced yet.
+no `implements` declaration is needed. Typed signatures use function-safe
+variance: implementation parameters are contravariant and returns are
+covariant. Omitting an interface annotation leaves that position unconstrained.
 
 The embedded core prelude is ordinary Diamond source from `lib/core.dia`.
 Current helpers include `array_first`, `array_swap_first_two`, and `hash_fetch`;
