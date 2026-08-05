@@ -204,7 +204,14 @@ bool diamond_load_program(const char *name,const char *source,
     *bundle=(DiamondSourceBundle){};Loader loader={.bundle=bundle,.error=error,
         .error_capacity=error_capacity};error[0]='\0';
     char path[DIAMOND_MAX_SOURCE_PATH];
-    if(realpath(name,path)==nullptr)(void)snprintf(path,sizeof path,"%s",name);
+    if(realpath(name,path)==nullptr) {
+        const int written=snprintf(path,sizeof path,"%s",name);
+        if(written<0||(size_t)written>=sizeof path) {
+            (void)snprintf(error,error_capacity,
+                           "source path is too long: '%s'",name);
+            return false;
+        }
+    }
     if(!expand(&loader,path,source,nullptr,0)) {
         if(error[0]=='\0')snprintf(error,error_capacity,"unable to expand program sources");
         free(loader.buffer);return false;
