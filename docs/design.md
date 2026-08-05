@@ -305,6 +305,9 @@ hidden `nil` receiver solely to preserve the original function's register and
 parameter layout; exported stateless code and namespace constants therefore
 need no cloned bytecode or module heap object. Instance-field access still
 requires a real mixed-in receiver and fails normally from the exported form.
+The argument-less directive enables the same transformation as definitions are
+registered for the remainder of that module body; the compiler saves and
+restores the mode across nested module declarations.
 
 Classes maintain a parallel singleton descriptor table. `Class.name()` resolves
 that table from the named class through its superclass chain, while `Class.new`

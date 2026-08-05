@@ -1329,4 +1329,16 @@ actual="$($diamond -e $'module Helpers\n def answer() = 42\n module_function ans
 actual="$($diamond -e $'module Helpers\n def answer() = 42\n module_function answer\nend\nclass Box\n include Helpers\nend\nbegin\n Box.new().answer()\nrescue error: TypeError\n Helpers.answer()\nend')"
 [[ "$actual" == "42" ]]
 
-echo "320 tests passed"
+actual="$($diamond -e $'module Math\n BASE = 40\n module_function\n def add(value = 2) = BASE + value\n def answer() = 42\nend\n[Math.add(), Math.answer()]')"
+[[ "$actual" == "[42, 42]" ]]
+
+actual="$($diamond -e $'module Types\n module_function\n def empty[T]() -> Array[T] = []\nend\nresult=Types.empty[Int]()\nbegin\n result.push("wrong")\nrescue error: TypeError\n 42\nend')"
+[[ "$actual" == "42" ]]
+
+actual="$($diamond -e $'module Helpers\n module_function\n def answer() = 42\nend\nclass Box\n def reveal() = self.answer()\n include Helpers\nend\nbegin\n Box.new().answer()\nrescue error: TypeError\n Box.new().reveal()\nend')"
+[[ "$actual" == "42" ]]
+
+actual="$($diamond -e $'module Outer\n module_function\n def outer() = 40\n module Inner\n  def value() = 2\n end\nend\nclass Box\n include Outer::Inner\nend\nOuter.outer() + Box.new().value()')"
+[[ "$actual" == "42" ]]
+
+echo "324 tests passed"

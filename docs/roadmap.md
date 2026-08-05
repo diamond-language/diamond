@@ -124,10 +124,11 @@ future work.
   methods without altering subsequent-definition defaults.
 - `module_function` exports that preserve signatures and generics while making
   includable copies private and avoiding a fabricated module instance.
+- Scoped standalone `module_function` mode for exporting subsequent methods.
 
 ## Next priorities
 
-1. Add `module_function` default mode for subsequent definitions.
+1. Add typed generated attributes without expanding them into handwritten methods.
 
 ## Later experiments
 

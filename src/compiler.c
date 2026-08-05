@@ -52,6 +52,7 @@ typedef struct Compiler {
     int current_class;
     int current_module;
     bool methods_private;
+    bool module_function_mode;
     DiamondSpan current_method;
     bool in_method;
     uint8_t known_types[256];
@@ -2510,6 +2511,17 @@ static uint8_t compile_definition(Compiler *compiler) {
                 method->required_arity=(uint8_t)(function->required_arity-1);
                 method->included=false;
                 method->is_private=compiler->methods_private;
+                if(compiler->module_function_mode) {
+                    if(module->singleton_method_count==DIAMOND_MAX_METHODS)
+                        fail(compiler,name,"too many module singleton functions");
+                    else {
+                        method->is_private=true;
+                        DiamondMethod exported=*method;
+                        exported.is_private=false;exported.needs_receiver=true;
+                        module->singleton_methods[
+                            module->singleton_method_count++]=exported;
+                    }
+                }
             }
         }
     } else if(compiler->current_module>=0&&module_singleton&&
@@ -2686,10 +2698,10 @@ static void compile_module_function(Compiler *compiler) {
     DiamondModule *module=
         &compiler->program->modules[(size_t)compiler->current_module];
     advance_token(compiler);
+    if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER) {
+        compiler->module_function_mode=true;return;
+    }
     while(!compiler->failed) {
-        if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER) {
-            fail(compiler,compiler->current.span,"expected module method name");return;
-        }
         const DiamondSpan name=compiler->current.span;
         DiamondMethod *source=nullptr;
         for(size_t index=module->method_count;index>0;index--)
@@ -2856,7 +2868,9 @@ static uint8_t compile_module(Compiler *compiler) {
     if(!consume_block_start(compiler))return 0;
     const int outer=compiler->current_module;compiler->current_module=index;
     const bool outer_private=compiler->methods_private;
+    const bool outer_module_function=compiler->module_function_mode;
     compiler->methods_private=false;
+    compiler->module_function_mode=false;
     while(!compiler->failed&&compiler->current.kind!=DIAMOND_TOKEN_END) {
         if(compiler->current.kind==DIAMOND_TOKEN_PRIVATE||
            compiler->current.kind==DIAMOND_TOKEN_PUBLIC) {
@@ -2963,6 +2977,7 @@ static uint8_t compile_module(Compiler *compiler) {
     }
     compiler->current_module=outer;
     compiler->methods_private=outer_private;
+    compiler->module_function_mode=outer_module_function;
     if(compiler->current.kind==DIAMOND_TOKEN_END)advance_token(compiler);
     const uint8_t result=allocate_register(compiler);
     emit_instruction(compiler,DIAMOND_OP_NIL,result,0,0,1);
