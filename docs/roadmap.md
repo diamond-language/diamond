@@ -186,11 +186,13 @@ future work.
 - VM message preservation through bare re-raise.
 - Diagnostics for subclass filters shadowed by earlier superclass clauses.
 - Postfix `if` and `unless` modifiers with direct bytecode layout.
+- Postfix modifiers on `break`, `next`, `redo`, `return`, `raise`, and `retry`.
+- Nested-loop and rescue-control modifier targeting.
 
 ## Next priorities
 
-1. Add modifier support to additional statement forms while preserving
-   precise result-register and control-flow semantics.
+1. Add modifier support to remaining declaration-oriented statement forms while
+   preserving precise result-register and control-flow semantics.
 
 ## Later experiments
 
