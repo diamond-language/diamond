@@ -1813,6 +1813,27 @@ static uint8_t parse_while(Compiler *compiler,bool inverted) {
     return destination;
 }
 
+static uint8_t parse_loop(Compiler *compiler) {
+    const uint8_t destination=allocate_register(compiler);
+    emit_instruction(compiler,DIAMOND_OP_NIL,destination,0,0,1);
+    if(!consume_loop_start(compiler))return destination;
+    const size_t body_start=compiler->function->code_count;
+    LoopContext loop={.previous=compiler->current_loop,
+        .continue_target=body_start,.redo_target=body_start,
+        .result_register=destination};
+    compiler->current_loop=&loop;
+    (void)compile_sequence(compiler);
+    compiler->current_loop=loop.previous;
+    emit_absolute_jump(compiler,body_start);
+    for(size_t index=0;index<loop.break_count;index++)
+        patch_jump(compiler,loop.breaks[index],compiler->function->code_count);
+    if(compiler->current.kind!=DIAMOND_TOKEN_END) {
+        fail(compiler,compiler->current.span,"expected 'end' after loop");
+        return destination;
+    }
+    advance_token(compiler);return destination;
+}
+
 static uint8_t parse_prefix(Compiler *compiler) {
     advance_token(compiler);
     switch (compiler->previous.kind) {
@@ -1879,6 +1900,8 @@ static uint8_t parse_prefix(Compiler *compiler) {
             return parse_while(compiler,false);
         case DIAMOND_TOKEN_UNTIL:
             return parse_while(compiler,true);
+        case DIAMOND_TOKEN_LOOP:
+            return parse_loop(compiler);
         case DIAMOND_TOKEN_BEGIN:
             return compile_begin(compiler);
         default:

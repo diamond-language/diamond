@@ -1638,4 +1638,10 @@ if "$diamond" -e $'begin\n 1 / 0\nrescue : StandardError\n 1\nrescue : ZeroDivis
     exit 1
 fi
 
-echo "413 tests passed"
+actual="$($diamond -e $'result=loop do\n break 42\nend\nresult')"
+[[ "$actual" == "42" ]]
+
+actual="$($diamond -e $'count=0\nloop do\n count=count+1\n if count<3\n  redo\n end\n break count\nend')"
+[[ "$actual" == "3" ]]
+
+echo "415 tests passed"

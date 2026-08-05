@@ -146,6 +146,7 @@ future work.
 - `until` loops with ordinary `break` and `next` control flow.
 - Loop-body `redo` without condition reevaluation.
 - Value-bearing `break` results for `while` and `until` expressions.
+- Unconditional `loop do` expressions with value-bearing exits.
 - Chained `elsif` branches in conditional expressions.
 - Optional `then` delimiters for conditional expressions.
 - Optional `do` delimiters for `while` and `until` loops.
