@@ -337,6 +337,7 @@ static Precedence token_precedence(DiamondTokenKind kind) {
         case DIAMOND_TOKEN_LESS_EQUAL:
         case DIAMOND_TOKEN_GREATER:
         case DIAMOND_TOKEN_GREATER_EQUAL:
+        case DIAMOND_TOKEN_IS:
             return PREC_COMPARISON;
         case DIAMOND_TOKEN_PLUS:
         case DIAMOND_TOKEN_MINUS:
@@ -879,6 +880,26 @@ static bool split_nil_type_set(Compiler *compiler,uint8_t source_index,
     return true;
 }
 
+static bool split_type_set(Compiler *compiler,uint8_t source_index,
+                           uint8_t tested_type,int16_t *matching,
+                           int16_t *remaining) {
+    const DiamondTypeSet source=compiler->function->type_sets[source_index];
+    DiamondTypeSet yes={},no={};
+    for(size_t index=0;index<source.count;index++) {
+        const DiamondTypeMember member=source.members[index];
+        if(known_type_satisfies_one(compiler,member.id,tested_type))
+            yes.members[yes.count++]=member;
+        else no.members[no.count++]=member;
+    }
+    if(yes.count==0||no.count==0||
+       compiler->function->type_set_count+2>DIAMOND_MAX_TYPE_SETS)return false;
+    *matching=(int16_t)compiler->function->type_set_count;
+    compiler->function->type_sets[compiler->function->type_set_count++]=yes;
+    *remaining=(int16_t)compiler->function->type_set_count;
+    compiler->function->type_sets[compiler->function->type_set_count++]=no;
+    return true;
+}
+
 static void apply_type_set_fact(Compiler *compiler,uint8_t reg,int16_t set_index) {
     compiler->known_type_sets[reg]=set_index;
     const DiamondTypeSet *set=&compiler->function->type_sets[(size_t)set_index];
@@ -1112,6 +1133,29 @@ static uint8_t parse_precedence(Compiler *compiler, Precedence precedence) {
         const DiamondTokenKind operator = compiler->current.kind;
         const Precedence operator_precedence = token_precedence(operator);
         advance_token(compiler);
+        if(operator==DIAMOND_TOKEN_IS) {
+            if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER) {
+                fail(compiler,compiler->current.span,"expected type after 'is'");
+                return left;
+            }
+            const uint8_t tested_type=(uint8_t)resolve_type(
+                compiler,compiler->current.span);
+            advance_token(compiler);
+            const uint8_t destination=allocate_register(compiler);
+            emit_instruction(compiler,DIAMOND_OP_IS_TYPE,destination,left,
+                             tested_type,3);
+            compiler->known_types[destination]=DIAMOND_TYPE_BOOL;
+            if(compiler->known_type_sets[left]>=0) {
+                int16_t matching=-1,remaining=-1;
+                if(split_type_set(compiler,
+                   (uint8_t)compiler->known_type_sets[left],tested_type,
+                   &matching,&remaining))
+                    compiler->narrowing=(Narrowing){.valid=true,
+                        .condition=destination,.reg=left,
+                        .when_true=matching,.when_false=remaining};
+            }
+            left=destination;continue;
+        }
         if(operator==DIAMOND_TOKEN_AND_AND || operator==DIAMOND_TOKEN_OR_OR) {
             const uint8_t destination=allocate_register(compiler);
             emit_instruction(compiler,DIAMOND_OP_MOVE,destination,left,0,2);

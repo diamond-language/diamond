@@ -1176,6 +1176,13 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 }
                 break;
             }
+            case DIAMOND_OP_IS_TYPE: {
+                uint8_t destination=0,source=0,type=0;
+                READ_BYTE(destination);READ_BYTE(source);READ_BYTE(type);
+                registers[destination]=DIAMOND_BOOL(
+                    value_matches_type(chunk,registers[source],type));
+                break;
+            }
             case DIAMOND_OP_ARRAY: {
                 uint8_t destination=0,base=0,count=0;
                 READ_BYTE(destination);READ_BYTE(base);READ_BYTE(count);

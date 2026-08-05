@@ -171,6 +171,11 @@ union type-set into nil and non-nil branch facts. Facts for locals that existed
 before the branch are merged at the join; disagreement becomes unknown, so
 branch-local assignment cannot leak an invalid narrowing proof.
 
+`value is Type` emits a non-throwing runtime predicate and has comparison
+precedence. For a direct conditional test, union members accepted by `Type`
+(including nominal subclasses) flow into the true branch and the complement
+flows into the false branch. Compound boolean conditions remain conservative.
+
 ## Deliberate constraints
 
 - No Ruby compatibility guarantee.

@@ -61,6 +61,7 @@ typedef enum DiamondTokenKind {
     DIAMOND_TOKEN_BEGIN,
     DIAMOND_TOKEN_RESCUE,
     DIAMOND_TOKEN_ENSURE,
+    DIAMOND_TOKEN_IS,
 } DiamondTokenKind;
 
 typedef struct DiamondToken {

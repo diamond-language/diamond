@@ -353,6 +353,33 @@ actual="$(DIAMOND_STRESS_GC=1 "$diamond" -e $'def transform()\n def double(value
 actual="$("$diamond" -e $'begin\n {}.key_at(0)\nrescue error: IndexError\n 42\nend')"
 [[ "$actual" == "42" ]]
 
+actual="$("$diamond" -e '42 is Int')"
+[[ "$actual" == "true" ]]
+
+actual="$("$diamond" -e '42 is String')"
+[[ "$actual" == "false" ]]
+
+actual="$("$diamond" --dump-bytecode -e $'def text(value: String | Int) -> String\n if value is String\n  value\n else\n  "number"\n end\nend\ntext(42)')"
+text_dump="$(sed -n '/^== text ==$/,$p' <<<"$actual")"
+grep -q 'IS_TYPE.*String' <<<"$text_dump"
+[[ "$(grep -c 'CHECK_TYPE' <<<"$text_dump")" == "1" ]]
+
+actual="$("$diamond" --dump-bytecode -e $'def number(value: String | Int) -> Int\n if value is String\n  0\n else\n  value\n end\nend\nnumber(42)')"
+number_dump="$(sed -n '/^== number ==$/,$p' <<<"$actual")"
+[[ "$(grep -c 'CHECK_TYPE' <<<"$number_dump")" == "1" ]]
+
+actual="$("$diamond" -e $'class Animal\nend\nclass Dog < Animal\nend\nDog.new() is Animal')"
+[[ "$actual" == "true" ]]
+
+actual="$("$diamond" --dump-bytecode -e $'def compound(value: String | Int, flag: Bool) -> String\n if value is String && flag\n  value\n else\n  "fallback"\n end\nend\ncompound("ok", true)')"
+compound_dump="$(sed -n '/^== compound ==$/,$p' <<<"$actual")"
+[[ "$(grep -c 'CHECK_TYPE' <<<"$compound_dump")" == "3" ]]
+
+if "$diamond" -e '42 is Missing' >/dev/null 2>&1; then
+    echo "is accepted an unknown type" >&2
+    exit 1
+fi
+
 actual="$("$diamond" --dump-bytecode -e $'def maybe(x: String | Nil) -> String | Nil\n x\nend\nmaybe(nil)')"
 grep -q 'String | Nil' <<<"$actual"
 
@@ -715,4 +742,4 @@ if "$diamond" -e $'begin\n raise 1\nrescue error: Int |\n 0\nend' \
     exit 1
 fi
 
-echo "136 tests passed"
+echo "143 tests passed"

@@ -68,6 +68,7 @@ typedef enum DiamondOpCode : uint8_t {
     DIAMOND_OP_PUSH_ENSURE,
     DIAMOND_OP_RUN_ENSURE,
     DIAMOND_OP_END_ENSURE,
+    DIAMOND_OP_IS_TYPE,
 } DiamondOpCode;
 
 typedef enum DiamondTypeId : uint8_t {

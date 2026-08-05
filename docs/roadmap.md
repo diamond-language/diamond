@@ -69,11 +69,12 @@ future work.
 - Growable arrays with guarded `push`/`pop` and Diamond iteration helpers.
 - Branch-sensitive nil narrowing with conservative local-fact joins.
 - Ordered hash iteration primitives with Diamond-written transforms.
+- Non-throwing `is` predicates with primitive and nominal union narrowing.
 
 ## Next priorities
 
-1. General type-test syntax and broader union narrowing.
-2. Collection callback contracts and typed transform results.
+1. Collection callback contracts and typed transform results.
+2. Structural interfaces for shared collection behavior.
 
 ## Later experiments
 

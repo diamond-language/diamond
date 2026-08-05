@@ -279,6 +279,22 @@ static bool disassemble_chunk(FILE *stream, const char *name,
                 const uint8_t set_index=chunk->code[offset+2];
                 valid=print_type_set(stream,chunk,set_index)&&valid;
                 fputc('\n',stream);offset+=3;break;
+            case DIAMOND_OP_IS_TYPE: {
+                if(!require_bytes(stream,chunk,offset,4)){valid=false;offset=chunk->code_count;break;}
+                fprintf(stream,"%-18s r%u, r%u, ","IS_TYPE",
+                        chunk->code[offset+1],chunk->code[offset+2]);
+                const uint8_t type=chunk->code[offset+3];
+                if(type==DIAMOND_TYPE_INT) fputs("Int",stream);
+                else if(type==DIAMOND_TYPE_STRING) fputs("String",stream);
+                else if(type==DIAMOND_TYPE_BOOL) fputs("Bool",stream);
+                else if(type==DIAMOND_TYPE_NIL) fputs("Nil",stream);
+                else if(type==DIAMOND_TYPE_ARRAY) fputs("Array",stream);
+                else if(type==DIAMOND_TYPE_HASH) fputs("Hash",stream);
+                else if((size_t)(type-DIAMOND_TYPE_CLASS_BASE)<chunk->class_count)
+                    fputs(chunk->classes[type-DIAMOND_TYPE_CLASS_BASE].name,stream);
+                else {fputs("<invalid type>",stream);valid=false;}
+                fputc('\n',stream);offset+=4;break;
+            }
             case DIAMOND_OP_ARRAY:
                 if(!require_bytes(stream,chunk,offset,4)){valid=false;offset=chunk->code_count;break;}
                 fprintf(stream,"%-18s r%u, r%u, %u items\n","ARRAY",
