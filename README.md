@@ -28,7 +28,7 @@ Implemented today:
 - stop-the-world mark/sweep collection with stress-GC testing;
 - source diagnostics and bytecode disassembly.
 
-The test suite currently contains 331 end-to-end assertions spanning the
+The test suite currently contains 332 end-to-end assertions spanning the
 frontend, compiler, VM, object model, type guards, collections, and collector.
 
 ## Build and run
@@ -305,6 +305,7 @@ in classes or modules. Writers are invoked as `object.name=(value)`; generated
 methods honor current visibility, inheritance, mixin state, and shape tracking.
 `attr_accessor name` generates both methods in one declaration.
 All three forms accept comma-separated names, such as `attr_accessor x, y`.
+Parenthesized spelling such as `attr_accessor(x, y)` is equivalent.
 Generating the same reader or writer twice is a compile-time error.
 Ordinary methods may use the same writer spelling with
 `def name=(value) ... end`, including annotations, defaults, module fields, and

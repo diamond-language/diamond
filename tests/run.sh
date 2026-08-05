@@ -1370,4 +1370,7 @@ actual="$($diamond -e $'module Config\n def self.value=(incoming = 42) = incomin
 actual="$($diamond -e $'class Box\n attr_writer value\n private value=\n def assign() = self.value=(42)\nend\nbegin\n Box.new().value=(1)\nrescue error: TypeError\n Box.new().assign()\nend')"
 [[ "$actual" == "42" ]]
 
-echo "331 tests passed"
+actual="$($diamond -e $'class Point\n attr_accessor(x, y)\nend\npoint=Point.new()\npoint.x=(20)\npoint.y=(22)\npoint.x() + point.y()')"
+[[ "$actual" == "42" ]]
+
+echo "332 tests passed"
