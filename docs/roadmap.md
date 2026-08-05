@@ -147,6 +147,7 @@ future work.
 - Loop-body `redo` without condition reevaluation.
 - Value-bearing `break` results for `while` and `until` expressions.
 - Unconditional `loop do` expressions with value-bearing exits.
+- Newline-delimited unconditional loops and delimiter diagnostics.
 - Chained `elsif` branches in conditional expressions.
 - Optional `then` delimiters for conditional expressions.
 - Optional `do` delimiters for `while` and `until` loops.
