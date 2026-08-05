@@ -182,6 +182,7 @@ future work.
 - Native exception accessor arity enforcement.
 - User initializer precedence over native exception construction.
 - Explicit cause preservation through raise and rescue.
+- Message payload coverage across standard runtime error classes.
 - Diagnostics for subclass filters shadowed by earlier superclass clauses.
 
 ## Next priorities
