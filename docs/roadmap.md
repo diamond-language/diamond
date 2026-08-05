@@ -197,11 +197,12 @@ future work.
 - Explicit loader diagnostics for nesting, file-count, segment, and source-size
   limits.
 - Circular-import diagnostics include the closing require site.
+- Named loader depth/file-count limits and overflow-safe source embedding.
 
 ## Next priorities
 
-1. Improve loader path and source-map diagnostics for remaining resource and
-   embedding limits while preserving precise source locations.
+1. Improve loader path and source-map diagnostics for remaining include-site
+   and embedding failures while preserving precise source locations.
 
 ## Later experiments
 
