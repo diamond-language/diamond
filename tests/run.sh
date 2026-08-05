@@ -1700,4 +1700,12 @@ actual="$($diamond -e $'value=0\nvalue=42 if false\nvalue')"
 [[ "$actual" == "0" ]]
 actual="$($diamond -e '1+2 if true')"
 [[ "$actual" == "3" ]]
-echo "444 tests passed"
+if "$diamond" -e '42 if' >/dev/null 2>&1; then
+    echo "postfix modifier without condition unexpectedly compiled" >&2
+    exit 1
+fi
+if "$diamond" -e $'42 if\n true' >/dev/null 2>&1; then
+    echo "multiline postfix condition unexpectedly compiled" >&2
+    exit 1
+fi
+echo "446 tests passed"
