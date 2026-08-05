@@ -27,6 +27,14 @@ invoking C undefined behavior.
 
 ## Compilation
 
+Before lexing, the source loader expands line-form `require "path"`
+dependencies at their declaration sites. Paths are canonicalized, `.dia` is
+inferred, and nested paths are resolved relative to the requiring file. Active
+and completed file sets provide cycle detection and load-once semantics. Source
+segments map offsets in the expanded program back to dependency paths and
+original lines, preserving useful diagnostics while the compiler retains one
+ordered top-level namespace and bytecode module.
+
 The lexer records byte offsets, lines, and columns. A Pratt parser compiles
 expressions directly to register bytecode; there is no retained AST. Locals and
 temporary values currently receive monotonically increasing registers within a

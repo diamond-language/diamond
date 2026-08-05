@@ -82,6 +82,8 @@ future work.
 - Trailing default arguments for functions, methods, constructors, and
   closures, with supplied-argument tracking in bytecode.
 - Double-quoted expression interpolation with scalar and instance conversion.
+- Compile-time multi-file `require` with relative paths, extension inference,
+  load-once semantics, cycle detection, and dependency-aware diagnostics.
 
 ## Next priorities
 

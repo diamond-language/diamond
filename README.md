@@ -27,7 +27,7 @@ Implemented today:
 - stop-the-world mark/sweep collection with stress-GC testing;
 - source diagnostics and bytecode disassembly.
 
-The test suite currently contains 198 end-to-end assertions spanning the
+The test suite currently contains 205 end-to-end assertions spanning the
 frontend, compiler, VM, object model, type guards, collections, and collector.
 
 ## Build and run
@@ -38,6 +38,21 @@ make test
 ./build/diamond -e '20 + 22'
 ./build/diamond program.dia
 ```
+
+## Multiple files
+
+`require` includes another Diamond source file into the same compilation:
+
+```ruby
+require "models/user"
+require "support/formatting.dia"
+```
+
+Paths are relative to the requiring file, and `.dia` is inferred when omitted.
+Canonical files load once, cycles are rejected, and all required files share
+top-level functions, classes, and interfaces. Diagnostics retain the imported
+file's path and original line. With `-e`, relative paths start at the current
+working directory.
 
 Build variants:
 

@@ -929,4 +929,25 @@ fi
 actual="$($diamond --dump-bytecode -e $'value = 42\n"value=#{value}"')"
 grep -q 'TO_STRING' <<<"$actual"
 
-echo "198 tests passed"
+actual="$($diamond tests/multifile/main.dia)"
+[[ "$actual" == "[42, Hello, world]" ]]
+
+actual="$($diamond tests/multifile/load_once_main.dia)"
+[[ "$actual" == "42" ]]
+
+if "$diamond" tests/multifile/cycle_a.dia >/dev/null 2>&1; then
+    echo "circular require unexpectedly loaded" >&2
+    exit 1
+fi
+
+actual="$($diamond tests/multifile/broken_main.dia 2>&1 || true)"
+grep -q 'tests/multifile/broken.dia:3:16' <<<"$actual"
+
+actual="$($diamond -e $'require "tests/multifile/math"\ndouble(21)')"
+[[ "$actual" == "42" ]]
+
+actual="$($diamond --dump-bytecode tests/multifile/main.dia)"
+grep -q '== double ==' <<<"$actual"
+grep -q '== greet ==' <<<"$actual"
+
+echo "205 tests passed"

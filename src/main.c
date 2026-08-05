@@ -1,5 +1,6 @@
 #include "compiler.h"
 #include "disassemble.h"
+#include "loader.h"
 #include "value.h"
 #include "vm.h"
 
@@ -16,8 +17,19 @@ static constexpr unsigned char DIAMOND_CORE_SOURCE[] = {
 static constexpr char DIAMOND_USER_LINE_RESET[] = "\n#line 1\n";
 
 static void print_diagnostic(const char *name, const char *source,
-                             DiamondDiagnostic diagnostic) {
-    fprintf(stderr, "%s:%zu:%zu: error: %s\n", name, diagnostic.span.line,
+                             DiamondDiagnostic diagnostic,
+                             const DiamondSourceBundle *bundle,
+                             size_t user_offset) {
+    size_t line=diagnostic.span.line;
+    if(diagnostic.span.start>=user_offset) {
+        const size_t offset=diagnostic.span.start-user_offset;
+        for(size_t index=0;index<bundle->segment_count;index++) {
+            const DiamondSourceSegment *segment=&bundle->segments[index];
+            if(offset<segment->start||offset>=segment->end)continue;
+            name=segment->path;line=segment->original_line+line-1;break;
+        }
+    }
+    fprintf(stderr, "%s:%zu:%zu: error: %s\n", name, line,
             diagnostic.span.column, diagnostic.message);
 
     size_t line_start = diagnostic.span.start;
@@ -36,22 +48,29 @@ static void print_diagnostic(const char *name, const char *source,
 }
 
 static int run_source(const char *name, const char *source, bool dump_bytecode) {
+    DiamondSourceBundle bundle;char load_error[768];
+    if(!diamond_load_program(name,source,&bundle,load_error,sizeof load_error)) {
+        fprintf(stderr,"diamond: %s\n",load_error);return 74;
+    }
     const size_t core_length=sizeof(DIAMOND_CORE_SOURCE)-1;
-    const size_t source_length=strlen(source);
+    const size_t source_length=strlen(bundle.source);
     const size_t reset_length=sizeof(DIAMOND_USER_LINE_RESET)-1;
     char *combined=malloc(core_length+reset_length+source_length+1);
     if(combined==nullptr) {
         fprintf(stderr,"diamond: out of memory loading core library\n");
+        diamond_source_bundle_free(&bundle);
         return 74;
     }
     memcpy(combined,DIAMOND_CORE_SOURCE,core_length);
     memcpy(combined+core_length,DIAMOND_USER_LINE_RESET,reset_length);
-    memcpy(combined+core_length+reset_length,source,source_length+1);
+    memcpy(combined+core_length+reset_length,bundle.source,source_length+1);
     DiamondProgram program;
     DiamondDiagnostic diagnostic;
     if (!diamond_compile(combined, &program, &diagnostic)) {
-        print_diagnostic(name, combined, diagnostic);
+        print_diagnostic(name,combined,diagnostic,&bundle,
+                         core_length+reset_length);
         free(combined);
+        diamond_source_bundle_free(&bundle);
         return 65;
     }
 
@@ -71,6 +90,7 @@ static int run_source(const char *name, const char *source, bool dump_bytecode) 
                 detail != nullptr ? detail : diamond_vm_status_name(status));
         diamond_vm_free(&vm);
         free(combined);
+        diamond_source_bundle_free(&bundle);
         return 70;
     }
 
@@ -89,6 +109,7 @@ static int run_source(const char *name, const char *source, bool dump_bytecode) 
     }
     diamond_vm_free(&vm);
     free(combined);
+    diamond_source_bundle_free(&bundle);
     return 0;
 }
 
