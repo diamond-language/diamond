@@ -2054,6 +2054,40 @@ static bool index_assignment_ahead(const Compiler *compiler) {
     return diamond_lexer_next(&lookahead).kind==DIAMOND_TOKEN_EQUAL;
 }
 
+static DiamondTokenKind postfix_modifier_ahead(const Compiler *compiler) {
+    DiamondLexer lookahead = compiler->lexer;
+    size_t depth = 0;
+    bool seen = true;
+    for (;;) {
+        DiamondToken token = diamond_lexer_next(&lookahead);
+        if (token.kind == DIAMOND_TOKEN_EOF ||
+            token.kind == DIAMOND_TOKEN_ERROR ||
+            token.kind == DIAMOND_TOKEN_NEWLINE) {
+            return DIAMOND_TOKEN_EOF;
+        }
+        if (depth == 0 && seen &&
+            (token.kind == DIAMOND_TOKEN_IF ||
+             token.kind == DIAMOND_TOKEN_UNLESS)) {
+            return token.kind;
+        }
+        switch (token.kind) {
+            case DIAMOND_TOKEN_LEFT_PAREN:
+            case DIAMOND_TOKEN_LEFT_BRACKET:
+            case DIAMOND_TOKEN_LEFT_BRACE:
+                depth++;
+                break;
+            case DIAMOND_TOKEN_RIGHT_PAREN:
+            case DIAMOND_TOKEN_RIGHT_BRACKET:
+            case DIAMOND_TOKEN_RIGHT_BRACE:
+                if (depth > 0) depth--;
+                break;
+            default:
+                break;
+        }
+        seen = true;
+    }
+}
+
 static uint8_t compile_index_assignment(Compiler *compiler) {
     const DiamondSpan name=compiler->current.span;
     const int local=find_local(compiler,name);
@@ -3516,6 +3550,13 @@ static uint8_t compile_sequence(Compiler *compiler) {
     emit_instruction(compiler, DIAMOND_OP_NIL, result, 0, 0, 1);
 
     while (!compiler->failed && !at_block_end(compiler)) {
+        const DiamondTokenKind postfix = postfix_modifier_ahead(compiler);
+        const bool has_postfix = postfix == DIAMOND_TOKEN_IF ||
+                                 postfix == DIAMOND_TOKEN_UNLESS;
+        const size_t condition_jump = has_postfix
+            ? emit_jump(compiler, DIAMOND_OP_JUMP, 0)
+            : SIZE_MAX;
+        const size_t body_start = compiler->function->code_count;
         if (compiler->current.kind == DIAMOND_TOKEN_DEF) {
             result = compile_definition(compiler);
         } else if (compiler->current.kind == DIAMOND_TOKEN_CLASS) {
@@ -3544,6 +3585,27 @@ static uint8_t compile_sequence(Compiler *compiler) {
                 result = assignment_ahead(compiler)
                     ? compile_assignment(compiler)
                     : parse_expression(compiler);
+        }
+        if (has_postfix) {
+            if (compiler->current.kind != postfix) {
+                fail(compiler, compiler->current.span,
+                     "expected postfix condition");
+                break;
+            }
+            advance_token(compiler);
+            const size_t body_exit = emit_jump(compiler, DIAMOND_OP_JUMP, 0);
+            const size_t condition_start = compiler->function->code_count;
+            const uint8_t condition = parse_expression(compiler);
+            const size_t body_jump = emit_jump(
+                compiler,
+                postfix == DIAMOND_TOKEN_IF
+                    ? DIAMOND_OP_JUMP_IF_TRUE
+                    : DIAMOND_OP_JUMP_IF_FALSE,
+                condition);
+            emit_instruction(compiler, DIAMOND_OP_NIL, result, 0, 0, 1);
+            patch_jump(compiler, condition_jump, condition_start);
+            patch_jump(compiler, body_exit, compiler->function->code_count);
+            patch_jump(compiler, body_jump, body_start);
         }
         if (compiler->current.kind == DIAMOND_TOKEN_NEWLINE) {
             skip_newlines(compiler);
