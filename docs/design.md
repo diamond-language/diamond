@@ -363,6 +363,8 @@ An `elsif` branch compiles as the false-side value of its preceding `if`,
 sharing the final `end` while preserving expression results and type joins.
 Conditional bodies accept either a newline or the `then` delimiter; after the
 delimiter the existing sequence compiler handles inline or multiline bodies.
+Loop bodies similarly accept a newline or `do`, allowing compact loops without
+altering their condition, redo, next, or value-bearing break targets.
 
 `until` likewise shares loop compilation with `while`, negating only the
 condition register before the existing exit jump; `break` and `next` targets

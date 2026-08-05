@@ -399,6 +399,7 @@ runtime error: expected String | Nil, got Int
 - `unless condition ... else ... end` as an inverted conditional expression
 - `elsif` chains within `if` expressions
 - optional `then` after `if`, `unless`, and `elsif` conditions
+- optional `do` after `while` and `until` conditions
 - `until condition ... end` loops, including `break` and `next`
 - `redo` to restart a loop body without reevaluating its condition
 - value-bearing loop exits such as `result = while true ... break 42 ... end`

@@ -1678,6 +1678,14 @@ static bool consume_conditional_start(Compiler *compiler) {
     return true;
 }
 
+static bool consume_loop_start(Compiler *compiler) {
+    if(compiler->current.kind!=DIAMOND_TOKEN_DO)
+        return consume_block_start(compiler);
+    advance_token(compiler);
+    skip_newlines(compiler);
+    return true;
+}
+
 static uint8_t parse_if(Compiler *compiler,bool inverted) {
     compiler->narrowing=(Narrowing){};
     const uint8_t condition = parse_expression(compiler);
@@ -1773,7 +1781,7 @@ static uint8_t parse_while(Compiler *compiler,bool inverted) {
     emit_instruction(compiler,DIAMOND_OP_NIL,destination,0,0,1);
     const size_t loop_start = compiler->function->code_count;
     const uint8_t condition = parse_expression(compiler);
-    if (!consume_block_start(compiler)) return 0;
+    if (!consume_loop_start(compiler)) return 0;
     uint8_t branch_condition=condition;
     if(inverted) {
         branch_condition=allocate_register(compiler);
