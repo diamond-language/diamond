@@ -1788,6 +1788,13 @@ if "$diamond" -e 'require "missing" if true' >/dev/null 2>"$require_error"; then
 fi
 grep -q "require directive cannot have trailing syntax" "$require_error"
 rm -f "$require_error"
+require_error="$(mktemp)"
+if "$diamond" -e 'require "missing_dependency"' >/dev/null 2>"$require_error"; then
+    rm -f "$require_error"
+    exit 1
+fi
+grep -q "cannot require 'missing_dependency.dia'" "$require_error"
+rm -f "$require_error"
 if "$diamond" -e $'module Constants\n VALUE = 42 if true\nend' >/dev/null 2>&1; then
     echo "conditional namespace constant unexpectedly compiled" >&2
     exit 1
