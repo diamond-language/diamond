@@ -1694,4 +1694,10 @@ actual="$($diamond -e '42 unless false')"
 [[ "$actual" == "42" ]]
 actual="$($diamond -e '42 unless true')"
 [[ "$actual" == "nil" ]]
-echo "440 tests passed"
+actual="$($diamond -e $'value=0\nvalue=42 if true\nvalue')"
+[[ "$actual" == "42" ]]
+actual="$($diamond -e $'value=0\nvalue=42 if false\nvalue')"
+[[ "$actual" == "0" ]]
+actual="$($diamond -e '1+2 if true')"
+[[ "$actual" == "3" ]]
+echo "444 tests passed"

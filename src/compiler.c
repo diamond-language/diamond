@@ -3553,6 +3553,10 @@ static uint8_t compile_sequence(Compiler *compiler) {
         const DiamondTokenKind postfix = postfix_modifier_ahead(compiler);
         const bool has_postfix = postfix == DIAMOND_TOKEN_IF ||
                                  postfix == DIAMOND_TOKEN_UNLESS;
+        const uint8_t body_result_slot = result;
+        const uint8_t postfix_result = has_postfix
+            ? allocate_register(compiler)
+            : body_result_slot;
         const size_t condition_jump = has_postfix
             ? emit_jump(compiler, DIAMOND_OP_JUMP, 0)
             : SIZE_MAX;
@@ -3593,6 +3597,8 @@ static uint8_t compile_sequence(Compiler *compiler) {
                 break;
             }
             advance_token(compiler);
+            emit_instruction(compiler, DIAMOND_OP_MOVE, postfix_result,
+                             result, 0, 2);
             const size_t body_exit = emit_jump(compiler, DIAMOND_OP_JUMP, 0);
             const size_t condition_start = compiler->function->code_count;
             const uint8_t condition = parse_expression(compiler);
@@ -3602,10 +3608,12 @@ static uint8_t compile_sequence(Compiler *compiler) {
                     ? DIAMOND_OP_JUMP_IF_TRUE
                     : DIAMOND_OP_JUMP_IF_FALSE,
                 condition);
-            emit_instruction(compiler, DIAMOND_OP_NIL, result, 0, 0, 1);
+            emit_instruction(compiler, DIAMOND_OP_NIL, postfix_result,
+                             0, 0, 1);
             patch_jump(compiler, condition_jump, condition_start);
             patch_jump(compiler, body_exit, compiler->function->code_count);
             patch_jump(compiler, body_jump, body_start);
+            result = postfix_result;
         }
         if (compiler->current.kind == DIAMOND_TOKEN_NEWLINE) {
             skip_newlines(compiler);
