@@ -2127,6 +2127,8 @@ static uint8_t compile_return(Compiler *compiler) {
     if(compiler->current.kind==DIAMOND_TOKEN_NEWLINE ||
        compiler->current.kind==DIAMOND_TOKEN_END ||
        compiler->current.kind==DIAMOND_TOKEN_ELSE ||
+       compiler->current.kind==DIAMOND_TOKEN_IF ||
+       compiler->current.kind==DIAMOND_TOKEN_UNLESS ||
        compiler->current.kind==DIAMOND_TOKEN_EOF) {
         value=allocate_register(compiler);
         emit_instruction(compiler,DIAMOND_OP_NIL,value,0,0,1);
@@ -2148,6 +2150,8 @@ static uint8_t compile_raise(Compiler *compiler) {
        compiler->current.kind==DIAMOND_TOKEN_END ||
        compiler->current.kind==DIAMOND_TOKEN_ELSE ||
        compiler->current.kind==DIAMOND_TOKEN_ENSURE ||
+       compiler->current.kind==DIAMOND_TOKEN_IF ||
+       compiler->current.kind==DIAMOND_TOKEN_UNLESS ||
        compiler->current.kind==DIAMOND_TOKEN_EOF) {
         if(compiler->current_exception<0) {
             fail(compiler,keyword,"bare 'raise' used outside rescue");return 0;
