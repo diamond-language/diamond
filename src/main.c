@@ -63,7 +63,7 @@ static int run_source(const char *name, const char *source, bool dump_bytecode) 
     }
     char *combined=malloc(core_length+reset_length+source_length+1);
     if(combined==nullptr) {
-        fprintf(stderr,"diamond: out of memory loading core library\n");
+        fprintf(stderr,"diamond: out of memory building expanded source\n");
         diamond_source_bundle_free(&bundle);
         return 74;
     }
