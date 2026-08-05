@@ -1504,4 +1504,15 @@ actual="$($diamond -e $'begin\n raise "failure"\nrescue error\n 42\nelse\n 0\nen
 actual="$($diamond -e $'value = 0\nbegin\n 1\nrescue error\n value = 1\nelse\n value = 40\nensure\n value = value + 2\nend\nvalue')"
 [[ "$actual" == "42" ]]
 
-echo "373 tests passed"
+actual="$($diamond -e $'begin\n begin\n  raise "failure"\n rescue error\n  raise\n end\nrescue outer\n 42\nend')"
+[[ "$actual" == "42" ]]
+
+actual="$($diamond -e $'begin\n begin\n  1 / 0\n rescue error: ZeroDivisionError\n  raise\n end\nrescue outer: ZeroDivisionError\n 42\nend')"
+[[ "$actual" == "42" ]]
+
+if "$diamond" -e $'raise' >/dev/null 2>&1; then
+    echo "bare raise outside rescue unexpectedly compiled" >&2
+    exit 1
+fi
+
+echo "376 tests passed"

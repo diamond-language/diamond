@@ -146,6 +146,7 @@ future work.
 - `until` loops with ordinary `break` and `next` control flow.
 - Chained `elsif` branches in conditional expressions.
 - Normal-completion `else` branches in `begin`/`rescue` expressions.
+- Bare re-raise of the current rescued exception.
 
 ## Next priorities
 

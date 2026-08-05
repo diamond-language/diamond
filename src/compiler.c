@@ -61,6 +61,7 @@ typedef struct Compiler {
     int current_return_type;
     DiamondSpan current_return_type_span;
     LoopContext *current_loop;
+    int current_exception;
     bool failed;
     Local enclosing_locals[DIAMOND_MAX_LOCALS];
     size_t enclosing_local_count;
@@ -2064,8 +2065,15 @@ static uint8_t compile_raise(Compiler *compiler) {
     advance_token(compiler);
     if(compiler->current.kind==DIAMOND_TOKEN_NEWLINE ||
        compiler->current.kind==DIAMOND_TOKEN_END ||
+       compiler->current.kind==DIAMOND_TOKEN_ELSE ||
+       compiler->current.kind==DIAMOND_TOKEN_ENSURE ||
        compiler->current.kind==DIAMOND_TOKEN_EOF) {
-        fail(compiler,keyword,"'raise' requires a value");return 0;
+        if(compiler->current_exception<0) {
+            fail(compiler,keyword,"bare 'raise' used outside rescue");return 0;
+        }
+        emit_instruction(compiler,DIAMOND_OP_RAISE,
+                         (uint8_t)compiler->current_exception,0,0,1);
+        return (uint8_t)compiler->current_exception;
     }
     const uint8_t value=parse_expression(compiler);
     emit_instruction(compiler,DIAMOND_OP_RAISE,value,0,0,1);
@@ -2131,7 +2139,10 @@ static uint8_t compile_begin(Compiler *compiler) {
             }
         }
         if(!consume_block_start(compiler))return destination;
+        const int outer_exception=compiler->current_exception;
+        compiler->current_exception=exception;
         const uint8_t rescued=compile_sequence(compiler);
+        compiler->current_exception=outer_exception;
         emit_instruction(compiler,DIAMOND_OP_MOVE,destination,rescued,0,2);
         compiler->local_count=rescue_local_count;
         rescue_end_jump=emit_jump(compiler,DIAMOND_OP_JUMP,0);
@@ -2307,6 +2318,7 @@ static uint8_t compile_definition(Compiler *compiler) {
     const bool outer_in_function=compiler->in_function;
     const int outer_return_type=compiler->current_return_type;
     const DiamondSpan outer_return_type_span=compiler->current_return_type_span;
+    const int outer_exception=compiler->current_exception;
     LoopContext *outer_loop=compiler->current_loop;
     Local outer_enclosing_locals[DIAMOND_MAX_LOCALS];
     const size_t outer_enclosing_local_count=compiler->enclosing_local_count;
@@ -2323,6 +2335,7 @@ static uint8_t compile_definition(Compiler *compiler) {
          outer_known_type_sets[index]=compiler->known_type_sets[index];}
     compiler->function = function;
     compiler->current_loop=nullptr;
+    compiler->current_exception=-1;
     compiler->local_count = 0;
     compiler->next_register = 0;
     compiler->enclosing_local_count=at_top_level ? 0 : outer_local_count;
@@ -2493,6 +2506,7 @@ static uint8_t compile_definition(Compiler *compiler) {
     compiler->in_function=outer_in_function;
     compiler->current_return_type=outer_return_type;
     compiler->current_return_type_span=outer_return_type_span;
+    compiler->current_exception=outer_exception;
     compiler->current_loop=outer_loop;
     compiler->enclosing_local_count=outer_enclosing_local_count;
     for(size_t i=0;i<outer_enclosing_local_count;i++)
@@ -3451,6 +3465,7 @@ bool diamond_compile(const char *source, DiamondProgram *program,
         .current_class = -1,
         .current_module = -1,
         .current_return_type = -1,
+        .current_exception = -1,
         .diagnostic = diagnostic,
     };
     diamond_lexer_init(&compiler.lexer, source);

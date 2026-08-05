@@ -400,6 +400,7 @@ runtime error: expected String | Nil, got Int
 - `elsif` chains within `if` expressions
 - `until condition ... end` loops, including `break` and `next`
 - `else` after `rescue`, executed only when the protected body completes normally
+- bare `raise` inside a rescue body to rethrow the current exception
 
 ## Architecture
 
