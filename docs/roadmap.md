@@ -162,6 +162,7 @@ future work.
 - Retry integration from later rescue clauses.
 - Single-run ensure integration with multiple rescue clauses.
 - Bare re-raise integration from later rescue clauses.
+- Ordered union-filter dispatch across rescue clauses.
 
 ## Next priorities
 
