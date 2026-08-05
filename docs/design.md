@@ -161,6 +161,11 @@ class fact. Indexing `Array[T]` produces `T`; indexing `Hash[K, V]` produces
 recursive union/subtype checks, eliminating redundant return guards while
 rejecting a hash lookup used where a non-nil value is required.
 
+For a direct `value == nil` or `value != nil` condition, the compiler splits a
+union type-set into nil and non-nil branch facts. Facts for locals that existed
+before the branch are merged at the join; disagreement becomes unknown, so
+branch-local assignment cannot leak an invalid narrowing proof.
+
 ## Deliberate constraints
 
 - No Ruby compatibility guarantee.

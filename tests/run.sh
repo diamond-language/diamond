@@ -314,6 +314,21 @@ actual="$(DIAMOND_STRESS_GC=1 "$diamond" -e $'def mapped()\n def double(value)\n
 actual="$(DIAMOND_STRESS_GC=1 "$diamond" -e $'def total()\n sum = 0\n def add(value)\n  sum = sum + value\n end\n array_each([20, 22], add)\n sum\nend\ntotal()')"
 [[ "$actual" == "42" ]]
 
+actual="$("$diamond" --dump-bytecode -e $'def present(value: String | Nil) -> String\n if value != nil\n  value\n else\n  "fallback"\n end\nend\npresent(nil)')"
+present_dump="$(sed -n '/^== present ==$/,$p' <<<"$actual")"
+[[ "$(grep -c 'CHECK_TYPE' <<<"$present_dump")" == "1" ]]
+
+actual="$("$diamond" --dump-bytecode -e $'def lookup(values: Hash[String, Int]) -> Int\n value = values["answer"]\n if value == nil\n  0\n else\n  value\n end\nend\nlookup({"answer": 42})')"
+lookup_dump="$(sed -n '/^== lookup ==$/,$p' <<<"$actual")"
+[[ "$(grep -c 'CHECK_TYPE' <<<"$lookup_dump")" == "1" ]]
+
+actual="$("$diamond" -e $'def answer(value: Int | Nil) -> Int\n if value != nil\n  value\n else\n  42\n end\nend\nanswer(nil)')"
+[[ "$actual" == "42" ]]
+
+actual="$("$diamond" --dump-bytecode -e $'def unstable(value: String | Nil, flag: Bool) -> String\n if flag\n  value = "changed"\n end\n value\nend\nunstable("ok", false)')"
+unstable_dump="$(sed -n '/^== unstable ==$/,$p' <<<"$actual")"
+[[ "$(grep -c 'CHECK_TYPE' <<<"$unstable_dump")" == "3" ]]
+
 actual="$("$diamond" --dump-bytecode -e $'def maybe(x: String | Nil) -> String | Nil\n x\nend\nmaybe(nil)')"
 grep -q 'String | Nil' <<<"$actual"
 
@@ -676,4 +691,4 @@ if "$diamond" -e $'begin\n raise 1\nrescue error: Int |\n 0\nend' \
     exit 1
 fi
 
-echo "124 tests passed"
+echo "128 tests passed"

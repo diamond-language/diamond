@@ -29,6 +29,14 @@ typedef struct LoopContext {
     size_t break_count;
 } LoopContext;
 
+typedef struct Narrowing {
+    bool valid;
+    uint8_t condition;
+    uint8_t reg;
+    int16_t when_true;
+    int16_t when_false;
+} Narrowing;
+
 typedef struct Compiler {
     const char *source;
     DiamondLexer lexer;
@@ -54,6 +62,7 @@ typedef struct Compiler {
     size_t enclosing_local_count;
     uint8_t capture_registers[16];
     size_t capture_count;
+    Narrowing narrowing;
 } Compiler;
 
 static uint8_t parse_expression(Compiler *compiler);
@@ -850,6 +859,32 @@ static int16_t type_set_with_nil(Compiler *compiler,uint8_t source_index) {
     return (int16_t)result;
 }
 
+static bool split_nil_type_set(Compiler *compiler,uint8_t source_index,
+                               int16_t *without_nil,int16_t *only_nil) {
+    const DiamondTypeSet source=compiler->function->type_sets[source_index];
+    DiamondTypeSet narrowed={};bool found_nil=false;
+    for(size_t index=0;index<source.count;index++) {
+        if(source.members[index].id==DIAMOND_TYPE_NIL)found_nil=true;
+        else narrowed.members[narrowed.count++]=source.members[index];
+    }
+    if(!found_nil||narrowed.count==0||
+       compiler->function->type_set_count+2>DIAMOND_MAX_TYPE_SETS)return false;
+    *without_nil=(int16_t)compiler->function->type_set_count;
+    compiler->function->type_sets[compiler->function->type_set_count++]=narrowed;
+    *only_nil=(int16_t)compiler->function->type_set_count;
+    DiamondTypeSet *nil_set=&compiler->function->type_sets[
+        compiler->function->type_set_count++];
+    *nil_set=(DiamondTypeSet){.members={{.id=DIAMOND_TYPE_NIL,
+        .argument_set=UINT8_MAX,.second_argument_set=UINT8_MAX}},.count=1};
+    return true;
+}
+
+static void apply_type_set_fact(Compiler *compiler,uint8_t reg,int16_t set_index) {
+    compiler->known_type_sets[reg]=set_index;
+    const DiamondTypeSet *set=&compiler->function->type_sets[(size_t)set_index];
+    compiler->known_types[reg]=set->count==1?set->members[0].id:TYPE_UNKNOWN;
+}
+
 static uint8_t parse_index(Compiler *compiler,uint8_t receiver) {
     advance_token(compiler);
     const uint8_t index=parse_expression(compiler);
@@ -885,29 +920,68 @@ static bool consume_block_start(Compiler *compiler) {
 }
 
 static uint8_t parse_if(Compiler *compiler) {
+    compiler->narrowing=(Narrowing){};
     const uint8_t condition = parse_expression(compiler);
+    const Narrowing narrowing=compiler->narrowing.condition==condition
+        ? compiler->narrowing:(Narrowing){};
+    compiler->narrowing=(Narrowing){};
     if (!consume_block_start(compiler)) return 0;
 
     const size_t false_jump = emit_jump(
         compiler, DIAMOND_OP_JUMP_IF_FALSE, condition);
     const uint8_t destination = allocate_register(compiler);
+    const size_t flow_reg_count=compiler->next_register;
+    uint8_t before_types[256];int16_t before_sets[256];
+    for(size_t index=0;index<flow_reg_count;index++) {
+        before_types[index]=compiler->known_types[index];
+        before_sets[index]=compiler->known_type_sets[index];
+    }
+    if(narrowing.valid)
+        apply_type_set_fact(compiler,narrowing.reg,narrowing.when_true);
     const uint8_t then_result = compile_sequence(compiler);
     const uint8_t then_type=compiler->known_types[then_result];
+    const int16_t then_set=compiler->known_type_sets[then_result];
+    uint8_t then_types[256];int16_t then_sets[256];
+    for(size_t index=0;index<flow_reg_count;index++) {
+        then_types[index]=compiler->known_types[index];
+        then_sets[index]=compiler->known_type_sets[index];
+    }
     emit_instruction(compiler, DIAMOND_OP_MOVE, destination, then_result, 0, 2);
     const size_t end_jump = emit_jump(compiler, DIAMOND_OP_JUMP, 0);
     patch_jump(compiler, false_jump, compiler->function->code_count);
 
+    for(size_t index=0;index<flow_reg_count;index++) {
+        compiler->known_types[index]=before_types[index];
+        compiler->known_type_sets[index]=before_sets[index];
+    }
+    if(narrowing.valid)
+        apply_type_set_fact(compiler,narrowing.reg,narrowing.when_false);
+
+    uint8_t result_type=TYPE_UNKNOWN;int16_t result_set=-1;
     if (compiler->current.kind == DIAMOND_TOKEN_ELSE) {
         advance_token(compiler);
         if (!consume_block_start(compiler)) return destination;
         const uint8_t else_result = compile_sequence(compiler);
         const uint8_t else_type=compiler->known_types[else_result];
+        const int16_t else_set=compiler->known_type_sets[else_result];
         emit_instruction(compiler, DIAMOND_OP_MOVE, destination, else_result, 0, 2);
-        if(then_type==else_type) compiler->known_types[destination]=then_type;
+        if(then_type==else_type)result_type=then_type;
+        if(then_set==else_set)result_set=then_set;
     } else {
         emit_instruction(compiler, DIAMOND_OP_NIL, destination, 0, 0, 1);
-        if(then_type==DIAMOND_TYPE_NIL) compiler->known_types[destination]=DIAMOND_TYPE_NIL;
+        if(then_type==DIAMOND_TYPE_NIL)result_type=DIAMOND_TYPE_NIL;
     }
+
+    for(size_t index=0;index<flow_reg_count;index++) {
+        const uint8_t false_type=compiler->known_types[index];
+        const int16_t false_set=compiler->known_type_sets[index];
+        compiler->known_types[index]=then_types[index]==false_type
+            ?then_types[index]:TYPE_UNKNOWN;
+        compiler->known_type_sets[index]=then_sets[index]==false_set
+            ?then_sets[index]:-1;
+    }
+    compiler->known_types[destination]=result_type;
+    compiler->known_type_sets[destination]=result_set;
 
     if (compiler->current.kind != DIAMOND_TOKEN_END) {
         fail(compiler, compiler->current.span, "expected 'end' after if expression");
@@ -1063,6 +1137,26 @@ static uint8_t parse_precedence(Compiler *compiler, Precedence precedence) {
            operator==DIAMOND_TOKEN_LESS || operator==DIAMOND_TOKEN_LESS_EQUAL ||
            operator==DIAMOND_TOKEN_GREATER || operator==DIAMOND_TOKEN_GREATER_EQUAL) {
             compiler->known_types[destination]=DIAMOND_TYPE_BOOL;
+            if(operator==DIAMOND_TOKEN_EQUAL_EQUAL||operator==DIAMOND_TOKEN_BANG_EQUAL) {
+                uint8_t narrowed=left,nil_value=right;
+                if(compiler->known_types[left]==DIAMOND_TYPE_NIL) {
+                    narrowed=right;nil_value=left;
+                }
+                if(compiler->known_types[nil_value]==DIAMOND_TYPE_NIL&&
+                   compiler->known_type_sets[narrowed]>=0) {
+                    int16_t non_nil=-1,nil_only=-1;
+                    if(split_nil_type_set(compiler,
+                       (uint8_t)compiler->known_type_sets[narrowed],
+                       &non_nil,&nil_only)) {
+                        compiler->narrowing=(Narrowing){.valid=true,
+                            .condition=destination,.reg=narrowed,
+                            .when_true=operator==DIAMOND_TOKEN_BANG_EQUAL
+                                ?non_nil:nil_only,
+                            .when_false=operator==DIAMOND_TOKEN_BANG_EQUAL
+                                ?nil_only:non_nil};
+                    }
+                }
+            }
         } else if(compiler->known_types[left]==DIAMOND_TYPE_INT &&
                   compiler->known_types[right]==DIAMOND_TYPE_INT) {
             compiler->known_types[destination]=DIAMOND_TYPE_INT;

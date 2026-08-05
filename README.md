@@ -27,7 +27,7 @@ Implemented today:
 - stop-the-world mark/sweep collection with stress-GC testing;
 - source diagnostics and bytecode disassembly.
 
-The test suite currently contains 124 end-to-end assertions spanning the
+The test suite currently contains 128 end-to-end assertions spanning the
 frontend, compiler, VM, object model, type guards, collections, and collector.
 
 ## Build and run
@@ -168,7 +168,8 @@ in `--dump-bytecode` output like user-defined functions. Arrays expose native
 The compiler removes provably redundant guards, rejects provable mismatches,
 retains checks for dynamic values, and propagates generic element/value facts
 through indexed reads. Hash lookup facts always include `Nil` because missing
-keys return `nil`. Runtime failures preserve source-level type names:
+keys return `nil`. Direct `== nil` and `!= nil` conditions narrow unions inside
+their branches. Runtime failures preserve source-level type names:
 
 ```text
 runtime error: expected String | Nil, got Int
