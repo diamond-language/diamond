@@ -1396,4 +1396,16 @@ if "$diamond" -e $'class Broken\n alias_method answer, missing\nend' >/dev/null 
     exit 1
 fi
 
-echo "339 tests passed"
+actual="$($diamond -e $'class Box\n attr_accessor value: Int\n def raw() = @value\nend\nbox=Box.new()\nbox.value=(42)\n[box.value(), box.raw()]')"
+[[ "$actual" == "[42, 42]" ]]
+
+actual="$($diamond -e $'class Box\n attr_accessor value: Int\n def raw() = @value\nend\nbox=Box.new()\nbegin\n box.value=("wrong")\nrescue error: TypeError\n box.raw()\nend')"
+[[ "$actual" == "nil" ]]
+
+actual="$($diamond -e $'class Box\n attr_reader value: Int\nend\nbegin\n Box.new().value()\nrescue error: TypeError\n 42\nend')"
+[[ "$actual" == "42" ]]
+
+actual="$($diamond -e $'class Pair\n attr_accessor left: Int, right: String\nend\npair=Pair.new()\npair.left=(42)\npair.right=("answer")\n[pair.left(), pair.right()]')"
+[[ "$actual" == "[42, answer]" ]]
+
+echo "343 tests passed"

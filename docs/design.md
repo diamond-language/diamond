@@ -325,6 +325,10 @@ attributes embed symbolic names. Consequently generated accessors require no
 special runtime dispatch and inherit visibility, mixing, caching, and shape
 semantics from the existing method and field machinery.
 
+Typed declarations such as `attr_accessor value: Int` copy the enclosing type
+graph into each generated function. A writer checks its argument before the
+field store; a reader checks the loaded value as its return contract.
+
 A definition treats `=` as part of its method name only when immediately
 followed by `(`, preserving endless `def name = expression`. Invocation appends
 the same suffix before method-name interning, so user-defined writers traverse

@@ -2581,11 +2581,8 @@ static uint8_t compile_definition(Compiler *compiler) {
     return result;
 }
 
-static void compile_attribute_named(Compiler *compiler,bool writer) {
-    if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER) {
-        fail(compiler,compiler->current.span,"expected attribute name");return;
-    }
-    const DiamondSpan name=compiler->current.span;
+static void compile_attribute_named(Compiler *compiler,bool writer,
+                                    DiamondSpan name,int type_set) {
     if(name.length+writer>=DIAMOND_MAX_FUNCTION_NAME||
        compiler->program->function_count==DIAMOND_MAX_FUNCTIONS) {
         fail(compiler,name,"attribute name is too long or function limit reached");
@@ -2658,23 +2655,42 @@ static void compile_attribute_named(Compiler *compiler,bool writer) {
     function->arity=writer?2:1;function->required_arity=function->arity;
     function->return_type_set=UINT8_MAX;
     for(size_t index=0;index<16;index++)function->parameter_type_sets[index]=UINT8_MAX;
+    if(type_set>=0) {
+        function->type_set_count=compiler->function->type_set_count;
+        memcpy(function->type_sets,compiler->function->type_sets,
+               function->type_set_count*sizeof(DiamondTypeSet));
+        if(writer)function->parameter_type_sets[0]=(uint8_t)type_set;
+        else function->return_type_set=(uint8_t)type_set;
+    }
+    size_t code=0;
+    if(writer&&type_set>=0) {
+        function->code[code++]=DIAMOND_OP_CHECK_TYPE;
+        function->code[code++]=1;
+        function->code[code++]=(uint8_t)type_set;
+    }
     if(compiler->current_module>=0&&compiler->current_class<0) {
         function->uses_instance_state=true;
         DiamondStringConstant *string=&function->strings[0];
         (void)snprintf(string->chars,sizeof string->chars,"%s",field_name);
         string->length=strlen(field_name);function->string_count=1;
-        function->code[0]=(uint8_t)(writer?DIAMOND_OP_SET_IVAR_NAME:
-                                     DIAMOND_OP_GET_IVAR_NAME);
-        function->code[1]=writer?0:1;function->code[2]=writer?0:0;
-        function->code[3]=writer?1:0;
+        function->code[code++]=(uint8_t)(writer?DIAMOND_OP_SET_IVAR_NAME:
+                                          DIAMOND_OP_GET_IVAR_NAME);
+        function->code[code++]=writer?0:1;function->code[code++]=0;
+        function->code[code++]=writer?1:0;
     } else {
-        function->code[0]=(uint8_t)(writer?DIAMOND_OP_SET_IVAR:
-                                     DIAMOND_OP_GET_IVAR);
-        function->code[1]=writer?0:1;function->code[2]=writer?field:0;
-        function->code[3]=writer?1:field;
+        function->code[code++]=(uint8_t)(writer?DIAMOND_OP_SET_IVAR:
+                                          DIAMOND_OP_GET_IVAR);
+        function->code[code++]=writer?0:1;
+        function->code[code++]=writer?field:0;
+        function->code[code++]=writer?1:field;
     }
-    function->code[4]=DIAMOND_OP_RETURN;function->code[5]=writer?1:1;
-    function->code_count=6;
+    if(!writer&&type_set>=0) {
+        function->code[code++]=DIAMOND_OP_CHECK_TYPE;
+        function->code[code++]=1;
+        function->code[code++]=(uint8_t)type_set;
+    }
+    function->code[code++]=DIAMOND_OP_RETURN;function->code[code++]=1;
+    function->code_count=code;
     (void)snprintf(method->name,sizeof method->name,"%s",method_name);
     method->function_index=function_index;method->arity=writer?1:0;
     method->required_arity=method->arity;method->is_private=compiler->methods_private;
@@ -2685,10 +2701,18 @@ static void compile_attribute(Compiler *compiler,bool reader,bool writer) {
     const bool parenthesized=compiler->current.kind==DIAMOND_TOKEN_LEFT_PAREN;
     if(parenthesized)advance_token(compiler);
     while(!compiler->failed) {
-        if(reader)compile_attribute_named(compiler,false);
-        if(writer&&!compiler->failed)compile_attribute_named(compiler,true);
+        if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER) {
+            fail(compiler,compiler->current.span,"expected attribute name");return;
+        }
+        const DiamondSpan name=compiler->current.span;advance_token(compiler);
+        int type_set=-1;
+        if(compiler->current.kind==DIAMOND_TOKEN_COLON) {
+            advance_token(compiler);type_set=parse_type_annotation(compiler);
+        }
+        if(reader)compile_attribute_named(compiler,false,name,type_set);
+        if(writer&&!compiler->failed)
+            compile_attribute_named(compiler,true,name,type_set);
         if(compiler->failed)return;
-        advance_token(compiler);
         if(compiler->current.kind!=DIAMOND_TOKEN_COMMA)break;
         advance_token(compiler);
     }

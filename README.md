@@ -309,6 +309,9 @@ methods honor current visibility, inheritance, mixin state, and shape tracking.
 `attr_accessor name` generates both methods in one declaration.
 All three forms accept comma-separated names, such as `attr_accessor x, y`.
 Parenthesized spelling such as `attr_accessor(x, y)` is equivalent.
+An optional annotation contracts both generated methods, as in
+`attr_accessor value: Int`; writers validate before mutating the field and
+readers validate the stored result.
 `attr name` is a compact reader-only synonym for `attr_reader name`.
 
 `alias_method new_name, existing_name` adds another instance-method descriptor

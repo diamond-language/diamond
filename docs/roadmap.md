@@ -119,6 +119,7 @@ future work.
 - User-defined writer methods with typed/default parameters, module state, and
   private self-dispatch, while preserving endless-method parsing.
 - Combined `attr_accessor` generation for class and module fields.
+- Optional gradual type contracts on generated attribute readers and writers.
 - Comma-separated multi-name reader, writer, and accessor declarations.
 - Targeted multi-name public/private changes for locally defined and generated
   methods without altering subsequent-definition defaults.
