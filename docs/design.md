@@ -374,6 +374,10 @@ While compiling a rescue body, the compiler records its exception register;
 bare `raise` emits the ordinary raise opcode against that register. The context
 is scoped across nested rescue blocks and cleared for nested function bodies.
 
+`retry` jumps to the rescue-handler installation immediately before the
+protected body. The surrounding ensure frame remains installed, so repeated
+attempts do not duplicate cleanup and final completion runs it exactly once.
+
 `value is Type` emits a non-throwing runtime predicate and has comparison
 precedence. For a direct conditional test, union members accepted by `Type`
 (including nominal subclasses) flow into the true branch and the complement

@@ -1515,4 +1515,15 @@ if "$diamond" -e $'raise' >/dev/null 2>&1; then
     exit 1
 fi
 
-echo "376 tests passed"
+actual="$($diamond -e $'attempts = 0\nbegin\n attempts = attempts + 1\n if attempts < 3\n  raise "again"\n end\n attempts\nrescue error\n retry\nend')"
+[[ "$actual" == "3" ]]
+
+actual="$($diamond -e $'attempts = 0\ncleanups = 0\nbegin\n attempts = attempts + 1\n if attempts < 2\n  raise "again"\n end\nrescue error\n retry\nensure\n cleanups = cleanups + 1\nend\n[attempts, cleanups]')"
+[[ "$actual" == "[2, 1]" ]]
+
+if "$diamond" -e $'retry' >/dev/null 2>&1; then
+    echo "retry outside rescue unexpectedly compiled" >&2
+    exit 1
+fi
+
+echo "379 tests passed"

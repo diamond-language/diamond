@@ -62,6 +62,7 @@ typedef struct Compiler {
     DiamondSpan current_return_type_span;
     LoopContext *current_loop;
     int current_exception;
+    size_t current_retry_target;
     bool failed;
     Local enclosing_locals[DIAMOND_MAX_LOCALS];
     size_t enclosing_local_count;
@@ -2086,6 +2087,7 @@ static uint8_t compile_begin(Compiler *compiler) {
     emit_opcode(compiler,DIAMOND_OP_PUSH_ENSURE);
     emit_byte(compiler,0);emit_byte(compiler,0);
     const uint8_t exception=allocate_register(compiler);
+    const size_t retry_target=compiler->function->code_count;
     const size_t handler_type_operand=compiler->function->code_count+2;
     const size_t handler_types_operand=compiler->function->code_count+3;
     const size_t handler_operand=compiler->function->code_count+11;
@@ -2140,9 +2142,12 @@ static uint8_t compile_begin(Compiler *compiler) {
         }
         if(!consume_block_start(compiler))return destination;
         const int outer_exception=compiler->current_exception;
+        const size_t outer_retry_target=compiler->current_retry_target;
         compiler->current_exception=exception;
+        compiler->current_retry_target=retry_target;
         const uint8_t rescued=compile_sequence(compiler);
         compiler->current_exception=outer_exception;
+        compiler->current_retry_target=outer_retry_target;
         emit_instruction(compiler,DIAMOND_OP_MOVE,destination,rescued,0,2);
         compiler->local_count=rescue_local_count;
         rescue_end_jump=emit_jump(compiler,DIAMOND_OP_JUMP,0);
@@ -2178,6 +2183,19 @@ static uint8_t compile_begin(Compiler *compiler) {
     advance_token(compiler);
     patch_jump(compiler,continuation_operand,compiler->function->code_count);
     return destination;
+}
+
+static uint8_t compile_retry(Compiler *compiler) {
+    const DiamondSpan keyword=compiler->current.span;
+    advance_token(compiler);
+    if(compiler->current_retry_target==SIZE_MAX) {
+        fail(compiler,keyword,"'retry' used outside rescue");return 0;
+    }
+    emit_absolute_jump(compiler,compiler->current_retry_target);
+    const uint8_t result=allocate_register(compiler);
+    emit_instruction(compiler,DIAMOND_OP_NIL,result,0,0,1);
+    compiler->known_types[result]=DIAMOND_TYPE_NIL;
+    return result;
 }
 
 static uint8_t compile_loop_control(Compiler *compiler) {
@@ -2319,6 +2337,7 @@ static uint8_t compile_definition(Compiler *compiler) {
     const int outer_return_type=compiler->current_return_type;
     const DiamondSpan outer_return_type_span=compiler->current_return_type_span;
     const int outer_exception=compiler->current_exception;
+    const size_t outer_retry_target=compiler->current_retry_target;
     LoopContext *outer_loop=compiler->current_loop;
     Local outer_enclosing_locals[DIAMOND_MAX_LOCALS];
     const size_t outer_enclosing_local_count=compiler->enclosing_local_count;
@@ -2336,6 +2355,7 @@ static uint8_t compile_definition(Compiler *compiler) {
     compiler->function = function;
     compiler->current_loop=nullptr;
     compiler->current_exception=-1;
+    compiler->current_retry_target=SIZE_MAX;
     compiler->local_count = 0;
     compiler->next_register = 0;
     compiler->enclosing_local_count=at_top_level ? 0 : outer_local_count;
@@ -2507,6 +2527,7 @@ static uint8_t compile_definition(Compiler *compiler) {
     compiler->current_return_type=outer_return_type;
     compiler->current_return_type_span=outer_return_type_span;
     compiler->current_exception=outer_exception;
+    compiler->current_retry_target=outer_retry_target;
     compiler->current_loop=outer_loop;
     compiler->enclosing_local_count=outer_enclosing_local_count;
     for(size_t i=0;i<outer_enclosing_local_count;i++)
@@ -3410,6 +3431,8 @@ static uint8_t compile_sequence(Compiler *compiler) {
             result=compile_return(compiler);
         } else if (compiler->current.kind == DIAMOND_TOKEN_RAISE) {
             result=compile_raise(compiler);
+        } else if (compiler->current.kind == DIAMOND_TOKEN_RETRY) {
+            result=compile_retry(compiler);
         } else if (compiler->current.kind == DIAMOND_TOKEN_BEGIN) {
             advance_token(compiler);
             result=compile_begin(compiler);
@@ -3466,6 +3489,7 @@ bool diamond_compile(const char *source, DiamondProgram *program,
         .current_module = -1,
         .current_return_type = -1,
         .current_exception = -1,
+        .current_retry_target = SIZE_MAX,
         .diagnostic = diagnostic,
     };
     diamond_lexer_init(&compiler.lexer, source);
