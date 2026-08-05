@@ -64,11 +64,12 @@ future work.
 - Persistent, recursively checked `Array[Element]` annotations.
 - Persistent `Hash[Key, Value]` contracts for entries and mutations.
 - C23-embedded Diamond core prelude with initial collection helpers.
+- Native collection `length()` with Diamond-written last/fallback/predicate helpers.
 
 ## Next priorities
 
-1. Native collection-size primitives exposed to Diamond-written helpers.
-2. Flow-sensitive collection result types and broader collection APIs.
+1. Flow-sensitive collection result types.
+2. Broader collection APIs implemented through the Diamond prelude.
 
 ## Later experiments
 

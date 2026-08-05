@@ -4,6 +4,30 @@ def array_first(values: Array)
   values[0]
 end
 
+def array_first_or(values: Array, fallback)
+  if values.length() == 0
+    fallback
+  else
+    values[0]
+  end
+end
+
+def array_last(values: Array)
+  values[values.length() - 1]
+end
+
+def array_last_or(values: Array, fallback)
+  if values.length() == 0
+    fallback
+  else
+    array_last(values)
+  end
+end
+
+def array_empty(values: Array) -> Bool
+  values.length() == 0
+end
+
 def array_swap_first_two(values: Array) -> Array
   first = values[0]
   second = values[1]
@@ -19,4 +43,9 @@ def hash_fetch(values: Hash, key, fallback)
   else
     found
   end
+end
+
+
+def hash_empty(values: Hash) -> Bool
+  values.length() == 0
 end

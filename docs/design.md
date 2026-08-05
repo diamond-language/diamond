@@ -79,6 +79,11 @@ diagnostics and stack traces at their original coordinates. Core helpers are
 therefore ordinary Diamond functions using the same bytecode, typing, exception,
 and GC paths as application code; C only loads and composes the source.
 
+Dynamic invocation recognizes one native collection primitive: zero-argument
+`length()` on arrays, hashes, and strings (string length counts stored bytes).
+Bounds decisions, fallback behavior, and empty predicates are implemented in
+the Diamond prelude using that primitive.
+
 ## Object model
 
 Classes are immutable module metadata rather than heap objects. Instances point

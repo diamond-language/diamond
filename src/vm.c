@@ -993,10 +993,27 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 READ_BYTE(dest);READ_BYTE(recv);READ_BYTE(name);READ_BYTE(base);READ_BYTE(argc);
                 if(argc>16) VM_RETURN(DIAMOND_VM_ARITY_ERROR);
                 if(registers[recv].kind!=DIAMOND_VALUE_OBJECT||
-                   registers[recv].as.object->kind!=DIAMOND_OBJECT_INSTANCE||
                    (size_t)name>=chunk->string_count) VM_RETURN(DIAMOND_VM_TYPE_ERROR);
-                DiamondInstance *instance=(DiamondInstance *)registers[recv].as.object;
                 const DiamondStringConstant *method_name=&chunk->strings[name];
+                const DiamondObjectKind receiver_kind=registers[recv].as.object->kind;
+                if(receiver_kind==DIAMOND_OBJECT_ARRAY||
+                   receiver_kind==DIAMOND_OBJECT_HASH||
+                   receiver_kind==DIAMOND_OBJECT_STRING) {
+                    const bool length_method=method_name->length==6&&
+                        memcmp(method_name->chars,"length",6)==0;
+                    if(!length_method)VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                    if(argc!=0)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                    size_t length=0;
+                    if(receiver_kind==DIAMOND_OBJECT_ARRAY)
+                        length=((DiamondArray *)registers[recv].as.object)->count;
+                    else if(receiver_kind==DIAMOND_OBJECT_HASH)
+                        length=((DiamondHash *)registers[recv].as.object)->count;
+                    else length=((DiamondString *)registers[recv].as.object)->length;
+                    registers[dest]=DIAMOND_INT((int64_t)length);break;
+                }
+                if(receiver_kind!=DIAMOND_OBJECT_INSTANCE)
+                    VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                DiamondInstance *instance=(DiamondInstance *)registers[recv].as.object;
                 const DiamondMethod *method=lookup_method_cached(
                     vm,chunk,chunk->code+instruction_offset,instance->class,
                     method_name->chars,method_name->length);

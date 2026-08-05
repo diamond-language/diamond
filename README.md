@@ -160,7 +160,9 @@ key and value annotations, such as `Hash[String, Array[Int]]`.
 
 The embedded core prelude is ordinary Diamond source from `lib/core.dia`.
 Current helpers include `array_first`, `array_swap_first_two`, and `hash_fetch`;
-their bytecode appears in `--dump-bytecode` output like user-defined functions.
+the prelude also provides fallback-aware first/last operations and empty
+predicates. Their bytecode appears in `--dump-bytecode` output like user-defined
+functions. Arrays, hashes, and strings expose the native `length()` primitive.
 
 The compiler removes provably redundant guards, rejects provable mismatches,
 and retains checks for dynamic values. Runtime failures preserve source-level
@@ -215,8 +217,8 @@ Field sites use four-entry polymorphic caches guarded by instance shape.
 - No modules, mixins, singleton methods, or visibility.
 - Classes own immutable shape chains for lazily materialized field prefixes;
   method calls and field access use four-entry polymorphic inline caches.
-- Generic contracts currently guard indexed mutation; collection method APIs
-  remain deliberately small.
+- Generic contracts guard indexed mutation. Collection APIs currently comprise
+  indexing, native `length()`, and the Diamond-written prelude helpers.
 - Fixed limits exist for bytecode, constants, functions, classes, fields, and
   registers.
 - Bytecode and language semantics are unstable by design.

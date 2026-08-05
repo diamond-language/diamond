@@ -250,6 +250,27 @@ actual="$("$diamond" --dump-bytecode -e 'array_first([42])')"
 grep -q '^== array_first ==$' <<<"$actual"
 grep -q 'INDEX_GET' <<<"$actual"
 
+actual="$("$diamond" -e '[20, 22].length()')"
+[[ "$actual" == "2" ]]
+
+actual="$("$diamond" -e '{"answer": 42}.length()')"
+[[ "$actual" == "1" ]]
+
+actual="$("$diamond" -e '"diamond".length()')"
+[[ "$actual" == "7" ]]
+
+actual="$(DIAMOND_STRESS_GC=1 "$diamond" -e 'array_first_or([], 40) + array_last([1, 2])')"
+[[ "$actual" == "42" ]]
+
+actual="$("$diamond" -e 'array_last_or([], 42)')"
+[[ "$actual" == "42" ]]
+
+actual="$("$diamond" -e 'array_empty([]) && hash_empty({})')"
+[[ "$actual" == "true" ]]
+
+actual="$("$diamond" -e $'begin\n [1].length(2)\nrescue error: ArgumentError\n 42\nend')"
+[[ "$actual" == "42" ]]
+
 actual="$("$diamond" --dump-bytecode -e $'def maybe(x: String | Nil) -> String | Nil\n x\nend\nmaybe(nil)')"
 grep -q 'String | Nil' <<<"$actual"
 
@@ -612,4 +633,4 @@ if "$diamond" -e $'begin\n raise 1\nrescue error: Int |\n 0\nend' \
     exit 1
 fi
 
-echo "105 tests passed"
+echo "112 tests passed"
