@@ -188,10 +188,11 @@ future work.
 - Postfix `if` and `unless` modifiers with direct bytecode layout.
 - Postfix modifiers on `break`, `next`, `redo`, `return`, `raise`, and `retry`.
 - Nested-loop and rescue-control modifier targeting.
+- Endless function and method bodies with postfix `if`/`unless` conditions.
 
 ## Next priorities
 
-1. Add modifier support to remaining declaration-oriented statement forms while
+1. Review modifier interactions with imports and namespace declarations while
    preserving precise result-register and control-flow semantics.
 
 ## Later experiments
