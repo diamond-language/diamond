@@ -119,10 +119,11 @@ future work.
 - User-defined writer methods with typed/default parameters, module state, and
   private self-dispatch, while preserving endless-method parsing.
 - Combined `attr_accessor` generation for class and module fields.
+- Comma-separated multi-name reader, writer, and accessor declarations.
 
 ## Next priorities
 
-1. Allow multiple names in attribute declarations.
+1. Add targeted `private name` and `public name` visibility changes.
 
 ## Later experiments
 

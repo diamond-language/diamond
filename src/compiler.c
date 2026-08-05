@@ -2633,9 +2633,14 @@ static void compile_attribute_named(Compiler *compiler,bool writer) {
 
 static void compile_attribute(Compiler *compiler,bool reader,bool writer) {
     advance_token(compiler);
-    if(reader)compile_attribute_named(compiler,false);
-    if(writer&&!compiler->failed)compile_attribute_named(compiler,true);
-    if(!compiler->failed)advance_token(compiler);
+    while(!compiler->failed) {
+        if(reader)compile_attribute_named(compiler,false);
+        if(writer&&!compiler->failed)compile_attribute_named(compiler,true);
+        if(compiler->failed)return;
+        advance_token(compiler);
+        if(compiler->current.kind!=DIAMOND_TOKEN_COMMA)break;
+        advance_token(compiler);
+    }
 }
 
 static uint8_t compile_class(Compiler *compiler) {

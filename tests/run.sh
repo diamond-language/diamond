@@ -1292,4 +1292,15 @@ actual="$($diamond -e $'class Box\n attr_accessor value\nend\nbox=Box.new()\nbox
 actual="$($diamond -e $'module Named\n attr_accessor name\nend\nclass Person\n include Named\nend\nperson=Person.new()\nperson.name=("Ada")\nperson.name()')"
 [[ "$actual" == "Ada" ]]
 
-echo "309 tests passed"
+actual="$($diamond -e $'class Point\n attr_accessor x, y\nend\npoint=Point.new()\npoint.x=(20)\npoint.y=(22)\npoint.x() + point.y()')"
+[[ "$actual" == "42" ]]
+
+actual="$($diamond -e $'module Pair\n attr_reader left, right\nend\nclass Box\n include Pair\nend\n[Box.new().left(), Box.new().right()]')"
+[[ "$actual" == "[nil, nil]" ]]
+
+if "$diamond" -e $'class Broken\n attr_reader value,\nend' >/dev/null 2>&1; then
+    echo "trailing attribute comma unexpectedly compiled" >&2
+    exit 1
+fi
+
+echo "312 tests passed"
