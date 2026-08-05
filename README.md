@@ -179,6 +179,7 @@ Single-expression functions and methods may use the endless form without an
 
 ```ruby
 def answer() -> Int = 42
+def greet(name = "world") = "Hello, #{name}" if name
 ```
 
 Endless definitions support ordinary parameters, annotations, methods, and
