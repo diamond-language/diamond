@@ -110,7 +110,11 @@ static bool expand(Loader *loader,const char *path,const char *source) {
                !record_segment(loader,path,chunk_line,start+9,loader->length))return false;
             char requested[DIAMOND_MAX_SOURCE_PATH];
             const size_t request_length=close-(quote+1);
-            if(request_length+5>=sizeof requested)return false;
+            if(request_length+5>=sizeof requested) {
+                (void)snprintf(loader->error,loader->error_capacity,
+                    "%s:%zu: required path is too long",path,line);
+                return false;
+            }
             memcpy(requested,source+quote+1,request_length);requested[request_length]='\0';
             if(request_length<4||strcmp(requested+request_length-4,".dia")!=0)
                 memcpy(requested+request_length,".dia",5);
@@ -118,10 +122,18 @@ static bool expand(Loader *loader,const char *path,const char *source) {
             const char *slash=strrchr(path,'/');
             const size_t directory=slash==nullptr?0:(size_t)(slash-path)+1;
             if(requested[0]=='/') {
-                if(strlen(requested)+1>sizeof joined)return false;
+                if(strlen(requested)+1>sizeof joined) {
+                    (void)snprintf(loader->error,loader->error_capacity,
+                        "%s:%zu: resolved required path is too long",path,line);
+                    return false;
+                }
                 strcpy(joined,requested);
             } else {
-                if(directory+strlen(requested)+1>sizeof joined)return false;
+                if(directory+strlen(requested)+1>sizeof joined) {
+                    (void)snprintf(loader->error,loader->error_capacity,
+                        "%s:%zu: resolved required path is too long",path,line);
+                    return false;
+                }
                 memcpy(joined,path,directory);strcpy(joined+directory,requested);
             }
             char canonical[DIAMOND_MAX_SOURCE_PATH];
