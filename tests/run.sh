@@ -1659,4 +1659,6 @@ actual="$($diamond -e $'class DetailedError < StandardError\n attr_accessor mess
 [[ "$actual" == "42" ]]
 actual="$($diamond -e $'class DetailedError < StandardError\n attr_accessor message: String\nend\nclass NetworkError < DetailedError\nend\nerror=NetworkError.new()\nerror.message=("offline")\nbegin\n raise error\nrescue caught: DetailedError\n caught.message()\nend')"
 [[ "$actual" == "offline" ]]
-echo "423 tests passed"
+actual="$($diamond -e $'class DetailedError < StandardError\n attr_accessor message: String\nend\nerror=DetailedError.new()\nerror.message=("kept")\nbegin\n begin\n  raise error\n rescue inner: DetailedError\n  raise\n end\nrescue outer: DetailedError\n outer.message()\nend')"
+[[ "$actual" == "kept" ]]
+echo "424 tests passed"
