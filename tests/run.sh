@@ -1736,4 +1736,6 @@ actual="$($diamond -e $'attempts=0\nbegin\n attempts=attempts+1\n [1][4]\nrescue
 [[ "$actual" == "4" ]]
 actual="$($diamond -e $'outer=loop do\n inner=loop do\n  next if false\n  break 20\n end\n break inner+22\nend\nouter')"
 [[ "$actual" == "42" ]]
-echo "460 tests passed"
+actual="$($diamond -e $'def typed_return(flag: Bool) -> Int\n return 42 if flag\n 7\nend\n[typed_return(true), typed_return(false)]')"
+[[ "$actual" == "[42, 7]" ]]
+echo "461 tests passed"
