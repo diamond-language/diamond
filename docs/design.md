@@ -173,7 +173,11 @@ and union bindings by walking annotated arguments and declared callback returns.
 The execution chunk exposes those bindings to parameter and return guards.
 When a checked Array or Hash escapes, its constraint copies the binding IDs and
 counts instead of retaining frame-local pointers, preserving generic mutation
-safety. Binding a variable to a recursively parameterized type remains deferred.
+safety. Bindings use bounded graphs of union nodes with Array/Hash child links,
+so variables may represent recursively parameterized structures. Graphs inferred
+from declared callback returns retain structure even when the mapped input is
+empty; an empty value with no other evidence naturally leaves its child node
+unbound.
 
 Annotations are optional. Parameters are checked on function entry and return
 values on every implicit or explicit exit unless the compiler proves the guard

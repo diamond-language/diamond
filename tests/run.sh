@@ -1020,4 +1020,16 @@ actual="$(DIAMOND_STRESS_GC=1 "$diamond" -e $'def singleton[T](value: T) -> Arra
 actual="$($diamond -e $'def bad[T](value: T) -> T = "wrong"\nbegin\n bad(42)\nrescue error: TypeError\n 42\nend')"
 [[ "$actual" == "42" ]]
 
-echo "226 tests passed"
+actual="$($diamond -e $'def singleton[T](value: T) -> Array[T] = [value]\nresult = singleton(["diamond"])\nbegin\n result.push([42])\nrescue error: TypeError\n 42\nend')"
+[[ "$actual" == "42" ]]
+
+actual="$($diamond -e $'def run()\n def words(value: Int) -> Array[String] = ["#{value}"]\n result = array_map_typed([], words)\n begin\n  result.push([42])\n rescue error: TypeError\n 42\n end\nend\nrun()')"
+[[ "$actual" == "42" ]]
+
+actual="$($diamond -e $'def singleton[T](value: T) -> Array[T] = [value]\nresult = singleton({"items": [1]})\nbegin\n result.push({"items": ["wrong"]})\nrescue error: TypeError\n 42\nend')"
+[[ "$actual" == "42" ]]
+
+actual="$(DIAMOND_STRESS_GC=1 "$diamond" -e $'def singleton[T](value: T) -> Array[T] = [value]\nresult = singleton([["diamond"]])\nbegin\n result.push([[42]])\nrescue error: TypeError\n 42\nend')"
+[[ "$actual" == "42" ]]
+
+echo "230 tests passed"

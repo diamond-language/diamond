@@ -32,6 +32,21 @@ typedef struct DiamondShape DiamondShape;
 typedef struct DiamondTypeSet DiamondTypeSet;
 typedef struct DiamondInterface DiamondInterface;
 
+enum { DIAMOND_BOUND_TYPE_NODES=16,DIAMOND_BOUND_TYPE_MEMBERS=8 };
+typedef struct DiamondBoundTypeMember {
+    uint8_t id;
+    uint8_t argument_node;
+    uint8_t second_argument_node;
+} DiamondBoundTypeMember;
+typedef struct DiamondBoundTypeNode {
+    DiamondBoundTypeMember members[DIAMOND_BOUND_TYPE_MEMBERS];
+    uint8_t count;
+} DiamondBoundTypeNode;
+typedef struct DiamondTypeBinding {
+    DiamondBoundTypeNode nodes[DIAMOND_BOUND_TYPE_NODES];
+    uint8_t node_count;
+} DiamondTypeBinding;
+
 typedef struct DiamondInstance {
     DiamondObject object;
     const DiamondClass *class;
@@ -52,8 +67,7 @@ typedef struct DiamondArray {
         size_t class_count;
         const DiamondInterface *interfaces;
         size_t interface_count;
-        uint8_t type_variable_bindings[8][8];
-        uint8_t type_variable_binding_counts[8];
+        DiamondTypeBinding *type_variable_bindings;
         uint8_t type_variable_count;
     } constraints[4];
     uint8_t constraint_count;
@@ -79,8 +93,7 @@ typedef struct DiamondHash {
         size_t class_count;
         const DiamondInterface *interfaces;
         size_t interface_count;
-        uint8_t type_variable_bindings[8][8];
-        uint8_t type_variable_binding_counts[8];
+        DiamondTypeBinding *type_variable_bindings;
         uint8_t type_variable_count;
     } constraints[4];
     uint8_t constraint_count;

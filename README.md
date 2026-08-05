@@ -27,7 +27,7 @@ Implemented today:
 - stop-the-world mark/sweep collection with stress-GC testing;
 - source diagnostics and bytecode disassembly.
 
-The test suite currently contains 226 end-to-end assertions spanning the
+The test suite currently contains 230 end-to-end assertions spanning the
 frontend, compiler, VM, object model, type guards, collections, and collector.
 
 ## Build and run
@@ -237,8 +237,9 @@ Calls infer variables from scalar, collection, and callable arguments. Primitive
 nominal, and union bindings participate in callee checks and are copied into
 returned Array/Hash contracts, so mutations remain guarded after the call frame
 ends. The core `array_map_typed` binds its output from the callback's declared
-return type, including for empty inputs. Deep structural bindings such as a type
-variable representing `Array[String]` are not recursively substituted yet.
+return type, including for empty inputs. Bindings preserve recursive structures
+such as `Array[String]` and `Hash[String, Array[Int]]`; empty runtime collections
+need another inference source before their inner type can be known.
 
 The embedded core prelude is ordinary Diamond source from `lib/core.dia`.
 Current helpers include `array_first`, `array_swap_first_two`, and `hash_fetch`;

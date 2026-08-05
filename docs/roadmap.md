@@ -90,10 +90,11 @@ future work.
   metadata and explicit runtime erasure.
 - Runtime generic binding from values and callable returns, with persistent
   primitive, nominal, and union substitutions on returned collections.
+- Bounded recursive generic binding graphs for nested Array and Hash types.
 
 ## Next priorities
 
-1. Recursive structural generic bindings and typed Callable parameters.
+1. Typed Callable parameter signatures.
 
 ## Later experiments
 

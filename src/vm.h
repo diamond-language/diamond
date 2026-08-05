@@ -203,8 +203,7 @@ typedef struct DiamondChunk {
     const uint8_t *parameter_type_sets;
     uint8_t type_variable_count;
     uint8_t parameter_offset;
-    const uint8_t (*type_variable_bindings)[DIAMOND_MAX_UNION_TYPES];
-    const uint8_t *type_variable_binding_counts;
+    const DiamondTypeBinding *type_variable_bindings;
 } DiamondChunk;
 
 typedef enum DiamondVmStatus : uint8_t {
