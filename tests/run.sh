@@ -1672,4 +1672,6 @@ actual="$($diamond -e $'root=TypeError.new("root")\nerror=RuntimeError.new("wrap
 actual="$($diamond -e $'error=RuntimeError.new()\n[error.message(), error.cause()]')"
 [[ "$actual" == "[nil, nil]" ]]
 if "$diamond" -e $'RuntimeError.new(1, 2, 3)' >/dev/null 2>&1; then exit 1; fi
-echo "430 tests passed"
+actual="$(DIAMOND_STRESS_GC=1 $diamond -e $'begin\n 1 / 0\nrescue error: ZeroDivisionError\n error.message()\nend')"
+[[ "$actual" == "division by zero" ]]
+echo "431 tests passed"

@@ -178,6 +178,7 @@ future work.
 - Uniform cause slots on built-in and user exception hierarchies.
 - Native message/cause construction for exception instances.
 - Exception constructor defaults and strict arity diagnostics.
+- Stress-GC rooting for VM-created exception payloads.
 - Diagnostics for subclass filters shadowed by earlier superclass clauses.
 
 ## Next priorities
