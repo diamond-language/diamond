@@ -98,6 +98,16 @@ DiamondToken diamond_lexer_next(DiamondLexer *lexer) {
             continue;
         }
         if (character == '#') {
+            static constexpr char line_reset[]="#line 1";
+            bool reset=true;
+            for(size_t index=0;index<sizeof(line_reset)-1;index++)
+                if(lexer->source[lexer->current+index]!=line_reset[index]) {
+                    reset=false;break;
+                }
+            if(reset) {
+                const char after=lexer->source[lexer->current+sizeof(line_reset)-1];
+                if(after=='\n'||after=='\0')lexer->line=0;
+            }
             while (!at_end(lexer) && lexer->source[lexer->current] != '\n') {
                 advance(lexer);
             }

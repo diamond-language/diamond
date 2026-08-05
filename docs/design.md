@@ -71,6 +71,14 @@ provably redundant type guards, rejects provable mismatches, and leaves runtime
 guards at dynamic boundaries. Mutable and uncertain flows are treated
 conservatively.
 
+## Core prelude
+
+The C23 executable embeds `lib/core.dia` with `#embed` and prefixes it to each
+file or `-e` program before compilation. An internal line reset keeps user
+diagnostics and stack traces at their original coordinates. Core helpers are
+therefore ordinary Diamond functions using the same bytecode, typing, exception,
+and GC paths as application code; C only loads and composes the source.
+
 ## Object model
 
 Classes are immutable module metadata rather than heap objects. Instances point

@@ -1,0 +1,22 @@
+# This file is compiled as ordinary Diamond before every user program.
+
+def array_first(values: Array)
+  values[0]
+end
+
+def array_swap_first_two(values: Array) -> Array
+  first = values[0]
+  second = values[1]
+  values[0] = second
+  values[1] = first
+  values
+end
+
+def hash_fetch(values: Hash, key, fallback)
+  found = values[key]
+  if found == nil
+    fallback
+  else
+    found
+  end
+end

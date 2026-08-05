@@ -234,6 +234,22 @@ rm -f "$error_file"
 actual="$("$diamond" --dump-bytecode -e $'def nested(values: Hash[String, Array[Int | Nil]])\n values\nend\nnested({"items": [nil]})')"
 grep -q 'Hash\[String, Array\[Int | Nil\]\]' <<<"$actual"
 
+actual="$(DIAMOND_STRESS_GC=1 "$diamond" -e 'array_first([42])')"
+[[ "$actual" == "42" ]]
+
+actual="$(DIAMOND_STRESS_GC=1 "$diamond" -e 'array_swap_first_two([20, 22])')"
+[[ "$actual" == "[22, 20]" ]]
+
+actual="$(DIAMOND_STRESS_GC=1 "$diamond" -e 'hash_fetch({"answer": 42}, "answer", 0)')"
+[[ "$actual" == "42" ]]
+
+actual="$("$diamond" -e 'hash_fetch({}, "missing", 42)')"
+[[ "$actual" == "42" ]]
+
+actual="$("$diamond" --dump-bytecode -e 'array_first([42])')"
+grep -q '^== array_first ==$' <<<"$actual"
+grep -q 'INDEX_GET' <<<"$actual"
+
 actual="$("$diamond" --dump-bytecode -e $'def maybe(x: String | Nil) -> String | Nil\n x\nend\nmaybe(nil)')"
 grep -q 'String | Nil' <<<"$actual"
 
@@ -258,7 +274,8 @@ grep -q 'runtime error: expected Animal, got Rock' "$error_file"
 rm -f "$error_file"
 
 actual="$("$diamond" --dump-bytecode -e $'def literal() -> Int\n  42\nend\nliteral()')"
-if grep -q 'CHECK_TYPE' <<<"$actual"; then
+literal_dump="$(sed -n '/^== literal ==$/,$p' <<<"$actual")"
+if grep -q 'CHECK_TYPE' <<<"$literal_dump"; then
     echo "provably redundant return guard was not eliminated" >&2
     exit 1
 fi
@@ -277,7 +294,8 @@ actual="$("$diamond" --dump-bytecode -e $'def dynamic(x) -> Int\n  x\nend\ndynam
 grep -q 'CHECK_TYPE.*Int' <<<"$actual"
 
 actual="$("$diamond" --dump-bytecode -e $'def absent() -> String | Nil\n  nil\nend\nabsent()')"
-if grep -q 'CHECK_TYPE' <<<"$actual"; then
+absent_dump="$(sed -n '/^== absent ==$/,$p' <<<"$actual")"
+if grep -q 'CHECK_TYPE' <<<"$absent_dump"; then
     echo "provably nil return retained a nilable guard" >&2
     exit 1
 fi
@@ -503,7 +521,7 @@ grep -q 'at tests/cases/stack_trace.dia:11:' "$error_file"
 rm -f "$error_file"
 
 actual="$("$diamond" --dump-bytecode -e '40 + 2')"
-grep -Eq '^000[0-9]+ +1:[0-9]+ +ADD' <<<"$actual"
+grep -Eq '^[0-9]{4} +1:[0-9]+ +ADD' <<<"$actual"
 
 actual="$(DIAMOND_STRESS_GC=1 "$diamond" tests/cases/closure_capture.dia)"
 [[ "$actual" == "47" ]]
@@ -594,4 +612,4 @@ if "$diamond" -e $'begin\n raise 1\nrescue error: Int |\n 0\nend' \
     exit 1
 fi
 
-echo "101 tests passed"
+echo "105 tests passed"

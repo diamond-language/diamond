@@ -9,6 +9,11 @@
 #include <string.h>
 
 static constexpr char DIAMOND_VERSION[] = "0.1.0-dev";
+static constexpr unsigned char DIAMOND_CORE_SOURCE[] = {
+#embed "../lib/core.dia" suffix(,)
+    0
+};
+static constexpr char DIAMOND_USER_LINE_RESET[] = "\n#line 1\n";
 
 static void print_diagnostic(const char *name, const char *source,
                              DiamondDiagnostic diagnostic) {
@@ -31,10 +36,22 @@ static void print_diagnostic(const char *name, const char *source,
 }
 
 static int run_source(const char *name, const char *source, bool dump_bytecode) {
+    const size_t core_length=sizeof(DIAMOND_CORE_SOURCE)-1;
+    const size_t source_length=strlen(source);
+    const size_t reset_length=sizeof(DIAMOND_USER_LINE_RESET)-1;
+    char *combined=malloc(core_length+reset_length+source_length+1);
+    if(combined==nullptr) {
+        fprintf(stderr,"diamond: out of memory loading core library\n");
+        return 74;
+    }
+    memcpy(combined,DIAMOND_CORE_SOURCE,core_length);
+    memcpy(combined+core_length,DIAMOND_USER_LINE_RESET,reset_length);
+    memcpy(combined+core_length+reset_length,source,source_length+1);
     DiamondProgram program;
     DiamondDiagnostic diagnostic;
-    if (!diamond_compile(source, &program, &diagnostic)) {
-        print_diagnostic(name, source, diagnostic);
+    if (!diamond_compile(combined, &program, &diagnostic)) {
+        print_diagnostic(name, combined, diagnostic);
+        free(combined);
         return 65;
     }
 
@@ -53,6 +70,7 @@ static int run_source(const char *name, const char *source, bool dump_bytecode) 
         fprintf(stderr, "%s: runtime error: %s\n", name,
                 detail != nullptr ? detail : diamond_vm_status_name(status));
         diamond_vm_free(&vm);
+        free(combined);
         return 70;
     }
 
@@ -70,6 +88,7 @@ static int run_source(const char *name, const char *source, bool dump_bytecode) 
                 vm.field_cache_hits,vm.field_cache_misses);
     }
     diamond_vm_free(&vm);
+    free(combined);
     return 0;
 }
 

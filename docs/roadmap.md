@@ -63,10 +63,11 @@ future work.
 - General union annotations for parameters and returns.
 - Persistent, recursively checked `Array[Element]` annotations.
 - Persistent `Hash[Key, Value]` contracts for entries and mutations.
+- C23-embedded Diamond core prelude with initial collection helpers.
 
 ## Next priorities
 
-1. A small core library implemented partly in Diamond.
+1. Native collection-size primitives exposed to Diamond-written helpers.
 2. Flow-sensitive collection result types and broader collection APIs.
 
 ## Later experiments
