@@ -1249,4 +1249,17 @@ actual="$($diamond -e $'module Hidden\n private\n def answer() = 42\nend\nclass 
 actual="$($diamond -e $'module Hidden\n private\n def answer() = 42\nend\nclass Box\n include Hidden\nend\nbegin\n Box.new().answer()\nrescue error: TypeError\n 42\nend')"
 [[ "$actual" == "42" ]]
 
-echo "296 tests passed"
+actual="$($diamond -e $'class Box\n private\n def hidden() = 1\n public\n def visible() = 42\nend\nBox.new().visible()')"
+[[ "$actual" == "42" ]]
+
+actual="$($diamond -e $'module Mixed\n private\n def hidden() = 1\n public\n def visible() = 42\nend\nclass Box\n include Mixed\nend\nBox.new().visible()')"
+[[ "$actual" == "42" ]]
+
+if ! error="$($diamond -e $'class Box\n private\n def hidden() = 1\nend\nBox.new().hidden()' 2>&1 >/dev/null)"; then
+    grep -q "private method 'hidden' called with an explicit receiver" <<<"$error"
+else
+    echo "private method call unexpectedly succeeded" >&2
+    exit 1
+fi
+
+echo "299 tests passed"

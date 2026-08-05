@@ -28,7 +28,7 @@ Implemented today:
 - stop-the-world mark/sweep collection with stress-GC testing;
 - source diagnostics and bytecode disassembly.
 
-The test suite currently contains 296 end-to-end assertions spanning the
+The test suite currently contains 299 end-to-end assertions spanning the
 frontend, compiler, VM, object model, type guards, collections, and collector.
 
 ## Build and run
@@ -286,7 +286,8 @@ of instance methods; constructors remain the dedicated `Class.new(...)` path.
 
 `private` in a class or module marks subsequent instance methods private. They
 remain callable through `self` from a method frame, including through inheritance
-and mixins, but explicit external receiver calls raise `TypeError`.
+and mixins, but explicit external receiver calls raise `TypeError` with the
+method name. `public` restores public visibility for subsequent definitions.
 
 Generic function and method declarations may introduce up to eight scoped type
 variables:
@@ -385,7 +386,7 @@ Field sites use four-entry polymorphic caches guarded by instance shape.
 - `ensure` may follow a rescued block or stand alone. It runs on normal
   completion, raised exceptions, runtime failures, and explicit returns;
   cleanup-side control flow overrides the pending unwind.
-- No protected visibility or public/private toggling within one declaration.
+- No protected visibility.
 - Classes own immutable shape chains for lazily materialized field prefixes;
   method calls and field access use four-entry polymorphic inline caches.
 - Generic contracts guard indexed mutation and `push`. Collection APIs currently

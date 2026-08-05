@@ -113,10 +113,11 @@ future work.
   overrides, and superclass-chain lookup alongside dedicated constructors.
 - Private instance methods across classes, inheritance, and modules, restricted
   to explicit `self` calls from method frames.
+- Public/private declaration toggling with named private-call diagnostics.
 
 ## Next priorities
 
-1. Add `public` visibility toggling and private-call diagnostics.
+1. Add compact `attr_reader` and `attr_writer` declarations.
 
 ## Later experiments
 

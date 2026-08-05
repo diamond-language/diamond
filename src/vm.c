@@ -2020,8 +2020,12 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     vm,chunk,chunk->code+instruction_offset,instance->class,
                     method_name->chars,method_name->length);
                 if(method==nullptr) VM_RETURN(DIAMOND_VM_TYPE_ERROR);
-                if(method->is_private&&!(chunk->parameter_offset==1&&recv==0))
+                if(method->is_private&&!(chunk->parameter_offset==1&&recv==0)) {
+                    snprintf(vm->error,sizeof vm->error,
+                        "private method '%.*s' called with an explicit receiver",
+                        (int)method_name->length,method_name->chars);
                     VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                }
                 if(argc<method->required_arity||argc>method->arity)
                     VM_RETURN(DIAMOND_VM_ARITY_ERROR);
                 DiamondValue args[17];args[0]=registers[recv];

@@ -2566,8 +2566,11 @@ static uint8_t compile_class(Compiler *compiler) {
     const bool outer_private=compiler->methods_private;
     compiler->methods_private=false;
     while(!compiler->failed && compiler->current.kind!=DIAMOND_TOKEN_END) {
-        if(compiler->current.kind==DIAMOND_TOKEN_PRIVATE) {
-            compiler->methods_private=true;advance_token(compiler);
+        if(compiler->current.kind==DIAMOND_TOKEN_PRIVATE||
+           compiler->current.kind==DIAMOND_TOKEN_PUBLIC) {
+            compiler->methods_private=
+                compiler->current.kind==DIAMOND_TOKEN_PRIVATE;
+            advance_token(compiler);
         } else if(compiler->current.kind==DIAMOND_TOKEN_INCLUDE) {
             advance_token(compiler);
             if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER) {
@@ -2654,8 +2657,11 @@ static uint8_t compile_module(Compiler *compiler) {
     const bool outer_private=compiler->methods_private;
     compiler->methods_private=false;
     while(!compiler->failed&&compiler->current.kind!=DIAMOND_TOKEN_END) {
-        if(compiler->current.kind==DIAMOND_TOKEN_PRIVATE) {
-            compiler->methods_private=true;advance_token(compiler);
+        if(compiler->current.kind==DIAMOND_TOKEN_PRIVATE||
+           compiler->current.kind==DIAMOND_TOKEN_PUBLIC) {
+            compiler->methods_private=
+                compiler->current.kind==DIAMOND_TOKEN_PRIVATE;
+            advance_token(compiler);
         } else if(compiler->current.kind==DIAMOND_TOKEN_IDENTIFIER&&
            assignment_ahead(compiler)) {
             const DiamondSpan constant_name=compiler->current.span;
