@@ -993,6 +993,25 @@ static int field_index(Compiler *compiler, DiamondSpan name, bool create) {
     return (int)class->field_count++;
 }
 
+static uint8_t module_field_name(Compiler *compiler,DiamondSpan name) {
+    DiamondModule *module=
+        &compiler->program->modules[(size_t)compiler->current_module];
+    const size_t length=name.length-1;
+    for(size_t field=0;field<module->field_count;field++)
+        if(strlen(module->fields[field])==length&&
+           memcmp(module->fields[field],compiler->source+name.start+1,length)==0)
+            return add_string_range(compiler,name.start+1,length,name);
+    if(module->field_count==DIAMOND_MAX_FIELDS) {
+        fail(compiler,name,"too many module instance variables");return 0;
+    }
+    if(length>=DIAMOND_MAX_FUNCTION_NAME) {
+        fail(compiler,name,"instance variable name is too long");return 0;
+    }
+    memcpy(module->fields[module->field_count],compiler->source+name.start+1,length);
+    module->fields[module->field_count][length]='\0';module->field_count++;
+    return add_string_range(compiler,name.start+1,length,name);
+}
+
 static uint8_t parse_call(Compiler *compiler, DiamondSpan name) {
     const int callable_local=find_local(compiler,name);
     if(callable_local>=0&&compiler->current.kind==DIAMOND_TOKEN_LEFT_PAREN) {
@@ -1579,10 +1598,17 @@ static uint8_t parse_prefix(Compiler *compiler) {
         case DIAMOND_TOKEN_IDENTIFIER:
             return parse_name(compiler);
         case DIAMOND_TOKEN_INSTANCE_VARIABLE: {
-            const int field = field_index(compiler, compiler->previous.span, true);
             const uint8_t destination = allocate_register(compiler);
-            emit_instruction(compiler, DIAMOND_OP_GET_IVAR, destination, 0,
-                             (uint8_t)field, 3);
+            if(compiler->current_module>=0&&compiler->current_class<0) {
+                const uint8_t field=module_field_name(
+                    compiler,compiler->previous.span);
+                emit_instruction(compiler,DIAMOND_OP_GET_IVAR_NAME,destination,0,
+                                 field,3);
+            } else {
+                const int field=field_index(compiler,compiler->previous.span,true);
+                emit_instruction(compiler,DIAMOND_OP_GET_IVAR,destination,0,
+                                 (uint8_t)field,3);
+            }
             return destination;
         }
         case DIAMOND_TOKEN_SELF:
@@ -2355,6 +2381,20 @@ static uint8_t compile_class(Compiler *compiler) {
             }
             const DiamondModule *module=
                 &compiler->program->modules[(size_t)module_index];
+            for(size_t source=0;source<module->field_count;source++) {
+                bool present=false;
+                for(size_t field=0;field<class->field_count;field++)
+                    if(strcmp(class->fields[field],module->fields[source])==0)
+                        present=true;
+                if(present)continue;
+                if(class->field_count==DIAMOND_MAX_FIELDS) {
+                    fail(compiler,include_span,
+                         "included module adds too many fields");break;
+                }
+                (void)snprintf(class->fields[class->field_count++],
+                    DIAMOND_MAX_FUNCTION_NAME,"%s",module->fields[source]);
+            }
+            if(compiler->failed)break;
             if(class->method_count+module->method_count>DIAMOND_MAX_METHODS) {
                 fail(compiler,compiler->current.span,
                      "included module adds too many methods");break;
@@ -2428,6 +2468,20 @@ static uint8_t compile_module(Compiler *compiler) {
             }
             const DiamondModule *source=
                 &compiler->program->modules[(size_t)included];
+            for(size_t imported=0;imported<source->field_count;imported++) {
+                bool present=false;
+                for(size_t field=0;field<module->field_count;field++)
+                    if(strcmp(module->fields[field],source->fields[imported])==0)
+                        present=true;
+                if(present)continue;
+                if(module->field_count==DIAMOND_MAX_FIELDS) {
+                    fail(compiler,include_span,
+                         "included module adds too many fields");break;
+                }
+                (void)snprintf(module->fields[module->field_count++],
+                    DIAMOND_MAX_FUNCTION_NAME,"%s",source->fields[imported]);
+            }
+            if(compiler->failed)break;
             if(module->method_count+source->method_count>DIAMOND_MAX_METHODS) {
                 fail(compiler,compiler->current.span,
                      "included module adds too many methods");break;
@@ -2551,9 +2605,14 @@ static uint8_t compile_assignment(Compiler *compiler) {
     advance_token(compiler);
     const uint8_t value = parse_expression(compiler);
     if (instance_variable) {
-        const int field = field_index(compiler, name, true);
-        emit_instruction(compiler, DIAMOND_OP_SET_IVAR, 0, (uint8_t)field,
-                         value, 3);
+        if(compiler->current_module>=0&&compiler->current_class<0) {
+            const uint8_t field=module_field_name(compiler,name);
+            emit_instruction(compiler,DIAMOND_OP_SET_IVAR_NAME,0,field,value,3);
+        } else {
+            const int field=field_index(compiler,name,true);
+            emit_instruction(compiler,DIAMOND_OP_SET_IVAR,0,(uint8_t)field,
+                             value,3);
+        }
         return value;
     }
     int local = find_local(compiler, name);

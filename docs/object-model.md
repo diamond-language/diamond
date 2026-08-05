@@ -36,6 +36,14 @@ SET_IVAR receiver, field_offset, source
 
 Offsets remain fixed while shape pointers make field materialization explicit.
 
+Class methods retain those numeric instructions. Reusable module methods emit
+`GET_IVAR_NAME` and `SET_IVAR_NAME` with a function-local field-name constant.
+Including the module merges its field names into the receiving class metadata.
+At execution, the symbolic instruction resolves the offset from the actual
+receiver class, then enters the same shape-transition and polymorphic-cache path
+as an ordinary numeric field instruction. Transitive includes carry field
+requirements, and equal names deliberately resolve to the same class slot.
+
 ## Methods and calls
 
 A method is an ordinary bytecode function whose register zero contains `self`.

@@ -1157,4 +1157,19 @@ if "$diamond" -e 'Missing::Thing.new()' >/dev/null 2>&1; then
     exit 1
 fi
 
-echo "268 tests passed"
+actual="$($diamond -e $'module Counter\n def increment()\n  if @count == nil\n   @count = 1\n  else\n   @count = @count + 1\n  end\n end\n def count() = @count\nend\nclass Box\n include Counter\nend\nbox = Box.new()\nbox.increment()\nbox.increment()\nbox.count()')"
+[[ "$actual" == "2" ]]
+
+actual="$($diamond -e $'module Named\n def set_name(value)\n  @name = value\n end\n def name() = @name\nend\nclass Person\n include Named\nend\nclass Product\n include Named\nend\nperson = Person.new()\nproduct = Product.new()\nperson.set_name("Ada")\nproduct.set_name("Diamond")\n[person.name(), product.name()]')"
+[[ "$actual" == "[Ada, Diamond]" ]]
+
+actual="$(DIAMOND_STRESS_GC=1 "$diamond" -e $'module State\n def set_value(value)\n  @value = value\n end\n def value() = @value\nend\nmodule Combined\n include State\nend\nclass Box\n include Combined\nend\nbox = Box.new()\nbox.set_value(["diamond"])\nbox.value()')"
+[[ "$actual" == "[diamond]" ]]
+
+actual="$($diamond -e $'module State\n def module_value() = @value\nend\nclass Box\n include State\n def set_value(value)\n  @value = value\n end\nend\nbox = Box.new()\nbox.set_value(42)\nbox.module_value()')"
+[[ "$actual" == "42" ]]
+
+actual="$($diamond --dump-bytecode -e $'module State\n def value() = @value\nend\nclass Box\n include State\nend\nBox.new().value()')"
+grep -q 'GET_IVAR_NAME' <<<"$actual"
+
+echo "273 tests passed"

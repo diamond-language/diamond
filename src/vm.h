@@ -58,6 +58,8 @@ typedef enum DiamondOpCode : uint8_t {
     DIAMOND_OP_SUPER,
     DIAMOND_OP_GET_IVAR,
     DIAMOND_OP_SET_IVAR,
+    DIAMOND_OP_GET_IVAR_NAME,
+    DIAMOND_OP_SET_IVAR_NAME,
     DIAMOND_OP_CHECK_TYPE,
     DIAMOND_OP_ARRAY,
     DIAMOND_OP_INDEX_GET,
@@ -152,6 +154,8 @@ typedef struct DiamondModule {
     char name[DIAMOND_MAX_FUNCTION_NAME];
     DiamondMethod methods[DIAMOND_MAX_METHODS];
     size_t method_count;
+    char fields[DIAMOND_MAX_FIELDS][DIAMOND_MAX_FUNCTION_NAME];
+    size_t field_count;
 } DiamondModule;
 
 typedef struct DiamondClass DiamondClass;

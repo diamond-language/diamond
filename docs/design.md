@@ -278,6 +278,13 @@ from hash/rescue/type colons, and qualified class constants participate in
 construction, nominal annotations, diagnostics, and object rendering without a
 runtime namespace object.
 
+Stateful module methods use symbolic instance-variable bytecode because a fixed
+offset from one class cannot safely apply to another. Inclusion merges required
+names into each class's ordered field table; runtime resolution against the
+actual receiver produces an offset consumed by the existing shape and field
+cache machinery. This keeps instances compact and makes field-name collisions
+explicitly shared state rather than layout corruption.
+
 For a direct `value == nil` or `value != nil` condition, the compiler splits a
 union type-set into nil and non-nil branch facts. Facts for locals that existed
 before the branch are merged at the join; disagreement becomes unknown, so

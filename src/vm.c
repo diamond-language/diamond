@@ -343,6 +343,15 @@ static DiamondFieldCacheEntry *lookup_field_cached(
     return &cache->entries[entry];
 }
 
+static int named_field_index(const DiamondInstance *instance,
+                             const DiamondStringConstant *name) {
+    for(size_t field=0;field<instance->class->field_count;field++)
+        if(strlen(instance->class->fields[field])==name->length&&
+           memcmp(instance->class->fields[field],name->chars,name->length)==0)
+            return (int)field;
+    return -1;
+}
+
 static bool runtime_set_satisfies(const DiamondChunk *chunk,
                                   const DiamondTypeSet *known_sets,
                                   uint8_t known_index,
@@ -2108,6 +2117,37 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     vm->shape_transitions++;
                 }
                 instance->fields[field]=registers[source];break;
+            }
+            case DIAMOND_OP_GET_IVAR_NAME:
+            case DIAMOND_OP_SET_IVAR_NAME: {
+                const uint8_t *site=&chunk->code[instruction_offset];
+                uint8_t first=0,receiver=0,name=0;
+                READ_BYTE(first);READ_BYTE(receiver);READ_BYTE(name);
+                const bool write=(DiamondOpCode)instruction==DIAMOND_OP_SET_IVAR_NAME;
+                const uint8_t recv=write?first:receiver;
+                const uint8_t source=write?name:0;
+                const uint8_t string_index=write?receiver:name;
+                if(registers[recv].kind!=DIAMOND_VALUE_OBJECT||
+                   registers[recv].as.object->kind!=DIAMOND_OBJECT_INSTANCE||
+                   (size_t)string_index>=chunk->string_count)
+                    VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
+                DiamondInstance *instance=(DiamondInstance *)registers[recv].as.object;
+                const int resolved=named_field_index(instance,
+                    &chunk->strings[string_index]);
+                if(resolved<0||(size_t)resolved>=instance->field_count)
+                    VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
+                const uint8_t field=(uint8_t)resolved;
+                DiamondFieldCacheEntry *cached=lookup_field_cached(
+                    vm,site,instance,field,write);
+                if(write) {
+                    if(instance->shape!=cached->output_shape) {
+                        instance->shape=cached->output_shape;
+                        vm->shape_transitions++;
+                    }
+                    instance->fields[field]=registers[source];
+                } else registers[first]=cached->materialized?
+                    instance->fields[field]:DIAMOND_NIL;
+                break;
             }
             case DIAMOND_OP_CHECK_TYPE: {
                 uint8_t source=0,set_index=0; READ_BYTE(source); READ_BYTE(set_index);

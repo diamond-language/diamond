@@ -103,11 +103,12 @@ future work.
   self-cycle diagnostics.
 - Lexical module namespaces with nested modules/classes, `Outer::Name`
   resolution, qualified type annotations, and isolated local names.
+- Symbolic module instance fields resolved through receiver-class field tables,
+  shapes, and caches, including transitive state requirements.
 
 ## Next priorities
 
-1. Decide whether module-owned state should use symbolic fields or accessors.
-2. Add nested interfaces and general immutable constant values.
+1. Add nested interfaces and general immutable constant values.
 
 ## Later experiments
 

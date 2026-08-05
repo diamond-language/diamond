@@ -343,6 +343,10 @@ static bool disassemble_chunk(FILE *stream, const char *name,
                 offset=three_registers(stream,chunk,"GET_IVAR",offset);break;
             case DIAMOND_OP_SET_IVAR:
                 offset=three_registers(stream,chunk,"SET_IVAR",offset);break;
+            case DIAMOND_OP_GET_IVAR_NAME:
+                offset=three_registers(stream,chunk,"GET_IVAR_NAME",offset);break;
+            case DIAMOND_OP_SET_IVAR_NAME:
+                offset=three_registers(stream,chunk,"SET_IVAR_NAME",offset);break;
             case DIAMOND_OP_CHECK_TYPE:
                 if(!require_bytes(stream,chunk,offset,3)){valid=false;offset=chunk->code_count;break;}
                 fprintf(stream,"%-18s r%u, ","CHECK_TYPE",chunk->code[offset+1]);
