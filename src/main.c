@@ -7,6 +7,7 @@
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdint.h>
 #include <string.h>
 
 static constexpr char DIAMOND_VERSION[] = "0.1.0-dev";
@@ -55,6 +56,11 @@ static int run_source(const char *name, const char *source, bool dump_bytecode) 
     const size_t core_length=sizeof(DIAMOND_CORE_SOURCE)-1;
     const size_t source_length=strlen(bundle.source);
     const size_t reset_length=sizeof(DIAMOND_USER_LINE_RESET)-1;
+    if(source_length>SIZE_MAX-core_length-reset_length-1) {
+        fprintf(stderr,"diamond: expanded source is too large\n");
+        diamond_source_bundle_free(&bundle);
+        return 74;
+    }
     char *combined=malloc(core_length+reset_length+source_length+1);
     if(combined==nullptr) {
         fprintf(stderr,"diamond: out of memory loading core library\n");

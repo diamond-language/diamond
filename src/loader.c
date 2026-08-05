@@ -4,6 +4,7 @@
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdint.h>
 #include <string.h>
 
 typedef struct Loader {
@@ -20,9 +21,13 @@ typedef struct Loader {
 } Loader;
 
 static bool append(Loader *loader,const char *text,size_t length) {
+    if(length>SIZE_MAX-loader->length-1)return false;
     if(loader->length+length+1>loader->capacity) {
         size_t capacity=loader->capacity==0?4096:loader->capacity;
-        while(capacity<loader->length+length+1)capacity*=2;
+        while(capacity<loader->length+length+1) {
+            if(capacity>SIZE_MAX/2)return false;
+            capacity*=2;
+        }
         char *grown=realloc(loader->buffer,capacity);
         if(grown==nullptr)return false;
         loader->buffer=grown;loader->capacity=capacity;
