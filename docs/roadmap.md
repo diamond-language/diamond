@@ -133,6 +133,7 @@ future work.
 - Parenthesized targeted visibility syntax.
 - Parenthesized multi-target `module_function` exports.
 - Writer-method `module_function` targeting and qualified export calls.
+- Reader-only `attr` shorthand with bare and parenthesized multi-name forms.
 
 ## Next priorities
 

@@ -2878,12 +2878,14 @@ static uint8_t compile_class(Compiler *compiler) {
         } else if(compiler->current.kind==DIAMOND_TOKEN_MODULE_FUNCTION) {
             fail(compiler,compiler->current.span,
                  "module_function is only valid in modules");break;
-        } else if(compiler->current.kind==DIAMOND_TOKEN_ATTR_READER||
+        } else if(compiler->current.kind==DIAMOND_TOKEN_ATTR||
+                  compiler->current.kind==DIAMOND_TOKEN_ATTR_READER||
                   compiler->current.kind==DIAMOND_TOKEN_ATTR_WRITER||
                   compiler->current.kind==DIAMOND_TOKEN_ATTR_ACCESSOR) {
             const bool reader=compiler->current.kind!=DIAMOND_TOKEN_ATTR_WRITER;
             const bool writer=compiler->current.kind!=DIAMOND_TOKEN_ATTR_READER;
-            compile_attribute(compiler,reader,writer);
+            const bool shorthand=compiler->current.kind==DIAMOND_TOKEN_ATTR;
+            compile_attribute(compiler,reader,shorthand?false:writer);
         } else if(compiler->current.kind==DIAMOND_TOKEN_INCLUDE) {
             advance_token(compiler);
             if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER) {
@@ -2979,12 +2981,14 @@ static uint8_t compile_module(Compiler *compiler) {
             compile_visibility(compiler,private_visibility);
         } else if(compiler->current.kind==DIAMOND_TOKEN_MODULE_FUNCTION) {
             compile_module_function(compiler);
-        } else if(compiler->current.kind==DIAMOND_TOKEN_ATTR_READER||
+        } else if(compiler->current.kind==DIAMOND_TOKEN_ATTR||
+                  compiler->current.kind==DIAMOND_TOKEN_ATTR_READER||
                   compiler->current.kind==DIAMOND_TOKEN_ATTR_WRITER||
                   compiler->current.kind==DIAMOND_TOKEN_ATTR_ACCESSOR) {
             const bool reader=compiler->current.kind!=DIAMOND_TOKEN_ATTR_WRITER;
             const bool writer=compiler->current.kind!=DIAMOND_TOKEN_ATTR_READER;
-            compile_attribute(compiler,reader,writer);
+            const bool shorthand=compiler->current.kind==DIAMOND_TOKEN_ATTR;
+            compile_attribute(compiler,reader,shorthand?false:writer);
         } else if(compiler->current.kind==DIAMOND_TOKEN_IDENTIFIER&&
            assignment_ahead(compiler)) {
             const DiamondSpan constant_name=compiler->current.span;

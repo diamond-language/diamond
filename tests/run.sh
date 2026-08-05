@@ -1382,4 +1382,7 @@ actual="$($diamond -e $'module Values\n def first() = 20\n def second() = 22\n m
 actual="$($diamond -e $'module Values\n def value=(incoming) = incoming\n module_function value=\nend\nValues.value=(42)')"
 [[ "$actual" == "42" ]]
 
-echo "335 tests passed"
+actual="$($diamond -e $'class Pair\n attr(left, right)\nend\n[Pair.new().left(), Pair.new().right()]')"
+[[ "$actual" == "[nil, nil]" ]]
+
+echo "336 tests passed"
