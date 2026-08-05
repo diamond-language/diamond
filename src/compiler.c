@@ -2855,6 +2855,8 @@ static void compile_module_function(Compiler *compiler) {
 
 static void compile_alias_method(Compiler *compiler) {
     advance_token(compiler);
+    const bool parenthesized=compiler->current.kind==DIAMOND_TOKEN_LEFT_PAREN;
+    if(parenthesized)advance_token(compiler);
     if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER) {
         fail(compiler,compiler->current.span,"expected new alias name");return;
     }
@@ -2914,6 +2916,13 @@ static void compile_alias_method(Compiler *compiler) {
     if(alias_writer)copied.name[alias.length]='=';
     copied.name[alias.length+(alias_writer?1u:0u)]='\0';copied.included=false;
     methods[(*count)++]=copied;
+    if(parenthesized) {
+        if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
+            fail(compiler,compiler->current.span,
+                 "expected ')' after alias_method names");return;
+        }
+        advance_token(compiler);
+    }
 }
 
 static uint8_t compile_class(Compiler *compiler) {

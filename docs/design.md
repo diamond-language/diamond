@@ -343,6 +343,8 @@ alias points at the same function index and therefore retains its executable
 body, arity range, visibility, receiver layout, and type metadata without
 duplicating code or creating a forwarding frame.
 Writer suffixes are resolved and copied as part of both names.
+Alias declarations accept either bare comma-separated names or one
+parenthesized pair.
 
 For a direct `value == nil` or `value != nil` condition, the compiler splits a
 union type-set into nil and non-nil branch facts. Facts for locals that existed

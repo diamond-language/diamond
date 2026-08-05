@@ -319,6 +319,7 @@ without cloning bytecode. Aliases preserve arity, visibility, generated field
 behavior, typing, inheritance, and module inclusion.
 Writer methods retain their suffix in aliases, as in
 `alias_method assign=, value=`.
+The equivalent parenthesized form is `alias_method(result, value)`.
 Generating the same reader or writer twice is a compile-time error.
 Ordinary methods may use the same writer spelling with
 `def name=(value) ... end`, including annotations, defaults, module fields, and

@@ -137,6 +137,7 @@ future work.
 - Reader-only `attr` shorthand with bare and parenthesized multi-name forms.
 - Descriptor-level `alias_method` support for class and module instance methods.
 - Writer-method sources and targets in `alias_method`.
+- Parenthesized `alias_method(new_name, existing_name)` declarations.
 - Predicate function and method names ending in `?`.
 - Bang function and method names ending in `!`.
 

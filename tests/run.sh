@@ -1437,4 +1437,15 @@ if "$diamond" -e $'class Broken\n attr_writer value\n alias_method value=, value
     exit 1
 fi
 
-echo "352 tests passed"
+actual="$($diamond -e $'class Answer\n def value() = 42\n alias_method(result, value)\nend\nAnswer.new().result()')"
+[[ "$actual" == "42" ]]
+
+actual="$($diamond -e $'class Box\n attr_accessor value\n alias_method(assign=, value=)\nend\nbox=Box.new()\nbox.assign=(42)\nbox.value()')"
+[[ "$actual" == "42" ]]
+
+if "$diamond" -e $'class Broken\n def value() = 42\n alias_method(result, value\nend' >/dev/null 2>&1; then
+    echo "unterminated parenthesized alias unexpectedly compiled" >&2
+    exit 1
+fi
+
+echo "355 tests passed"
