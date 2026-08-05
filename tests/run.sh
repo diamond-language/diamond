@@ -1732,4 +1732,6 @@ actual="$($diamond -e $'loop do\n redo if false\n break 42\nend')"
 [[ "$actual" == "42" ]]
 actual="$($diamond -e $'def conditional_return(flag)\n return if flag\n 42\nend\n[conditional_return(false), conditional_return(true)]')"
 [[ "$actual" == "[42, nil]" ]]
-echo "458 tests passed"
+actual="$($diamond -e $'attempts=0\nbegin\n attempts=attempts+1\n [1][4]\nrescue : IndexError\n attempts=attempts+1\n retry if attempts<3\nend\nattempts')"
+[[ "$actual" == "4" ]]
+echo "459 tests passed"
