@@ -54,7 +54,8 @@ Canonical files load once, cycles are rejected, and all required files share
 top-level functions, classes, and interfaces. Diagnostics retain the imported
 file's path and original line. With `-e`, relative paths start at the current
 working directory. `require` is a standalone source directive; it cannot be
-used as a conditional expression.
+used as a conditional expression. Nested imports preserve the deepest source
+file in diagnostics, including missing and unreadable dependency paths.
 
 Build variants:
 
