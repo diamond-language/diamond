@@ -194,11 +194,13 @@ future work.
 - Explicit diagnostics for trailing syntax on standalone `require` directives.
 - CRLF-safe `require` scanning and normalized relative-path coverage.
 - Nested-import source mapping and missing-dependency context.
+- Explicit loader diagnostics for nesting, file-count, segment, and source-size
+  limits.
 
 ## Next priorities
 
-1. Improve loader path and source-map diagnostics for loader depth and resource
-   limits while preserving precise source locations.
+1. Improve loader path and source-map diagnostics for include-site context while
+   preserving precise source locations.
 
 ## Later experiments
 
