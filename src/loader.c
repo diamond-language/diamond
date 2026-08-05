@@ -130,7 +130,12 @@ static bool expand(Loader *loader,const char *path,const char *source) {
                     strerror(errno));return false;
             }
             char *dependency=read_source(canonical);
-            if(dependency==nullptr)return false;
+            if(dependency==nullptr) {
+                (void)snprintf(loader->error,loader->error_capacity,
+                    "%s:%zu: cannot read required file '%s': %s",
+                    path,line,canonical,strerror(errno));
+                return false;
+            }
             const bool ok=expand(loader,canonical,dependency);free(dependency);
             if(!ok)return false;
             chunk=offset;chunk_line=line+1;
