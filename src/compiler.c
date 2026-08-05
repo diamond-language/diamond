@@ -48,6 +48,10 @@ typedef struct Compiler {
     DiamondSpan current_return_type_span;
     LoopContext *current_loop;
     bool failed;
+    Local enclosing_locals[DIAMOND_MAX_LOCALS];
+    size_t enclosing_local_count;
+    uint8_t capture_registers[16];
+    size_t capture_count;
 } Compiler;
 
 static uint8_t parse_expression(Compiler *compiler);
@@ -335,8 +339,22 @@ static uint8_t parse_literal(Compiler *compiler) {
 static uint8_t parse_identifier(Compiler *compiler) {
     const int local = find_local(compiler, compiler->previous.span);
     if (local < 0) {
-        fail(compiler, compiler->previous.span, "undefined local variable");
-        return 0;
+        for(size_t i=compiler->enclosing_local_count;i>0;i--) {
+            if(!spans_equal(compiler,compiler->enclosing_locals[i-1].name,
+                            compiler->previous.span)) continue;
+            size_t capture=0;
+            while(capture<compiler->capture_count &&
+                  compiler->capture_registers[capture]!=compiler->enclosing_locals[i-1].reg)
+                capture++;
+            if(capture==compiler->capture_count) {
+                if(capture==16){fail(compiler,compiler->previous.span,"too many captured variables");return 0;}
+                compiler->capture_registers[compiler->capture_count++]=compiler->enclosing_locals[i-1].reg;
+            }
+            const uint8_t destination=allocate_register(compiler);
+            emit_instruction(compiler,DIAMOND_OP_GET_CAPTURE,destination,(uint8_t)capture,0,2);
+            return destination;
+        }
+        fail(compiler, compiler->previous.span, "undefined local variable"); return 0;
     }
     return compiler->locals[(size_t)local].reg;
 }
@@ -344,7 +362,8 @@ static uint8_t parse_identifier(Compiler *compiler) {
 static int find_function(const Compiler *compiler, DiamondSpan name) {
     for (size_t index = 0; index < compiler->program->function_count; index++) {
         const char *candidate = compiler->program->functions[index].name;
-        if (compiler->program->functions[index].owner_class != UINT8_MAX) continue;
+        if (compiler->program->functions[index].owner_class != UINT8_MAX ||
+            compiler->program->functions[index].nested) continue;
         size_t length = 0;
         while (candidate[length] != '\0') length++;
         if (length != name.length) continue;
@@ -453,6 +472,27 @@ static int field_index(Compiler *compiler, DiamondSpan name, bool create) {
 }
 
 static uint8_t parse_call(Compiler *compiler, DiamondSpan name) {
+    const int callable_local=find_local(compiler,name);
+    if(callable_local>=0) {
+        const uint8_t callable=compiler->locals[(size_t)callable_local].reg;
+        advance_token(compiler);
+        uint8_t arguments[16]; size_t argument_count=0;
+        while(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN && !compiler->failed) {
+            if(argument_count==16){fail(compiler,compiler->current.span,"too many call arguments");return 0;}
+            arguments[argument_count++]=parse_expression(compiler);
+            if(compiler->current.kind!=DIAMOND_TOKEN_COMMA)break;
+            advance_token(compiler);
+        }
+        if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN){fail(compiler,compiler->current.span,"expected ')' after arguments");return 0;}
+        advance_token(compiler);
+        const uint8_t base=allocate_register(compiler);
+        for(size_t i=1;i<argument_count;i++)(void)allocate_register(compiler);
+        for(size_t i=0;i<argument_count;i++)emit_instruction(compiler,DIAMOND_OP_MOVE,(uint8_t)(base+i),arguments[i],0,2);
+        const uint8_t destination=allocate_register(compiler);
+        emit_opcode(compiler,DIAMOND_OP_CALL_CLOSURE);emit_byte(compiler,destination);
+        emit_byte(compiler,callable);emit_byte(compiler,base);emit_byte(compiler,(uint8_t)argument_count);
+        return destination;
+    }
     const int function_index = find_function(compiler, name);
     if (function_index < 0) {
         fail(compiler, name, "undefined function");
@@ -1035,10 +1075,6 @@ static uint8_t compile_loop_control(Compiler *compiler) {
 
 static uint8_t compile_definition(Compiler *compiler) {
     const bool at_top_level = compiler->function == &compiler->program->entry;
-    if (!at_top_level) {
-        fail(compiler, compiler->current.span, "nested function definitions are not supported");
-        return 0;
-    }
     advance_token(compiler);
     if (compiler->current.kind != DIAMOND_TOKEN_IDENTIFIER) {
         fail(compiler, compiler->current.span, "expected function name after 'def'");
@@ -1062,6 +1098,7 @@ static uint8_t compile_definition(Compiler *compiler) {
     const size_t function_index = compiler->program->function_count - 1;
     function->owner_class = compiler->current_class < 0
         ? UINT8_MAX : (uint8_t)compiler->current_class;
+    function->nested=!at_top_level;
     const size_t copy_length = name.length;
     for (size_t index = 0; index < copy_length; index++) {
         function->name[index] = compiler->source[name.start + index];
@@ -1094,6 +1131,10 @@ static uint8_t compile_definition(Compiler *compiler) {
     compiler->current_loop=nullptr;
     compiler->local_count = 0;
     compiler->next_register = 0;
+    compiler->enclosing_local_count=at_top_level ? 0 : outer_local_count;
+    for(size_t i=0;i<compiler->enclosing_local_count;i++)
+        compiler->enclosing_locals[i]=outer_locals[i];
+    compiler->capture_count=0;
     if (compiler->current_class >= 0) {
         (void)allocate_register(compiler);
         function->arity = 1;
@@ -1154,6 +1195,10 @@ static uint8_t compile_definition(Compiler *compiler) {
         }
     }
 
+    function->capture_count=(uint8_t)compiler->capture_count;
+    uint8_t captures[16];
+    for(size_t i=0;i<compiler->capture_count;i++)captures[i]=compiler->capture_registers[i];
+    const size_t capture_count=compiler->capture_count;
     compiler->function = outer_function;
     compiler->local_count = outer_local_count;
     for (size_t index = 0; index < outer_local_count; index++) {
@@ -1168,7 +1213,7 @@ static uint8_t compile_definition(Compiler *compiler) {
     compiler->current_loop=outer_loop;
     for(size_t index=0;index<256;index++)
         compiler->known_types[index]=outer_known_types[index];
-    if (compiler->current_class >= 0 && !compiler->failed) {
+    if (compiler->current_class >= 0 && !compiler->failed && at_top_level) {
         DiamondClass *class = &compiler->program->classes[(size_t)compiler->current_class];
         if (class->method_count == DIAMOND_MAX_METHODS ||
             find_method(compiler, compiler->current_class, name) >= 0) {
@@ -1182,7 +1227,12 @@ static uint8_t compile_definition(Compiler *compiler) {
         }
     }
     const uint8_t result = allocate_register(compiler);
-    emit_instruction(compiler, DIAMOND_OP_NIL, result, 0, 0, 1);
+    if(!at_top_level) {
+        emit_opcode(compiler,DIAMOND_OP_CLOSURE);emit_byte(compiler,result);
+        emit_byte(compiler,(uint8_t)function_index);emit_byte(compiler,(uint8_t)capture_count);
+        for(size_t i=0;i<capture_count;i++)emit_byte(compiler,captures[i]);
+        compiler->locals[compiler->local_count++]=(Local){.name=name,.reg=result};
+    } else emit_instruction(compiler, DIAMOND_OP_NIL, result, 0, 0, 1);
     return result;
 }
 

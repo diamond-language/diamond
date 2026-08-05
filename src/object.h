@@ -11,6 +11,7 @@ typedef enum DiamondObjectKind : uint8_t {
     DIAMOND_OBJECT_INSTANCE,
     DIAMOND_OBJECT_ARRAY,
     DIAMOND_OBJECT_HASH,
+    DIAMOND_OBJECT_CLOSURE,
 } DiamondObjectKind;
 
 typedef struct DiamondObject {
@@ -51,5 +52,12 @@ typedef struct DiamondHash {
     size_t capacity;
     DiamondHashEntry *entries;
 } DiamondHash;
+
+typedef struct DiamondClosure {
+    DiamondObject object;
+    uint8_t function_index;
+    uint8_t capture_count;
+    DiamondValue captures[16];
+} DiamondClosure;
 
 #endif

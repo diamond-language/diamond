@@ -459,4 +459,7 @@ rm -f "$error_file"
 actual="$("$diamond" --dump-bytecode -e '40 + 2')"
 grep -Eq '^000[0-9]+ +1:[0-9]+ +ADD' <<<"$actual"
 
-echo "76 tests passed"
+actual="$(DIAMOND_STRESS_GC=1 "$diamond" tests/cases/closure_capture.dia)"
+[[ "$actual" == "47" ]]
+
+echo "77 tests passed"

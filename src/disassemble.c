@@ -191,6 +191,23 @@ static bool disassemble_chunk(FILE *stream, const char *name,
                 }
                 offset += 5;
                 break;
+            case DIAMOND_OP_CALL_CLOSURE:
+                if(!require_bytes(stream,chunk,offset,5)){valid=false;offset=chunk->code_count;break;}
+                fprintf(stream,"%-18s r%u, r%u, r%u, %u args\n","CALL_CLOSURE",
+                    chunk->code[offset+1],chunk->code[offset+2],chunk->code[offset+3],chunk->code[offset+4]);
+                offset+=5;break;
+            case DIAMOND_OP_GET_CAPTURE:
+                if(!require_bytes(stream,chunk,offset,3)){valid=false;offset=chunk->code_count;break;}
+                fprintf(stream,"%-18s r%u, c%u\n","GET_CAPTURE",chunk->code[offset+1],chunk->code[offset+2]);
+                offset+=3;break;
+            case DIAMOND_OP_CLOSURE: {
+                if(!require_bytes(stream,chunk,offset,4)){valid=false;offset=chunk->code_count;break;}
+                const size_t count=chunk->code[offset+3];
+                if(!require_bytes(stream,chunk,offset,4+count)){valid=false;offset=chunk->code_count;break;}
+                fprintf(stream,"%-18s r%u, f%u, %zu captures\n","CLOSURE",
+                    chunk->code[offset+1],chunk->code[offset+2],count);
+                offset+=4+count;break;
+            }
             case DIAMOND_OP_NEW:
                 if(!require_bytes(stream,chunk,offset,5)){valid=false;offset=chunk->code_count;break;}
                 fprintf(stream,"%-18s r%u, class%u, r%u, %u args\n","NEW",

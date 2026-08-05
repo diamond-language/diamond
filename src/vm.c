@@ -31,6 +31,9 @@ static void mark_object(DiamondObject *object) {
             mark_value(hash->entries[i].key);
             mark_value(hash->entries[i].value);
         }
+    } else if(object->kind==DIAMOND_OBJECT_CLOSURE) {
+        DiamondClosure *closure=(DiamondClosure *)object;
+        for(size_t i=0;i<closure->capture_count;i++)mark_value(closure->captures[i]);
     }
 }
 
@@ -65,10 +68,12 @@ void diamond_vm_collect(DiamondVm *vm) {
         } else if(unreached->kind==DIAMOND_OBJECT_ARRAY) {
             const DiamondArray *array=(const DiamondArray *)unreached;
             size=sizeof(DiamondArray)+array->count*sizeof(DiamondValue);
-        } else {
+        } else if(unreached->kind==DIAMOND_OBJECT_HASH) {
             DiamondHash *hash=(DiamondHash *)unreached;
             size=sizeof(DiamondHash)+hash->capacity*sizeof(DiamondHashEntry);
             free(hash->entries);
+        } else {
+            size=sizeof(DiamondClosure);
         }
         vm->bytes_allocated -= size;
         free(unreached);
@@ -138,6 +143,16 @@ static DiamondHash *allocate_hash(DiamondVm *vm) {
     DiamondHash *hash=malloc(sizeof(DiamondHash)); if(hash==nullptr)return nullptr;
     *hash=(DiamondHash){.object={.next=vm->objects,.kind=DIAMOND_OBJECT_HASH}};
     vm->objects=&hash->object;vm->bytes_allocated+=sizeof(DiamondHash);return hash;
+}
+
+static DiamondClosure *allocate_closure(DiamondVm *vm,uint8_t function_index,
+                                        const DiamondValue *captures,size_t count) {
+    if(vm->stress_gc||vm->bytes_allocated>=vm->next_gc)diamond_vm_collect(vm);
+    DiamondClosure *closure=malloc(sizeof(DiamondClosure));if(closure==nullptr)return nullptr;
+    *closure=(DiamondClosure){.object={.next=vm->objects,.kind=DIAMOND_OBJECT_CLOSURE},
+      .function_index=function_index,.capture_count=(uint8_t)count};
+    for(size_t i=0;i<count;i++)closure->captures[i]=captures[i];
+    vm->objects=&closure->object;vm->bytes_allocated+=sizeof(DiamondClosure);return closure;
 }
 
 static bool values_equal(DiamondValue left, DiamondValue right) {
@@ -276,6 +291,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                                  DiamondVm *vm,
                                  const DiamondValue *arguments,
                                  size_t argument_count, size_t depth,
+                                 const DiamondClosure *closure,
                                  DiamondValue *result) {
     if (depth >= DIAMOND_MAX_CALL_DEPTH) {
         return DIAMOND_VM_STACK_OVERFLOW;
@@ -589,10 +605,44 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 DiamondValue call_result = DIAMOND_NIL;
                 const DiamondVmStatus status = run_chunk(
                     &called_chunk, vm, &registers[argument_base],
-                    call_argument_count, depth + 1, &call_result);
+                    call_argument_count, depth + 1, nullptr, &call_result);
                 if (status != DIAMOND_VM_OK) VM_RETURN(status);
                 registers[destination] = call_result;
                 break;
+            }
+            case DIAMOND_OP_CLOSURE: {
+                uint8_t dest=0,index=0,count=0;READ_BYTE(dest);READ_BYTE(index);READ_BYTE(count);
+                if(index>=chunk->function_count||count>16)VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
+                DiamondValue captures[16];
+                for(size_t i=0;i<count;i++){uint8_t reg=0;READ_BYTE(reg);captures[i]=registers[reg];}
+                DiamondClosure *created=allocate_closure(vm,index,captures,count);
+                if(created==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                registers[dest]=DIAMOND_OBJECT(created);break;
+            }
+            case DIAMOND_OP_GET_CAPTURE: {
+                uint8_t dest=0,index=0;READ_BYTE(dest);READ_BYTE(index);
+                if(closure==nullptr||index>=closure->capture_count)VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
+                registers[dest]=closure->captures[index];break;
+            }
+            case DIAMOND_OP_CALL_CLOSURE: {
+                uint8_t dest=0,callable=0,base=0,argc=0;
+                READ_BYTE(dest);READ_BYTE(callable);READ_BYTE(base);READ_BYTE(argc);
+                if(registers[callable].kind!=DIAMOND_VALUE_OBJECT||
+                   registers[callable].as.object->kind!=DIAMOND_OBJECT_CLOSURE)
+                    VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                DiamondClosure *called=(DiamondClosure *)registers[callable].as.object;
+                if(called->function_index>=chunk->function_count)VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
+                const DiamondFunction *fn=&chunk->functions[called->function_index];
+                if(fn->arity!=argc)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                DiamondChunk child={.name=fn->name,.code=fn->code,.lines=fn->lines,
+                  .columns=fn->columns,.code_count=fn->code_count,.constants=fn->constants,
+                  .constant_count=fn->constant_count,.strings=fn->strings,.string_count=fn->string_count,
+                  .functions=chunk->functions,.function_count=chunk->function_count,
+                  .classes=chunk->classes,.class_count=chunk->class_count};
+                DiamondValue call_result=DIAMOND_NIL;
+                DiamondVmStatus status=run_chunk(&child,vm,&registers[base],argc,depth+1,called,&call_result);
+                if(status!=DIAMOND_VM_OK) VM_RETURN(status);
+                registers[dest]=call_result;break;
             }
             case DIAMOND_OP_NEW: {
                 uint8_t dest=0,ci=0,base=0,argc=0;
@@ -617,7 +667,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                       .functions=chunk->functions,.function_count=chunk->function_count,
                       .classes=chunk->classes,.class_count=chunk->class_count};
                     DiamondValue ignored=DIAMOND_NIL;
-                    DiamondVmStatus s=run_chunk(&child,vm,args,(size_t)argc+1,depth+1,&ignored);
+                    DiamondVmStatus s=run_chunk(&child,vm,args,(size_t)argc+1,depth+1,nullptr,&ignored);
                     if(s!=DIAMOND_VM_OK)VM_RETURN(s);
                 } else if(argc!=0) VM_RETURN(DIAMOND_VM_ARITY_ERROR);
                 break;
@@ -645,7 +695,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                   .functions=chunk->functions,.function_count=chunk->function_count,
                   .classes=chunk->classes,.class_count=chunk->class_count};
                 DiamondValue call_result=DIAMOND_NIL;
-                DiamondVmStatus s=run_chunk(&child,vm,args,(size_t)argc+1,depth+1,&call_result);
+                DiamondVmStatus s=run_chunk(&child,vm,args,(size_t)argc+1,depth+1,nullptr,&call_result);
                 if(s!=DIAMOND_VM_OK) VM_RETURN(s);
                 registers[dest]=call_result;
                 break;
@@ -678,7 +728,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                   .classes=chunk->classes,.class_count=chunk->class_count};
                 DiamondValue call_result=DIAMOND_NIL;
                 DiamondVmStatus status=run_chunk(&child,vm,args,(size_t)argc+1,
-                                                  depth+1,&call_result);
+                                                  depth+1,nullptr,&call_result);
                 if(status!=DIAMOND_VM_OK) VM_RETURN(status);
                 registers[dest]=call_result;
                 break;
@@ -815,7 +865,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
 DiamondVmStatus diamond_vm_run(DiamondVm *vm, const DiamondChunk *chunk,
                                DiamondValue *result) {
     vm->error[0]='\0';
-    return run_chunk(chunk, vm, nullptr, 0, 0, result);
+    return run_chunk(chunk, vm, nullptr, 0, 0, nullptr, result);
 }
 
 const char *diamond_vm_error(const DiamondVm *vm) {

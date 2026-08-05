@@ -183,7 +183,8 @@ compiler, disassembler, VM, value representation, and object layouts live under
 
 ## Important limitations
 
-- No closures or nested functions.
+- Nested functions are first-class closures. Captures currently snapshot values
+  when the closure is created; shared mutable capture cells are still planned.
 - Runtime errors include source-mapped Diamond stack traces; structured
   exceptions are not implemented yet.
 - No modules, mixins, singleton methods, or visibility.

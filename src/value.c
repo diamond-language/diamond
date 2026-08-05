@@ -38,9 +38,11 @@ void diamond_value_fprint(FILE *stream, DiamondValue value) {
                     diamond_value_fprint(stream,hash->entries[index].value);
                 }
                 fputc('}',stream);
-            } else {
+            } else if(value.as.object->kind==DIAMOND_OBJECT_INSTANCE) {
                 const DiamondInstance *instance=(const DiamondInstance *)value.as.object;
                 fprintf(stream,"#<%s>",instance->class->name);
+            } else {
+                fputs("#<Closure>",stream);
             }
             break;
         }

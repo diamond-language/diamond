@@ -49,10 +49,11 @@ future work.
 - Detailed expected/actual runtime type diagnostics.
 - Per-instruction source coordinates in bytecode dumps.
 - Source-mapped runtime stack traces across functions and methods.
+- First-class nested closures with escaping value captures.
 
 ## Next priorities
 
-1. Closures and captured lexical environments.
+1. Shared mutable capture cells and recursively nested lexical environments.
 2. Runtime shapes and monomorphic method/field inline caches.
 3. Structured runtime exceptions.
 4. Generic collection annotations and general unions.

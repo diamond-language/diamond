@@ -39,6 +39,9 @@ typedef enum DiamondOpCode : uint8_t {
     DIAMOND_OP_JUMP,
     DIAMOND_OP_JUMP_IF_FALSE,
     DIAMOND_OP_CALL,
+    DIAMOND_OP_CLOSURE,
+    DIAMOND_OP_CALL_CLOSURE,
+    DIAMOND_OP_GET_CAPTURE,
     DIAMOND_OP_NEW,
     DIAMOND_OP_INVOKE,
     DIAMOND_OP_SUPER,
@@ -98,6 +101,8 @@ typedef struct DiamondFunction {
     size_t string_count;
     uint8_t arity;
     uint8_t owner_class;
+    bool nested;
+    uint8_t capture_count;
 } DiamondFunction;
 
 typedef struct DiamondChunk {
