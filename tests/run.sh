@@ -1385,4 +1385,15 @@ actual="$($diamond -e $'module Values\n def value=(incoming) = incoming\n module
 actual="$($diamond -e $'class Pair\n attr(left, right)\nend\n[Pair.new().left(), Pair.new().right()]')"
 [[ "$actual" == "[nil, nil]" ]]
 
-echo "336 tests passed"
+actual="$($diamond -e $'class Answer\n def value() = 42\n alias_method result, value\nend\nAnswer.new().result()')"
+[[ "$actual" == "42" ]]
+
+actual="$($diamond -e $'module Named\n attr_reader name\n alias_method label, name\nend\nclass Person\n include Named\nend\nPerson.new().label()')"
+[[ "$actual" == "nil" ]]
+
+if "$diamond" -e $'class Broken\n alias_method answer, missing\nend' >/dev/null 2>&1; then
+    echo "undefined alias source unexpectedly compiled" >&2
+    exit 1
+fi
+
+echo "339 tests passed"

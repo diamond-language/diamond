@@ -28,7 +28,7 @@ Implemented today:
 - stop-the-world mark/sweep collection with stress-GC testing;
 - source diagnostics and bytecode disassembly.
 
-The test suite currently contains 336 end-to-end assertions spanning the
+The test suite currently contains 339 end-to-end assertions spanning the
 frontend, compiler, VM, object model, type guards, collections, and collector.
 
 ## Build and run
@@ -310,6 +310,10 @@ methods honor current visibility, inheritance, mixin state, and shape tracking.
 All three forms accept comma-separated names, such as `attr_accessor x, y`.
 Parenthesized spelling such as `attr_accessor(x, y)` is equivalent.
 `attr name` is a compact reader-only synonym for `attr_reader name`.
+
+`alias_method new_name, existing_name` adds another instance-method descriptor
+without cloning bytecode. Aliases preserve arity, visibility, generated field
+behavior, typing, inheritance, and module inclusion.
 Generating the same reader or writer twice is a compile-time error.
 Ordinary methods may use the same writer spelling with
 `def name=(value) ... end`, including annotations, defaults, module fields, and

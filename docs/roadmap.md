@@ -134,6 +134,7 @@ future work.
 - Parenthesized multi-target `module_function` exports.
 - Writer-method `module_function` targeting and qualified export calls.
 - Reader-only `attr` shorthand with bare and parenthesized multi-name forms.
+- Descriptor-level `alias_method` support for class and module instance methods.
 
 ## Next priorities
 

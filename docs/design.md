@@ -330,6 +330,11 @@ followed by `(`, preserving endless `def name = expression`. Invocation appends
 the same suffix before method-name interning, so user-defined writers traverse
 ordinary visibility, lookup, typing, and module-field paths.
 
+`alias_method` copies an existing local method descriptor under a new name. The
+alias points at the same function index and therefore retains its executable
+body, arity range, visibility, receiver layout, and type metadata without
+duplicating code or creating a forwarding frame.
+
 For a direct `value == nil` or `value != nil` condition, the compiler splits a
 union type-set into nil and non-nil branch facts. Facts for locals that existed
 before the branch are merged at the join; disagreement becomes unknown, so

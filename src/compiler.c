@@ -2829,6 +2829,55 @@ static void compile_module_function(Compiler *compiler) {
     }
 }
 
+static void compile_alias_method(Compiler *compiler) {
+    advance_token(compiler);
+    if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER) {
+        fail(compiler,compiler->current.span,"expected new alias name");return;
+    }
+    const DiamondSpan alias=compiler->current.span;advance_token(compiler);
+    if(alias.length>=DIAMOND_MAX_FUNCTION_NAME) {
+        fail(compiler,alias,"alias name is too long");return;
+    }
+    if(compiler->current.kind!=DIAMOND_TOKEN_COMMA) {
+        fail(compiler,compiler->current.span,"expected ',' in alias_method");return;
+    }
+    advance_token(compiler);
+    if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER) {
+        fail(compiler,compiler->current.span,"expected existing method name");return;
+    }
+    const DiamondSpan original=compiler->current.span;
+    DiamondMethod *methods=nullptr;size_t *count=nullptr;
+    if(compiler->current_class>=0) {
+        DiamondClass *class=
+            &compiler->program->classes[(size_t)compiler->current_class];
+        methods=class->methods;count=&class->method_count;
+    } else {
+        DiamondModule *module=
+            &compiler->program->modules[(size_t)compiler->current_module];
+        methods=module->methods;count=&module->method_count;
+    }
+    DiamondMethod *source=nullptr;
+    for(size_t index=*count;index>0;index--)
+        if(name_equals(compiler,methods[index-1].name,original,false)) {
+            source=&methods[index-1];break;
+        }
+    if(source==nullptr) {
+        fail(compiler,original,"alias source is not defined here");return;
+    }
+    for(size_t index=0;index<*count;index++)
+        if(name_equals(compiler,methods[index].name,alias,false)) {
+            fail(compiler,alias,"alias name is already defined");return;
+        }
+    if(*count==DIAMOND_MAX_METHODS) {
+        fail(compiler,alias,"too many methods");return;
+    }
+    DiamondMethod copied=*source;
+    for(size_t index=0;index<alias.length;index++)
+        copied.name[index]=compiler->source[alias.start+index];
+    copied.name[alias.length]='\0';copied.included=false;
+    methods[(*count)++]=copied;advance_token(compiler);
+}
+
 static uint8_t compile_class(Compiler *compiler) {
     advance_token(compiler);
     if (compiler->current.kind != DIAMOND_TOKEN_IDENTIFIER ||
@@ -2878,6 +2927,8 @@ static uint8_t compile_class(Compiler *compiler) {
         } else if(compiler->current.kind==DIAMOND_TOKEN_MODULE_FUNCTION) {
             fail(compiler,compiler->current.span,
                  "module_function is only valid in modules");break;
+        } else if(compiler->current.kind==DIAMOND_TOKEN_ALIAS_METHOD) {
+            compile_alias_method(compiler);
         } else if(compiler->current.kind==DIAMOND_TOKEN_ATTR||
                   compiler->current.kind==DIAMOND_TOKEN_ATTR_READER||
                   compiler->current.kind==DIAMOND_TOKEN_ATTR_WRITER||
@@ -2981,6 +3032,8 @@ static uint8_t compile_module(Compiler *compiler) {
             compile_visibility(compiler,private_visibility);
         } else if(compiler->current.kind==DIAMOND_TOKEN_MODULE_FUNCTION) {
             compile_module_function(compiler);
+        } else if(compiler->current.kind==DIAMOND_TOKEN_ALIAS_METHOD) {
+            compile_alias_method(compiler);
         } else if(compiler->current.kind==DIAMOND_TOKEN_ATTR||
                   compiler->current.kind==DIAMOND_TOKEN_ATTR_READER||
                   compiler->current.kind==DIAMOND_TOKEN_ATTR_WRITER||
