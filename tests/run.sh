@@ -945,6 +945,7 @@ if "$diamond" tests/multifile/cycle_a.dia >/dev/null 2>"$cycle_error"; then
     exit 1
 fi
 grep -q "circular require involving" "$cycle_error"
+grep -q "required from .*cycle_b.dia:1" "$cycle_error"
 rm -f "$cycle_error"
 
 actual="$($diamond tests/multifile/broken_main.dia 2>&1 || true)"
