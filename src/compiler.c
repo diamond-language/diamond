@@ -2055,6 +2055,12 @@ static bool index_assignment_ahead(const Compiler *compiler) {
 }
 
 static DiamondTokenKind postfix_modifier_ahead(const Compiler *compiler) {
+    if (compiler->current.kind == DIAMOND_TOKEN_DEF ||
+        compiler->current.kind == DIAMOND_TOKEN_CLASS ||
+        compiler->current.kind == DIAMOND_TOKEN_INTERFACE ||
+        compiler->current.kind == DIAMOND_TOKEN_MODULE) {
+        return DIAMOND_TOKEN_EOF;
+    }
     DiamondLexer lookahead = compiler->lexer;
     size_t depth = 0;
     bool seen = true;
@@ -2631,7 +2637,35 @@ static uint8_t compile_definition(Compiler *compiler) {
     uint8_t body_result=0;
     if(endless) {
         advance_token(compiler);
+        const DiamondTokenKind postfix=postfix_modifier_ahead(compiler);
+        const bool has_postfix=postfix==DIAMOND_TOKEN_IF||
+                               postfix==DIAMOND_TOKEN_UNLESS;
+        const uint8_t postfix_result=has_postfix?allocate_register(compiler):0;
+        const size_t condition_jump=has_postfix
+            ? emit_jump(compiler,DIAMOND_OP_JUMP,0):SIZE_MAX;
+        const size_t body_start=compiler->function->code_count;
         body_result=parse_expression(compiler);
+        if(has_postfix) {
+            if(compiler->current.kind!=postfix) {
+                fail(compiler,compiler->current.span,"expected postfix condition");
+            } else {
+                advance_token(compiler);
+                emit_instruction(compiler,DIAMOND_OP_MOVE,postfix_result,
+                                 body_result,0,2);
+                const size_t body_exit=emit_jump(compiler,DIAMOND_OP_JUMP,0);
+                const size_t condition_start=compiler->function->code_count;
+                const uint8_t condition=parse_expression(compiler);
+                const size_t body_jump=emit_jump(
+                    compiler,postfix==DIAMOND_TOKEN_IF
+                        ? DIAMOND_OP_JUMP_IF_TRUE:DIAMOND_OP_JUMP_IF_FALSE,
+                    condition);
+                emit_instruction(compiler,DIAMOND_OP_NIL,postfix_result,0,0,1);
+                patch_jump(compiler,condition_jump,condition_start);
+                patch_jump(compiler,body_exit,compiler->function->code_count);
+                patch_jump(compiler,body_jump,body_start);
+                body_result=postfix_result;
+            }
+        }
     } else {
         if(!compiler->failed)(void)consume_block_start(compiler);
         body_result=compiler->failed?0:compile_sequence(compiler);
