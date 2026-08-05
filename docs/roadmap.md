@@ -180,6 +180,7 @@ future work.
 - Exception constructor defaults and strict arity diagnostics.
 - Stress-GC rooting for VM-created exception payloads.
 - Native exception accessor arity enforcement.
+- User initializer precedence over native exception construction.
 - Diagnostics for subclass filters shadowed by earlier superclass clauses.
 
 ## Next priorities

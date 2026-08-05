@@ -1676,4 +1676,6 @@ actual="$(DIAMOND_STRESS_GC=1 $diamond -e $'begin\n 1 / 0\nrescue error: ZeroDiv
 [[ "$actual" == "division by zero" ]]
 actual="$($diamond -e $'error=RuntimeError.new("x")\nleft=begin\n error.message(1)\nrescue : ArgumentError\n 20\nend\nright=begin\n error.cause(1)\nrescue : ArgumentError\n 22\nend\nleft+right')"
 [[ "$actual" == "42" ]]
-echo "432 tests passed"
+actual="$($diamond -e $'class CustomError < StandardError\n def initialize(code: Int)\n  @message="code #{code}"\n end\nend\nCustomError.new(42).message()')"
+[[ "$actual" == "code 42" ]]
+echo "433 tests passed"
