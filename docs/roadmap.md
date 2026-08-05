@@ -189,10 +189,12 @@ future work.
 - Postfix modifiers on `break`, `next`, `redo`, `return`, `raise`, and `retry`.
 - Nested-loop and rescue-control modifier targeting.
 - Endless function and method bodies with postfix `if`/`unless` conditions.
+- Explicit diagnostics for postfix modifiers on declarations and namespace
+  constants.
 
 ## Next priorities
 
-1. Review modifier interactions with imports and namespace declarations while
+1. Review modifier interactions with remaining loader directives while
    preserving precise result-register and control-flow semantics.
 
 ## Later experiments
