@@ -1657,4 +1657,6 @@ actual="$($diamond -e $'class WrappedError < StandardError\n attr_reader cause: 
 [[ "$actual" == "true" ]]
 actual="$($diamond -e $'class DetailedError < StandardError\n attr_accessor message: String\nend\nbegin\n DetailedError.new().message=(42)\nrescue : TypeError\n 42\nend')"
 [[ "$actual" == "42" ]]
-echo "422 tests passed"
+actual="$($diamond -e $'class DetailedError < StandardError\n attr_accessor message: String\nend\nclass NetworkError < DetailedError\nend\nerror=NetworkError.new()\nerror.message=("offline")\nbegin\n raise error\nrescue caught: DetailedError\n caught.message()\nend')"
+[[ "$actual" == "offline" ]]
+echo "423 tests passed"

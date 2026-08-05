@@ -171,6 +171,7 @@ future work.
 - Typed payload fields on user-defined exception subclasses.
 - Typed causal chaining on user-defined exceptions.
 - Runtime enforcement of exception payload contracts.
+- Inherited exception payload accessors and nominal rescue matching.
 - Diagnostics for subclass filters shadowed by earlier superclass clauses.
 
 ## Next priorities
