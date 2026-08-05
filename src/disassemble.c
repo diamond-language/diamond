@@ -252,6 +252,28 @@ static bool disassemble_chunk(FILE *stream, const char *name,
                 }
                 offset += 5;
                 break;
+            case DIAMOND_OP_CALL_TYPED: {
+                if(!require_bytes(stream,chunk,offset,6)) {
+                    valid=false;offset=chunk->code_count;break;
+                }
+                const uint8_t count=chunk->code[offset+5];
+                if(!require_bytes(stream,chunk,offset,(size_t)6+count)) {
+                    valid=false;offset=chunk->code_count;break;
+                }
+                fprintf(stream,"%-18s r%u, f%u, r%u, %u args, [",
+                    "CALL_TYPED",chunk->code[offset+1],chunk->code[offset+2],
+                    chunk->code[offset+3],chunk->code[offset+4]);
+                for(size_t index=0;index<count;index++) {
+                    if(index>0)fputs(", ",stream);
+                    const uint8_t set=chunk->code[offset+6+index];
+                    valid=print_type_set(stream,chunk,set)&&valid;
+                }
+                fputs("]\n",stream);
+                if((size_t)chunk->code[offset+2]>=chunk->function_count)
+                    valid=false;
+                offset+=(size_t)6+count;
+                break;
+            }
             case DIAMOND_OP_CALL_CLOSURE:
                 if(!require_bytes(stream,chunk,offset,5)){valid=false;offset=chunk->code_count;break;}
                 fprintf(stream,"%-18s r%u, r%u, r%u, %u args\n","CALL_CLOSURE",
@@ -293,6 +315,25 @@ static bool disassemble_chunk(FILE *stream, const char *name,
                 fprintf(stream,"%-18s r%u, r%u, s%u, r%u, %u args\n","INVOKE",
                     chunk->code[offset+1],chunk->code[offset+2],chunk->code[offset+3],
                     chunk->code[offset+4],chunk->code[offset+5]);offset+=6;break;
+            case DIAMOND_OP_INVOKE_TYPED: {
+                if(!require_bytes(stream,chunk,offset,7)) {
+                    valid=false;offset=chunk->code_count;break;
+                }
+                const uint8_t count=chunk->code[offset+6];
+                if(!require_bytes(stream,chunk,offset,(size_t)7+count)) {
+                    valid=false;offset=chunk->code_count;break;
+                }
+                fprintf(stream,"%-18s r%u, r%u, s%u, r%u, %u args, [",
+                    "INVOKE_TYPED",chunk->code[offset+1],chunk->code[offset+2],
+                    chunk->code[offset+3],chunk->code[offset+4],
+                    chunk->code[offset+5]);
+                for(size_t index=0;index<count;index++) {
+                    if(index>0)fputs(", ",stream);
+                    valid=print_type_set(stream,chunk,
+                        chunk->code[offset+7+index])&&valid;
+                }
+                fputs("]\n",stream);offset+=(size_t)7+count;break;
+            }
             case DIAMOND_OP_SUPER:
                 if(!require_bytes(stream,chunk,offset,6)){valid=false;offset=chunk->code_count;break;}
                 fprintf(stream,"%-18s r%u, class%u, s%u, r%u, %u args\n","SUPER",

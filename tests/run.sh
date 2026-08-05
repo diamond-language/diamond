@@ -1065,4 +1065,31 @@ actual="$($diamond -e $'def empty_ints() -> Array[Int] = []\ndef run()\n def wro
 actual="$(DIAMOND_STRESS_GC=1 "$diamond" -e $'def empty_like[T](sample: T) -> Array[T] = []\ndef preserve[T](values: Array[T]) -> Array[T] = values\nresult = preserve(empty_like(["diamond"]))\nbegin\n result.push([42])\nrescue error: TypeError\n 42\nend')"
 [[ "$actual" == "42" ]]
 
-echo "241 tests passed"
+actual="$($diamond -e $'def empty[T]() -> Array[T] = []\nresult = empty[Int]()\nbegin\n result.push("wrong")\nrescue error: TypeError\n 42\nend')"
+[[ "$actual" == "42" ]]
+
+actual="$($diamond -e $'def empty_pair[K, V]() -> Hash[K, V] = {}\nresult = empty_pair[String, Int]()\nresult["answer"] = 42\nresult["answer"]')"
+[[ "$actual" == "42" ]]
+
+actual="$($diamond -e $'def identity[T](value: T) -> T = value\nbegin\n identity[Int]("wrong")\nrescue error: TypeError\n 42\nend')"
+[[ "$actual" == "42" ]]
+
+actual="$($diamond -e $'def empty[T]() -> Array[T] = []\ndef outer[T](value: T) -> Array[T] = empty[T]()\nresult = outer("diamond")\nbegin\n result.push(42)\nrescue error: TypeError\n 42\nend')"
+[[ "$actual" == "42" ]]
+
+actual="$($diamond -e $'class Factory\n def empty[T]() -> Array[T] = []\nend\nresult = Factory.new().empty[String]()\nbegin\n result.push(42)\nrescue error: TypeError\n 42\nend')"
+[[ "$actual" == "42" ]]
+
+if "$diamond" -e $'def empty[T]() -> Array[T] = []\nempty[Int, String]()' \
+    >/dev/null 2>&1; then
+    echo "wrong explicit generic argument count unexpectedly compiled" >&2
+    exit 1
+fi
+
+actual="$($diamond --dump-bytecode -e $'def empty[T]() -> Array[T] = []\nempty[Array[String]]()')"
+grep -q 'CALL_TYPED.*\[Array\[String\]\]' <<<"$actual"
+
+actual="$($diamond -e $'def values[T]() -> Array[T] = []\ndef run()\n values = [42]\n values[0]\nend\nrun()')"
+[[ "$actual" == "42" ]]
+
+echo "249 tests passed"

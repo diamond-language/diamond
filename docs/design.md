@@ -254,6 +254,12 @@ contract's element, key, and value graphs—including substitutions captured by
 an earlier generic frame. This preserves nested types across chains of generic
 calls without requiring a sentinel value in an otherwise empty collection.
 
+Generic functions and methods may be specialized explicitly with syntax such
+as `empty[Int]()` or `factory.empty[String]()`. The call instruction carries
+the caller's type-set graphs into the callee, resolving outer generic variables
+when necessary. Explicit bindings disable inference for that call and therefore
+act as authoritative parameter and return contracts.
+
 For a direct `value == nil` or `value != nil` condition, the compiler splits a
 union type-set into nil and non-nil branch facts. Facts for locals that existed
 before the branch are merged at the join; disagreement becomes unknown, so

@@ -865,7 +865,7 @@ static int field_index(Compiler *compiler, DiamondSpan name, bool create) {
 
 static uint8_t parse_call(Compiler *compiler, DiamondSpan name) {
     const int callable_local=find_local(compiler,name);
-    if(callable_local>=0) {
+    if(callable_local>=0&&compiler->current.kind==DIAMOND_TOKEN_LEFT_PAREN) {
         uint8_t callable=compiler->locals[(size_t)callable_local].reg;
         if(compiler->locals[(size_t)callable_local].captured) {
             const uint8_t loaded=allocate_register(compiler);
@@ -895,6 +895,36 @@ static uint8_t parse_call(Compiler *compiler, DiamondSpan name) {
         fail(compiler, name, "undefined function");
         return 0;
     }
+    const DiamondFunction *function =
+        &compiler->program->functions[(size_t)function_index];
+    uint8_t type_arguments[8];
+    size_t type_argument_count=0;
+    if(compiler->current.kind==DIAMOND_TOKEN_LEFT_BRACKET) {
+        advance_token(compiler);
+        while(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_BRACKET&&
+              !compiler->failed) {
+            if(type_argument_count==8) {
+                fail(compiler,compiler->current.span,"too many generic arguments");
+                return 0;
+            }
+            type_arguments[type_argument_count++]=
+                (uint8_t)parse_type_annotation(compiler);
+            if(compiler->current.kind!=DIAMOND_TOKEN_COMMA)break;
+            advance_token(compiler);
+        }
+        if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_BRACKET) {
+            fail(compiler,compiler->current.span,
+                 "expected ']' after generic arguments");return 0;
+        }
+        advance_token(compiler);
+        if(type_argument_count!=function->type_variable_count) {
+            fail(compiler,name,"wrong number of generic arguments");return 0;
+        }
+        if(compiler->current.kind!=DIAMOND_TOKEN_LEFT_PAREN) {
+            fail(compiler,compiler->current.span,
+                 "expected '(' after generic arguments");return 0;
+        }
+    }
     advance_token(compiler);
     uint8_t arguments[16];
     size_t argument_count = 0;
@@ -915,8 +945,6 @@ static uint8_t parse_call(Compiler *compiler, DiamondSpan name) {
         return 0;
     }
     advance_token(compiler);
-    const DiamondFunction *function =
-        &compiler->program->functions[(size_t)function_index];
     if (argument_count < function->required_arity||argument_count > function->arity) {
         fail(compiler, name, "wrong number of arguments");
         return 0;
@@ -931,11 +959,17 @@ static uint8_t parse_call(Compiler *compiler, DiamondSpan name) {
                          (uint8_t)(argument_base + index), arguments[index], 0, 2);
     }
     const uint8_t destination = allocate_register(compiler);
-    emit_opcode(compiler, DIAMOND_OP_CALL);
+    emit_opcode(compiler,type_argument_count==0?
+        DIAMOND_OP_CALL:DIAMOND_OP_CALL_TYPED);
     emit_byte(compiler, destination);
     emit_byte(compiler, (uint8_t)function_index);
     emit_byte(compiler, argument_base);
     emit_byte(compiler, (uint8_t)argument_count);
+    if(type_argument_count>0) {
+        emit_byte(compiler,(uint8_t)type_argument_count);
+        for(size_t index=0;index<type_argument_count;index++)
+            emit_byte(compiler,type_arguments[index]);
+    }
     return destination;
 }
 
@@ -978,7 +1012,9 @@ static uint8_t parse_name(Compiler *compiler) {
         compiler->known_types[dest]=(uint8_t)(DIAMOND_TYPE_CLASS_BASE+class_index);
         return dest;
     }
-    if (compiler->current.kind == DIAMOND_TOKEN_LEFT_PAREN) {
+    if (compiler->current.kind == DIAMOND_TOKEN_LEFT_PAREN||
+        (compiler->current.kind==DIAMOND_TOKEN_LEFT_BRACKET&&
+         find_local(compiler,name)<0&&find_function(compiler,name)>=0)) {
         return parse_call(compiler, name);
     }
     return parse_identifier(compiler);
@@ -991,6 +1027,26 @@ static uint8_t parse_invoke(Compiler *compiler, uint8_t receiver) {
     }
     const DiamondSpan name = compiler->current.span;
     advance_token(compiler);
+    uint8_t type_arguments[8];size_t type_argument_count=0;
+    if(compiler->current.kind==DIAMOND_TOKEN_LEFT_BRACKET) {
+        advance_token(compiler);
+        while(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_BRACKET&&
+              !compiler->failed) {
+            if(type_argument_count==8) {
+                fail(compiler,compiler->current.span,"too many generic arguments");
+                return 0;
+            }
+            type_arguments[type_argument_count++]=
+                (uint8_t)parse_type_annotation(compiler);
+            if(compiler->current.kind!=DIAMOND_TOKEN_COMMA)break;
+            advance_token(compiler);
+        }
+        if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_BRACKET) {
+            fail(compiler,compiler->current.span,
+                 "expected ']' after generic arguments");return 0;
+        }
+        advance_token(compiler);
+    }
     if (compiler->current.kind != DIAMOND_TOKEN_LEFT_PAREN) {
         fail(compiler, compiler->current.span, "expected '(' after method name"); return 0;
     }
@@ -1013,9 +1069,15 @@ static uint8_t parse_invoke(Compiler *compiler, uint8_t receiver) {
         (uint8_t)(base+i), args[i], 0, 2);
     const uint8_t dest=allocate_register(compiler);
     const uint8_t method=add_name_string(compiler,name);
-    emit_opcode(compiler,DIAMOND_OP_INVOKE); emit_byte(compiler,dest);
+    emit_opcode(compiler,type_argument_count==0?
+        DIAMOND_OP_INVOKE:DIAMOND_OP_INVOKE_TYPED);emit_byte(compiler,dest);
     emit_byte(compiler,receiver); emit_byte(compiler,method); emit_byte(compiler,base);
     emit_byte(compiler,(uint8_t)count);
+    if(type_argument_count>0) {
+        emit_byte(compiler,(uint8_t)type_argument_count);
+        for(size_t index=0;index<type_argument_count;index++)
+            emit_byte(compiler,type_arguments[index]);
+    }
     return dest;
 }
 

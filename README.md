@@ -27,7 +27,7 @@ Implemented today:
 - stop-the-world mark/sweep collection with stress-GC testing;
 - source diagnostics and bytecode disassembly.
 
-The test suite currently contains 241 end-to-end assertions spanning the
+The test suite currently contains 249 end-to-end assertions spanning the
 frontend, compiler, VM, object model, type guards, collections, and collector.
 
 ## Build and run
@@ -232,6 +232,9 @@ variables:
 ```ruby
 def identity[T](value: T) -> T = value
 def pair[K, V](key: K, value: V) -> Hash[K, V] = {key: value}
+def empty[T]() -> Array[T] = []
+empty[Int]()
+factory.empty[String]()
 ```
 
 Calls infer variables from scalar, collection, and callable arguments. Primitive,
@@ -243,6 +246,10 @@ generic arguments. The core `array_map_typed` binds its output from the
 callback's declared return type, including for empty inputs. Bindings preserve
 recursive structures such as `Array[String]` and
 `Hash[String, Array[Int]]`.
+When inference has no evidence—or the caller wants an authoritative
+specialization—functions and methods accept explicit type arguments before the
+ordinary argument list. Their count must match the declaration, and supplied
+types remain fixed while value arguments are checked.
 
 Callable contracts may describe only arity and return type with
 `Callable[1, String]`, or carry complete parameter types with

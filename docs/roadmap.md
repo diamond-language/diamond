@@ -95,10 +95,12 @@ future work.
   returns, zero-argument lists, generic inference, and diagnostic rendering.
 - Generic inference from persistent Array and Hash contracts, including empty
   collections and recursively bound contracts from earlier generic calls.
+- Explicit generic arguments for function and method calls, including nested
+  types, outer generic forwarding, strict arity, and specialized bytecode.
 
 ## Next priorities
 
-1. Explore explicit generic call arguments for otherwise ambiguous calls.
+1. Add module namespaces and mixins without conflating them with classes.
 
 ## Later experiments
 
