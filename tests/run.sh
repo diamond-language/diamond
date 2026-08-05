@@ -1754,4 +1754,6 @@ actual="$(DIAMOND_STRESS_GC=1 $diamond -e $'def conditional() = "kept" if true\n
 [[ "$actual" == "kept" ]]
 actual="$($diamond -e $'class Box\n def value() = 42 if true\nend\nBox.new().value()')"
 [[ "$actual" == "42" ]]
-echo "468 tests passed"
+actual="$($diamond -e $'def typed_endless() -> Int = 42 if true\ntyped_endless()')"
+[[ "$actual" == "42" ]]
+echo "469 tests passed"
