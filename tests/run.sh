@@ -1748,4 +1748,8 @@ if "$diamond" -e $'class Marker\nend if true' >/dev/null 2>&1; then
     echo "declaration-level postfix unexpectedly compiled" >&2
     exit 1
 fi
-echo "465 tests passed"
+actual="$($diamond -e $'def ready() = true\ndef conditional() = 42 if ready()\nconditional()')"
+[[ "$actual" == "42" ]]
+actual="$(DIAMOND_STRESS_GC=1 $diamond -e $'def conditional() = "kept" if true\nconditional()')"
+[[ "$actual" == "kept" ]]
+echo "467 tests passed"
