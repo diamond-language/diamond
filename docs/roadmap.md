@@ -58,10 +58,11 @@ future work.
 - Primitive and subtype-aware nominal filters on rescue bindings.
 - Pipe-separated rescue type sets with up to eight alternatives.
 - Shape-guarded polymorphic inline caches for instance field reads and writes.
+- Built-in exception hierarchy with rescuable VM runtime failures.
 
 ## Next priorities
 
-1. Standard exception classes and `ensure`.
+1. `ensure` across normal completion, exceptions, and returns.
 2. Generic collection annotations and general unions.
 3. A small core library implemented partly in Diamond.
 

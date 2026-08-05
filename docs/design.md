@@ -54,6 +54,12 @@ types. During unwinding, a handler matches any member; mismatched handlers are
 discarded and lookup continues outward. Nominal filters accept subclasses;
 unannotated handlers match every raised Diamond value.
 
+Every program includes `Exception`, `StandardError`, `RuntimeError`, `TypeError`,
+`ArgumentError`, `IndexError`, `ZeroDivisionError`, `RangeError`, and
+`SystemStackError`. Rescuable VM failures are materialized as instances of these
+classes, so nominal matching and the ordinary exception unwind path handle both
+runtime failures and explicitly raised values.
+
 The compiler tracks exact types for locally obvious temporary values. It removes
 provably redundant type guards, rejects provable mismatches, and leaves runtime
 guards at dynamic boundaries. Mutable and uncertain flows are treated

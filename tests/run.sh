@@ -519,10 +519,16 @@ grep -q 'POP_RESCUE' <<<"$actual"
 actual="$(DIAMOND_STRESS_GC=1 "$diamond" tests/cases/typed_rescue.dia)"
 [[ "$actual" == "42" ]]
 
+actual="$(DIAMOND_STRESS_GC=1 "$diamond" tests/cases/standard_exceptions.dia)"
+[[ "$actual" == "42" ]]
+
+actual="$("$diamond" -e $'begin\n true + 1\nrescue error: StandardError\n 42\nend')"
+[[ "$actual" == "42" ]]
+
 if "$diamond" -e $'begin\n raise 1\nrescue error: Int |\n 0\nend' \
     >/dev/null 2>&1; then
     echo "trailing rescue union unexpectedly compiled" >&2
     exit 1
 fi
 
-echo "86 tests passed"
+echo "88 tests passed"

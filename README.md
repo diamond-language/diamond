@@ -200,6 +200,8 @@ Field sites use four-entry polymorphic caches guarded by instance shape.
   catch raised values across calls and optionally bind them to a local. A rescue
   binding may carry pipe-separated primitive or nominal filters, such as
   `rescue error: NetworkError | TimeoutError`.
+- Built-in exception classes make type, argument, index, division, range, and
+  stack failures rescuable through the same `begin`/`rescue` syntax.
 - No modules, mixins, singleton methods, or visibility.
 - Classes own immutable shape chains for lazily materialized field prefixes;
   method calls and field access use four-entry polymorphic inline caches.

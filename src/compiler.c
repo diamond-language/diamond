@@ -1509,6 +1509,26 @@ static uint8_t compile_sequence(Compiler *compiler) {
 bool diamond_compile(const char *source, DiamondProgram *program,
                      DiamondDiagnostic *diagnostic) {
     *program = (DiamondProgram){};
+    static const struct {
+        const char *name;
+        uint8_t superclass;
+    } builtins[DIAMOND_BUILTIN_CLASS_COUNT] = {
+        [DIAMOND_CLASS_EXCEPTION]={"Exception",UINT8_MAX},
+        [DIAMOND_CLASS_STANDARD_ERROR]={"StandardError",DIAMOND_CLASS_EXCEPTION},
+        [DIAMOND_CLASS_RUNTIME_ERROR]={"RuntimeError",DIAMOND_CLASS_STANDARD_ERROR},
+        [DIAMOND_CLASS_TYPE_ERROR]={"TypeError",DIAMOND_CLASS_STANDARD_ERROR},
+        [DIAMOND_CLASS_ARGUMENT_ERROR]={"ArgumentError",DIAMOND_CLASS_STANDARD_ERROR},
+        [DIAMOND_CLASS_INDEX_ERROR]={"IndexError",DIAMOND_CLASS_STANDARD_ERROR},
+        [DIAMOND_CLASS_ZERO_DIVISION_ERROR]={"ZeroDivisionError",DIAMOND_CLASS_STANDARD_ERROR},
+        [DIAMOND_CLASS_RANGE_ERROR]={"RangeError",DIAMOND_CLASS_STANDARD_ERROR},
+        [DIAMOND_CLASS_SYSTEM_STACK_ERROR]={"SystemStackError",DIAMOND_CLASS_EXCEPTION},
+    };
+    program->class_count=DIAMOND_BUILTIN_CLASS_COUNT;
+    for(size_t index=0;index<DIAMOND_BUILTIN_CLASS_COUNT;index++) {
+        DiamondClass *class=&program->classes[index];
+        (void)snprintf(class->name,sizeof class->name,"%s",builtins[index].name);
+        class->superclass=builtins[index].superclass;
+    }
     snprintf(program->entry.name, sizeof(program->entry.name), "<main>");
     *diagnostic = (DiamondDiagnostic){};
     Compiler compiler = {

@@ -349,6 +349,32 @@ static bool catch_exception(DiamondVm *vm,const DiamondChunk *chunk,
     return false;
 }
 
+static uint8_t exception_class_for_status(DiamondVmStatus status) {
+    switch(status) {
+        case DIAMOND_VM_TYPE_ERROR: return DIAMOND_CLASS_TYPE_ERROR;
+        case DIAMOND_VM_INTEGER_OVERFLOW: return DIAMOND_CLASS_RANGE_ERROR;
+        case DIAMOND_VM_DIVISION_BY_ZERO: return DIAMOND_CLASS_ZERO_DIVISION_ERROR;
+        case DIAMOND_VM_ARITY_ERROR: return DIAMOND_CLASS_ARGUMENT_ERROR;
+        case DIAMOND_VM_STACK_OVERFLOW: return DIAMOND_CLASS_SYSTEM_STACK_ERROR;
+        case DIAMOND_VM_INDEX_ERROR: return DIAMOND_CLASS_INDEX_ERROR;
+        default: return UINT8_MAX;
+    }
+}
+
+static bool catch_runtime_error(DiamondVm *vm,const DiamondChunk *chunk,
+                                DiamondVmStatus status,RescueHandler *handlers,
+                                size_t *handler_count,DiamondValue *registers,
+                                size_t *ip) {
+    const uint8_t class_index=exception_class_for_status(status);
+    if(class_index==UINT8_MAX || (size_t)class_index>=chunk->class_count)return false;
+    DiamondInstance *exception=allocate_instance(vm,&chunk->classes[class_index]);
+    if(exception==nullptr)return false;
+    vm->exception=DIAMOND_OBJECT(exception);vm->has_exception=true;
+    (void)snprintf(vm->error,sizeof vm->error,"uncaught exception: %s",
+                   exception->class->name);
+    return catch_exception(vm,chunk,handlers,handler_count,registers,ip);
+}
+
 static void format_type(char *buffer, size_t capacity,
                         const DiamondChunk *chunk, uint8_t encoded) {
     const bool nilable=(encoded&DIAMOND_TYPE_NILABLE)!=0;
@@ -429,11 +455,15 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
         }                                                                   \
     } while (false)
 
-#define VM_RETURN(status_)                   \
-    do {                                     \
-        RECORD_ERROR(status_);               \
-        vm->frames = frame.previous;          \
-        return (status_);                     \
+#define VM_RETURN(status_)                                           \
+    do {                                                             \
+        const DiamondVmStatus return_status_=(status_);               \
+        if(handler_count>0 && catch_runtime_error(vm,chunk,           \
+           return_status_,handlers,&handler_count,registers,&ip))     \
+            goto dispatch_continue;                                  \
+        RECORD_ERROR(return_status_);                                \
+        vm->frames = frame.previous;                                 \
+        return vm->has_exception?DIAMOND_VM_EXCEPTION:return_status_;\
     } while (false)
 
 #define VM_PROPAGATE(status_)                                      \
@@ -1020,6 +1050,10 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     const DiamondString *string=(const DiamondString *)vm->exception.as.object;
                     snprintf(vm->error,sizeof vm->error,"uncaught exception: %.*s",
                              (int)string->length,string->chars);
+                } else if(vm->exception.as.object->kind==DIAMOND_OBJECT_INSTANCE) {
+                    const DiamondInstance *instance=(const DiamondInstance *)vm->exception.as.object;
+                    snprintf(vm->error,sizeof vm->error,"uncaught exception: %s",
+                             instance->class->name);
                 } else snprintf(vm->error,sizeof vm->error,"uncaught exception: object");
                 VM_RETURN(DIAMOND_VM_EXCEPTION);
             }
@@ -1043,6 +1077,8 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
             default:
                 VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
         }
+dispatch_continue:
+        continue;
     }
 
 #undef READ_BYTE
