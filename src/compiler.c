@@ -1548,6 +1548,8 @@ static uint8_t compile_definition(Compiler *compiler) {
     DiamondFunction *function =
         &compiler->program->functions[compiler->program->function_count++];
     function->return_type_set=UINT8_MAX;
+    for(size_t index=0;index<16;index++)
+        function->parameter_type_sets[index]=UINT8_MAX;
     const size_t function_index = compiler->program->function_count - 1;
     function->owner_class = compiler->current_class < 0
         ? UINT8_MAX : (uint8_t)compiler->current_class;
@@ -1614,6 +1616,7 @@ static uint8_t compile_definition(Compiler *compiler) {
         compiler->in_method = true;
     }
 
+    size_t declared_parameter_count=0;
     if (compiler->current.kind != DIAMOND_TOKEN_RIGHT_PAREN) {
         do {
             if (compiler->current.kind != DIAMOND_TOKEN_IDENTIFIER) {
@@ -1630,6 +1633,9 @@ static uint8_t compile_definition(Compiler *compiler) {
             if (compiler->current.kind == DIAMOND_TOKEN_COLON) {
                 advance_token(compiler);
                 const int type = parse_type_annotation(compiler);
+                if(declared_parameter_count<16)
+                    function->parameter_type_sets[declared_parameter_count]=
+                        (uint8_t)type;
                 emit_type_check(compiler,parameter,(uint8_t)type,
                                 compiler->previous.span);
                 compiler->known_type_sets[parameter]=(int16_t)type;
@@ -1637,6 +1643,7 @@ static uint8_t compile_definition(Compiler *compiler) {
                 if(parameter_set->count==1)
                     compiler->known_types[parameter]=parameter_set->members[0].id;
             }
+            declared_parameter_count++;
             if (compiler->current.kind != DIAMOND_TOKEN_COMMA) break;
             advance_token(compiler);
             if(compiler->current.kind==DIAMOND_TOKEN_RIGHT_PAREN) break;
@@ -1792,6 +1799,10 @@ static uint8_t compile_class(Compiler *compiler) {
 }
 
 static uint8_t compile_interface(Compiler *compiler) {
+    if(compiler->function!=&compiler->program->entry) {
+        fail(compiler,compiler->current.span,
+             "interfaces must be declared at top level");return 0;
+    }
     advance_token(compiler);
     if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER||
        compiler->program->interface_count==DIAMOND_MAX_INTERFACES) {
@@ -1828,6 +1839,9 @@ static uint8_t compile_interface(Compiler *compiler) {
             }
         if(compiler->failed)break;
         DiamondInterfaceMethod *method=&interface->methods[interface->method_count++];
+        method->return_type_set=UINT8_MAX;
+        for(size_t index=0;index<16;index++)
+            method->parameter_type_sets[index]=UINT8_MAX;
         if(compiler->current.span.length>=DIAMOND_MAX_FUNCTION_NAME) {
             fail(compiler,compiler->current.span,"interface method name is too long");break;
         }
@@ -1845,7 +1859,9 @@ static uint8_t compile_interface(Compiler *compiler) {
             }
             method->arity++;advance_token(compiler);
             if(compiler->current.kind==DIAMOND_TOKEN_COLON) {
-                advance_token(compiler);(void)parse_type_annotation(compiler);
+                advance_token(compiler);
+                method->parameter_type_sets[method->arity-1]=
+                    (uint8_t)parse_type_annotation(compiler);
             }
             if(compiler->current.kind!=DIAMOND_TOKEN_COMMA)break;
             advance_token(compiler);
@@ -1855,7 +1871,8 @@ static uint8_t compile_interface(Compiler *compiler) {
         }
         advance_token(compiler);
         if(compiler->current.kind==DIAMOND_TOKEN_ARROW) {
-            advance_token(compiler);(void)parse_type_annotation(compiler);
+            advance_token(compiler);
+            method->return_type_set=(uint8_t)parse_type_annotation(compiler);
         }
         if(compiler->current.kind!=DIAMOND_TOKEN_NEWLINE&&
            compiler->current.kind!=DIAMOND_TOKEN_END) {

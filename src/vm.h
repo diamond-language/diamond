@@ -128,6 +128,8 @@ typedef struct DiamondMethod {
 typedef struct DiamondInterfaceMethod {
     char name[DIAMOND_MAX_FUNCTION_NAME];
     uint8_t arity;
+    uint8_t parameter_type_sets[16];
+    uint8_t return_type_set;
 } DiamondInterfaceMethod;
 
 typedef struct DiamondInterface {
@@ -170,6 +172,7 @@ typedef struct DiamondFunction {
     bool nested;
     uint8_t capture_count;
     uint8_t return_type_set;
+    uint8_t parameter_type_sets[16];
 } DiamondFunction;
 
 typedef struct DiamondChunk {
