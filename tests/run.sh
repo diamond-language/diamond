@@ -939,6 +939,13 @@ if "$diamond" tests/multifile/cycle_a.dia >/dev/null 2>&1; then
     echo "circular require unexpectedly loaded" >&2
     exit 1
 fi
+cycle_error="$(mktemp)"
+if "$diamond" tests/multifile/cycle_a.dia >/dev/null 2>"$cycle_error"; then
+    rm -f "$cycle_error"
+    exit 1
+fi
+grep -q "circular require involving" "$cycle_error"
+rm -f "$cycle_error"
 
 actual="$($diamond tests/multifile/broken_main.dia 2>&1 || true)"
 grep -q 'tests/multifile/broken.dia:3:16' <<<"$actual"
