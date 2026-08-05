@@ -1720,4 +1720,8 @@ actual="$($diamond -e $'loop do\n break 42 if true\nend')"
 [[ "$actual" == "42" ]]
 actual="$($diamond -e $'loop do\n break 42 unless false\nend')"
 [[ "$actual" == "42" ]]
-echo "452 tests passed"
+actual="$($diamond -e $'def answer()\n return 42 if true\n 0\nend\nanswer()')"
+[[ "$actual" == "42" ]]
+actual="$($diamond -e $'begin\n raise TypeError.new("bad") if true\nrescue : TypeError\n 42\nend')"
+[[ "$actual" == "42" ]]
+echo "454 tests passed"
