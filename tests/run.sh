@@ -1457,4 +1457,13 @@ actual="$($diamond -e $'unless true\n 0\nelse\n 42\nend')"
 actual="$($diamond -e $'def answer(value: Int | Nil) -> Int\n unless value == nil\n  value + 0\n else\n  0\n end\nend\nanswer(42)')"
 [[ "$actual" == "42" ]]
 
-echo "358 tests passed"
+actual="$($diamond -e $'value = 0\nuntil value == 3\n value = value + 1\nend\nvalue')"
+[[ "$actual" == "3" ]]
+
+actual="$($diamond -e $'value = 0\nuntil false\n value = value + 1\n break\nend\nvalue')"
+[[ "$actual" == "1" ]]
+
+actual="$($diamond -e $'value = 0\nuntil value == 3\n value = value + 1\n next\n value = 99\nend\nvalue')"
+[[ "$actual" == "3" ]]
+
+echo "361 tests passed"

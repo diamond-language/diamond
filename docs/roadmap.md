@@ -141,6 +141,7 @@ future work.
 - Predicate function and method names ending in `?`.
 - Bang function and method names ending in `!`.
 - `unless` conditional expressions with `else` and type narrowing.
+- `until` loops with ordinary `break` and `next` control flow.
 
 ## Next priorities
 

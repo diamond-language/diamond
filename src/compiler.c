@@ -1746,12 +1746,17 @@ static uint8_t parse_if(Compiler *compiler,bool inverted) {
     return destination;
 }
 
-static uint8_t parse_while(Compiler *compiler) {
+static uint8_t parse_while(Compiler *compiler,bool inverted) {
     const size_t loop_start = compiler->function->code_count;
     const uint8_t condition = parse_expression(compiler);
     if (!consume_block_start(compiler)) return 0;
+    uint8_t branch_condition=condition;
+    if(inverted) {
+        branch_condition=allocate_register(compiler);
+        emit_instruction(compiler,DIAMOND_OP_NOT,branch_condition,condition,0,2);
+    }
     const size_t exit_jump = emit_jump(
-        compiler, DIAMOND_OP_JUMP_IF_FALSE, condition);
+        compiler, DIAMOND_OP_JUMP_IF_FALSE, branch_condition);
     LoopContext loop={
         .previous=compiler->current_loop,
         .continue_target=loop_start,
@@ -1837,7 +1842,9 @@ static uint8_t parse_prefix(Compiler *compiler) {
         case DIAMOND_TOKEN_UNLESS:
             return parse_if(compiler,true);
         case DIAMOND_TOKEN_WHILE:
-            return parse_while(compiler);
+            return parse_while(compiler,false);
+        case DIAMOND_TOKEN_UNTIL:
+            return parse_while(compiler,true);
         case DIAMOND_TOKEN_BEGIN:
             return compile_begin(compiler);
         default:
