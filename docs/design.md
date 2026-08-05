@@ -328,6 +328,8 @@ semantics from the existing method and field machinery.
 Typed declarations such as `attr_accessor value: Int` copy the enclosing type
 graph into each generated function. A writer checks its argument before the
 field store; a reader checks the loaded value as its return contract.
+`attr_predicate` selects a `?` descriptor name while retaining the unsuffixed
+field name, so it uses exactly the same field bytecode and optional contract.
 
 A definition treats `=` as part of its method name only when immediately
 followed by `(`, preserving endless `def name = expression`. Invocation appends

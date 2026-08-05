@@ -313,6 +313,8 @@ An optional annotation contracts both generated methods, as in
 `attr_accessor value: Int`; writers validate before mutating the field and
 readers validate the stored result.
 `attr name` is a compact reader-only synonym for `attr_reader name`.
+`attr_predicate enabled: Bool` generates an `enabled?()` reader over the
+`@enabled` field and accepts the same visibility, module, and typing features.
 
 `alias_method new_name, existing_name` adds another instance-method descriptor
 without cloning bytecode. Aliases preserve arity, visibility, generated field

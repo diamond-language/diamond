@@ -1475,4 +1475,15 @@ actual="$($diamond -e $'value = 3\nif value == 1\n 1\nelsif value == 2\n 2\nelsi
 actual="$($diamond -e $'if false\n 0\nelsif false\n 1\nend')"
 [[ "$actual" == "nil" ]]
 
-echo "364 tests passed"
+actual="$($diamond -e $'class Feature\n attr_writer enabled\n attr_predicate enabled: Bool\nend\nfeature=Feature.new()\nfeature.enabled=(true)\nfeature.enabled?()')"
+[[ "$actual" == "true" ]]
+
+actual="$($diamond -e $'module State\n attr_predicate ready\nend\nclass Job\n include State\nend\nJob.new().ready?()')"
+[[ "$actual" == "nil" ]]
+
+if "$diamond" -e $'class Broken\n attr_predicate ready\n attr_predicate ready\nend' >/dev/null 2>&1; then
+    echo "duplicate predicate attribute unexpectedly compiled" >&2
+    exit 1
+fi
+
+echo "367 tests passed"

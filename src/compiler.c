@@ -2607,9 +2607,9 @@ static uint8_t compile_definition(Compiler *compiler) {
     return result;
 }
 
-static void compile_attribute_named(Compiler *compiler,bool writer,
+static void compile_attribute_named(Compiler *compiler,bool writer,bool predicate,
                                     DiamondSpan name,int type_set) {
-    if(name.length+writer>=DIAMOND_MAX_FUNCTION_NAME||
+    if(name.length+(writer||predicate?1u:0u)>=DIAMOND_MAX_FUNCTION_NAME||
        compiler->program->function_count==DIAMOND_MAX_FUNCTIONS) {
         fail(compiler,name,"attribute name is too long or function limit reached");
         return;
@@ -2622,7 +2622,7 @@ static void compile_attribute_named(Compiler *compiler,bool writer,
     DiamondMethod *method=nullptr;
     char method_name[DIAMOND_MAX_FUNCTION_NAME];
     (void)snprintf(method_name,sizeof method_name,"%s%s",field_name,
-                   writer?"=":"");
+                   writer?"=":predicate?"?":"");
     if(compiler->current_class>=0) {
         DiamondClass *class=
             &compiler->program->classes[(size_t)compiler->current_class];
@@ -2722,7 +2722,8 @@ static void compile_attribute_named(Compiler *compiler,bool writer,
     method->required_arity=method->arity;method->is_private=compiler->methods_private;
 }
 
-static void compile_attribute(Compiler *compiler,bool reader,bool writer) {
+static void compile_attribute(Compiler *compiler,bool reader,bool writer,
+                              bool predicate) {
     advance_token(compiler);
     const bool parenthesized=compiler->current.kind==DIAMOND_TOKEN_LEFT_PAREN;
     if(parenthesized)advance_token(compiler);
@@ -2735,9 +2736,9 @@ static void compile_attribute(Compiler *compiler,bool reader,bool writer) {
         if(compiler->current.kind==DIAMOND_TOKEN_COLON) {
             advance_token(compiler);type_set=parse_type_annotation(compiler);
         }
-        if(reader)compile_attribute_named(compiler,false,name,type_set);
+        if(reader)compile_attribute_named(compiler,false,predicate,name,type_set);
         if(writer&&!compiler->failed)
-            compile_attribute_named(compiler,true,name,type_set);
+            compile_attribute_named(compiler,true,false,name,type_set);
         if(compiler->failed)return;
         if(compiler->current.kind!=DIAMOND_TOKEN_COMMA)break;
         advance_token(compiler);
@@ -3005,11 +3006,15 @@ static uint8_t compile_class(Compiler *compiler) {
         } else if(compiler->current.kind==DIAMOND_TOKEN_ATTR||
                   compiler->current.kind==DIAMOND_TOKEN_ATTR_READER||
                   compiler->current.kind==DIAMOND_TOKEN_ATTR_WRITER||
-                  compiler->current.kind==DIAMOND_TOKEN_ATTR_ACCESSOR) {
+                  compiler->current.kind==DIAMOND_TOKEN_ATTR_ACCESSOR||
+                  compiler->current.kind==DIAMOND_TOKEN_ATTR_PREDICATE) {
             const bool reader=compiler->current.kind!=DIAMOND_TOKEN_ATTR_WRITER;
             const bool writer=compiler->current.kind!=DIAMOND_TOKEN_ATTR_READER;
             const bool shorthand=compiler->current.kind==DIAMOND_TOKEN_ATTR;
-            compile_attribute(compiler,reader,shorthand?false:writer);
+            const bool predicate=
+                compiler->current.kind==DIAMOND_TOKEN_ATTR_PREDICATE;
+            compile_attribute(compiler,reader,
+                              shorthand||predicate?false:writer,predicate);
         } else if(compiler->current.kind==DIAMOND_TOKEN_INCLUDE) {
             advance_token(compiler);
             if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER) {
@@ -3110,11 +3115,15 @@ static uint8_t compile_module(Compiler *compiler) {
         } else if(compiler->current.kind==DIAMOND_TOKEN_ATTR||
                   compiler->current.kind==DIAMOND_TOKEN_ATTR_READER||
                   compiler->current.kind==DIAMOND_TOKEN_ATTR_WRITER||
-                  compiler->current.kind==DIAMOND_TOKEN_ATTR_ACCESSOR) {
+                  compiler->current.kind==DIAMOND_TOKEN_ATTR_ACCESSOR||
+                  compiler->current.kind==DIAMOND_TOKEN_ATTR_PREDICATE) {
             const bool reader=compiler->current.kind!=DIAMOND_TOKEN_ATTR_WRITER;
             const bool writer=compiler->current.kind!=DIAMOND_TOKEN_ATTR_READER;
             const bool shorthand=compiler->current.kind==DIAMOND_TOKEN_ATTR;
-            compile_attribute(compiler,reader,shorthand?false:writer);
+            const bool predicate=
+                compiler->current.kind==DIAMOND_TOKEN_ATTR_PREDICATE;
+            compile_attribute(compiler,reader,
+                              shorthand||predicate?false:writer,predicate);
         } else if(compiler->current.kind==DIAMOND_TOKEN_IDENTIFIER&&
            assignment_ahead(compiler)) {
             const DiamondSpan constant_name=compiler->current.span;

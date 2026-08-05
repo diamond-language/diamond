@@ -120,6 +120,7 @@ future work.
   private self-dispatch, while preserving endless-method parsing.
 - Combined `attr_accessor` generation for class and module fields.
 - Optional gradual type contracts on generated attribute readers and writers.
+- Generated `attr_predicate` readers backed by ordinary instance fields.
 - Comma-separated multi-name reader, writer, and accessor declarations.
 - Targeted multi-name public/private changes for locally defined and generated
   methods without altering subsequent-definition defaults.
