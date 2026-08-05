@@ -1744,10 +1744,14 @@ actual="$($diamond -e $'def endless_if() = 42 if false\nendless_if()')"
 [[ "$actual" == "nil" ]]
 actual="$($diamond -e $'def endless_unless() = 42 unless false\nendless_unless()')"
 [[ "$actual" == "42" ]]
-if "$diamond" -e $'class Marker\nend if true' >/dev/null 2>&1; then
+declaration_error="$(mktemp)"
+if "$diamond" -e $'class Marker\nend if true' >/dev/null 2>"$declaration_error"; then
     echo "declaration-level postfix unexpectedly compiled" >&2
+    rm -f "$declaration_error"
     exit 1
 fi
+grep -q "postfix modifiers cannot follow declarations" "$declaration_error"
+rm -f "$declaration_error"
 actual="$($diamond -e $'def ready() = true\ndef conditional() = 42 if ready()\nconditional()')"
 [[ "$actual" == "42" ]]
 actual="$(DIAMOND_STRESS_GC=1 $diamond -e $'def conditional() = "kept" if true\nconditional()')"
