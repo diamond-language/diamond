@@ -150,6 +150,9 @@ static bool disassemble_chunk(FILE *stream, const char *name,
                         chunk->code[offset + 2] ? "true" : "false");
                 offset += 3;
                 break;
+            case DIAMOND_OP_ARGUMENT_PROVIDED:
+                offset=two_registers(stream,chunk,"ARGUMENT_PROVIDED",offset);
+                break;
             case DIAMOND_OP_MOVE:
                 offset = two_registers(stream, chunk, "MOVE", offset);
                 break;

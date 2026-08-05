@@ -27,7 +27,7 @@ Implemented today:
 - stop-the-world mark/sweep collection with stress-GC testing;
 - source diagnostics and bytecode disassembly.
 
-The test suite currently contains 181 end-to-end assertions spanning the
+The test suite currently contains 190 end-to-end assertions spanning the
 frontend, compiler, VM, object model, type guards, collections, and collector.
 
 ## Build and run
@@ -162,6 +162,14 @@ def answer() -> Int = 42
 Endless definitions support ordinary parameters, annotations, methods, and
 nested closure captures, and enforce the same entry and return contracts as
 block-bodied definitions.
+
+Trailing parameters may have defaults, evaluated inside the callee from left
+to right. A later default may reference an earlier parameter, and explicitly
+passing `nil` counts as supplying an argument:
+
+```ruby
+def greet(name: String = "world") -> String = name
+```
 
 Available annotations are `Int`, `String`, `Bool`, `Nil`, `Array`, `Hash`, and
 declared class names. `Sized` is a structural interface requiring a zero-arity

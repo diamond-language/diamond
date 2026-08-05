@@ -79,10 +79,12 @@ future work.
 - Function-safe structural signature checks with contravariant parameters and
   covariant returns.
 - Endless expression-bodied function and method definitions.
+- Trailing default arguments for functions, methods, constructors, and
+  closures, with supplied-argument tracking in bytecode.
 
 ## Next priorities
 
-1. Default arguments and string interpolation so forms such as
+1. String interpolation so forms such as
    `def greet(name = "world") = "Hello, #{name}"` work end to end.
 
 ## Later experiments

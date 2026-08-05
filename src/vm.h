@@ -70,6 +70,7 @@ typedef enum DiamondOpCode : uint8_t {
     DIAMOND_OP_RUN_ENSURE,
     DIAMOND_OP_END_ENSURE,
     DIAMOND_OP_IS_TYPE,
+    DIAMOND_OP_ARGUMENT_PROVIDED,
 } DiamondOpCode;
 
 typedef enum DiamondTypeId : uint8_t {
@@ -123,6 +124,7 @@ typedef struct DiamondMethod {
     char name[DIAMOND_MAX_FUNCTION_NAME];
     uint8_t function_index;
     uint8_t arity;
+    uint8_t required_arity;
 } DiamondMethod;
 
 typedef struct DiamondInterfaceMethod {
@@ -168,6 +170,7 @@ typedef struct DiamondFunction {
     DiamondTypeSet type_sets[DIAMOND_MAX_TYPE_SETS];
     size_t type_set_count;
     uint8_t arity;
+    uint8_t required_arity;
     uint8_t owner_class;
     bool nested;
     uint8_t capture_count;

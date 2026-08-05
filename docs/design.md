@@ -166,6 +166,13 @@ expression through the same register allocation, capture discovery, return
 guard, method installation, and interface-signature metadata paths as a normal
 definition.
 
+Functions retain a minimum and maximum arity. Trailing default expressions are
+compiled into the start of the callee and guarded by `ARGUMENT_PROVIDED`, which
+tests the original argument count rather than the register's value. Parameter
+registers are reserved before any fallback bytecode is emitted, preserving
+later supplied arguments. Defaults run left-to-right before parameter type
+guards, and explicit `nil` never selects a fallback.
+
 `Sized` is Diamond's first structural interface. Its contract is a zero-arity
 `length` method. `String`, `Array`, and `Hash` satisfy it natively; user classes
 satisfy it by defining or inheriting a method with that name and arity. The same

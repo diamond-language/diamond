@@ -871,4 +871,34 @@ fi
 actual="$($diamond --dump-bytecode -e $'def answer() -> Int = 42\nanswer()')"
 grep -A3 '== answer ==' <<<"$actual" | grep -q 'RETURN'
 
-echo "181 tests passed"
+actual="$($diamond -e $'def greet(name = "world") = name\n[greet(), greet(nil), greet("diamond")]')"
+[[ "$actual" == "[world, nil, diamond]" ]]
+
+actual="$($diamond -e $'def values(a = 20, b = a + 2) = [a, b]\n[values(), values(40), values(40, 2)]')"
+[[ "$actual" == "[[20, 22], [40, 42], [40, 2]]" ]]
+
+actual="$($diamond -e $'class Greeter\n def greet(name = "world") = name\nend\n[Greeter.new().greet(), Greeter.new().greet(nil)]')"
+[[ "$actual" == "[world, nil]" ]]
+
+actual="$($diamond -e $'class Point\n def initialize(value = 42)\n  @value = value\n end\n def value() = @value\nend\n[Point.new().value(), Point.new(7).value()]')"
+[[ "$actual" == "[42, 7]" ]]
+
+actual="$($diamond -e $'def run()\n def greet(name = "world") = name\n [greet(), greet("diamond")]\nend\nrun()')"
+[[ "$actual" == "[world, diamond]" ]]
+
+actual="$($diamond -e $'interface Greeter\n def greet(name: String) -> String\nend\nclass Friendly\n def greet(name: String = "world") -> String = name\nend\nFriendly.new() is Greeter')"
+[[ "$actual" == "true" ]]
+
+actual="$($diamond -e $'def typed(value: Int = 42) -> Int = value\nbegin\n typed(nil)\nrescue error: TypeError\n 42\nend')"
+[[ "$actual" == "42" ]]
+
+if "$diamond" -e $'def invalid(optional = 1, required) = required' \
+    >/dev/null 2>&1; then
+    echo "required parameter followed a default parameter" >&2
+    exit 1
+fi
+
+actual="$($diamond --dump-bytecode -e $'def answer(value = 42) = value\nanswer()')"
+grep -q 'ARGUMENT_PROVIDED' <<<"$actual"
+
+echo "190 tests passed"

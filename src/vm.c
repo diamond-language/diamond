@@ -410,7 +410,9 @@ static bool value_matches_type(const DiamondChunk *chunk, DiamondValue value,
                 for(size_t method=0;method<class->method_count;method++)
                     if(strcmp(class->methods[method].name,
                               interface->methods[required].name)==0&&
-                       class->methods[method].arity==interface->methods[required].arity) {
+                       interface->methods[required].arity>=
+                           class->methods[method].required_arity&&
+                       interface->methods[required].arity<=class->methods[method].arity) {
                         const DiamondInterfaceMethod *wanted=
                             &interface->methods[required];
                         const DiamondFunction *implementation=
@@ -519,7 +521,9 @@ static bool runtime_type_id_satisfies(const DiamondChunk *chunk,uint8_t known,
                 for(size_t method=0;method<class->method_count;method++)
                     if(strcmp(class->methods[method].name,
                               interface->methods[required].name)==0&&
-                       class->methods[method].arity==interface->methods[required].arity) {
+                       interface->methods[required].arity>=
+                           class->methods[method].required_arity&&
+                       interface->methods[required].arity<=class->methods[method].arity) {
                         const DiamondInterfaceMethod *wanted=&interface->methods[required];
                         const DiamondFunction *implementation=
                             &chunk->functions[class->methods[method].function_index];
@@ -609,7 +613,8 @@ static bool value_matches_member(const DiamondChunk *chunk,DiamondValue value,
         if(closure->function_index>=chunk->function_count)return false;
         const DiamondFunction *function=&chunk->functions[closure->function_index];
         if(member.callable_arity!=UINT8_MAX&&
-           function->arity!=member.callable_arity)return false;
+           (member.callable_arity<function->required_arity||
+            member.callable_arity>function->arity))return false;
         return member.callable_return_set==UINT8_MAX||
             ((size_t)member.callable_return_set<chunk->type_set_count&&
              function->return_type_set!=UINT8_MAX&&
@@ -975,6 +980,12 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 registers[destination] = DIAMOND_BOOL(boolean != 0);
                 break;
             }
+            case DIAMOND_OP_ARGUMENT_PROVIDED: {
+                uint8_t destination=0,index=0;
+                READ_BYTE(destination);READ_BYTE(index);
+                registers[destination]=DIAMOND_BOOL(index<argument_count);
+                break;
+            }
             case DIAMOND_OP_MOVE: {
                 uint8_t destination = 0;
                 uint8_t source = 0;
@@ -1166,7 +1177,8 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 }
                 const DiamondFunction *function =
                     &chunk->functions[function_index];
-                if (call_argument_count != function->arity) {
+                if (call_argument_count < function->required_arity||
+                    call_argument_count > function->arity) {
                     VM_RETURN(DIAMOND_VM_ARITY_ERROR);
                 }
                 const DiamondChunk called_chunk = {
@@ -1255,7 +1267,8 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 DiamondClosure *called=(DiamondClosure *)registers[callable].as.object;
                 if(called->function_index>=chunk->function_count)VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
                 const DiamondFunction *fn=&chunk->functions[called->function_index];
-                if(fn->arity!=argc)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                if(argc<fn->required_arity||argc>fn->arity)
+                    VM_RETURN(DIAMOND_VM_ARITY_ERROR);
                 DiamondChunk child={.name=fn->name,.code=fn->code,.lines=fn->lines,
                   .columns=fn->columns,.code_count=fn->code_count,.constants=fn->constants,
                   .constant_count=fn->constant_count,.strings=fn->strings,.string_count=fn->string_count,
@@ -1280,7 +1293,8 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 const DiamondMethod *init=lookup_method(
                     chunk,class,"initialize",sizeof("initialize")-1);
                 if(init!=nullptr) {
-                    if(init->arity!=argc) VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                    if(argc<init->required_arity||argc>init->arity)
+                        VM_RETURN(DIAMOND_VM_ARITY_ERROR);
                     DiamondValue args[17];args[0]=registers[dest];
                     for(size_t i=0;i<argc;i++)args[i+1]=registers[(size_t)base+i];
                     const DiamondFunction *fn=&chunk->functions[init->function_index];
@@ -1373,7 +1387,8 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     vm,chunk,chunk->code+instruction_offset,instance->class,
                     method_name->chars,method_name->length);
                 if(method==nullptr) VM_RETURN(DIAMOND_VM_TYPE_ERROR);
-                if(method->arity!=argc) VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                if(argc<method->required_arity||argc>method->arity)
+                    VM_RETURN(DIAMOND_VM_ARITY_ERROR);
                 DiamondValue args[17];args[0]=registers[recv];
                 for(size_t i=0;i<argc;i++)args[i+1]=registers[(size_t)base+i];
                 const DiamondFunction *fn=&chunk->functions[method->function_index];
@@ -1407,7 +1422,8 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     &chunk->classes[owner->superclass],method_name->chars,
                     method_name->length);
                 if(method==nullptr) VM_RETURN(DIAMOND_VM_TYPE_ERROR);
-                if(method->arity!=argc) VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                if(argc<method->required_arity||argc>method->arity)
+                    VM_RETURN(DIAMOND_VM_ARITY_ERROR);
                 DiamondValue args[17]; args[0]=registers[0];
                 for(size_t i=0;i<argc;i++) args[i+1]=registers[(size_t)base+i];
                 const DiamondFunction *fn=&chunk->functions[method->function_index];

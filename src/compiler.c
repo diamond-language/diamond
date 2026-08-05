@@ -183,7 +183,9 @@ static bool known_type_satisfies_one(const Compiler *compiler, uint8_t known,
                 for(size_t method=0;method<class->method_count;method++)
                     if(strcmp(class->methods[method].name,
                               interface->methods[required].name)==0&&
-                       class->methods[method].arity==interface->methods[required].arity) {
+                       interface->methods[required].arity>=
+                           class->methods[method].required_arity&&
+                       interface->methods[required].arity<=class->methods[method].arity) {
                         const DiamondInterfaceMethod *wanted=
                             &interface->methods[required];
                         const DiamondFunction *implementation=
@@ -791,7 +793,7 @@ static uint8_t parse_call(Compiler *compiler, DiamondSpan name) {
     advance_token(compiler);
     const DiamondFunction *function =
         &compiler->program->functions[(size_t)function_index];
-    if (argument_count != function->arity) {
+    if (argument_count < function->required_arity||argument_count > function->arity) {
         fail(compiler, name, "wrong number of arguments");
         return 0;
     }
@@ -1689,11 +1691,36 @@ static uint8_t compile_definition(Compiler *compiler) {
     if (compiler->current_class >= 0) {
         (void)allocate_register(compiler);
         function->arity = 1;
+        function->required_arity=1;
         compiler->current_method = name;
         compiler->in_method = true;
     }
 
-    size_t declared_parameter_count=0;
+    size_t parameter_count=0;
+    if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
+        parameter_count=1;DiamondLexer lookahead=compiler->lexer;
+        DiamondToken token=compiler->current;size_t nesting=0;
+        while(token.kind!=DIAMOND_TOKEN_EOF) {
+            if(token.kind==DIAMOND_TOKEN_LEFT_PAREN||
+               token.kind==DIAMOND_TOKEN_LEFT_BRACKET||
+               token.kind==DIAMOND_TOKEN_LEFT_BRACE)nesting++;
+            else if(token.kind==DIAMOND_TOKEN_RIGHT_PAREN) {
+                if(nesting==0)break;
+                nesting--;
+            } else if(token.kind==DIAMOND_TOKEN_RIGHT_BRACKET||
+                      token.kind==DIAMOND_TOKEN_RIGHT_BRACE) {
+                if(nesting>0)nesting--;
+            } else if(token.kind==DIAMOND_TOKEN_COMMA&&nesting==0)parameter_count++;
+            token=diamond_lexer_next(&lookahead);
+        }
+    }
+    if(parameter_count>16) {
+        fail(compiler,name,"functions cannot declare more than 16 parameters");
+        parameter_count=16;
+    }
+    const uint8_t parameter_base=(uint8_t)compiler->next_register;
+    for(size_t index=0;index<parameter_count;index++)(void)allocate_register(compiler);
+    size_t declared_parameter_count=0;bool saw_default=false;
     if (compiler->current.kind != DIAMOND_TOKEN_RIGHT_PAREN) {
         do {
             if (compiler->current.kind != DIAMOND_TOKEN_IDENTIFIER) {
@@ -1704,19 +1731,43 @@ static uint8_t compile_definition(Compiler *compiler) {
                 fail(compiler, compiler->current.span, "too many parameters");
                 break;
             }
-            const uint8_t parameter = define_local(compiler, compiler->current.span);
+            if(compiler->local_count==DIAMOND_MAX_LOCALS) {
+                fail(compiler,compiler->current.span,"too many local variables");break;
+            }
+            const uint8_t parameter=(uint8_t)(parameter_base+declared_parameter_count);
+            compiler->locals[compiler->local_count++]=(Local){
+                .name=compiler->current.span,.reg=parameter};
             function->arity++;
             advance_token(compiler);
+            int parameter_type=-1;DiamondSpan parameter_type_span={};
             if (compiler->current.kind == DIAMOND_TOKEN_COLON) {
                 advance_token(compiler);
+                parameter_type_span=compiler->current.span;
                 const int type = parse_type_annotation(compiler);
+                parameter_type=type;
                 if(declared_parameter_count<16)
                     function->parameter_type_sets[declared_parameter_count]=
                         (uint8_t)type;
-                emit_type_check(compiler,parameter,(uint8_t)type,
-                                compiler->previous.span);
-                compiler->known_type_sets[parameter]=(int16_t)type;
-                const DiamondTypeSet *parameter_set=&function->type_sets[(size_t)type];
+            }
+            if(compiler->current.kind==DIAMOND_TOKEN_EQUAL) {
+                saw_default=true;advance_token(compiler);
+                const uint8_t provided=allocate_register(compiler);
+                emit_instruction(compiler,DIAMOND_OP_ARGUMENT_PROVIDED,provided,
+                                 (uint8_t)(function->arity-1),0,2);
+                const size_t skip=emit_jump(compiler,DIAMOND_OP_JUMP_IF_TRUE,provided);
+                const uint8_t fallback=parse_expression(compiler);
+                emit_instruction(compiler,DIAMOND_OP_MOVE,parameter,fallback,0,2);
+                patch_jump(compiler,skip,compiler->function->code_count);
+            } else if(saw_default) {
+                fail(compiler,compiler->previous.span,
+                     "required parameter cannot follow a default parameter");
+            } else function->required_arity++;
+            if(parameter_type>=0) {
+                emit_type_check(compiler,parameter,(uint8_t)parameter_type,
+                                parameter_type_span);
+                compiler->known_type_sets[parameter]=(int16_t)parameter_type;
+                const DiamondTypeSet *parameter_set=
+                    &function->type_sets[(size_t)parameter_type];
                 if(parameter_set->count==1)
                     compiler->known_types[parameter]=parameter_set->members[0].id;
             }
@@ -1812,6 +1863,7 @@ static uint8_t compile_definition(Compiler *compiler) {
             method->name[copy_length]='\0';
             method->function_index=(uint8_t)function_index;
             method->arity=(uint8_t)(function->arity-1);
+            method->required_arity=(uint8_t)(function->required_arity-1);
         }
     }
     const uint8_t result = allocate_register(compiler);
