@@ -75,7 +75,8 @@ static bool expand(Loader *loader,const char *path,const char *source) {
     while(source[offset]!='\0') {
         const size_t line_start=offset;
         while(source[offset]!='\0'&&source[offset]!='\n')offset++;
-        const size_t line_end=offset;
+        size_t line_end=offset;
+        if(line_end>line_start&&source[line_end-1]=='\r')line_end--;
         if(source[offset]=='\n')offset++;
         size_t cursor=line_start;
         while(cursor<line_end&&(source[cursor]==' '||source[cursor]=='\t'))cursor++;
