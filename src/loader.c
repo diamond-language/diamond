@@ -66,7 +66,16 @@ static bool expand(Loader *loader,const char *path,const char *source) {
                        "circular require involving '%s'",path);return false;
     }
     if(same_path(loader->loaded,loader->loaded_count,path))return true;
-    if(loader->active_count==128||loader->loaded_count==128)return false;
+    if(loader->active_count==128) {
+        (void)snprintf(loader->error,loader->error_capacity,
+                       "%s: require nesting limit reached",path);
+        return false;
+    }
+    if(loader->loaded_count==128) {
+        (void)snprintf(loader->error,loader->error_capacity,
+                       "%s: loaded-file limit reached",path);
+        return false;
+    }
     (void)snprintf(loader->active[loader->active_count++],DIAMOND_MAX_SOURCE_PATH,
                    "%s",path);
     (void)snprintf(loader->loaded[loader->loaded_count++],DIAMOND_MAX_SOURCE_PATH,
@@ -106,8 +115,18 @@ static bool expand(Loader *loader,const char *path,const char *source) {
         if(required) {
             const size_t start=loader->length;
             if(!append(loader,"\n#line 1\n",9)||
-               !append(loader,source+chunk,line_start-chunk)||
-               !record_segment(loader,path,chunk_line,start+9,loader->length))return false;
+               !append(loader,source+chunk,line_start-chunk)) {
+                (void)snprintf(loader->error,loader->error_capacity,
+                               "%s:%zu: expanded source is too large",
+                               path,line);
+                return false;
+            }
+            if(!record_segment(loader,path,chunk_line,start+9,loader->length)) {
+                (void)snprintf(loader->error,loader->error_capacity,
+                               "%s:%zu: source-file segment limit reached",
+                               path,line);
+                return false;
+            }
             char requested[DIAMOND_MAX_SOURCE_PATH];
             const size_t request_length=close-(quote+1);
             if(request_length+5>=sizeof requested) {
@@ -156,8 +175,17 @@ static bool expand(Loader *loader,const char *path,const char *source) {
         line++;
     }
     const size_t start=loader->length;
-    if(!append(loader,"\n#line 1\n",9)||!append(loader,source+chunk,offset-chunk)||
-       !record_segment(loader,path,chunk_line,start+9,loader->length))return false;
+    if(!append(loader,"\n#line 1\n",9)||
+       !append(loader,source+chunk,offset-chunk)) {
+        (void)snprintf(loader->error,loader->error_capacity,
+                       "%s: expanded source is too large",path);
+        return false;
+    }
+    if(!record_segment(loader,path,chunk_line,start+9,loader->length)) {
+        (void)snprintf(loader->error,loader->error_capacity,
+                       "%s: source-file segment limit reached",path);
+        return false;
+    }
     loader->active_count--;return true;
 }
 
