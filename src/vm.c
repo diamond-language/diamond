@@ -340,6 +340,8 @@ static bool runtime_set_satisfies(const DiamondChunk *chunk,
 
 static bool value_matches_type(const DiamondChunk *chunk, DiamondValue value,
                                uint8_t type) {
+    if(type>=DIAMOND_TYPE_VARIABLE_BASE&&type<DIAMOND_TYPE_INTERFACE_BASE)
+        return true;
     if(type==DIAMOND_TYPE_INT) return value.kind==DIAMOND_VALUE_INT;
     if(type==DIAMOND_TYPE_BOOL) return value.kind==DIAMOND_VALUE_BOOL;
     if(type==DIAMOND_TYPE_NIL) return value.kind==DIAMOND_VALUE_NIL;
@@ -466,6 +468,10 @@ static bool runtime_set_satisfies(const DiamondChunk *chunk,
 static bool runtime_type_id_satisfies(const DiamondChunk *chunk,uint8_t known,
                                       uint8_t expected) {
     if(known==expected)return true;
+    if(expected>=DIAMOND_TYPE_VARIABLE_BASE&&
+       expected<DIAMOND_TYPE_INTERFACE_BASE)return true;
+    if(known>=DIAMOND_TYPE_VARIABLE_BASE&&known<DIAMOND_TYPE_INTERFACE_BASE)
+        return false;
     if(expected==DIAMOND_TYPE_SIZED) {
         if(known==DIAMOND_TYPE_STRING||known==DIAMOND_TYPE_ARRAY||
            known==DIAMOND_TYPE_HASH)return true;
@@ -781,6 +787,8 @@ static const char *type_name(const DiamondChunk *chunk,uint8_t type) {
     else if(type==DIAMOND_TYPE_HASH) name="Hash";
     else if(type==DIAMOND_TYPE_CALLABLE) name="Callable";
     else if(type==DIAMOND_TYPE_SIZED) name="Sized";
+    else if(type>=DIAMOND_TYPE_VARIABLE_BASE&&type<DIAMOND_TYPE_INTERFACE_BASE)
+        name="TypeVariable";
     else if(type>=DIAMOND_TYPE_INTERFACE_BASE&&
             (size_t)(type-DIAMOND_TYPE_INTERFACE_BASE)<chunk->interface_count)
         name=chunk->interfaces[type-DIAMOND_TYPE_INTERFACE_BASE].name;

@@ -971,4 +971,29 @@ actual="$($diamond -e $'class Parent\n def to_s() -> String = "parent"\nend\ncla
 actual="$(DIAMOND_STRESS_GC=1 "$diamond" -e $'class Item\n def to_s() -> String = "item"\nend\n"#{Item.new()} #{[1, 2]}"')"
 [[ "$actual" == "item [1, 2]" ]]
 
-echo "212 tests passed"
+actual="$($diamond -e $'def identity[T](value: T) -> T = value\n[identity(42), identity("diamond")]')"
+[[ "$actual" == "[42, diamond]" ]]
+
+actual="$($diamond -e $'def pair[K, V](key: K, value: V) -> Hash[K, V] = {key: value}\npair("answer", 42)')"
+[[ "$actual" == "{answer: 42}" ]]
+
+if "$diamond" -e $'def invalid[T, T](value: T) = value' >/dev/null 2>&1; then
+    echo "duplicate generic type variable unexpectedly compiled" >&2
+    exit 1
+fi
+
+if "$diamond" -e $'def invalid[T](value: Missing) = value' >/dev/null 2>&1; then
+    echo "unknown generic annotation unexpectedly compiled" >&2
+    exit 1
+fi
+
+if "$diamond" -e $'def identity[T](value: T) = value\ndef invalid(value: T) = value' \
+    >/dev/null 2>&1; then
+    echo "generic type variable escaped its declaration scope" >&2
+    exit 1
+fi
+
+actual="$($diamond --dump-bytecode -e $'def first[T](values: Array[T]) -> T = values[0]\nfirst([42])')"
+grep -q 'Array\[T0\]' <<<"$actual"
+
+echo "218 tests passed"

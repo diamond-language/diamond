@@ -164,6 +164,14 @@ indexed insertion or replacement must satisfy every contract already attached
 to the hash. Generic arrays and hashes may nest recursively. Plain `Hash` remains
 dynamic, and a missing-key read still returns `nil`.
 
+Functions and methods may declare scoped type variables after their names, as
+in `def pair[K, V](key: K, value: V) -> Hash[K, V]`. Each compiled function
+retains up to eight variable names, and type members reserve stable variable IDs
+that survive recursive Array, Hash, and Callable annotations. The initial layer
+uses runtime erasure—variable checks accept any value—while preserving enough
+metadata for call-site binding and persistent return substitution in the next
+layer.
+
 Annotations are optional. Parameters are checked on function entry and return
 values on every implicit or explicit exit unless the compiler proves the guard
 redundant.

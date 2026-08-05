@@ -51,6 +51,8 @@ static bool print_type_set(FILE *stream,const DiamondChunk *chunk,
         else if(type==DIAMOND_TYPE_HASH) fputs("Hash",stream);
         else if(type==DIAMOND_TYPE_CALLABLE) fputs("Callable",stream);
         else if(type==DIAMOND_TYPE_SIZED) fputs("Sized",stream);
+        else if(type>=DIAMOND_TYPE_VARIABLE_BASE&&type<DIAMOND_TYPE_INTERFACE_BASE)
+            fprintf(stream,"T%u",type-DIAMOND_TYPE_VARIABLE_BASE);
         else if(type>=DIAMOND_TYPE_INTERFACE_BASE&&
                 (size_t)(type-DIAMOND_TYPE_INTERFACE_BASE)<chunk->interface_count)
             fputs(chunk->interfaces[type-DIAMOND_TYPE_INTERFACE_BASE].name,stream);
@@ -310,6 +312,9 @@ static bool disassemble_chunk(FILE *stream, const char *name,
                 else if(type==DIAMOND_TYPE_HASH) fputs("Hash",stream);
                 else if(type==DIAMOND_TYPE_CALLABLE) fputs("Callable",stream);
                 else if(type==DIAMOND_TYPE_SIZED) fputs("Sized",stream);
+                else if(type>=DIAMOND_TYPE_VARIABLE_BASE&&
+                        type<DIAMOND_TYPE_INTERFACE_BASE)
+                    fprintf(stream,"T%u",type-DIAMOND_TYPE_VARIABLE_BASE);
                 else if(type>=DIAMOND_TYPE_INTERFACE_BASE&&
                         (size_t)(type-DIAMOND_TYPE_INTERFACE_BASE)<chunk->interface_count)
                     fputs(chunk->interfaces[type-DIAMOND_TYPE_INTERFACE_BASE].name,stream);

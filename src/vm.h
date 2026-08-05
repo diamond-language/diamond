@@ -84,6 +84,7 @@ typedef enum DiamondTypeId : uint8_t {
     DIAMOND_TYPE_CALLABLE,
     DIAMOND_TYPE_SIZED,
     DIAMOND_TYPE_CLASS_BASE,
+    DIAMOND_TYPE_VARIABLE_BASE = 96,
     DIAMOND_TYPE_INTERFACE_BASE = 128,
 } DiamondTypeId;
 
@@ -177,6 +178,8 @@ typedef struct DiamondFunction {
     uint8_t capture_count;
     uint8_t return_type_set;
     uint8_t parameter_type_sets[16];
+    char type_variables[8][DIAMOND_MAX_FUNCTION_NAME];
+    uint8_t type_variable_count;
 } DiamondFunction;
 
 typedef struct DiamondChunk {

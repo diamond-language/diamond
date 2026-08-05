@@ -27,7 +27,7 @@ Implemented today:
 - stop-the-world mark/sweep collection with stress-GC testing;
 - source diagnostics and bytecode disassembly.
 
-The test suite currently contains 212 end-to-end assertions spanning the
+The test suite currently contains 218 end-to-end assertions spanning the
 frontend, compiler, VM, object model, type guards, collections, and collector.
 
 ## Build and run
@@ -224,6 +224,18 @@ A class satisfies the interface by defining or inheriting the required shape;
 no `implements` declaration is needed. Typed signatures use function-safe
 variance: implementation parameters are contravariant and returns are
 covariant. Omitting an interface annotation leaves that position unconstrained.
+
+Generic function and method declarations may introduce up to eight scoped type
+variables:
+
+```ruby
+def identity[T](value: T) -> T = value
+def pair[K, V](key: K, value: V) -> Hash[K, V] = {key: value}
+```
+
+This is currently the metadata/erasure layer: variables are retained throughout
+nested annotations and bytecode metadata, but calls do not bind them to concrete
+types yet. Persistent substituted collection contracts are the next layer.
 
 The embedded core prelude is ordinary Diamond source from `lib/core.dia`.
 Current helpers include `array_first`, `array_swap_first_two`, and `hash_fetch`;

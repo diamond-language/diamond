@@ -141,6 +141,10 @@ static bool type_sets_satisfy_across(const Compiler *compiler,
 static bool known_type_satisfies_one(const Compiler *compiler, uint8_t known,
                                      uint8_t expected) {
     if(known==expected) return true;
+    if(expected>=DIAMOND_TYPE_VARIABLE_BASE&&
+       expected<DIAMOND_TYPE_INTERFACE_BASE)return true;
+    if(known>=DIAMOND_TYPE_VARIABLE_BASE&&known<DIAMOND_TYPE_INTERFACE_BASE)
+        return false;
     if(expected>=DIAMOND_TYPE_INTERFACE_BASE) {
         const size_t interface_index=(size_t)(expected-DIAMOND_TYPE_INTERFACE_BASE);
         if(interface_index>=compiler->program->interface_count)return false;
@@ -667,6 +671,9 @@ static int resolve_type(Compiler *compiler, DiamondSpan name) {
     if (name_equals(compiler, "Hash", name, false)) return DIAMOND_TYPE_HASH;
     if (name_equals(compiler, "Callable", name, false)) return DIAMOND_TYPE_CALLABLE;
     if (name_equals(compiler, "Sized", name, false)) return DIAMOND_TYPE_SIZED;
+    for(size_t index=0;index<compiler->function->type_variable_count;index++)
+        if(name_equals(compiler,compiler->function->type_variables[index],name,false))
+            return DIAMOND_TYPE_VARIABLE_BASE+(int)index;
     const int interface_index=find_interface(compiler,name);
     if(interface_index>=0)return DIAMOND_TYPE_INTERFACE_BASE+interface_index;
     const int class_index = find_class(compiler, name);
@@ -1371,6 +1378,10 @@ static uint8_t parse_precedence(Compiler *compiler, Precedence precedence) {
             }
             const uint8_t tested_type=(uint8_t)resolve_type(
                 compiler,compiler->current.span);
+            if(tested_type>=DIAMOND_TYPE_VARIABLE_BASE&&
+               tested_type<DIAMOND_TYPE_INTERFACE_BASE)
+                fail(compiler,compiler->current.span,
+                     "generic type variables cannot be used with 'is' before binding");
             advance_token(compiler);
             const uint8_t destination=allocate_register(compiler);
             emit_instruction(compiler,DIAMOND_OP_IS_TYPE,destination,left,
@@ -1581,8 +1592,15 @@ static uint8_t compile_begin(Compiler *compiler) {
                     if(type_count==8) {
                         fail(compiler,compiler->current.span,"too many rescue types");break;
                     }
+                    const uint8_t rescue_type=(uint8_t)resolve_type(
+                        compiler,compiler->current.span);
+                    if(rescue_type>=DIAMOND_TYPE_VARIABLE_BASE&&
+                       rescue_type<DIAMOND_TYPE_INTERFACE_BASE) {
+                        fail(compiler,compiler->current.span,
+                             "generic type variables cannot filter rescue");break;
+                    }
                     compiler->function->code[handler_types_operand+type_count++]=
-                        (uint8_t)resolve_type(compiler,compiler->current.span);
+                        rescue_type;
                     advance_token(compiler);
                     if(compiler->current.kind!=DIAMOND_TOKEN_PIPE)break;
                     advance_token(compiler);
@@ -1688,6 +1706,36 @@ static uint8_t compile_definition(Compiler *compiler) {
     }
     function->name[copy_length] = '\0';
     advance_token(compiler);
+    if(compiler->current.kind==DIAMOND_TOKEN_LEFT_BRACKET) {
+        advance_token(compiler);
+        while(!compiler->failed&&compiler->current.kind!=DIAMOND_TOKEN_RIGHT_BRACKET) {
+            if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER||
+               function->type_variable_count==8) {
+                fail(compiler,compiler->current.span,"expected generic type parameter");break;
+            }
+            for(size_t existing=0;existing<function->type_variable_count;existing++)
+                if(name_equals(compiler,function->type_variables[existing],
+                               compiler->current.span,false)) {
+                    fail(compiler,compiler->current.span,
+                         "duplicate generic type parameter");break;
+                }
+            if(compiler->failed)break;
+            char *type_variable=
+                function->type_variables[function->type_variable_count++];
+            if(compiler->current.span.length>=DIAMOND_MAX_FUNCTION_NAME) {
+                fail(compiler,compiler->current.span,"generic type name is too long");break;
+            }
+            for(size_t index=0;index<compiler->current.span.length;index++)
+                type_variable[index]=compiler->source[compiler->current.span.start+index];
+            type_variable[compiler->current.span.length]='\0';advance_token(compiler);
+            if(compiler->current.kind!=DIAMOND_TOKEN_COMMA)break;
+            advance_token(compiler);
+        }
+        if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_BRACKET)
+            fail(compiler,compiler->current.span,
+                 "expected ']' after generic type parameters");
+        else advance_token(compiler);
+    }
     if (compiler->current.kind != DIAMOND_TOKEN_LEFT_PAREN) {
         fail(compiler, compiler->current.span, "expected '(' after function name");
         return 0;
