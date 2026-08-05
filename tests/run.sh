@@ -1756,4 +1756,12 @@ actual="$($diamond -e $'class Box\n def value() = 42 if true\nend\nBox.new().val
 [[ "$actual" == "42" ]]
 actual="$($diamond -e $'def typed_endless() -> Int = 42 if true\ntyped_endless()')"
 [[ "$actual" == "42" ]]
-echo "469 tests passed"
+if "$diamond" -e 'require "missing" if true' >/dev/null 2>&1; then
+    echo "conditional require unexpectedly compiled" >&2
+    exit 1
+fi
+if "$diamond" -e $'module Constants\n VALUE = 42 if true\nend' >/dev/null 2>&1; then
+    echo "conditional namespace constant unexpectedly compiled" >&2
+    exit 1
+fi
+echo "471 tests passed"
