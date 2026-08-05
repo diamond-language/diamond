@@ -82,6 +82,11 @@ static bool expand(Loader *loader,const char *path,const char *source) {
         const char keyword[]="require";
         bool required=line_end-cursor>=sizeof keyword-1&&
             memcmp(source+cursor,keyword,sizeof keyword-1)==0;
+        const size_t keyword_end=cursor+sizeof keyword-1;
+        const bool require_candidate=required &&
+            (keyword_end==line_end||source[keyword_end]==' '||
+             source[keyword_end]=='\t'||source[keyword_end]=='"');
+        required=require_candidate;
         size_t quote=cursor+sizeof keyword-1;
         while(required&&quote<line_end&&(source[quote]==' '||source[quote]=='\t'))quote++;
         required=required&&quote<line_end&&source[quote]=='"';
@@ -90,6 +95,12 @@ static bool expand(Loader *loader,const char *path,const char *source) {
         required=required&&close<line_end;
         size_t tail=close+1;
         while(required&&tail<line_end&&(source[tail]==' '||source[tail]=='\t'))tail++;
+        if(required && tail<line_end && source[tail]!='#') {
+            (void)snprintf(loader->error,loader->error_capacity,
+                "%s:%zu: require directive cannot have trailing syntax",
+                path,line);
+            return false;
+        }
         required=required&&(tail==line_end||source[tail]=='#');
         if(required) {
             const size_t start=loader->length;
