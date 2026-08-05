@@ -1753,17 +1753,25 @@ static uint8_t compile_definition(Compiler *compiler) {
     compiler->in_function=true;
     compiler->current_return_type=return_type;
     compiler->current_return_type_span=return_type_span;
-    if (!compiler->failed) (void)consume_block_start(compiler);
-    const uint8_t body_result = compiler->failed ? 0 : compile_sequence(compiler);
+    const bool endless=!compiler->failed&&
+        compiler->current.kind==DIAMOND_TOKEN_EQUAL;
+    uint8_t body_result=0;
+    if(endless) {
+        advance_token(compiler);
+        body_result=parse_expression(compiler);
+    } else {
+        if(!compiler->failed)(void)consume_block_start(compiler);
+        body_result=compiler->failed?0:compile_sequence(compiler);
+    }
     if (!compiler->failed) {
         if (return_type >= 0) {
             emit_type_check(compiler,body_result,(uint8_t)return_type,
                             return_type_span);
         }
         emit_instruction(compiler, DIAMOND_OP_RETURN, body_result, 0, 0, 1);
-        if (compiler->current.kind != DIAMOND_TOKEN_END) {
+        if (!endless&&compiler->current.kind != DIAMOND_TOKEN_END) {
             fail(compiler, compiler->current.span, "expected 'end' after function body");
-        } else {
+        } else if(!endless) {
             advance_token(compiler);
         }
     }

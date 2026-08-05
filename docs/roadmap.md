@@ -78,11 +78,11 @@ future work.
   for native objects and inherited class methods.
 - Function-safe structural signature checks with contravariant parameters and
   covariant returns.
+- Endless expression-bodied function and method definitions.
 
 ## Next priorities
 
-1. Endless method definitions (`def name(...) = expression`), followed by
-   default arguments and string interpolation so forms such as
+1. Default arguments and string interpolation so forms such as
    `def greet(name = "world") = "Hello, #{name}"` work end to end.
 
 ## Later experiments

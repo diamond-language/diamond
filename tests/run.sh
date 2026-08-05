@@ -843,4 +843,32 @@ actual="$($diamond -e $'interface IntegerLength\n def length() -> Int\nend\ninte
 actual="$($diamond -e $'interface StringMaker\n def make() -> String\nend\nclass Wrong\n def make() -> Int\n  1\n end\nend\ndef accept(value: StringMaker)\n value\nend\ndef dynamic(values: Array)\n begin\n  accept(values[0])\n rescue error: TypeError\n  42\n end\nend\ndynamic([Wrong.new()])')"
 [[ "$actual" == "42" ]]
 
-echo "173 tests passed"
+actual="$($diamond -e $'def answer() = 42\nanswer()')"
+[[ "$actual" == "42" ]]
+
+actual="$($diamond -e $'def identity(value: String) -> String = value\nidentity("diamond")')"
+[[ "$actual" == "diamond" ]]
+
+actual="$($diamond -e $'class Greeter\n def greet(name: String) -> String = name\nend\nGreeter.new().greet("diamond")')"
+[[ "$actual" == "diamond" ]]
+
+actual="$($diamond -e $'def outer(value)\n def captured() = value\n captured()\nend\nouter(42)')"
+[[ "$actual" == "42" ]]
+
+actual="$($diamond -e $'interface Maker\n def make() -> String\nend\nclass DiamondMaker\n def make() -> String = "diamond"\nend\nDiamondMaker.new() is Maker')"
+[[ "$actual" == "true" ]]
+
+if "$diamond" -e $'def wrong() -> String = 42\nwrong()' >/dev/null 2>&1; then
+    echo "endless method bypassed its return contract" >&2
+    exit 1
+fi
+
+if "$diamond" -e $'def missing() =' >/dev/null 2>&1; then
+    echo "endless method accepted a missing expression" >&2
+    exit 1
+fi
+
+actual="$($diamond --dump-bytecode -e $'def answer() -> Int = 42\nanswer()')"
+grep -A3 '== answer ==' <<<"$actual" | grep -q 'RETURN'
+
+echo "181 tests passed"

@@ -160,6 +160,12 @@ Annotations are optional. Parameters are checked on function entry and return
 values on every implicit or explicit exit unless the compiler proves the guard
 redundant.
 
+After its optional return annotation, a definition may use `= expression`
+instead of a newline-delimited body and closing `end`. The compiler feeds this
+expression through the same register allocation, capture discovery, return
+guard, method installation, and interface-signature metadata paths as a normal
+definition.
+
 `Sized` is Diamond's first structural interface. Its contract is a zero-arity
 `length` method. `String`, `Array`, and `Hash` satisfy it natively; user classes
 satisfy it by defining or inheriting a method with that name and arity. The same
