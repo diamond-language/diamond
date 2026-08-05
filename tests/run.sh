@@ -480,4 +480,10 @@ actual="$(DIAMOND_TRACE_IC=1 "$diamond" tests/cases/polymorphic_cache.dia 2>"$er
 grep -q 'inline caches: 2 hits, 2 misses' "$error_file"
 rm -f "$error_file"
 
-echo "81 tests passed"
+error_file="$(mktemp)"
+actual="$(DIAMOND_TRACE_SHAPES=1 "$diamond" tests/cases/runtime_shapes.dia 2>"$error_file")"
+[[ "$actual" == "42" ]]
+grep -q 'shape transitions: 1' "$error_file"
+rm -f "$error_file"
+
+echo "82 tests passed"

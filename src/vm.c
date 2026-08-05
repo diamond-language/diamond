@@ -126,7 +126,8 @@ static DiamondInstance *allocate_instance(DiamondVm *vm,const DiamondClass *clas
     const size_t size=sizeof(DiamondInstance)+class->field_count*sizeof(DiamondValue);
     DiamondInstance *instance=malloc(size); if(instance==nullptr)return nullptr;
     instance->object=(DiamondObject){.next=vm->objects,.kind=DIAMOND_OBJECT_INSTANCE};
-    instance->class=class; instance->field_count=class->field_count;
+    instance->class=class; instance->shape=&class->shapes[0];
+    instance->field_count=class->field_count;
     for(size_t i=0;i<instance->field_count;i++) instance->fields[i]=DIAMOND_NIL;
     vm->objects=&instance->object; vm->bytes_allocated+=size; return instance;
 }
@@ -815,7 +816,8 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     VM_RETURN(DIAMOND_VM_TYPE_ERROR);
                 DiamondInstance *instance=(DiamondInstance *)registers[recv].as.object;
                 if((size_t)field>=instance->field_count)VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
-                registers[dest]=instance->fields[field];break;
+                registers[dest]=(size_t)field<instance->shape->field_count
+                    ? instance->fields[field] : DIAMOND_NIL;break;
             }
             case DIAMOND_OP_SET_IVAR: {
                 uint8_t recv=0,field=0,source=0;READ_BYTE(recv);READ_BYTE(field);READ_BYTE(source);
@@ -823,6 +825,11 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     VM_RETURN(DIAMOND_VM_TYPE_ERROR);
                 DiamondInstance *instance=(DiamondInstance *)registers[recv].as.object;
                 if((size_t)field>=instance->field_count)VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
+                const size_t needed=(size_t)field+1;
+                if(instance->shape->field_count<needed) {
+                    instance->shape=&instance->class->shapes[needed];
+                    vm->shape_transitions++;
+                }
                 instance->fields[field]=registers[source];break;
             }
             case DIAMOND_OP_CHECK_TYPE: {
@@ -944,6 +951,7 @@ DiamondVmStatus diamond_vm_run(DiamondVm *vm, const DiamondChunk *chunk,
     memset(vm->method_caches,0,sizeof(vm->method_caches));
     vm->inline_cache_hits=0;
     vm->inline_cache_misses=0;
+    vm->shape_transitions=0;
     return run_chunk(chunk, vm, nullptr, 0, 0, nullptr, result);
 }
 

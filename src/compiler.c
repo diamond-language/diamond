@@ -1446,6 +1446,13 @@ bool diamond_compile(const char *source, DiamondProgram *program,
     }
     if (!compiler.failed) {
         emit_instruction(&compiler, DIAMOND_OP_RETURN, result, 0, 0, 1);
+        for(size_t class_index=0;class_index<program->class_count;class_index++) {
+            DiamondClass *class=&program->classes[class_index];
+            for(size_t field_count=0;field_count<=class->field_count;field_count++) {
+                class->shapes[field_count]=(DiamondShape){
+                    .class=class,.field_count=(uint8_t)field_count};
+            }
+        }
     }
     return !compiler.failed;
 }

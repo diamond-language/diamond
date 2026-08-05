@@ -53,12 +53,12 @@ Methods are bytecode functions with `self` in register zero. Dynamic method
 lookup walks the receiver's class and superclass chain. `super(arguments)` is
 anchored to the class that lexically defined the calling method.
 
-Because classes and field layouts are immutable, the receiver's class pointer
-currently serves as its runtime shape. Each dynamic invoke bytecode site has a
-VM-owned four-entry polymorphic cache keyed by its instruction address and
-guarded by class pointer. A hit bypasses method-name and superclass lookup; a
-miss performs normal lookup and fills or round-robin replaces an entry. Cache
-state is reset between top-level VM runs.
+Each class owns a pointer-stable chain of shapes representing materialized field
+prefixes. Fresh instances begin at shape zero; writing a field advances to the
+shape that includes its slot, while an unmaterialized read produces `nil`.
+Method dispatch is independent of field state, so each dynamic invoke bytecode
+site uses a VM-owned four-entry polymorphic cache guarded by class pointer. A hit
+bypasses lookup; a miss performs normal lookup and fills or replaces an entry.
 
 Nested functions compile to heap-allocated closure objects. A closure identifies
 its bytecode function and traces captured values through the garbage collector;

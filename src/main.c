@@ -62,6 +62,9 @@ static int run_source(const char *name, const char *source, bool dump_bytecode) 
         fprintf(stderr,"inline caches: %zu hits, %zu misses\n",
                 vm.inline_cache_hits,vm.inline_cache_misses);
     }
+    if (getenv("DIAMOND_TRACE_SHAPES") != nullptr) {
+        fprintf(stderr,"shape transitions: %zu\n",vm.shape_transitions);
+    }
     diamond_vm_free(&vm);
     return 0;
 }

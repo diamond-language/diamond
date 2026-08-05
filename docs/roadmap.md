@@ -52,10 +52,11 @@ future work.
 - First-class nested closures with escaping, shared mutable capture cells across
   recursively nested lexical environments.
 - VM-owned four-entry polymorphic caches for dynamic method call sites.
+- Class-owned runtime shape chains with lazy instance field transitions.
 
 ## Next priorities
 
-1. Explicit mutable shapes and field inline caches.
+1. Shape-guarded field inline caches.
 2. Structured runtime exceptions.
 3. Generic collection annotations and general unions.
 4. A small core library implemented partly in Diamond.

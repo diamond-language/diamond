@@ -28,10 +28,12 @@ typedef struct DiamondString {
 } DiamondString;
 
 typedef struct DiamondClass DiamondClass;
+typedef struct DiamondShape DiamondShape;
 
 typedef struct DiamondInstance {
     DiamondObject object;
     const DiamondClass *class;
+    const DiamondShape *shape;
     size_t field_count;
     DiamondValue fields[];
 } DiamondInstance;

@@ -87,14 +87,22 @@ typedef struct DiamondMethod {
     uint8_t arity;
 } DiamondMethod;
 
-typedef struct DiamondClass {
+typedef struct DiamondClass DiamondClass;
+
+typedef struct DiamondShape {
+    const DiamondClass *class;
+    uint8_t field_count;
+} DiamondShape;
+
+struct DiamondClass {
     char name[DIAMOND_MAX_FUNCTION_NAME];
     uint8_t superclass;
     DiamondMethod methods[DIAMOND_MAX_METHODS];
     size_t method_count;
     char fields[DIAMOND_MAX_FIELDS][DIAMOND_MAX_FUNCTION_NAME];
     size_t field_count;
-} DiamondClass;
+    DiamondShape shapes[DIAMOND_MAX_FIELDS + 1];
+};
 
 typedef struct DiamondFunction {
     char name[DIAMOND_MAX_FUNCTION_NAME];
@@ -161,6 +169,7 @@ typedef struct DiamondVm {
     DiamondMethodCache method_caches[DIAMOND_INLINE_CACHE_COUNT];
     size_t inline_cache_hits;
     size_t inline_cache_misses;
+    size_t shape_transitions;
     char error[1024];
 } DiamondVm;
 

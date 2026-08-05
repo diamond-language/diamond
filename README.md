@@ -185,6 +185,9 @@ Set `DIAMOND_TRACE_IC=1` to print method inline-cache hit and miss counts after
 execution. Dynamic call sites use VM-owned four-entry polymorphic caches guarded
 by receiver class.
 
+Set `DIAMOND_TRACE_SHAPES=1` to print instance shape transitions. Fresh objects
+begin at their class's empty shape and advance lazily as fields are first written.
+
 ## Important limitations
 
 - Nested functions are first-class closures. Captured locals use shared mutable
@@ -192,8 +195,9 @@ by receiver class.
 - Runtime errors include source-mapped Diamond stack traces; structured
   exceptions are not implemented yet.
 - No modules, mixins, singleton methods, or visibility.
-- Classes currently act as immutable runtime shapes; method calls use
-  four-entry polymorphic inline caches. Mutable shapes are not implemented yet.
+- Classes own immutable shape chains for lazily materialized field prefixes;
+  method calls use four-entry polymorphic inline caches. Field caches are not
+  implemented yet.
 - No generic arrays/hashes or unrestricted union types.
 - Fixed limits exist for bytecode, constants, functions, classes, fields, and
   registers.

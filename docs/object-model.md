@@ -11,6 +11,7 @@ mark bit, and allocation-list link.
 An instance contains:
 
 - a pointer to immutable `DiamondClass` metadata;
+- a pointer to its current class-owned `DiamondShape`;
 - a field count;
 - a variable-sized array of `DiamondValue` fields.
 
@@ -23,7 +24,8 @@ first-class Diamond objects.
 The compiler assigns a stable offset whenever a method first mentions an
 instance variable. A subclass begins with a copy of its parent's field table,
 preserving inherited offsets. Instance allocation reserves every field known to
-the class and initializes it to `nil`.
+the class, but starts at shape zero and lazily advances its materialized prefix
+on writes. Reads beyond that prefix return `nil`.
 
 Current bytecode uses numeric offsets directly:
 
@@ -32,7 +34,7 @@ GET_IVAR destination, receiver, field_offset
 SET_IVAR receiver, field_offset, source
 ```
 
-This is a fixed class layout, not runtime hidden-class/shape transitions.
+Offsets remain fixed while shape pointers make field materialization explicit.
 
 ## Methods and calls
 
@@ -43,8 +45,9 @@ Explicit parameters begin in register one.
 INVOKE destination, receiver, method_name, argument_base, argument_count
 ```
 
-Lookup is currently a linear search through the receiver's class method table,
-then each superclass. There is no inline cache yet.
+Lookup misses search the receiver's class method table and then each superclass.
+Dynamic invoke sites retain up to four class/method resolutions in VM-owned
+polymorphic inline caches.
 
 `ClassName.new(arguments)` allocates an instance and looks up `initialize`. Its
 return value is ignored; `new` returns the instance. Inherited constructors work

@@ -1,0 +1,18 @@
+class Box
+  def value()
+    @value
+  end
+  def set_value(value)
+    @value = value
+  end
+end
+
+box = Box.new()
+before = box.value()
+box.set_value(42)
+box.set_value(42)
+if before == nil
+  box.value()
+else
+  0
+end
