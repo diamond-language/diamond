@@ -57,8 +57,9 @@ Nested functions compile to heap-allocated closure objects. A closure identifies
 its bytecode function and traces captured values through the garbage collector;
 dynamic closure calls use a separate opcode from statically resolved top-level
 calls. Locals are boxed only when captured; sibling closures share the resulting
-GC-traced mutable cell, while ordinary locals remain direct registers.
-Recursively nested environments are the next step in this part of the runtime.
+GC-traced mutable cell, while ordinary locals remain direct registers. Nested
+closures forward cells through intermediate environments, preserving identity
+and mutation across arbitrary lexical depth.
 
 See [object-model.md](object-model.md) for layouts and current limitations.
 

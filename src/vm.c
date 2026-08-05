@@ -638,6 +638,14 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
                 registers[dest]=((DiamondCell *)captured.as.object)->value;break;
             }
+            case DIAMOND_OP_GET_CAPTURE_CELL: {
+                uint8_t dest=0,index=0;READ_BYTE(dest);READ_BYTE(index);
+                if(closure==nullptr||index>=closure->capture_count)VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
+                DiamondValue captured=closure->captures[index];
+                if(captured.kind!=DIAMOND_VALUE_OBJECT||captured.as.object->kind!=DIAMOND_OBJECT_CELL)
+                    VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
+                registers[dest]=captured;break;
+            }
             case DIAMOND_OP_SET_CAPTURE: {
                 uint8_t index=0,source=0;READ_BYTE(index);READ_BYTE(source);
                 if(closure==nullptr||index>=closure->capture_count)VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);

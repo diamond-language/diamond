@@ -200,6 +200,10 @@ static bool disassemble_chunk(FILE *stream, const char *name,
                 if(!require_bytes(stream,chunk,offset,3)){valid=false;offset=chunk->code_count;break;}
                 fprintf(stream,"%-18s r%u, c%u\n","GET_CAPTURE",chunk->code[offset+1],chunk->code[offset+2]);
                 offset+=3;break;
+            case DIAMOND_OP_GET_CAPTURE_CELL:
+                if(!require_bytes(stream,chunk,offset,3)){valid=false;offset=chunk->code_count;break;}
+                fprintf(stream,"%-18s r%u, c%u\n","GET_CAPTURE_CELL",chunk->code[offset+1],chunk->code[offset+2]);
+                offset+=3;break;
             case DIAMOND_OP_SET_CAPTURE:
                 if(!require_bytes(stream,chunk,offset,3)){valid=false;offset=chunk->code_count;break;}
                 fprintf(stream,"%-18s c%u, r%u\n","SET_CAPTURE",chunk->code[offset+1],chunk->code[offset+2]);

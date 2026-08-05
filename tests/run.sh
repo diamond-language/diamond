@@ -465,4 +465,7 @@ actual="$(DIAMOND_STRESS_GC=1 "$diamond" tests/cases/closure_capture.dia)"
 actual="$(DIAMOND_STRESS_GC=1 "$diamond" tests/cases/mutable_closure.dia)"
 [[ "$actual" == "2" ]]
 
-echo "78 tests passed"
+actual="$(DIAMOND_STRESS_GC=1 "$diamond" tests/cases/deep_closure.dia)"
+[[ "$actual" == "42" ]]
+
+echo "79 tests passed"

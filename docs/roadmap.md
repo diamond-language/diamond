@@ -49,15 +49,15 @@ future work.
 - Detailed expected/actual runtime type diagnostics.
 - Per-instruction source coordinates in bytecode dumps.
 - Source-mapped runtime stack traces across functions and methods.
-- First-class nested closures with escaping, shared mutable capture cells.
+- First-class nested closures with escaping, shared mutable capture cells across
+  recursively nested lexical environments.
 
 ## Next priorities
 
-1. Recursively nested lexical environments.
-2. Runtime shapes and monomorphic method/field inline caches.
-3. Structured runtime exceptions.
-4. Generic collection annotations and general unions.
-5. A small core library implemented partly in Diamond.
+1. Runtime shapes and monomorphic method/field inline caches.
+2. Structured runtime exceptions.
+3. Generic collection annotations and general unions.
+4. A small core library implemented partly in Diamond.
 
 ## Later experiments
 

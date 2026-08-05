@@ -1159,6 +1159,15 @@ static uint8_t compile_definition(Compiler *compiler) {
     for(size_t i=0;i<compiler->enclosing_local_count;i++)
         compiler->enclosing_locals[i]=outer_locals[i];
     compiler->capture_count=0;
+    if(!at_top_level) {
+        if(compiler->enclosing_local_count>16) {
+            fail(compiler,name,"nested function sees too many lexical bindings");
+        } else {
+            compiler->capture_count=compiler->enclosing_local_count;
+            for(size_t i=0;i<compiler->capture_count;i++)
+                compiler->capture_registers[i]=compiler->enclosing_locals[i].reg;
+        }
+    }
     if (compiler->current_class >= 0) {
         (void)allocate_register(compiler);
         function->arity = 1;
@@ -1192,6 +1201,18 @@ static uint8_t compile_definition(Compiler *compiler) {
     }
     if (!compiler->failed && compiler->current.kind != DIAMOND_TOKEN_RIGHT_PAREN) {
         fail(compiler, compiler->current.span, "expected ')' after parameters");
+    }
+    if(!compiler->failed && !at_top_level) {
+        for(size_t i=0;i<compiler->enclosing_local_count;i++) {
+            if(find_local(compiler,compiler->enclosing_locals[i].name)>=0)continue;
+            if(compiler->local_count==DIAMOND_MAX_LOCALS) {
+                fail(compiler,compiler->enclosing_locals[i].name,"too many lexical bindings");break;
+            }
+            const uint8_t cell=allocate_register(compiler);
+            emit_instruction(compiler,DIAMOND_OP_GET_CAPTURE_CELL,cell,(uint8_t)i,0,2);
+            compiler->locals[compiler->local_count++]=(Local){
+                .name=compiler->enclosing_locals[i].name,.reg=cell,.captured=true};
+        }
     }
     int return_type = -1;
     DiamondSpan return_type_span = {};
