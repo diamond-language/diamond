@@ -901,4 +901,32 @@ fi
 actual="$($diamond --dump-bytecode -e $'def answer(value = 42) = value\nanswer()')"
 grep -q 'ARGUMENT_PROVIDED' <<<"$actual"
 
-echo "190 tests passed"
+actual="$($diamond -e $'def greet(name = "world") = "Hello, #{name}"\n[greet(), greet("Diamond")]')"
+[[ "$actual" == "[Hello, world, Hello, Diamond]" ]]
+
+actual="$($diamond -e $'value = 42\n"x=#{value}, bool=#{true}, nil=#{nil}, math=#{value + 1}"')"
+[[ "$actual" == "x=42, bool=true, nil=nil, math=43" ]]
+
+actual="$($diamond -e $'"nested #{"text"}"')"
+[[ "$actual" == "nested text" ]]
+
+actual="$($diamond -e $'class Box\nend\n"value=#{Box.new()}"')"
+[[ "$actual" == "value=#<Box>" ]]
+
+actual="$($diamond -e $'"escaped \\#{42}"')"
+[[ "$actual" == 'escaped #{42}' ]]
+
+if "$diamond" -e $'"missing #{42"' >/dev/null 2>&1; then
+    echo "unterminated interpolation unexpectedly compiled" >&2
+    exit 1
+fi
+
+if "$diamond" -e $'"empty #{}"' >/dev/null 2>&1; then
+    echo "empty interpolation unexpectedly compiled" >&2
+    exit 1
+fi
+
+actual="$($diamond --dump-bytecode -e $'value = 42\n"value=#{value}"')"
+grep -q 'TO_STRING' <<<"$actual"
+
+echo "198 tests passed"

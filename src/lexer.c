@@ -149,6 +149,24 @@ DiamondToken diamond_lexer_next(DiamondLexer *lexer) {
     }
     if (character == '"') {
         while (!at_end(lexer) && lexer->source[lexer->current] != '"') {
+            if(lexer->source[lexer->current]=='#'&&
+               lexer->source[lexer->current+1]=='{') {
+                advance(lexer);advance(lexer);size_t depth=1;
+                while(!at_end(lexer)&&depth>0) {
+                    const char embedded=advance(lexer);
+                    if(embedded=='"') {
+                        while(!at_end(lexer)&&lexer->source[lexer->current]!='"') {
+                            if(lexer->source[lexer->current]=='\\'&&
+                               lexer->source[lexer->current+1]!='\0')advance(lexer);
+                            advance(lexer);
+                        }
+                        if(!at_end(lexer))advance(lexer);
+                    } else if(embedded=='{')depth++;
+                    else if(embedded=='}')depth--;
+                }
+                if(depth!=0)return token(lexer,DIAMOND_TOKEN_ERROR);
+                continue;
+            }
             if (lexer->source[lexer->current] == '\\' &&
                 lexer->source[lexer->current + 1] != '\0') {
                 advance(lexer);

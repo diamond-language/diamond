@@ -27,7 +27,7 @@ Implemented today:
 - stop-the-world mark/sweep collection with stress-GC testing;
 - source diagnostics and bytecode disassembly.
 
-The test suite currently contains 190 end-to-end assertions spanning the
+The test suite currently contains 198 end-to-end assertions spanning the
 frontend, compiler, VM, object model, type guards, collections, and collector.
 
 ## Build and run
@@ -169,6 +169,15 @@ passing `nil` counts as supplying an argument:
 
 ```ruby
 def greet(name: String = "world") -> String = name
+```
+
+Double-quoted strings interpolate ordinary expressions with `#{...}`. Multiple
+segments are evaluated left-to-right; strings, integers, booleans, nil, and
+instances have built-in interpolation representations. Escape the marker as
+`\#{...}` to keep it literal.
+
+```ruby
+def greet(name = "world") = "Hello, #{name}"
 ```
 
 Available annotations are `Int`, `String`, `Bool`, `Nil`, `Array`, `Hash`, and

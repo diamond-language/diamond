@@ -153,6 +153,8 @@ static bool disassemble_chunk(FILE *stream, const char *name,
             case DIAMOND_OP_ARGUMENT_PROVIDED:
                 offset=two_registers(stream,chunk,"ARGUMENT_PROVIDED",offset);
                 break;
+            case DIAMOND_OP_TO_STRING:
+                offset=two_registers(stream,chunk,"TO_STRING",offset);break;
             case DIAMOND_OP_MOVE:
                 offset = two_registers(stream, chunk, "MOVE", offset);
                 break;

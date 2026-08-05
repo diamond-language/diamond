@@ -986,6 +986,34 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 registers[destination]=DIAMOND_BOOL(index<argument_count);
                 break;
             }
+            case DIAMOND_OP_TO_STRING: {
+                uint8_t destination=0,source=0;
+                READ_BYTE(destination);READ_BYTE(source);
+                if(registers[source].kind==DIAMOND_VALUE_OBJECT&&
+                   registers[source].as.object->kind==DIAMOND_OBJECT_STRING) {
+                    registers[destination]=registers[source];break;
+                }
+                char chars[96];int length=0;
+                if(registers[source].kind==DIAMOND_VALUE_INT)
+                    length=snprintf(chars,sizeof chars,"%" PRId64,
+                                    registers[source].as.integer);
+                else if(registers[source].kind==DIAMOND_VALUE_BOOL)
+                    length=snprintf(chars,sizeof chars,"%s",
+                                    registers[source].as.boolean?"true":"false");
+                else if(registers[source].kind==DIAMOND_VALUE_NIL)
+                    length=snprintf(chars,sizeof chars,"nil");
+                else if(registers[source].kind==DIAMOND_VALUE_OBJECT&&
+                        registers[source].as.object->kind==DIAMOND_OBJECT_INSTANCE) {
+                    const DiamondInstance *instance=
+                        (const DiamondInstance *)registers[source].as.object;
+                    length=snprintf(chars,sizeof chars,"#<%s>",instance->class->name);
+                } else VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                if(length<0||(size_t)length>=sizeof chars)
+                    VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                DiamondString *string=allocate_string(vm,chars,(size_t)length);
+                if(string==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                registers[destination]=DIAMOND_OBJECT(string);break;
+            }
             case DIAMOND_OP_MOVE: {
                 uint8_t destination = 0;
                 uint8_t source = 0;

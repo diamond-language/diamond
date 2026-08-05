@@ -173,6 +173,14 @@ registers are reserved before any fallback bytecode is emitted, preserving
 later supplied arguments. Defaults run left-to-right before parameter type
 guards, and explicit `nil` never selects a fallback.
 
+The lexer retains an interpolated double-quoted string as one source token while
+skipping balanced embedded braces and quoted strings. The compiler temporarily
+lexes each `#{expression}` range with the ordinary Pratt parser, emits
+`TO_STRING`, and folds literal and evaluated segments through normal string
+addition. `\#{` is decoded as a literal interpolation marker. Scalar values and
+instances currently have built-in conversion; collection conversion is left to
+the future object stringification protocol.
+
 `Sized` is Diamond's first structural interface. Its contract is a zero-arity
 `length` method. `String`, `Array`, and `Hash` satisfy it natively; user classes
 satisfy it by defining or inheriting a method with that name and arity. The same

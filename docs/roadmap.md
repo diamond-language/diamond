@@ -81,11 +81,12 @@ future work.
 - Endless expression-bodied function and method definitions.
 - Trailing default arguments for functions, methods, constructors, and
   closures, with supplied-argument tracking in bytecode.
+- Double-quoted expression interpolation with scalar and instance conversion.
 
 ## Next priorities
 
-1. String interpolation so forms such as
-   `def greet(name = "world") = "Hello, #{name}"` work end to end.
+1. Object stringification protocol, including collection interpolation.
+2. Generic type variables for reusable typed collection transforms.
 
 ## Later experiments
 

@@ -356,24 +356,27 @@ static uint8_t add_constant(Compiler *compiler, DiamondValue value) {
     return (uint8_t)index;
 }
 
-static uint8_t add_string(Compiler *compiler, DiamondSpan span) {
+static uint8_t add_string_range(Compiler *compiler,size_t start,size_t length,
+                                DiamondSpan span) {
     if (compiler->function->string_count == DIAMOND_MAX_STRING_CONSTANTS) {
         fail(compiler, span, "function has too many string literals");
         return 0;
     }
     DiamondStringConstant *string =
         &compiler->function->strings[compiler->function->string_count];
-    for (size_t index = 1; index + 1 < span.length; index++) {
-        char character = compiler->source[span.start + index];
+    for(size_t index=0;index<length;index++) {
+        char character=compiler->source[start+index];
         if (character == '\\') {
             index++;
-            character = compiler->source[span.start + index];
+            if(index==length) {fail(compiler,span,"incomplete string escape");return 0;}
+            character=compiler->source[start+index];
             switch (character) {
                 case 'n': character = '\n'; break;
                 case 'r': character = '\r'; break;
                 case 't': character = '\t'; break;
                 case '"': character = '"'; break;
                 case '\\': character = '\\'; break;
+                case '#': character = '#'; break;
                 default:
                     fail(compiler, span, "unsupported string escape");
                     return 0;
@@ -387,6 +390,10 @@ static uint8_t add_string(Compiler *compiler, DiamondSpan span) {
     }
     string->chars[string->length] = '\0';
     return (uint8_t)compiler->function->string_count++;
+}
+
+static uint8_t add_string(Compiler *compiler,DiamondSpan span) {
+    return add_string_range(compiler,span.start+1,span.length-2,span);
 }
 
 static uint8_t add_name_string(Compiler *compiler, DiamondSpan span) {
@@ -514,11 +521,53 @@ static uint8_t parse_integer(Compiler *compiler) {
 }
 
 static uint8_t parse_string(Compiler *compiler) {
-    const uint8_t destination = allocate_register(compiler);
-    const uint8_t string = add_string(compiler, compiler->previous.span);
-    emit_instruction(compiler, DIAMOND_OP_STRING, destination, string, 0, 2);
-    compiler->known_types[destination]=DIAMOND_TYPE_STRING;
-    return destination;
+    const DiamondSpan span=compiler->previous.span;
+    const size_t end=span.start+span.length-1;
+    size_t piece=span.start+1;uint8_t result=UINT8_MAX;
+    while(piece<end&&!compiler->failed) {
+        size_t index=piece;
+        while(index+1<end) {
+            if(compiler->source[index]=='\\') {index+=2;continue;}
+            if(compiler->source[index]=='#'&&compiler->source[index+1]=='{')break;
+            index++;
+        }
+        if(index+1>=end)index=end;
+        const uint8_t literal_register=allocate_register(compiler);
+        const uint8_t literal=add_string_range(compiler,piece,index-piece,span);
+        emit_instruction(compiler,DIAMOND_OP_STRING,literal_register,literal,0,2);
+        if(result==UINT8_MAX)result=literal_register;
+        else {
+            const uint8_t joined=allocate_register(compiler);
+            emit_instruction(compiler,DIAMOND_OP_ADD,joined,result,literal_register,3);
+            result=joined;
+        }
+        if(index>=end)break;
+        DiamondLexer outer_lexer=compiler->lexer;
+        const DiamondToken outer_current=compiler->current;
+        const DiamondToken outer_previous=compiler->previous;
+        DiamondLexer embedded={.source=compiler->source,.current=index+2,
+            .start=index+2,.line=span.line,.column=span.column+(index-span.start)+2,
+            .token_line=span.line,.token_column=span.column+(index-span.start)+2};
+        compiler->lexer=embedded;
+        compiler->current=diamond_lexer_next(&compiler->lexer);
+        const uint8_t value=parse_expression(compiler);
+        if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_BRACE)
+            fail(compiler,compiler->current.span,"expected '}' after interpolation");
+        const size_t close=compiler->current.span.start;
+        compiler->lexer=outer_lexer;compiler->current=outer_current;
+        compiler->previous=outer_previous;
+        const uint8_t converted=allocate_register(compiler);
+        emit_instruction(compiler,DIAMOND_OP_TO_STRING,converted,value,0,2);
+        const uint8_t joined=allocate_register(compiler);
+        emit_instruction(compiler,DIAMOND_OP_ADD,joined,result,converted,3);
+        result=joined;piece=close+1;
+    }
+    if(result==UINT8_MAX) {
+        result=allocate_register(compiler);
+        const uint8_t string=add_string(compiler,span);
+        emit_instruction(compiler,DIAMOND_OP_STRING,result,string,0,2);
+    }
+    compiler->known_types[result]=DIAMOND_TYPE_STRING;return result;
 }
 
 static uint8_t parse_literal(Compiler *compiler) {
