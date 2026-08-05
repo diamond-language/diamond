@@ -500,4 +500,14 @@ rm -f "$error_file"
 actual="$("$diamond" --dump-bytecode -e 'raise 42' 2>/dev/null || true)"
 grep -q 'RAISE' <<<"$actual"
 
-echo "83 tests passed"
+actual="$(DIAMOND_STRESS_GC=1 "$diamond" tests/cases/rescue.dia)"
+[[ "$actual" == "diamond rescued!" ]]
+
+actual="$("$diamond" -e $'begin\n 40 + 2\nrescue error\n 0\nend')"
+[[ "$actual" == "42" ]]
+
+actual="$("$diamond" --dump-bytecode tests/cases/rescue.dia)"
+grep -q 'PUSH_RESCUE' <<<"$actual"
+grep -q 'POP_RESCUE' <<<"$actual"
+
+echo "84 tests passed"

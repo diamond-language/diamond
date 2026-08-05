@@ -62,6 +62,8 @@ static DiamondTokenKind identifier_kind(const DiamondLexer *lexer) {
     if (text_equals(lexer, "break", 5)) return DIAMOND_TOKEN_BREAK;
     if (text_equals(lexer, "next", 4)) return DIAMOND_TOKEN_NEXT;
     if (text_equals(lexer, "raise", 5)) return DIAMOND_TOKEN_RAISE;
+    if (text_equals(lexer, "begin", 5)) return DIAMOND_TOKEN_BEGIN;
+    if (text_equals(lexer, "rescue", 6)) return DIAMOND_TOKEN_RESCUE;
     return DIAMOND_TOKEN_IDENTIFIER;
 }
 

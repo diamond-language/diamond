@@ -57,6 +57,7 @@ typedef struct Compiler {
 
 static uint8_t parse_expression(Compiler *compiler);
 static uint8_t compile_sequence(Compiler *compiler);
+static uint8_t compile_begin(Compiler *compiler);
 
 static void fail(Compiler *compiler, DiamondSpan span, const char *message) {
     if (!compiler->failed) {
@@ -901,6 +902,8 @@ static uint8_t parse_prefix(Compiler *compiler) {
             return parse_if(compiler);
         case DIAMOND_TOKEN_WHILE:
             return parse_while(compiler);
+        case DIAMOND_TOKEN_BEGIN:
+            return compile_begin(compiler);
         default:
             fail(compiler, compiler->previous.span, "expected expression");
             return 0;
@@ -1067,6 +1070,45 @@ static uint8_t compile_raise(Compiler *compiler) {
     const uint8_t value=parse_expression(compiler);
     emit_instruction(compiler,DIAMOND_OP_RAISE,value,0,0,1);
     return value;
+}
+
+static uint8_t compile_begin(Compiler *compiler) {
+    if(!consume_block_start(compiler))return 0;
+    const uint8_t exception=allocate_register(compiler);
+    const size_t handler_operand=compiler->function->code_count+2;
+    emit_instruction(compiler,DIAMOND_OP_PUSH_RESCUE,exception,0,0,3);
+    const uint8_t body=compile_sequence(compiler);
+    const uint8_t destination=allocate_register(compiler);
+    emit_instruction(compiler,DIAMOND_OP_MOVE,destination,body,0,2);
+    emit_instruction(compiler,DIAMOND_OP_POP_RESCUE,0,0,0,0);
+    const size_t end_jump=emit_jump(compiler,DIAMOND_OP_JUMP,0);
+    if(compiler->current.kind!=DIAMOND_TOKEN_RESCUE) {
+        fail(compiler,compiler->current.span,"expected 'rescue' after begin body");
+        return destination;
+    }
+    patch_jump(compiler,handler_operand,compiler->function->code_count);
+    advance_token(compiler);
+    const size_t rescue_local_count=compiler->local_count;
+    if(compiler->current.kind==DIAMOND_TOKEN_IDENTIFIER) {
+        if(compiler->local_count==DIAMOND_MAX_LOCALS) {
+            fail(compiler,compiler->current.span,"too many local variables");
+            return destination;
+        }
+        compiler->locals[compiler->local_count++]=(Local){
+            .name=compiler->current.span,.reg=exception};
+        advance_token(compiler);
+    }
+    if(!consume_block_start(compiler))return destination;
+    const uint8_t rescued=compile_sequence(compiler);
+    emit_instruction(compiler,DIAMOND_OP_MOVE,destination,rescued,0,2);
+    compiler->local_count=rescue_local_count;
+    if(compiler->current.kind!=DIAMOND_TOKEN_END) {
+        fail(compiler,compiler->current.span,"expected 'end' after rescue body");
+        return destination;
+    }
+    advance_token(compiler);
+    patch_jump(compiler,end_jump,compiler->function->code_count);
+    return destination;
 }
 
 static uint8_t compile_loop_control(Compiler *compiler) {
@@ -1400,6 +1442,7 @@ static uint8_t compile_assignment(Compiler *compiler) {
 static bool at_block_end(const Compiler *compiler) {
     return compiler->current.kind == DIAMOND_TOKEN_EOF ||
            compiler->current.kind == DIAMOND_TOKEN_ELSE ||
+           compiler->current.kind == DIAMOND_TOKEN_RESCUE ||
            compiler->current.kind == DIAMOND_TOKEN_END;
 }
 
@@ -1417,6 +1460,9 @@ static uint8_t compile_sequence(Compiler *compiler) {
             result=compile_return(compiler);
         } else if (compiler->current.kind == DIAMOND_TOKEN_RAISE) {
             result=compile_raise(compiler);
+        } else if (compiler->current.kind == DIAMOND_TOKEN_BEGIN) {
+            advance_token(compiler);
+            result=compile_begin(compiler);
         } else if (compiler->current.kind == DIAMOND_TOKEN_BREAK ||
                    compiler->current.kind == DIAMOND_TOKEN_NEXT) {
             result=compile_loop_control(compiler);

@@ -351,6 +351,8 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
     vm->frames = &frame;
     size_t ip = 0;
     size_t instruction_offset = 0;
+    struct { size_t target; uint8_t destination; } handlers[16];
+    size_t handler_count=0;
 
     #define RECORD_ERROR(status_) do {                                      \
         if ((status_) != DIAMOND_VM_OK) {                                   \
@@ -378,6 +380,18 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
         vm->frames = frame.previous;          \
         return (status_);                     \
     } while (false)
+
+#define VM_PROPAGATE(status_)                                      \
+    if ((status_) != DIAMOND_VM_OK) {                              \
+        if ((status_) == DIAMOND_VM_EXCEPTION && handler_count>0) {\
+            handler_count--;                                       \
+            ip=handlers[handler_count].target;                      \
+            registers[handlers[handler_count].destination]=vm->exception;\
+            vm->has_exception=false;vm->error[0]='\0';             \
+            break;                                                  \
+        }                                                           \
+        VM_RETURN(status_);                                         \
+    }
 
 #define READ_BYTE(target_)                   \
     do {                                     \
@@ -647,7 +661,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 const DiamondVmStatus status = run_chunk(
                     &called_chunk, vm, &registers[argument_base],
                     call_argument_count, depth + 1, nullptr, &call_result);
-                if (status != DIAMOND_VM_OK) VM_RETURN(status);
+                VM_PROPAGATE(status);
                 registers[destination] = call_result;
                 break;
             }
@@ -718,7 +732,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                   .classes=chunk->classes,.class_count=chunk->class_count};
                 DiamondValue call_result=DIAMOND_NIL;
                 DiamondVmStatus status=run_chunk(&child,vm,&registers[base],argc,depth+1,called,&call_result);
-                if(status!=DIAMOND_VM_OK) VM_RETURN(status);
+                VM_PROPAGATE(status);
                 registers[dest]=call_result;break;
             }
             case DIAMOND_OP_NEW: {
@@ -745,7 +759,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                       .classes=chunk->classes,.class_count=chunk->class_count};
                     DiamondValue ignored=DIAMOND_NIL;
                     DiamondVmStatus s=run_chunk(&child,vm,args,(size_t)argc+1,depth+1,nullptr,&ignored);
-                    if(s!=DIAMOND_VM_OK)VM_RETURN(s);
+                    VM_PROPAGATE(s);
                 } else if(argc!=0) VM_RETURN(DIAMOND_VM_ARITY_ERROR);
                 break;
             }
@@ -774,7 +788,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                   .classes=chunk->classes,.class_count=chunk->class_count};
                 DiamondValue call_result=DIAMOND_NIL;
                 DiamondVmStatus s=run_chunk(&child,vm,args,(size_t)argc+1,depth+1,nullptr,&call_result);
-                if(s!=DIAMOND_VM_OK) VM_RETURN(s);
+                VM_PROPAGATE(s);
                 registers[dest]=call_result;
                 break;
             }
@@ -807,7 +821,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 DiamondValue call_result=DIAMOND_NIL;
                 DiamondVmStatus status=run_chunk(&child,vm,args,(size_t)argc+1,
                                                   depth+1,nullptr,&call_result);
-                if(status!=DIAMOND_VM_OK) VM_RETURN(status);
+                VM_PROPAGATE(status);
                 registers[dest]=call_result;
                 break;
             }
@@ -936,6 +950,12 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
             case DIAMOND_OP_RAISE: {
                 uint8_t source=0;READ_BYTE(source);
                 vm->exception=registers[source];vm->has_exception=true;
+                if(handler_count>0) {
+                    handler_count--;
+                    ip=handlers[handler_count].target;
+                    registers[handlers[handler_count].destination]=vm->exception;
+                    vm->has_exception=false;vm->error[0]='\0';break;
+                }
                 if(vm->exception.kind==DIAMOND_VALUE_INT)
                     snprintf(vm->error,sizeof vm->error,"uncaught exception: %" PRId64,
                              vm->exception.as.integer);
@@ -951,6 +971,18 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 } else snprintf(vm->error,sizeof vm->error,"uncaught exception: object");
                 VM_RETURN(DIAMOND_VM_EXCEPTION);
             }
+            case DIAMOND_OP_PUSH_RESCUE: {
+                uint8_t destination=0,high=0,low=0;
+                READ_BYTE(destination);READ_BYTE(high);READ_BYTE(low);
+                const size_t target=((size_t)high<<8)|low;
+                if(handler_count==16||target>chunk->code_count)
+                    VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
+                handlers[handler_count++]=(typeof(handlers[0])){
+                    .target=target,.destination=destination};break;
+            }
+            case DIAMOND_OP_POP_RESCUE:
+                if(handler_count==0)VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
+                handler_count--;break;
             default:
                 VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
         }
@@ -958,6 +990,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
 
 #undef READ_BYTE
 #undef VM_RETURN
+#undef VM_PROPAGATE
 #undef RECORD_ERROR
 
     vm->frames = frame.previous;

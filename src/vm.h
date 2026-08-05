@@ -61,6 +61,8 @@ typedef enum DiamondOpCode : uint8_t {
     DIAMOND_OP_JUMP_IF_TRUE,
     DIAMOND_OP_RETURN,
     DIAMOND_OP_RAISE,
+    DIAMOND_OP_PUSH_RESCUE,
+    DIAMOND_OP_POP_RESCUE,
 } DiamondOpCode;
 
 typedef enum DiamondTypeId : uint8_t {

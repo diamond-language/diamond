@@ -54,11 +54,12 @@ future work.
 - VM-owned four-entry polymorphic caches for dynamic method call sites.
 - Class-owned runtime shape chains with lazy instance field transitions.
 - Value-carrying `raise` with source-mapped cross-call unwinding.
+- Nested `begin`/`rescue` expressions with optional raised-value bindings.
 
 ## Next priorities
 
 1. Shape-guarded field inline caches.
-2. `begin`/`rescue` exception handlers and exception classes.
+2. Exception classes, typed rescue matching, and `ensure`.
 3. Generic collection annotations and general unions.
 4. A small core library implemented partly in Diamond.
 
