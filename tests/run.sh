@@ -1605,4 +1605,9 @@ if "$diamond" -e $'begin\n raise "x"\nrescue error\n 1\nrescue : TypeError\n 2\n
     exit 1
 fi
 
-echo "404 tests passed"
+if "$diamond" -e $'begin\n 1 / 0\nrescue : TypeError | TypeError\n 42\nend' >/dev/null 2>&1; then
+    echo "duplicate rescue type unexpectedly compiled" >&2
+    exit 1
+fi
+
+echo "405 tests passed"

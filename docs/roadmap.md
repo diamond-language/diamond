@@ -156,6 +156,7 @@ future work.
 - Rescue-local `retry` with stable ensure-frame behavior.
 - Binding-free typed rescue filters.
 - Ordered multiple rescue clauses with unmatched re-raise.
+- Duplicate rescue-filter type diagnostics.
 
 ## Next priorities
 

@@ -2158,6 +2158,10 @@ static uint8_t compile_begin(Compiler *compiler) {
                 }
                 const uint8_t rescue_type=(uint8_t)resolve_type(
                     compiler,compiler->current.span);
+                for(size_t existing=0;existing<type_count;existing++)
+                    if(rescue_types[existing]==rescue_type)
+                        fail(compiler,compiler->current.span,
+                             "duplicate rescue type");
                 if(rescue_type>=DIAMOND_TYPE_VARIABLE_BASE&&
                    rescue_type<DIAMOND_TYPE_INTERFACE_BASE) {
                     fail(compiler,compiler->current.span,
