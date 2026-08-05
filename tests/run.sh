@@ -1120,4 +1120,21 @@ if "$diamond" -e $'module Box\nend\nclass Box\nend' >/dev/null 2>&1; then
     exit 1
 fi
 
-echo "257 tests passed"
+actual="$($diamond -e $'module Base\n def value() = 1\nend\nmodule Combined\n include Base\n def other() = 41\nend\nclass Box\n include Combined\nend\nBox.new().value() + Box.new().other()')"
+[[ "$actual" == "42" ]]
+
+actual="$($diamond -e $'module Base\n def value() = 1\nend\nmodule Combined\n include Base\n def value() = 2\nend\nclass Box\n include Combined\nend\nBox.new().value()')"
+[[ "$actual" == "2" ]]
+
+actual="$($diamond -e $'module First\n def value() = 1\nend\nmodule Second\n def value() = 2\nend\nmodule Combined\n include First\n include Second\nend\nclass Box\n include Combined\nend\nBox.new().value()')"
+[[ "$actual" == "2" ]]
+
+actual="$($diamond -e $'module Base\n def empty[T]() -> Array[T] = []\nend\nmodule Combined\n include Base\nend\nclass Factory\n include Combined\nend\nresult = Factory.new().empty[Int]()\nbegin\n result.push("wrong")\nrescue error: TypeError\n 42\nend')"
+[[ "$actual" == "42" ]]
+
+if "$diamond" -e $'module Recursive\n include Recursive\nend' >/dev/null 2>&1; then
+    echo "self-including module unexpectedly compiled" >&2
+    exit 1
+fi
+
+echo "262 tests passed"

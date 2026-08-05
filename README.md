@@ -28,7 +28,7 @@ Implemented today:
 - stop-the-world mark/sweep collection with stress-GC testing;
 - source diagnostics and bytecode disassembly.
 
-The test suite currently contains 257 end-to-end assertions spanning the
+The test suite currently contains 262 end-to-end assertions spanning the
 frontend, compiler, VM, object model, type guards, collections, and collector.
 
 ## Build and run
@@ -242,7 +242,9 @@ end
 Included methods receive the eventual instance as `self`. Later includes win
 over earlier includes, methods written directly in the class win over included
 methods, and the resulting class method set precedes inherited lookup. Modules
-are not instantiable and do not participate in nominal subtyping.
+may include previously declared modules with the same precedence rules, making
+composition transitive. Modules are not instantiable and do not participate in
+nominal subtyping.
 
 Generic function and method declarations may introduce up to eight scoped type
 variables:

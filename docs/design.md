@@ -266,7 +266,10 @@ bytecode functions, typed signatures, generics, and the receiver slot. Reverse
 declaration lookup gives direct class methods precedence over included methods
 and later includes precedence over earlier ones; superclass lookup begins only
 after the receiving class is exhausted. Modules have no instances,
-superclasses, fields, or nominal type identity.
+superclasses, fields, or nominal type identity. A module may include an earlier
+module; its flattened descriptors remain marked as imported so methods declared
+directly by the composing module override them. Source-order resolution and the
+absence of reopening prevent indirect cycles, while self-inclusion is diagnosed.
 
 For a direct `value == nil` or `value != nil` condition, the compiler splits a
 union type-set into nil and non-nil branch facts. Facts for locals that existed

@@ -99,6 +99,8 @@ future work.
   types, outer generic forwarding, strict arity, and specialized bytecode.
 - Reusable modules with class inclusion, receiver-aware generic methods,
   deterministic precedence, inheritance integration, and name diagnostics.
+- Transitive module-to-module inclusion with imported/direct precedence and
+  self-cycle diagnostics.
 
 ## Next priorities
 

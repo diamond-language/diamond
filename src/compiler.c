@@ -2102,7 +2102,8 @@ static uint8_t compile_definition(Compiler *compiler) {
         DiamondModule *module=
             &compiler->program->modules[(size_t)compiler->current_module];
         for(size_t existing=0;existing<module->method_count;existing++)
-            if(name_equals(compiler,module->methods[existing].name,name,false)) {
+            if(!module->methods[existing].included&&
+               name_equals(compiler,module->methods[existing].name,name,false)) {
                 fail(compiler,name,"duplicate module method");break;
             }
         if(!compiler->failed) {
@@ -2115,7 +2116,7 @@ static uint8_t compile_definition(Compiler *compiler) {
                 method->function_index=(uint8_t)function_index;
                 method->arity=(uint8_t)(function->arity-1);
                 method->required_arity=(uint8_t)(function->required_arity-1);
-                method->included=true;
+                method->included=false;
             }
         }
     }
@@ -2193,8 +2194,10 @@ static uint8_t compile_class(Compiler *compiler) {
                 fail(compiler,compiler->current.span,
                      "included module adds too many methods");break;
             }
-            for(size_t method=0;method<module->method_count;method++)
-                class->methods[class->method_count++]=module->methods[method];
+            for(size_t method=0;method<module->method_count;method++) {
+                class->methods[class->method_count]=module->methods[method];
+                class->methods[class->method_count++].included=true;
+            }
             advance_token(compiler);
         } else if(compiler->current.kind==DIAMOND_TOKEN_DEF) {
             (void)compile_definition(compiler);
@@ -2237,11 +2240,37 @@ static uint8_t compile_module(Compiler *compiler) {
     if(!consume_block_start(compiler))return 0;
     const int outer=compiler->current_module;compiler->current_module=index;
     while(!compiler->failed&&compiler->current.kind!=DIAMOND_TOKEN_END) {
-        if(compiler->current.kind!=DIAMOND_TOKEN_DEF) {
+        if(compiler->current.kind==DIAMOND_TOKEN_INCLUDE) {
+            advance_token(compiler);
+            if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER) {
+                fail(compiler,compiler->current.span,
+                     "expected module name after 'include'");break;
+            }
+            const int included=find_module(compiler,compiler->current.span);
+            if(included==index) {
+                fail(compiler,compiler->current.span,
+                     "module cannot include itself");break;
+            }
+            if(included<0) {
+                fail(compiler,compiler->current.span,"undefined module");break;
+            }
+            const DiamondModule *source=
+                &compiler->program->modules[(size_t)included];
+            if(module->method_count+source->method_count>DIAMOND_MAX_METHODS) {
+                fail(compiler,compiler->current.span,
+                     "included module adds too many methods");break;
+            }
+            for(size_t method=0;method<source->method_count;method++) {
+                module->methods[module->method_count]=source->methods[method];
+                module->methods[module->method_count++].included=true;
+            }
+            advance_token(compiler);
+        } else if(compiler->current.kind==DIAMOND_TOKEN_DEF) {
+            (void)compile_definition(compiler);
+        } else {
             fail(compiler,compiler->current.span,
-                 "expected method definition in module");break;
+                 "expected method definition or include in module");break;
         }
-        (void)compile_definition(compiler);
         if(compiler->current.kind==DIAMOND_TOKEN_NEWLINE)skip_newlines(compiler);
     }
     compiler->current_module=outer;
