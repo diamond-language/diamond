@@ -409,6 +409,7 @@ runtime error: expected String | Nil, got Int
 - `else` after `rescue`, executed only when the protected body completes normally
 - bare `raise` inside a rescue body to rethrow the current exception
 - user exception subclasses may define typed message/cause fields and constructors
+- VM-generated standard exceptions expose their runtime diagnostic through `message()`
 - `retry` inside rescue to restart the protected body
 - binding-free typed filters such as `rescue : TypeError | IndexError`
 - multiple ordered `rescue` clauses, with an optional final catch-all

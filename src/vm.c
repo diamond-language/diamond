@@ -898,9 +898,15 @@ static bool catch_runtime_error(DiamondVm *vm,const DiamondChunk *chunk,
                                 DiamondValue *registers,size_t *ip) {
     const uint8_t class_index=exception_class_for_status(status);
     if(class_index==UINT8_MAX || (size_t)class_index>=chunk->class_count)return false;
+    char message[sizeof vm->error];
+    (void)snprintf(message,sizeof message,"%s",vm->error[0]!='\0'?vm->error:
+                   diamond_vm_status_name(status));
     DiamondInstance *exception=allocate_instance(vm,&chunk->classes[class_index]);
     if(exception==nullptr)return false;
     vm->exception=DIAMOND_OBJECT(exception);vm->has_exception=true;
+    DiamondString *text=allocate_string(vm,message,strlen(message));
+    if(text==nullptr)return false;
+    if(exception->field_count>0)exception->fields[0]=DIAMOND_OBJECT(text);
     (void)snprintf(vm->error,sizeof vm->error,"uncaught exception: %s",
                    exception->class->name);
     return catch_exception(vm,chunk,handlers,handler_count,pending,registers,ip);
@@ -2016,6 +2022,21 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 if(receiver_kind!=DIAMOND_OBJECT_INSTANCE)
                     VM_RETURN(DIAMOND_VM_TYPE_ERROR);
                 DiamondInstance *instance=(DiamondInstance *)registers[recv].as.object;
+                bool exception_instance=false;
+                const DiamondClass *ancestor=instance->class;
+                while(ancestor!=nullptr) {
+                    if(ancestor==&chunk->classes[DIAMOND_CLASS_EXCEPTION]) {
+                        exception_instance=true;break;
+                    }
+                    ancestor=ancestor->superclass==UINT8_MAX?nullptr:
+                        &chunk->classes[ancestor->superclass];
+                }
+                if(exception_instance&&method_name->length==7&&
+                   memcmp(method_name->chars,"message",7)==0) {
+                    if(argc!=0)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                    registers[dest]=instance->field_count>0?
+                        instance->fields[0]:DIAMOND_NIL;break;
+                }
                 const DiamondMethod *method=lookup_method_cached(
                     vm,chunk,chunk->code+instruction_offset,instance->class,
                     method_name->chars,method_name->length);

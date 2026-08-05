@@ -1663,4 +1663,6 @@ actual="$($diamond -e $'class DetailedError < StandardError\n attr_accessor mess
 [[ "$actual" == "kept" ]]
 actual="$($diamond -e $'class DetailedError < StandardError\n attr_accessor message: String\nend\nerror=DetailedError.new()\nerror.message=("stable")\ncleanup=nil\nbegin\n raise error\nrescue caught: DetailedError\n caught.message()\nensure\n cleanup=error.message()\nend\ncleanup')"
 [[ "$actual" == "stable" ]]
-echo "425 tests passed"
+actual="$($diamond -e $'begin\n 1 / 0\nrescue error: ZeroDivisionError\n error.message()\nend')"
+[[ "$actual" == "division by zero" ]]
+echo "426 tests passed"

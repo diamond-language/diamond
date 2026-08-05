@@ -174,6 +174,7 @@ future work.
 - Inherited exception payload accessors and nominal rescue matching.
 - Exception payload identity preservation through bare re-raise.
 - Exception payload stability across ensure cleanup.
+- Message payloads on VM-generated standard exceptions.
 - Diagnostics for subclass filters shadowed by earlier superclass clauses.
 
 ## Next priorities
