@@ -192,11 +192,13 @@ future work.
 - Explicit diagnostics for postfix modifiers on declarations and namespace
   constants.
 - Explicit diagnostics for trailing syntax on standalone `require` directives.
+- CRLF-safe `require` scanning and normalized relative-path coverage.
+- Nested-import source mapping and missing-dependency context.
 
 ## Next priorities
 
-1. Improve loader path and source-map diagnostics while preserving precise
-   source locations for imported files.
+1. Improve loader path and source-map diagnostics for loader depth and resource
+   limits while preserving precise source locations.
 
 ## Later experiments
 
