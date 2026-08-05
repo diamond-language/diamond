@@ -128,6 +128,7 @@ future work.
 - Duplicate generated attribute-method diagnostics for classes and modules.
 - Compile-time rejection of stateful `module_function` exports.
 - Class and module singleton writer definitions and qualified invocation.
+- Targeted visibility changes for generated and handwritten writer methods.
 
 ## Next priorities
 

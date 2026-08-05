@@ -2699,19 +2699,32 @@ static void compile_visibility(Compiler *compiler,bool is_private) {
     }
     while(!compiler->failed) {
         const DiamondSpan name=compiler->current.span;
+        DiamondLexer name_lookahead=compiler->lexer;
+        const bool writer_name=
+            diamond_lexer_next(&name_lookahead).kind==DIAMOND_TOKEN_EQUAL;
         DiamondMethod *found=nullptr;
         if(compiler->current_class>=0) {
             DiamondClass *class=
                 &compiler->program->classes[(size_t)compiler->current_class];
             for(size_t index=class->method_count;index>0;index--)
-                if(name_equals(compiler,class->methods[index-1].name,name,false)) {
+                if((!writer_name&&name_equals(compiler,
+                       class->methods[index-1].name,name,false))||
+                   (writer_name&&strlen(class->methods[index-1].name)==name.length+1&&
+                    class->methods[index-1].name[name.length]=='='&&
+                    memcmp(class->methods[index-1].name,
+                           compiler->source+name.start,name.length)==0)) {
                     found=&class->methods[index-1];break;
                 }
         } else {
             DiamondModule *module=
                 &compiler->program->modules[(size_t)compiler->current_module];
             for(size_t index=module->method_count;index>0;index--)
-                if(name_equals(compiler,module->methods[index-1].name,name,false)) {
+                if((!writer_name&&name_equals(compiler,
+                       module->methods[index-1].name,name,false))||
+                   (writer_name&&strlen(module->methods[index-1].name)==name.length+1&&
+                    module->methods[index-1].name[name.length]=='='&&
+                    memcmp(module->methods[index-1].name,
+                           compiler->source+name.start,name.length)==0)) {
                     found=&module->methods[index-1];break;
                 }
         }
@@ -2719,6 +2732,8 @@ static void compile_visibility(Compiler *compiler,bool is_private) {
             fail(compiler,name,"visibility target is not defined here");return;
         }
         found->is_private=is_private;advance_token(compiler);
+        if(writer_name&&compiler->current.kind==DIAMOND_TOKEN_EQUAL)
+            advance_token(compiler);
         if(compiler->current.kind!=DIAMOND_TOKEN_COMMA)break;
         advance_token(compiler);
         if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER) {
