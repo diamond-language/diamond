@@ -52,6 +52,9 @@ typedef struct DiamondArray {
         size_t class_count;
         const DiamondInterface *interfaces;
         size_t interface_count;
+        uint8_t type_variable_bindings[8][8];
+        uint8_t type_variable_binding_counts[8];
+        uint8_t type_variable_count;
     } constraints[4];
     uint8_t constraint_count;
     DiamondValue *values;
@@ -76,6 +79,9 @@ typedef struct DiamondHash {
         size_t class_count;
         const DiamondInterface *interfaces;
         size_t interface_count;
+        uint8_t type_variable_bindings[8][8];
+        uint8_t type_variable_binding_counts[8];
+        uint8_t type_variable_count;
     } constraints[4];
     uint8_t constraint_count;
 } DiamondHash;

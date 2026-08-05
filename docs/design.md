@@ -168,9 +168,12 @@ Functions and methods may declare scoped type variables after their names, as
 in `def pair[K, V](key: K, value: V) -> Hash[K, V]`. Each compiled function
 retains up to eight variable names, and type members reserve stable variable IDs
 that survive recursive Array, Hash, and Callable annotations. The initial layer
-uses runtime erasure—variable checks accept any value—while preserving enough
-metadata for call-site binding and persistent return substitution in the next
-layer.
+initial metadata layer used runtime erasure. Calls now infer primitive, nominal,
+and union bindings by walking annotated arguments and declared callback returns.
+The execution chunk exposes those bindings to parameter and return guards.
+When a checked Array or Hash escapes, its constraint copies the binding IDs and
+counts instead of retaining frame-local pointers, preserving generic mutation
+safety. Binding a variable to a recursively parameterized type remains deferred.
 
 Annotations are optional. Parameters are checked on function entry and return
 values on every implicit or explicit exit unless the compiler proves the guard

@@ -328,8 +328,28 @@ static bool type_member_satisfies(const Compiler *compiler,
                            expected.second_argument_set);
 }
 
+static bool type_set_contains_variable(const Compiler *compiler,uint8_t set_index) {
+    const DiamondTypeSet *set=&compiler->function->type_sets[set_index];
+    for(size_t index=0;index<set->count;index++) {
+        const DiamondTypeMember member=set->members[index];
+        if(member.id>=DIAMOND_TYPE_VARIABLE_BASE&&
+           member.id<DIAMOND_TYPE_INTERFACE_BASE)return true;
+        if(member.argument_set!=UINT8_MAX&&
+           type_set_contains_variable(compiler,member.argument_set))return true;
+        if(member.second_argument_set!=UINT8_MAX&&
+           type_set_contains_variable(compiler,member.second_argument_set))return true;
+        if(member.callable_return_set!=UINT8_MAX&&
+           type_set_contains_variable(compiler,member.callable_return_set))return true;
+    }
+    return false;
+}
+
 static void emit_type_check(Compiler *compiler, uint8_t reg, uint8_t set_index,
                             DiamondSpan span) {
+    if(type_set_contains_variable(compiler,set_index)) {
+        emit_instruction(compiler,DIAMOND_OP_CHECK_TYPE,reg,set_index,0,2);
+        return;
+    }
     if(compiler->known_type_sets[reg]>=0) {
         if(type_set_satisfies(compiler,
            (uint8_t)compiler->known_type_sets[reg],set_index))return;

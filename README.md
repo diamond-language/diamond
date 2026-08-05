@@ -27,7 +27,7 @@ Implemented today:
 - stop-the-world mark/sweep collection with stress-GC testing;
 - source diagnostics and bytecode disassembly.
 
-The test suite currently contains 218 end-to-end assertions spanning the
+The test suite currently contains 226 end-to-end assertions spanning the
 frontend, compiler, VM, object model, type guards, collections, and collector.
 
 ## Build and run
@@ -233,9 +233,12 @@ def identity[T](value: T) -> T = value
 def pair[K, V](key: K, value: V) -> Hash[K, V] = {key: value}
 ```
 
-This is currently the metadata/erasure layer: variables are retained throughout
-nested annotations and bytecode metadata, but calls do not bind them to concrete
-types yet. Persistent substituted collection contracts are the next layer.
+Calls infer variables from scalar, collection, and callable arguments. Primitive,
+nominal, and union bindings participate in callee checks and are copied into
+returned Array/Hash contracts, so mutations remain guarded after the call frame
+ends. The core `array_map_typed` binds its output from the callback's declared
+return type, including for empty inputs. Deep structural bindings such as a type
+variable representing `Array[String]` are not recursively substituted yet.
 
 The embedded core prelude is ordinary Diamond source from `lib/core.dia`.
 Current helpers include `array_first`, `array_swap_first_two`, and `hash_fetch`;

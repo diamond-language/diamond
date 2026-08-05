@@ -996,4 +996,28 @@ fi
 actual="$($diamond --dump-bytecode -e $'def first[T](values: Array[T]) -> T = values[0]\nfirst([42])')"
 grep -q 'Array\[T0\]' <<<"$actual"
 
-echo "218 tests passed"
+actual="$($diamond -e $'def run()\n def stringify(value: Int) -> String = "#{value}"\n result = array_map_typed([1, 2], stringify)\n begin\n  result.push(3)\n rescue error: TypeError\n  result\n end\nend\nrun()')"
+[[ "$actual" == "[1, 2]" ]]
+
+actual="$($diamond -e $'def run()\n def stringify(value: Int) -> String = "#{value}"\n result = array_map_typed([], stringify)\n begin\n  result.push(42)\n rescue error: TypeError\n  42\n end\nend\nrun()')"
+[[ "$actual" == "42" ]]
+
+actual="$($diamond -e $'def pair[K, V](key: K, value: V) -> Hash[K, V] = {key: value}\nresult = pair("answer", 42)\nbegin\n result[1] = 2\nrescue error: TypeError\n result["answer"]\nend')"
+[[ "$actual" == "42" ]]
+
+actual="$($diamond -e $'def pair[K, V](key: K, value: V) -> Hash[K, V] = {key: value}\nresult = pair("answer", 42)\nbegin\n result["other"] = "wrong"\nrescue error: TypeError\n result["answer"]\nend')"
+[[ "$actual" == "42" ]]
+
+actual="$($diamond -e $'class Box\n def wrap[T](value: T) -> Array[T] = [value]\nend\nresult = Box.new().wrap("diamond")\nbegin\n result.push(42)\nrescue error: TypeError\n result\nend')"
+[[ "$actual" == "[diamond]" ]]
+
+actual="$($diamond -e $'class Animal\nend\nclass Dog < Animal\nend\ndef singleton[T](value: T) -> Array[T] = [value]\nresult = singleton(Dog.new())\nbegin\n result.push(Animal.new())\nrescue error: TypeError\n 42\nend')"
+[[ "$actual" == "42" ]]
+
+actual="$(DIAMOND_STRESS_GC=1 "$diamond" -e $'def singleton[T](value: T) -> Array[T] = [value]\nresult = singleton("diamond")\nbegin\n result.push(42)\nrescue error: TypeError\n result\nend')"
+[[ "$actual" == "[diamond]" ]]
+
+actual="$($diamond -e $'def bad[T](value: T) -> T = "wrong"\nbegin\n bad(42)\nrescue error: TypeError\n 42\nend')"
+[[ "$actual" == "42" ]]
+
+echo "226 tests passed"

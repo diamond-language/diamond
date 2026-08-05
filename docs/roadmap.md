@@ -88,10 +88,12 @@ future work.
   collection interpolation.
 - Scoped generic function type-variable declarations with retained recursive
   metadata and explicit runtime erasure.
+- Runtime generic binding from values and callable returns, with persistent
+  primitive, nominal, and union substitutions on returned collections.
 
 ## Next priorities
 
-1. Call-site generic binding and persistent substituted return contracts.
+1. Recursive structural generic bindings and typed Callable parameters.
 
 ## Later experiments
 
