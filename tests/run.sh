@@ -942,6 +942,8 @@ fi
 
 actual="$($diamond tests/multifile/broken_main.dia 2>&1 || true)"
 grep -q 'tests/multifile/broken.dia:3:16' <<<"$actual"
+actual="$($diamond tests/multifile/nested_broken_main.dia 2>&1 || true)"
+grep -q 'tests/multifile/broken.dia:3:16' <<<"$actual"
 
 actual="$($diamond -e $'require "tests/multifile/math"\ndouble(21)')"
 [[ "$actual" == "42" ]]
