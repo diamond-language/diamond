@@ -159,6 +159,7 @@ future work.
 - Duplicate rescue-filter type diagnostics.
 - Unreachable repeated-type diagnostics across rescue clauses.
 - Normal-only `else` integration with multiple rescue clauses.
+- Retry integration from later rescue clauses.
 
 ## Next priorities
 

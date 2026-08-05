@@ -1618,4 +1618,7 @@ fi
 actual="$($diamond -e $'begin\n 40\nrescue : TypeError\n 0\nrescue : IndexError\n 1\nelse\n 42\nend')"
 [[ "$actual" == "42" ]]
 
-echo "407 tests passed"
+attempt="$($diamond -e $'attempts=0\nbegin\n attempts=attempts+1\n if attempts==1\n  [1][4]\n end\nrescue : TypeError\n 0\nrescue : IndexError\n retry\nelse\n 42\nend')"
+[[ "$attempt" == "42" ]]
+
+echo "408 tests passed"
