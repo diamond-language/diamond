@@ -1708,4 +1708,8 @@ if "$diamond" -e $'42 if\n true' >/dev/null 2>&1; then
     echo "multiline postfix condition unexpectedly compiled" >&2
     exit 1
 fi
-echo "446 tests passed"
+actual="$(DIAMOND_STRESS_GC=1 $diamond -e '"stable" if true')"
+[[ "$actual" == "stable" ]]
+actual="$(DIAMOND_STRESS_GC=1 $diamond -e '"discarded" if false')"
+[[ "$actual" == "nil" ]]
+echo "448 tests passed"
