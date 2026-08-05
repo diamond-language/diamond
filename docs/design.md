@@ -76,6 +76,9 @@ shape that includes its slot, while an unmaterialized read produces `nil`.
 Method dispatch is independent of field state, so each dynamic invoke bytecode
 site uses a VM-owned four-entry polymorphic cache guarded by class pointer. A hit
 bypasses lookup; a miss performs normal lookup and fills or replaces an entry.
+Field bytecode sites use parallel four-entry polymorphic caches guarded by shape
+pointer. Cached reads remember whether their slot is materialized; cached writes
+remember the resulting shape, avoiding repeated shape-chain decisions.
 
 Nested functions compile to heap-allocated closure objects. A closure identifies
 its bytecode function and traces captured values through the garbage collector;
@@ -112,7 +115,7 @@ redundant.
 ## Deliberate constraints
 
 - No Ruby compatibility guarantee.
-- No closures, modules, exceptions, generics, or general unions yet.
+- No modules, generics, or general unions yet.
 - No native-code generator or JIT.
 - No stable bytecode, embedding API, or package format.
 - No parallel execution.

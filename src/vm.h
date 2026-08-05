@@ -164,6 +164,19 @@ typedef struct DiamondMethodCache {
     uint8_t next_replace;
 } DiamondMethodCache;
 
+typedef struct DiamondFieldCacheEntry {
+    const DiamondShape *input_shape;
+    const DiamondShape *output_shape;
+    bool materialized;
+} DiamondFieldCacheEntry;
+
+typedef struct DiamondFieldCache {
+    const uint8_t *site;
+    DiamondFieldCacheEntry entries[DIAMOND_INLINE_CACHE_WIDTH];
+    uint8_t entry_count;
+    uint8_t next_replace;
+} DiamondFieldCache;
+
 typedef struct DiamondVm {
     DiamondObject *objects;
     size_t bytes_allocated;
@@ -171,8 +184,11 @@ typedef struct DiamondVm {
     void *frames;
     bool stress_gc;
     DiamondMethodCache method_caches[DIAMOND_INLINE_CACHE_COUNT];
+    DiamondFieldCache field_caches[DIAMOND_INLINE_CACHE_COUNT];
     size_t inline_cache_hits;
     size_t inline_cache_misses;
+    size_t field_cache_hits;
+    size_t field_cache_misses;
     size_t shape_transitions;
     DiamondValue exception;
     bool has_exception;

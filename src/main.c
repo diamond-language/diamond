@@ -65,6 +65,10 @@ static int run_source(const char *name, const char *source, bool dump_bytecode) 
     if (getenv("DIAMOND_TRACE_SHAPES") != nullptr) {
         fprintf(stderr,"shape transitions: %zu\n",vm.shape_transitions);
     }
+    if (getenv("DIAMOND_TRACE_FIELDS") != nullptr) {
+        fprintf(stderr,"field caches: %zu hits, %zu misses\n",
+                vm.field_cache_hits,vm.field_cache_misses);
+    }
     diamond_vm_free(&vm);
     return 0;
 }

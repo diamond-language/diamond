@@ -275,6 +275,37 @@ static const DiamondMethod *lookup_method_cached(
     return method;
 }
 
+static DiamondFieldCacheEntry *lookup_field_cached(
+    DiamondVm *vm, const uint8_t *site, const DiamondInstance *instance,
+    uint8_t field, bool write) {
+    const size_t slot=((size_t)(uintptr_t)site>>2)%DIAMOND_INLINE_CACHE_COUNT;
+    DiamondFieldCache *cache=&vm->field_caches[slot];
+    if(cache->site!=site) {
+        *cache=(DiamondFieldCache){.site=site};
+    } else {
+        for(size_t index=0;index<cache->entry_count;index++) {
+            if(cache->entries[index].input_shape!=instance->shape)continue;
+            vm->field_cache_hits++;
+            return &cache->entries[index];
+        }
+    }
+    vm->field_cache_misses++;
+    size_t entry=cache->entry_count;
+    if(entry<DIAMOND_INLINE_CACHE_WIDTH) {
+        cache->entry_count++;
+    } else {
+        entry=cache->next_replace;
+        cache->next_replace=(uint8_t)((cache->next_replace+1)%DIAMOND_INLINE_CACHE_WIDTH);
+    }
+    const size_t needed=(size_t)field+1;
+    cache->entries[entry]=(DiamondFieldCacheEntry){
+        .input_shape=instance->shape,
+        .output_shape=write && instance->shape->field_count<needed
+            ? &instance->class->shapes[needed] : instance->shape,
+        .materialized=(size_t)field<instance->shape->field_count};
+    return &cache->entries[entry];
+}
+
 static bool value_matches_type(const DiamondChunk *chunk, DiamondValue value,
                                uint8_t type) {
     const bool nilable=(type&DIAMOND_TYPE_NILABLE)!=0;
@@ -847,23 +878,28 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 break;
             }
             case DIAMOND_OP_GET_IVAR: {
+                const uint8_t *site=&chunk->code[instruction_offset];
                 uint8_t dest=0,recv=0,field=0;READ_BYTE(dest);READ_BYTE(recv);READ_BYTE(field);
                 if(registers[recv].kind!=DIAMOND_VALUE_OBJECT||registers[recv].as.object->kind!=DIAMOND_OBJECT_INSTANCE)
                     VM_RETURN(DIAMOND_VM_TYPE_ERROR);
                 DiamondInstance *instance=(DiamondInstance *)registers[recv].as.object;
                 if((size_t)field>=instance->field_count)VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
-                registers[dest]=(size_t)field<instance->shape->field_count
+                const DiamondFieldCacheEntry *cached=lookup_field_cached(
+                    vm,site,instance,field,false);
+                registers[dest]=cached->materialized
                     ? instance->fields[field] : DIAMOND_NIL;break;
             }
             case DIAMOND_OP_SET_IVAR: {
+                const uint8_t *site=&chunk->code[instruction_offset];
                 uint8_t recv=0,field=0,source=0;READ_BYTE(recv);READ_BYTE(field);READ_BYTE(source);
                 if(registers[recv].kind!=DIAMOND_VALUE_OBJECT||registers[recv].as.object->kind!=DIAMOND_OBJECT_INSTANCE)
                     VM_RETURN(DIAMOND_VM_TYPE_ERROR);
                 DiamondInstance *instance=(DiamondInstance *)registers[recv].as.object;
                 if((size_t)field>=instance->field_count)VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
-                const size_t needed=(size_t)field+1;
-                if(instance->shape->field_count<needed) {
-                    instance->shape=&instance->class->shapes[needed];
+                const DiamondFieldCacheEntry *cached=lookup_field_cached(
+                    vm,site,instance,field,true);
+                if(instance->shape!=cached->output_shape) {
+                    instance->shape=cached->output_shape;
                     vm->shape_transitions++;
                 }
                 instance->fields[field]=registers[source];break;
@@ -1023,8 +1059,11 @@ DiamondVmStatus diamond_vm_run(DiamondVm *vm, const DiamondChunk *chunk,
     vm->error[0]='\0';
     vm->has_exception=false;
     memset(vm->method_caches,0,sizeof(vm->method_caches));
+    memset(vm->field_caches,0,sizeof(vm->field_caches));
     vm->inline_cache_hits=0;
     vm->inline_cache_misses=0;
+    vm->field_cache_hits=0;
+    vm->field_cache_misses=0;
     vm->shape_transitions=0;
     return run_chunk(chunk, vm, nullptr, 0, 0, nullptr, result);
 }

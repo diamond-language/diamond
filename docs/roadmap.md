@@ -57,13 +57,13 @@ future work.
 - Nested `begin`/`rescue` expressions with optional raised-value bindings.
 - Primitive and subtype-aware nominal filters on rescue bindings.
 - Pipe-separated rescue type sets with up to eight alternatives.
+- Shape-guarded polymorphic inline caches for instance field reads and writes.
 
 ## Next priorities
 
-1. Shape-guarded field inline caches.
-2. Standard exception classes and `ensure`.
-3. Generic collection annotations and general unions.
-4. A small core library implemented partly in Diamond.
+1. Standard exception classes and `ensure`.
+2. Generic collection annotations and general unions.
+3. A small core library implemented partly in Diamond.
 
 ## Later experiments
 

@@ -188,6 +188,9 @@ by receiver class.
 Set `DIAMOND_TRACE_SHAPES=1` to print instance shape transitions. Fresh objects
 begin at their class's empty shape and advance lazily as fields are first written.
 
+Set `DIAMOND_TRACE_FIELDS=1` to print field inline-cache hit and miss counts.
+Field sites use four-entry polymorphic caches guarded by instance shape.
+
 ## Important limitations
 
 - Nested functions are first-class closures. Captured locals use shared mutable
@@ -199,8 +202,7 @@ begin at their class's empty shape and advance lazily as fields are first writte
   `rescue error: NetworkError | TimeoutError`.
 - No modules, mixins, singleton methods, or visibility.
 - Classes own immutable shape chains for lazily materialized field prefixes;
-  method calls use four-entry polymorphic inline caches. Field caches are not
-  implemented yet.
+  method calls and field access use four-entry polymorphic inline caches.
 - No generic arrays/hashes or unrestricted union types.
 - Fixed limits exist for bytecode, constants, functions, classes, fields, and
   registers.

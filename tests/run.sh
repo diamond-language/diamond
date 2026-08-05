@@ -487,6 +487,12 @@ grep -q 'shape transitions: 1' "$error_file"
 rm -f "$error_file"
 
 error_file="$(mktemp)"
+actual="$(DIAMOND_TRACE_FIELDS=1 "$diamond" tests/cases/runtime_shapes.dia 2>"$error_file")"
+[[ "$actual" == "42" ]]
+grep -q 'field caches: 2 hits, 4 misses' "$error_file"
+rm -f "$error_file"
+
+error_file="$(mktemp)"
 if DIAMOND_STRESS_GC=1 "$diamond" tests/cases/raise_stack.dia >/dev/null 2>"$error_file"; then
     echo "raised value unexpectedly returned" >&2
     exit 1
