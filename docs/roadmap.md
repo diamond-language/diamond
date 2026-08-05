@@ -91,10 +91,13 @@ future work.
 - Runtime generic binding from values and callable returns, with persistent
   primitive, nominal, and union substitutions on returned collections.
 - Bounded recursive generic binding graphs for nested Array and Hash types.
+- Typed Callable parameter signatures with contravariant inputs, covariant
+  returns, zero-argument lists, generic inference, and diagnostic rendering.
 
 ## Next priorities
 
-1. Typed Callable parameter signatures.
+1. Infer generic arguments from persistent contracts on empty collections.
+2. Explore explicit generic call arguments for otherwise ambiguous calls.
 
 ## Later experiments
 

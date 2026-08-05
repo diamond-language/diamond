@@ -235,6 +235,13 @@ structurally compatible return type-set. Nominal returns are covariant, so a
 declared subclass return satisfies a superclass result contract. Unannotated
 closures do not satisfy a requested result contract.
 
+Full callback signatures use `Callable[[Input, ...], Return]`, with `[]` for
+zero inputs. Parameter contracts are contravariant: a closure accepting a
+wider input set can satisfy a narrower callback requirement. Return contracts
+remain covariant. Untyped closure parameters accept any contracted input, and
+generic variables appearing in callback inputs or returns contribute to call
+inference.
+
 Registers may also carry a type-set fact in addition to an exact primitive or
 class fact. Indexing `Array[T]` produces `T`; indexing `Hash[K, V]` produces
 `V | Nil`. These facts survive ordinary local assignment and participate in

@@ -27,7 +27,7 @@ Implemented today:
 - stop-the-world mark/sweep collection with stress-GC testing;
 - source diagnostics and bytecode disassembly.
 
-The test suite currently contains 230 end-to-end assertions spanning the
+The test suite currently contains 237 end-to-end assertions spanning the
 frontend, compiler, VM, object model, type guards, collections, and collector.
 
 ## Build and run
@@ -211,6 +211,7 @@ key and value annotations, such as `Hash[String, Array[Int]]`.
 Closures satisfy `Callable`; `Callable[n]` additionally requires exactly `n`
 arguments. `Callable[n, Return]` also requires an explicit, compatible return
 annotation on the closure, including unions and covariant nominal returns.
+`Callable[[Input, ...], Return]` additionally checks parameter types.
 
 User-defined structural interfaces declare required method names and arities:
 
@@ -240,6 +241,14 @@ ends. The core `array_map_typed` binds its output from the callback's declared
 return type, including for empty inputs. Bindings preserve recursive structures
 such as `Array[String]` and `Hash[String, Array[Int]]`; empty runtime collections
 need another inference source before their inner type can be known.
+
+Callable contracts may describe only arity and return type with
+`Callable[1, String]`, or carry complete parameter types with
+`Callable[[Int], String]` and `Callable[[], String]`. Callback inputs are checked
+contravariantly, callback returns covariantly, and an untyped callback parameter
+remains compatible with a typed contract. Generic callable inputs and returns
+both participate in inference; `array_map_typed` therefore declares its callback
+as `Callable[[T], U]`.
 
 The embedded core prelude is ordinary Diamond source from `lib/core.dia`.
 Current helpers include `array_first`, `array_swap_first_two`, and `hash_fetch`;

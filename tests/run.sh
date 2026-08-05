@@ -1032,4 +1032,25 @@ actual="$($diamond -e $'def singleton[T](value: T) -> Array[T] = [value]\nresult
 actual="$(DIAMOND_STRESS_GC=1 "$diamond" -e $'def singleton[T](value: T) -> Array[T] = [value]\nresult = singleton([["diamond"]])\nbegin\n result.push([[42]])\nrescue error: TypeError\n 42\nend')"
 [[ "$actual" == "42" ]]
 
-echo "230 tests passed"
+actual="$($diamond -e $'def run()\n def accepts(callback: Callable[[Int], String]) = callback(42)\n def stringify(value: Int) -> String = "#{value}"\n accepts(stringify)\nend\nrun()')"
+[[ "$actual" == "42" ]]
+
+actual="$($diamond -e $'def run()\n def accepts(callback: Callable[[Int], String]) = 1\n def wrong(value: String) -> String = value\n begin\n  accepts(wrong)\n rescue error: TypeError\n  42\n end\nend\nrun()')"
+[[ "$actual" == "42" ]]
+
+actual="$($diamond -e $'def run()\n def accepts(callback: Callable[[Int], String]) = callback(42)\n def broad(value: Int | String) -> String = "#{value}"\n accepts(broad)\nend\nrun()')"
+[[ "$actual" == "42" ]]
+
+actual="$($diamond -e $'def run()\n def accepts(callback: Callable[[Int], String]) = callback(42)\n def dynamic(value) -> String = "#{value}"\n accepts(dynamic)\nend\nrun()')"
+[[ "$actual" == "42" ]]
+
+actual="$($diamond -e $'def run()\n def accepts(callback: Callable[[], String]) = callback()\n def greeting() -> String = "diamond"\n accepts(greeting)\nend\nrun()')"
+[[ "$actual" == "diamond" ]]
+
+actual="$($diamond -e $'def run()\n def accepts(callback: Callable[[Int], String]) = 1\n def wrong(value: Int) -> Int = value\n begin\n  accepts(wrong)\n rescue error: TypeError\n  42\n end\nend\nrun()')"
+[[ "$actual" == "42" ]]
+
+actual="$($diamond --dump-bytecode -e $'def accepts(callback: Callable[[Int, String], Bool]) = true\ntrue')"
+grep -q 'Callable\[\[Int, String\], Bool\]' <<<"$actual"
+
+echo "237 tests passed"

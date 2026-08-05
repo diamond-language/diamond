@@ -78,7 +78,7 @@ def array_map_string(values: Array, callback: Callable[1, String]) -> Array[Stri
   result
 end
 
-def array_map_typed[T, U](values: Array[T], callback: Callable[1, U]) -> Array[U]
+def array_map_typed[T, U](values: Array[T], callback: Callable[[T], U]) -> Array[U]
   result = []
   index = 0
   while index < values.length()

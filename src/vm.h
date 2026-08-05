@@ -115,6 +115,8 @@ typedef struct DiamondTypeMember {
     uint8_t second_argument_set;
     uint8_t callable_arity;
     uint8_t callable_return_set;
+    bool callable_parameters_typed;
+    uint8_t callable_parameter_sets[16];
 } DiamondTypeMember;
 
 typedef struct DiamondTypeSet {

@@ -69,7 +69,16 @@ static bool print_type_set(FILE *stream,const DiamondChunk *chunk,
             fputc(']',stream);
         } else if(member.id==DIAMOND_TYPE_CALLABLE&&
                   member.callable_arity!=UINT8_MAX) {
-            fprintf(stream,"[%u",member.callable_arity);
+            fputc('[',stream);
+            if(member.callable_parameters_typed) {
+                fputc('[',stream);
+                for(size_t parameter=0;parameter<member.callable_arity;parameter++) {
+                    if(parameter>0)fputs(", ",stream);
+                    valid=print_type_set(stream,chunk,
+                        member.callable_parameter_sets[parameter])&&valid;
+                }
+                fputc(']',stream);
+            } else fprintf(stream,"%u",member.callable_arity);
             if(member.callable_return_set!=UINT8_MAX) {
                 fputs(", ",stream);
                 valid=print_type_set(stream,chunk,member.callable_return_set)&&valid;

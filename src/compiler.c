@@ -274,6 +274,15 @@ static bool type_members_satisfy_across(const Compiler *compiler,
     if(expected.id==DIAMOND_TYPE_CALLABLE) {
         if(expected.callable_arity!=UINT8_MAX&&
            known.callable_arity!=expected.callable_arity)return false;
+        if(expected.callable_parameters_typed)
+            for(size_t parameter=0;parameter<expected.callable_arity;parameter++) {
+                const uint8_t wanted=expected.callable_parameter_sets[parameter];
+                if(wanted==UINT8_MAX)continue;
+                const uint8_t actual=known.callable_parameter_sets[parameter];
+                if(actual!=UINT8_MAX&&
+                   !type_sets_satisfy_across(compiler,expected_sets,wanted,
+                                              known_sets,actual))return false;
+            }
         return expected.callable_return_set==UINT8_MAX||
             (known.callable_return_set!=UINT8_MAX&&
              type_sets_satisfy_across(compiler,known_sets,
@@ -312,6 +321,14 @@ static bool type_member_satisfies(const Compiler *compiler,
     if(expected.id==DIAMOND_TYPE_CALLABLE) {
         if(expected.callable_arity!=UINT8_MAX&&
            known.callable_arity!=expected.callable_arity)return false;
+        if(expected.callable_parameters_typed)
+            for(size_t parameter=0;parameter<expected.callable_arity;parameter++) {
+                const uint8_t wanted=expected.callable_parameter_sets[parameter];
+                if(wanted==UINT8_MAX)continue;
+                const uint8_t actual=known.callable_parameter_sets[parameter];
+                if(actual!=UINT8_MAX&&
+                   !type_set_satisfies(compiler,wanted,actual))return false;
+            }
         return expected.callable_return_set==UINT8_MAX||
             (known.callable_return_set!=UINT8_MAX&&
              type_set_satisfies(compiler,known.callable_return_set,
@@ -340,6 +357,10 @@ static bool type_set_contains_variable(const Compiler *compiler,uint8_t set_inde
            type_set_contains_variable(compiler,member.second_argument_set))return true;
         if(member.callable_return_set!=UINT8_MAX&&
            type_set_contains_variable(compiler,member.callable_return_set))return true;
+        if(member.callable_parameters_typed)
+            for(size_t parameter=0;parameter<member.callable_arity;parameter++)
+                if(type_set_contains_variable(compiler,
+                       member.callable_parameter_sets[parameter]))return true;
     }
     return false;
 }
@@ -727,24 +748,47 @@ static int parse_type_annotation(Compiler *compiler) {
         uint8_t argument_set=UINT8_MAX,second_argument_set=UINT8_MAX;
         uint8_t callable_arity=UINT8_MAX;
         uint8_t callable_return_set=UINT8_MAX;
+        bool callable_parameters_typed=false;
+        uint8_t callable_parameter_sets[16];
+        for(size_t index=0;index<16;index++)callable_parameter_sets[index]=UINT8_MAX;
         if(compiler->current.kind==DIAMOND_TOKEN_LEFT_BRACKET) {
             if(type==DIAMOND_TYPE_CALLABLE) {
                 advance_token(compiler);
-                if(compiler->current.kind!=DIAMOND_TOKEN_INTEGER) {
+                if(compiler->current.kind==DIAMOND_TOKEN_INTEGER) {
+                    size_t arity=0;
+                    for(size_t index=0;index<compiler->current.span.length;index++) {
+                        const char ch=compiler->source[compiler->current.span.start+index];
+                        if(ch=='_')continue;
+                        arity=arity*10+(size_t)(ch-'0');
+                    }
+                    if(arity>16) {
+                        fail(compiler,compiler->current.span,
+                             "Callable arity cannot exceed 16");break;
+                    }
+                    callable_arity=(uint8_t)arity;advance_token(compiler);
+                } else if(compiler->current.kind==DIAMOND_TOKEN_LEFT_BRACKET) {
+                    advance_token(compiler);callable_arity=0;
+                    callable_parameters_typed=true;
+                    while(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_BRACKET&&
+                          !compiler->failed) {
+                        if(callable_arity==16) {
+                            fail(compiler,compiler->current.span,
+                                 "Callable cannot exceed 16 parameters");break;
+                        }
+                        callable_parameter_sets[callable_arity++]=
+                            (uint8_t)parse_type_annotation(compiler);
+                        if(compiler->current.kind!=DIAMOND_TOKEN_COMMA)break;
+                        advance_token(compiler);
+                    }
+                    if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_BRACKET) {
+                        fail(compiler,compiler->current.span,
+                             "expected ']' after Callable parameters");break;
+                    }
+                    advance_token(compiler);
+                } else {
                     fail(compiler,compiler->current.span,
-                         "expected Callable arity");break;
+                         "expected Callable arity or parameter list");break;
                 }
-                size_t arity=0;
-                for(size_t index=0;index<compiler->current.span.length;index++) {
-                    const char ch=compiler->source[compiler->current.span.start+index];
-                    if(ch=='_')continue;
-                    arity=arity*10+(size_t)(ch-'0');
-                }
-                if(arity>16) {
-                    fail(compiler,compiler->current.span,
-                         "Callable arity cannot exceed 16");break;
-                }
-                callable_arity=(uint8_t)arity;advance_token(compiler);
                 if(compiler->current.kind==DIAMOND_TOKEN_COMMA) {
                     advance_token(compiler);
                     callable_return_set=(uint8_t)parse_type_annotation(compiler);
@@ -770,11 +814,15 @@ static int parse_type_annotation(Compiler *compiler) {
             }
             advance_token(compiler);
         }
-        set->members[set->count++]=(DiamondTypeMember){
+        DiamondTypeMember parsed=(DiamondTypeMember){
             .id=type,.argument_set=argument_set,
             .second_argument_set=second_argument_set,
             .callable_arity=callable_arity,
-            .callable_return_set=callable_return_set};
+            .callable_return_set=callable_return_set,
+            .callable_parameters_typed=callable_parameters_typed};
+        for(size_t index=0;index<16;index++)
+            parsed.callable_parameter_sets[index]=callable_parameter_sets[index];
+        set->members[set->count++]=parsed;
         if(compiler->current.kind!=DIAMOND_TOKEN_PIPE)break;
         advance_token(compiler);
     }
