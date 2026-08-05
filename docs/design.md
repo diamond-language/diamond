@@ -299,6 +299,13 @@ normal arity, defaults, type metadata, generic inference, and explicit generic
 call encoding. Singleton descriptors are deliberately excluded from module
 inclusion.
 
+`module_function name` installs a second descriptor for an existing module
+method and marks the instance descriptor private. Qualified calls insert a
+hidden `nil` receiver solely to preserve the original function's register and
+parameter layout; exported stateless code and namespace constants therefore
+need no cloned bytecode or module heap object. Instance-field access still
+requires a real mixed-in receiver and fails normally from the exported form.
+
 Classes maintain a parallel singleton descriptor table. `Class.name()` resolves
 that table from the named class through its superclass chain, while `Class.new`
 continues to use constructor allocation and `initialize`. Singleton overrides

@@ -122,10 +122,12 @@ future work.
 - Comma-separated multi-name reader, writer, and accessor declarations.
 - Targeted multi-name public/private changes for locally defined and generated
   methods without altering subsequent-definition defaults.
+- `module_function` exports that preserve signatures and generics while making
+  includable copies private and avoiding a fabricated module instance.
 
 ## Next priorities
 
-1. Add `module_function name` to export selected module methods.
+1. Add `module_function` default mode for subsequent definitions.
 
 ## Later experiments
 

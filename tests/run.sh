@@ -1317,4 +1317,16 @@ if "$diamond" -e $'class Box\n private missing\nend' >/dev/null 2>&1; then
     exit 1
 fi
 
-echo "316 tests passed"
+actual="$($diamond -e $'module Math\n BASE = 40\n def add(value: Int = 2) -> Int = BASE + value\n module_function add\nend\n[Math.add(), Math.add(1)]')"
+[[ "$actual" == "[42, 41]" ]]
+
+actual="$($diamond -e $'module Types\n def empty[T]() -> Array[T] = []\n module_function empty\nend\nresult=Types.empty[String]()\nbegin\n result.push(42)\nrescue error: TypeError\n 42\nend')"
+[[ "$actual" == "42" ]]
+
+actual="$($diamond -e $'module Helpers\n def answer() = 42\n module_function answer\nend\nclass Box\n def reveal() = self.answer()\n include Helpers\nend\nBox.new().reveal()')"
+[[ "$actual" == "42" ]]
+
+actual="$($diamond -e $'module Helpers\n def answer() = 42\n module_function answer\nend\nclass Box\n include Helpers\nend\nbegin\n Box.new().answer()\nrescue error: TypeError\n Helpers.answer()\nend')"
+[[ "$actual" == "42" ]]
+
+echo "320 tests passed"

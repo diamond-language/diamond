@@ -1207,16 +1207,20 @@ static uint8_t parse_singleton_call(Compiler *compiler,
     if(argument_count<method->required_arity||argument_count>method->arity) {
         fail(compiler,name,"wrong number of arguments");return 0;
     }
+    const size_t call_count=argument_count+(method->needs_receiver?1:0);
     const uint8_t base=allocate_register(compiler);
-    for(size_t index=1;index<argument_count;index++)(void)allocate_register(compiler);
+    for(size_t index=1;index<call_count;index++)(void)allocate_register(compiler);
+    if(method->needs_receiver)
+        emit_instruction(compiler,DIAMOND_OP_NIL,base,0,0,1);
     for(size_t index=0;index<argument_count;index++)
-        emit_instruction(compiler,DIAMOND_OP_MOVE,(uint8_t)(base+index),
+        emit_instruction(compiler,DIAMOND_OP_MOVE,
+                         (uint8_t)(base+index+(method->needs_receiver?1:0)),
                          arguments[index],0,2);
     const uint8_t destination=allocate_register(compiler);
     emit_opcode(compiler,type_argument_count==0?DIAMOND_OP_CALL:
                 DIAMOND_OP_CALL_TYPED);
     emit_byte(compiler,destination);emit_byte(compiler,method->function_index);
-    emit_byte(compiler,base);emit_byte(compiler,(uint8_t)argument_count);
+    emit_byte(compiler,base);emit_byte(compiler,(uint8_t)call_count);
     if(type_argument_count>0) {
         emit_byte(compiler,(uint8_t)type_argument_count);
         for(size_t index=0;index<type_argument_count;index++)
@@ -2678,6 +2682,41 @@ static void compile_visibility(Compiler *compiler,bool is_private) {
     }
 }
 
+static void compile_module_function(Compiler *compiler) {
+    DiamondModule *module=
+        &compiler->program->modules[(size_t)compiler->current_module];
+    advance_token(compiler);
+    while(!compiler->failed) {
+        if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER) {
+            fail(compiler,compiler->current.span,"expected module method name");return;
+        }
+        const DiamondSpan name=compiler->current.span;
+        DiamondMethod *source=nullptr;
+        for(size_t index=module->method_count;index>0;index--)
+            if(name_equals(compiler,module->methods[index-1].name,name,false)) {
+                source=&module->methods[index-1];break;
+            }
+        if(source==nullptr) {
+            fail(compiler,name,"module_function target is not defined here");return;
+        }
+        for(size_t index=0;index<module->singleton_method_count;index++)
+            if(strcmp(module->singleton_methods[index].name,source->name)==0) {
+                fail(compiler,name,"module singleton function is already defined");
+                return;
+            }
+        if(module->singleton_method_count==DIAMOND_MAX_METHODS) {
+            fail(compiler,name,"too many module singleton functions");return;
+        }
+        source->is_private=true;
+        DiamondMethod exported=*source;exported.needs_receiver=true;
+        exported.is_private=false;
+        module->singleton_methods[module->singleton_method_count++]=exported;
+        advance_token(compiler);
+        if(compiler->current.kind!=DIAMOND_TOKEN_COMMA)break;
+        advance_token(compiler);
+    }
+}
+
 static uint8_t compile_class(Compiler *compiler) {
     advance_token(compiler);
     if (compiler->current.kind != DIAMOND_TOKEN_IDENTIFIER ||
@@ -2724,6 +2763,9 @@ static uint8_t compile_class(Compiler *compiler) {
             const bool private_visibility=
                 compiler->current.kind==DIAMOND_TOKEN_PRIVATE;
             compile_visibility(compiler,private_visibility);
+        } else if(compiler->current.kind==DIAMOND_TOKEN_MODULE_FUNCTION) {
+            fail(compiler,compiler->current.span,
+                 "module_function is only valid in modules");break;
         } else if(compiler->current.kind==DIAMOND_TOKEN_ATTR_READER||
                   compiler->current.kind==DIAMOND_TOKEN_ATTR_WRITER||
                   compiler->current.kind==DIAMOND_TOKEN_ATTR_ACCESSOR) {
@@ -2821,6 +2863,8 @@ static uint8_t compile_module(Compiler *compiler) {
             const bool private_visibility=
                 compiler->current.kind==DIAMOND_TOKEN_PRIVATE;
             compile_visibility(compiler,private_visibility);
+        } else if(compiler->current.kind==DIAMOND_TOKEN_MODULE_FUNCTION) {
+            compile_module_function(compiler);
         } else if(compiler->current.kind==DIAMOND_TOKEN_ATTR_READER||
                   compiler->current.kind==DIAMOND_TOKEN_ATTR_WRITER||
                   compiler->current.kind==DIAMOND_TOKEN_ATTR_ACCESSOR) {

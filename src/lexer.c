@@ -64,6 +64,7 @@ static DiamondTokenKind identifier_kind(const DiamondLexer *lexer) {
     if (text_equals(lexer, "attr_reader", 11)) return DIAMOND_TOKEN_ATTR_READER;
     if (text_equals(lexer, "attr_writer", 11)) return DIAMOND_TOKEN_ATTR_WRITER;
     if (text_equals(lexer, "attr_accessor", 13)) return DIAMOND_TOKEN_ATTR_ACCESSOR;
+    if (text_equals(lexer, "module_function", 15)) return DIAMOND_TOKEN_MODULE_FUNCTION;
     if (text_equals(lexer, "self", 4)) return DIAMOND_TOKEN_SELF;
     if (text_equals(lexer, "super", 5)) return DIAMOND_TOKEN_SUPER;
     if (text_equals(lexer, "return", 6)) return DIAMOND_TOKEN_RETURN;
