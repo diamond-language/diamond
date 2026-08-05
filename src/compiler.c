@@ -3602,6 +3602,11 @@ static uint8_t compile_sequence(Compiler *compiler) {
             ? emit_jump(compiler, DIAMOND_OP_JUMP, 0)
             : SIZE_MAX;
         const size_t body_start = compiler->function->code_count;
+        const bool declaration_statement =
+            compiler->current.kind == DIAMOND_TOKEN_DEF ||
+            compiler->current.kind == DIAMOND_TOKEN_CLASS ||
+            compiler->current.kind == DIAMOND_TOKEN_INTERFACE ||
+            compiler->current.kind == DIAMOND_TOKEN_MODULE;
         if (compiler->current.kind == DIAMOND_TOKEN_DEF) {
             result = compile_definition(compiler);
         } else if (compiler->current.kind == DIAMOND_TOKEN_CLASS) {
@@ -3656,7 +3661,12 @@ static uint8_t compile_sequence(Compiler *compiler) {
             patch_jump(compiler, body_jump, body_start);
             result = postfix_result;
         }
-        if (compiler->current.kind == DIAMOND_TOKEN_NEWLINE) {
+        if (!has_postfix && declaration_statement &&
+            (compiler->current.kind == DIAMOND_TOKEN_IF ||
+             compiler->current.kind == DIAMOND_TOKEN_UNLESS)) {
+            fail(compiler, compiler->current.span,
+                 "postfix modifiers cannot follow declarations");
+        } else if (compiler->current.kind == DIAMOND_TOKEN_NEWLINE) {
             skip_newlines(compiler);
         } else if (!at_block_end(compiler)) {
             fail(compiler, compiler->current.span, "expected newline after expression");
