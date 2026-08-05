@@ -70,6 +70,7 @@ typedef struct Compiler {
 static uint8_t parse_expression(Compiler *compiler);
 static uint8_t compile_sequence(Compiler *compiler);
 static uint8_t compile_begin(Compiler *compiler);
+static uint8_t compile_interface(Compiler *compiler);
 
 static void fail(Compiler *compiler, DiamondSpan span, const char *message) {
     if (!compiler->failed) {
@@ -780,6 +781,34 @@ static int find_module_name(const Compiler *compiler,const char *name) {
     return -1;
 }
 
+static int find_namespace_constant_name(const Compiler *compiler,
+                                        const char *name) {
+    for(size_t index=0;index<compiler->program->namespace_constant_count;index++)
+        if(strcmp(compiler->program->namespace_constants[index],name)==0)
+            return (int)index;
+    return -1;
+}
+
+static int find_namespace_constant(const Compiler *compiler,DiamondSpan name) {
+    if(compiler->current_module<0)return -1;
+    char scope[DIAMOND_MAX_FUNCTION_NAME];
+    (void)snprintf(scope,sizeof scope,"%s",
+        compiler->program->modules[(size_t)compiler->current_module].name);
+    while(true) {
+        char qualified[DIAMOND_MAX_FUNCTION_NAME];
+        const int written=snprintf(qualified,sizeof qualified,"%s::%.*s",scope,
+            (int)name.length,compiler->source+name.start);
+        if(written>0&&(size_t)written<sizeof qualified) {
+            const int found=find_namespace_constant_name(compiler,qualified);
+            if(found>=0)return found;
+        }
+        char *separator=strrchr(scope,':');
+        if(separator==nullptr)break;
+        separator[-1]='\0';
+    }
+    return -1;
+}
+
 static bool append_span_name(Compiler *compiler,char *buffer,size_t capacity,
                              DiamondSpan span) {
     const size_t used=strlen(buffer);
@@ -1146,9 +1175,23 @@ static uint8_t parse_name(Compiler *compiler) {
             advance_token(compiler);
         }
         class_index=find_class_name(compiler,qualified);
+        const int constant=find_namespace_constant_name(compiler,qualified);
+        if(constant>=0) {
+            const uint8_t destination=allocate_register(compiler);
+            emit_instruction(compiler,DIAMOND_OP_GET_NAMESPACE_CONSTANT,
+                destination,(uint8_t)constant,0,2);
+            return destination;
+        }
         if(class_index<0) {
             fail(compiler,name,"undefined namespaced class");return 0;
         }
+    }
+    const int constant=find_namespace_constant(compiler,name);
+    if(constant>=0&&find_local(compiler,name)<0) {
+        const uint8_t destination=allocate_register(compiler);
+        emit_instruction(compiler,DIAMOND_OP_GET_NAMESPACE_CONSTANT,destination,
+                         (uint8_t)constant,0,2);
+        return destination;
     }
     if (class_index >= 0 && compiler->current.kind == DIAMOND_TOKEN_DOT) {
         advance_token(compiler);
@@ -2444,7 +2487,37 @@ static uint8_t compile_module(Compiler *compiler) {
     if(!consume_block_start(compiler))return 0;
     const int outer=compiler->current_module;compiler->current_module=index;
     while(!compiler->failed&&compiler->current.kind!=DIAMOND_TOKEN_END) {
-        if(compiler->current.kind==DIAMOND_TOKEN_INCLUDE) {
+        if(compiler->current.kind==DIAMOND_TOKEN_IDENTIFIER&&
+           assignment_ahead(compiler)) {
+            const DiamondSpan constant_name=compiler->current.span;
+            const char first=compiler->source[constant_name.start];
+            if(first<'A'||first>'Z') {
+                fail(compiler,constant_name,
+                     "module constants must begin with an uppercase letter");break;
+            }
+            char qualified[DIAMOND_MAX_FUNCTION_NAME];
+            const int written=snprintf(qualified,sizeof qualified,"%s::%.*s",
+                module->name,(int)constant_name.length,
+                compiler->source+constant_name.start);
+            if(written<0||(size_t)written>=sizeof qualified) {
+                fail(compiler,constant_name,"constant name is too long");break;
+            }
+            if(find_namespace_constant_name(compiler,qualified)>=0) {
+                fail(compiler,constant_name,"constant is already defined");break;
+            }
+            if(compiler->program->namespace_constant_count==
+               DIAMOND_MAX_NAMESPACE_CONSTANTS) {
+                fail(compiler,constant_name,"too many namespace constants");break;
+            }
+            const uint8_t constant=(uint8_t)
+                compiler->program->namespace_constant_count++;
+            (void)snprintf(compiler->program->namespace_constants[constant],
+                DIAMOND_MAX_FUNCTION_NAME,"%s",qualified);
+            advance_token(compiler);advance_token(compiler);
+            const uint8_t value=parse_expression(compiler);
+            emit_instruction(compiler,DIAMOND_OP_SET_NAMESPACE_CONSTANT,
+                             constant,value,0,2);
+        } else if(compiler->current.kind==DIAMOND_TOKEN_INCLUDE) {
             advance_token(compiler);
             if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER) {
                 fail(compiler,compiler->current.span,
@@ -2496,6 +2569,8 @@ static uint8_t compile_module(Compiler *compiler) {
             (void)compile_module(compiler);
         } else if(compiler->current.kind==DIAMOND_TOKEN_CLASS) {
             (void)compile_class(compiler);
+        } else if(compiler->current.kind==DIAMOND_TOKEN_INTERFACE) {
+            (void)compile_interface(compiler);
         } else {
             fail(compiler,compiler->current.span,
                  "expected definition or include in module");break;
@@ -2520,18 +2595,19 @@ static uint8_t compile_interface(Compiler *compiler) {
         fail(compiler,compiler->current.span,"expected valid interface name");return 0;
     }
     const DiamondSpan name=compiler->current.span;
-    if(name.length>=DIAMOND_MAX_FUNCTION_NAME) {
+    char stored_name[DIAMOND_MAX_FUNCTION_NAME];
+    if(!declaration_name(compiler,stored_name,sizeof stored_name,name)) {
         fail(compiler,name,"interface name is too long");return 0;
     }
-    if(find_interface(compiler,name)>=0||find_class(compiler,name)>=0||
-       find_module(compiler,name)>=0) {
+    if(find_interface_name(compiler,stored_name)>=0||
+       find_class_name(compiler,stored_name)>=0||
+       find_module_name(compiler,stored_name)>=0) {
         fail(compiler,name,"type name is already defined");return 0;
     }
     DiamondInterface *interface=
         &compiler->program->interfaces[compiler->program->interface_count++];
-    for(size_t index=0;index<name.length;index++)
-        interface->name[index]=compiler->source[name.start+index];
-    interface->name[name.length]='\0';
+    interface->type_sets=compiler->program->entry.type_sets;
+    (void)snprintf(interface->name,sizeof interface->name,"%s",stored_name);
     advance_token(compiler);
     if(!consume_block_start(compiler))return 0;
     while(!compiler->failed&&compiler->current.kind!=DIAMOND_TOKEN_END) {

@@ -105,14 +105,16 @@ future work.
   resolution, qualified type annotations, and isolated local names.
 - Symbolic module instance fields resolved through receiver-class field tables,
   shapes, and caches, including transitive state requirements.
+- Nested interfaces and write-once namespace constants with lexical/qualified
+  lookup, arbitrary expression values, cross-frame access, and GC rooting.
 
 ## Next priorities
 
-1. Add nested interfaces and general immutable constant values.
+1. Add module singleton functions such as `Config.load()`.
 
 ## Later experiments
 
-- Modules/mixins and singleton methods.
+- Class singleton methods and visibility controls.
 - Bytecode quickening and type-specialized instructions.
 - Fibers and cooperative concurrency.
 - Structural interfaces and more capable flow typing.

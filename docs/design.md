@@ -285,6 +285,13 @@ actual receiver produces an offset consumed by the existing shape and field
 cache machinery. This keeps instances compact and makes field-name collisions
 explicitly shared state rather than layout corruption.
 
+Interfaces share the same lexical namespace and may be referenced through a
+qualified type name. Namespace constant declarations evaluate ordinary Diamond
+expressions during entry execution and store the resulting value in a VM root
+table. `GET_NAMESPACE_CONSTANT` makes those bindings available from methods and
+other function chunks without capturing the entry frame. Each binding is
+write-once; object values remain mutable according to their own APIs.
+
 For a direct `value == nil` or `value != nil` condition, the compiler splits a
 union type-set into nil and non-nil branch facts. Facts for locals that existed
 before the branch are merged at the join; disagreement becomes unknown, so
@@ -298,7 +305,7 @@ flows into the false branch. Compound boolean conditions remain conservative.
 ## Deliberate constraints
 
 - No Ruby compatibility guarantee.
-- No modules yet; collection APIs are still limited to literals and indexing.
+- No singleton methods or visibility controls.
 - No native-code generator or JIT.
 - No stable bytecode, embedding API, or package format.
 - No parallel execution.

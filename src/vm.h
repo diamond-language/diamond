@@ -21,6 +21,7 @@ enum {
     DIAMOND_MAX_UNION_TYPES = 8,
     DIAMOND_MAX_METHODS = 32,
     DIAMOND_MAX_FIELDS = 32,
+    DIAMOND_MAX_NAMESPACE_CONSTANTS = 64,
 };
 
 typedef enum DiamondOpCode : uint8_t {
@@ -60,6 +61,8 @@ typedef enum DiamondOpCode : uint8_t {
     DIAMOND_OP_SET_IVAR,
     DIAMOND_OP_GET_IVAR_NAME,
     DIAMOND_OP_SET_IVAR_NAME,
+    DIAMOND_OP_GET_NAMESPACE_CONSTANT,
+    DIAMOND_OP_SET_NAMESPACE_CONSTANT,
     DIAMOND_OP_CHECK_TYPE,
     DIAMOND_OP_ARRAY,
     DIAMOND_OP_INDEX_GET,
@@ -148,6 +151,7 @@ typedef struct DiamondInterface {
     char name[DIAMOND_MAX_FUNCTION_NAME];
     DiamondInterfaceMethod methods[DIAMOND_MAX_METHODS];
     size_t method_count;
+    const DiamondTypeSet *type_sets;
 } DiamondInterface;
 
 typedef struct DiamondModule {
@@ -273,6 +277,8 @@ typedef struct DiamondVm {
     size_t field_cache_hits;
     size_t field_cache_misses;
     size_t shape_transitions;
+    DiamondValue namespace_constants[DIAMOND_MAX_NAMESPACE_CONSTANTS];
+    bool namespace_constant_initialized[DIAMOND_MAX_NAMESPACE_CONSTANTS];
     DiamondValue exception;
     bool has_exception;
     char error[1024];

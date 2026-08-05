@@ -70,6 +70,9 @@ static void mark_value(DiamondValue value) {
 
 void diamond_vm_collect(DiamondVm *vm) {
     if(vm->has_exception)mark_value(vm->exception);
+    for(size_t index=0;index<DIAMOND_MAX_NAMESPACE_CONSTANTS;index++)
+        if(vm->namespace_constant_initialized[index])
+            mark_value(vm->namespace_constants[index]);
     for (DiamondFrame *frame = vm->frames; frame != nullptr;
          frame = frame->previous) {
         for (size_t index = 0; index < DIAMOND_REGISTER_COUNT; index++) {
@@ -458,7 +461,7 @@ static bool value_matches_type(const DiamondChunk *chunk, DiamondValue value,
                     const DiamondTypeSet native={.members={{.id=result,
                         .argument_set=UINT8_MAX,.second_argument_set=UINT8_MAX,
                         .callable_arity=UINT8_MAX,.callable_return_set=UINT8_MAX}},.count=1};
-                    if(!runtime_set_satisfies(chunk,&native,0,chunk->type_sets,
+                    if(!runtime_set_satisfies(chunk,&native,0,interface->type_sets,
                         method->return_type_set))return false;
                 }
             }
@@ -486,14 +489,14 @@ static bool value_matches_type(const DiamondChunk *chunk, DiamondValue value,
                             if(required_set==UINT8_MAX) {
                                 if(actual_set!=UINT8_MAX)found=false;
                             } else if(actual_set!=UINT8_MAX&&
-                                !runtime_set_satisfies(chunk,chunk->type_sets,
+                                !runtime_set_satisfies(chunk,interface->type_sets,
                                     required_set,implementation->type_sets,
                                     actual_set))found=false;
                         }
                         if(wanted->return_type_set!=UINT8_MAX&&
                            (implementation->return_type_set==UINT8_MAX||
                             !runtime_set_satisfies(chunk,implementation->type_sets,
-                                implementation->return_type_set,chunk->type_sets,
+                                implementation->return_type_set,interface->type_sets,
                                 wanted->return_type_set)))found=false;
                         if(found)break;
                     }
@@ -593,7 +596,7 @@ static bool runtime_type_id_satisfies(const DiamondChunk *chunk,uint8_t known,
                     const DiamondTypeSet native={.members={{.id=result,
                         .argument_set=UINT8_MAX,.second_argument_set=UINT8_MAX,
                         .callable_arity=UINT8_MAX,.callable_return_set=UINT8_MAX}},.count=1};
-                    if(!runtime_set_satisfies(chunk,&native,0,chunk->type_sets,
+                    if(!runtime_set_satisfies(chunk,&native,0,interface->type_sets,
                         method->return_type_set))return false;
                 }
             }
@@ -621,13 +624,13 @@ static bool runtime_type_id_satisfies(const DiamondChunk *chunk,uint8_t known,
                             if(required_set==UINT8_MAX) {
                                 if(actual_set!=UINT8_MAX)found=false;
                             } else if(actual_set!=UINT8_MAX&&
-                                !runtime_set_satisfies(chunk,chunk->type_sets,required_set,
+                                !runtime_set_satisfies(chunk,interface->type_sets,required_set,
                                     implementation->type_sets,actual_set))found=false;
                         }
                         if(wanted->return_type_set!=UINT8_MAX&&
                            (implementation->return_type_set==UINT8_MAX||
                             !runtime_set_satisfies(chunk,implementation->type_sets,
-                                implementation->return_type_set,chunk->type_sets,
+                                implementation->return_type_set,interface->type_sets,
                                 wanted->return_type_set)))found=false;
                         if(found)break;
                     }
@@ -2148,6 +2151,21 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 } else registers[first]=cached->materialized?
                     instance->fields[field]:DIAMOND_NIL;
                 break;
+            }
+            case DIAMOND_OP_GET_NAMESPACE_CONSTANT: {
+                uint8_t destination=0,index=0;READ_BYTE(destination);READ_BYTE(index);
+                if(index>=DIAMOND_MAX_NAMESPACE_CONSTANTS||
+                   !vm->namespace_constant_initialized[index])
+                    VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
+                registers[destination]=vm->namespace_constants[index];break;
+            }
+            case DIAMOND_OP_SET_NAMESPACE_CONSTANT: {
+                uint8_t index=0,source=0;READ_BYTE(index);READ_BYTE(source);
+                if(index>=DIAMOND_MAX_NAMESPACE_CONSTANTS||
+                   vm->namespace_constant_initialized[index])
+                    VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
+                vm->namespace_constants[index]=registers[source];
+                vm->namespace_constant_initialized[index]=true;break;
             }
             case DIAMOND_OP_CHECK_TYPE: {
                 uint8_t source=0,set_index=0; READ_BYTE(source); READ_BYTE(set_index);

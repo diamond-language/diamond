@@ -14,6 +14,9 @@ typedef struct DiamondProgram {
     size_t interface_count;
     DiamondModule modules[DIAMOND_MAX_MODULES];
     size_t module_count;
+    char namespace_constants[DIAMOND_MAX_NAMESPACE_CONSTANTS]
+                            [DIAMOND_MAX_FUNCTION_NAME];
+    size_t namespace_constant_count;
 } DiamondProgram;
 
 typedef struct DiamondDiagnostic {

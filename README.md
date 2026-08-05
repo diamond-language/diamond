@@ -28,7 +28,7 @@ Implemented today:
 - stop-the-world mark/sweep collection with stress-GC testing;
 - source diagnostics and bytecode disassembly.
 
-The test suite currently contains 273 end-to-end assertions spanning the
+The test suite currently contains 280 end-to-end assertions spanning the
 frontend, compiler, VM, object model, type guards, collections, and collector.
 
 ## Build and run
@@ -257,6 +257,13 @@ ordinary fixed field storage, shapes, and inline caches. This permits one
 stateful module to serve unrelated classes; identical field names included into
 one class intentionally share a slot.
 
+Interfaces may be nested in modules and referenced as qualified types such as
+`Contracts::Named`. Modules may also declare immutable constant bindings with
+uppercase names. Constants accept arbitrary expressions, resolve lexically or
+through `Outer::NAME`, remain visible inside included methods, and are retained
+as GC roots. Immutability applies to the binding; a referenced Array or Hash
+keeps its normal mutable semantics.
+
 Generic function and method declarations may introduce up to eight scoped type
 variables:
 
@@ -354,8 +361,7 @@ Field sites use four-entry polymorphic caches guarded by instance shape.
 - `ensure` may follow a rescued block or stand alone. It runs on normal
   completion, raised exceptions, runtime failures, and explicit returns;
   cleanup-side control flow overrides the pending unwind.
-- No singleton methods or visibility controls; general constant values remain
-  deferred.
+- No singleton methods or visibility controls.
 - Classes own immutable shape chains for lazily materialized field prefixes;
   method calls and field access use four-entry polymorphic inline caches.
 - Generic contracts guard indexed mutation and `push`. Collection APIs currently

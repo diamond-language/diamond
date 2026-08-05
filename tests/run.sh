@@ -1172,4 +1172,29 @@ actual="$($diamond -e $'module State\n def module_value() = @value\nend\nclass B
 actual="$($diamond --dump-bytecode -e $'module State\n def value() = @value\nend\nclass Box\n include State\nend\nBox.new().value()')"
 grep -q 'GET_IVAR_NAME' <<<"$actual"
 
-echo "273 tests passed"
+actual="$($diamond -e $'module Contracts\n interface Named\n  def name() -> String\n end\nend\nclass Person\n def name() -> String = "Ada"\nend\ndef read(value: Contracts::Named) -> String = value.name()\nread(Person.new())')"
+[[ "$actual" == "Ada" ]]
+
+actual="$($diamond -e $'module Config\n ANSWER = 42\n def answer() = ANSWER\nend\nclass Reader\n include Config\nend\n[Config::ANSWER, Reader.new().answer()]')"
+[[ "$actual" == "[42, 42]" ]]
+
+actual="$($diamond -e $'module Outer\n VALUE = 40\n module Inner\n  OFFSET = 2\n  def total() = VALUE + OFFSET\n end\n class Box\n  include Inner\n end\nend\nOuter::Box.new().total()')"
+[[ "$actual" == "42" ]]
+
+actual="$(DIAMOND_STRESS_GC=1 "$diamond" -e $'module Config\n NAMES = ["diamond"]\n def names() = NAMES\nend\nclass Reader\n include Config\nend\nReader.new().names()')"
+[[ "$actual" == "[diamond]" ]]
+
+actual="$($diamond -e $'module First\n VALUE = 1\nend\nmodule Second\n VALUE = 2\nend\n[First::VALUE, Second::VALUE]')"
+[[ "$actual" == "[1, 2]" ]]
+
+if "$diamond" -e $'module Config\n VALUE = 1\n VALUE = 2\nend' >/dev/null 2>&1; then
+    echo "namespace constant reassignment unexpectedly compiled" >&2
+    exit 1
+fi
+
+if "$diamond" -e $'module Config\n value = 1\nend' >/dev/null 2>&1; then
+    echo "lowercase module constant unexpectedly compiled" >&2
+    exit 1
+fi
+
+echo "280 tests passed"
