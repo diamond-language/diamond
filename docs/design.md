@@ -166,6 +166,12 @@ satisfy it by defining or inheriting a method with that name and arity. The same
 structural test drives annotation checks, subtype reasoning, union narrowing,
 and the non-throwing `is Sized` predicate.
 
+User declarations generalize that model with `interface Name ... end`. An
+interface body contains bodyless `def` signatures. Conformance is implicit and
+currently compares every required method name and arity against native methods
+or the receiver class's inherited method table. Declared parameter and return
+types are reserved for the next conformance layer.
+
 Closure objects satisfy `Callable`. An optional integer argument, as in
 `Callable[2]`, checks the referenced bytecode function's arity at the typed
 boundary. Core collection callbacks use these contracts, so invalid callbacks

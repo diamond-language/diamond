@@ -15,6 +15,7 @@ enum {
     DIAMOND_MAX_STRING_CONSTANTS = 64,
     DIAMOND_MAX_STRING_LENGTH = 255,
     DIAMOND_MAX_CLASSES = 32,
+    DIAMOND_MAX_INTERFACES = 16,
     DIAMOND_MAX_TYPE_SETS = 64,
     DIAMOND_MAX_UNION_TYPES = 8,
     DIAMOND_MAX_METHODS = 32,
@@ -81,6 +82,7 @@ typedef enum DiamondTypeId : uint8_t {
     DIAMOND_TYPE_CALLABLE,
     DIAMOND_TYPE_SIZED,
     DIAMOND_TYPE_CLASS_BASE,
+    DIAMOND_TYPE_INTERFACE_BASE = 128,
 } DiamondTypeId;
 
 enum { DIAMOND_INLINE_CACHE_COUNT = 64 };
@@ -122,6 +124,17 @@ typedef struct DiamondMethod {
     uint8_t function_index;
     uint8_t arity;
 } DiamondMethod;
+
+typedef struct DiamondInterfaceMethod {
+    char name[DIAMOND_MAX_FUNCTION_NAME];
+    uint8_t arity;
+} DiamondInterfaceMethod;
+
+typedef struct DiamondInterface {
+    char name[DIAMOND_MAX_FUNCTION_NAME];
+    DiamondInterfaceMethod methods[DIAMOND_MAX_METHODS];
+    size_t method_count;
+} DiamondInterface;
 
 typedef struct DiamondClass DiamondClass;
 
@@ -175,6 +188,8 @@ typedef struct DiamondChunk {
     size_t function_count;
     const DiamondClass *classes;
     size_t class_count;
+    const DiamondInterface *interfaces;
+    size_t interface_count;
 } DiamondChunk;
 
 typedef enum DiamondVmStatus : uint8_t {

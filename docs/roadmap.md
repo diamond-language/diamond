@@ -74,10 +74,12 @@ future work.
 - Declared `Callable[n, Return]` result contracts and typed array transforms.
 - First structural interface, `Sized`, implemented by native containers and
   user classes that provide zero-arity `length`.
+- User-declared structural interfaces with implicit name-and-arity conformance
+  for native objects and inherited class methods.
 
 ## Next priorities
 
-1. User-declared structural interfaces with method-signature requirements.
+1. Structural interface parameter and return-type compatibility.
 2. Endless method definitions (`def name(...) = expression`), followed by
    default arguments and string interpolation so forms such as
    `def greet(name = "world") = "Hello, #{name}"` work end to end.

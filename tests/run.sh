@@ -807,4 +807,25 @@ actual="$($diamond -e $'def length_or_zero(value: Sized | Nil) -> Int\n if value
 actual="$($diamond --dump-bytecode -e $'def size(value: Sized)\n value.length()\nend')"
 grep -q 'CHECK_TYPE.*Sized' <<<"$actual"
 
-echo "161 tests passed"
+actual="$($diamond -e $'interface Greetable\n def greet(name)\nend\nclass Person\n def greet(name) -> String\n  name\n end\nend\ndef greet(value: Greetable) -> String\n value.greet("hi")\nend\n[greet(Person.new()), Person.new() is Greetable]')"
+[[ "$actual" == "[hi, true]" ]]
+
+actual="$($diamond -e $'interface Greetable\n def greet(name)\nend\nclass Wrong\n def greet()\n  "no"\n end\nend\nWrong.new() is Greetable')"
+[[ "$actual" == "false" ]]
+
+actual="$($diamond -e $'interface LengthLike\n def length()\nend\ndef size(value: LengthLike) -> Int\n value.length()\nend\n[size("abc"), size([1, 2]), size({"a": 1})]')"
+[[ "$actual" == "[3, 2, 1]" ]]
+
+actual="$($diamond -e $'interface Named\n def name()\nend\nclass Parent\n def name() -> String\n  "diamond"\n end\nend\nclass Child < Parent\nend\nChild.new() is Named')"
+[[ "$actual" == "true" ]]
+
+actual="$($diamond -e $'interface Greetable\n def greet(name)\nend\ndef accept(value: Greetable)\n value\nend\ndef dynamic(values: Array)\n begin\n  accept(values[0])\n rescue error: TypeError\n  42\n end\nend\ndynamic([1])')"
+[[ "$actual" == "42" ]]
+
+actual="$($diamond -e $'interface Named\n def name()\nend\nclass Person\n def name() -> String\n  "diamond"\n end\nend\ndef name_or_nil(value: Named | Nil)\n if value is Named\n  value.name()\n else\n  nil\n end\nend\n[name_or_nil(Person.new()), name_or_nil(nil)]')"
+[[ "$actual" == "[diamond, nil]" ]]
+
+actual="$($diamond --dump-bytecode -e $'interface Named\n def name()\nend\ndef accept(value: Named)\n value\nend')"
+grep -q 'CHECK_TYPE.*Named' <<<"$actual"
+
+echo "168 tests passed"

@@ -361,6 +361,47 @@ static bool value_matches_type(const DiamondChunk *chunk, DiamondValue value,
         }
         return false;
     }
+    if(type>=DIAMOND_TYPE_INTERFACE_BASE) {
+        const size_t interface_index=(size_t)(type-DIAMOND_TYPE_INTERFACE_BASE);
+        if(interface_index>=chunk->interface_count||value.kind!=DIAMOND_VALUE_OBJECT)
+            return false;
+        const DiamondInterface *interface=&chunk->interfaces[interface_index];
+        uint8_t builtin=UINT8_MAX;
+        if(value.as.object->kind==DIAMOND_OBJECT_STRING)builtin=DIAMOND_TYPE_STRING;
+        else if(value.as.object->kind==DIAMOND_OBJECT_ARRAY)builtin=DIAMOND_TYPE_ARRAY;
+        else if(value.as.object->kind==DIAMOND_OBJECT_HASH)builtin=DIAMOND_TYPE_HASH;
+        if(builtin!=UINT8_MAX) {
+            for(size_t required=0;required<interface->method_count;required++) {
+                const DiamondInterfaceMethod *method=&interface->methods[required];
+                const bool length=strcmp(method->name,"length")==0&&method->arity==0;
+                const bool array_method=builtin==DIAMOND_TYPE_ARRAY&&
+                    ((strcmp(method->name,"push")==0&&method->arity==1)||
+                     (strcmp(method->name,"pop")==0&&method->arity==0));
+                const bool hash_method=builtin==DIAMOND_TYPE_HASH&&method->arity==1&&
+                    (strcmp(method->name,"key_at")==0||
+                     strcmp(method->name,"value_at")==0);
+                if(!length&&!array_method&&!hash_method)return false;
+            }
+            return true;
+        }
+        if(value.as.object->kind!=DIAMOND_OBJECT_INSTANCE)return false;
+        for(size_t required=0;required<interface->method_count;required++) {
+            bool found=false;
+            const DiamondClass *class=((DiamondInstance *)value.as.object)->class;
+            while(class!=nullptr&&!found) {
+                for(size_t method=0;method<class->method_count;method++)
+                    if(strcmp(class->methods[method].name,
+                              interface->methods[required].name)==0&&
+                       class->methods[method].arity==interface->methods[required].arity) {
+                        found=true;break;
+                    }
+                class=class->superclass==UINT8_MAX?nullptr:
+                    &chunk->classes[class->superclass];
+            }
+            if(!found)return false;
+        }
+        return true;
+    }
     const size_t class_index=(size_t)(type-DIAMOND_TYPE_CLASS_BASE);
     if(class_index>=chunk->class_count || value.kind!=DIAMOND_VALUE_OBJECT ||
        value.as.object->kind!=DIAMOND_OBJECT_INSTANCE) return false;
@@ -399,6 +440,44 @@ static bool runtime_type_id_satisfies(const DiamondChunk *chunk,uint8_t known,
             index=class->superclass;
         }
         return false;
+    }
+    if(expected>=DIAMOND_TYPE_INTERFACE_BASE) {
+        const size_t interface_index=(size_t)(expected-DIAMOND_TYPE_INTERFACE_BASE);
+        if(interface_index>=chunk->interface_count)return false;
+        const DiamondInterface *interface=&chunk->interfaces[interface_index];
+        if(known==DIAMOND_TYPE_STRING||known==DIAMOND_TYPE_ARRAY||
+           known==DIAMOND_TYPE_HASH) {
+            for(size_t required=0;required<interface->method_count;required++) {
+                const DiamondInterfaceMethod *method=&interface->methods[required];
+                const bool length=strcmp(method->name,"length")==0&&method->arity==0;
+                const bool array_method=known==DIAMOND_TYPE_ARRAY&&
+                    ((strcmp(method->name,"push")==0&&method->arity==1)||
+                     (strcmp(method->name,"pop")==0&&method->arity==0));
+                const bool hash_method=known==DIAMOND_TYPE_HASH&&method->arity==1&&
+                    (strcmp(method->name,"key_at")==0||
+                     strcmp(method->name,"value_at")==0);
+                if(!length&&!array_method&&!hash_method)return false;
+            }
+            return true;
+        }
+        if(known<DIAMOND_TYPE_CLASS_BASE||known>=DIAMOND_TYPE_INTERFACE_BASE)
+            return false;
+        for(size_t required=0;required<interface->method_count;required++) {
+            bool found=false;size_t index=(size_t)(known-DIAMOND_TYPE_CLASS_BASE);
+            while(index<chunk->class_count&&!found) {
+                const DiamondClass *class=&chunk->classes[index];
+                for(size_t method=0;method<class->method_count;method++)
+                    if(strcmp(class->methods[method].name,
+                              interface->methods[required].name)==0&&
+                       class->methods[method].arity==interface->methods[required].arity) {
+                        found=true;break;
+                    }
+                if(found||class->superclass==UINT8_MAX)break;
+                index=class->superclass;
+            }
+            if(!found)return false;
+        }
+        return true;
     }
     if(known<DIAMOND_TYPE_CLASS_BASE||expected<DIAMOND_TYPE_CLASS_BASE)return false;
     size_t index=(size_t)(known-DIAMOND_TYPE_CLASS_BASE);
@@ -489,7 +568,8 @@ static bool value_matches_member(const DiamondChunk *chunk,DiamondValue value,
         array->constraints[array->constraint_count++]=(typeof(array->constraints[0])){
             .type_sets=chunk->type_sets,.type_set_count=chunk->type_set_count,
             .set_index=member.argument_set,.classes=chunk->classes,
-            .class_count=chunk->class_count};
+            .class_count=chunk->class_count,.interfaces=chunk->interfaces,
+            .interface_count=chunk->interface_count};
         return true;
     }
     if(member.id!=DIAMOND_TYPE_HASH||member.second_argument_set==UINT8_MAX||
@@ -513,6 +593,8 @@ static bool value_matches_member(const DiamondChunk *chunk,DiamondValue value,
         .type_sets=chunk->type_sets,.type_set_count=chunk->type_set_count,
         .key_set=member.argument_set,.value_set=member.second_argument_set,
         .classes=chunk->classes,.class_count=chunk->class_count};
+    hash->constraints[hash->constraint_count-1].interfaces=chunk->interfaces;
+    hash->constraints[hash->constraint_count-1].interface_count=chunk->interface_count;
     return true;
 }
 
@@ -531,7 +613,8 @@ static bool array_value_satisfies_constraints(DiamondArray *array,
         const typeof(array->constraints[0]) *constraint=&array->constraints[index];
         const DiamondChunk context={.type_sets=constraint->type_sets,
             .type_set_count=constraint->type_set_count,.classes=constraint->classes,
-            .class_count=constraint->class_count};
+            .class_count=constraint->class_count,.interfaces=constraint->interfaces,
+            .interface_count=constraint->interface_count};
         if(!value_matches_set(&context,value,constraint->set_index,true))return false;
     }
     return true;
@@ -557,7 +640,8 @@ static bool hash_entry_satisfies_constraints(DiamondHash *hash,
         const typeof(hash->constraints[0]) *constraint=&hash->constraints[index];
         const DiamondChunk context={.type_sets=constraint->type_sets,
             .type_set_count=constraint->type_set_count,.classes=constraint->classes,
-            .class_count=constraint->class_count};
+            .class_count=constraint->class_count,.interfaces=constraint->interfaces,
+            .interface_count=constraint->interface_count};
         if(!value_matches_set(&context,key,constraint->key_set,true)||
            !value_matches_set(&context,value,constraint->value_set,true))return false;
     }
@@ -624,6 +708,9 @@ static const char *type_name(const DiamondChunk *chunk,uint8_t type) {
     else if(type==DIAMOND_TYPE_HASH) name="Hash";
     else if(type==DIAMOND_TYPE_CALLABLE) name="Callable";
     else if(type==DIAMOND_TYPE_SIZED) name="Sized";
+    else if(type>=DIAMOND_TYPE_INTERFACE_BASE&&
+            (size_t)(type-DIAMOND_TYPE_INTERFACE_BASE)<chunk->interface_count)
+        name=chunk->interfaces[type-DIAMOND_TYPE_INTERFACE_BASE].name;
     else {
         const size_t index=(size_t)(type-DIAMOND_TYPE_CLASS_BASE);
         if(index<chunk->class_count) name=chunk->classes[index].name;
@@ -1030,6 +1117,8 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     .function_count = chunk->function_count,
                     .classes = chunk->classes,
                     .class_count = chunk->class_count,
+                    .interfaces=chunk->interfaces,
+                    .interface_count=chunk->interface_count,
                 };
                 DiamondValue call_result = DIAMOND_NIL;
                 const DiamondVmStatus status = run_chunk(
@@ -1104,7 +1193,8 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                   .constant_count=fn->constant_count,.strings=fn->strings,.string_count=fn->string_count,
                   .type_sets=fn->type_sets,.type_set_count=fn->type_set_count,
                   .functions=chunk->functions,.function_count=chunk->function_count,
-                  .classes=chunk->classes,.class_count=chunk->class_count};
+                  .classes=chunk->classes,.class_count=chunk->class_count,
+                  .interfaces=chunk->interfaces,.interface_count=chunk->interface_count};
                 DiamondValue call_result=DIAMOND_NIL;
                 DiamondVmStatus status=run_chunk(&child,vm,&registers[base],argc,depth+1,called,&call_result);
                 VM_PROPAGATE(status);
@@ -1132,7 +1222,8 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                       .strings=fn->strings,.string_count=fn->string_count,
                       .type_sets=fn->type_sets,.type_set_count=fn->type_set_count,
                       .functions=chunk->functions,.function_count=chunk->function_count,
-                      .classes=chunk->classes,.class_count=chunk->class_count};
+                      .classes=chunk->classes,.class_count=chunk->class_count,
+                      .interfaces=chunk->interfaces,.interface_count=chunk->interface_count};
                     DiamondValue ignored=DIAMOND_NIL;
                     DiamondVmStatus s=run_chunk(&child,vm,args,(size_t)argc+1,depth+1,nullptr,&ignored);
                     VM_PROPAGATE(s);
@@ -1224,7 +1315,8 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                   .strings=fn->strings,.string_count=fn->string_count,
                   .type_sets=fn->type_sets,.type_set_count=fn->type_set_count,
                   .functions=chunk->functions,.function_count=chunk->function_count,
-                  .classes=chunk->classes,.class_count=chunk->class_count};
+                  .classes=chunk->classes,.class_count=chunk->class_count,
+                  .interfaces=chunk->interfaces,.interface_count=chunk->interface_count};
                 DiamondValue call_result=DIAMOND_NIL;
                 DiamondVmStatus s=run_chunk(&child,vm,args,(size_t)argc+1,depth+1,nullptr,&call_result);
                 VM_PROPAGATE(s);
@@ -1257,7 +1349,8 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                   .strings=fn->strings,.string_count=fn->string_count,
                   .type_sets=fn->type_sets,.type_set_count=fn->type_set_count,
                   .functions=chunk->functions,.function_count=chunk->function_count,
-                  .classes=chunk->classes,.class_count=chunk->class_count};
+                  .classes=chunk->classes,.class_count=chunk->class_count,
+                  .interfaces=chunk->interfaces,.interface_count=chunk->interface_count};
                 DiamondValue call_result=DIAMOND_NIL;
                 DiamondVmStatus status=run_chunk(&child,vm,args,(size_t)argc+1,
                                                   depth+1,nullptr,&call_result);

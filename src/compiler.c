@@ -137,6 +137,45 @@ static uint8_t allocate_register(Compiler *compiler) {
 static bool known_type_satisfies_one(const Compiler *compiler, uint8_t known,
                                      uint8_t expected) {
     if(known==expected) return true;
+    if(expected>=DIAMOND_TYPE_INTERFACE_BASE) {
+        const size_t interface_index=(size_t)(expected-DIAMOND_TYPE_INTERFACE_BASE);
+        if(interface_index>=compiler->program->interface_count)return false;
+        const DiamondInterface *interface=&compiler->program->interfaces[interface_index];
+        if(known==DIAMOND_TYPE_STRING||known==DIAMOND_TYPE_ARRAY||
+           known==DIAMOND_TYPE_HASH) {
+            for(size_t required=0;required<interface->method_count;required++) {
+                const DiamondInterfaceMethod *method=&interface->methods[required];
+                const bool length=strcmp(method->name,"length")==0&&method->arity==0;
+                const bool array_method=known==DIAMOND_TYPE_ARRAY&&
+                    ((strcmp(method->name,"push")==0&&method->arity==1)||
+                     (strcmp(method->name,"pop")==0&&method->arity==0));
+                const bool hash_method=known==DIAMOND_TYPE_HASH&&method->arity==1&&
+                    (strcmp(method->name,"key_at")==0||
+                     strcmp(method->name,"value_at")==0);
+                if(!length&&!array_method&&!hash_method)return false;
+            }
+            return true;
+        }
+        if(known<DIAMOND_TYPE_CLASS_BASE||known>=DIAMOND_TYPE_INTERFACE_BASE)
+            return false;
+        for(size_t required=0;required<interface->method_count;required++) {
+            bool found=false;
+            size_t class_index=(size_t)(known-DIAMOND_TYPE_CLASS_BASE);
+            while(class_index<compiler->program->class_count&&!found) {
+                const DiamondClass *class=&compiler->program->classes[class_index];
+                for(size_t method=0;method<class->method_count;method++)
+                    if(strcmp(class->methods[method].name,
+                              interface->methods[required].name)==0&&
+                       class->methods[method].arity==interface->methods[required].arity) {
+                        found=true;break;
+                    }
+                if(found||class->superclass==UINT8_MAX)break;
+                class_index=class->superclass;
+            }
+            if(!found)return false;
+        }
+        return true;
+    }
     if(expected==DIAMOND_TYPE_SIZED) {
         if(known==DIAMOND_TYPE_STRING||known==DIAMOND_TYPE_ARRAY||
            known==DIAMOND_TYPE_HASH)return true;
@@ -484,6 +523,13 @@ static int find_class(const Compiler *compiler, DiamondSpan name) {
     return -1;
 }
 
+static int find_interface(const Compiler *compiler,DiamondSpan name) {
+    for(size_t index=0;index<compiler->program->interface_count;index++)
+        if(name_equals(compiler,compiler->program->interfaces[index].name,name,false))
+            return (int)index;
+    return -1;
+}
+
 static int resolve_type(Compiler *compiler, DiamondSpan name) {
     if (name_equals(compiler, "Int", name, false)) return DIAMOND_TYPE_INT;
     if (name_equals(compiler, "String", name, false)) return DIAMOND_TYPE_STRING;
@@ -493,6 +539,8 @@ static int resolve_type(Compiler *compiler, DiamondSpan name) {
     if (name_equals(compiler, "Hash", name, false)) return DIAMOND_TYPE_HASH;
     if (name_equals(compiler, "Callable", name, false)) return DIAMOND_TYPE_CALLABLE;
     if (name_equals(compiler, "Sized", name, false)) return DIAMOND_TYPE_SIZED;
+    const int interface_index=find_interface(compiler,name);
+    if(interface_index>=0)return DIAMOND_TYPE_INTERFACE_BASE+interface_index;
     const int class_index = find_class(compiler, name);
     if (class_index >= 0) return DIAMOND_TYPE_CLASS_BASE + class_index;
     fail(compiler, name, "unknown type annotation");
@@ -1704,7 +1752,9 @@ static uint8_t compile_class(Compiler *compiler) {
     if(name.length>=DIAMOND_MAX_FUNCTION_NAME) {
         fail(compiler,name,"class name is too long"); return 0;
     }
-    if (find_class(compiler,name)>=0) { fail(compiler,name,"class is already defined"); return 0; }
+    if (find_class(compiler,name)>=0||find_interface(compiler,name)>=0) {
+        fail(compiler,name,"type name is already defined");return 0;
+    }
     const int index=(int)compiler->program->class_count++;
     DiamondClass *class=&compiler->program->classes[(size_t)index];
     class->superclass=UINT8_MAX;
@@ -1739,6 +1789,83 @@ static uint8_t compile_class(Compiler *compiler) {
     if(compiler->current.kind==DIAMOND_TOKEN_END) advance_token(compiler);
     const uint8_t result=allocate_register(compiler);
     emit_instruction(compiler,DIAMOND_OP_NIL,result,0,0,1); return result;
+}
+
+static uint8_t compile_interface(Compiler *compiler) {
+    advance_token(compiler);
+    if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER||
+       compiler->program->interface_count==DIAMOND_MAX_INTERFACES) {
+        fail(compiler,compiler->current.span,"expected valid interface name");return 0;
+    }
+    const DiamondSpan name=compiler->current.span;
+    if(name.length>=DIAMOND_MAX_FUNCTION_NAME) {
+        fail(compiler,name,"interface name is too long");return 0;
+    }
+    if(find_interface(compiler,name)>=0||find_class(compiler,name)>=0) {
+        fail(compiler,name,"type name is already defined");return 0;
+    }
+    DiamondInterface *interface=
+        &compiler->program->interfaces[compiler->program->interface_count++];
+    for(size_t index=0;index<name.length;index++)
+        interface->name[index]=compiler->source[name.start+index];
+    interface->name[name.length]='\0';
+    advance_token(compiler);
+    if(!consume_block_start(compiler))return 0;
+    while(!compiler->failed&&compiler->current.kind!=DIAMOND_TOKEN_END) {
+        if(compiler->current.kind!=DIAMOND_TOKEN_DEF||
+           interface->method_count==DIAMOND_MAX_METHODS) {
+            fail(compiler,compiler->current.span,
+                 "expected method signature in interface");break;
+        }
+        advance_token(compiler);
+        if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER) {
+            fail(compiler,compiler->current.span,"expected interface method name");break;
+        }
+        const DiamondSpan method_name=compiler->current.span;
+        for(size_t index=0;index<interface->method_count;index++)
+            if(name_equals(compiler,interface->methods[index].name,method_name,false)) {
+                fail(compiler,method_name,"duplicate interface method");break;
+            }
+        if(compiler->failed)break;
+        DiamondInterfaceMethod *method=&interface->methods[interface->method_count++];
+        if(compiler->current.span.length>=DIAMOND_MAX_FUNCTION_NAME) {
+            fail(compiler,compiler->current.span,"interface method name is too long");break;
+        }
+        for(size_t index=0;index<compiler->current.span.length;index++)
+            method->name[index]=compiler->source[compiler->current.span.start+index];
+        method->name[compiler->current.span.length]='\0';
+        advance_token(compiler);
+        if(compiler->current.kind!=DIAMOND_TOKEN_LEFT_PAREN) {
+            fail(compiler,compiler->current.span,"expected '(' after interface method");break;
+        }
+        advance_token(compiler);
+        while(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN&&!compiler->failed) {
+            if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER||method->arity==16) {
+                fail(compiler,compiler->current.span,"expected interface parameter");break;
+            }
+            method->arity++;advance_token(compiler);
+            if(compiler->current.kind==DIAMOND_TOKEN_COLON) {
+                advance_token(compiler);(void)parse_type_annotation(compiler);
+            }
+            if(compiler->current.kind!=DIAMOND_TOKEN_COMMA)break;
+            advance_token(compiler);
+        }
+        if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
+            fail(compiler,compiler->current.span,"expected ')' after interface parameters");break;
+        }
+        advance_token(compiler);
+        if(compiler->current.kind==DIAMOND_TOKEN_ARROW) {
+            advance_token(compiler);(void)parse_type_annotation(compiler);
+        }
+        if(compiler->current.kind!=DIAMOND_TOKEN_NEWLINE&&
+           compiler->current.kind!=DIAMOND_TOKEN_END) {
+            fail(compiler,compiler->current.span,"expected newline after method signature");break;
+        }
+        skip_newlines(compiler);
+    }
+    if(compiler->current.kind==DIAMOND_TOKEN_END)advance_token(compiler);
+    const uint8_t result=allocate_register(compiler);
+    emit_instruction(compiler,DIAMOND_OP_NIL,result,0,0,1);return result;
 }
 
 static uint8_t compile_assignment(Compiler *compiler) {
@@ -1801,6 +1928,8 @@ static uint8_t compile_sequence(Compiler *compiler) {
             result = compile_definition(compiler);
         } else if (compiler->current.kind == DIAMOND_TOKEN_CLASS) {
             result = compile_class(compiler);
+        } else if (compiler->current.kind == DIAMOND_TOKEN_INTERFACE) {
+            result = compile_interface(compiler);
         } else if (compiler->current.kind == DIAMOND_TOKEN_RETURN) {
             result=compile_return(compiler);
         } else if (compiler->current.kind == DIAMOND_TOKEN_RAISE) {
@@ -1900,5 +2029,7 @@ DiamondChunk diamond_program_chunk(const DiamondProgram *program) {
         .function_count = program->function_count,
         .classes = program->classes,
         .class_count = program->class_count,
+        .interfaces=program->interfaces,
+        .interface_count=program->interface_count,
     };
 }

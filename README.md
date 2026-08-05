@@ -27,7 +27,7 @@ Implemented today:
 - stop-the-world mark/sweep collection with stress-GC testing;
 - source diagnostics and bytecode disassembly.
 
-The test suite currently contains 161 end-to-end assertions spanning the
+The test suite currently contains 168 end-to-end assertions spanning the
 frontend, compiler, VM, object model, type guards, collections, and collector.
 
 ## Build and run
@@ -162,6 +162,18 @@ key and value annotations, such as `Hash[String, Array[Int]]`.
 Closures satisfy `Callable`; `Callable[n]` additionally requires exactly `n`
 arguments. `Callable[n, Return]` also requires an explicit, compatible return
 annotation on the closure, including unions and covariant nominal returns.
+
+User-defined structural interfaces declare required method names and arities:
+
+```ruby
+interface Greetable
+  def greet(name)
+end
+```
+
+A class satisfies the interface by defining or inheriting the required shape;
+no `implements` declaration is needed. Interface parameter and return variance
+is not enforced yet.
 
 The embedded core prelude is ordinary Diamond source from `lib/core.dia`.
 Current helpers include `array_first`, `array_swap_first_two`, and `hash_fetch`;

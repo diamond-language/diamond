@@ -10,6 +10,8 @@ typedef struct DiamondProgram {
     size_t function_count;
     DiamondClass classes[DIAMOND_MAX_CLASSES];
     size_t class_count;
+    DiamondInterface interfaces[DIAMOND_MAX_INTERFACES];
+    size_t interface_count;
 } DiamondProgram;
 
 typedef struct DiamondDiagnostic {
