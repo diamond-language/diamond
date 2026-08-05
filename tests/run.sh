@@ -1426,4 +1426,15 @@ actual="$($diamond -e $'def assert!(value: Bool) = value\nassert!(true)')"
 actual="$($diamond -e $'module Mutation\n def clear!() = 42\nend\nclass Box\n include Mutation\nend\nBox.new().clear!()')"
 [[ "$actual" == "42" ]]
 
-echo "349 tests passed"
+actual="$($diamond -e $'class Box\n attr_accessor value\n alias_method assign=, value=\nend\nbox=Box.new()\nbox.assign=(42)\nbox.value()')"
+[[ "$actual" == "42" ]]
+
+actual="$($diamond -e $'module Named\n attr_accessor name\n alias_method label=, name=\nend\nclass Person\n include Named\nend\nperson=Person.new()\nperson.label=("Ada")\nperson.name()')"
+[[ "$actual" == "Ada" ]]
+
+if "$diamond" -e $'class Broken\n attr_writer value\n alias_method value=, value=\nend' >/dev/null 2>&1; then
+    echo "duplicate writer alias unexpectedly compiled" >&2
+    exit 1
+fi
+
+echo "352 tests passed"

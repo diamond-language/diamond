@@ -2859,7 +2859,9 @@ static void compile_alias_method(Compiler *compiler) {
         fail(compiler,compiler->current.span,"expected new alias name");return;
     }
     const DiamondSpan alias=compiler->current.span;advance_token(compiler);
-    if(alias.length>=DIAMOND_MAX_FUNCTION_NAME) {
+    const bool alias_writer=compiler->current.kind==DIAMOND_TOKEN_EQUAL;
+    if(alias_writer)advance_token(compiler);
+    if(alias.length+(alias_writer?1u:0u)>=DIAMOND_MAX_FUNCTION_NAME) {
         fail(compiler,alias,"alias name is too long");return;
     }
     if(compiler->current.kind!=DIAMOND_TOKEN_COMMA) {
@@ -2869,7 +2871,9 @@ static void compile_alias_method(Compiler *compiler) {
     if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER) {
         fail(compiler,compiler->current.span,"expected existing method name");return;
     }
-    const DiamondSpan original=compiler->current.span;
+    const DiamondSpan original=compiler->current.span;advance_token(compiler);
+    const bool original_writer=compiler->current.kind==DIAMOND_TOKEN_EQUAL;
+    if(original_writer)advance_token(compiler);
     DiamondMethod *methods=nullptr;size_t *count=nullptr;
     if(compiler->current_class>=0) {
         DiamondClass *class=
@@ -2882,14 +2886,23 @@ static void compile_alias_method(Compiler *compiler) {
     }
     DiamondMethod *source=nullptr;
     for(size_t index=*count;index>0;index--)
-        if(name_equals(compiler,methods[index-1].name,original,false)) {
+        if((!original_writer&&name_equals(compiler,methods[index-1].name,
+                                         original,false))||
+           (original_writer&&strlen(methods[index-1].name)==original.length+1&&
+            methods[index-1].name[original.length]=='='&&
+            memcmp(methods[index-1].name,compiler->source+original.start,
+                   original.length)==0)) {
             source=&methods[index-1];break;
         }
     if(source==nullptr) {
         fail(compiler,original,"alias source is not defined here");return;
     }
     for(size_t index=0;index<*count;index++)
-        if(name_equals(compiler,methods[index].name,alias,false)) {
+        if((!alias_writer&&name_equals(compiler,methods[index].name,alias,false))||
+           (alias_writer&&strlen(methods[index].name)==alias.length+1&&
+            methods[index].name[alias.length]=='='&&
+            memcmp(methods[index].name,compiler->source+alias.start,
+                   alias.length)==0)) {
             fail(compiler,alias,"alias name is already defined");return;
         }
     if(*count==DIAMOND_MAX_METHODS) {
@@ -2898,8 +2911,9 @@ static void compile_alias_method(Compiler *compiler) {
     DiamondMethod copied=*source;
     for(size_t index=0;index<alias.length;index++)
         copied.name[index]=compiler->source[alias.start+index];
-    copied.name[alias.length]='\0';copied.included=false;
-    methods[(*count)++]=copied;advance_token(compiler);
+    if(alias_writer)copied.name[alias.length]='=';
+    copied.name[alias.length+(alias_writer?1u:0u)]='\0';copied.included=false;
+    methods[(*count)++]=copied;
 }
 
 static uint8_t compile_class(Compiler *compiler) {

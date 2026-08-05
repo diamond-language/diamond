@@ -136,6 +136,7 @@ future work.
 - Writer-method `module_function` targeting and qualified export calls.
 - Reader-only `attr` shorthand with bare and parenthesized multi-name forms.
 - Descriptor-level `alias_method` support for class and module instance methods.
+- Writer-method sources and targets in `alias_method`.
 - Predicate function and method names ending in `?`.
 - Bang function and method names ending in `!`.
 
