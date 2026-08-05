@@ -175,6 +175,7 @@ future work.
 - Exception payload identity preservation through bare re-raise.
 - Exception payload stability across ensure cleanup.
 - Message payloads on VM-generated standard exceptions.
+- Uniform cause slots on built-in and user exception hierarchies.
 - Diagnostics for subclass filters shadowed by earlier superclass clauses.
 
 ## Next priorities

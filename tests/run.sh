@@ -1665,4 +1665,6 @@ actual="$($diamond -e $'class DetailedError < StandardError\n attr_accessor mess
 [[ "$actual" == "stable" ]]
 actual="$($diamond -e $'begin\n 1 / 0\nrescue error: ZeroDivisionError\n error.message()\nend')"
 [[ "$actual" == "division by zero" ]]
-echo "426 tests passed"
+actual="$($diamond -e $'begin\n [1][4]\nrescue error: IndexError\n [error.message(), error.cause()]\nend')"
+[[ "$actual" == "[index 4 out of bounds for Array of length 1, nil]" ]]
+echo "427 tests passed"

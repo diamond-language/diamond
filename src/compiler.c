@@ -3576,8 +3576,9 @@ bool diamond_compile(const char *source, DiamondProgram *program,
         DiamondClass *class=&program->classes[index];
         (void)snprintf(class->name,sizeof class->name,"%s",builtins[index].name);
         class->superclass=builtins[index].superclass;
-        class->field_count=1;
+        class->field_count=2;
         (void)snprintf(class->fields[0],DIAMOND_MAX_FUNCTION_NAME,"message");
+        (void)snprintf(class->fields[1],DIAMOND_MAX_FUNCTION_NAME,"cause");
     }
     snprintf(program->entry.name, sizeof(program->entry.name), "<main>");
     *diagnostic = (DiamondDiagnostic){};

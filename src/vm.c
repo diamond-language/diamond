@@ -2037,6 +2037,12 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     registers[dest]=instance->field_count>0?
                         instance->fields[0]:DIAMOND_NIL;break;
                 }
+                if(exception_instance&&method_name->length==5&&
+                   memcmp(method_name->chars,"cause",5)==0) {
+                    if(argc!=0)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                    registers[dest]=instance->field_count>1?
+                        instance->fields[1]:DIAMOND_NIL;break;
+                }
                 const DiamondMethod *method=lookup_method_cached(
                     vm,chunk,chunk->code+instruction_offset,instance->class,
                     method_name->chars,method_name->length);
