@@ -194,7 +194,8 @@ begin at their class's empty shape and advance lazily as fields are first writte
   cells, including across sibling closures and recursively nested environments.
 - Runtime errors include source-mapped Diamond stack traces; structured
   `raise value` exceptions use the same unwind path. `begin`/`rescue` expressions
-  catch raised values across calls and optionally bind them to a local.
+  catch raised values across calls and optionally bind them to a local. A rescue
+  binding may carry a primitive or nominal filter, such as `rescue error: Error`.
 - No modules, mixins, singleton methods, or visibility.
 - Classes own immutable shape chains for lazily materialized field prefixes;
   method calls use four-entry polymorphic inline caches. Field caches are not

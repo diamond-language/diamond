@@ -510,4 +510,7 @@ actual="$("$diamond" --dump-bytecode tests/cases/rescue.dia)"
 grep -q 'PUSH_RESCUE' <<<"$actual"
 grep -q 'POP_RESCUE' <<<"$actual"
 
-echo "84 tests passed"
+actual="$(DIAMOND_STRESS_GC=1 "$diamond" tests/cases/typed_rescue.dia)"
+[[ "$actual" == "42" ]]
+
+echo "85 tests passed"

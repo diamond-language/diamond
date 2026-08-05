@@ -1075,8 +1075,11 @@ static uint8_t compile_raise(Compiler *compiler) {
 static uint8_t compile_begin(Compiler *compiler) {
     if(!consume_block_start(compiler))return 0;
     const uint8_t exception=allocate_register(compiler);
-    const size_t handler_operand=compiler->function->code_count+2;
-    emit_instruction(compiler,DIAMOND_OP_PUSH_RESCUE,exception,0,0,3);
+    const size_t handler_type_operand=compiler->function->code_count+2;
+    const size_t handler_operand=compiler->function->code_count+3;
+    emit_opcode(compiler,DIAMOND_OP_PUSH_RESCUE);
+    emit_byte(compiler,exception);emit_byte(compiler,UINT8_MAX);
+    emit_byte(compiler,0);emit_byte(compiler,0);
     const uint8_t body=compile_sequence(compiler);
     const uint8_t destination=allocate_register(compiler);
     emit_instruction(compiler,DIAMOND_OP_MOVE,destination,body,0,2);
@@ -1097,6 +1100,11 @@ static uint8_t compile_begin(Compiler *compiler) {
         compiler->locals[compiler->local_count++]=(Local){
             .name=compiler->current.span,.reg=exception};
         advance_token(compiler);
+        if(compiler->current.kind==DIAMOND_TOKEN_COLON) {
+            advance_token(compiler);
+            compiler->function->code[handler_type_operand]=
+                (uint8_t)parse_type_annotation(compiler);
+        }
     }
     if(!consume_block_start(compiler))return destination;
     const uint8_t rescued=compile_sequence(compiler);

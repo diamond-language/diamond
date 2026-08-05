@@ -9,6 +9,12 @@
 enum { DIAMOND_REGISTER_COUNT = 256 };
 enum { DIAMOND_MAX_CALL_DEPTH = 256 };
 
+typedef struct RescueHandler {
+    size_t target;
+    uint8_t destination;
+    uint8_t type;
+} RescueHandler;
+
 typedef struct DiamondFrame {
     struct DiamondFrame *previous;
     DiamondValue *registers;
@@ -294,6 +300,21 @@ static bool value_matches_type(const DiamondChunk *chunk, DiamondValue value,
     return false;
 }
 
+static bool catch_exception(DiamondVm *vm,const DiamondChunk *chunk,
+                            RescueHandler *handlers,size_t *handler_count,
+                            DiamondValue *registers,size_t *ip) {
+    while(*handler_count>0) {
+        (*handler_count)--;
+        RescueHandler *handler=&handlers[*handler_count];
+        if(handler->type!=UINT8_MAX &&
+           !value_matches_type(chunk,vm->exception,handler->type))continue;
+        *ip=handler->target;
+        registers[handler->destination]=vm->exception;
+        vm->has_exception=false;vm->error[0]='\0';return true;
+    }
+    return false;
+}
+
 static void format_type(char *buffer, size_t capacity,
                         const DiamondChunk *chunk, uint8_t encoded) {
     const bool nilable=(encoded&DIAMOND_TYPE_NILABLE)!=0;
@@ -351,7 +372,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
     vm->frames = &frame;
     size_t ip = 0;
     size_t instruction_offset = 0;
-    struct { size_t target; uint8_t destination; } handlers[16];
+    RescueHandler handlers[16];
     size_t handler_count=0;
 
     #define RECORD_ERROR(status_) do {                                      \
@@ -383,11 +404,8 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
 
 #define VM_PROPAGATE(status_)                                      \
     if ((status_) != DIAMOND_VM_OK) {                              \
-        if ((status_) == DIAMOND_VM_EXCEPTION && handler_count>0) {\
-            handler_count--;                                       \
-            ip=handlers[handler_count].target;                      \
-            registers[handlers[handler_count].destination]=vm->exception;\
-            vm->has_exception=false;vm->error[0]='\0';             \
+        if ((status_) == DIAMOND_VM_EXCEPTION &&                  \
+            catch_exception(vm,chunk,handlers,&handler_count,registers,&ip)) {\
             break;                                                  \
         }                                                           \
         VM_RETURN(status_);                                         \
@@ -950,12 +968,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
             case DIAMOND_OP_RAISE: {
                 uint8_t source=0;READ_BYTE(source);
                 vm->exception=registers[source];vm->has_exception=true;
-                if(handler_count>0) {
-                    handler_count--;
-                    ip=handlers[handler_count].target;
-                    registers[handlers[handler_count].destination]=vm->exception;
-                    vm->has_exception=false;vm->error[0]='\0';break;
-                }
+                if(catch_exception(vm,chunk,handlers,&handler_count,registers,&ip))break;
                 if(vm->exception.kind==DIAMOND_VALUE_INT)
                     snprintf(vm->error,sizeof vm->error,"uncaught exception: %" PRId64,
                              vm->exception.as.integer);
@@ -972,13 +985,13 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 VM_RETURN(DIAMOND_VM_EXCEPTION);
             }
             case DIAMOND_OP_PUSH_RESCUE: {
-                uint8_t destination=0,high=0,low=0;
-                READ_BYTE(destination);READ_BYTE(high);READ_BYTE(low);
+                uint8_t destination=0,type=0,high=0,low=0;
+                READ_BYTE(destination);READ_BYTE(type);READ_BYTE(high);READ_BYTE(low);
                 const size_t target=((size_t)high<<8)|low;
                 if(handler_count==16||target>chunk->code_count)
                     VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
-                handlers[handler_count++]=(typeof(handlers[0])){
-                    .target=target,.destination=destination};break;
+                handlers[handler_count++]=(RescueHandler){
+                    .target=target,.destination=destination,.type=type};break;
             }
             case DIAMOND_OP_POP_RESCUE:
                 if(handler_count==0)VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
