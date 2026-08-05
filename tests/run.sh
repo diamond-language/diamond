@@ -1712,4 +1712,8 @@ actual="$(DIAMOND_STRESS_GC=1 $diamond -e '"stable" if true')"
 [[ "$actual" == "stable" ]]
 actual="$(DIAMOND_STRESS_GC=1 $diamond -e '"discarded" if false')"
 [[ "$actual" == "nil" ]]
-echo "448 tests passed"
+actual="$($diamond -e $'def ready()\n true\nend\n42 if ready()')"
+[[ "$actual" == "42" ]]
+actual="$($diamond -e $'def ready()\n false\nend\n42 unless ready()')"
+[[ "$actual" == "42" ]]
+echo "450 tests passed"
