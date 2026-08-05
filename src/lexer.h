@@ -1,0 +1,80 @@
+#ifndef DIAMOND_LEXER_H
+#define DIAMOND_LEXER_H
+
+#include <stddef.h>
+
+typedef struct DiamondSpan {
+    size_t start;
+    size_t length;
+    size_t line;
+    size_t column;
+} DiamondSpan;
+
+typedef enum DiamondTokenKind {
+    DIAMOND_TOKEN_EOF,
+    DIAMOND_TOKEN_ERROR,
+    DIAMOND_TOKEN_INTEGER,
+    DIAMOND_TOKEN_STRING,
+    DIAMOND_TOKEN_IDENTIFIER,
+    DIAMOND_TOKEN_INSTANCE_VARIABLE,
+    DIAMOND_TOKEN_NEWLINE,
+    DIAMOND_TOKEN_LEFT_PAREN,
+    DIAMOND_TOKEN_RIGHT_PAREN,
+    DIAMOND_TOKEN_LEFT_BRACKET,
+    DIAMOND_TOKEN_RIGHT_BRACKET,
+    DIAMOND_TOKEN_LEFT_BRACE,
+    DIAMOND_TOKEN_RIGHT_BRACE,
+    DIAMOND_TOKEN_COMMA,
+    DIAMOND_TOKEN_DOT,
+    DIAMOND_TOKEN_COLON,
+    DIAMOND_TOKEN_PIPE,
+    DIAMOND_TOKEN_BANG,
+    DIAMOND_TOKEN_AND_AND,
+    DIAMOND_TOKEN_OR_OR,
+    DIAMOND_TOKEN_PLUS,
+    DIAMOND_TOKEN_MINUS,
+    DIAMOND_TOKEN_ARROW,
+    DIAMOND_TOKEN_STAR,
+    DIAMOND_TOKEN_SLASH,
+    DIAMOND_TOKEN_EQUAL,
+    DIAMOND_TOKEN_EQUAL_EQUAL,
+    DIAMOND_TOKEN_BANG_EQUAL,
+    DIAMOND_TOKEN_LESS,
+    DIAMOND_TOKEN_LESS_EQUAL,
+    DIAMOND_TOKEN_GREATER,
+    DIAMOND_TOKEN_GREATER_EQUAL,
+    DIAMOND_TOKEN_IF,
+    DIAMOND_TOKEN_ELSE,
+    DIAMOND_TOKEN_END,
+    DIAMOND_TOKEN_WHILE,
+    DIAMOND_TOKEN_TRUE,
+    DIAMOND_TOKEN_FALSE,
+    DIAMOND_TOKEN_NIL,
+    DIAMOND_TOKEN_DEF,
+    DIAMOND_TOKEN_CLASS,
+    DIAMOND_TOKEN_SELF,
+    DIAMOND_TOKEN_SUPER,
+    DIAMOND_TOKEN_RETURN,
+    DIAMOND_TOKEN_BREAK,
+    DIAMOND_TOKEN_NEXT,
+} DiamondTokenKind;
+
+typedef struct DiamondToken {
+    DiamondTokenKind kind;
+    DiamondSpan span;
+} DiamondToken;
+
+typedef struct DiamondLexer {
+    const char *source;
+    size_t start;
+    size_t current;
+    size_t line;
+    size_t column;
+    size_t token_line;
+    size_t token_column;
+} DiamondLexer;
+
+void diamond_lexer_init(DiamondLexer *lexer, const char *source);
+DiamondToken diamond_lexer_next(DiamondLexer *lexer);
+
+#endif
