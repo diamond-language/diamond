@@ -131,6 +131,7 @@ future work.
 - Targeted visibility changes for generated and handwritten writer methods.
 - Parenthesized reader, writer, and accessor declaration syntax.
 - Parenthesized targeted visibility syntax.
+- Parenthesized multi-target `module_function` exports.
 
 ## Next priorities
 

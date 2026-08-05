@@ -2768,7 +2768,13 @@ static void compile_module_function(Compiler *compiler) {
     DiamondModule *module=
         &compiler->program->modules[(size_t)compiler->current_module];
     advance_token(compiler);
+    const bool parenthesized=compiler->current.kind==DIAMOND_TOKEN_LEFT_PAREN;
+    if(parenthesized)advance_token(compiler);
     if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER) {
+        if(parenthesized) {
+            fail(compiler,compiler->current.span,
+                 "expected method in module_function list");return;
+        }
         compiler->module_function_mode=true;return;
     }
     while(!compiler->failed) {
@@ -2802,6 +2808,13 @@ static void compile_module_function(Compiler *compiler) {
         module->singleton_methods[module->singleton_method_count++]=exported;
         advance_token(compiler);
         if(compiler->current.kind!=DIAMOND_TOKEN_COMMA)break;
+        advance_token(compiler);
+    }
+    if(parenthesized) {
+        if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
+            fail(compiler,compiler->current.span,
+                 "expected ')' after module_function targets");return;
+        }
         advance_token(compiler);
     }
 }

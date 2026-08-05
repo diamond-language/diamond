@@ -1376,4 +1376,7 @@ actual="$($diamond -e $'class Point\n attr_accessor(x, y)\nend\npoint=Point.new(
 actual="$($diamond -e $'class Box\n attr_reader value\n private(value)\n def reveal() = self.value()\nend\nBox.new().reveal()')"
 [[ "$actual" == "nil" ]]
 
-echo "333 tests passed"
+actual="$($diamond -e $'module Values\n def first() = 20\n def second() = 22\n module_function(first, second)\nend\nValues.first() + Values.second()')"
+[[ "$actual" == "42" ]]
+
+echo "334 tests passed"
