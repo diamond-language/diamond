@@ -53,7 +53,8 @@ Paths are relative to the requiring file, and `.dia` is inferred when omitted.
 Canonical files load once, cycles are rejected, and all required files share
 top-level functions, classes, and interfaces. Diagnostics retain the imported
 file's path and original line. With `-e`, relative paths start at the current
-working directory.
+working directory. `require` is a standalone source directive; it cannot be
+used as a conditional expression.
 
 Build variants:
 
@@ -405,6 +406,7 @@ runtime error: expected String | Nil, got Int
 - trailing commas in arrays, calls, constructors, and parameter lists
 - `unless condition ... else ... end` as an inverted conditional expression
 - postfix `if` and `unless` modifiers for single-line expressions
+- declarations and namespace constants remain unconditional
 - `elsif` chains within `if` expressions
 - optional `then` after `if`, `unless`, and `elsif` conditions
 - optional `do` after `while` and `until` conditions
