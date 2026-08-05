@@ -60,10 +60,13 @@ static bool record_segment(Loader *loader,const char *path,size_t line,
     (void)snprintf(segment->path,sizeof segment->path,"%s",path);return true;
 }
 
-static bool expand(Loader *loader,const char *path,const char *source) {
+static bool expand(Loader *loader,const char *path,const char *source,
+                   const char *including_path,size_t including_line) {
     if(same_path(loader->active,loader->active_count,path)) {
         (void)snprintf(loader->error,loader->error_capacity,
-                       "circular require involving '%s'",path);return false;
+                       "circular require involving '%s' (required from %s:%zu)",
+                       path,including_path!=nullptr?including_path:"<root>",
+                       including_line);return false;
     }
     if(same_path(loader->loaded,loader->loaded_count,path))return true;
     if(loader->active_count==128) {
@@ -168,7 +171,8 @@ static bool expand(Loader *loader,const char *path,const char *source) {
                     path,line,canonical,strerror(errno));
                 return false;
             }
-            const bool ok=expand(loader,canonical,dependency);free(dependency);
+            const bool ok=expand(loader,canonical,dependency,path,line);
+            free(dependency);
             if(!ok)return false;
             chunk=offset;chunk_line=line+1;
         }
@@ -196,7 +200,7 @@ bool diamond_load_program(const char *name,const char *source,
         .error_capacity=error_capacity};error[0]='\0';
     char path[DIAMOND_MAX_SOURCE_PATH];
     if(realpath(name,path)==nullptr)(void)snprintf(path,sizeof path,"%s",name);
-    if(!expand(&loader,path,source)) {
+    if(!expand(&loader,path,source,nullptr,0)) {
         if(error[0]=='\0')snprintf(error,error_capacity,"unable to expand program sources");
         free(loader.buffer);return false;
     }
