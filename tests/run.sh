@@ -1744,4 +1744,8 @@ actual="$($diamond -e $'def endless_if() = 42 if false\nendless_if()')"
 [[ "$actual" == "nil" ]]
 actual="$($diamond -e $'def endless_unless() = 42 unless false\nendless_unless()')"
 [[ "$actual" == "42" ]]
-echo "464 tests passed"
+if "$diamond" -e $'class Marker\nend if true' >/dev/null 2>&1; then
+    echo "declaration-level postfix unexpectedly compiled" >&2
+    exit 1
+fi
+echo "465 tests passed"
