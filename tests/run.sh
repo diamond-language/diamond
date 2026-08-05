@@ -1661,4 +1661,6 @@ actual="$($diamond -e $'class DetailedError < StandardError\n attr_accessor mess
 [[ "$actual" == "offline" ]]
 actual="$($diamond -e $'class DetailedError < StandardError\n attr_accessor message: String\nend\nerror=DetailedError.new()\nerror.message=("kept")\nbegin\n begin\n  raise error\n rescue inner: DetailedError\n  raise\n end\nrescue outer: DetailedError\n outer.message()\nend')"
 [[ "$actual" == "kept" ]]
-echo "424 tests passed"
+actual="$($diamond -e $'class DetailedError < StandardError\n attr_accessor message: String\nend\nerror=DetailedError.new()\nerror.message=("stable")\ncleanup=nil\nbegin\n raise error\nrescue caught: DetailedError\n caught.message()\nensure\n cleanup=error.message()\nend\ncleanup')"
+[[ "$actual" == "stable" ]]
+echo "425 tests passed"

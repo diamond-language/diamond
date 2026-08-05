@@ -173,11 +173,12 @@ future work.
 - Runtime enforcement of exception payload contracts.
 - Inherited exception payload accessors and nominal rescue matching.
 - Exception payload identity preservation through bare re-raise.
+- Exception payload stability across ensure cleanup.
 - Diagnostics for subclass filters shadowed by earlier superclass clauses.
 
 ## Next priorities
 
-1. Strengthen structured exception control flow and diagnostics.
+1. Add message payloads to VM-generated standard exceptions.
 
 ## Later experiments
 
