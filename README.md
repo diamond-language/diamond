@@ -28,7 +28,7 @@ Implemented today:
 - stop-the-world mark/sweep collection with stress-GC testing;
 - source diagnostics and bytecode disassembly.
 
-The test suite currently contains 280 end-to-end assertions spanning the
+The test suite currently contains 286 end-to-end assertions spanning the
 frontend, compiler, VM, object model, type guards, collections, and collector.
 
 ## Build and run
@@ -263,6 +263,22 @@ uppercase names. Constants accept arbitrary expressions, resolve lexically or
 through `Outer::NAME`, remain visible inside included methods, and are retained
 as GC roots. Immutability applies to the binding; a referenced Array or Hash
 keeps its normal mutable semantics.
+
+Modules may expose singleton functions without making them includable instance
+methods:
+
+```ruby
+module Config
+  DEFAULT_PORT = 8080
+  def self.port(offset: Int = 0) -> Int = DEFAULT_PORT + offset
+end
+
+Config.port()
+```
+
+Singleton functions support defaults, annotations, generics, explicit type
+arguments, nested namespaces, and lexical constants. `include Config` imports
+only Config's ordinary instance methods.
 
 Generic function and method declarations may introduce up to eight scoped type
 variables:

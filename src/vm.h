@@ -158,6 +158,8 @@ typedef struct DiamondModule {
     char name[DIAMOND_MAX_FUNCTION_NAME];
     DiamondMethod methods[DIAMOND_MAX_METHODS];
     size_t method_count;
+    DiamondMethod singleton_methods[DIAMOND_MAX_METHODS];
+    size_t singleton_method_count;
     char fields[DIAMOND_MAX_FIELDS][DIAMOND_MAX_FUNCTION_NAME];
     size_t field_count;
 } DiamondModule;

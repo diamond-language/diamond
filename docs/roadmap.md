@@ -107,14 +107,16 @@ future work.
   shapes, and caches, including transitive state requirements.
 - Nested interfaces and write-once namespace constants with lexical/qualified
   lookup, arbitrary expression values, cross-frame access, and GC rooting.
+- Module singleton functions with qualified dispatch, defaults, typing,
+  generics, nested namespaces, and strict separation from included methods.
 
 ## Next priorities
 
-1. Add module singleton functions such as `Config.load()`.
+1. Add class singleton methods and decide constructor-level inheritance rules.
 
 ## Later experiments
 
-- Class singleton methods and visibility controls.
+- Visibility controls.
 - Bytecode quickening and type-specialized instructions.
 - Fibers and cooperative concurrency.
 - Structural interfaces and more capable flow typing.

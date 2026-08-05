@@ -292,6 +292,13 @@ table. `GET_NAMESPACE_CONSTANT` makes those bindings available from methods and
 other function chunks without capturing the entry frame. Each binding is
 write-once; object values remain mutable according to their own APIs.
 
+`def self.name` inside a module declares a namespace singleton function rather
+than an includable method. Its bytecode function has no receiver slot and is
+called directly through the module's singleton descriptor table, retaining the
+normal arity, defaults, type metadata, generic inference, and explicit generic
+call encoding. Singleton descriptors are deliberately excluded from module
+inclusion.
+
 For a direct `value == nil` or `value != nil` condition, the compiler splits a
 union type-set into nil and non-nil branch facts. Facts for locals that existed
 before the branch are merged at the join; disagreement becomes unknown, so

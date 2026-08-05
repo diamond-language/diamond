@@ -1151,9 +1151,92 @@ static uint8_t parse_call(Compiler *compiler, DiamondSpan name) {
     return destination;
 }
 
+static uint8_t parse_module_call(Compiler *compiler,int module_index,
+                                 DiamondSpan namespace_name) {
+    advance_token(compiler);
+    if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER) {
+        fail(compiler,compiler->current.span,
+             "expected singleton function after module name");return 0;
+    }
+    const DiamondSpan name=compiler->current.span;
+    const DiamondModule *module=
+        &compiler->program->modules[(size_t)module_index];
+    const DiamondMethod *method=nullptr;
+    for(size_t index=0;index<module->singleton_method_count;index++)
+        if(name_equals(compiler,module->singleton_methods[index].name,name,false))
+            method=&module->singleton_methods[index];
+    if(method==nullptr) {
+        fail(compiler,name,"undefined module singleton function");return 0;
+    }
+    const DiamondFunction *function=
+        &compiler->program->functions[method->function_index];
+    advance_token(compiler);
+    uint8_t type_arguments[8];size_t type_argument_count=0;
+    if(compiler->current.kind==DIAMOND_TOKEN_LEFT_BRACKET) {
+        advance_token(compiler);
+        while(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_BRACKET&&
+              !compiler->failed) {
+            if(type_argument_count==8) {
+                fail(compiler,compiler->current.span,"too many generic arguments");
+                return 0;
+            }
+            type_arguments[type_argument_count++]=
+                (uint8_t)parse_type_annotation(compiler);
+            if(compiler->current.kind!=DIAMOND_TOKEN_COMMA)break;
+            advance_token(compiler);
+        }
+        if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_BRACKET) {
+            fail(compiler,compiler->current.span,
+                 "expected ']' after generic arguments");return 0;
+        }
+        advance_token(compiler);
+        if(type_argument_count!=function->type_variable_count) {
+            fail(compiler,name,"wrong number of generic arguments");return 0;
+        }
+    }
+    if(compiler->current.kind!=DIAMOND_TOKEN_LEFT_PAREN) {
+        fail(compiler,namespace_name,"expected '(' after singleton function");
+        return 0;
+    }
+    advance_token(compiler);
+    uint8_t arguments[16];size_t argument_count=0;
+    while(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN&&!compiler->failed) {
+        if(argument_count==16) {
+            fail(compiler,compiler->current.span,"too many call arguments");return 0;
+        }
+        arguments[argument_count++]=parse_expression(compiler);
+        if(compiler->current.kind!=DIAMOND_TOKEN_COMMA)break;
+        advance_token(compiler);
+    }
+    if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
+        fail(compiler,compiler->current.span,"expected ')' after arguments");return 0;
+    }
+    advance_token(compiler);
+    if(argument_count<method->required_arity||argument_count>method->arity) {
+        fail(compiler,name,"wrong number of arguments");return 0;
+    }
+    const uint8_t base=allocate_register(compiler);
+    for(size_t index=1;index<argument_count;index++)(void)allocate_register(compiler);
+    for(size_t index=0;index<argument_count;index++)
+        emit_instruction(compiler,DIAMOND_OP_MOVE,(uint8_t)(base+index),
+                         arguments[index],0,2);
+    const uint8_t destination=allocate_register(compiler);
+    emit_opcode(compiler,type_argument_count==0?DIAMOND_OP_CALL:
+                DIAMOND_OP_CALL_TYPED);
+    emit_byte(compiler,destination);emit_byte(compiler,method->function_index);
+    emit_byte(compiler,base);emit_byte(compiler,(uint8_t)argument_count);
+    if(type_argument_count>0) {
+        emit_byte(compiler,(uint8_t)type_argument_count);
+        for(size_t index=0;index<type_argument_count;index++)
+            emit_byte(compiler,type_arguments[index]);
+    }
+    return destination;
+}
+
 static uint8_t parse_name(Compiler *compiler) {
     const DiamondSpan name = compiler->previous.span;
     int class_index=find_class(compiler,name);
+    int module_index=find_module(compiler,name);
     if(compiler->current.kind==DIAMOND_TOKEN_DOUBLE_COLON) {
         char qualified[DIAMOND_MAX_FUNCTION_NAME]={};
         if(!append_span_name(compiler,qualified,sizeof qualified,name)) {
@@ -1175,6 +1258,7 @@ static uint8_t parse_name(Compiler *compiler) {
             advance_token(compiler);
         }
         class_index=find_class_name(compiler,qualified);
+        module_index=find_module_name(compiler,qualified);
         const int constant=find_namespace_constant_name(compiler,qualified);
         if(constant>=0) {
             const uint8_t destination=allocate_register(compiler);
@@ -1182,10 +1266,12 @@ static uint8_t parse_name(Compiler *compiler) {
                 destination,(uint8_t)constant,0,2);
             return destination;
         }
-        if(class_index<0) {
+        if(class_index<0&&module_index<0) {
             fail(compiler,name,"undefined namespaced class");return 0;
         }
     }
+    if(module_index>=0&&compiler->current.kind==DIAMOND_TOKEN_DOT)
+        return parse_module_call(compiler,module_index,name);
     const int constant=find_namespace_constant(compiler,name);
     if(constant>=0&&find_local(compiler,name)<0) {
         const uint8_t destination=allocate_register(compiler);
@@ -2028,6 +2114,16 @@ static uint8_t compile_loop_control(Compiler *compiler) {
 static uint8_t compile_definition(Compiler *compiler) {
     const bool at_top_level = compiler->function == &compiler->program->entry;
     advance_token(compiler);
+    bool module_singleton=false;
+    if(compiler->current.kind==DIAMOND_TOKEN_SELF&&compiler->current_module>=0&&
+       compiler->current_class<0) {
+        module_singleton=true;advance_token(compiler);
+        if(compiler->current.kind!=DIAMOND_TOKEN_DOT) {
+            fail(compiler,compiler->current.span,"expected '.' after 'self'");
+            return 0;
+        }
+        advance_token(compiler);
+    }
     if (compiler->current.kind != DIAMOND_TOKEN_IDENTIFIER) {
         fail(compiler, compiler->current.span, "expected function name after 'def'");
         return 0;
@@ -2041,7 +2137,7 @@ static uint8_t compile_definition(Compiler *compiler) {
         fail(compiler, name, "function name is too long");
         return 0;
     }
-    if (compiler->current_class < 0&&compiler->current_module<0&&
+    if(compiler->current_class<0&&compiler->current_module<0&&
         find_function(compiler, name) >= 0) {
         fail(compiler, name, "function is already defined");
         return 0;
@@ -2054,7 +2150,7 @@ static uint8_t compile_definition(Compiler *compiler) {
     const size_t function_index = compiler->program->function_count - 1;
     function->owner_class=compiler->current_class>=0?
         (uint8_t)compiler->current_class:
-        (compiler->current_module>=0?UINT8_MAX-1:UINT8_MAX);
+        (compiler->current_module>=0&&!module_singleton?UINT8_MAX-1:UINT8_MAX);
     function->nested=!at_top_level;
     const size_t copy_length = name.length;
     for (size_t index = 0; index < copy_length; index++) {
@@ -2141,7 +2237,8 @@ static uint8_t compile_definition(Compiler *compiler) {
                 compiler->capture_registers[i]=compiler->enclosing_locals[i].reg;
         }
     }
-    if (compiler->current_class >= 0||compiler->current_module>=0) {
+    if(compiler->current_class>=0||
+       (compiler->current_module>=0&&!module_singleton)) {
         (void)allocate_register(compiler);
         function->arity = 1;
         function->required_arity=1;
@@ -2323,7 +2420,8 @@ static uint8_t compile_definition(Compiler *compiler) {
             method->required_arity=(uint8_t)(function->required_arity-1);
             method->included=false;
         }
-    } else if(compiler->current_module>=0&&!compiler->failed&&at_top_level) {
+    } else if(compiler->current_module>=0&&!module_singleton&&
+              !compiler->failed&&at_top_level) {
         DiamondModule *module=
             &compiler->program->modules[(size_t)compiler->current_module];
         for(size_t existing=0;existing<module->method_count;existing++)
@@ -2343,6 +2441,25 @@ static uint8_t compile_definition(Compiler *compiler) {
                 method->required_arity=(uint8_t)(function->required_arity-1);
                 method->included=false;
             }
+        }
+    } else if(compiler->current_module>=0&&module_singleton&&
+              !compiler->failed&&at_top_level) {
+        DiamondModule *module=
+            &compiler->program->modules[(size_t)compiler->current_module];
+        bool duplicate=false;
+        for(size_t existing=0;existing<module->singleton_method_count;existing++)
+            if(name_equals(compiler,module->singleton_methods[existing].name,
+                           name,false))duplicate=true;
+        if(duplicate||module->singleton_method_count==DIAMOND_MAX_METHODS)
+            fail(compiler,name,"duplicate or excessive module singleton function");
+        else {
+            DiamondMethod *method=
+                &module->singleton_methods[module->singleton_method_count++];
+            for(size_t i=0;i<copy_length;i++)method->name[i]=function->name[i];
+            method->name[copy_length]='\0';
+            method->function_index=(uint8_t)function_index;
+            method->arity=function->arity;
+            method->required_arity=function->required_arity;
         }
     }
     const uint8_t result = allocate_register(compiler);

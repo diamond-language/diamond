@@ -1197,4 +1197,24 @@ if "$diamond" -e $'module Config\n value = 1\nend' >/dev/null 2>&1; then
     exit 1
 fi
 
-echo "280 tests passed"
+actual="$($diamond -e $'module Config\n VALUE = 40\n def self.load(offset: Int = 2) -> Int = VALUE + offset\nend\n[Config.load(), Config.load(1)]')"
+[[ "$actual" == "[42, 41]" ]]
+
+actual="$($diamond -e $'module Types\n def self.empty[T]() -> Array[T] = []\nend\nresult = Types.empty[String]()\nbegin\n result.push(42)\nrescue error: TypeError\n 42\nend')"
+[[ "$actual" == "42" ]]
+
+actual="$($diamond -e $'module Outer\n module Math\n  def self.answer() = 42\n end\nend\nOuter::Math.answer()')"
+[[ "$actual" == "42" ]]
+
+actual="$($diamond -e $'module Tools\n def self.answer() = 42\n def included() = 1\nend\nclass Box\n include Tools\nend\nbegin\n Box.new().answer()\nrescue error: TypeError\n Tools.answer()\nend')"
+[[ "$actual" == "42" ]]
+
+if "$diamond" -e $'module Tools\n def self.answer() = 1\n def self.answer() = 2\nend' >/dev/null 2>&1; then
+    echo "duplicate module singleton function unexpectedly compiled" >&2
+    exit 1
+fi
+
+actual="$($diamond --dump-bytecode -e $'module Types\n def self.empty[T]() -> Array[T] = []\nend\nTypes.empty[String]()')"
+grep -q 'CALL_TYPED.*\[String\]' <<<"$actual"
+
+echo "286 tests passed"
