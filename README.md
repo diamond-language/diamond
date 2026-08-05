@@ -392,6 +392,7 @@ runtime error: expected String | Nil, got Int
 - semicolon statement separators
 - numeric separators such as `1_000_000`
 - trailing commas in arrays, calls, constructors, and parameter lists
+- `unless condition ... else ... end` as an inverted conditional expression
 
 ## Architecture
 

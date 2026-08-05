@@ -140,6 +140,7 @@ future work.
 - Parenthesized `alias_method(new_name, existing_name)` declarations.
 - Predicate function and method names ending in `?`.
 - Bang function and method names ending in `!`.
+- `unless` conditional expressions with `else` and type narrowing.
 
 ## Next priorities
 

@@ -1666,7 +1666,7 @@ static bool consume_block_start(Compiler *compiler) {
     return true;
 }
 
-static uint8_t parse_if(Compiler *compiler) {
+static uint8_t parse_if(Compiler *compiler,bool inverted) {
     compiler->narrowing=(Narrowing){};
     const uint8_t condition = parse_expression(compiler);
     const Narrowing narrowing=compiler->narrowing.condition==condition
@@ -1674,8 +1674,13 @@ static uint8_t parse_if(Compiler *compiler) {
     compiler->narrowing=(Narrowing){};
     if (!consume_block_start(compiler)) return 0;
 
+    uint8_t branch_condition=condition;
+    if(inverted) {
+        branch_condition=allocate_register(compiler);
+        emit_instruction(compiler,DIAMOND_OP_NOT,branch_condition,condition,0,2);
+    }
     const size_t false_jump = emit_jump(
-        compiler, DIAMOND_OP_JUMP_IF_FALSE, condition);
+        compiler, DIAMOND_OP_JUMP_IF_FALSE, branch_condition);
     const uint8_t destination = allocate_register(compiler);
     const size_t flow_reg_count=compiler->next_register;
     uint8_t before_types[256];int16_t before_sets[256];
@@ -1684,7 +1689,8 @@ static uint8_t parse_if(Compiler *compiler) {
         before_sets[index]=compiler->known_type_sets[index];
     }
     if(narrowing.valid)
-        apply_type_set_fact(compiler,narrowing.reg,narrowing.when_true);
+        apply_type_set_fact(compiler,narrowing.reg,
+                            inverted?narrowing.when_false:narrowing.when_true);
     const uint8_t then_result = compile_sequence(compiler);
     const uint8_t then_type=compiler->known_types[then_result];
     const int16_t then_set=compiler->known_type_sets[then_result];
@@ -1702,7 +1708,8 @@ static uint8_t parse_if(Compiler *compiler) {
         compiler->known_type_sets[index]=before_sets[index];
     }
     if(narrowing.valid)
-        apply_type_set_fact(compiler,narrowing.reg,narrowing.when_false);
+        apply_type_set_fact(compiler,narrowing.reg,
+                            inverted?narrowing.when_true:narrowing.when_false);
 
     uint8_t result_type=TYPE_UNKNOWN;int16_t result_set=-1;
     if (compiler->current.kind == DIAMOND_TOKEN_ELSE) {
@@ -1826,7 +1833,9 @@ static uint8_t parse_prefix(Compiler *compiler) {
             return destination;
         }
         case DIAMOND_TOKEN_IF:
-            return parse_if(compiler);
+            return parse_if(compiler,false);
+        case DIAMOND_TOKEN_UNLESS:
+            return parse_if(compiler,true);
         case DIAMOND_TOKEN_WHILE:
             return parse_while(compiler);
         case DIAMOND_TOKEN_BEGIN:

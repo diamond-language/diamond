@@ -1448,4 +1448,13 @@ if "$diamond" -e $'class Broken\n def value() = 42\n alias_method(result, value\
     exit 1
 fi
 
-echo "355 tests passed"
+actual="$($diamond -e $'unless false\n 42\nend')"
+[[ "$actual" == "42" ]]
+
+actual="$($diamond -e $'unless true\n 0\nelse\n 42\nend')"
+[[ "$actual" == "42" ]]
+
+actual="$($diamond -e $'def answer(value: Int | Nil) -> Int\n unless value == nil\n  value + 0\n else\n  0\n end\nend\nanswer(42)')"
+[[ "$actual" == "42" ]]
+
+echo "358 tests passed"
