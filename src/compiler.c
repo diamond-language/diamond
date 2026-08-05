@@ -445,20 +445,30 @@ static int parse_type_annotation(Compiler *compiler) {
             fail(compiler,compiler->current.span,"too many types in union");break;
         }
         advance_token(compiler);
-        uint8_t argument_set=UINT8_MAX;
+        uint8_t argument_set=UINT8_MAX,second_argument_set=UINT8_MAX;
         if(compiler->current.kind==DIAMOND_TOKEN_LEFT_BRACKET) {
-            if(type!=DIAMOND_TYPE_ARRAY) {
-                fail(compiler,member_span,"only Array accepts a type argument");break;
+            if(type!=DIAMOND_TYPE_ARRAY&&type!=DIAMOND_TYPE_HASH) {
+                fail(compiler,member_span,"only Array and Hash accept type arguments");break;
             }
             advance_token(compiler);
             argument_set=(uint8_t)parse_type_annotation(compiler);
+            if(type==DIAMOND_TYPE_HASH) {
+                if(compiler->current.kind!=DIAMOND_TOKEN_COMMA) {
+                    fail(compiler,compiler->current.span,
+                         "expected ',' between Hash key and value types");break;
+                }
+                advance_token(compiler);
+                second_argument_set=(uint8_t)parse_type_annotation(compiler);
+            }
             if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_BRACKET) {
-                fail(compiler,compiler->current.span,"expected ']' after Array element type");break;
+                fail(compiler,compiler->current.span,
+                     "expected ']' after collection type arguments");break;
             }
             advance_token(compiler);
         }
         set->members[set->count++]=(DiamondTypeMember){
-            .id=type,.argument_set=argument_set};
+            .id=type,.argument_set=argument_set,
+            .second_argument_set=second_argument_set};
         if(compiler->current.kind!=DIAMOND_TOKEN_PIPE)break;
         advance_token(compiler);
     }

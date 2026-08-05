@@ -218,6 +218,22 @@ rm -f "$error_file"
 actual="$("$diamond" --dump-bytecode -e $'def nested(values: Array[Array[Int | Nil]])\n values\nend\nnested([[nil]])')"
 grep -q 'Array\[Array\[Int | Nil\]\]' <<<"$actual"
 
+actual="$(DIAMOND_STRESS_GC=1 "$diamond" tests/cases/hash_generics.dia)"
+[[ "$actual" == "42" ]]
+
+error_file="$(mktemp)"
+if "$diamond" -e $'def scores(values: Hash[String, Int])\n values\nend\nscores({"ok": "bad"})' \
+    >/dev/null 2>"$error_file"; then
+    echo "Hash[String, Int] accepted an existing String value" >&2
+    rm -f "$error_file"
+    exit 1
+fi
+grep -q 'expected Hash\[String, Int\], got Hash' "$error_file"
+rm -f "$error_file"
+
+actual="$("$diamond" --dump-bytecode -e $'def nested(values: Hash[String, Array[Int | Nil]])\n values\nend\nnested({"items": [nil]})')"
+grep -q 'Hash\[String, Array\[Int | Nil\]\]' <<<"$actual"
+
 actual="$("$diamond" --dump-bytecode -e $'def maybe(x: String | Nil) -> String | Nil\n x\nend\nmaybe(nil)')"
 grep -q 'String | Nil' <<<"$actual"
 
@@ -578,4 +594,4 @@ if "$diamond" -e $'begin\n raise 1\nrescue error: Int |\n 0\nend' \
     exit 1
 fi
 
-echo "98 tests passed"
+echo "101 tests passed"

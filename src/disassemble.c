@@ -55,6 +55,10 @@ static bool print_type_set(FILE *stream,const DiamondChunk *chunk,
         if(member.argument_set!=UINT8_MAX) {
             fputc('[',stream);
             valid=print_type_set(stream,chunk,member.argument_set)&&valid;
+            if(member.second_argument_set!=UINT8_MAX) {
+                fputs(", ",stream);
+                valid=print_type_set(stream,chunk,member.second_argument_set)&&valid;
+            }
             fputc(']',stream);
         }
     }

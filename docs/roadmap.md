@@ -62,11 +62,12 @@ future work.
 - `ensure` unwinding for normal completion, exceptions, and returns.
 - General union annotations for parameters and returns.
 - Persistent, recursively checked `Array[Element]` annotations.
+- Persistent `Hash[Key, Value]` contracts for entries and mutations.
 
 ## Next priorities
 
-1. `Hash[Key, Value]` annotations with mutation guards.
-2. A small core library implemented partly in Diamond.
+1. A small core library implemented partly in Diamond.
+2. Flow-sensitive collection result types and broader collection APIs.
 
 ## Later experiments
 

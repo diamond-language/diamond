@@ -104,6 +104,7 @@ typedef struct DiamondStringConstant {
 typedef struct DiamondTypeMember {
     uint8_t id;
     uint8_t argument_set;
+    uint8_t second_argument_set;
 } DiamondTypeMember;
 
 typedef struct DiamondTypeSet {

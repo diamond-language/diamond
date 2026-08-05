@@ -127,6 +127,12 @@ contract to the array object. Indexed mutations subsequently check every
 attached contract, preserving the guarantee through aliases; nested array
 checks attach nested contracts as well. Plain `Array` remains fully dynamic.
 
+`Hash[Key, Value]` applies the same boundary-and-persistent-contract design to
+both halves of every entry. Existing entries are checked before attachment, and
+indexed insertion or replacement must satisfy every contract already attached
+to the hash. Generic arrays and hashes may nest recursively. Plain `Hash` remains
+dynamic, and a missing-key read still returns `nil`.
+
 Annotations are optional. Parameters are checked on function entry and return
 values on every implicit or explicit exit unless the compiler proves the guard
 redundant.
@@ -134,7 +140,7 @@ redundant.
 ## Deliberate constraints
 
 - No Ruby compatibility guarantee.
-- No modules or generic hash annotations yet.
+- No modules yet; collection APIs are still limited to literals and indexing.
 - No native-code generator or JIT.
 - No stable bytecode, embedding API, or package format.
 - No parallel execution.

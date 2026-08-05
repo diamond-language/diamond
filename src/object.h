@@ -63,6 +63,15 @@ typedef struct DiamondHash {
     size_t count;
     size_t capacity;
     DiamondHashEntry *entries;
+    struct {
+        const DiamondTypeSet *type_sets;
+        size_t type_set_count;
+        uint8_t key_set;
+        uint8_t value_set;
+        const DiamondClass *classes;
+        size_t class_count;
+    } constraints[4];
+    uint8_t constraint_count;
 } DiamondHash;
 
 typedef struct DiamondClosure {

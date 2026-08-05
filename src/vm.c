@@ -355,24 +355,48 @@ static bool value_matches_set(const DiamondChunk *chunk,DiamondValue value,
 static bool value_matches_member(const DiamondChunk *chunk,DiamondValue value,
                                  DiamondTypeMember member,bool attach) {
     if(!value_matches_type(chunk,value,member.id))return false;
-    if(member.id!=DIAMOND_TYPE_ARRAY||member.argument_set==UINT8_MAX)return true;
+    if(member.argument_set==UINT8_MAX)return true;
     if((size_t)member.argument_set>=chunk->type_set_count)return false;
-    DiamondArray *array=(DiamondArray *)value.as.object;
-    for(size_t index=0;index<array->count;index++)
-        if(!value_matches_set(chunk,array->values[index],member.argument_set,false))
-            return false;
+    if(member.id==DIAMOND_TYPE_ARRAY) {
+        DiamondArray *array=(DiamondArray *)value.as.object;
+        for(size_t index=0;index<array->count;index++)
+            if(!value_matches_set(chunk,array->values[index],member.argument_set,false))
+                return false;
+        if(!attach)return true;
+        for(size_t index=0;index<array->count;index++)
+            if(!value_matches_set(chunk,array->values[index],member.argument_set,true))
+                return false;
+        for(size_t index=0;index<array->constraint_count;index++)
+            if(array->constraints[index].type_sets==chunk->type_sets&&
+               array->constraints[index].set_index==member.argument_set)return true;
+        if(array->constraint_count==4)return false;
+        array->constraints[array->constraint_count++]=(typeof(array->constraints[0])){
+            .type_sets=chunk->type_sets,.type_set_count=chunk->type_set_count,
+            .set_index=member.argument_set,.classes=chunk->classes,
+            .class_count=chunk->class_count};
+        return true;
+    }
+    if(member.id!=DIAMOND_TYPE_HASH||member.second_argument_set==UINT8_MAX||
+       (size_t)member.second_argument_set>=chunk->type_set_count)return false;
+    DiamondHash *hash=(DiamondHash *)value.as.object;
+    for(size_t index=0;index<hash->count;index++)
+        if(!value_matches_set(chunk,hash->entries[index].key,member.argument_set,false)||
+           !value_matches_set(chunk,hash->entries[index].value,
+                              member.second_argument_set,false))return false;
     if(!attach)return true;
-    for(size_t index=0;index<array->count;index++)
-        if(!value_matches_set(chunk,array->values[index],member.argument_set,true))
-            return false;
-    for(size_t index=0;index<array->constraint_count;index++)
-        if(array->constraints[index].type_sets==chunk->type_sets&&
-           array->constraints[index].set_index==member.argument_set)return true;
-    if(array->constraint_count==4)return false;
-    array->constraints[array->constraint_count++]=(typeof(array->constraints[0])){
+    for(size_t index=0;index<hash->count;index++)
+        if(!value_matches_set(chunk,hash->entries[index].key,member.argument_set,true)||
+           !value_matches_set(chunk,hash->entries[index].value,
+                              member.second_argument_set,true))return false;
+    for(size_t index=0;index<hash->constraint_count;index++)
+        if(hash->constraints[index].type_sets==chunk->type_sets&&
+           hash->constraints[index].key_set==member.argument_set&&
+           hash->constraints[index].value_set==member.second_argument_set)return true;
+    if(hash->constraint_count==4)return false;
+    hash->constraints[hash->constraint_count++]=(typeof(hash->constraints[0])){
         .type_sets=chunk->type_sets,.type_set_count=chunk->type_set_count,
-        .set_index=member.argument_set,.classes=chunk->classes,
-        .class_count=chunk->class_count};
+        .key_set=member.argument_set,.value_set=member.second_argument_set,
+        .classes=chunk->classes,.class_count=chunk->class_count};
     return true;
 }
 
@@ -393,6 +417,20 @@ static bool array_value_satisfies_constraints(const DiamondArray *array,
             .type_set_count=constraint->type_set_count,.classes=constraint->classes,
             .class_count=constraint->class_count};
         if(!value_matches_set(&context,value,constraint->set_index,false))return false;
+    }
+    return true;
+}
+
+static bool hash_entry_satisfies_constraints(const DiamondHash *hash,
+                                              DiamondValue key,
+                                              DiamondValue value) {
+    for(size_t index=0;index<hash->constraint_count;index++) {
+        const typeof(hash->constraints[0]) *constraint=&hash->constraints[index];
+        const DiamondChunk context={.type_sets=constraint->type_sets,
+            .type_set_count=constraint->type_set_count,.classes=constraint->classes,
+            .class_count=constraint->class_count};
+        if(!value_matches_set(&context,key,constraint->key_set,false)||
+           !value_matches_set(&context,value,constraint->value_set,false))return false;
     }
     return true;
 }
@@ -480,7 +518,12 @@ static void format_type_set_index(char *buffer,size_t capacity,
             used+=(size_t)open;
             char nested[80];format_type_set_index(nested,sizeof nested,chunk,
                 set->members[index].argument_set);
-            const int close=snprintf(buffer+used,capacity-used,"%s]",nested);
+            char second[80]="";
+            if(set->members[index].second_argument_set!=UINT8_MAX)
+                format_type_set_index(second,sizeof second,chunk,
+                    set->members[index].second_argument_set);
+            const int close=snprintf(buffer+used,capacity-used,"%s%s%s]",nested,
+                second[0]=='\0'?"":", ",second);
             if(close<0)return;
             used+=(size_t)close;
         }
@@ -1094,8 +1137,14 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 if(registers[receiver].kind!=DIAMOND_VALUE_OBJECT)
                     VM_RETURN(DIAMOND_VM_TYPE_ERROR);
                 if(registers[receiver].as.object->kind==DIAMOND_OBJECT_HASH) {
-                    if(!hash_set(vm,(DiamondHash *)registers[receiver].as.object,
-                                 registers[index_register],registers[source]))
+                    DiamondHash *hash=(DiamondHash *)registers[receiver].as.object;
+                    if(!hash_entry_satisfies_constraints(hash,
+                       registers[index_register],registers[source])) {
+                        snprintf(vm->error,sizeof vm->error,
+                                 "hash entry violates its type annotation");
+                        VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                    }
+                    if(!hash_set(vm,hash,registers[index_register],registers[source]))
                         VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
                     break;
                 }
