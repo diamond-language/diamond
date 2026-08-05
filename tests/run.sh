@@ -1486,4 +1486,13 @@ if "$diamond" -e $'class Broken\n attr_predicate ready\n attr_predicate ready\ne
     exit 1
 fi
 
-echo "367 tests passed"
+actual="$($diamond -e $'class Vault\n attr_writer ready\n attr_predicate ready\n private ready?\n def reveal() = self.ready?()\nend\nvault=Vault.new()\nvault.ready=(true)\nvault.reveal()')"
+[[ "$actual" == "true" ]]
+
+actual="$($diamond -e $'class State\n def valid?() = true\n def reset!() = 42\n alias_method acceptable?, valid?\n alias_method clear!, reset!\nend\nstate=State.new()\n[state.acceptable?(), state.clear!()]')"
+[[ "$actual" == "[true, 42]" ]]
+
+actual="$($diamond -e $'module Query\n def valid?(value) = value == 42\n module_function valid?\nend\nQuery.valid?(42)')"
+[[ "$actual" == "true" ]]
+
+echo "370 tests passed"

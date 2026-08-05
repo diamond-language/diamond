@@ -339,6 +339,8 @@ ordinary visibility, lookup, typing, and module-field paths.
 The lexer retains a terminal `?` or `!` in identifiers, making predicate and
 bang names ordinary functions and methods throughout definition, dispatch,
 typing, and aliasing.
+Descriptor-oriented directives consume the same identifier tokens, so suffixed
+names require no parallel visibility, aliasing, or module-export machinery.
 
 `alias_method` copies an existing local method descriptor under a new name. The
 alias points at the same function index and therefore retains its executable

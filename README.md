@@ -332,6 +332,8 @@ Predicate method and function names may end in `?`, for example
 `def empty?() = length() == 0`.
 Mutating or emphatic names may end in `!`, such as `def reset!() ... end`;
 the suffix is naming convention rather than a separate dispatch mechanism.
+Both suffixes remain part of the name in `private`/`public`, `alias_method`, and
+`module_function` target lists.
 
 Generic function and method declarations may introduce up to eight scoped type
 variables:

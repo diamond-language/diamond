@@ -141,6 +141,7 @@ future work.
 - Parenthesized `alias_method(new_name, existing_name)` declarations.
 - Predicate function and method names ending in `?`.
 - Bang function and method names ending in `!`.
+- Suffixed-name integration with visibility, aliasing, and module exports.
 - `unless` conditional expressions with `else` and type narrowing.
 - `until` loops with ordinary `break` and `next` control flow.
 - Chained `elsif` branches in conditional expressions.
