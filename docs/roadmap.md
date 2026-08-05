@@ -84,11 +84,12 @@ future work.
 - Double-quoted expression interpolation with scalar and instance conversion.
 - Compile-time multi-file `require` with relative paths, extension inference,
   load-once semantics, cycle detection, and dependency-aware diagnostics.
+- Inherited `to_s` stringification for instances and cycle-safe recursive
+  collection interpolation.
 
 ## Next priorities
 
-1. Object stringification protocol, including collection interpolation.
-2. Generic type variables for reusable typed collection transforms.
+1. Generic type variables for reusable typed collection transforms.
 
 ## Later experiments
 

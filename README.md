@@ -27,7 +27,7 @@ Implemented today:
 - stop-the-world mark/sweep collection with stress-GC testing;
 - source diagnostics and bytecode disassembly.
 
-The test suite currently contains 205 end-to-end assertions spanning the
+The test suite currently contains 212 end-to-end assertions spanning the
 frontend, compiler, VM, object model, type guards, collections, and collector.
 
 ## Build and run
@@ -194,6 +194,12 @@ instances have built-in interpolation representations. Escape the marker as
 ```ruby
 def greet(name = "world") = "Hello, #{name}"
 ```
+
+Instances may customize interpolation by defining zero-argument `to_s()` that
+returns `String`; lookup honors inheritance. Without it they render as
+`#<Class>`. Arrays and hashes stringify recursively, with `[...]`/`{...}` cycle
+markers for self-reference. Returning a non-string from `to_s` raises
+`TypeError`.
 
 Available annotations are `Int`, `String`, `Bool`, `Nil`, `Array`, `Hash`, and
 declared class names. `Sized` is a structural interface requiring a zero-arity

@@ -185,9 +185,16 @@ The lexer retains an interpolated double-quoted string as one source token while
 skipping balanced embedded braces and quoted strings. The compiler temporarily
 lexes each `#{expression}` range with the ordinary Pratt parser, emits
 `TO_STRING`, and folds literal and evaluated segments through normal string
-addition. `\#{` is decoded as a literal interpolation marker. Scalar values and
-instances currently have built-in conversion; collection conversion is left to
-the future object stringification protocol.
+addition. `\#{` is decoded as a literal interpolation marker. Scalar values use
+built-in conversion, while instances and collections follow the object
+stringification protocol below.
+
+`TO_STRING` dispatches a zero-argument `to_s` method on instances when one is
+available and requires its result to be `String`; method lookup is inherited,
+and exceptions propagate through the interpolation site. The default instance
+form remains `#<Class>`. Arrays and hashes use a growable native formatter that
+recurses through nested collections and tracks active object identities to emit
+finite `[...]` or `{...}` markers for cycles.
 
 `Sized` is Diamond's first structural interface. Its contract is a zero-arity
 `length` method. `String`, `Array`, and `Hash` satisfy it natively; user classes

@@ -950,4 +950,25 @@ actual="$($diamond --dump-bytecode tests/multifile/main.dia)"
 grep -q '== double ==' <<<"$actual"
 grep -q '== greet ==' <<<"$actual"
 
-echo "205 tests passed"
+actual="$($diamond -e $'class User\n def initialize(name)\n  @name = name\n end\n def to_s() -> String = "User(#{@name})"\nend\n"hello #{User.new("Ada")}"')"
+[[ "$actual" == "hello User(Ada)" ]]
+
+actual="$($diamond -e $'class Box\nend\n"#{Box.new()}"')"
+[[ "$actual" == "#<Box>" ]]
+
+actual="$($diamond -e $'values = [1, "two", [true, nil]]\nmap = {"values": values}\n"#{map}"')"
+[[ "$actual" == "{values: [1, two, [true, nil]]}" ]]
+
+actual="$($diamond -e $'values = []\nvalues.push(values)\n"#{values}"')"
+[[ "$actual" == "[[...]]" ]]
+
+actual="$($diamond -e $'class Bad\n def to_s() = 42\nend\nbegin\n "#{Bad.new()}"\nrescue error: TypeError\n 42\nend')"
+[[ "$actual" == "42" ]]
+
+actual="$($diamond -e $'class Parent\n def to_s() -> String = "parent"\nend\nclass Child < Parent\nend\n"#{Child.new()}"')"
+[[ "$actual" == "parent" ]]
+
+actual="$(DIAMOND_STRESS_GC=1 "$diamond" -e $'class Item\n def to_s() -> String = "item"\nend\n"#{Item.new()} #{[1, 2]}"')"
+[[ "$actual" == "item [1, 2]" ]]
+
+echo "212 tests passed"

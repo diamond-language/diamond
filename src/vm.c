@@ -857,6 +857,75 @@ static void format_value_type(char *buffer, size_t capacity,
     snprintf(buffer,capacity,"%s",name);
 }
 
+typedef struct StringBuilder {
+    char *chars;
+    size_t length;
+    size_t capacity;
+    const DiamondObject *active[32];
+    size_t active_count;
+} StringBuilder;
+
+static bool builder_append(StringBuilder *builder,const char *chars,size_t length) {
+    if(builder->length+length+1>builder->capacity) {
+        size_t capacity=builder->capacity==0?64:builder->capacity;
+        while(capacity<builder->length+length+1)capacity*=2;
+        char *grown=realloc(builder->chars,capacity);
+        if(grown==nullptr)return false;
+        builder->chars=grown;builder->capacity=capacity;
+    }
+    memcpy(builder->chars+builder->length,chars,length);
+    builder->length+=length;builder->chars[builder->length]='\0';return true;
+}
+
+static bool builder_format_value(StringBuilder *builder,DiamondValue value) {
+    char scalar[96];int length=0;
+    if(value.kind==DIAMOND_VALUE_NIL)return builder_append(builder,"nil",3);
+    if(value.kind==DIAMOND_VALUE_BOOL)
+        return builder_append(builder,value.as.boolean?"true":"false",
+                              value.as.boolean?4:5);
+    if(value.kind==DIAMOND_VALUE_INT) {
+        length=snprintf(scalar,sizeof scalar,"%" PRId64,value.as.integer);
+        return length>=0&&(size_t)length<sizeof scalar&&
+            builder_append(builder,scalar,(size_t)length);
+    }
+    const DiamondObject *object=value.as.object;
+    if(object->kind==DIAMOND_OBJECT_STRING) {
+        const DiamondString *string=(const DiamondString *)object;
+        return builder_append(builder,string->chars,string->length);
+    }
+    for(size_t index=0;index<builder->active_count;index++)
+        if(builder->active[index]==object)
+            return builder_append(builder,
+                object->kind==DIAMOND_OBJECT_HASH?"{...}":"[...]",5);
+    if(object->kind==DIAMOND_OBJECT_ARRAY||object->kind==DIAMOND_OBJECT_HASH) {
+        if(builder->active_count==32)return builder_append(builder,"...",3);
+        builder->active[builder->active_count++]=object;
+        const bool hash=object->kind==DIAMOND_OBJECT_HASH;
+        if(!builder_append(builder,hash?"{":"[",1))return false;
+        const size_t count=hash?((const DiamondHash *)object)->count:
+                                ((const DiamondArray *)object)->count;
+        for(size_t index=0;index<count;index++) {
+            if(index>0&&!builder_append(builder,", ",2))return false;
+            if(hash) {
+                const DiamondHashEntry entry=((const DiamondHash *)object)->entries[index];
+                if(!builder_format_value(builder,entry.key)||
+                   !builder_append(builder,": ",2)||
+                   !builder_format_value(builder,entry.value))return false;
+            } else if(!builder_format_value(builder,
+                ((const DiamondArray *)object)->values[index]))return false;
+        }
+        builder->active_count--;
+        return builder_append(builder,hash?"}":"]",1);
+    }
+    if(object->kind==DIAMOND_OBJECT_INSTANCE) {
+        const DiamondInstance *instance=(const DiamondInstance *)object;
+        length=snprintf(scalar,sizeof scalar,"#<%s>",instance->class->name);
+        return length>=0&&(size_t)length<sizeof scalar&&
+            builder_append(builder,scalar,(size_t)length);
+    }
+    return builder_append(builder,"#<Closure>",10);
+}
+
 static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                                  DiamondVm *vm,
                                  const DiamondValue *arguments,
@@ -993,24 +1062,43 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                    registers[source].as.object->kind==DIAMOND_OBJECT_STRING) {
                     registers[destination]=registers[source];break;
                 }
-                char chars[96];int length=0;
-                if(registers[source].kind==DIAMOND_VALUE_INT)
-                    length=snprintf(chars,sizeof chars,"%" PRId64,
-                                    registers[source].as.integer);
-                else if(registers[source].kind==DIAMOND_VALUE_BOOL)
-                    length=snprintf(chars,sizeof chars,"%s",
-                                    registers[source].as.boolean?"true":"false");
-                else if(registers[source].kind==DIAMOND_VALUE_NIL)
-                    length=snprintf(chars,sizeof chars,"nil");
-                else if(registers[source].kind==DIAMOND_VALUE_OBJECT&&
-                        registers[source].as.object->kind==DIAMOND_OBJECT_INSTANCE) {
+                if(registers[source].kind==DIAMOND_VALUE_OBJECT&&
+                   registers[source].as.object->kind==DIAMOND_OBJECT_INSTANCE) {
                     const DiamondInstance *instance=
                         (const DiamondInstance *)registers[source].as.object;
-                    length=snprintf(chars,sizeof chars,"#<%s>",instance->class->name);
-                } else VM_RETURN(DIAMOND_VM_TYPE_ERROR);
-                if(length<0||(size_t)length>=sizeof chars)
-                    VM_RETURN(DIAMOND_VM_TYPE_ERROR);
-                DiamondString *string=allocate_string(vm,chars,(size_t)length);
+                    const DiamondMethod *method=lookup_method(chunk,instance->class,
+                        "to_s",sizeof("to_s")-1);
+                    if(method!=nullptr) {
+                        if(method->required_arity>0)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                        const DiamondFunction *fn=&chunk->functions[method->function_index];
+                        const DiamondChunk child={.name=fn->name,.code=fn->code,
+                          .lines=fn->lines,.columns=fn->columns,.code_count=fn->code_count,
+                          .constants=fn->constants,.constant_count=fn->constant_count,
+                          .strings=fn->strings,.string_count=fn->string_count,
+                          .type_sets=fn->type_sets,.type_set_count=fn->type_set_count,
+                          .functions=chunk->functions,.function_count=chunk->function_count,
+                          .classes=chunk->classes,.class_count=chunk->class_count,
+                          .interfaces=chunk->interfaces,.interface_count=chunk->interface_count};
+                        DiamondValue converted=DIAMOND_NIL;
+                        const DiamondValue argument=registers[source];
+                        DiamondVmStatus status=run_chunk(&child,vm,&argument,1,
+                            depth+1,nullptr,&converted);
+                        VM_PROPAGATE(status);
+                        if(converted.kind!=DIAMOND_VALUE_OBJECT||
+                           converted.as.object->kind!=DIAMOND_OBJECT_STRING) {
+                            snprintf(vm->error,sizeof vm->error,
+                                     "to_s must return String");
+                            VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                        }
+                        registers[destination]=converted;break;
+                    }
+                }
+                StringBuilder builder={};
+                if(!builder_format_value(&builder,registers[source])) {
+                    free(builder.chars);VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                }
+                DiamondString *string=allocate_string(vm,builder.chars,builder.length);
+                free(builder.chars);
                 if(string==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
                 registers[destination]=DIAMOND_OBJECT(string);break;
             }
