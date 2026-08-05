@@ -1670,13 +1670,21 @@ static bool consume_block_start(Compiler *compiler) {
     return true;
 }
 
+static bool consume_conditional_start(Compiler *compiler) {
+    if(compiler->current.kind!=DIAMOND_TOKEN_THEN)
+        return consume_block_start(compiler);
+    advance_token(compiler);
+    skip_newlines(compiler);
+    return true;
+}
+
 static uint8_t parse_if(Compiler *compiler,bool inverted) {
     compiler->narrowing=(Narrowing){};
     const uint8_t condition = parse_expression(compiler);
     const Narrowing narrowing=compiler->narrowing.condition==condition
         ? compiler->narrowing:(Narrowing){};
     compiler->narrowing=(Narrowing){};
-    if (!consume_block_start(compiler)) return 0;
+    if (!consume_conditional_start(compiler)) return 0;
 
     uint8_t branch_condition=condition;
     if(inverted) {
@@ -1719,7 +1727,7 @@ static uint8_t parse_if(Compiler *compiler,bool inverted) {
     bool end_consumed=false;
     if (compiler->current.kind == DIAMOND_TOKEN_ELSE) {
         advance_token(compiler);
-        if (!consume_block_start(compiler)) return destination;
+        if(compiler->current.kind==DIAMOND_TOKEN_NEWLINE)skip_newlines(compiler);
         const uint8_t else_result = compile_sequence(compiler);
         const uint8_t else_type=compiler->known_types[else_result];
         const int16_t else_set=compiler->known_type_sets[else_result];
