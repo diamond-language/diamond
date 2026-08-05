@@ -145,10 +145,11 @@ future work.
 - `unless` conditional expressions with `else` and type narrowing.
 - `until` loops with ordinary `break` and `next` control flow.
 - Chained `elsif` branches in conditional expressions.
+- Normal-completion `else` branches in `begin`/`rescue` expressions.
 
 ## Next priorities
 
-1. Add typed generated attributes without expanding them into handwritten methods.
+1. Strengthen structured exception control flow and diagnostics.
 
 ## Later experiments
 

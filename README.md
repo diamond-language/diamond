@@ -399,6 +399,7 @@ runtime error: expected String | Nil, got Int
 - `unless condition ... else ... end` as an inverted conditional expression
 - `elsif` chains within `if` expressions
 - `until condition ... end` loops, including `break` and `next`
+- `else` after `rescue`, executed only when the protected body completes normally
 
 ## Architecture
 

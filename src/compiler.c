@@ -2091,6 +2091,7 @@ static uint8_t compile_begin(Compiler *compiler) {
     emit_instruction(compiler,DIAMOND_OP_POP_RESCUE,0,0,0,0);
     const size_t end_jump=emit_jump(compiler,DIAMOND_OP_JUMP,0);
     patch_jump(compiler,handler_operand,compiler->function->code_count);
+    size_t rescue_end_jump=SIZE_MAX;
     if(compiler->current.kind==DIAMOND_TOKEN_RESCUE) {
         advance_token(compiler);
         compiler->function->code[handler_type_operand]=0;
@@ -2133,6 +2134,7 @@ static uint8_t compile_begin(Compiler *compiler) {
         const uint8_t rescued=compile_sequence(compiler);
         emit_instruction(compiler,DIAMOND_OP_MOVE,destination,rescued,0,2);
         compiler->local_count=rescue_local_count;
+        rescue_end_jump=emit_jump(compiler,DIAMOND_OP_JUMP,0);
     }
     if(compiler->current.kind!=DIAMOND_TOKEN_ENSURE &&
        compiler->function->code[handler_type_operand]==0x80) {
@@ -2140,6 +2142,14 @@ static uint8_t compile_begin(Compiler *compiler) {
         return destination;
     }
     patch_jump(compiler,end_jump,compiler->function->code_count);
+    if(compiler->current.kind==DIAMOND_TOKEN_ELSE) {
+        advance_token(compiler);
+        if(!consume_block_start(compiler))return destination;
+        const uint8_t normal=compile_sequence(compiler);
+        emit_instruction(compiler,DIAMOND_OP_MOVE,destination,normal,0,2);
+    }
+    if(rescue_end_jump!=SIZE_MAX)
+        patch_jump(compiler,rescue_end_jump,compiler->function->code_count);
     emit_opcode(compiler,DIAMOND_OP_RUN_ENSURE);
     const size_t continuation_operand=compiler->function->code_count;
     emit_byte(compiler,0);emit_byte(compiler,0);

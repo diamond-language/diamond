@@ -1495,4 +1495,13 @@ actual="$($diamond -e $'class State\n def valid?() = true\n def reset!() = 42\n 
 actual="$($diamond -e $'module Query\n def valid?(value) = value == 42\n module_function valid?\nend\nQuery.valid?(42)')"
 [[ "$actual" == "true" ]]
 
-echo "370 tests passed"
+actual="$($diamond -e $'begin\n 20\nrescue error\n 0\nelse\n 42\nend')"
+[[ "$actual" == "42" ]]
+
+actual="$($diamond -e $'begin\n raise "failure"\nrescue error\n 42\nelse\n 0\nend')"
+[[ "$actual" == "42" ]]
+
+actual="$($diamond -e $'value = 0\nbegin\n 1\nrescue error\n value = 1\nelse\n value = 40\nensure\n value = value + 2\nend\nvalue')"
+[[ "$actual" == "42" ]]
+
+echo "373 tests passed"

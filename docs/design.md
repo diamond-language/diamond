@@ -366,6 +366,10 @@ sharing the final `end` while preserving expression results and type joins.
 condition register before the existing exit jump; `break` and `next` targets
 therefore retain identical semantics.
 
+A `begin` expression may place `else` after its rescue clause. Normal execution
+jumps over the handler into that branch, while rescued execution jumps past it;
+both paths subsequently pass through `ensure`.
+
 `value is Type` emits a non-throwing runtime predicate and has comparison
 precedence. For a direct conditional test, union members accepted by `Type`
 (including nominal subclasses) flow into the true branch and the complement
