@@ -1651,4 +1651,6 @@ actual="$($diamond -e $'count=0\nresult=loop do\n count=count+1\n if count<3\n  
 [[ "$actual" == "42" ]]
 actual="$($diamond -e $'outer=loop do\n inner=loop do\n  break 20\n end\n break inner+22\nend\nouter')"
 [[ "$actual" == "42" ]]
-echo "419 tests passed"
+actual="$($diamond -e $'class DetailedError < StandardError\n attr_reader message: String\n def initialize(message: String)\n  @message=message\n end\nend\nbegin\n raise DetailedError.new("failure")\nrescue error: DetailedError\n error.message()\nend')"
+[[ "$actual" == "failure" ]]
+echo "420 tests passed"
