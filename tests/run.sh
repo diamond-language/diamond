@@ -1630,4 +1630,7 @@ actual="$($diamond -e $'begin\n begin\n  [1][4]\n rescue : TypeError\n  0\n resc
 actual="$($diamond -e $'begin\n 1 / 0\nrescue : TypeError | IndexError\n 0\nrescue : ZeroDivisionError | RangeError\n 42\nend')"
 [[ "$actual" == "42" ]]
 
-echo "411 tests passed"
+actual="$($diamond -e $'class NetworkError < StandardError\nend\nclass TimeoutError < NetworkError\nend\nbegin\n raise TimeoutError.new()\nrescue : TypeError\n 0\nrescue error: NetworkError\n 42\nend')"
+[[ "$actual" == "42" ]]
+
+echo "412 tests passed"
