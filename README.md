@@ -411,6 +411,7 @@ runtime error: expected String | Nil, got Int
 - user exception subclasses may define typed message/cause fields and constructors
 - VM-generated standard exceptions expose their runtime diagnostic through `message()`
 - all exception instances expose `cause()`, initially `nil` for VM failures
+- exceptions without a custom initializer accept `new(message, cause)`
 - `retry` inside rescue to restart the protected body
 - binding-free typed filters such as `rescue : TypeError | IndexError`
 - multiple ordered `rescue` clauses, with an optional final catch-all

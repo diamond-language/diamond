@@ -1667,4 +1667,6 @@ actual="$($diamond -e $'begin\n 1 / 0\nrescue error: ZeroDivisionError\n error.m
 [[ "$actual" == "division by zero" ]]
 actual="$($diamond -e $'begin\n [1][4]\nrescue error: IndexError\n [error.message(), error.cause()]\nend')"
 [[ "$actual" == "[index 4 out of bounds for Array of length 1, nil]" ]]
-echo "427 tests passed"
+actual="$($diamond -e $'root=TypeError.new("root")\nerror=RuntimeError.new("wrapped", root)\n[error.message(), error.cause().message()]')"
+[[ "$actual" == "[wrapped, root]" ]]
+echo "428 tests passed"

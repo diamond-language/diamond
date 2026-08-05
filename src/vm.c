@@ -1939,7 +1939,21 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     DiamondValue ignored=DIAMOND_NIL;
                     DiamondVmStatus s=run_chunk(&child,vm,args,(size_t)argc+1,depth+1,nullptr,&ignored);
                     VM_PROPAGATE(s);
-                } else if(argc!=0) VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                } else {
+                    bool exception_class=false;const DiamondClass *ancestor=class;
+                    while(ancestor!=nullptr) {
+                        if(ancestor==&chunk->classes[DIAMOND_CLASS_EXCEPTION]) {
+                            exception_class=true;break;
+                        }
+                        ancestor=ancestor->superclass==UINT8_MAX?nullptr:
+                            &chunk->classes[ancestor->superclass];
+                    }
+                    if(exception_class) {
+                        if(argc>2)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                        if(argc>0)instance->fields[0]=registers[base];
+                        if(argc>1)instance->fields[1]=registers[(size_t)base+1];
+                    } else if(argc!=0)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                }
                 break;
             }
             case DIAMOND_OP_INVOKE:
