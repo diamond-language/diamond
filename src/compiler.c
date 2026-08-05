@@ -1861,7 +1861,8 @@ static uint8_t parse_prefix(Compiler *compiler) {
                 compiler->known_types[destination]=DIAMOND_TYPE_INT;
             return destination;
         }
-        case DIAMOND_TOKEN_BANG: {
+        case DIAMOND_TOKEN_BANG:
+        case DIAMOND_TOKEN_NOT: {
             const uint8_t operand=parse_precedence(compiler,PREC_PREFIX);
             const uint8_t destination=allocate_register(compiler);
             emit_instruction(compiler,DIAMOND_OP_NOT,destination,operand,0,2);

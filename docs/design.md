@@ -365,6 +365,8 @@ Conditional bodies accept either a newline or the `then` delimiter; after the
 delimiter the existing sequence compiler handles inline or multiline bodies.
 Loop bodies similarly accept a newline or `do`, allowing compact loops without
 altering their condition, redo, next, or value-bearing break targets.
+The `not` keyword shares prefix precedence and the `NOT` bytecode instruction
+with `!`, producing a strict Boolean from Diamond truthiness.
 
 `until` likewise shares loop compilation with `while`, negating only the
 condition register before the existing exit jump; `break` and `next` targets

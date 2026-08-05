@@ -1573,4 +1573,13 @@ actual="$($diamond -e $'value = 0\nuntil value == 3 do\n value = value + 1\nend\
 actual="$($diamond -e $'result = while true do break 42 end\nresult')"
 [[ "$actual" == "42" ]]
 
-echo "394 tests passed"
+actual="$($diamond -e $'not false')"
+[[ "$actual" == "true" ]]
+
+actual="$($diamond -e $'not nil')"
+[[ "$actual" == "true" ]]
+
+actual="$($diamond -e $'not (20 + 22 == 42)')"
+[[ "$actual" == "false" ]]
+
+echo "397 tests passed"
