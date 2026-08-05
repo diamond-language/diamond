@@ -28,7 +28,7 @@ Implemented today:
 - stop-the-world mark/sweep collection with stress-GC testing;
 - source diagnostics and bytecode disassembly.
 
-The test suite currently contains 303 end-to-end assertions spanning the
+The test suite currently contains 307 end-to-end assertions spanning the
 frontend, compiler, VM, object model, type guards, collections, and collector.
 
 ## Build and run
@@ -292,6 +292,9 @@ method name. `public` restores public visibility for subsequent definitions.
 `attr_reader name` and `attr_writer name` generate compact field-backed methods
 in classes or modules. Writers are invoked as `object.name=(value)`; generated
 methods honor current visibility, inheritance, mixin state, and shape tracking.
+Ordinary methods may use the same writer spelling with
+`def name=(value) ... end`, including annotations, defaults, module fields, and
+private `self.name=(value)` calls.
 
 Generic function and method declarations may introduce up to eight scoped type
 variables:

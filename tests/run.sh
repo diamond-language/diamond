@@ -1274,4 +1274,16 @@ actual="$($diamond -e $'class Parent\n attr_reader value\n attr_writer value\nen
 actual="$($diamond -e $'class Box\n private\n attr_reader value\n public\n def reveal() = self.value()\nend\nbegin\n Box.new().value()\nrescue error: TypeError\n Box.new().reveal()\nend')"
 [[ "$actual" == "nil" ]]
 
-echo "303 tests passed"
+actual="$($diamond -e $'class Box\n attr_reader value\n def value=(incoming: Int) -> Int\n  @value = incoming\n end\nend\nbox=Box.new()\nbox.value=(42)\nbox.value()')"
+[[ "$actual" == "42" ]]
+
+actual="$($diamond -e $'module Named\n def name=(value)\n  @name = value\n end\n def name() = @name\nend\nclass Person\n include Named\nend\nperson=Person.new()\nperson.name=("Ada")\nperson.name()')"
+[[ "$actual" == "Ada" ]]
+
+actual="$($diamond -e $'class Box\n attr_reader value\n def value=(incoming = 42)\n  @value = incoming\n end\nend\nbox=Box.new()\nbox.value=()\nbox.value()')"
+[[ "$actual" == "42" ]]
+
+actual="$($diamond -e $'class Box\n def assign() = self.value=(42)\n private\n def value=(incoming)\n  @value = incoming\n end\nend\nBox.new().assign()')"
+[[ "$actual" == "42" ]]
+
+echo "307 tests passed"

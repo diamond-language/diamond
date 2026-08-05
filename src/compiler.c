@@ -2188,12 +2188,22 @@ static uint8_t compile_definition(Compiler *compiler) {
         (uint8_t)compiler->current_class:
         (compiler->current_module>=0&&!module_singleton?UINT8_MAX-1:UINT8_MAX);
     function->nested=!at_top_level;
-    const size_t copy_length = name.length;
+    size_t copy_length=name.length;
     for (size_t index = 0; index < copy_length; index++) {
         function->name[index] = compiler->source[name.start + index];
     }
     function->name[copy_length] = '\0';
     advance_token(compiler);
+    if(compiler->current.kind==DIAMOND_TOKEN_EQUAL) {
+        DiamondLexer lookahead=compiler->lexer;
+        if(diamond_lexer_next(&lookahead).kind==DIAMOND_TOKEN_LEFT_PAREN) {
+            if(copy_length+1>=DIAMOND_MAX_FUNCTION_NAME) {
+                fail(compiler,name,"writer method name is too long");return 0;
+            }
+            function->name[copy_length++]='=';
+            function->name[copy_length]='\0';advance_token(compiler);
+        }
+    }
     if(compiler->current.kind==DIAMOND_TOKEN_LEFT_BRACKET) {
         advance_token(compiler);
         while(!compiler->failed&&compiler->current.kind!=DIAMOND_TOKEN_RIGHT_BRACKET) {
@@ -2444,7 +2454,7 @@ static uint8_t compile_definition(Compiler *compiler) {
         bool duplicate=false;
         for(size_t existing=0;existing<class->method_count;existing++)
             if(!class->methods[existing].included&&
-               name_equals(compiler,class->methods[existing].name,name,false))
+               strcmp(class->methods[existing].name,function->name)==0)
                 duplicate=true;
         if(class->method_count==DIAMOND_MAX_METHODS||duplicate) {
             fail(compiler, name, "duplicate or excessive method definition");
@@ -2464,8 +2474,8 @@ static uint8_t compile_definition(Compiler *compiler) {
             &compiler->program->classes[(size_t)compiler->current_class];
         bool duplicate=false;
         for(size_t existing=0;existing<class->singleton_method_count;existing++)
-            if(name_equals(compiler,class->singleton_methods[existing].name,
-                           name,false))duplicate=true;
+            if(strcmp(class->singleton_methods[existing].name,
+                      function->name)==0)duplicate=true;
         if(duplicate||class->singleton_method_count==DIAMOND_MAX_METHODS)
             fail(compiler,name,"duplicate or excessive class singleton method");
         else {
@@ -2481,7 +2491,7 @@ static uint8_t compile_definition(Compiler *compiler) {
             &compiler->program->modules[(size_t)compiler->current_module];
         for(size_t existing=0;existing<module->method_count;existing++)
             if(!module->methods[existing].included&&
-               name_equals(compiler,module->methods[existing].name,name,false)) {
+               strcmp(module->methods[existing].name,function->name)==0) {
                 fail(compiler,name,"duplicate module method");break;
             }
         if(!compiler->failed) {
@@ -2504,8 +2514,8 @@ static uint8_t compile_definition(Compiler *compiler) {
             &compiler->program->modules[(size_t)compiler->current_module];
         bool duplicate=false;
         for(size_t existing=0;existing<module->singleton_method_count;existing++)
-            if(name_equals(compiler,module->singleton_methods[existing].name,
-                           name,false))duplicate=true;
+            if(strcmp(module->singleton_methods[existing].name,
+                      function->name)==0)duplicate=true;
         if(duplicate||module->singleton_method_count==DIAMOND_MAX_METHODS)
             fail(compiler,name,"duplicate or excessive module singleton function");
         else {

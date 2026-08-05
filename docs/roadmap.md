@@ -116,10 +116,12 @@ future work.
 - Public/private declaration toggling with named private-call diagnostics.
 - Generated `attr_reader`/`attr_writer` methods for classes and modules, using
   numeric or symbolic fields while retaining visibility and inheritance.
+- User-defined writer methods with typed/default parameters, module state, and
+  private self-dispatch, while preserving endless-method parsing.
 
 ## Next priorities
 
-1. Permit ordinary user-defined writer methods with `def name=(value)`.
+1. Add `attr_accessor` as the combined reader/writer declaration.
 
 ## Later experiments
 

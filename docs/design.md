@@ -315,6 +315,11 @@ attributes embed symbolic names. Consequently generated accessors require no
 special runtime dispatch and inherit visibility, mixing, caching, and shape
 semantics from the existing method and field machinery.
 
+A definition treats `=` as part of its method name only when immediately
+followed by `(`, preserving endless `def name = expression`. Invocation appends
+the same suffix before method-name interning, so user-defined writers traverse
+ordinary visibility, lookup, typing, and module-field paths.
+
 For a direct `value == nil` or `value != nil` condition, the compiler splits a
 union type-set into nil and non-nil branch facts. Facts for locals that existed
 before the branch are merged at the join; disagreement becomes unknown, so
