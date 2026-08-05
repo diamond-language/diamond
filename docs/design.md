@@ -150,6 +150,12 @@ Annotations are optional. Parameters are checked on function entry and return
 values on every implicit or explicit exit unless the compiler proves the guard
 redundant.
 
+Registers may also carry a type-set fact in addition to an exact primitive or
+class fact. Indexing `Array[T]` produces `T`; indexing `Hash[K, V]` produces
+`V | Nil`. These facts survive ordinary local assignment and participate in
+recursive union/subtype checks, eliminating redundant return guards while
+rejecting a hash lookup used where a non-nil value is required.
+
 ## Deliberate constraints
 
 - No Ruby compatibility guarantee.

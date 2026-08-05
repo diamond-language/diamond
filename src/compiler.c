@@ -44,6 +44,7 @@ typedef struct Compiler {
     DiamondSpan current_method;
     bool in_method;
     uint8_t known_types[256];
+    int16_t known_type_sets[256];
     bool in_function;
     int current_return_type;
     DiamondSpan current_return_type_span;
@@ -119,6 +120,7 @@ static uint8_t allocate_register(Compiler *compiler) {
     }
     const uint8_t reg=(uint8_t)compiler->next_register++;
     compiler->known_types[reg]=TYPE_UNKNOWN;
+    compiler->known_type_sets[reg]=-1;
     return reg;
 }
 
@@ -138,8 +140,46 @@ static bool known_type_satisfies_one(const Compiler *compiler, uint8_t known,
     return false;
 }
 
+static bool type_member_satisfies(const Compiler *compiler,
+                                  DiamondTypeMember known,
+                                  DiamondTypeMember expected);
+
+static bool type_set_satisfies(const Compiler *compiler,uint8_t known_index,
+                               uint8_t expected_index) {
+    const DiamondTypeSet *known=&compiler->function->type_sets[known_index];
+    const DiamondTypeSet *expected=&compiler->function->type_sets[expected_index];
+    for(size_t source=0;source<known->count;source++) {
+        bool accepted=false;
+        for(size_t target=0;target<expected->count&&!accepted;target++)
+            accepted=type_member_satisfies(compiler,known->members[source],
+                                           expected->members[target]);
+        if(!accepted)return false;
+    }
+    return true;
+}
+
+static bool type_member_satisfies(const Compiler *compiler,
+                                  DiamondTypeMember known,
+                                  DiamondTypeMember expected) {
+    if(!known_type_satisfies_one(compiler,known.id,expected.id))return false;
+    if(expected.argument_set==UINT8_MAX)return true;
+    if(known.argument_set==UINT8_MAX||
+       !type_set_satisfies(compiler,known.argument_set,expected.argument_set))
+        return false;
+    if(expected.id!=DIAMOND_TYPE_HASH)return true;
+    return known.second_argument_set!=UINT8_MAX&&
+        expected.second_argument_set!=UINT8_MAX&&
+        type_set_satisfies(compiler,known.second_argument_set,
+                           expected.second_argument_set);
+}
+
 static void emit_type_check(Compiler *compiler, uint8_t reg, uint8_t set_index,
                             DiamondSpan span) {
+    if(compiler->known_type_sets[reg]>=0) {
+        if(type_set_satisfies(compiler,
+           (uint8_t)compiler->known_type_sets[reg],set_index))return;
+        fail(compiler,span,"expression cannot satisfy type annotation");return;
+    }
     const uint8_t known=compiler->known_types[reg];
     if(known==TYPE_UNKNOWN) {
         emit_instruction(compiler,DIAMOND_OP_CHECK_TYPE,reg,set_index,0,2);
@@ -795,6 +835,21 @@ static uint8_t parse_hash(Compiler *compiler) {
     return destination;
 }
 
+static int16_t type_set_with_nil(Compiler *compiler,uint8_t source_index) {
+    const DiamondTypeSet source=compiler->function->type_sets[source_index];
+    for(size_t index=0;index<source.count;index++)
+        if(source.members[index].id==DIAMOND_TYPE_NIL)return (int16_t)source_index;
+    if(source.count==DIAMOND_MAX_UNION_TYPES||
+       compiler->function->type_set_count==DIAMOND_MAX_TYPE_SETS)return -1;
+    const size_t result=compiler->function->type_set_count++;
+    compiler->function->type_sets[result]=source;
+    DiamondTypeSet *set=&compiler->function->type_sets[result];
+    set->members[set->count++]=(DiamondTypeMember){
+        .id=DIAMOND_TYPE_NIL,.argument_set=UINT8_MAX,
+        .second_argument_set=UINT8_MAX};
+    return (int16_t)result;
+}
+
 static uint8_t parse_index(Compiler *compiler,uint8_t receiver) {
     advance_token(compiler);
     const uint8_t index=parse_expression(compiler);
@@ -804,6 +859,19 @@ static uint8_t parse_index(Compiler *compiler,uint8_t receiver) {
     advance_token(compiler);
     const uint8_t destination=allocate_register(compiler);
     emit_instruction(compiler,DIAMOND_OP_INDEX_GET,destination,receiver,index,3);
+    const int16_t receiver_set=compiler->known_type_sets[receiver];
+    if(receiver_set>=0) {
+        const DiamondTypeSet *set=&compiler->function->type_sets[(size_t)receiver_set];
+        if(set->count==1) {
+            const DiamondTypeMember member=set->members[0];
+            if(member.id==DIAMOND_TYPE_ARRAY&&member.argument_set!=UINT8_MAX)
+                compiler->known_type_sets[destination]=(int16_t)member.argument_set;
+            else if(member.id==DIAMOND_TYPE_HASH&&
+                    member.second_argument_set!=UINT8_MAX)
+                compiler->known_type_sets[destination]=type_set_with_nil(
+                    compiler,member.second_argument_set);
+        }
+    }
     return destination;
 }
 
@@ -1276,8 +1344,10 @@ static uint8_t compile_definition(Compiler *compiler) {
     for(size_t i=0;i<outer_capture_count;i++)
         outer_capture_registers[i]=compiler->capture_registers[i];
     uint8_t outer_known_types[256];
+    int16_t outer_known_type_sets[256];
     for(size_t index=0;index<256;index++)
-        outer_known_types[index]=compiler->known_types[index];
+        {outer_known_types[index]=compiler->known_types[index];
+         outer_known_type_sets[index]=compiler->known_type_sets[index];}
     compiler->function = function;
     compiler->current_loop=nullptr;
     compiler->local_count = 0;
@@ -1320,6 +1390,10 @@ static uint8_t compile_definition(Compiler *compiler) {
                 const int type = parse_type_annotation(compiler);
                 emit_type_check(compiler,parameter,(uint8_t)type,
                                 compiler->previous.span);
+                compiler->known_type_sets[parameter]=(int16_t)type;
+                const DiamondTypeSet *parameter_set=&function->type_sets[(size_t)type];
+                if(parameter_set->count==1)
+                    compiler->known_types[parameter]=parameter_set->members[0].id;
             }
             if (compiler->current.kind != DIAMOND_TOKEN_COMMA) break;
             advance_token(compiler);
@@ -1390,7 +1464,8 @@ static uint8_t compile_definition(Compiler *compiler) {
     for(size_t i=0;i<outer_capture_count;i++)
         compiler->capture_registers[i]=outer_capture_registers[i];
     for(size_t index=0;index<256;index++)
-        compiler->known_types[index]=outer_known_types[index];
+        {compiler->known_types[index]=outer_known_types[index];
+         compiler->known_type_sets[index]=outer_known_type_sets[index];}
     if (compiler->current_class >= 0 && !compiler->failed && at_top_level) {
         DiamondClass *class = &compiler->program->classes[(size_t)compiler->current_class];
         if (class->method_count == DIAMOND_MAX_METHODS ||
@@ -1508,6 +1583,8 @@ static uint8_t compile_assignment(Compiler *compiler) {
         ? define_local(compiler, name)
         : compiler->locals[(size_t)local].reg;
     emit_instruction(compiler, DIAMOND_OP_MOVE, destination, value, 0, 2);
+    compiler->known_types[destination]=compiler->known_types[value];
+    compiler->known_type_sets[destination]=compiler->known_type_sets[value];
     return destination;
 }
 

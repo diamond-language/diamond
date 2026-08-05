@@ -271,6 +271,25 @@ actual="$("$diamond" -e 'array_empty([]) && hash_empty({})')"
 actual="$("$diamond" -e $'begin\n [1].length(2)\nrescue error: ArgumentError\n 42\nend')"
 [[ "$actual" == "42" ]]
 
+actual="$("$diamond" --dump-bytecode -e $'def head(values: Array[Int]) -> Int\n item = values[0]\n item\nend\nhead([42])')"
+head_dump="$(sed -n '/^== head ==$/,$p' <<<"$actual")"
+[[ "$(grep -c 'CHECK_TYPE' <<<"$head_dump")" == "1" ]]
+grep -q 'INDEX_GET' <<<"$head_dump"
+
+actual="$("$diamond" --dump-bytecode -e $'def nested(values: Array[Array[Int]]) -> Array[Int]\n values[0]\nend\nnested([[42]])')"
+nested_dump="$(sed -n '/^== nested ==$/,$p' <<<"$actual")"
+[[ "$(grep -c 'CHECK_TYPE' <<<"$nested_dump")" == "1" ]]
+
+actual="$("$diamond" --dump-bytecode -e $'def lookup(values: Hash[String, Int]) -> Int | Nil\n values["answer"]\nend\nlookup({"answer": 42})')"
+lookup_dump="$(sed -n '/^== lookup ==$/,$p' <<<"$actual")"
+[[ "$(grep -c 'CHECK_TYPE' <<<"$lookup_dump")" == "1" ]]
+
+if "$diamond" -e $'def unsafe(values: Hash[String, Int]) -> Int\n values["missing"]\nend' \
+    >/dev/null 2>&1; then
+    echo "hash lookup incorrectly omitted its possible Nil result" >&2
+    exit 1
+fi
+
 actual="$("$diamond" --dump-bytecode -e $'def maybe(x: String | Nil) -> String | Nil\n x\nend\nmaybe(nil)')"
 grep -q 'String | Nil' <<<"$actual"
 
@@ -633,4 +652,4 @@ if "$diamond" -e $'begin\n raise 1\nrescue error: Int |\n 0\nend' \
     exit 1
 fi
 
-echo "112 tests passed"
+echo "116 tests passed"

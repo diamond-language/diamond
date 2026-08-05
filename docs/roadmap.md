@@ -65,11 +65,12 @@ future work.
 - Persistent `Hash[Key, Value]` contracts for entries and mutations.
 - C23-embedded Diamond core prelude with initial collection helpers.
 - Native collection `length()` with Diamond-written last/fallback/predicate helpers.
+- Flow-sensitive generic result facts for array and hash indexing.
 
 ## Next priorities
 
-1. Flow-sensitive collection result types.
-2. Broader collection APIs implemented through the Diamond prelude.
+1. Broader collection APIs implemented through the Diamond prelude.
+2. Branch-sensitive narrowing of union-typed locals.
 
 ## Later experiments
 

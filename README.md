@@ -165,8 +165,9 @@ predicates. Their bytecode appears in `--dump-bytecode` output like user-defined
 functions. Arrays, hashes, and strings expose the native `length()` primitive.
 
 The compiler removes provably redundant guards, rejects provable mismatches,
-and retains checks for dynamic values. Runtime failures preserve source-level
-type names:
+retains checks for dynamic values, and propagates generic element/value facts
+through indexed reads. Hash lookup facts always include `Nil` because missing
+keys return `nil`. Runtime failures preserve source-level type names:
 
 ```text
 runtime error: expected String | Nil, got Int
