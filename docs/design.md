@@ -49,10 +49,10 @@ the nearest target, clears the provisional uncaught trace, and evaluates the
 rescue body. Raising again inside a rescue naturally targets the next enclosing
 handler.
 
-Rescue bindings may include the same compact type annotations used by parameters
-and returns. During unwinding, mismatched handlers are discarded and lookup
-continues outward. Nominal filters accept subclasses; unannotated handlers match
-every raised Diamond value.
+Rescue bindings may include up to eight pipe-separated primitive or nominal
+types. During unwinding, a handler matches any member; mismatched handlers are
+discarded and lookup continues outward. Nominal filters accept subclasses;
+unannotated handlers match every raised Diamond value.
 
 The compiler tracks exact types for locally obvious temporary values. It removes
 provably redundant type guards, rejects provable mismatches, and leaves runtime

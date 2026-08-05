@@ -4,19 +4,22 @@ end
 class SpecificFailure < Failure
 end
 
+class OtherFailure
+end
+
 primitive = begin
   begin
     raise "text"
   rescue wrong: Int
     0
   end
-rescue message: String
+rescue message: Int | String
   message + "!"
 end
 
 nominal = begin
   raise SpecificFailure.new()
-rescue error: Failure
+rescue error: OtherFailure | Failure
   41
 end
 

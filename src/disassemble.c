@@ -281,11 +281,11 @@ static bool disassemble_chunk(FILE *stream, const char *name,
                 offset = one_register(stream, chunk, "RAISE", offset);
                 break;
             case DIAMOND_OP_PUSH_RESCUE: {
-                if(!require_bytes(stream,chunk,offset,5)){valid=false;offset=chunk->code_count;break;}
-                const size_t target=((size_t)chunk->code[offset+3]<<8)|chunk->code[offset+4];
-                fprintf(stream,"%-18s r%u, type%u -> %04zu\n","PUSH_RESCUE",
+                if(!require_bytes(stream,chunk,offset,13)){valid=false;offset=chunk->code_count;break;}
+                const size_t target=((size_t)chunk->code[offset+11]<<8)|chunk->code[offset+12];
+                fprintf(stream,"%-18s r%u, %u types -> %04zu\n","PUSH_RESCUE",
                         chunk->code[offset+1],chunk->code[offset+2],target);
-                offset+=5;break;
+                offset+=13;break;
             }
             case DIAMOND_OP_POP_RESCUE:
                 fprintf(stream,"%-18s\n","POP_RESCUE");offset++;break;

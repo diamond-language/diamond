@@ -56,6 +56,7 @@ future work.
 - Value-carrying `raise` with source-mapped cross-call unwinding.
 - Nested `begin`/`rescue` expressions with optional raised-value bindings.
 - Primitive and subtype-aware nominal filters on rescue bindings.
+- Pipe-separated rescue type sets with up to eight alternatives.
 
 ## Next priorities
 

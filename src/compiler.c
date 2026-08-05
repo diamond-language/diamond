@@ -1076,9 +1076,11 @@ static uint8_t compile_begin(Compiler *compiler) {
     if(!consume_block_start(compiler))return 0;
     const uint8_t exception=allocate_register(compiler);
     const size_t handler_type_operand=compiler->function->code_count+2;
-    const size_t handler_operand=compiler->function->code_count+3;
+    const size_t handler_types_operand=compiler->function->code_count+3;
+    const size_t handler_operand=compiler->function->code_count+11;
     emit_opcode(compiler,DIAMOND_OP_PUSH_RESCUE);
-    emit_byte(compiler,exception);emit_byte(compiler,UINT8_MAX);
+    emit_byte(compiler,exception);emit_byte(compiler,0);
+    for(size_t i=0;i<8;i++)emit_byte(compiler,0);
     emit_byte(compiler,0);emit_byte(compiler,0);
     const uint8_t body=compile_sequence(compiler);
     const uint8_t destination=allocate_register(compiler);
@@ -1102,8 +1104,21 @@ static uint8_t compile_begin(Compiler *compiler) {
         advance_token(compiler);
         if(compiler->current.kind==DIAMOND_TOKEN_COLON) {
             advance_token(compiler);
-            compiler->function->code[handler_type_operand]=
-                (uint8_t)parse_type_annotation(compiler);
+            size_t type_count=0;
+            while(!compiler->failed) {
+                if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER) {
+                    fail(compiler,compiler->current.span,"expected rescue type");break;
+                }
+                if(type_count==8) {
+                    fail(compiler,compiler->current.span,"too many rescue types");break;
+                }
+                compiler->function->code[handler_types_operand+type_count++]=
+                    (uint8_t)resolve_type(compiler,compiler->current.span);
+                advance_token(compiler);
+                if(compiler->current.kind!=DIAMOND_TOKEN_PIPE)break;
+                advance_token(compiler);
+            }
+            compiler->function->code[handler_type_operand]=(uint8_t)type_count;
         }
     }
     if(!consume_block_start(compiler))return destination;
