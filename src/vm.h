@@ -89,6 +89,8 @@ typedef struct DiamondClass {
 typedef struct DiamondFunction {
     char name[DIAMOND_MAX_FUNCTION_NAME];
     uint8_t code[DIAMOND_MAX_CODE];
+    uint32_t lines[DIAMOND_MAX_CODE];
+    uint32_t columns[DIAMOND_MAX_CODE];
     size_t code_count;
     DiamondValue constants[DIAMOND_MAX_CONSTANTS];
     size_t constant_count;
@@ -99,7 +101,10 @@ typedef struct DiamondFunction {
 } DiamondFunction;
 
 typedef struct DiamondChunk {
+    const char *name;
     const uint8_t *code;
+    const uint32_t *lines;
+    const uint32_t *columns;
     size_t code_count;
     const DiamondValue *constants;
     size_t constant_count;
@@ -129,7 +134,7 @@ typedef struct DiamondVm {
     size_t next_gc;
     void *frames;
     bool stress_gc;
-    char error[192];
+    char error[1024];
 } DiamondVm;
 
 void diamond_vm_init(DiamondVm *vm);

@@ -47,15 +47,16 @@ future work.
 - Guards on every implicit and explicit typed return path.
 - Exact local type facts that remove proven guards and reject proven errors.
 - Detailed expected/actual runtime type diagnostics.
+- Per-instruction source coordinates in bytecode dumps.
+- Source-mapped runtime stack traces across functions and methods.
 
 ## Next priorities
 
-1. Source maps in bytecode and runtime stack traces.
-2. Closures and captured lexical environments.
-3. Runtime shapes and monomorphic method/field inline caches.
-4. Structured runtime exceptions.
-5. Generic collection annotations and general unions.
-6. A small core library implemented partly in Diamond.
+1. Closures and captured lexical environments.
+2. Runtime shapes and monomorphic method/field inline caches.
+3. Structured runtime exceptions.
+4. Generic collection annotations and general unions.
+5. A small core library implemented partly in Diamond.
 
 ## Later experiments
 

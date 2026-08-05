@@ -184,7 +184,8 @@ compiler, disassembler, VM, value representation, and object layouts live under
 ## Important limitations
 
 - No closures or nested functions.
-- No exceptions or runtime stack traces.
+- Runtime errors include source-mapped Diamond stack traces; structured
+  exceptions are not implemented yet.
 - No modules, mixins, singleton methods, or visibility.
 - No runtime shapes or inline caches yet.
 - No generic arrays/hashes or unrestricted union types.

@@ -38,7 +38,8 @@ static int run_source(const char *name, const char *source, bool dump_bytecode) 
         return 65;
     }
 
-    const DiamondChunk chunk = diamond_program_chunk(&program);
+    DiamondChunk chunk = diamond_program_chunk(&program);
+    chunk.name = name;
     if (dump_bytecode) {
         (void)diamond_disassemble(stdout, name, &chunk);
     }

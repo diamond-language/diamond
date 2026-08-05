@@ -445,4 +445,18 @@ fi
 actual="$("$diamond" --dump-bytecode -e '{"answer": 42}')"
 grep -q 'HASH' <<<"$actual"
 
-echo "75 tests passed"
+error_file="$(mktemp)"
+if "$diamond" tests/cases/stack_trace.dia >/dev/null 2>"$error_file"; then
+    echo "runtime stack trace unexpectedly succeeded" >&2
+    exit 1
+fi
+grep -q 'runtime error: division by zero' "$error_file"
+grep -q 'at divide:3:' "$error_file"
+grep -q 'at invoke:8:' "$error_file"
+grep -q 'at tests/cases/stack_trace.dia:11:' "$error_file"
+rm -f "$error_file"
+
+actual="$("$diamond" --dump-bytecode -e '40 + 2')"
+grep -Eq '^000[0-9]+ +1:[0-9]+ +ADD' <<<"$actual"
+
+echo "76 tests passed"

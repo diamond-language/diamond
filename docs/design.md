@@ -32,6 +32,11 @@ expressions directly to register bytecode; there is no retained AST. Locals and
 temporary values currently receive monotonically increasing registers within a
 function, capped at 256.
 
+Each opcode carries the line and column of the source token that produced it.
+The disassembler displays these coordinates, and the VM uses them while
+unwinding failed calls to build Diamond-level stack traces without exposing C
+implementation frames.
+
 The compiler tracks exact types for locally obvious temporary values. It removes
 provably redundant type guards, rejects provable mismatches, and leaves runtime
 guards at dynamic boundaries. Mutable and uncertain flows are treated

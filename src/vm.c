@@ -293,9 +293,31 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
     };
     vm->frames = &frame;
     size_t ip = 0;
+    size_t instruction_offset = 0;
+
+    #define RECORD_ERROR(status_) do {                                      \
+        if ((status_) != DIAMOND_VM_OK) {                                   \
+            size_t used = strlen(vm->error);                                \
+            if (used == 0) {                                                \
+                used = (size_t)snprintf(vm->error, sizeof(vm->error), "%s", \
+                                        diamond_vm_status_name(status_));    \
+            }                                                               \
+            const char *frame_name = chunk->name != nullptr ? chunk->name    \
+                                                              : "<chunk>"; \
+            const uint32_t line = chunk->lines != nullptr                    \
+                ? chunk->lines[instruction_offset] : 0;                      \
+            const uint32_t column = chunk->columns != nullptr                \
+                ? chunk->columns[instruction_offset] : 0;                    \
+            if (used < sizeof(vm->error)) {                                  \
+                (void)snprintf(vm->error + used, sizeof(vm->error) - used,   \
+                               "\n  at %s:%u:%u", frame_name, line, column);  \
+            }                                                               \
+        }                                                                   \
+    } while (false)
 
 #define VM_RETURN(status_)                   \
     do {                                     \
+        RECORD_ERROR(status_);               \
         vm->frames = frame.previous;          \
         return (status_);                     \
     } while (false)
@@ -309,6 +331,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
     } while (false)
 
     while (ip < chunk->code_count) {
+        instruction_offset = ip;
         uint8_t instruction = 0;
         READ_BYTE(instruction);
 
@@ -549,7 +572,10 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     VM_RETURN(DIAMOND_VM_ARITY_ERROR);
                 }
                 const DiamondChunk called_chunk = {
+                    .name = function->name,
                     .code = function->code,
+                    .lines = function->lines,
+                    .columns = function->columns,
                     .code_count = function->code_count,
                     .constants = function->constants,
                     .constant_count = function->constant_count,
@@ -584,7 +610,8 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     DiamondValue args[17];args[0]=registers[dest];
                     for(size_t i=0;i<argc;i++)args[i+1]=registers[(size_t)base+i];
                     const DiamondFunction *fn=&chunk->functions[init->function_index];
-                    DiamondChunk child={.code=fn->code,.code_count=fn->code_count,
+                    DiamondChunk child={.name=fn->name,.code=fn->code,
+                      .lines=fn->lines,.columns=fn->columns,.code_count=fn->code_count,
                       .constants=fn->constants,.constant_count=fn->constant_count,
                       .strings=fn->strings,.string_count=fn->string_count,
                       .functions=chunk->functions,.function_count=chunk->function_count,
@@ -611,7 +638,8 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 DiamondValue args[17];args[0]=registers[recv];
                 for(size_t i=0;i<argc;i++)args[i+1]=registers[(size_t)base+i];
                 const DiamondFunction *fn=&chunk->functions[method->function_index];
-                DiamondChunk child={.code=fn->code,.code_count=fn->code_count,
+                DiamondChunk child={.name=fn->name,.code=fn->code,
+                  .lines=fn->lines,.columns=fn->columns,.code_count=fn->code_count,
                   .constants=fn->constants,.constant_count=fn->constant_count,
                   .strings=fn->strings,.string_count=fn->string_count,
                   .functions=chunk->functions,.function_count=chunk->function_count,
@@ -642,7 +670,8 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 DiamondValue args[17]; args[0]=registers[0];
                 for(size_t i=0;i<argc;i++) args[i+1]=registers[(size_t)base+i];
                 const DiamondFunction *fn=&chunk->functions[method->function_index];
-                DiamondChunk child={.code=fn->code,.code_count=fn->code_count,
+                DiamondChunk child={.name=fn->name,.code=fn->code,
+                  .lines=fn->lines,.columns=fn->columns,.code_count=fn->code_count,
                   .constants=fn->constants,.constant_count=fn->constant_count,
                   .strings=fn->strings,.string_count=fn->string_count,
                   .functions=chunk->functions,.function_count=chunk->function_count,
@@ -777,6 +806,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
 
 #undef READ_BYTE
 #undef VM_RETURN
+#undef RECORD_ERROR
 
     vm->frames = frame.previous;
     return DIAMOND_VM_INVALID_BYTECODE;

@@ -84,9 +84,17 @@ static bool emit_byte(Compiler *compiler, uint8_t byte) {
     return true;
 }
 
+static bool emit_opcode(Compiler *compiler, DiamondOpCode opcode) {
+    const size_t offset = compiler->function->code_count;
+    if (!emit_byte(compiler, (uint8_t)opcode)) return false;
+    compiler->function->lines[offset] = (uint32_t)compiler->previous.span.line;
+    compiler->function->columns[offset] = (uint32_t)compiler->previous.span.column;
+    return true;
+}
+
 static bool emit_instruction(Compiler *compiler, DiamondOpCode opcode,
                              uint8_t a, uint8_t b, uint8_t c, size_t operands) {
-    if (!emit_byte(compiler, (uint8_t)opcode)) {
+    if (!emit_opcode(compiler, opcode)) {
         return false;
     }
     const uint8_t values[] = {a, b, c};
@@ -486,7 +494,7 @@ static uint8_t parse_call(Compiler *compiler, DiamondSpan name) {
                          (uint8_t)(argument_base + index), arguments[index], 0, 2);
     }
     const uint8_t destination = allocate_register(compiler);
-    emit_byte(compiler, (uint8_t)DIAMOND_OP_CALL);
+    emit_opcode(compiler, DIAMOND_OP_CALL);
     emit_byte(compiler, destination);
     emit_byte(compiler, (uint8_t)function_index);
     emit_byte(compiler, argument_base);
@@ -527,7 +535,7 @@ static uint8_t parse_name(Compiler *compiler) {
         for (size_t i = 0; i < count; i++)
             emit_instruction(compiler, DIAMOND_OP_MOVE, (uint8_t)(base+i), args[i], 0, 2);
         const uint8_t dest = allocate_register(compiler);
-        emit_byte(compiler, DIAMOND_OP_NEW); emit_byte(compiler, dest);
+        emit_opcode(compiler, DIAMOND_OP_NEW); emit_byte(compiler, dest);
         emit_byte(compiler, (uint8_t)class_index); emit_byte(compiler, base);
         emit_byte(compiler, (uint8_t)count);
         compiler->known_types[dest]=(uint8_t)(DIAMOND_TYPE_CLASS_BASE+class_index);
@@ -568,7 +576,7 @@ static uint8_t parse_invoke(Compiler *compiler, uint8_t receiver) {
         (uint8_t)(base+i), args[i], 0, 2);
     const uint8_t dest=allocate_register(compiler);
     const uint8_t method=add_name_string(compiler,name);
-    emit_byte(compiler,DIAMOND_OP_INVOKE); emit_byte(compiler,dest);
+    emit_opcode(compiler,DIAMOND_OP_INVOKE); emit_byte(compiler,dest);
     emit_byte(compiler,receiver); emit_byte(compiler,method); emit_byte(compiler,base);
     emit_byte(compiler,(uint8_t)count);
     return dest;
@@ -616,7 +624,7 @@ static uint8_t parse_super(Compiler *compiler) {
     }
     const uint8_t destination = allocate_register(compiler);
     const uint8_t method = add_name_string(compiler, compiler->current_method);
-    emit_byte(compiler, DIAMOND_OP_SUPER);
+    emit_opcode(compiler, DIAMOND_OP_SUPER);
     emit_byte(compiler, destination);
     emit_byte(compiler, (uint8_t)compiler->current_class);
     emit_byte(compiler, method);
@@ -1287,6 +1295,7 @@ static uint8_t compile_sequence(Compiler *compiler) {
 bool diamond_compile(const char *source, DiamondProgram *program,
                      DiamondDiagnostic *diagnostic) {
     *program = (DiamondProgram){};
+    snprintf(program->entry.name, sizeof(program->entry.name), "<main>");
     *diagnostic = (DiamondDiagnostic){};
     Compiler compiler = {
         .source = source,
@@ -1313,7 +1322,10 @@ bool diamond_compile(const char *source, DiamondProgram *program,
 
 DiamondChunk diamond_program_chunk(const DiamondProgram *program) {
     return (DiamondChunk){
+        .name = program->entry.name,
         .code = program->entry.code,
+        .lines = program->entry.lines,
+        .columns = program->entry.columns,
         .code_count = program->entry.code_count,
         .constants = program->entry.constants,
         .constant_count = program->entry.constant_count,

@@ -40,7 +40,12 @@ static bool disassemble_chunk(FILE *stream, const char *name,
     bool valid = true;
 
     while (offset < chunk->code_count) {
-        fprintf(stream, "%04zu ", offset);
+        if (chunk->lines != nullptr && chunk->lines[offset] != 0) {
+            fprintf(stream, "%04zu %4u:%-3u ", offset, chunk->lines[offset],
+                    chunk->columns[offset]);
+        } else {
+            fprintf(stream, "%04zu          ", offset);
+        }
         const DiamondOpCode opcode = (DiamondOpCode)chunk->code[offset];
         switch (opcode) {
             case DIAMOND_OP_CONSTANT: {
@@ -257,7 +262,10 @@ bool diamond_disassemble(FILE *stream, const char *name,
     for (size_t index = 0; index < chunk->function_count; index++) {
         const DiamondFunction *function = &chunk->functions[index];
         const DiamondChunk function_chunk = {
+            .name = function->name,
             .code = function->code,
+            .lines = function->lines,
+            .columns = function->columns,
             .code_count = function->code_count,
             .constants = function->constants,
             .constant_count = function->constant_count,
