@@ -1353,6 +1353,10 @@ static uint8_t parse_invoke(Compiler *compiler, uint8_t receiver) {
     }
     const DiamondSpan name = compiler->current.span;
     advance_token(compiler);
+    bool writer_name=false;
+    if(compiler->current.kind==DIAMOND_TOKEN_EQUAL) {
+        writer_name=true;advance_token(compiler);
+    }
     uint8_t type_arguments[8];size_t type_argument_count=0;
     if(compiler->current.kind==DIAMOND_TOKEN_LEFT_BRACKET) {
         advance_token(compiler);
@@ -1395,6 +1399,15 @@ static uint8_t parse_invoke(Compiler *compiler, uint8_t receiver) {
         (uint8_t)(base+i), args[i], 0, 2);
     const uint8_t dest=allocate_register(compiler);
     const uint8_t method=add_name_string(compiler,name);
+    if(writer_name&&!compiler->failed) {
+        DiamondStringConstant *string=&compiler->function->strings[method];
+        if(string->length==DIAMOND_MAX_STRING_LENGTH)
+            fail(compiler,name,"method name is too long");
+        else {
+            string->chars[string->length++]='=';
+            string->chars[string->length]='\0';
+        }
+    }
     emit_opcode(compiler,type_argument_count==0?
         DIAMOND_OP_INVOKE:DIAMOND_OP_INVOKE_TYPED);emit_byte(compiler,dest);
     emit_byte(compiler,receiver); emit_byte(compiler,method); emit_byte(compiler,base);
@@ -2525,6 +2538,91 @@ static uint8_t compile_definition(Compiler *compiler) {
     return result;
 }
 
+static void compile_attribute(Compiler *compiler,bool writer) {
+    advance_token(compiler);
+    if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER) {
+        fail(compiler,compiler->current.span,"expected attribute name");return;
+    }
+    const DiamondSpan name=compiler->current.span;
+    if(name.length+writer>=DIAMOND_MAX_FUNCTION_NAME||
+       compiler->program->function_count==DIAMOND_MAX_FUNCTIONS) {
+        fail(compiler,name,"attribute name is too long or function limit reached");
+        return;
+    }
+    char field_name[DIAMOND_MAX_FUNCTION_NAME];
+    for(size_t index=0;index<name.length;index++)
+        field_name[index]=compiler->source[name.start+index];
+    field_name[name.length]='\0';
+    uint8_t field=UINT8_MAX;
+    DiamondMethod *method=nullptr;
+    if(compiler->current_class>=0) {
+        DiamondClass *class=
+            &compiler->program->classes[(size_t)compiler->current_class];
+        for(size_t index=0;index<class->field_count;index++)
+            if(strcmp(class->fields[index],field_name)==0)field=(uint8_t)index;
+        if(field==UINT8_MAX) {
+            if(class->field_count==DIAMOND_MAX_FIELDS) {
+                fail(compiler,name,"too many instance variables");return;
+            }
+            field=(uint8_t)class->field_count;
+            (void)snprintf(class->fields[class->field_count++],
+                DIAMOND_MAX_FUNCTION_NAME,"%s",field_name);
+        }
+        if(class->method_count==DIAMOND_MAX_METHODS) {
+            fail(compiler,name,"too many methods");return;
+        }
+        method=&class->methods[class->method_count++];
+    } else {
+        DiamondModule *module=
+            &compiler->program->modules[(size_t)compiler->current_module];
+        bool present=false;
+        for(size_t index=0;index<module->field_count;index++)
+            if(strcmp(module->fields[index],field_name)==0)present=true;
+        if(!present) {
+            if(module->field_count==DIAMOND_MAX_FIELDS) {
+                fail(compiler,name,"too many module instance variables");return;
+            }
+            (void)snprintf(module->fields[module->field_count++],
+                DIAMOND_MAX_FUNCTION_NAME,"%s",field_name);
+        }
+        if(module->method_count==DIAMOND_MAX_METHODS) {
+            fail(compiler,name,"too many module methods");return;
+        }
+        method=&module->methods[module->method_count++];method->included=false;
+    }
+    DiamondFunction *function=
+        &compiler->program->functions[compiler->program->function_count];
+    const uint8_t function_index=(uint8_t)compiler->program->function_count++;
+    (void)snprintf(function->name,sizeof function->name,"%s%s",field_name,
+                   writer?"=":"");
+    function->owner_class=compiler->current_class>=0?
+        (uint8_t)compiler->current_class:UINT8_MAX-1;
+    function->arity=writer?2:1;function->required_arity=function->arity;
+    function->return_type_set=UINT8_MAX;
+    for(size_t index=0;index<16;index++)function->parameter_type_sets[index]=UINT8_MAX;
+    if(compiler->current_module>=0&&compiler->current_class<0) {
+        DiamondStringConstant *string=&function->strings[0];
+        (void)snprintf(string->chars,sizeof string->chars,"%s",field_name);
+        string->length=strlen(field_name);function->string_count=1;
+        function->code[0]=(uint8_t)(writer?DIAMOND_OP_SET_IVAR_NAME:
+                                     DIAMOND_OP_GET_IVAR_NAME);
+        function->code[1]=writer?0:1;function->code[2]=writer?0:0;
+        function->code[3]=writer?1:0;
+    } else {
+        function->code[0]=(uint8_t)(writer?DIAMOND_OP_SET_IVAR:
+                                     DIAMOND_OP_GET_IVAR);
+        function->code[1]=writer?0:1;function->code[2]=writer?field:0;
+        function->code[3]=writer?1:field;
+    }
+    function->code[4]=DIAMOND_OP_RETURN;function->code[5]=writer?1:1;
+    function->code_count=6;
+    (void)snprintf(method->name,sizeof method->name,"%s%s",field_name,
+                   writer?"=":"");
+    method->function_index=function_index;method->arity=writer?1:0;
+    method->required_arity=method->arity;method->is_private=compiler->methods_private;
+    advance_token(compiler);
+}
+
 static uint8_t compile_class(Compiler *compiler) {
     advance_token(compiler);
     if (compiler->current.kind != DIAMOND_TOKEN_IDENTIFIER ||
@@ -2571,6 +2669,10 @@ static uint8_t compile_class(Compiler *compiler) {
             compiler->methods_private=
                 compiler->current.kind==DIAMOND_TOKEN_PRIVATE;
             advance_token(compiler);
+        } else if(compiler->current.kind==DIAMOND_TOKEN_ATTR_READER||
+                  compiler->current.kind==DIAMOND_TOKEN_ATTR_WRITER) {
+            const bool writer=compiler->current.kind==DIAMOND_TOKEN_ATTR_WRITER;
+            compile_attribute(compiler,writer);
         } else if(compiler->current.kind==DIAMOND_TOKEN_INCLUDE) {
             advance_token(compiler);
             if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER) {
@@ -2662,6 +2764,10 @@ static uint8_t compile_module(Compiler *compiler) {
             compiler->methods_private=
                 compiler->current.kind==DIAMOND_TOKEN_PRIVATE;
             advance_token(compiler);
+        } else if(compiler->current.kind==DIAMOND_TOKEN_ATTR_READER||
+                  compiler->current.kind==DIAMOND_TOKEN_ATTR_WRITER) {
+            const bool writer=compiler->current.kind==DIAMOND_TOKEN_ATTR_WRITER;
+            compile_attribute(compiler,writer);
         } else if(compiler->current.kind==DIAMOND_TOKEN_IDENTIFIER&&
            assignment_ahead(compiler)) {
             const DiamondSpan constant_name=compiler->current.span;

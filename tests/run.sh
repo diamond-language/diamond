@@ -1262,4 +1262,16 @@ else
     exit 1
 fi
 
-echo "299 tests passed"
+actual="$($diamond -e $'class Person\n attr_reader name\n attr_writer name\nend\nperson = Person.new()\nperson.name=("Ada")\nperson.name()')"
+[[ "$actual" == "Ada" ]]
+
+actual="$($diamond -e $'module Named\n attr_reader name\n attr_writer name\nend\nclass Person\n include Named\nend\nperson = Person.new()\nperson.name=("Ada")\nperson.name()')"
+[[ "$actual" == "Ada" ]]
+
+actual="$($diamond -e $'class Parent\n attr_reader value\n attr_writer value\nend\nclass Child < Parent\nend\nchild=Child.new()\nchild.value=(42)\nchild.value()')"
+[[ "$actual" == "42" ]]
+
+actual="$($diamond -e $'class Box\n private\n attr_reader value\n public\n def reveal() = self.value()\nend\nbegin\n Box.new().value()\nrescue error: TypeError\n Box.new().reveal()\nend')"
+[[ "$actual" == "nil" ]]
+
+echo "303 tests passed"

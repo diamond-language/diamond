@@ -309,6 +309,12 @@ inclusion. Runtime invocation accepts a private descriptor only when executing a
 method chunk and invoking register zero (`self`); calls through ordinary
 external receiver registers fail through the normal rescuable type-error path.
 
+Attribute declarations synthesize minimal six-byte getter/setter functions and
+ordinary method descriptors. Class attributes embed numeric offsets; module
+attributes embed symbolic names. Consequently generated accessors require no
+special runtime dispatch and inherit visibility, mixing, caching, and shape
+semantics from the existing method and field machinery.
+
 For a direct `value == nil` or `value != nil` condition, the compiler splits a
 union type-set into nil and non-nil branch facts. Facts for locals that existed
 before the branch are merged at the join; disagreement becomes unknown, so

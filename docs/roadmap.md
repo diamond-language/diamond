@@ -114,10 +114,12 @@ future work.
 - Private instance methods across classes, inheritance, and modules, restricted
   to explicit `self` calls from method frames.
 - Public/private declaration toggling with named private-call diagnostics.
+- Generated `attr_reader`/`attr_writer` methods for classes and modules, using
+  numeric or symbolic fields while retaining visibility and inheritance.
 
 ## Next priorities
 
-1. Add compact `attr_reader` and `attr_writer` declarations.
+1. Permit ordinary user-defined writer methods with `def name=(value)`.
 
 ## Later experiments
 

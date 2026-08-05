@@ -28,7 +28,7 @@ Implemented today:
 - stop-the-world mark/sweep collection with stress-GC testing;
 - source diagnostics and bytecode disassembly.
 
-The test suite currently contains 299 end-to-end assertions spanning the
+The test suite currently contains 303 end-to-end assertions spanning the
 frontend, compiler, VM, object model, type guards, collections, and collector.
 
 ## Build and run
@@ -288,6 +288,10 @@ of instance methods; constructors remain the dedicated `Class.new(...)` path.
 remain callable through `self` from a method frame, including through inheritance
 and mixins, but explicit external receiver calls raise `TypeError` with the
 method name. `public` restores public visibility for subsequent definitions.
+
+`attr_reader name` and `attr_writer name` generate compact field-backed methods
+in classes or modules. Writers are invoked as `object.name=(value)`; generated
+methods honor current visibility, inheritance, mixin state, and shape tracking.
 
 Generic function and method declarations may introduce up to eight scoped type
 variables:
