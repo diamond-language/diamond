@@ -196,11 +196,12 @@ future work.
 - Nested-import source mapping and missing-dependency context.
 - Explicit loader diagnostics for nesting, file-count, segment, and source-size
   limits.
+- Circular-import diagnostics include the closing require site.
 
 ## Next priorities
 
-1. Improve loader path and source-map diagnostics for include-site context while
-   preserving precise source locations.
+1. Improve loader path and source-map diagnostics for remaining resource and
+   embedding limits while preserving precise source locations.
 
 ## Later experiments
 
