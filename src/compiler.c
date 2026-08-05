@@ -2114,31 +2114,31 @@ static uint8_t compile_begin(Compiler *compiler) {
             compiler->locals[compiler->local_count++]=(Local){
                 .name=compiler->current.span,.reg=exception};
             advance_token(compiler);
-            if(compiler->current.kind==DIAMOND_TOKEN_COLON) {
-                advance_token(compiler);
-                size_t type_count=0;
-                while(!compiler->failed) {
-                    if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER) {
-                        fail(compiler,compiler->current.span,"expected rescue type");break;
-                    }
-                    if(type_count==8) {
-                        fail(compiler,compiler->current.span,"too many rescue types");break;
-                    }
-                    const uint8_t rescue_type=(uint8_t)resolve_type(
-                        compiler,compiler->current.span);
-                    if(rescue_type>=DIAMOND_TYPE_VARIABLE_BASE&&
-                       rescue_type<DIAMOND_TYPE_INTERFACE_BASE) {
-                        fail(compiler,compiler->current.span,
-                             "generic type variables cannot filter rescue");break;
-                    }
-                    compiler->function->code[handler_types_operand+type_count++]=
-                        rescue_type;
-                    advance_token(compiler);
-                    if(compiler->current.kind!=DIAMOND_TOKEN_PIPE)break;
-                    advance_token(compiler);
+        }
+        if(compiler->current.kind==DIAMOND_TOKEN_COLON) {
+            advance_token(compiler);
+            size_t type_count=0;
+            while(!compiler->failed) {
+                if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER) {
+                    fail(compiler,compiler->current.span,"expected rescue type");break;
                 }
-                compiler->function->code[handler_type_operand]=(uint8_t)type_count;
+                if(type_count==8) {
+                    fail(compiler,compiler->current.span,"too many rescue types");break;
+                }
+                const uint8_t rescue_type=(uint8_t)resolve_type(
+                    compiler,compiler->current.span);
+                if(rescue_type>=DIAMOND_TYPE_VARIABLE_BASE&&
+                   rescue_type<DIAMOND_TYPE_INTERFACE_BASE) {
+                    fail(compiler,compiler->current.span,
+                         "generic type variables cannot filter rescue");break;
+                }
+                compiler->function->code[handler_types_operand+type_count++]=
+                    rescue_type;
+                advance_token(compiler);
+                if(compiler->current.kind!=DIAMOND_TOKEN_PIPE)break;
+                advance_token(compiler);
             }
+            compiler->function->code[handler_type_operand]=(uint8_t)type_count;
         }
         if(!consume_block_start(compiler))return destination;
         const int outer_exception=compiler->current_exception;

@@ -148,6 +148,7 @@ future work.
 - Normal-completion `else` branches in `begin`/`rescue` expressions.
 - Bare re-raise of the current rescued exception.
 - Rescue-local `retry` with stable ensure-frame behavior.
+- Binding-free typed rescue filters.
 
 ## Next priorities
 

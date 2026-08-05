@@ -1526,4 +1526,13 @@ if "$diamond" -e $'retry' >/dev/null 2>&1; then
     exit 1
 fi
 
-echo "379 tests passed"
+actual="$($diamond -e $'begin\n 1 / 0\nrescue : ZeroDivisionError\n 42\nend')"
+[[ "$actual" == "42" ]]
+
+actual="$($diamond -e $'begin\n [1][4]\nrescue : TypeError | IndexError\n 42\nend')"
+[[ "$actual" == "42" ]]
+
+actual="$($diamond -e $'begin\n 1 / 0\nrescue error: ZeroDivisionError\n error\nend')"
+[[ "$actual" == "#<ZeroDivisionError>" ]]
+
+echo "382 tests passed"

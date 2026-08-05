@@ -378,6 +378,10 @@ is scoped across nested rescue blocks and cleared for nested function bodies.
 protected body. The surrounding ensure frame remains installed, so repeated
 attempts do not duplicate cleanup and final completion runs it exactly once.
 
+The colon introducing rescue filters is independent of the optional local
+binding. Both `rescue error: TypeError` and `rescue : TypeError` therefore emit
+the same handler type table; only the former adds a lexical local.
+
 `value is Type` emits a non-throwing runtime predicate and has comparison
 precedence. For a direct conditional test, union members accepted by `Type`
 (including nominal subclasses) flow into the true branch and the complement
