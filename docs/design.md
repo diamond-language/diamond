@@ -304,6 +304,11 @@ that table from the named class through its superclass chain, while `Class.new`
 continues to use constructor allocation and `initialize`. Singleton overrides
 do not alter instance dispatch, and their functions have no receiver slot.
 
+Method descriptors carry private visibility through inheritance and module
+inclusion. Runtime invocation accepts a private descriptor only when executing a
+method chunk and invoking register zero (`self`); calls through ordinary
+external receiver registers fail through the normal rescuable type-error path.
+
 For a direct `value == nil` or `value != nil` condition, the compiler splits a
 union type-set into nil and non-nil branch facts. Facts for locals that existed
 before the branch are merged at the join; disagreement becomes unknown, so

@@ -2020,6 +2020,8 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     vm,chunk,chunk->code+instruction_offset,instance->class,
                     method_name->chars,method_name->length);
                 if(method==nullptr) VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                if(method->is_private&&!(chunk->parameter_offset==1&&recv==0))
+                    VM_RETURN(DIAMOND_VM_TYPE_ERROR);
                 if(argc<method->required_arity||argc>method->arity)
                     VM_RETURN(DIAMOND_VM_ARITY_ERROR);
                 DiamondValue args[17];args[0]=registers[recv];

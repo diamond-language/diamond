@@ -1234,4 +1234,19 @@ if "$diamond" -e $'class Factory\n def self.answer() = 1\n def self.answer() = 2
     exit 1
 fi
 
-echo "291 tests passed"
+actual="$($diamond -e $'class Vault\n def reveal() = self.answer()\n private\n def answer() = 42\nend\nVault.new().reveal()')"
+[[ "$actual" == "42" ]]
+
+actual="$($diamond -e $'class Vault\n private\n def answer() = 42\nend\nbegin\n Vault.new().answer()\nrescue error: TypeError\n 42\nend')"
+[[ "$actual" == "42" ]]
+
+actual="$($diamond -e $'class Parent\n private\n def answer() = 42\nend\nclass Child < Parent\n def reveal() = self.answer()\nend\nChild.new().reveal()')"
+[[ "$actual" == "42" ]]
+
+actual="$($diamond -e $'module Hidden\n private\n def answer() = 42\nend\nclass Box\n def reveal() = self.answer()\n include Hidden\nend\nBox.new().reveal()')"
+[[ "$actual" == "42" ]]
+
+actual="$($diamond -e $'module Hidden\n private\n def answer() = 42\nend\nclass Box\n include Hidden\nend\nbegin\n Box.new().answer()\nrescue error: TypeError\n 42\nend')"
+[[ "$actual" == "42" ]]
+
+echo "296 tests passed"

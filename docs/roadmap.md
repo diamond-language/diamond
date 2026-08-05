@@ -111,10 +111,12 @@ future work.
   generics, nested namespaces, and strict separation from included methods.
 - Class singleton methods with generic specialization, defaults, independent
   overrides, and superclass-chain lookup alongside dedicated constructors.
+- Private instance methods across classes, inheritance, and modules, restricted
+  to explicit `self` calls from method frames.
 
 ## Next priorities
 
-1. Add method visibility controls beginning with `private`.
+1. Add `public` visibility toggling and private-call diagnostics.
 
 ## Later experiments
 

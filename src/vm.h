@@ -138,6 +138,7 @@ typedef struct DiamondMethod {
     uint8_t arity;
     uint8_t required_arity;
     bool included;
+    bool is_private;
 } DiamondMethod;
 
 typedef struct DiamondInterfaceMethod {

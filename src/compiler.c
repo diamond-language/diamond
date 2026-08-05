@@ -51,6 +51,7 @@ typedef struct Compiler {
     uint16_t next_register;
     int current_class;
     int current_module;
+    bool methods_private;
     DiamondSpan current_method;
     bool in_method;
     uint8_t known_types[256];
@@ -2442,6 +2443,7 @@ static uint8_t compile_definition(Compiler *compiler) {
             method->arity=(uint8_t)(function->arity-1);
             method->required_arity=(uint8_t)(function->required_arity-1);
             method->included=false;
+            method->is_private=compiler->methods_private;
         }
     } else if(compiler->current_class>=0&&module_singleton&&
               !compiler->failed&&at_top_level) {
@@ -2480,6 +2482,7 @@ static uint8_t compile_definition(Compiler *compiler) {
                 method->arity=(uint8_t)(function->arity-1);
                 method->required_arity=(uint8_t)(function->required_arity-1);
                 method->included=false;
+                method->is_private=compiler->methods_private;
             }
         }
     } else if(compiler->current_module>=0&&module_singleton&&
@@ -2560,8 +2563,12 @@ static uint8_t compile_class(Compiler *compiler) {
     }
     if(!consume_block_start(compiler)) return 0;
     const int outer=compiler->current_class; compiler->current_class=index;
+    const bool outer_private=compiler->methods_private;
+    compiler->methods_private=false;
     while(!compiler->failed && compiler->current.kind!=DIAMOND_TOKEN_END) {
-        if(compiler->current.kind==DIAMOND_TOKEN_INCLUDE) {
+        if(compiler->current.kind==DIAMOND_TOKEN_PRIVATE) {
+            compiler->methods_private=true;advance_token(compiler);
+        } else if(compiler->current.kind==DIAMOND_TOKEN_INCLUDE) {
             advance_token(compiler);
             if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER) {
                 fail(compiler,compiler->current.span,
@@ -2612,6 +2619,7 @@ static uint8_t compile_class(Compiler *compiler) {
         if(compiler->current.kind==DIAMOND_TOKEN_NEWLINE) skip_newlines(compiler);
     }
     compiler->current_class=outer;
+    compiler->methods_private=outer_private;
     if(compiler->current.kind==DIAMOND_TOKEN_END) advance_token(compiler);
     const uint8_t result=allocate_register(compiler);
     emit_instruction(compiler,DIAMOND_OP_NIL,result,0,0,1); return result;
@@ -2643,8 +2651,12 @@ static uint8_t compile_module(Compiler *compiler) {
     advance_token(compiler);
     if(!consume_block_start(compiler))return 0;
     const int outer=compiler->current_module;compiler->current_module=index;
+    const bool outer_private=compiler->methods_private;
+    compiler->methods_private=false;
     while(!compiler->failed&&compiler->current.kind!=DIAMOND_TOKEN_END) {
-        if(compiler->current.kind==DIAMOND_TOKEN_IDENTIFIER&&
+        if(compiler->current.kind==DIAMOND_TOKEN_PRIVATE) {
+            compiler->methods_private=true;advance_token(compiler);
+        } else if(compiler->current.kind==DIAMOND_TOKEN_IDENTIFIER&&
            assignment_ahead(compiler)) {
             const DiamondSpan constant_name=compiler->current.span;
             const char first=compiler->source[constant_name.start];
@@ -2735,6 +2747,7 @@ static uint8_t compile_module(Compiler *compiler) {
         if(compiler->current.kind==DIAMOND_TOKEN_NEWLINE)skip_newlines(compiler);
     }
     compiler->current_module=outer;
+    compiler->methods_private=outer_private;
     if(compiler->current.kind==DIAMOND_TOKEN_END)advance_token(compiler);
     const uint8_t result=allocate_register(compiler);
     emit_instruction(compiler,DIAMOND_OP_NIL,result,0,0,1);
