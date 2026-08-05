@@ -2703,7 +2703,13 @@ static void compile_attribute(Compiler *compiler,bool reader,bool writer) {
 
 static void compile_visibility(Compiler *compiler,bool is_private) {
     advance_token(compiler);
+    const bool parenthesized=compiler->current.kind==DIAMOND_TOKEN_LEFT_PAREN;
+    if(parenthesized)advance_token(compiler);
     if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER) {
+        if(parenthesized) {
+            fail(compiler,compiler->current.span,
+                 "expected method name in visibility list");return;
+        }
         compiler->methods_private=is_private;return;
     }
     while(!compiler->failed) {
@@ -2748,6 +2754,13 @@ static void compile_visibility(Compiler *compiler,bool is_private) {
         if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER) {
             fail(compiler,compiler->current.span,"expected method after ','");return;
         }
+    }
+    if(parenthesized) {
+        if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
+            fail(compiler,compiler->current.span,
+                 "expected ')' after visibility targets");return;
+        }
+        advance_token(compiler);
     }
 }
 

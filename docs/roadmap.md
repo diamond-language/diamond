@@ -130,6 +130,7 @@ future work.
 - Class and module singleton writer definitions and qualified invocation.
 - Targeted visibility changes for generated and handwritten writer methods.
 - Parenthesized reader, writer, and accessor declaration syntax.
+- Parenthesized targeted visibility syntax.
 
 ## Next priorities
 

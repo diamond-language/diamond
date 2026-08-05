@@ -1373,4 +1373,7 @@ actual="$($diamond -e $'class Box\n attr_writer value\n private value=\n def ass
 actual="$($diamond -e $'class Point\n attr_accessor(x, y)\nend\npoint=Point.new()\npoint.x=(20)\npoint.y=(22)\npoint.x() + point.y()')"
 [[ "$actual" == "42" ]]
 
-echo "332 tests passed"
+actual="$($diamond -e $'class Box\n attr_reader value\n private(value)\n def reveal() = self.value()\nend\nBox.new().reveal()')"
+[[ "$actual" == "nil" ]]
+
+echo "333 tests passed"

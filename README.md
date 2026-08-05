@@ -28,7 +28,7 @@ Implemented today:
 - stop-the-world mark/sweep collection with stress-GC testing;
 - source diagnostics and bytecode disassembly.
 
-The test suite currently contains 332 end-to-end assertions spanning the
+The test suite currently contains 333 end-to-end assertions spanning the
 frontend, compiler, VM, object model, type guards, collections, and collector.
 
 ## Build and run
@@ -299,6 +299,7 @@ method name. `public` restores public visibility for subsequent definitions.
 Supplying names changes existing methods without altering the default, for
 example `private token, secret` or `public name`.
 Writer names may be targeted with their suffix, as in `private value=`.
+Target lists may also be parenthesized: `private(name, token)`.
 
 `attr_reader name` and `attr_writer name` generate compact field-backed methods
 in classes or modules. Writers are invoked as `object.name=(value)`; generated
