@@ -72,10 +72,12 @@ future work.
 - Non-throwing `is` predicates with primitive and nominal union narrowing.
 - Runtime `Callable[n]` contracts for Diamond core callbacks.
 - Declared `Callable[n, Return]` result contracts and typed array transforms.
+- First structural interface, `Sized`, implemented by native containers and
+  user classes that provide zero-arity `length`.
 
 ## Next priorities
 
-1. Structural interfaces for shared collection behavior.
+1. User-declared structural interfaces with method-signature requirements.
 2. Endless method definitions (`def name(...) = expression`), followed by
    default arguments and string interpolation so forms such as
    `def greet(name = "world") = "Hello, #{name}"` work end to end.

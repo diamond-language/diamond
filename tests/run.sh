@@ -789,4 +789,22 @@ actual="$($diamond -e $'class Animal\nend\nclass Dog < Animal\nend\ndef run()\n 
 actual="$($diamond --dump-bytecode -e $'def accept(callback: Callable[1, String])\n callback(1)\nend')"
 grep -q 'Callable\[1, String\]' <<<"$actual"
 
-echo "155 tests passed"
+actual="$($diamond -e $'def size(value: Sized) -> Int\n value.length()\nend\n[size("abc"), size([1, 2]), size({"a": 1})]')"
+[[ "$actual" == "[3, 2, 1]" ]]
+
+actual="$($diamond -e $'class Box\n def length() -> Int\n  42\n end\nend\ndef size(value: Sized) -> Int\n value.length()\nend\n[size(Box.new()), Box.new() is Sized, 42 is Sized]')"
+[[ "$actual" == "[42, true, false]" ]]
+
+actual="$($diamond -e $'class Parent\n def length() -> Int\n  42\n end\nend\nclass Child < Parent\nend\ndef size(value: Sized) -> Int\n value.length()\nend\nsize(Child.new())')"
+[[ "$actual" == "42" ]]
+
+actual="$($diamond -e $'def size(value: Sized) -> Int\n value.length()\nend\ndef dynamic(values: Array)\n begin\n  size(values[0])\n rescue error: TypeError\n  42\n end\nend\ndynamic([1])')"
+[[ "$actual" == "42" ]]
+
+actual="$($diamond -e $'def length_or_zero(value: Sized | Nil) -> Int\n if value is Sized\n  value.length()\n else\n  0\n end\nend\n[length_or_zero([1, 2]), length_or_zero(nil)]')"
+[[ "$actual" == "[2, 0]" ]]
+
+actual="$($diamond --dump-bytecode -e $'def size(value: Sized)\n value.length()\nend')"
+grep -q 'CHECK_TYPE.*Sized' <<<"$actual"
+
+echo "161 tests passed"

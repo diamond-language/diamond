@@ -27,7 +27,7 @@ Implemented today:
 - stop-the-world mark/sweep collection with stress-GC testing;
 - source diagnostics and bytecode disassembly.
 
-The test suite currently contains 155 end-to-end assertions spanning the
+The test suite currently contains 161 end-to-end assertions spanning the
 frontend, compiler, VM, object model, type guards, collections, and collector.
 
 ## Build and run
@@ -153,7 +153,9 @@ end
 ```
 
 Available annotations are `Int`, `String`, `Bool`, `Nil`, `Array`, `Hash`, and
-declared class names. Pipe-separated unions may contain up to eight types, and
+declared class names. `Sized` is a structural interface requiring a zero-arity
+`length` method; strings, arrays, hashes, and matching user classes satisfy it
+without an explicit declaration. Pipe-separated unions may contain up to eight types, and
 nominal members accept subclasses. Arrays accept recursive element annotations,
 such as `Array[Int | Nil]` and `Array[Array[String]]`. Hashes accept independent
 key and value annotations, such as `Hash[String, Array[Int]]`.

@@ -345,6 +345,22 @@ static bool value_matches_type(const DiamondChunk *chunk, DiamondValue value,
         value.as.object->kind==DIAMOND_OBJECT_HASH;
     if(type==DIAMOND_TYPE_CALLABLE) return value.kind==DIAMOND_VALUE_OBJECT &&
         value.as.object->kind==DIAMOND_OBJECT_CLOSURE;
+    if(type==DIAMOND_TYPE_SIZED) {
+        if(value.kind!=DIAMOND_VALUE_OBJECT)return false;
+        if(value.as.object->kind==DIAMOND_OBJECT_STRING||
+           value.as.object->kind==DIAMOND_OBJECT_ARRAY||
+           value.as.object->kind==DIAMOND_OBJECT_HASH)return true;
+        if(value.as.object->kind!=DIAMOND_OBJECT_INSTANCE)return false;
+        const DiamondClass *class=((DiamondInstance *)value.as.object)->class;
+        while(class!=nullptr) {
+            for(size_t index=0;index<class->method_count;index++)
+                if(strcmp(class->methods[index].name,"length")==0&&
+                   class->methods[index].arity==0)return true;
+            class=class->superclass==UINT8_MAX?nullptr:
+                &chunk->classes[class->superclass];
+        }
+        return false;
+    }
     const size_t class_index=(size_t)(type-DIAMOND_TYPE_CLASS_BASE);
     if(class_index>=chunk->class_count || value.kind!=DIAMOND_VALUE_OBJECT ||
        value.as.object->kind!=DIAMOND_OBJECT_INSTANCE) return false;
@@ -369,6 +385,21 @@ static bool runtime_set_satisfies(const DiamondChunk *chunk,
 static bool runtime_type_id_satisfies(const DiamondChunk *chunk,uint8_t known,
                                       uint8_t expected) {
     if(known==expected)return true;
+    if(expected==DIAMOND_TYPE_SIZED) {
+        if(known==DIAMOND_TYPE_STRING||known==DIAMOND_TYPE_ARRAY||
+           known==DIAMOND_TYPE_HASH)return true;
+        if(known<DIAMOND_TYPE_CLASS_BASE)return false;
+        size_t index=(size_t)(known-DIAMOND_TYPE_CLASS_BASE);
+        while(index<chunk->class_count) {
+            const DiamondClass *class=&chunk->classes[index];
+            for(size_t method=0;method<class->method_count;method++)
+                if(strcmp(class->methods[method].name,"length")==0&&
+                   class->methods[method].arity==0)return true;
+            if(class->superclass==UINT8_MAX)break;
+            index=class->superclass;
+        }
+        return false;
+    }
     if(known<DIAMOND_TYPE_CLASS_BASE||expected<DIAMOND_TYPE_CLASS_BASE)return false;
     size_t index=(size_t)(known-DIAMOND_TYPE_CLASS_BASE);
     const size_t wanted=(size_t)(expected-DIAMOND_TYPE_CLASS_BASE);
@@ -592,6 +623,7 @@ static const char *type_name(const DiamondChunk *chunk,uint8_t type) {
     else if(type==DIAMOND_TYPE_ARRAY) name="Array";
     else if(type==DIAMOND_TYPE_HASH) name="Hash";
     else if(type==DIAMOND_TYPE_CALLABLE) name="Callable";
+    else if(type==DIAMOND_TYPE_SIZED) name="Sized";
     else {
         const size_t index=(size_t)(type-DIAMOND_TYPE_CLASS_BASE);
         if(index<chunk->class_count) name=chunk->classes[index].name;

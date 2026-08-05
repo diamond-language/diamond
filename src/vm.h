@@ -79,6 +79,7 @@ typedef enum DiamondTypeId : uint8_t {
     DIAMOND_TYPE_ARRAY,
     DIAMOND_TYPE_HASH,
     DIAMOND_TYPE_CALLABLE,
+    DIAMOND_TYPE_SIZED,
     DIAMOND_TYPE_CLASS_BASE,
 } DiamondTypeId;
 

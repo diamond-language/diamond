@@ -1,6 +1,7 @@
 #include "compiler.h"
 
 #include <limits.h>
+#include <string.h>
 
 enum { DIAMOND_MAX_LOCALS = 64 };
 enum { TYPE_UNKNOWN = UINT8_MAX };
@@ -136,6 +137,21 @@ static uint8_t allocate_register(Compiler *compiler) {
 static bool known_type_satisfies_one(const Compiler *compiler, uint8_t known,
                                      uint8_t expected) {
     if(known==expected) return true;
+    if(expected==DIAMOND_TYPE_SIZED) {
+        if(known==DIAMOND_TYPE_STRING||known==DIAMOND_TYPE_ARRAY||
+           known==DIAMOND_TYPE_HASH)return true;
+        if(known<DIAMOND_TYPE_CLASS_BASE)return false;
+        size_t class_index=(size_t)(known-DIAMOND_TYPE_CLASS_BASE);
+        while(class_index<compiler->program->class_count) {
+            const DiamondClass *class=&compiler->program->classes[class_index];
+            for(size_t index=0;index<class->method_count;index++)
+                if(strcmp(class->methods[index].name,"length")==0&&
+                   class->methods[index].arity==0)return true;
+            if(class->superclass==UINT8_MAX)break;
+            class_index=class->superclass;
+        }
+        return false;
+    }
     if(known<DIAMOND_TYPE_CLASS_BASE || expected<DIAMOND_TYPE_CLASS_BASE)
         return false;
     size_t class_index=(size_t)(known-DIAMOND_TYPE_CLASS_BASE);
@@ -476,6 +492,7 @@ static int resolve_type(Compiler *compiler, DiamondSpan name) {
     if (name_equals(compiler, "Array", name, false)) return DIAMOND_TYPE_ARRAY;
     if (name_equals(compiler, "Hash", name, false)) return DIAMOND_TYPE_HASH;
     if (name_equals(compiler, "Callable", name, false)) return DIAMOND_TYPE_CALLABLE;
+    if (name_equals(compiler, "Sized", name, false)) return DIAMOND_TYPE_SIZED;
     const int class_index = find_class(compiler, name);
     if (class_index >= 0) return DIAMOND_TYPE_CLASS_BASE + class_index;
     fail(compiler, name, "unknown type annotation");

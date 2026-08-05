@@ -50,6 +50,7 @@ static bool print_type_set(FILE *stream,const DiamondChunk *chunk,
         else if(type==DIAMOND_TYPE_ARRAY) fputs("Array",stream);
         else if(type==DIAMOND_TYPE_HASH) fputs("Hash",stream);
         else if(type==DIAMOND_TYPE_CALLABLE) fputs("Callable",stream);
+        else if(type==DIAMOND_TYPE_SIZED) fputs("Sized",stream);
         else if((size_t)(type-DIAMOND_TYPE_CLASS_BASE)<chunk->class_count)
             fputs(chunk->classes[type-DIAMOND_TYPE_CLASS_BASE].name,stream);
         else {fputs("<invalid type>",stream);valid=false;}
@@ -300,6 +301,7 @@ static bool disassemble_chunk(FILE *stream, const char *name,
                 else if(type==DIAMOND_TYPE_ARRAY) fputs("Array",stream);
                 else if(type==DIAMOND_TYPE_HASH) fputs("Hash",stream);
                 else if(type==DIAMOND_TYPE_CALLABLE) fputs("Callable",stream);
+                else if(type==DIAMOND_TYPE_SIZED) fputs("Sized",stream);
                 else if((size_t)(type-DIAMOND_TYPE_CLASS_BASE)<chunk->class_count)
                     fputs(chunk->classes[type-DIAMOND_TYPE_CLASS_BASE].name,stream);
                 else {fputs("<invalid type>",stream);valid=false;}

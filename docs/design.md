@@ -160,6 +160,12 @@ Annotations are optional. Parameters are checked on function entry and return
 values on every implicit or explicit exit unless the compiler proves the guard
 redundant.
 
+`Sized` is Diamond's first structural interface. Its contract is a zero-arity
+`length` method. `String`, `Array`, and `Hash` satisfy it natively; user classes
+satisfy it by defining or inheriting a method with that name and arity. The same
+structural test drives annotation checks, subtype reasoning, union narrowing,
+and the non-throwing `is Sized` predicate.
+
 Closure objects satisfy `Callable`. An optional integer argument, as in
 `Callable[2]`, checks the referenced bytecode function's arity at the typed
 boundary. Core collection callbacks use these contracts, so invalid callbacks
