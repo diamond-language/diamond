@@ -55,7 +55,8 @@ top-level functions, classes, and interfaces. Diagnostics retain the imported
 file's path and original line. With `-e`, relative paths start at the current
 working directory. `require` is a standalone source directive; it cannot be
 used as a conditional expression. Nested imports preserve the deepest source
-file in diagnostics, including missing and unreadable dependency paths.
+file in diagnostics, including missing and unreadable dependency paths. Cycles
+also report the importing file and line that closed the cycle.
 
 Build variants:
 
