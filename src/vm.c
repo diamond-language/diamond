@@ -44,6 +44,7 @@ static void mark_value(DiamondValue value) {
 }
 
 void diamond_vm_collect(DiamondVm *vm) {
+    if(vm->has_exception)mark_value(vm->exception);
     for (DiamondFrame *frame = vm->frames; frame != nullptr;
          frame = frame->previous) {
         for (size_t index = 0; index < DIAMOND_REGISTER_COUNT; index++) {
@@ -932,6 +933,24 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 *result = registers[source];
                 VM_RETURN(DIAMOND_VM_OK);
             }
+            case DIAMOND_OP_RAISE: {
+                uint8_t source=0;READ_BYTE(source);
+                vm->exception=registers[source];vm->has_exception=true;
+                if(vm->exception.kind==DIAMOND_VALUE_INT)
+                    snprintf(vm->error,sizeof vm->error,"uncaught exception: %" PRId64,
+                             vm->exception.as.integer);
+                else if(vm->exception.kind==DIAMOND_VALUE_BOOL)
+                    snprintf(vm->error,sizeof vm->error,"uncaught exception: %s",
+                             vm->exception.as.boolean?"true":"false");
+                else if(vm->exception.kind==DIAMOND_VALUE_NIL)
+                    snprintf(vm->error,sizeof vm->error,"uncaught exception: nil");
+                else if(vm->exception.as.object->kind==DIAMOND_OBJECT_STRING) {
+                    const DiamondString *string=(const DiamondString *)vm->exception.as.object;
+                    snprintf(vm->error,sizeof vm->error,"uncaught exception: %.*s",
+                             (int)string->length,string->chars);
+                } else snprintf(vm->error,sizeof vm->error,"uncaught exception: object");
+                VM_RETURN(DIAMOND_VM_EXCEPTION);
+            }
             default:
                 VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
         }
@@ -948,6 +967,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
 DiamondVmStatus diamond_vm_run(DiamondVm *vm, const DiamondChunk *chunk,
                                DiamondValue *result) {
     vm->error[0]='\0';
+    vm->has_exception=false;
     memset(vm->method_caches,0,sizeof(vm->method_caches));
     vm->inline_cache_hits=0;
     vm->inline_cache_misses=0;
@@ -979,6 +999,8 @@ const char *diamond_vm_status_name(DiamondVmStatus status) {
             return "out of memory";
         case DIAMOND_VM_INDEX_ERROR:
             return "array index out of bounds";
+        case DIAMOND_VM_EXCEPTION:
+            return "uncaught exception";
     }
     return "unknown VM status";
 }

@@ -486,4 +486,18 @@ actual="$(DIAMOND_TRACE_SHAPES=1 "$diamond" tests/cases/runtime_shapes.dia 2>"$e
 grep -q 'shape transitions: 1' "$error_file"
 rm -f "$error_file"
 
-echo "82 tests passed"
+error_file="$(mktemp)"
+if DIAMOND_STRESS_GC=1 "$diamond" tests/cases/raise_stack.dia >/dev/null 2>"$error_file"; then
+    echo "raised value unexpectedly returned" >&2
+    exit 1
+fi
+grep -q 'runtime error: uncaught exception: diamond cracked' "$error_file"
+grep -q 'at fail:2:' "$error_file"
+grep -q 'at call_fail:6:' "$error_file"
+grep -q 'at tests/cases/raise_stack.dia:9:' "$error_file"
+rm -f "$error_file"
+
+actual="$("$diamond" --dump-bytecode -e 'raise 42' 2>/dev/null || true)"
+grep -q 'RAISE' <<<"$actual"
+
+echo "83 tests passed"

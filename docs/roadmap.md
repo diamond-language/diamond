@@ -53,11 +53,12 @@ future work.
   recursively nested lexical environments.
 - VM-owned four-entry polymorphic caches for dynamic method call sites.
 - Class-owned runtime shape chains with lazy instance field transitions.
+- Value-carrying `raise` with source-mapped cross-call unwinding.
 
 ## Next priorities
 
 1. Shape-guarded field inline caches.
-2. Structured runtime exceptions.
+2. `begin`/`rescue` exception handlers and exception classes.
 3. Generic collection annotations and general unions.
 4. A small core library implemented partly in Diamond.
 

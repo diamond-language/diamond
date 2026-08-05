@@ -277,6 +277,9 @@ static bool disassemble_chunk(FILE *stream, const char *name,
             case DIAMOND_OP_RETURN:
                 offset = one_register(stream, chunk, "RETURN", offset);
                 break;
+            case DIAMOND_OP_RAISE:
+                offset = one_register(stream, chunk, "RAISE", offset);
+                break;
             default:
                 fprintf(stream, "<unknown opcode %u>\n", chunk->code[offset]);
                 valid = false;

@@ -1056,6 +1056,19 @@ static uint8_t compile_return(Compiler *compiler) {
     return value;
 }
 
+static uint8_t compile_raise(Compiler *compiler) {
+    const DiamondSpan keyword=compiler->current.span;
+    advance_token(compiler);
+    if(compiler->current.kind==DIAMOND_TOKEN_NEWLINE ||
+       compiler->current.kind==DIAMOND_TOKEN_END ||
+       compiler->current.kind==DIAMOND_TOKEN_EOF) {
+        fail(compiler,keyword,"'raise' requires a value");return 0;
+    }
+    const uint8_t value=parse_expression(compiler);
+    emit_instruction(compiler,DIAMOND_OP_RAISE,value,0,0,1);
+    return value;
+}
+
 static uint8_t compile_loop_control(Compiler *compiler) {
     const DiamondTokenKind kind=compiler->current.kind;
     const DiamondSpan keyword=compiler->current.span;
@@ -1402,6 +1415,8 @@ static uint8_t compile_sequence(Compiler *compiler) {
             result = compile_class(compiler);
         } else if (compiler->current.kind == DIAMOND_TOKEN_RETURN) {
             result=compile_return(compiler);
+        } else if (compiler->current.kind == DIAMOND_TOKEN_RAISE) {
+            result=compile_raise(compiler);
         } else if (compiler->current.kind == DIAMOND_TOKEN_BREAK ||
                    compiler->current.kind == DIAMOND_TOKEN_NEXT) {
             result=compile_loop_control(compiler);

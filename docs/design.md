@@ -37,6 +37,11 @@ The disassembler displays these coordinates, and the VM uses them while
 unwinding failed calls to build Diamond-level stack traces without exposing C
 implementation frames.
 
+`raise value` emits a dedicated exception opcode. The VM roots the raised
+Diamond value and propagates a distinct exception status through functions,
+methods, and closures, appending the same source-mapped frames used by runtime
+errors. Bytecode-level rescue handlers are the next exception milestone.
+
 The compiler tracks exact types for locally obvious temporary values. It removes
 provably redundant type guards, rejects provable mismatches, and leaves runtime
 guards at dynamic boundaries. Mutable and uncertain flows are treated

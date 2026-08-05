@@ -60,6 +60,7 @@ typedef enum DiamondOpCode : uint8_t {
     DIAMOND_OP_NOT,
     DIAMOND_OP_JUMP_IF_TRUE,
     DIAMOND_OP_RETURN,
+    DIAMOND_OP_RAISE,
 } DiamondOpCode;
 
 typedef enum DiamondTypeId : uint8_t {
@@ -146,6 +147,7 @@ typedef enum DiamondVmStatus : uint8_t {
     DIAMOND_VM_STACK_OVERFLOW,
     DIAMOND_VM_OUT_OF_MEMORY,
     DIAMOND_VM_INDEX_ERROR,
+    DIAMOND_VM_EXCEPTION,
 } DiamondVmStatus;
 
 typedef struct DiamondMethodCacheEntry {
@@ -170,6 +172,8 @@ typedef struct DiamondVm {
     size_t inline_cache_hits;
     size_t inline_cache_misses;
     size_t shape_transitions;
+    DiamondValue exception;
+    bool has_exception;
     char error[1024];
 } DiamondVm;
 
