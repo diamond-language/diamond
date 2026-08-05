@@ -1678,4 +1678,7 @@ actual="$($diamond -e $'error=RuntimeError.new("x")\nleft=begin\n error.message(
 [[ "$actual" == "42" ]]
 actual="$($diamond -e $'class CustomError < StandardError\n def initialize(code: Int)\n  @message="code #{code}"\n end\nend\nCustomError.new(42).message()')"
 [[ "$actual" == "code 42" ]]
-echo "433 tests passed"
+actual="$($diamond -e $'root=IndexError.new("root")\nwrapped=RuntimeError.new("wrapped", root)\nbegin\n raise wrapped\nrescue error: RuntimeError\n [error.message(), error.cause().message()]
+end')"
+[[ "$actual" == "[wrapped, root]" ]]
+echo "434 tests passed"

@@ -181,6 +181,7 @@ future work.
 - Stress-GC rooting for VM-created exception payloads.
 - Native exception accessor arity enforcement.
 - User initializer precedence over native exception construction.
+- Explicit cause preservation through raise and rescue.
 - Diagnostics for subclass filters shadowed by earlier superclass clauses.
 
 ## Next priorities
