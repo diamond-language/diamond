@@ -160,6 +160,7 @@ future work.
 - Unreachable repeated-type diagnostics across rescue clauses.
 - Normal-only `else` integration with multiple rescue clauses.
 - Retry integration from later rescue clauses.
+- Single-run ensure integration with multiple rescue clauses.
 
 ## Next priorities
 

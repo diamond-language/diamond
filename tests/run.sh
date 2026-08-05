@@ -1621,4 +1621,7 @@ actual="$($diamond -e $'begin\n 40\nrescue : TypeError\n 0\nrescue : IndexError\
 attempt="$($diamond -e $'attempts=0\nbegin\n attempts=attempts+1\n if attempts==1\n  [1][4]\n end\nrescue : TypeError\n 0\nrescue : IndexError\n retry\nelse\n 42\nend')"
 [[ "$attempt" == "42" ]]
 
-echo "408 tests passed"
+actual="$($diamond -e $'cleanup=0\nvalue=begin\n [1][4]\nrescue : TypeError\n 0\nrescue : IndexError\n 40\nensure\n cleanup=cleanup+1\nend\n[value+2, cleanup]')"
+[[ "$actual" == "[42, 1]" ]]
+
+echo "409 tests passed"
