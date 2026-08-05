@@ -79,3 +79,55 @@ end
 def hash_empty(values: Hash) -> Bool
   values.length() == 0
 end
+
+def hash_each(values: Hash, callback) -> Hash
+  index = 0
+  count = values.length()
+  while index < count
+    callback(values.key_at(index), values.value_at(index))
+    index = index + 1
+  end
+  values
+end
+
+def hash_keys(values: Hash) -> Array
+  result = []
+  index = 0
+  while index < values.length()
+    result.push(values.key_at(index))
+    index = index + 1
+  end
+  result
+end
+
+def hash_values(values: Hash) -> Array
+  result = []
+  index = 0
+  while index < values.length()
+    result.push(values.value_at(index))
+    index = index + 1
+  end
+  result
+end
+
+def hash_include_key(values: Hash, needle) -> Bool
+  index = 0
+  while index < values.length()
+    if values.key_at(index) == needle
+      return true
+    end
+    index = index + 1
+  end
+  false
+end
+
+def hash_map_values(values: Hash, callback) -> Hash
+  result = {}
+  index = 0
+  while index < values.length()
+    key = values.key_at(index)
+    result[key] = callback(values.value_at(index))
+    index = index + 1
+  end
+  result
+end

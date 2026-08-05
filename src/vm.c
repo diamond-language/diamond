@@ -1030,6 +1030,26 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                         else length=((DiamondString *)registers[recv].as.object)->length;
                         registers[dest]=DIAMOND_INT((int64_t)length);break;
                     }
+                    if(receiver_kind==DIAMOND_OBJECT_HASH) {
+                        const bool key_method=method_name->length==6&&
+                            memcmp(method_name->chars,"key_at",6)==0;
+                        const bool value_method=method_name->length==8&&
+                            memcmp(method_name->chars,"value_at",8)==0;
+                        if(!key_method&&!value_method)VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                        if(argc!=1)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                        if(registers[base].kind!=DIAMOND_VALUE_INT)
+                            VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                        DiamondHash *hash=(DiamondHash *)registers[recv].as.object;
+                        const int64_t index=registers[base].as.integer;
+                        if(index<0||(uint64_t)index>=hash->count) {
+                            snprintf(vm->error,sizeof vm->error,
+                                "index %" PRId64 " out of bounds for Hash of length %zu",
+                                index,hash->count);
+                            VM_RETURN(DIAMOND_VM_INDEX_ERROR);
+                        }
+                        const DiamondHashEntry entry=hash->entries[(size_t)index];
+                        registers[dest]=key_method?entry.key:entry.value;break;
+                    }
                     if(receiver_kind!=DIAMOND_OBJECT_ARRAY)
                         VM_RETURN(DIAMOND_VM_TYPE_ERROR);
                     DiamondArray *array=(DiamondArray *)registers[recv].as.object;

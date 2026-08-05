@@ -329,6 +329,30 @@ actual="$("$diamond" --dump-bytecode -e $'def unstable(value: String | Nil, flag
 unstable_dump="$(sed -n '/^== unstable ==$/,$p' <<<"$actual")"
 [[ "$(grep -c 'CHECK_TYPE' <<<"$unstable_dump")" == "3" ]]
 
+actual="$("$diamond" -e '{"first": 20, "second": 22}.key_at(1)')"
+[[ "$actual" == "second" ]]
+
+actual="$("$diamond" -e '{"first": 20, "second": 22}.value_at(1)')"
+[[ "$actual" == "22" ]]
+
+actual="$(DIAMOND_STRESS_GC=1 "$diamond" -e 'hash_keys({"first": 20, "second": 22})')"
+[[ "$actual" == "[first, second]" ]]
+
+actual="$(DIAMOND_STRESS_GC=1 "$diamond" -e 'hash_values({"first": 20, "second": 22})')"
+[[ "$actual" == "[20, 22]" ]]
+
+actual="$("$diamond" -e 'hash_include_key({"answer": 42}, "answer")')"
+[[ "$actual" == "true" ]]
+
+actual="$(DIAMOND_STRESS_GC=1 "$diamond" -e $'def sum_values()\n total = 0\n def add(key, value)\n  total = total + value\n end\n hash_each({"a": 20, "b": 22}, add)\n total\nend\nsum_values()')"
+[[ "$actual" == "42" ]]
+
+actual="$(DIAMOND_STRESS_GC=1 "$diamond" -e $'def transform()\n def double(value)\n  value * 2\n end\n hash_map_values({"a": 20, "b": 1}, double)\nend\ntransform()')"
+[[ "$actual" == "{a: 40, b: 2}" ]]
+
+actual="$("$diamond" -e $'begin\n {}.key_at(0)\nrescue error: IndexError\n 42\nend')"
+[[ "$actual" == "42" ]]
+
 actual="$("$diamond" --dump-bytecode -e $'def maybe(x: String | Nil) -> String | Nil\n x\nend\nmaybe(nil)')"
 grep -q 'String | Nil' <<<"$actual"
 
@@ -691,4 +715,4 @@ if "$diamond" -e $'begin\n raise 1\nrescue error: Int |\n 0\nend' \
     exit 1
 fi
 
-echo "128 tests passed"
+echo "136 tests passed"

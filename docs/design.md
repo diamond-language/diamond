@@ -89,6 +89,11 @@ of GC accounting. Native `push` grows that buffer and enforces every persistent
 element contract; `pop` returns `nil` when empty. Membership, callback iteration,
 and mapping are Diamond prelude loops built from these primitives.
 
+Hashes expose insertion-ordered `key_at(index)` and `value_at(index)` primitives;
+invalid positions raise `IndexError`. The prelude builds key/value extraction,
+membership, callback traversal, and value mapping on them. `hash_each` snapshots
+the initial length, so callback insertions are not visited during that traversal.
+
 ## Object model
 
 Classes are immutable module metadata rather than heap objects. Instances point

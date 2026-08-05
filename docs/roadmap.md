@@ -68,11 +68,12 @@ future work.
 - Flow-sensitive generic result facts for array and hash indexing.
 - Growable arrays with guarded `push`/`pop` and Diamond iteration helpers.
 - Branch-sensitive nil narrowing with conservative local-fact joins.
+- Ordered hash iteration primitives with Diamond-written transforms.
 
 ## Next priorities
 
-1. Hash iteration primitives and Diamond-written transforms.
-2. General type-test syntax and broader union narrowing.
+1. General type-test syntax and broader union narrowing.
+2. Collection callback contracts and typed transform results.
 
 ## Later experiments
 
