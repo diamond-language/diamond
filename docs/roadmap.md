@@ -179,6 +179,7 @@ future work.
 - Native message/cause construction for exception instances.
 - Exception constructor defaults and strict arity diagnostics.
 - Stress-GC rooting for VM-created exception payloads.
+- Native exception accessor arity enforcement.
 - Diagnostics for subclass filters shadowed by earlier superclass clauses.
 
 ## Next priorities

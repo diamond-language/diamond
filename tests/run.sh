@@ -1674,4 +1674,6 @@ actual="$($diamond -e $'error=RuntimeError.new()\n[error.message(), error.cause(
 if "$diamond" -e $'RuntimeError.new(1, 2, 3)' >/dev/null 2>&1; then exit 1; fi
 actual="$(DIAMOND_STRESS_GC=1 $diamond -e $'begin\n 1 / 0\nrescue error: ZeroDivisionError\n error.message()\nend')"
 [[ "$actual" == "division by zero" ]]
-echo "431 tests passed"
+actual="$($diamond -e $'error=RuntimeError.new("x")\nleft=begin\n error.message(1)\nrescue : ArgumentError\n 20\nend\nright=begin\n error.cause(1)\nrescue : ArgumentError\n 22\nend\nleft+right')"
+[[ "$actual" == "42" ]]
+echo "432 tests passed"
