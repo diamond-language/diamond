@@ -161,6 +161,7 @@ future work.
 - Normal-only `else` integration with multiple rescue clauses.
 - Retry integration from later rescue clauses.
 - Single-run ensure integration with multiple rescue clauses.
+- Bare re-raise integration from later rescue clauses.
 
 ## Next priorities
 
