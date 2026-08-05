@@ -402,6 +402,7 @@ runtime error: expected String | Nil, got Int
 - numeric separators such as `1_000_000`
 - trailing commas in arrays, calls, constructors, and parameter lists
 - `unless condition ... else ... end` as an inverted conditional expression
+- postfix `if` and `unless` modifiers for single-line expressions
 - `elsif` chains within `if` expressions
 - optional `then` after `if`, `unless`, and `elsif` conditions
 - optional `do` after `while` and `until` conditions
