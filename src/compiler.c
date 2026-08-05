@@ -2334,7 +2334,10 @@ static uint8_t compile_loop_control(Compiler *compiler) {
        compiler->current.kind!=DIAMOND_TOKEN_END&&
        compiler->current.kind!=DIAMOND_TOKEN_ELSE&&
        compiler->current.kind!=DIAMOND_TOKEN_EOF;
-    if(kind!=DIAMOND_TOKEN_BREAK&&has_value) {
+    const bool has_modifier = compiler->current.kind == DIAMOND_TOKEN_IF ||
+                              compiler->current.kind == DIAMOND_TOKEN_UNLESS;
+    const bool actual_value = has_value && !has_modifier;
+    if(kind!=DIAMOND_TOKEN_BREAK&&actual_value) {
         fail(compiler,compiler->current.span,
              "next and redo do not accept values");
         return 0;
@@ -2344,7 +2347,7 @@ static uint8_t compile_loop_control(Compiler *compiler) {
             fail(compiler,keyword,"too many break statements in loop");
             return 0;
         }
-        if(has_value) {
+        if(actual_value) {
             const uint8_t value=parse_expression(compiler);
             emit_instruction(compiler,DIAMOND_OP_MOVE,
                              compiler->current_loop->result_register,value,0,2);
