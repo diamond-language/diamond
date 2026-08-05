@@ -1303,4 +1303,18 @@ if "$diamond" -e $'class Broken\n attr_reader value,\nend' >/dev/null 2>&1; then
     exit 1
 fi
 
-echo "312 tests passed"
+actual="$($diamond -e $'class Box\n def hidden() = 42\n private hidden\n def reveal() = self.hidden()\nend\nBox.new().reveal()')"
+[[ "$actual" == "42" ]]
+
+actual="$($diamond -e $'class Box\n private\n def visible() = 42\n public visible\nend\nBox.new().visible()')"
+[[ "$actual" == "42" ]]
+
+actual="$($diamond -e $'module Mixed\n attr_reader first, second\n private first, second\nend\nclass Box\n include Mixed\n def reveal() = [self.first(), self.second()]\nend\nBox.new().reveal()')"
+[[ "$actual" == "[nil, nil]" ]]
+
+if "$diamond" -e $'class Box\n private missing\nend' >/dev/null 2>&1; then
+    echo "undefined visibility target unexpectedly compiled" >&2
+    exit 1
+fi
+
+echo "316 tests passed"

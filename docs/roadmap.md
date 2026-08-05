@@ -120,10 +120,12 @@ future work.
   private self-dispatch, while preserving endless-method parsing.
 - Combined `attr_accessor` generation for class and module fields.
 - Comma-separated multi-name reader, writer, and accessor declarations.
+- Targeted multi-name public/private changes for locally defined and generated
+  methods without altering subsequent-definition defaults.
 
 ## Next priorities
 
-1. Add targeted `private name` and `public name` visibility changes.
+1. Add `module_function name` to export selected module methods.
 
 ## Later experiments
 

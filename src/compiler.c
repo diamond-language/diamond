@@ -2643,6 +2643,41 @@ static void compile_attribute(Compiler *compiler,bool reader,bool writer) {
     }
 }
 
+static void compile_visibility(Compiler *compiler,bool is_private) {
+    advance_token(compiler);
+    if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER) {
+        compiler->methods_private=is_private;return;
+    }
+    while(!compiler->failed) {
+        const DiamondSpan name=compiler->current.span;
+        DiamondMethod *found=nullptr;
+        if(compiler->current_class>=0) {
+            DiamondClass *class=
+                &compiler->program->classes[(size_t)compiler->current_class];
+            for(size_t index=class->method_count;index>0;index--)
+                if(name_equals(compiler,class->methods[index-1].name,name,false)) {
+                    found=&class->methods[index-1];break;
+                }
+        } else {
+            DiamondModule *module=
+                &compiler->program->modules[(size_t)compiler->current_module];
+            for(size_t index=module->method_count;index>0;index--)
+                if(name_equals(compiler,module->methods[index-1].name,name,false)) {
+                    found=&module->methods[index-1];break;
+                }
+        }
+        if(found==nullptr) {
+            fail(compiler,name,"visibility target is not defined here");return;
+        }
+        found->is_private=is_private;advance_token(compiler);
+        if(compiler->current.kind!=DIAMOND_TOKEN_COMMA)break;
+        advance_token(compiler);
+        if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER) {
+            fail(compiler,compiler->current.span,"expected method after ','");return;
+        }
+    }
+}
+
 static uint8_t compile_class(Compiler *compiler) {
     advance_token(compiler);
     if (compiler->current.kind != DIAMOND_TOKEN_IDENTIFIER ||
@@ -2686,9 +2721,9 @@ static uint8_t compile_class(Compiler *compiler) {
     while(!compiler->failed && compiler->current.kind!=DIAMOND_TOKEN_END) {
         if(compiler->current.kind==DIAMOND_TOKEN_PRIVATE||
            compiler->current.kind==DIAMOND_TOKEN_PUBLIC) {
-            compiler->methods_private=
+            const bool private_visibility=
                 compiler->current.kind==DIAMOND_TOKEN_PRIVATE;
-            advance_token(compiler);
+            compile_visibility(compiler,private_visibility);
         } else if(compiler->current.kind==DIAMOND_TOKEN_ATTR_READER||
                   compiler->current.kind==DIAMOND_TOKEN_ATTR_WRITER||
                   compiler->current.kind==DIAMOND_TOKEN_ATTR_ACCESSOR) {
@@ -2783,9 +2818,9 @@ static uint8_t compile_module(Compiler *compiler) {
     while(!compiler->failed&&compiler->current.kind!=DIAMOND_TOKEN_END) {
         if(compiler->current.kind==DIAMOND_TOKEN_PRIVATE||
            compiler->current.kind==DIAMOND_TOKEN_PUBLIC) {
-            compiler->methods_private=
+            const bool private_visibility=
                 compiler->current.kind==DIAMOND_TOKEN_PRIVATE;
-            advance_token(compiler);
+            compile_visibility(compiler,private_visibility);
         } else if(compiler->current.kind==DIAMOND_TOKEN_ATTR_READER||
                   compiler->current.kind==DIAMOND_TOKEN_ATTR_WRITER||
                   compiler->current.kind==DIAMOND_TOKEN_ATTR_ACCESSOR) {
