@@ -367,6 +367,9 @@ condition register before the existing exit jump; `break` and `next` targets
 therefore retain identical semantics.
 Each loop also records the first body instruction separately from its condition;
 `redo` targets that offset, whereas `next` targets condition reevaluation.
+Loop expressions initialize a result register to `nil`; `break value` moves its
+operand into that register before jumping to the shared exit, while bare break
+retains the initialized value.
 
 A `begin` expression may place `else` after its rescue clause. Normal execution
 jumps over the handler into that branch, while rescued execution jumps past it;

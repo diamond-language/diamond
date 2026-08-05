@@ -27,6 +27,7 @@ typedef struct LoopContext {
     struct LoopContext *previous;
     size_t continue_target;
     size_t redo_target;
+    uint8_t result_register;
     size_t breaks[64];
     size_t break_count;
 } LoopContext;
@@ -1760,6 +1761,8 @@ static uint8_t parse_if(Compiler *compiler,bool inverted) {
 }
 
 static uint8_t parse_while(Compiler *compiler,bool inverted) {
+    const uint8_t destination=allocate_register(compiler);
+    emit_instruction(compiler,DIAMOND_OP_NIL,destination,0,0,1);
     const size_t loop_start = compiler->function->code_count;
     const uint8_t condition = parse_expression(compiler);
     if (!consume_block_start(compiler)) return 0;
@@ -1774,6 +1777,7 @@ static uint8_t parse_while(Compiler *compiler,bool inverted) {
         .previous=compiler->current_loop,
         .continue_target=loop_start,
         .redo_target=compiler->function->code_count,
+        .result_register=destination,
     };
     compiler->current_loop=&loop;
     (void)compile_sequence(compiler);
@@ -1788,9 +1792,6 @@ static uint8_t parse_while(Compiler *compiler,bool inverted) {
         return 0;
     }
     advance_token(compiler);
-    const uint8_t destination = allocate_register(compiler);
-    emit_instruction(compiler, DIAMOND_OP_NIL, destination, 0, 0, 1);
-    compiler->known_types[destination]=DIAMOND_TYPE_NIL;
     return destination;
 }
 
@@ -2210,18 +2211,24 @@ static uint8_t compile_loop_control(Compiler *compiler) {
         return 0;
     }
     advance_token(compiler);
-    if(compiler->current.kind!=DIAMOND_TOKEN_NEWLINE &&
-       compiler->current.kind!=DIAMOND_TOKEN_END &&
-       compiler->current.kind!=DIAMOND_TOKEN_ELSE &&
-       compiler->current.kind!=DIAMOND_TOKEN_EOF) {
+    const bool has_value=compiler->current.kind!=DIAMOND_TOKEN_NEWLINE&&
+       compiler->current.kind!=DIAMOND_TOKEN_END&&
+       compiler->current.kind!=DIAMOND_TOKEN_ELSE&&
+       compiler->current.kind!=DIAMOND_TOKEN_EOF;
+    if(kind!=DIAMOND_TOKEN_BREAK&&has_value) {
         fail(compiler,compiler->current.span,
-             "break and next do not accept values yet");
+             "next and redo do not accept values");
         return 0;
     }
     if(kind==DIAMOND_TOKEN_BREAK) {
         if(compiler->current_loop->break_count==64) {
             fail(compiler,keyword,"too many break statements in loop");
             return 0;
+        }
+        if(has_value) {
+            const uint8_t value=parse_expression(compiler);
+            emit_instruction(compiler,DIAMOND_OP_MOVE,
+                             compiler->current_loop->result_register,value,0,2);
         }
         compiler->current_loop->breaks[compiler->current_loop->break_count++]=
             emit_jump(compiler,DIAMOND_OP_JUMP,0);

@@ -145,6 +145,7 @@ future work.
 - `unless` conditional expressions with `else` and type narrowing.
 - `until` loops with ordinary `break` and `next` control flow.
 - Loop-body `redo` without condition reevaluation.
+- Value-bearing `break` results for `while` and `until` expressions.
 - Chained `elsif` branches in conditional expressions.
 - Normal-completion `else` branches in `begin`/`rescue` expressions.
 - Bare re-raise of the current rescued exception.

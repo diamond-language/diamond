@@ -602,8 +602,8 @@ if "$diamond" -e 'next' >/dev/null 2>&1; then
     exit 1
 fi
 
-if "$diamond" -e $'while true\n  break 42\nend' >/dev/null 2>&1; then
-    echo "valued break unexpectedly compiled" >&2
+if "$diamond" -e $'while true\n  next 42\nend' >/dev/null 2>&1; then
+    echo "valued next unexpectedly compiled" >&2
     exit 1
 fi
 
@@ -1546,4 +1546,13 @@ if "$diamond" -e $'redo' >/dev/null 2>&1; then
     exit 1
 fi
 
-echo "385 tests passed"
+actual="$($diamond -e $'result = while true\n break 42\nend\nresult')"
+[[ "$actual" == "42" ]]
+
+actual="$($diamond -e $'result = until false\n break "done"\nend\nresult')"
+[[ "$actual" == "done" ]]
+
+actual="$($diamond -e $'outer = while true\n inner = while true\n  break 20\n end\n break inner + 22\nend\nouter')"
+[[ "$actual" == "42" ]]
+
+echo "388 tests passed"
