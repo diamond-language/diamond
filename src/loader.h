@@ -4,7 +4,12 @@
 #include <stddef.h>
 #include <stdbool.h>
 
-enum { DIAMOND_MAX_SOURCE_SEGMENTS=256,DIAMOND_MAX_SOURCE_PATH=4096 };
+enum {
+    DIAMOND_MAX_SOURCE_SEGMENTS=256,
+    DIAMOND_MAX_SOURCE_PATH=4096,
+    DIAMOND_MAX_LOADED_FILES=128,
+    DIAMOND_MAX_REQUIRE_DEPTH=128
+};
 
 typedef struct DiamondSourceSegment {
     size_t start;

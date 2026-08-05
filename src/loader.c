@@ -12,9 +12,9 @@ typedef struct Loader {
     char *buffer;
     size_t length;
     size_t capacity;
-    char loaded[128][DIAMOND_MAX_SOURCE_PATH];
+    char loaded[DIAMOND_MAX_LOADED_FILES][DIAMOND_MAX_SOURCE_PATH];
     size_t loaded_count;
-    char active[128][DIAMOND_MAX_SOURCE_PATH];
+    char active[DIAMOND_MAX_REQUIRE_DEPTH][DIAMOND_MAX_SOURCE_PATH];
     size_t active_count;
     char *error;
     size_t error_capacity;
@@ -74,12 +74,12 @@ static bool expand(Loader *loader,const char *path,const char *source,
                        including_line);return false;
     }
     if(same_path(loader->loaded,loader->loaded_count,path))return true;
-    if(loader->active_count==128) {
+    if(loader->active_count==DIAMOND_MAX_REQUIRE_DEPTH) {
         (void)snprintf(loader->error,loader->error_capacity,
                        "%s: require nesting limit reached",path);
         return false;
     }
-    if(loader->loaded_count==128) {
+    if(loader->loaded_count==DIAMOND_MAX_LOADED_FILES) {
         (void)snprintf(loader->error,loader->error_capacity,
                        "%s: loaded-file limit reached",path);
         return false;
