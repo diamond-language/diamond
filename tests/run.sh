@@ -1582,4 +1582,13 @@ actual="$($diamond -e $'not nil')"
 actual="$($diamond -e $'not (20 + 22 == 42)')"
 [[ "$actual" == "false" ]]
 
-echo "397 tests passed"
+actual="$($diamond -e $'true and 42')"
+[[ "$actual" == "42" ]]
+
+actual="$($diamond -e $'nil or "fallback"')"
+[[ "$actual" == "fallback" ]]
+
+actual="$($diamond -e $'[(false and (1 / 0)), (true or (1 / 0))]')"
+[[ "$actual" == "[false, true]" ]]
+
+echo "400 tests passed"

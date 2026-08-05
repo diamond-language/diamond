@@ -367,6 +367,8 @@ Loop bodies similarly accept a newline or `do`, allowing compact loops without
 altering their condition, redo, next, or value-bearing break targets.
 The `not` keyword shares prefix precedence and the `NOT` bytecode instruction
 with `!`, producing a strict Boolean from Diamond truthiness.
+`and` and `or` share precedence and short-circuit jump generation with `&&` and
+`||`; like those operators, they return one of their operand values.
 
 `until` likewise shares loop compilation with `while`, negating only the
 condition register before the existing exit jump; `break` and `next` targets

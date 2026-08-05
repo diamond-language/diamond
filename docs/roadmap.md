@@ -150,6 +150,7 @@ future work.
 - Optional `then` delimiters for conditional expressions.
 - Optional `do` delimiters for `while` and `until` loops.
 - Unary `not` keyword alongside `!`.
+- Short-circuit `and` and `or` keyword operators.
 - Normal-completion `else` branches in `begin`/`rescue` expressions.
 - Bare re-raise of the current rescued exception.
 - Rescue-local `retry` with stable ensure-frame behavior.

@@ -401,6 +401,7 @@ runtime error: expected String | Nil, got Int
 - optional `then` after `if`, `unless`, and `elsif` conditions
 - optional `do` after `while` and `until` conditions
 - unary `not` as a readable synonym for `!`
+- short-circuit `and`/`or` synonyms for `&&`/`||`
 - `until condition ... end` loops, including `break` and `next`
 - `redo` to restart a loop body without reevaluating its condition
 - value-bearing loop exits such as `result = while true ... break 42 ... end`

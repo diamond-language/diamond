@@ -529,8 +529,10 @@ static uint8_t define_local(Compiler *compiler, DiamondSpan name) {
 static Precedence token_precedence(DiamondTokenKind kind) {
     switch (kind) {
         case DIAMOND_TOKEN_OR_OR:
+        case DIAMOND_TOKEN_OR:
             return PREC_OR;
         case DIAMOND_TOKEN_AND_AND:
+        case DIAMOND_TOKEN_AND:
             return PREC_AND;
         case DIAMOND_TOKEN_EQUAL_EQUAL:
         case DIAMOND_TOKEN_BANG_EQUAL:
@@ -1941,12 +1943,13 @@ static uint8_t parse_precedence(Compiler *compiler, Precedence precedence) {
             }
             left=destination;continue;
         }
-        if(operator==DIAMOND_TOKEN_AND_AND || operator==DIAMOND_TOKEN_OR_OR) {
+        if(operator==DIAMOND_TOKEN_AND_AND||operator==DIAMOND_TOKEN_AND||
+           operator==DIAMOND_TOKEN_OR_OR||operator==DIAMOND_TOKEN_OR) {
             const uint8_t destination=allocate_register(compiler);
             emit_instruction(compiler,DIAMOND_OP_MOVE,destination,left,0,2);
             const size_t end_jump=emit_jump(compiler,
-                operator==DIAMOND_TOKEN_AND_AND ? DIAMOND_OP_JUMP_IF_FALSE
-                                                : DIAMOND_OP_JUMP_IF_TRUE,
+                operator==DIAMOND_TOKEN_AND_AND||operator==DIAMOND_TOKEN_AND
+                    ? DIAMOND_OP_JUMP_IF_FALSE:DIAMOND_OP_JUMP_IF_TRUE,
                 left);
             const uint8_t right=parse_precedence(
                 compiler,(Precedence)(operator_precedence+1));

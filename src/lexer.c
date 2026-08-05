@@ -60,6 +60,8 @@ static DiamondTokenKind identifier_kind(const DiamondLexer *lexer) {
     if (text_equals(lexer, "false", 5)) return DIAMOND_TOKEN_FALSE;
     if (text_equals(lexer, "nil", 3)) return DIAMOND_TOKEN_NIL;
     if (text_equals(lexer, "not", 3)) return DIAMOND_TOKEN_NOT;
+    if (text_equals(lexer, "and", 3)) return DIAMOND_TOKEN_AND;
+    if (text_equals(lexer, "or", 2)) return DIAMOND_TOKEN_OR;
     if (text_equals(lexer, "def", 3)) return DIAMOND_TOKEN_DEF;
     if (text_equals(lexer, "class", 5)) return DIAMOND_TOKEN_CLASS;
     if (text_equals(lexer, "interface", 9)) return DIAMOND_TOKEN_INTERFACE;
