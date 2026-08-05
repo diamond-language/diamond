@@ -1805,6 +1805,11 @@ if "$diamond" -e 'require "missing_dependency"' >/dev/null 2>"$require_error"; t
 fi
 grep -q "cannot require 'missing_dependency.dia'" "$require_error"
 rm -f "$require_error"
+long_path="$(printf 'x%.0s' $(seq 1 5000))"
+if "$diamond" "$long_path" >/dev/null 2>&1; then
+    echo "oversized root path unexpectedly opened" >&2
+    exit 1
+fi
 if "$diamond" -e $'module Constants\n VALUE = 42 if true\nend' >/dev/null 2>&1; then
     echo "conditional namespace constant unexpectedly compiled" >&2
     exit 1
