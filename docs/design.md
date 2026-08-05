@@ -334,8 +334,9 @@ followed by `(`, preserving endless `def name = expression`. Invocation appends
 the same suffix before method-name interning, so user-defined writers traverse
 ordinary visibility, lookup, typing, and module-field paths.
 
-The lexer retains a terminal `?` in identifiers, making predicate names ordinary
-functions and methods throughout definition, dispatch, typing, and aliasing.
+The lexer retains a terminal `?` or `!` in identifiers, making predicate and
+bang names ordinary functions and methods throughout definition, dispatch,
+typing, and aliasing.
 
 `alias_method` copies an existing local method descriptor under a new name. The
 alias points at the same function index and therefore retains its executable

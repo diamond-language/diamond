@@ -325,6 +325,8 @@ Class and module singleton functions may likewise use writer names and qualified
 calls such as `Config.value=(42)`.
 Predicate method and function names may end in `?`, for example
 `def empty?() = length() == 0`.
+Mutating or emphatic names may end in `!`, such as `def reset!() ... end`;
+the suffix is naming convention rather than a separate dispatch mechanism.
 
 Generic function and method declarations may introduce up to eight scoped type
 variables:

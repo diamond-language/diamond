@@ -1417,4 +1417,13 @@ actual="$($diamond -e $'def ready?(value: Int) = value == 42\nready?(42)')"
 actual="$($diamond -e $'module Query\n def valid?() = true\nend\nclass Box\n include Query\nend\nBox.new().valid?()')"
 [[ "$actual" == "true" ]]
 
-echo "346 tests passed"
+actual="$($diamond -e $'class Counter\n attr_accessor value\n def reset!()\n  @value = 0\n end\nend\ncounter=Counter.new()\ncounter.value=(42)\ncounter.reset!()\ncounter.value()')"
+[[ "$actual" == "0" ]]
+
+actual="$($diamond -e $'def assert!(value: Bool) = value\nassert!(true)')"
+[[ "$actual" == "true" ]]
+
+actual="$($diamond -e $'module Mutation\n def clear!() = 42\nend\nclass Box\n include Mutation\nend\nBox.new().clear!()')"
+[[ "$actual" == "42" ]]
+
+echo "349 tests passed"

@@ -191,7 +191,8 @@ DiamondToken diamond_lexer_next(DiamondLexer *lexer) {
         while (identifier_part(lexer->source[lexer->current])) {
             advance(lexer);
         }
-        if(lexer->source[lexer->current]=='?')advance(lexer);
+        if(lexer->source[lexer->current]=='?'||
+           lexer->source[lexer->current]=='!')advance(lexer);
         return token(lexer, identifier_kind(lexer));
     }
     if (character == '@' && identifier_start(lexer->source[lexer->current])) {
