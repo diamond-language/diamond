@@ -142,6 +142,7 @@ future work.
 - Bang function and method names ending in `!`.
 - `unless` conditional expressions with `else` and type narrowing.
 - `until` loops with ordinary `break` and `next` control flow.
+- Chained `elsif` branches in conditional expressions.
 
 ## Next priorities
 

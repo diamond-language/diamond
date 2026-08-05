@@ -1712,6 +1712,7 @@ static uint8_t parse_if(Compiler *compiler,bool inverted) {
                             inverted?narrowing.when_true:narrowing.when_false);
 
     uint8_t result_type=TYPE_UNKNOWN;int16_t result_set=-1;
+    bool end_consumed=false;
     if (compiler->current.kind == DIAMOND_TOKEN_ELSE) {
         advance_token(compiler);
         if (!consume_block_start(compiler)) return destination;
@@ -1721,6 +1722,15 @@ static uint8_t parse_if(Compiler *compiler,bool inverted) {
         emit_instruction(compiler, DIAMOND_OP_MOVE, destination, else_result, 0, 2);
         if(then_type==else_type)result_type=then_type;
         if(then_set==else_set)result_set=then_set;
+    } else if(compiler->current.kind==DIAMOND_TOKEN_ELSIF) {
+        advance_token(compiler);
+        const uint8_t else_result=parse_if(compiler,false);
+        const uint8_t else_type=compiler->known_types[else_result];
+        const int16_t else_set=compiler->known_type_sets[else_result];
+        emit_instruction(compiler,DIAMOND_OP_MOVE,destination,else_result,0,2);
+        if(then_type==else_type)result_type=then_type;
+        if(then_set==else_set)result_set=then_set;
+        end_consumed=true;
     } else {
         emit_instruction(compiler, DIAMOND_OP_NIL, destination, 0, 0, 1);
         if(then_type==DIAMOND_TYPE_NIL)result_type=DIAMOND_TYPE_NIL;
@@ -1737,11 +1747,11 @@ static uint8_t parse_if(Compiler *compiler,bool inverted) {
     compiler->known_types[destination]=result_type;
     compiler->known_type_sets[destination]=result_set;
 
-    if (compiler->current.kind != DIAMOND_TOKEN_END) {
+    if (!end_consumed&&compiler->current.kind != DIAMOND_TOKEN_END) {
         fail(compiler, compiler->current.span, "expected 'end' after if expression");
         return destination;
     }
-    advance_token(compiler);
+    if(!end_consumed)advance_token(compiler);
     patch_jump(compiler, end_jump, compiler->function->code_count);
     return destination;
 }
@@ -3343,6 +3353,7 @@ static uint8_t compile_assignment(Compiler *compiler) {
 static bool at_block_end(const Compiler *compiler) {
     return compiler->current.kind == DIAMOND_TOKEN_EOF ||
            compiler->current.kind == DIAMOND_TOKEN_ELSE ||
+           compiler->current.kind == DIAMOND_TOKEN_ELSIF ||
            compiler->current.kind == DIAMOND_TOKEN_RESCUE ||
            compiler->current.kind == DIAMOND_TOKEN_ENSURE ||
            compiler->current.kind == DIAMOND_TOKEN_END;

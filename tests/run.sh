@@ -1466,4 +1466,13 @@ actual="$($diamond -e $'value = 0\nuntil false\n value = value + 1\n break\nend\
 actual="$($diamond -e $'value = 0\nuntil value == 3\n value = value + 1\n next\n value = 99\nend\nvalue')"
 [[ "$actual" == "3" ]]
 
-echo "361 tests passed"
+actual="$($diamond -e $'value = 2\nif value == 1\n "one"\nelsif value == 2\n "two"\nelse\n "other"\nend')"
+[[ "$actual" == "two" ]]
+
+actual="$($diamond -e $'value = 3\nif value == 1\n 1\nelsif value == 2\n 2\nelsif value == 3\n 42\nelse\n 0\nend')"
+[[ "$actual" == "42" ]]
+
+actual="$($diamond -e $'if false\n 0\nelsif false\n 1\nend')"
+[[ "$actual" == "nil" ]]
+
+echo "364 tests passed"
