@@ -117,8 +117,9 @@ write barrier. Object finalizers and weak references do not exist.
 
 Annotations describe acceptable runtime values and do not alter value layout.
 Supported types are `Int`, `String`, `Bool`, `Nil`, `Array`, `Hash`, and declared
-classes. Nominal class checks accept subclasses. `Type | Nil` provides compact
-nilable unions.
+classes. An annotation is a reusable set of up to eight pipe-separated types;
+nominal members accept subclasses. Type-set indexes are bytecode operands, so
+arbitrary unions do not consume opcode bits or alter runtime value layout.
 
 Annotations are optional. Parameters are checked on function entry and return
 values on every implicit or explicit exit unless the compiler proves the guard
@@ -127,7 +128,7 @@ redundant.
 ## Deliberate constraints
 
 - No Ruby compatibility guarantee.
-- No modules, generics, or general unions yet.
+- No modules or generic collection annotations yet.
 - No native-code generator or JIT.
 - No stable bytecode, embedding API, or package format.
 - No parallel execution.

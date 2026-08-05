@@ -244,19 +244,23 @@ static bool disassemble_chunk(FILE *stream, const char *name,
             case DIAMOND_OP_CHECK_TYPE:
                 if(!require_bytes(stream,chunk,offset,3)){valid=false;offset=chunk->code_count;break;}
                 fprintf(stream,"%-18s r%u, ","CHECK_TYPE",chunk->code[offset+1]);
-                const uint8_t encoded_type=chunk->code[offset+2];
-                const bool nilable=(encoded_type&DIAMOND_TYPE_NILABLE)!=0;
-                const uint8_t type=encoded_type&(uint8_t)~DIAMOND_TYPE_NILABLE;
-                if(type==DIAMOND_TYPE_INT) fputs("Int",stream);
-                else if(type==DIAMOND_TYPE_STRING) fputs("String",stream);
-                else if(type==DIAMOND_TYPE_BOOL) fputs("Bool",stream);
-                else if(type==DIAMOND_TYPE_NIL) fputs("Nil",stream);
-                else if(type==DIAMOND_TYPE_ARRAY) fputs("Array",stream);
-                else if(type==DIAMOND_TYPE_HASH) fputs("Hash",stream);
-                else if((size_t)(type-DIAMOND_TYPE_CLASS_BASE)<chunk->class_count)
-                    fputs(chunk->classes[type-DIAMOND_TYPE_CLASS_BASE].name,stream);
-                else {fputs("<invalid type>",stream);valid=false;}
-                if(nilable) fputs(" | Nil",stream);
+                const uint8_t set_index=chunk->code[offset+2];
+                if((size_t)set_index>=chunk->type_set_count) {
+                    fputs("<invalid type set>",stream);valid=false;
+                } else for(size_t index=0;
+                           index<chunk->type_sets[set_index].count;index++) {
+                    if(index>0)fputs(" | ",stream);
+                    const uint8_t type=chunk->type_sets[set_index].types[index];
+                    if(type==DIAMOND_TYPE_INT) fputs("Int",stream);
+                    else if(type==DIAMOND_TYPE_STRING) fputs("String",stream);
+                    else if(type==DIAMOND_TYPE_BOOL) fputs("Bool",stream);
+                    else if(type==DIAMOND_TYPE_NIL) fputs("Nil",stream);
+                    else if(type==DIAMOND_TYPE_ARRAY) fputs("Array",stream);
+                    else if(type==DIAMOND_TYPE_HASH) fputs("Hash",stream);
+                    else if((size_t)(type-DIAMOND_TYPE_CLASS_BASE)<chunk->class_count)
+                        fputs(chunk->classes[type-DIAMOND_TYPE_CLASS_BASE].name,stream);
+                    else {fputs("<invalid type>",stream);valid=false;}
+                }
                 fputc('\n',stream);offset+=3;break;
             case DIAMOND_OP_ARRAY:
                 if(!require_bytes(stream,chunk,offset,4)){valid=false;offset=chunk->code_count;break;}
@@ -325,6 +329,8 @@ bool diamond_disassemble(FILE *stream, const char *name,
             .constant_count = function->constant_count,
             .strings = function->strings,
             .string_count = function->string_count,
+            .type_sets = function->type_sets,
+            .type_set_count = function->type_set_count,
             .functions = chunk->functions,
             .function_count = chunk->function_count,
             .classes = chunk->classes,

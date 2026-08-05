@@ -328,9 +328,6 @@ static DiamondFieldCacheEntry *lookup_field_cached(
 
 static bool value_matches_type(const DiamondChunk *chunk, DiamondValue value,
                                uint8_t type) {
-    const bool nilable=(type&DIAMOND_TYPE_NILABLE)!=0;
-    type&=(uint8_t)~DIAMOND_TYPE_NILABLE;
-    if(nilable && value.kind==DIAMOND_VALUE_NIL) return true;
     if(type==DIAMOND_TYPE_INT) return value.kind==DIAMOND_VALUE_INT;
     if(type==DIAMOND_TYPE_BOOL) return value.kind==DIAMOND_VALUE_BOOL;
     if(type==DIAMOND_TYPE_NIL) return value.kind==DIAMOND_VALUE_NIL;
@@ -402,10 +399,7 @@ static bool catch_runtime_error(DiamondVm *vm,const DiamondChunk *chunk,
     return catch_exception(vm,chunk,handlers,handler_count,pending,registers,ip);
 }
 
-static void format_type(char *buffer, size_t capacity,
-                        const DiamondChunk *chunk, uint8_t encoded) {
-    const bool nilable=(encoded&DIAMOND_TYPE_NILABLE)!=0;
-    const uint8_t type=encoded&(uint8_t)~DIAMOND_TYPE_NILABLE;
+static const char *type_name(const DiamondChunk *chunk,uint8_t type) {
     const char *name="<invalid type>";
     if(type==DIAMOND_TYPE_INT) name="Int";
     else if(type==DIAMOND_TYPE_STRING) name="String";
@@ -417,7 +411,18 @@ static void format_type(char *buffer, size_t capacity,
         const size_t index=(size_t)(type-DIAMOND_TYPE_CLASS_BASE);
         if(index<chunk->class_count) name=chunk->classes[index].name;
     }
-    snprintf(buffer,capacity,"%s%s",name,nilable?" | Nil":"");
+    return name;
+}
+
+static void format_type_set(char *buffer,size_t capacity,
+                            const DiamondChunk *chunk,const DiamondTypeSet *set) {
+    size_t used=0;buffer[0]='\0';
+    for(size_t index=0;index<set->count && used<capacity;index++) {
+        const int written=snprintf(buffer+used,capacity-used,"%s%s",
+            index==0?"":" | ",type_name(chunk,set->types[index]));
+        if(written<0)return;
+        used+=(size_t)written;
+    }
 }
 
 static void format_value_type(char *buffer, size_t capacity,
@@ -763,6 +768,8 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     .constant_count = function->constant_count,
                     .strings = function->strings,
                     .string_count = function->string_count,
+                    .type_sets = function->type_sets,
+                    .type_set_count = function->type_set_count,
                     .functions = chunk->functions,
                     .function_count = chunk->function_count,
                     .classes = chunk->classes,
@@ -839,6 +846,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 DiamondChunk child={.name=fn->name,.code=fn->code,.lines=fn->lines,
                   .columns=fn->columns,.code_count=fn->code_count,.constants=fn->constants,
                   .constant_count=fn->constant_count,.strings=fn->strings,.string_count=fn->string_count,
+                  .type_sets=fn->type_sets,.type_set_count=fn->type_set_count,
                   .functions=chunk->functions,.function_count=chunk->function_count,
                   .classes=chunk->classes,.class_count=chunk->class_count};
                 DiamondValue call_result=DIAMOND_NIL;
@@ -866,6 +874,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                       .lines=fn->lines,.columns=fn->columns,.code_count=fn->code_count,
                       .constants=fn->constants,.constant_count=fn->constant_count,
                       .strings=fn->strings,.string_count=fn->string_count,
+                      .type_sets=fn->type_sets,.type_set_count=fn->type_set_count,
                       .functions=chunk->functions,.function_count=chunk->function_count,
                       .classes=chunk->classes,.class_count=chunk->class_count};
                     DiamondValue ignored=DIAMOND_NIL;
@@ -895,6 +904,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                   .lines=fn->lines,.columns=fn->columns,.code_count=fn->code_count,
                   .constants=fn->constants,.constant_count=fn->constant_count,
                   .strings=fn->strings,.string_count=fn->string_count,
+                  .type_sets=fn->type_sets,.type_set_count=fn->type_set_count,
                   .functions=chunk->functions,.function_count=chunk->function_count,
                   .classes=chunk->classes,.class_count=chunk->class_count};
                 DiamondValue call_result=DIAMOND_NIL;
@@ -927,6 +937,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                   .lines=fn->lines,.columns=fn->columns,.code_count=fn->code_count,
                   .constants=fn->constants,.constant_count=fn->constant_count,
                   .strings=fn->strings,.string_count=fn->string_count,
+                  .type_sets=fn->type_sets,.type_set_count=fn->type_set_count,
                   .functions=chunk->functions,.function_count=chunk->function_count,
                   .classes=chunk->classes,.class_count=chunk->class_count};
                 DiamondValue call_result=DIAMOND_NIL;
@@ -964,10 +975,16 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 instance->fields[field]=registers[source];break;
             }
             case DIAMOND_OP_CHECK_TYPE: {
-                uint8_t source=0,type=0; READ_BYTE(source); READ_BYTE(type);
-                if(!value_matches_type(chunk,registers[source],type)) {
+                uint8_t source=0,set_index=0; READ_BYTE(source); READ_BYTE(set_index);
+                if((size_t)set_index>=chunk->type_set_count)
+                    VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
+                const DiamondTypeSet *set=&chunk->type_sets[set_index];
+                bool matches=false;
+                for(size_t index=0;index<set->count&&!matches;index++)
+                    matches=value_matches_type(chunk,registers[source],set->types[index]);
+                if(!matches) {
                     char expected[80]; char actual[80];
-                    format_type(expected,sizeof expected,chunk,type);
+                    format_type_set(expected,sizeof expected,chunk,set);
                     format_value_type(actual,sizeof actual,registers[source]);
                     snprintf(vm->error,sizeof vm->error,"expected %s, got %s",
                              expected,actual);

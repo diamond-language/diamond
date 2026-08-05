@@ -43,7 +43,7 @@ future work.
 
 - Optional parameter and return annotations.
 - `Int`, `String`, `Bool`, `Nil`, `Array`, `Hash`, and nominal class types.
-- Subtype-aware class checks and compact `Type | Nil` unions.
+- Subtype-aware class checks and reusable unions of up to eight types.
 - Guards on every implicit and explicit typed return path.
 - Exact local type facts that remove proven guards and reject proven errors.
 - Detailed expected/actual runtime type diagnostics.
@@ -60,12 +60,12 @@ future work.
 - Shape-guarded polymorphic inline caches for instance field reads and writes.
 - Built-in exception hierarchy with rescuable VM runtime failures.
 - `ensure` unwinding for normal completion, exceptions, and returns.
+- General union annotations for parameters and returns.
 
 ## Next priorities
 
-1. General union annotations beyond `Type | Nil`.
-2. Generic collection annotations.
-3. A small core library implemented partly in Diamond.
+1. Generic collection annotations.
+2. A small core library implemented partly in Diamond.
 
 ## Later experiments
 

@@ -152,8 +152,9 @@ end
 ```
 
 Available annotations are `Int`, `String`, `Bool`, `Nil`, `Array`, `Hash`, and
-declared class names. Nominal checks accept subclasses. General unions and
-generic collection element types are not implemented.
+declared class names. Pipe-separated unions may contain up to eight types, and
+nominal members accept subclasses. Generic collection element types are not
+implemented.
 
 The compiler removes provably redundant guards, rejects provable mismatches,
 and retains checks for dynamic values. Runtime failures preserve source-level
@@ -208,7 +209,7 @@ Field sites use four-entry polymorphic caches guarded by instance shape.
 - No modules, mixins, singleton methods, or visibility.
 - Classes own immutable shape chains for lazily materialized field prefixes;
   method calls and field access use four-entry polymorphic inline caches.
-- No generic arrays/hashes or unrestricted union types.
+- No generic array/hash element annotations.
 - Fixed limits exist for bytecode, constants, functions, classes, fields, and
   registers.
 - Bytecode and language semantics are unstable by design.

@@ -183,10 +183,24 @@ if "$diamond" -e $'def accept(x: Int | Nil)\n x\nend\naccept("bad")' >/dev/null 
     exit 1
 fi
 
-if "$diamond" -e $'def unsupported(x: Int | String)\n x\nend' >/dev/null 2>&1; then
-    echo "unsupported general union unexpectedly compiled" >&2
+actual="$("$diamond" -e $'def accept(x: Int | String) -> Int | String\n x\nend\naccept("diamond")')"
+[[ "$actual" == "diamond" ]]
+
+error_file="$(mktemp)"
+if "$diamond" -e $'def accept(x: Int | String)\n x\nend\naccept(true)' \
+    >/dev/null 2>"$error_file"; then
+    echo "general union accepted an unrelated type" >&2
+    rm -f "$error_file"
     exit 1
 fi
+grep -q 'expected Int | String, got Bool' "$error_file"
+rm -f "$error_file"
+
+actual="$("$diamond" --dump-bytecode -e $'def accept(x: Int | String)\n x\nend\naccept(42)')"
+grep -q 'CHECK_TYPE.*Int | String' <<<"$actual"
+
+actual="$(DIAMOND_STRESS_GC=1 "$diamond" tests/cases/general_unions.dia)"
+[[ "$actual" == "diamond" ]]
 
 actual="$("$diamond" --dump-bytecode -e $'def maybe(x: String | Nil) -> String | Nil\n x\nend\nmaybe(nil)')"
 grep -q 'String | Nil' <<<"$actual"
@@ -548,4 +562,4 @@ if "$diamond" -e $'begin\n raise 1\nrescue error: Int |\n 0\nend' \
     exit 1
 fi
 
-echo "93 tests passed"
+echo "95 tests passed"

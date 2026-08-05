@@ -122,11 +122,8 @@ static uint8_t allocate_register(Compiler *compiler) {
     return reg;
 }
 
-static bool known_type_satisfies(const Compiler *compiler, uint8_t known,
-                                 uint8_t expected) {
-    const bool nilable=(expected&DIAMOND_TYPE_NILABLE)!=0;
-    expected&=(uint8_t)~DIAMOND_TYPE_NILABLE;
-    if(known==DIAMOND_TYPE_NIL) return nilable || expected==DIAMOND_TYPE_NIL;
+static bool known_type_satisfies_one(const Compiler *compiler, uint8_t known,
+                                     uint8_t expected) {
     if(known==expected) return true;
     if(known<DIAMOND_TYPE_CLASS_BASE || expected<DIAMOND_TYPE_CLASS_BASE)
         return false;
@@ -141,12 +138,20 @@ static bool known_type_satisfies(const Compiler *compiler, uint8_t known,
     return false;
 }
 
-static void emit_type_check(Compiler *compiler, uint8_t reg, uint8_t expected,
+static bool known_type_satisfies(const Compiler *compiler,uint8_t known,
+                                 const DiamondTypeSet *set) {
+    for(size_t index=0;index<set->count;index++)
+        if(known_type_satisfies_one(compiler,known,set->types[index]))return true;
+    return false;
+}
+
+static void emit_type_check(Compiler *compiler, uint8_t reg, uint8_t set_index,
                             DiamondSpan span) {
     const uint8_t known=compiler->known_types[reg];
     if(known==TYPE_UNKNOWN) {
-        emit_instruction(compiler,DIAMOND_OP_CHECK_TYPE,reg,expected,0,2);
-    } else if(!known_type_satisfies(compiler,known,expected)) {
+        emit_instruction(compiler,DIAMOND_OP_CHECK_TYPE,reg,set_index,0,2);
+    } else if(!known_type_satisfies(compiler,known,
+              &compiler->function->type_sets[set_index])) {
         fail(compiler,span,"expression cannot satisfy type annotation");
     }
 }
@@ -420,28 +425,31 @@ static int resolve_type(Compiler *compiler, DiamondSpan name) {
 }
 
 static int parse_type_annotation(Compiler *compiler) {
-    if (compiler->current.kind != DIAMOND_TOKEN_IDENTIFIER) {
-        fail(compiler, compiler->current.span, "expected type annotation");
-        return DIAMOND_TYPE_NIL;
+    if(compiler->function->type_set_count==DIAMOND_MAX_TYPE_SETS) {
+        fail(compiler,compiler->current.span,"function has too many type annotations");
+        return 0;
     }
-    const int type = resolve_type(compiler, compiler->current.span);
-    advance_token(compiler);
-    if (compiler->current.kind != DIAMOND_TOKEN_PIPE) return type;
-
-    if (type == DIAMOND_TYPE_NIL) {
-        fail(compiler, compiler->previous.span,
-             "nilable union must be written as 'Type | Nil'");
-        return type;
+    const size_t set_index=compiler->function->type_set_count++;
+    DiamondTypeSet *set=&compiler->function->type_sets[set_index];
+    while(!compiler->failed) {
+        if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER) {
+            fail(compiler,compiler->current.span,"expected type annotation");break;
+        }
+        const uint8_t type=(uint8_t)resolve_type(compiler,compiler->current.span);
+        for(size_t index=0;index<set->count;index++) {
+            if(set->types[index]==type) {
+                fail(compiler,compiler->current.span,"duplicate type in union");break;
+            }
+        }
+        if(set->count==DIAMOND_MAX_UNION_TYPES) {
+            fail(compiler,compiler->current.span,"too many types in union");break;
+        }
+        set->types[set->count++]=type;
+        advance_token(compiler);
+        if(compiler->current.kind!=DIAMOND_TOKEN_PIPE)break;
+        advance_token(compiler);
     }
-    advance_token(compiler);
-    if (compiler->current.kind != DIAMOND_TOKEN_IDENTIFIER ||
-        !name_equals(compiler, "Nil", compiler->current.span, false)) {
-        fail(compiler, compiler->current.span,
-             "only nilable unions of the form 'Type | Nil' are supported");
-        return type;
-    }
-    advance_token(compiler);
-    return type | DIAMOND_TYPE_NILABLE;
+    return (int)set_index;
 }
 
 static int find_method(const Compiler *compiler, int class_index, DiamondSpan name) {
@@ -1591,6 +1599,8 @@ DiamondChunk diamond_program_chunk(const DiamondProgram *program) {
         .constant_count = program->entry.constant_count,
         .strings = program->entry.strings,
         .string_count = program->entry.string_count,
+        .type_sets = program->entry.type_sets,
+        .type_set_count = program->entry.type_set_count,
         .functions = program->functions,
         .function_count = program->function_count,
         .classes = program->classes,

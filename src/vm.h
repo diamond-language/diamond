@@ -15,6 +15,8 @@ enum {
     DIAMOND_MAX_STRING_CONSTANTS = 64,
     DIAMOND_MAX_STRING_LENGTH = 255,
     DIAMOND_MAX_CLASSES = 32,
+    DIAMOND_MAX_TYPE_SETS = 64,
+    DIAMOND_MAX_UNION_TYPES = 8,
     DIAMOND_MAX_METHODS = 32,
     DIAMOND_MAX_FIELDS = 32,
 };
@@ -78,7 +80,6 @@ typedef enum DiamondTypeId : uint8_t {
     DIAMOND_TYPE_CLASS_BASE,
 } DiamondTypeId;
 
-enum { DIAMOND_TYPE_NILABLE = 0x80 };
 enum { DIAMOND_INLINE_CACHE_COUNT = 64 };
 enum { DIAMOND_INLINE_CACHE_WIDTH = 4 };
 
@@ -99,6 +100,11 @@ typedef struct DiamondStringConstant {
     char chars[DIAMOND_MAX_STRING_LENGTH + 1];
     size_t length;
 } DiamondStringConstant;
+
+typedef struct DiamondTypeSet {
+    uint8_t types[DIAMOND_MAX_UNION_TYPES];
+    uint8_t count;
+} DiamondTypeSet;
 
 typedef struct DiamondMethod {
     char name[DIAMOND_MAX_FUNCTION_NAME];
@@ -133,6 +139,8 @@ typedef struct DiamondFunction {
     size_t constant_count;
     DiamondStringConstant strings[DIAMOND_MAX_STRING_CONSTANTS];
     size_t string_count;
+    DiamondTypeSet type_sets[DIAMOND_MAX_TYPE_SETS];
+    size_t type_set_count;
     uint8_t arity;
     uint8_t owner_class;
     bool nested;
@@ -149,6 +157,8 @@ typedef struct DiamondChunk {
     size_t constant_count;
     const DiamondStringConstant *strings;
     size_t string_count;
+    const DiamondTypeSet *type_sets;
+    size_t type_set_count;
     const DiamondFunction *functions;
     size_t function_count;
     const DiamondClass *classes;
