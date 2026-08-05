@@ -1716,4 +1716,8 @@ actual="$($diamond -e $'def ready()\n true\nend\n42 if ready()')"
 [[ "$actual" == "42" ]]
 actual="$($diamond -e $'def ready()\n false\nend\n42 unless ready()')"
 [[ "$actual" == "42" ]]
-echo "450 tests passed"
+actual="$($diamond -e $'loop do\n break 42 if true\nend')"
+[[ "$actual" == "42" ]]
+actual="$($diamond -e $'loop do\n break 42 unless false\nend')"
+[[ "$actual" == "42" ]]
+echo "452 tests passed"
