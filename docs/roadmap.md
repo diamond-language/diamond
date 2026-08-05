@@ -169,6 +169,7 @@ future work.
 - Ordered union-filter dispatch across rescue clauses.
 - Nominal subclass matching across ordered rescue clauses.
 - Typed payload fields on user-defined exception subclasses.
+- Typed causal chaining on user-defined exceptions.
 - Diagnostics for subclass filters shadowed by earlier superclass clauses.
 
 ## Next priorities
