@@ -28,7 +28,7 @@ Implemented today:
 - stop-the-world mark/sweep collection with stress-GC testing;
 - source diagnostics and bytecode disassembly.
 
-The test suite currently contains 334 end-to-end assertions spanning the
+The test suite currently contains 335 end-to-end assertions spanning the
 frontend, compiler, VM, object model, type guards, collections, and collector.
 
 ## Build and run
@@ -286,6 +286,7 @@ their defaults, annotations, generics, and constant access. They have no module
 object, so methods requiring instance fields remain meaningful only when mixed
 into a class and are rejected from `module_function` at compile time.
 Multiple targets may use `module_function(first, second)`.
+Writer methods may be exported with a target such as `module_function value=`.
 With no names, `module_function` exports all subsequent ordinary methods until
 the module ends; nested modules start with their own mode.
 

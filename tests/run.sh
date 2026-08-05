@@ -1379,4 +1379,7 @@ actual="$($diamond -e $'class Box\n attr_reader value\n private(value)\n def rev
 actual="$($diamond -e $'module Values\n def first() = 20\n def second() = 22\n module_function(first, second)\nend\nValues.first() + Values.second()')"
 [[ "$actual" == "42" ]]
 
-echo "334 tests passed"
+actual="$($diamond -e $'module Values\n def value=(incoming) = incoming\n module_function value=\nend\nValues.value=(42)')"
+[[ "$actual" == "42" ]]
+
+echo "335 tests passed"

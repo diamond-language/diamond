@@ -2779,9 +2779,17 @@ static void compile_module_function(Compiler *compiler) {
     }
     while(!compiler->failed) {
         const DiamondSpan name=compiler->current.span;
+        DiamondLexer name_lookahead=compiler->lexer;
+        const bool writer_name=
+            diamond_lexer_next(&name_lookahead).kind==DIAMOND_TOKEN_EQUAL;
         DiamondMethod *source=nullptr;
         for(size_t index=module->method_count;index>0;index--)
-            if(name_equals(compiler,module->methods[index-1].name,name,false)) {
+            if((!writer_name&&name_equals(compiler,
+                   module->methods[index-1].name,name,false))||
+               (writer_name&&strlen(module->methods[index-1].name)==name.length+1&&
+                module->methods[index-1].name[name.length]=='='&&
+                memcmp(module->methods[index-1].name,
+                       compiler->source+name.start,name.length)==0)) {
                 source=&module->methods[index-1];break;
             }
         if(source==nullptr) {
@@ -2807,6 +2815,8 @@ static void compile_module_function(Compiler *compiler) {
         exported.is_private=false;
         module->singleton_methods[module->singleton_method_count++]=exported;
         advance_token(compiler);
+        if(writer_name&&compiler->current.kind==DIAMOND_TOKEN_EQUAL)
+            advance_token(compiler);
         if(compiler->current.kind!=DIAMOND_TOKEN_COMMA)break;
         advance_token(compiler);
     }
