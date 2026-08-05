@@ -410,6 +410,7 @@ runtime error: expected String | Nil, got Int
 - `retry` inside rescue to restart the protected body
 - binding-free typed filters such as `rescue : TypeError | IndexError`
 - multiple ordered `rescue` clauses, with an optional final catch-all
+  (later exact or subclass filters already covered by earlier clauses are rejected)
 
 ## Architecture
 

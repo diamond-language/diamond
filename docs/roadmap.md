@@ -164,6 +164,7 @@ future work.
 - Bare re-raise integration from later rescue clauses.
 - Ordered union-filter dispatch across rescue clauses.
 - Nominal subclass matching across ordered rescue clauses.
+- Diagnostics for subclass filters shadowed by earlier superclass clauses.
 
 ## Next priorities
 

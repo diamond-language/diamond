@@ -1633,4 +1633,9 @@ actual="$($diamond -e $'begin\n 1 / 0\nrescue : TypeError | IndexError\n 0\nresc
 actual="$($diamond -e $'class NetworkError < StandardError\nend\nclass TimeoutError < NetworkError\nend\nbegin\n raise TimeoutError.new()\nrescue : TypeError\n 0\nrescue error: NetworkError\n 42\nend')"
 [[ "$actual" == "42" ]]
 
-echo "412 tests passed"
+if "$diamond" -e $'begin\n 1 / 0\nrescue : StandardError\n 1\nrescue : ZeroDivisionError\n 2\nend' >/dev/null 2>&1; then
+    echo "shadowed rescue subclass unexpectedly compiled" >&2
+    exit 1
+fi
+
+echo "413 tests passed"

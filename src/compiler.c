@@ -2167,6 +2167,18 @@ static uint8_t compile_begin(Compiler *compiler) {
                     if(seen_rescue_types[existing]==rescue_type)
                         fail(compiler,compiler->current.span,
                              "rescue type was already handled");
+                    else if(seen_rescue_types[existing]>=DIAMOND_TYPE_CLASS_BASE&&
+                            rescue_type>=DIAMOND_TYPE_CLASS_BASE) {
+                        size_t child=(size_t)(rescue_type-DIAMOND_TYPE_CLASS_BASE);
+                        const size_t ancestor=(size_t)(
+                            seen_rescue_types[existing]-DIAMOND_TYPE_CLASS_BASE);
+                        while(child<compiler->program->class_count&&child!=ancestor&&
+                              compiler->program->classes[child].superclass!=UINT8_MAX)
+                            child=compiler->program->classes[child].superclass;
+                        if(child==ancestor)
+                            fail(compiler,compiler->current.span,
+                                 "rescue type is covered by an earlier clause");
+                    }
                 if(rescue_type>=DIAMOND_TYPE_VARIABLE_BASE&&
                    rescue_type<DIAMOND_TYPE_INTERFACE_BASE) {
                     fail(compiler,compiler->current.span,
