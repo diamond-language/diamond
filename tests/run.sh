@@ -1286,4 +1286,10 @@ actual="$($diamond -e $'class Box\n attr_reader value\n def value=(incoming = 42
 actual="$($diamond -e $'class Box\n def assign() = self.value=(42)\n private\n def value=(incoming)\n  @value = incoming\n end\nend\nBox.new().assign()')"
 [[ "$actual" == "42" ]]
 
-echo "307 tests passed"
+actual="$($diamond -e $'class Box\n attr_accessor value\nend\nbox=Box.new()\nbox.value=(42)\nbox.value()')"
+[[ "$actual" == "42" ]]
+
+actual="$($diamond -e $'module Named\n attr_accessor name\nend\nclass Person\n include Named\nend\nperson=Person.new()\nperson.name=("Ada")\nperson.name()')"
+[[ "$actual" == "Ada" ]]
+
+echo "309 tests passed"

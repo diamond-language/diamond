@@ -118,10 +118,11 @@ future work.
   numeric or symbolic fields while retaining visibility and inheritance.
 - User-defined writer methods with typed/default parameters, module state, and
   private self-dispatch, while preserving endless-method parsing.
+- Combined `attr_accessor` generation for class and module fields.
 
 ## Next priorities
 
-1. Add `attr_accessor` as the combined reader/writer declaration.
+1. Allow multiple names in attribute declarations.
 
 ## Later experiments
 

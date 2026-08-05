@@ -2548,8 +2548,7 @@ static uint8_t compile_definition(Compiler *compiler) {
     return result;
 }
 
-static void compile_attribute(Compiler *compiler,bool writer) {
-    advance_token(compiler);
+static void compile_attribute_named(Compiler *compiler,bool writer) {
     if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER) {
         fail(compiler,compiler->current.span,"expected attribute name");return;
     }
@@ -2630,7 +2629,13 @@ static void compile_attribute(Compiler *compiler,bool writer) {
                    writer?"=":"");
     method->function_index=function_index;method->arity=writer?1:0;
     method->required_arity=method->arity;method->is_private=compiler->methods_private;
+}
+
+static void compile_attribute(Compiler *compiler,bool reader,bool writer) {
     advance_token(compiler);
+    if(reader)compile_attribute_named(compiler,false);
+    if(writer&&!compiler->failed)compile_attribute_named(compiler,true);
+    if(!compiler->failed)advance_token(compiler);
 }
 
 static uint8_t compile_class(Compiler *compiler) {
@@ -2680,9 +2685,11 @@ static uint8_t compile_class(Compiler *compiler) {
                 compiler->current.kind==DIAMOND_TOKEN_PRIVATE;
             advance_token(compiler);
         } else if(compiler->current.kind==DIAMOND_TOKEN_ATTR_READER||
-                  compiler->current.kind==DIAMOND_TOKEN_ATTR_WRITER) {
-            const bool writer=compiler->current.kind==DIAMOND_TOKEN_ATTR_WRITER;
-            compile_attribute(compiler,writer);
+                  compiler->current.kind==DIAMOND_TOKEN_ATTR_WRITER||
+                  compiler->current.kind==DIAMOND_TOKEN_ATTR_ACCESSOR) {
+            const bool reader=compiler->current.kind!=DIAMOND_TOKEN_ATTR_WRITER;
+            const bool writer=compiler->current.kind!=DIAMOND_TOKEN_ATTR_READER;
+            compile_attribute(compiler,reader,writer);
         } else if(compiler->current.kind==DIAMOND_TOKEN_INCLUDE) {
             advance_token(compiler);
             if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER) {
@@ -2775,9 +2782,11 @@ static uint8_t compile_module(Compiler *compiler) {
                 compiler->current.kind==DIAMOND_TOKEN_PRIVATE;
             advance_token(compiler);
         } else if(compiler->current.kind==DIAMOND_TOKEN_ATTR_READER||
-                  compiler->current.kind==DIAMOND_TOKEN_ATTR_WRITER) {
-            const bool writer=compiler->current.kind==DIAMOND_TOKEN_ATTR_WRITER;
-            compile_attribute(compiler,writer);
+                  compiler->current.kind==DIAMOND_TOKEN_ATTR_WRITER||
+                  compiler->current.kind==DIAMOND_TOKEN_ATTR_ACCESSOR) {
+            const bool reader=compiler->current.kind!=DIAMOND_TOKEN_ATTR_WRITER;
+            const bool writer=compiler->current.kind!=DIAMOND_TOKEN_ATTR_READER;
+            compile_attribute(compiler,reader,writer);
         } else if(compiler->current.kind==DIAMOND_TOKEN_IDENTIFIER&&
            assignment_ahead(compiler)) {
             const DiamondSpan constant_name=compiler->current.span;
