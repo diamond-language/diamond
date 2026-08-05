@@ -125,6 +125,7 @@ future work.
 - `module_function` exports that preserve signatures and generics while making
   includable copies private and avoiding a fabricated module instance.
 - Scoped standalone `module_function` mode for exporting subsequent methods.
+- Duplicate generated attribute-method diagnostics for classes and modules.
 
 ## Next priorities
 

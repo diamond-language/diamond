@@ -2580,9 +2580,17 @@ static void compile_attribute_named(Compiler *compiler,bool writer) {
     field_name[name.length]='\0';
     uint8_t field=UINT8_MAX;
     DiamondMethod *method=nullptr;
+    char method_name[DIAMOND_MAX_FUNCTION_NAME];
+    (void)snprintf(method_name,sizeof method_name,"%s%s",field_name,
+                   writer?"=":"");
     if(compiler->current_class>=0) {
         DiamondClass *class=
             &compiler->program->classes[(size_t)compiler->current_class];
+        for(size_t index=0;index<class->method_count;index++)
+            if(!class->methods[index].included&&
+               strcmp(class->methods[index].name,method_name)==0) {
+                fail(compiler,name,"attribute method is already defined");return;
+            }
         for(size_t index=0;index<class->field_count;index++)
             if(strcmp(class->fields[index],field_name)==0)field=(uint8_t)index;
         if(field==UINT8_MAX) {
@@ -2600,6 +2608,11 @@ static void compile_attribute_named(Compiler *compiler,bool writer) {
     } else {
         DiamondModule *module=
             &compiler->program->modules[(size_t)compiler->current_module];
+        for(size_t index=0;index<module->method_count;index++)
+            if(!module->methods[index].included&&
+               strcmp(module->methods[index].name,method_name)==0) {
+                fail(compiler,name,"attribute method is already defined");return;
+            }
         bool present=false;
         for(size_t index=0;index<module->field_count;index++)
             if(strcmp(module->fields[index],field_name)==0)present=true;
@@ -2618,8 +2631,7 @@ static void compile_attribute_named(Compiler *compiler,bool writer) {
     DiamondFunction *function=
         &compiler->program->functions[compiler->program->function_count];
     const uint8_t function_index=(uint8_t)compiler->program->function_count++;
-    (void)snprintf(function->name,sizeof function->name,"%s%s",field_name,
-                   writer?"=":"");
+    (void)snprintf(function->name,sizeof function->name,"%s",method_name);
     function->owner_class=compiler->current_class>=0?
         (uint8_t)compiler->current_class:UINT8_MAX-1;
     function->arity=writer?2:1;function->required_arity=function->arity;
@@ -2641,8 +2653,7 @@ static void compile_attribute_named(Compiler *compiler,bool writer) {
     }
     function->code[4]=DIAMOND_OP_RETURN;function->code[5]=writer?1:1;
     function->code_count=6;
-    (void)snprintf(method->name,sizeof method->name,"%s%s",field_name,
-                   writer?"=":"");
+    (void)snprintf(method->name,sizeof method->name,"%s",method_name);
     method->function_index=function_index;method->arity=writer?1:0;
     method->required_arity=method->arity;method->is_private=compiler->methods_private;
 }

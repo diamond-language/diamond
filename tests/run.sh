@@ -1341,4 +1341,14 @@ actual="$($diamond -e $'module Helpers\n module_function\n def answer() = 42\nen
 actual="$($diamond -e $'module Outer\n module_function\n def outer() = 40\n module Inner\n  def value() = 2\n end\nend\nclass Box\n include Outer::Inner\nend\nOuter.outer() + Box.new().value()')"
 [[ "$actual" == "42" ]]
 
-echo "324 tests passed"
+if "$diamond" -e $'class Box\n attr_reader value\n attr_reader value\nend' >/dev/null 2>&1; then
+    echo "duplicate generated reader unexpectedly compiled" >&2
+    exit 1
+fi
+
+if "$diamond" -e $'module Named\n attr_writer name\n attr_writer name\nend' >/dev/null 2>&1; then
+    echo "duplicate generated module writer unexpectedly compiled" >&2
+    exit 1
+fi
+
+echo "326 tests passed"
