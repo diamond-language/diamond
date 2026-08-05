@@ -1752,6 +1752,19 @@ if "$diamond" -e $'class Marker\nend if true' >/dev/null 2>"$declaration_error";
 fi
 grep -q "postfix modifiers cannot follow declarations" "$declaration_error"
 rm -f "$declaration_error"
+if "$diamond" -e $'module Marker\nend unless false' >/dev/null 2>"$declaration_error"; then
+    echo "module postfix unexpectedly compiled" >&2
+    rm -f "$declaration_error"
+    exit 1
+fi
+grep -q "postfix modifiers cannot follow declarations" "$declaration_error"
+if "$diamond" -e $'interface Marker\nend if true' >/dev/null 2>"$declaration_error"; then
+    echo "interface postfix unexpectedly compiled" >&2
+    rm -f "$declaration_error"
+    exit 1
+fi
+grep -q "postfix modifiers cannot follow declarations" "$declaration_error"
+rm -f "$declaration_error"
 actual="$($diamond -e $'def ready() = true\ndef conditional() = 42 if ready()\nconditional()')"
 [[ "$actual" == "42" ]]
 actual="$(DIAMOND_STRESS_GC=1 $diamond -e $'def conditional() = "kept" if true\nconditional()')"
