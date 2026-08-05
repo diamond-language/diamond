@@ -106,8 +106,13 @@ def factorial(n: Int) -> Int
 end
 ```
 
-Early returns use block-based control flow; modifier `if` syntax is not yet
-implemented:
+Early returns use block-based control flow. Postfix `if` and `unless` modifiers
+are also available for single-line expressions:
+
+```ruby
+log("ready") if enabled
+fallback() unless configured
+```
 
 ```ruby
 def classify(value: Int) -> String

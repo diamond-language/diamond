@@ -185,10 +185,12 @@ future work.
 - Message payload coverage across standard runtime error classes.
 - VM message preservation through bare re-raise.
 - Diagnostics for subclass filters shadowed by earlier superclass clauses.
+- Postfix `if` and `unless` modifiers with direct bytecode layout.
 
 ## Next priorities
 
-1. Add postfix `if` and `unless` without compromising direct bytecode emission.
+1. Add modifier support to additional statement forms while preserving
+   precise result-register and control-flow semantics.
 
 ## Later experiments
 
