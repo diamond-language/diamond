@@ -191,11 +191,12 @@ future work.
 - Endless function and method bodies with postfix `if`/`unless` conditions.
 - Explicit diagnostics for postfix modifiers on declarations and namespace
   constants.
+- Explicit diagnostics for trailing syntax on standalone `require` directives.
 
 ## Next priorities
 
-1. Review modifier interactions with remaining loader directives while
-   preserving precise result-register and control-flow semantics.
+1. Improve loader path and source-map diagnostics while preserving precise
+   source locations for imported files.
 
 ## Later experiments
 
