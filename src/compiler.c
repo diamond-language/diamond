@@ -50,6 +50,7 @@ typedef struct Compiler {
     size_t local_count;
     uint16_t next_register;
     int current_class;
+    int current_module;
     DiamondSpan current_method;
     bool in_method;
     uint8_t known_types[256];
@@ -703,6 +704,13 @@ static int find_interface(const Compiler *compiler,DiamondSpan name) {
     return -1;
 }
 
+static int find_module(const Compiler *compiler,DiamondSpan name) {
+    for(size_t index=0;index<compiler->program->module_count;index++)
+        if(name_equals(compiler,compiler->program->modules[index].name,name,false))
+            return (int)index;
+    return -1;
+}
+
 static int resolve_type(Compiler *compiler, DiamondSpan name) {
     if (name_equals(compiler, "Int", name, false)) return DIAMOND_TYPE_INT;
     if (name_equals(compiler, "String", name, false)) return DIAMOND_TYPE_STRING;
@@ -827,15 +835,6 @@ static int parse_type_annotation(Compiler *compiler) {
         advance_token(compiler);
     }
     return (int)set_index;
-}
-
-static int find_method(const Compiler *compiler, int class_index, DiamondSpan name) {
-    const DiamondClass *class = &compiler->program->classes[(size_t)class_index];
-    for (size_t index = 0; index < class->method_count; index++) {
-        if (name_equals(compiler, class->methods[index].name, name, false))
-            return (int)index;
-    }
-    return -1;
 }
 
 static int field_index(Compiler *compiler, DiamondSpan name, bool create) {
@@ -1431,7 +1430,7 @@ static uint8_t parse_prefix(Compiler *compiler) {
             return destination;
         }
         case DIAMOND_TOKEN_SELF:
-            if (compiler->current_class < 0) {
+            if (!compiler->in_method) {
                 fail(compiler, compiler->previous.span, "'self' used outside a method");
                 return 0;
             }
@@ -1817,7 +1816,8 @@ static uint8_t compile_definition(Compiler *compiler) {
         fail(compiler, name, "function name is too long");
         return 0;
     }
-    if (compiler->current_class < 0 && find_function(compiler, name) >= 0) {
+    if (compiler->current_class < 0&&compiler->current_module<0&&
+        find_function(compiler, name) >= 0) {
         fail(compiler, name, "function is already defined");
         return 0;
     }
@@ -1827,8 +1827,9 @@ static uint8_t compile_definition(Compiler *compiler) {
     for(size_t index=0;index<16;index++)
         function->parameter_type_sets[index]=UINT8_MAX;
     const size_t function_index = compiler->program->function_count - 1;
-    function->owner_class = compiler->current_class < 0
-        ? UINT8_MAX : (uint8_t)compiler->current_class;
+    function->owner_class=compiler->current_class>=0?
+        (uint8_t)compiler->current_class:
+        (compiler->current_module>=0?UINT8_MAX-1:UINT8_MAX);
     function->nested=!at_top_level;
     const size_t copy_length = name.length;
     for (size_t index = 0; index < copy_length; index++) {
@@ -1915,7 +1916,7 @@ static uint8_t compile_definition(Compiler *compiler) {
                 compiler->capture_registers[i]=compiler->enclosing_locals[i].reg;
         }
     }
-    if (compiler->current_class >= 0) {
+    if (compiler->current_class >= 0||compiler->current_module>=0) {
         (void)allocate_register(compiler);
         function->arity = 1;
         function->required_arity=1;
@@ -2081,8 +2082,12 @@ static uint8_t compile_definition(Compiler *compiler) {
          compiler->known_type_sets[index]=outer_known_type_sets[index];}
     if (compiler->current_class >= 0 && !compiler->failed && at_top_level) {
         DiamondClass *class = &compiler->program->classes[(size_t)compiler->current_class];
-        if (class->method_count == DIAMOND_MAX_METHODS ||
-            find_method(compiler, compiler->current_class, name) >= 0) {
+        bool duplicate=false;
+        for(size_t existing=0;existing<class->method_count;existing++)
+            if(!class->methods[existing].included&&
+               name_equals(compiler,class->methods[existing].name,name,false))
+                duplicate=true;
+        if(class->method_count==DIAMOND_MAX_METHODS||duplicate) {
             fail(compiler, name, "duplicate or excessive method definition");
         } else {
             DiamondMethod *method = &class->methods[class->method_count++];
@@ -2091,6 +2096,27 @@ static uint8_t compile_definition(Compiler *compiler) {
             method->function_index=(uint8_t)function_index;
             method->arity=(uint8_t)(function->arity-1);
             method->required_arity=(uint8_t)(function->required_arity-1);
+            method->included=false;
+        }
+    } else if(compiler->current_module>=0&&!compiler->failed&&at_top_level) {
+        DiamondModule *module=
+            &compiler->program->modules[(size_t)compiler->current_module];
+        for(size_t existing=0;existing<module->method_count;existing++)
+            if(name_equals(compiler,module->methods[existing].name,name,false)) {
+                fail(compiler,name,"duplicate module method");break;
+            }
+        if(!compiler->failed) {
+            if(module->method_count==DIAMOND_MAX_METHODS)
+                fail(compiler,name,"too many module methods");
+            else {
+                DiamondMethod *method=&module->methods[module->method_count++];
+                for(size_t i=0;i<copy_length;i++)method->name[i]=function->name[i];
+                method->name[copy_length]='\0';
+                method->function_index=(uint8_t)function_index;
+                method->arity=(uint8_t)(function->arity-1);
+                method->required_arity=(uint8_t)(function->required_arity-1);
+                method->included=true;
+            }
         }
     }
     const uint8_t result = allocate_register(compiler);
@@ -2123,7 +2149,8 @@ static uint8_t compile_class(Compiler *compiler) {
     if(name.length>=DIAMOND_MAX_FUNCTION_NAME) {
         fail(compiler,name,"class name is too long"); return 0;
     }
-    if (find_class(compiler,name)>=0||find_interface(compiler,name)>=0) {
+    if(find_class(compiler,name)>=0||find_interface(compiler,name)>=0||
+       find_module(compiler,name)>=0) {
         fail(compiler,name,"type name is already defined");return 0;
     }
     const int index=(int)compiler->program->class_count++;
@@ -2150,16 +2177,78 @@ static uint8_t compile_class(Compiler *compiler) {
     if(!consume_block_start(compiler)) return 0;
     const int outer=compiler->current_class; compiler->current_class=index;
     while(!compiler->failed && compiler->current.kind!=DIAMOND_TOKEN_END) {
-        if(compiler->current.kind!=DIAMOND_TOKEN_DEF) {
-            fail(compiler,compiler->current.span,"expected method definition in class"); break;
+        if(compiler->current.kind==DIAMOND_TOKEN_INCLUDE) {
+            advance_token(compiler);
+            if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER) {
+                fail(compiler,compiler->current.span,
+                     "expected module name after 'include'");break;
+            }
+            const int module_index=find_module(compiler,compiler->current.span);
+            if(module_index<0) {
+                fail(compiler,compiler->current.span,"undefined module");break;
+            }
+            const DiamondModule *module=
+                &compiler->program->modules[(size_t)module_index];
+            if(class->method_count+module->method_count>DIAMOND_MAX_METHODS) {
+                fail(compiler,compiler->current.span,
+                     "included module adds too many methods");break;
+            }
+            for(size_t method=0;method<module->method_count;method++)
+                class->methods[class->method_count++]=module->methods[method];
+            advance_token(compiler);
+        } else if(compiler->current.kind==DIAMOND_TOKEN_DEF) {
+            (void)compile_definition(compiler);
+        } else {
+            fail(compiler,compiler->current.span,
+                 "expected method definition or include in class");break;
         }
-        (void)compile_definition(compiler);
         if(compiler->current.kind==DIAMOND_TOKEN_NEWLINE) skip_newlines(compiler);
     }
     compiler->current_class=outer;
     if(compiler->current.kind==DIAMOND_TOKEN_END) advance_token(compiler);
     const uint8_t result=allocate_register(compiler);
     emit_instruction(compiler,DIAMOND_OP_NIL,result,0,0,1); return result;
+}
+
+static uint8_t compile_module(Compiler *compiler) {
+    if(compiler->function!=&compiler->program->entry) {
+        fail(compiler,compiler->current.span,
+             "modules must be declared at top level");return 0;
+    }
+    advance_token(compiler);
+    if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER||
+       compiler->program->module_count==DIAMOND_MAX_MODULES) {
+        fail(compiler,compiler->current.span,"expected valid module name");return 0;
+    }
+    const DiamondSpan name=compiler->current.span;
+    if(name.length>=DIAMOND_MAX_FUNCTION_NAME) {
+        fail(compiler,name,"module name is too long");return 0;
+    }
+    if(find_module(compiler,name)>=0||find_class(compiler,name)>=0||
+       find_interface(compiler,name)>=0) {
+        fail(compiler,name,"module name is already defined");return 0;
+    }
+    const int index=(int)compiler->program->module_count++;
+    DiamondModule *module=&compiler->program->modules[(size_t)index];
+    for(size_t character=0;character<name.length;character++)
+        module->name[character]=compiler->source[name.start+character];
+    module->name[name.length]='\0';
+    advance_token(compiler);
+    if(!consume_block_start(compiler))return 0;
+    const int outer=compiler->current_module;compiler->current_module=index;
+    while(!compiler->failed&&compiler->current.kind!=DIAMOND_TOKEN_END) {
+        if(compiler->current.kind!=DIAMOND_TOKEN_DEF) {
+            fail(compiler,compiler->current.span,
+                 "expected method definition in module");break;
+        }
+        (void)compile_definition(compiler);
+        if(compiler->current.kind==DIAMOND_TOKEN_NEWLINE)skip_newlines(compiler);
+    }
+    compiler->current_module=outer;
+    if(compiler->current.kind==DIAMOND_TOKEN_END)advance_token(compiler);
+    const uint8_t result=allocate_register(compiler);
+    emit_instruction(compiler,DIAMOND_OP_NIL,result,0,0,1);
+    return result;
 }
 
 static uint8_t compile_interface(Compiler *compiler) {
@@ -2176,7 +2265,8 @@ static uint8_t compile_interface(Compiler *compiler) {
     if(name.length>=DIAMOND_MAX_FUNCTION_NAME) {
         fail(compiler,name,"interface name is too long");return 0;
     }
-    if(find_interface(compiler,name)>=0||find_class(compiler,name)>=0) {
+    if(find_interface(compiler,name)>=0||find_class(compiler,name)>=0||
+       find_module(compiler,name)>=0) {
         fail(compiler,name,"type name is already defined");return 0;
     }
     DiamondInterface *interface=
@@ -2311,6 +2401,8 @@ static uint8_t compile_sequence(Compiler *compiler) {
             result = compile_class(compiler);
         } else if (compiler->current.kind == DIAMOND_TOKEN_INTERFACE) {
             result = compile_interface(compiler);
+        } else if(compiler->current.kind==DIAMOND_TOKEN_MODULE) {
+            result=compile_module(compiler);
         } else if (compiler->current.kind == DIAMOND_TOKEN_RETURN) {
             result=compile_return(compiler);
         } else if (compiler->current.kind == DIAMOND_TOKEN_RAISE) {
@@ -2368,6 +2460,7 @@ bool diamond_compile(const char *source, DiamondProgram *program,
         .program = program,
         .function = &program->entry,
         .current_class = -1,
+        .current_module = -1,
         .current_return_type = -1,
         .diagnostic = diagnostic,
     };

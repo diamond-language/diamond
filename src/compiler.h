@@ -12,6 +12,8 @@ typedef struct DiamondProgram {
     size_t class_count;
     DiamondInterface interfaces[DIAMOND_MAX_INTERFACES];
     size_t interface_count;
+    DiamondModule modules[DIAMOND_MAX_MODULES];
+    size_t module_count;
 } DiamondProgram;
 
 typedef struct DiamondDiagnostic {

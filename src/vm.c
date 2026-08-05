@@ -271,8 +271,8 @@ static const DiamondMethod *lookup_method(const DiamondChunk *chunk,
                                           const char *name, size_t length) {
     const DiamondClass *current = class;
     while (current != nullptr) {
-        for (size_t index = 0; index < current->method_count; index++) {
-            const DiamondMethod *method = &current->methods[index];
+        for(size_t index=current->method_count;index>0;index--) {
+            const DiamondMethod *method=&current->methods[index-1];
             if (strlen(method->name) == length &&
                 memcmp(method->name, name, length) == 0) {
                 return method;

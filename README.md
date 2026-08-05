@@ -22,12 +22,13 @@ Implemented today:
 - expression-valued conditionals and loops with `break` and `next`;
 - functions, recursion, explicit returns, and isolated call frames;
 - classes, methods, constructors, fields, inheritance, `self`, and `super`;
+- reusable modules included into classes with deterministic method precedence;
 - optional gradual parameter/return annotations and nilable types;
 - a Diamond-written core prelude with collection helpers;
 - stop-the-world mark/sweep collection with stress-GC testing;
 - source diagnostics and bytecode disassembly.
 
-The test suite currently contains 249 end-to-end assertions spanning the
+The test suite currently contains 257 end-to-end assertions spanning the
 frontend, compiler, VM, object model, type guards, collections, and collector.
 
 ## Build and run
@@ -225,6 +226,23 @@ A class satisfies the interface by defining or inheriting the required shape;
 no `implements` declaration is needed. Typed signatures use function-safe
 variance: implementation parameters are contravariant and returns are
 covariant. Omitting an interface annotation leaves that position unconstrained.
+
+Reusable behavior may be declared separately from class identity:
+
+```ruby
+module Greetable
+  def greet(name: String) -> String = "Hello, #{name}"
+end
+
+class Person
+  include Greetable
+end
+```
+
+Included methods receive the eventual instance as `self`. Later includes win
+over earlier includes, methods written directly in the class win over included
+methods, and the resulting class method set precedes inherited lookup. Modules
+are not instantiable and do not participate in nominal subtyping.
 
 Generic function and method declarations may introduce up to eight scoped type
 variables:

@@ -260,6 +260,14 @@ the caller's type-set graphs into the callee, resolving outer generic variables
 when necessary. Explicit bindings disable inference for that call and therefore
 act as authoritative parameter and return contracts.
 
+Modules are reusable method sets rather than classes. `include Name` copies a
+module's method descriptors into the receiving class while retaining ordinary
+bytecode functions, typed signatures, generics, and the receiver slot. Reverse
+declaration lookup gives direct class methods precedence over included methods
+and later includes precedence over earlier ones; superclass lookup begins only
+after the receiving class is exhausted. Modules have no instances,
+superclasses, fields, or nominal type identity.
+
 For a direct `value == nil` or `value != nil` condition, the compiler splits a
 union type-set into nil and non-nil branch facts. Facts for locals that existed
 before the branch are merged at the join; disagreement becomes unknown, so

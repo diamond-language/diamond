@@ -97,10 +97,13 @@ future work.
   collections and recursively bound contracts from earlier generic calls.
 - Explicit generic arguments for function and method calls, including nested
   types, outer generic forwarding, strict arity, and specialized bytecode.
+- Reusable modules with class inclusion, receiver-aware generic methods,
+  deterministic precedence, inheritance integration, and name diagnostics.
 
 ## Next priorities
 
-1. Add module namespaces and mixins without conflating them with classes.
+1. Add namespaced module constants and nested declarations.
+2. Decide whether module-owned state should use symbolic fields or accessors.
 
 ## Later experiments
 

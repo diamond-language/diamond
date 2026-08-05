@@ -16,6 +16,7 @@ enum {
     DIAMOND_MAX_STRING_LENGTH = 255,
     DIAMOND_MAX_CLASSES = 32,
     DIAMOND_MAX_INTERFACES = 16,
+    DIAMOND_MAX_MODULES = 16,
     DIAMOND_MAX_TYPE_SETS = 64,
     DIAMOND_MAX_UNION_TYPES = 8,
     DIAMOND_MAX_METHODS = 32,
@@ -131,6 +132,7 @@ typedef struct DiamondMethod {
     uint8_t function_index;
     uint8_t arity;
     uint8_t required_arity;
+    bool included;
 } DiamondMethod;
 
 typedef struct DiamondInterfaceMethod {
@@ -145,6 +147,12 @@ typedef struct DiamondInterface {
     DiamondInterfaceMethod methods[DIAMOND_MAX_METHODS];
     size_t method_count;
 } DiamondInterface;
+
+typedef struct DiamondModule {
+    char name[DIAMOND_MAX_FUNCTION_NAME];
+    DiamondMethod methods[DIAMOND_MAX_METHODS];
+    size_t method_count;
+} DiamondModule;
 
 typedef struct DiamondClass DiamondClass;
 

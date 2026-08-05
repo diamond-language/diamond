@@ -1092,4 +1092,32 @@ grep -q 'CALL_TYPED.*\[Array\[String\]\]' <<<"$actual"
 actual="$($diamond -e $'def values[T]() -> Array[T] = []\ndef run()\n values = [42]\n values[0]\nend\nrun()')"
 [[ "$actual" == "42" ]]
 
-echo "249 tests passed"
+actual="$($diamond -e $'module Greetable\n def greet(name: String) -> String = "Hello, #{name}"\nend\nclass Person\n include Greetable\nend\nPerson.new().greet("sir")')"
+[[ "$actual" == "Hello, sir" ]]
+
+actual="$($diamond -e $'module Identity\n def itself() = self\nend\nclass Box\n include Identity\nend\nBox.new().itself()')"
+[[ "$actual" == "#<Box>" ]]
+
+actual="$($diamond -e $'module First\n def value() = 1\nend\nmodule Second\n def value() = 2\nend\nclass Box\n include First\n include Second\nend\nBox.new().value()')"
+[[ "$actual" == "2" ]]
+
+actual="$($diamond -e $'module Values\n def value() = 1\nend\nclass Box\n include Values\n def value() = 3\nend\nBox.new().value()')"
+[[ "$actual" == "3" ]]
+
+actual="$($diamond -e $'module Values\n def value() = 42\nend\nclass Parent\n include Values\nend\nclass Child < Parent\nend\nChild.new().value()')"
+[[ "$actual" == "42" ]]
+
+actual="$($diamond -e $'module Collections\n def empty[T]() -> Array[T] = []\nend\nclass Factory\n include Collections\nend\nresult = Factory.new().empty[String]()\nbegin\n result.push(42)\nrescue error: TypeError\n 42\nend')"
+[[ "$actual" == "42" ]]
+
+if "$diamond" -e $'class Box\n include Missing\nend' >/dev/null 2>&1; then
+    echo "undefined included module unexpectedly compiled" >&2
+    exit 1
+fi
+
+if "$diamond" -e $'module Box\nend\nclass Box\nend' >/dev/null 2>&1; then
+    echo "module and class name collision unexpectedly compiled" >&2
+    exit 1
+fi
+
+echo "257 tests passed"
