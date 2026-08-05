@@ -26,6 +26,7 @@ typedef struct Local {
 typedef struct LoopContext {
     struct LoopContext *previous;
     size_t continue_target;
+    size_t redo_target;
     size_t breaks[64];
     size_t break_count;
 } LoopContext;
@@ -1772,6 +1773,7 @@ static uint8_t parse_while(Compiler *compiler,bool inverted) {
     LoopContext loop={
         .previous=compiler->current_loop,
         .continue_target=loop_start,
+        .redo_target=compiler->function->code_count,
     };
     compiler->current_loop=&loop;
     (void)compile_sequence(compiler);
@@ -2203,7 +2205,8 @@ static uint8_t compile_loop_control(Compiler *compiler) {
     const DiamondSpan keyword=compiler->current.span;
     if(compiler->current_loop==nullptr) {
         fail(compiler,keyword,kind==DIAMOND_TOKEN_BREAK
-            ? "'break' used outside a loop" : "'next' used outside a loop");
+            ? "'break' used outside a loop":kind==DIAMOND_TOKEN_NEXT
+            ? "'next' used outside a loop":"'redo' used outside a loop");
         return 0;
     }
     advance_token(compiler);
@@ -2222,8 +2225,10 @@ static uint8_t compile_loop_control(Compiler *compiler) {
         }
         compiler->current_loop->breaks[compiler->current_loop->break_count++]=
             emit_jump(compiler,DIAMOND_OP_JUMP,0);
-    } else {
+    } else if(kind==DIAMOND_TOKEN_NEXT) {
         emit_absolute_jump(compiler,compiler->current_loop->continue_target);
+    } else {
+        emit_absolute_jump(compiler,compiler->current_loop->redo_target);
     }
     const uint8_t result=allocate_register(compiler);
     emit_instruction(compiler,DIAMOND_OP_NIL,result,0,0,1);
@@ -3437,7 +3442,8 @@ static uint8_t compile_sequence(Compiler *compiler) {
             advance_token(compiler);
             result=compile_begin(compiler);
         } else if (compiler->current.kind == DIAMOND_TOKEN_BREAK ||
-                   compiler->current.kind == DIAMOND_TOKEN_NEXT) {
+                   compiler->current.kind == DIAMOND_TOKEN_NEXT ||
+                   compiler->current.kind == DIAMOND_TOKEN_REDO) {
             result=compile_loop_control(compiler);
         } else {
             if(index_assignment_ahead(compiler))

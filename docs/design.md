@@ -365,6 +365,8 @@ sharing the final `end` while preserving expression results and type joins.
 `until` likewise shares loop compilation with `while`, negating only the
 condition register before the existing exit jump; `break` and `next` targets
 therefore retain identical semantics.
+Each loop also records the first body instruction separately from its condition;
+`redo` targets that offset, whereas `next` targets condition reevaluation.
 
 A `begin` expression may place `else` after its rescue clause. Normal execution
 jumps over the handler into that branch, while rescued execution jumps past it;

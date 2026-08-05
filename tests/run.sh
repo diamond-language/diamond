@@ -1535,4 +1535,15 @@ actual="$($diamond -e $'begin\n [1][4]\nrescue : TypeError | IndexError\n 42\nen
 actual="$($diamond -e $'begin\n 1 / 0\nrescue error: ZeroDivisionError\n error\nend')"
 [[ "$actual" == "#<ZeroDivisionError>" ]]
 
-echo "382 tests passed"
+actual="$($diamond -e $'condition_checks = 0\nbody_runs = 0\nwhile condition_checks < 1\n condition_checks = condition_checks + 1\n body_runs = body_runs + 1\n if body_runs < 3\n  redo\n end\nend\n[condition_checks, body_runs]')"
+[[ "$actual" == "[3, 3]" ]]
+
+actual="$($diamond -e $'runs = 0\nuntil true\n runs = 99\nend\nuntil runs == 2\n runs = runs + 1\n if runs == 1\n  redo\n end\nend\nruns')"
+[[ "$actual" == "2" ]]
+
+if "$diamond" -e $'redo' >/dev/null 2>&1; then
+    echo "redo outside loop unexpectedly compiled" >&2
+    exit 1
+fi
+
+echo "385 tests passed"

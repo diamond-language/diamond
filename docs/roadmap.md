@@ -144,6 +144,7 @@ future work.
 - Suffixed-name integration with visibility, aliasing, and module exports.
 - `unless` conditional expressions with `else` and type narrowing.
 - `until` loops with ordinary `break` and `next` control flow.
+- Loop-body `redo` without condition reevaluation.
 - Chained `elsif` branches in conditional expressions.
 - Normal-completion `else` branches in `begin`/`rescue` expressions.
 - Bare re-raise of the current rescued exception.
