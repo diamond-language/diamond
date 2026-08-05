@@ -1655,4 +1655,6 @@ actual="$($diamond -e $'class DetailedError < StandardError\n attr_reader messag
 [[ "$actual" == "failure" ]]
 actual="$($diamond -e $'class WrappedError < StandardError\n attr_reader cause: StandardError\n def initialize(cause: StandardError)\n  @cause=cause\n end\nend\nbegin\n raise WrappedError.new(TypeError.new())\nrescue error: WrappedError\n error.cause() is TypeError\nend')"
 [[ "$actual" == "true" ]]
-echo "421 tests passed"
+actual="$($diamond -e $'class DetailedError < StandardError\n attr_accessor message: String\nend\nbegin\n DetailedError.new().message=(42)\nrescue : TypeError\n 42\nend')"
+[[ "$actual" == "42" ]]
+echo "422 tests passed"

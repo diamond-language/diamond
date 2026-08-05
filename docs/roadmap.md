@@ -170,6 +170,7 @@ future work.
 - Nominal subclass matching across ordered rescue clauses.
 - Typed payload fields on user-defined exception subclasses.
 - Typed causal chaining on user-defined exceptions.
+- Runtime enforcement of exception payload contracts.
 - Diagnostics for subclass filters shadowed by earlier superclass clauses.
 
 ## Next priorities
