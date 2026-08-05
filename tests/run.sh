@@ -1669,4 +1669,7 @@ actual="$($diamond -e $'begin\n [1][4]\nrescue error: IndexError\n [error.messag
 [[ "$actual" == "[index 4 out of bounds for Array of length 1, nil]" ]]
 actual="$($diamond -e $'root=TypeError.new("root")\nerror=RuntimeError.new("wrapped", root)\n[error.message(), error.cause().message()]')"
 [[ "$actual" == "[wrapped, root]" ]]
-echo "428 tests passed"
+actual="$($diamond -e $'error=RuntimeError.new()\n[error.message(), error.cause()]')"
+[[ "$actual" == "[nil, nil]" ]]
+if "$diamond" -e $'RuntimeError.new(1, 2, 3)' >/dev/null 2>&1; then exit 1; fi
+echo "430 tests passed"

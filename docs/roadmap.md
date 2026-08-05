@@ -177,6 +177,7 @@ future work.
 - Message payloads on VM-generated standard exceptions.
 - Uniform cause slots on built-in and user exception hierarchies.
 - Native message/cause construction for exception instances.
+- Exception constructor defaults and strict arity diagnostics.
 - Diagnostics for subclass filters shadowed by earlier superclass clauses.
 
 ## Next priorities
