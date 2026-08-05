@@ -1165,6 +1165,7 @@ static uint8_t parse_singleton_call(Compiler *compiler,
     const DiamondFunction *function=
         &compiler->program->functions[method->function_index];
     advance_token(compiler);
+    if(compiler->current.kind==DIAMOND_TOKEN_EQUAL)advance_token(compiler);
     uint8_t type_arguments[8];size_t type_argument_count=0;
     if(compiler->current.kind==DIAMOND_TOKEN_LEFT_BRACKET) {
         advance_token(compiler);
@@ -1231,6 +1232,16 @@ static uint8_t parse_singleton_call(Compiler *compiler,
     return destination;
 }
 
+static bool singleton_call_name_equals(const Compiler *compiler,
+                                       const char *candidate,DiamondSpan name) {
+    const size_t length=strlen(candidate);
+    if(length==name.length)return name_equals(compiler,candidate,name,false);
+    if(length!=name.length+1||candidate[length-1]!='=')return false;
+    DiamondLexer lookahead=compiler->lexer;
+    if(diamond_lexer_next(&lookahead).kind!=DIAMOND_TOKEN_EQUAL)return false;
+    return memcmp(candidate,compiler->source+name.start,name.length)==0;
+}
+
 static uint8_t parse_name(Compiler *compiler) {
     const DiamondSpan name = compiler->previous.span;
     int class_index=find_class(compiler,name);
@@ -1275,8 +1286,9 @@ static uint8_t parse_name(Compiler *compiler) {
         const DiamondMethod *method=nullptr;
         if(compiler->current.kind==DIAMOND_TOKEN_IDENTIFIER)
             for(size_t index=0;index<module->singleton_method_count;index++)
-                if(name_equals(compiler,module->singleton_methods[index].name,
-                               compiler->current.span,false))
+                if(singleton_call_name_equals(compiler,
+                       module->singleton_methods[index].name,
+                       compiler->current.span))
                     method=&module->singleton_methods[index];
         if(method==nullptr) {
             fail(compiler,compiler->current.span,
@@ -1303,8 +1315,9 @@ static uint8_t parse_name(Compiler *compiler) {
                 &compiler->program->classes[(size_t)class_index];
             while(owner!=nullptr&&method==nullptr) {
                 for(size_t index=0;index<owner->singleton_method_count;index++)
-                    if(name_equals(compiler,owner->singleton_methods[index].name,
-                                   compiler->current.span,false))
+                    if(singleton_call_name_equals(compiler,
+                           owner->singleton_methods[index].name,
+                           compiler->current.span))
                         method=&owner->singleton_methods[index];
                 owner=owner->superclass==UINT8_MAX?nullptr:
                     &compiler->program->classes[owner->superclass];

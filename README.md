@@ -28,7 +28,7 @@ Implemented today:
 - stop-the-world mark/sweep collection with stress-GC testing;
 - source diagnostics and bytecode disassembly.
 
-The test suite currently contains 328 end-to-end assertions spanning the
+The test suite currently contains 330 end-to-end assertions spanning the
 frontend, compiler, VM, object model, type guards, collections, and collector.
 
 ## Build and run
@@ -308,6 +308,8 @@ Generating the same reader or writer twice is a compile-time error.
 Ordinary methods may use the same writer spelling with
 `def name=(value) ... end`, including annotations, defaults, module fields, and
 private `self.name=(value)` calls.
+Class and module singleton functions may likewise use writer names and qualified
+calls such as `Config.value=(42)`.
 
 Generic function and method declarations may introduce up to eight scoped type
 variables:

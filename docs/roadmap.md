@@ -127,6 +127,7 @@ future work.
 - Scoped standalone `module_function` mode for exporting subsequent methods.
 - Duplicate generated attribute-method diagnostics for classes and modules.
 - Compile-time rejection of stateful `module_function` exports.
+- Class and module singleton writer definitions and qualified invocation.
 
 ## Next priorities
 

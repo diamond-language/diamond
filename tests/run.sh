@@ -1361,4 +1361,10 @@ if "$diamond" -e $'module Stateful\n module_function\n attr_reader value\nend' >
     exit 1
 fi
 
-echo "328 tests passed"
+actual="$($diamond -e $'class Box\n def self.value=(incoming: Int) -> Int = incoming\nend\nBox.value=(42)')"
+[[ "$actual" == "42" ]]
+
+actual="$($diamond -e $'module Config\n def self.value=(incoming = 42) = incoming\nend\nConfig.value=()')"
+[[ "$actual" == "42" ]]
+
+echo "330 tests passed"
