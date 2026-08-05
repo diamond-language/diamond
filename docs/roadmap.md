@@ -101,11 +101,13 @@ future work.
   deterministic precedence, inheritance integration, and name diagnostics.
 - Transitive module-to-module inclusion with imported/direct precedence and
   self-cycle diagnostics.
+- Lexical module namespaces with nested modules/classes, `Outer::Name`
+  resolution, qualified type annotations, and isolated local names.
 
 ## Next priorities
 
-1. Add namespaced module constants and nested declarations.
-2. Decide whether module-owned state should use symbolic fields or accessors.
+1. Decide whether module-owned state should use symbolic fields or accessors.
+2. Add nested interfaces and general immutable constant values.
 
 ## Later experiments
 

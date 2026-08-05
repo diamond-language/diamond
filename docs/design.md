@@ -271,6 +271,13 @@ module; its flattened descriptors remain marked as imported so methods declared
 directly by the composing module override them. Source-order resolution and the
 absence of reopening prevent indirect cycles, while self-inclusion is diagnosed.
 
+Module metadata also establishes a lexical constant namespace. Nested modules
+and classes store their fully qualified `Outer::Name`, while source inside the
+module may resolve a sibling by its local name. The lexer distinguishes `::`
+from hash/rescue/type colons, and qualified class constants participate in
+construction, nominal annotations, diagnostics, and object rendering without a
+runtime namespace object.
+
 For a direct `value == nil` or `value != nil` condition, the compiler splits a
 union type-set into nil and non-nil branch facts. Facts for locals that existed
 before the branch are merged at the join; disagreement becomes unknown, so

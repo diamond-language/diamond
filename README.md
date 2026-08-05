@@ -28,7 +28,7 @@ Implemented today:
 - stop-the-world mark/sweep collection with stress-GC testing;
 - source diagnostics and bytecode disassembly.
 
-The test suite currently contains 262 end-to-end assertions spanning the
+The test suite currently contains 268 end-to-end assertions spanning the
 frontend, compiler, VM, object model, type guards, collections, and collector.
 
 ## Build and run
@@ -246,6 +246,11 @@ may include previously declared modules with the same precedence rules, making
 composition transitive. Modules are not instantiable and do not participate in
 nominal subtyping.
 
+Modules also form lexical namespaces for nested modules and classes. Constants
+resolve explicitly with `Outer::Name` and lexically from inside the enclosing
+module; qualified class names are valid constructor targets and type
+annotations. Separate namespaces may reuse the same local declaration name.
+
 Generic function and method declarations may introduce up to eight scoped type
 variables:
 
@@ -343,7 +348,8 @@ Field sites use four-entry polymorphic caches guarded by instance shape.
 - `ensure` may follow a rescued block or stand alone. It runs on normal
   completion, raised exceptions, runtime failures, and explicit returns;
   cleanup-side control flow overrides the pending unwind.
-- No modules, mixins, singleton methods, or visibility.
+- No singleton methods or visibility controls; module fields and general
+  constant values remain deferred.
 - Classes own immutable shape chains for lazily materialized field prefixes;
   method calls and field access use four-entry polymorphic inline caches.
 - Generic contracts guard indexed mutation and `push`. Collection APIs currently

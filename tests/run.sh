@@ -1137,4 +1137,24 @@ if "$diamond" -e $'module Recursive\n include Recursive\nend' >/dev/null 2>&1; t
     exit 1
 fi
 
-echo "262 tests passed"
+actual="$($diamond -e $'module Models\n class User\n end\nend\nModels::User.new()')"
+[[ "$actual" == "#<Models::User>" ]]
+
+actual="$($diamond -e $'module Outer\n module Greetings\n  def greet() = "hello"\n end\n class Person\n  include Outer::Greetings\n end\nend\nOuter::Person.new().greet()')"
+[[ "$actual" == "hello" ]]
+
+actual="$($diamond -e $'module Outer\n module Greetings\n  def greet() = "hello"\n end\n class Person\n  include Greetings\n end\nend\nOuter::Person.new().greet()')"
+[[ "$actual" == "hello" ]]
+
+actual="$($diamond -e $'module Models\n class Box\n end\nend\ndef accept(value: Models::Box) -> Models::Box = value\naccept(Models::Box.new())')"
+[[ "$actual" == "#<Models::Box>" ]]
+
+actual="$($diamond -e $'module First\n class Box\n end\nend\nmodule Second\n class Box\n end\nend\n[First::Box.new(), Second::Box.new()]')"
+[[ "$actual" == "[#<First::Box>, #<Second::Box>]" ]]
+
+if "$diamond" -e 'Missing::Thing.new()' >/dev/null 2>&1; then
+    echo "undefined qualified name unexpectedly compiled" >&2
+    exit 1
+fi
+
+echo "268 tests passed"

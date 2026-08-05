@@ -208,7 +208,8 @@ DiamondToken diamond_lexer_next(DiamondLexer *lexer) {
         case '.':
             return token(lexer, DIAMOND_TOKEN_DOT);
         case ':':
-            return token(lexer, DIAMOND_TOKEN_COLON);
+            return token(lexer,match(lexer,':')?DIAMOND_TOKEN_DOUBLE_COLON:
+                         DIAMOND_TOKEN_COLON);
         case '|':
             return token(lexer, match(lexer, '|') ? DIAMOND_TOKEN_OR_OR
                                                    : DIAMOND_TOKEN_PIPE);
