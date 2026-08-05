@@ -2124,6 +2124,7 @@ static uint8_t compile_begin(Compiler *compiler) {
     const size_t end_jump=emit_jump(compiler,DIAMOND_OP_JUMP,0);
     patch_jump(compiler,handler_operand,compiler->function->code_count);
     size_t rescue_end_jumps[16];size_t rescue_count=0;
+    uint8_t seen_rescue_types[128];size_t seen_rescue_type_count=0;
     bool saw_rescue=false,catch_all=false;
     while(compiler->current.kind==DIAMOND_TOKEN_RESCUE&&!compiler->failed) {
         if(catch_all) {
@@ -2162,12 +2163,17 @@ static uint8_t compile_begin(Compiler *compiler) {
                     if(rescue_types[existing]==rescue_type)
                         fail(compiler,compiler->current.span,
                              "duplicate rescue type");
+                for(size_t existing=0;existing<seen_rescue_type_count;existing++)
+                    if(seen_rescue_types[existing]==rescue_type)
+                        fail(compiler,compiler->current.span,
+                             "rescue type was already handled");
                 if(rescue_type>=DIAMOND_TYPE_VARIABLE_BASE&&
                    rescue_type<DIAMOND_TYPE_INTERFACE_BASE) {
                     fail(compiler,compiler->current.span,
                          "generic type variables cannot filter rescue");break;
                 }
                 rescue_types[type_count++]=rescue_type;
+                seen_rescue_types[seen_rescue_type_count++]=rescue_type;
                 advance_token(compiler);
                 if(compiler->current.kind!=DIAMOND_TOKEN_PIPE)break;
                 advance_token(compiler);

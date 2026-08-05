@@ -157,6 +157,7 @@ future work.
 - Binding-free typed rescue filters.
 - Ordered multiple rescue clauses with unmatched re-raise.
 - Duplicate rescue-filter type diagnostics.
+- Unreachable repeated-type diagnostics across rescue clauses.
 
 ## Next priorities
 
