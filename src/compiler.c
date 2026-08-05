@@ -1025,6 +1025,7 @@ static int field_index(Compiler *compiler, DiamondSpan name, bool create) {
 }
 
 static uint8_t module_field_name(Compiler *compiler,DiamondSpan name) {
+    compiler->function->uses_instance_state=true;
     DiamondModule *module=
         &compiler->program->modules[(size_t)compiler->current_module];
     const size_t length=name.length-1;
@@ -2512,7 +2513,10 @@ static uint8_t compile_definition(Compiler *compiler) {
                 method->included=false;
                 method->is_private=compiler->methods_private;
                 if(compiler->module_function_mode) {
-                    if(module->singleton_method_count==DIAMOND_MAX_METHODS)
+                    if(function->uses_instance_state)
+                        fail(compiler,name,
+                            "stateful method cannot use module_function mode");
+                    else if(module->singleton_method_count==DIAMOND_MAX_METHODS)
                         fail(compiler,name,"too many module singleton functions");
                     else {
                         method->is_private=true;
@@ -2608,6 +2612,10 @@ static void compile_attribute_named(Compiler *compiler,bool writer) {
     } else {
         DiamondModule *module=
             &compiler->program->modules[(size_t)compiler->current_module];
+        if(compiler->module_function_mode) {
+            fail(compiler,name,
+                 "stateful attribute cannot use module_function mode");return;
+        }
         for(size_t index=0;index<module->method_count;index++)
             if(!module->methods[index].included&&
                strcmp(module->methods[index].name,method_name)==0) {
@@ -2638,6 +2646,7 @@ static void compile_attribute_named(Compiler *compiler,bool writer) {
     function->return_type_set=UINT8_MAX;
     for(size_t index=0;index<16;index++)function->parameter_type_sets[index]=UINT8_MAX;
     if(compiler->current_module>=0&&compiler->current_class<0) {
+        function->uses_instance_state=true;
         DiamondStringConstant *string=&function->strings[0];
         (void)snprintf(string->chars,sizeof string->chars,"%s",field_name);
         string->length=strlen(field_name);function->string_count=1;
@@ -2721,6 +2730,13 @@ static void compile_module_function(Compiler *compiler) {
             }
         if(source==nullptr) {
             fail(compiler,name,"module_function target is not defined here");return;
+        }
+        const DiamondFunction *function=
+            &compiler->program->functions[source->function_index];
+        if(function->uses_instance_state) {
+            fail(compiler,name,
+                 "stateful module method cannot become a module_function");
+            return;
         }
         for(size_t index=0;index<module->singleton_method_count;index++)
             if(strcmp(module->singleton_methods[index].name,source->name)==0) {

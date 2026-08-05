@@ -28,7 +28,7 @@ Implemented today:
 - stop-the-world mark/sweep collection with stress-GC testing;
 - source diagnostics and bytecode disassembly.
 
-The test suite currently contains 326 end-to-end assertions spanning the
+The test suite currently contains 328 end-to-end assertions spanning the
 frontend, compiler, VM, object model, type guards, collections, and collector.
 
 ## Build and run
@@ -284,7 +284,7 @@ only Config's ordinary instance methods.
 module namespace and makes the includable copy private. Exported functions keep
 their defaults, annotations, generics, and constant access. They have no module
 object, so methods requiring instance fields remain meaningful only when mixed
-into a class.
+into a class and are rejected from `module_function` at compile time.
 With no names, `module_function` exports all subsequent ordinary methods until
 the module ends; nested modules start with their own mode.
 

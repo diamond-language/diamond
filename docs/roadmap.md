@@ -126,6 +126,7 @@ future work.
   includable copies private and avoiding a fabricated module instance.
 - Scoped standalone `module_function` mode for exporting subsequent methods.
 - Duplicate generated attribute-method diagnostics for classes and modules.
+- Compile-time rejection of stateful `module_function` exports.
 
 ## Next priorities
 

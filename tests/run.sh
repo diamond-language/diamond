@@ -1351,4 +1351,14 @@ if "$diamond" -e $'module Named\n attr_writer name\n attr_writer name\nend' >/de
     exit 1
 fi
 
-echo "326 tests passed"
+if "$diamond" -e $'module Stateful\n def value() = @value\n module_function value\nend' >/dev/null 2>&1; then
+    echo "stateful targeted module_function unexpectedly compiled" >&2
+    exit 1
+fi
+
+if "$diamond" -e $'module Stateful\n module_function\n attr_reader value\nend' >/dev/null 2>&1; then
+    echo "stateful module_function mode unexpectedly compiled" >&2
+    exit 1
+fi
+
+echo "328 tests passed"
