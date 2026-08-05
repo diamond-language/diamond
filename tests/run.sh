@@ -771,4 +771,22 @@ if "$diamond" -e $'begin\n raise 1\nrescue error: Int |\n 0\nend' \
     exit 1
 fi
 
-echo "149 tests passed"
+actual="$(DIAMOND_STRESS_GC=1 "$diamond" -e $'def run()\n def stringify(value) -> String\n  "ok"\n end\n array_map_string([1, 2], stringify)\nend\nrun()')"
+[[ "$actual" == "[ok, ok]" ]]
+
+actual="$($diamond -e $'def run()\n def stringify(value) -> String\n  "ok"\n end\n result = array_map_string([1], stringify)\n begin\n  result.push(42)\n rescue error: TypeError\n  42\n end\nend\nrun()')"
+[[ "$actual" == "42" ]]
+
+actual="$($diamond -e $'def run()\n def wrong(value) -> Int\n  value\n end\n begin\n  array_map_string([], wrong)\n rescue error: TypeError\n  42\n end\nend\nrun()')"
+[[ "$actual" == "42" ]]
+
+actual="$($diamond -e $'def run()\n def unknown(value)\n  "ok"\n end\n begin\n  array_map_string([], unknown)\n rescue error: TypeError\n  42\n end\nend\nrun()')"
+[[ "$actual" == "42" ]]
+
+actual="$($diamond -e $'class Animal\nend\nclass Dog < Animal\nend\ndef run()\n def make_dog() -> Dog\n  Dog.new()\n end\n def accept(callback: Callable[0, Animal]) -> Animal\n  callback()\n end\n accept(make_dog)\nend\nrun()')"
+[[ "$actual" == "#<Dog>" ]]
+
+actual="$($diamond --dump-bytecode -e $'def accept(callback: Callable[1, String])\n callback(1)\nend')"
+grep -q 'Callable\[1, String\]' <<<"$actual"
+
+echo "155 tests passed"

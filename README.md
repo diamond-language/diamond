@@ -27,7 +27,7 @@ Implemented today:
 - stop-the-world mark/sweep collection with stress-GC testing;
 - source diagnostics and bytecode disassembly.
 
-The test suite currently contains 149 end-to-end assertions spanning the
+The test suite currently contains 155 end-to-end assertions spanning the
 frontend, compiler, VM, object model, type guards, collections, and collector.
 
 ## Build and run
@@ -158,12 +158,15 @@ nominal members accept subclasses. Arrays accept recursive element annotations,
 such as `Array[Int | Nil]` and `Array[Array[String]]`. Hashes accept independent
 key and value annotations, such as `Hash[String, Array[Int]]`.
 Closures satisfy `Callable`; `Callable[n]` additionally requires exactly `n`
-arguments.
+arguments. `Callable[n, Return]` also requires an explicit, compatible return
+annotation on the closure, including unions and covariant nominal returns.
 
 The embedded core prelude is ordinary Diamond source from `lib/core.dia`.
 Current helpers include `array_first`, `array_swap_first_two`, and `hash_fetch`;
 the prelude also provides fallback-aware first/last operations and empty
-predicates, membership, callback iteration, and mapping. Their bytecode appears
+predicates, membership, callback iteration, and mapping. Typed
+`array_map_int`/`array_map_string` variants require matching callback return
+signatures and return persistently contracted arrays. Their bytecode appears
 in `--dump-bytecode` output like user-defined functions. Arrays expose native
 `push`/`pop`; hashes expose insertion-ordered `key_at`/`value_at`; arrays, hashes,
 and strings expose native `length()`.

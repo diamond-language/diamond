@@ -58,6 +58,26 @@ def array_map(values: Array, callback: Callable[1]) -> Array
   result
 end
 
+def array_map_int(values: Array, callback: Callable[1, Int]) -> Array[Int]
+  result = []
+  index = 0
+  while index < values.length()
+    result.push(callback(values[index]))
+    index = index + 1
+  end
+  result
+end
+
+def array_map_string(values: Array, callback: Callable[1, String]) -> Array[String]
+  result = []
+  index = 0
+  while index < values.length()
+    result.push(callback(values[index]))
+    index = index + 1
+  end
+  result
+end
+
 def array_swap_first_two(values: Array) -> Array
   first = values[0]
   second = values[1]

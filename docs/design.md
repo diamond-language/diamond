@@ -164,6 +164,10 @@ Closure objects satisfy `Callable`. An optional integer argument, as in
 `Callable[2]`, checks the referenced bytecode function's arity at the typed
 boundary. Core collection callbacks use these contracts, so invalid callbacks
 are rejected even when an empty collection would perform no invocation.
+`Callable[2, String | Nil]` additionally requires the closure to declare a
+structurally compatible return type-set. Nominal returns are covariant, so a
+declared subclass return satisfies a superclass result contract. Unannotated
+closures do not satisfy a requested result contract.
 
 Registers may also carry a type-set fact in addition to an exact primitive or
 class fact. Indexing `Array[T]` produces `T`; indexing `Hash[K, V]` produces

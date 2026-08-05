@@ -360,14 +360,85 @@ static bool value_matches_type(const DiamondChunk *chunk, DiamondValue value,
 static bool value_matches_set(const DiamondChunk *chunk,DiamondValue value,
                               uint8_t set_index,bool attach);
 
+static bool runtime_set_satisfies(const DiamondChunk *chunk,
+                                  const DiamondTypeSet *known_sets,
+                                  uint8_t known_index,
+                                  const DiamondTypeSet *expected_sets,
+                                  uint8_t expected_index);
+
+static bool runtime_type_id_satisfies(const DiamondChunk *chunk,uint8_t known,
+                                      uint8_t expected) {
+    if(known==expected)return true;
+    if(known<DIAMOND_TYPE_CLASS_BASE||expected<DIAMOND_TYPE_CLASS_BASE)return false;
+    size_t index=(size_t)(known-DIAMOND_TYPE_CLASS_BASE);
+    const size_t wanted=(size_t)(expected-DIAMOND_TYPE_CLASS_BASE);
+    while(index<chunk->class_count) {
+        if(index==wanted)return true;
+        const uint8_t parent=chunk->classes[index].superclass;
+        if(parent==UINT8_MAX)break;
+        index=parent;
+    }
+    return false;
+}
+
+static bool runtime_member_satisfies(const DiamondChunk *chunk,
+                                     const DiamondTypeSet *known_sets,
+                                     DiamondTypeMember known,
+                                     const DiamondTypeSet *expected_sets,
+                                     DiamondTypeMember expected) {
+    if(!runtime_type_id_satisfies(chunk,known.id,expected.id))return false;
+    if(expected.id==DIAMOND_TYPE_CALLABLE) {
+        if(expected.callable_arity!=UINT8_MAX&&
+           known.callable_arity!=expected.callable_arity)return false;
+        return expected.callable_return_set==UINT8_MAX||
+            (known.callable_return_set!=UINT8_MAX&&
+             runtime_set_satisfies(chunk,known_sets,known.callable_return_set,
+                                   expected_sets,expected.callable_return_set));
+    }
+    if(expected.argument_set==UINT8_MAX)return true;
+    if(known.argument_set==UINT8_MAX||
+       !runtime_set_satisfies(chunk,known_sets,known.argument_set,
+                              expected_sets,expected.argument_set))return false;
+    if(expected.id!=DIAMOND_TYPE_HASH)return true;
+    return known.second_argument_set!=UINT8_MAX&&
+        expected.second_argument_set!=UINT8_MAX&&
+        runtime_set_satisfies(chunk,known_sets,known.second_argument_set,
+                              expected_sets,expected.second_argument_set);
+}
+
+static bool runtime_set_satisfies(const DiamondChunk *chunk,
+                                  const DiamondTypeSet *known_sets,
+                                  uint8_t known_index,
+                                  const DiamondTypeSet *expected_sets,
+                                  uint8_t expected_index) {
+    const DiamondTypeSet *known=&known_sets[known_index];
+    const DiamondTypeSet *expected=&expected_sets[expected_index];
+    for(size_t source=0;source<known->count;source++) {
+        bool accepted=false;
+        for(size_t target=0;target<expected->count&&!accepted;target++)
+            accepted=runtime_member_satisfies(chunk,known_sets,
+                known->members[source],expected_sets,expected->members[target]);
+        if(!accepted)return false;
+    }
+    return true;
+}
+
 static bool value_matches_member(const DiamondChunk *chunk,DiamondValue value,
                                  DiamondTypeMember member,bool attach) {
     if(!value_matches_type(chunk,value,member.id))return false;
     if(member.id==DIAMOND_TYPE_CALLABLE) {
-        if(member.callable_arity==UINT8_MAX)return true;
         const DiamondClosure *closure=(const DiamondClosure *)value.as.object;
-        return closure->function_index<chunk->function_count&&
-            chunk->functions[closure->function_index].arity==member.callable_arity;
+        if(closure->function_index>=chunk->function_count)return false;
+        const DiamondFunction *function=&chunk->functions[closure->function_index];
+        if(member.callable_arity!=UINT8_MAX&&
+           function->arity!=member.callable_arity)return false;
+        return member.callable_return_set==UINT8_MAX||
+            ((size_t)member.callable_return_set<chunk->type_set_count&&
+             function->return_type_set!=UINT8_MAX&&
+             (size_t)function->return_type_set<function->type_set_count&&
+             runtime_set_satisfies(chunk,function->type_sets,
+                function->return_type_set,chunk->type_sets,
+                member.callable_return_set));
     }
     if(member.argument_set==UINT8_MAX)return true;
     if((size_t)member.argument_set>=chunk->type_set_count)return false;
@@ -556,10 +627,23 @@ static void format_type_set_index(char *buffer,size_t capacity,
             used+=(size_t)close;
         } else if(set->members[index].id==DIAMOND_TYPE_CALLABLE&&
                   set->members[index].callable_arity!=UINT8_MAX&&used<capacity) {
-            const int arity=snprintf(buffer+used,capacity-used,"[%u]",
+            const int arity=snprintf(buffer+used,capacity-used,"[%u",
                 set->members[index].callable_arity);
             if(arity<0)return;
             used+=(size_t)arity;
+            if(set->members[index].callable_return_set!=UINT8_MAX&&used<capacity) {
+                char returns[80];
+                format_type_set_index(returns,sizeof returns,chunk,
+                    set->members[index].callable_return_set);
+                const int result=snprintf(buffer+used,capacity-used,", %s",returns);
+                if(result<0)return;
+                used+=(size_t)result;
+            }
+            if(used<capacity) {
+                const int close=snprintf(buffer+used,capacity-used,"]");
+                if(close<0)return;
+                used+=(size_t)close;
+            }
         }
     }
 }

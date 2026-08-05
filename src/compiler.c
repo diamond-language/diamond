@@ -171,9 +171,14 @@ static bool type_member_satisfies(const Compiler *compiler,
                                   DiamondTypeMember known,
                                   DiamondTypeMember expected) {
     if(!known_type_satisfies_one(compiler,known.id,expected.id))return false;
-    if(expected.id==DIAMOND_TYPE_CALLABLE)
-        return expected.callable_arity==UINT8_MAX||
-            known.callable_arity==expected.callable_arity;
+    if(expected.id==DIAMOND_TYPE_CALLABLE) {
+        if(expected.callable_arity!=UINT8_MAX&&
+           known.callable_arity!=expected.callable_arity)return false;
+        return expected.callable_return_set==UINT8_MAX||
+            (known.callable_return_set!=UINT8_MAX&&
+             type_set_satisfies(compiler,known.callable_return_set,
+                                expected.callable_return_set));
+    }
     if(expected.argument_set==UINT8_MAX)return true;
     if(known.argument_set==UINT8_MAX||
        !type_set_satisfies(compiler,known.argument_set,expected.argument_set))
@@ -501,6 +506,7 @@ static int parse_type_annotation(Compiler *compiler) {
         advance_token(compiler);
         uint8_t argument_set=UINT8_MAX,second_argument_set=UINT8_MAX;
         uint8_t callable_arity=UINT8_MAX;
+        uint8_t callable_return_set=UINT8_MAX;
         if(compiler->current.kind==DIAMOND_TOKEN_LEFT_BRACKET) {
             if(type==DIAMOND_TYPE_CALLABLE) {
                 advance_token(compiler);
@@ -519,6 +525,10 @@ static int parse_type_annotation(Compiler *compiler) {
                          "Callable arity cannot exceed 16");break;
                 }
                 callable_arity=(uint8_t)arity;advance_token(compiler);
+                if(compiler->current.kind==DIAMOND_TOKEN_COMMA) {
+                    advance_token(compiler);
+                    callable_return_set=(uint8_t)parse_type_annotation(compiler);
+                }
             } else if(type==DIAMOND_TYPE_ARRAY||type==DIAMOND_TYPE_HASH) {
                 advance_token(compiler);
                 argument_set=(uint8_t)parse_type_annotation(compiler);
@@ -543,7 +553,8 @@ static int parse_type_annotation(Compiler *compiler) {
         set->members[set->count++]=(DiamondTypeMember){
             .id=type,.argument_set=argument_set,
             .second_argument_set=second_argument_set,
-            .callable_arity=callable_arity};
+            .callable_arity=callable_arity,
+            .callable_return_set=callable_return_set};
         if(compiler->current.kind!=DIAMOND_TOKEN_PIPE)break;
         advance_token(compiler);
     }
@@ -881,7 +892,8 @@ static int16_t type_set_with_nil(Compiler *compiler,uint8_t source_index) {
     DiamondTypeSet *set=&compiler->function->type_sets[result];
     set->members[set->count++]=(DiamondTypeMember){
         .id=DIAMOND_TYPE_NIL,.argument_set=UINT8_MAX,
-        .second_argument_set=UINT8_MAX,.callable_arity=UINT8_MAX};
+        .second_argument_set=UINT8_MAX,.callable_arity=UINT8_MAX,
+        .callable_return_set=UINT8_MAX};
     return (int16_t)result;
 }
 
@@ -902,7 +914,7 @@ static bool split_nil_type_set(Compiler *compiler,uint8_t source_index,
         compiler->function->type_set_count++];
     *nil_set=(DiamondTypeSet){.members={{.id=DIAMOND_TYPE_NIL,
         .argument_set=UINT8_MAX,.second_argument_set=UINT8_MAX,
-        .callable_arity=UINT8_MAX}},.count=1};
+        .callable_arity=UINT8_MAX,.callable_return_set=UINT8_MAX}},.count=1};
     return true;
 }
 
@@ -1470,6 +1482,7 @@ static uint8_t compile_definition(Compiler *compiler) {
     }
     DiamondFunction *function =
         &compiler->program->functions[compiler->program->function_count++];
+    function->return_type_set=UINT8_MAX;
     const size_t function_index = compiler->program->function_count - 1;
     function->owner_class = compiler->current_class < 0
         ? UINT8_MAX : (uint8_t)compiler->current_class;
@@ -1586,6 +1599,7 @@ static uint8_t compile_definition(Compiler *compiler) {
         advance_token(compiler);
         return_type_span=compiler->current.span;
         return_type = parse_type_annotation(compiler);
+        function->return_type_set=(uint8_t)return_type;
     }
     compiler->in_function=true;
     compiler->current_return_type=return_type;

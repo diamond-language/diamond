@@ -71,11 +71,14 @@ future work.
 - Ordered hash iteration primitives with Diamond-written transforms.
 - Non-throwing `is` predicates with primitive and nominal union narrowing.
 - Runtime `Callable[n]` contracts for Diamond core callbacks.
+- Declared `Callable[n, Return]` result contracts and typed array transforms.
 
 ## Next priorities
 
-1. Callable return signatures and typed collection transforms.
-2. Structural interfaces for shared collection behavior.
+1. Structural interfaces for shared collection behavior.
+2. Endless method definitions (`def name(...) = expression`), followed by
+   default arguments and string interpolation so forms such as
+   `def greet(name = "world") = "Hello, #{name}"` work end to end.
 
 ## Later experiments
 

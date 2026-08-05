@@ -108,6 +108,7 @@ typedef struct DiamondTypeMember {
     uint8_t argument_set;
     uint8_t second_argument_set;
     uint8_t callable_arity;
+    uint8_t callable_return_set;
 } DiamondTypeMember;
 
 typedef struct DiamondTypeSet {
@@ -154,6 +155,7 @@ typedef struct DiamondFunction {
     uint8_t owner_class;
     bool nested;
     uint8_t capture_count;
+    uint8_t return_type_set;
 } DiamondFunction;
 
 typedef struct DiamondChunk {
