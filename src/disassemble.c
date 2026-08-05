@@ -289,6 +289,17 @@ static bool disassemble_chunk(FILE *stream, const char *name,
             }
             case DIAMOND_OP_POP_RESCUE:
                 fprintf(stream,"%-18s\n","POP_RESCUE");offset++;break;
+            case DIAMOND_OP_PUSH_ENSURE:
+            case DIAMOND_OP_RUN_ENSURE: {
+                if(!require_bytes(stream,chunk,offset,3)){valid=false;offset=chunk->code_count;break;}
+                const size_t target=((size_t)chunk->code[offset+1]<<8)|chunk->code[offset+2];
+                fprintf(stream,"%-18s -> %04zu\n",
+                    chunk->code[offset]==DIAMOND_OP_PUSH_ENSURE
+                        ? "PUSH_ENSURE" : "RUN_ENSURE",target);
+                offset+=3;break;
+            }
+            case DIAMOND_OP_END_ENSURE:
+                fprintf(stream,"%-18s\n","END_ENSURE");offset++;break;
             default:
                 fprintf(stream, "<unknown opcode %u>\n", chunk->code[offset]);
                 valid = false;

@@ -60,6 +60,12 @@ Every program includes `Exception`, `StandardError`, `RuntimeError`, `TypeError`
 classes, so nominal matching and the ordinary exception unwind path handle both
 runtime failures and explicitly raised values.
 
+An `ensure` clause installs a second kind of frame-local unwind handler. Normal
+completion, exceptions, and explicit returns enter the cleanup body with their
+control state held in a GC-traced pending-unwind record. `END_ENSURE` resumes that
+state through any enclosing cleanup or rescue. A `return` or exception from the
+cleanup body supersedes the pending state, matching Ruby's cleanup semantics.
+
 The compiler tracks exact types for locally obvious temporary values. It removes
 provably redundant type guards, rejects provable mismatches, and leaves runtime
 guards at dynamic boundaries. Mutable and uncertain flows are treated

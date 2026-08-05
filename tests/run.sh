@@ -525,10 +525,27 @@ actual="$(DIAMOND_STRESS_GC=1 "$diamond" tests/cases/standard_exceptions.dia)"
 actual="$("$diamond" -e $'begin\n true + 1\nrescue error: StandardError\n 42\nend')"
 [[ "$actual" == "42" ]]
 
+actual="$(DIAMOND_STRESS_GC=1 "$diamond" tests/cases/ensure.dia)"
+[[ "$actual" == "42" ]]
+
+actual="$("$diamond" -e $'begin\n begin\n  1 / 0\n ensure\n  40 + 2\n end\nrescue error: ZeroDivisionError\n 42\nend')"
+[[ "$actual" == "42" ]]
+
+actual="$("$diamond" --dump-bytecode -e $'begin\n 42\nensure\n nil\nend')"
+grep -q 'PUSH_ENSURE' <<<"$actual"
+grep -q 'RUN_ENSURE' <<<"$actual"
+grep -q 'END_ENSURE' <<<"$actual"
+
+actual="$("$diamond" -e $'def answer()\n begin\n  return 1\n ensure\n  return 42\n end\nend\nanswer()')"
+[[ "$actual" == "42" ]]
+
+actual="$("$diamond" -e $'begin\n begin\n  raise "old"\n ensure\n  raise 42\n end\nrescue error: Int\n error\nend')"
+[[ "$actual" == "42" ]]
+
 if "$diamond" -e $'begin\n raise 1\nrescue error: Int |\n 0\nend' \
     >/dev/null 2>&1; then
     echo "trailing rescue union unexpectedly compiled" >&2
     exit 1
 fi
 
-echo "88 tests passed"
+echo "93 tests passed"

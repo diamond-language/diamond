@@ -9,16 +9,34 @@
 enum { DIAMOND_REGISTER_COUNT = 256 };
 enum { DIAMOND_MAX_CALL_DEPTH = 256 };
 
-typedef struct RescueHandler {
+typedef enum HandlerKind : uint8_t { HANDLER_RESCUE, HANDLER_ENSURE } HandlerKind;
+
+typedef struct UnwindHandler {
+    HandlerKind kind;
     size_t target;
     uint8_t destination;
     uint8_t type_count;
     uint8_t types[8];
-} RescueHandler;
+    bool enabled;
+} UnwindHandler;
+
+typedef enum PendingKind : uint8_t {
+    PENDING_NONE,
+    PENDING_NORMAL,
+    PENDING_RETURN,
+    PENDING_EXCEPTION,
+} PendingKind;
+
+typedef struct PendingUnwind {
+    PendingKind kind;
+    DiamondValue value;
+    size_t continuation;
+} PendingUnwind;
 
 typedef struct DiamondFrame {
     struct DiamondFrame *previous;
     DiamondValue *registers;
+    PendingUnwind *pending;
 } DiamondFrame;
 
 static void mark_value(DiamondValue value);
@@ -57,6 +75,8 @@ void diamond_vm_collect(DiamondVm *vm) {
         for (size_t index = 0; index < DIAMOND_REGISTER_COUNT; index++) {
             mark_value(frame->registers[index]);
         }
+        if(frame->pending!=nullptr && frame->pending->kind!=PENDING_NONE)
+            mark_value(frame->pending->value);
     }
 
     DiamondObject **object = &vm->objects;
@@ -333,11 +353,18 @@ static bool value_matches_type(const DiamondChunk *chunk, DiamondValue value,
 }
 
 static bool catch_exception(DiamondVm *vm,const DiamondChunk *chunk,
-                            RescueHandler *handlers,size_t *handler_count,
-                            DiamondValue *registers,size_t *ip) {
+                            UnwindHandler *handlers,size_t *handler_count,
+                            PendingUnwind *pending,DiamondValue *registers,
+                            size_t *ip) {
     while(*handler_count>0) {
         (*handler_count)--;
-        RescueHandler *handler=&handlers[*handler_count];
+        UnwindHandler *handler=&handlers[*handler_count];
+        if(handler->kind==HANDLER_ENSURE) {
+            *pending=(PendingUnwind){.kind=PENDING_EXCEPTION,
+                                     .value=vm->exception};
+            vm->has_exception=false;*ip=handler->target;return true;
+        }
+        if(!handler->enabled)continue;
         bool matches=handler->type_count==0;
         for(size_t i=0;i<handler->type_count&&!matches;i++)
             matches=value_matches_type(chunk,vm->exception,handler->types[i]);
@@ -362,9 +389,9 @@ static uint8_t exception_class_for_status(DiamondVmStatus status) {
 }
 
 static bool catch_runtime_error(DiamondVm *vm,const DiamondChunk *chunk,
-                                DiamondVmStatus status,RescueHandler *handlers,
-                                size_t *handler_count,DiamondValue *registers,
-                                size_t *ip) {
+                                DiamondVmStatus status,UnwindHandler *handlers,
+                                size_t *handler_count,PendingUnwind *pending,
+                                DiamondValue *registers,size_t *ip) {
     const uint8_t class_index=exception_class_for_status(status);
     if(class_index==UINT8_MAX || (size_t)class_index>=chunk->class_count)return false;
     DiamondInstance *exception=allocate_instance(vm,&chunk->classes[class_index]);
@@ -372,7 +399,7 @@ static bool catch_runtime_error(DiamondVm *vm,const DiamondChunk *chunk,
     vm->exception=DIAMOND_OBJECT(exception);vm->has_exception=true;
     (void)snprintf(vm->error,sizeof vm->error,"uncaught exception: %s",
                    exception->class->name);
-    return catch_exception(vm,chunk,handlers,handler_count,registers,ip);
+    return catch_exception(vm,chunk,handlers,handler_count,pending,registers,ip);
 }
 
 static void format_type(char *buffer, size_t capacity,
@@ -425,14 +452,16 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
     for (size_t index = 0; index < argument_count; index++) {
         registers[index] = arguments[index];
     }
+    PendingUnwind pending={};
     DiamondFrame frame = {
         .previous = vm->frames,
         .registers = registers,
+        .pending = &pending,
     };
     vm->frames = &frame;
     size_t ip = 0;
     size_t instruction_offset = 0;
-    RescueHandler handlers[16];
+    UnwindHandler handlers[16];
     size_t handler_count=0;
 
     #define RECORD_ERROR(status_) do {                                      \
@@ -459,7 +488,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
     do {                                                             \
         const DiamondVmStatus return_status_=(status_);               \
         if(handler_count>0 && catch_runtime_error(vm,chunk,           \
-           return_status_,handlers,&handler_count,registers,&ip))     \
+           return_status_,handlers,&handler_count,&pending,registers,&ip))\
             goto dispatch_continue;                                  \
         RECORD_ERROR(return_status_);                                \
         vm->frames = frame.previous;                                 \
@@ -469,7 +498,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
 #define VM_PROPAGATE(status_)                                      \
     if ((status_) != DIAMOND_VM_OK) {                              \
         if ((status_) == DIAMOND_VM_EXCEPTION &&                  \
-            catch_exception(vm,chunk,handlers,&handler_count,registers,&ip)) {\
+            catch_exception(vm,chunk,handlers,&handler_count,&pending,registers,&ip)) {\
             break;                                                  \
         }                                                           \
         VM_RETURN(status_);                                         \
@@ -1031,13 +1060,23 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
             case DIAMOND_OP_RETURN: {
                 uint8_t source = 0;
                 READ_BYTE(source);
+                while(handler_count>0 &&
+                      handlers[handler_count-1].kind!=HANDLER_ENSURE)
+                    handler_count--;
+                if(handler_count>0) {
+                    const UnwindHandler handler=handlers[--handler_count];
+                    pending=(PendingUnwind){.kind=PENDING_RETURN,
+                                            .value=registers[source]};
+                    ip=handler.target;break;
+                }
                 *result = registers[source];
                 VM_RETURN(DIAMOND_VM_OK);
             }
             case DIAMOND_OP_RAISE: {
                 uint8_t source=0;READ_BYTE(source);
                 vm->exception=registers[source];vm->has_exception=true;
-                if(catch_exception(vm,chunk,handlers,&handler_count,registers,&ip))break;
+                if(catch_exception(vm,chunk,handlers,&handler_count,&pending,
+                                   registers,&ip))break;
                 if(vm->exception.kind==DIAMOND_VALUE_INT)
                     snprintf(vm->error,sizeof vm->error,"uncaught exception: %" PRId64,
                              vm->exception.as.integer);
@@ -1063,17 +1102,61 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 for(size_t i=0;i<8;i++)READ_BYTE(types[i]);
                 READ_BYTE(high);READ_BYTE(low);
                 const size_t target=((size_t)high<<8)|low;
+                const bool enabled=(type_count&0x80)==0;
+                type_count&=0x7f;
                 if(handler_count==16||type_count>8||target>chunk->code_count)
                     VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
-                RescueHandler *handler=&handlers[handler_count++];
-                *handler=(RescueHandler){.target=target,.destination=destination,
-                                         .type_count=type_count};
+                UnwindHandler *handler=&handlers[handler_count++];
+                *handler=(UnwindHandler){.kind=HANDLER_RESCUE,.target=target,
+                    .destination=destination,.type_count=type_count,.enabled=enabled};
                 for(size_t i=0;i<type_count;i++)handler->types[i]=types[i];
                 break;
             }
             case DIAMOND_OP_POP_RESCUE:
-                if(handler_count==0)VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
+                if(handler_count==0||handlers[handler_count-1].kind!=HANDLER_RESCUE)
+                    VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
                 handler_count--;break;
+            case DIAMOND_OP_PUSH_ENSURE: {
+                uint8_t high=0,low=0;READ_BYTE(high);READ_BYTE(low);
+                const size_t target=((size_t)high<<8)|low;
+                if(handler_count==16||target>chunk->code_count)
+                    VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
+                handlers[handler_count++]=(UnwindHandler){
+                    .kind=HANDLER_ENSURE,.target=target,.enabled=true};
+                break;
+            }
+            case DIAMOND_OP_RUN_ENSURE: {
+                uint8_t high=0,low=0;READ_BYTE(high);READ_BYTE(low);
+                const size_t continuation=((size_t)high<<8)|low;
+                if(handler_count==0||continuation>chunk->code_count||
+                   handlers[handler_count-1].kind!=HANDLER_ENSURE)
+                    VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
+                const UnwindHandler handler=handlers[--handler_count];
+                pending=(PendingUnwind){.kind=PENDING_NORMAL,
+                                        .continuation=continuation};
+                ip=handler.target;break;
+            }
+            case DIAMOND_OP_END_ENSURE: {
+                const PendingUnwind resume=pending;pending=(PendingUnwind){};
+                if(resume.kind==PENDING_NORMAL) {ip=resume.continuation;break;}
+                if(resume.kind==PENDING_RETURN) {
+                    while(handler_count>0 &&
+                          handlers[handler_count-1].kind!=HANDLER_ENSURE)
+                        handler_count--;
+                    if(handler_count>0) {
+                        const UnwindHandler handler=handlers[--handler_count];
+                        pending=resume;ip=handler.target;break;
+                    }
+                    *result=resume.value;VM_RETURN(DIAMOND_VM_OK);
+                }
+                if(resume.kind==PENDING_EXCEPTION) {
+                    vm->exception=resume.value;vm->has_exception=true;
+                    if(catch_exception(vm,chunk,handlers,&handler_count,&pending,
+                                       registers,&ip))break;
+                    VM_RETURN(DIAMOND_VM_EXCEPTION);
+                }
+                VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
+            }
             default:
                 VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
         }

@@ -59,11 +59,12 @@ future work.
 - Pipe-separated rescue type sets with up to eight alternatives.
 - Shape-guarded polymorphic inline caches for instance field reads and writes.
 - Built-in exception hierarchy with rescuable VM runtime failures.
+- `ensure` unwinding for normal completion, exceptions, and returns.
 
 ## Next priorities
 
-1. `ensure` across normal completion, exceptions, and returns.
-2. Generic collection annotations and general unions.
+1. General union annotations beyond `Type | Nil`.
+2. Generic collection annotations.
 3. A small core library implemented partly in Diamond.
 
 ## Later experiments

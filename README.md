@@ -202,6 +202,9 @@ Field sites use four-entry polymorphic caches guarded by instance shape.
   `rescue error: NetworkError | TimeoutError`.
 - Built-in exception classes make type, argument, index, division, range, and
   stack failures rescuable through the same `begin`/`rescue` syntax.
+- `ensure` may follow a rescued block or stand alone. It runs on normal
+  completion, raised exceptions, runtime failures, and explicit returns;
+  cleanup-side control flow overrides the pending unwind.
 - No modules, mixins, singleton methods, or visibility.
 - Classes own immutable shape chains for lazily materialized field prefixes;
   method calls and field access use four-entry polymorphic inline caches.
