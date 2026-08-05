@@ -947,6 +947,8 @@ actual="$($diamond -e $'require "tests/multifile/math"\ndouble(21)')"
 [[ "$actual" == "42" ]]
 actual="$($diamond -e $'require "tests/multifile/math"\r\ndouble(21)\r\n')"
 [[ "$actual" == "42" ]]
+actual="$($diamond -e $'require "./tests/multifile/math.dia"\ndouble(21)')"
+[[ "$actual" == "42" ]]
 
 actual="$($diamond --dump-bytecode tests/multifile/main.dia)"
 grep -q '== double ==' <<<"$actual"
