@@ -80,4 +80,5 @@ The focused regression harness is available with:
 ```sh
 make test-fibers
 make test-fiber-run
+make test-fiber-context
 ```
