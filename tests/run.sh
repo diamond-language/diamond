@@ -958,6 +958,7 @@ actual="$($diamond --dump-bytecode tests/multifile/broken_main.dia 2>&1 || true)
 grep -q 'tests/multifile/broken.dia:3:16' <<<"$actual"
 actual="$($diamond tests/multifile/eof_broken_main.dia 2>&1 || true)"
 grep -q 'tests/multifile/eof_broken.dia:' <<<"$actual"
+! grep -q '^#line' <<<"$actual"
 crlf_error="$(mktemp)"
 if "$diamond" -e $'1 + )\r\n' >/dev/null 2>"$crlf_error"; then
     rm -f "$crlf_error"
