@@ -35,7 +35,7 @@ int main(void) {
        !diamond_fiber_queue_push(&queue,second)||
        diamond_fiber_queue_count(&queue)!=2||
        diamond_fiber_queue_at(&queue,0)!=first||
-       diamond_fiber_queue_pop(&queue)!=first||first->state!=DIAMOND_FIBER_RUNNING||
+       diamond_fiber_scheduler_step(&queue)!=first||first->state!=DIAMOND_FIBER_RUNNING||
        diamond_fiber_queue_pop(&queue)!=second||
        diamond_fiber_queue_pop(&queue)!=nullptr)return 12;
     diamond_fiber_queue_free(&queue);diamond_fiber_free(first);diamond_fiber_free(second);

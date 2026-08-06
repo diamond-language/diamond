@@ -308,6 +308,10 @@ DiamondFiber *diamond_fiber_queue_at(const DiamondFiberQueue *queue, size_t inde
     return queue->items[queue->head+index];
 }
 
+DiamondFiber *diamond_fiber_scheduler_step(DiamondFiberQueue *queue) {
+    return diamond_fiber_queue_pop(queue);
+}
+
 static DiamondString *allocate_string(DiamondVm *vm, const char *chars,
                                       size_t length) {
     if (vm->stress_gc || vm->bytes_allocated >= vm->next_gc) {

@@ -381,6 +381,7 @@ bool diamond_fiber_queue_push(DiamondFiberQueue *queue, DiamondFiber *fiber);
 DiamondFiber *diamond_fiber_queue_pop(DiamondFiberQueue *queue);
 size_t diamond_fiber_queue_count(const DiamondFiberQueue *queue);
 DiamondFiber *diamond_fiber_queue_at(const DiamondFiberQueue *queue, size_t index);
+DiamondFiber *diamond_fiber_scheduler_step(DiamondFiberQueue *queue);
 DiamondVmStatus diamond_vm_run(DiamondVm *vm, const DiamondChunk *chunk,
                                DiamondValue *result);
 const char *diamond_vm_status_name(DiamondVmStatus status);
