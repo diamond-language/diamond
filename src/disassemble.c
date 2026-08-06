@@ -340,6 +340,11 @@ static bool disassemble_chunk(FILE *stream, const char *name,
                 fprintf(stream,"%-18s r%u, class%u, r%u, %u args\n","NEW",
                     chunk->code[offset+1],chunk->code[offset+2],chunk->code[offset+3],chunk->code[offset+4]);
                 offset+=5;break;
+            case DIAMOND_OP_REDEFINE_METHOD:
+                if(!require_bytes(stream,chunk,offset,5)){valid=false;offset=chunk->code_count;break;}
+                fprintf(stream,"%-18s r%u, class%u, r%u, r%u\n","REDEFINE_METHOD",
+                    chunk->code[offset+1],chunk->code[offset+2],chunk->code[offset+3],chunk->code[offset+4]);
+                offset+=5;break;
             case DIAMOND_OP_INVOKE:
                 if(!require_bytes(stream,chunk,offset,6)){valid=false;offset=chunk->code_count;break;}
                 fprintf(stream,"%-18s r%u, r%u, s%u, r%u, %u args\n","INVOKE",
