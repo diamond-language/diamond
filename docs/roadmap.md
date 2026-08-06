@@ -232,6 +232,7 @@ future work.
 - Rewrite warm-up suppression coverage for high dispatch thresholds.
 - Polymorphic-site guard coverage preventing unsafe invoke rewriting.
 - Deterministic 100-call dispatch probe benchmark.
+- Explicit rewritten-site tracking for safe VM reuse.
 
 ## Next priorities
 

@@ -476,6 +476,8 @@ counts can be compared without relying on wall-clock timing.
 Stable instance call sites may rewrite to `INVOKE_MONO` after warm-up; use
 `DIAMOND_TRACE_IC_REWRITES=1` to report those rewrites. A receiver-class guard
 deoptimizes the site back to `INVOKE` if the assumption fails.
+Rewritten instruction addresses are tracked explicitly so a reused VM can
+restore only genuine rewritten sites between runs.
 
 Set `DIAMOND_TRACE_SHAPES=1` to print instance shape transitions. Fresh objects
 begin at their class's empty shape and advance lazily as fields are first written.
