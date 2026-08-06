@@ -22,19 +22,22 @@ static void print_diagnostic(const char *name, const char *source,
                              const DiamondSourceBundle *bundle,
                              size_t user_offset) {
     size_t line=diagnostic.span.line;
+    bool mapped_segment=false;
     if(diagnostic.span.start>=user_offset) {
         const size_t offset=diagnostic.span.start-user_offset;
         for(size_t index=0;index<bundle->segment_count;index++) {
             const DiamondSourceSegment *segment=&bundle->segments[index];
             if(offset<segment->start||
                (offset>segment->end && offset-segment->end>9))continue;
-            name=segment->path;line=segment->original_line+line-1;break;
+            name=segment->path;line=segment->original_line+line-1;
+            mapped_segment=true;break;
         }
     }
     fprintf(stderr, "%s:%zu:%zu: error: %s\n", name, line,
             diagnostic.span.column, diagnostic.message);
 
     size_t line_start = diagnostic.span.start;
+    if(mapped_segment && line_start>0 && source[line_start]=='\n')line_start--;
     while (line_start > 0 && source[line_start - 1] != '\n') {
         line_start--;
     }
