@@ -229,6 +229,11 @@ bool diamond_fiber_context_terminal(const DiamondFiberExecutionContext *context)
         (context->status!=DIAMOND_VM_OK||context->instruction>=context->chunk->code_count);
 }
 
+bool diamond_fiber_resumable(const DiamondFiber *fiber) {
+    return fiber!=nullptr && (fiber->state==DIAMOND_FIBER_RUNNABLE||
+        fiber->state==DIAMOND_FIBER_SUSPENDED);
+}
+
 const char *diamond_fiber_state_name(DiamondFiberState state) {
     switch(state) {
         case DIAMOND_FIBER_NEW:return "new";
