@@ -308,6 +308,13 @@ future work.
   including the quickened arithmetic fast path and `RangeError`
   rescuability. The checked-arithmetic implementation was already correct;
   none of it had any test coverage beforehand.
+- Regression coverage for dynamic-dispatch arity checking: too few/too many
+  arguments through `INVOKE`, constructor dispatch, the warmed `INVOKE_MONO`
+  fast path, a polymorphic site validating a second receiver class
+  correctly, and multi-frame stack traces through nested dynamic calls.
+  Direct calls are already compile-time arity-checked and covered; dynamic
+  dispatch's runtime check was correct but, like the two gaps above, had no
+  test coverage at all.
 
 ## Next priorities
 
