@@ -106,6 +106,14 @@ int main(void) {
        diamond_fiber_run(compiled_fiber)!=DIAMOND_FIBER_OK||
        compiled_fiber->state!=DIAMOND_FIBER_SUSPENDED)return 16;
     diamond_fiber_free(compiled_fiber);diamond_vm_free(&compiled_vm);
+
+    static DiamondProgram double_yield_program;DiamondDiagnostic double_yield_diagnostic;
+    if(!diamond_compile("yield\nyield",&double_yield_program,&double_yield_diagnostic))return 18;
+    DiamondChunk double_yield_chunk=diamond_program_chunk(&double_yield_program);
+    size_t yield_count=0;
+    for(size_t index=0;index<double_yield_chunk.code_count;index++)
+        if(double_yield_chunk.code[index]==DIAMOND_OP_YIELD)yield_count++;
+    if(yield_count!=2)return 19;
     puts("fiber run passed");
     return 0;
 }
