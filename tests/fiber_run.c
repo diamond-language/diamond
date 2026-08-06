@@ -246,6 +246,34 @@ int main(void) {
     diamond_fiber_queue_free(&gc_root_queue);diamond_fiber_free(gc_root_fiber);
     diamond_vm_free(&gc_root_vm);
 
+    static const DiamondStringConstant unbound_gc_strings[]={
+        {.chars="alpha",.length=5},{.chars="beta",.length=4}};
+    static const uint8_t unbound_gc_code[]={
+        DIAMOND_OP_STRING,0,0,DIAMOND_OP_YIELD,DIAMOND_OP_STRING,1,1};
+    static const DiamondChunk unbound_gc_chunk={.name="unbound-gc",.code=unbound_gc_code,
+        .code_count=7,.strings=unbound_gc_strings,.string_count=2};
+    DiamondVm unbound_gc_vm;diamond_vm_init(&unbound_gc_vm);
+    unbound_gc_vm.stress_gc=true;
+    DiamondFiber *unbound_gc_fiber=diamond_fiber_new(&unbound_gc_chunk);
+    if(unbound_gc_fiber==nullptr||
+       diamond_fiber_bind_vm(unbound_gc_fiber,&unbound_gc_vm)!=DIAMOND_FIBER_OK||
+       diamond_fiber_prepare(unbound_gc_fiber)!=DIAMOND_FIBER_OK||
+       diamond_fiber_resume(unbound_gc_fiber)!=DIAMOND_FIBER_OK||
+       diamond_fiber_run(unbound_gc_fiber)!=DIAMOND_FIBER_OK||
+       unbound_gc_fiber->state!=DIAMOND_FIBER_SUSPENDED)return 44;
+    if(diamond_fiber_resume(unbound_gc_fiber)!=DIAMOND_FIBER_OK||
+       diamond_fiber_run(unbound_gc_fiber)!=DIAMOND_FIBER_OK||
+       unbound_gc_fiber->state!=DIAMOND_FIBER_COMPLETED)return 45;
+    DiamondValue unbound_first=DIAMOND_NIL,unbound_second=DIAMOND_NIL;
+    if(!diamond_fiber_get_register(unbound_gc_fiber,0,&unbound_first)||
+       !diamond_fiber_get_register(unbound_gc_fiber,1,&unbound_second)||
+       unbound_first.kind!=DIAMOND_VALUE_OBJECT||unbound_second.kind!=DIAMOND_VALUE_OBJECT)return 46;
+    const DiamondString *unbound_first_string=(const DiamondString *)unbound_first.as.object;
+    const DiamondString *unbound_second_string=(const DiamondString *)unbound_second.as.object;
+    if(unbound_first_string->length!=5||memcmp(unbound_first_string->chars,"alpha",5)!=0||
+       unbound_second_string->length!=4||memcmp(unbound_second_string->chars,"beta",4)!=0)return 47;
+    diamond_fiber_free(unbound_gc_fiber);diamond_vm_free(&unbound_gc_vm);
+
     puts("fiber run passed");
     return 0;
 }
