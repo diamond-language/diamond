@@ -229,6 +229,7 @@ future work.
 - Configurable monomorphic dispatch warm-up thresholds.
 - Guarded `INVOKE_MONO` rewriting for stable instance call sites.
 - Monomorphic invoke deoptimization coverage when a new receiver class appears.
+- Rewrite warm-up suppression coverage for high dispatch thresholds.
 
 ## Next priorities
 
