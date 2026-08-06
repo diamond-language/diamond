@@ -139,6 +139,8 @@ static int run_source(const char *name, const char *source, bool dump_bytecode) 
     }
     DiamondVmStatus status=DIAMOND_VM_OK;
     for(size_t iteration=0;iteration<repeat_count;iteration++) {
+        if (iteration>0 && getenv("DIAMOND_INVALIDATE_IC_EACH_RUN") != nullptr)
+            diamond_vm_invalidate_method_caches(&vm);
         status=diamond_vm_run(&vm,&chunk,&result);
         if (getenv("DIAMOND_TRACE_IC_EACH_RUN") != nullptr)
             fprintf(stderr,"run %zu: inline caches: %zu hits, %zu misses, rewrites: %zu\n",
