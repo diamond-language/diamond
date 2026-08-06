@@ -247,11 +247,14 @@ future work.
 - Method arity and visibility mutation coverage through explicit invalidation.
 - Superclass-link mutation and restoration coverage through explicit invalidation.
 - Shared-program invalidation coverage across independent VM instances.
+- Fiber lifecycle states, frame checkpoints, FIFO scheduler stepping, and
+  explicit yield/requeue transitions.
+- VM binding, result/status accessors, and one-shot fiber execution boundary.
 
 ## Next priorities
 
-1. Design fibers and cooperative scheduling around resumable VM execution
-   frames.
+1. Split `diamond_vm_run` into resumable interpreter steps that honor fiber
+   frame checkpoints and real suspension points.
 2. Add runtime class/module mutation with automatic method-cache invalidation.
 3. Measure `INVOKE_MONO` against polymorphic dispatch under representative
    workloads.
