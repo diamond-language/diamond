@@ -274,6 +274,11 @@ future work.
   every lifecycle transition rejects a fiber outside its required source
   state, formalizing the "clear errors for resuming a running or completed
   fiber" requirement stated since the initial fiber design.
+- Explicit `DIAMOND_VM_UNSUPPORTED_YIELD` rejection for `yield` below the
+  top-level call frame, replacing a silent resume-time correctness bug
+  (a nested yield's suspension previously discarded the inner call's
+  progress and produced a misleading error on resume) with an immediate,
+  deterministic failure.
 
 ## Next priorities
 
