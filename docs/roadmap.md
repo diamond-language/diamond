@@ -236,6 +236,7 @@ future work.
 - Reusable-VM repeat execution mode for lifecycle tests.
 - Repeated polymorphic rewrite/deoptimization lifecycle coverage.
 - Per-run reusable-VM cache and rewrite counter telemetry.
+- Immediate-versus-delayed dispatch warm-up baseline coverage.
 
 ## Next priorities
 

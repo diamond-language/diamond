@@ -482,6 +482,8 @@ Set `DIAMOND_REPEAT=N` to execute the same compiled program N times in one VM;
 this is useful for validating specialization reset behavior.
 Add `DIAMOND_TRACE_IC_EACH_RUN=1` to print cache and rewrite counters after
 each repeated execution.
+The dispatch benchmark uses these counters to compare immediate and delayed
+monomorphic warm-up without depending on wall-clock timing.
 
 Set `DIAMOND_TRACE_SHAPES=1` to print instance shape transitions. Fresh objects
 begin at their class's empty shape and advance lazily as fields are first written.
