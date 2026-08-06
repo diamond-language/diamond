@@ -364,6 +364,21 @@ int main(void) {
     if(fiber_depth_result.kind!=DIAMOND_VALUE_INT||fiber_depth_result.as.integer!=90)return 67;
     diamond_fiber_free(fiber_depth_fiber);diamond_vm_free(&fiber_depth_vm);
 
+    static DiamondProgram fiber_overflow_program;DiamondDiagnostic fiber_overflow_diagnostic;
+    if(!diamond_compile("def depth(n)\n if n <= 0\n  0\n else\n  depth(n - 1) + 1\n end\nend\ndepth(5000)",
+        &fiber_overflow_program,&fiber_overflow_diagnostic))return 68;
+    DiamondChunk fiber_overflow_chunk=diamond_program_chunk(&fiber_overflow_program);
+    DiamondVm fiber_overflow_vm;diamond_vm_init(&fiber_overflow_vm);
+    DiamondFiber *fiber_overflow_fiber=diamond_fiber_new(&fiber_overflow_chunk);
+    if(fiber_overflow_fiber==nullptr||
+       diamond_fiber_bind_vm(fiber_overflow_fiber,&fiber_overflow_vm)!=DIAMOND_FIBER_OK||
+       diamond_fiber_prepare(fiber_overflow_fiber)!=DIAMOND_FIBER_OK||
+       diamond_fiber_resume(fiber_overflow_fiber)!=DIAMOND_FIBER_OK||
+       diamond_fiber_run(fiber_overflow_fiber)!=DIAMOND_FIBER_OK)return 69;
+    if(fiber_overflow_fiber->state!=DIAMOND_FIBER_FAILED||
+       diamond_fiber_status(fiber_overflow_fiber)!=DIAMOND_VM_STACK_OVERFLOW)return 70;
+    diamond_fiber_free(fiber_overflow_fiber);diamond_vm_free(&fiber_overflow_vm);
+
     puts("fiber run passed");
     return 0;
 }
