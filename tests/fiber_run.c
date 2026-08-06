@@ -305,6 +305,29 @@ int main(void) {
        strstr(nested_yield_direct_error,"yield outside a fiber")==nullptr)return 49;
     diamond_vm_free(&nested_yield_direct_vm);
 
+    static DiamondProgram rescue_yield_program;DiamondDiagnostic rescue_yield_diagnostic;
+    if(!diamond_compile("begin\n yield\n raise \"boom\"\nrescue error: String\n error\nend",
+        &rescue_yield_program,&rescue_yield_diagnostic))return 58;
+    DiamondChunk rescue_yield_chunk=diamond_program_chunk(&rescue_yield_program);
+    DiamondVm rescue_yield_vm;diamond_vm_init(&rescue_yield_vm);
+    DiamondFiber *rescue_yield_fiber=diamond_fiber_new(&rescue_yield_chunk);
+    if(rescue_yield_fiber==nullptr||
+       diamond_fiber_bind_vm(rescue_yield_fiber,&rescue_yield_vm)!=DIAMOND_FIBER_OK||
+       diamond_fiber_prepare(rescue_yield_fiber)!=DIAMOND_FIBER_OK||
+       diamond_fiber_resume(rescue_yield_fiber)!=DIAMOND_FIBER_OK||
+       diamond_fiber_run(rescue_yield_fiber)!=DIAMOND_FIBER_OK)return 59;
+    if(rescue_yield_fiber->state!=DIAMOND_FIBER_SUSPENDED||
+       diamond_fiber_status(rescue_yield_fiber)!=DIAMOND_VM_YIELDED)return 60;
+    if(diamond_fiber_resume(rescue_yield_fiber)!=DIAMOND_FIBER_OK||
+       diamond_fiber_run(rescue_yield_fiber)!=DIAMOND_FIBER_OK||
+       rescue_yield_fiber->state!=DIAMOND_FIBER_COMPLETED||
+       diamond_fiber_status(rescue_yield_fiber)!=DIAMOND_VM_OK)return 61;
+    DiamondValue rescue_yield_result=diamond_fiber_result(rescue_yield_fiber);
+    if(rescue_yield_result.kind!=DIAMOND_VALUE_OBJECT)return 62;
+    const DiamondString *rescue_yield_string=(const DiamondString *)rescue_yield_result.as.object;
+    if(rescue_yield_string->length!=4||memcmp(rescue_yield_string->chars,"boom",4)!=0)return 63;
+    diamond_fiber_free(rescue_yield_fiber);diamond_vm_free(&rescue_yield_vm);
+
     static DiamondProgram post_call_yield_program;DiamondDiagnostic post_call_yield_diagnostic;
     if(!diamond_compile("def helper()\n 1\nend\nhelper()\nyield",
         &post_call_yield_program,&post_call_yield_diagnostic))return 50;
