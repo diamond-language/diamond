@@ -11,6 +11,7 @@ int main(void) {
     if (!diamond_compile("1 + 2", &program, &diagnostic)) return 1;
     DiamondChunk chunk = diamond_program_chunk(&program);
     DiamondFiberFrame checkpoint;
+    DiamondFiberExecutionContext context;
     DiamondVm vm;
     diamond_vm_init(&vm);
     DiamondFiber *fiber = diamond_fiber_new(&chunk);
@@ -29,6 +30,8 @@ int main(void) {
         checkpoint.instruction != chunk.code_count ||
         checkpoint.registers[7].kind != DIAMOND_VALUE_INT ||
         checkpoint.registers[7].as.integer != 99 ||
+        !diamond_fiber_capture_context(fiber, &context) ||
+        context.instruction != chunk.code_count ||
         diamond_fiber_checkpoint(fiber, nullptr)) return 2;
     if (diamond_fiber_run(fiber) != DIAMOND_FIBER_INVALID_STATE) return 3;
     diamond_fiber_free(fiber);
