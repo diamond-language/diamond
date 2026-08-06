@@ -64,6 +64,7 @@ int main(void) {
     diamond_vm_free(&vm);
     diamond_fiber_free(fiber);
     DiamondFiberQueue queue;diamond_fiber_queue_init(&queue);
+    if(diamond_fiber_scheduler_run_once(&queue)!=DIAMOND_FIBER_INVALID_STATE)return 27;
     DiamondFiber *first=diamond_fiber_new(nullptr),*second=diamond_fiber_new(nullptr);
     if(first==nullptr||second==nullptr||
        diamond_fiber_make_runnable(first)!=DIAMOND_FIBER_OK||
