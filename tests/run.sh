@@ -821,6 +821,22 @@ actual="$("$diamond" tests/cases/inherited_cache.dia)"
 actual="$("$diamond" tests/cases/mono_deopt.dia)"
 [[ "$actual" == "82" ]]
 
+actual="$("$diamond" tests/cases/dispatch_benchmark.dia)"
+[[ "$actual" == "42" ]]
+
+error_file="$(mktemp)"
+actual="$(DIAMOND_TRACE_IC_PROBES=1 "$diamond" tests/cases/dispatch_benchmark.dia 2>"$error_file")"
+[[ "$actual" == "42" ]]
+grep -q 'method cache probes: 1' "$error_file"
+rm -f "$error_file"
+
+error_file="$(mktemp)"
+actual="$(DIAMOND_IC_MONO_THRESHOLD=100 DIAMOND_TRACE_IC_PROBES=1 \
+    "$diamond" tests/cases/dispatch_benchmark.dia 2>"$error_file")"
+[[ "$actual" == "42" ]]
+grep -q 'method cache probes: 99' "$error_file"
+rm -f "$error_file"
+
 error_file="$(mktemp)"
 actual="$(DIAMOND_TRACE_IC_REWRITES=1 "$diamond" tests/cases/mono_deopt.dia 2>"$error_file")"
 [[ "$actual" == "82" ]]
@@ -2037,4 +2053,4 @@ if "$diamond" -e $'module Constants\n VALUE = 42 if true\nend' >/dev/null 2>&1; 
     echo "conditional namespace constant unexpectedly compiled" >&2
     exit 1
 fi
-echo "508 tests passed"
+echo "513 tests passed"
