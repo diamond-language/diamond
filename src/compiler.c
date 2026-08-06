@@ -1248,6 +1248,35 @@ static bool singleton_call_name_equals(const Compiler *compiler,
     return memcmp(candidate,compiler->source+name.start,name.length)==0;
 }
 
+static uint8_t parse_redefine_method_call(Compiler *compiler, int class_index) {
+    advance_token(compiler); /* consume 'redefine_method' */
+    if (compiler->current.kind != DIAMOND_TOKEN_LEFT_PAREN) {
+        fail(compiler, compiler->current.span, "expected '(' after 'redefine_method'");
+        return 0;
+    }
+    advance_token(compiler);
+    const uint8_t name_register = parse_expression(compiler);
+    if (compiler->current.kind != DIAMOND_TOKEN_COMMA) {
+        fail(compiler, compiler->current.span, "expected ',' after redefine_method name");
+        return 0;
+    }
+    advance_token(compiler);
+    const uint8_t callable_register = parse_expression(compiler);
+    if (compiler->current.kind != DIAMOND_TOKEN_RIGHT_PAREN) {
+        fail(compiler, compiler->current.span, "expected ')' after redefine_method arguments");
+        return 0;
+    }
+    advance_token(compiler);
+    const uint8_t dest = allocate_register(compiler);
+    emit_opcode(compiler, DIAMOND_OP_REDEFINE_METHOD);
+    emit_byte(compiler, dest);
+    emit_byte(compiler, (uint8_t)class_index);
+    emit_byte(compiler, name_register);
+    emit_byte(compiler, callable_register);
+    compiler->known_types[dest] = DIAMOND_TYPE_NIL;
+    return dest;
+}
+
 static uint8_t parse_name(Compiler *compiler) {
     const DiamondSpan name = compiler->previous.span;
     int class_index=find_class(compiler,name);
@@ -1315,6 +1344,8 @@ static uint8_t parse_name(Compiler *compiler) {
             fail(compiler,compiler->current.span,
                  "expected constructor or singleton method");return 0;
         }
+        if(name_equals(compiler,"redefine_method",compiler->current.span,false))
+            return parse_redefine_method_call(compiler,class_index);
         if(!name_equals(compiler,"new",compiler->current.span,false)) {
             const DiamondMethod *method=nullptr;
             const DiamondClass *owner=

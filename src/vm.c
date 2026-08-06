@@ -2871,6 +2871,55 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 vm->running_fiber->status=DIAMOND_VM_YIELDED;
                 swapcontext(&vm->running_fiber->context,vm->running_fiber->resume_target);
                 break;
+            case DIAMOND_OP_REDEFINE_METHOD: {
+                uint8_t dest=0,class_operand=0,name_reg=0,callable_reg=0;
+                READ_BYTE(dest);READ_BYTE(class_operand);READ_BYTE(name_reg);READ_BYTE(callable_reg);
+                if((size_t)class_operand>=chunk->class_count)VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
+                if(registers[name_reg].kind!=DIAMOND_VALUE_OBJECT||
+                   registers[name_reg].as.object->kind!=DIAMOND_OBJECT_STRING) {
+                    snprintf(vm->error,sizeof vm->error,"redefine_method name must be a String");
+                    VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                }
+                if(registers[callable_reg].kind!=DIAMOND_VALUE_OBJECT||
+                   registers[callable_reg].as.object->kind!=DIAMOND_OBJECT_CLOSURE) {
+                    snprintf(vm->error,sizeof vm->error,"redefine_method callable must be a Callable value");
+                    VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                }
+                const DiamondString *name_string=(const DiamondString *)registers[name_reg].as.object;
+                DiamondClosure *replacement=(DiamondClosure *)registers[callable_reg].as.object;
+                DiamondClass *class=(DiamondClass *)(void *)&chunk->classes[class_operand];
+                DiamondMethod *target=nullptr;
+                for(size_t index=0;index<class->method_count;index++)
+                    if(strlen(class->methods[index].name)==name_string->length&&
+                       memcmp(class->methods[index].name,name_string->chars,name_string->length)==0) {
+                        target=&class->methods[index];break;
+                    }
+                if(target==nullptr) {
+                    snprintf(vm->error,sizeof vm->error,"class '%s' has no method '%.*s' to redefine",
+                             class->name,(int)name_string->length,name_string->chars);
+                    VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                }
+                if(replacement->capture_count!=0) {
+                    snprintf(vm->error,sizeof vm->error,
+                             "redefine_method callable must not capture any variables");
+                    VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                }
+                if((size_t)replacement->function_index>=chunk->function_count)
+                    VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
+                const DiamondFunction *new_function=&chunk->functions[replacement->function_index];
+                if(new_function->owner_class!=class_operand) {
+                    snprintf(vm->error,sizeof vm->error,
+                             "redefine_method callable must be a method of '%s'",class->name);
+                    VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                }
+                const uint8_t new_arity=(uint8_t)(new_function->arity-1);
+                const uint8_t new_required_arity=(uint8_t)(new_function->required_arity-1);
+                if(new_arity!=target->arity||new_required_arity!=target->required_arity)
+                    VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                target->function_index=replacement->function_index;
+                diamond_vm_invalidate_method_caches(vm);
+                registers[dest]=DIAMOND_NIL;break;
+            }
             default:
                 VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
         }
