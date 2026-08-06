@@ -82,6 +82,16 @@ until the queue empties, draining every queued fiber to a terminal
 `COMPLETED` or `FAILED` state. An individual fiber failure does not stop the
 run; remaining queued fibers still execute to completion.
 
+`diamond_vm_bind_fiber_queue` attaches a `DiamondFiberQueue` to a `DiamondVm`
+as an additional garbage-collection root source. Collection walks every fiber
+currently enumerable in the bound queue and marks each of its frames'
+registers, alongside the existing live native call chain. This closes the gap
+noted above: a fiber sharing a VM with other scheduled fibers can suspend
+holding heap references that are reachable only through its own checkpointed
+registers, not through `vm->frames`, while another fiber's turn triggers
+collection. Binding is optional and additive; a VM with no bound queue
+collects exactly as before.
+
 Diamond source may now emit this boundary with a standalone `yield` statement;
 the compiler emits `DIAMOND_OP_YIELD` followed by a `nil` continuation value.
 
