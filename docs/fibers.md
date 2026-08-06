@@ -30,6 +30,17 @@ consumed storage, and transitions dequeued fibers to `RUNNING`.
 Scheduler helpers now support one-step dequeue and requeue of yielded fibers,
 preserving FIFO ordering.
 
+Every lifecycle transition rejects a fiber outside its required source state
+and returns `DIAMOND_FIBER_INVALID_STATE` rather than corrupting state:
+`diamond_fiber_begin` requires `RUNNABLE`; `diamond_fiber_resume` requires
+`RUNNABLE` or `SUSPENDED`; `diamond_fiber_run` requires `RUNNING` with a bound
+VM and chunk; `diamond_fiber_suspend`, `diamond_fiber_complete`, and
+`diamond_fiber_fail` all require `RUNNING`. `diamond_fiber_resumable` reports
+whether `resume` would currently succeed (true only for `RUNNABLE` or
+`SUSPENDED`) without attempting the transition. This formalizes the "clear
+errors for resuming a running or completed fiber" requirement from the top of
+this document; every rejected transition above has regression coverage.
+
 Fiber frames currently carry the owning chunk, instruction checkpoint, and
 call depth, plus a fixed register snapshot. Push/pop, checkpoint updates, and
 bounded register access are implemented independently of the VM interpreter;
