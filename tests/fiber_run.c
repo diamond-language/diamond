@@ -124,10 +124,12 @@ int main(void) {
        diamond_fiber_current_frame(double_fiber)==nullptr||
        diamond_fiber_current_frame(double_fiber)->instruction==0||
        diamond_fiber_current_frame(double_fiber)->instruction>=double_yield_chunk.code_count)return 20;
+    const size_t first_double_instruction=diamond_fiber_current_frame(double_fiber)->instruction;
     if(diamond_fiber_resume(double_fiber)!=DIAMOND_FIBER_OK)return 21;
     if(diamond_fiber_run(double_fiber)!=DIAMOND_FIBER_OK)return 22;
     if(double_fiber->state!=DIAMOND_FIBER_SUSPENDED)return 23;
     if(diamond_fiber_status(double_fiber)!=DIAMOND_VM_YIELDED)return 24;
+    if(diamond_fiber_current_frame(double_fiber)->instruction<=first_double_instruction)return 26;
     if(diamond_fiber_resume(double_fiber)!=DIAMOND_FIBER_OK||
        diamond_fiber_run(double_fiber)!=DIAMOND_FIBER_OK||
        double_fiber->state!=DIAMOND_FIBER_COMPLETED||
