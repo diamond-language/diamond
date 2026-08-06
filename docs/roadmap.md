@@ -225,6 +225,7 @@ future work.
 - Inherited-method and repeated-hit coverage for polymorphic dispatch caches.
 - Per-site method-cache telemetry for specialization decisions.
 - Monomorphic method-cache fast path with execution telemetry.
+- Method-cache probe-depth telemetry for deterministic dispatch comparisons.
 
 ## Next priorities
 
