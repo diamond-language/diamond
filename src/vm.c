@@ -174,7 +174,8 @@ void diamond_fiber_free(DiamondFiber *fiber) {
 DiamondFiberStatus diamond_fiber_prepare(DiamondFiber *fiber) {
     if(fiber==nullptr||fiber->state!=DIAMOND_FIBER_NEW||fiber->chunk==nullptr)
         return DIAMOND_FIBER_INVALID_STATE;
-    DiamondFiberFrame frame={.chunk=fiber->chunk,.instruction=0,.depth=0};
+    DiamondFiberFrame frame={.chunk=fiber->chunk,.instruction=0,.depth=0,
+                             .status=DIAMOND_VM_OK};
     for(size_t index=0;index<DIAMOND_REGISTER_COUNT;index++)
         frame.registers[index]=DIAMOND_NIL;
     if(!diamond_fiber_push_frame(fiber,frame))return DIAMOND_FIBER_INVALID_STATE;
@@ -2873,6 +2874,7 @@ DiamondVmStatus diamond_vm_run_context(DiamondVm *vm,
        context->instruction!=0||context->depth!=0)
         return DIAMOND_VM_INVALID_BYTECODE;
     DiamondVmStatus status=diamond_vm_run(vm,context->chunk,result);
+    context->status=status;
     if(status==DIAMOND_VM_OK)context->instruction=context->chunk->code_count;
     return status;
 }

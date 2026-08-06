@@ -302,6 +302,7 @@ typedef struct DiamondFiberFrame {
     const DiamondChunk *chunk;
     size_t instruction;
     size_t depth;
+    DiamondVmStatus status;
     DiamondValue registers[DIAMOND_REGISTER_COUNT];
 } DiamondFiberFrame;
 
