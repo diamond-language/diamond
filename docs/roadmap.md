@@ -228,6 +228,7 @@ future work.
 - Method-cache probe-depth telemetry for deterministic dispatch comparisons.
 - Configurable monomorphic dispatch warm-up thresholds.
 - Guarded `INVOKE_MONO` rewriting for stable instance call sites.
+- Monomorphic invoke deoptimization coverage when a new receiver class appears.
 
 ## Next priorities
 
