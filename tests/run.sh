@@ -27,6 +27,11 @@ actual="$($diamond -e '2 + 3 * 4 - -1')"
     exit 1
 }
 
+quickening_trace="$(DIAMOND_QUICKEN=1 DIAMOND_TRACE_QUICKEN=1 \
+    "$diamond" -e $'def add(a,b)=a+b\nadd(20,22)' 2>&1)"
+grep -q 'quickened sites: 1' <<<"$quickening_trace"
+grep -q '^42$' <<<"$quickening_trace"
+
 error_file="$(mktemp)"
 if "$diamond" -e '1 + )' 2>"$error_file"; then
     echo "invalid source unexpectedly succeeded" >&2
