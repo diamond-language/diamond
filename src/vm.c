@@ -5,6 +5,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/mman.h>
+#include <unistd.h>
 
 enum { DIAMOND_MAX_CALL_DEPTH = 256 };
 
@@ -173,6 +175,31 @@ void diamond_vm_invalidate_method_caches(DiamondVm *vm) {
     vm->inline_cache_misses=0;
     vm->monomorphic_dispatches=0;
     vm->method_cache_probes=0;
+}
+
+enum { DIAMOND_FIBER_STACK_SIZE = 8 * 1024 * 1024 };
+
+[[maybe_unused]] static bool allocate_fiber_stack(DiamondFiber *fiber) {
+    const size_t page = (size_t)sysconf(_SC_PAGESIZE);
+    const size_t total = DIAMOND_FIBER_STACK_SIZE + page;
+    void *base = mmap(nullptr, total, PROT_READ | PROT_WRITE,
+                       MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (base == MAP_FAILED) return false;
+    if (mprotect(base, page, PROT_NONE) != 0) {
+        munmap(base, total);
+        return false;
+    }
+    fiber->stack = base;
+    fiber->stack_size = total;
+    return true;
+}
+
+[[maybe_unused]] static void free_fiber_stack(DiamondFiber *fiber) {
+    if (fiber->stack != nullptr) {
+        munmap(fiber->stack, fiber->stack_size);
+        fiber->stack = nullptr;
+        fiber->stack_size = 0;
+    }
 }
 
 DiamondFiber *diamond_fiber_new(const DiamondChunk *chunk) {
