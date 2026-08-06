@@ -239,6 +239,11 @@ bool diamond_fiber_update_instruction(DiamondFiber *fiber, size_t instruction) {
     fiber->frames[fiber->frame_count-1].instruction=instruction;return true;
 }
 
+bool diamond_fiber_update_depth(DiamondFiber *fiber, size_t depth) {
+    if(fiber==nullptr||fiber->frame_count==0)return false;
+    fiber->frames[fiber->frame_count-1].depth=depth;return true;
+}
+
 void diamond_fiber_queue_init(DiamondFiberQueue *queue) {
     *queue=(DiamondFiberQueue){};
 }
