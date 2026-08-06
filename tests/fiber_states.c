@@ -51,6 +51,9 @@ int main(void) {
     context.instruction=0;
     context.status=DIAMOND_VM_EXCEPTION;
     if(diamond_fiber_restore_context(fiber,&context))return 24;
+    context.status=DIAMOND_VM_OK;
+    context.instruction=0;
+    if(!diamond_fiber_context_terminal(&context))return 25;
     DiamondVm vm;diamond_vm_init(&vm);
     DiamondValue vm_result=DIAMOND_NIL;
     if(diamond_vm_run_context(&vm,nullptr,&vm_result)!=DIAMOND_VM_INVALID_BYTECODE||
