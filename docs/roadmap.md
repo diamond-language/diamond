@@ -244,6 +244,7 @@ future work.
 - C-level method-table mutation and invalidation harness.
 - C-level inherited-method mutation and invalidation coverage.
 - Selective inherited-method mutation coverage across multiple call sites.
+- Method arity and visibility mutation coverage through explicit invalidation.
 
 ## Next priorities
 
