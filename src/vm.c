@@ -192,6 +192,8 @@ DiamondFiberStatus diamond_fiber_run(DiamondFiber *fiber) {
     fiber->status=diamond_vm_run(fiber->vm,fiber->chunk,&fiber->result);
     fiber->state=fiber->status==DIAMOND_VM_OK?DIAMOND_FIBER_COMPLETED:
         DIAMOND_FIBER_FAILED;
+    if(fiber->status==DIAMOND_VM_OK)
+        (void)diamond_fiber_update_instruction(fiber,fiber->chunk->code_count);
     return DIAMOND_FIBER_OK;
 }
 

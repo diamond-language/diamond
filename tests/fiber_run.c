@@ -20,7 +20,9 @@ int main(void) {
         fiber->state != DIAMOND_FIBER_COMPLETED ||
         diamond_fiber_result(fiber).kind != DIAMOND_VALUE_INT ||
         diamond_fiber_result(fiber).as.integer != 3 ||
-        diamond_fiber_status(fiber) != DIAMOND_VM_OK) return 2;
+        diamond_fiber_status(fiber) != DIAMOND_VM_OK ||
+        diamond_fiber_current_frame(fiber) == nullptr ||
+        diamond_fiber_current_frame(fiber)->instruction != chunk.code_count) return 2;
     if (diamond_fiber_run(fiber) != DIAMOND_FIBER_INVALID_STATE) return 3;
     diamond_fiber_free(fiber);
     diamond_vm_free(&vm);
