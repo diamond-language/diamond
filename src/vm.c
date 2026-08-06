@@ -88,9 +88,7 @@ static void mark_frame_chain(void *frames) {
 
 static void mark_fiber(const DiamondFiber *fiber) {
     if (fiber == nullptr) return;
-    for (size_t frame = 0; frame < fiber->frame_count; frame++)
-        for (size_t index = 0; index < DIAMOND_REGISTER_COUNT; index++)
-            mark_value(fiber->frames[frame].registers[index]);
+    mark_frame_chain(fiber->native_frames);
 }
 
 void diamond_vm_collect(DiamondVm *vm) {
@@ -258,10 +256,18 @@ DiamondFiberStatus diamond_fiber_bind_vm(DiamondFiber *fiber, DiamondVm *vm) {
 DiamondFiberStatus diamond_fiber_run(DiamondFiber *fiber) {
     if(fiber==nullptr||fiber->state!=DIAMOND_FIBER_RUNNING||fiber->vm==nullptr||
        fiber->chunk==nullptr)return DIAMOND_FIBER_INVALID_STATE;
-    DiamondFiberExecutionContext context={};
-    if(!diamond_fiber_capture_context(fiber,&context))return DIAMOND_FIBER_INVALID_STATE;
-    fiber->status=diamond_vm_run_context(fiber->vm,&context,&fiber->result);
-    if(!diamond_fiber_restore_context(fiber,&context))return DIAMOND_FIBER_INVALID_STATE;
+    DiamondVm *vm=fiber->vm;
+    void *saved_frames=vm->frames;
+    DiamondFiber *saved_running=vm->running_fiber;
+    vm->frames=fiber->native_frames;
+    vm->running_fiber=fiber;
+    diamond_fiber_entering=fiber;
+    ucontext_t caller_context;
+    fiber->resume_target=&caller_context;
+    swapcontext(&caller_context,&fiber->context);
+    fiber->native_frames=vm->frames;
+    vm->frames=saved_frames;
+    vm->running_fiber=saved_running;
     fiber->state=fiber->status==DIAMOND_VM_OK?DIAMOND_FIBER_COMPLETED:
         (fiber->status==DIAMOND_VM_YIELDED?DIAMOND_FIBER_SUSPENDED:
          DIAMOND_FIBER_FAILED);
