@@ -38,6 +38,12 @@ int main(void) {
        register_value.kind!=DIAMOND_VALUE_INT||register_value.as.integer!=42||
        diamond_fiber_set_register(fiber,DIAMOND_REGISTER_COUNT,DIAMOND_NIL)||
        diamond_fiber_get_register(fiber,DIAMOND_REGISTER_COUNT,&register_value))return 18;
+    DiamondFiberExecutionContext context={};
+    if(!diamond_fiber_capture_context(fiber,&context)||
+       !diamond_fiber_set_register(fiber,0,DIAMOND_INT(7))||
+       !diamond_fiber_restore_context(fiber,&context)||
+       !diamond_fiber_get_register(fiber,0,&register_value)||
+       register_value.as.integer!=42||diamond_fiber_restore_context(fiber,nullptr))return 21;
     diamond_fiber_free(fiber);
     DiamondFiberQueue queue;diamond_fiber_queue_init(&queue);
     DiamondFiber *first=diamond_fiber_new(nullptr),*second=diamond_fiber_new(nullptr);
