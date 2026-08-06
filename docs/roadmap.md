@@ -235,6 +235,7 @@ future work.
 - Explicit rewritten-site tracking for safe VM reuse.
 - Reusable-VM repeat execution mode for lifecycle tests.
 - Repeated polymorphic rewrite/deoptimization lifecycle coverage.
+- Per-run reusable-VM cache and rewrite counter telemetry.
 
 ## Next priorities
 
