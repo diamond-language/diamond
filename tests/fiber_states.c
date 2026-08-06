@@ -25,6 +25,24 @@ int main(void) {
        diamond_fiber_queue_pop(&queue)!=second||
        diamond_fiber_queue_pop(&queue)!=nullptr)return 12;
     diamond_fiber_queue_free(&queue);diamond_fiber_free(first);diamond_fiber_free(second);
+    diamond_fiber_queue_init(&queue);
+    DiamondFiber *batch[12]={};
+    for(size_t index=0;index<12;index++) {
+        batch[index]=diamond_fiber_new(nullptr);
+        if(batch[index]==nullptr||diamond_fiber_make_runnable(batch[index])!=DIAMOND_FIBER_OK||
+           !diamond_fiber_queue_push(&queue,batch[index]))return 13;
+    }
+    for(size_t index=0;index<4;index++) {
+        if(diamond_fiber_queue_pop(&queue)!=batch[index])return 14;
+        diamond_fiber_free(batch[index]);
+    }
+    for(size_t index=0;index<4;index++) {
+        batch[index]=diamond_fiber_new(nullptr);
+        if(batch[index]==nullptr||diamond_fiber_make_runnable(batch[index])!=DIAMOND_FIBER_OK||
+           !diamond_fiber_queue_push(&queue,batch[index]))return 15;
+    }
+    diamond_fiber_queue_free(&queue);
+    for(size_t index=0;index<12;index++)diamond_fiber_free(batch[index]);
     fiber=diamond_fiber_new(nullptr);
     if(fiber==nullptr||diamond_fiber_make_runnable(fiber)!=DIAMOND_FIBER_OK||
        diamond_fiber_begin(fiber)!=DIAMOND_FIBER_OK||

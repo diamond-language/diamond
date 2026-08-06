@@ -223,6 +223,11 @@ void diamond_fiber_queue_free(DiamondFiberQueue *queue) {
 
 bool diamond_fiber_queue_push(DiamondFiberQueue *queue, DiamondFiber *fiber) {
     if(fiber==nullptr||fiber->state!=DIAMOND_FIBER_RUNNABLE)return false;
+    if(queue->head>0&&queue->count==queue->capacity) {
+        const size_t pending=queue->count-queue->head;
+        memmove(queue->items,queue->items+queue->head,pending*sizeof *queue->items);
+        queue->head=0;queue->count=pending;
+    }
     if(queue->count==queue->capacity) {
         const size_t capacity=queue->capacity==0?8:queue->capacity*2;
         DiamondFiber **items=realloc(queue->items,capacity*sizeof *items);
