@@ -10,6 +10,7 @@ int main(void) {
         diamond_fiber_status(nullptr) != DIAMOND_VM_INVALID_BYTECODE) return 6;
     if (!diamond_compile("1 + 2", &program, &diagnostic)) return 1;
     DiamondChunk chunk = diamond_program_chunk(&program);
+    DiamondFiberFrame checkpoint;
     DiamondVm vm;
     diamond_vm_init(&vm);
     DiamondFiber *fiber = diamond_fiber_new(&chunk);
@@ -22,7 +23,10 @@ int main(void) {
         diamond_fiber_result(fiber).as.integer != 3 ||
         diamond_fiber_status(fiber) != DIAMOND_VM_OK ||
         diamond_fiber_current_frame(fiber) == nullptr ||
-        diamond_fiber_current_frame(fiber)->instruction != chunk.code_count) return 2;
+        diamond_fiber_current_frame(fiber)->instruction != chunk.code_count ||
+        !diamond_fiber_checkpoint(fiber, &checkpoint) ||
+        checkpoint.instruction != chunk.code_count ||
+        diamond_fiber_checkpoint(fiber, nullptr)) return 2;
     if (diamond_fiber_run(fiber) != DIAMOND_FIBER_INVALID_STATE) return 3;
     diamond_fiber_free(fiber);
     diamond_vm_free(&vm);

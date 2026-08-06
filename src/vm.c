@@ -282,6 +282,13 @@ const DiamondFiberFrame *diamond_fiber_current_frame(const DiamondFiber *fiber) 
     return &fiber->frames[fiber->frame_count-1];
 }
 
+bool diamond_fiber_checkpoint(const DiamondFiber *fiber, DiamondFiberFrame *frame) {
+    const DiamondFiberFrame *current=diamond_fiber_current_frame(fiber);
+    if(current==nullptr||frame==nullptr)return false;
+    *frame=*current;
+    return true;
+}
+
 bool diamond_fiber_update_instruction(DiamondFiber *fiber, size_t instruction) {
     if(fiber==nullptr||fiber->frame_count==0)return false;
     const DiamondChunk *chunk=fiber->frames[fiber->frame_count-1].chunk;
