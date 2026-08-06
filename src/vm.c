@@ -185,7 +185,7 @@ void diamond_vm_invalidate_method_caches(DiamondVm *vm) {
 
 enum { DIAMOND_FIBER_STACK_SIZE = 8 * 1024 * 1024 };
 
-[[maybe_unused]] static bool allocate_fiber_stack(DiamondFiber *fiber) {
+static bool allocate_fiber_stack(DiamondFiber *fiber) {
     const size_t page = (size_t)sysconf(_SC_PAGESIZE);
     const size_t total = DIAMOND_FIBER_STACK_SIZE + page;
     void *base = mmap(nullptr, total, PROT_READ | PROT_WRITE,
@@ -200,7 +200,7 @@ enum { DIAMOND_FIBER_STACK_SIZE = 8 * 1024 * 1024 };
     return true;
 }
 
-[[maybe_unused]] static void free_fiber_stack(DiamondFiber *fiber) {
+static void free_fiber_stack(DiamondFiber *fiber) {
     if (fiber->stack != nullptr) {
         munmap(fiber->stack, fiber->stack_size);
         fiber->stack = nullptr;
@@ -210,7 +210,7 @@ enum { DIAMOND_FIBER_STACK_SIZE = 8 * 1024 * 1024 };
 
 static DiamondFiber *diamond_fiber_entering;
 
-[[maybe_unused]] static void diamond_fiber_trampoline(void) {
+static void diamond_fiber_trampoline(void) {
     DiamondFiber *self = diamond_fiber_entering;
     self->status = run_chunk(self->chunk, self->vm, nullptr, 0, 0, nullptr,
                              &self->result, nullptr);
@@ -229,17 +229,23 @@ DiamondFiber *diamond_fiber_new(const DiamondChunk *chunk) {
 
 void diamond_fiber_free(DiamondFiber *fiber) {
     if(fiber==nullptr)return;
-    free(fiber->frames);free(fiber);
+    free_fiber_stack(fiber);
+    free(fiber);
 }
 
 DiamondFiberStatus diamond_fiber_prepare(DiamondFiber *fiber) {
     if(fiber==nullptr||fiber->state!=DIAMOND_FIBER_NEW||fiber->chunk==nullptr)
         return DIAMOND_FIBER_INVALID_STATE;
-    DiamondFiberFrame frame={.chunk=fiber->chunk,.instruction=0,.depth=0,
-                             .status=DIAMOND_VM_OK};
-    for(size_t index=0;index<DIAMOND_REGISTER_COUNT;index++)
-        frame.registers[index]=DIAMOND_NIL;
-    if(!diamond_fiber_push_frame(fiber,frame))return DIAMOND_FIBER_INVALID_STATE;
+    if(!allocate_fiber_stack(fiber))return DIAMOND_FIBER_INVALID_STATE;
+    if(getcontext(&fiber->context)!=0) {
+        free_fiber_stack(fiber);
+        return DIAMOND_FIBER_INVALID_STATE;
+    }
+    const size_t page=(size_t)sysconf(_SC_PAGESIZE);
+    fiber->context.uc_stack.ss_sp=(char *)fiber->stack+page;
+    fiber->context.uc_stack.ss_size=DIAMOND_FIBER_STACK_SIZE;
+    fiber->context.uc_link=nullptr;
+    makecontext(&fiber->context,diamond_fiber_trampoline,0);
     fiber->state=DIAMOND_FIBER_RUNNABLE;return DIAMOND_FIBER_OK;
 }
 
