@@ -222,11 +222,12 @@ future work.
 - Guarded integer quickening for dynamic ordering comparisons.
 - Configurable quickening warm-up thresholds with environment control.
 - Guarded integer quickening for equality and inequality.
+- Inherited-method and repeated-hit coverage for polymorphic dispatch caches.
 
 ## Next priorities
 
-1. Measure quickening thresholds and evaluate specialization for method
-   dispatch sites.
+1. Measure quickening thresholds and evaluate direct-call specialization for
+   stable method-dispatch sites.
 
 ## Later experiments
 

@@ -460,7 +460,8 @@ next performance investigation is bytecode quickening and type specialization.
 
 Set `DIAMOND_TRACE_IC=1` to print method inline-cache hit and miss counts after
 execution. Dynamic call sites use VM-owned four-entry polymorphic caches guarded
-by receiver class.
+by receiver class, including inherited-method resolution. Repeated calls on
+the same receiver classes take the cache-hit path.
 
 Set `DIAMOND_TRACE_SHAPES=1` to print instance shape transitions. Fresh objects
 begin at their class's empty shape and advance lazily as fields are first written.
