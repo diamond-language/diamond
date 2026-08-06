@@ -28,6 +28,10 @@ fiber's frame chain, captured cells, pending handlers, and result are GC roots.
 The initial queue primitive is FIFO, rejects non-runnable fibers, compacts
 consumed storage, and transitions dequeued fibers to `RUNNING`.
 
+Fiber frames currently carry the owning chunk, instruction checkpoint, and
+call depth. Push/pop plus checkpoint updates are implemented independently of
+the VM interpreter; queued-fiber enumeration provides the future GC root hook.
+
 The proposed C boundary is:
 
 ```c
