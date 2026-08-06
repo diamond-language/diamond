@@ -159,6 +159,13 @@ int main(void) {
        double_fiber->state!=DIAMOND_FIBER_COMPLETED||
        diamond_fiber_status(double_fiber)!=DIAMOND_VM_OK)return 25;
     diamond_fiber_free(double_fiber);diamond_vm_free(&double_vm);
+
+    DiamondFiberQueue empty_run_all_queue;diamond_fiber_queue_init(&empty_run_all_queue);
+    if(diamond_fiber_scheduler_run_all(&empty_run_all_queue)!=DIAMOND_FIBER_OK||
+       diamond_fiber_queue_count(&empty_run_all_queue)!=0)return 32;
+    diamond_fiber_queue_free(&empty_run_all_queue);
+    if(diamond_fiber_scheduler_run_all(nullptr)!=DIAMOND_FIBER_INVALID_STATE)return 33;
+
     puts("fiber run passed");
     return 0;
 }
