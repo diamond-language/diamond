@@ -213,6 +213,32 @@ DiamondFiberStatus diamond_fiber_fail(DiamondFiber *fiber, DiamondVmStatus statu
     return DIAMOND_FIBER_OK;
 }
 
+void diamond_fiber_queue_init(DiamondFiberQueue *queue) {
+    *queue=(DiamondFiberQueue){};
+}
+
+void diamond_fiber_queue_free(DiamondFiberQueue *queue) {
+    free(queue->items);*queue=(DiamondFiberQueue){};
+}
+
+bool diamond_fiber_queue_push(DiamondFiberQueue *queue, DiamondFiber *fiber) {
+    if(fiber==nullptr||fiber->state!=DIAMOND_FIBER_RUNNABLE)return false;
+    if(queue->count==queue->capacity) {
+        const size_t capacity=queue->capacity==0?8:queue->capacity*2;
+        DiamondFiber **items=realloc(queue->items,capacity*sizeof *items);
+        if(items==nullptr)return false;
+        queue->items=items;queue->capacity=capacity;
+    }
+    queue->items[queue->count++]=fiber;return true;
+}
+
+DiamondFiber *diamond_fiber_queue_pop(DiamondFiberQueue *queue) {
+    if(queue->head==queue->count)return nullptr;
+    DiamondFiber *fiber=queue->items[queue->head++];
+    if(queue->head==queue->count)queue->head=queue->count=0;
+    return fiber;
+}
+
 static DiamondString *allocate_string(DiamondVm *vm, const char *chars,
                                       size_t length) {
     if (vm->stress_gc || vm->bytes_allocated >= vm->next_gc) {

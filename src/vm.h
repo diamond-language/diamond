@@ -306,6 +306,13 @@ typedef enum DiamondFiberStatus : uint8_t {
     DIAMOND_FIBER_INVALID_STATE,
 } DiamondFiberStatus;
 
+typedef struct DiamondFiberQueue {
+    DiamondFiber **items;
+    size_t count;
+    size_t capacity;
+    size_t head;
+} DiamondFiberQueue;
+
 typedef struct DiamondVm {
     DiamondObject *objects;
     size_t bytes_allocated;
@@ -350,6 +357,10 @@ DiamondFiberStatus diamond_fiber_begin(DiamondFiber *fiber);
 DiamondFiberStatus diamond_fiber_suspend(DiamondFiber *fiber);
 DiamondFiberStatus diamond_fiber_complete(DiamondFiber *fiber, DiamondValue result);
 DiamondFiberStatus diamond_fiber_fail(DiamondFiber *fiber, DiamondVmStatus status);
+void diamond_fiber_queue_init(DiamondFiberQueue *queue);
+void diamond_fiber_queue_free(DiamondFiberQueue *queue);
+bool diamond_fiber_queue_push(DiamondFiberQueue *queue, DiamondFiber *fiber);
+DiamondFiber *diamond_fiber_queue_pop(DiamondFiberQueue *queue);
 DiamondVmStatus diamond_vm_run(DiamondVm *vm, const DiamondChunk *chunk,
                                DiamondValue *result);
 const char *diamond_vm_status_name(DiamondVmStatus status);
