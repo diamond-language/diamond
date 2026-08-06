@@ -2190,6 +2190,14 @@ static uint8_t compile_return(Compiler *compiler) {
     return value;
 }
 
+static uint8_t compile_yield(Compiler *compiler) {
+    const uint8_t result=allocate_register(compiler);
+    advance_token(compiler);
+    emit_instruction(compiler,DIAMOND_OP_YIELD,0,0,0,1);
+    emit_instruction(compiler,DIAMOND_OP_NIL,result,0,0,1);
+    return result;
+}
+
 static uint8_t compile_raise(Compiler *compiler) {
     const DiamondSpan keyword=compiler->current.span;
     advance_token(compiler);
