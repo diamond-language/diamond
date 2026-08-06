@@ -305,6 +305,10 @@ bool diamond_fiber_get_register(const DiamondFiber *fiber, size_t index, Diamond
     return true;
 }
 
+size_t diamond_fiber_register_count(void) {
+    return DIAMOND_REGISTER_COUNT;
+}
+
 bool diamond_fiber_update_instruction(DiamondFiber *fiber, size_t instruction) {
     if(fiber==nullptr||fiber->frame_count==0)return false;
     const DiamondChunk *chunk=fiber->frames[fiber->frame_count-1].chunk;

@@ -385,6 +385,7 @@ const DiamondFiberFrame *diamond_fiber_current_frame(const DiamondFiber *fiber);
 bool diamond_fiber_checkpoint(const DiamondFiber *fiber, DiamondFiberFrame *frame);
 bool diamond_fiber_set_register(DiamondFiber *fiber, size_t index, DiamondValue value);
 bool diamond_fiber_get_register(const DiamondFiber *fiber, size_t index, DiamondValue *value);
+size_t diamond_fiber_register_count(void);
 bool diamond_fiber_update_instruction(DiamondFiber *fiber, size_t instruction);
 bool diamond_fiber_update_depth(DiamondFiber *fiber, size_t depth);
 void diamond_fiber_queue_init(DiamondFiberQueue *queue);
