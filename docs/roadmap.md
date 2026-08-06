@@ -323,10 +323,29 @@ future work.
   monomorphism break is a one-time cost, not a per-call one. Complements the
   existing small-scale (100-call, 2-call) benchmarks with a larger, mixed
   workload.
+- Runtime method redefinition: `ClassName.redefine_method(name, callable)`
+  repoints an existing method to a different already-compiled function, with
+  cache invalidation happening automatically as part of the call instead of
+  a separate manual step. Scoped deliberately narrower than the roadmap
+  phrasing might suggest: this repoints methods that already exist, it does
+  not define genuinely new ones (`DiamondClass.methods` is a fixed-size,
+  compile-time-populated array) and it does not cover modules. Classes are
+  not first-class runtime values, so this required a new opcode recognized
+  contextually at the same call site that already special-cases
+  `ClassName.new(...)`, rather than ordinary method dispatch. Four
+  structural checks reject unsafe replacements: the callable must capture no
+  variables (a method slot only stores a raw function index, so captured
+  state would be silently discarded), it must have been compiled with the
+  same `owner_class` as the target (otherwise `self`/`@field` register and
+  offset assumptions baked in at compile time would be wrong), its arity
+  must exactly match the existing method's, and the name must match an
+  existing method on that class directly (no superclass walk, no defining a
+  new method). Verified end-to-end from pure Diamond source, including
+  against an already-warmed `INVOKE_MONO` dispatch site.
 
 ## Next priorities
 
-1. Add runtime class/module mutation with automatic method-cache invalidation.
+None queued.
 
 ## Later experiments
 
