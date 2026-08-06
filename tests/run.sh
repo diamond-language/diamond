@@ -127,6 +127,14 @@ fi
 grep -q 'runtime error: integer overflow' "$error_file"
 rm -f "$error_file"
 
+error_file="$(mktemp)"
+if "$diamond" -e '9223372036854775807 * 2' >/dev/null 2>"$error_file"; then
+    echo "integer multiply overflow unexpectedly succeeded" >&2
+    exit 1
+fi
+grep -q 'runtime error: integer overflow' "$error_file"
+rm -f "$error_file"
+
 actual="$($diamond tests/cases/control_flow.dia)"
 [[ "$actual" == "42" ]] || {
     echo "control flow program failed: $actual" >&2
@@ -2145,4 +2153,4 @@ if "$diamond" -e $'module Constants\n VALUE = 42 if true\nend' >/dev/null 2>&1; 
     echo "conditional namespace constant unexpectedly compiled" >&2
     exit 1
 fi
-echo "531 tests passed"
+echo "532 tests passed"
