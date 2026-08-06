@@ -3666,6 +3666,8 @@ static uint8_t compile_sequence(Compiler *compiler) {
             result=compile_module(compiler);
         } else if (compiler->current.kind == DIAMOND_TOKEN_RETURN) {
             result=compile_return(compiler);
+        } else if (compiler->current.kind == DIAMOND_TOKEN_YIELD) {
+            result=compile_yield(compiler);
         } else if (compiler->current.kind == DIAMOND_TOKEN_RAISE) {
             result=compile_raise(compiler);
         } else if (compiler->current.kind == DIAMOND_TOKEN_RETRY) {
