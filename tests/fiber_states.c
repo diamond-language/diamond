@@ -14,8 +14,9 @@ int main(void) {
     if(diamond_fiber_suspend(fiber)!=DIAMOND_FIBER_OK)return 8;
     if(diamond_fiber_state_name(fiber->state)==nullptr)return 9;
     DiamondFiberFrame frame={.chunk=nullptr,.instruction=12,.depth=2},popped={};
-    if(!diamond_fiber_push_frame(fiber,frame)||!diamond_fiber_pop_frame(fiber,&popped)||
-       popped.instruction!=12||popped.depth!=2)return 16;
+    if(!diamond_fiber_push_frame(fiber,frame)||!diamond_fiber_update_instruction(fiber,13)||
+       !diamond_fiber_pop_frame(fiber,&popped)||
+       popped.instruction!=13||popped.depth!=2)return 16;
     diamond_fiber_free(fiber);
     DiamondFiberQueue queue;diamond_fiber_queue_init(&queue);
     DiamondFiber *first=diamond_fiber_new(nullptr),*second=diamond_fiber_new(nullptr);

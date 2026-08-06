@@ -234,6 +234,11 @@ bool diamond_fiber_pop_frame(DiamondFiber *fiber, DiamondFiberFrame *frame) {
     *frame=fiber->frames[--fiber->frame_count];return true;
 }
 
+bool diamond_fiber_update_instruction(DiamondFiber *fiber, size_t instruction) {
+    if(fiber==nullptr||fiber->frame_count==0)return false;
+    fiber->frames[fiber->frame_count-1].instruction=instruction;return true;
+}
+
 void diamond_fiber_queue_init(DiamondFiberQueue *queue) {
     *queue=(DiamondFiberQueue){};
 }
