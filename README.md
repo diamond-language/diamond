@@ -68,7 +68,7 @@ and preserve the complete canonical path, including diagnostics raised at an
 imported file's EOF boundary. Diagnostic excerpts omit the loader's internal
 marker lines and retain multiline line numbers. Runtime failures from imported
 code retain their function frames and root caller frame in the VM stack trace,
-including under stress-GC execution.
+including line/column locations and stress-GC execution.
 
 Build variants:
 
