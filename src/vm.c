@@ -149,6 +149,14 @@ void diamond_vm_free(DiamondVm *vm) {
     *vm = (DiamondVm){};
 }
 
+void diamond_vm_invalidate_method_caches(DiamondVm *vm) {
+    memset(vm->method_caches,0,sizeof vm->method_caches);
+    vm->inline_cache_hits=0;
+    vm->inline_cache_misses=0;
+    vm->monomorphic_dispatches=0;
+    vm->method_cache_probes=0;
+}
+
 static DiamondString *allocate_string(DiamondVm *vm, const char *chars,
                                       size_t length) {
     if (vm->stress_gc || vm->bytes_allocated >= vm->next_gc) {
@@ -2616,12 +2624,8 @@ DiamondVmStatus diamond_vm_run(DiamondVm *vm, const DiamondChunk *chunk,
     vm->rewritten_site_count=0;
     vm->error[0]='\0';
     vm->has_exception=false;
-    memset(vm->method_caches,0,sizeof(vm->method_caches));
+    diamond_vm_invalidate_method_caches(vm);
     memset(vm->field_caches,0,sizeof(vm->field_caches));
-    vm->inline_cache_hits=0;
-    vm->inline_cache_misses=0;
-    vm->monomorphic_dispatches=0;
-    vm->method_cache_probes=0;
     vm->direct_dispatch_rewrites=0;
     vm->field_cache_hits=0;
     vm->field_cache_misses=0;

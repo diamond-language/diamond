@@ -320,6 +320,7 @@ typedef struct DiamondVm {
 void diamond_vm_init(DiamondVm *vm);
 void diamond_vm_free(DiamondVm *vm);
 void diamond_vm_collect(DiamondVm *vm);
+void diamond_vm_invalidate_method_caches(DiamondVm *vm);
 DiamondVmStatus diamond_vm_run(DiamondVm *vm, const DiamondChunk *chunk,
                                DiamondValue *result);
 const char *diamond_vm_status_name(DiamondVmStatus status);
