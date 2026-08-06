@@ -2857,8 +2857,10 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
             }
             case DIAMOND_OP_YIELD:
-                if(depth!=0) VM_RETURN(DIAMOND_VM_UNSUPPORTED_YIELD);
-                VM_RETURN(DIAMOND_VM_YIELDED);
+                if(vm->running_fiber==nullptr) VM_RETURN(DIAMOND_VM_UNSUPPORTED_YIELD);
+                vm->running_fiber->status=DIAMOND_VM_YIELDED;
+                swapcontext(&vm->running_fiber->context,vm->running_fiber->resume_target);
+                break;
             default:
                 VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
         }
