@@ -1850,6 +1850,13 @@ if "$diamond" "$long_path" >/dev/null 2>&1; then
     echo "oversized root path unexpectedly opened" >&2
     exit 1
 fi
+root_error="$(mktemp)"
+if "$diamond" tests/multifile/no_such_root.dia >/dev/null 2>"$root_error"; then
+    rm -f "$root_error"
+    exit 1
+fi
+grep -q "cannot open 'tests/multifile/no_such_root.dia'" "$root_error"
+rm -f "$root_error"
 if "$diamond" -e $'module Constants\n VALUE = 42 if true\nend' >/dev/null 2>&1; then
     echo "conditional namespace constant unexpectedly compiled" >&2
     exit 1
