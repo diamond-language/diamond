@@ -58,13 +58,22 @@ static bool same_path(const char paths[][DIAMOND_MAX_SOURCE_PATH],size_t count,
 static bool record_segment(Loader *loader,const char *path,size_t line,
                            size_t start,size_t end) {
     if(start==end)return true;
-    if(end<start)return false;
+    if(end<start) {
+        (void)snprintf(loader->error,loader->error_capacity,
+                       "%s:%zu: invalid source segment range",path,line);
+        return false;
+    }
     if(loader->bundle->segment_count==DIAMOND_MAX_SOURCE_SEGMENTS)return false;
     DiamondSourceSegment *segment=
         &loader->bundle->segments[loader->bundle->segment_count++];
     *segment=(DiamondSourceSegment){.start=start,.end=end,.original_line=line};
     const int written=snprintf(segment->path,sizeof segment->path,"%s",path);
-    return written>=0&&(size_t)written<sizeof segment->path;
+    if(written<0||(size_t)written>=sizeof segment->path) {
+        (void)snprintf(loader->error,loader->error_capacity,
+                       "%s:%zu: source path is too long for mapping",path,line);
+        return false;
+    }
+    return true;
 }
 
 static bool expand(Loader *loader,const char *path,const char *source,
@@ -132,9 +141,10 @@ static bool expand(Loader *loader,const char *path,const char *source,
                 return false;
             }
             if(!record_segment(loader,path,chunk_line,start+9,loader->length)) {
-                (void)snprintf(loader->error,loader->error_capacity,
-                               "%s:%zu: source-file segment limit reached",
-                               path,line);
+                if(loader->error[0]=='\0')
+                    (void)snprintf(loader->error,loader->error_capacity,
+                                   "%s:%zu: source-file segment limit reached",
+                                   path,line);
                 return false;
             }
             char requested[DIAMOND_MAX_SOURCE_PATH];
@@ -193,8 +203,9 @@ static bool expand(Loader *loader,const char *path,const char *source,
         return false;
     }
     if(!record_segment(loader,path,chunk_line,start+9,loader->length)) {
-        (void)snprintf(loader->error,loader->error_capacity,
-                       "%s: source-file segment limit reached",path);
+        if(loader->error[0]=='\0')
+            (void)snprintf(loader->error,loader->error_capacity,
+                           "%s: source-file segment limit reached",path);
         return false;
     }
     loader->active_count--;return true;
