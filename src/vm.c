@@ -290,6 +290,18 @@ bool diamond_fiber_checkpoint(const DiamondFiber *fiber, DiamondFiberFrame *fram
     return true;
 }
 
+bool diamond_fiber_capture_context(const DiamondFiber *fiber, DiamondFiberExecutionContext *context) {
+    return diamond_fiber_checkpoint(fiber, context);
+}
+
+bool diamond_fiber_restore_context(DiamondFiber *fiber, const DiamondFiberExecutionContext *context) {
+    if(fiber==nullptr||context==nullptr||fiber->frame_count==0||
+       context->chunk==nullptr||context->instruction>context->chunk->code_count)
+        return false;
+    fiber->frames[fiber->frame_count-1]=*context;
+    return true;
+}
+
 bool diamond_fiber_set_register(DiamondFiber *fiber, size_t index, DiamondValue value) {
     DiamondFiberFrame *frame=fiber==nullptr?nullptr:
         (fiber->frame_count==0?nullptr:&fiber->frames[fiber->frame_count-1]);

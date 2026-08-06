@@ -305,6 +305,8 @@ typedef struct DiamondFiberFrame {
     DiamondValue registers[DIAMOND_REGISTER_COUNT];
 } DiamondFiberFrame;
 
+typedef DiamondFiberFrame DiamondFiberExecutionContext;
+
 typedef struct DiamondFiber {
     DiamondFiberState state;
     const DiamondChunk *chunk;
@@ -383,6 +385,8 @@ bool diamond_fiber_push_frame(DiamondFiber *fiber, DiamondFiberFrame frame);
 bool diamond_fiber_pop_frame(DiamondFiber *fiber, DiamondFiberFrame *frame);
 const DiamondFiberFrame *diamond_fiber_current_frame(const DiamondFiber *fiber);
 bool diamond_fiber_checkpoint(const DiamondFiber *fiber, DiamondFiberFrame *frame);
+bool diamond_fiber_capture_context(const DiamondFiber *fiber, DiamondFiberExecutionContext *context);
+bool diamond_fiber_restore_context(DiamondFiber *fiber, const DiamondFiberExecutionContext *context);
 bool diamond_fiber_set_register(DiamondFiber *fiber, size_t index, DiamondValue value);
 bool diamond_fiber_get_register(const DiamondFiber *fiber, size_t index, DiamondValue *value);
 size_t diamond_fiber_register_count(void);
