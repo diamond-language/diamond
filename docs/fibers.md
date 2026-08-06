@@ -59,6 +59,12 @@ registers, and status back to the context. Suspension is not yet exposed as a
 language operation, but the interpreter boundary now preserves the required
 state.
 
+`DIAMOND_OP_YIELD` is the first explicit suspension boundary. It returns
+`DIAMOND_VM_YIELDED`, records the instruction immediately after the opcode,
+and maps a running fiber to `SUSPENDED`; resuming currently re-enters the
+chunk and reaches the boundary again until continuation-aware dispatch is
+implemented.
+
 Contexts also retain the last `DiamondVmStatus`; successful contexts end at
 `DIAMOND_VM_OK`, while failures retain the precise VM error. Restoration
 accepts only `DIAMOND_VM_OK` contexts on nonterminal fibers.
