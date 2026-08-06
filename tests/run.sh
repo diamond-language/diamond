@@ -427,6 +427,17 @@ rm -f "$error_file"
 actual="$("$diamond" -e $'class Foo\n def bar(a, b)\n  a + b\n end\nend\nclass Baz\n def bar(a)\n  a\n end\nend\ndef call_it(x)\n x.bar(1)\nend\ncall_it(Baz.new())\nbegin\n call_it(Foo.new())\nrescue error: ArgumentError\n 42\nend')"
 [[ "$actual" == "42" ]]
 
+error_file="$(mktemp)"
+if "$diamond" -e $'class Foo\n def bar(a, b)\n  a + b\n end\nend\ndef inner(x)\n x.bar(1)\nend\ndef outer(x)\n inner(x)\nend\nouter(Foo.new())' \
+    >/dev/null 2>"$error_file"; then
+    echo "nested dynamic dispatch arity error unexpectedly succeeded" >&2
+    exit 1
+fi
+grep -q 'runtime error: wrong number of arguments' "$error_file"
+grep -q 'at inner:7:' "$error_file"
+grep -q 'at outer:10:' "$error_file"
+rm -f "$error_file"
+
 actual="$("$diamond" --dump-bytecode -e $'def head(values: Array[Int]) -> Int\n item = values[0]\n item\nend\nhead([42])')"
 head_dump="$(sed -n '/^== head ==$/,$p' <<<"$actual")"
 [[ "$(grep -c 'CHECK_TYPE' <<<"$head_dump")" == "1" ]]
@@ -2215,4 +2226,4 @@ if "$diamond" -e $'module Constants\n VALUE = 42 if true\nend' >/dev/null 2>&1; 
     echo "conditional namespace constant unexpectedly compiled" >&2
     exit 1
 fi
-echo "542 tests passed"
+echo "543 tests passed"
