@@ -35,6 +35,20 @@ quickening_trace="$(DIAMOND_QUICKEN=1 DIAMOND_TRACE_QUICKEN=1 \
     "$diamond" -e $'def add(a,b)=a+b\n[add(20,22), add("a","b")]' 2>&1)"
 grep -q 'quickened sites: 1, deoptimized sites: 1' <<<"$quickening_trace"
 grep -q '\[42, ab\]' <<<"$quickening_trace"
+quickening_trace="$(DIAMOND_QUICKEN=1 DIAMOND_TRACE_QUICKEN=1 \
+    "$diamond" -e $'def arithmetic(a,b) = a-b\narithmetic(20,2)' 2>&1)"
+grep -q 'quickened sites: 1, deoptimized sites: 0' <<<"$quickening_trace"
+grep -q '^18$' <<<"$quickening_trace"
+
+quickening_trace="$(DIAMOND_QUICKEN=1 DIAMOND_TRACE_QUICKEN=1 \
+    "$diamond" -e $'def arithmetic(a,b) = a*b\narithmetic(20,2)' 2>&1)"
+grep -q 'quickened sites: 1, deoptimized sites: 0' <<<"$quickening_trace"
+grep -q '^40$' <<<"$quickening_trace"
+
+quickening_trace="$(DIAMOND_QUICKEN=1 DIAMOND_TRACE_QUICKEN=1 \
+    "$diamond" -e $'def arithmetic(a,b) = a/b\narithmetic(20,2)' 2>&1)"
+grep -q 'quickened sites: 1, deoptimized sites: 0' <<<"$quickening_trace"
+grep -q '^10$' <<<"$quickening_trace"
 
 error_file="$(mktemp)"
 if "$diamond" -e '1 + )' 2>"$error_file"; then
@@ -1910,4 +1924,4 @@ if "$diamond" -e $'module Constants\n VALUE = 42 if true\nend' >/dev/null 2>&1; 
     echo "conditional namespace constant unexpectedly compiled" >&2
     exit 1
 fi
-echo "471 tests passed"
+echo "477 tests passed"

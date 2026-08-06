@@ -1680,9 +1680,11 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 bool overflow = false;
                 if (opcode == DIAMOND_OP_ADD_INT) {
                     overflow = ckd_add(&result_value, left_value, right_value);
-                } else if (opcode == DIAMOND_OP_SUBTRACT_INT) {
+                } else if (opcode == DIAMOND_OP_SUBTRACT_INT ||
+                           opcode == DIAMOND_OP_SUBTRACT) {
                     overflow = ckd_sub(&result_value, left_value, right_value);
-                } else if (opcode == DIAMOND_OP_MULTIPLY_INT) {
+                } else if (opcode == DIAMOND_OP_MULTIPLY_INT ||
+                           opcode == DIAMOND_OP_MULTIPLY) {
                     overflow = ckd_mul(&result_value, left_value, right_value);
                 } else {
                     if (right_value == 0) {
