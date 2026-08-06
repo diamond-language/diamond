@@ -2923,6 +2923,8 @@ const char *diamond_vm_status_name(DiamondVmStatus status) {
             return "array index out of bounds";
         case DIAMOND_VM_EXCEPTION:
             return "uncaught exception";
+        case DIAMOND_VM_YIELDED:
+            return "yielded";
     }
     return "unknown VM status";
 }
