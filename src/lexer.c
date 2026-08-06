@@ -85,6 +85,7 @@ static DiamondTokenKind identifier_kind(const DiamondLexer *lexer) {
     if (text_equals(lexer, "redo", 4)) return DIAMOND_TOKEN_REDO;
     if (text_equals(lexer, "raise", 5)) return DIAMOND_TOKEN_RAISE;
     if (text_equals(lexer, "retry", 5)) return DIAMOND_TOKEN_RETRY;
+    if (text_equals(lexer, "yield", 5)) return DIAMOND_TOKEN_YIELD;
     if (text_equals(lexer, "begin", 5)) return DIAMOND_TOKEN_BEGIN;
     if (text_equals(lexer, "rescue", 6)) return DIAMOND_TOKEN_RESCUE;
     if (text_equals(lexer, "ensure", 6)) return DIAMOND_TOKEN_ENSURE;
