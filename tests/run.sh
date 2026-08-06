@@ -1864,6 +1864,13 @@ if "$diamond" tests >/dev/null 2>"$root_error"; then
 fi
 grep -q "cannot read 'tests': Is a directory" "$root_error"
 rm -f "$root_error"
+root_error="$(mktemp)"
+if "$diamond" --dump-bytecode tests/multifile/no_such_root.dia >/dev/null 2>"$root_error"; then
+    rm -f "$root_error"
+    exit 1
+fi
+grep -q "cannot open 'tests/multifile/no_such_root.dia'" "$root_error"
+rm -f "$root_error"
 if "$diamond" -e $'module Constants\n VALUE = 42 if true\nend' >/dev/null 2>&1; then
     echo "conditional namespace constant unexpectedly compiled" >&2
     exit 1
