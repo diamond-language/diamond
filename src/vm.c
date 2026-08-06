@@ -124,6 +124,7 @@ void diamond_vm_collect(DiamondVm *vm) {
 
 void diamond_vm_init(DiamondVm *vm) {
     *vm = (DiamondVm){.next_gc = 2048};
+    vm->quickening_threshold = 1;
 }
 
 void diamond_vm_free(DiamondVm *vm) {
@@ -1578,7 +1579,8 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 READ_BYTE(right);
                 if (registers[left].kind == DIAMOND_VALUE_INT &&
                     registers[right].kind == DIAMOND_VALUE_INT) {
-                    if (vm->quickening) {
+                    if (vm->quickening &&
+                        ++vm->quickening_observations >= vm->quickening_threshold) {
                         uint8_t *code=(uint8_t *)(void *)chunk->code;
                         code[instruction_offset]=(uint8_t)DIAMOND_OP_ADD_INT;
                         vm->quickened_sites++;
@@ -1633,7 +1635,8 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                      opcode == DIAMOND_OP_MULTIPLY ||
                      opcode == DIAMOND_OP_DIVIDE) &&
                     registers[left].kind == DIAMOND_VALUE_INT &&
-                    registers[right].kind == DIAMOND_VALUE_INT) {
+                    registers[right].kind == DIAMOND_VALUE_INT &&
+                    ++vm->quickening_observations >= vm->quickening_threshold) {
                     const DiamondOpCode specialized = opcode == DIAMOND_OP_SUBTRACT
                         ? DIAMOND_OP_SUBTRACT_INT
                         : opcode == DIAMOND_OP_MULTIPLY
@@ -1751,7 +1754,8 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                      opcode == DIAMOND_OP_GREATER ||
                      opcode == DIAMOND_OP_GREATER_EQUAL) &&
                     registers[left].kind == DIAMOND_VALUE_INT &&
-                    registers[right].kind == DIAMOND_VALUE_INT) {
+                    registers[right].kind == DIAMOND_VALUE_INT &&
+                    ++vm->quickening_observations >= vm->quickening_threshold) {
                     const DiamondOpCode specialized = opcode == DIAMOND_OP_LESS
                         ? DIAMOND_OP_LESS_INT
                         : opcode == DIAMOND_OP_LESS_EQUAL

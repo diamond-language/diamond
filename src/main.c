@@ -110,6 +110,15 @@ static int run_source(const char *name, const char *source, bool dump_bytecode) 
     diamond_vm_init(&vm);
     vm.stress_gc = getenv("DIAMOND_STRESS_GC") != nullptr;
     vm.quickening = getenv("DIAMOND_QUICKEN") != nullptr;
+    const char *quickening_threshold = getenv("DIAMOND_QUICKEN_THRESHOLD");
+    if (quickening_threshold != nullptr && quickening_threshold[0] != '\0') {
+        char *end = nullptr;
+        const unsigned long long parsed = strtoull(quickening_threshold, &end, 10);
+        if (end != quickening_threshold && *end == '\0' && parsed > 0 &&
+            parsed <= SIZE_MAX) {
+            vm.quickening_threshold = (size_t)parsed;
+        }
+    }
     DiamondValue result = DIAMOND_NIL;
     const DiamondVmStatus status = diamond_vm_run(&vm, &chunk, &result);
     if (status != DIAMOND_VM_OK) {
