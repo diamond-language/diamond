@@ -492,6 +492,8 @@ The research defaults are one observation for both policies; this favors
 quick feedback while the benchmark remains available for later tuning.
 Embedders that mutate class or module method tables should call
 `diamond_vm_invalidate_method_caches` before the next dispatch.
+`make test-api` runs a C-level harness that mutates a method table, invalidates
+the VM caches, and verifies the replacement dispatch.
 
 Set `DIAMOND_TRACE_SHAPES=1` to print instance shape transitions. Fresh objects
 begin at their class's empty shape and advance lazily as fields are first written.

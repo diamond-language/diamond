@@ -241,6 +241,7 @@ future work.
 - Default one-observation policy locked by deterministic benchmark coverage.
 - Explicit method-cache invalidation API for future class/module mutation.
 - Repeat-mode exercise of the explicit invalidation boundary.
+- C-level method-table mutation and invalidation harness.
 
 ## Next priorities
 
