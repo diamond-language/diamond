@@ -486,6 +486,8 @@ The dispatch benchmark uses these counters to compare immediate and delayed
 monomorphic warm-up without depending on wall-clock timing.
 Set `DIAMOND_TRACE_IC_POLICY=1` to print the active quickening and dispatch
 thresholds used for a run.
+The research defaults are one observation for both policies; this favors
+quick feedback while the benchmark remains available for later tuning.
 
 Set `DIAMOND_TRACE_SHAPES=1` to print instance shape transitions. Fresh objects
 begin at their class's empty shape and advance lazily as fields are first written.

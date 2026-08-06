@@ -238,11 +238,12 @@ future work.
 - Per-run reusable-VM cache and rewrite counter telemetry.
 - Immediate-versus-delayed dispatch warm-up baseline coverage.
 - Active dispatch-policy trace for reproducible threshold experiments.
+- Default one-observation policy locked by deterministic benchmark coverage.
 
 ## Next priorities
 
-1. Measure guarded `INVOKE_MONO` benefit and evaluate reclamation behavior for
-   rewritten sites.
+1. Evaluate method-cache invalidation requirements as class mutation features
+   are introduced.
 
 ## Later experiments
 
