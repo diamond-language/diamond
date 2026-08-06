@@ -67,6 +67,17 @@ static void mark_value(DiamondValue value) {
     if (value.kind == DIAMOND_VALUE_OBJECT) mark_object(value.as.object);
 }
 
+static void mark_frame_chain(void *frames) {
+    for (DiamondFrame *frame = frames; frame != nullptr;
+         frame = frame->previous) {
+        for (size_t index = 0; index < DIAMOND_REGISTER_COUNT; index++) {
+            mark_value(frame->registers[index]);
+        }
+        if(frame->pending!=nullptr && frame->pending->kind!=PENDING_NONE)
+            mark_value(frame->pending->value);
+    }
+}
+
 static void mark_fiber(const DiamondFiber *fiber) {
     if (fiber == nullptr) return;
     for (size_t frame = 0; frame < fiber->frame_count; frame++)
@@ -79,14 +90,7 @@ void diamond_vm_collect(DiamondVm *vm) {
     for(size_t index=0;index<DIAMOND_MAX_NAMESPACE_CONSTANTS;index++)
         if(vm->namespace_constant_initialized[index])
             mark_value(vm->namespace_constants[index]);
-    for (DiamondFrame *frame = vm->frames; frame != nullptr;
-         frame = frame->previous) {
-        for (size_t index = 0; index < DIAMOND_REGISTER_COUNT; index++) {
-            mark_value(frame->registers[index]);
-        }
-        if(frame->pending!=nullptr && frame->pending->kind!=PENDING_NONE)
-            mark_value(frame->pending->value);
-    }
+    mark_frame_chain(vm->frames);
     if (vm->root_queue != nullptr)
         for (size_t index = 0; index < diamond_fiber_queue_count(vm->root_queue); index++)
             mark_fiber(diamond_fiber_queue_at(vm->root_queue, index));
