@@ -1075,6 +1075,9 @@ actual="$("$diamond" -e $'def depth(n)\n if n <= 0\n  0\n else\n  depth(n - 1) +
 actual="$("$diamond" --dump-bytecode -e 'raise 42' 2>/dev/null || true)"
 grep -q 'RAISE' <<<"$actual"
 
+actual="$($diamond --dump-bytecode -e $'class Foo\n def bar(a)\n  a\n end\n def self.make_patch()\n  def replacement(a)\n   a\n  end\n  replacement\n end\nend\nFoo.redefine_method("bar", Foo.make_patch())')"
+grep -q 'REDEFINE_METHOD' <<<"$actual"
+
 actual="$(DIAMOND_STRESS_GC=1 "$diamond" tests/cases/rescue.dia)"
 [[ "$actual" == "diamond rescued!" ]]
 
@@ -2247,4 +2250,4 @@ if "$diamond" -e $'module Constants\n VALUE = 42 if true\nend' >/dev/null 2>&1; 
     echo "conditional namespace constant unexpectedly compiled" >&2
     exit 1
 fi
-echo "547 tests passed"
+echo "548 tests passed"
