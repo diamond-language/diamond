@@ -315,12 +315,18 @@ future work.
   Direct calls are already compile-time arity-checked and covered; dynamic
   dispatch's runtime check was correct but, like the two gaps above, had no
   test coverage at all.
+- A representative mixed-class dispatch workload (`mixed_dispatch_workload.dia`,
+  a 1000-call loop split 500/500 between two classes) measuring `INVOKE_MONO`
+  against polymorphic dispatch at realistic scale: a single deoptimizing
+  rewrite when the second class first appears, 498 monomorphic dispatches
+  before it, and 1000 polymorphic-cache probes after — locking in that a
+  monomorphism break is a one-time cost, not a per-call one. Complements the
+  existing small-scale (100-call, 2-call) benchmarks with a larger, mixed
+  workload.
 
 ## Next priorities
 
 1. Add runtime class/module mutation with automatic method-cache invalidation.
-2. Measure `INVOKE_MONO` against polymorphic dispatch under representative
-   workloads.
 
 ## Later experiments
 
