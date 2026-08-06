@@ -488,6 +488,8 @@ Set `DIAMOND_TRACE_IC_POLICY=1` to print the active quickening and dispatch
 thresholds used for a run.
 The research defaults are one observation for both policies; this favors
 quick feedback while the benchmark remains available for later tuning.
+Embedders that mutate class or module method tables should call
+`diamond_vm_invalidate_method_caches` before the next dispatch.
 
 Set `DIAMOND_TRACE_SHAPES=1` to print instance shape transitions. Fresh objects
 begin at their class's empty shape and advance lazily as fields are first written.

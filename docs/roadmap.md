@@ -239,6 +239,7 @@ future work.
 - Immediate-versus-delayed dispatch warm-up baseline coverage.
 - Active dispatch-policy trace for reproducible threshold experiments.
 - Default one-observation policy locked by deterministic benchmark coverage.
+- Explicit method-cache invalidation API for future class/module mutation.
 
 ## Next priorities
 
