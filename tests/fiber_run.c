@@ -16,7 +16,9 @@ int main(void) {
         diamond_fiber_resume(fiber) != DIAMOND_FIBER_OK ||
         diamond_fiber_run(fiber) != DIAMOND_FIBER_OK ||
         fiber->state != DIAMOND_FIBER_COMPLETED ||
-        fiber->result.kind != DIAMOND_VALUE_INT || fiber->result.as.integer != 3) return 2;
+        diamond_fiber_result(fiber).kind != DIAMOND_VALUE_INT ||
+        diamond_fiber_result(fiber).as.integer != 3 ||
+        diamond_fiber_status(fiber) != DIAMOND_VM_OK) return 2;
     if (diamond_fiber_run(fiber) != DIAMOND_FIBER_INVALID_STATE) return 3;
     diamond_fiber_free(fiber);
     diamond_vm_free(&vm);
@@ -32,7 +34,7 @@ int main(void) {
         diamond_fiber_resume(failing) != DIAMOND_FIBER_OK ||
         diamond_fiber_run(failing) != DIAMOND_FIBER_OK ||
         failing->state != DIAMOND_FIBER_FAILED ||
-        failing->status != DIAMOND_VM_DIVISION_BY_ZERO) return 5;
+        diamond_fiber_status(failing) != DIAMOND_VM_DIVISION_BY_ZERO) return 5;
     diamond_fiber_free(failing);
     diamond_vm_free(&failing_vm);
     puts("fiber run passed");

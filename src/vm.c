@@ -195,6 +195,14 @@ DiamondFiberStatus diamond_fiber_run(DiamondFiber *fiber) {
     return DIAMOND_FIBER_OK;
 }
 
+DiamondValue diamond_fiber_result(const DiamondFiber *fiber) {
+    return fiber == nullptr ? DIAMOND_NIL : fiber->result;
+}
+
+DiamondVmStatus diamond_fiber_status(const DiamondFiber *fiber) {
+    return fiber == nullptr ? DIAMOND_VM_INVALID_BYTECODE : fiber->status;
+}
+
 const char *diamond_fiber_state_name(DiamondFiberState state) {
     switch(state) {
         case DIAMOND_FIBER_NEW:return "new";
