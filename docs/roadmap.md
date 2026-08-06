@@ -207,6 +207,7 @@ future work.
 - Imported EOF diagnostics retain the dependency path at segment boundaries.
 - Imported diagnostic excerpts omit internal loader marker lines.
 - Multiline imported EOF diagnostics compute line numbers within the segment.
+- Imported runtime failures retain their VM function frames.
 
 ## Next priorities
 
