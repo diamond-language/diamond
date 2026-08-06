@@ -58,6 +58,10 @@ completion and advances the context to the terminal instruction boundary;
 nonzero checkpoints are rejected until the interpreter loop is split into
 resumable steps.
 
+Contexts also retain the last `DiamondVmStatus`; successful contexts end at
+`DIAMOND_VM_OK`, while failures retain the precise VM error. Restoration
+accepts only `DIAMOND_VM_OK` contexts on nonterminal fibers.
+
 The current C boundary is:
 
 ```c
