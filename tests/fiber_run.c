@@ -128,6 +128,11 @@ int main(void) {
     if(diamond_fiber_run(double_fiber)!=DIAMOND_FIBER_OK)return 22;
     if(double_fiber->state!=DIAMOND_FIBER_SUSPENDED)return 23;
     if(diamond_fiber_status(double_fiber)!=DIAMOND_VM_YIELDED)return 24;
+    if(diamond_fiber_resume(double_fiber)!=DIAMOND_FIBER_OK||
+       diamond_fiber_run(double_fiber)!=DIAMOND_FIBER_OK||
+       double_fiber->state!=DIAMOND_FIBER_COMPLETED||
+       diamond_fiber_status(double_fiber)!=DIAMOND_VM_OK)return 25;
+    diamond_fiber_free(double_fiber);diamond_vm_free(&double_vm);
     puts("fiber run passed");
     return 0;
 }
