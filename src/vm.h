@@ -285,6 +285,22 @@ typedef struct DiamondFieldCache {
     uint8_t next_replace;
 } DiamondFieldCache;
 
+typedef enum DiamondFiberState : uint8_t {
+    DIAMOND_FIBER_NEW,
+    DIAMOND_FIBER_RUNNABLE,
+    DIAMOND_FIBER_RUNNING,
+    DIAMOND_FIBER_SUSPENDED,
+    DIAMOND_FIBER_COMPLETED,
+    DIAMOND_FIBER_FAILED,
+} DiamondFiberState;
+
+typedef struct DiamondFiber {
+    DiamondFiberState state;
+    const DiamondChunk *chunk;
+    DiamondValue result;
+    DiamondVmStatus status;
+} DiamondFiber;
+
 typedef struct DiamondVm {
     DiamondObject *objects;
     size_t bytes_allocated;
