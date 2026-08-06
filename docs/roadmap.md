@@ -259,6 +259,8 @@ future work.
 - First explicit `YIELD` opcode with VM status propagation and suspended-fiber
   mapping; continuation-aware re-entry remains next.
 - Standalone `yield` source syntax and compiler emission coverage.
+- Fiber continuation resumes from saved instruction/register contexts and can
+  complete after a terminal yield boundary.
 
 ## Next priorities
 
