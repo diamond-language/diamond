@@ -13,4 +13,4 @@ end
 
 parent = Parent.new()
 child = Child.new()
-read(parent) + read(child)
+read(parent) + read(child) + read(child) + read(parent)

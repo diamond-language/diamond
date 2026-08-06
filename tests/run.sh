@@ -766,12 +766,12 @@ grep -q 'inline caches: 2 hits, 2 misses' "$error_file"
 rm -f "$error_file"
 
 actual="$("$diamond" tests/cases/inherited_cache.dia)"
-[[ "$actual" == "80" ]]
+[[ "$actual" == "160" ]]
 
 error_file="$(mktemp)"
 actual="$(DIAMOND_TRACE_IC=1 "$diamond" tests/cases/inherited_cache.dia 2>"$error_file")"
-[[ "$actual" == "80" ]]
-grep -q 'inline caches: 0 hits, 2 misses' "$error_file"
+[[ "$actual" == "160" ]]
+grep -q 'inline caches: 2 hits, 2 misses' "$error_file"
 rm -f "$error_file"
 
 error_file="$(mktemp)"
