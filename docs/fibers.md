@@ -47,7 +47,8 @@ diamond_fiber_run(fiber);
 `diamond_fiber_run` records either the VM result and `COMPLETED`, or the VM
 status and `FAILED`. This is deliberately a one-shot boundary: the VM still
 executes a chunk to completion, so instruction checkpoints are metadata rather
-than true mid-instruction continuations. Splitting the interpreter into
+than true mid-instruction continuations; successful completion advances the
+checkpoint to the chunk boundary. Splitting the interpreter into
 resumable steps is the next fiber implementation milestone.
 
 The current C boundary is:
