@@ -1660,7 +1660,8 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
     DiamondValue registers[DIAMOND_REGISTER_COUNT] = {};
     if(context!=nullptr) {
         if(context->chunk!=chunk||context->instruction>chunk->code_count||
-           context->depth!=depth||context->status!=DIAMOND_VM_OK)
+           context->depth!=depth||(context->status!=DIAMOND_VM_OK&&
+           context->status!=DIAMOND_VM_YIELDED))
             return DIAMOND_VM_INVALID_BYTECODE;
         memcpy(registers,context->registers,sizeof registers);
     }
@@ -2892,7 +2893,8 @@ DiamondVmStatus diamond_vm_run_context(DiamondVm *vm,
                                        DiamondFiberExecutionContext *context,
                                        DiamondValue *result) {
     if(vm==nullptr||context==nullptr||result==nullptr||context->chunk==nullptr||
-       context->instruction>context->chunk->code_count||context->depth!=0)
+       context->instruction>context->chunk->code_count||context->depth!=0||
+       (context->status!=DIAMOND_VM_OK&&context->status!=DIAMOND_VM_YIELDED))
         return DIAMOND_VM_INVALID_BYTECODE;
     DiamondVmStatus status=run_chunk(context->chunk,vm,nullptr,0,0,nullptr,result,context);
     context->status=status;
