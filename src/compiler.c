@@ -1913,9 +1913,9 @@ static uint8_t parse_prefix(Compiler *compiler) {
 static DiamondOpCode binary_opcode(DiamondTokenKind operator) {
     switch (operator) {
         case DIAMOND_TOKEN_PLUS: return DIAMOND_OP_ADD;
-        case DIAMOND_TOKEN_MINUS: return DIAMOND_OP_SUBTRACT_INT;
-        case DIAMOND_TOKEN_STAR: return DIAMOND_OP_MULTIPLY_INT;
-        case DIAMOND_TOKEN_SLASH: return DIAMOND_OP_DIVIDE_INT;
+        case DIAMOND_TOKEN_MINUS: return DIAMOND_OP_SUBTRACT;
+        case DIAMOND_TOKEN_STAR: return DIAMOND_OP_MULTIPLY;
+        case DIAMOND_TOKEN_SLASH: return DIAMOND_OP_DIVIDE;
         case DIAMOND_TOKEN_EQUAL_EQUAL: return DIAMOND_OP_EQUAL;
         case DIAMOND_TOKEN_BANG_EQUAL: return DIAMOND_OP_NOT_EQUAL;
         case DIAMOND_TOKEN_LESS: return DIAMOND_OP_LESS_INT;
@@ -1991,6 +1991,18 @@ static uint8_t parse_precedence(Compiler *compiler, Precedence precedence) {
            compiler->known_types[left]==DIAMOND_TYPE_INT&&
            compiler->known_types[right]==DIAMOND_TYPE_INT)
             opcode=DIAMOND_OP_ADD_INT;
+        if(operator==DIAMOND_TOKEN_MINUS&&
+           compiler->known_types[left]==DIAMOND_TYPE_INT&&
+           compiler->known_types[right]==DIAMOND_TYPE_INT)
+            opcode=DIAMOND_OP_SUBTRACT_INT;
+        if(operator==DIAMOND_TOKEN_STAR&&
+           compiler->known_types[left]==DIAMOND_TYPE_INT&&
+           compiler->known_types[right]==DIAMOND_TYPE_INT)
+            opcode=DIAMOND_OP_MULTIPLY_INT;
+        if(operator==DIAMOND_TOKEN_SLASH&&
+           compiler->known_types[left]==DIAMOND_TYPE_INT&&
+           compiler->known_types[right]==DIAMOND_TYPE_INT)
+            opcode=DIAMOND_OP_DIVIDE_INT;
         emit_instruction(compiler, opcode, destination,
                          left, right, 3);
         if(operator==DIAMOND_TOKEN_EQUAL_EQUAL || operator==DIAMOND_TOKEN_BANG_EQUAL ||

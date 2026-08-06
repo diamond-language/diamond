@@ -175,6 +175,15 @@ static bool disassemble_chunk(FILE *stream, const char *name,
             case DIAMOND_OP_ADD_INT:
                 offset = three_registers(stream, chunk, "ADD_INT", offset);
                 break;
+            case DIAMOND_OP_SUBTRACT:
+                offset = three_registers(stream, chunk, "SUBTRACT", offset);
+                break;
+            case DIAMOND_OP_MULTIPLY:
+                offset = three_registers(stream, chunk, "MULTIPLY", offset);
+                break;
+            case DIAMOND_OP_DIVIDE:
+                offset = three_registers(stream, chunk, "DIVIDE", offset);
+                break;
             case DIAMOND_OP_SUBTRACT_INT:
                 offset = three_registers(stream, chunk, "SUBTRACT_INT", offset);
                 break;

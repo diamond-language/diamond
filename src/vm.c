@@ -1614,17 +1614,35 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 VM_RETURN(DIAMOND_VM_TYPE_ERROR);
                 break;
             }
+            case DIAMOND_OP_SUBTRACT:
+            case DIAMOND_OP_MULTIPLY:
+            case DIAMOND_OP_DIVIDE:
             case DIAMOND_OP_ADD_INT:
             case DIAMOND_OP_SUBTRACT_INT:
             case DIAMOND_OP_MULTIPLY_INT:
             case DIAMOND_OP_DIVIDE_INT: {
-                const DiamondOpCode opcode = (DiamondOpCode)instruction;
+                DiamondOpCode opcode = (DiamondOpCode)instruction;
                 uint8_t destination = 0;
                 uint8_t left = 0;
                 uint8_t right = 0;
                 READ_BYTE(destination);
                 READ_BYTE(left);
                 READ_BYTE(right);
+                if (vm->quickening &&
+                    (opcode == DIAMOND_OP_SUBTRACT ||
+                     opcode == DIAMOND_OP_MULTIPLY ||
+                     opcode == DIAMOND_OP_DIVIDE) &&
+                    registers[left].kind == DIAMOND_VALUE_INT &&
+                    registers[right].kind == DIAMOND_VALUE_INT) {
+                    const DiamondOpCode specialized = opcode == DIAMOND_OP_SUBTRACT
+                        ? DIAMOND_OP_SUBTRACT_INT
+                        : opcode == DIAMOND_OP_MULTIPLY
+                            ? DIAMOND_OP_MULTIPLY_INT : DIAMOND_OP_DIVIDE_INT;
+                    uint8_t *code=(uint8_t *)(void *)chunk->code;
+                    code[instruction_offset]=(uint8_t)specialized;
+                    opcode=specialized;
+                    vm->quickened_sites++;
+                }
                 if (opcode == DIAMOND_OP_ADD_INT &&
                     (registers[left].kind != DIAMOND_VALUE_INT ||
                      registers[right].kind != DIAMOND_VALUE_INT)) {
