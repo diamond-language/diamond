@@ -760,6 +760,12 @@ grep -q 'inline caches: 4 hits, 1 misses' "$error_file"
 rm -f "$error_file"
 
 error_file="$(mktemp)"
+actual="$(DIAMOND_TRACE_IC_FAST=1 "$diamond" tests/cases/inline_cache.dia 2>"$error_file")"
+[[ "$actual" == "42" ]]
+grep -q 'monomorphic dispatches: 4' "$error_file"
+rm -f "$error_file"
+
+error_file="$(mktemp)"
 actual="$(DIAMOND_TRACE_IC=1 "$diamond" tests/cases/polymorphic_cache.dia 2>"$error_file")"
 [[ "$actual" == "42" ]]
 grep -q 'inline caches: 2 hits, 2 misses' "$error_file"
@@ -1978,4 +1984,4 @@ if "$diamond" -e $'module Constants\n VALUE = 42 if true\nend' >/dev/null 2>&1; 
     echo "conditional namespace constant unexpectedly compiled" >&2
     exit 1
 fi
-echo "497 tests passed"
+echo "498 tests passed"

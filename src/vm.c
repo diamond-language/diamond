@@ -296,6 +296,13 @@ static const DiamondMethod *lookup_method_cached(
     if(cache->site!=site) {
         *cache=(DiamondMethodCache){.site=site};
     } else {
+        if (cache->entry_count == 1 &&
+            cache->entries[0].receiver_class == class) {
+            vm->inline_cache_hits++;
+            vm->monomorphic_dispatches++;
+            cache->hits++;
+            return cache->entries[0].method;
+        }
         for(size_t index=0;index<cache->entry_count;index++) {
             if(cache->entries[index].receiver_class!=class)continue;
             vm->inline_cache_hits++;
@@ -2575,6 +2582,7 @@ DiamondVmStatus diamond_vm_run(DiamondVm *vm, const DiamondChunk *chunk,
     memset(vm->field_caches,0,sizeof(vm->field_caches));
     vm->inline_cache_hits=0;
     vm->inline_cache_misses=0;
+    vm->monomorphic_dispatches=0;
     vm->field_cache_hits=0;
     vm->field_cache_misses=0;
     vm->shape_transitions=0;

@@ -145,6 +145,8 @@ static int run_source(const char *name, const char *source, bool dump_bytecode) 
                         index,cache->hits,cache->misses,cache->entry_count);
         }
     }
+    if (getenv("DIAMOND_TRACE_IC_FAST") != nullptr)
+        fprintf(stderr,"monomorphic dispatches: %zu\n",vm.monomorphic_dispatches);
     if (getenv("DIAMOND_TRACE_SHAPES") != nullptr) {
         fprintf(stderr,"shape transitions: %zu\n",vm.shape_transitions);
     }
