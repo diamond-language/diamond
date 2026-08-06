@@ -142,7 +142,8 @@ static int run_source(const char *name, const char *source, bool dump_bytecode) 
                         vm.opcode_counts[opcode]);
     }
     if (getenv("DIAMOND_TRACE_QUICKEN") != nullptr)
-        fprintf(stderr,"quickened sites: %zu\n",vm.quickened_sites);
+        fprintf(stderr,"quickened sites: %zu, deoptimized sites: %zu\n",
+                vm.quickened_sites,vm.deoptimized_sites);
     diamond_vm_free(&vm);
     free(combined);
     diamond_source_bundle_free(&bundle);

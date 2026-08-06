@@ -1625,6 +1625,33 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 READ_BYTE(destination);
                 READ_BYTE(left);
                 READ_BYTE(right);
+                if (opcode == DIAMOND_OP_ADD_INT &&
+                    (registers[left].kind != DIAMOND_VALUE_INT ||
+                     registers[right].kind != DIAMOND_VALUE_INT)) {
+                    uint8_t *code=(uint8_t *)(void *)chunk->code;
+                    code[instruction_offset]=(uint8_t)DIAMOND_OP_ADD;
+                    vm->deoptimized_sites++;
+                    if (registers[left].kind == DIAMOND_VALUE_OBJECT &&
+                        registers[right].kind == DIAMOND_VALUE_OBJECT &&
+                        registers[left].as.object->kind == DIAMOND_OBJECT_STRING &&
+                        registers[right].as.object->kind == DIAMOND_OBJECT_STRING) {
+                        const DiamondString *left_string=(const DiamondString *)
+                            registers[left].as.object;
+                        const DiamondString *right_string=(const DiamondString *)
+                            registers[right].as.object;
+                        const size_t length=left_string->length+right_string->length;
+                        char *chars=malloc(length+1);
+                        if(chars==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                        memcpy(chars,left_string->chars,left_string->length);
+                        memcpy(chars+left_string->length,right_string->chars,
+                               right_string->length);
+                        DiamondString *string=allocate_string(vm,chars,length);
+                        free(chars);
+                        if(string==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                        registers[destination]=DIAMOND_OBJECT(string);break;
+                    }
+                    VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                }
                 if (registers[left].kind != DIAMOND_VALUE_INT ||
                     registers[right].kind != DIAMOND_VALUE_INT) {
                     VM_RETURN(DIAMOND_VM_TYPE_ERROR);
@@ -2468,6 +2495,7 @@ DiamondVmStatus diamond_vm_run(DiamondVm *vm, const DiamondChunk *chunk,
     vm->field_cache_misses=0;
     vm->shape_transitions=0;
     vm->quickened_sites=0;
+    vm->deoptimized_sites=0;
     return run_chunk(chunk, vm, nullptr, 0, 0, nullptr, result);
 }
 

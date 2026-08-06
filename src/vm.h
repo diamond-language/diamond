@@ -289,6 +289,7 @@ typedef struct DiamondVm {
     size_t opcode_counts[DIAMOND_OP_COUNT];
     bool quickening;
     size_t quickened_sites;
+    size_t deoptimized_sites;
     DiamondValue namespace_constants[DIAMOND_MAX_NAMESPACE_CONSTANTS];
     bool namespace_constant_initialized[DIAMOND_MAX_NAMESPACE_CONSTANTS];
     DiamondValue exception;
