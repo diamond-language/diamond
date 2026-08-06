@@ -253,6 +253,8 @@ future work.
 - Fiber frame register snapshots with bounded checkpoint accessors.
 - Explicit fiber execution-context capture and validated restoration.
 - VM-facing fresh-context execution boundary with terminal checkpoint updates.
+- Explicit VM status propagation through execution contexts and restoration
+  guards for nonterminal, successful contexts.
 
 ## Next priorities
 
