@@ -299,6 +299,9 @@ typedef struct DiamondFiber {
     const DiamondChunk *chunk;
     DiamondValue result;
     DiamondVmStatus status;
+    DiamondFiberFrame *frames;
+    size_t frame_count;
+    size_t frame_capacity;
 } DiamondFiber;
 
 typedef enum DiamondFiberStatus : uint8_t {

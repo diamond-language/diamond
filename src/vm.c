@@ -167,7 +167,10 @@ DiamondFiber *diamond_fiber_new(const DiamondChunk *chunk) {
     return fiber;
 }
 
-void diamond_fiber_free(DiamondFiber *fiber) { free(fiber); }
+void diamond_fiber_free(DiamondFiber *fiber) {
+    if(fiber==nullptr)return;
+    free(fiber->frames);free(fiber);
+}
 
 const char *diamond_fiber_state_name(DiamondFiberState state) {
     switch(state) {
