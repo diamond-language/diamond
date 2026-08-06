@@ -27,6 +27,8 @@ fiber's frame chain, captured cells, pending handlers, and result are GC roots.
 
 The initial queue primitive is FIFO, rejects non-runnable fibers, compacts
 consumed storage, and transitions dequeued fibers to `RUNNING`.
+Scheduler helpers now support one-step dequeue and requeue of yielded fibers,
+preserving FIFO ordering.
 
 Fiber frames currently carry the owning chunk, instruction checkpoint, and
 call depth. Push/pop plus checkpoint updates are implemented independently of
