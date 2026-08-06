@@ -213,6 +213,7 @@ future work.
 - CRLF imported dependencies preserve the same runtime/compile-time mapping.
 - CRLF imported runtime frames preserve line and column locations.
 - Sequential all-build validation covers debug, release, and sanitizer modes.
+- All-build validation cleans between compiler-mode transitions.
 
 ## Next priorities
 
