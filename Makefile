@@ -14,7 +14,7 @@ SOURCES := $(wildcard src/*.c)
 OBJECTS := $(SOURCES:src/%.c=$(BUILD_DIR)/%.o)
 DEPS := $(OBJECTS:.o=.d)
 
-.PHONY: all debug sanitize release test test-release test-sanitize test-api test-fibers test-fiber-run test-fiber-context test-vm-context test-yield test-continuation test-multi-yield test-all clean
+.PHONY: all debug sanitize release test test-release test-sanitize test-api test-fibers test-fiber-run test-fiber-context test-vm-context test-yield test-continuation test-multi-yield test-scheduler test-all clean
 
 all: debug
 
@@ -76,6 +76,8 @@ test-yield: test-fiber-run
 test-continuation: test-fiber-run
 
 test-multi-yield: test-fiber-run
+
+test-scheduler: test-fiber-run
 
 test-all:
 	$(MAKE) clean
