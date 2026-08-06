@@ -222,5 +222,6 @@ bool diamond_load_program(const char *name,const char *source,
 }
 
 void diamond_source_bundle_free(DiamondSourceBundle *bundle) {
-    free(bundle->source);bundle->source=nullptr;bundle->segment_count=0;
+    free(bundle->source);
+    *bundle=(DiamondSourceBundle){};
 }
