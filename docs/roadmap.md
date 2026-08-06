@@ -243,6 +243,7 @@ future work.
 - Repeat-mode exercise of the explicit invalidation boundary.
 - C-level method-table mutation and invalidation harness.
 - C-level inherited-method mutation and invalidation coverage.
+- Selective inherited-method mutation coverage across multiple call sites.
 
 ## Next priorities
 
