@@ -224,11 +224,12 @@ future work.
 - Guarded integer quickening for equality and inequality.
 - Inherited-method and repeated-hit coverage for polymorphic dispatch caches.
 - Per-site method-cache telemetry for specialization decisions.
+- Monomorphic method-cache fast path with execution telemetry.
 
 ## Next priorities
 
-1. Measure quickening thresholds and evaluate direct-call specialization for
-   stable method-dispatch sites.
+1. Measure direct-call fast-path benefit and evaluate safe bytecode rewriting
+   for stable method-dispatch sites.
 
 ## Later experiments
 

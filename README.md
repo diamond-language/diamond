@@ -465,6 +465,8 @@ the same receiver classes take the cache-hit path.
 Set `DIAMOND_TRACE_IC_SITES=1` to report per-site hit/miss counts and the
 number of cached receiver classes, useful when deciding whether direct-call
 specialization is worthwhile.
+Monomorphic sites use a fast path after their first miss; set
+`DIAMOND_TRACE_IC_FAST=1` to report how often that path executes.
 
 Set `DIAMOND_TRACE_SHAPES=1` to print instance shape transitions. Fresh objects
 begin at their class's empty shape and advance lazily as fields are first written.
