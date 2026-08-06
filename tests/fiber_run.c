@@ -2,6 +2,7 @@
 #include "vm.h"
 
 #include <stdio.h>
+#include <string.h>
 
 int main(void) {
     static DiamondProgram program;
@@ -220,6 +221,30 @@ int main(void) {
     diamond_fiber_queue_free(&run_all_fail_queue);
     diamond_fiber_free(run_all_fail_fiber);diamond_fiber_free(run_all_ok_fiber);
     diamond_vm_free(&run_all_fail_vm);diamond_vm_free(&run_all_ok_vm);
+
+    static const DiamondStringConstant gc_root_strings[]={{.chars="root-marked",.length=11}};
+    static const uint8_t gc_root_code[]={DIAMOND_OP_STRING,0,0,DIAMOND_OP_YIELD};
+    static const DiamondChunk gc_root_chunk={.name="gc-root",.code=gc_root_code,
+        .code_count=4,.strings=gc_root_strings,.string_count=1};
+    DiamondVm gc_root_vm;diamond_vm_init(&gc_root_vm);
+    DiamondFiberQueue gc_root_queue;diamond_fiber_queue_init(&gc_root_queue);
+    DiamondFiber *gc_root_fiber=diamond_fiber_new(&gc_root_chunk);
+    if(gc_root_fiber==nullptr||
+       diamond_fiber_bind_vm(gc_root_fiber,&gc_root_vm)!=DIAMOND_FIBER_OK||
+       diamond_fiber_prepare(gc_root_fiber)!=DIAMOND_FIBER_OK||
+       !diamond_fiber_queue_push(&gc_root_queue,gc_root_fiber))return 40;
+    diamond_vm_bind_fiber_queue(&gc_root_vm,&gc_root_queue);
+    if(diamond_fiber_scheduler_run_once(&gc_root_queue)!=DIAMOND_FIBER_OK||
+       gc_root_fiber->state!=DIAMOND_FIBER_RUNNABLE||
+       diamond_fiber_status(gc_root_fiber)!=DIAMOND_VM_YIELDED)return 41;
+    diamond_vm_collect(&gc_root_vm);
+    DiamondValue gc_root_value=DIAMOND_NIL;
+    if(!diamond_fiber_get_register(gc_root_fiber,0,&gc_root_value)||
+       gc_root_value.kind!=DIAMOND_VALUE_OBJECT)return 42;
+    const DiamondString *gc_root_string=(const DiamondString *)gc_root_value.as.object;
+    if(gc_root_string->length!=11||memcmp(gc_root_string->chars,"root-marked",11)!=0)return 43;
+    diamond_fiber_queue_free(&gc_root_queue);diamond_fiber_free(gc_root_fiber);
+    diamond_vm_free(&gc_root_vm);
 
     puts("fiber run passed");
     return 0;
