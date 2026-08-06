@@ -114,6 +114,13 @@ int main(void) {
     for(size_t index=0;index<double_yield_chunk.code_count;index++)
         if(double_yield_chunk.code[index]==DIAMOND_OP_YIELD)yield_count++;
     if(yield_count!=2)return 19;
+    DiamondVm double_vm;diamond_vm_init(&double_vm);
+    DiamondFiber *double_fiber=diamond_fiber_new(&double_yield_chunk);
+    if(double_fiber==nullptr||diamond_fiber_bind_vm(double_fiber,&double_vm)!=DIAMOND_FIBER_OK||
+       diamond_fiber_prepare(double_fiber)!=DIAMOND_FIBER_OK||
+       diamond_fiber_resume(double_fiber)!=DIAMOND_FIBER_OK||
+       diamond_fiber_run(double_fiber)!=DIAMOND_FIBER_OK||
+       double_fiber->state!=DIAMOND_FIBER_SUSPENDED)return 20;
     puts("fiber run passed");
     return 0;
 }
