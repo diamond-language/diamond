@@ -166,6 +166,20 @@ int main(void) {
     diamond_fiber_queue_free(&empty_run_all_queue);
     if(diamond_fiber_scheduler_run_all(nullptr)!=DIAMOND_FIBER_INVALID_STATE)return 33;
 
+    DiamondVm run_all_single_vm;diamond_vm_init(&run_all_single_vm);
+    DiamondFiberQueue run_all_single_queue;diamond_fiber_queue_init(&run_all_single_queue);
+    DiamondFiber *run_all_single_fiber=diamond_fiber_new(&double_yield_chunk);
+    if(run_all_single_fiber==nullptr||
+       diamond_fiber_bind_vm(run_all_single_fiber,&run_all_single_vm)!=DIAMOND_FIBER_OK||
+       diamond_fiber_prepare(run_all_single_fiber)!=DIAMOND_FIBER_OK||
+       !diamond_fiber_queue_push(&run_all_single_queue,run_all_single_fiber))return 34;
+    if(diamond_fiber_scheduler_run_all(&run_all_single_queue)!=DIAMOND_FIBER_OK||
+       run_all_single_fiber->state!=DIAMOND_FIBER_COMPLETED||
+       diamond_fiber_status(run_all_single_fiber)!=DIAMOND_VM_OK||
+       diamond_fiber_queue_count(&run_all_single_queue)!=0)return 35;
+    diamond_fiber_queue_free(&run_all_single_queue);
+    diamond_fiber_free(run_all_single_fiber);diamond_vm_free(&run_all_single_vm);
+
     puts("fiber run passed");
     return 0;
 }
