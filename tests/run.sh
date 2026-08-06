@@ -1003,6 +1003,8 @@ rm -rf "$files_dir" "$files_error"
 
 actual="$($diamond -e $'require "tests/multifile/math"\ndouble(21)')"
 [[ "$actual" == "42" ]]
+runtime_stack="$($diamond -e $'require "tests/multifile/math"\ndouble("bad")' 2>&1 || true)"
+grep -q 'at double:' <<<"$runtime_stack"
 actual="$($diamond -e $'require "tests/multifile/math"\r\ndouble(21)\r\n')"
 [[ "$actual" == "42" ]]
 actual="$($diamond -e $'require "./tests/multifile/math.dia"\ndouble(21)')"
