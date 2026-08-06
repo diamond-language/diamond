@@ -127,6 +127,11 @@ void diamond_vm_init(DiamondVm *vm) {
     vm->monomorphic_threshold = 1;
 }
 
+void diamond_vm_bind_fiber_queue(DiamondVm *vm, const DiamondFiberQueue *queue) {
+    if(vm==nullptr)return;
+    vm->root_queue=queue;
+}
+
 void diamond_vm_free(DiamondVm *vm) {
     DiamondObject *object = vm->objects;
     while (object != nullptr) {
