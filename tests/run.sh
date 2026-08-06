@@ -1005,6 +1005,9 @@ actual="$($diamond -e $'require "tests/multifile/math"\ndouble(21)')"
 [[ "$actual" == "42" ]]
 runtime_stack="$($diamond -e $'require "tests/multifile/math"\ndouble("bad")' 2>&1 || true)"
 grep -q 'at double:' <<<"$runtime_stack"
+runtime_stack="$($diamond tests/multifile/runtime_broken_main.dia 2>&1 || true)"
+grep -q 'at explode:' <<<"$runtime_stack"
+grep -q 'at tests/multifile/runtime_broken_main.dia:' <<<"$runtime_stack"
 actual="$($diamond -e $'require "tests/multifile/math"\r\ndouble(21)\r\n')"
 [[ "$actual" == "42" ]]
 actual="$($diamond -e $'require "./tests/multifile/math.dia"\ndouble(21)')"
