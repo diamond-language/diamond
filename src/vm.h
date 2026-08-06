@@ -366,6 +366,8 @@ DiamondFiberStatus diamond_fiber_begin(DiamondFiber *fiber);
 DiamondFiberStatus diamond_fiber_suspend(DiamondFiber *fiber);
 DiamondFiberStatus diamond_fiber_complete(DiamondFiber *fiber, DiamondValue result);
 DiamondFiberStatus diamond_fiber_fail(DiamondFiber *fiber, DiamondVmStatus status);
+bool diamond_fiber_push_frame(DiamondFiber *fiber, DiamondFiberFrame frame);
+bool diamond_fiber_pop_frame(DiamondFiber *fiber, DiamondFiberFrame *frame);
 void diamond_fiber_queue_init(DiamondFiberQueue *queue);
 void diamond_fiber_queue_free(DiamondFiberQueue *queue);
 bool diamond_fiber_queue_push(DiamondFiberQueue *queue, DiamondFiber *fiber);
