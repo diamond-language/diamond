@@ -401,6 +401,14 @@ fi
 grep -q 'runtime error: wrong number of arguments' "$error_file"
 rm -f "$error_file"
 
+error_file="$(mktemp)"
+if "$diamond" -e $'class Foo\n def bar(a, b)\n  a + b\n end\nend\nFoo.new().bar(1, 2, 3)' >/dev/null 2>"$error_file"; then
+    echo "dynamic dispatch with too many arguments unexpectedly succeeded" >&2
+    exit 1
+fi
+grep -q 'runtime error: wrong number of arguments' "$error_file"
+rm -f "$error_file"
+
 actual="$("$diamond" --dump-bytecode -e $'def head(values: Array[Int]) -> Int\n item = values[0]\n item\nend\nhead([42])')"
 head_dump="$(sed -n '/^== head ==$/,$p' <<<"$actual")"
 [[ "$(grep -c 'CHECK_TYPE' <<<"$head_dump")" == "1" ]]
@@ -2189,4 +2197,4 @@ if "$diamond" -e $'module Constants\n VALUE = 42 if true\nend' >/dev/null 2>&1; 
     echo "conditional namespace constant unexpectedly compiled" >&2
     exit 1
 fi
-echo "537 tests passed"
+echo "538 tests passed"
