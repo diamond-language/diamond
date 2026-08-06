@@ -43,6 +43,15 @@ int main(void) {
     diamond_vm_invalidate_method_caches(&vm);
     if (diamond_vm_run(&vm,&chunk,&result)!=DIAMOND_VM_OK ||
         result.kind!=DIAMOND_VALUE_INT || result.as.integer!=4) return 4;
+    klass->methods[0].arity=1;
+    klass->methods[0].required_arity=1;
+    diamond_vm_invalidate_method_caches(&vm);
+    if (diamond_vm_run(&vm,&chunk,&result)!=DIAMOND_VM_ARITY_ERROR)return 5;
+    klass->methods[0].arity=0;
+    klass->methods[0].required_arity=0;
+    klass->methods[1].is_private=true;
+    diamond_vm_invalidate_method_caches(&vm);
+    if (diamond_vm_run(&vm,&chunk,&result)!=DIAMOND_VM_TYPE_ERROR)return 6;
     diamond_vm_free(&vm);
     puts("api invalidation passed");
     return 0;
