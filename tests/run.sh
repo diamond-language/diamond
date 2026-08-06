@@ -931,6 +931,9 @@ grep -q 'at call_fail:6:' "$error_file"
 grep -q 'at tests/cases/raise_stack.dia:9:' "$error_file"
 rm -f "$error_file"
 
+actual="$("$diamond" -e $'def depth(n)\n if n <= 0\n  0\n else\n  depth(n - 1) + 1\n end\nend\ndepth(90)')"
+[[ "$actual" == "90" ]]
+
 actual="$("$diamond" --dump-bytecode -e 'raise 42' 2>/dev/null || true)"
 grep -q 'RAISE' <<<"$actual"
 
@@ -2106,4 +2109,4 @@ if "$diamond" -e $'module Constants\n VALUE = 42 if true\nend' >/dev/null 2>&1; 
     echo "conditional namespace constant unexpectedly compiled" >&2
     exit 1
 fi
-echo "525 tests passed"
+echo "526 tests passed"
