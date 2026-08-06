@@ -14,7 +14,7 @@ SOURCES := $(wildcard src/*.c)
 OBJECTS := $(SOURCES:src/%.c=$(BUILD_DIR)/%.o)
 DEPS := $(OBJECTS:.o=.d)
 
-.PHONY: all debug sanitize release test test-release test-sanitize test-api test-fibers test-fiber-run test-fiber-context test-vm-context test-yield test-continuation test-multi-yield test-scheduler test-scheduler-run-all test-fiber-gc-roots test-all clean
+.PHONY: all debug sanitize release test test-release test-sanitize test-api test-fibers test-fiber-run test-fiber-context test-vm-context test-yield test-continuation test-multi-yield test-scheduler test-scheduler-run-all test-fiber-gc-roots test-fiber-guards test-all clean
 
 all: debug
 
@@ -59,6 +59,8 @@ $(BUILD_DIR)/fiber_states: tests/fiber_states.c $(API_SOURCES)
 
 test-fibers: $(BUILD_DIR)/fiber_states
 	$(BUILD_DIR)/fiber_states
+
+test-fiber-guards: test-fibers
 
 test-fiber-context: test-fibers
 
