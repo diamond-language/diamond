@@ -126,13 +126,16 @@ static char *read_file(const char *path) {
         return nullptr;
     }
     if (fseek(file, 0, SEEK_END) != 0) {
-        fprintf(stderr, "diamond: cannot seek '%s'\n", path);
+        fprintf(stderr, "diamond: cannot seek '%s': %s\n", path,
+                strerror(errno));
         fclose(file);
         return nullptr;
     }
     const long length = ftell(file);
-    if (length < 0 || fseek(file, 0, SEEK_SET) != 0) {
-        fprintf(stderr, "diamond: cannot read '%s'\n", path);
+    if (length < 0 || (unsigned long long)length >= SIZE_MAX ||
+        fseek(file, 0, SEEK_SET) != 0) {
+        fprintf(stderr, "diamond: cannot read '%s': %s\n", path,
+                strerror(errno));
         fclose(file);
         return nullptr;
     }
@@ -145,7 +148,8 @@ static char *read_file(const char *path) {
     }
     const size_t read_count = fread(source, 1, (size_t)length, file);
     if (read_count != (size_t)length) {
-        fprintf(stderr, "diamond: cannot read '%s'\n", path);
+        fprintf(stderr, "diamond: cannot read '%s': %s\n", path,
+                ferror(file) ? strerror(errno) : "unexpected end of file");
         free(source);
         fclose(file);
         return nullptr;
