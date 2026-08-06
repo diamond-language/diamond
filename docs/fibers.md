@@ -84,6 +84,17 @@ Multiple yield boundaries are supported in sequence. Each resume advances the
 frame checkpoint to the next boundary; only the final resume transitions the
 fiber to `COMPLETED`.
 
+`yield` is only supported in the top-level frame (call depth zero) today.
+Nested calls execute through native C recursion in `run_chunk`, and only the
+outermost call receives a checkpoint context; a suspension inside a called
+function has nowhere to save the inner frame's progress. `DIAMOND_OP_YIELD`
+detects this and returns `DIAMOND_VM_UNSUPPORTED_YIELD` instead of
+`DIAMOND_VM_YIELDED`, failing the fiber immediately and deterministically
+rather than reporting a misleading suspension that would silently lose the
+inner call's state and corrupt the result on the next resume. This limitation
+is removed once the interpreter is split into resumable per-frame steps, the
+lead item under "Next priorities" in `docs/roadmap.md`.
+
 `diamond_fiber_scheduler_run_once` dequeues one runnable fiber, executes it,
 requeues suspended fibers at the FIFO tail, and removes completed or failed
 fibers from the queue.
