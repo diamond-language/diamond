@@ -303,6 +303,11 @@ future work.
   regression coverage (previously nonexistent) for both the plain and
   fiber-native-stack execution paths, and confirming `SystemStackError`
   remains rescuable at the new boundary.
+- Regression coverage for integer overflow across addition, subtraction,
+  multiplication, negation, and the `INT64_MIN / -1` division edge case,
+  including the quickened arithmetic fast path and `RangeError`
+  rescuability. The checked-arithmetic implementation was already correct;
+  none of it had any test coverage beforehand.
 
 ## Next priorities
 
