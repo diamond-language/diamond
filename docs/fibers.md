@@ -108,4 +108,5 @@ make test-fiber-run
 make test-fiber-context
 make test-vm-context
 make test-yield
+make test-continuation
 ```
