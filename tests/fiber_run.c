@@ -18,7 +18,7 @@ int main(void) {
     context=(DiamondFiberExecutionContext){.chunk=&chunk};
     if(diamond_vm_run_context(&vm,&context,&context_result)!=DIAMOND_VM_OK||
        context_result.kind!=DIAMOND_VALUE_INT||context_result.as.integer!=3||
-       context.instruction!=chunk.code_count)return 7;
+       context.instruction!=chunk.code_count||context.status!=DIAMOND_VM_OK)return 7;
     DiamondFiber *fiber = diamond_fiber_new(&chunk);
     if (fiber == nullptr || diamond_fiber_bind_vm(fiber, &vm) != DIAMOND_FIBER_OK ||
         diamond_fiber_prepare(fiber) != DIAMOND_FIBER_OK ||
@@ -58,7 +58,8 @@ int main(void) {
     DiamondFiberExecutionContext failing_context={.chunk=&failing_chunk};
     DiamondValue failing_result=DIAMOND_NIL;
     if(diamond_vm_run_context(&failing_vm,&failing_context,&failing_result)!=
-       DIAMOND_VM_DIVISION_BY_ZERO||failing_context.instruction!=0)return 8;
+       DIAMOND_VM_DIVISION_BY_ZERO||failing_context.instruction!=0||
+       failing_context.status!=DIAMOND_VM_DIVISION_BY_ZERO)return 8;
     diamond_fiber_free(failing);
     diamond_vm_free(&failing_vm);
     puts("fiber run passed");
