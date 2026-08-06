@@ -876,6 +876,12 @@ grep -q 'dispatch policy: quicken threshold 3, monomorphic threshold 4' "$error_
 rm -f "$error_file"
 
 error_file="$(mktemp)"
+actual="$(DIAMOND_TRACE_IC_POLICY=1 "$diamond" -e '1+2' 2>"$error_file")"
+[[ "$actual" == "3" ]]
+grep -q 'dispatch policy: quicken threshold 1, monomorphic threshold 1' "$error_file"
+rm -f "$error_file"
+
+error_file="$(mktemp)"
 actual="$(DIAMOND_TRACE_IC_REWRITES=1 "$diamond" tests/cases/mono_deopt.dia 2>"$error_file")"
 [[ "$actual" == "82" ]]
 grep -q 'direct dispatch rewrites: 1' "$error_file"
@@ -2091,4 +2097,4 @@ if "$diamond" -e $'module Constants\n VALUE = 42 if true\nend' >/dev/null 2>&1; 
     echo "conditional namespace constant unexpectedly compiled" >&2
     exit 1
 fi
-echo "522 tests passed"
+echo "523 tests passed"
