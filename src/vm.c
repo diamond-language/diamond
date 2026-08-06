@@ -397,6 +397,15 @@ bool diamond_fiber_scheduler_requeue(DiamondFiberQueue *queue, DiamondFiber *fib
     return true;
 }
 
+DiamondFiberStatus diamond_fiber_scheduler_run_once(DiamondFiberQueue *queue) {
+    DiamondFiber *fiber=diamond_fiber_scheduler_step(queue);
+    if(fiber==nullptr)return DIAMOND_FIBER_INVALID_STATE;
+    if(diamond_fiber_run(fiber)!=DIAMOND_FIBER_OK)return DIAMOND_FIBER_INVALID_STATE;
+    if(fiber->state==DIAMOND_FIBER_SUSPENDED&&
+       !diamond_fiber_scheduler_requeue(queue,fiber))return DIAMOND_FIBER_INVALID_STATE;
+    return DIAMOND_FIBER_OK;
+}
+
 static DiamondString *allocate_string(DiamondVm *vm, const char *chars,
                                       size_t length) {
     if (vm->stress_gc || vm->bytes_allocated >= vm->next_gc) {
