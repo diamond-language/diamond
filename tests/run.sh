@@ -954,6 +954,8 @@ actual="$($diamond tests/multifile/nested_broken_main.dia 2>&1 || true)"
 grep -q 'tests/multifile/broken.dia:3:16' <<<"$actual"
 actual="$($diamond tests/multifile/nested_missing_main.dia 2>&1 || true)"
 grep -q 'nested_missing_mid.dia:1: cannot require' <<<"$actual"
+actual="$($diamond --dump-bytecode tests/multifile/broken_main.dia 2>&1 || true)"
+grep -q 'tests/multifile/broken.dia:3:16' <<<"$actual"
 crlf_error="$(mktemp)"
 if "$diamond" -e $'1 + )\r\n' >/dev/null 2>"$crlf_error"; then
     rm -f "$crlf_error"
