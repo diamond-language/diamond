@@ -14,6 +14,18 @@ int main(void) {
     if(diamond_fiber_suspend(fiber)!=DIAMOND_FIBER_OK)return 8;
     if(diamond_fiber_state_name(fiber->state)==nullptr)return 9;
     diamond_fiber_free(fiber);
+    fiber=diamond_fiber_new(nullptr);
+    if(fiber==nullptr||diamond_fiber_make_runnable(fiber)!=DIAMOND_FIBER_OK||
+       diamond_fiber_begin(fiber)!=DIAMOND_FIBER_OK||
+       diamond_fiber_complete(fiber,DIAMOND_INT(42))!=DIAMOND_FIBER_OK||
+       fiber->state!=DIAMOND_FIBER_COMPLETED||fiber->result.as.integer!=42)return 10;
+    diamond_fiber_free(fiber);
+    fiber=diamond_fiber_new(nullptr);
+    if(fiber==nullptr||diamond_fiber_make_runnable(fiber)!=DIAMOND_FIBER_OK||
+       diamond_fiber_begin(fiber)!=DIAMOND_FIBER_OK||
+       diamond_fiber_fail(fiber,DIAMOND_VM_TYPE_ERROR)!=DIAMOND_FIBER_OK||
+       fiber->state!=DIAMOND_FIBER_FAILED)return 11;
+    diamond_fiber_free(fiber);
     puts("fiber states passed");
     return 0;
 }

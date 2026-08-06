@@ -199,6 +199,20 @@ DiamondFiberStatus diamond_fiber_suspend(DiamondFiber *fiber) {
     fiber->state=DIAMOND_FIBER_SUSPENDED;return DIAMOND_FIBER_OK;
 }
 
+DiamondFiberStatus diamond_fiber_complete(DiamondFiber *fiber, DiamondValue result) {
+    if(fiber==nullptr||fiber->state!=DIAMOND_FIBER_RUNNING)
+        return DIAMOND_FIBER_INVALID_STATE;
+    fiber->result=result;fiber->status=DIAMOND_VM_OK;
+    fiber->state=DIAMOND_FIBER_COMPLETED;return DIAMOND_FIBER_OK;
+}
+
+DiamondFiberStatus diamond_fiber_fail(DiamondFiber *fiber, DiamondVmStatus status) {
+    if(fiber==nullptr||fiber->state!=DIAMOND_FIBER_RUNNING)
+        return DIAMOND_FIBER_INVALID_STATE;
+    fiber->status=status;fiber->state=DIAMOND_FIBER_FAILED;
+    return DIAMOND_FIBER_OK;
+}
+
 static DiamondString *allocate_string(DiamondVm *vm, const char *chars,
                                       size_t length) {
     if (vm->stress_gc || vm->bytes_allocated >= vm->next_gc) {

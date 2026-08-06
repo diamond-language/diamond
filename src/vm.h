@@ -348,6 +348,8 @@ const char *diamond_fiber_state_name(DiamondFiberState state);
 DiamondFiberStatus diamond_fiber_make_runnable(DiamondFiber *fiber);
 DiamondFiberStatus diamond_fiber_begin(DiamondFiber *fiber);
 DiamondFiberStatus diamond_fiber_suspend(DiamondFiber *fiber);
+DiamondFiberStatus diamond_fiber_complete(DiamondFiber *fiber, DiamondValue result);
+DiamondFiberStatus diamond_fiber_fail(DiamondFiber *fiber, DiamondVmStatus status);
 DiamondVmStatus diamond_vm_run(DiamondVm *vm, const DiamondChunk *chunk,
                                DiamondValue *result);
 const char *diamond_vm_status_name(DiamondVmStatus status);
