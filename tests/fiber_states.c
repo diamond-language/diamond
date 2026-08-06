@@ -19,6 +19,13 @@ int main(void) {
        !diamond_fiber_pop_frame(fiber,&popped)||
        popped.instruction!=13||popped.depth!=3)return 16;
     diamond_fiber_free(fiber);
+    DiamondChunk empty_chunk={};
+    fiber=diamond_fiber_new(&empty_chunk);
+    if(fiber==nullptr||diamond_fiber_prepare(fiber)!=DIAMOND_FIBER_OK||
+       fiber->state!=DIAMOND_FIBER_RUNNABLE||
+       diamond_fiber_current_frame(fiber)==nullptr||
+       diamond_fiber_current_frame(fiber)->instruction!=0)return 17;
+    diamond_fiber_free(fiber);
     DiamondFiberQueue queue;diamond_fiber_queue_init(&queue);
     DiamondFiber *first=diamond_fiber_new(nullptr),*second=diamond_fiber_new(nullptr);
     if(first==nullptr||second==nullptr||
