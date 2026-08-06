@@ -105,6 +105,7 @@ test-all:
 	$(MAKE) test-scheduler-run-all
 	$(MAKE) test-fiber-gc-roots
 	$(MAKE) test-nested-yield-guard
+	$(MAKE) test-stack-overflow
 
 clean:
 	rm -rf $(BUILD_DIR)
