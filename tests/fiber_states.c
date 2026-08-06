@@ -10,7 +10,7 @@ int main(void) {
     if(diamond_fiber_begin(fiber)!=DIAMOND_FIBER_OK)return 4;
     if(diamond_fiber_suspend(fiber)!=DIAMOND_FIBER_OK)return 5;
     if(diamond_fiber_make_runnable(fiber)!=DIAMOND_FIBER_OK)return 6;
-    if(diamond_fiber_begin(fiber)!=DIAMOND_FIBER_OK)return 7;
+    if(diamond_fiber_resume(fiber)!=DIAMOND_FIBER_OK)return 7;
     if(diamond_fiber_suspend(fiber)!=DIAMOND_FIBER_OK)return 8;
     if(diamond_fiber_state_name(fiber->state)==nullptr)return 9;
     DiamondFiberFrame frame={.chunk=nullptr,.instruction=12,.depth=2},popped={};
