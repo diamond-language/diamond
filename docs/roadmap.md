@@ -216,10 +216,11 @@ future work.
 - All-build validation cleans between compiler-mode transitions.
 - Diagnostics audit complete across compiler, loader, runtime, source maps, and
   all supported build modes.
+- Opcode execution profiling and opt-in dynamic integer-add quickening.
 
 ## Next priorities
 
-1. Prototype bytecode quickening and type-specialized VM instructions.
+1. Extend quickening to guarded arithmetic sites beyond integer addition.
 
 ## Later experiments
 
