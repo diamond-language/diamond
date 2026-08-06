@@ -208,6 +208,7 @@ future work.
 - Imported diagnostic excerpts omit internal loader marker lines.
 - Multiline imported EOF diagnostics compute line numbers within the segment.
 - Imported runtime failures retain their VM function frames.
+- Imported runtime frame coverage includes stress-GC and root callers.
 
 ## Next priorities
 
