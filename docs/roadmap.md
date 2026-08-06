@@ -203,6 +203,7 @@ future work.
 - Root file-size failures and imported diagnostics remain consistent in dump
   mode.
 - Source-segment range validation and reusable bundle cleanup.
+- Canonical source-map path preservation across segment metadata.
 
 ## Next priorities
 
