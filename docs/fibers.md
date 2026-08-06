@@ -66,6 +66,7 @@ DiamondVmStatus diamond_fiber_status(const DiamondFiber *);
 bool diamond_fiber_checkpoint(const DiamondFiber *, DiamondFiberFrame *);
 bool diamond_fiber_set_register(DiamondFiber *, size_t, DiamondValue);
 bool diamond_fiber_get_register(const DiamondFiber *, size_t, DiamondValue *);
+size_t diamond_fiber_register_count(void);
 void diamond_fiber_free(DiamondFiber *);
 ```
 
