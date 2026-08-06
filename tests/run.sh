@@ -934,6 +934,15 @@ rm -f "$error_file"
 actual="$("$diamond" -e $'def depth(n)\n if n <= 0\n  0\n else\n  depth(n - 1) + 1\n end\nend\ndepth(90)')"
 [[ "$actual" == "90" ]]
 
+error_file="$(mktemp)"
+if "$diamond" -e $'def depth(n)\n if n <= 0\n  0\n else\n  depth(n - 1) + 1\n end\nend\ndepth(5000)' \
+    >/dev/null 2>"$error_file"; then
+    echo "deep recursion unexpectedly completed" >&2
+    exit 1
+fi
+grep -q 'runtime error: call stack overflow' "$error_file"
+rm -f "$error_file"
+
 actual="$("$diamond" --dump-bytecode -e 'raise 42' 2>/dev/null || true)"
 grep -q 'RAISE' <<<"$actual"
 
@@ -2109,4 +2118,4 @@ if "$diamond" -e $'module Constants\n VALUE = 42 if true\nend' >/dev/null 2>&1; 
     echo "conditional namespace constant unexpectedly compiled" >&2
     exit 1
 fi
-echo "526 tests passed"
+echo "527 tests passed"
