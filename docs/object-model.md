@@ -77,7 +77,13 @@ hashes can form arbitrary nested object graphs and are recursively traced.
 - Monomorphic, then potentially polymorphic, method inline caches.
 - Field caches keyed by shape identity.
 - Classes as ordinary instances of `Class`.
-- Modules/mixins, singleton classes, visibility, and runtime method definition.
+- Modules/mixins, singleton classes, and visibility are implemented (see
+  `docs/design.md`). Runtime method *redefinition* — repointing an existing
+  method to a different already-compiled function via
+  `ClassName.redefine_method(name, callable)` — is also implemented. Defining
+  genuinely new method bodies at runtime (e.g. from a source string) remains
+  unimplemented and would require a runtime-callable compiler entry point,
+  a materially larger undertaking overlapping with self-hosting.
 
 Those optimizations should preserve the current receiver convention and source
 semantics, but they are not represented in the current bytecode format.

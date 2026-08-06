@@ -129,10 +129,12 @@ the initial length, so callback insertions are not visited during that traversal
 
 ## Object model
 
-Classes are immutable module metadata rather than heap objects. Instances point
-to their class and contain a fixed field array. Instance-variable names are
-assigned stable class-owned offsets during compilation; subclasses copy their
-parent's field-slot prefix.
+Classes are immutable module metadata rather than heap objects, with one
+narrow, explicit exception: `ClassName.redefine_method(name, callable)` (see
+below) repoints an existing method's compiled body in place at runtime.
+Instances point to their class and contain a fixed field array.
+Instance-variable names are assigned stable class-owned offsets during
+compilation; subclasses copy their parent's field-slot prefix.
 
 Methods are bytecode functions with `self` in register zero. Dynamic method
 lookup walks the receiver's class and superclass chain. `super(arguments)` is
@@ -384,6 +386,32 @@ duplicating code or creating a forwarding frame.
 Writer suffixes are resolved and copied as part of both names.
 Alias declarations accept either bare comma-separated names or one
 parenthesized pair.
+
+`ClassName.redefine_method(name, callable)` is `alias_method`'s runtime,
+value-taking counterpart: it repoints an *existing* method slot to a
+different already-compiled function, rather than resolving names at compile
+time. `name` is any expression evaluating to a `String`; `callable` is any
+expression evaluating to a `Callable` value, which in practice means a
+nested, named function referenced by its bare name (Diamond has no anonymous
+closure literal). Because classes are not first-class runtime values,
+`redefine_method` is recognized contextually at the same call site that
+already special-cases `ClassName.new(...)`, and compiles to a dedicated
+opcode carrying the target class as a compile-time operand rather than an
+ordinary dispatched call. Four structural checks reject unsafe replacements
+before the method table is touched: the name must match an existing method
+on that class directly (no superclass walk, and no defining a new method —
+`DiamondClass.methods` is a fixed-size, compile-time-populated array); the
+callable must capture no variables (a method slot only stores a raw function
+index, so captured state would be silently discarded and then read as
+invalid bytecode the first time the method dispatched); the callable's
+function must have been compiled with `owner_class` equal to the target
+class (otherwise `self`-register and `@field` offset assumptions baked in at
+compile time would be wrong for the new receiver); and the callable's real
+arity must exactly match the existing method's declared arity (avoiding a
+second metadata mutation axis). A successful call returns `nil` and calls
+the same cache-invalidation path `tests/api_invalidation.c` exercises
+directly, so already-warmed monomorphic dispatch sites correctly reflect the
+change on their very next call.
 
 For a direct `value == nil` or `value != nil` condition, the compiler splits a
 union type-set into nil and non-nil branch facts. Facts for locals that existed
