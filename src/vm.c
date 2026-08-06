@@ -304,7 +304,8 @@ bool diamond_fiber_capture_context(const DiamondFiber *fiber, DiamondFiberExecut
 bool diamond_fiber_restore_context(DiamondFiber *fiber, const DiamondFiberExecutionContext *context) {
     if(fiber==nullptr||context==nullptr||fiber->frame_count==0||
        fiber->state==DIAMOND_FIBER_COMPLETED||fiber->state==DIAMOND_FIBER_FAILED||
-       context->chunk==nullptr||context->status!=DIAMOND_VM_OK||
+       context->chunk==nullptr||(context->status!=DIAMOND_VM_OK&&
+       context->status!=DIAMOND_VM_YIELDED)||
        context->instruction>context->chunk->code_count)
         return false;
     fiber->frames[fiber->frame_count-1]=*context;
