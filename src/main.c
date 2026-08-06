@@ -48,7 +48,7 @@ static void print_diagnostic(const char *name, const char *source,
     while (line_start > 0 && source[line_start - 1] != '\n') {
         line_start--;
     }
-    size_t line_end = diagnostic.span.start;
+    size_t line_end = line_start;
     while (source[line_end] != '\0' && source[line_end] != '\n') {
         line_end++;
     }
