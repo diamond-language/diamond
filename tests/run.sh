@@ -804,6 +804,12 @@ grep -q 'method cache probes: 4' "$error_file"
 rm -f "$error_file"
 
 error_file="$(mktemp)"
+actual="$(DIAMOND_TRACE_IC_REWRITES=1 "$diamond" tests/cases/polymorphic_cache.dia 2>"$error_file")"
+[[ "$actual" == "42" ]]
+grep -q 'direct dispatch rewrites: 0' "$error_file"
+rm -f "$error_file"
+
+error_file="$(mktemp)"
 actual="$(DIAMOND_TRACE_IC_SITES=1 "$diamond" tests/cases/inherited_cache.dia 2>"$error_file")"
 [[ "$actual" == "160" ]]
 grep -Eq 'inline cache site\[[0-9]+\]: 2 hits, 2 misses, 2 classes' "$error_file"
@@ -2031,4 +2037,4 @@ if "$diamond" -e $'module Constants\n VALUE = 42 if true\nend' >/dev/null 2>&1; 
     echo "conditional namespace constant unexpectedly compiled" >&2
     exit 1
 fi
-echo "507 tests passed"
+echo "508 tests passed"
