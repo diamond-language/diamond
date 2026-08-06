@@ -50,6 +50,10 @@ quickening_trace="$(DIAMOND_QUICKEN=1 DIAMOND_TRACE_QUICKEN=1 \
 grep -q 'quickened sites: 1, deoptimized sites: 0' <<<"$quickening_trace"
 grep -q '^10$' <<<"$quickening_trace"
 
+[[ "$("$diamond" -e $'20-2')" == 18 ]]
+[[ "$("$diamond" -e $'20*2')" == 40 ]]
+[[ "$("$diamond" -e $'20/2')" == 10 ]]
+
 error_file="$(mktemp)"
 if "$diamond" -e '1 + )' 2>"$error_file"; then
     echo "invalid source unexpectedly succeeded" >&2
@@ -1924,4 +1928,4 @@ if "$diamond" -e $'module Constants\n VALUE = 42 if true\nend' >/dev/null 2>&1; 
     echo "conditional namespace constant unexpectedly compiled" >&2
     exit 1
 fi
-echo "477 tests passed"
+echo "480 tests passed"
