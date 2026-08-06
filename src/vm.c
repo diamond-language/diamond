@@ -2088,6 +2088,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 break;
             }
             case DIAMOND_OP_INVOKE:
+            case DIAMOND_OP_INVOKE_MONO:
             case DIAMOND_OP_INVOKE_TYPED: {
                 uint8_t dest=0,recv=0,name=0,base=0,argc=0;
                 READ_BYTE(dest);READ_BYTE(recv);READ_BYTE(name);READ_BYTE(base);READ_BYTE(argc);
@@ -2188,9 +2189,32 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     registers[dest]=instance->field_count>1?
                         instance->fields[1]:DIAMOND_NIL;break;
                 }
-                const DiamondMethod *method=lookup_method_cached(
-                    vm,chunk,chunk->code+instruction_offset,instance->class,
-                    method_name->chars,method_name->length);
+                const uint8_t *site=chunk->code+instruction_offset;
+                const size_t cache_slot=((size_t)(uintptr_t)site>>2)%
+                    DIAMOND_INLINE_CACHE_COUNT;
+                DiamondMethodCache *cache=&vm->method_caches[cache_slot];
+                const DiamondMethod *method=nullptr;
+                if ((DiamondOpCode)instruction==DIAMOND_OP_INVOKE_MONO &&
+                    cache->site==site && cache->entry_count==1 &&
+                    cache->entries[0].receiver_class==instance->class) {
+                    method=cache->entries[0].method;
+                    vm->inline_cache_hits++;
+                    vm->monomorphic_dispatches++;
+                } else {
+                    if ((DiamondOpCode)instruction==DIAMOND_OP_INVOKE_MONO) {
+                        uint8_t *code=(uint8_t *)(void *)chunk->code;
+                        code[instruction_offset]=(uint8_t)DIAMOND_OP_INVOKE;
+                    }
+                    method=lookup_method_cached(vm,chunk,site,instance->class,
+                        method_name->chars,method_name->length);
+                    if ((DiamondOpCode)instruction==DIAMOND_OP_INVOKE &&
+                        cache->entry_count==1 &&
+                        cache->hits>=vm->monomorphic_threshold) {
+                        uint8_t *code=(uint8_t *)(void *)chunk->code;
+                        code[instruction_offset]=(uint8_t)DIAMOND_OP_INVOKE_MONO;
+                        vm->direct_dispatch_rewrites++;
+                    }
+                }
                 if(method==nullptr) VM_RETURN(DIAMOND_VM_TYPE_ERROR);
                 if(method->is_private&&!(chunk->parameter_offset==1&&recv==0)) {
                     snprintf(vm->error,sizeof vm->error,
@@ -2587,6 +2611,7 @@ DiamondVmStatus diamond_vm_run(DiamondVm *vm, const DiamondChunk *chunk,
     vm->inline_cache_misses=0;
     vm->monomorphic_dispatches=0;
     vm->method_cache_probes=0;
+    vm->direct_dispatch_rewrites=0;
     vm->field_cache_hits=0;
     vm->field_cache_misses=0;
     vm->shape_transitions=0;

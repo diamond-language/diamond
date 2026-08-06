@@ -65,6 +65,7 @@ typedef enum DiamondOpCode : uint8_t {
     DIAMOND_OP_SET_CELL,
     DIAMOND_OP_NEW,
     DIAMOND_OP_INVOKE,
+    DIAMOND_OP_INVOKE_MONO,
     DIAMOND_OP_INVOKE_TYPED,
     DIAMOND_OP_SUPER,
     DIAMOND_OP_GET_IVAR,
@@ -297,6 +298,7 @@ typedef struct DiamondVm {
     size_t monomorphic_dispatches;
     size_t method_cache_probes;
     size_t monomorphic_threshold;
+    size_t direct_dispatch_rewrites;
     size_t field_cache_hits;
     size_t field_cache_misses;
     size_t shape_transitions;

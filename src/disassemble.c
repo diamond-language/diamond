@@ -345,6 +345,11 @@ static bool disassemble_chunk(FILE *stream, const char *name,
                 fprintf(stream,"%-18s r%u, r%u, s%u, r%u, %u args\n","INVOKE",
                     chunk->code[offset+1],chunk->code[offset+2],chunk->code[offset+3],
                     chunk->code[offset+4],chunk->code[offset+5]);offset+=6;break;
+            case DIAMOND_OP_INVOKE_MONO:
+                if(!require_bytes(stream,chunk,offset,6)){valid=false;offset=chunk->code_count;break;}
+                fprintf(stream,"%-18s r%u, r%u, s%u, r%u, %u args\n","INVOKE_MONO",
+                    chunk->code[offset+1],chunk->code[offset+2],chunk->code[offset+3],
+                    chunk->code[offset+4],chunk->code[offset+5]);offset+=6;break;
             case DIAMOND_OP_INVOKE_TYPED: {
                 if(!require_bytes(stream,chunk,offset,7)) {
                     valid=false;offset=chunk->code_count;break;

@@ -158,6 +158,8 @@ static int run_source(const char *name, const char *source, bool dump_bytecode) 
         fprintf(stderr,"monomorphic dispatches: %zu\n",vm.monomorphic_dispatches);
     if (getenv("DIAMOND_TRACE_IC_PROBES") != nullptr)
         fprintf(stderr,"method cache probes: %zu\n",vm.method_cache_probes);
+    if (getenv("DIAMOND_TRACE_IC_REWRITES") != nullptr)
+        fprintf(stderr,"direct dispatch rewrites: %zu\n",vm.direct_dispatch_rewrites);
     if (getenv("DIAMOND_TRACE_SHAPES") != nullptr) {
         fprintf(stderr,"shape transitions: %zu\n",vm.shape_transitions);
     }
