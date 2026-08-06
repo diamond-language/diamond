@@ -261,6 +261,8 @@ future work.
 - Standalone `yield` source syntax and compiler emission coverage.
 - Fiber continuation resumes from saved instruction/register contexts and can
   complete after a terminal yield boundary.
+- Sequential multiple-yield fibers with advancing checkpoints and terminal
+  completion coverage.
 
 ## Next priorities
 
