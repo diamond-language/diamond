@@ -260,7 +260,7 @@ typedef enum DiamondVmStatus : uint8_t {
     DIAMOND_VM_INDEX_ERROR,
     DIAMOND_VM_EXCEPTION,
     DIAMOND_VM_YIELDED,
-    DIAMOND_VM_UNSUPPORTED_YIELD,
+    DIAMOND_VM_YIELD_WITHOUT_FIBER,
 } DiamondVmStatus;
 
 typedef struct DiamondMethodCacheEntry {

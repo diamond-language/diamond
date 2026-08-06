@@ -2857,7 +2857,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
             }
             case DIAMOND_OP_YIELD:
-                if(vm->running_fiber==nullptr) VM_RETURN(DIAMOND_VM_UNSUPPORTED_YIELD);
+                if(vm->running_fiber==nullptr) VM_RETURN(DIAMOND_VM_YIELD_WITHOUT_FIBER);
                 vm->running_fiber->status=DIAMOND_VM_YIELDED;
                 swapcontext(&vm->running_fiber->context,vm->running_fiber->resume_target);
                 break;
@@ -2928,8 +2928,8 @@ const char *diamond_vm_status_name(DiamondVmStatus status) {
             return "uncaught exception";
         case DIAMOND_VM_YIELDED:
             return "yielded";
-        case DIAMOND_VM_UNSUPPORTED_YIELD:
-            return "unsupported nested yield";
+        case DIAMOND_VM_YIELD_WITHOUT_FIBER:
+            return "yield outside a fiber";
     }
     return "unknown VM status";
 }
