@@ -45,8 +45,11 @@ test-sanitize: sanitize
 	ASAN_OPTIONS=detect_leaks=0 UBSAN_OPTIONS=print_stacktrace=1 bash tests/run.sh
 
 test-all:
+	$(MAKE) clean
 	$(MAKE) test
+	$(MAKE) clean
 	$(MAKE) test-release
+	$(MAKE) clean
 	$(MAKE) test-sanitize
 
 clean:
