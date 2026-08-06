@@ -26,7 +26,14 @@ managed heap objects with a common header. NaN boxing is deferred until
 measurement shows that representation density is worth the complexity.
 
 Integer arithmetic uses C23 checked arithmetic and reports overflow rather than
-invoking C undefined behavior.
+invoking C undefined behavior. Addition, subtraction, multiplication, and
+negation all detect overflow through `ckd_add`/`ckd_sub`/`ckd_mul`; division
+additionally special-cases `INT64_MIN / -1`, the classic two's-complement
+overflow that checked-arithmetic division alone would not catch, since the
+mathematically correct magnitude has no representable positive counterpart.
+Every overflow raises the rescuable `RangeError` class rather than wrapping
+or invoking undefined behavior, on both the generic and quickened arithmetic
+opcode paths.
 
 Nested Diamond calls recurse through the C call stack, one native activation
 per call depth, and a call-depth counter enforces a hard ceiling
