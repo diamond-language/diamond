@@ -14,7 +14,7 @@ SOURCES := $(wildcard src/*.c)
 OBJECTS := $(SOURCES:src/%.c=$(BUILD_DIR)/%.o)
 DEPS := $(OBJECTS:.o=.d)
 
-.PHONY: all debug sanitize release test test-sanitize clean
+.PHONY: all debug sanitize release test test-release test-sanitize clean
 
 all: debug
 
@@ -36,6 +36,9 @@ $(BUILD_DIR)/%.o: src/%.c
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c $< -o $@
 
 test: debug
+	bash tests/run.sh
+
+test-release: release
 	bash tests/run.sh
 
 test-sanitize: sanitize
