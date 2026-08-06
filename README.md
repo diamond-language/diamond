@@ -478,6 +478,8 @@ Stable instance call sites may rewrite to `INVOKE_MONO` after warm-up; use
 deoptimizes the site back to `INVOKE` if the assumption fails.
 Rewritten instruction addresses are tracked explicitly so a reused VM can
 restore only genuine rewritten sites between runs.
+Set `DIAMOND_REPEAT=N` to execute the same compiled program N times in one VM;
+this is useful for validating specialization reset behavior.
 
 Set `DIAMOND_TRACE_SHAPES=1` to print instance shape transitions. Fresh objects
 begin at their class's empty shape and advance lazily as fields are first written.

@@ -233,6 +233,7 @@ future work.
 - Polymorphic-site guard coverage preventing unsafe invoke rewriting.
 - Deterministic 100-call dispatch probe benchmark.
 - Explicit rewritten-site tracking for safe VM reuse.
+- Reusable-VM repeat execution mode for lifecycle tests.
 
 ## Next priorities
 
