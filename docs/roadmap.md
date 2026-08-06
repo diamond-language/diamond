@@ -242,6 +242,7 @@ future work.
 - Explicit method-cache invalidation API for future class/module mutation.
 - Repeat-mode exercise of the explicit invalidation boundary.
 - C-level method-table mutation and invalidation harness.
+- C-level inherited-method mutation and invalidation coverage.
 
 ## Next priorities
 
