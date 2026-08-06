@@ -270,6 +270,10 @@ future work.
 - Garbage-collection roots for queued and suspended fiber frames, closing the
   use-after-free gap where one fiber's turn could collect another fiber's
   live, checkpointed registers on a shared VM.
+- A `diamond_fiber_resumable` predicate and regression coverage confirming
+  every lifecycle transition rejects a fiber outside its required source
+  state, formalizing the "clear errors for resuming a running or completed
+  fiber" requirement stated since the initial fiber design.
 
 ## Next priorities
 
