@@ -14,7 +14,7 @@ SOURCES := $(wildcard src/*.c)
 OBJECTS := $(SOURCES:src/%.c=$(BUILD_DIR)/%.o)
 DEPS := $(OBJECTS:.o=.d)
 
-.PHONY: all debug sanitize release test test-release test-sanitize test-all clean
+.PHONY: all debug sanitize release test test-release test-sanitize test-api test-all clean
 
 all: debug
 
@@ -44,6 +44,15 @@ test-release: release
 test-sanitize: sanitize
 	ASAN_OPTIONS=detect_leaks=0 UBSAN_OPTIONS=print_stacktrace=1 bash tests/run.sh
 
+API_SOURCES := $(filter-out src/main.c,$(SOURCES))
+
+$(BUILD_DIR)/api_invalidation: tests/api_invalidation.c $(API_SOURCES)
+	@mkdir -p $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS_COMMON) $(CFLAGS_DEBUG) $(API_SOURCES) $< -o $@
+
+test-api: $(BUILD_DIR)/api_invalidation
+	$(BUILD_DIR)/api_invalidation
+
 test-all:
 	$(MAKE) clean
 	$(MAKE) test
@@ -51,6 +60,7 @@ test-all:
 	$(MAKE) test-release
 	$(MAKE) clean
 	$(MAKE) test-sanitize
+	$(MAKE) test-api
 
 clean:
 	rm -rf $(BUILD_DIR)
