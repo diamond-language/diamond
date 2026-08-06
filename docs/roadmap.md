@@ -223,6 +223,7 @@ future work.
 - Configurable quickening warm-up thresholds with environment control.
 - Guarded integer quickening for equality and inequality.
 - Inherited-method and repeated-hit coverage for polymorphic dispatch caches.
+- Per-site method-cache telemetry for specialization decisions.
 
 ## Next priorities
 

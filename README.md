@@ -462,6 +462,9 @@ Set `DIAMOND_TRACE_IC=1` to print method inline-cache hit and miss counts after
 execution. Dynamic call sites use VM-owned four-entry polymorphic caches guarded
 by receiver class, including inherited-method resolution. Repeated calls on
 the same receiver classes take the cache-hit path.
+Set `DIAMOND_TRACE_IC_SITES=1` to report per-site hit/miss counts and the
+number of cached receiver classes, useful when deciding whether direct-call
+specialization is worthwhile.
 
 Set `DIAMOND_TRACE_SHAPES=1` to print instance shape transitions. Fresh objects
 begin at their class's empty shape and advance lazily as fields are first written.
