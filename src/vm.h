@@ -6,6 +6,7 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include <ucontext.h>
 
 enum {
     DIAMOND_MAX_CODE = 1024,
@@ -320,6 +321,11 @@ typedef struct DiamondFiber {
     size_t frame_count;
     size_t frame_capacity;
     DiamondVm *vm;
+    ucontext_t context;
+    ucontext_t *resume_target;
+    void *stack;
+    size_t stack_size;
+    void *native_frames;
 } DiamondFiber;
 
 typedef enum DiamondFiberStatus : uint8_t {
@@ -365,6 +371,7 @@ struct DiamondVm {
     bool has_exception;
     char error[1024];
     const DiamondFiberQueue *root_queue;
+    DiamondFiber *running_fiber;
 };
 
 void diamond_vm_init(DiamondVm *vm);
