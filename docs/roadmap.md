@@ -227,11 +227,12 @@ future work.
 - Monomorphic method-cache fast path with execution telemetry.
 - Method-cache probe-depth telemetry for deterministic dispatch comparisons.
 - Configurable monomorphic dispatch warm-up thresholds.
+- Guarded `INVOKE_MONO` rewriting for stable instance call sites.
 
 ## Next priorities
 
-1. Measure direct-call fast-path benefit and evaluate safe bytecode rewriting
-   for stable method-dispatch sites.
+1. Measure guarded `INVOKE_MONO` benefit and evaluate reclamation behavior for
+   rewritten sites.
 
 ## Later experiments
 
