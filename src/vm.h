@@ -313,6 +313,7 @@ typedef struct DiamondFiber {
     void *stack;
     size_t stack_size;
     void *native_frames;
+    DiamondValue resume_value;
 } DiamondFiber;
 
 typedef enum DiamondFiberStatus : uint8_t {
@@ -377,7 +378,7 @@ bool diamond_fiber_resumable(const DiamondFiber *fiber);
 const char *diamond_fiber_state_name(DiamondFiberState state);
 DiamondFiberStatus diamond_fiber_make_runnable(DiamondFiber *fiber);
 DiamondFiberStatus diamond_fiber_begin(DiamondFiber *fiber);
-DiamondFiberStatus diamond_fiber_resume(DiamondFiber *fiber);
+DiamondFiberStatus diamond_fiber_resume(DiamondFiber *fiber, DiamondValue value);
 DiamondFiberStatus diamond_fiber_suspend(DiamondFiber *fiber);
 DiamondFiberStatus diamond_fiber_yield(DiamondFiber *fiber);
 DiamondFiberStatus diamond_fiber_complete(DiamondFiber *fiber, DiamondValue result);
