@@ -64,6 +64,8 @@ DiamondFiberStatus diamond_fiber_yield(DiamondFiber *);
 DiamondValue diamond_fiber_result(const DiamondFiber *);
 DiamondVmStatus diamond_fiber_status(const DiamondFiber *);
 bool diamond_fiber_checkpoint(const DiamondFiber *, DiamondFiberFrame *);
+bool diamond_fiber_capture_context(const DiamondFiber *, DiamondFiberExecutionContext *);
+bool diamond_fiber_restore_context(DiamondFiber *, const DiamondFiberExecutionContext *);
 bool diamond_fiber_set_register(DiamondFiber *, size_t, DiamondValue);
 bool diamond_fiber_get_register(const DiamondFiber *, size_t, DiamondValue *);
 size_t diamond_fiber_register_count(void);
