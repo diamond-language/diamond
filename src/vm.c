@@ -45,8 +45,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk, DiamondVm *vm,
                                  const DiamondValue *arguments,
                                  size_t argument_count, size_t depth,
                                  const DiamondClosure *closure,
-                                 DiamondValue *result,
-                                 DiamondFiberExecutionContext *context);
+                                 DiamondValue *result);
 
 static void mark_object(DiamondObject *object) {
     if (object == nullptr || object->marked) return;
@@ -211,7 +210,7 @@ static DiamondFiber *diamond_fiber_entering;
 static void diamond_fiber_trampoline(void) {
     DiamondFiber *self = diamond_fiber_entering;
     self->status = run_chunk(self->chunk, self->vm, nullptr, 0, 0, nullptr,
-                             &self->result, nullptr);
+                             &self->result);
     swapcontext(&self->context, self->resume_target);
 }
 
@@ -282,11 +281,6 @@ DiamondVmStatus diamond_fiber_status(const DiamondFiber *fiber) {
     return fiber == nullptr ? DIAMOND_VM_INVALID_BYTECODE : fiber->status;
 }
 
-bool diamond_fiber_context_terminal(const DiamondFiberExecutionContext *context) {
-    return context!=nullptr && context->chunk!=nullptr &&
-        (context->status!=DIAMOND_VM_OK||context->instruction>=context->chunk->code_count);
-}
-
 bool diamond_fiber_resumable(const DiamondFiber *fiber) {
     return fiber!=nullptr && (fiber->state==DIAMOND_FIBER_RUNNABLE||
         fiber->state==DIAMOND_FIBER_SUSPENDED);
@@ -344,81 +338,6 @@ DiamondFiberStatus diamond_fiber_fail(DiamondFiber *fiber, DiamondVmStatus statu
         return DIAMOND_FIBER_INVALID_STATE;
     fiber->status=status;fiber->state=DIAMOND_FIBER_FAILED;
     return DIAMOND_FIBER_OK;
-}
-
-bool diamond_fiber_push_frame(DiamondFiber *fiber, DiamondFiberFrame frame) {
-    if(fiber==nullptr||fiber->state==DIAMOND_FIBER_COMPLETED||
-       fiber->state==DIAMOND_FIBER_FAILED)return false;
-    if(fiber->frame_count==DIAMOND_MAX_FIBER_FRAMES)return false;
-    if(fiber->frame_count==fiber->frame_capacity) {
-        const size_t capacity=fiber->frame_capacity==0?4:fiber->frame_capacity*2;
-        DiamondFiberFrame *frames=realloc(fiber->frames,capacity*sizeof *frames);
-        if(frames==nullptr)return false;
-        fiber->frames=frames;fiber->frame_capacity=capacity;
-    }
-    fiber->frames[fiber->frame_count++]=frame;return true;
-}
-
-bool diamond_fiber_pop_frame(DiamondFiber *fiber, DiamondFiberFrame *frame) {
-    if(fiber==nullptr||fiber->frame_count==0)return false;
-    *frame=fiber->frames[--fiber->frame_count];return true;
-}
-
-const DiamondFiberFrame *diamond_fiber_current_frame(const DiamondFiber *fiber) {
-    if(fiber==nullptr||fiber->frame_count==0)return nullptr;
-    return &fiber->frames[fiber->frame_count-1];
-}
-
-bool diamond_fiber_checkpoint(const DiamondFiber *fiber, DiamondFiberFrame *frame) {
-    const DiamondFiberFrame *current=diamond_fiber_current_frame(fiber);
-    if(current==nullptr||frame==nullptr)return false;
-    *frame=*current;
-    return true;
-}
-
-bool diamond_fiber_capture_context(const DiamondFiber *fiber, DiamondFiberExecutionContext *context) {
-    return diamond_fiber_checkpoint(fiber, context);
-}
-
-bool diamond_fiber_restore_context(DiamondFiber *fiber, const DiamondFiberExecutionContext *context) {
-    if(fiber==nullptr||context==nullptr||fiber->frame_count==0||
-       fiber->state==DIAMOND_FIBER_COMPLETED||fiber->state==DIAMOND_FIBER_FAILED||
-       context->chunk==nullptr||
-       context->instruction>context->chunk->code_count)
-        return false;
-    fiber->frames[fiber->frame_count-1]=*context;
-    return true;
-}
-
-bool diamond_fiber_set_register(DiamondFiber *fiber, size_t index, DiamondValue value) {
-    DiamondFiberFrame *frame=fiber==nullptr?nullptr:
-        (fiber->frame_count==0?nullptr:&fiber->frames[fiber->frame_count-1]);
-    if(frame==nullptr||index>=DIAMOND_REGISTER_COUNT)return false;
-    frame->registers[index]=value;
-    return true;
-}
-
-bool diamond_fiber_get_register(const DiamondFiber *fiber, size_t index, DiamondValue *value) {
-    const DiamondFiberFrame *frame=diamond_fiber_current_frame(fiber);
-    if(frame==nullptr||value==nullptr||index>=DIAMOND_REGISTER_COUNT)return false;
-    *value=frame->registers[index];
-    return true;
-}
-
-size_t diamond_fiber_register_count(void) {
-    return DIAMOND_REGISTER_COUNT;
-}
-
-bool diamond_fiber_update_instruction(DiamondFiber *fiber, size_t instruction) {
-    if(fiber==nullptr||fiber->frame_count==0)return false;
-    const DiamondChunk *chunk=fiber->frames[fiber->frame_count-1].chunk;
-    if(chunk!=nullptr&&instruction>chunk->code_count)return false;
-    fiber->frames[fiber->frame_count-1].instruction=instruction;return true;
-}
-
-bool diamond_fiber_update_depth(DiamondFiber *fiber, size_t depth) {
-    if(fiber==nullptr||fiber->frame_count==0)return false;
-    fiber->frames[fiber->frame_count-1].depth=depth;return true;
 }
 
 void diamond_fiber_queue_init(DiamondFiberQueue *queue) {
@@ -1732,8 +1651,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                                  const DiamondValue *arguments,
                                  size_t argument_count, size_t depth,
                                  const DiamondClosure *closure,
-                                 DiamondValue *result,
-                                 DiamondFiberExecutionContext *context) {
+                                 DiamondValue *result) {
     if (depth >= DIAMOND_MAX_CALL_DEPTH) {
         return DIAMOND_VM_STACK_OVERFLOW;
     }
@@ -1755,13 +1673,6 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
         chunk=&execution;
     }
     DiamondValue registers[DIAMOND_REGISTER_COUNT] = {};
-    if(context!=nullptr) {
-        if(context->chunk!=chunk||context->instruction>chunk->code_count||
-           context->depth!=depth||(context->status!=DIAMOND_VM_OK&&
-           context->status!=DIAMOND_VM_YIELDED))
-            return DIAMOND_VM_INVALID_BYTECODE;
-        memcpy(registers,context->registers,sizeof registers);
-    }
     if (argument_count > DIAMOND_REGISTER_COUNT) {
         return DIAMOND_VM_ARITY_ERROR;
     }
@@ -1775,7 +1686,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
         .pending = &pending,
     };
     vm->frames = &frame;
-    size_t ip = context==nullptr?0:context->instruction;
+    size_t ip = 0;
     size_t instruction_offset = 0;
     UnwindHandler handlers[16];
     size_t handler_count=0;
@@ -1807,11 +1718,6 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
            return_status_,handlers,&handler_count,&pending,registers,&ip))\
             goto dispatch_continue;                                  \
         RECORD_ERROR(return_status_);                                \
-        if(context!=nullptr) {                                       \
-            context->instruction=ip; context->depth=depth;           \
-            context->status=return_status_;                          \
-            memcpy(context->registers,registers,sizeof registers);   \
-        }                                                              \
         vm->frames = frame.previous;                                 \
         return vm->has_exception?DIAMOND_VM_EXCEPTION:return_status_;\
     } while (false)
@@ -1918,7 +1824,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                         DiamondValue converted=DIAMOND_NIL;
                         const DiamondValue argument=registers[source];
                         DiamondVmStatus status=run_chunk(&child,vm,&argument,1,
-                                                          depth+1,nullptr,&converted,nullptr);
+                                                          depth+1,nullptr,&converted);
                         VM_PROPAGATE(status);
                         if(converted.kind!=DIAMOND_VALUE_OBJECT||
                            converted.as.object->kind!=DIAMOND_OBJECT_STRING) {
@@ -2274,7 +2180,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 DiamondValue call_result = DIAMOND_NIL;
                 const DiamondVmStatus status = run_chunk(
                     &called_chunk, vm, &registers[argument_base],
-                    call_argument_count, depth + 1, nullptr, &call_result,nullptr);
+                    call_argument_count, depth + 1, nullptr, &call_result);
                 VM_PROPAGATE(status);
                 registers[destination] = call_result;
                 break;
@@ -2322,7 +2228,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 DiamondValue call_result=DIAMOND_NIL;
                 const DiamondVmStatus status=run_chunk(&called_chunk,vm,
                     &registers[argument_base],call_argument_count,depth+1,nullptr,
-                    &call_result,nullptr);
+                    &call_result);
                 VM_PROPAGATE(status);
                 registers[destination]=call_result;
                 break;
@@ -2399,7 +2305,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                   .type_variable_count=fn->type_variable_count,
                   .parameter_offset=fn->owner_class==UINT8_MAX?0:1};
                 DiamondValue call_result=DIAMOND_NIL;
-                DiamondVmStatus status=run_chunk(&child,vm,&registers[base],argc,depth+1,called,&call_result,nullptr);
+                DiamondVmStatus status=run_chunk(&child,vm,&registers[base],argc,depth+1,called,&call_result);
                 VM_PROPAGATE(status);
                 registers[dest]=call_result;break;
             }
@@ -2432,7 +2338,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                       .type_variable_count=fn->type_variable_count,
                       .parameter_offset=fn->owner_class==UINT8_MAX?0:1};
                     DiamondValue ignored=DIAMOND_NIL;
-                    DiamondVmStatus s=run_chunk(&child,vm,args,(size_t)argc+1,depth+1,nullptr,&ignored,nullptr);
+                    DiamondVmStatus s=run_chunk(&child,vm,args,(size_t)argc+1,depth+1,nullptr,&ignored);
                     VM_PROPAGATE(s);
                 } else {
                     bool exception_class=false;const DiamondClass *ancestor=class;
@@ -2617,7 +2523,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                   .type_variable_bindings=type_argument_count==0?nullptr:
                       explicit_bindings};
                 DiamondValue call_result=DIAMOND_NIL;
-                DiamondVmStatus s=run_chunk(&child,vm,args,(size_t)argc+1,depth+1,nullptr,&call_result,nullptr);
+                DiamondVmStatus s=run_chunk(&child,vm,args,(size_t)argc+1,depth+1,nullptr,&call_result);
                 VM_PROPAGATE(s);
                 registers[dest]=call_result;
                 break;
@@ -2656,7 +2562,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                   .parameter_offset=fn->owner_class==UINT8_MAX?0:1};
                 DiamondValue call_result=DIAMOND_NIL;
                 DiamondVmStatus status=run_chunk(&child,vm,args,(size_t)argc+1,
-                                                  depth+1,nullptr,&call_result,nullptr);
+                                                  depth+1,nullptr,&call_result);
                 VM_PROPAGATE(status);
                 registers[dest]=call_result;
                 break;
@@ -2965,11 +2871,8 @@ dispatch_continue:
 #undef VM_PROPAGATE
 #undef RECORD_ERROR
 
-    if(context!=nullptr&&ip>=chunk->code_count) {
+    if(depth==0&&vm->running_fiber!=nullptr&&ip>=chunk->code_count) {
         *result=DIAMOND_NIL;
-        context->instruction=ip;
-        context->status=DIAMOND_VM_OK;
-        memcpy(context->registers,registers,sizeof registers);
         vm->frames=frame.previous;
         return DIAMOND_VM_OK;
     }
@@ -2992,20 +2895,7 @@ DiamondVmStatus diamond_vm_run(DiamondVm *vm, const DiamondChunk *chunk,
     vm->shape_transitions=0;
     vm->quickened_sites=0;
     vm->deoptimized_sites=0;
-    return run_chunk(chunk, vm, nullptr, 0, 0, nullptr, result, nullptr);
-}
-
-DiamondVmStatus diamond_vm_run_context(DiamondVm *vm,
-                                       DiamondFiberExecutionContext *context,
-                                       DiamondValue *result) {
-    if(vm==nullptr||context==nullptr||result==nullptr||context->chunk==nullptr||
-       context->instruction>context->chunk->code_count||context->depth!=0||
-       (context->status!=DIAMOND_VM_OK&&context->status!=DIAMOND_VM_YIELDED))
-        return DIAMOND_VM_INVALID_BYTECODE;
-    DiamondVmStatus status=run_chunk(context->chunk,vm,nullptr,0,0,nullptr,result,context);
-    context->status=status;
-    if(status==DIAMOND_VM_OK)context->instruction=context->chunk->code_count;
-    return status;
+    return run_chunk(chunk, vm, nullptr, 0, 0, nullptr, result);
 }
 
 const char *diamond_vm_error(const DiamondVm *vm) {

@@ -24,7 +24,6 @@ enum {
     DIAMOND_MAX_FIELDS = 32,
     DIAMOND_MAX_NAMESPACE_CONSTANTS = 64,
     DIAMOND_REGISTER_COUNT = 256,
-    DIAMOND_MAX_FIBER_FRAMES = 256,
 };
 
 typedef enum DiamondOpCode : uint8_t {
@@ -302,24 +301,11 @@ typedef enum DiamondFiberState : uint8_t {
 
 typedef struct DiamondVm DiamondVm;
 
-typedef struct DiamondFiberFrame {
-    const DiamondChunk *chunk;
-    size_t instruction;
-    size_t depth;
-    DiamondVmStatus status;
-    DiamondValue registers[DIAMOND_REGISTER_COUNT];
-} DiamondFiberFrame;
-
-typedef DiamondFiberFrame DiamondFiberExecutionContext;
-
 typedef struct DiamondFiber {
     DiamondFiberState state;
     const DiamondChunk *chunk;
     DiamondValue result;
     DiamondVmStatus status;
-    DiamondFiberFrame *frames;
-    size_t frame_count;
-    size_t frame_capacity;
     DiamondVm *vm;
     ucontext_t context;
     ucontext_t *resume_target;
@@ -386,7 +372,6 @@ DiamondFiberStatus diamond_fiber_bind_vm(DiamondFiber *fiber, DiamondVm *vm);
 DiamondFiberStatus diamond_fiber_run(DiamondFiber *fiber);
 DiamondValue diamond_fiber_result(const DiamondFiber *fiber);
 DiamondVmStatus diamond_fiber_status(const DiamondFiber *fiber);
-bool diamond_fiber_context_terminal(const DiamondFiberExecutionContext *context);
 bool diamond_fiber_resumable(const DiamondFiber *fiber);
 const char *diamond_fiber_state_name(DiamondFiberState state);
 DiamondFiberStatus diamond_fiber_make_runnable(DiamondFiber *fiber);
@@ -396,17 +381,6 @@ DiamondFiberStatus diamond_fiber_suspend(DiamondFiber *fiber);
 DiamondFiberStatus diamond_fiber_yield(DiamondFiber *fiber);
 DiamondFiberStatus diamond_fiber_complete(DiamondFiber *fiber, DiamondValue result);
 DiamondFiberStatus diamond_fiber_fail(DiamondFiber *fiber, DiamondVmStatus status);
-bool diamond_fiber_push_frame(DiamondFiber *fiber, DiamondFiberFrame frame);
-bool diamond_fiber_pop_frame(DiamondFiber *fiber, DiamondFiberFrame *frame);
-const DiamondFiberFrame *diamond_fiber_current_frame(const DiamondFiber *fiber);
-bool diamond_fiber_checkpoint(const DiamondFiber *fiber, DiamondFiberFrame *frame);
-bool diamond_fiber_capture_context(const DiamondFiber *fiber, DiamondFiberExecutionContext *context);
-bool diamond_fiber_restore_context(DiamondFiber *fiber, const DiamondFiberExecutionContext *context);
-bool diamond_fiber_set_register(DiamondFiber *fiber, size_t index, DiamondValue value);
-bool diamond_fiber_get_register(const DiamondFiber *fiber, size_t index, DiamondValue *value);
-size_t diamond_fiber_register_count(void);
-bool diamond_fiber_update_instruction(DiamondFiber *fiber, size_t instruction);
-bool diamond_fiber_update_depth(DiamondFiber *fiber, size_t depth);
 void diamond_fiber_queue_init(DiamondFiberQueue *queue);
 void diamond_fiber_queue_free(DiamondFiberQueue *queue);
 bool diamond_fiber_queue_push(DiamondFiberQueue *queue, DiamondFiber *fiber);
@@ -419,10 +393,6 @@ DiamondFiberStatus diamond_fiber_scheduler_run_once(DiamondFiberQueue *queue);
 DiamondFiberStatus diamond_fiber_scheduler_run_all(DiamondFiberQueue *queue);
 DiamondVmStatus diamond_vm_run(DiamondVm *vm, const DiamondChunk *chunk,
                                DiamondValue *result);
-/* Executes from a saved context and writes instruction/register state back. */
-DiamondVmStatus diamond_vm_run_context(DiamondVm *vm,
-                                       DiamondFiberExecutionContext *context,
-                                       DiamondValue *result);
 const char *diamond_vm_status_name(DiamondVmStatus status);
 const char *diamond_vm_error(const DiamondVm *vm);
 
