@@ -221,11 +221,12 @@ future work.
 - Guarded integer quickening for dynamic subtraction, multiplication, and division.
 - Guarded integer quickening for dynamic ordering comparisons.
 - Configurable quickening warm-up thresholds with environment control.
+- Guarded integer quickening for equality and inequality.
 
 ## Next priorities
 
-1. Measure quickening thresholds and evaluate specialization for equality and
-   method dispatch sites.
+1. Measure quickening thresholds and evaluate specialization for method
+   dispatch sites.
 
 ## Later experiments
 

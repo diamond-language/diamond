@@ -475,7 +475,8 @@ With `DIAMOND_QUICKEN=1`, integer arithmetic and ordering sites specialize to
 `LESS_EQUAL_INT`, `GREATER_INT`, or `GREATER_EQUAL_INT`. A later
 non-integer observation deoptimizes addition back to generic `ADD`; the other
 operators retain their normal type errors. Equality remains a structural,
-non-specialized operation.
+non-specialized operation for non-integer values; integer `==` and `!=` sites
+use `EQUAL_INT` and `NOT_EQUAL_INT` with the same guarded warm-up policy.
 The default warm-up threshold is one observation; set
 `DIAMOND_QUICKEN_THRESHOLD=N` to require N integer observations before a
 dynamic site specializes.
