@@ -250,14 +250,17 @@ future work.
 
 ## Next priorities
 
-1. Evaluate method-cache invalidation requirements as class mutation features
-   are introduced.
+1. Design fibers and cooperative scheduling around resumable VM execution
+   frames.
+2. Add runtime class/module mutation with automatic method-cache invalidation.
+3. Measure `INVOKE_MONO` against polymorphic dispatch under representative
+   workloads.
 
 ## Later experiments
 
-- Visibility controls.
-- Bytecode quickening and type-specialized instructions.
 - Fibers and cooperative concurrency.
+- JIT compilation for stable specialized bytecode paths.
+- Self-hosting the compiler and core libraries in Diamond.
 - Structural interfaces and more capable flow typing.
 - Native-code generation or a tracing/method JIT.
 - Self-hosting selected compiler and standard-library components.
