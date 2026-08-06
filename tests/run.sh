@@ -424,6 +424,9 @@ fi
 grep -q 'runtime error: wrong number of arguments' "$error_file"
 rm -f "$error_file"
 
+actual="$("$diamond" -e $'class Foo\n def bar(a, b)\n  a + b\n end\nend\nclass Baz\n def bar(a)\n  a\n end\nend\ndef call_it(x)\n x.bar(1)\nend\ncall_it(Baz.new())\nbegin\n call_it(Foo.new())\nrescue error: ArgumentError\n 42\nend')"
+[[ "$actual" == "42" ]]
+
 actual="$("$diamond" --dump-bytecode -e $'def head(values: Array[Int]) -> Int\n item = values[0]\n item\nend\nhead([42])')"
 head_dump="$(sed -n '/^== head ==$/,$p' <<<"$actual")"
 [[ "$(grep -c 'CHECK_TYPE' <<<"$head_dump")" == "1" ]]
@@ -2212,4 +2215,4 @@ if "$diamond" -e $'module Constants\n VALUE = 42 if true\nend' >/dev/null 2>&1; 
     echo "conditional namespace constant unexpectedly compiled" >&2
     exit 1
 fi
-echo "541 tests passed"
+echo "542 tests passed"
