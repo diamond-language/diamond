@@ -234,6 +234,7 @@ future work.
 - Deterministic 100-call dispatch probe benchmark.
 - Explicit rewritten-site tracking for safe VM reuse.
 - Reusable-VM repeat execution mode for lifecycle tests.
+- Repeated polymorphic rewrite/deoptimization lifecycle coverage.
 
 ## Next priorities
 
