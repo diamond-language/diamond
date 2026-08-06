@@ -294,6 +294,15 @@ future work.
   different route than originally specified: rather than splitting the
   interpreter into an explicit, hand-persisted frame stack, fibers get their
   own real stack and the interpreter needs no fiber-specific state at all.
+- Fixed a real, previously untested crash: `DIAMOND_MAX_CALL_DEPTH` was set to
+  256 based only on release-build measurements, but each call activation's
+  unconditional multi-kilobyte C locals meant real recursion segfaulted the
+  process around depth ~210-220 in a debug build and ~150-160 under
+  AddressSanitizer, well before the counter ever tripped. Lowered to 100, a
+  margin verified safe under all three build configurations, with new
+  regression coverage (previously nonexistent) for both the plain and
+  fiber-native-stack execution paths, and confirming `SystemStackError`
+  remains rescuable at the new boundary.
 
 ## Next priorities
 
