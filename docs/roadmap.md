@@ -202,6 +202,7 @@ future work.
 - Root-file seek/read and directory diagnostics preserve OS detail.
 - Root file-size failures and imported diagnostics remain consistent in dump
   mode.
+- Source-segment range validation and reusable bundle cleanup.
 
 ## Next priorities
 
