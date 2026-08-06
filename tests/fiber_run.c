@@ -74,6 +74,9 @@ int main(void) {
     DiamondValue yield_result=DIAMOND_NIL;
     if(diamond_vm_run_context(&yield_vm,&yield_context,&yield_result)!=DIAMOND_VM_YIELDED||
        yield_context.instruction!=1||yield_context.status!=DIAMOND_VM_YIELDED)return 11;
+    if(diamond_vm_run_context(&yield_vm,&yield_context,&yield_result)!=DIAMOND_VM_OK||
+       yield_context.instruction!=yield_chunk.code_count||
+       yield_context.status!=DIAMOND_VM_OK)return 17;
     DiamondFiber *yield_fiber=diamond_fiber_new(&yield_chunk);
     if(yield_fiber==nullptr||diamond_fiber_bind_vm(yield_fiber,&yield_vm)!=DIAMOND_FIBER_OK||
        diamond_fiber_prepare(yield_fiber)!=DIAMOND_FIBER_OK||
