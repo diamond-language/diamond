@@ -129,7 +129,19 @@ static int run_source(const char *name, const char *source, bool dump_bytecode) 
         }
     }
     DiamondValue result = DIAMOND_NIL;
-    const DiamondVmStatus status = diamond_vm_run(&vm, &chunk, &result);
+    size_t repeat_count=1;
+    const char *repeat_value=getenv("DIAMOND_REPEAT");
+    if(repeat_value!=nullptr&&repeat_value[0]!='\0') {
+        char *end=nullptr;
+        const unsigned long long parsed=strtoull(repeat_value,&end,10);
+        if(end!=repeat_value&&*end=='\0'&&parsed>0&&parsed<=SIZE_MAX)
+            repeat_count=(size_t)parsed;
+    }
+    DiamondVmStatus status=DIAMOND_VM_OK;
+    for(size_t iteration=0;iteration<repeat_count;iteration++) {
+        status=diamond_vm_run(&vm,&chunk,&result);
+        if(status!=DIAMOND_VM_OK)break;
+    }
     if (status != DIAMOND_VM_OK) {
         const char *detail=diamond_vm_error(&vm);
         fprintf(stderr, "%s: runtime error: %s\n", name,
