@@ -2889,7 +2889,7 @@ DiamondVmStatus diamond_vm_run_context(DiamondVm *vm,
                                        DiamondFiberExecutionContext *context,
                                        DiamondValue *result) {
     if(vm==nullptr||context==nullptr||result==nullptr||context->chunk==nullptr||
-       context->instruction!=0||context->depth!=0)
+       context->instruction>context->chunk->code_count||context->depth!=0)
         return DIAMOND_VM_INVALID_BYTECODE;
     DiamondVmStatus status=run_chunk(context->chunk,vm,nullptr,0,0,nullptr,result,context);
     context->status=status;
