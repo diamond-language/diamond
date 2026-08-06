@@ -978,6 +978,20 @@ if "$diamond" "$depth_dir/f0.dia" >/dev/null 2>"$depth_error"; then
 fi
 grep -q "require nesting limit reached" "$depth_error"
 rm -rf "$depth_dir" "$depth_error"
+files_dir="$(mktemp -d)"
+: >"$files_dir/main.dia"
+for file_index in $(seq 0 127); do
+    printf '42\n' >"$files_dir/f$file_index.dia"
+    printf 'require "f%s"\n' "$file_index" >>"$files_dir/main.dia"
+done
+files_error="$(mktemp)"
+if "$diamond" "$files_dir/main.dia" >/dev/null 2>"$files_error"; then
+    echo "loaded-file limit unexpectedly succeeded" >&2
+    rm -rf "$files_dir" "$files_error"
+    exit 1
+fi
+grep -q "loaded-file limit reached" "$files_error"
+rm -rf "$files_dir" "$files_error"
 
 actual="$($diamond -e $'require "tests/multifile/math"\ndouble(21)')"
 [[ "$actual" == "42" ]]
