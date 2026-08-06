@@ -12,8 +12,13 @@ int main(void) {
     DiamondChunk chunk = diamond_program_chunk(&program);
     DiamondFiberFrame checkpoint;
     DiamondFiberExecutionContext context;
+    DiamondValue context_result=DIAMOND_NIL;
     DiamondVm vm;
     diamond_vm_init(&vm);
+    context=(DiamondFiberExecutionContext){.chunk=&chunk};
+    if(diamond_vm_run_context(&vm,&context,&context_result)!=DIAMOND_VM_OK||
+       context_result.kind!=DIAMOND_VALUE_INT||context_result.as.integer!=3||
+       context.instruction!=chunk.code_count)return 7;
     DiamondFiber *fiber = diamond_fiber_new(&chunk);
     if (fiber == nullptr || diamond_fiber_bind_vm(fiber, &vm) != DIAMOND_FIBER_OK ||
         diamond_fiber_prepare(fiber) != DIAMOND_FIBER_OK ||
