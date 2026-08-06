@@ -961,6 +961,23 @@ if "$diamond" -e $'1 + )\r\n' >/dev/null 2>"$crlf_error"; then
 fi
 grep -q -- '-e:1:' "$crlf_error"
 rm -f "$crlf_error"
+depth_dir="$(mktemp -d)"
+for depth in $(seq 0 128); do
+    if [[ "$depth" -eq 128 ]]; then
+        printf '42\n' >"$depth_dir/f$depth.dia"
+    else
+        next=$((depth+1))
+        printf 'require "f%s"\n' "$next" >"$depth_dir/f$depth.dia"
+    fi
+done
+depth_error="$(mktemp)"
+if "$diamond" "$depth_dir/f0.dia" >/dev/null 2>"$depth_error"; then
+    echo "require-depth limit unexpectedly succeeded" >&2
+    rm -rf "$depth_dir" "$depth_error"
+    exit 1
+fi
+grep -q "require nesting limit reached" "$depth_error"
+rm -rf "$depth_dir" "$depth_error"
 
 actual="$($diamond -e $'require "tests/multifile/math"\ndouble(21)')"
 [[ "$actual" == "42" ]]
