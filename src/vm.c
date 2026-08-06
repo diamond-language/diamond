@@ -186,6 +186,15 @@ DiamondFiberStatus diamond_fiber_bind_vm(DiamondFiber *fiber, DiamondVm *vm) {
     fiber->vm=vm;return DIAMOND_FIBER_OK;
 }
 
+DiamondFiberStatus diamond_fiber_run(DiamondFiber *fiber) {
+    if(fiber==nullptr||fiber->state!=DIAMOND_FIBER_RUNNING||fiber->vm==nullptr||
+       fiber->chunk==nullptr)return DIAMOND_FIBER_INVALID_STATE;
+    fiber->status=diamond_vm_run(fiber->vm,fiber->chunk,&fiber->result);
+    fiber->state=fiber->status==DIAMOND_VM_OK?DIAMOND_FIBER_COMPLETED:
+        DIAMOND_FIBER_FAILED;
+    return DIAMOND_FIBER_OK;
+}
+
 const char *diamond_fiber_state_name(DiamondFiberState state) {
     switch(state) {
         case DIAMOND_FIBER_NEW:return "new";

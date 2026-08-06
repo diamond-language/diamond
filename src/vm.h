@@ -366,6 +366,7 @@ DiamondFiber *diamond_fiber_new(const DiamondChunk *chunk);
 void diamond_fiber_free(DiamondFiber *fiber);
 DiamondFiberStatus diamond_fiber_prepare(DiamondFiber *fiber);
 DiamondFiberStatus diamond_fiber_bind_vm(DiamondFiber *fiber, DiamondVm *vm);
+DiamondFiberStatus diamond_fiber_run(DiamondFiber *fiber);
 const char *diamond_fiber_state_name(DiamondFiberState state);
 DiamondFiberStatus diamond_fiber_make_runnable(DiamondFiber *fiber);
 DiamondFiberStatus diamond_fiber_begin(DiamondFiber *fiber);
