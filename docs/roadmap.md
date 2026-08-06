@@ -256,6 +256,8 @@ future work.
 - Explicit VM status propagation through execution contexts and restoration
   guards for nonterminal, successful contexts.
 - `run_chunk` context handoff for instruction/register checkpoints on VM exits.
+- First explicit `YIELD` opcode with VM status propagation and suspended-fiber
+  mapping; continuation-aware re-entry remains next.
 
 ## Next priorities
 
