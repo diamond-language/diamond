@@ -55,6 +55,10 @@ int main(void) {
         diamond_fiber_run(failing) != DIAMOND_FIBER_OK ||
         failing->state != DIAMOND_FIBER_FAILED ||
         diamond_fiber_status(failing) != DIAMOND_VM_DIVISION_BY_ZERO) return 5;
+    DiamondFiberExecutionContext failing_context={.chunk=&failing_chunk};
+    DiamondValue failing_result=DIAMOND_NIL;
+    if(diamond_vm_run_context(&failing_vm,&failing_context,&failing_result)!=
+       DIAMOND_VM_DIVISION_BY_ZERO||failing_context.instruction!=0)return 8;
     diamond_fiber_free(failing);
     diamond_vm_free(&failing_vm);
     puts("fiber run passed");
