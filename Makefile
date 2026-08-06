@@ -14,7 +14,7 @@ SOURCES := $(wildcard src/*.c)
 OBJECTS := $(SOURCES:src/%.c=$(BUILD_DIR)/%.o)
 DEPS := $(OBJECTS:.o=.d)
 
-.PHONY: all debug sanitize release test test-release test-sanitize clean
+.PHONY: all debug sanitize release test test-release test-sanitize test-all clean
 
 all: debug
 
@@ -43,6 +43,11 @@ test-release: release
 
 test-sanitize: sanitize
 	ASAN_OPTIONS=detect_leaks=0 UBSAN_OPTIONS=print_stacktrace=1 bash tests/run.sh
+
+test-all:
+	$(MAKE) test
+	$(MAKE) test-release
+	$(MAKE) test-sanitize
 
 clean:
 	rm -rf $(BUILD_DIR)
