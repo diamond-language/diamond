@@ -217,10 +217,11 @@ future work.
 - Diagnostics audit complete across compiler, loader, runtime, source maps, and
   all supported build modes.
 - Opcode execution profiling and opt-in dynamic integer-add quickening.
+- Guarded addition quickening with safe polymorphic deoptimization.
 
 ## Next priorities
 
-1. Extend quickening to guarded arithmetic sites beyond integer addition.
+1. Extend guarded quickening to subtraction, multiplication, and division sites.
 
 ## Later experiments
 
