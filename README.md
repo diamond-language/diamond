@@ -61,6 +61,8 @@ The loader caps active require nesting and loaded files at 128 each and reports
 which limit was reached. CRLF and LF source files follow the same directive and
 line-mapping rules. Root-file open, seek, directory, and read failures retain
 the original path and operating-system detail.
+File-size and rewind failures are reported separately from ordinary read
+failures.
 
 Build variants:
 
