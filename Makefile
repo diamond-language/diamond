@@ -96,6 +96,7 @@ test-all:
 	$(MAKE) test-vm-context
 	$(MAKE) test-scheduler
 	$(MAKE) test-scheduler-run-all
+	$(MAKE) test-fiber-gc-roots
 
 clean:
 	rm -rf $(BUILD_DIR)
