@@ -1578,6 +1578,11 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 READ_BYTE(right);
                 if (registers[left].kind == DIAMOND_VALUE_INT &&
                     registers[right].kind == DIAMOND_VALUE_INT) {
+                    if (vm->quickening) {
+                        uint8_t *code=(uint8_t *)(void *)chunk->code;
+                        code[instruction_offset]=(uint8_t)DIAMOND_OP_ADD_INT;
+                        vm->quickened_sites++;
+                    }
                     int64_t sum = 0;
                     if (ckd_add(&sum, registers[left].as.integer,
                                 registers[right].as.integer)) {
@@ -2462,6 +2467,7 @@ DiamondVmStatus diamond_vm_run(DiamondVm *vm, const DiamondChunk *chunk,
     vm->field_cache_hits=0;
     vm->field_cache_misses=0;
     vm->shape_transitions=0;
+    vm->quickened_sites=0;
     return run_chunk(chunk, vm, nullptr, 0, 0, nullptr, result);
 }
 

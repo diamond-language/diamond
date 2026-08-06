@@ -109,6 +109,7 @@ static int run_source(const char *name, const char *source, bool dump_bytecode) 
     DiamondVm vm;
     diamond_vm_init(&vm);
     vm.stress_gc = getenv("DIAMOND_STRESS_GC") != nullptr;
+    vm.quickening = getenv("DIAMOND_QUICKEN") != nullptr;
     DiamondValue result = DIAMOND_NIL;
     const DiamondVmStatus status = diamond_vm_run(&vm, &chunk, &result);
     if (status != DIAMOND_VM_OK) {
@@ -140,6 +141,8 @@ static int run_source(const char *name, const char *source, bool dump_bytecode) 
                 fprintf(stderr,"opcode[%zu]: %zu\n",opcode,
                         vm.opcode_counts[opcode]);
     }
+    if (getenv("DIAMOND_TRACE_QUICKEN") != nullptr)
+        fprintf(stderr,"quickened sites: %zu\n",vm.quickened_sites);
     diamond_vm_free(&vm);
     free(combined);
     diamond_source_bundle_free(&bundle);
