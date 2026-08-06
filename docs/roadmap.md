@@ -265,6 +265,8 @@ future work.
   completion coverage.
 - Scheduler run-once execution with FIFO suspended requeue and terminal
   fiber removal.
+- Scheduler run-all draining of an entire fiber queue to terminal states,
+  tolerating individual fiber failures without aborting the run.
 
 ## Next priorities
 
