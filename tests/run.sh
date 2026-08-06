@@ -805,6 +805,21 @@ rm -f "$error_file"
 actual="$("$diamond" tests/cases/inherited_cache.dia)"
 [[ "$actual" == "160" ]]
 
+actual="$("$diamond" tests/cases/mono_deopt.dia)"
+[[ "$actual" == "82" ]]
+
+error_file="$(mktemp)"
+actual="$(DIAMOND_TRACE_IC_REWRITES=1 "$diamond" tests/cases/mono_deopt.dia 2>"$error_file")"
+[[ "$actual" == "82" ]]
+grep -q 'direct dispatch rewrites: 1' "$error_file"
+rm -f "$error_file"
+
+error_file="$(mktemp)"
+actual="$(DIAMOND_TRACE_IC=1 "$diamond" tests/cases/mono_deopt.dia 2>"$error_file")"
+[[ "$actual" == "82" ]]
+grep -q 'inline caches: 1 hits, 2 misses' "$error_file"
+rm -f "$error_file"
+
 error_file="$(mktemp)"
 actual="$(DIAMOND_TRACE_IC=1 "$diamond" tests/cases/inherited_cache.dia 2>"$error_file")"
 [[ "$actual" == "160" ]]
@@ -2009,4 +2024,4 @@ if "$diamond" -e $'module Constants\n VALUE = 42 if true\nend' >/dev/null 2>&1; 
     echo "conditional namespace constant unexpectedly compiled" >&2
     exit 1
 fi
-echo "503 tests passed"
+echo "506 tests passed"
