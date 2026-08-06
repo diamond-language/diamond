@@ -1084,6 +1084,18 @@ actual="$("$diamond" -e $'class Shape\n def initialize(width, height)\n  @width 
 actual="$("$diamond" -e $'class Shape\n def initialize(width, height)\n  @width = width\n  @height = height\n end\n def area()\n  @width * @height\n end\n def self.square_area_patch()\n  def square_area()\n   @width * @width\n  end\n  square_area\n end\nend\ns = Shape.new(3, 4)\ns.area()\ns.area()\ns.area()\nShape.redefine_method("area", Shape.square_area_patch())\ns.area()')"
 [[ "$actual" == "9" ]]
 
+error_file="$(mktemp)"
+if "$diamond" -e $'class Foo\n def bar(a)\n  a\n end\n def self.make_patch()\n  def replacement(a, b)\n   a + b\n  end\n  replacement\n end\nend\nFoo.redefine_method("bar", Foo.make_patch())' \
+    >/dev/null 2>"$error_file"; then
+    echo "redefine_method with mismatched arity unexpectedly succeeded" >&2
+    exit 1
+fi
+grep -q 'runtime error: wrong number of arguments' "$error_file"
+rm -f "$error_file"
+
+actual="$("$diamond" -e $'class Foo\n def bar(a)\n  a\n end\n def self.make_patch()\n  def replacement(a, b)\n   a + b\n  end\n  replacement\n end\nend\nbegin\n Foo.redefine_method("bar", Foo.make_patch())\nrescue error: ArgumentError\n 42\nend')"
+[[ "$actual" == "42" ]]
+
 actual="$(DIAMOND_STRESS_GC=1 "$diamond" tests/cases/rescue.dia)"
 [[ "$actual" == "diamond rescued!" ]]
 
@@ -2256,4 +2268,4 @@ if "$diamond" -e $'module Constants\n VALUE = 42 if true\nend' >/dev/null 2>&1; 
     echo "conditional namespace constant unexpectedly compiled" >&2
     exit 1
 fi
-echo "550 tests passed"
+echo "551 tests passed"
