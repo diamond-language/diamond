@@ -66,3 +66,10 @@ void diamond_fiber_free(DiamondFiber *);
 
 The API remains provisional until frame ownership, continuation points, and
 exception propagation are integrated with the interpreter.
+
+The focused regression harness is available with:
+
+```sh
+make test-fibers
+make test-fiber-run
+```
