@@ -1460,6 +1460,8 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
         instruction_offset = ip;
         uint8_t instruction = 0;
         READ_BYTE(instruction);
+        if (instruction < DIAMOND_OP_COUNT)
+            vm->opcode_counts[instruction]++;
 
         switch ((DiamondOpCode)instruction) {
             case DIAMOND_OP_CONSTANT: {

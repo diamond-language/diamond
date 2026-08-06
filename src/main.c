@@ -134,6 +134,12 @@ static int run_source(const char *name, const char *source, bool dump_bytecode) 
         fprintf(stderr,"field caches: %zu hits, %zu misses\n",
                 vm.field_cache_hits,vm.field_cache_misses);
     }
+    if (getenv("DIAMOND_TRACE_OPCODES") != nullptr) {
+        for (size_t opcode=0;opcode<DIAMOND_OP_COUNT;opcode++)
+            if (vm.opcode_counts[opcode]!=0)
+                fprintf(stderr,"opcode[%zu]: %zu\n",opcode,
+                        vm.opcode_counts[opcode]);
+    }
     diamond_vm_free(&vm);
     free(combined);
     diamond_source_bundle_free(&bundle);

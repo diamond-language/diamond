@@ -80,6 +80,7 @@ typedef enum DiamondOpCode : uint8_t {
     DIAMOND_OP_IS_TYPE,
     DIAMOND_OP_ARGUMENT_PROVIDED,
     DIAMOND_OP_TO_STRING,
+    DIAMOND_OP_COUNT,
 } DiamondOpCode;
 
 typedef enum DiamondTypeId : uint8_t {
@@ -284,6 +285,7 @@ typedef struct DiamondVm {
     size_t field_cache_hits;
     size_t field_cache_misses;
     size_t shape_transitions;
+    size_t opcode_counts[DIAMOND_OP_COUNT];
     DiamondValue namespace_constants[DIAMOND_MAX_NAMESPACE_CONSTANTS];
     bool namespace_constant_initialized[DIAMOND_MAX_NAMESPACE_CONSTANTS];
     DiamondValue exception;
