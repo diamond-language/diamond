@@ -2893,6 +2893,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
             }
             case DIAMOND_OP_YIELD:
+                if(depth!=0) VM_RETURN(DIAMOND_VM_UNSUPPORTED_YIELD);
                 VM_RETURN(DIAMOND_VM_YIELDED);
             default:
                 VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
