@@ -1007,6 +1007,7 @@ runtime_stack="$($diamond -e $'require "tests/multifile/math"\ndouble("bad")' 2>
 grep -q 'at double:' <<<"$runtime_stack"
 runtime_stack="$($diamond tests/multifile/runtime_broken_main.dia 2>&1 || true)"
 grep -q 'at explode:' <<<"$runtime_stack"
+grep -q 'at explode:2:10' <<<"$runtime_stack"
 grep -q 'at tests/multifile/runtime_broken_main.dia:' <<<"$runtime_stack"
 runtime_stack="$(DIAMOND_STRESS_GC=1 $diamond tests/multifile/runtime_broken_main.dia 2>&1 || true)"
 grep -q 'at explode:' <<<"$runtime_stack"
