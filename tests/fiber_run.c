@@ -180,6 +180,26 @@ int main(void) {
     diamond_fiber_queue_free(&run_all_single_queue);
     diamond_fiber_free(run_all_single_fiber);diamond_vm_free(&run_all_single_vm);
 
+    DiamondVm run_all_multi_vm_a;diamond_vm_init(&run_all_multi_vm_a);
+    DiamondVm run_all_multi_vm_b;diamond_vm_init(&run_all_multi_vm_b);
+    DiamondFiberQueue run_all_multi_queue;diamond_fiber_queue_init(&run_all_multi_queue);
+    DiamondFiber *run_all_multi_a=diamond_fiber_new(&yield_chunk);
+    DiamondFiber *run_all_multi_b=diamond_fiber_new(&double_yield_chunk);
+    if(run_all_multi_a==nullptr||run_all_multi_b==nullptr||
+       diamond_fiber_bind_vm(run_all_multi_a,&run_all_multi_vm_a)!=DIAMOND_FIBER_OK||
+       diamond_fiber_bind_vm(run_all_multi_b,&run_all_multi_vm_b)!=DIAMOND_FIBER_OK||
+       diamond_fiber_prepare(run_all_multi_a)!=DIAMOND_FIBER_OK||
+       diamond_fiber_prepare(run_all_multi_b)!=DIAMOND_FIBER_OK||
+       !diamond_fiber_queue_push(&run_all_multi_queue,run_all_multi_a)||
+       !diamond_fiber_queue_push(&run_all_multi_queue,run_all_multi_b))return 36;
+    if(diamond_fiber_scheduler_run_all(&run_all_multi_queue)!=DIAMOND_FIBER_OK||
+       run_all_multi_a->state!=DIAMOND_FIBER_COMPLETED||
+       run_all_multi_b->state!=DIAMOND_FIBER_COMPLETED||
+       diamond_fiber_queue_count(&run_all_multi_queue)!=0)return 37;
+    diamond_fiber_queue_free(&run_all_multi_queue);
+    diamond_fiber_free(run_all_multi_a);diamond_fiber_free(run_all_multi_b);
+    diamond_vm_free(&run_all_multi_vm_a);diamond_vm_free(&run_all_multi_vm_b);
+
     puts("fiber run passed");
     return 0;
 }
