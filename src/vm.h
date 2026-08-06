@@ -295,6 +295,7 @@ typedef struct DiamondVm {
     size_t inline_cache_hits;
     size_t inline_cache_misses;
     size_t monomorphic_dispatches;
+    size_t method_cache_probes;
     size_t field_cache_hits;
     size_t field_cache_misses;
     size_t shape_transitions;

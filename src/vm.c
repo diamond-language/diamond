@@ -304,6 +304,7 @@ static const DiamondMethod *lookup_method_cached(
             return cache->entries[0].method;
         }
         for(size_t index=0;index<cache->entry_count;index++) {
+            vm->method_cache_probes++;
             if(cache->entries[index].receiver_class!=class)continue;
             vm->inline_cache_hits++;
             cache->hits++;
@@ -2583,6 +2584,7 @@ DiamondVmStatus diamond_vm_run(DiamondVm *vm, const DiamondChunk *chunk,
     vm->inline_cache_hits=0;
     vm->inline_cache_misses=0;
     vm->monomorphic_dispatches=0;
+    vm->method_cache_probes=0;
     vm->field_cache_hits=0;
     vm->field_cache_misses=0;
     vm->shape_transitions=0;
