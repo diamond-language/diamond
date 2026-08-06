@@ -943,6 +943,9 @@ fi
 grep -q 'runtime error: call stack overflow' "$error_file"
 rm -f "$error_file"
 
+actual="$("$diamond" -e $'def depth(n)\n if n <= 0\n  0\n else\n  depth(n - 1) + 1\n end\nend\nbegin\n depth(5000)\nrescue error: SystemStackError\n 42\nend')"
+[[ "$actual" == "42" ]]
+
 actual="$("$diamond" --dump-bytecode -e 'raise 42' 2>/dev/null || true)"
 grep -q 'RAISE' <<<"$actual"
 
@@ -2118,4 +2121,4 @@ if "$diamond" -e $'module Constants\n VALUE = 42 if true\nend' >/dev/null 2>&1; 
     echo "conditional namespace constant unexpectedly compiled" >&2
     exit 1
 fi
-echo "527 tests passed"
+echo "528 tests passed"
