@@ -263,6 +263,8 @@ future work.
   complete after a terminal yield boundary.
 - Sequential multiple-yield fibers with advancing checkpoints and terminal
   completion coverage.
+- Scheduler run-once execution with FIFO suspended requeue and terminal
+  fiber removal.
 
 ## Next priorities
 
