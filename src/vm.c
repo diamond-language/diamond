@@ -276,6 +276,15 @@ DiamondFiber *diamond_fiber_queue_pop(DiamondFiberQueue *queue) {
     return fiber;
 }
 
+size_t diamond_fiber_queue_count(const DiamondFiberQueue *queue) {
+    return queue==nullptr?0:queue->count-queue->head;
+}
+
+DiamondFiber *diamond_fiber_queue_at(const DiamondFiberQueue *queue, size_t index) {
+    if(queue==nullptr||index>=diamond_fiber_queue_count(queue))return nullptr;
+    return queue->items[queue->head+index];
+}
+
 static DiamondString *allocate_string(DiamondVm *vm, const char *chars,
                                       size_t length) {
     if (vm->stress_gc || vm->bytes_allocated >= vm->next_gc) {
