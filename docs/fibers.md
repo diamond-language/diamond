@@ -65,6 +65,10 @@ and maps a running fiber to `SUSPENDED`; resuming currently re-enters the
 chunk and reaches the boundary again until continuation-aware dispatch is
 implemented.
 
+The context-aware fiber path now resumes from the saved instruction: a fiber
+that yields at its final boundary can be resumed and completed without
+re-executing the yield opcode.
+
 Diamond source may now emit this boundary with a standalone `yield` statement;
 the compiler emits `DIAMOND_OP_YIELD` followed by a `nil` continuation value.
 
