@@ -259,6 +259,8 @@ const DiamondFiberFrame *diamond_fiber_current_frame(const DiamondFiber *fiber) 
 
 bool diamond_fiber_update_instruction(DiamondFiber *fiber, size_t instruction) {
     if(fiber==nullptr||fiber->frame_count==0)return false;
+    const DiamondChunk *chunk=fiber->frames[fiber->frame_count-1].chunk;
+    if(chunk!=nullptr&&instruction>chunk->code_count)return false;
     fiber->frames[fiber->frame_count-1].instruction=instruction;return true;
 }
 

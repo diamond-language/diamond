@@ -24,7 +24,8 @@ int main(void) {
     if(fiber==nullptr||diamond_fiber_prepare(fiber)!=DIAMOND_FIBER_OK||
        fiber->state!=DIAMOND_FIBER_RUNNABLE||
        diamond_fiber_current_frame(fiber)==nullptr||
-       diamond_fiber_current_frame(fiber)->instruction!=0)return 17;
+       diamond_fiber_current_frame(fiber)->instruction!=0||
+       diamond_fiber_update_instruction(fiber,1))return 17;
     diamond_fiber_free(fiber);
     DiamondFiberQueue queue;diamond_fiber_queue_init(&queue);
     DiamondFiber *first=diamond_fiber_new(nullptr),*second=diamond_fiber_new(nullptr);
