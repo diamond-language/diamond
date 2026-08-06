@@ -214,11 +214,12 @@ future work.
 - CRLF imported runtime frames preserve line and column locations.
 - Sequential all-build validation covers debug, release, and sanitizer modes.
 - All-build validation cleans between compiler-mode transitions.
+- Diagnostics audit complete across compiler, loader, runtime, source maps, and
+  all supported build modes.
 
 ## Next priorities
 
-1. Improve loader path and source-map diagnostics for remaining segment and
-   embedding failures while preserving precise source locations.
+1. Prototype bytecode quickening and type-specialized VM instructions.
 
 ## Later experiments
 

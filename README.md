@@ -455,6 +455,9 @@ compiler, disassembler, VM, value representation, and object layouts live under
 `src/`; executable language cases and the shell test harness live under
 `tests/`.
 
+Diagnostics are currently considered complete for the research baseline; the
+next performance investigation is bytecode quickening and type specialization.
+
 Set `DIAMOND_TRACE_IC=1` to print method inline-cache hit and miss counts after
 execution. Dynamic call sites use VM-owned four-entry polymorphic caches guarded
 by receiver class.
