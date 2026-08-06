@@ -219,10 +219,12 @@ future work.
 - Opcode execution profiling and opt-in dynamic integer-add quickening.
 - Guarded addition quickening with safe polymorphic deoptimization.
 - Guarded integer quickening for dynamic subtraction, multiplication, and division.
+- Guarded integer quickening for dynamic ordering comparisons.
 
 ## Next priorities
 
-1. Measure quickening thresholds and extend specialization to comparison sites.
+1. Measure quickening thresholds and evaluate specialization for equality and
+   method dispatch sites.
 
 ## Later experiments
 
