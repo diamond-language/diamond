@@ -200,6 +200,8 @@ future work.
 - Named loader depth/file-count limits and overflow-safe source embedding.
 - Require-depth and loaded-file limit regression coverage.
 - Root-file seek/read and directory diagnostics preserve OS detail.
+- Root file-size failures and imported diagnostics remain consistent in dump
+  mode.
 
 ## Next priorities
 
