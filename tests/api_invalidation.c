@@ -32,9 +32,13 @@ int main(void) {
     }
     DiamondChunk chunk=diamond_program_chunk(&program);
     DiamondVm vm;diamond_vm_init(&vm);
+    DiamondVm second_vm;diamond_vm_init(&second_vm);
     DiamondValue result=DIAMOND_NIL;
     if (diamond_vm_run(&vm,&chunk,&result)!=DIAMOND_VM_OK ||
         result.kind!=DIAMOND_VALUE_INT || result.as.integer!=3) return 2;
+    DiamondValue second_result=DIAMOND_NIL;
+    if (diamond_vm_run(&second_vm,&chunk,&second_result)!=DIAMOND_VM_OK ||
+        second_result.kind!=DIAMOND_VALUE_INT || second_result.as.integer!=3)return 10;
     DiamondClass *klass=nullptr;
     for(size_t index=0;index<program.class_count;index++)
         if(strcmp(program.classes[index].name,"Parent")==0)klass=&program.classes[index];
@@ -46,8 +50,11 @@ int main(void) {
     if(child==nullptr)return 7;
     klass->methods[0].function_index=klass->methods[1].function_index;
     diamond_vm_invalidate_method_caches(&vm);
+    diamond_vm_invalidate_method_caches(&second_vm);
     if (diamond_vm_run(&vm,&chunk,&result)!=DIAMOND_VM_OK ||
         result.kind!=DIAMOND_VALUE_INT || result.as.integer!=4) return 4;
+    if (diamond_vm_run(&second_vm,&chunk,&second_result)!=DIAMOND_VM_OK ||
+        second_result.kind!=DIAMOND_VALUE_INT || second_result.as.integer!=4)return 11;
     klass->methods[0].arity=1;
     klass->methods[0].required_arity=1;
     diamond_vm_invalidate_method_caches(&vm);
@@ -67,6 +74,7 @@ int main(void) {
     if (diamond_vm_run(&vm,&chunk,&result)!=DIAMOND_VM_OK ||
         result.kind!=DIAMOND_VALUE_INT || result.as.integer!=3)return 9;
     diamond_vm_free(&vm);
+    diamond_vm_free(&second_vm);
     puts("api invalidation passed");
     return 0;
 }
