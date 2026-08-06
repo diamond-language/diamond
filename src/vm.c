@@ -207,6 +207,11 @@ DiamondVmStatus diamond_fiber_status(const DiamondFiber *fiber) {
     return fiber == nullptr ? DIAMOND_VM_INVALID_BYTECODE : fiber->status;
 }
 
+bool diamond_fiber_context_terminal(const DiamondFiberExecutionContext *context) {
+    return context!=nullptr && context->chunk!=nullptr &&
+        (context->status!=DIAMOND_VM_OK||context->instruction>=context->chunk->code_count);
+}
+
 const char *diamond_fiber_state_name(DiamondFiberState state) {
     switch(state) {
         case DIAMOND_FIBER_NEW:return "new";

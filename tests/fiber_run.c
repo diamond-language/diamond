@@ -19,6 +19,7 @@ int main(void) {
     if(diamond_vm_run_context(&vm,&context,&context_result)!=DIAMOND_VM_OK||
        context_result.kind!=DIAMOND_VALUE_INT||context_result.as.integer!=3||
        context.instruction!=chunk.code_count||context.status!=DIAMOND_VM_OK)return 7;
+    if(!diamond_fiber_context_terminal(&context)||diamond_fiber_context_terminal(nullptr))return 9;
     DiamondFiber *fiber = diamond_fiber_new(&chunk);
     if (fiber == nullptr || diamond_fiber_bind_vm(fiber, &vm) != DIAMOND_FIBER_OK ||
         diamond_fiber_prepare(fiber) != DIAMOND_FIBER_OK ||
@@ -60,6 +61,7 @@ int main(void) {
     if(diamond_vm_run_context(&failing_vm,&failing_context,&failing_result)!=
        DIAMOND_VM_DIVISION_BY_ZERO||failing_context.instruction!=0||
        failing_context.status!=DIAMOND_VM_DIVISION_BY_ZERO)return 8;
+    if(!diamond_fiber_context_terminal(&failing_context))return 10;
     diamond_fiber_free(failing);
     diamond_vm_free(&failing_vm);
     puts("fiber run passed");

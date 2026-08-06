@@ -374,6 +374,7 @@ DiamondFiberStatus diamond_fiber_bind_vm(DiamondFiber *fiber, DiamondVm *vm);
 DiamondFiberStatus diamond_fiber_run(DiamondFiber *fiber);
 DiamondValue diamond_fiber_result(const DiamondFiber *fiber);
 DiamondVmStatus diamond_fiber_status(const DiamondFiber *fiber);
+bool diamond_fiber_context_terminal(const DiamondFiberExecutionContext *context);
 const char *diamond_fiber_state_name(DiamondFiberState state);
 DiamondFiberStatus diamond_fiber_make_runnable(DiamondFiber *fiber);
 DiamondFiberStatus diamond_fiber_begin(DiamondFiber *fiber);
