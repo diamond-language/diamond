@@ -294,6 +294,12 @@ typedef enum DiamondFiberState : uint8_t {
     DIAMOND_FIBER_FAILED,
 } DiamondFiberState;
 
+typedef struct DiamondFiberFrame {
+    const DiamondChunk *chunk;
+    size_t instruction;
+    size_t depth;
+} DiamondFiberFrame;
+
 typedef struct DiamondFiber {
     DiamondFiberState state;
     const DiamondChunk *chunk;
@@ -315,12 +321,6 @@ typedef struct DiamondFiberQueue {
     size_t capacity;
     size_t head;
 } DiamondFiberQueue;
-
-typedef struct DiamondFiberFrame {
-    const DiamondChunk *chunk;
-    size_t instruction;
-    size_t depth;
-} DiamondFiberFrame;
 
 typedef struct DiamondVm {
     DiamondObject *objects;
