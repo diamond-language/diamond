@@ -119,6 +119,15 @@ static int run_source(const char *name, const char *source, bool dump_bytecode) 
             vm.quickening_threshold = (size_t)parsed;
         }
     }
+    const char *mono_threshold = getenv("DIAMOND_IC_MONO_THRESHOLD");
+    if (mono_threshold != nullptr && mono_threshold[0] != '\0') {
+        char *end = nullptr;
+        const unsigned long long parsed = strtoull(mono_threshold, &end, 10);
+        if (end != mono_threshold && *end == '\0' && parsed > 0 &&
+            parsed <= SIZE_MAX) {
+            vm.monomorphic_threshold = (size_t)parsed;
+        }
+    }
     DiamondValue result = DIAMOND_NIL;
     const DiamondVmStatus status = diamond_vm_run(&vm, &chunk, &result);
     if (status != DIAMOND_VM_OK) {

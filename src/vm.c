@@ -125,6 +125,7 @@ void diamond_vm_collect(DiamondVm *vm) {
 void diamond_vm_init(DiamondVm *vm) {
     *vm = (DiamondVm){.next_gc = 2048};
     vm->quickening_threshold = 1;
+    vm->monomorphic_threshold = 1;
 }
 
 void diamond_vm_free(DiamondVm *vm) {
@@ -297,6 +298,7 @@ static const DiamondMethod *lookup_method_cached(
         *cache=(DiamondMethodCache){.site=site};
     } else {
         if (cache->entry_count == 1 &&
+            cache->hits >= vm->monomorphic_threshold &&
             cache->entries[0].receiver_class == class) {
             vm->inline_cache_hits++;
             vm->monomorphic_dispatches++;
