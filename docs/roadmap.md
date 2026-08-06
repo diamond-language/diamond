@@ -258,6 +258,7 @@ future work.
 - `run_chunk` context handoff for instruction/register checkpoints on VM exits.
 - First explicit `YIELD` opcode with VM status propagation and suspended-fiber
   mapping; continuation-aware re-entry remains next.
+- Standalone `yield` source syntax and compiler emission coverage.
 
 ## Next priorities
 
