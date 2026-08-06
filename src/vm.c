@@ -241,6 +241,7 @@ DiamondFiber *diamond_fiber_queue_pop(DiamondFiberQueue *queue) {
     if(queue->head==queue->count)return nullptr;
     DiamondFiber *fiber=queue->items[queue->head++];
     if(queue->head==queue->count)queue->head=queue->count=0;
+    if(fiber->state==DIAMOND_FIBER_RUNNABLE)fiber->state=DIAMOND_FIBER_RUNNING;
     return fiber;
 }
 
