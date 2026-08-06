@@ -120,7 +120,10 @@ int main(void) {
        diamond_fiber_prepare(double_fiber)!=DIAMOND_FIBER_OK||
        diamond_fiber_resume(double_fiber)!=DIAMOND_FIBER_OK||
        diamond_fiber_run(double_fiber)!=DIAMOND_FIBER_OK||
-       double_fiber->state!=DIAMOND_FIBER_SUSPENDED)return 20;
+       double_fiber->state!=DIAMOND_FIBER_SUSPENDED||
+       diamond_fiber_current_frame(double_fiber)==nullptr||
+       diamond_fiber_current_frame(double_fiber)->instruction==0||
+       diamond_fiber_current_frame(double_fiber)->instruction>=double_yield_chunk.code_count)return 20;
     puts("fiber run passed");
     return 0;
 }
