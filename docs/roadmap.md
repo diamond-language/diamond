@@ -259,8 +259,8 @@ future work.
 
 ## Next priorities
 
-1. Split `diamond_vm_run` into resumable interpreter steps that consume fiber
-   frame instruction and register checkpoints at real suspension points.
+1. Add explicit suspension opcodes and split `diamond_vm_run` into resumable
+   interpreter steps that consume fiber frame instruction/register checkpoints.
 2. Add runtime class/module mutation with automatic method-cache invalidation.
 3. Measure `INVOKE_MONO` against polymorphic dispatch under representative
    workloads.
