@@ -110,6 +110,29 @@ int main(void) {
        diamond_fiber_fail(fiber,DIAMOND_VM_TYPE_ERROR)!=DIAMOND_FIBER_OK||
        fiber->state!=DIAMOND_FIBER_FAILED)return 11;
     diamond_fiber_free(fiber);
+
+    DiamondFiber *resumable_fiber=diamond_fiber_new(nullptr);
+    if(resumable_fiber==nullptr||diamond_fiber_resumable(nullptr)||
+       diamond_fiber_resumable(resumable_fiber))return 28;
+    if(diamond_fiber_make_runnable(resumable_fiber)!=DIAMOND_FIBER_OK||
+       !diamond_fiber_resumable(resumable_fiber))return 29;
+    if(diamond_fiber_begin(resumable_fiber)!=DIAMOND_FIBER_OK||
+       diamond_fiber_resumable(resumable_fiber))return 30;
+    if(diamond_fiber_suspend(resumable_fiber)!=DIAMOND_FIBER_OK||
+       !diamond_fiber_resumable(resumable_fiber))return 31;
+    if(diamond_fiber_resume(resumable_fiber)!=DIAMOND_FIBER_OK||
+       diamond_fiber_resumable(resumable_fiber))return 32;
+    if(diamond_fiber_complete(resumable_fiber,DIAMOND_INT(1))!=DIAMOND_FIBER_OK||
+       diamond_fiber_resumable(resumable_fiber))return 33;
+    diamond_fiber_free(resumable_fiber);
+
+    DiamondFiber *resumable_failed=diamond_fiber_new(nullptr);
+    if(resumable_failed==nullptr||diamond_fiber_make_runnable(resumable_failed)!=DIAMOND_FIBER_OK||
+       diamond_fiber_begin(resumable_failed)!=DIAMOND_FIBER_OK||
+       diamond_fiber_fail(resumable_failed,DIAMOND_VM_TYPE_ERROR)!=DIAMOND_FIBER_OK||
+       diamond_fiber_resumable(resumable_failed))return 34;
+    diamond_fiber_free(resumable_failed);
+
     puts("fiber states passed");
     return 0;
 }
