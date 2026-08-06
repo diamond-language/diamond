@@ -216,6 +216,10 @@ DiamondFiberStatus diamond_fiber_suspend(DiamondFiber *fiber) {
     fiber->state=DIAMOND_FIBER_SUSPENDED;return DIAMOND_FIBER_OK;
 }
 
+DiamondFiberStatus diamond_fiber_yield(DiamondFiber *fiber) {
+    return diamond_fiber_suspend(fiber);
+}
+
 DiamondFiberStatus diamond_fiber_complete(DiamondFiber *fiber, DiamondValue result) {
     if(fiber==nullptr||fiber->state!=DIAMOND_FIBER_RUNNING)
         return DIAMOND_FIBER_INVALID_STATE;

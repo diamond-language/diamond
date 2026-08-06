@@ -8,7 +8,7 @@ int main(void) {
     if(diamond_fiber_begin(fiber)!=DIAMOND_FIBER_INVALID_STATE)return 2;
     if(diamond_fiber_make_runnable(fiber)!=DIAMOND_FIBER_OK)return 3;
     if(diamond_fiber_begin(fiber)!=DIAMOND_FIBER_OK)return 4;
-    if(diamond_fiber_suspend(fiber)!=DIAMOND_FIBER_OK)return 5;
+    if(diamond_fiber_yield(fiber)!=DIAMOND_FIBER_OK)return 5;
     if(diamond_fiber_make_runnable(fiber)!=DIAMOND_FIBER_OK)return 6;
     if(diamond_fiber_resume(fiber)!=DIAMOND_FIBER_OK)return 7;
     if(diamond_fiber_suspend(fiber)!=DIAMOND_FIBER_OK)return 8;
