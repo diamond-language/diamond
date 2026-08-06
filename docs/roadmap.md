@@ -199,6 +199,7 @@ future work.
 - Circular-import diagnostics include the closing require site.
 - Named loader depth/file-count limits and overflow-safe source embedding.
 - Require-depth and loaded-file limit regression coverage.
+- Root-file seek/read and directory diagnostics preserve OS detail.
 
 ## Next priorities
 
