@@ -47,6 +47,11 @@ int main(void) {
     context.instruction=2;
     context.chunk=&empty_chunk;
     if(diamond_fiber_restore_context(fiber,&context))return 22;
+    DiamondVm vm;diamond_vm_init(&vm);
+    DiamondValue vm_result=DIAMOND_NIL;
+    if(diamond_vm_run_context(&vm,nullptr,&vm_result)!=DIAMOND_VM_INVALID_BYTECODE||
+       diamond_vm_run_context(&vm,&context,&vm_result)!=DIAMOND_VM_INVALID_BYTECODE) return 23;
+    diamond_vm_free(&vm);
     diamond_fiber_free(fiber);
     DiamondFiberQueue queue;diamond_fiber_queue_init(&queue);
     DiamondFiber *first=diamond_fiber_new(nullptr),*second=diamond_fiber_new(nullptr);
