@@ -3,6 +3,9 @@
 Diamond is a personal research language. These notes describe the current
 implementation, followed by decisions that are intentionally still open.
 
+Ruby familiarity is a surface and object-model influence only; behavioral or
+library compatibility with Ruby is explicitly out of scope.
+
 ## Goals
 
 - Ruby-like, expression-oriented syntax and object semantics.

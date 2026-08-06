@@ -232,7 +232,7 @@ future work.
 
 ## Explicitly deferred
 
-- Ruby compatibility.
+- Ruby compatibility (not a goal; only familiar syntax and object conventions).
 - Stable bytecode and embedding APIs.
 - Package management.
 - Multi-platform support.
