@@ -267,6 +267,9 @@ future work.
   fiber removal.
 - Scheduler run-all draining of an entire fiber queue to terminal states,
   tolerating individual fiber failures without aborting the run.
+- Garbage-collection roots for queued and suspended fiber frames, closing the
+  use-after-free gap where one fiber's turn could collect another fiber's
+  live, checkpointed registers on a shared VM.
 
 ## Next priorities
 
