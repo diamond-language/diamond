@@ -278,19 +278,31 @@ future work.
   top-level call frame, replacing a silent resume-time correctness bug
   (a nested yield's suspension previously discarded the inner call's
   progress and produced a misleading error on resume) with an immediate,
-  deterministic failure.
+  deterministic failure. Superseded by the stackful rewrite below.
+- Stackful fibers via POSIX `ucontext.h`: each `DiamondFiber` now owns its own
+  native OS stack (`mmap`-allocated, with a `PROT_NONE` guard page), and
+  `yield`/`resume` are `swapcontext` calls rather than an interpreter-level
+  instruction/register checkpoint. `run_chunk` itself is unchanged for nested
+  calls, rescue/ensure handling, and generic dispatch, since the OS preserves
+  the whole C call stack across a suspend. This fixed two confirmed
+  correctness bugs at once: `yield` inside a nested call now resumes and
+  completes with the correct value instead of silently corrupting on resume,
+  and `yield` inside an active `begin`/`rescue` now preserves the handler
+  stack across the suspend instead of losing it. GC root marking was
+  generalized to walk any fiber's own parked native frame chain, not just a
+  flat register array. This resolves the "Next priorities" item below by a
+  different route than originally specified: rather than splitting the
+  interpreter into an explicit, hand-persisted frame stack, fibers get their
+  own real stack and the interpreter needs no fiber-specific state at all.
 
 ## Next priorities
 
-1. Add explicit suspension opcodes and split `diamond_vm_run` into resumable
-   interpreter steps that consume fiber frame instruction/register checkpoints.
-2. Add runtime class/module mutation with automatic method-cache invalidation.
-3. Measure `INVOKE_MONO` against polymorphic dispatch under representative
+1. Add runtime class/module mutation with automatic method-cache invalidation.
+2. Measure `INVOKE_MONO` against polymorphic dispatch under representative
    workloads.
 
 ## Later experiments
 
-- Fibers and cooperative concurrency.
 - JIT compilation for stable specialized bytecode paths.
 - Self-hosting the compiler and core libraries in Diamond.
 - Structural interfaces and more capable flow typing.
