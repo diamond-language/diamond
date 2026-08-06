@@ -8,7 +8,17 @@
 #include <sys/mman.h>
 #include <unistd.h>
 
-enum { DIAMOND_MAX_CALL_DEPTH = 256 };
+/* Each run_chunk activation unconditionally allocates DiamondValue
+ * registers[256] (4KB), DiamondTypeBinding bindings[8] (~3.2KB), and
+ * UnwindHandler handlers[16] (~0.5KB) as C-stack locals, regardless of the
+ * called function's actual complexity. Measured against this machine's
+ * default 8MB stack, real (non-instrumented) recursion segfaults around
+ * depth ~210-220 in a debug (-O0) build and ~150-160 under AddressSanitizer's
+ * redzone-inflated frames -- both well below the depth this counter used to
+ * allow, so the guard never had a chance to trip before the native stack
+ * actually overflowed. 100 leaves comfortable margin under the tightest
+ * (sanitizer) measurement. */
+enum { DIAMOND_MAX_CALL_DEPTH = 100 };
 
 typedef enum HandlerKind : uint8_t { HANDLER_RESCUE, HANDLER_ENSURE } HandlerKind;
 
