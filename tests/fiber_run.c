@@ -86,6 +86,14 @@ int main(void) {
        yield_fiber->state!=DIAMOND_FIBER_SUSPENDED)return 13;
     diamond_fiber_free(yield_fiber);
     diamond_vm_free(&yield_vm);
+
+    static DiamondProgram yield_program;DiamondDiagnostic yield_diagnostic;
+    if(!diamond_compile("yield",&yield_program,&yield_diagnostic))return 14;
+    DiamondChunk compiled_yield=diamond_program_chunk(&yield_program);
+    bool found_yield=false;
+    for(size_t index=0;index<compiled_yield.code_count;index++)
+        if(compiled_yield.code[index]==DIAMOND_OP_YIELD)found_yield=true;
+    if(!found_yield)return 15;
     puts("fiber run passed");
     return 0;
 }
