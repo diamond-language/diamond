@@ -41,6 +41,12 @@ typedef struct DiamondFrame {
 } DiamondFrame;
 
 static void mark_value(DiamondValue value);
+static DiamondVmStatus run_chunk(const DiamondChunk *chunk, DiamondVm *vm,
+                                 const DiamondValue *arguments,
+                                 size_t argument_count, size_t depth,
+                                 const DiamondClosure *closure,
+                                 DiamondValue *result,
+                                 DiamondFiberExecutionContext *context);
 
 static void mark_object(DiamondObject *object) {
     if (object == nullptr || object->marked) return;
@@ -200,6 +206,15 @@ enum { DIAMOND_FIBER_STACK_SIZE = 8 * 1024 * 1024 };
         fiber->stack = nullptr;
         fiber->stack_size = 0;
     }
+}
+
+static DiamondFiber *diamond_fiber_entering;
+
+[[maybe_unused]] static void diamond_fiber_trampoline(void) {
+    DiamondFiber *self = diamond_fiber_entering;
+    self->status = run_chunk(self->chunk, self->vm, nullptr, 0, 0, nullptr,
+                             &self->result, nullptr);
+    swapcontext(&self->context, self->resume_target);
 }
 
 DiamondFiber *diamond_fiber_new(const DiamondChunk *chunk) {
