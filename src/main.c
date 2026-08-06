@@ -137,6 +137,14 @@ static int run_source(const char *name, const char *source, bool dump_bytecode) 
         fprintf(stderr,"inline caches: %zu hits, %zu misses\n",
                 vm.inline_cache_hits,vm.inline_cache_misses);
     }
+    if (getenv("DIAMOND_TRACE_IC_SITES") != nullptr) {
+        for (size_t index=0;index<DIAMOND_INLINE_CACHE_COUNT;index++) {
+            const DiamondMethodCache *cache=&vm.method_caches[index];
+            if (cache->site != nullptr)
+                fprintf(stderr,"inline cache site[%zu]: %zu hits, %zu misses, %u classes\n",
+                        index,cache->hits,cache->misses,cache->entry_count);
+        }
+    }
     if (getenv("DIAMOND_TRACE_SHAPES") != nullptr) {
         fprintf(stderr,"shape transitions: %zu\n",vm.shape_transitions);
     }

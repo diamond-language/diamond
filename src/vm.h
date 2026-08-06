@@ -267,6 +267,8 @@ typedef struct DiamondMethodCache {
     DiamondMethodCacheEntry entries[DIAMOND_INLINE_CACHE_WIDTH];
     uint8_t entry_count;
     uint8_t next_replace;
+    size_t hits;
+    size_t misses;
 } DiamondMethodCache;
 
 typedef struct DiamondFieldCacheEntry {

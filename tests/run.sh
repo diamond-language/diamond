@@ -765,6 +765,12 @@ actual="$(DIAMOND_TRACE_IC=1 "$diamond" tests/cases/polymorphic_cache.dia 2>"$er
 grep -q 'inline caches: 2 hits, 2 misses' "$error_file"
 rm -f "$error_file"
 
+error_file="$(mktemp)"
+actual="$(DIAMOND_TRACE_IC_SITES=1 "$diamond" tests/cases/inherited_cache.dia 2>"$error_file")"
+[[ "$actual" == "160" ]]
+grep -Eq 'inline cache site\[[0-9]+\]: 2 hits, 2 misses, 2 classes' "$error_file"
+rm -f "$error_file"
+
 actual="$("$diamond" tests/cases/inherited_cache.dia)"
 [[ "$actual" == "160" ]]
 
@@ -1972,4 +1978,4 @@ if "$diamond" -e $'module Constants\n VALUE = 42 if true\nend' >/dev/null 2>&1; 
     echo "conditional namespace constant unexpectedly compiled" >&2
     exit 1
 fi
-echo "496 tests passed"
+echo "497 tests passed"

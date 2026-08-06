@@ -299,10 +299,12 @@ static const DiamondMethod *lookup_method_cached(
         for(size_t index=0;index<cache->entry_count;index++) {
             if(cache->entries[index].receiver_class!=class)continue;
             vm->inline_cache_hits++;
+            cache->hits++;
             return cache->entries[index].method;
         }
     }
     vm->inline_cache_misses++;
+    cache->misses++;
     const DiamondMethod *method=lookup_method(chunk,class,name,length);
     size_t entry=cache->entry_count;
     if(entry<DIAMOND_INLINE_CACHE_WIDTH) {
