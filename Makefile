@@ -94,6 +94,7 @@ test-all:
 	$(MAKE) test-sanitize
 	$(MAKE) test-api
 	$(MAKE) test-fibers
+	$(MAKE) test-fiber-guards
 	$(MAKE) test-fiber-run
 	$(MAKE) test-vm-context
 	$(MAKE) test-scheduler
