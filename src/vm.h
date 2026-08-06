@@ -363,12 +363,14 @@ struct DiamondVm {
     DiamondValue exception;
     bool has_exception;
     char error[1024];
+    const DiamondFiberQueue *root_queue;
 };
 
 void diamond_vm_init(DiamondVm *vm);
 void diamond_vm_free(DiamondVm *vm);
 void diamond_vm_collect(DiamondVm *vm);
 void diamond_vm_invalidate_method_caches(DiamondVm *vm);
+void diamond_vm_bind_fiber_queue(DiamondVm *vm, const DiamondFiberQueue *queue);
 DiamondFiber *diamond_fiber_new(const DiamondChunk *chunk);
 void diamond_fiber_free(DiamondFiber *fiber);
 DiamondFiberStatus diamond_fiber_prepare(DiamondFiber *fiber);
