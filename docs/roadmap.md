@@ -230,6 +230,7 @@ future work.
 - Guarded `INVOKE_MONO` rewriting for stable instance call sites.
 - Monomorphic invoke deoptimization coverage when a new receiver class appears.
 - Rewrite warm-up suppression coverage for high dispatch thresholds.
+- Polymorphic-site guard coverage preventing unsafe invoke rewriting.
 
 ## Next priorities
 
