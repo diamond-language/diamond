@@ -334,6 +334,25 @@ int main(void) {
        strstr(nested_yield_direct_error,"unsupported nested yield")==nullptr)return 56;
     diamond_vm_free(&nested_yield_direct_vm);
 
+    static DiamondProgram post_call_yield_program;DiamondDiagnostic post_call_yield_diagnostic;
+    if(!diamond_compile("def helper()\n 1\nend\nhelper()\nyield",
+        &post_call_yield_program,&post_call_yield_diagnostic))return 57;
+    DiamondChunk post_call_yield_chunk=diamond_program_chunk(&post_call_yield_program);
+    DiamondVm post_call_yield_vm;diamond_vm_init(&post_call_yield_vm);
+    DiamondFiber *post_call_yield_fiber=diamond_fiber_new(&post_call_yield_chunk);
+    if(post_call_yield_fiber==nullptr||
+       diamond_fiber_bind_vm(post_call_yield_fiber,&post_call_yield_vm)!=DIAMOND_FIBER_OK||
+       diamond_fiber_prepare(post_call_yield_fiber)!=DIAMOND_FIBER_OK||
+       diamond_fiber_resume(post_call_yield_fiber)!=DIAMOND_FIBER_OK||
+       diamond_fiber_run(post_call_yield_fiber)!=DIAMOND_FIBER_OK)return 58;
+    if(post_call_yield_fiber->state!=DIAMOND_FIBER_SUSPENDED||
+       diamond_fiber_status(post_call_yield_fiber)!=DIAMOND_VM_YIELDED)return 59;
+    if(diamond_fiber_resume(post_call_yield_fiber)!=DIAMOND_FIBER_OK||
+       diamond_fiber_run(post_call_yield_fiber)!=DIAMOND_FIBER_OK||
+       post_call_yield_fiber->state!=DIAMOND_FIBER_COMPLETED||
+       diamond_fiber_status(post_call_yield_fiber)!=DIAMOND_VM_OK)return 60;
+    diamond_fiber_free(post_call_yield_fiber);diamond_vm_free(&post_call_yield_vm);
+
     puts("fiber run passed");
     return 0;
 }
