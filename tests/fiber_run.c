@@ -279,6 +279,23 @@ int main(void) {
     if(!diamond_compile("def inner()\n yield\n 5\nend\ninner() + 100",
         &nested_yield_program,&nested_yield_diagnostic))return 47;
     DiamondChunk nested_yield_chunk=diamond_program_chunk(&nested_yield_program);
+    DiamondVm nested_yield_vm;diamond_vm_init(&nested_yield_vm);
+    DiamondFiber *nested_yield_fiber=diamond_fiber_new(&nested_yield_chunk);
+    if(nested_yield_fiber==nullptr||
+       diamond_fiber_bind_vm(nested_yield_fiber,&nested_yield_vm)!=DIAMOND_FIBER_OK||
+       diamond_fiber_prepare(nested_yield_fiber)!=DIAMOND_FIBER_OK||
+       diamond_fiber_resume(nested_yield_fiber)!=DIAMOND_FIBER_OK||
+       diamond_fiber_run(nested_yield_fiber)!=DIAMOND_FIBER_OK)return 54;
+    if(nested_yield_fiber->state!=DIAMOND_FIBER_SUSPENDED||
+       diamond_fiber_status(nested_yield_fiber)!=DIAMOND_VM_YIELDED)return 55;
+    if(diamond_fiber_resume(nested_yield_fiber)!=DIAMOND_FIBER_OK||
+       diamond_fiber_run(nested_yield_fiber)!=DIAMOND_FIBER_OK||
+       nested_yield_fiber->state!=DIAMOND_FIBER_COMPLETED||
+       diamond_fiber_status(nested_yield_fiber)!=DIAMOND_VM_OK)return 56;
+    DiamondValue nested_yield_result=diamond_fiber_result(nested_yield_fiber);
+    if(nested_yield_result.kind!=DIAMOND_VALUE_INT||nested_yield_result.as.integer!=105)return 57;
+    diamond_fiber_free(nested_yield_fiber);diamond_vm_free(&nested_yield_vm);
+
     DiamondVm nested_yield_direct_vm;diamond_vm_init(&nested_yield_direct_vm);
     DiamondValue nested_yield_direct_result=DIAMOND_NIL;
     if(diamond_vm_run(&nested_yield_direct_vm,&nested_yield_chunk,&nested_yield_direct_result)!=
