@@ -20,8 +20,11 @@ int main(void) {
         "def read(object)\n"
         "  object.value()\n"
         "end\n"
+        "def read_replacement(object)\n"
+        "  object.replacement()\n"
+        "end\n"
         "a = Child.new()\n"
-        "read(a)\n";
+        "read(a) + read_replacement(a)\n";
     DiamondProgram program;
     DiamondDiagnostic diagnostic;
     if (!diamond_compile(source,&program,&diagnostic)) {
@@ -31,7 +34,7 @@ int main(void) {
     DiamondVm vm;diamond_vm_init(&vm);
     DiamondValue result=DIAMOND_NIL;
     if (diamond_vm_run(&vm,&chunk,&result)!=DIAMOND_VM_OK ||
-        result.kind!=DIAMOND_VALUE_INT || result.as.integer!=1) return 2;
+        result.kind!=DIAMOND_VALUE_INT || result.as.integer!=3) return 2;
     DiamondClass *klass=nullptr;
     for(size_t index=0;index<program.class_count;index++)
         if(strcmp(program.classes[index].name,"Parent")==0)klass=&program.classes[index];
@@ -39,7 +42,7 @@ int main(void) {
     klass->methods[0].function_index=klass->methods[1].function_index;
     diamond_vm_invalidate_method_caches(&vm);
     if (diamond_vm_run(&vm,&chunk,&result)!=DIAMOND_VM_OK ||
-        result.kind!=DIAMOND_VALUE_INT || result.as.integer!=2) return 4;
+        result.kind!=DIAMOND_VALUE_INT || result.as.integer!=4) return 4;
     diamond_vm_free(&vm);
     puts("api invalidation passed");
     return 0;
