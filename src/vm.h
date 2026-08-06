@@ -404,6 +404,7 @@ size_t diamond_fiber_queue_count(const DiamondFiberQueue *queue);
 DiamondFiber *diamond_fiber_queue_at(const DiamondFiberQueue *queue, size_t index);
 DiamondFiber *diamond_fiber_scheduler_step(DiamondFiberQueue *queue);
 bool diamond_fiber_scheduler_requeue(DiamondFiberQueue *queue, DiamondFiber *fiber);
+DiamondFiberStatus diamond_fiber_scheduler_run_once(DiamondFiberQueue *queue);
 DiamondVmStatus diamond_vm_run(DiamondVm *vm, const DiamondChunk *chunk,
                                DiamondValue *result);
 /* Executes from a saved context and writes instruction/register state back. */
