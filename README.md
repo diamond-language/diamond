@@ -78,6 +78,7 @@ Build variants:
 make debug
 make release
 make sanitize # requires GCC sanitizer runtime libraries
+make test-all # debug, release, and sanitizer suites sequentially
 make clean
 ```
 
