@@ -40,6 +40,7 @@ int main(void) {
        diamond_fiber_get_register(fiber,DIAMOND_REGISTER_COUNT,&register_value))return 18;
     DiamondFiberExecutionContext context={};
     if(!diamond_fiber_capture_context(fiber,&context)||
+       context.status!=DIAMOND_VM_OK||
        !diamond_fiber_set_register(fiber,0,DIAMOND_INT(7))||
        !diamond_fiber_restore_context(fiber,&context)||
        !diamond_fiber_get_register(fiber,0,&register_value)||
