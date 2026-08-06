@@ -255,6 +255,7 @@ future work.
 - VM-facing fresh-context execution boundary with terminal checkpoint updates.
 - Explicit VM status propagation through execution contexts and restoration
   guards for nonterminal, successful contexts.
+- `run_chunk` context handoff for instruction/register checkpoints on VM exits.
 
 ## Next priorities
 
