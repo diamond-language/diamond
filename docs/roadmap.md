@@ -204,6 +204,7 @@ future work.
   mode.
 - Source-segment range validation and reusable bundle cleanup.
 - Canonical source-map path preservation across segment metadata.
+- Imported EOF diagnostics retain the dependency path at segment boundaries.
 
 ## Next priorities
 
