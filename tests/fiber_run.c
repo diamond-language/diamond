@@ -16,6 +16,7 @@ int main(void) {
     DiamondFiber *fiber = diamond_fiber_new(&chunk);
     if (fiber == nullptr || diamond_fiber_bind_vm(fiber, &vm) != DIAMOND_FIBER_OK ||
         diamond_fiber_prepare(fiber) != DIAMOND_FIBER_OK ||
+        !diamond_fiber_set_register(fiber, 7, DIAMOND_INT(99)) ||
         diamond_fiber_resume(fiber) != DIAMOND_FIBER_OK ||
         diamond_fiber_run(fiber) != DIAMOND_FIBER_OK ||
         fiber->state != DIAMOND_FIBER_COMPLETED ||
@@ -26,6 +27,8 @@ int main(void) {
         diamond_fiber_current_frame(fiber)->instruction != chunk.code_count ||
         !diamond_fiber_checkpoint(fiber, &checkpoint) ||
         checkpoint.instruction != chunk.code_count ||
+        checkpoint.registers[7].kind != DIAMOND_VALUE_INT ||
+        checkpoint.registers[7].as.integer != 99 ||
         diamond_fiber_checkpoint(fiber, nullptr)) return 2;
     if (diamond_fiber_run(fiber) != DIAMOND_FIBER_INVALID_STATE) return 3;
     diamond_fiber_free(fiber);
