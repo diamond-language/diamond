@@ -218,10 +218,11 @@ future work.
   all supported build modes.
 - Opcode execution profiling and opt-in dynamic integer-add quickening.
 - Guarded addition quickening with safe polymorphic deoptimization.
+- Guarded integer quickening for dynamic subtraction, multiplication, and division.
 
 ## Next priorities
 
-1. Extend guarded quickening to subtraction, multiplication, and division sites.
+1. Measure quickening thresholds and extend specialization to comparison sites.
 
 ## Later experiments
 
