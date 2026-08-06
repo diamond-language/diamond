@@ -39,6 +39,11 @@ int main(void) {
     for(size_t index=0;index<program.class_count;index++)
         if(strcmp(program.classes[index].name,"Parent")==0)klass=&program.classes[index];
     if(klass==nullptr||klass->method_count<2)return 3;
+    const uint8_t original_value_function=klass->methods[0].function_index;
+    DiamondClass *child=nullptr;
+    for(size_t index=0;index<program.class_count;index++)
+        if(strcmp(program.classes[index].name,"Child")==0)child=&program.classes[index];
+    if(child==nullptr)return 7;
     klass->methods[0].function_index=klass->methods[1].function_index;
     diamond_vm_invalidate_method_caches(&vm);
     if (diamond_vm_run(&vm,&chunk,&result)!=DIAMOND_VM_OK ||
@@ -52,6 +57,15 @@ int main(void) {
     klass->methods[1].is_private=true;
     diamond_vm_invalidate_method_caches(&vm);
     if (diamond_vm_run(&vm,&chunk,&result)!=DIAMOND_VM_TYPE_ERROR)return 6;
+    child->superclass=UINT8_MAX;
+    diamond_vm_invalidate_method_caches(&vm);
+    if (diamond_vm_run(&vm,&chunk,&result)!=DIAMOND_VM_TYPE_ERROR)return 8;
+    child->superclass=(uint8_t)(klass-program.classes);
+    klass->methods[0].function_index=original_value_function;
+    klass->methods[1].is_private=false;
+    diamond_vm_invalidate_method_caches(&vm);
+    if (diamond_vm_run(&vm,&chunk,&result)!=DIAMOND_VM_OK ||
+        result.kind!=DIAMOND_VALUE_INT || result.as.integer!=3)return 9;
     diamond_vm_free(&vm);
     puts("api invalidation passed");
     return 0;
