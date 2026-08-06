@@ -172,6 +172,14 @@ void diamond_fiber_free(DiamondFiber *fiber) {
     free(fiber->frames);free(fiber);
 }
 
+DiamondFiberStatus diamond_fiber_prepare(DiamondFiber *fiber) {
+    if(fiber==nullptr||fiber->state!=DIAMOND_FIBER_NEW||fiber->chunk==nullptr)
+        return DIAMOND_FIBER_INVALID_STATE;
+    const DiamondFiberFrame frame={.chunk=fiber->chunk,.instruction=0,.depth=0};
+    if(!diamond_fiber_push_frame(fiber,frame))return DIAMOND_FIBER_INVALID_STATE;
+    fiber->state=DIAMOND_FIBER_RUNNABLE;return DIAMOND_FIBER_OK;
+}
+
 const char *diamond_fiber_state_name(DiamondFiberState state) {
     switch(state) {
         case DIAMOND_FIBER_NEW:return "new";
