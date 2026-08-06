@@ -138,6 +138,16 @@ Methods are bytecode functions with `self` in register zero. Dynamic method
 lookup walks the receiver's class and superclass chain. `super(arguments)` is
 anchored to the class that lexically defined the calling method.
 
+Direct calls to statically known functions have their arity checked at
+compile time. Dynamic dispatch cannot: the compiler does not know which
+method a receiver's class will resolve to until the call actually runs, so
+every dynamic invoke path (`INVOKE`, the rewritten `INVOKE_MONO` fast path,
+and constructor dispatch) validates the resolved method's declared arity at
+runtime and raises a rescuable `ArgumentError` on mismatch. This check is
+per-dispatch, not cached alongside the monomorphic or polymorphic call-site
+caches, so a call site that has warmed on one receiver class still correctly
+validates arity against whichever class actually shows up next.
+
 Each class owns a pointer-stable chain of shapes representing materialized field
 prefixes. Fresh instances begin at shape zero; writing a field advances to the
 shape that includes its slot, while an unmaterialized read produces `nil`.
