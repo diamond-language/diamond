@@ -274,6 +274,42 @@ int main(void) {
        unbound_second_string->length!=4||memcmp(unbound_second_string->chars,"beta",4)!=0)return 47;
     diamond_fiber_free(unbound_gc_fiber);diamond_vm_free(&unbound_gc_vm);
 
+    static const DiamondStringConstant shared_gc_strings_a[]={{.chars="fiber-a-value",.length=13}};
+    static const uint8_t shared_gc_code_a[]={DIAMOND_OP_STRING,0,0,DIAMOND_OP_YIELD};
+    static const DiamondChunk shared_gc_chunk_a={.name="shared-gc-a",.code=shared_gc_code_a,
+        .code_count=4,.strings=shared_gc_strings_a,.string_count=1};
+    static const DiamondStringConstant shared_gc_strings_b[]={{.chars="fiber-b-value",.length=13}};
+    static const uint8_t shared_gc_code_b[]={DIAMOND_OP_STRING,0,0,DIAMOND_OP_YIELD};
+    static const DiamondChunk shared_gc_chunk_b={.name="shared-gc-b",.code=shared_gc_code_b,
+        .code_count=4,.strings=shared_gc_strings_b,.string_count=1};
+    DiamondVm shared_gc_vm;diamond_vm_init(&shared_gc_vm);
+    shared_gc_vm.stress_gc=true;
+    DiamondFiberQueue shared_gc_queue;diamond_fiber_queue_init(&shared_gc_queue);
+    diamond_vm_bind_fiber_queue(&shared_gc_vm,&shared_gc_queue);
+    DiamondFiber *shared_gc_a=diamond_fiber_new(&shared_gc_chunk_a);
+    DiamondFiber *shared_gc_b=diamond_fiber_new(&shared_gc_chunk_b);
+    if(shared_gc_a==nullptr||shared_gc_b==nullptr||
+       diamond_fiber_bind_vm(shared_gc_a,&shared_gc_vm)!=DIAMOND_FIBER_OK||
+       diamond_fiber_bind_vm(shared_gc_b,&shared_gc_vm)!=DIAMOND_FIBER_OK||
+       diamond_fiber_prepare(shared_gc_a)!=DIAMOND_FIBER_OK||
+       diamond_fiber_prepare(shared_gc_b)!=DIAMOND_FIBER_OK||
+       !diamond_fiber_queue_push(&shared_gc_queue,shared_gc_a)||
+       !diamond_fiber_queue_push(&shared_gc_queue,shared_gc_b))return 48;
+    if(diamond_fiber_scheduler_run_all(&shared_gc_queue)!=DIAMOND_FIBER_OK||
+       shared_gc_a->state!=DIAMOND_FIBER_COMPLETED||
+       shared_gc_b->state!=DIAMOND_FIBER_COMPLETED)return 49;
+    DiamondValue shared_gc_a_value=DIAMOND_NIL,shared_gc_b_value=DIAMOND_NIL;
+    if(!diamond_fiber_get_register(shared_gc_a,0,&shared_gc_a_value)||
+       !diamond_fiber_get_register(shared_gc_b,0,&shared_gc_b_value)||
+       shared_gc_a_value.kind!=DIAMOND_VALUE_OBJECT||shared_gc_b_value.kind!=DIAMOND_VALUE_OBJECT)return 50;
+    const DiamondString *shared_gc_a_string=(const DiamondString *)shared_gc_a_value.as.object;
+    const DiamondString *shared_gc_b_string=(const DiamondString *)shared_gc_b_value.as.object;
+    if(shared_gc_a_string->length!=13||memcmp(shared_gc_a_string->chars,"fiber-a-value",13)!=0||
+       shared_gc_b_string->length!=13||memcmp(shared_gc_b_string->chars,"fiber-b-value",13)!=0)return 51;
+    diamond_fiber_queue_free(&shared_gc_queue);
+    diamond_fiber_free(shared_gc_a);diamond_fiber_free(shared_gc_b);
+    diamond_vm_free(&shared_gc_vm);
+
     puts("fiber run passed");
     return 0;
 }
