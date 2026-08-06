@@ -328,6 +328,13 @@ static const DiamondMethod *lookup_method_cached(
     return method;
 }
 
+static void record_rewritten_site(DiamondVm *vm, const uint8_t *site) {
+    if (vm->rewritten_site_count >= DIAMOND_MAX_CODE)return;
+    for (size_t index=0;index<vm->rewritten_site_count;index++)
+        if (vm->rewritten_sites[index]==site)return;
+    vm->rewritten_sites[vm->rewritten_site_count++]=site;
+}
+
 static DiamondFieldCacheEntry *lookup_field_cached(
     DiamondVm *vm, const uint8_t *site, const DiamondInstance *instance,
     uint8_t field, bool write) {
@@ -2212,6 +2219,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                         cache->hits>=vm->monomorphic_threshold) {
                         uint8_t *code=(uint8_t *)(void *)chunk->code;
                         code[instruction_offset]=(uint8_t)DIAMOND_OP_INVOKE_MONO;
+                        record_rewritten_site(vm,site);
                         vm->direct_dispatch_rewrites++;
                     }
                 }
@@ -2603,6 +2611,9 @@ dispatch_continue:
 
 DiamondVmStatus diamond_vm_run(DiamondVm *vm, const DiamondChunk *chunk,
                                DiamondValue *result) {
+    for (size_t index=0;index<vm->rewritten_site_count;index++)
+        ((uint8_t *)(void *)vm->rewritten_sites[index])[0]=(uint8_t)DIAMOND_OP_INVOKE;
+    vm->rewritten_site_count=0;
     vm->error[0]='\0';
     vm->has_exception=false;
     memset(vm->method_caches,0,sizeof(vm->method_caches));

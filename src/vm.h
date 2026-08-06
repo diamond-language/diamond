@@ -299,6 +299,8 @@ typedef struct DiamondVm {
     size_t method_cache_probes;
     size_t monomorphic_threshold;
     size_t direct_dispatch_rewrites;
+    const uint8_t *rewritten_sites[DIAMOND_MAX_CODE];
+    size_t rewritten_site_count;
     size_t field_cache_hits;
     size_t field_cache_misses;
     size_t shape_transitions;
