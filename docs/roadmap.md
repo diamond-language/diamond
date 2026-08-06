@@ -240,6 +240,7 @@ future work.
 - Active dispatch-policy trace for reproducible threshold experiments.
 - Default one-observation policy locked by deterministic benchmark coverage.
 - Explicit method-cache invalidation API for future class/module mutation.
+- Repeat-mode exercise of the explicit invalidation boundary.
 
 ## Next priorities
 
