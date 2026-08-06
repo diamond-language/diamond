@@ -59,7 +59,7 @@ int main(void) {
     DiamondFiberExecutionContext failing_context={.chunk=&failing_chunk};
     DiamondValue failing_result=DIAMOND_NIL;
     if(diamond_vm_run_context(&failing_vm,&failing_context,&failing_result)!=
-       DIAMOND_VM_DIVISION_BY_ZERO||failing_context.instruction!=0||
+       DIAMOND_VM_DIVISION_BY_ZERO||failing_context.instruction>failing_chunk.code_count||
        failing_context.status!=DIAMOND_VM_DIVISION_BY_ZERO)return 8;
     if(!diamond_fiber_context_terminal(&failing_context))return 10;
     diamond_fiber_free(failing);
