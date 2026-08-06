@@ -220,6 +220,7 @@ future work.
 - Guarded addition quickening with safe polymorphic deoptimization.
 - Guarded integer quickening for dynamic subtraction, multiplication, and division.
 - Guarded integer quickening for dynamic ordering comparisons.
+- Configurable quickening warm-up thresholds with environment control.
 
 ## Next priorities
 

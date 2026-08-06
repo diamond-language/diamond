@@ -476,6 +476,9 @@ With `DIAMOND_QUICKEN=1`, integer arithmetic and ordering sites specialize to
 non-integer observation deoptimizes addition back to generic `ADD`; the other
 operators retain their normal type errors. Equality remains a structural,
 non-specialized operation.
+The default warm-up threshold is one observation; set
+`DIAMOND_QUICKEN_THRESHOLD=N` to require N integer observations before a
+dynamic site specializes.
 
 ## Important limitations
 
