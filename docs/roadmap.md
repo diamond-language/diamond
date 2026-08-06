@@ -206,6 +206,7 @@ future work.
 - Canonical source-map path preservation across segment metadata.
 - Imported EOF diagnostics retain the dependency path at segment boundaries.
 - Imported diagnostic excerpts omit internal loader marker lines.
+- Multiline imported EOF diagnostics compute line numbers within the segment.
 
 ## Next priorities
 
