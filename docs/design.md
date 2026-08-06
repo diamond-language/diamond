@@ -28,6 +28,21 @@ measurement shows that representation density is worth the complexity.
 Integer arithmetic uses C23 checked arithmetic and reports overflow rather than
 invoking C undefined behavior.
 
+Nested Diamond calls recurse through the C call stack, one native activation
+per call depth, and a call-depth counter enforces a hard ceiling
+(`DIAMOND_MAX_CALL_DEPTH`) so uncontrolled recursion fails as a rescuable
+`SystemStackError` instead of exhausting the process's real native stack. The
+ceiling is calibrated to native stack safety, not chosen as a language-level
+recursion limit: each call activation unconditionally allocates several
+kilobytes of fixed-size C locals regardless of the called function's actual
+complexity, and the ceiling must stay safely below the point where the real
+stack would overflow first, across every build configuration this project
+tests (debug, release, and under AddressSanitizer's redzone-inflated frames,
+the tightest of the three). A ceiling calibrated only against an optimized
+release build previously allowed recursion deep enough to segfault the
+process outright in debug and sanitizer builds, well before the counter ever
+got a chance to trip.
+
 ## Compilation
 
 Before lexing, the source loader expands line-form `require "path"`
