@@ -87,4 +87,5 @@ The focused regression harness is available with:
 make test-fibers
 make test-fiber-run
 make test-fiber-context
+make test-vm-context
 ```
