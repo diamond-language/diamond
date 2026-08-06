@@ -66,7 +66,7 @@ failures. Loader bundles fully reset after release, so callers may safely reuse
 the bundle object for another load. Source-map segments reject invalid ranges
 and preserve the complete canonical path, including diagnostics raised at an
 imported file's EOF boundary. Diagnostic excerpts omit the loader's internal
-marker lines.
+marker lines and retain multiline line numbers.
 
 Build variants:
 
