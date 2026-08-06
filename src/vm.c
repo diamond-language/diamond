@@ -2866,6 +2866,17 @@ DiamondVmStatus diamond_vm_run(DiamondVm *vm, const DiamondChunk *chunk,
     return run_chunk(chunk, vm, nullptr, 0, 0, nullptr, result);
 }
 
+DiamondVmStatus diamond_vm_run_context(DiamondVm *vm,
+                                       DiamondFiberExecutionContext *context,
+                                       DiamondValue *result) {
+    if(vm==nullptr||context==nullptr||result==nullptr||context->chunk==nullptr||
+       context->instruction!=0||context->depth!=0)
+        return DIAMOND_VM_INVALID_BYTECODE;
+    DiamondVmStatus status=diamond_vm_run(vm,context->chunk,result);
+    if(status==DIAMOND_VM_OK)context->instruction=context->chunk->code_count;
+    return status;
+}
+
 const char *diamond_vm_error(const DiamondVm *vm) {
     return vm->error[0]=='\0' ? nullptr : vm->error;
 }

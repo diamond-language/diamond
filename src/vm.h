@@ -402,6 +402,9 @@ DiamondFiber *diamond_fiber_scheduler_step(DiamondFiberQueue *queue);
 bool diamond_fiber_scheduler_requeue(DiamondFiberQueue *queue, DiamondFiber *fiber);
 DiamondVmStatus diamond_vm_run(DiamondVm *vm, const DiamondChunk *chunk,
                                DiamondValue *result);
+DiamondVmStatus diamond_vm_run_context(DiamondVm *vm,
+                                       DiamondFiberExecutionContext *context,
+                                       DiamondValue *result);
 const char *diamond_vm_status_name(DiamondVmStatus status);
 const char *diamond_vm_error(const DiamondVm *vm);
 
