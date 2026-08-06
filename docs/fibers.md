@@ -52,6 +52,12 @@ than true mid-instruction continuations; successful completion advances the
 checkpoint to the chunk boundary. Splitting the interpreter into
 resumable steps is the next fiber implementation milestone.
 
+The VM-facing `diamond_vm_run_context` entry point currently accepts only a
+fresh context (`instruction == 0`, `depth == 0`). It runs the chunk to
+completion and advances the context to the terminal instruction boundary;
+nonzero checkpoints are rejected until the interpreter loop is split into
+resumable steps.
+
 The current C boundary is:
 
 ```c
