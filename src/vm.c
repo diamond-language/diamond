@@ -191,12 +191,13 @@ DiamondFiberStatus diamond_fiber_bind_vm(DiamondFiber *fiber, DiamondVm *vm) {
 DiamondFiberStatus diamond_fiber_run(DiamondFiber *fiber) {
     if(fiber==nullptr||fiber->state!=DIAMOND_FIBER_RUNNING||fiber->vm==nullptr||
        fiber->chunk==nullptr)return DIAMOND_FIBER_INVALID_STATE;
-    fiber->status=diamond_vm_run(fiber->vm,fiber->chunk,&fiber->result);
+    DiamondFiberExecutionContext context={};
+    if(!diamond_fiber_capture_context(fiber,&context))return DIAMOND_FIBER_INVALID_STATE;
+    fiber->status=diamond_vm_run_context(fiber->vm,&context,&fiber->result);
+    if(!diamond_fiber_restore_context(fiber,&context))return DIAMOND_FIBER_INVALID_STATE;
     fiber->state=fiber->status==DIAMOND_VM_OK?DIAMOND_FIBER_COMPLETED:
         (fiber->status==DIAMOND_VM_YIELDED?DIAMOND_FIBER_SUSPENDED:
          DIAMOND_FIBER_FAILED);
-    if(fiber->status==DIAMOND_VM_OK)
-        (void)diamond_fiber_update_instruction(fiber,fiber->chunk->code_count);
     return DIAMOND_FIBER_OK;
 }
 
@@ -304,8 +305,7 @@ bool diamond_fiber_capture_context(const DiamondFiber *fiber, DiamondFiberExecut
 bool diamond_fiber_restore_context(DiamondFiber *fiber, const DiamondFiberExecutionContext *context) {
     if(fiber==nullptr||context==nullptr||fiber->frame_count==0||
        fiber->state==DIAMOND_FIBER_COMPLETED||fiber->state==DIAMOND_FIBER_FAILED||
-       context->chunk==nullptr||(context->status!=DIAMOND_VM_OK&&
-       context->status!=DIAMOND_VM_YIELDED)||
+       context->chunk==nullptr||
        context->instruction>context->chunk->code_count)
         return false;
     fiber->frames[fiber->frame_count-1]=*context;
