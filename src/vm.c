@@ -2867,6 +2867,14 @@ dispatch_continue:
 #undef VM_PROPAGATE
 #undef RECORD_ERROR
 
+    if(context!=nullptr&&ip>=chunk->code_count) {
+        *result=DIAMOND_NIL;
+        context->instruction=ip;
+        context->status=DIAMOND_VM_OK;
+        memcpy(context->registers,registers,sizeof registers);
+        vm->frames=frame.previous;
+        return DIAMOND_VM_OK;
+    }
     vm->frames = frame.previous;
     return DIAMOND_VM_INVALID_BYTECODE;
 }
