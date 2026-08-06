@@ -250,11 +250,12 @@ future work.
 - Fiber lifecycle states, frame checkpoints, FIFO scheduler stepping, and
   explicit yield/requeue transitions.
 - VM binding, result/status accessors, and one-shot fiber execution boundary.
+- Fiber frame register snapshots with bounded checkpoint accessors.
 
 ## Next priorities
 
-1. Split `diamond_vm_run` into resumable interpreter steps that honor fiber
-   frame checkpoints and real suspension points.
+1. Split `diamond_vm_run` into resumable interpreter steps that consume fiber
+   frame instruction and register checkpoints at real suspension points.
 2. Add runtime class/module mutation with automatic method-cache invalidation.
 3. Measure `INVOKE_MONO` against polymorphic dispatch under representative
    workloads.
