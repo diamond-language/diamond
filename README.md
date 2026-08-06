@@ -470,6 +470,8 @@ Field sites use four-entry polymorphic caches guarded by instance shape.
 
 Set `DIAMOND_TRACE_OPCODES=1` to print executed opcode counts while profiling
 programs for quickening and type-specialization experiments.
+With `DIAMOND_QUICKEN=1`, integer `+` sites specialize to `ADD_INT`; a later
+non-integer observation deoptimizes the site back to generic `ADD`.
 
 ## Important limitations
 
