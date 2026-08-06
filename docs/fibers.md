@@ -69,6 +69,10 @@ The context-aware fiber path now resumes from the saved instruction: a fiber
 that yields at its final boundary can be resumed and completed without
 re-executing the yield opcode.
 
+Multiple yield boundaries are supported in sequence. Each resume advances the
+frame checkpoint to the next boundary; only the final resume transitions the
+fiber to `COMPLETED`.
+
 Diamond source may now emit this boundary with a standalone `yield` statement;
 the compiler emits `DIAMOND_OP_YIELD` followed by a `nil` continuation value.
 
