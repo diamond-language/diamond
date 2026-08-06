@@ -246,6 +246,7 @@ future work.
 - Selective inherited-method mutation coverage across multiple call sites.
 - Method arity and visibility mutation coverage through explicit invalidation.
 - Superclass-link mutation and restoration coverage through explicit invalidation.
+- Shared-program invalidation coverage across independent VM instances.
 
 ## Next priorities
 
