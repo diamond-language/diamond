@@ -58,11 +58,13 @@ static bool same_path(const char paths[][DIAMOND_MAX_SOURCE_PATH],size_t count,
 static bool record_segment(Loader *loader,const char *path,size_t line,
                            size_t start,size_t end) {
     if(start==end)return true;
+    if(end<start)return false;
     if(loader->bundle->segment_count==DIAMOND_MAX_SOURCE_SEGMENTS)return false;
     DiamondSourceSegment *segment=
         &loader->bundle->segments[loader->bundle->segment_count++];
     *segment=(DiamondSourceSegment){.start=start,.end=end,.original_line=line};
-    (void)snprintf(segment->path,sizeof segment->path,"%s",path);return true;
+    const int written=snprintf(segment->path,sizeof segment->path,"%s",path);
+    return written>=0&&(size_t)written<sizeof segment->path;
 }
 
 static bool expand(Loader *loader,const char *path,const char *source,
