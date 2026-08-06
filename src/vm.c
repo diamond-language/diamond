@@ -1730,17 +1730,40 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     opcode == DIAMOND_OP_EQUAL ? equal : !equal);
                 break;
             }
+            case DIAMOND_OP_LESS:
+            case DIAMOND_OP_LESS_EQUAL:
+            case DIAMOND_OP_GREATER:
+            case DIAMOND_OP_GREATER_EQUAL:
             case DIAMOND_OP_LESS_INT:
             case DIAMOND_OP_LESS_EQUAL_INT:
             case DIAMOND_OP_GREATER_INT:
             case DIAMOND_OP_GREATER_EQUAL_INT: {
-                const DiamondOpCode opcode = (DiamondOpCode)instruction;
+                DiamondOpCode opcode = (DiamondOpCode)instruction;
                 uint8_t destination = 0;
                 uint8_t left = 0;
                 uint8_t right = 0;
                 READ_BYTE(destination);
                 READ_BYTE(left);
                 READ_BYTE(right);
+                if (vm->quickening &&
+                    (opcode == DIAMOND_OP_LESS ||
+                     opcode == DIAMOND_OP_LESS_EQUAL ||
+                     opcode == DIAMOND_OP_GREATER ||
+                     opcode == DIAMOND_OP_GREATER_EQUAL) &&
+                    registers[left].kind == DIAMOND_VALUE_INT &&
+                    registers[right].kind == DIAMOND_VALUE_INT) {
+                    const DiamondOpCode specialized = opcode == DIAMOND_OP_LESS
+                        ? DIAMOND_OP_LESS_INT
+                        : opcode == DIAMOND_OP_LESS_EQUAL
+                            ? DIAMOND_OP_LESS_EQUAL_INT
+                            : opcode == DIAMOND_OP_GREATER
+                                ? DIAMOND_OP_GREATER_INT
+                                : DIAMOND_OP_GREATER_EQUAL_INT;
+                    uint8_t *code=(uint8_t *)(void *)chunk->code;
+                    code[instruction_offset]=(uint8_t)specialized;
+                    opcode=specialized;
+                    vm->quickened_sites++;
+                }
                 if (registers[left].kind != DIAMOND_VALUE_INT ||
                     registers[right].kind != DIAMOND_VALUE_INT) {
                     VM_RETURN(DIAMOND_VM_TYPE_ERROR);
@@ -1748,10 +1771,14 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 const int64_t a = registers[left].as.integer;
                 const int64_t b = registers[right].as.integer;
                 bool comparison = false;
-                if (opcode == DIAMOND_OP_LESS_INT) comparison = a < b;
-                if (opcode == DIAMOND_OP_LESS_EQUAL_INT) comparison = a <= b;
-                if (opcode == DIAMOND_OP_GREATER_INT) comparison = a > b;
-                if (opcode == DIAMOND_OP_GREATER_EQUAL_INT) comparison = a >= b;
+                if (opcode == DIAMOND_OP_LESS_INT || opcode == DIAMOND_OP_LESS)
+                    comparison = a < b;
+                if (opcode == DIAMOND_OP_LESS_EQUAL_INT ||
+                    opcode == DIAMOND_OP_LESS_EQUAL) comparison = a <= b;
+                if (opcode == DIAMOND_OP_GREATER_INT ||
+                    opcode == DIAMOND_OP_GREATER) comparison = a > b;
+                if (opcode == DIAMOND_OP_GREATER_EQUAL_INT ||
+                    opcode == DIAMOND_OP_GREATER_EQUAL) comparison = a >= b;
                 registers[destination] = DIAMOND_BOOL(comparison);
                 break;
             }

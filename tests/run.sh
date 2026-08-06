@@ -50,6 +50,16 @@ quickening_trace="$(DIAMOND_QUICKEN=1 DIAMOND_TRACE_QUICKEN=1 \
 grep -q 'quickened sites: 1, deoptimized sites: 0' <<<"$quickening_trace"
 grep -q '^10$' <<<"$quickening_trace"
 
+quickening_trace="$(DIAMOND_QUICKEN=1 DIAMOND_TRACE_QUICKEN=1 \
+    "$diamond" -e $'def comparison(a,b) = a < b\ncomparison(2,3)' 2>&1)"
+grep -q 'quickened sites: 1, deoptimized sites: 0' <<<"$quickening_trace"
+grep -q '^true$' <<<"$quickening_trace"
+
+quickening_trace="$(DIAMOND_QUICKEN=1 DIAMOND_TRACE_QUICKEN=1 \
+    "$diamond" -e $'def comparison(a,b) = a >= b\ncomparison(3,3)' 2>&1)"
+grep -q 'quickened sites: 1, deoptimized sites: 0' <<<"$quickening_trace"
+grep -q '^true$' <<<"$quickening_trace"
+
 [[ "$("$diamond" -e $'20-2')" == 18 ]]
 [[ "$("$diamond" -e $'20*2')" == 40 ]]
 [[ "$("$diamond" -e $'20/2')" == 10 ]]
@@ -1928,4 +1938,4 @@ if "$diamond" -e $'module Constants\n VALUE = 42 if true\nend' >/dev/null 2>&1; 
     echo "conditional namespace constant unexpectedly compiled" >&2
     exit 1
 fi
-echo "480 tests passed"
+echo "484 tests passed"

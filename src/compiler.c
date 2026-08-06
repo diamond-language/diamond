@@ -1918,10 +1918,10 @@ static DiamondOpCode binary_opcode(DiamondTokenKind operator) {
         case DIAMOND_TOKEN_SLASH: return DIAMOND_OP_DIVIDE;
         case DIAMOND_TOKEN_EQUAL_EQUAL: return DIAMOND_OP_EQUAL;
         case DIAMOND_TOKEN_BANG_EQUAL: return DIAMOND_OP_NOT_EQUAL;
-        case DIAMOND_TOKEN_LESS: return DIAMOND_OP_LESS_INT;
-        case DIAMOND_TOKEN_LESS_EQUAL: return DIAMOND_OP_LESS_EQUAL_INT;
-        case DIAMOND_TOKEN_GREATER: return DIAMOND_OP_GREATER_INT;
-        case DIAMOND_TOKEN_GREATER_EQUAL: return DIAMOND_OP_GREATER_EQUAL_INT;
+        case DIAMOND_TOKEN_LESS: return DIAMOND_OP_LESS;
+        case DIAMOND_TOKEN_LESS_EQUAL: return DIAMOND_OP_LESS_EQUAL;
+        case DIAMOND_TOKEN_GREATER: return DIAMOND_OP_GREATER;
+        case DIAMOND_TOKEN_GREATER_EQUAL: return DIAMOND_OP_GREATER_EQUAL;
         default: return DIAMOND_OP_ADD;
     }
 }
@@ -2003,6 +2003,22 @@ static uint8_t parse_precedence(Compiler *compiler, Precedence precedence) {
            compiler->known_types[left]==DIAMOND_TYPE_INT&&
            compiler->known_types[right]==DIAMOND_TYPE_INT)
             opcode=DIAMOND_OP_DIVIDE_INT;
+        if(operator==DIAMOND_TOKEN_LESS&&
+           compiler->known_types[left]==DIAMOND_TYPE_INT&&
+           compiler->known_types[right]==DIAMOND_TYPE_INT)
+            opcode=DIAMOND_OP_LESS_INT;
+        if(operator==DIAMOND_TOKEN_LESS_EQUAL&&
+           compiler->known_types[left]==DIAMOND_TYPE_INT&&
+           compiler->known_types[right]==DIAMOND_TYPE_INT)
+            opcode=DIAMOND_OP_LESS_EQUAL_INT;
+        if(operator==DIAMOND_TOKEN_GREATER&&
+           compiler->known_types[left]==DIAMOND_TYPE_INT&&
+           compiler->known_types[right]==DIAMOND_TYPE_INT)
+            opcode=DIAMOND_OP_GREATER_INT;
+        if(operator==DIAMOND_TOKEN_GREATER_EQUAL&&
+           compiler->known_types[left]==DIAMOND_TYPE_INT&&
+           compiler->known_types[right]==DIAMOND_TYPE_INT)
+            opcode=DIAMOND_OP_GREATER_EQUAL_INT;
         emit_instruction(compiler, opcode, destination,
                          left, right, 3);
         if(operator==DIAMOND_TOKEN_EQUAL_EQUAL || operator==DIAMOND_TOKEN_BANG_EQUAL ||
