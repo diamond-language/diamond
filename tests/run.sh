@@ -393,6 +393,14 @@ actual="$("$diamond" -e 'array_empty([]) && hash_empty({})')"
 actual="$("$diamond" -e $'begin\n [1].length(2)\nrescue error: ArgumentError\n 42\nend')"
 [[ "$actual" == "42" ]]
 
+error_file="$(mktemp)"
+if "$diamond" -e $'class Foo\n def bar(a, b)\n  a + b\n end\nend\nFoo.new().bar(1)' >/dev/null 2>"$error_file"; then
+    echo "dynamic dispatch with too few arguments unexpectedly succeeded" >&2
+    exit 1
+fi
+grep -q 'runtime error: wrong number of arguments' "$error_file"
+rm -f "$error_file"
+
 actual="$("$diamond" --dump-bytecode -e $'def head(values: Array[Int]) -> Int\n item = values[0]\n item\nend\nhead([42])')"
 head_dump="$(sed -n '/^== head ==$/,$p' <<<"$actual")"
 [[ "$(grep -c 'CHECK_TYPE' <<<"$head_dump")" == "1" ]]
@@ -2181,4 +2189,4 @@ if "$diamond" -e $'module Constants\n VALUE = 42 if true\nend' >/dev/null 2>&1; 
     echo "conditional namespace constant unexpectedly compiled" >&2
     exit 1
 fi
-echo "536 tests passed"
+echo "537 tests passed"
