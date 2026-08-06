@@ -1105,6 +1105,24 @@ fi
 grep -q "class 'Foo' has no method 'nonexistent' to redefine" "$error_file"
 rm -f "$error_file"
 
+error_file="$(mktemp)"
+if "$diamond" -e $'class Foo\n def bar(a)\n  a\n end\n def self.make_patch(extra)\n  def replacement(a)\n   a + extra\n  end\n  replacement\n end\nend\nFoo.redefine_method("bar", Foo.make_patch(1))' \
+    >/dev/null 2>"$error_file"; then
+    echo "redefine_method with a capturing closure unexpectedly succeeded" >&2
+    exit 1
+fi
+grep -q 'redefine_method callable must not capture any variables' "$error_file"
+rm -f "$error_file"
+
+error_file="$(mktemp)"
+if "$diamond" -e $'class Foo\n def bar(a)\n  a\n end\nend\nclass Baz\n def bar(a)\n  a\n end\n def self.make_patch()\n  def replacement(a)\n   a\n  end\n  replacement\n end\nend\nFoo.redefine_method("bar", Baz.make_patch())' \
+    >/dev/null 2>"$error_file"; then
+    echo "redefine_method with a callable from a different class unexpectedly succeeded" >&2
+    exit 1
+fi
+grep -q "redefine_method callable must be a method of 'Foo'" "$error_file"
+rm -f "$error_file"
+
 actual="$(DIAMOND_STRESS_GC=1 "$diamond" tests/cases/rescue.dia)"
 [[ "$actual" == "diamond rescued!" ]]
 
@@ -2277,4 +2295,4 @@ if "$diamond" -e $'module Constants\n VALUE = 42 if true\nend' >/dev/null 2>&1; 
     echo "conditional namespace constant unexpectedly compiled" >&2
     exit 1
 fi
-echo "552 tests passed"
+echo "554 tests passed"
