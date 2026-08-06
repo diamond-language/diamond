@@ -52,11 +52,12 @@ than true mid-instruction continuations; successful completion advances the
 checkpoint to the chunk boundary. Splitting the interpreter into
 resumable steps is the next fiber implementation milestone.
 
-The VM-facing `diamond_vm_run_context` entry point currently accepts only a
-fresh context (`instruction == 0`, `depth == 0`). It runs the chunk to
-completion and advances the context to the terminal instruction boundary;
-nonzero checkpoints are rejected until the interpreter loop is split into
-resumable steps.
+The VM-facing `diamond_vm_run_context` entry point accepts a validated context
+with any instruction checkpoint within the chunk and matching register state.
+It runs from that checkpoint to the next VM exit and writes the instruction,
+registers, and status back to the context. Suspension is not yet exposed as a
+language operation, but the interpreter boundary now preserves the required
+state.
 
 Contexts also retain the last `DiamondVmStatus`; successful contexts end at
 `DIAMOND_VM_OK`, while failures retain the precise VM error. Restoration
