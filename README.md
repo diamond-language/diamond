@@ -57,6 +57,8 @@ working directory. `require` is a standalone source directive; it cannot be
 used as a conditional expression. Nested imports preserve the deepest source
 file in diagnostics, including missing and unreadable dependency paths. Cycles
 also report the importing file and line that closed the cycle.
+The loader caps active require nesting and loaded files at 128 each and reports
+which limit was reached.
 
 Build variants:
 
