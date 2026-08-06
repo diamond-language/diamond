@@ -2003,6 +2003,14 @@ static uint8_t parse_precedence(Compiler *compiler, Precedence precedence) {
            compiler->known_types[left]==DIAMOND_TYPE_INT&&
            compiler->known_types[right]==DIAMOND_TYPE_INT)
             opcode=DIAMOND_OP_DIVIDE_INT;
+        if(operator==DIAMOND_TOKEN_EQUAL_EQUAL&&
+           compiler->known_types[left]==DIAMOND_TYPE_INT&&
+           compiler->known_types[right]==DIAMOND_TYPE_INT)
+            opcode=DIAMOND_OP_EQUAL_INT;
+        if(operator==DIAMOND_TOKEN_BANG_EQUAL&&
+           compiler->known_types[left]==DIAMOND_TYPE_INT&&
+           compiler->known_types[right]==DIAMOND_TYPE_INT)
+            opcode=DIAMOND_OP_NOT_EQUAL_INT;
         if(operator==DIAMOND_TOKEN_LESS&&
            compiler->known_types[left]==DIAMOND_TYPE_INT&&
            compiler->known_types[right]==DIAMOND_TYPE_INT)

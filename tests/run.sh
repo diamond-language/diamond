@@ -65,6 +65,21 @@ fallback_trace="$(DIAMOND_QUICKEN=1 DIAMOND_QUICKEN_THRESHOLD=invalid \
 grep -q 'quickened sites: 1, deoptimized sites: 0' <<<"$fallback_trace"
 grep -q '^3$' <<<"$fallback_trace"
 
+equality_trace="$(DIAMOND_QUICKEN=1 DIAMOND_TRACE_QUICKEN=1 \
+    "$diamond" -e $'def equality(a,b) = a==b\nequality(4,4)' 2>&1)"
+grep -q 'quickened sites: 1, deoptimized sites: 0' <<<"$equality_trace"
+grep -q '^true$' <<<"$equality_trace"
+
+equality_trace="$(DIAMOND_QUICKEN=1 DIAMOND_TRACE_QUICKEN=1 \
+    "$diamond" -e $'def equality(a,b) = a != b\nequality(4,5)' 2>&1)"
+grep -q 'quickened sites: 1, deoptimized sites: 0' <<<"$equality_trace"
+grep -q '^true$' <<<"$equality_trace"
+
+equality_trace="$(DIAMOND_QUICKEN=1 DIAMOND_TRACE_QUICKEN=1 \
+    "$diamond" -e $'def equality(a,b) = a==b\n[equality(4,4), equality("x","x")]' 2>&1)"
+grep -q 'quickened sites: 1, deoptimized sites: 1' <<<"$equality_trace"
+grep -q '^\[true, true\]$' <<<"$equality_trace"
+
 quickening_trace="$(DIAMOND_QUICKEN=1 DIAMOND_TRACE_QUICKEN=1 \
     "$diamond" -e $'def comparison(a,b) = a >= b\ncomparison(3,3)' 2>&1)"
 grep -q 'quickened sites: 1, deoptimized sites: 0' <<<"$quickening_trace"
@@ -1948,4 +1963,4 @@ if "$diamond" -e $'module Constants\n VALUE = 42 if true\nend' >/dev/null 2>&1; 
     echo "conditional namespace constant unexpectedly compiled" >&2
     exit 1
 fi
-echo "488 tests passed"
+echo "494 tests passed"

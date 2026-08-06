@@ -1720,14 +1720,45 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 break;
             }
             case DIAMOND_OP_EQUAL:
-            case DIAMOND_OP_NOT_EQUAL: {
-                const DiamondOpCode opcode = (DiamondOpCode)instruction;
+            case DIAMOND_OP_NOT_EQUAL:
+            case DIAMOND_OP_EQUAL_INT:
+            case DIAMOND_OP_NOT_EQUAL_INT: {
+                DiamondOpCode opcode = (DiamondOpCode)instruction;
                 uint8_t destination = 0;
                 uint8_t left = 0;
                 uint8_t right = 0;
                 READ_BYTE(destination);
                 READ_BYTE(left);
                 READ_BYTE(right);
+                const bool integer_operands =
+                    registers[left].kind == DIAMOND_VALUE_INT &&
+                    registers[right].kind == DIAMOND_VALUE_INT;
+                if (vm->quickening && integer_operands &&
+                    (opcode == DIAMOND_OP_EQUAL || opcode == DIAMOND_OP_NOT_EQUAL) &&
+                    ++vm->quickening_observations >= vm->quickening_threshold) {
+                    const DiamondOpCode specialized = opcode == DIAMOND_OP_EQUAL
+                        ? DIAMOND_OP_EQUAL_INT : DIAMOND_OP_NOT_EQUAL_INT;
+                    uint8_t *code=(uint8_t *)(void *)chunk->code;
+                    code[instruction_offset]=(uint8_t)specialized;
+                    opcode=specialized;
+                    vm->quickened_sites++;
+                }
+                if ((opcode == DIAMOND_OP_EQUAL_INT ||
+                     opcode == DIAMOND_OP_NOT_EQUAL_INT) && !integer_operands) {
+                    uint8_t *code=(uint8_t *)(void *)chunk->code;
+                    code[instruction_offset]=(uint8_t)(opcode == DIAMOND_OP_EQUAL_INT
+                        ? DIAMOND_OP_EQUAL : DIAMOND_OP_NOT_EQUAL);
+                    vm->deoptimized_sites++;
+                    opcode=(DiamondOpCode)code[instruction_offset];
+                }
+                if ((opcode == DIAMOND_OP_EQUAL_INT ||
+                     opcode == DIAMOND_OP_NOT_EQUAL_INT) && integer_operands) {
+                    const bool equal = registers[left].as.integer ==
+                        registers[right].as.integer;
+                    registers[destination] = DIAMOND_BOOL(
+                        opcode == DIAMOND_OP_EQUAL_INT ? equal : !equal);
+                    break;
+                }
                 const bool equal = values_equal(registers[left], registers[right]);
                 registers[destination] = DIAMOND_BOOL(
                     opcode == DIAMOND_OP_EQUAL ? equal : !equal);
