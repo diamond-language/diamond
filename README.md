@@ -467,6 +467,8 @@ number of cached receiver classes, useful when deciding whether direct-call
 specialization is worthwhile.
 Monomorphic sites use a fast path after their first miss; set
 `DIAMOND_TRACE_IC_FAST=1` to report how often that path executes.
+Set `DIAMOND_IC_MONO_THRESHOLD=N` to require N cache hits before enabling the
+monomorphic path; the default is one.
 Set `DIAMOND_TRACE_IC_PROBES=1` to report polymorphic cache probe depth; this
 provides a deterministic baseline for future direct-call benchmarks.
 

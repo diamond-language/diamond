@@ -226,6 +226,7 @@ future work.
 - Per-site method-cache telemetry for specialization decisions.
 - Monomorphic method-cache fast path with execution telemetry.
 - Method-cache probe-depth telemetry for deterministic dispatch comparisons.
+- Configurable monomorphic dispatch warm-up thresholds.
 
 ## Next priorities
 
