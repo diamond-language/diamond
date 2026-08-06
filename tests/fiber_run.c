@@ -86,7 +86,8 @@ int main(void) {
        diamond_fiber_status(yield_fiber)!=DIAMOND_VM_YIELDED)return 12;
     if(diamond_fiber_resume(yield_fiber)!=DIAMOND_FIBER_OK||
        diamond_fiber_run(yield_fiber)!=DIAMOND_FIBER_OK||
-       yield_fiber->state!=DIAMOND_FIBER_SUSPENDED)return 13;
+       yield_fiber->state!=DIAMOND_FIBER_COMPLETED||
+       diamond_fiber_status(yield_fiber)!=DIAMOND_VM_OK)return 13;
     diamond_fiber_free(yield_fiber);
     diamond_vm_free(&yield_vm);
 

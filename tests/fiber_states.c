@@ -50,14 +50,15 @@ int main(void) {
     if(diamond_fiber_restore_context(fiber,&context))return 22;
     context.instruction=0;
     context.status=DIAMOND_VM_EXCEPTION;
-    if(diamond_fiber_restore_context(fiber,&context))return 24;
+    if(!diamond_fiber_restore_context(fiber,&context))return 24;
     context.status=DIAMOND_VM_OK;
     context.instruction=0;
     if(!diamond_fiber_context_terminal(&context))return 25;
     DiamondVm vm;diamond_vm_init(&vm);
     DiamondValue vm_result=DIAMOND_NIL;
     if(diamond_vm_run_context(&vm,nullptr,&vm_result)!=DIAMOND_VM_INVALID_BYTECODE||
-       diamond_vm_run_context(&vm,&context,&vm_result)!=DIAMOND_VM_INVALID_BYTECODE) return 23;
+       diamond_vm_run_context(&vm,&context,&vm_result)!=DIAMOND_VM_OK||
+       context.status!=DIAMOND_VM_OK) return 23;
     context.chunk=&empty_chunk;context.depth=1;context.status=DIAMOND_VM_OK;
     if(diamond_vm_run_context(&vm,&context,&vm_result)!=DIAMOND_VM_INVALID_BYTECODE)return 26;
     diamond_vm_free(&vm);
