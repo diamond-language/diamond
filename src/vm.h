@@ -370,6 +370,7 @@ DiamondFiberStatus diamond_fiber_complete(DiamondFiber *fiber, DiamondValue resu
 DiamondFiberStatus diamond_fiber_fail(DiamondFiber *fiber, DiamondVmStatus status);
 bool diamond_fiber_push_frame(DiamondFiber *fiber, DiamondFiberFrame frame);
 bool diamond_fiber_pop_frame(DiamondFiber *fiber, DiamondFiberFrame *frame);
+const DiamondFiberFrame *diamond_fiber_current_frame(const DiamondFiber *fiber);
 bool diamond_fiber_update_instruction(DiamondFiber *fiber, size_t instruction);
 bool diamond_fiber_update_depth(DiamondFiber *fiber, size_t depth);
 void diamond_fiber_queue_init(DiamondFiberQueue *queue);
