@@ -31,6 +31,10 @@ quickening_trace="$(DIAMOND_QUICKEN=1 DIAMOND_TRACE_QUICKEN=1 \
     "$diamond" -e $'def add(a,b)=a+b\nadd(20,22)' 2>&1)"
 grep -q 'quickened sites: 1' <<<"$quickening_trace"
 grep -q '^42$' <<<"$quickening_trace"
+quickening_trace="$(DIAMOND_QUICKEN=1 DIAMOND_TRACE_QUICKEN=1 \
+    "$diamond" -e $'def add(a,b)=a+b\n[add(20,22), add("a","b")]' 2>&1)"
+grep -q 'quickened sites: 1, deoptimized sites: 1' <<<"$quickening_trace"
+grep -q '\[42, ab\]' <<<"$quickening_trace"
 
 error_file="$(mktemp)"
 if "$diamond" -e '1 + )' 2>"$error_file"; then
