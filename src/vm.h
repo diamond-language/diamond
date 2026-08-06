@@ -295,6 +295,8 @@ typedef enum DiamondFiberState : uint8_t {
     DIAMOND_FIBER_FAILED,
 } DiamondFiberState;
 
+typedef struct DiamondVm DiamondVm;
+
 typedef struct DiamondFiberFrame {
     const DiamondChunk *chunk;
     size_t instruction;
@@ -309,6 +311,7 @@ typedef struct DiamondFiber {
     DiamondFiberFrame *frames;
     size_t frame_count;
     size_t frame_capacity;
+    DiamondVm *vm;
 } DiamondFiber;
 
 typedef enum DiamondFiberStatus : uint8_t {
@@ -323,7 +326,7 @@ typedef struct DiamondFiberQueue {
     size_t head;
 } DiamondFiberQueue;
 
-typedef struct DiamondVm {
+struct DiamondVm {
     DiamondObject *objects;
     size_t bytes_allocated;
     size_t next_gc;
@@ -353,7 +356,7 @@ typedef struct DiamondVm {
     DiamondValue exception;
     bool has_exception;
     char error[1024];
-} DiamondVm;
+};
 
 void diamond_vm_init(DiamondVm *vm);
 void diamond_vm_free(DiamondVm *vm);
@@ -362,6 +365,7 @@ void diamond_vm_invalidate_method_caches(DiamondVm *vm);
 DiamondFiber *diamond_fiber_new(const DiamondChunk *chunk);
 void diamond_fiber_free(DiamondFiber *fiber);
 DiamondFiberStatus diamond_fiber_prepare(DiamondFiber *fiber);
+DiamondFiberStatus diamond_fiber_bind_vm(DiamondFiber *fiber, DiamondVm *vm);
 const char *diamond_fiber_state_name(DiamondFiberState state);
 DiamondFiberStatus diamond_fiber_make_runnable(DiamondFiber *fiber);
 DiamondFiberStatus diamond_fiber_begin(DiamondFiber *fiber);

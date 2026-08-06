@@ -180,6 +180,12 @@ DiamondFiberStatus diamond_fiber_prepare(DiamondFiber *fiber) {
     fiber->state=DIAMOND_FIBER_RUNNABLE;return DIAMOND_FIBER_OK;
 }
 
+DiamondFiberStatus diamond_fiber_bind_vm(DiamondFiber *fiber, DiamondVm *vm) {
+    if(fiber==nullptr||vm==nullptr||fiber->state==DIAMOND_FIBER_COMPLETED||
+       fiber->state==DIAMOND_FIBER_FAILED)return DIAMOND_FIBER_INVALID_STATE;
+    fiber->vm=vm;return DIAMOND_FIBER_OK;
+}
+
 const char *diamond_fiber_state_name(DiamondFiberState state) {
     switch(state) {
         case DIAMOND_FIBER_NEW:return "new";
