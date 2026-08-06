@@ -22,6 +22,7 @@ enum {
     DIAMOND_MAX_METHODS = 32,
     DIAMOND_MAX_FIELDS = 32,
     DIAMOND_MAX_NAMESPACE_CONSTANTS = 64,
+    DIAMOND_REGISTER_COUNT = 256,
     DIAMOND_MAX_FIBER_FRAMES = 256,
 };
 
@@ -301,6 +302,7 @@ typedef struct DiamondFiberFrame {
     const DiamondChunk *chunk;
     size_t instruction;
     size_t depth;
+    DiamondValue registers[DIAMOND_REGISTER_COUNT];
 } DiamondFiberFrame;
 
 typedef struct DiamondFiber {

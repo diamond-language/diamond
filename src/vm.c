@@ -6,7 +6,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-enum { DIAMOND_REGISTER_COUNT = 256 };
 enum { DIAMOND_MAX_CALL_DEPTH = 256 };
 
 typedef enum HandlerKind : uint8_t { HANDLER_RESCUE, HANDLER_ENSURE } HandlerKind;
