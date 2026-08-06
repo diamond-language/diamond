@@ -998,6 +998,12 @@ grep -q 'direct dispatch rewrites: 1' "$error_file"
 rm -f "$error_file"
 
 error_file="$(mktemp)"
+actual="$(DIAMOND_TRACE_IC_PROBES=1 "$diamond" tests/cases/mixed_dispatch_workload.dia 2>"$error_file")"
+[[ "$actual" == "1500" ]]
+grep -q 'method cache probes: 1000' "$error_file"
+rm -f "$error_file"
+
+error_file="$(mktemp)"
 actual="$(DIAMOND_QUICKEN_THRESHOLD=3 DIAMOND_IC_MONO_THRESHOLD=4 \
     DIAMOND_TRACE_IC_POLICY=1 "$diamond" -e '1+2' 2>"$error_file")"
 [[ "$actual" == "3" ]]
@@ -2241,4 +2247,4 @@ if "$diamond" -e $'module Constants\n VALUE = 42 if true\nend' >/dev/null 2>&1; 
     echo "conditional namespace constant unexpectedly compiled" >&2
     exit 1
 fi
-echo "546 tests passed"
+echo "547 tests passed"
