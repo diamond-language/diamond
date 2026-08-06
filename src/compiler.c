@@ -1986,7 +1986,12 @@ static uint8_t parse_precedence(Compiler *compiler, Precedence precedence) {
         const uint8_t right = parse_precedence(
             compiler, (Precedence)(operator_precedence + 1));
         const uint8_t destination = allocate_register(compiler);
-        emit_instruction(compiler, binary_opcode(operator), destination,
+        DiamondOpCode opcode=binary_opcode(operator);
+        if(operator==DIAMOND_TOKEN_PLUS&&
+           compiler->known_types[left]==DIAMOND_TYPE_INT&&
+           compiler->known_types[right]==DIAMOND_TYPE_INT)
+            opcode=DIAMOND_OP_ADD_INT;
+        emit_instruction(compiler, opcode, destination,
                          left, right, 3);
         if(operator==DIAMOND_TOKEN_EQUAL_EQUAL || operator==DIAMOND_TOKEN_BANG_EQUAL ||
            operator==DIAMOND_TOKEN_LESS || operator==DIAMOND_TOKEN_LESS_EQUAL ||

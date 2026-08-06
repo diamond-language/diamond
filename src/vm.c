@@ -1609,6 +1609,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 VM_RETURN(DIAMOND_VM_TYPE_ERROR);
                 break;
             }
+            case DIAMOND_OP_ADD_INT:
             case DIAMOND_OP_SUBTRACT_INT:
             case DIAMOND_OP_MULTIPLY_INT:
             case DIAMOND_OP_DIVIDE_INT: {
@@ -1627,7 +1628,9 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 const int64_t right_value = registers[right].as.integer;
                 int64_t result_value = 0;
                 bool overflow = false;
-                if (opcode == DIAMOND_OP_SUBTRACT_INT) {
+                if (opcode == DIAMOND_OP_ADD_INT) {
+                    overflow = ckd_add(&result_value, left_value, right_value);
+                } else if (opcode == DIAMOND_OP_SUBTRACT_INT) {
                     overflow = ckd_sub(&result_value, left_value, right_value);
                 } else if (opcode == DIAMOND_OP_MULTIPLY_INT) {
                     overflow = ckd_mul(&result_value, left_value, right_value);
