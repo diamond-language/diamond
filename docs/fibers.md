@@ -77,6 +77,11 @@ fiber to `COMPLETED`.
 requeues suspended fibers at the FIFO tail, and removes completed or failed
 fibers from the queue.
 
+`diamond_fiber_scheduler_run_all` loops `diamond_fiber_scheduler_run_once`
+until the queue empties, draining every queued fiber to a terminal
+`COMPLETED` or `FAILED` state. An individual fiber failure does not stop the
+run; remaining queued fibers still execute to completion.
+
 Diamond source may now emit this boundary with a standalone `yield` statement;
 the compiler emits `DIAMOND_OP_YIELD` followed by a `nil` continuation value.
 
