@@ -44,6 +44,9 @@ int main(void) {
        !diamond_fiber_restore_context(fiber,&context)||
        !diamond_fiber_get_register(fiber,0,&register_value)||
        register_value.as.integer!=42||diamond_fiber_restore_context(fiber,nullptr))return 21;
+    context.instruction=2;
+    context.chunk=&empty_chunk;
+    if(diamond_fiber_restore_context(fiber,&context))return 22;
     diamond_fiber_free(fiber);
     DiamondFiberQueue queue;diamond_fiber_queue_init(&queue);
     DiamondFiber *first=diamond_fiber_new(nullptr),*second=diamond_fiber_new(nullptr);
