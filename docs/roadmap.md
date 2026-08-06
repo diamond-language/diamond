@@ -210,6 +210,7 @@ future work.
 - Imported runtime failures retain their VM function frames.
 - Imported runtime frame coverage includes stress-GC and root callers.
 - Imported runtime frames preserve source line and column locations.
+- CRLF imported dependencies preserve the same runtime/compile-time mapping.
 
 ## Next priorities
 
