@@ -23,20 +23,23 @@ static void print_diagnostic(const char *name, const char *source,
                              size_t user_offset) {
     size_t line=diagnostic.span.line;
     bool mapped_segment=false;
+    size_t mapped_segment_start=0;
     size_t mapped_segment_end=0;
+    size_t mapped_original_line=1;
     if(diagnostic.span.start>=user_offset) {
         const size_t offset=diagnostic.span.start-user_offset;
         for(size_t index=0;index<bundle->segment_count;index++) {
             const DiamondSourceSegment *segment=&bundle->segments[index];
             if(offset<segment->start||
                (offset>segment->end && offset-segment->end>9))continue;
-            name=segment->path;line=segment->original_line+line-1;
-            mapped_segment=true;mapped_segment_end=user_offset+segment->end;break;
+            name=segment->path;
+            mapped_segment=true;
+            mapped_segment_start=user_offset+segment->start;
+            mapped_segment_end=user_offset+segment->end;
+            mapped_original_line=segment->original_line;
+            break;
         }
     }
-    fprintf(stderr, "%s:%zu:%zu: error: %s\n", name, line,
-            diagnostic.span.column, diagnostic.message);
-
     size_t line_start = diagnostic.span.start;
     if(mapped_segment && line_start>=mapped_segment_end)
         line_start=mapped_segment_end;
@@ -48,6 +51,13 @@ static void print_diagnostic(const char *name, const char *source,
     while (line_start > 0 && source[line_start - 1] != '\n') {
         line_start--;
     }
+    if(mapped_segment) {
+        line=mapped_original_line;
+        for(size_t index=mapped_segment_start;index<line_start;index++)
+            if(source[index]=='\n')line++;
+    }
+    fprintf(stderr, "%s:%zu:%zu: error: %s\n", name, line,
+            diagnostic.span.column, diagnostic.message);
     size_t line_end = line_start;
     while (source[line_end] != '\0' && source[line_end] != '\n') {
         line_end++;
