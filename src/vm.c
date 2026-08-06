@@ -219,6 +219,7 @@ DiamondFiberStatus diamond_fiber_fail(DiamondFiber *fiber, DiamondVmStatus statu
 bool diamond_fiber_push_frame(DiamondFiber *fiber, DiamondFiberFrame frame) {
     if(fiber==nullptr||fiber->state==DIAMOND_FIBER_COMPLETED||
        fiber->state==DIAMOND_FIBER_FAILED)return false;
+    if(fiber->frame_count==DIAMOND_MAX_FIBER_FRAMES)return false;
     if(fiber->frame_count==fiber->frame_capacity) {
         const size_t capacity=fiber->frame_capacity==0?4:fiber->frame_capacity*2;
         DiamondFiberFrame *frames=realloc(fiber->frames,capacity*sizeof *frames);

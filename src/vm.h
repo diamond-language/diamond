@@ -22,6 +22,7 @@ enum {
     DIAMOND_MAX_METHODS = 32,
     DIAMOND_MAX_FIELDS = 32,
     DIAMOND_MAX_NAMESPACE_CONSTANTS = 64,
+    DIAMOND_MAX_FIBER_FRAMES = 256,
 };
 
 typedef enum DiamondOpCode : uint8_t {
