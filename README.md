@@ -69,6 +69,7 @@ imported file's EOF boundary. Diagnostic excerpts omit the loader's internal
 marker lines and retain multiline line numbers. Runtime failures from imported
 code retain their function frames and root caller frame in the VM stack trace,
 including line/column locations and stress-GC execution.
+Imported CRLF files use the same line/column mapping as LF files.
 
 Build variants:
 
