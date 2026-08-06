@@ -66,6 +66,15 @@ int main(void) {
     if(!diamond_fiber_context_terminal(&failing_context))return 10;
     diamond_fiber_free(failing);
     diamond_vm_free(&failing_vm);
+
+    static const uint8_t yield_code[]={DIAMOND_OP_YIELD};
+    static const DiamondChunk yield_chunk={.name="yield",.code=yield_code,.code_count=1};
+    DiamondFiberExecutionContext yield_context={.chunk=&yield_chunk};
+    DiamondVm yield_vm;diamond_vm_init(&yield_vm);
+    DiamondValue yield_result=DIAMOND_NIL;
+    if(diamond_vm_run_context(&yield_vm,&yield_context,&yield_result)!=DIAMOND_VM_YIELDED||
+       yield_context.instruction!=1||yield_context.status!=DIAMOND_VM_YIELDED)return 11;
+    diamond_vm_free(&yield_vm);
     puts("fiber run passed");
     return 0;
 }
