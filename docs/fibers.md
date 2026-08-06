@@ -73,6 +73,10 @@ Multiple yield boundaries are supported in sequence. Each resume advances the
 frame checkpoint to the next boundary; only the final resume transitions the
 fiber to `COMPLETED`.
 
+`diamond_fiber_scheduler_run_once` dequeues one runnable fiber, executes it,
+requeues suspended fibers at the FIFO tail, and removes completed or failed
+fibers from the queue.
+
 Diamond source may now emit this boundary with a standalone `yield` statement;
 the compiler emits `DIAMOND_OP_YIELD` followed by a `nil` continuation value.
 
