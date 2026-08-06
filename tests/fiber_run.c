@@ -100,6 +100,11 @@ int main(void) {
     if(diamond_fiber_scheduler_run_once(&scheduled_queue)!=DIAMOND_FIBER_OK)return 28;
     if(scheduled_fiber->state!=DIAMOND_FIBER_RUNNABLE||
        diamond_fiber_queue_count(&scheduled_queue)!=1)return 29;
+    if(diamond_fiber_scheduler_run_once(&scheduled_queue)!=DIAMOND_FIBER_OK||
+       scheduled_fiber->state!=DIAMOND_FIBER_COMPLETED||
+       diamond_fiber_queue_count(&scheduled_queue)!=0)return 30;
+    diamond_fiber_queue_free(&scheduled_queue);diamond_fiber_free(scheduled_fiber);
+    diamond_vm_free(&scheduled_vm);
 
     static DiamondProgram yield_program;DiamondDiagnostic yield_diagnostic;
     if(!diamond_compile("yield",&yield_program,&yield_diagnostic))return 14;
