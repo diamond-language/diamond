@@ -468,6 +468,9 @@ begin at their class's empty shape and advance lazily as fields are first writte
 Set `DIAMOND_TRACE_FIELDS=1` to print field inline-cache hit and miss counts.
 Field sites use four-entry polymorphic caches guarded by instance shape.
 
+Set `DIAMOND_TRACE_OPCODES=1` to print executed opcode counts while profiling
+programs for quickening and type-specialization experiments.
+
 ## Important limitations
 
 - Nested functions are first-class closures. Captured locals use shared mutable
