@@ -140,6 +140,10 @@ static int run_source(const char *name, const char *source, bool dump_bytecode) 
     DiamondVmStatus status=DIAMOND_VM_OK;
     for(size_t iteration=0;iteration<repeat_count;iteration++) {
         status=diamond_vm_run(&vm,&chunk,&result);
+        if (getenv("DIAMOND_TRACE_IC_EACH_RUN") != nullptr)
+            fprintf(stderr,"run %zu: inline caches: %zu hits, %zu misses, rewrites: %zu\n",
+                    iteration+1,vm.inline_cache_hits,vm.inline_cache_misses,
+                    vm.direct_dispatch_rewrites);
         if(status!=DIAMOND_VM_OK)break;
     }
     if (status != DIAMOND_VM_OK) {

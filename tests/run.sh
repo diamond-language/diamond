@@ -772,6 +772,14 @@ grep -q 'direct dispatch rewrites: 1' "$error_file"
 rm -f "$error_file"
 
 error_file="$(mktemp)"
+actual="$(DIAMOND_REPEAT=2 DIAMOND_TRACE_IC_EACH_RUN=1 "$diamond" \
+    tests/cases/mono_deopt.dia 2>"$error_file")"
+[[ "$actual" == "82" ]]
+grep -q 'run 1: inline caches: 1 hits, 2 misses, rewrites: 1' "$error_file"
+grep -q 'run 2: inline caches: 1 hits, 2 misses, rewrites: 1' "$error_file"
+rm -f "$error_file"
+
+error_file="$(mktemp)"
 actual="$(DIAMOND_REPEAT=2 DIAMOND_TRACE_IC_REWRITES=1 "$diamond" \
     tests/cases/mono_deopt.dia 2>"$error_file")"
 [[ "$actual" == "82" ]]
@@ -2067,4 +2075,4 @@ if "$diamond" -e $'module Constants\n VALUE = 42 if true\nend' >/dev/null 2>&1; 
     echo "conditional namespace constant unexpectedly compiled" >&2
     exit 1
 fi
-echo "516 tests passed"
+echo "519 tests passed"
