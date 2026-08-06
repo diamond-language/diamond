@@ -245,6 +245,7 @@ future work.
 - C-level inherited-method mutation and invalidation coverage.
 - Selective inherited-method mutation coverage across multiple call sites.
 - Method arity and visibility mutation coverage through explicit invalidation.
+- Superclass-link mutation and restoration coverage through explicit invalidation.
 
 ## Next priorities
 
