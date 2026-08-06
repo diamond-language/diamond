@@ -26,7 +26,8 @@ static void print_diagnostic(const char *name, const char *source,
         const size_t offset=diagnostic.span.start-user_offset;
         for(size_t index=0;index<bundle->segment_count;index++) {
             const DiamondSourceSegment *segment=&bundle->segments[index];
-            if(offset<segment->start||offset>=segment->end)continue;
+            if(offset<segment->start||
+               (offset>segment->end && offset-segment->end>9))continue;
             name=segment->path;line=segment->original_line+line-1;break;
         }
     }
