@@ -27,6 +27,9 @@ int main(void) {
        diamond_fiber_current_frame(fiber)->instruction!=0||
        diamond_fiber_update_instruction(fiber,1))return 17;
     DiamondValue register_value=DIAMOND_NIL;
+    if(diamond_fiber_get_register(nullptr,0,&register_value)||
+       diamond_fiber_get_register(fiber,0,nullptr)||
+       diamond_fiber_set_register(nullptr,0,DIAMOND_NIL))return 19;
     if(!diamond_fiber_get_register(fiber,0,&register_value)||
        register_value.kind!=DIAMOND_VALUE_NIL||
        !diamond_fiber_set_register(fiber,0,DIAMOND_INT(42))||
