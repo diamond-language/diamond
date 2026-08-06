@@ -32,6 +32,7 @@ int main(void) {
         checkpoint.registers[7].as.integer != 99 ||
         !diamond_fiber_capture_context(fiber, &context) ||
         context.instruction != chunk.code_count ||
+        diamond_fiber_restore_context(fiber, &context) ||
         diamond_fiber_checkpoint(fiber, nullptr)) return 2;
     if (diamond_fiber_run(fiber) != DIAMOND_FIBER_INVALID_STATE) return 3;
     diamond_fiber_free(fiber);
