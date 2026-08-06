@@ -94,6 +94,14 @@ int main(void) {
     for(size_t index=0;index<compiled_yield.code_count;index++)
         if(compiled_yield.code[index]==DIAMOND_OP_YIELD)found_yield=true;
     if(!found_yield)return 15;
+    DiamondVm compiled_vm;diamond_vm_init(&compiled_vm);
+    DiamondFiber *compiled_fiber=diamond_fiber_new(&compiled_yield);
+    if(compiled_fiber==nullptr||diamond_fiber_bind_vm(compiled_fiber,&compiled_vm)!=DIAMOND_FIBER_OK||
+       diamond_fiber_prepare(compiled_fiber)!=DIAMOND_FIBER_OK||
+       diamond_fiber_resume(compiled_fiber)!=DIAMOND_FIBER_OK||
+       diamond_fiber_run(compiled_fiber)!=DIAMOND_FIBER_OK||
+       compiled_fiber->state!=DIAMOND_FIBER_SUSPENDED)return 16;
+    diamond_fiber_free(compiled_fiber);diamond_vm_free(&compiled_vm);
     puts("fiber run passed");
     return 0;
 }
