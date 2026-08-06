@@ -258,6 +258,7 @@ typedef enum DiamondVmStatus : uint8_t {
     DIAMOND_VM_OUT_OF_MEMORY,
     DIAMOND_VM_INDEX_ERROR,
     DIAMOND_VM_EXCEPTION,
+    DIAMOND_VM_YIELDED,
 } DiamondVmStatus;
 
 typedef struct DiamondMethodCacheEntry {
