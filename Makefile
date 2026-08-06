@@ -14,7 +14,7 @@ SOURCES := $(wildcard src/*.c)
 OBJECTS := $(SOURCES:src/%.c=$(BUILD_DIR)/%.o)
 DEPS := $(OBJECTS:.o=.d)
 
-.PHONY: all debug sanitize release test test-release test-sanitize test-api test-all clean
+.PHONY: all debug sanitize release test test-release test-sanitize test-api test-fibers test-all clean
 
 all: debug
 
@@ -53,6 +53,13 @@ $(BUILD_DIR)/api_invalidation: tests/api_invalidation.c $(API_SOURCES)
 test-api: $(BUILD_DIR)/api_invalidation
 	$(BUILD_DIR)/api_invalidation
 
+$(BUILD_DIR)/fiber_states: tests/fiber_states.c $(API_SOURCES)
+	@mkdir -p $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS_COMMON) $(CFLAGS_DEBUG) $(API_SOURCES) $< -o $@
+
+test-fibers: $(BUILD_DIR)/fiber_states
+	$(BUILD_DIR)/fiber_states
+
 test-all:
 	$(MAKE) clean
 	$(MAKE) test
@@ -61,6 +68,7 @@ test-all:
 	$(MAKE) clean
 	$(MAKE) test-sanitize
 	$(MAKE) test-api
+	$(MAKE) test-fibers
 
 clean:
 	rm -rf $(BUILD_DIR)
