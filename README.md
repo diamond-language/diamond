@@ -59,7 +59,8 @@ file in diagnostics, including missing and unreadable dependency paths. Cycles
 also report the importing file and line that closed the cycle.
 The loader caps active require nesting and loaded files at 128 each and reports
 which limit was reached. CRLF and LF source files follow the same directive and
-line-mapping rules.
+line-mapping rules. Root-file open, seek, directory, and read failures retain
+the original path and operating-system detail.
 
 Build variants:
 
