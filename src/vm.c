@@ -2977,6 +2977,8 @@ const char *diamond_vm_status_name(DiamondVmStatus status) {
             return "uncaught exception";
         case DIAMOND_VM_YIELDED:
             return "yielded";
+        case DIAMOND_VM_UNSUPPORTED_YIELD:
+            return "unsupported nested yield";
     }
     return "unknown VM status";
 }
