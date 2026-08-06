@@ -81,6 +81,7 @@ test-all:
 	$(MAKE) test-api
 	$(MAKE) test-fibers
 	$(MAKE) test-fiber-run
+	$(MAKE) test-vm-context
 
 clean:
 	rm -rf $(BUILD_DIR)
