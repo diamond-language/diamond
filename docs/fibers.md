@@ -65,6 +65,9 @@ and maps a running fiber to `SUSPENDED`; resuming currently re-enters the
 chunk and reaches the boundary again until continuation-aware dispatch is
 implemented.
 
+Diamond source may now emit this boundary with a standalone `yield` statement;
+the compiler emits `DIAMOND_OP_YIELD` followed by a `nil` continuation value.
+
 Contexts also retain the last `DiamondVmStatus`; successful contexts end at
 `DIAMOND_VM_OK`, while failures retain the precise VM error. Restoration
 accepts only `DIAMOND_VM_OK` contexts on nonterminal fibers.
