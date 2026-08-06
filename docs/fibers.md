@@ -25,6 +25,9 @@ Only the scheduler may transition `RUNNABLE` to `RUNNING`, and only an
 explicit yield or completion may return control to the scheduler. A suspended
 fiber's frame chain, captured cells, pending handlers, and result are GC roots.
 
+The initial queue primitive is FIFO, rejects non-runnable fibers, compacts
+consumed storage, and transitions dequeued fibers to `RUNNING`.
+
 The proposed C boundary is:
 
 ```c
