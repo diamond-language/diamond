@@ -1096,6 +1096,15 @@ rm -f "$error_file"
 actual="$("$diamond" -e $'class Foo\n def bar(a)\n  a\n end\n def self.make_patch()\n  def replacement(a, b)\n   a + b\n  end\n  replacement\n end\nend\nbegin\n Foo.redefine_method("bar", Foo.make_patch())\nrescue error: ArgumentError\n 42\nend')"
 [[ "$actual" == "42" ]]
 
+error_file="$(mktemp)"
+if "$diamond" -e $'class Foo\n def bar(a)\n  a\n end\n def self.make_patch()\n  def replacement(a)\n   a\n  end\n  replacement\n end\nend\nFoo.redefine_method("nonexistent", Foo.make_patch())' \
+    >/dev/null 2>"$error_file"; then
+    echo "redefine_method of an unknown method name unexpectedly succeeded" >&2
+    exit 1
+fi
+grep -q "class 'Foo' has no method 'nonexistent' to redefine" "$error_file"
+rm -f "$error_file"
+
 actual="$(DIAMOND_STRESS_GC=1 "$diamond" tests/cases/rescue.dia)"
 [[ "$actual" == "diamond rescued!" ]]
 
@@ -2268,4 +2277,4 @@ if "$diamond" -e $'module Constants\n VALUE = 42 if true\nend' >/dev/null 2>&1; 
     echo "conditional namespace constant unexpectedly compiled" >&2
     exit 1
 fi
-echo "551 tests passed"
+echo "552 tests passed"
