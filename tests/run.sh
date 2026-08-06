@@ -1008,6 +1008,8 @@ grep -q 'at double:' <<<"$runtime_stack"
 runtime_stack="$($diamond tests/multifile/runtime_broken_main.dia 2>&1 || true)"
 grep -q 'at explode:' <<<"$runtime_stack"
 grep -q 'at tests/multifile/runtime_broken_main.dia:' <<<"$runtime_stack"
+runtime_stack="$(DIAMOND_STRESS_GC=1 $diamond tests/multifile/runtime_broken_main.dia 2>&1 || true)"
+grep -q 'at explode:' <<<"$runtime_stack"
 actual="$($diamond -e $'require "tests/multifile/math"\r\ndouble(21)\r\n')"
 [[ "$actual" == "42" ]]
 actual="$($diamond -e $'require "./tests/multifile/math.dia"\ndouble(21)')"
