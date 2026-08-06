@@ -313,6 +313,12 @@ typedef struct DiamondFiberQueue {
     size_t head;
 } DiamondFiberQueue;
 
+typedef struct DiamondFiberFrame {
+    const DiamondChunk *chunk;
+    size_t instruction;
+    size_t depth;
+} DiamondFiberFrame;
+
 typedef struct DiamondVm {
     DiamondObject *objects;
     size_t bytes_allocated;
