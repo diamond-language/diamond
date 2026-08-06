@@ -251,6 +251,7 @@ future work.
   explicit yield/requeue transitions.
 - VM binding, result/status accessors, and one-shot fiber execution boundary.
 - Fiber frame register snapshots with bounded checkpoint accessors.
+- Explicit fiber execution-context capture and validated restoration.
 
 ## Next priorities
 
