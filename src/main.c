@@ -132,8 +132,18 @@ static char *read_file(const char *path) {
         return nullptr;
     }
     const long length = ftell(file);
-    if (length < 0 || (unsigned long long)length >= SIZE_MAX ||
-        fseek(file, 0, SEEK_SET) != 0) {
+    if (length < 0) {
+        fprintf(stderr, "diamond: cannot determine size of '%s': %s\n", path,
+                strerror(errno));
+        fclose(file);
+        return nullptr;
+    }
+    if ((unsigned long long)length >= SIZE_MAX) {
+        fprintf(stderr, "diamond: file '%s' is too large\n", path);
+        fclose(file);
+        return nullptr;
+    }
+    if (fseek(file, 0, SEEK_SET) != 0) {
         fprintf(stderr, "diamond: cannot read '%s': %s\n", path,
                 strerror(errno));
         fclose(file);
