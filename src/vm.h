@@ -337,6 +337,9 @@ void diamond_vm_init(DiamondVm *vm);
 void diamond_vm_free(DiamondVm *vm);
 void diamond_vm_collect(DiamondVm *vm);
 void diamond_vm_invalidate_method_caches(DiamondVm *vm);
+DiamondFiber *diamond_fiber_new(const DiamondChunk *chunk);
+void diamond_fiber_free(DiamondFiber *fiber);
+const char *diamond_fiber_state_name(DiamondFiberState state);
 DiamondVmStatus diamond_vm_run(DiamondVm *vm, const DiamondChunk *chunk,
                                DiamondValue *result);
 const char *diamond_vm_status_name(DiamondVmStatus status);

@@ -157,6 +157,30 @@ void diamond_vm_invalidate_method_caches(DiamondVm *vm) {
     vm->method_cache_probes=0;
 }
 
+DiamondFiber *diamond_fiber_new(const DiamondChunk *chunk) {
+    DiamondFiber *fiber=calloc(1,sizeof *fiber);
+    if(fiber==nullptr)return nullptr;
+    fiber->state=DIAMOND_FIBER_NEW;
+    fiber->chunk=chunk;
+    fiber->result=DIAMOND_NIL;
+    fiber->status=DIAMOND_VM_OK;
+    return fiber;
+}
+
+void diamond_fiber_free(DiamondFiber *fiber) { free(fiber); }
+
+const char *diamond_fiber_state_name(DiamondFiberState state) {
+    switch(state) {
+        case DIAMOND_FIBER_NEW:return "new";
+        case DIAMOND_FIBER_RUNNABLE:return "runnable";
+        case DIAMOND_FIBER_RUNNING:return "running";
+        case DIAMOND_FIBER_SUSPENDED:return "suspended";
+        case DIAMOND_FIBER_COMPLETED:return "completed";
+        case DIAMOND_FIBER_FAILED:return "failed";
+    }
+    return "unknown";
+}
+
 static DiamondString *allocate_string(DiamondVm *vm, const char *chars,
                                       size_t length) {
     if (vm->stress_gc || vm->bytes_allocated >= vm->next_gc) {
