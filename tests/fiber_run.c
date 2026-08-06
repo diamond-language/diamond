@@ -325,6 +325,15 @@ int main(void) {
        diamond_fiber_status(nested_yield_fiber)!=DIAMOND_VM_UNSUPPORTED_YIELD)return 54;
     diamond_fiber_free(nested_yield_fiber);diamond_vm_free(&nested_yield_vm);
 
+    DiamondVm nested_yield_direct_vm;diamond_vm_init(&nested_yield_direct_vm);
+    DiamondValue nested_yield_direct_result=DIAMOND_NIL;
+    if(diamond_vm_run(&nested_yield_direct_vm,&nested_yield_chunk,&nested_yield_direct_result)!=
+       DIAMOND_VM_UNSUPPORTED_YIELD)return 55;
+    const char *nested_yield_direct_error=diamond_vm_error(&nested_yield_direct_vm);
+    if(nested_yield_direct_error==nullptr||
+       strstr(nested_yield_direct_error,"unsupported nested yield")==nullptr)return 56;
+    diamond_vm_free(&nested_yield_direct_vm);
+
     puts("fiber run passed");
     return 0;
 }
