@@ -471,6 +471,8 @@ Set `DIAMOND_IC_MONO_THRESHOLD=N` to require N cache hits before enabling the
 monomorphic path; the default is one.
 Set `DIAMOND_TRACE_IC_PROBES=1` to report polymorphic cache probe depth; this
 provides a deterministic baseline for future direct-call benchmarks.
+The `tests/cases/dispatch_benchmark.dia` case exercises 100 calls so probe
+counts can be compared without relying on wall-clock timing.
 Stable instance call sites may rewrite to `INVOKE_MONO` after warm-up; use
 `DIAMOND_TRACE_IC_REWRITES=1` to report those rewrites. A receiver-class guard
 deoptimizes the site back to `INVOKE` if the assumption fails.
