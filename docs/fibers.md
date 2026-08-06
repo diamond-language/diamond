@@ -31,8 +31,9 @@ Scheduler helpers now support one-step dequeue and requeue of yielded fibers,
 preserving FIFO ordering.
 
 Fiber frames currently carry the owning chunk, instruction checkpoint, and
-call depth. Push/pop plus checkpoint updates are implemented independently of
-the VM interpreter; queued-fiber enumeration provides the future GC root hook.
+call depth, plus a fixed register snapshot. Push/pop, checkpoint updates, and
+bounded register access are implemented independently of the VM interpreter;
+queued-fiber enumeration provides the future GC root hook.
 
 The current execution bridge binds a prepared fiber to a `DiamondVm` and runs
 the complete chunk once it reaches `RUNNING`:
@@ -62,6 +63,9 @@ DiamondFiberStatus diamond_fiber_resume(DiamondFiber *);
 DiamondFiberStatus diamond_fiber_yield(DiamondFiber *);
 DiamondValue diamond_fiber_result(const DiamondFiber *);
 DiamondVmStatus diamond_fiber_status(const DiamondFiber *);
+bool diamond_fiber_checkpoint(const DiamondFiber *, DiamondFiberFrame *);
+bool diamond_fiber_set_register(DiamondFiber *, size_t, DiamondValue);
+bool diamond_fiber_get_register(const DiamondFiber *, size_t, DiamondValue *);
 void diamond_fiber_free(DiamondFiber *);
 ```
 
