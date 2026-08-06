@@ -181,6 +181,24 @@ const char *diamond_fiber_state_name(DiamondFiberState state) {
     return "unknown";
 }
 
+DiamondFiberStatus diamond_fiber_make_runnable(DiamondFiber *fiber) {
+    if(fiber==nullptr||(fiber->state!=DIAMOND_FIBER_NEW&&
+       fiber->state!=DIAMOND_FIBER_SUSPENDED))return DIAMOND_FIBER_INVALID_STATE;
+    fiber->state=DIAMOND_FIBER_RUNNABLE;return DIAMOND_FIBER_OK;
+}
+
+DiamondFiberStatus diamond_fiber_begin(DiamondFiber *fiber) {
+    if(fiber==nullptr||fiber->state!=DIAMOND_FIBER_RUNNABLE)
+        return DIAMOND_FIBER_INVALID_STATE;
+    fiber->state=DIAMOND_FIBER_RUNNING;return DIAMOND_FIBER_OK;
+}
+
+DiamondFiberStatus diamond_fiber_suspend(DiamondFiber *fiber) {
+    if(fiber==nullptr||fiber->state!=DIAMOND_FIBER_RUNNING)
+        return DIAMOND_FIBER_INVALID_STATE;
+    fiber->state=DIAMOND_FIBER_SUSPENDED;return DIAMOND_FIBER_OK;
+}
+
 static DiamondString *allocate_string(DiamondVm *vm, const char *chars,
                                       size_t length) {
     if (vm->stress_gc || vm->bytes_allocated >= vm->next_gc) {
