@@ -2193,7 +2193,7 @@ static uint8_t compile_return(Compiler *compiler) {
 static uint8_t compile_yield(Compiler *compiler) {
     const uint8_t result=allocate_register(compiler);
     advance_token(compiler);
-    emit_instruction(compiler,DIAMOND_OP_YIELD,0,0,0,1);
+    emit_instruction(compiler,DIAMOND_OP_YIELD,0,0,0,0);
     emit_instruction(compiler,DIAMOND_OP_NIL,result,0,0,1);
     return result;
 }
