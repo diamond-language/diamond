@@ -64,7 +64,8 @@ the original path and operating-system detail.
 File-size and rewind failures are reported separately from ordinary read
 failures. Loader bundles fully reset after release, so callers may safely reuse
 the bundle object for another load. Source-map segments reject invalid ranges
-and preserve the complete canonical path.
+and preserve the complete canonical path, including diagnostics raised at an
+imported file's EOF boundary.
 
 Build variants:
 
