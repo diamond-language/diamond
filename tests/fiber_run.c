@@ -6,6 +6,8 @@
 int main(void) {
     static DiamondProgram program;
     DiamondDiagnostic diagnostic;
+    if (diamond_fiber_result(nullptr).kind != DIAMOND_VALUE_NIL ||
+        diamond_fiber_status(nullptr) != DIAMOND_VM_INVALID_BYTECODE) return 6;
     if (!diamond_compile("1 + 2", &program, &diagnostic)) return 1;
     DiamondChunk chunk = diamond_program_chunk(&program);
     DiamondVm vm;
