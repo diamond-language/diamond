@@ -364,16 +364,27 @@ future work.
   Sweeping an unreached fiber handle now frees its native stack instead of
   leaking it. See `docs/fibers.md` for the full design. Still no Diamond-level
   way to create or resume a fiber — that is Phases 3-4 (see below).
+- Phase 3 of Diamond-language fiber syntax: `Fiber.new(callable)` is now
+  Diamond-language syntax, via a new `DIAMOND_OP_FIBER_NEW` opcode recognized
+  in the compiler the same way `redefine_method` is (gated on the identifier
+  not being shadowed by a local). The callable must be a zero-argument
+  `Callable`, checked with a rescuable `TypeError`/`ArgumentError`; captures
+  are allowed, unlike `redefine_method`. The dangling-chunk-pointer hazard
+  identified during planning is fixed and regression-tested from Diamond
+  source three call frames deep (verified against a deliberately reverted
+  fix under ASan first: a clean stack-use-after-return). Along the way, an
+  unrelated latent bug surfaced and was fixed: `diamond_fiber_prepare`/
+  `diamond_fiber_run` unconditionally rejected any fiber with a null
+  `chunk`, which closure-invoking fibers always have — nothing had
+  exercised that path end-to-end until this phase reached it. Still no
+  Diamond-level way to resume, inspect, or free a fiber — that is Phase 4.
 
 ## Next priorities
 
-1. Diamond-language fiber syntax, remaining phases: `Fiber.new(callable)` as
-   the compiler-recognized constructor (new `DIAMOND_OP_FIBER_NEW` opcode; a
-   fiber must not retain a dangling pointer into a transient stack-local
-   chunk once the constructing call returns, however deeply nested); native
-   `.resume(value)`/`.status()`/`.alive?()` dispatch; a new `FiberError`
-   exception class; uncaught fiber-body exceptions propagating to the
-   resumer through the existing rescue machinery. Scheduler
+1. Diamond-language fiber syntax, final phase: native `.resume(value)`/
+   `.status()`/`.alive?()` dispatch inside `DIAMOND_OP_INVOKE`; a new
+   `FiberError` exception class; uncaught fiber-body exceptions propagating
+   to the resumer through the existing rescue machinery. Scheduler
    (`DiamondFiberQueue`) exposure to Diamond source is explicitly deferred
    beyond this.
 

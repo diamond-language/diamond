@@ -123,12 +123,13 @@ collects exactly as before.
 Diamond source emits this boundary with `yield` or `yield(value)` — now a
 primary expression, usable anywhere a value is expected (`x = yield(1) +
 1`), not only as a standalone statement. Bare `yield` yields `nil` out
-(unchanged from before); `yield(value)` yields `value` out. The expression's
-own result — what a later resume delivers back in — is not yet reachable
-from Diamond source, since there is no `Fiber.new`/`.resume(value)` syntax
-yet; the C-level `diamond_fiber_resume(fiber, value)` API already threads a
-value all the way through, exercised by `tests/fiber_run.c`, ahead of the
-language-level construct landing.
+(unchanged from before); `yield(value)` yields `value` out. `Fiber.new(callable)`
+now constructs a fiber from Diamond source (see below), but there is not yet
+any way to resume one from Diamond source — no `.resume(value)` dispatch
+exists yet — so the expression's own result, what a later resume delivers
+back in, is only reachable via the C-level `diamond_fiber_resume(fiber,
+value)` API today, exercised by `tests/fiber_run.c`, ahead of the
+`.resume(value)` dispatch landing.
 
 The current C boundary is:
 
@@ -160,12 +161,38 @@ A fiber can now be wrapped in a `DiamondFiberHandle` — a thin
 The wrapper is deliberately thin rather than folding `DiamondObject` directly
 into `DiamondFiber`: the existing C-level scheduler tests construct fibers
 with no VM at all (`diamond_fiber_new(nullptr)`, multi-VM scheduler tests),
-which folding would break. There is not yet any Diamond-language syntax that
-allocates a `DiamondFiberHandle` — that is `Fiber.new(callable)`, still to
-come — but the object kind, its GC marking, and its sweep-time cleanup are
-now fully implemented and tested at the C level ahead of that surface
-landing, the same staging the value-carrying `yield`/`resume` re-encoding
-used.
+which folding would break.
+
+`Fiber.new(callable)` is now Diamond-language syntax, recognized in the
+compiler wherever an identifier named `Fiber` is followed by `.new(...)` and
+is not shadowed by a local variable of that name (same precedent as
+`redefine_method`: `Fiber = 5; Fiber.new(1)` compiles to ordinary dynamic
+`INVOKE` dispatch on the local, not the special form). It compiles to a new
+`DIAMOND_OP_FIBER_NEW dest, callable` instruction. The callable must be a
+zero-argument `Callable` value; both constraints are enforced at the
+`Fiber.new` call site with a rescuable `TypeError` or `ArgumentError`, since
+classes are not first-class runtime values and neither the argument's kind
+nor its target function's arity can be known until then. Captures are
+allowed, unlike `redefine_method`'s restriction: the fiber trampoline invokes
+its entry closure exactly the way `DIAMOND_OP_CALL_CLOSURE` already does, so
+`GET_CAPTURE`/`SET_CAPTURE` need no special handling.
+
+`DIAMOND_OP_FIBER_NEW` builds a fiber via `diamond_fiber_new_for_closure`,
+binds it to the running VM, prepares its native stack, and wraps it in a
+`DiamondFiberHandle` — closing the loop on the object kind, GC marking, and
+sweep-time cleanup that landed in the prior phase ahead of this surface.
+Reaching this opcode also surfaced an unrelated, previously-latent bug:
+`diamond_fiber_prepare`/`diamond_fiber_run` both unconditionally rejected any
+fiber with a null `chunk`, but closure-invoking fibers deliberately leave
+`chunk` null (they run via `entry_closure` + `program_tables` instead) —
+since nothing had exercised that path end-to-end before, this went unnoticed
+until it would have rejected every fiber `Fiber.new` ever constructed. Both
+guards now accept either `chunk` or `entry_closure` being set.
+
+There is not yet any way to resume, inspect, or free a `Fiber.new`-constructed
+fiber from Diamond source — that is the next phase (`.resume`/`.status`/
+`.alive?` native dispatch). A `Fiber` value with nothing else referencing it
+is ordinary GC-reachable garbage in the meantime.
 
 `mark_object`'s `DIAMOND_OBJECT_FIBER` branch marks a fiber's own parked
 frame chain (`native_frames`), its `result` and `resume_value`, and —
