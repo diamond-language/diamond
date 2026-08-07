@@ -2675,4 +2675,21 @@ fi
 grep -q "String#index_of argument must be a String" "$error_file"
 rm -f "$error_file"
 
-echo "653 tests passed"
+file_dir="$(mktemp -d)"
+data_file="$file_dir/data.txt"
+printf 'hello world, this is a test file' >"$data_file"
+actual="$($diamond -e "$(printf 'f = File.open("%s", "r")\nchunk = f.read(5)\nrest = f.read()\nf.close()\n"#{chunk}|#{rest}"' "$data_file")")"
+[[ "$actual" == "hello| world, this is a test file" ]]
+
+actual="$($diamond -e "$(printf 'f = File.open("%s", "r")\nf.read()' "$data_file")")"
+[[ "$actual" == "hello world, this is a test file" ]]
+
+if "$diamond" -e "$(printf 'f = File.open("%s", "r")\nf.read(-1)' "$data_file")" >/dev/null 2>&1; then
+    echo "File#read with a negative length unexpectedly succeeded" >&2
+    rm -rf "$file_dir"
+    exit 1
+fi
+
+rm -rf "$file_dir"
+
+echo "656 tests passed"

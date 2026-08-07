@@ -2813,13 +2813,27 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                         VM_RETURN(DIAMOND_VM_IO_ERROR);
                     }
                     if(read_method) {
-                        if(argc!=0)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                        if(argc>1)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                        bool bounded=false;size_t limit=0;
+                        if(argc==1) {
+                            if(registers[base].kind!=DIAMOND_VALUE_INT||
+                               registers[base].as.integer<0) {
+                                snprintf(vm->error,sizeof vm->error,
+                                    "File#read argument must be a non-negative Int");
+                                VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                            }
+                            bounded=true;limit=(size_t)registers[base].as.integer;
+                        }
                         StringBuilder builder={};
                         char chunk_buffer[4096];
                         size_t read_count=0;
                         errno=0;
-                        while((read_count=fread(chunk_buffer,1,sizeof chunk_buffer,
-                                                 target_file->stream))>0) {
+                        while(!bounded||builder.length<limit) {
+                            const size_t remaining=bounded?limit-builder.length:sizeof chunk_buffer;
+                            const size_t want=remaining<sizeof chunk_buffer?
+                                remaining:sizeof chunk_buffer;
+                            read_count=fread(chunk_buffer,1,want,target_file->stream);
+                            if(read_count==0)break;
                             if(!builder_append(&builder,chunk_buffer,read_count)) {
                                 free(builder.chars);VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
                             }
