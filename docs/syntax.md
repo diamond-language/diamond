@@ -157,6 +157,12 @@ returning the element at `index`, or `nil` without mutating if `index`
 is out of bounds; `hash_merge(a, b)` returns a new `Hash` with `a`'s
 pairs then `b`'s applied on top (`b` wins on key conflicts).
 
+`Int` has no per-value method dispatch (it's a scalar `DiamondValue`,
+not a heap object), so numeric helpers are plain functions:
+`abs(x)`/`min(a, b)`/`max(a, b)`. `abs` inherits the overflow check
+already on negation, so `abs` of the most negative `Int` raises a
+rescuable `RangeError` rather than silently wrapping.
+
 ## Fibers
 
 ```ruby

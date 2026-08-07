@@ -3142,6 +3142,21 @@ actual="$($diamond -e $'"#{hash_merge({}, {"a":1})}"')"
 actual="$($diamond -e $'"#{hash_merge({"a":1}, {})}"')"
 [[ "$actual" == "{a: 1}" ]]
 
+actual="$($diamond -e 'abs(-5)')"
+[[ "$actual" == "5" ]]
+
+actual="$($diamond -e 'abs(5)')"
+[[ "$actual" == "5" ]]
+
+actual="$($diamond -e 'abs(0)')"
+[[ "$actual" == "0" ]]
+
+actual="$($diamond -e $'begin\n min_val = -9223372036854775807 - 1\n abs(min_val)\nrescue error: RangeError\n 42\nend')"
+[[ "$actual" == "42" ]]
+
+actual="$($diamond -e '"#{min(3, 7)}, #{min(7, 3)}, #{max(3, 7)}, #{max(7, 3)}"')"
+[[ "$actual" == "3, 3, 7, 7" ]]
+
 stress_socket_port=18746
 stress_server_out="$(mktemp)"
 timeout 10 env DIAMOND_STRESS_GC=1 "$diamond" -e "$(printf 'server = TCPServer.listen(%d)
@@ -3207,4 +3222,4 @@ wait "$stress_http_pid" 2>/dev/null || true
 [[ "$stress_http_response" == $'HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 13\r\n\r\nhello, /world' ]]
 rm -f "$stress_http_out"
 
-echo "690 tests passed"
+echo "691 tests passed"
