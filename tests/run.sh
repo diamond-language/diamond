@@ -2916,6 +2916,18 @@ actual="$($diamond -e '"ALREADY UPPER".upcase()')"
 actual="$($diamond -e '"".upcase()')"
 [[ "$actual" == "" ]]
 
+actual="$($diamond -e '"hello".reverse()')"
+[[ "$actual" == "olleh" ]]
+
+actual="$($diamond -e '"".reverse()')"
+[[ "$actual" == "" ]]
+
+actual="$($diamond -e '"a".reverse()')"
+[[ "$actual" == "a" ]]
+
+actual="$($diamond -e '"ab".reverse()')"
+[[ "$actual" == "ba" ]]
+
 http_port=18743
 http_server_out="$(mktemp)"
 http_server_src="$(cat <<'HTTPEOF'
@@ -3266,4 +3278,4 @@ wait "$stress_http_pid" 2>/dev/null || true
 [[ "$stress_http_response" == $'HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 13\r\n\r\nhello, /world' ]]
 rm -f "$stress_http_out"
 
-echo "694 tests passed"
+echo "695 tests passed"
