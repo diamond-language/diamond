@@ -349,6 +349,11 @@ static bool disassemble_chunk(FILE *stream, const char *name,
                 offset=two_registers(stream,chunk,"YIELD",offset);break;
             case DIAMOND_OP_FIBER_NEW:
                 offset=two_registers(stream,chunk,"FIBER_NEW",offset);break;
+            case DIAMOND_OP_PRINT:
+                if(!require_bytes(stream,chunk,offset,4)){valid=false;offset=chunk->code_count;break;}
+                fprintf(stream,"%-18s r%u, r%u, newline=%u\n","PRINT",
+                    chunk->code[offset+1],chunk->code[offset+2],chunk->code[offset+3]);
+                offset+=4;break;
             case DIAMOND_OP_INVOKE:
                 if(!require_bytes(stream,chunk,offset,6)){valid=false;offset=chunk->code_count;break;}
                 fprintf(stream,"%-18s r%u, r%u, s%u, r%u, %u args\n","INVOKE",
