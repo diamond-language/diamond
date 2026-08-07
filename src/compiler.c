@@ -76,6 +76,7 @@ typedef struct Compiler {
 static uint8_t parse_expression(Compiler *compiler);
 static uint8_t compile_sequence(Compiler *compiler);
 static uint8_t compile_begin(Compiler *compiler);
+static uint8_t compile_yield(Compiler *compiler);
 static uint8_t compile_interface(Compiler *compiler);
 
 static void fail(Compiler *compiler, DiamondSpan span, const char *message) {
@@ -1935,6 +1936,8 @@ static uint8_t parse_prefix(Compiler *compiler) {
             return parse_loop(compiler);
         case DIAMOND_TOKEN_BEGIN:
             return compile_begin(compiler);
+        case DIAMOND_TOKEN_YIELD:
+            return compile_yield(compiler);
         default:
             fail(compiler, compiler->previous.span, "expected expression");
             return 0;
@@ -2222,11 +2225,21 @@ static uint8_t compile_return(Compiler *compiler) {
 }
 
 static uint8_t compile_yield(Compiler *compiler) {
-    advance_token(compiler);
-    const uint8_t source=allocate_register(compiler);
-    emit_instruction(compiler,DIAMOND_OP_NIL,source,0,0,1);
-    const uint8_t dest=allocate_register(compiler);
-    emit_instruction(compiler,DIAMOND_OP_YIELD,dest,source,0,2);
+    uint8_t source;
+    if (compiler->current.kind == DIAMOND_TOKEN_LEFT_PAREN) {
+        advance_token(compiler);
+        source = parse_expression(compiler);
+        if (compiler->current.kind != DIAMOND_TOKEN_RIGHT_PAREN) {
+            fail(compiler, compiler->current.span, "expected ')' after yield value");
+            return 0;
+        }
+        advance_token(compiler);
+    } else {
+        source = allocate_register(compiler);
+        emit_instruction(compiler, DIAMOND_OP_NIL, source, 0, 0, 1);
+    }
+    const uint8_t dest = allocate_register(compiler);
+    emit_instruction(compiler, DIAMOND_OP_YIELD, dest, source, 0, 2);
     return dest;
 }
 
@@ -3698,8 +3711,6 @@ static uint8_t compile_sequence(Compiler *compiler) {
             result=compile_module(compiler);
         } else if (compiler->current.kind == DIAMOND_TOKEN_RETURN) {
             result=compile_return(compiler);
-        } else if (compiler->current.kind == DIAMOND_TOKEN_YIELD) {
-            result=compile_yield(compiler);
         } else if (compiler->current.kind == DIAMOND_TOKEN_RAISE) {
             result=compile_raise(compiler);
         } else if (compiler->current.kind == DIAMOND_TOKEN_RETRY) {
