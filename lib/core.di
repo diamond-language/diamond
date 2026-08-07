@@ -106,6 +106,21 @@ def array_reverse(values: Array) -> Array
   result
 end
 
+def array_concat(values: Array, other: Array) -> Array
+  result = []
+  index = 0
+  while index < values.length()
+    result.push(values[index])
+    index = index + 1
+  end
+  index = 0
+  while index < other.length()
+    result.push(other[index])
+    index = index + 1
+  end
+  result
+end
+
 def hash_fetch(values: Hash, key, fallback)
   found = values[key]
   if found == nil
