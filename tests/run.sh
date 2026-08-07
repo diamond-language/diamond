@@ -2800,4 +2800,7 @@ fi
 grep -q "undefined method 'nope' for String" "$error_file"
 rm -f "$error_file"
 
-echo "670 tests passed"
+actual="$($diamond -e $'def run()\n def double(x) -> Int\n  x * 2\n end\n array_map_int([1,2,3], double)\nend\nrun()')"
+[[ "$actual" == "[2, 4, 6]" ]]
+
+echo "671 tests passed"
