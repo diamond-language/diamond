@@ -2775,4 +2775,12 @@ rm -f "$http_server_out"
 actual="$($diamond -e $'begin\n yield\nrescue error: FiberError\n 42\nend')"
 [[ "$actual" == "42" ]]
 
-echo "664 tests passed"
+error_file="$(mktemp)"
+if "$diamond" -e '"hello".slice(0, -1)' >/dev/null 2>"$error_file"; then
+    echo "String#slice with a negative length unexpectedly succeeded" >&2
+    exit 1
+fi
+grep -q "index 0 out of bounds for String of length 5" "$error_file"
+rm -f "$error_file"
+
+echo "666 tests passed"
