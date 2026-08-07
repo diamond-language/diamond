@@ -2,8 +2,10 @@
 
 This document covers Diamond's package resolution — a `diamond_packages/`
 convention `require` falls back to when a bare package name doesn't
-resolve as a relative file. See `docs/roadmap.md` for what's still
-aspirational (manifests, versions, a lockfile, an installer).
+resolve as a relative file, plus the optional manifest a package can
+declare its identity with. See `docs/roadmap.md` for what's still
+aspirational (versions actually being used for anything, a lockfile, an
+installer).
 
 ## `require "name"` resolving a package
 
@@ -46,8 +48,39 @@ by ordinary relative path (`require "helpers"` from inside
 `diamond_packages/greeter/`, the same relative-file resolution any
 required file already gets) without needing any awareness of the
 package convention that got it loaded in the first place. There is
-nothing else to configure — no manifest file is read or required for a
-package to be resolvable.
+nothing else to configure — a manifest (see below) is entirely optional,
+and a package with none is still fully resolvable.
+
+## Manifests
+
+```ruby
+# diamond_packages/greeter/package.di
+{"name": "greeter", "version": "0.1.0"}
+```
+
+A package may optionally include `diamond_packages/<name>/package.di`.
+If present, its last-expression value — the same "last line is the
+result" convention every Diamond program already has — must be a `Hash`
+with a String `name` key matching the package's own directory exactly; a
+package whose manifest disagrees with its own directory name fails the
+whole `require` with a clear error rather than silently loading anyway
+(this is the manifest's actual payoff today: catching a package that was
+copied or renamed incorrectly during a manual install). An optional
+`version` key, if present, must be a String — validated for type only;
+nothing reads its value yet, since there's no dependency resolution to
+consult it (see `docs/roadmap.md`).
+
+A manifest is compiled and run **standalone**: it does not go through
+`require`'s own loader pipeline, so `require` inside a manifest is not
+supported. A manifest is metadata, not a program — this keeps it to a
+single self-contained expression and avoids the loader recursing into
+itself to resolve a manifest's own dependencies. There's no sandboxing
+around manifest execution beyond that — same trust model the rest of the
+language already has for any program it runs, and packages are
+hand-installed locally, not fetched from anywhere untrusted.
+
+If no `package.di` exists at all, none of this applies — the package
+resolves exactly as it would with no manifest support at all.
 
 ## Precedence
 
@@ -60,14 +93,11 @@ alongside it.
 
 ## What's deliberately out of scope so far
 
-- **Manifests / package metadata**: no `name`/`version`/`dependencies`
-  file is read. `require` is pure compile-time text-splicing (see
-  `src/loader.c`'s `expand()`) — reading structured metadata mid-resolution
-  would mean the loader compiling and running a small Diamond program to
-  get a `Hash` back, a real mechanism of its own, not bundled into this
-  round.
-- **Versions and dependency resolution**: there is no version concept at
-  all yet. This isn't just unbuilt — it's architecturally constrained:
+- **Dependencies in the manifest**: only `name` and `version` are read;
+  there is no `dependencies` key or anything that consults one.
+- **Versions actually meaning anything**: `version` is validated to be a
+  String if present, but nothing compares, selects, or otherwise consumes
+  it. This isn't just unbuilt — it's architecturally constrained:
   Diamond compiles every `require`d file into *one* flat namespace with
   small, global, shared tables (`DIAMOND_MAX_FUNCTIONS`,
   `DIAMOND_MAX_CLASSES`, `DIAMOND_MAX_MODULES` in `src/vm.h`), so two
