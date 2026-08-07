@@ -2410,4 +2410,27 @@ if "$diamond" -e 'puts(1, 2)' >/dev/null 2>&1; then
     exit 1
 fi
 
-echo "585 tests passed"
+actual="$($diamond --dump-bytecode -e 'gets()')"
+grep -Eq 'GETS +r[0-9]+' <<<"$actual"
+
+actual="$(printf 'hello world\n' | $diamond -e $'name = gets()\n"hi #{name}"')"
+[[ "$actual" == "hi hello world" ]]
+
+actual="$(printf '' | $diamond -e $'x = gets()\nx == nil')"
+[[ "$actual" == "true" ]]
+
+actual="$(printf 'no trailing newline' | $diamond -e $'gets()')"
+[[ "$actual" == "no trailing newline" ]]
+
+actual="$(printf 'line1\r\nline2\n' | $diamond -e $'a = gets()\nb = gets()\n"#{a}|#{b}"')"
+[[ "$actual" == "line1|line2" ]]
+
+actual="$($diamond -e $'def gets()\n "shadowed"\nend\ngets()')"
+[[ "$actual" == "shadowed" ]]
+
+if "$diamond" -e 'gets(1)' >/dev/null 2>&1; then
+    echo "gets with an argument unexpectedly compiled" >&2
+    exit 1
+fi
+
+echo "592 tests passed"
