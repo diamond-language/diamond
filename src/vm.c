@@ -2,6 +2,7 @@
 
 #include "vm.h"
 
+#include <ctype.h>
 #include <errno.h>
 #include <stdckdint.h>
 #include <inttypes.h>
@@ -2680,8 +2681,20 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                             memcmp(method_name->chars,"slice",5)==0;
                         const bool to_i_method=method_name->length==4&&
                             memcmp(method_name->chars,"to_i",4)==0;
+                        const bool downcase_method=method_name->length==8&&
+                            memcmp(method_name->chars,"downcase",8)==0;
                         const DiamondString *source=
                             (const DiamondString *)registers[recv].as.object;
+                        if(downcase_method) {
+                            if(argc!=0)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                            DiamondString *lowered=
+                                allocate_string(vm,source->chars,source->length);
+                            if(lowered==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                            for(size_t index=0;index<lowered->length;index++)
+                                lowered->chars[index]=
+                                    (char)tolower((unsigned char)lowered->chars[index]);
+                            registers[dest]=DIAMOND_OBJECT(lowered);break;
+                        }
                         if(to_i_method) {
                             if(argc!=0)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
                             size_t position=0;bool negative=false;
