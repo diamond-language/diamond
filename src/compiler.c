@@ -1487,19 +1487,19 @@ static uint8_t parse_name(Compiler *compiler) {
                          (uint8_t)constant,0,2);
         return destination;
     }
-    if(class_index<0&&find_local(compiler,name)<0&&
+    if(class_index<0&&find_local(compiler,name)<0&&find_function(compiler,name)<0&&
        compiler->current.kind==DIAMOND_TOKEN_DOT&&
        name_equals(compiler,"Fiber",name,false))
         return parse_fiber_new_call(compiler);
-    if(class_index<0&&find_local(compiler,name)<0&&
+    if(class_index<0&&find_local(compiler,name)<0&&find_function(compiler,name)<0&&
        compiler->current.kind==DIAMOND_TOKEN_DOT&&
        name_equals(compiler,"File",name,false))
         return parse_file_open_call(compiler);
-    if(class_index<0&&find_local(compiler,name)<0&&
+    if(class_index<0&&find_local(compiler,name)<0&&find_function(compiler,name)<0&&
        compiler->current.kind==DIAMOND_TOKEN_DOT&&
        name_equals(compiler,"TCPSocket",name,false))
         return parse_tcp_connect_call(compiler);
-    if(class_index<0&&find_local(compiler,name)<0&&
+    if(class_index<0&&find_local(compiler,name)<0&&find_function(compiler,name)<0&&
        compiler->current.kind==DIAMOND_TOKEN_DOT&&
        name_equals(compiler,"TCPServer",name,false))
         return parse_tcp_listen_call(compiler);
