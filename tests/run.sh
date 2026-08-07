@@ -2381,4 +2381,33 @@ fi
 grep -q 'runtime error: type error' "$error_file"
 rm -f "$error_file"
 
-echo "576 tests passed"
+actual="$($diamond --dump-bytecode -e 'print("x")')"
+grep -Eq 'PRINT +r[0-9]+, r[0-9]+, newline=0' <<<"$actual"
+
+actual="$($diamond --dump-bytecode -e 'puts("x")')"
+grep -Eq 'PRINT +r[0-9]+, r[0-9]+, newline=1' <<<"$actual"
+
+actual="$($diamond -e $'print("a")\nprint("b")\n"c"')"
+[[ "$actual" == "abc" ]]
+
+actual="$($diamond -e $'puts("a")\nputs("b")\n0')"
+[[ "$actual" == $'a\nb\n0' ]]
+
+actual="$($diamond -e $'class Foo\n def to_s()\n  "a Foo"\n end\nend\nputs(Foo.new())\n0')"
+[[ "$actual" == $'a Foo\n0' ]]
+
+actual="$($diamond -e $'def print(x)\n "shadowed"\nend\nprint("real")')"
+[[ "$actual" == "shadowed" ]]
+
+actual="$($diamond -e $'x = puts("hi")\nx == nil')"
+[[ "$actual" == $'hi\ntrue' ]]
+
+actual="$($diamond -e $'class Bad\n def to_s(x)\n  "no"\n end\nend\nbegin\n puts(Bad.new())\nrescue error: ArgumentError\n 42\nend')"
+[[ "$actual" == "42" ]]
+
+if "$diamond" -e 'puts(1, 2)' >/dev/null 2>&1; then
+    echo "puts with more than one argument unexpectedly compiled" >&2
+    exit 1
+fi
+
+echo "585 tests passed"
