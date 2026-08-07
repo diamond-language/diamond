@@ -2784,6 +2784,15 @@ actual="$($diamond -e '"3.14".to_i()')"
 actual="$($diamond -e $'begin\n "99999999999999999999".to_i()\nrescue error: RangeError\n 42\nend')"
 [[ "$actual" == "42" ]]
 
+actual="$($diamond -e '"HeLLo, World!".downcase()')"
+[[ "$actual" == "hello, world!" ]]
+
+actual="$($diamond -e '"already lower".downcase()')"
+[[ "$actual" == "already lower" ]]
+
+actual="$($diamond -e '"".downcase()')"
+[[ "$actual" == "" ]]
+
 http_port=18743
 http_server_out="$(mktemp)"
 http_server_src="$(cat <<'HTTPEOF'
@@ -2847,6 +2856,37 @@ exec 3<&- 3>&- 2>/dev/null || true
 kill "$http_server_pid" 2>/dev/null || true
 wait "$http_server_pid" 2>/dev/null || true
 [[ "$http_response" == $'HTTP/1.1 201 Created\r\nContent-Type: text/plain\r\nContent-Length: 24\r\n\r\nPOST: {"name":"diamond"}' ]]
+rm -f "$http_server_out"
+
+http_port=18745
+http_server_out="$(mktemp)"
+http_server_src="$(cat <<'HTTPEOF'
+require "lib/http"
+def run()
+  def handler(request)
+    body = request["body"]
+    [200, {"Content-Type": "text/plain"}, "got: #{body}"]
+  end
+  http_serve(HTTP_PORT, handler)
+end
+run()
+HTTPEOF
+)"
+http_server_src="${http_server_src/HTTP_PORT/$http_port}"
+timeout 10 "$diamond" -e "$http_server_src" >"$http_server_out" 2>&1 &
+http_server_pid=$!
+{ for _ in $(seq 1 100); do
+    if exec 3<>"/dev/tcp/127.0.0.1/$http_port" 2>/dev/null; then
+        break
+    fi
+    sleep 0.05
+done } 2>/dev/null
+printf 'POST /items HTTP/1.1\r\nHost: localhost\r\ncontent-length: 5\r\n\r\nhello' >&3
+http_response="$(cat <&3)"
+exec 3<&- 3>&- 2>/dev/null || true
+kill "$http_server_pid" 2>/dev/null || true
+wait "$http_server_pid" 2>/dev/null || true
+[[ "$http_response" == $'HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 10\r\n\r\ngot: hello' ]]
 rm -f "$http_server_out"
 
 actual="$($diamond -e $'begin\n yield\nrescue error: FiberError\n 42\nend')"
@@ -2945,4 +2985,4 @@ wait "$stress_http_pid" 2>/dev/null || true
 [[ "$stress_http_response" == $'HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 13\r\n\r\nhello, /world' ]]
 rm -f "$stress_http_out"
 
-echo "676 tests passed"
+echo "677 tests passed"
