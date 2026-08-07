@@ -342,10 +342,27 @@ future work.
   existing method on that class directly (no superclass walk, no defining a
   new method). Verified end-to-end from pure Diamond source, including
   against an already-warmed `INVOKE_MONO` dispatch site.
+- Phase 1 of Diamond-language fiber syntax: `DIAMOND_OP_YIELD` re-encoded
+  with `dest`/`source` register operands (was zero-operand), threading a
+  value across the `swapcontext` boundary in both directions at the C level
+  (`diamond_fiber_resume(fiber, value)`, `vm->running_fiber->result`). `yield`
+  promoted from a statement-only special case to an ordinary primary
+  expression (`x = yield(1) + 1` now compiles), fixing a confirmed-broken
+  disassembler case (`<unknown opcode 66>`) along the way. This is groundwork
+  only — no Diamond-level way to create or resume a fiber exists yet; that is
+  the remaining, larger part of this feature (see below).
 
 ## Next priorities
 
-None queued.
+1. Diamond-language fiber syntax, remaining phases: `Fiber.new(callable)` as
+   a first-class, GC-managed value (new `DIAMOND_OBJECT_FIBER` heap kind,
+   with two identified GC-root correctness fixes — the resumer's own frames
+   must stay rooted while a child fiber runs, and a fiber must not retain a
+   dangling pointer into a transient stack-local chunk); `.resume(value)`/
+   `.status()`/`.alive?()` native dispatch; a new `FiberError` exception
+   class; uncaught fiber-body exceptions propagating to the resumer through
+   the existing rescue machinery. Scheduler (`DiamondFiberQueue`) exposure to
+   Diamond source is explicitly deferred beyond this.
 
 ## Later experiments
 

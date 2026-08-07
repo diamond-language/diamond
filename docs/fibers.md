@@ -71,9 +71,16 @@ maps to `COMPLETED`, `SUSPENDED`, or `FAILED` exactly as before.
 
 `DIAMOND_OP_YIELD` swaps back to whoever resumed the fiber directly, in
 place, at any call depth — including inside a called function, inside an
-active `begin`/`rescue`/`ensure` block, or inside generic dispatch. This
-closes two bugs from the interpreter's earlier single-frame-checkpoint
-design, both confirmed by direct repro before the fix:
+active `begin`/`rescue`/`ensure` block, or inside generic dispatch. It reads
+two register operands, `dest` and `source`: `source` is the value yielded
+*out* to whoever resumes, and on the next resume, `dest` is filled with
+whatever value that resume delivered. This works because `registers[]` is
+an ordinary C-stack local inside the fiber's own `run_chunk` activation,
+which lives on the fiber's own never-unwound native stack — resuming a
+`swapcontext` call is exactly like returning from any blocking function
+call, with locals (and thus pending register writes) intact. This closes
+two bugs from the interpreter's earlier single-frame-checkpoint design,
+both confirmed by direct repro before the fix:
 
 - **Nested yield used to silently corrupt on resume.** `def inner()\n
   yield\n 5\nend\ninner() + 100` would suspend "successfully," but resuming
@@ -113,9 +120,15 @@ through its own parked stack, while another fiber's turn triggers
 collection. Binding is optional and additive; a VM with no bound queue
 collects exactly as before.
 
-Diamond source may emit this boundary with a standalone `yield` statement;
-the compiler emits `DIAMOND_OP_YIELD` followed by a `nil` continuation value,
-so `yield` as an expression currently always evaluates to `nil`.
+Diamond source emits this boundary with `yield` or `yield(value)` — now a
+primary expression, usable anywhere a value is expected (`x = yield(1) +
+1`), not only as a standalone statement. Bare `yield` yields `nil` out
+(unchanged from before); `yield(value)` yields `value` out. The expression's
+own result — what a later resume delivers back in — is not yet reachable
+from Diamond source, since there is no `Fiber.new`/`.resume(value)` syntax
+yet; the C-level `diamond_fiber_resume(fiber, value)` API already threads a
+value all the way through, exercised by `tests/fiber_run.c`, ahead of the
+language-level construct landing.
 
 The current C boundary is:
 
