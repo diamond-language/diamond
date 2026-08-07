@@ -2345,4 +2345,40 @@ if grep -q 'FIBER_NEW' <<<"$actual"; then
     exit 1
 fi
 
-echo "566 tests passed"
+actual="$($diamond -e $'def make_counter()\n def counter()\n  i = 0\n  loop do\n   got = yield(i)\n   i = i + got\n  end\n end\n counter\nend\nf = Fiber.new(make_counter())\nfirst = f.resume(0)\nsecond = f.resume(10)\nthird = f.resume(5)\n"#{first}, #{second}, #{third}"')"
+[[ "$actual" == "0, 10, 15" ]]
+
+actual="$($diamond -e $'def make()\n def once()\n  1\n end\n once\nend\nf = Fiber.new(make())\nbefore = f.status()\na = f.resume(0)\nafter = f.status()\nalive_before = f.alive?()\n"#{before}, #{a}, #{after}, #{alive_before}"')"
+[[ "$actual" == "runnable, 1, completed, false" ]]
+
+actual="$($diamond -e $'def make()\n def once()\n  yield(1)\n  99\n end\n once\nend\nf = Fiber.new(make())\na = f.resume(0)\nb = f.resume(0)\ns = f.status()\n"#{a}, #{b}, #{s}"')"
+[[ "$actual" == "1, 99, completed" ]]
+
+actual="$($diamond -e $'def make()\n def once()\n  yield(1)\n  99\n end\n once\nend\nf = Fiber.new(make())\nf.resume(0)\nf.resume(0)\nbegin\n f.resume(0)\nrescue error: FiberError\n 42\nend')"
+[[ "$actual" == "42" ]]
+
+actual="$($diamond -e $'def make()\n def bad()\n  yield(1)\n  raise RuntimeError.new("boom")\n end\n bad\nend\nf = Fiber.new(make())\nf.resume(0)\nbegin\n f.resume(0)\nrescue error: RuntimeError\n error.message()\nend')"
+[[ "$actual" == "boom" ]]
+
+actual="$(DIAMOND_STRESS_GC=1 $diamond -e $'def make()\n def once()\n  yield(7)\n end\n once\nend\nf = Fiber.new(make())\nf.resume(0)')"
+[[ "$actual" == "7" ]]
+
+error_file="$(mktemp)"
+if "$diamond" -e $'def make()\n def once()\n  1\n end\n once\nend\nf = Fiber.new(make())\nf.resume(0, 1)' \
+    >/dev/null 2>"$error_file"; then
+    echo "Fiber#resume with too many arguments unexpectedly succeeded" >&2
+    exit 1
+fi
+grep -q 'runtime error: wrong number of arguments' "$error_file"
+rm -f "$error_file"
+
+error_file="$(mktemp)"
+if "$diamond" -e $'def make()\n def once()\n  1\n end\n once\nend\nf = Fiber.new(make())\nf.nonexistent()' \
+    >/dev/null 2>"$error_file"; then
+    echo "an unknown method on a Fiber receiver unexpectedly succeeded" >&2
+    exit 1
+fi
+grep -q 'runtime error: type error' "$error_file"
+rm -f "$error_file"
+
+echo "576 tests passed"
