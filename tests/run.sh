@@ -2635,4 +2635,10 @@ actual="$($diamond -e $'def run()\n def add(acc, x)\n  acc + x\n end\n [1,2,3].r
 actual="$($diamond -e $'def run()\n def add(acc, x)\n  acc + x\n end\n {"a":1,"b":2,"c":3}.reduce(0, add)\nend\nrun()')"
 [[ "$actual" == "6" ]]
 
-echo "641 tests passed"
+actual="$($diamond -e $'class NumberBag\n include Enumerable\n def initialize(values)\n  @values = values\n end\n def each(callback)\n  @values.each(callback)\n end\nend\ndef run()\n def is_even(x)\n  x - (x / 2) * 2 == 0\n end\n bag = NumberBag.new([1,2,3,4,5,6])\n bag.select(is_even)\nend\nrun()')"
+[[ "$actual" == "[2, 4, 6]" ]]
+
+actual="$($diamond -e $'class NumberBag\n include Enumerable\n def initialize(values)\n  @values = values\n end\n def each(callback)\n  @values.each(callback)\n end\nend\ndef run()\n def is_even(x)\n  x - (x / 2) * 2 == 0\n end\n def double(x)\n  x * 2\n end\n def add(acc, x)\n  acc + x\n end\n bag = NumberBag.new([1,2,3,4])\n a = bag.count(is_even)\n b = bag.any?(is_even)\n c = bag.all?(is_even)\n d = bag.map(double)\n e = bag.reduce(0, add)\n "#{a}, #{b}, #{c}, #{d}, #{e}"\nend\nrun()')"
+[[ "$actual" == "2, true, false, [2, 4, 6, 8], 10" ]]
+
+echo "643 tests passed"

@@ -273,3 +273,12 @@ def enumerable_reduce(values, initial, callback: Callable[2])
   end
   accumulator
 end
+
+module Enumerable
+  def select(callback: Callable[1]) -> Array = enumerable_select(self, callback)
+  def count(callback: Callable[1]) -> Int = enumerable_count(self, callback)
+  def any?(callback: Callable[1]) -> Bool = enumerable_any(self, callback)
+  def all?(callback: Callable[1]) -> Bool = enumerable_all(self, callback)
+  def map(callback: Callable[1]) -> Array = enumerable_map(self, callback)
+  def reduce(initial, callback: Callable[2]) = enumerable_reduce(self, initial, callback)
+end
