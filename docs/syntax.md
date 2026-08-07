@@ -168,6 +168,11 @@ Euclidean/Python-style mod) — `mod(-7, 3)` is `-1`, not `2`. `b == 0`
 raises the same `ZeroDivisionError` the division inside it already
 would.
 
+`array_sort(values: Array[Int])` returns a new sorted array (input
+untouched); `Int` is the only type with a native ordering comparison,
+so this is Int-only, checked up front (`expected Array[Int], got
+Array` on a non-Int element) rather than failing confusingly mid-sort.
+
 ## Fibers
 
 ```ruby

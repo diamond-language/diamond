@@ -3163,6 +3163,35 @@ actual="$($diamond -e '"#{mod(7, 3)}, #{mod(-7, 3)}, #{mod(7, -3)}, #{mod(0, 5)}
 actual="$($diamond -e $'begin\n mod(5, 0)\nrescue error: ZeroDivisionError\n 42\nend')"
 [[ "$actual" == "42" ]]
 
+actual="$($diamond -e 'array_sort([5,3,1,4,2])')"
+[[ "$actual" == "[1, 2, 3, 4, 5]" ]]
+
+actual="$($diamond -e 'array_sort([])')"
+[[ "$actual" == "[]" ]]
+
+actual="$($diamond -e 'array_sort([1])')"
+[[ "$actual" == "[1]" ]]
+
+actual="$($diamond -e 'array_sort([-1,-5,3,0])')"
+[[ "$actual" == "[-5, -1, 0, 3]" ]]
+
+actual="$($diamond -e 'array_sort([2,2,1,1])')"
+[[ "$actual" == "[1, 1, 2, 2]" ]]
+
+actual="$($diamond -e $'a = [3,1,2]\nsorted = array_sort(a)\n"#{a}, #{sorted}"')"
+[[ "$actual" == "[3, 1, 2], [1, 2, 3]" ]]
+
+error_file="$(mktemp)"
+if "$diamond" -e 'array_sort([1, "bad", 2])' >/dev/null 2>"$error_file"; then
+    echo "array_sort with a non-Int element unexpectedly succeeded" >&2
+    exit 1
+fi
+grep -q "expected Array\[Int\], got Array" "$error_file"
+rm -f "$error_file"
+
+actual="$(DIAMOND_STRESS_GC=1 $diamond -e 'array_sort([5,3,1,4,2])')"
+[[ "$actual" == "[1, 2, 3, 4, 5]" ]]
+
 stress_socket_port=18746
 stress_server_out="$(mktemp)"
 timeout 10 env DIAMOND_STRESS_GC=1 "$diamond" -e "$(printf 'server = TCPServer.listen(%d)
@@ -3228,4 +3257,4 @@ wait "$stress_http_pid" 2>/dev/null || true
 [[ "$stress_http_response" == $'HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 13\r\n\r\nhello, /world' ]]
 rm -f "$stress_http_out"
 
-echo "692 tests passed"
+echo "693 tests passed"
