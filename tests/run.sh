@@ -2803,4 +2803,38 @@ rm -f "$error_file"
 actual="$($diamond -e $'def run()\n def double(x) -> Int\n  x * 2\n end\n array_map_int([1,2,3], double)\nend\nrun()')"
 [[ "$actual" == "[2, 4, 6]" ]]
 
-echo "671 tests passed"
+stress_socket_port=18746
+stress_server_out="$(mktemp)"
+timeout 10 env DIAMOND_STRESS_GC=1 "$diamond" -e "$(printf 'server = TCPServer.listen(%d)
+conn = server.accept()
+msg = conn.gets()
+conn.write("echo: #{msg}\\n")
+conn.close()
+server.close()
+0' "$stress_socket_port")" >"$stress_server_out" 2>&1 &
+stress_server_pid=$!
+stress_client_src="$(printf 'c = nil
+attempts = 0
+while c == nil
+ c = begin
+  TCPSocket.connect("127.0.0.1", %d)
+ rescue error: IOError
+  attempts = attempts + 1
+  if attempts > 2000
+   raise "giving up"
+  end
+  nil
+ end
+end
+c.write("hello\\n")
+response = c.gets()
+c.close()
+response' "$stress_socket_port")"
+stress_client_out="$(mktemp)"
+timeout 10 env DIAMOND_STRESS_GC=1 "$diamond" -e "$stress_client_src" >"$stress_client_out" 2>&1
+wait "$stress_server_pid"
+[[ "$(cat "$stress_server_out")" == "0" ]]
+[[ "$(cat "$stress_client_out")" == "echo: hello" ]]
+rm -f "$stress_server_out" "$stress_client_out"
+
+echo "673 tests passed"
