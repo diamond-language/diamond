@@ -219,8 +219,24 @@ static DiamondFiber *diamond_fiber_entering;
 
 static void diamond_fiber_trampoline(void) {
     DiamondFiber *self = diamond_fiber_entering;
-    self->status = run_chunk(self->chunk, self->vm, nullptr, 0, 0, nullptr,
-                             &self->result);
+    if (self->entry_closure != nullptr) {
+        const DiamondFunction *fn=
+            &self->program_tables.functions[self->entry_closure->function_index];
+        DiamondChunk child={.name=fn->name,.code=fn->code,.lines=fn->lines,
+          .columns=fn->columns,.code_count=fn->code_count,.constants=fn->constants,
+          .constant_count=fn->constant_count,.strings=fn->strings,.string_count=fn->string_count,
+          .type_sets=fn->type_sets,.type_set_count=fn->type_set_count,
+          .functions=self->program_tables.functions,.function_count=self->program_tables.function_count,
+          .classes=self->program_tables.classes,.class_count=self->program_tables.class_count,
+          .interfaces=self->program_tables.interfaces,.interface_count=self->program_tables.interface_count,
+          .parameter_type_sets=fn->parameter_type_sets,
+          .type_variable_count=fn->type_variable_count,
+          .parameter_offset=fn->owner_class==UINT8_MAX?0:1};
+        self->status=run_chunk(&child,self->vm,nullptr,0,0,self->entry_closure,&self->result);
+    } else {
+        self->status = run_chunk(self->chunk, self->vm, nullptr, 0, 0, nullptr,
+                                 &self->result);
+    }
     swapcontext(&self->context, self->resume_target);
 }
 
