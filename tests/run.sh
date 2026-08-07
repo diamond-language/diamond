@@ -1468,6 +1468,53 @@ fi
 grep -q "cannot require '.*no_such_package.di'" "$pkg_missing_error"
 rm -rf "$pkg_dir" "$pkg_missing_error"
 
+manifest_dir="$(mktemp -d)"
+mkdir -p "$manifest_dir/diamond_packages/greeter"
+printf 'def greet(name)\n  "hi, " + name\nend\n' >"$manifest_dir/diamond_packages/greeter/greeter.di"
+printf 'require "greeter"\ngreet("world")\n' >"$manifest_dir/main.di"
+
+printf '{"name": "greeter", "version": "0.1.0"}\n' >"$manifest_dir/diamond_packages/greeter/package.di"
+actual="$(cd "$manifest_dir" && "$diamond_abs" main.di)"
+[[ "$actual" == "hi, world" ]]
+rm -f "$manifest_dir/diamond_packages/greeter/package.di"
+
+actual="$(cd "$manifest_dir" && "$diamond_abs" main.di)"
+[[ "$actual" == "hi, world" ]]
+
+manifest_error="$(mktemp)"
+printf '{"name": "wrong_name"}\n' >"$manifest_dir/diamond_packages/greeter/package.di"
+if (cd "$manifest_dir" && "$diamond_abs" main.di) >/dev/null 2>"$manifest_error"; then
+    echo "mismatched manifest name unexpectedly succeeded" >&2
+    rm -rf "$manifest_dir" "$manifest_error"
+    exit 1
+fi
+grep -q "declares name 'wrong_name', expected 'greeter'" "$manifest_error"
+
+printf '42\n' >"$manifest_dir/diamond_packages/greeter/package.di"
+if (cd "$manifest_dir" && "$diamond_abs" main.di) >/dev/null 2>"$manifest_error"; then
+    echo "non-Hash manifest unexpectedly succeeded" >&2
+    rm -rf "$manifest_dir" "$manifest_error"
+    exit 1
+fi
+grep -q "must evaluate to a Hash" "$manifest_error"
+
+printf '{"version": "0.1.0"}\n' >"$manifest_dir/diamond_packages/greeter/package.di"
+if (cd "$manifest_dir" && "$diamond_abs" main.di) >/dev/null 2>"$manifest_error"; then
+    echo "manifest missing name key unexpectedly succeeded" >&2
+    rm -rf "$manifest_dir" "$manifest_error"
+    exit 1
+fi
+grep -q "must have a String 'name' key" "$manifest_error"
+
+printf '{"name": "greeter", "version": 1}\n' >"$manifest_dir/diamond_packages/greeter/package.di"
+if (cd "$manifest_dir" && "$diamond_abs" main.di) >/dev/null 2>"$manifest_error"; then
+    echo "non-String version unexpectedly succeeded" >&2
+    rm -rf "$manifest_dir" "$manifest_error"
+    exit 1
+fi
+grep -q "key 'version' must be a String" "$manifest_error"
+rm -rf "$manifest_dir" "$manifest_error"
+
 actual="$($diamond -e $'class User\n def initialize(name)\n  @name = name\n end\n def to_s() -> String = "User(#{@name})"\nend\n"hello #{User.new("Ada")}"')"
 [[ "$actual" == "hello User(Ada)" ]]
 
@@ -2898,4 +2945,4 @@ wait "$stress_http_pid" 2>/dev/null || true
 [[ "$stress_http_response" == $'HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 13\r\n\r\nhello, /world' ]]
 rm -f "$stress_http_out"
 
-echo "675 tests passed"
+echo "676 tests passed"
