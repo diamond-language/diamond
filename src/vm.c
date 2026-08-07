@@ -234,6 +234,25 @@ DiamondFiber *diamond_fiber_new(const DiamondChunk *chunk) {
     return fiber;
 }
 
+/* Builds a fiber that invokes a specific closure rather than running a whole
+ * chunk from ip=0. Only the sub-tables that are provably stable for the
+ * process's lifetime are copied by value -- never chunk->code/constants,
+ * which belong to whatever transient stack-local chunk existed at the call
+ * site -- so the fiber never retains a pointer that could dangle once that
+ * call site returns, however deeply nested Fiber.new(...) was called from. */
+[[maybe_unused]] static DiamondFiber *diamond_fiber_new_for_closure(
+        const DiamondChunk *chunk, const DiamondClosure *closure) {
+    DiamondFiber *fiber=diamond_fiber_new(nullptr);
+    if(fiber==nullptr)return nullptr;
+    fiber->entry_closure=closure;
+    fiber->program_tables=(DiamondChunk){
+        .functions=chunk->functions,.function_count=chunk->function_count,
+        .classes=chunk->classes,.class_count=chunk->class_count,
+        .interfaces=chunk->interfaces,.interface_count=chunk->interface_count,
+    };
+    return fiber;
+}
+
 void diamond_fiber_free(DiamondFiber *fiber) {
     if(fiber==nullptr)return;
     free_fiber_stack(fiber);
