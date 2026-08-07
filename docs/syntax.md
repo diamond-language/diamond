@@ -124,7 +124,8 @@ Strings support `.length()`, `.index_of(needle)` (position or `nil`),
 `.slice(start, length)`, `.to_i()` (lenient decimal parsing), and
 `.downcase()`/`.upcase()` (ASCII-only case conversion), and
 `.reverse()` (byte-level, not UTF-8-grapheme-aware — consistent with
-the rest of the language having no other Unicode awareness).
+the rest of the language having no other Unicode awareness), and
+`.strip()` (trims leading/trailing ASCII whitespace).
 
 `.each(callback)`, and the `Enumerable` methods derived from it —
 `.select`/`.count`/`.any?`/`.all?`/`.reduce`/`.map` — work as receiver
