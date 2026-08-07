@@ -449,6 +449,53 @@ int main(void) {
     if(mincore(stack_probe_addr,stack_probe_page,stack_probe_vec)!=-1||errno!=ENOMEM)return 80;
     diamond_vm_free(&stack_probe_vm);
 
+    static const DiamondStringConstant resumer_hazard_strings[]={
+        {.chars="resumer-only-value",.length=18}};
+    static const uint8_t resumer_hazard_code[]={
+        DIAMOND_OP_STRING,0,0,DIAMOND_OP_YIELD,1,0,DIAMOND_OP_RETURN,0};
+    static const DiamondChunk resumer_hazard_chunk={.name="resumer-hazard-a",
+        .code=resumer_hazard_code,.code_count=8,
+        .strings=resumer_hazard_strings,.string_count=1};
+    static const DiamondStringConstant resumer_hazard_child_strings[]={
+        {.chars="child-value",.length=11}};
+    static const uint8_t resumer_hazard_child_code[]={DIAMOND_OP_STRING,0,0,DIAMOND_OP_RETURN,0};
+    static const DiamondChunk resumer_hazard_child_chunk={.name="resumer-hazard-b",
+        .code=resumer_hazard_child_code,.code_count=5,
+        .strings=resumer_hazard_child_strings,.string_count=1};
+    DiamondVm resumer_hazard_vm;diamond_vm_init(&resumer_hazard_vm);
+    DiamondFiber *resumer_hazard_a=diamond_fiber_new(&resumer_hazard_chunk);
+    DiamondFiber *resumer_hazard_b=diamond_fiber_new(&resumer_hazard_child_chunk);
+    if(resumer_hazard_a==nullptr||resumer_hazard_b==nullptr||
+       diamond_fiber_bind_vm(resumer_hazard_a,&resumer_hazard_vm)!=DIAMOND_FIBER_OK||
+       diamond_fiber_bind_vm(resumer_hazard_b,&resumer_hazard_vm)!=DIAMOND_FIBER_OK||
+       diamond_fiber_prepare(resumer_hazard_a)!=DIAMOND_FIBER_OK||
+       diamond_fiber_prepare(resumer_hazard_b)!=DIAMOND_FIBER_OK)return 81;
+    if(diamond_fiber_resume(resumer_hazard_a,DIAMOND_NIL)!=DIAMOND_FIBER_OK||
+       diamond_fiber_run(resumer_hazard_a)!=DIAMOND_FIBER_OK||
+       resumer_hazard_a->state!=DIAMOND_FIBER_SUSPENDED)return 82;
+    /* Simulate A being the live resumer of nested fiber B, exactly as
+     * Phase D's .resume() dispatch will do from inside DIAMOND_OP_INVOKE:
+     * A's own frame chain is "current" while B runs and allocates. */
+    resumer_hazard_vm.stress_gc=true;
+    resumer_hazard_vm.frames=resumer_hazard_a->native_frames;
+    resumer_hazard_vm.running_fiber=resumer_hazard_a;
+    if(diamond_fiber_resume(resumer_hazard_b,DIAMOND_NIL)!=DIAMOND_FIBER_OK||
+       diamond_fiber_run(resumer_hazard_b)!=DIAMOND_FIBER_OK||
+       resumer_hazard_b->state!=DIAMOND_FIBER_COMPLETED)return 83;
+    resumer_hazard_vm.frames=nullptr;
+    resumer_hazard_vm.running_fiber=nullptr;
+    resumer_hazard_vm.stress_gc=false;
+    if(diamond_fiber_resume(resumer_hazard_a,DIAMOND_NIL)!=DIAMOND_FIBER_OK||
+       diamond_fiber_run(resumer_hazard_a)!=DIAMOND_FIBER_OK||
+       resumer_hazard_a->state!=DIAMOND_FIBER_COMPLETED)return 84;
+    DiamondValue resumer_hazard_result=diamond_fiber_result(resumer_hazard_a);
+    if(resumer_hazard_result.kind!=DIAMOND_VALUE_OBJECT)return 85;
+    const DiamondString *resumer_hazard_string=(const DiamondString *)resumer_hazard_result.as.object;
+    if(resumer_hazard_string->length!=18||
+       memcmp(resumer_hazard_string->chars,"resumer-only-value",18)!=0)return 86;
+    diamond_fiber_free(resumer_hazard_a);diamond_fiber_free(resumer_hazard_b);
+    diamond_vm_free(&resumer_hazard_vm);
+
     puts("fiber run passed");
     return 0;
 }
