@@ -563,16 +563,33 @@ future work.
   at roughly 50 of the 64 `DIAMOND_MAX_FUNCTIONS` slots — a real
   constraint on how much further pure-Diamond stdlib growth this budget
   can absorb before it needs raising.
+- Stdlib round 2: String primitives. `.upcase()`/`.reverse()`/`.strip()`/
+  `.split(separator)`/`.ord()` as new `DIAMOND_OP_INVOKE` branches in
+  `src/vm.c`'s String dispatch block, following the exact `.downcase()`/
+  `.slice()` pattern (`.split`'s empty-separator case splits into
+  one-character strings; otherwise keeps every piece including empty
+  ones, deliberately not replicating Ruby's trailing-empty-suppression
+  quirk). `chr(code)` is the inverse of `.ord()` — a new global function
+  (not receiver syntax, since `Int` has no per-value method dispatch)
+  backed by a genuinely new `DIAMOND_OP_CHR` opcode and compiler
+  recognition mirroring `gets()`/`print()`, since there was no existing
+  Diamond-level way to build a `String` from a raw byte value. Scoped
+  down from the full round-2 target list: char-indexing (`"abc"[0]`)
+  and string repeat (`"x" * 3`) were deliberately left out because both
+  would touch shared, high-traffic opcodes (`INDEX_GET`/`INDEX_SET`,
+  `MULTIPLY`'s quickening-instrumented block) with real regression-risk
+  surface for Array/Hash/Int, unlike every other addition this round
+  which was a purely additive, isolated branch — see `Next priorities`.
 
 ## Next priorities
 
-- Stdlib round 2: String primitives (`split`, `strip`/`trim`, `upcase`,
-  `reverse`, char-indexing, `ord`/`chr`, string repeat). Explicitly
-  deferred from stdlib round 1 in favor of the zero-VM-change
-  collections/numeric work — unlike round 1, each of these needs a new
-  native `DIAMOND_OP_INVOKE` branch in `src/vm.c`'s String dispatch
-  block (small, isolated, following the exact `.slice`/`.downcase`
-  pattern, but still C-level work, not pure `lib/core.di`).
+- Stdlib round 3: char-indexing (`"abc"[0]`) and string repeat
+  (`"x" * 3`), the two String primitives deliberately deferred from
+  round 2 for touching shared opcodes (`DIAMOND_OP_INDEX_GET`/
+  `INDEX_SET`, `DIAMOND_OP_MULTIPLY`) rather than being isolated
+  additions — needs more care than a typical new-method round, since a
+  mistake there risks regressing Array/Hash/Int code paths that have
+  nothing to do with strings.
 
 ## Later experiments
 
