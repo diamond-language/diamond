@@ -1513,7 +1513,28 @@ if (cd "$manifest_dir" && "$diamond_abs" main.di) >/dev/null 2>"$manifest_error"
     exit 1
 fi
 grep -q "key 'version' must be a String" "$manifest_error"
-rm -rf "$manifest_dir" "$manifest_error"
+
+printf 'this is not valid Diamond syntax )))\n' >"$manifest_dir/diamond_packages/greeter/package.di"
+if (cd "$manifest_dir" && "$diamond_abs" main.di) >/dev/null 2>"$manifest_error"; then
+    echo "manifest with a compile error unexpectedly succeeded" >&2
+    rm -rf "$manifest_dir" "$manifest_error"
+    exit 1
+fi
+grep -q "failed to compile at line" "$manifest_error"
+
+printf 'raise "manifest boom"\n' >"$manifest_dir/diamond_packages/greeter/package.di"
+if (cd "$manifest_dir" && "$diamond_abs" main.di) >/dev/null 2>"$manifest_error"; then
+    echo "manifest that raises unexpectedly succeeded" >&2
+    rm -rf "$manifest_dir" "$manifest_error"
+    exit 1
+fi
+grep -q "package manifest '.*' failed: uncaught exception: manifest boom" "$manifest_error"
+rm -f "$manifest_error"
+
+printf '{"name": "greeter", "version": "0.1.0"}\n' >"$manifest_dir/diamond_packages/greeter/package.di"
+actual="$(cd "$manifest_dir" && DIAMOND_STRESS_GC=1 "$diamond_abs" main.di)"
+[[ "$actual" == "hi, world" ]]
+rm -rf "$manifest_dir"
 
 actual="$($diamond -e $'class User\n def initialize(name)\n  @name = name\n end\n def to_s() -> String = "User(#{@name})"\nend\n"hello #{User.new("Ada")}"')"
 [[ "$actual" == "hello User(Ada)" ]]
@@ -3031,4 +3052,4 @@ wait "$stress_http_pid" 2>/dev/null || true
 [[ "$stress_http_response" == $'HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 13\r\n\r\nhello, /world' ]]
 rm -f "$stress_http_out"
 
-echo "679 tests passed"
+echo "680 tests passed"
