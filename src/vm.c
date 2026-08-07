@@ -2820,7 +2820,11 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                             target_fiber->state!=DIAMOND_FIBER_FAILED);
                         break;
                     }
-                    if(!resume_method)VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                    if(!resume_method) {
+                        snprintf(vm->error,sizeof vm->error,"undefined method '%.*s' for %s",
+                            (int)method_name->length,method_name->chars,"Fiber");
+                        VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                    }
                     if(argc>1)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
                     const DiamondValue resume_argument=argc==1?registers[base]:DIAMOND_NIL;
                     if(target_fiber->state!=DIAMOND_FIBER_RUNNABLE&&
@@ -2848,8 +2852,11 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                         memcmp(method_name->chars,"write",5)==0;
                     const bool close_method=method_name->length==5&&
                         memcmp(method_name->chars,"close",5)==0;
-                    if(!read_method&&!gets_method&&!write_method&&!close_method)
+                    if(!read_method&&!gets_method&&!write_method&&!close_method) {
+                        snprintf(vm->error,sizeof vm->error,"undefined method '%.*s' for %s",
+                            (int)method_name->length,method_name->chars,"File");
                         VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                    }
                     if(close_method) {
                         if(argc!=0)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
                         if(target_file->stream!=nullptr) {
@@ -2938,7 +2945,11 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                         memcmp(method_name->chars,"accept",6)==0;
                     const bool close_method=method_name->length==5&&
                         memcmp(method_name->chars,"close",5)==0;
-                    if(!accept_method&&!close_method)VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                    if(!accept_method&&!close_method) {
+                        snprintf(vm->error,sizeof vm->error,"undefined method '%.*s' for %s",
+                            (int)method_name->length,method_name->chars,"Listener");
+                        VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                    }
                     if(argc!=0)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
                     if(close_method) {
                         if(listener->fd>=0) {
