@@ -1,5 +1,6 @@
 #include "vm.h"
 
+#include <errno.h>
 #include <stdckdint.h>
 #include <inttypes.h>
 #include <stdio.h>
@@ -553,6 +554,13 @@ static DiamondFiberHandle *allocate_fiber_handle(DiamondVm *vm,DiamondFiber *fib
     DiamondFiberHandle *handle=malloc(sizeof(DiamondFiberHandle));if(handle==nullptr)return nullptr;
     *handle=(DiamondFiberHandle){.object={.next=vm->objects,.kind=DIAMOND_OBJECT_FIBER},.fiber=fiber};
     vm->objects=&handle->object;vm->bytes_allocated+=sizeof(DiamondFiberHandle);return handle;
+}
+
+static DiamondFileHandle *allocate_file_handle(DiamondVm *vm,FILE *stream) {
+    if(vm->stress_gc||vm->bytes_allocated>=vm->next_gc)diamond_vm_collect(vm);
+    DiamondFileHandle *handle=malloc(sizeof(DiamondFileHandle));if(handle==nullptr)return nullptr;
+    *handle=(DiamondFileHandle){.object={.next=vm->objects,.kind=DIAMOND_OBJECT_FILE},.stream=stream};
+    vm->objects=&handle->object;vm->bytes_allocated+=sizeof(DiamondFileHandle);return handle;
 }
 
 static bool values_equal(DiamondValue left, DiamondValue right) {
@@ -3105,6 +3113,34 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 DiamondFiberHandle *handle=allocate_fiber_handle(vm,new_fiber);
                 if(handle==nullptr) {
                     diamond_fiber_free(new_fiber);
+                    VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                }
+                registers[dest]=(DiamondValue){.kind=DIAMOND_VALUE_OBJECT,
+                    .as.object=(DiamondObject *)handle};
+                break;
+            }
+            case DIAMOND_OP_FILE_OPEN: {
+                uint8_t dest=0,path_reg=0,mode_reg=0;
+                READ_BYTE(dest);READ_BYTE(path_reg);READ_BYTE(mode_reg);
+                if(registers[path_reg].kind!=DIAMOND_VALUE_OBJECT||
+                   registers[path_reg].as.object->kind!=DIAMOND_OBJECT_STRING||
+                   registers[mode_reg].kind!=DIAMOND_VALUE_OBJECT||
+                   registers[mode_reg].as.object->kind!=DIAMOND_OBJECT_STRING) {
+                    snprintf(vm->error,sizeof vm->error,"File.open arguments must be String values");
+                    VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                }
+                const DiamondString *path=(const DiamondString *)registers[path_reg].as.object;
+                const DiamondString *mode=(const DiamondString *)registers[mode_reg].as.object;
+                errno=0;
+                FILE *stream=fopen(path->chars,mode->chars);
+                if(stream==nullptr) {
+                    snprintf(vm->error,sizeof vm->error,"cannot open '%.*s': %s",
+                             (int)path->length,path->chars,strerror(errno));
+                    VM_RETURN(DIAMOND_VM_IO_ERROR);
+                }
+                DiamondFileHandle *handle=allocate_file_handle(vm,stream);
+                if(handle==nullptr) {
+                    fclose(stream);
                     VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
                 }
                 registers[dest]=(DiamondValue){.kind=DIAMOND_VALUE_OBJECT,
