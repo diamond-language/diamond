@@ -96,6 +96,7 @@ int main(void) {
        diamond_fiber_resume(compiled_fiber, DIAMOND_NIL)!=DIAMOND_FIBER_OK||
        diamond_fiber_run(compiled_fiber)!=DIAMOND_FIBER_OK||
        compiled_fiber->state!=DIAMOND_FIBER_SUSPENDED)return 16;
+    if(diamond_fiber_result(compiled_fiber).kind!=DIAMOND_VALUE_NIL)return 71;
     diamond_fiber_free(compiled_fiber);diamond_vm_free(&compiled_vm);
 
     static DiamondProgram double_yield_program;DiamondDiagnostic double_yield_diagnostic;
