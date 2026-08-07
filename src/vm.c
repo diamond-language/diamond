@@ -2687,8 +2687,23 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                             memcmp(method_name->chars,"upcase",6)==0;
                         const bool reverse_method=method_name->length==7&&
                             memcmp(method_name->chars,"reverse",7)==0;
+                        const bool strip_method=method_name->length==5&&
+                            memcmp(method_name->chars,"strip",5)==0;
                         const DiamondString *source=
                             (const DiamondString *)registers[recv].as.object;
+                        if(strip_method) {
+                            if(argc!=0)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                            size_t start=0;
+                            while(start<source->length&&
+                                  isspace((unsigned char)source->chars[start]))start++;
+                            size_t end=source->length;
+                            while(end>start&&
+                                  isspace((unsigned char)source->chars[end-1]))end--;
+                            DiamondString *stripped=
+                                allocate_string(vm,source->chars+start,end-start);
+                            if(stripped==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                            registers[dest]=DIAMOND_OBJECT(stripped);break;
+                        }
                         if(reverse_method) {
                             if(argc!=0)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
                             DiamondString *reversed=
