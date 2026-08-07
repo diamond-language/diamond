@@ -132,7 +132,11 @@ unlike Ruby, it keeps every piece including empty ones from consecutive
 or leading/trailing separators (no trailing-empty suppression) — a
 deliberate simplification, not an attempt at Ruby compatibility.
 `.ord()` returns the first byte's value as an `Int`; an empty String
-raises a rescuable `IndexError`.
+raises a rescuable `IndexError`. `chr(code)` is its inverse — a global
+function (not receiver syntax; `Int` has no per-value method dispatch)
+returning a one-character `String`, recognized the same way `gets()`
+is (shadowable by a local or top-level function). `code` outside
+`0..255` raises a rescuable `RangeError`.
 
 `.each(callback)`, and the `Enumerable` methods derived from it —
 `.select`/`.count`/`.any?`/`.all?`/`.reduce`/`.map` — work as receiver

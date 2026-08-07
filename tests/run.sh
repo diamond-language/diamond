@@ -2990,6 +2990,38 @@ actual="$($diamond -e '" ".ord()')"
 actual="$($diamond -e $'begin\n "".ord()\nrescue error: IndexError\n 42\nend')"
 [[ "$actual" == "42" ]]
 
+actual="$($diamond -e 'chr(65)')"
+[[ "$actual" == "A" ]]
+
+actual="$($diamond -e 'chr(97)')"
+[[ "$actual" == "a" ]]
+
+actual="$($diamond -e 'chr("A".ord())')"
+[[ "$actual" == "A" ]]
+
+actual="$($diamond --dump-bytecode -e 'chr(65)')"
+grep -q 'CHR' <<<"$actual"
+
+error_file="$(mktemp)"
+if "$diamond" -e 'chr("x")' >/dev/null 2>"$error_file"; then
+    echo "chr with a non-Int argument unexpectedly succeeded" >&2
+    exit 1
+fi
+grep -q "chr argument must be an Int" "$error_file"
+rm -f "$error_file"
+
+actual="$($diamond -e $'begin\n chr(300)\nrescue error: RangeError\n 42\nend')"
+[[ "$actual" == "42" ]]
+
+actual="$($diamond -e $'begin\n chr(-1)\nrescue error: RangeError\n 42\nend')"
+[[ "$actual" == "42" ]]
+
+actual="$($diamond -e $'def chr(x)\n "shadowed"\nend\nchr(65)')"
+[[ "$actual" == "shadowed" ]]
+
+actual="$(DIAMOND_STRESS_GC=1 $diamond -e $'a = chr(72)\nb = chr(73)\n"#{a}#{b}"')"
+[[ "$actual" == "HI" ]]
+
 http_port=18743
 http_server_out="$(mktemp)"
 http_server_src="$(cat <<'HTTPEOF'
@@ -3340,4 +3372,4 @@ wait "$stress_http_pid" 2>/dev/null || true
 [[ "$stress_http_response" == $'HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 13\r\n\r\nhello, /world' ]]
 rm -f "$stress_http_out"
 
-echo "698 tests passed"
+echo "699 tests passed"
