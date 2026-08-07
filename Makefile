@@ -42,7 +42,7 @@ test-release: release
 	bash tests/run.sh
 
 test-sanitize: sanitize
-	ASAN_OPTIONS=detect_leaks=0 UBSAN_OPTIONS=print_stacktrace=1 bash tests/run.sh
+	ASAN_OPTIONS=detect_leaks=1 UBSAN_OPTIONS=print_stacktrace=1 bash tests/run.sh
 
 API_SOURCES := $(filter-out src/main.c,$(SOURCES))
 
