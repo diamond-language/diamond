@@ -148,7 +148,10 @@ elements appended; `array_compact(values)` returns a new array with any
 `nil` elements dropped; `array_uniq(values)` returns a new array with
 only the first occurrence of each distinct (`==`) element, order
 preserved; `array_flatten(values)` returns a new array with nested
-arrays fully flattened (recursively, matching Ruby's default).
+arrays fully flattened (recursively, matching Ruby's default);
+`array_join(values, separator = "")` stringifies each element (the same
+formatting string interpolation uses) and joins them with `separator`
+between (not trailing).
 
 ## Fibers
 
