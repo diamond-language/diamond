@@ -1304,6 +1304,23 @@ static uint8_t parse_fiber_new_call(Compiler *compiler) {
     return dest;
 }
 
+static uint8_t parse_print_call(Compiler *compiler, bool newline) {
+    advance_token(compiler); /* consume '(' */
+    const uint8_t source=parse_expression(compiler);
+    if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
+        fail(compiler,compiler->current.span,"expected ')' after arguments");
+        return 0;
+    }
+    advance_token(compiler);
+    const uint8_t dest=allocate_register(compiler);
+    emit_opcode(compiler,DIAMOND_OP_PRINT);
+    emit_byte(compiler,dest);
+    emit_byte(compiler,source);
+    emit_byte(compiler,newline?1:0);
+    compiler->known_types[dest]=DIAMOND_TYPE_NIL;
+    return dest;
+}
+
 static uint8_t parse_name(Compiler *compiler) {
     const DiamondSpan name = compiler->previous.span;
     int class_index=find_class(compiler,name);
@@ -1369,6 +1386,11 @@ static uint8_t parse_name(Compiler *compiler) {
        compiler->current.kind==DIAMOND_TOKEN_DOT&&
        name_equals(compiler,"Fiber",name,false))
         return parse_fiber_new_call(compiler);
+    if(find_local(compiler,name)<0&&find_function(compiler,name)<0&&
+       compiler->current.kind==DIAMOND_TOKEN_LEFT_PAREN&&
+       (name_equals(compiler,"print",name,false)||
+        name_equals(compiler,"puts",name,false)))
+        return parse_print_call(compiler,name_equals(compiler,"puts",name,false));
     if (class_index >= 0 && compiler->current.kind == DIAMOND_TOKEN_DOT) {
         advance_token(compiler);
         if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER) {
