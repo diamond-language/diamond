@@ -2837,4 +2837,35 @@ wait "$stress_server_pid"
 [[ "$(cat "$stress_client_out")" == "echo: hello" ]]
 rm -f "$stress_server_out" "$stress_client_out"
 
-echo "673 tests passed"
+stress_http_port=18747
+stress_http_out="$(mktemp)"
+stress_http_src="$(cat <<'HTTPEOF'
+require "lib/http"
+def run()
+  def handler(request)
+    path = request["path"]
+    [200, {"Content-Type": "text/plain"}, "hello, #{path}"]
+  end
+  http_serve(HTTP_PORT, handler)
+end
+run()
+HTTPEOF
+)"
+stress_http_src="${stress_http_src/HTTP_PORT/$stress_http_port}"
+timeout 10 env DIAMOND_STRESS_GC=1 "$diamond" -e "$stress_http_src" >"$stress_http_out" 2>&1 &
+stress_http_pid=$!
+{ for _ in $(seq 1 100); do
+    if exec 3<>"/dev/tcp/127.0.0.1/$stress_http_port" 2>/dev/null; then
+        break
+    fi
+    sleep 0.05
+done } 2>/dev/null
+printf 'GET /world HTTP/1.1\r\nHost: localhost\r\n\r\n' >&3
+stress_http_response="$(cat <&3)"
+exec 3<&- 3>&- 2>/dev/null || true
+kill "$stress_http_pid" 2>/dev/null || true
+wait "$stress_http_pid" 2>/dev/null || true
+[[ "$stress_http_response" == $'HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 13\r\n\r\nhello, /world' ]]
+rm -f "$stress_http_out"
+
+echo "674 tests passed"
