@@ -480,7 +480,23 @@ future work.
 
 ## Next priorities
 
-None queued.
+1. Basic Rack-style web server. Its previously-stated blocker (socket/IO
+   access) is resolved by the File/Socket work already done. A second,
+   previously-unflagged prerequisite was found while scoping this: Diamond
+   has no string manipulation beyond concatenation/interpolation/`.length()`
+   today — no indexing, no substring, no split — needed for even minimal
+   HTTP request-line/header parsing. First slice: two new native `String`
+   methods (find a substring's position, extract a substring by range),
+   `File#read(n)` (length-limited read, for reading a request body of known
+   `Content-Length` — today's `.read()` only reads to EOF), then a new
+   `lib/http.di` — deliberately *not* auto-embedded like `lib/core.di`, opt
+   in via `require "http"`, so programs that never touch HTTP don't pay for
+   it against the small (64-entry) function-table budget — with request
+   parsing, response writing, and an accept-loop `http_serve(port, handler)`
+   built on `TCPServer`/`TCPSocket` already in place. Request/response
+   convention mirrors Rack directly: a request `Hash` (`method`/`path`/
+   `headers`/`body`), a handler returning a 3-element response `Array`
+   (`[status, headers, body]`).
 
 ## Later experiments
 
@@ -495,12 +511,6 @@ None queued.
   project. Depends on `require`'s current path-based loader (`src/loader.c`)
   growing a notion of installed/versioned packages, not just relative file
   paths.
-- A basic Rack-style web server interface: a minimal HTTP request/response
-  convention (an object or callable taking a request-like value and
-  returning a response-like value) that a small built-in or standard-library
-  HTTP server could dispatch to, enabling simple web apps written in
-  Diamond. Depends on some form of socket/IO access existing first, which
-  the language does not yet have.
 
 ## Explicitly deferred
 
