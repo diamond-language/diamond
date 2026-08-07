@@ -425,7 +425,11 @@ int main(void) {
     if(survive_result.kind!=DIAMOND_VALUE_OBJECT)return 75;
     const DiamondString *survive_string=(const DiamondString *)survive_result.as.object;
     if(survive_string->length!=18||memcmp(survive_string->chars,"fiber-survives-gc",18)!=0)return 76;
-    diamond_fiber_free(survive_fiber);diamond_vm_free(&survive_vm);
+    /* survive_handle is still linked in survive_vm.objects (that's what this
+     * test just confirmed) - diamond_vm_free now owns and frees any fiber
+     * still reachable that way, so an explicit diamond_fiber_free here would
+     * double-free survive_fiber. */
+    diamond_vm_free(&survive_vm);
 
     static const uint8_t stack_probe_code[]={DIAMOND_OP_RETURN,0};
     static const DiamondChunk stack_probe_chunk={.name="stack-probe",
@@ -536,7 +540,11 @@ int main(void) {
        nested_fiber_new_fiber->state!=DIAMOND_FIBER_COMPLETED)return 91;
     DiamondValue nested_fiber_new_final=diamond_fiber_result(nested_fiber_new_fiber);
     if(nested_fiber_new_final.kind!=DIAMOND_VALUE_INT||nested_fiber_new_final.as.integer!=12)return 92;
-    diamond_fiber_free(nested_fiber_new_fiber);diamond_vm_free(&nested_fiber_new_vm);
+    /* nested_fiber_new_fiber is nested_fiber_new_handle->fiber, and that
+     * handle is still linked in nested_fiber_new_vm.objects - diamond_vm_free
+     * now owns and frees it, so an explicit diamond_fiber_free here would
+     * double-free it. */
+    diamond_vm_free(&nested_fiber_new_vm);
 
     puts("fiber run passed");
     return 0;
