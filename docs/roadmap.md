@@ -506,14 +506,27 @@ future work.
   gained the fallback as a small, additive change; no compiler or grammar
   changes were needed since `require` recognition is entirely
   loader-level text scanning.
+- Package resolution, phase 2 (manifests): an optional
+  `diamond_packages/name/package.di`, compiled and run standalone (no
+  `require` support inside one — a manifest is metadata, not a program)
+  to get back a `Hash`. A String `name` key must match the package's own
+  directory, or the whole `require` fails with a clear error — the actual
+  payoff today, since it catches a package copied/renamed incorrectly
+  during a manual install. An optional `version` key is validated for
+  type only; nothing consumes it yet (see `docs/packages.md`). Found and
+  fixed a real, previously-latent stack-overflow risk while building
+  this: `diamond_compile`'s `*program = (DiamondProgram){};` materialized
+  a 3MB+ temporary on its own stack frame regardless of where the
+  destination pointer lives, which was always true but only became
+  reachable now that a second `diamond_compile` call (for the manifest)
+  runs from inside `expand()`'s own recursive call chain while the
+  top-level program's `DiamondProgram` is still live further up the
+  stack in `main.c`'s `run_source`. Fixed by using `memset` instead,
+  which needs no stack-resident temporary.
 
 ## Next priorities
 
-- Package manifests: a way for a package to declare its own name/version
-  (and eventually dependencies) that `require`'s package-resolution
-  fallback (see `docs/packages.md`) can read. Likely needs the loader to
-  compile-and-run a small Diamond file mid-resolution to get a `Hash`
-  back, which is a new mechanism in its own right.
+None queued.
 
 ## Later experiments
 
@@ -524,10 +537,12 @@ future work.
 - Self-hosting selected compiler and standard-library components.
 - Dependency resolution, a lockfile, and a way to fetch/install packages
   into a project — the remainder of the "Bundler-like package manager"
-  idea beyond bare name resolution (see `docs/packages.md` for what's
-  already built and `Next priorities` for the immediately-next slice).
-  Fetching specifically has no buildable target yet: there is no HTTP
-  client and no registry to fetch from.
+  idea beyond bare name resolution and manifests (see `docs/packages.md`
+  for what's already built). The manifest's `version` field is already
+  declared and type-validated but not yet consumed by anything — this is
+  where it would first get read for something. Fetching specifically has
+  no buildable target yet: there is no HTTP client and no registry to
+  fetch from.
 
 ## Explicitly deferred
 
