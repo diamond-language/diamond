@@ -2792,4 +2792,12 @@ rm -rf "$stress_file_dir"
 actual="$($diamond -e $'def run()\n def cb(x) = true\n def add(acc,x) = acc+x\n s = [].select(cb)\n c = [].count(cb)\n m = [].map(cb)\n r = [].reduce(99, add)\n "#{s}, #{c}, #{m}, #{r}"\nend\nrun()')"
 [[ "$actual" == "[], 0, [], 99" ]]
 
-echo "668 tests passed"
+error_file="$(mktemp)"
+if "$diamond" -e '"hi".nope()' >/dev/null 2>"$error_file"; then
+    echo "an unrecognized method on a String receiver unexpectedly succeeded" >&2
+    exit 1
+fi
+grep -q "undefined method 'nope' for String" "$error_file"
+rm -f "$error_file"
+
+echo "670 tests passed"
