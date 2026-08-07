@@ -409,7 +409,22 @@ future work.
 
 ## Next priorities
 
-None queued.
+1. stdin: a `gets()` primitive reading one line from standard input,
+   returning it as a `String` with the trailing line ending stripped (both
+   `\n` and `\r\n`), or `nil` at EOF. Same compiler-recognition precedent
+   as `print`/`puts` (shadowable, no reserved keyword). Files and sockets
+   remain out of scope; see `docs/io.md`.
+2. Stdlib rethink: a real `Enumerable`-style module, deriving `select`/
+   `count`/`any?`/`all?`/`reduce`/etc. from a single `#each` primitive
+   (Ruby's actual design), rather than today's flat `array_*`/`hash_*`
+   free functions with inconsistent naming (`array_include` vs. no
+   `array_include?`; `hash_map_values` vs. no `hash_map`). Needs design
+   work first: Array/Hash are native VM object kinds without method
+   tables, not classes, so `values.each(cb)` receiver syntax and
+   `include Enumerable`-style derivation for user classes are two
+   different mechanisms that need to converge on the same method
+   surface. Scope and mechanism to be worked out in a dedicated plan
+   before implementation starts.
 
 ## Later experiments
 
