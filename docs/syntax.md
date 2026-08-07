@@ -121,7 +121,8 @@ exceptions, and explicit `return` alike. Built-in exception classes:
 `[1, 2]` for arrays and `{"key": value}` for hashes, both with optional
 type parameters. `.push`, `.pop`, and `.length()` are native on both.
 Strings support `.length()`, `.index_of(needle)` (position or `nil`),
-`.slice(start, length)`, and `.to_i()` (lenient decimal parsing).
+`.slice(start, length)`, `.to_i()` (lenient decimal parsing), and
+`.downcase()` (ASCII-only lowercasing).
 
 `.each(callback)`, and the `Enumerable` methods derived from it —
 `.select`/`.count`/`.any?`/`.all?`/`.reduce`/`.map` — work as receiver
