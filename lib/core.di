@@ -201,3 +201,43 @@ def enumerable_count(values, callback: Callable[1]) -> Int
   end
   total
 end
+
+def enumerable_any(values, callback: Callable[1]) -> Bool
+  found = false
+  def probe_pair(key, value)
+    if callback(value)
+      found = true
+    end
+  end
+  def probe_item(item)
+    if callback(item)
+      found = true
+    end
+  end
+  if values is Hash
+    values.each(probe_pair)
+  else
+    values.each(probe_item)
+  end
+  found
+end
+
+def enumerable_all(values, callback: Callable[1]) -> Bool
+  result = true
+  def check_pair(key, value)
+    if callback(value) == false
+      result = false
+    end
+  end
+  def check_item(item)
+    if callback(item) == false
+      result = false
+    end
+  end
+  if values is Hash
+    values.each(check_pair)
+  else
+    values.each(check_item)
+  end
+  result
+end

@@ -2575,4 +2575,22 @@ actual="$($diamond -e $'def run()\n def is_even(x)\n  x - (x / 2) * 2 == 0\n end
 actual="$($diamond -e $'def run()\n def is_positive(x)\n  x > 0\n end\n enumerable_count({"a":1,"b":-2,"c":3}, is_positive)\nend\nrun()')"
 [[ "$actual" == "2" ]]
 
-echo "621 tests passed"
+actual="$($diamond -e $'def run()\n def is_even(x)\n  x - (x / 2) * 2 == 0\n end\n enumerable_any([1,3,5,6], is_even)\nend\nrun()')"
+[[ "$actual" == "true" ]]
+
+actual="$($diamond -e $'def run()\n def is_even(x)\n  x - (x / 2) * 2 == 0\n end\n enumerable_any([1,3,5], is_even)\nend\nrun()')"
+[[ "$actual" == "false" ]]
+
+actual="$($diamond -e $'def run()\n def is_positive(x)\n  x > 0\n end\n enumerable_all({"a":1,"b":2}, is_positive)\nend\nrun()')"
+[[ "$actual" == "true" ]]
+
+actual="$($diamond -e $'def run()\n def is_positive(x)\n  x > 0\n end\n enumerable_all({"a":1,"b":-2}, is_positive)\nend\nrun()')"
+[[ "$actual" == "false" ]]
+
+actual="$($diamond -e $'def run()\n def anything(x)\n  false\n end\n enumerable_all([], anything)\nend\nrun()')"
+[[ "$actual" == "true" ]]
+
+actual="$($diamond -e $'def run()\n def anything(x)\n  true\n end\n enumerable_any([], anything)\nend\nrun()')"
+[[ "$actual" == "false" ]]
+
+echo "627 tests passed"
