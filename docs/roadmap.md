@@ -395,11 +395,22 @@ future work.
 - Structural interfaces and more capable flow typing.
 - Native-code generation or a tracing/method JIT.
 - Self-hosting selected compiler and standard-library components.
+- A RubyGems-like packaging format for distributing Diamond libraries (name
+  TBD) and a Bundler-like package manager on top of it: dependency
+  resolution, a lockfile, and a way to fetch and install packages into a
+  project. Depends on `require`'s current path-based loader (`src/loader.c`)
+  growing a notion of installed/versioned packages, not just relative file
+  paths.
+- A basic Rack-style web server interface: a minimal HTTP request/response
+  convention (an object or callable taking a request-like value and
+  returning a response-like value) that a small built-in or standard-library
+  HTTP server could dispatch to, enabling simple web apps written in
+  Diamond. Depends on some form of socket/IO access existing first, which
+  the language does not yet have.
 
 ## Explicitly deferred
 
 - Ruby compatibility (not a goal; only familiar syntax and object conventions).
 - Stable bytecode and embedding APIs.
-- Package management.
 - Multi-platform support.
 - Parallel execution.
