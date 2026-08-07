@@ -2691,8 +2691,21 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                             memcmp(method_name->chars,"strip",5)==0;
                         const bool split_method=method_name->length==5&&
                             memcmp(method_name->chars,"split",5)==0;
+                        const bool ord_method=method_name->length==3&&
+                            memcmp(method_name->chars,"ord",3)==0;
                         const DiamondString *source=
                             (const DiamondString *)registers[recv].as.object;
+                        if(ord_method) {
+                            if(argc!=0)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                            if(source->length==0) {
+                                snprintf(vm->error,sizeof vm->error,
+                                    "cannot take ord of an empty String");
+                                VM_RETURN(DIAMOND_VM_INDEX_ERROR);
+                            }
+                            registers[dest]=
+                                DIAMOND_INT((unsigned char)source->chars[0]);
+                            break;
+                        }
                         if(split_method) {
                             if(argc!=1)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
                             if(registers[base].kind!=DIAMOND_VALUE_OBJECT||
