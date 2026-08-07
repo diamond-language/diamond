@@ -121,6 +121,19 @@ def array_concat(values: Array, other: Array) -> Array
   result
 end
 
+def array_compact(values: Array) -> Array
+  result = []
+  index = 0
+  while index < values.length()
+    item = values[index]
+    if item != nil
+      result.push(item)
+    end
+    index = index + 1
+  end
+  result
+end
+
 def hash_fetch(values: Hash, key, fallback)
   found = values[key]
   if found == nil
