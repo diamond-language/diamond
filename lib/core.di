@@ -175,6 +175,22 @@ def array_join(values: Array, separator: String = "") -> String
   result
 end
 
+def array_delete_at(values: Array, index: Int)
+  length = values.length()
+  if index < 0 || index >= length
+    nil
+  else
+    removed = values[index]
+    shift = index
+    while shift < length - 1
+      values[shift] = values[shift + 1]
+      shift = shift + 1
+    end
+    values.pop()
+    removed
+  end
+end
+
 def hash_fetch(values: Hash, key, fallback)
   found = values[key]
   if found == nil
