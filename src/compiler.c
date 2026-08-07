@@ -1337,6 +1337,65 @@ static uint8_t parse_file_open_call(Compiler *compiler) {
     return dest;
 }
 
+static uint8_t parse_tcp_connect_call(Compiler *compiler) {
+    advance_token(compiler); /* consume '.' */
+    if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER||
+       !name_equals(compiler,"connect",compiler->current.span,false)) {
+        fail(compiler,compiler->current.span,"expected 'connect' after 'TCPSocket'");
+        return 0;
+    }
+    advance_token(compiler); /* consume 'connect' */
+    if(compiler->current.kind!=DIAMOND_TOKEN_LEFT_PAREN) {
+        fail(compiler,compiler->current.span,"expected '(' after 'TCPSocket.connect'");
+        return 0;
+    }
+    advance_token(compiler);
+    const uint8_t host_register=parse_expression(compiler);
+    if(compiler->current.kind!=DIAMOND_TOKEN_COMMA) {
+        fail(compiler,compiler->current.span,"expected ',' after TCPSocket.connect host");
+        return 0;
+    }
+    advance_token(compiler);
+    const uint8_t port_register=parse_expression(compiler);
+    if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
+        fail(compiler,compiler->current.span,"expected ')' after TCPSocket.connect arguments");
+        return 0;
+    }
+    advance_token(compiler);
+    const uint8_t dest=allocate_register(compiler);
+    emit_opcode(compiler,DIAMOND_OP_TCP_CONNECT);
+    emit_byte(compiler,dest);
+    emit_byte(compiler,host_register);
+    emit_byte(compiler,port_register);
+    return dest;
+}
+
+static uint8_t parse_tcp_listen_call(Compiler *compiler) {
+    advance_token(compiler); /* consume '.' */
+    if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER||
+       !name_equals(compiler,"listen",compiler->current.span,false)) {
+        fail(compiler,compiler->current.span,"expected 'listen' after 'TCPServer'");
+        return 0;
+    }
+    advance_token(compiler); /* consume 'listen' */
+    if(compiler->current.kind!=DIAMOND_TOKEN_LEFT_PAREN) {
+        fail(compiler,compiler->current.span,"expected '(' after 'TCPServer.listen'");
+        return 0;
+    }
+    advance_token(compiler);
+    const uint8_t port_register=parse_expression(compiler);
+    if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
+        fail(compiler,compiler->current.span,"expected ')' after TCPServer.listen argument");
+        return 0;
+    }
+    advance_token(compiler);
+    const uint8_t dest=allocate_register(compiler);
+    emit_opcode(compiler,DIAMOND_OP_TCP_LISTEN);
+    emit_byte(compiler,dest);
+    emit_byte(compiler,port_register);
+    return dest;
+}
+
 static uint8_t parse_print_call(Compiler *compiler, bool newline) {
     advance_token(compiler); /* consume '(' */
     const uint8_t source=parse_expression(compiler);
@@ -1436,6 +1495,14 @@ static uint8_t parse_name(Compiler *compiler) {
        compiler->current.kind==DIAMOND_TOKEN_DOT&&
        name_equals(compiler,"File",name,false))
         return parse_file_open_call(compiler);
+    if(class_index<0&&find_local(compiler,name)<0&&
+       compiler->current.kind==DIAMOND_TOKEN_DOT&&
+       name_equals(compiler,"TCPSocket",name,false))
+        return parse_tcp_connect_call(compiler);
+    if(class_index<0&&find_local(compiler,name)<0&&
+       compiler->current.kind==DIAMOND_TOKEN_DOT&&
+       name_equals(compiler,"TCPServer",name,false))
+        return parse_tcp_listen_call(compiler);
     if(find_local(compiler,name)<0&&find_function(compiler,name)<0&&
        compiler->current.kind==DIAMOND_TOKEN_LEFT_PAREN&&
        (name_equals(compiler,"print",name,false)||
