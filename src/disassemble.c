@@ -354,6 +354,8 @@ static bool disassemble_chunk(FILE *stream, const char *name,
                 fprintf(stream,"%-18s r%u, r%u, newline=%u\n","PRINT",
                     chunk->code[offset+1],chunk->code[offset+2],chunk->code[offset+3]);
                 offset+=4;break;
+            case DIAMOND_OP_GETS:
+                offset=one_register(stream,chunk,"GETS",offset);break;
             case DIAMOND_OP_INVOKE:
                 if(!require_bytes(stream,chunk,offset,6)){valid=false;offset=chunk->code_count;break;}
                 fprintf(stream,"%-18s r%u, r%u, s%u, r%u, %u args\n","INVOKE",
