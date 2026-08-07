@@ -2433,4 +2433,41 @@ if "$diamond" -e 'gets(1)' >/dev/null 2>&1; then
     exit 1
 fi
 
-echo "592 tests passed"
+actual="$($diamond --dump-bytecode -e 'File.open("x", "r")' 2>/dev/null || true)"
+grep -q 'FILE_OPEN' <<<"$actual"
+
+file_dir="$(mktemp -d)"
+data_file="$file_dir/data.txt"
+actual="$($diamond -e "$(printf 'f = File.open("%s", "w")\nf.write("hello, ")\nf.write("world")\nf.close()\ng = File.open("%s", "r")\ncontent = g.read()\ng.close()\ncontent' "$data_file" "$data_file")")"
+[[ "$actual" == "hello, world" ]]
+
+printf 'line1\nline2\n' >"$data_file"
+actual="$($diamond -e "$(printf 'f = File.open("%s", "r")\na = f.gets()\nb = f.gets()\nc = f.gets()\nf.close()\n"#{a}|#{b}|#{c}"' "$data_file")")"
+[[ "$actual" == "line1|line2|nil" ]]
+
+actual="$($diamond -e "$(printf 'begin\n File.open("%s/nonexistent", "r")\nrescue error: IOError\n 42\nend' "$file_dir")")"
+[[ "$actual" == "42" ]]
+
+actual="$($diamond -e "$(printf 'f = File.open("%s", "r")\nf.close()\nbegin\n f.read()\nrescue error: IOError\n 42\nend' "$data_file")")"
+[[ "$actual" == "42" ]]
+
+actual="$($diamond -e "$(printf 'f = File.open("%s", "r")\nbegin\n f.write("x")\nrescue error: IOError\n 42\nend' "$data_file")")"
+[[ "$actual" == "42" ]]
+
+actual="$($diamond --dump-bytecode -e 'File = 5
+File.open("x", "r")' 2>/dev/null || true)"
+if grep -q 'FILE_OPEN' <<<"$actual"; then
+    echo "File.open on a shadowing local unexpectedly compiled to FILE_OPEN" >&2
+    rm -rf "$file_dir"
+    exit 1
+fi
+
+if "$diamond" -e "$(printf 'f = File.open("%s", "r")\nf.write()' "$data_file")" >/dev/null 2>&1; then
+    echo "File#write with no arguments unexpectedly succeeded" >&2
+    rm -rf "$file_dir"
+    exit 1
+fi
+
+rm -rf "$file_dir"
+
+echo "600 tests passed"
