@@ -98,6 +98,7 @@ typedef enum DiamondOpCode : uint8_t {
     DIAMOND_OP_FIBER_NEW,
     DIAMOND_OP_PRINT,
     DIAMOND_OP_GETS,
+    DIAMOND_OP_FILE_OPEN,
     DIAMOND_OP_COUNT,
 } DiamondOpCode;
 
