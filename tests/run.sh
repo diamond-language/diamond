@@ -2641,4 +2641,7 @@ actual="$($diamond -e $'class NumberBag\n include Enumerable\n def initialize(va
 actual="$($diamond -e $'class NumberBag\n include Enumerable\n def initialize(values)\n  @values = values\n end\n def each(callback)\n  @values.each(callback)\n end\nend\ndef run()\n def is_even(x)\n  x - (x / 2) * 2 == 0\n end\n def double(x)\n  x * 2\n end\n def add(acc, x)\n  acc + x\n end\n bag = NumberBag.new([1,2,3,4])\n a = bag.count(is_even)\n b = bag.any?(is_even)\n c = bag.all?(is_even)\n d = bag.map(double)\n e = bag.reduce(0, add)\n "#{a}, #{b}, #{c}, #{d}, #{e}"\nend\nrun()')"
 [[ "$actual" == "2, true, false, [2, 4, 6, 8], 10" ]]
 
-echo "643 tests passed"
+actual="$($diamond -e $'def run(flag)\n result = 0\n if flag\n  def add_a(x)\n   result = result + x\n  end\n  add_a(1)\n else\n  def add_b(x)\n   result = result + x\n  end\n  add_b(2)\n end\n result\nend\n"#{run(true)}, #{run(false)}"')"
+[[ "$actual" == "1, 2" ]]
+
+echo "644 tests passed"

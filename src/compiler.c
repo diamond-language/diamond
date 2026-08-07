@@ -3073,13 +3073,18 @@ static uint8_t compile_definition(Compiler *compiler) {
     }
     const uint8_t result = allocate_register(compiler);
     if(!at_top_level) {
+        /* Always emit BOX_LOCAL here, even if this local was already boxed
+         * at an earlier capture site elsewhere in the function: that earlier
+         * site might be in a sibling if/else branch that doesn't dominate
+         * this one, so it may not actually have executed on this runtime
+         * path. DIAMOND_OP_BOX_LOCAL is idempotent (a no-op if the register
+         * already holds a Cell), so emitting it redundantly on paths where
+         * the earlier boxing did run is always safe. */
         for(size_t i=0;i<capture_count;i++) {
             for(size_t local=0;local<compiler->local_count;local++) {
                 if(compiler->locals[local].reg!=captures[i])continue;
-                if(!compiler->locals[local].captured) {
-                    emit_instruction(compiler,DIAMOND_OP_BOX_LOCAL,captures[i],0,0,1);
-                    compiler->locals[local].captured=true;
-                }
+                emit_instruction(compiler,DIAMOND_OP_BOX_LOCAL,captures[i],0,0,1);
+                compiler->locals[local].captured=true;
                 break;
             }
         }

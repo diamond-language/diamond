@@ -2449,7 +2449,10 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 ((DiamondCell *)captured.as.object)->value=registers[source];break;
             }
             case DIAMOND_OP_BOX_LOCAL: {
-                uint8_t reg=0;READ_BYTE(reg);DiamondCell *cell=allocate_cell(vm,registers[reg]);
+                uint8_t reg=0;READ_BYTE(reg);
+                if(registers[reg].kind==DIAMOND_VALUE_OBJECT&&
+                   registers[reg].as.object->kind==DIAMOND_OBJECT_CELL)break;
+                DiamondCell *cell=allocate_cell(vm,registers[reg]);
                 if(cell==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
                 registers[reg]=DIAMOND_OBJECT(cell);break;
             }
