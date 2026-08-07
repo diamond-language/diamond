@@ -204,6 +204,14 @@ void diamond_vm_free(DiamondVm *vm) {
             for(size_t index=0;index<array->constraint_count;index++)
                 free(array->constraints[index].type_variable_bindings);
             free(array->values);
+        } else if(object->kind==DIAMOND_OBJECT_FIBER) {
+            diamond_fiber_free(((DiamondFiberHandle *)object)->fiber);
+        } else if(object->kind==DIAMOND_OBJECT_FILE) {
+            FILE *stream=((DiamondFileHandle *)object)->stream;
+            if(stream!=nullptr)fclose(stream);
+        } else if(object->kind==DIAMOND_OBJECT_LISTENER) {
+            const int fd=((DiamondListenerHandle *)object)->fd;
+            if(fd>=0)close(fd);
         }
         free(object);
         object = next;
