@@ -164,19 +164,19 @@ end
 
 def enumerable_select(values, callback: Callable[1]) -> Array
   result = []
-  def collect_pair(key, value)
-    if callback(value)
-      result.push(value)
-    end
-  end
-  def collect_item(item)
-    if callback(item)
-      result.push(item)
-    end
-  end
   if values is Hash
+    def collect_pair(key, value)
+      if callback(value)
+        result.push(value)
+      end
+    end
     values.each(collect_pair)
   else
+    def collect_item(item)
+      if callback(item)
+        result.push(item)
+      end
+    end
     values.each(collect_item)
   end
   result
@@ -184,19 +184,19 @@ end
 
 def enumerable_count(values, callback: Callable[1]) -> Int
   total = 0
-  def tally_pair(key, value)
-    if callback(value)
-      total = total + 1
-    end
-  end
-  def tally_item(item)
-    if callback(item)
-      total = total + 1
-    end
-  end
   if values is Hash
+    def tally_pair(key, value)
+      if callback(value)
+        total = total + 1
+      end
+    end
     values.each(tally_pair)
   else
+    def tally_item(item)
+      if callback(item)
+        total = total + 1
+      end
+    end
     values.each(tally_item)
   end
   total
@@ -204,19 +204,19 @@ end
 
 def enumerable_any(values, callback: Callable[1]) -> Bool
   found = false
-  def probe_pair(key, value)
-    if callback(value)
-      found = true
-    end
-  end
-  def probe_item(item)
-    if callback(item)
-      found = true
-    end
-  end
   if values is Hash
+    def probe_pair(key, value)
+      if callback(value)
+        found = true
+      end
+    end
     values.each(probe_pair)
   else
+    def probe_item(item)
+      if callback(item)
+        found = true
+      end
+    end
     values.each(probe_item)
   end
   found
@@ -224,19 +224,19 @@ end
 
 def enumerable_all(values, callback: Callable[1]) -> Bool
   result = true
-  def check_pair(key, value)
-    if callback(value) == false
-      result = false
-    end
-  end
-  def check_item(item)
-    if callback(item) == false
-      result = false
-    end
-  end
   if values is Hash
+    def check_pair(key, value)
+      if callback(value) == false
+        result = false
+      end
+    end
     values.each(check_pair)
   else
+    def check_item(item)
+      if callback(item) == false
+        result = false
+      end
+    end
     values.each(check_item)
   end
   result
@@ -244,15 +244,15 @@ end
 
 def enumerable_map(values, callback: Callable[1]) -> Array
   result = []
-  def transform_pair(key, value)
-    result.push(callback(value))
-  end
-  def transform_item(item)
-    result.push(callback(item))
-  end
   if values is Hash
+    def transform_pair(key, value)
+      result.push(callback(value))
+    end
     values.each(transform_pair)
   else
+    def transform_item(item)
+      result.push(callback(item))
+    end
     values.each(transform_item)
   end
   result
@@ -260,15 +260,15 @@ end
 
 def enumerable_reduce(values, initial, callback: Callable[2])
   accumulator = initial
-  def combine_pair(key, value)
-    accumulator = callback(accumulator, value)
-  end
-  def combine_item(item)
-    accumulator = callback(accumulator, item)
-  end
   if values is Hash
+    def combine_pair(key, value)
+      accumulator = callback(accumulator, value)
+    end
     values.each(combine_pair)
   else
+    def combine_item(item)
+      accumulator = callback(accumulator, item)
+    end
     values.each(combine_item)
   end
   accumulator
