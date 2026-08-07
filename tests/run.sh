@@ -2772,4 +2772,7 @@ wait "$http_server_pid" 2>/dev/null || true
 [[ "$http_response" == $'HTTP/1.1 201 Created\r\nContent-Type: text/plain\r\nContent-Length: 24\r\n\r\nPOST: {"name":"diamond"}' ]]
 rm -f "$http_server_out"
 
-echo "663 tests passed"
+actual="$($diamond -e $'begin\n yield\nrescue error: FiberError\n 42\nend')"
+[[ "$actual" == "42" ]]
+
+echo "664 tests passed"
