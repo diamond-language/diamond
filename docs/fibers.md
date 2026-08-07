@@ -98,7 +98,8 @@ both confirmed by direct repro before the fix:
 If `yield` executes with no fiber currently running (plain `diamond_vm_run`,
 not `diamond_fiber_run`), there is no scheduler to suspend into:
 `DIAMOND_VM_YIELD_WITHOUT_FIBER` is returned instead, failing immediately and
-clearly rather than doing nothing meaningful.
+clearly rather than doing nothing meaningful — rescuable as `FiberError`
+(a `StandardError` subclass), the same as `.resume`'s own error case below.
 
 `diamond_fiber_scheduler_run_once` dequeues one runnable fiber, executes it,
 requeues suspended fibers at the FIFO tail, and removes completed or failed
@@ -165,9 +166,10 @@ which folding would break.
 
 `Fiber.new(callable)` is now Diamond-language syntax, recognized in the
 compiler wherever an identifier named `Fiber` is followed by `.new(...)` and
-is not shadowed by a local variable of that name (same precedent as
-`redefine_method`: `Fiber = 5; Fiber.new(1)` compiles to ordinary dynamic
-`INVOKE` dispatch on the local, not the special form). It compiles to a new
+is not shadowed by a local variable or a top-level function of that name
+(same precedent as `redefine_method`: `Fiber = 5; Fiber.new(1)` compiles to
+ordinary dynamic `INVOKE` dispatch on the local, not the special form). It
+compiles to a new
 `DIAMOND_OP_FIBER_NEW dest, callable` instruction. The callable must be a
 zero-argument `Callable` value; both constraints are enforced at the
 `Fiber.new` call site with a rescuable `TypeError` or `ArgumentError`, since

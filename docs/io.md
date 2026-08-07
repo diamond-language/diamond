@@ -85,7 +85,8 @@ safety net, the same role sweep-time cleanup plays for an unclosed
 `Fiber`'s native stack.
 
 `File.open` is recognized in the compiler the same way `Fiber.new` is
-(shadowable by a local of the same name), compiling to a single
+(shadowable by a local or a top-level function of the same name),
+compiling to a single
 `DIAMOND_OP_FILE_OPEN dest, path, mode` instruction. `.read()`/`.gets()`/
 `.write(value)`/`.close()` are native `DIAMOND_OP_INVOKE` dispatch on a
 `DIAMOND_OBJECT_FILE` receiver, the same mechanism `Fiber`'s `.resume`/
