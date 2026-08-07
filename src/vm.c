@@ -165,6 +165,10 @@ void diamond_vm_collect(DiamondVm *vm) {
             size=sizeof(DiamondFileHandle);
             FILE *stream=((DiamondFileHandle *)unreached)->stream;
             if(stream!=nullptr)fclose(stream);
+        } else if(unreached->kind==DIAMOND_OBJECT_LISTENER) {
+            size=sizeof(DiamondListenerHandle);
+            const int fd=((DiamondListenerHandle *)unreached)->fd;
+            if(fd>=0)close(fd);
         } else {
             size=sizeof(DiamondCell);
         }
