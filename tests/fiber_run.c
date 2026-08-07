@@ -392,6 +392,36 @@ int main(void) {
     if(sweep_vm.objects!=nullptr)return 72;
     diamond_fiber_free(sweep_fiber);diamond_vm_free(&sweep_vm);
 
+    static const DiamondStringConstant survive_strings[]={{.chars="fiber-survives-gc",.length=18}};
+    static const uint8_t survive_code[]={DIAMOND_OP_STRING,0,0,DIAMOND_OP_YIELD,1,0,DIAMOND_OP_RETURN,0};
+    static const DiamondChunk survive_chunk={.name="survive-gc",.code=survive_code,
+        .code_count=8,.strings=survive_strings,.string_count=1};
+    DiamondVm survive_vm;diamond_vm_init(&survive_vm);
+    DiamondFiber *survive_fiber=diamond_fiber_new(&survive_chunk);
+    DiamondFiberHandle *survive_handle=malloc(sizeof *survive_handle);
+    if(survive_fiber==nullptr||survive_handle==nullptr||
+       diamond_fiber_bind_vm(survive_fiber,&survive_vm)!=DIAMOND_FIBER_OK||
+       diamond_fiber_prepare(survive_fiber)!=DIAMOND_FIBER_OK||
+       diamond_fiber_resume(survive_fiber,DIAMOND_NIL)!=DIAMOND_FIBER_OK||
+       diamond_fiber_run(survive_fiber)!=DIAMOND_FIBER_OK||
+       survive_fiber->state!=DIAMOND_FIBER_SUSPENDED)return 73;
+    *survive_handle=(DiamondFiberHandle){.object={.next=survive_vm.objects,.kind=DIAMOND_OBJECT_FIBER},
+        .fiber=survive_fiber};
+    survive_vm.objects=&survive_handle->object;
+    survive_vm.has_exception=true;
+    survive_vm.exception=(DiamondValue){.kind=DIAMOND_VALUE_OBJECT,.as.object=&survive_handle->object};
+    diamond_vm_collect(&survive_vm);
+    survive_vm.has_exception=false;
+    bool handle_survived=false;
+    for(DiamondObject *object=survive_vm.objects;object!=nullptr;object=object->next)
+        if(object==&survive_handle->object)handle_survived=true;
+    if(!handle_survived)return 74;
+    DiamondValue survive_result=diamond_fiber_result(survive_fiber);
+    if(survive_result.kind!=DIAMOND_VALUE_OBJECT)return 75;
+    const DiamondString *survive_string=(const DiamondString *)survive_result.as.object;
+    if(survive_string->length!=18||memcmp(survive_string->chars,"fiber-survives-gc",18)!=0)return 76;
+    diamond_fiber_free(survive_fiber);diamond_vm_free(&survive_vm);
+
     puts("fiber run passed");
     return 0;
 }
