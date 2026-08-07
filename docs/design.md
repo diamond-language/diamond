@@ -127,6 +127,54 @@ invalid positions raise `IndexError`. The prelude builds key/value extraction,
 membership, callback traversal, and value mapping on them. `hash_each` snapshots
 the initial length, so callback insertions are not visited during that traversal.
 
+### Enumerable
+
+Arrays and hashes are native VM object kinds, not classes — they have no
+method table and cannot `include` a module. So `values.each(cb)`,
+`values.select(cb)`, and friends work through a different mechanism than
+ordinary method dispatch: `DIAMOND_OP_INVOKE`'s existing native dispatch for
+array/hash receivers recognizes a small fixed set of method names
+(`each`/`select`/`count`/`any?`/`all?`/`reduce`/`map`) and, on a match, resolves
+an ordinary *top-level* prelude function by name at runtime
+(`find_top_level_function` in `src/vm.c`, applying the same two filters the
+compiler's own `find_function` uses — excluding class/module methods and
+nested `def`s, so a same-named local closure can never shadow the real
+prelude function) and calls it with the receiver prepended as the first
+argument. `each` forwards to the pre-existing `array_each`/`hash_each`;
+every other name forwards to one shared `enumerable_*` function regardless
+of array vs. hash, since that function only needs `values.each(...)` to work
+generically once `each` itself dispatches correctly per receiver kind.
+
+The same `enumerable_*` functions back a `module Enumerable` with one-line
+delegating methods (`def select(callback) = enumerable_select(self, callback)`,
+etc.) — any user-defined class that implements its own `each(callback)` and
+`include`s `Enumerable` gets `select`/`count`/`any?`/`all?`/`reduce`/`map` for
+free through the *ordinary* method-dispatch path, with zero duplicated logic
+between the two routes.
+
+`array_each` requires a 1-arity callback; `hash_each` requires a 2-arity
+callback (key, value). A single `enumerable_select`-shaped function needs one
+fixed-arity glue closure to pass to `values.each(...)`, so each branches once
+on `values is Hash`, using a 2-arity glue closure that discards the key and
+forwards only the value in the `Hash` branch. This means Enumerable operates
+over **values only** for a hash receiver, discarding keys — consistent with
+the pre-existing `hash_map_values`/`hash_values`/`hash_include_key`
+convention, and a deliberate divergence from Ruby (where `Hash#select` yields
+`[key, value]` pairs and returns a `Hash`), consistent with this project's
+stance that Ruby compatibility is not a goal.
+
+Both glue closures for a given `enumerable_*` function are declared
+unconditionally *before* the `values is Hash` branch, not nested inside its
+`if`/`else` arms. This works around a real compiler bug found while building
+this feature: a nested `def` inside one branch of an `if`/`else`, when a
+*sibling* branch also declares its own nested `def`, captures a stale
+register from the sibling branch as a bogus extra closure capture (confirmed
+via disassembly — a `CLOSURE` instruction reporting one more capture than its
+closure body actually reads). The underlying bug is in the compiler's
+capture analysis for nested `def`s inside conditional branches and remains
+unfixed; declaring both closures unconditionally before branching sidesteps
+it entirely and was verified safe in isolation before being relied on here.
+
 ## Object model
 
 Classes are immutable module metadata rather than heap objects, with one

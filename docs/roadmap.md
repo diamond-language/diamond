@@ -442,20 +442,30 @@ future work.
   preserving the real `strerror(errno)` from the failing attempt. This
   is the prerequisite for the Rack-style web server idea under Later
   experiments. See `docs/io.md` for the full surface.
+- Real `Enumerable`: `select`/`count`/`any?`/`all?`/`reduce`/`map`,
+  derived from a single `each`, replacing the pain point of today's flat
+  `array_*`/`hash_*` free functions with inconsistent naming. Array/Hash
+  are native VM object kinds without method tables, so `values.each(cb)`
+  receiver syntax resolves through a new runtime mechanism —
+  `DIAMOND_OP_INVOKE`'s existing Array/Hash dispatch recognizes a small
+  fixed method-name set and forwards to an ordinary top-level prelude
+  function by name (`find_top_level_function`, mirroring the compiler's
+  own `find_function` filters) — while a new `module Enumerable` gives
+  any user class the same six methods via ordinary `include`, both
+  routes calling the exact same `enumerable_*` functions with zero
+  duplicated logic. A hash receiver's Enumerable operates over values
+  only, discarding keys (matching the pre-existing `hash_map_values`
+  convention, a deliberate Ruby divergence). Found and worked around a
+  real, previously-unexercised compiler bug along the way: a nested
+  `def` inside one branch of an `if`/`else` captures a stale register
+  from a *sibling* branch's own nested `def` as a bogus extra closure
+  capture — confirmed via disassembly, not yet fixed, worked around by
+  declaring both branches' closures unconditionally before branching.
+  See `docs/design.md`'s "Enumerable" section for the full mechanism.
 
 ## Next priorities
 
-1. Stdlib rethink: a real `Enumerable`-style module, deriving `select`/
-   `count`/`any?`/`all?`/`reduce`/etc. from a single `#each` primitive
-   (Ruby's actual design), rather than today's flat `array_*`/`hash_*`
-   free functions with inconsistent naming (`array_include` vs. no
-   `array_include?`; `hash_map_values` vs. no `hash_map`). Needs design
-   work first: Array/Hash are native VM object kinds without method
-   tables, not classes, so `values.each(cb)` receiver syntax and
-   `include Enumerable`-style derivation for user classes are two
-   different mechanisms that need to converge on the same method
-   surface. Scope and mechanism to be worked out in a dedicated plan
-   before implementation starts.
+None queued.
 
 ## Later experiments
 
