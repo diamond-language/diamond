@@ -417,7 +417,19 @@ future work.
 
 ## Next priorities
 
-1. Stdlib rethink: a real `Enumerable`-style module, deriving `select`/
+1. File I/O: `File.open(path, mode)` as a first-class, GC-managed value
+   (new `DIAMOND_OBJECT_FILE` heap kind wrapping a `FILE *`, same shape as
+   `Fiber`'s `DiamondFiberHandle`), with `.read()`/`.gets()`/`.write(value)`/
+   `.close()` native dispatch and a new `IOError` exception class for open
+   and I/O failures. Sweeping an unclosed handle closes it as a safety
+   net, matching how sweeping an unreached fiber frees its native stack.
+2. Sockets: a minimal blocking TCP-only primitive (connect/listen/accept/
+   send/recv) reusing the same object-kind-wrapping-a-descriptor shape as
+   File, as a direct follow-up once File I/O lands. Deliberately narrow:
+   non-blocking I/O, UDP, and TLS are out of scope. This is the
+   prerequisite for the Rack-style web server idea under Later
+   experiments.
+3. Stdlib rethink: a real `Enumerable`-style module, deriving `select`/
    `count`/`any?`/`all?`/`reduce`/etc. from a single `#each` primitive
    (Ruby's actual design), rather than today's flat `array_*`/`hash_*`
    free functions with inconsistent naming (`array_include` vs. no
