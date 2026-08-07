@@ -392,3 +392,27 @@ module Enumerable
   def map(callback: Callable[1]) -> Array = enumerable_map(self, callback)
   def reduce(initial, callback: Callable[2]) = enumerable_reduce(self, initial, callback)
 end
+
+def abs(x: Int) -> Int
+  if x < 0
+    -x
+  else
+    x
+  end
+end
+
+def min(a: Int, b: Int) -> Int
+  if a < b
+    a
+  else
+    b
+  end
+end
+
+def max(a: Int, b: Int) -> Int
+  if a > b
+    a
+  else
+    b
+  end
+end
