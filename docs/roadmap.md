@@ -395,17 +395,21 @@ future work.
   source remains explicitly deferred — `Fiber.new(...).resume(...)` alone,
   with no scheduler required, is a complete, independently useful unit.
 
+- Basic I/O, first slice: `print(value)`/`puts(value)` (no newline / with
+  newline) via a new `DIAMOND_OP_PRINT` opcode, recognized in the compiler
+  the same way `Fiber.new`/`redefine_method` are (shadowable by a local or
+  user-defined function of the same name, no reserved keyword).
+  Stringification reuses the exact mechanism string interpolation already
+  uses (a `stringify_value` helper factored out of `DIAMOND_OP_TO_STRING`
+  as part of this work, with no behavior change to existing interpolation):
+  a user-defined `to_s` is respected, including its arity being validated
+  the same as any other call. See `docs/io.md` for what's covered and what
+  remains deliberately out of scope (stdin, files, sockets, multiple
+  arguments, write-failure error handling).
+
 ## Next priorities
 
-1. Basic I/O, starting with stdout: there is currently no way for a running
-   Diamond program to produce output as it goes — the only existing output
-   path is the CLI harness printing the top-level expression's final value
-   once, after the whole program finishes. First slice is `print(value)`/
-   `puts(value)` (no newline / with newline), stringifying via the same
-   mechanism `to_s`/string interpolation already uses (a user-defined
-   `to_s` on an instance is respected). Standard input and file I/O are
-   deliberately out of scope for this slice; see `docs/io.md` once it
-   exists for the fuller picture as it grows.
+None queued.
 
 ## Later experiments
 
