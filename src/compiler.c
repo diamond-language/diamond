@@ -3815,6 +3815,7 @@ bool diamond_compile(const char *source, DiamondProgram *program,
         [DIAMOND_CLASS_ZERO_DIVISION_ERROR]={"ZeroDivisionError",DIAMOND_CLASS_STANDARD_ERROR},
         [DIAMOND_CLASS_RANGE_ERROR]={"RangeError",DIAMOND_CLASS_STANDARD_ERROR},
         [DIAMOND_CLASS_SYSTEM_STACK_ERROR]={"SystemStackError",DIAMOND_CLASS_EXCEPTION},
+        [DIAMOND_CLASS_FIBER_ERROR]={"FiberError",DIAMOND_CLASS_STANDARD_ERROR},
     };
     program->class_count=DIAMOND_BUILTIN_CLASS_COUNT;
     for(size_t index=0;index<DIAMOND_BUILTIN_CLASS_COUNT;index++) {
