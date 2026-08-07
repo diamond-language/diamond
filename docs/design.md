@@ -53,7 +53,7 @@ got a chance to trip.
 ## Compilation
 
 Before lexing, the source loader expands line-form `require "path"`
-dependencies at their declaration sites. Paths are canonicalized, `.dia` is
+dependencies at their declaration sites. Paths are canonicalized, `.di` is
 inferred, and nested paths are resolved relative to the requiring file. Active
 and completed file sets provide cycle detection and load-once semantics. Source
 segments map offsets in the expanded program back to dependency paths and
@@ -106,7 +106,7 @@ conservatively.
 
 ## Core prelude
 
-The C23 executable embeds `lib/core.dia` with `#embed` and prefixes it to each
+The C23 executable embeds `lib/core.di` with `#embed` and prefixes it to each
 file or `-e` program before compilation. An internal line reset keeps user
 diagnostics and stack traces at their original coordinates. Core helpers are
 therefore ordinary Diamond functions using the same bytecode, typing, exception,

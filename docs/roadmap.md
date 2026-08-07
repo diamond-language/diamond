@@ -315,7 +315,7 @@ future work.
   Direct calls are already compile-time arity-checked and covered; dynamic
   dispatch's runtime check was correct but, like the two gaps above, had no
   test coverage at all.
-- A representative mixed-class dispatch workload (`mixed_dispatch_workload.dia`,
+- A representative mixed-class dispatch workload (`mixed_dispatch_workload.di`,
   a 1000-call loop split 500/500 between two classes) measuring `INVOKE_MONO`
   against polymorphic dispatch at realistic scale: a single deoptimizing
   rewrite when the second class first appears, 498 monomorphic dispatches

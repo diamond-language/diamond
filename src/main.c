@@ -12,7 +12,7 @@
 
 static constexpr char DIAMOND_VERSION[] = "0.1.0-dev";
 static constexpr unsigned char DIAMOND_CORE_SOURCE[] = {
-#embed "../lib/core.dia" suffix(,)
+#embed "../lib/core.di" suffix(,)
     0
 };
 static constexpr char DIAMOND_USER_LINE_RESET[] = "\n#line 1\n";

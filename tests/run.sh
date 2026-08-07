@@ -15,7 +15,7 @@ actual="$($diamond --version)"
     exit 1
 }
 
-actual="$($diamond tests/cases/arithmetic.dia)"
+actual="$($diamond tests/cases/arithmetic.di)"
 [[ "$actual" == "42" ]] || {
     echo "expected file result 42, got: $actual" >&2
     exit 1
@@ -163,7 +163,7 @@ fi
 grep -q 'runtime error: integer overflow' "$error_file"
 rm -f "$error_file"
 
-actual="$($diamond tests/cases/control_flow.dia)"
+actual="$($diamond tests/cases/control_flow.di)"
 [[ "$actual" == "42" ]] || {
     echo "control flow program failed: $actual" >&2
     exit 1
@@ -189,7 +189,7 @@ grep -q 'RETURN' <<<"$actual"
     exit 1
 }
 
-actual="$($diamond tests/cases/functions.dia)"
+actual="$($diamond tests/cases/functions.di)"
 [[ "$actual" == "42" ]] || {
     echo "function or recursion test failed: $actual" >&2
     exit 1
@@ -200,7 +200,7 @@ if "$diamond" -e $'def one(a)\n  a\nend\none()' >/dev/null 2>&1; then
     exit 1
 fi
 
-actual="$($diamond --dump-bytecode tests/cases/functions.dia)"
+actual="$($diamond --dump-bytecode tests/cases/functions.di)"
 grep -q '^== factorial ==$' <<<"$actual"
 grep -q 'CALL' <<<"$actual"
 [[ "${actual##*$'\n'}" == "42" ]] || {
@@ -208,7 +208,7 @@ grep -q 'CALL' <<<"$actual"
     exit 1
 }
 
-actual="$(DIAMOND_STRESS_GC=1 "$diamond" tests/cases/strings.dia)"
+actual="$(DIAMOND_STRESS_GC=1 "$diamond" tests/cases/strings.di)"
 [[ "$actual" == "[hahahahahahahaha]" ]] || {
     echo "string or stress-GC test failed: $actual" >&2
     exit 1
@@ -227,19 +227,19 @@ grep -q 'STRING.*s0 ("dia")' <<<"$actual"
     exit 1
 }
 
-actual="$(DIAMOND_STRESS_GC=1 "$diamond" tests/cases/classes.dia)"
+actual="$(DIAMOND_STRESS_GC=1 "$diamond" tests/cases/classes.di)"
 [[ "$actual" == "hello, diamond" ]] || {
     echo "class, method, field, or stress-GC test failed: $actual" >&2
     exit 1
 }
 
-actual="$("$diamond" --dump-bytecode tests/cases/classes.dia)"
+actual="$("$diamond" --dump-bytecode tests/cases/classes.di)"
 grep -q 'NEW' <<<"$actual"
 grep -q 'INVOKE' <<<"$actual"
 grep -q 'GET_IVAR' <<<"$actual"
 grep -q 'SET_IVAR' <<<"$actual"
 
-actual="$(DIAMOND_STRESS_GC=1 "$diamond" tests/cases/inheritance.dia)"
+actual="$(DIAMOND_STRESS_GC=1 "$diamond" tests/cases/inheritance.di)"
 [[ "$actual" == "hello> diamond" ]] || {
     echo "inheritance, override, self, or inherited constructor failed: $actual" >&2
     exit 1
@@ -250,13 +250,13 @@ if "$diamond" -e $'class Child < Missing\nend' >/dev/null 2>&1; then
     exit 1
 fi
 
-actual="$(DIAMOND_STRESS_GC=1 "$diamond" tests/cases/super.dia)"
+actual="$(DIAMOND_STRESS_GC=1 "$diamond" tests/cases/super.di)"
 [[ "$actual" == "hello> diamond!" ]] || {
     echo "super method or constructor chaining failed: $actual" >&2
     exit 1
 }
 
-actual="$("$diamond" --dump-bytecode tests/cases/super.dia)"
+actual="$("$diamond" --dump-bytecode tests/cases/super.di)"
 grep -q 'SUPER' <<<"$actual"
 
 if "$diamond" -e $'class Root\n  def value()\n    super()\n  end\nend' >/dev/null 2>&1; then
@@ -264,7 +264,7 @@ if "$diamond" -e $'class Root\n  def value()\n    super()\n  end\nend' >/dev/nul
     exit 1
 fi
 
-actual="$(DIAMOND_STRESS_GC=1 "$diamond" tests/cases/types.dia)"
+actual="$(DIAMOND_STRESS_GC=1 "$diamond" tests/cases/types.di)"
 [[ "$actual" == "Ruby: 42" ]] || {
     echo "typed primitive, class, or subtype boundary failed: $actual" >&2
     exit 1
@@ -288,7 +288,7 @@ fi
 actual="$("$diamond" --dump-bytecode -e $'def add(x: Int) -> Int\n  x + 1\nend\nadd(41)')"
 grep -q 'CHECK_TYPE' <<<"$actual"
 
-actual="$(DIAMOND_STRESS_GC=1 "$diamond" tests/cases/nilable_types.dia)"
+actual="$(DIAMOND_STRESS_GC=1 "$diamond" tests/cases/nilable_types.di)"
 [[ "$actual" == "#<ChildRecord>" ]] || {
     echo "nilable nominal subtype check failed: $actual" >&2
     exit 1
@@ -321,10 +321,10 @@ rm -f "$error_file"
 actual="$("$diamond" --dump-bytecode -e $'def accept(x: Int | String)\n x\nend\naccept(42)')"
 grep -q 'CHECK_TYPE.*Int | String' <<<"$actual"
 
-actual="$(DIAMOND_STRESS_GC=1 "$diamond" tests/cases/general_unions.dia)"
+actual="$(DIAMOND_STRESS_GC=1 "$diamond" tests/cases/general_unions.di)"
 [[ "$actual" == "diamond" ]]
 
-actual="$(DIAMOND_STRESS_GC=1 "$diamond" tests/cases/array_generics.dia)"
+actual="$(DIAMOND_STRESS_GC=1 "$diamond" tests/cases/array_generics.di)"
 [[ "$actual" == "42" ]]
 
 error_file="$(mktemp)"
@@ -340,7 +340,7 @@ rm -f "$error_file"
 actual="$("$diamond" --dump-bytecode -e $'def nested(values: Array[Array[Int | Nil]])\n values\nend\nnested([[nil]])')"
 grep -q 'Array\[Array\[Int | Nil\]\]' <<<"$actual"
 
-actual="$(DIAMOND_STRESS_GC=1 "$diamond" tests/cases/hash_generics.dia)"
+actual="$(DIAMOND_STRESS_GC=1 "$diamond" tests/cases/hash_generics.di)"
 [[ "$actual" == "42" ]]
 
 error_file="$(mktemp)"
@@ -626,7 +626,7 @@ if grep -q 'CHECK_TYPE' <<<"$absent_dump"; then
     exit 1
 fi
 
-actual="$(DIAMOND_STRESS_GC=1 "$diamond" tests/cases/arrays.dia)"
+actual="$(DIAMOND_STRESS_GC=1 "$diamond" tests/cases/arrays.di)"
 [[ "$actual" == "22" ]] || {
     echo "array indexing, typing, or recursive GC tracing failed: $actual" >&2
     exit 1
@@ -657,7 +657,7 @@ actual="$("$diamond" --dump-bytecode -e '[20, 22][1]')"
 grep -q 'ARRAY' <<<"$actual"
 grep -q 'INDEX_GET' <<<"$actual"
 
-actual="$(DIAMOND_STRESS_GC=1 "$diamond" tests/cases/array_mutation.dia)"
+actual="$(DIAMOND_STRESS_GC=1 "$diamond" tests/cases/array_mutation.di)"
 [[ "$actual" == "survived" ]] || {
     echo "array mutation or post-frame GC tracing failed: $actual" >&2
     exit 1
@@ -714,7 +714,7 @@ actual="$("$diamond" -e '!nil')"
 actual="$("$diamond" --dump-bytecode -e 'nil || 42')"
 grep -q 'JUMP_IF_TRUE' <<<"$actual"
 
-actual="$("$diamond" tests/cases/returns.dia)"
+actual="$("$diamond" tests/cases/returns.di)"
 [[ "$actual" == "4" ]] || {
     echo "nested explicit return did not exit its function: $actual" >&2
     exit 1
@@ -747,7 +747,7 @@ if "$diamond" -e 'return 1' >/dev/null 2>&1; then
     exit 1
 fi
 
-actual="$("$diamond" tests/cases/loop_control.dia)"
+actual="$("$diamond" tests/cases/loop_control.di)"
 [[ "$actual" == "12" ]] || {
     echo "break or next produced the wrong loop result: $actual" >&2
     exit 1
@@ -774,7 +774,7 @@ if "$diamond" -e $'while true\n  next 42\nend' >/dev/null 2>&1; then
     exit 1
 fi
 
-actual="$("$diamond" tests/cases/source_ergonomics.dia)"
+actual="$("$diamond" tests/cases/source_ergonomics.di)"
 [[ "$actual" == "42" ]] || {
     echo "comments, separators, or trailing commas failed: $actual" >&2
     exit 1
@@ -802,7 +802,7 @@ if "$diamond" -e '1_' >/dev/null 2>&1; then
     exit 1
 fi
 
-actual="$(DIAMOND_STRESS_GC=1 "$diamond" tests/cases/hashes.dia)"
+actual="$(DIAMOND_STRESS_GC=1 "$diamond" tests/cases/hashes.di)"
 [[ "$actual" == "42" ]] || {
     echo "hash lookup, mutation, typing, or tracing failed: $actual" >&2
     exit 1
@@ -836,49 +836,49 @@ actual="$("$diamond" --dump-bytecode -e '{"answer": 42}')"
 grep -q 'HASH' <<<"$actual"
 
 error_file="$(mktemp)"
-if "$diamond" tests/cases/stack_trace.dia >/dev/null 2>"$error_file"; then
+if "$diamond" tests/cases/stack_trace.di >/dev/null 2>"$error_file"; then
     echo "runtime stack trace unexpectedly succeeded" >&2
     exit 1
 fi
 grep -q 'runtime error: division by zero' "$error_file"
 grep -q 'at divide:3:' "$error_file"
 grep -q 'at invoke:8:' "$error_file"
-grep -q 'at tests/cases/stack_trace.dia:11:' "$error_file"
+grep -q 'at tests/cases/stack_trace.di:11:' "$error_file"
 rm -f "$error_file"
 
 actual="$("$diamond" --dump-bytecode -e '40 + 2')"
 grep -Eq '^[0-9]{4} +1:[0-9]+ +ADD' <<<"$actual"
 
-actual="$(DIAMOND_STRESS_GC=1 "$diamond" tests/cases/closure_capture.dia)"
+actual="$(DIAMOND_STRESS_GC=1 "$diamond" tests/cases/closure_capture.di)"
 [[ "$actual" == "47" ]]
 
-actual="$(DIAMOND_STRESS_GC=1 "$diamond" tests/cases/mutable_closure.dia)"
+actual="$(DIAMOND_STRESS_GC=1 "$diamond" tests/cases/mutable_closure.di)"
 [[ "$actual" == "2" ]]
 
-actual="$(DIAMOND_STRESS_GC=1 "$diamond" tests/cases/deep_closure.dia)"
+actual="$(DIAMOND_STRESS_GC=1 "$diamond" tests/cases/deep_closure.di)"
 [[ "$actual" == "42" ]]
 
 error_file="$(mktemp)"
-actual="$(DIAMOND_TRACE_IC=1 "$diamond" tests/cases/inline_cache.dia 2>"$error_file")"
+actual="$(DIAMOND_TRACE_IC=1 "$diamond" tests/cases/inline_cache.di 2>"$error_file")"
 [[ "$actual" == "42" ]]
 grep -q 'inline caches: 4 hits, 1 misses' "$error_file"
 rm -f "$error_file"
 
 error_file="$(mktemp)"
-actual="$(DIAMOND_TRACE_IC_FAST=1 "$diamond" tests/cases/inline_cache.dia 2>"$error_file")"
+actual="$(DIAMOND_TRACE_IC_FAST=1 "$diamond" tests/cases/inline_cache.di 2>"$error_file")"
 [[ "$actual" == "42" ]]
 grep -q 'monomorphic dispatches: 3' "$error_file"
 rm -f "$error_file"
 
 error_file="$(mktemp)"
-actual="$(DIAMOND_TRACE_IC_REWRITES=1 "$diamond" tests/cases/inline_cache.dia 2>"$error_file")"
+actual="$(DIAMOND_TRACE_IC_REWRITES=1 "$diamond" tests/cases/inline_cache.di 2>"$error_file")"
 [[ "$actual" == "42" ]]
 grep -q 'direct dispatch rewrites: 1' "$error_file"
 rm -f "$error_file"
 
 error_file="$(mktemp)"
 actual="$(DIAMOND_REPEAT=2 DIAMOND_TRACE_IC_EACH_RUN=1 "$diamond" \
-    tests/cases/mono_deopt.dia 2>"$error_file")"
+    tests/cases/mono_deopt.di 2>"$error_file")"
 [[ "$actual" == "82" ]]
 grep -q 'run 1: inline caches: 1 hits, 2 misses, rewrites: 1' "$error_file"
 grep -q 'run 2: inline caches: 1 hits, 2 misses, rewrites: 1' "$error_file"
@@ -886,7 +886,7 @@ rm -f "$error_file"
 
 error_file="$(mktemp)"
 actual="$(DIAMOND_REPEAT=2 DIAMOND_INVALIDATE_IC_EACH_RUN=1 \
-    DIAMOND_TRACE_IC_EACH_RUN=1 "$diamond" tests/cases/inline_cache.dia \
+    DIAMOND_TRACE_IC_EACH_RUN=1 "$diamond" tests/cases/inline_cache.di \
     2>"$error_file")"
 [[ "$actual" == "42" ]]
 grep -q 'run 1: inline caches: 4 hits, 1 misses, rewrites: 1' "$error_file"
@@ -895,110 +895,110 @@ rm -f "$error_file"
 
 error_file="$(mktemp)"
 actual="$(DIAMOND_REPEAT=2 DIAMOND_TRACE_IC_REWRITES=1 "$diamond" \
-    tests/cases/mono_deopt.dia 2>"$error_file")"
+    tests/cases/mono_deopt.di 2>"$error_file")"
 [[ "$actual" == "82" ]]
 grep -q 'direct dispatch rewrites: 1' "$error_file"
 rm -f "$error_file"
 
 error_file="$(mktemp)"
 actual="$(DIAMOND_REPEAT=2 DIAMOND_TRACE_IC_REWRITES=1 "$diamond" \
-    tests/cases/inline_cache.dia 2>"$error_file")"
+    tests/cases/inline_cache.di 2>"$error_file")"
 [[ "$actual" == "42" ]]
 grep -q 'direct dispatch rewrites: 1' "$error_file"
 rm -f "$error_file"
 
 error_file="$(mktemp)"
 actual="$(DIAMOND_IC_MONO_THRESHOLD=100 DIAMOND_TRACE_IC_REWRITES=1 \
-    "$diamond" tests/cases/inline_cache.dia 2>"$error_file")"
+    "$diamond" tests/cases/inline_cache.di 2>"$error_file")"
 [[ "$actual" == "42" ]]
 grep -q 'direct dispatch rewrites: 0' "$error_file"
 rm -f "$error_file"
 
 error_file="$(mktemp)"
-actual="$(DIAMOND_TRACE_IC_PROBES=1 "$diamond" tests/cases/inline_cache.dia 2>"$error_file")"
+actual="$(DIAMOND_TRACE_IC_PROBES=1 "$diamond" tests/cases/inline_cache.di 2>"$error_file")"
 [[ "$actual" == "42" ]]
 grep -q 'method cache probes: 1' "$error_file"
 rm -f "$error_file"
 
 error_file="$(mktemp)"
 actual="$(DIAMOND_IC_MONO_THRESHOLD=2 DIAMOND_TRACE_IC_FAST=1 "$diamond" \
-    tests/cases/inline_cache.dia 2>"$error_file")"
+    tests/cases/inline_cache.di 2>"$error_file")"
 [[ "$actual" == "42" ]]
 grep -q 'monomorphic dispatches: 2' "$error_file"
 rm -f "$error_file"
 
 error_file="$(mktemp)"
-actual="$(DIAMOND_TRACE_IC=1 "$diamond" tests/cases/polymorphic_cache.dia 2>"$error_file")"
+actual="$(DIAMOND_TRACE_IC=1 "$diamond" tests/cases/polymorphic_cache.di 2>"$error_file")"
 [[ "$actual" == "42" ]]
 grep -q 'inline caches: 2 hits, 2 misses' "$error_file"
 rm -f "$error_file"
 
 error_file="$(mktemp)"
-actual="$(DIAMOND_TRACE_IC_PROBES=1 "$diamond" tests/cases/polymorphic_cache.dia 2>"$error_file")"
+actual="$(DIAMOND_TRACE_IC_PROBES=1 "$diamond" tests/cases/polymorphic_cache.di 2>"$error_file")"
 [[ "$actual" == "42" ]]
 grep -q 'method cache probes: 4' "$error_file"
 rm -f "$error_file"
 
 error_file="$(mktemp)"
-actual="$(DIAMOND_TRACE_IC_REWRITES=1 "$diamond" tests/cases/polymorphic_cache.dia 2>"$error_file")"
+actual="$(DIAMOND_TRACE_IC_REWRITES=1 "$diamond" tests/cases/polymorphic_cache.di 2>"$error_file")"
 [[ "$actual" == "42" ]]
 grep -q 'direct dispatch rewrites: 0' "$error_file"
 rm -f "$error_file"
 
 error_file="$(mktemp)"
-actual="$(DIAMOND_TRACE_IC_SITES=1 "$diamond" tests/cases/inherited_cache.dia 2>"$error_file")"
+actual="$(DIAMOND_TRACE_IC_SITES=1 "$diamond" tests/cases/inherited_cache.di 2>"$error_file")"
 [[ "$actual" == "160" ]]
 grep -Eq 'inline cache site\[[0-9]+\]: 2 hits, 2 misses, 2 classes' "$error_file"
 rm -f "$error_file"
 
-actual="$("$diamond" tests/cases/inherited_cache.dia)"
+actual="$("$diamond" tests/cases/inherited_cache.di)"
 [[ "$actual" == "160" ]]
 
-actual="$("$diamond" tests/cases/mono_deopt.dia)"
+actual="$("$diamond" tests/cases/mono_deopt.di)"
 [[ "$actual" == "82" ]]
 
-actual="$("$diamond" tests/cases/dispatch_benchmark.dia)"
+actual="$("$diamond" tests/cases/dispatch_benchmark.di)"
 [[ "$actual" == "42" ]]
 
 error_file="$(mktemp)"
-actual="$(DIAMOND_TRACE_IC_PROBES=1 "$diamond" tests/cases/dispatch_benchmark.dia 2>"$error_file")"
+actual="$(DIAMOND_TRACE_IC_PROBES=1 "$diamond" tests/cases/dispatch_benchmark.di 2>"$error_file")"
 [[ "$actual" == "42" ]]
 grep -q 'method cache probes: 1' "$error_file"
 rm -f "$error_file"
 
 error_file="$(mktemp)"
 actual="$(DIAMOND_IC_MONO_THRESHOLD=100 DIAMOND_TRACE_IC_PROBES=1 \
-    "$diamond" tests/cases/dispatch_benchmark.dia 2>"$error_file")"
+    "$diamond" tests/cases/dispatch_benchmark.di 2>"$error_file")"
 [[ "$actual" == "42" ]]
 grep -q 'method cache probes: 99' "$error_file"
 rm -f "$error_file"
 
 error_file="$(mktemp)"
 actual="$(DIAMOND_IC_MONO_THRESHOLD=100 DIAMOND_REPEAT=2 \
-    DIAMOND_TRACE_IC_EACH_RUN=1 "$diamond" tests/cases/dispatch_benchmark.dia \
+    DIAMOND_TRACE_IC_EACH_RUN=1 "$diamond" tests/cases/dispatch_benchmark.di \
     2>"$error_file")"
 [[ "$actual" == "42" ]]
 grep -q 'run 1: inline caches: 99 hits, 1 misses, rewrites: 0' "$error_file"
 grep -q 'run 2: inline caches: 99 hits, 1 misses, rewrites: 0' "$error_file"
 rm -f "$error_file"
 
-actual="$("$diamond" tests/cases/mixed_dispatch_workload.dia)"
+actual="$("$diamond" tests/cases/mixed_dispatch_workload.di)"
 [[ "$actual" == "1500" ]]
 
 error_file="$(mktemp)"
-actual="$(DIAMOND_TRACE_IC_FAST=1 "$diamond" tests/cases/mixed_dispatch_workload.dia 2>"$error_file")"
+actual="$(DIAMOND_TRACE_IC_FAST=1 "$diamond" tests/cases/mixed_dispatch_workload.di 2>"$error_file")"
 [[ "$actual" == "1500" ]]
 grep -q 'monomorphic dispatches: 498' "$error_file"
 rm -f "$error_file"
 
 error_file="$(mktemp)"
-actual="$(DIAMOND_TRACE_IC_REWRITES=1 "$diamond" tests/cases/mixed_dispatch_workload.dia 2>"$error_file")"
+actual="$(DIAMOND_TRACE_IC_REWRITES=1 "$diamond" tests/cases/mixed_dispatch_workload.di 2>"$error_file")"
 [[ "$actual" == "1500" ]]
 grep -q 'direct dispatch rewrites: 1' "$error_file"
 rm -f "$error_file"
 
 error_file="$(mktemp)"
-actual="$(DIAMOND_TRACE_IC_PROBES=1 "$diamond" tests/cases/mixed_dispatch_workload.dia 2>"$error_file")"
+actual="$(DIAMOND_TRACE_IC_PROBES=1 "$diamond" tests/cases/mixed_dispatch_workload.di 2>"$error_file")"
 [[ "$actual" == "1500" ]]
 grep -q 'method cache probes: 1000' "$error_file"
 rm -f "$error_file"
@@ -1017,44 +1017,44 @@ grep -q 'dispatch policy: quicken threshold 1, monomorphic threshold 1' "$error_
 rm -f "$error_file"
 
 error_file="$(mktemp)"
-actual="$(DIAMOND_TRACE_IC_REWRITES=1 "$diamond" tests/cases/mono_deopt.dia 2>"$error_file")"
+actual="$(DIAMOND_TRACE_IC_REWRITES=1 "$diamond" tests/cases/mono_deopt.di 2>"$error_file")"
 [[ "$actual" == "82" ]]
 grep -q 'direct dispatch rewrites: 1' "$error_file"
 rm -f "$error_file"
 
 error_file="$(mktemp)"
-actual="$(DIAMOND_TRACE_IC=1 "$diamond" tests/cases/mono_deopt.dia 2>"$error_file")"
+actual="$(DIAMOND_TRACE_IC=1 "$diamond" tests/cases/mono_deopt.di 2>"$error_file")"
 [[ "$actual" == "82" ]]
 grep -q 'inline caches: 1 hits, 2 misses' "$error_file"
 rm -f "$error_file"
 
 error_file="$(mktemp)"
-actual="$(DIAMOND_TRACE_IC=1 "$diamond" tests/cases/inherited_cache.dia 2>"$error_file")"
+actual="$(DIAMOND_TRACE_IC=1 "$diamond" tests/cases/inherited_cache.di 2>"$error_file")"
 [[ "$actual" == "160" ]]
 grep -q 'inline caches: 2 hits, 2 misses' "$error_file"
 rm -f "$error_file"
 
 error_file="$(mktemp)"
-actual="$(DIAMOND_TRACE_SHAPES=1 "$diamond" tests/cases/runtime_shapes.dia 2>"$error_file")"
+actual="$(DIAMOND_TRACE_SHAPES=1 "$diamond" tests/cases/runtime_shapes.di 2>"$error_file")"
 [[ "$actual" == "42" ]]
 grep -q 'shape transitions: 1' "$error_file"
 rm -f "$error_file"
 
 error_file="$(mktemp)"
-actual="$(DIAMOND_TRACE_FIELDS=1 "$diamond" tests/cases/runtime_shapes.dia 2>"$error_file")"
+actual="$(DIAMOND_TRACE_FIELDS=1 "$diamond" tests/cases/runtime_shapes.di 2>"$error_file")"
 [[ "$actual" == "42" ]]
 grep -q 'field caches: 2 hits, 4 misses' "$error_file"
 rm -f "$error_file"
 
 error_file="$(mktemp)"
-if DIAMOND_STRESS_GC=1 "$diamond" tests/cases/raise_stack.dia >/dev/null 2>"$error_file"; then
+if DIAMOND_STRESS_GC=1 "$diamond" tests/cases/raise_stack.di >/dev/null 2>"$error_file"; then
     echo "raised value unexpectedly returned" >&2
     exit 1
 fi
 grep -q 'runtime error: uncaught exception: diamond cracked' "$error_file"
 grep -q 'at fail:2:' "$error_file"
 grep -q 'at call_fail:6:' "$error_file"
-grep -q 'at tests/cases/raise_stack.dia:9:' "$error_file"
+grep -q 'at tests/cases/raise_stack.di:9:' "$error_file"
 rm -f "$error_file"
 
 actual="$("$diamond" -e $'def depth(n)\n if n <= 0\n  0\n else\n  depth(n - 1) + 1\n end\nend\ndepth(90)')"
@@ -1137,26 +1137,26 @@ fi
 grep -q "redefine_method callable must be a method of 'Foo'" "$error_file"
 rm -f "$error_file"
 
-actual="$(DIAMOND_STRESS_GC=1 "$diamond" tests/cases/rescue.dia)"
+actual="$(DIAMOND_STRESS_GC=1 "$diamond" tests/cases/rescue.di)"
 [[ "$actual" == "diamond rescued!" ]]
 
 actual="$("$diamond" -e $'begin\n 40 + 2\nrescue error\n 0\nend')"
 [[ "$actual" == "42" ]]
 
-actual="$("$diamond" --dump-bytecode tests/cases/rescue.dia)"
+actual="$("$diamond" --dump-bytecode tests/cases/rescue.di)"
 grep -q 'PUSH_RESCUE' <<<"$actual"
 grep -q 'POP_RESCUE' <<<"$actual"
 
-actual="$(DIAMOND_STRESS_GC=1 "$diamond" tests/cases/typed_rescue.dia)"
+actual="$(DIAMOND_STRESS_GC=1 "$diamond" tests/cases/typed_rescue.di)"
 [[ "$actual" == "42" ]]
 
-actual="$(DIAMOND_STRESS_GC=1 "$diamond" tests/cases/standard_exceptions.dia)"
+actual="$(DIAMOND_STRESS_GC=1 "$diamond" tests/cases/standard_exceptions.di)"
 [[ "$actual" == "42" ]]
 
 actual="$("$diamond" -e $'begin\n true + 1\nrescue error: StandardError\n 42\nend')"
 [[ "$actual" == "42" ]]
 
-actual="$(DIAMOND_STRESS_GC=1 "$diamond" tests/cases/ensure.dia)"
+actual="$(DIAMOND_STRESS_GC=1 "$diamond" tests/cases/ensure.di)"
 [[ "$actual" == "42" ]]
 
 actual="$("$diamond" -e $'begin\n begin\n  1 / 0\n ensure\n  40 + 2\n end\nrescue error: ZeroDivisionError\n 42\nend')"
@@ -1337,47 +1337,47 @@ fi
 actual="$($diamond --dump-bytecode -e $'value = 42\n"value=#{value}"')"
 grep -q 'TO_STRING' <<<"$actual"
 
-actual="$($diamond tests/multifile/main.dia)"
+actual="$($diamond tests/multifile/main.di)"
 [[ "$actual" == "[42, Hello, world]" ]]
 
-actual="$($diamond tests/multifile/load_once_main.dia)"
+actual="$($diamond tests/multifile/load_once_main.di)"
 [[ "$actual" == "42" ]]
 
-if "$diamond" tests/multifile/cycle_a.dia >/dev/null 2>&1; then
+if "$diamond" tests/multifile/cycle_a.di >/dev/null 2>&1; then
     echo "circular require unexpectedly loaded" >&2
     exit 1
 fi
 cycle_error="$(mktemp)"
-if "$diamond" tests/multifile/cycle_a.dia >/dev/null 2>"$cycle_error"; then
+if "$diamond" tests/multifile/cycle_a.di >/dev/null 2>"$cycle_error"; then
     rm -f "$cycle_error"
     exit 1
 fi
 grep -q "circular require involving" "$cycle_error"
-grep -q "required from .*cycle_b.dia:1" "$cycle_error"
+grep -q "required from .*cycle_b.di:1" "$cycle_error"
 rm -f "$cycle_error"
 
-actual="$($diamond tests/multifile/broken_main.dia 2>&1 || true)"
-grep -q 'tests/multifile/broken.dia:3:16' <<<"$actual"
-actual="$($diamond tests/multifile/nested_broken_main.dia 2>&1 || true)"
-grep -q 'tests/multifile/broken.dia:3:16' <<<"$actual"
-actual="$($diamond tests/multifile/nested_missing_main.dia 2>&1 || true)"
-grep -q 'nested_missing_mid.dia:1: cannot require' <<<"$actual"
-actual="$($diamond --dump-bytecode tests/multifile/broken_main.dia 2>&1 || true)"
-grep -q 'tests/multifile/broken.dia:3:16' <<<"$actual"
-actual="$($diamond tests/multifile/eof_broken_main.dia 2>&1 || true)"
-grep -q 'tests/multifile/eof_broken.dia:' <<<"$actual"
+actual="$($diamond tests/multifile/broken_main.di 2>&1 || true)"
+grep -q 'tests/multifile/broken.di:3:16' <<<"$actual"
+actual="$($diamond tests/multifile/nested_broken_main.di 2>&1 || true)"
+grep -q 'tests/multifile/broken.di:3:16' <<<"$actual"
+actual="$($diamond tests/multifile/nested_missing_main.di 2>&1 || true)"
+grep -q 'nested_missing_mid.di:1: cannot require' <<<"$actual"
+actual="$($diamond --dump-bytecode tests/multifile/broken_main.di 2>&1 || true)"
+grep -q 'tests/multifile/broken.di:3:16' <<<"$actual"
+actual="$($diamond tests/multifile/eof_broken_main.di 2>&1 || true)"
+grep -q 'tests/multifile/eof_broken.di:' <<<"$actual"
 ! grep -q '^#line' <<<"$actual"
-actual="$($diamond tests/multifile/eof_multiline_main.dia 2>&1 || true)"
-grep -q 'tests/multifile/eof_multiline_broken.dia:2:1' <<<"$actual"
+actual="$($diamond tests/multifile/eof_multiline_main.di 2>&1 || true)"
+grep -q 'tests/multifile/eof_multiline_broken.di:2:1' <<<"$actual"
 ! grep -q '^#line' <<<"$actual"
 crlf_dir="$(mktemp -d)"
-printf 'if true\r\n  1\r\n' >"$crlf_dir/broken.dia"
-printf 'require "broken"\r\n' >"$crlf_dir/main.dia"
-actual="$($diamond "$crlf_dir/main.dia" 2>&1 || true)"
-grep -q 'broken.dia:2:1' <<<"$actual"
-printf 'def explode(value)\r\n  value[4]\r\nend\r\n' >"$crlf_dir/runtime.dia"
-printf 'require "runtime"\r\nexplode([1])\r\n' >"$crlf_dir/runtime_main.dia"
-actual="$($diamond "$crlf_dir/runtime_main.dia" 2>&1 || true)"
+printf 'if true\r\n  1\r\n' >"$crlf_dir/broken.di"
+printf 'require "broken"\r\n' >"$crlf_dir/main.di"
+actual="$($diamond "$crlf_dir/main.di" 2>&1 || true)"
+grep -q 'broken.di:2:1' <<<"$actual"
+printf 'def explode(value)\r\n  value[4]\r\nend\r\n' >"$crlf_dir/runtime.di"
+printf 'require "runtime"\r\nexplode([1])\r\n' >"$crlf_dir/runtime_main.di"
+actual="$($diamond "$crlf_dir/runtime_main.di" 2>&1 || true)"
 grep -q 'at explode:2:10' <<<"$actual"
 rm -rf "$crlf_dir"
 crlf_error="$(mktemp)"
@@ -1390,14 +1390,14 @@ rm -f "$crlf_error"
 depth_dir="$(mktemp -d)"
 for depth in $(seq 0 128); do
     if [[ "$depth" -eq 128 ]]; then
-        printf '42\n' >"$depth_dir/f$depth.dia"
+        printf '42\n' >"$depth_dir/f$depth.di"
     else
         next=$((depth+1))
-        printf 'require "f%s"\n' "$next" >"$depth_dir/f$depth.dia"
+        printf 'require "f%s"\n' "$next" >"$depth_dir/f$depth.di"
     fi
 done
 depth_error="$(mktemp)"
-if "$diamond" "$depth_dir/f0.dia" >/dev/null 2>"$depth_error"; then
+if "$diamond" "$depth_dir/f0.di" >/dev/null 2>"$depth_error"; then
     echo "require-depth limit unexpectedly succeeded" >&2
     rm -rf "$depth_dir" "$depth_error"
     exit 1
@@ -1405,13 +1405,13 @@ fi
 grep -q "require nesting limit reached" "$depth_error"
 rm -rf "$depth_dir" "$depth_error"
 files_dir="$(mktemp -d)"
-: >"$files_dir/main.dia"
+: >"$files_dir/main.di"
 for file_index in $(seq 0 127); do
-    printf '42\n' >"$files_dir/f$file_index.dia"
-    printf 'require "f%s"\n' "$file_index" >>"$files_dir/main.dia"
+    printf '42\n' >"$files_dir/f$file_index.di"
+    printf 'require "f%s"\n' "$file_index" >>"$files_dir/main.di"
 done
 files_error="$(mktemp)"
-if "$diamond" "$files_dir/main.dia" >/dev/null 2>"$files_error"; then
+if "$diamond" "$files_dir/main.di" >/dev/null 2>"$files_error"; then
     echo "loaded-file limit unexpectedly succeeded" >&2
     rm -rf "$files_dir" "$files_error"
     exit 1
@@ -1423,18 +1423,18 @@ actual="$($diamond -e $'require "tests/multifile/math"\ndouble(21)')"
 [[ "$actual" == "42" ]]
 runtime_stack="$($diamond -e $'require "tests/multifile/math"\ndouble("bad")' 2>&1 || true)"
 grep -q 'at double:' <<<"$runtime_stack"
-runtime_stack="$($diamond tests/multifile/runtime_broken_main.dia 2>&1 || true)"
+runtime_stack="$($diamond tests/multifile/runtime_broken_main.di 2>&1 || true)"
 grep -q 'at explode:' <<<"$runtime_stack"
 grep -q 'at explode:2:10' <<<"$runtime_stack"
-grep -q 'at tests/multifile/runtime_broken_main.dia:' <<<"$runtime_stack"
-runtime_stack="$(DIAMOND_STRESS_GC=1 $diamond tests/multifile/runtime_broken_main.dia 2>&1 || true)"
+grep -q 'at tests/multifile/runtime_broken_main.di:' <<<"$runtime_stack"
+runtime_stack="$(DIAMOND_STRESS_GC=1 $diamond tests/multifile/runtime_broken_main.di 2>&1 || true)"
 grep -q 'at explode:' <<<"$runtime_stack"
 actual="$($diamond -e $'require "tests/multifile/math"\r\ndouble(21)\r\n')"
 [[ "$actual" == "42" ]]
-actual="$($diamond -e $'require "./tests/multifile/math.dia"\ndouble(21)')"
+actual="$($diamond -e $'require "./tests/multifile/math.di"\ndouble(21)')"
 [[ "$actual" == "42" ]]
 
-actual="$($diamond --dump-bytecode tests/multifile/main.dia)"
+actual="$($diamond --dump-bytecode tests/multifile/main.di)"
 grep -q '== double ==' <<<"$actual"
 grep -q '== greet ==' <<<"$actual"
 
@@ -2277,7 +2277,7 @@ if "$diamond" -e 'require "missing_dependency"' >/dev/null 2>"$require_error"; t
     rm -f "$require_error"
     exit 1
 fi
-grep -q "cannot require 'missing_dependency.dia'" "$require_error"
+grep -q "cannot require 'missing_dependency.di'" "$require_error"
 rm -f "$require_error"
 long_path="$(printf 'x%.0s' $(seq 1 5000))"
 if "$diamond" "$long_path" >/dev/null 2>&1; then
@@ -2285,11 +2285,11 @@ if "$diamond" "$long_path" >/dev/null 2>&1; then
     exit 1
 fi
 root_error="$(mktemp)"
-if "$diamond" tests/multifile/no_such_root.dia >/dev/null 2>"$root_error"; then
+if "$diamond" tests/multifile/no_such_root.di >/dev/null 2>"$root_error"; then
     rm -f "$root_error"
     exit 1
 fi
-grep -q "cannot open 'tests/multifile/no_such_root.dia'" "$root_error"
+grep -q "cannot open 'tests/multifile/no_such_root.di'" "$root_error"
 rm -f "$root_error"
 root_error="$(mktemp)"
 if "$diamond" tests >/dev/null 2>"$root_error"; then
@@ -2299,11 +2299,11 @@ fi
 grep -q "cannot read 'tests': Is a directory" "$root_error"
 rm -f "$root_error"
 root_error="$(mktemp)"
-if "$diamond" --dump-bytecode tests/multifile/no_such_root.dia >/dev/null 2>"$root_error"; then
+if "$diamond" --dump-bytecode tests/multifile/no_such_root.di >/dev/null 2>"$root_error"; then
     rm -f "$root_error"
     exit 1
 fi
-grep -q "cannot open 'tests/multifile/no_such_root.dia'" "$root_error"
+grep -q "cannot open 'tests/multifile/no_such_root.di'" "$root_error"
 rm -f "$root_error"
 if "$diamond" -e $'module Constants\n VALUE = 42 if true\nend' >/dev/null 2>&1; then
     echo "conditional namespace constant unexpectedly compiled" >&2

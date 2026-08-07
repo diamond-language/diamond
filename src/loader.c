@@ -149,14 +149,14 @@ static bool expand(Loader *loader,const char *path,const char *source,
             }
             char requested[DIAMOND_MAX_SOURCE_PATH];
             const size_t request_length=close-(quote+1);
-            if(request_length+5>=sizeof requested) {
+            if(request_length+4>=sizeof requested) {
                 (void)snprintf(loader->error,loader->error_capacity,
                     "%s:%zu: required path is too long",path,line);
                 return false;
             }
             memcpy(requested,source+quote+1,request_length);requested[request_length]='\0';
-            if(request_length<4||strcmp(requested+request_length-4,".dia")!=0)
-                memcpy(requested+request_length,".dia",5);
+            if(request_length<3||strcmp(requested+request_length-3,".di")!=0)
+                memcpy(requested+request_length,".di",4);
             char joined[DIAMOND_MAX_SOURCE_PATH];
             const char *slash=strrchr(path,'/');
             const size_t directory=slash==nullptr?0:(size_t)(slash-path)+1;
