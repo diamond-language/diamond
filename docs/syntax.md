@@ -122,7 +122,7 @@ exceptions, and explicit `return` alike. Built-in exception classes:
 type parameters. `.push`, `.pop`, and `.length()` are native on both.
 Strings support `.length()`, `.index_of(needle)` (position or `nil`),
 `.slice(start, length)`, `.to_i()` (lenient decimal parsing), and
-`.downcase()` (ASCII-only lowercasing).
+`.downcase()`/`.upcase()` (ASCII-only case conversion).
 
 `.each(callback)`, and the `Enumerable` methods derived from it —
 `.select`/`.count`/`.any?`/`.all?`/`.reduce`/`.map` — work as receiver
