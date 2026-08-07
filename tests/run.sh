@@ -2791,6 +2791,14 @@ grep -q "index 10 out of bounds for String of length 2" "$error_file"
 rm -f "$error_file"
 
 error_file="$(mktemp)"
+if "$diamond" -e '"hi".slice("a", 1)' >/dev/null 2>"$error_file"; then
+    echo "String#slice with a non-Int argument unexpectedly succeeded" >&2
+    exit 1
+fi
+grep -q "String#slice arguments must be Int" "$error_file"
+rm -f "$error_file"
+
+error_file="$(mktemp)"
 if "$diamond" -e '"hi".index_of(5)' >/dev/null 2>"$error_file"; then
     echo "String#index_of with a non-String argument unexpectedly succeeded" >&2
     exit 1
@@ -2807,13 +2815,73 @@ actual="$($diamond -e "$(printf 'f = File.open("%s", "r")\nchunk = f.read(5)\nre
 actual="$($diamond -e "$(printf 'f = File.open("%s", "r")\nf.read()' "$data_file")")"
 [[ "$actual" == "hello world, this is a test file" ]]
 
-if "$diamond" -e "$(printf 'f = File.open("%s", "r")\nf.read(-1)' "$data_file")" >/dev/null 2>&1; then
+error_file="$(mktemp)"
+if "$diamond" -e "$(printf 'f = File.open("%s", "r")\nf.read(-1)' "$data_file")" \
+    >/dev/null 2>"$error_file"; then
     echo "File#read with a negative length unexpectedly succeeded" >&2
-    rm -rf "$file_dir"
+    rm -rf "$file_dir" "$error_file"
     exit 1
 fi
+grep -q "File#read argument must be a non-negative Int" "$error_file"
+rm -f "$error_file"
 
 rm -rf "$file_dir"
+
+error_file="$(mktemp)"
+if "$diamond" -e 'File.open(1, "r")' >/dev/null 2>"$error_file"; then
+    echo "File.open with a non-String path unexpectedly succeeded" >&2
+    exit 1
+fi
+grep -q "File.open arguments must be String values" "$error_file"
+rm -f "$error_file"
+
+error_file="$(mktemp)"
+if "$diamond" -e 'TCPSocket.connect(1, "80")' >/dev/null 2>"$error_file"; then
+    echo "TCPSocket.connect with a non-String host unexpectedly succeeded" >&2
+    exit 1
+fi
+grep -q "TCPSocket.connect arguments must be a String host and an Int port" "$error_file"
+rm -f "$error_file"
+
+error_file="$(mktemp)"
+if "$diamond" -e 'TCPServer.listen("80")' >/dev/null 2>"$error_file"; then
+    echo "TCPServer.listen with a non-Int port unexpectedly succeeded" >&2
+    exit 1
+fi
+grep -q "TCPServer.listen argument must be an Int port" "$error_file"
+rm -f "$error_file"
+
+error_file="$(mktemp)"
+if "$diamond" -e 'File.write("x")' >/dev/null 2>"$error_file"; then
+    echo "malformed File.write unexpectedly compiled" >&2
+    exit 1
+fi
+grep -q "expected 'open' after 'File'" "$error_file"
+rm -f "$error_file"
+
+error_file="$(mktemp)"
+if "$diamond" -e 'File.open("x")' >/dev/null 2>"$error_file"; then
+    echo "File.open with a missing mode argument unexpectedly compiled" >&2
+    exit 1
+fi
+grep -q "expected ',' after File.open path" "$error_file"
+rm -f "$error_file"
+
+error_file="$(mktemp)"
+if "$diamond" -e 'TCPSocket.dial("x", 80)' >/dev/null 2>"$error_file"; then
+    echo "malformed TCPSocket.dial unexpectedly compiled" >&2
+    exit 1
+fi
+grep -q "expected 'connect' after 'TCPSocket'" "$error_file"
+rm -f "$error_file"
+
+error_file="$(mktemp)"
+if "$diamond" -e 'TCPServer.watch(80)' >/dev/null 2>"$error_file"; then
+    echo "malformed TCPServer.watch unexpectedly compiled" >&2
+    exit 1
+fi
+grep -q "expected 'listen' after 'TCPServer'" "$error_file"
+rm -f "$error_file"
 
 actual="$($diamond -e '"42".to_i()')"
 [[ "$actual" == "42" ]]
@@ -3061,4 +3129,4 @@ wait "$stress_http_pid" 2>/dev/null || true
 [[ "$stress_http_response" == $'HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 13\r\n\r\nhello, /world' ]]
 rm -f "$stress_http_out"
 
-echo "681 tests passed"
+echo "682 tests passed"
