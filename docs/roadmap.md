@@ -397,7 +397,17 @@ future work.
 
 ## Next priorities
 
-None queued.
+1. Basic I/O, starting with stdout: there is currently no way for a running
+   Diamond program to produce output as it goes — the only existing output
+   path is the CLI harness printing the top-level expression's final value
+   once, after the whole program finishes. First slice is `print(value)`/
+   `puts(value)` (no newline / with newline), stringifying via the same
+   mechanism `to_s`/string interpolation already uses (a user-defined
+   `to_s` on an instance is respected). Standard input and file I/O are
+   deliberately out of scope for this slice; see `docs/io.md` once it
+   exists for the fuller picture as it grows.
+
+## Later experiments
 
 ## Later experiments
 
