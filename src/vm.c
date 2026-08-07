@@ -2721,6 +2721,47 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     }
                     registers[dest]=DIAMOND_NIL;break;
                 }
+                if(receiver_kind==DIAMOND_OBJECT_LISTENER) {
+                    if(type_argument_count!=0)VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                    DiamondListenerHandle *listener=
+                        (DiamondListenerHandle *)registers[recv].as.object;
+                    const bool accept_method=method_name->length==6&&
+                        memcmp(method_name->chars,"accept",6)==0;
+                    const bool close_method=method_name->length==5&&
+                        memcmp(method_name->chars,"close",5)==0;
+                    if(!accept_method&&!close_method)VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                    if(argc!=0)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                    if(close_method) {
+                        if(listener->fd>=0) {
+                            close(listener->fd);
+                            listener->fd=-1;
+                        }
+                        registers[dest]=DIAMOND_NIL;break;
+                    }
+                    if(listener->fd<0) {
+                        snprintf(vm->error,sizeof vm->error,"listener is closed");
+                        VM_RETURN(DIAMOND_VM_IO_ERROR);
+                    }
+                    errno=0;
+                    const int client_fd=accept(listener->fd,nullptr,nullptr);
+                    if(client_fd<0) {
+                        snprintf(vm->error,sizeof vm->error,"accept failed: %s",strerror(errno));
+                        VM_RETURN(DIAMOND_VM_IO_ERROR);
+                    }
+                    FILE *client_stream=fdopen(client_fd,"r+");
+                    if(client_stream==nullptr) {
+                        close(client_fd);
+                        VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                    }
+                    DiamondFileHandle *client_handle=allocate_file_handle(vm,client_stream);
+                    if(client_handle==nullptr) {
+                        fclose(client_stream);
+                        VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                    }
+                    registers[dest]=(DiamondValue){.kind=DIAMOND_VALUE_OBJECT,
+                        .as.object=(DiamondObject *)client_handle};
+                    break;
+                }
                 if(receiver_kind!=DIAMOND_OBJECT_INSTANCE)
                     VM_RETURN(DIAMOND_VM_TYPE_ERROR);
                 DiamondInstance *instance=(DiamondInstance *)registers[recv].as.object;
