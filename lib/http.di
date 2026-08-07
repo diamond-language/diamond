@@ -51,7 +51,7 @@ def http_parse_request(conn)
     if colon != nil
       name = line.slice(0, colon)
       value = line.slice(colon + 2, line.length())
-      headers[name] = value
+      headers[name.downcase()] = value
     end
   end
   loop do
@@ -63,7 +63,7 @@ def http_parse_request(conn)
   end
 
   body = ""
-  content_length = headers["Content-Length"]
+  content_length = headers["content-length"]
   if content_length != nil
     body = conn.read(content_length.to_i())
   end

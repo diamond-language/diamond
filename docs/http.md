@@ -21,7 +21,13 @@ run()
 ## Convention
 
 A request is a `Hash`: `{"method": ..., "path": ..., "headers": ..., "body": ...}`.
-`headers` is itself a `Hash` of header name to value. A handler is a
+`headers` is itself a `Hash` of header name to value, with names
+normalized to lowercase (`content-type`, not `Content-Type`) — HTTP
+header names are case-insensitive per spec, and a raw exact-case `Hash`
+lookup would silently miss a legal lowercase header from a client or
+proxy that doesn't send canonical casing. Look up request headers using
+lowercase names; a handler's own response headers are written to the
+wire exactly as given, with no normalization. A handler is a
 `Callable[1]` taking a request and returning a 3-element response `Array`:
 `[status, headers, body]` — `status` an `Int`, `headers` a `Hash`, `body` a
 `String`. This mirrors Rack's own `call(env) => [status, headers, body]`
