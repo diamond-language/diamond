@@ -491,6 +491,13 @@ static DiamondCell *allocate_cell(DiamondVm *vm,DiamondValue value) {
     vm->objects=&cell->object;vm->bytes_allocated+=sizeof(DiamondCell);return cell;
 }
 
+[[maybe_unused]] static DiamondFiberHandle *allocate_fiber_handle(DiamondVm *vm,DiamondFiber *fiber) {
+    if(vm->stress_gc||vm->bytes_allocated>=vm->next_gc)diamond_vm_collect(vm);
+    DiamondFiberHandle *handle=malloc(sizeof(DiamondFiberHandle));if(handle==nullptr)return nullptr;
+    *handle=(DiamondFiberHandle){.object={.next=vm->objects,.kind=DIAMOND_OBJECT_FIBER},.fiber=fiber};
+    vm->objects=&handle->object;vm->bytes_allocated+=sizeof(DiamondFiberHandle);return handle;
+}
+
 static bool values_equal(DiamondValue left, DiamondValue right) {
     if (left.kind != right.kind) {
         return false;
