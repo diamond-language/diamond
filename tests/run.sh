@@ -2644,4 +2644,35 @@ actual="$($diamond -e $'class NumberBag\n include Enumerable\n def initialize(va
 actual="$($diamond -e $'def run(flag)\n result = 0\n if flag\n  def add_a(x)\n   result = result + x\n  end\n  add_a(1)\n else\n  def add_b(x)\n   result = result + x\n  end\n  add_b(2)\n end\n result\nend\n"#{run(true)}, #{run(false)}"')"
 [[ "$actual" == "1, 2" ]]
 
-echo "644 tests passed"
+actual="$($diamond -e '"hello world".index_of("world")')"
+[[ "$actual" == "6" ]]
+
+actual="$($diamond -e '"hello world".index_of("xyz")')"
+[[ "$actual" == "nil" ]]
+
+actual="$($diamond -e '"hello".index_of("")')"
+[[ "$actual" == "0" ]]
+
+actual="$($diamond -e '"hello world".slice(0, 5)')"
+[[ "$actual" == "hello" ]]
+
+actual="$($diamond -e '"hello world".slice(6, 100)')"
+[[ "$actual" == "world" ]]
+
+error_file="$(mktemp)"
+if "$diamond" -e '"hi".slice(10, 1)' >/dev/null 2>"$error_file"; then
+    echo "String#slice with an out-of-bounds start unexpectedly succeeded" >&2
+    exit 1
+fi
+grep -q "index 10 out of bounds for String of length 2" "$error_file"
+rm -f "$error_file"
+
+error_file="$(mktemp)"
+if "$diamond" -e '"hi".index_of(5)' >/dev/null 2>"$error_file"; then
+    echo "String#index_of with a non-String argument unexpectedly succeeded" >&2
+    exit 1
+fi
+grep -q "String#index_of argument must be a String" "$error_file"
+rm -f "$error_file"
+
+echo "653 tests passed"

@@ -2658,6 +2658,67 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                         const DiamondHashEntry entry=hash->entries[(size_t)index];
                         registers[dest]=key_method?entry.key:entry.value;break;
                     }
+                    if(receiver_kind==DIAMOND_OBJECT_STRING) {
+                        const bool index_of_method=method_name->length==8&&
+                            memcmp(method_name->chars,"index_of",8)==0;
+                        const bool slice_method=method_name->length==5&&
+                            memcmp(method_name->chars,"slice",5)==0;
+                        const DiamondString *source=
+                            (const DiamondString *)registers[recv].as.object;
+                        if(index_of_method) {
+                            if(argc!=1)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                            if(registers[base].kind!=DIAMOND_VALUE_OBJECT||
+                               registers[base].as.object->kind!=DIAMOND_OBJECT_STRING) {
+                                snprintf(vm->error,sizeof vm->error,
+                                    "String#index_of argument must be a String");
+                                VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                            }
+                            const DiamondString *needle=
+                                (const DiamondString *)registers[base].as.object;
+                            registers[dest]=DIAMOND_NIL;
+                            if(needle->length==0) {
+                                registers[dest]=DIAMOND_INT(0);
+                            } else if(needle->length<=source->length) {
+                                for(size_t start=0;
+                                    start+needle->length<=source->length;start++) {
+                                    if(memcmp(source->chars+start,needle->chars,
+                                              needle->length)==0) {
+                                        registers[dest]=DIAMOND_INT((int64_t)start);break;
+                                    }
+                                }
+                            }
+                            break;
+                        }
+                        if(slice_method) {
+                            if(argc!=2)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                            if(registers[base].kind!=DIAMOND_VALUE_INT||
+                               registers[(size_t)base+1].kind!=DIAMOND_VALUE_INT) {
+                                snprintf(vm->error,sizeof vm->error,
+                                    "String#slice arguments must be Int");
+                                VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                            }
+                            const int64_t start=registers[base].as.integer;
+                            const int64_t requested_length=
+                                registers[(size_t)base+1].as.integer;
+                            if(start<0||(uint64_t)start>source->length||
+                               requested_length<0) {
+                                snprintf(vm->error,sizeof vm->error,
+                                    "index %" PRId64 " out of bounds for String of length %zu",
+                                    start,source->length);
+                                VM_RETURN(DIAMOND_VM_INDEX_ERROR);
+                            }
+                            const size_t available=source->length-(size_t)start;
+                            const size_t take=(size_t)requested_length<available?
+                                (size_t)requested_length:available;
+                            DiamondString *sliced=
+                                allocate_string(vm,source->chars+(size_t)start,take);
+                            if(sliced==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                            registers[dest]=DIAMOND_OBJECT(sliced);break;
+                        }
+                        snprintf(vm->error,sizeof vm->error,"undefined method '%.*s' for %s",
+                            (int)method_name->length,method_name->chars,"String");
+                        VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                    }
                     if(receiver_kind!=DIAMOND_OBJECT_ARRAY)
                         VM_RETURN(DIAMOND_VM_TYPE_ERROR);
                     DiamondArray *array=(DiamondArray *)registers[recv].as.object;
