@@ -2577,6 +2577,24 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                         if(method_name->length==4&&memcmp(method_name->chars,"each",4)==0)
                             target_name=receiver_kind==DIAMOND_OBJECT_ARRAY?
                                 "array_each":"hash_each";
+                        else if(method_name->length==6&&
+                                memcmp(method_name->chars,"select",6)==0)
+                            target_name="enumerable_select";
+                        else if(method_name->length==5&&
+                                memcmp(method_name->chars,"count",5)==0)
+                            target_name="enumerable_count";
+                        else if(method_name->length==4&&
+                                memcmp(method_name->chars,"any?",4)==0)
+                            target_name="enumerable_any";
+                        else if(method_name->length==4&&
+                                memcmp(method_name->chars,"all?",4)==0)
+                            target_name="enumerable_all";
+                        else if(method_name->length==6&&
+                                memcmp(method_name->chars,"reduce",6)==0)
+                            target_name="enumerable_reduce";
+                        else if(method_name->length==3&&
+                                memcmp(method_name->chars,"map",3)==0)
+                            target_name="enumerable_map";
                         if(target_name!=nullptr) {
                             const DiamondFunction *target=
                                 find_top_level_function(chunk,target_name,strlen(target_name));
