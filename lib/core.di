@@ -257,6 +257,21 @@ def hash_map_values(values: Hash, callback: Callable[1]) -> Hash
   result
 end
 
+def hash_merge(a: Hash, b: Hash) -> Hash
+  result = {}
+  index = 0
+  while index < a.length()
+    result[a.key_at(index)] = a.value_at(index)
+    index = index + 1
+  end
+  index = 0
+  while index < b.length()
+    result[b.key_at(index)] = b.value_at(index)
+    index = index + 1
+  end
+  result
+end
+
 def enumerable_select(values, callback: Callable[1]) -> Array
   result = []
   if values is Hash
