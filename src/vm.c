@@ -2617,7 +2617,12 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                             memcmp(method_name->chars,"key_at",6)==0;
                         const bool value_method=method_name->length==8&&
                             memcmp(method_name->chars,"value_at",8)==0;
-                        if(!key_method&&!value_method)VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                        if(!key_method&&!value_method) {
+                            snprintf(vm->error,sizeof vm->error,
+                                "undefined method '%.*s' for %s",
+                                (int)method_name->length,method_name->chars,"Hash");
+                            VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                        }
                         if(argc!=1)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
                         if(registers[base].kind!=DIAMOND_VALUE_INT)
                             VM_RETURN(DIAMOND_VM_TYPE_ERROR);
@@ -2655,6 +2660,8 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                         registers[dest]=array->count==0?DIAMOND_NIL:
                             array->values[--array->count];break;
                     }
+                    snprintf(vm->error,sizeof vm->error,"undefined method '%.*s' for %s",
+                        (int)method_name->length,method_name->chars,"Array");
                     VM_RETURN(DIAMOND_VM_TYPE_ERROR);
                 }
                 if(receiver_kind==DIAMOND_OBJECT_FIBER) {
