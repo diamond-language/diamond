@@ -2,6 +2,7 @@
 #include "vm.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 int main(void) {
@@ -379,6 +380,17 @@ int main(void) {
     if(fiber_overflow_fiber->state!=DIAMOND_FIBER_FAILED||
        diamond_fiber_status(fiber_overflow_fiber)!=DIAMOND_VM_STACK_OVERFLOW)return 70;
     diamond_fiber_free(fiber_overflow_fiber);diamond_vm_free(&fiber_overflow_vm);
+
+    DiamondVm sweep_vm;diamond_vm_init(&sweep_vm);
+    DiamondFiber *sweep_fiber=diamond_fiber_new(nullptr);
+    DiamondFiberHandle *sweep_handle=malloc(sizeof *sweep_handle);
+    if(sweep_fiber==nullptr||sweep_handle==nullptr)return 71;
+    *sweep_handle=(DiamondFiberHandle){.object={.next=sweep_vm.objects,.kind=DIAMOND_OBJECT_FIBER},
+        .fiber=sweep_fiber};
+    sweep_vm.objects=&sweep_handle->object;
+    diamond_vm_collect(&sweep_vm);
+    if(sweep_vm.objects!=nullptr)return 72;
+    diamond_fiber_free(sweep_fiber);diamond_vm_free(&sweep_vm);
 
     puts("fiber run passed");
     return 0;
