@@ -1446,6 +1446,54 @@ static bool builder_format_value(StringBuilder *builder,DiamondValue value) {
     return builder_append(builder,"#<Closure>",10);
 }
 
+static DiamondVmStatus stringify_value(DiamondVm *vm,const DiamondChunk *chunk,
+                                        size_t depth,DiamondValue value,
+                                        DiamondValue *out) {
+    if(value.kind==DIAMOND_VALUE_OBJECT&&
+       value.as.object->kind==DIAMOND_OBJECT_STRING) {
+        *out=value;return DIAMOND_VM_OK;
+    }
+    if(value.kind==DIAMOND_VALUE_OBJECT&&
+       value.as.object->kind==DIAMOND_OBJECT_INSTANCE) {
+        const DiamondInstance *instance=(const DiamondInstance *)value.as.object;
+        const DiamondMethod *method=lookup_method(chunk,instance->class,
+            "to_s",sizeof("to_s")-1);
+        if(method!=nullptr) {
+            if(method->required_arity>0)return DIAMOND_VM_ARITY_ERROR;
+            const DiamondFunction *fn=&chunk->functions[method->function_index];
+            const DiamondChunk child={.name=fn->name,.code=fn->code,
+              .lines=fn->lines,.columns=fn->columns,.code_count=fn->code_count,
+              .constants=fn->constants,.constant_count=fn->constant_count,
+              .strings=fn->strings,.string_count=fn->string_count,
+              .type_sets=fn->type_sets,.type_set_count=fn->type_set_count,
+              .functions=chunk->functions,.function_count=chunk->function_count,
+              .classes=chunk->classes,.class_count=chunk->class_count,
+              .interfaces=chunk->interfaces,.interface_count=chunk->interface_count,
+              .parameter_type_sets=fn->parameter_type_sets,
+              .type_variable_count=fn->type_variable_count,
+              .parameter_offset=fn->owner_class==UINT8_MAX?0:1};
+            DiamondValue converted=DIAMOND_NIL;
+            DiamondVmStatus status=run_chunk(&child,vm,&value,1,
+                                              depth+1,nullptr,&converted);
+            if(status!=DIAMOND_VM_OK)return status;
+            if(converted.kind!=DIAMOND_VALUE_OBJECT||
+               converted.as.object->kind!=DIAMOND_OBJECT_STRING) {
+                snprintf(vm->error,sizeof vm->error,"to_s must return String");
+                return DIAMOND_VM_TYPE_ERROR;
+            }
+            *out=converted;return DIAMOND_VM_OK;
+        }
+    }
+    StringBuilder builder={};
+    if(!builder_format_value(&builder,value)) {
+        free(builder.chars);return DIAMOND_VM_OUT_OF_MEMORY;
+    }
+    DiamondString *string=allocate_string(vm,builder.chars,builder.length);
+    free(builder.chars);
+    if(string==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+    *out=DIAMOND_OBJECT(string);return DIAMOND_VM_OK;
+}
+
 static uint8_t runtime_value_type(const DiamondChunk *chunk,DiamondValue value) {
     if(value.kind==DIAMOND_VALUE_NIL)return DIAMOND_TYPE_NIL;
     if(value.kind==DIAMOND_VALUE_BOOL)return DIAMOND_TYPE_BOOL;
@@ -1873,52 +1921,11 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
             case DIAMOND_OP_TO_STRING: {
                 uint8_t destination=0,source=0;
                 READ_BYTE(destination);READ_BYTE(source);
-                if(registers[source].kind==DIAMOND_VALUE_OBJECT&&
-                   registers[source].as.object->kind==DIAMOND_OBJECT_STRING) {
-                    registers[destination]=registers[source];break;
-                }
-                if(registers[source].kind==DIAMOND_VALUE_OBJECT&&
-                   registers[source].as.object->kind==DIAMOND_OBJECT_INSTANCE) {
-                    const DiamondInstance *instance=
-                        (const DiamondInstance *)registers[source].as.object;
-                    const DiamondMethod *method=lookup_method(chunk,instance->class,
-                        "to_s",sizeof("to_s")-1);
-                    if(method!=nullptr) {
-                        if(method->required_arity>0)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
-                        const DiamondFunction *fn=&chunk->functions[method->function_index];
-                        const DiamondChunk child={.name=fn->name,.code=fn->code,
-                          .lines=fn->lines,.columns=fn->columns,.code_count=fn->code_count,
-                          .constants=fn->constants,.constant_count=fn->constant_count,
-                          .strings=fn->strings,.string_count=fn->string_count,
-                          .type_sets=fn->type_sets,.type_set_count=fn->type_set_count,
-                          .functions=chunk->functions,.function_count=chunk->function_count,
-                          .classes=chunk->classes,.class_count=chunk->class_count,
-                          .interfaces=chunk->interfaces,.interface_count=chunk->interface_count,
-                          .parameter_type_sets=fn->parameter_type_sets,
-                          .type_variable_count=fn->type_variable_count,
-                          .parameter_offset=fn->owner_class==UINT8_MAX?0:1};
-                        DiamondValue converted=DIAMOND_NIL;
-                        const DiamondValue argument=registers[source];
-                        DiamondVmStatus status=run_chunk(&child,vm,&argument,1,
-                                                          depth+1,nullptr,&converted);
-                        VM_PROPAGATE(status);
-                        if(converted.kind!=DIAMOND_VALUE_OBJECT||
-                           converted.as.object->kind!=DIAMOND_OBJECT_STRING) {
-                            snprintf(vm->error,sizeof vm->error,
-                                     "to_s must return String");
-                            VM_RETURN(DIAMOND_VM_TYPE_ERROR);
-                        }
-                        registers[destination]=converted;break;
-                    }
-                }
-                StringBuilder builder={};
-                if(!builder_format_value(&builder,registers[source])) {
-                    free(builder.chars);VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
-                }
-                DiamondString *string=allocate_string(vm,builder.chars,builder.length);
-                free(builder.chars);
-                if(string==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
-                registers[destination]=DIAMOND_OBJECT(string);break;
+                DiamondValue converted=DIAMOND_NIL;
+                DiamondVmStatus status=stringify_value(vm,chunk,depth,
+                    registers[source],&converted);
+                VM_PROPAGATE(status);
+                registers[destination]=converted;break;
             }
             case DIAMOND_OP_MOVE: {
                 uint8_t destination = 0;
