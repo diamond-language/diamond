@@ -1081,6 +1081,17 @@ grep -q 'REDEFINE_METHOD' <<<"$actual"
 actual="$($diamond --dump-bytecode -e 'yield' 2>/dev/null || true)"
 grep -Eq 'YIELD +r[0-9]+, r[0-9]+' <<<"$actual"
 
+actual="$($diamond --dump-bytecode -e $'def f()\n x = yield(1) + 1\n x\nend' 2>/dev/null || true)"
+grep -Eq 'YIELD +r[0-9]+, r[0-9]+' <<<"$actual"
+
+error_file="$(mktemp)"
+if "$diamond" -e $'def f()\n x = yield(1) + 1\n x\nend\nf()' >/dev/null 2>"$error_file"; then
+    echo "yield as a sub-expression outside a fiber unexpectedly succeeded" >&2
+    exit 1
+fi
+grep -q 'runtime error: yield outside a fiber' "$error_file"
+rm -f "$error_file"
+
 actual="$("$diamond" -e $'class Shape\n def initialize(width, height)\n  @width = width\n  @height = height\n end\n def area()\n  @width * @height\n end\n def self.square_area_patch()\n  def square_area()\n   @width * @width\n  end\n  square_area\n end\nend\ns = Shape.new(3, 4)\nbefore = s.area()\nShape.redefine_method("area", Shape.square_area_patch())\nafter = s.area()\n"#{before}, #{after}"')"
 [[ "$actual" == "12, 9" ]]
 
@@ -2298,4 +2309,4 @@ if "$diamond" -e $'module Constants\n VALUE = 42 if true\nend' >/dev/null 2>&1; 
     echo "conditional namespace constant unexpectedly compiled" >&2
     exit 1
 fi
-echo "555 tests passed"
+echo "557 tests passed"
