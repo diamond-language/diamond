@@ -129,6 +129,7 @@ typedef enum DiamondBuiltinClass : uint8_t {
     DIAMOND_CLASS_RANGE_ERROR,
     DIAMOND_CLASS_SYSTEM_STACK_ERROR,
     DIAMOND_CLASS_FIBER_ERROR,
+    DIAMOND_CLASS_IO_ERROR,
     DIAMOND_BUILTIN_CLASS_COUNT,
 } DiamondBuiltinClass;
 
@@ -267,6 +268,7 @@ typedef enum DiamondVmStatus : uint8_t {
     DIAMOND_VM_YIELDED,
     DIAMOND_VM_YIELD_WITHOUT_FIBER,
     DIAMOND_VM_FIBER_NOT_RESUMABLE,
+    DIAMOND_VM_IO_ERROR,
 } DiamondVmStatus;
 
 typedef struct DiamondMethodCacheEntry {

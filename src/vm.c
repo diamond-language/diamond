@@ -1247,6 +1247,7 @@ static uint8_t exception_class_for_status(DiamondVmStatus status) {
         case DIAMOND_VM_STACK_OVERFLOW: return DIAMOND_CLASS_SYSTEM_STACK_ERROR;
         case DIAMOND_VM_INDEX_ERROR: return DIAMOND_CLASS_INDEX_ERROR;
         case DIAMOND_VM_FIBER_NOT_RESUMABLE: return DIAMOND_CLASS_FIBER_ERROR;
+        case DIAMOND_VM_IO_ERROR: return DIAMOND_CLASS_IO_ERROR;
         default: return UINT8_MAX;
     }
 }
@@ -3181,6 +3182,8 @@ const char *diamond_vm_status_name(DiamondVmStatus status) {
             return "yield outside a fiber";
         case DIAMOND_VM_FIBER_NOT_RESUMABLE:
             return "fiber is not resumable";
+        case DIAMOND_VM_IO_ERROR:
+            return "I/O error";
     }
     return "unknown VM status";
 }
