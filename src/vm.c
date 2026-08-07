@@ -1457,15 +1457,21 @@ static bool builder_append(StringBuilder *builder,const char *chars,size_t lengt
  * it's correct regardless of where an fgets chunk boundary falls
  * relative to the line ending. *saw_any is false only when zero bytes
  * were read before EOF. */
-static DiamondVmStatus read_line(FILE *stream,StringBuilder *builder,bool *saw_any) {
+static DiamondVmStatus read_line(DiamondVm *vm,FILE *stream,StringBuilder *builder,
+                                 bool *saw_any) {
     char chunk_buffer[256];
     *saw_any=false;
+    errno=0;
     for(;;) {
         if(fgets(chunk_buffer,sizeof chunk_buffer,stream)==nullptr)break;
         *saw_any=true;
         const size_t piece_length=strlen(chunk_buffer);
         if(!builder_append(builder,chunk_buffer,piece_length))return DIAMOND_VM_OUT_OF_MEMORY;
         if(piece_length>0&&chunk_buffer[piece_length-1]=='\n')break;
+    }
+    if(ferror(stream)) {
+        snprintf(vm->error,sizeof vm->error,"read error: %s",strerror(errno));
+        return DIAMOND_VM_IO_ERROR;
     }
     if(builder->length>0&&builder->chars[builder->length-1]=='\n') {
         builder->length--;
@@ -2022,7 +2028,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 READ_BYTE(destination);
                 StringBuilder builder={};
                 bool saw_any=false;
-                DiamondVmStatus read_status=read_line(stdin,&builder,&saw_any);
+                DiamondVmStatus read_status=read_line(vm,stdin,&builder,&saw_any);
                 if(read_status!=DIAMOND_VM_OK) {
                     free(builder.chars);VM_RETURN(read_status);
                 }
@@ -2884,7 +2890,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                         StringBuilder builder={};
                         bool saw_any=false;
                         DiamondVmStatus read_status=
-                            read_line(target_file->stream,&builder,&saw_any);
+                            read_line(vm,target_file->stream,&builder,&saw_any);
                         if(read_status!=DIAMOND_VM_OK) {
                             free(builder.chars);VM_RETURN(read_status);
                         }
