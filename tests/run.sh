@@ -2692,4 +2692,19 @@ fi
 
 rm -rf "$file_dir"
 
-echo "656 tests passed"
+actual="$($diamond -e '"42".to_i()')"
+[[ "$actual" == "42" ]]
+
+actual="$($diamond -e '"-17".to_i()')"
+[[ "$actual" == "-17" ]]
+
+actual="$($diamond -e '"abc".to_i()')"
+[[ "$actual" == "0" ]]
+
+actual="$($diamond -e '"3.14".to_i()')"
+[[ "$actual" == "3" ]]
+
+actual="$($diamond -e $'begin\n "99999999999999999999".to_i()\nrescue error: RangeError\n 42\nend')"
+[[ "$actual" == "42" ]]
+
+echo "661 tests passed"

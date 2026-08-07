@@ -2663,8 +2663,30 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                             memcmp(method_name->chars,"index_of",8)==0;
                         const bool slice_method=method_name->length==5&&
                             memcmp(method_name->chars,"slice",5)==0;
+                        const bool to_i_method=method_name->length==4&&
+                            memcmp(method_name->chars,"to_i",4)==0;
                         const DiamondString *source=
                             (const DiamondString *)registers[recv].as.object;
+                        if(to_i_method) {
+                            if(argc!=0)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                            size_t position=0;bool negative=false;
+                            if(position<source->length&&
+                               (source->chars[position]=='-'||source->chars[position]=='+')) {
+                                negative=source->chars[position]=='-';position++;
+                            }
+                            int64_t value=0;bool saw_digit=false;
+                            while(position<source->length&&
+                                  source->chars[position]>='0'&&source->chars[position]<='9') {
+                                saw_digit=true;
+                                int64_t widened=0;
+                                if(ckd_mul(&widened,value,(int64_t)10)||
+                                   ckd_add(&value,widened,(int64_t)(source->chars[position]-'0')))
+                                    VM_RETURN(DIAMOND_VM_INTEGER_OVERFLOW);
+                                position++;
+                            }
+                            registers[dest]=DIAMOND_INT(saw_digit?(negative?-value:value):0);
+                            break;
+                        }
                         if(index_of_method) {
                             if(argc!=1)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
                             if(registers[base].kind!=DIAMOND_VALUE_OBJECT||
