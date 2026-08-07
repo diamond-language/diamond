@@ -292,7 +292,8 @@ void diamond_fiber_free(DiamondFiber *fiber) {
 }
 
 DiamondFiberStatus diamond_fiber_prepare(DiamondFiber *fiber) {
-    if(fiber==nullptr||fiber->state!=DIAMOND_FIBER_NEW||fiber->chunk==nullptr)
+    if(fiber==nullptr||fiber->state!=DIAMOND_FIBER_NEW||
+       (fiber->chunk==nullptr&&fiber->entry_closure==nullptr))
         return DIAMOND_FIBER_INVALID_STATE;
     if(!allocate_fiber_stack(fiber))return DIAMOND_FIBER_INVALID_STATE;
     if(getcontext(&fiber->context)!=0) {
@@ -315,7 +316,8 @@ DiamondFiberStatus diamond_fiber_bind_vm(DiamondFiber *fiber, DiamondVm *vm) {
 
 DiamondFiberStatus diamond_fiber_run(DiamondFiber *fiber) {
     if(fiber==nullptr||fiber->state!=DIAMOND_FIBER_RUNNING||fiber->vm==nullptr||
-       fiber->chunk==nullptr)return DIAMOND_FIBER_INVALID_STATE;
+       (fiber->chunk==nullptr&&fiber->entry_closure==nullptr))
+        return DIAMOND_FIBER_INVALID_STATE;
     DiamondVm *vm=fiber->vm;
     void *saved_frames=vm->frames;
     DiamondFiber *saved_running=vm->running_fiber;
