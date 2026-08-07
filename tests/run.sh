@@ -1078,6 +1078,9 @@ grep -q 'RAISE' <<<"$actual"
 actual="$($diamond --dump-bytecode -e $'class Foo\n def bar(a)\n  a\n end\n def self.make_patch()\n  def replacement(a)\n   a\n  end\n  replacement\n end\nend\nFoo.redefine_method("bar", Foo.make_patch())')"
 grep -q 'REDEFINE_METHOD' <<<"$actual"
 
+actual="$($diamond --dump-bytecode -e 'yield' 2>/dev/null || true)"
+grep -Eq 'YIELD +r[0-9]+, r[0-9]+' <<<"$actual"
+
 actual="$("$diamond" -e $'class Shape\n def initialize(width, height)\n  @width = width\n  @height = height\n end\n def area()\n  @width * @height\n end\n def self.square_area_patch()\n  def square_area()\n   @width * @width\n  end\n  square_area\n end\nend\ns = Shape.new(3, 4)\nbefore = s.area()\nShape.redefine_method("area", Shape.square_area_patch())\nafter = s.area()\n"#{before}, #{after}"')"
 [[ "$actual" == "12, 9" ]]
 
@@ -2295,4 +2298,4 @@ if "$diamond" -e $'module Constants\n VALUE = 42 if true\nend' >/dev/null 2>&1; 
     echo "conditional namespace constant unexpectedly compiled" >&2
     exit 1
 fi
-echo "554 tests passed"
+echo "555 tests passed"
