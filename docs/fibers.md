@@ -189,16 +189,71 @@ since nothing had exercised that path end-to-end before, this went unnoticed
 until it would have rejected every fiber `Fiber.new` ever constructed. Both
 guards now accept either `chunk` or `entry_closure` being set.
 
-There is not yet any way to resume, inspect, or free a `Fiber.new`-constructed
-fiber from Diamond source — that is the next phase (`.resume`/`.status`/
-`.alive?` native dispatch). A `Fiber` value with nothing else referencing it
-is ordinary GC-reachable garbage in the meantime.
+A `Fiber` value with nothing else referencing it is ordinary GC-reachable
+garbage — there is no explicit free from Diamond source, matching every
+other heap value.
+
+## `.resume`/`.status`/`.alive?` dispatch
+
+No new compiler code was needed for these — `.method(args)` already compiles
+generically to `DIAMOND_OP_INVOKE` with zero compile-time knowledge of the
+receiver's type; dispatch is entirely runtime, keyed off the receiver
+object's kind, the same mechanism that already special-cases native
+`length()` on arrays/hashes/strings. One more `receiver_kind==DIAMOND_OBJECT_FIBER`
+branch handles all three:
+
+- `.resume(value)` (the argument is optional, defaulting to `nil`) sets the
+  fiber's `resume_value`, runs it via `diamond_fiber_run`, and returns
+  whatever it yielded or completed with. Resuming a fiber that is not
+  `RUNNABLE` or `SUSPENDED` — already `COMPLETED` or `FAILED` — raises the
+  new `DIAMOND_VM_FIBER_NOT_RESUMABLE` status, rescuable as `FiberError`
+  (a `StandardError` subclass).
+- `.status()` returns a `String` from the existing `diamond_fiber_state_name`.
+- `.alive?()` follows the project's predicate-name convention (bare
+  boolean): `true` for any state other than `COMPLETED`/`FAILED`.
+
+`.resume` reuses the *existing* exception/rescue machinery for free, exactly
+as planned: since the fiber shares the resumer's `DiamondVm` (bound at
+`Fiber.new` time), an uncaught `raise` inside the fiber body already leaves
+`vm->exception`/`vm->has_exception` populated exactly as any uncaught
+exception would. `VM_PROPAGATE(fiber->status)` at the `.resume()` call site
+then runs `catch_exception` against the *resumer's* own enclosing rescue
+handlers — matching Ruby's actual behavior, with zero new exception-handling
+code. A bare VM failure with no explicit `raise` likewise falls through to
+the existing `catch_runtime_error` path, rescuable at the resume site with
+the already-correct built-in class.
+
+The user's own generator example now round-trips end to end from Diamond
+source:
+
+```
+def make_counter()
+ def counter()
+  i = 0
+  loop do
+   got = yield(i)
+   i = i + got
+  end
+ end
+ counter
+end
+f = Fiber.new(make_counter())
+f.resume(0)   # => 0
+f.resume(10)  # => 10
+f.resume(5)   # => 15
+```
+
+Scheduler (`DiamondFiberQueue`) exposure to Diamond source — a real
+multi-fiber round-robin scheduler callable from a program — remains
+deliberately out of scope. `Fiber.new(...).resume(...)` alone, exactly how
+Ruby's own `Fiber` class works with no scheduler required, is a complete,
+independently useful unit.
 
 `mark_object`'s `DIAMOND_OBJECT_FIBER` branch marks a fiber's own parked
-frame chain (`native_frames`), its `result` and `resume_value`, and —
-load-bearing once `Fiber.new(callable)` lands — its `entry_closure`: once
-that call returns, the fiber wrapper is the only remaining path to the
-closure and its captured cells. Sweeping an unreached fiber handle calls
+frame chain (`native_frames`), its `result` and `resume_value`, and — load
+bearing for `Fiber.new(callable)` — its `entry_closure`: once that call
+returns, the fiber wrapper is the only remaining path to the closure and its
+captured cells. Sweeping an unreached fiber handle calls
 `diamond_fiber_free` on the underlying fiber, releasing its `mmap`'d native
 stack, rather than leaking it.
 
@@ -213,12 +268,12 @@ clearing both once the child returns control. `diamond_vm_collect` walks
 through the resumer's own live registers — most importantly, the very Fiber
 value the resumer is holding, if it lives nowhere else — could be collected
 out from under it the instant the child fiber's own allocations trigger a
-collection. This is a real hazard only once something can call
-`diamond_fiber_run` on a nested fiber from inside another fiber's own
-execution — today only exercisable by a C-level test that manually mirrors
-what the eventual `.resume(value)` dispatch will do — but the fix and its
-regression coverage (`tests/fiber_run.c`, verified against a deliberately
-reverted fix under ASan first) are in place ahead of that dispatch landing.
+collection. This is a real hazard whenever `diamond_fiber_run` runs a nested
+fiber from inside another fiber's own execution — exactly what `.resume(value)`
+now does from Diamond source. The fix and its regression coverage
+(`tests/fiber_run.c`, verified against a deliberately reverted fix under
+ASan first) landed a phase ahead of `.resume` itself, so the dispatch below
+was never exposed to it.
 
 The focused regression harness is available with:
 

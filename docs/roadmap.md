@@ -378,15 +378,26 @@ future work.
   `chunk`, which closure-invoking fibers always have — nothing had
   exercised that path end-to-end until this phase reached it. Still no
   Diamond-level way to resume, inspect, or free a fiber — that is Phase 4.
+- Phase 4 (final) of Diamond-language fiber syntax: `.resume(value)`/
+  `.status()`/`.alive?()` native dispatch inside `DIAMOND_OP_INVOKE`, the
+  same runtime-kind-keyed mechanism already used for Array/Hash/String
+  native methods — no new compiler code needed. A new `FiberError`
+  exception class (`StandardError` subclass) backs the one genuinely new
+  case with no existing analog: resuming an already-completed or -failed
+  fiber, via a new `DIAMOND_VM_FIBER_NOT_RESUMABLE` status. Uncaught
+  fiber-body exceptions propagate to the resumer through the existing
+  rescue machinery with zero new exception-handling code, since the fiber
+  shares the resumer's `DiamondVm`. The user's own generator example round-
+  trips end to end from Diamond source (`0, 10, 15`). This closes out
+  Diamond-language fiber syntax as a whole (`Fiber.new`/`.resume(value)`/
+  `.status()`/`.alive?()`/`yield(value)`, all GC-correct, all tested from
+  pure Diamond source). Scheduler (`DiamondFiberQueue`) exposure to Diamond
+  source remains explicitly deferred — `Fiber.new(...).resume(...)` alone,
+  with no scheduler required, is a complete, independently useful unit.
 
 ## Next priorities
 
-1. Diamond-language fiber syntax, final phase: native `.resume(value)`/
-   `.status()`/`.alive?()` dispatch inside `DIAMOND_OP_INVOKE`; a new
-   `FiberError` exception class; uncaught fiber-body exceptions propagating
-   to the resumer through the existing rescue machinery. Scheduler
-   (`DiamondFiberQueue`) exposure to Diamond source is explicitly deferred
-   beyond this.
+None queued.
 
 ## Later experiments
 
