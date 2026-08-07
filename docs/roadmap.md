@@ -544,10 +544,35 @@ future work.
   coverage gaps a full survey found (manifest failure paths, `DIAMOND_
   STRESS_GC=1` for packages and Enumerable, empty-collection Enumerable
   cases, I/O type-error messages, malformed builtin syntax).
+- Stdlib round 1: collections + numeric helpers. Thirteen new
+  `lib/core.di` functions, all pure Diamond built from existing
+  primitives — zero VM/compiler changes. Array: `reverse`/`concat`/
+  `compact`/`uniq`/`flatten` (fully recursive)/`join(separator = "")`/
+  `delete_at` (mutates in place, `nil` on out-of-bounds rather than
+  raising, matching Ruby). Hash: `merge` (right-biased on conflicts).
+  Numeric: `abs`/`min`/`max`/`mod` as plain functions, not receiver
+  syntax — `Int` is a scalar `DiamondValue`, not a heap object, so
+  there's no per-value method dispatch for it. `array_sort` is Int-only
+  (checked via the existing `Array[Int]` parameter-type mechanism,
+  `array_map_int`'s precedent) since `Int` is the only type with a
+  native ordering comparison — confirmed during scoping that Diamond
+  has no `Float`, no operators beyond `+ - * /`, no `Range`, and no
+  sorting or Comparable/spaceship mechanism at all, each requiring new
+  lexer tokens/opcodes/a `DiamondValue` layout change rather than a
+  stdlib addition, so out of scope for this round. `lib/core.di` is now
+  at roughly 50 of the 64 `DIAMOND_MAX_FUNCTIONS` slots — a real
+  constraint on how much further pure-Diamond stdlib growth this budget
+  can absorb before it needs raising.
 
 ## Next priorities
 
-None queued.
+- Stdlib round 2: String primitives (`split`, `strip`/`trim`, `upcase`,
+  `reverse`, char-indexing, `ord`/`chr`, string repeat). Explicitly
+  deferred from stdlib round 1 in favor of the zero-VM-change
+  collections/numeric work — unlike round 1, each of these needs a new
+  native `DIAMOND_OP_INVOKE` branch in `src/vm.c`'s String dispatch
+  block (small, isolated, following the exact `.slice`/`.downcase`
+  pattern, but still C-level work, not pure `lib/core.di`).
 
 ## Later experiments
 
