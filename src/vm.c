@@ -2511,6 +2511,28 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     }
                     VM_RETURN(DIAMOND_VM_TYPE_ERROR);
                 }
+                if(receiver_kind==DIAMOND_OBJECT_FIBER) {
+                    if(type_argument_count!=0)VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                    DiamondFiber *target_fiber=
+                        ((DiamondFiberHandle *)registers[recv].as.object)->fiber;
+                    const bool resume_method=method_name->length==6&&
+                        memcmp(method_name->chars,"resume",6)==0;
+                    if(!resume_method)VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                    if(argc>1)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                    const DiamondValue resume_argument=argc==1?registers[base]:DIAMOND_NIL;
+                    if(target_fiber->state!=DIAMOND_FIBER_RUNNABLE&&
+                       target_fiber->state!=DIAMOND_FIBER_SUSPENDED) {
+                        snprintf(vm->error,sizeof vm->error,
+                                 "cannot resume a fiber that is not runnable or suspended");
+                        VM_RETURN(DIAMOND_VM_FIBER_NOT_RESUMABLE);
+                    }
+                    diamond_fiber_resume(target_fiber,resume_argument);
+                    diamond_fiber_run(target_fiber);
+                    if(target_fiber->status!=DIAMOND_VM_OK&&
+                       target_fiber->status!=DIAMOND_VM_YIELDED)
+                        VM_PROPAGATE(target_fiber->status);
+                    registers[dest]=target_fiber->result;break;
+                }
                 if(receiver_kind!=DIAMOND_OBJECT_INSTANCE)
                     VM_RETURN(DIAMOND_VM_TYPE_ERROR);
                 DiamondInstance *instance=(DiamondInstance *)registers[recv].as.object;
