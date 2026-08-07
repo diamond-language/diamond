@@ -571,6 +571,14 @@ static DiamondFileHandle *allocate_file_handle(DiamondVm *vm,FILE *stream) {
     vm->objects=&handle->object;vm->bytes_allocated+=sizeof(DiamondFileHandle);return handle;
 }
 
+static DiamondListenerHandle *allocate_listener_handle(DiamondVm *vm,int fd) {
+    if(vm->stress_gc||vm->bytes_allocated>=vm->next_gc)diamond_vm_collect(vm);
+    DiamondListenerHandle *handle=malloc(sizeof(DiamondListenerHandle));
+    if(handle==nullptr)return nullptr;
+    *handle=(DiamondListenerHandle){.object={.next=vm->objects,.kind=DIAMOND_OBJECT_LISTENER},.fd=fd};
+    vm->objects=&handle->object;vm->bytes_allocated+=sizeof(DiamondListenerHandle);return handle;
+}
+
 static bool values_equal(DiamondValue left, DiamondValue right) {
     if (left.kind != right.kind) {
         return false;
@@ -3246,6 +3254,116 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 }
                 registers[dest]=(DiamondValue){.kind=DIAMOND_VALUE_OBJECT,
                     .as.object=(DiamondObject *)handle};
+                break;
+            }
+            case DIAMOND_OP_TCP_CONNECT: {
+                uint8_t dest=0,host_reg=0,port_reg=0;
+                READ_BYTE(dest);READ_BYTE(host_reg);READ_BYTE(port_reg);
+                if(registers[host_reg].kind!=DIAMOND_VALUE_OBJECT||
+                   registers[host_reg].as.object->kind!=DIAMOND_OBJECT_STRING||
+                   registers[port_reg].kind!=DIAMOND_VALUE_INT) {
+                    snprintf(vm->error,sizeof vm->error,
+                             "TCPSocket.connect arguments must be a String host and an Int port");
+                    VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                }
+                const DiamondString *host=(const DiamondString *)registers[host_reg].as.object;
+                char port_text[32];
+                (void)snprintf(port_text,sizeof port_text,"%" PRId64,
+                               registers[port_reg].as.integer);
+                struct addrinfo hints={.ai_family=AF_UNSPEC,.ai_socktype=SOCK_STREAM};
+                struct addrinfo *results=nullptr;
+                const int resolve_status=getaddrinfo(host->chars,port_text,&hints,&results);
+                if(resolve_status!=0) {
+                    snprintf(vm->error,sizeof vm->error,"cannot connect to '%.*s:%s': %s",
+                             (int)host->length,host->chars,port_text,gai_strerror(resolve_status));
+                    VM_RETURN(DIAMOND_VM_IO_ERROR);
+                }
+                int connected_fd=-1;
+                int last_errno=0;
+                for(struct addrinfo *candidate=results;candidate!=nullptr;
+                    candidate=candidate->ai_next) {
+                    const int fd=socket(candidate->ai_family,candidate->ai_socktype,
+                                         candidate->ai_protocol);
+                    if(fd<0) {last_errno=errno;continue;}
+                    if(connect(fd,candidate->ai_addr,candidate->ai_addrlen)==0) {
+                        connected_fd=fd;break;
+                    }
+                    last_errno=errno;close(fd);
+                }
+                freeaddrinfo(results);
+                if(connected_fd<0) {
+                    snprintf(vm->error,sizeof vm->error,"cannot connect to '%.*s:%s': %s",
+                             (int)host->length,host->chars,port_text,strerror(last_errno));
+                    VM_RETURN(DIAMOND_VM_IO_ERROR);
+                }
+                FILE *stream=fdopen(connected_fd,"r+");
+                if(stream==nullptr) {
+                    close(connected_fd);
+                    VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                }
+                DiamondFileHandle *handle=allocate_file_handle(vm,stream);
+                if(handle==nullptr) {
+                    fclose(stream);
+                    VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                }
+                registers[dest]=(DiamondValue){.kind=DIAMOND_VALUE_OBJECT,
+                    .as.object=(DiamondObject *)handle};
+                break;
+            }
+            case DIAMOND_OP_TCP_LISTEN: {
+                uint8_t dest=0,port_reg=0;
+                READ_BYTE(dest);READ_BYTE(port_reg);
+                if(registers[port_reg].kind!=DIAMOND_VALUE_INT) {
+                    snprintf(vm->error,sizeof vm->error,
+                             "TCPServer.listen argument must be an Int port");
+                    VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                }
+                char port_text[32];
+                (void)snprintf(port_text,sizeof port_text,"%" PRId64,
+                               registers[port_reg].as.integer);
+                struct addrinfo hints={.ai_family=AF_UNSPEC,.ai_socktype=SOCK_STREAM,
+                    .ai_flags=AI_PASSIVE};
+                struct addrinfo *results=nullptr;
+                const int resolve_status=getaddrinfo(nullptr,port_text,&hints,&results);
+                if(resolve_status!=0) {
+                    snprintf(vm->error,sizeof vm->error,"cannot listen on port %s: %s",
+                             port_text,gai_strerror(resolve_status));
+                    VM_RETURN(DIAMOND_VM_IO_ERROR);
+                }
+                int listening_fd=-1;
+                int last_errno=0;
+                for(struct addrinfo *candidate=results;candidate!=nullptr;
+                    candidate=candidate->ai_next) {
+                    const int fd=socket(candidate->ai_family,candidate->ai_socktype,
+                                         candidate->ai_protocol);
+                    if(fd<0) {last_errno=errno;continue;}
+                    const int yes=1;
+                    (void)setsockopt(fd,SOL_SOCKET,SO_REUSEADDR,&yes,sizeof yes);
+                    if(bind(fd,candidate->ai_addr,candidate->ai_addrlen)==0) {
+                        listening_fd=fd;break;
+                    }
+                    last_errno=errno;close(fd);
+                }
+                freeaddrinfo(results);
+                if(listening_fd<0) {
+                    snprintf(vm->error,sizeof vm->error,"cannot listen on port %s: %s",
+                             port_text,strerror(last_errno));
+                    VM_RETURN(DIAMOND_VM_IO_ERROR);
+                }
+                if(listen(listening_fd,16)!=0) {
+                    snprintf(vm->error,sizeof vm->error,"cannot listen on port %s: %s",
+                             port_text,strerror(errno));
+                    close(listening_fd);
+                    VM_RETURN(DIAMOND_VM_IO_ERROR);
+                }
+                DiamondListenerHandle *listener_handle=
+                    allocate_listener_handle(vm,listening_fd);
+                if(listener_handle==nullptr) {
+                    close(listening_fd);
+                    VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                }
+                registers[dest]=(DiamondValue){.kind=DIAMOND_VALUE_OBJECT,
+                    .as.object=(DiamondObject *)listener_handle};
                 break;
             }
             default:
