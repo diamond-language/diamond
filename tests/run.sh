@@ -2422,6 +2422,22 @@ if grep -q 'FIBER_NEW' <<<"$actual"; then
     exit 1
 fi
 
+error_file="$(mktemp)"
+if "$diamond" -e $'def Fiber()\n 1\nend\nFiber.new(1)' >/dev/null 2>"$error_file"; then
+    echo "Fiber.new on a shadowing top-level function unexpectedly compiled" >&2
+    exit 1
+fi
+grep -q "undefined local variable" "$error_file"
+rm -f "$error_file"
+
+error_file="$(mktemp)"
+if "$diamond" -e $'def File()\n 1\nend\nFile.open("x", "r")' >/dev/null 2>"$error_file"; then
+    echo "File.open on a shadowing top-level function unexpectedly compiled" >&2
+    exit 1
+fi
+grep -q "undefined local variable" "$error_file"
+rm -f "$error_file"
+
 actual="$($diamond -e $'def make_counter()\n def counter()\n  i = 0\n  loop do\n   got = yield(i)\n   i = i + got\n  end\n end\n counter\nend\nf = Fiber.new(make_counter())\nfirst = f.resume(0)\nsecond = f.resume(10)\nthird = f.resume(5)\n"#{first}, #{second}, #{third}"')"
 [[ "$actual" == "0, 10, 15" ]]
 
@@ -3015,4 +3031,4 @@ wait "$stress_http_pid" 2>/dev/null || true
 [[ "$stress_http_response" == $'HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 13\r\n\r\nhello, /world' ]]
 rm -f "$stress_http_out"
 
-echo "678 tests passed"
+echo "679 tests passed"
