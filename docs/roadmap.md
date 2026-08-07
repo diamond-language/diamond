@@ -495,10 +495,25 @@ future work.
   itself. Deliberately basic: no chunked encoding, no keep-alive, no
   malformed-request handling, no routing layer. See `docs/http.md` for
   the full surface and what remains out of scope.
+- Package resolution, phase 1: `require "name"` falls back to
+  `diamond_packages/name/name.di` (resolved against the process's CWD)
+  when the usual relative-file lookup fails — a bare name only, no new
+  syntax, and a relative file always wins when both exist. Scoped down
+  from the full "packaging format + package manager" idea in `Later
+  experiments` after establishing that manifests/versions/fetching each
+  need their own separate mechanism (see `docs/packages.md` for the full
+  reasoning and what's still out of scope). `src/loader.c`'s `expand()`
+  gained the fallback as a small, additive change; no compiler or grammar
+  changes were needed since `require` recognition is entirely
+  loader-level text scanning.
 
 ## Next priorities
 
-None queued.
+- Package manifests: a way for a package to declare its own name/version
+  (and eventually dependencies) that `require`'s package-resolution
+  fallback (see `docs/packages.md`) can read. Likely needs the loader to
+  compile-and-run a small Diamond file mid-resolution to get a `Hash`
+  back, which is a new mechanism in its own right.
 
 ## Later experiments
 
@@ -507,12 +522,12 @@ None queued.
 - Structural interfaces and more capable flow typing.
 - Native-code generation or a tracing/method JIT.
 - Self-hosting selected compiler and standard-library components.
-- A RubyGems-like packaging format for distributing Diamond libraries (name
-  TBD) and a Bundler-like package manager on top of it: dependency
-  resolution, a lockfile, and a way to fetch and install packages into a
-  project. Depends on `require`'s current path-based loader (`src/loader.c`)
-  growing a notion of installed/versioned packages, not just relative file
-  paths.
+- Dependency resolution, a lockfile, and a way to fetch/install packages
+  into a project — the remainder of the "Bundler-like package manager"
+  idea beyond bare name resolution (see `docs/packages.md` for what's
+  already built and `Next priorities` for the immediately-next slice).
+  Fetching specifically has no buildable target yet: there is no HTTP
+  client and no registry to fetch from.
 
 ## Explicitly deferred
 
