@@ -51,6 +51,7 @@ typedef struct DiamondFrame {
 } DiamondFrame;
 
 static void mark_value(DiamondValue value);
+static void mark_frame_chain(void *frames);
 static DiamondVmStatus run_chunk(const DiamondChunk *chunk, DiamondVm *vm,
                                  const DiamondValue *arguments,
                                  size_t argument_count, size_t depth,
@@ -77,6 +78,15 @@ static void mark_object(DiamondObject *object) {
         for(size_t i=0;i<closure->capture_count;i++)mark_value(closure->captures[i]);
     } else if(object->kind==DIAMOND_OBJECT_CELL) {
         mark_value(((DiamondCell *)object)->value);
+    } else if(object->kind==DIAMOND_OBJECT_FIBER) {
+        DiamondFiber *fiber=((DiamondFiberHandle *)object)->fiber;
+        if(fiber!=nullptr) {
+            mark_frame_chain(fiber->native_frames);
+            mark_value(fiber->result);
+            mark_value(fiber->resume_value);
+            if(fiber->entry_closure!=nullptr)
+                mark_object((DiamondObject *)fiber->entry_closure);
+        }
     }
 }
 
