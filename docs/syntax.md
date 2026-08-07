@@ -131,6 +131,8 @@ returns an `Array` of every piece around non-overlapping occurrences of
 unlike Ruby, it keeps every piece including empty ones from consecutive
 or leading/trailing separators (no trailing-empty suppression) — a
 deliberate simplification, not an attempt at Ruby compatibility.
+`.ord()` returns the first byte's value as an `Int`; an empty String
+raises a rescuable `IndexError`.
 
 `.each(callback)`, and the `Enumerable` methods derived from it —
 `.select`/`.count`/`.any?`/`.all?`/`.reduce`/`.map` — work as receiver

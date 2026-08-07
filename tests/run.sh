@@ -2978,6 +2978,18 @@ fi
 grep -q "String#split argument must be a String" "$error_file"
 rm -f "$error_file"
 
+actual="$($diamond -e '"A".ord()')"
+[[ "$actual" == "65" ]]
+
+actual="$($diamond -e '"abc".ord()')"
+[[ "$actual" == "97" ]]
+
+actual="$($diamond -e '" ".ord()')"
+[[ "$actual" == "32" ]]
+
+actual="$($diamond -e $'begin\n "".ord()\nrescue error: IndexError\n 42\nend')"
+[[ "$actual" == "42" ]]
+
 http_port=18743
 http_server_out="$(mktemp)"
 http_server_src="$(cat <<'HTTPEOF'
@@ -3328,4 +3340,4 @@ wait "$stress_http_pid" 2>/dev/null || true
 [[ "$stress_http_response" == $'HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 13\r\n\r\nhello, /world' ]]
 rm -f "$stress_http_out"
 
-echo "697 tests passed"
+echo "698 tests passed"
