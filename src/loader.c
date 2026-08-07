@@ -155,6 +155,7 @@ static bool expand(Loader *loader,const char *path,const char *source,
                 return false;
             }
             memcpy(requested,source+quote+1,request_length);requested[request_length]='\0';
+            const bool bare_name=memchr(requested,'/',request_length)==nullptr;
             if(request_length<3||strcmp(requested+request_length-3,".di")!=0)
                 memcpy(requested+request_length,".di",4);
             char joined[DIAMOND_MAX_SOURCE_PATH];
@@ -177,9 +178,28 @@ static bool expand(Loader *loader,const char *path,const char *source,
             }
             char canonical[DIAMOND_MAX_SOURCE_PATH];
             if(realpath(joined,canonical)==nullptr) {
-                (void)snprintf(loader->error,loader->error_capacity,
-                    "%s:%zu: cannot require '%s': %s",path,line,joined,
-                    strerror(errno));return false;
+                const int relative_errno=errno;
+                bool resolved_as_package=false;
+                if(bare_name) {
+                    /* Heap-allocated rather than a stack buffer: expand() recurses
+                     * once per require depth (up to DIAMOND_MAX_REQUIRE_DEPTH), and
+                     * a fixed-size path buffer in every frame is enough to overflow
+                     * the stack at that depth. */
+                    char *package_path=malloc(DIAMOND_MAX_SOURCE_PATH);
+                    if(package_path!=nullptr) {
+                        const int written=snprintf(package_path,DIAMOND_MAX_SOURCE_PATH,
+                            "diamond_packages/%.*s/%.*s.di",
+                            (int)request_length,requested,(int)request_length,requested);
+                        resolved_as_package=written>0&&(size_t)written<DIAMOND_MAX_SOURCE_PATH&&
+                            realpath(package_path,canonical)!=nullptr;
+                        free(package_path);
+                    }
+                }
+                if(!resolved_as_package) {
+                    (void)snprintf(loader->error,loader->error_capacity,
+                        "%s:%zu: cannot require '%s': %s",path,line,joined,
+                        strerror(relative_errno));return false;
+                }
             }
             char *dependency=read_source(canonical);
             if(dependency==nullptr) {
