@@ -694,6 +694,22 @@ static const DiamondMethod *lookup_method_cached(
     return method;
 }
 
+/* Mirrors find_function's two filters (compiler.c) exactly, operating on
+ * the runtime DiamondChunk instead of the compile-time DiamondProgram:
+ * excludes class/module methods (owner_class!=UINT8_MAX) and nested
+ * def's, so a same-named local closure can never shadow a real
+ * top-level prelude function. */
+[[maybe_unused]] static const DiamondFunction *find_top_level_function(
+        const DiamondChunk *chunk, const char *name, size_t length) {
+    for (size_t index = 0; index < chunk->function_count; index++) {
+        const DiamondFunction *candidate = &chunk->functions[index];
+        if (candidate->owner_class != UINT8_MAX || candidate->nested) continue;
+        if (strlen(candidate->name) == length &&
+            memcmp(candidate->name, name, length) == 0) return candidate;
+    }
+    return nullptr;
+}
+
 static void record_rewritten_site(DiamondVm *vm, const uint8_t *site) {
     if (vm->rewritten_site_count >= DIAMOND_MAX_CODE)return;
     for (size_t index=0;index<vm->rewritten_site_count;index++)
