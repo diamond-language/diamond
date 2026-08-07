@@ -351,18 +351,31 @@ future work.
   disassembler case (`<unknown opcode 66>`) along the way. This is groundwork
   only — no Diamond-level way to create or resume a fiber exists yet; that is
   the remaining, larger part of this feature (see below).
+- Phase 2 of Diamond-language fiber syntax: a fiber is now a first-class,
+  GC-managed value, via a new `DIAMOND_OBJECT_FIBER` heap kind wrapping a
+  `DiamondFiber` pointer. Both GC-root hazards identified during planning are
+  fixed and independently regression-tested (verified against deliberately
+  reverted fixes under ASan first): `mark_object` marks a reachable fiber's
+  own parked frame chain, result, resume value, and entry closure; and
+  `diamond_vm_collect` walks a running fiber's resumer chain, marking each
+  ancestor's own frames as GC roots, closing the gap where a value reachable
+  only through the resumer's own live registers could be collected out from
+  under it while a child fiber's own allocations trigger a collection.
+  Sweeping an unreached fiber handle now frees its native stack instead of
+  leaking it. See `docs/fibers.md` for the full design. Still no Diamond-level
+  way to create or resume a fiber — that is Phases 3-4 (see below).
 
 ## Next priorities
 
 1. Diamond-language fiber syntax, remaining phases: `Fiber.new(callable)` as
-   a first-class, GC-managed value (new `DIAMOND_OBJECT_FIBER` heap kind,
-   with two identified GC-root correctness fixes — the resumer's own frames
-   must stay rooted while a child fiber runs, and a fiber must not retain a
-   dangling pointer into a transient stack-local chunk); `.resume(value)`/
-   `.status()`/`.alive?()` native dispatch; a new `FiberError` exception
-   class; uncaught fiber-body exceptions propagating to the resumer through
-   the existing rescue machinery. Scheduler (`DiamondFiberQueue`) exposure to
-   Diamond source is explicitly deferred beyond this.
+   the compiler-recognized constructor (new `DIAMOND_OP_FIBER_NEW` opcode; a
+   fiber must not retain a dangling pointer into a transient stack-local
+   chunk once the constructing call returns, however deeply nested); native
+   `.resume(value)`/`.status()`/`.alive?()` dispatch; a new `FiberError`
+   exception class; uncaught fiber-body exceptions propagating to the
+   resumer through the existing rescue machinery. Scheduler
+   (`DiamondFiberQueue`) exposure to Diamond source is explicitly deferred
+   beyond this.
 
 ## Later experiments
 

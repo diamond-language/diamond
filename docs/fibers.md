@@ -137,7 +137,7 @@ DiamondFiber *diamond_fiber_new(const DiamondChunk *);
 DiamondFiberStatus diamond_fiber_bind_vm(DiamondFiber *, DiamondVm *);
 DiamondFiberStatus diamond_fiber_prepare(DiamondFiber *);
 DiamondFiberStatus diamond_fiber_run(DiamondFiber *);
-DiamondFiberStatus diamond_fiber_resume(DiamondFiber *);
+DiamondFiberStatus diamond_fiber_resume(DiamondFiber *, DiamondValue);
 DiamondFiberStatus diamond_fiber_yield(DiamondFiber *);
 bool diamond_fiber_resumable(const DiamondFiber *);
 DiamondValue diamond_fiber_result(const DiamondFiber *);
@@ -151,6 +151,47 @@ There is no more instruction/register checkpoint API (`diamond_vm_run_context`,
 similar) — a fiber's execution state is its own native stack, not a value the
 caller can inspect or reconstruct. Values must be observed through
 `diamond_fiber_result` after resuming to completion.
+
+## Fiber object model and GC design
+
+A fiber can now be wrapped in a `DiamondFiberHandle` — a thin
+`DiamondObject`-headed struct holding a pointer to the underlying
+`DiamondFiber` — giving it a new heap object kind, `DIAMOND_OBJECT_FIBER`.
+The wrapper is deliberately thin rather than folding `DiamondObject` directly
+into `DiamondFiber`: the existing C-level scheduler tests construct fibers
+with no VM at all (`diamond_fiber_new(nullptr)`, multi-VM scheduler tests),
+which folding would break. There is not yet any Diamond-language syntax that
+allocates a `DiamondFiberHandle` — that is `Fiber.new(callable)`, still to
+come — but the object kind, its GC marking, and its sweep-time cleanup are
+now fully implemented and tested at the C level ahead of that surface
+landing, the same staging the value-carrying `yield`/`resume` re-encoding
+used.
+
+`mark_object`'s `DIAMOND_OBJECT_FIBER` branch marks a fiber's own parked
+frame chain (`native_frames`), its `result` and `resume_value`, and —
+load-bearing once `Fiber.new(callable)` lands — its `entry_closure`: once
+that call returns, the fiber wrapper is the only remaining path to the
+closure and its captured cells. Sweeping an unreached fiber handle calls
+`diamond_fiber_free` on the underlying fiber, releasing its `mmap`'d native
+stack, rather than leaking it.
+
+A second, independent GC-root gap was fixed in the same phase: while a
+child fiber runs, `diamond_fiber_run` temporarily overwrites
+`vm->frames`/`vm->running_fiber` with the child's own, for the duration of
+the `swapcontext` call. Before doing so, it now records the *previous*
+values onto the child fiber itself, as `resumer_frames`/`resumer_fiber`,
+clearing both once the child returns control. `diamond_vm_collect` walks
+`vm->running_fiber->resumer_fiber` transitively, marking each ancestor's
+`resumer_frames` as additional roots. Without this, a value reachable only
+through the resumer's own live registers — most importantly, the very Fiber
+value the resumer is holding, if it lives nowhere else — could be collected
+out from under it the instant the child fiber's own allocations trigger a
+collection. This is a real hazard only once something can call
+`diamond_fiber_run` on a nested fiber from inside another fiber's own
+execution — today only exercisable by a C-level test that manually mirrors
+what the eventual `.resume(value)` dispatch will do — but the fix and its
+regression coverage (`tests/fiber_run.c`, verified against a deliberately
+reverted fix under ASan first) are in place ahead of that dispatch landing.
 
 The focused regression harness is available with:
 
