@@ -3100,6 +3100,15 @@ actual="$($diamond -e 'array_uniq([])')"
 actual="$($diamond -e 'array_uniq([1,1,1])')"
 [[ "$actual" == "[1]" ]]
 
+actual="$($diamond -e 'array_flatten([1, [2, 3], [4, [5, 6]], 7])')"
+[[ "$actual" == "[1, 2, 3, 4, 5, 6, 7]" ]]
+
+actual="$($diamond -e 'array_flatten([])')"
+[[ "$actual" == "[]" ]]
+
+actual="$($diamond -e 'array_flatten([[], [[]]])')"
+[[ "$actual" == "[]" ]]
+
 stress_socket_port=18746
 stress_server_out="$(mktemp)"
 timeout 10 env DIAMOND_STRESS_GC=1 "$diamond" -e "$(printf 'server = TCPServer.listen(%d)
@@ -3165,4 +3174,4 @@ wait "$stress_http_pid" 2>/dev/null || true
 [[ "$stress_http_response" == $'HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 13\r\n\r\nhello, /world' ]]
 rm -f "$stress_http_out"
 
-echo "686 tests passed"
+echo "687 tests passed"

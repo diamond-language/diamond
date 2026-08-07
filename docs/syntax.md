@@ -147,7 +147,8 @@ order; `array_concat(values, other)` returns a new array with `other`'s
 elements appended; `array_compact(values)` returns a new array with any
 `nil` elements dropped; `array_uniq(values)` returns a new array with
 only the first occurrence of each distinct (`==`) element, order
-preserved.
+preserved; `array_flatten(values)` returns a new array with nested
+arrays fully flattened (recursively, matching Ruby's default).
 
 ## Fibers
 
