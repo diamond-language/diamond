@@ -16,6 +16,7 @@ typedef enum DiamondObjectKind : uint8_t {
     DIAMOND_OBJECT_CELL,
     DIAMOND_OBJECT_FIBER,
     DIAMOND_OBJECT_FILE,
+    DIAMOND_OBJECT_LISTENER,
 } DiamondObjectKind;
 
 typedef struct DiamondObject {
@@ -125,5 +126,10 @@ typedef struct DiamondFileHandle {
     DiamondObject object;
     FILE *stream;
 } DiamondFileHandle;
+
+typedef struct DiamondListenerHandle {
+    DiamondObject object;
+    int fd;
+} DiamondListenerHandle;
 
 #endif
