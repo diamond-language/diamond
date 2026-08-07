@@ -272,7 +272,7 @@ DiamondFiber *diamond_fiber_new(const DiamondChunk *chunk) {
  * which belong to whatever transient stack-local chunk existed at the call
  * site -- so the fiber never retains a pointer that could dangle once that
  * call site returns, however deeply nested Fiber.new(...) was called from. */
-[[maybe_unused]] static DiamondFiber *diamond_fiber_new_for_closure(
+static DiamondFiber *diamond_fiber_new_for_closure(
         const DiamondChunk *chunk, const DiamondClosure *closure) {
     DiamondFiber *fiber=diamond_fiber_new(nullptr);
     if(fiber==nullptr)return nullptr;
@@ -548,7 +548,7 @@ static DiamondCell *allocate_cell(DiamondVm *vm,DiamondValue value) {
     vm->objects=&cell->object;vm->bytes_allocated+=sizeof(DiamondCell);return cell;
 }
 
-[[maybe_unused]] static DiamondFiberHandle *allocate_fiber_handle(DiamondVm *vm,DiamondFiber *fiber) {
+static DiamondFiberHandle *allocate_fiber_handle(DiamondVm *vm,DiamondFiber *fiber) {
     if(vm->stress_gc||vm->bytes_allocated>=vm->next_gc)diamond_vm_collect(vm);
     DiamondFiberHandle *handle=malloc(sizeof(DiamondFiberHandle));if(handle==nullptr)return nullptr;
     *handle=(DiamondFiberHandle){.object={.next=vm->objects,.kind=DIAMOND_OBJECT_FIBER},.fiber=fiber};
@@ -2989,6 +2989,37 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 target->function_index=replacement->function_index;
                 diamond_vm_invalidate_method_caches(vm);
                 registers[dest]=DIAMOND_NIL;break;
+            }
+            case DIAMOND_OP_FIBER_NEW: {
+                uint8_t dest=0,callable_reg=0;
+                READ_BYTE(dest);READ_BYTE(callable_reg);
+                if(registers[callable_reg].kind!=DIAMOND_VALUE_OBJECT||
+                   registers[callable_reg].as.object->kind!=DIAMOND_OBJECT_CLOSURE) {
+                    snprintf(vm->error,sizeof vm->error,"Fiber.new argument must be a Callable value");
+                    VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                }
+                const DiamondClosure *callable=(const DiamondClosure *)registers[callable_reg].as.object;
+                if((size_t)callable->function_index>=chunk->function_count)
+                    VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
+                const DiamondFunction *target_fn=&chunk->functions[callable->function_index];
+                if(target_fn->arity!=0) {
+                    snprintf(vm->error,sizeof vm->error,"Fiber.new callable must take no arguments");
+                    VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                }
+                DiamondFiber *new_fiber=diamond_fiber_new_for_closure(chunk,callable);
+                if(new_fiber==nullptr||diamond_fiber_bind_vm(new_fiber,vm)!=DIAMOND_FIBER_OK||
+                   diamond_fiber_prepare(new_fiber)!=DIAMOND_FIBER_OK) {
+                    diamond_fiber_free(new_fiber);
+                    VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                }
+                DiamondFiberHandle *handle=allocate_fiber_handle(vm,new_fiber);
+                if(handle==nullptr) {
+                    diamond_fiber_free(new_fiber);
+                    VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                }
+                registers[dest]=(DiamondValue){.kind=DIAMOND_VALUE_OBJECT,
+                    .as.object=(DiamondObject *)handle};
+                break;
             }
             default:
                 VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
