@@ -314,6 +314,10 @@ typedef struct DiamondFiber {
     size_t stack_size;
     void *native_frames;
     DiamondValue resume_value;
+    const DiamondClosure *entry_closure;
+    DiamondChunk program_tables;
+    void *resumer_frames;
+    DiamondFiber *resumer_fiber;
 } DiamondFiber;
 
 typedef enum DiamondFiberStatus : uint8_t {
