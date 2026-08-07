@@ -2625,6 +2625,86 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                         VM_PROPAGATE(target_fiber->status);
                     registers[dest]=target_fiber->result;break;
                 }
+                if(receiver_kind==DIAMOND_OBJECT_FILE) {
+                    if(type_argument_count!=0)VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                    DiamondFileHandle *target_file=
+                        (DiamondFileHandle *)registers[recv].as.object;
+                    const bool read_method=method_name->length==4&&
+                        memcmp(method_name->chars,"read",4)==0;
+                    const bool gets_method=method_name->length==4&&
+                        memcmp(method_name->chars,"gets",4)==0;
+                    const bool write_method=method_name->length==5&&
+                        memcmp(method_name->chars,"write",5)==0;
+                    const bool close_method=method_name->length==5&&
+                        memcmp(method_name->chars,"close",5)==0;
+                    if(!read_method&&!gets_method&&!write_method&&!close_method)
+                        VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                    if(close_method) {
+                        if(argc!=0)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                        if(target_file->stream!=nullptr) {
+                            fclose(target_file->stream);
+                            target_file->stream=nullptr;
+                        }
+                        registers[dest]=DIAMOND_NIL;break;
+                    }
+                    if(target_file->stream==nullptr) {
+                        snprintf(vm->error,sizeof vm->error,"file is closed");
+                        VM_RETURN(DIAMOND_VM_IO_ERROR);
+                    }
+                    if(read_method) {
+                        if(argc!=0)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                        StringBuilder builder={};
+                        char chunk_buffer[4096];
+                        size_t read_count=0;
+                        errno=0;
+                        while((read_count=fread(chunk_buffer,1,sizeof chunk_buffer,
+                                                 target_file->stream))>0) {
+                            if(!builder_append(&builder,chunk_buffer,read_count)) {
+                                free(builder.chars);VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                            }
+                        }
+                        if(ferror(target_file->stream)) {
+                            free(builder.chars);
+                            snprintf(vm->error,sizeof vm->error,"read error: %s",strerror(errno));
+                            VM_RETURN(DIAMOND_VM_IO_ERROR);
+                        }
+                        DiamondString *string=allocate_string(vm,builder.chars,builder.length);
+                        free(builder.chars);
+                        if(string==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                        registers[dest]=DIAMOND_OBJECT(string);break;
+                    }
+                    if(gets_method) {
+                        if(argc!=0)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                        StringBuilder builder={};
+                        bool saw_any=false;
+                        DiamondVmStatus read_status=
+                            read_line(target_file->stream,&builder,&saw_any);
+                        if(read_status!=DIAMOND_VM_OK) {
+                            free(builder.chars);VM_RETURN(read_status);
+                        }
+                        if(!saw_any) {
+                            free(builder.chars);
+                            registers[dest]=DIAMOND_NIL;break;
+                        }
+                        DiamondString *string=allocate_string(vm,builder.chars,builder.length);
+                        free(builder.chars);
+                        if(string==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                        registers[dest]=DIAMOND_OBJECT(string);break;
+                    }
+                    if(argc!=1)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                    DiamondValue converted=DIAMOND_NIL;
+                    DiamondVmStatus status=stringify_value(vm,chunk,depth,
+                        registers[base],&converted);
+                    VM_PROPAGATE(status);
+                    const DiamondString *text=(const DiamondString *)converted.as.object;
+                    errno=0;
+                    const size_t written=fwrite(text->chars,1,text->length,target_file->stream);
+                    if(written!=text->length||ferror(target_file->stream)) {
+                        snprintf(vm->error,sizeof vm->error,"write error: %s",strerror(errno));
+                        VM_RETURN(DIAMOND_VM_IO_ERROR);
+                    }
+                    registers[dest]=DIAMOND_NIL;break;
+                }
                 if(receiver_kind!=DIAMOND_OBJECT_INSTANCE)
                     VM_RETURN(DIAMOND_VM_TYPE_ERROR);
                 DiamondInstance *instance=(DiamondInstance *)registers[recv].as.object;
