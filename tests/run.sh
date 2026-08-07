@@ -2455,7 +2455,7 @@ if "$diamond" -e $'def make()\n def once()\n  1\n end\n once\nend\nf = Fiber.new
     echo "an unknown method on a Fiber receiver unexpectedly succeeded" >&2
     exit 1
 fi
-grep -q 'runtime error: type error' "$error_file"
+grep -q "undefined method 'nonexistent' for Fiber" "$error_file"
 rm -f "$error_file"
 
 actual="$($diamond --dump-bytecode -e 'print("x")')"
@@ -2917,6 +2917,36 @@ fi
 grep -q "undefined method 'nope' for String" "$error_file"
 rm -f "$error_file"
 
+error_file="$(mktemp)"
+if "$diamond" -e $'def run()\n def once()\n  1\n end\n f = Fiber.new(once)\n f.nope()\nend\nrun()' \
+    >/dev/null 2>"$error_file"; then
+    echo "an unrecognized method on a Fiber receiver unexpectedly succeeded" >&2
+    exit 1
+fi
+grep -q "undefined method 'nope' for Fiber" "$error_file"
+rm -f "$error_file"
+
+file_dir="$(mktemp -d)"
+printf 'x' >"$file_dir/data.txt"
+error_file="$(mktemp)"
+if "$diamond" -e "$(printf 'f = File.open("%s", "r")\nf.nope()' "$file_dir/data.txt")" \
+    >/dev/null 2>"$error_file"; then
+    echo "an unrecognized method on a File receiver unexpectedly succeeded" >&2
+    exit 1
+fi
+grep -q "undefined method 'nope' for File" "$error_file"
+rm -f "$error_file" "$file_dir/data.txt"
+rmdir "$file_dir"
+
+error_file="$(mktemp)"
+if "$diamond" -e 's = TCPServer.listen(0)
+s.nope()' >/dev/null 2>"$error_file"; then
+    echo "an unrecognized method on a Listener receiver unexpectedly succeeded" >&2
+    exit 1
+fi
+grep -q "undefined method 'nope' for Listener" "$error_file"
+rm -f "$error_file"
+
 actual="$($diamond -e $'def run()\n def double(x) -> Int\n  x * 2\n end\n array_map_int([1,2,3], double)\nend\nrun()')"
 [[ "$actual" == "[2, 4, 6]" ]]
 
@@ -2985,4 +3015,4 @@ wait "$stress_http_pid" 2>/dev/null || true
 [[ "$stress_http_response" == $'HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 13\r\n\r\nhello, /world' ]]
 rm -f "$stress_http_out"
 
-echo "677 tests passed"
+echo "678 tests passed"
