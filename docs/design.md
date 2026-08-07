@@ -163,17 +163,22 @@ convention, and a deliberate divergence from Ruby (where `Hash#select` yields
 `[key, value]` pairs and returns a `Hash`), consistent with this project's
 stance that Ruby compatibility is not a goal.
 
-Both glue closures for a given `enumerable_*` function are declared
-unconditionally *before* the `values is Hash` branch, not nested inside its
-`if`/`else` arms. This works around a real compiler bug found while building
-this feature: a nested `def` inside one branch of an `if`/`else`, when a
-*sibling* branch also declares its own nested `def`, captures a stale
-register from the sibling branch as a bogus extra closure capture (confirmed
-via disassembly — a `CLOSURE` instruction reporting one more capture than its
-closure body actually reads). The underlying bug is in the compiler's
-capture analysis for nested `def`s inside conditional branches and remains
-unfixed; declaring both closures unconditionally before branching sidesteps
-it entirely and was verified safe in isolation before being relied on here.
+Each glue closure is declared directly inside the `if`/`else` arm that uses
+it — the natural way to write it, and now safe: building this feature
+surfaced (and this project then fixed) a real compiler bug where a nested
+`def` inside one branch, when a *sibling* branch also declares its own
+nested `def` capturing the same outer local, could capture a stale
+unboxed value instead of the shared `Cell` (confirmed via disassembly — a
+`CLOSURE` instruction capturing a raw register that the dominating branch's
+own boxing never actually ran on, on the path that skipped it). Root
+cause: capture boxing (`DIAMOND_OP_BOX_LOCAL`) was only ever emitted once
+per local, at the first capture site encountered during compilation, on
+the assumption that a single compile-time "already boxed" flag reliably
+predicts runtime state — which breaks when that first site doesn't
+dominate a later one. Fixed by making `BOX_LOCAL` idempotent (a no-op if
+the register already holds a `Cell`) and always emitting it at every
+capture site rather than skipping already-flagged locals, so boxing is
+correct regardless of which branch actually ran.
 
 ## Object model
 

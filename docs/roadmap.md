@@ -455,13 +455,28 @@ future work.
   routes calling the exact same `enumerable_*` functions with zero
   duplicated logic. A hash receiver's Enumerable operates over values
   only, discarding keys (matching the pre-existing `hash_map_values`
-  convention, a deliberate Ruby divergence). Found and worked around a
-  real, previously-unexercised compiler bug along the way: a nested
-  `def` inside one branch of an `if`/`else` captures a stale register
-  from a *sibling* branch's own nested `def` as a bogus extra closure
-  capture — confirmed via disassembly, not yet fixed, worked around by
-  declaring both branches' closures unconditionally before branching.
-  See `docs/design.md`'s "Enumerable" section for the full mechanism.
+  convention, a deliberate Ruby divergence). Building this feature found
+  a real, previously-unexercised compiler bug — a nested `def` inside one
+  branch of an `if`/`else` could capture a stale register from a
+  *sibling* branch's own nested `def` — worked around at the time by
+  declaring both branches' closures unconditionally before branching,
+  then the underlying bug itself was fixed (see below), letting this
+  code move back to the natural pattern. See `docs/design.md`'s
+  "Enumerable" section for the full mechanism.
+- Fixed the nested-`def`-in-sibling-branches closure capture bug found
+  above. Root cause: capture boxing (`DIAMOND_OP_BOX_LOCAL`) was only
+  ever emitted once per local, at the first capture site encountered
+  during compilation, on the assumption that a single compile-time
+  "already boxed" flag reliably predicts runtime state — which breaks
+  when that first site is in a branch that doesn't dominate a later
+  capture site in a sibling branch, so on a path that skips the first
+  branch, its boxing never ran, and the later closure captured a raw
+  unboxed value where a `Cell` was expected. Fixed by making
+  `DIAMOND_OP_BOX_LOCAL` idempotent (a no-op if the register already
+  holds a `Cell`) and always emitting it at every capture site instead
+  of skipping already-flagged locals. Verified against a deliberately
+  reverted fix first: the original repro reproduces the exact original
+  failure without the fix and passes with it, on both branches.
 
 ## Next priorities
 
