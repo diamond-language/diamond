@@ -413,8 +413,6 @@ None queued.
 
 ## Later experiments
 
-## Later experiments
-
 - JIT compilation for stable specialized bytecode paths.
 - Self-hosting the compiler and core libraries in Diamond.
 - Structural interfaces and more capable flow typing.
