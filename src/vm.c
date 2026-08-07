@@ -157,6 +157,10 @@ void diamond_vm_collect(DiamondVm *vm) {
         } else if(unreached->kind==DIAMOND_OBJECT_FIBER) {
             size=sizeof(DiamondFiberHandle);
             diamond_fiber_free(((DiamondFiberHandle *)unreached)->fiber);
+        } else if(unreached->kind==DIAMOND_OBJECT_FILE) {
+            size=sizeof(DiamondFileHandle);
+            FILE *stream=((DiamondFileHandle *)unreached)->stream;
+            if(stream!=nullptr)fclose(stream);
         } else {
             size=sizeof(DiamondCell);
         }
