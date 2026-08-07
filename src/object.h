@@ -13,6 +13,7 @@ typedef enum DiamondObjectKind : uint8_t {
     DIAMOND_OBJECT_HASH,
     DIAMOND_OBJECT_CLOSURE,
     DIAMOND_OBJECT_CELL,
+    DIAMOND_OBJECT_FIBER,
 } DiamondObjectKind;
 
 typedef struct DiamondObject {
@@ -110,5 +111,12 @@ typedef struct DiamondCell {
     DiamondObject object;
     DiamondValue value;
 } DiamondCell;
+
+typedef struct DiamondFiber DiamondFiber;
+
+typedef struct DiamondFiberHandle {
+    DiamondObject object;
+    DiamondFiber *fiber;
+} DiamondFiberHandle;
 
 #endif
