@@ -116,6 +116,9 @@ void diamond_vm_collect(DiamondVm *vm) {
         if(vm->namespace_constant_initialized[index])
             mark_value(vm->namespace_constants[index]);
     mark_frame_chain(vm->frames);
+    for (DiamondFiber *ancestor = vm->running_fiber; ancestor != nullptr;
+         ancestor = ancestor->resumer_fiber)
+        mark_frame_chain(ancestor->resumer_frames);
     if (vm->root_queue != nullptr)
         for (size_t index = 0; index < diamond_fiber_queue_count(vm->root_queue); index++)
             mark_fiber(diamond_fiber_queue_at(vm->root_queue, index));
