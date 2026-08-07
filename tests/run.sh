@@ -2563,4 +2563,16 @@ fi
 grep -q "undefined method 'nope' for Hash" "$error_file"
 rm -f "$error_file"
 
-echo "617 tests passed"
+actual="$($diamond -e $'def run()\n def is_even(x)\n  x - (x / 2) * 2 == 0\n end\n enumerable_select([1,2,3,4,5,6], is_even)\nend\nrun()')"
+[[ "$actual" == "[2, 4, 6]" ]]
+
+actual="$($diamond -e $'def run()\n def is_positive(x)\n  x > 0\n end\n enumerable_select({"a":1,"b":-2,"c":3}, is_positive)\nend\nrun()')"
+[[ "$actual" == "[1, 3]" ]]
+
+actual="$($diamond -e $'def run()\n def is_even(x)\n  x - (x / 2) * 2 == 0\n end\n enumerable_count([1,2,3,4], is_even)\nend\nrun()')"
+[[ "$actual" == "2" ]]
+
+actual="$($diamond -e $'def run()\n def is_positive(x)\n  x > 0\n end\n enumerable_count({"a":1,"b":-2,"c":3}, is_positive)\nend\nrun()')"
+[[ "$actual" == "2" ]]
+
+echo "621 tests passed"

@@ -161,3 +161,43 @@ def hash_map_values(values: Hash, callback: Callable[1]) -> Hash
   end
   result
 end
+
+def enumerable_select(values, callback: Callable[1]) -> Array
+  result = []
+  def collect_pair(key, value)
+    if callback(value)
+      result.push(value)
+    end
+  end
+  def collect_item(item)
+    if callback(item)
+      result.push(item)
+    end
+  end
+  if values is Hash
+    values.each(collect_pair)
+  else
+    values.each(collect_item)
+  end
+  result
+end
+
+def enumerable_count(values, callback: Callable[1]) -> Int
+  total = 0
+  def tally_pair(key, value)
+    if callback(value)
+      total = total + 1
+    end
+  end
+  def tally_item(item)
+    if callback(item)
+      total = total + 1
+    end
+  end
+  if values is Hash
+    values.each(tally_pair)
+  else
+    values.each(tally_item)
+  end
+  total
+end
