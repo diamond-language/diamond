@@ -1,7 +1,7 @@
 # I/O
 
-Diamond has no file access or sockets yet. This document covers what
-exists today (stdout and stdin) and will grow as later slices land (see
+Diamond has no sockets yet. This document covers what exists today
+(stdout, stdin, and files) and will grow as later slices land (see
 `docs/roadmap.md`).
 
 ## stdout: `print`/`puts`
@@ -55,18 +55,71 @@ underlying `fgets` calls as a line needs, the same growable-buffer
 pattern (`StringBuilder`) already used for value formatting elsewhere
 in `src/vm.c`.
 
+## Files: `File.open`/`.read`/`.gets`/`.write`/`.close`
+
+```ruby
+f = File.open("data.txt", "w")
+f.write("hello, ")
+f.write("world")
+f.close()
+
+g = File.open("data.txt", "r")
+g.read()   # => "hello, world"
+g.close()
+```
+
+`File.open(path, mode)` opens a file via the C `fopen(path, mode)`
+convention directly — `mode` is passed through unvalidated (`"r"`,
+`"w"`, `"a"`, `"r+"`, and so on all work exactly as they would in C; an
+invalid mode fails the same way a missing path does). A failed open
+raises a rescuable `IOError` with `strerror(errno)` in the message, the
+same phrasing the CLI's own `require`/file-loading errors already use
+(`cannot open '<path>': <reason>`).
+
+A `File` value is a new GC-managed heap object kind
+(`DIAMOND_OBJECT_FILE`), a thin wrapper around a `FILE *` — the same
+shape as `Fiber`'s `DiamondFiberHandle` around a `DiamondFiber *`.
+Unlike `Fiber`, nothing inside a `DiamondFileHandle` references another
+Diamond value, so `mark_object` needs no dedicated branch for it; sweeping
+an unreached handle whose stream is still open calls `fclose` on it as a
+safety net, the same role sweep-time cleanup plays for an unclosed
+`Fiber`'s native stack.
+
+`File.open` is recognized in the compiler the same way `Fiber.new` is
+(shadowable by a local of the same name), compiling to a single
+`DIAMOND_OP_FILE_OPEN dest, path, mode` instruction. `.read()`/`.gets()`/
+`.write(value)`/`.close()` are native `DIAMOND_OP_INVOKE` dispatch on a
+`DIAMOND_OBJECT_FILE` receiver, the same mechanism `Fiber`'s `.resume`/
+`.status`/`.alive?` use:
+
+- `.read()` reads all remaining bytes from the current position to EOF
+  as one `String`.
+- `.gets()` reads one line, sharing the exact `read_line` helper stdin's
+  global `gets()` uses (same EOF/`nil`, CRLF-stripping, and no-line-
+  length-cap behavior).
+- `.write(value)` stringifies `value` via `stringify_value` (same as
+  `print`) and writes it.
+- `.close()` is idempotent — closing an already-closed handle is a no-op,
+  not an error.
+
+Any operation other than `.close()` on an already-closed handle, or a
+genuine read/write failure (checked via `ferror`, not just a short
+return value), raises a rescuable `IOError`.
+
 ## What's deliberately out of scope so far
 
-- **Files**: no way to open, read, or write a file yet.
 - **Sockets**: needed before the Rack-style web server idea on the
   roadmap is possible at all.
 - **Multiple `print`/`puts` arguments**: `puts(a, b)` (Ruby-style, one
   line per argument) is not supported — exactly one argument, matching
   the narrowest useful slice.
-- **Error handling for write failures**: a failed `fwrite`/`fputc` to
-  stdout (e.g. a broken pipe) is not currently surfaced as a rescuable
-  exception; this mirrors most languages' baseline `print`, but is a
-  known simplification, not a deliberate design stance.
+- **Error handling for stdout write failures**: a failed `fwrite`/`fputc`
+  to stdout (e.g. a broken pipe) is not currently surfaced as a
+  rescuable exception, unlike `File#write`'s own `ferror` check; this
+  mirrors most languages' baseline `print`, but is a known
+  simplification, not a deliberate design stance.
+- **File mode validation**: `File.open` passes `mode` straight through
+  to `fopen` with no Diamond-level checking.
 
 Each of these is a plausible next slice, sized independently rather than
 attempted together.
