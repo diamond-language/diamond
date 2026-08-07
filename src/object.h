@@ -3,6 +3,7 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include <stdio.h>
 
 #include "value.h"
 
@@ -14,6 +15,7 @@ typedef enum DiamondObjectKind : uint8_t {
     DIAMOND_OBJECT_CLOSURE,
     DIAMOND_OBJECT_CELL,
     DIAMOND_OBJECT_FIBER,
+    DIAMOND_OBJECT_FILE,
 } DiamondObjectKind;
 
 typedef struct DiamondObject {
@@ -118,5 +120,10 @@ typedef struct DiamondFiberHandle {
     DiamondObject object;
     DiamondFiber *fiber;
 } DiamondFiberHandle;
+
+typedef struct DiamondFileHandle {
+    DiamondObject object;
+    FILE *stream;
+} DiamondFileHandle;
 
 #endif
