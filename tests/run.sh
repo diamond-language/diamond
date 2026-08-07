@@ -2,6 +2,7 @@
 set -euo pipefail
 
 diamond=./build/diamond
+diamond_abs="$(realpath "$diamond")"
 
 actual="$($diamond -e '20 + 22')"
 [[ "$actual" == "42" ]] || {
@@ -1438,6 +1439,35 @@ actual="$($diamond --dump-bytecode tests/multifile/main.di)"
 grep -q '== double ==' <<<"$actual"
 grep -q '== greet ==' <<<"$actual"
 
+pkg_dir="$(mktemp -d)"
+mkdir -p "$pkg_dir/diamond_packages/greeter"
+printf 'def greet(name)\n  "hi, " + name\nend\n' >"$pkg_dir/diamond_packages/greeter/greeter.di"
+printf 'require "greeter"\ngreet("world")\n' >"$pkg_dir/main.di"
+actual="$(cd "$pkg_dir" && "$diamond_abs" main.di)"
+[[ "$actual" == "hi, world" ]]
+
+printf 'def greet(name)\n  "relative wins: " + name\nend\n' >"$pkg_dir/greeter.di"
+actual="$(cd "$pkg_dir" && "$diamond_abs" main.di)"
+[[ "$actual" == "relative wins: world" ]]
+rm -f "$pkg_dir/greeter.di"
+
+mkdir -p "$pkg_dir/diamond_packages/pkg"
+printf 'def helper_fn()\n  "helped"\nend\n' >"$pkg_dir/diamond_packages/pkg/helper.di"
+printf 'require "helper"\ndef pkg_fn()\n  helper_fn()\nend\n' >"$pkg_dir/diamond_packages/pkg/pkg.di"
+printf 'require "pkg"\npkg_fn()\n' >"$pkg_dir/pkg_main.di"
+actual="$(cd "$pkg_dir" && "$diamond_abs" pkg_main.di)"
+[[ "$actual" == "helped" ]]
+
+pkg_missing_error="$(mktemp)"
+printf 'require "no_such_package"\n' >"$pkg_dir/missing_main.di"
+if (cd "$pkg_dir" && "$diamond_abs" missing_main.di) >/dev/null 2>"$pkg_missing_error"; then
+    echo "nonexistent package require unexpectedly succeeded" >&2
+    rm -rf "$pkg_dir" "$pkg_missing_error"
+    exit 1
+fi
+grep -q "cannot require '.*no_such_package.di'" "$pkg_missing_error"
+rm -rf "$pkg_dir" "$pkg_missing_error"
+
 actual="$($diamond -e $'class User\n def initialize(name)\n  @name = name\n end\n def to_s() -> String = "User(#{@name})"\nend\n"hello #{User.new("Ada")}"')"
 [[ "$actual" == "hello User(Ada)" ]]
 
@@ -2868,4 +2898,4 @@ wait "$stress_http_pid" 2>/dev/null || true
 [[ "$stress_http_response" == $'HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 13\r\n\r\nhello, /world' ]]
 rm -f "$stress_http_out"
 
-echo "674 tests passed"
+echo "675 tests passed"
