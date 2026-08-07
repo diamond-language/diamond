@@ -2789,4 +2789,7 @@ actual="$(DIAMOND_STRESS_GC=1 $diamond -e "$(printf 'f = File.open("%s", "w")\nf
 [[ "$actual" == "hello, stress gc" ]]
 rm -rf "$stress_file_dir"
 
-echo "667 tests passed"
+actual="$($diamond -e $'def run()\n def cb(x) = true\n def add(acc,x) = acc+x\n s = [].select(cb)\n c = [].count(cb)\n m = [].map(cb)\n r = [].reduce(99, add)\n "#{s}, #{c}, #{m}, #{r}"\nend\nrun()')"
+[[ "$actual" == "[], 0, [], 99" ]]
+
+echo "668 tests passed"
