@@ -1,3 +1,5 @@
+#define _DEFAULT_SOURCE
+
 #include "vm.h"
 
 #include <errno.h>
@@ -6,7 +8,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <netdb.h>
 #include <sys/mman.h>
+#include <sys/socket.h>
 #include <unistd.h>
 
 /* Each run_chunk activation unconditionally allocates DiamondValue
