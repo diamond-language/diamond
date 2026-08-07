@@ -1304,6 +1304,39 @@ static uint8_t parse_fiber_new_call(Compiler *compiler) {
     return dest;
 }
 
+static uint8_t parse_file_open_call(Compiler *compiler) {
+    advance_token(compiler); /* consume '.' */
+    if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER||
+       !name_equals(compiler,"open",compiler->current.span,false)) {
+        fail(compiler,compiler->current.span,"expected 'open' after 'File'");
+        return 0;
+    }
+    advance_token(compiler); /* consume 'open' */
+    if(compiler->current.kind!=DIAMOND_TOKEN_LEFT_PAREN) {
+        fail(compiler,compiler->current.span,"expected '(' after 'File.open'");
+        return 0;
+    }
+    advance_token(compiler);
+    const uint8_t path_register=parse_expression(compiler);
+    if(compiler->current.kind!=DIAMOND_TOKEN_COMMA) {
+        fail(compiler,compiler->current.span,"expected ',' after File.open path");
+        return 0;
+    }
+    advance_token(compiler);
+    const uint8_t mode_register=parse_expression(compiler);
+    if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
+        fail(compiler,compiler->current.span,"expected ')' after File.open arguments");
+        return 0;
+    }
+    advance_token(compiler);
+    const uint8_t dest=allocate_register(compiler);
+    emit_opcode(compiler,DIAMOND_OP_FILE_OPEN);
+    emit_byte(compiler,dest);
+    emit_byte(compiler,path_register);
+    emit_byte(compiler,mode_register);
+    return dest;
+}
+
 static uint8_t parse_print_call(Compiler *compiler, bool newline) {
     advance_token(compiler); /* consume '(' */
     const uint8_t source=parse_expression(compiler);
@@ -1399,6 +1432,10 @@ static uint8_t parse_name(Compiler *compiler) {
        compiler->current.kind==DIAMOND_TOKEN_DOT&&
        name_equals(compiler,"Fiber",name,false))
         return parse_fiber_new_call(compiler);
+    if(class_index<0&&find_local(compiler,name)<0&&
+       compiler->current.kind==DIAMOND_TOKEN_DOT&&
+       name_equals(compiler,"File",name,false))
+        return parse_file_open_call(compiler);
     if(find_local(compiler,name)<0&&find_function(compiler,name)<0&&
        compiler->current.kind==DIAMOND_TOKEN_LEFT_PAREN&&
        (name_equals(compiler,"print",name,false)||
