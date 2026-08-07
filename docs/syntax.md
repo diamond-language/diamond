@@ -145,7 +145,9 @@ receiver syntax only exists for the natives and the Enumerable/forwarding
 set above): `array_reverse(values)` returns a new array in reverse
 order; `array_concat(values, other)` returns a new array with `other`'s
 elements appended; `array_compact(values)` returns a new array with any
-`nil` elements dropped.
+`nil` elements dropped; `array_uniq(values)` returns a new array with
+only the first occurrence of each distinct (`==`) element, order
+preserved.
 
 ## Fibers
 
