@@ -2470,4 +2470,64 @@ fi
 
 rm -rf "$file_dir"
 
-echo "600 tests passed"
+actual="$($diamond --dump-bytecode -e 'TCPSocket.connect("h", 1)' 2>/dev/null || true)"
+grep -q 'TCP_CONNECT' <<<"$actual"
+
+actual="$($diamond --dump-bytecode -e 'TCPServer.listen(0)' 2>/dev/null || true)"
+grep -q 'TCP_LISTEN' <<<"$actual"
+
+actual="$($diamond -e $'begin\n TCPSocket.connect("127.0.0.1", 1)\nrescue error: IOError\n 42\nend')"
+[[ "$actual" == "42" ]]
+
+socket_port=18734
+server_out="$(mktemp)"
+timeout 10 "$diamond" -e "$(printf 'server = TCPServer.listen(%d)
+conn = server.accept()
+msg = conn.gets()
+conn.write("echo: #{msg}\\n")
+conn.close()
+server.close()
+0' "$socket_port")" >"$server_out" 2>&1 &
+socket_server_pid=$!
+client_src="$(printf 'c = nil
+attempts = 0
+while c == nil
+ c = begin
+  TCPSocket.connect("127.0.0.1", %d)
+ rescue error: IOError
+  attempts = attempts + 1
+  if attempts > 2000
+   raise "giving up"
+  end
+  nil
+ end
+end
+c.write("hello\\n")
+response = c.gets()
+c.close()
+response' "$socket_port")"
+client_out="$(mktemp)"
+timeout 10 "$diamond" -e "$client_src" >"$client_out" 2>&1
+wait "$socket_server_pid"
+[[ "$(cat "$server_out")" == "0" ]]
+[[ "$(cat "$client_out")" == "echo: hello" ]]
+rm -f "$server_out" "$client_out"
+
+actual="$($diamond --dump-bytecode -e 'TCPSocket = 5
+TCPSocket.connect("h", 1)' 2>/dev/null || true)"
+if grep -q 'TCP_CONNECT' <<<"$actual"; then
+    echo "TCPSocket.connect on a shadowing local unexpectedly compiled to TCP_CONNECT" >&2
+    exit 1
+fi
+
+actual="$($diamond --dump-bytecode -e 'TCPServer = 5
+TCPServer.listen(0)' 2>/dev/null || true)"
+if grep -q 'TCP_LISTEN' <<<"$actual"; then
+    echo "TCPServer.listen on a shadowing local unexpectedly compiled to TCP_LISTEN" >&2
+    exit 1
+fi
+
+actual="$($diamond -e $'server = TCPServer.listen(0)\nserver.close()\nbegin\n server.accept()\nrescue error: IOError\n 42\nend')"
+[[ "$actual" == "42" ]]
+
+echo "608 tests passed"
