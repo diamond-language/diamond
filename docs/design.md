@@ -117,6 +117,13 @@ Dynamic invocation recognizes one native collection primitive: zero-argument
 Bounds decisions, fallback behavior, and empty predicates are implemented in
 the Diamond prelude using that primitive.
 
+Strings also natively support `index_of(needle)` (first match position as
+an `Int`, or `nil` if not found), `slice(start, length)` (a substring,
+bounds-checking `start` but clamping `length` to what's available), and
+`to_i()` (lenient leading-digit decimal parsing, using checked arithmetic
+and raising `RangeError` on overflow). These were added as prerequisites
+for `lib/http.di` (see `docs/http.md`) but are general-purpose.
+
 Arrays use a growable separately allocated value buffer whose capacity is part
 of GC accounting. Native `push` grows that buffer and enforces every persistent
 element contract; `pop` returns `nil` when empty. Membership, callback iteration,

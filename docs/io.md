@@ -92,7 +92,10 @@ safety net, the same role sweep-time cleanup plays for an unclosed
 `.status`/`.alive?` use:
 
 - `.read()` reads all remaining bytes from the current position to EOF
-  as one `String`.
+  as one `String`; `.read(n)` reads up to `n` bytes and stops instead —
+  needed for reading a fixed-size chunk (e.g. an HTTP request body of
+  known `Content-Length`, see `docs/http.md`) without also blocking on or
+  consuming whatever the other side sends next on a still-open connection.
 - `.gets()` reads one line, sharing the exact `read_line` helper stdin's
   global `gets()` uses (same EOF/`nil`, CRLF-stripping, and no-line-
   length-cap behavior).

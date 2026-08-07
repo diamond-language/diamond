@@ -477,26 +477,28 @@ future work.
   of skipping already-flagged locals. Verified against a deliberately
   reverted fix first: the original repro reproduces the exact original
   failure without the fix and passes with it, on both branches.
+- Basic Rack-style web server: `lib/http.di`, opt-in via `require
+  "lib/http"` (not auto-embedded like `lib/core.di`, so programs that
+  never touch HTTP don't spend any of the small 64-entry function-table
+  budget on it). `http_serve(port, handler)` loops accept/parse/handle/
+  respond/close over a `TCPServer`; request/response convention mirrors
+  Rack directly (a request `Hash` of `method`/`path`/`headers`/`body`, a
+  handler returning a 3-element response `Array` of `[status, headers,
+  body]`). Found and closed a real, previously-unflagged prerequisite
+  gap while scoping this: Diamond had no string manipulation beyond
+  concatenation/interpolation/`.length()` — no indexing, no substring, no
+  numeric parsing — needed for even minimal HTTP parsing. Added
+  `String#index_of`/`#slice`/`#to_i` and `File#read(n)` (length-limited
+  read, for a request body of known `Content-Length`) as prerequisites.
+  A connected socket already being a `File` under the hood (see
+  `docs/io.md`) meant no new I/O plumbing was needed for the library
+  itself. Deliberately basic: no chunked encoding, no keep-alive, no
+  malformed-request handling, no routing layer. See `docs/http.md` for
+  the full surface and what remains out of scope.
 
 ## Next priorities
 
-1. Basic Rack-style web server. Its previously-stated blocker (socket/IO
-   access) is resolved by the File/Socket work already done. A second,
-   previously-unflagged prerequisite was found while scoping this: Diamond
-   has no string manipulation beyond concatenation/interpolation/`.length()`
-   today — no indexing, no substring, no split — needed for even minimal
-   HTTP request-line/header parsing. First slice: two new native `String`
-   methods (find a substring's position, extract a substring by range),
-   `File#read(n)` (length-limited read, for reading a request body of known
-   `Content-Length` — today's `.read()` only reads to EOF), then a new
-   `lib/http.di` — deliberately *not* auto-embedded like `lib/core.di`, opt
-   in via `require "http"`, so programs that never touch HTTP don't pay for
-   it against the small (64-entry) function-table budget — with request
-   parsing, response writing, and an accept-loop `http_serve(port, handler)`
-   built on `TCPServer`/`TCPSocket` already in place. Request/response
-   convention mirrors Rack directly: a request `Hash` (`method`/`path`/
-   `headers`/`body`), a handler returning a 3-element response `Array`
-   (`[status, headers, body]`).
+None queued.
 
 ## Later experiments
 
