@@ -316,6 +316,8 @@ DiamondFiberStatus diamond_fiber_run(DiamondFiber *fiber) {
     DiamondVm *vm=fiber->vm;
     void *saved_frames=vm->frames;
     DiamondFiber *saved_running=vm->running_fiber;
+    fiber->resumer_frames=saved_frames;
+    fiber->resumer_fiber=saved_running;
     vm->frames=fiber->native_frames;
     vm->running_fiber=fiber;
     diamond_fiber_entering=fiber;
@@ -325,6 +327,8 @@ DiamondFiberStatus diamond_fiber_run(DiamondFiber *fiber) {
     fiber->native_frames=vm->frames;
     vm->frames=saved_frames;
     vm->running_fiber=saved_running;
+    fiber->resumer_frames=nullptr;
+    fiber->resumer_fiber=nullptr;
     fiber->state=fiber->status==DIAMOND_VM_OK?DIAMOND_FIBER_COMPLETED:
         (fiber->status==DIAMOND_VM_YIELDED?DIAMOND_FIBER_SUSPENDED:
          DIAMOND_FIBER_FAILED);
