@@ -3064,6 +3064,15 @@ rm -f "$error_file"
 actual="$($diamond -e $'def run()\n def double(x) -> Int\n  x * 2\n end\n array_map_int([1,2,3], double)\nend\nrun()')"
 [[ "$actual" == "[2, 4, 6]" ]]
 
+actual="$($diamond -e 'array_reverse([1,2,3])')"
+[[ "$actual" == "[3, 2, 1]" ]]
+
+actual="$($diamond -e 'array_reverse([])')"
+[[ "$actual" == "[]" ]]
+
+actual="$(DIAMOND_STRESS_GC=1 $diamond -e 'array_reverse([1,2,3,4,5])')"
+[[ "$actual" == "[5, 4, 3, 2, 1]" ]]
+
 stress_socket_port=18746
 stress_server_out="$(mktemp)"
 timeout 10 env DIAMOND_STRESS_GC=1 "$diamond" -e "$(printf 'server = TCPServer.listen(%d)
@@ -3129,4 +3138,4 @@ wait "$stress_http_pid" 2>/dev/null || true
 [[ "$stress_http_response" == $'HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 13\r\n\r\nhello, /world' ]]
 rm -f "$stress_http_out"
 
-echo "682 tests passed"
+echo "683 tests passed"

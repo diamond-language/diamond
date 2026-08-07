@@ -139,6 +139,12 @@ functions in the prelude:
 Any user-defined class gets the same six methods for free by implementing
 its own `each(callback)` and `include`-ing `Enumerable`.
 
+A handful of further Array/Hash conveniences live in the prelude as
+plain functions (`array_reverse(values)`, not `values.reverse()` —
+receiver syntax only exists for the natives and the Enumerable/forwarding
+set above): `array_reverse(values)` returns a new array in reverse
+order.
+
 ## Fibers
 
 ```ruby
