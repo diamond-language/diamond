@@ -161,7 +161,12 @@ pairs then `b`'s applied on top (`b` wins on key conflicts).
 not a heap object), so numeric helpers are plain functions:
 `abs(x)`/`min(a, b)`/`max(a, b)`. `abs` inherits the overflow check
 already on negation, so `abs` of the most negative `Int` raises a
-rescuable `RangeError` rather than silently wrapping.
+rescuable `RangeError` rather than silently wrapping. `mod(a, b)`
+computes `a - (a / b) * b`; since `/` is C-style truncating division,
+`mod`'s result takes the sign of `a`, not always non-negative (not
+Euclidean/Python-style mod) — `mod(-7, 3)` is `-1`, not `2`. `b == 0`
+raises the same `ZeroDivisionError` the division inside it already
+would.
 
 ## Fibers
 

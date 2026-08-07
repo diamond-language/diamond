@@ -3157,6 +3157,12 @@ actual="$($diamond -e $'begin\n min_val = -9223372036854775807 - 1\n abs(min_val
 actual="$($diamond -e '"#{min(3, 7)}, #{min(7, 3)}, #{max(3, 7)}, #{max(7, 3)}"')"
 [[ "$actual" == "3, 3, 7, 7" ]]
 
+actual="$($diamond -e '"#{mod(7, 3)}, #{mod(-7, 3)}, #{mod(7, -3)}, #{mod(0, 5)}"')"
+[[ "$actual" == "1, -1, 1, 0" ]]
+
+actual="$($diamond -e $'begin\n mod(5, 0)\nrescue error: ZeroDivisionError\n 42\nend')"
+[[ "$actual" == "42" ]]
+
 stress_socket_port=18746
 stress_server_out="$(mktemp)"
 timeout 10 env DIAMOND_STRESS_GC=1 "$diamond" -e "$(printf 'server = TCPServer.listen(%d)
@@ -3222,4 +3228,4 @@ wait "$stress_http_pid" 2>/dev/null || true
 [[ "$stress_http_response" == $'HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 13\r\n\r\nhello, /world' ]]
 rm -f "$stress_http_out"
 
-echo "691 tests passed"
+echo "692 tests passed"
