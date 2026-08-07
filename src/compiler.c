@@ -3949,7 +3949,14 @@ static uint8_t compile_sequence(Compiler *compiler) {
 
 bool diamond_compile(const char *source, DiamondProgram *program,
                      DiamondDiagnostic *diagnostic) {
-    *program = (DiamondProgram){};
+    /* memset rather than `*program = (DiamondProgram){};`: a compound-literal
+     * assignment materializes a full temporary DiamondProgram (3MB+) on this
+     * function's own stack frame regardless of where `program` itself points,
+     * which is unsafe for any caller running at nontrivial stack depth (e.g.
+     * a required package's manifest, compiled from inside expand()'s own
+     * recursive call chain, while the top-level program's own DiamondProgram
+     * is still live further up the stack in main.c's run_source). */
+    memset(program, 0, sizeof *program);
     static const struct {
         const char *name;
         uint8_t superclass;
