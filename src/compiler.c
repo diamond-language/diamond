@@ -1321,6 +1321,19 @@ static uint8_t parse_print_call(Compiler *compiler, bool newline) {
     return dest;
 }
 
+static uint8_t parse_gets_call(Compiler *compiler) {
+    advance_token(compiler); /* consume '(' */
+    if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
+        fail(compiler,compiler->current.span,"expected ')' after arguments");
+        return 0;
+    }
+    advance_token(compiler);
+    const uint8_t dest=allocate_register(compiler);
+    emit_opcode(compiler,DIAMOND_OP_GETS);
+    emit_byte(compiler,dest);
+    return dest;
+}
+
 static uint8_t parse_name(Compiler *compiler) {
     const DiamondSpan name = compiler->previous.span;
     int class_index=find_class(compiler,name);
@@ -1391,6 +1404,10 @@ static uint8_t parse_name(Compiler *compiler) {
        (name_equals(compiler,"print",name,false)||
         name_equals(compiler,"puts",name,false)))
         return parse_print_call(compiler,name_equals(compiler,"puts",name,false));
+    if(find_local(compiler,name)<0&&find_function(compiler,name)<0&&
+       compiler->current.kind==DIAMOND_TOKEN_LEFT_PAREN&&
+       name_equals(compiler,"gets",name,false))
+        return parse_gets_call(compiler);
     if (class_index >= 0 && compiler->current.kind == DIAMOND_TOKEN_DOT) {
         advance_token(compiler);
         if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER) {
