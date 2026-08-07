@@ -523,6 +523,27 @@ future work.
   top-level program's `DiamondProgram` is still live further up the
   stack in `main.c`'s `run_source`. Fixed by using `memset` instead,
   which needs no stack-resident temporary.
+- Maintenance pass over everything built this session (I/O, Enumerable,
+  HTTP, fibers, packages). Found and fixed real bugs, not just coverage
+  gaps: `diamond_vm_free` leaked a Fiber's native stack / a File's stream
+  / a Listener's fd at normal process exit (only the GC sweep path freed
+  them) — fixed, and `test-sanitize` now runs with LeakSanitizer enabled
+  by default so this class of bug is caught automatically going forward,
+  not just by a hand-written case. `read_line` never checked `ferror`,
+  so a genuine stream read error on `gets()`/`File#gets` was
+  indistinguishable from clean EOF — fixed to match `File#read`'s
+  existing check. `lib/http.di` looked up `Content-Length` with exact-
+  case `Hash` indexing; a legal lowercase `content-length` header
+  silently produced an empty body with no error — fixed by normalizing
+  header names to lowercase at parse time (added `String#downcase` for
+  this). Also gave `File`/`Listener`/`Fiber` the same descriptive
+  "undefined method 'x' for Y" error on an unrecognized method that
+  Array/Hash/String already had, let a top-level function shadow
+  `Fiber.new`/`File.open`/`TCPSocket.connect`/`TCPServer.listen` the same
+  way one already could shadow `print`/`puts`/`gets`, and closed out the
+  coverage gaps a full survey found (manifest failure paths, `DIAMOND_
+  STRESS_GC=1` for packages and Enumerable, empty-collection Enumerable
+  cases, I/O type-error messages, malformed builtin syntax).
 
 ## Next priorities
 
