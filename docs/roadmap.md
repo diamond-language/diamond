@@ -406,15 +406,18 @@ future work.
   the same as any other call. See `docs/io.md` for what's covered and what
   remains deliberately out of scope (stdin, files, sockets, multiple
   arguments, write-failure error handling).
+- stdin: a `gets()` primitive reading one line from standard input, via a
+  new `DIAMOND_OP_GETS` opcode. Returns a `String` with the trailing line
+  ending stripped (both `\n` and `\r\n`, correct regardless of internal
+  read-buffer boundaries since stripping happens on the accumulated line,
+  not per underlying `fgets` call), or `nil` only when zero bytes were
+  read before EOF — a final line with no trailing newline still returns
+  its content, matching Ruby's `gets`. Same shadowing precedent as
+  `print`/`puts`. Files and sockets remain out of scope; see `docs/io.md`.
 
 ## Next priorities
 
-1. stdin: a `gets()` primitive reading one line from standard input,
-   returning it as a `String` with the trailing line ending stripped (both
-   `\n` and `\r\n`), or `nil` at EOF. Same compiler-recognition precedent
-   as `print`/`puts` (shadowable, no reserved keyword). Files and sockets
-   remain out of scope; see `docs/io.md`.
-2. Stdlib rethink: a real `Enumerable`-style module, deriving `select`/
+1. Stdlib rethink: a real `Enumerable`-style module, deriving `select`/
    `count`/`any?`/`all?`/`reduce`/etc. from a single `#each` primitive
    (Ruby's actual design), rather than today's flat `array_*`/`hash_*`
    free functions with inconsistent naming (`array_include` vs. no

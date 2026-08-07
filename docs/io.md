@@ -1,8 +1,8 @@
 # I/O
 
-Diamond has no general I/O yet — no file access, no stdin, no sockets.
-This document covers what exists today (stdout only) and will grow as
-later slices land (see `docs/roadmap.md`).
+Diamond has no file access or sockets yet. This document covers what
+exists today (stdout and stdin) and will grow as later slices land (see
+`docs/roadmap.md`).
 
 ## stdout: `print`/`puts`
 
@@ -33,15 +33,36 @@ a single `DIAMOND_OP_PRINT dest, source, newline` instruction; `newline`
 is a compile-time-constant byte (`0` for `print`, `1` for `puts`), not a
 runtime value.
 
-## What's deliberately out of scope for this slice
+## stdin: `gets()`
 
-- **stdin**: no way to read input yet.
+```ruby
+name = gets()
+puts("hi #{name}")
+```
+
+`gets()` takes no arguments and reads one line from stdin, returning it
+as a `String` with the trailing line ending stripped — both `\n` and
+`\r\n` are handled, and stripping happens on the accumulated line rather
+than per underlying read, so it's correct regardless of where an
+internal buffer boundary happens to fall relative to the ending. Returns
+`nil` only when zero bytes were read before EOF; a final line with no
+trailing newline still returns its content, matching Ruby's `gets`.
+Compiles to a single `DIAMOND_OP_GETS dest` instruction. Recognized with
+the same shadowing precedent as `print`/`puts`.
+
+Line length is not capped — reading grows a buffer across as many
+underlying `fgets` calls as a line needs, the same growable-buffer
+pattern (`StringBuilder`) already used for value formatting elsewhere
+in `src/vm.c`.
+
+## What's deliberately out of scope so far
+
 - **Files**: no way to open, read, or write a file yet.
 - **Sockets**: needed before the Rack-style web server idea on the
   roadmap is possible at all.
-- **Multiple arguments**: `puts(a, b)` (Ruby-style, one line per
-  argument) is not supported — exactly one argument, matching the
-  narrowest useful slice.
+- **Multiple `print`/`puts` arguments**: `puts(a, b)` (Ruby-style, one
+  line per argument) is not supported — exactly one argument, matching
+  the narrowest useful slice.
 - **Error handling for write failures**: a failed `fwrite`/`fputc` to
   stdout (e.g. a broken pipe) is not currently surfaced as a rescuable
   exception; this mirrors most languages' baseline `print`, but is a
