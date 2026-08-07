@@ -2689,8 +2689,58 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                             memcmp(method_name->chars,"reverse",7)==0;
                         const bool strip_method=method_name->length==5&&
                             memcmp(method_name->chars,"strip",5)==0;
+                        const bool split_method=method_name->length==5&&
+                            memcmp(method_name->chars,"split",5)==0;
                         const DiamondString *source=
                             (const DiamondString *)registers[recv].as.object;
+                        if(split_method) {
+                            if(argc!=1)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                            if(registers[base].kind!=DIAMOND_VALUE_OBJECT||
+                               registers[base].as.object->kind!=DIAMOND_OBJECT_STRING) {
+                                snprintf(vm->error,sizeof vm->error,
+                                    "String#split argument must be a String");
+                                VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                            }
+                            const DiamondString *separator=
+                                (const DiamondString *)registers[base].as.object;
+                            DiamondArray *pieces=allocate_array(vm,nullptr,0);
+                            if(pieces==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                            /* Root the result array in registers[dest] before any
+                             * further allocation (each piece below) can trigger a
+                             * GC collection - registers are the VM's root set. */
+                            registers[dest]=DIAMOND_OBJECT(pieces);
+                            if(separator->length==0) {
+                                for(size_t index=0;index<source->length;index++) {
+                                    DiamondString *piece=
+                                        allocate_string(vm,source->chars+index,1);
+                                    if(piece==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                                    if(!array_push(vm,pieces,DIAMOND_OBJECT(piece)))
+                                        VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                                }
+                            } else {
+                                size_t start=0,cursor=0;
+                                while(cursor+separator->length<=source->length) {
+                                    if(memcmp(source->chars+cursor,separator->chars,
+                                              separator->length)==0) {
+                                        DiamondString *piece=allocate_string(vm,
+                                            source->chars+start,cursor-start);
+                                        if(piece==nullptr)
+                                            VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                                        if(!array_push(vm,pieces,DIAMOND_OBJECT(piece)))
+                                            VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                                        cursor+=separator->length;start=cursor;
+                                    } else {
+                                        cursor++;
+                                    }
+                                }
+                                DiamondString *piece=allocate_string(vm,
+                                    source->chars+start,source->length-start);
+                                if(piece==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                                if(!array_push(vm,pieces,DIAMOND_OBJECT(piece)))
+                                    VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                            }
+                            break;
+                        }
                         if(strip_method) {
                             if(argc!=0)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
                             size_t start=0;
