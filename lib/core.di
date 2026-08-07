@@ -416,3 +416,7 @@ def max(a: Int, b: Int) -> Int
     b
   end
 end
+
+def mod(a: Int, b: Int) -> Int
+  a - (a / b) * b
+end
