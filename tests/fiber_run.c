@@ -496,6 +496,48 @@ int main(void) {
     diamond_fiber_free(resumer_hazard_a);diamond_fiber_free(resumer_hazard_b);
     diamond_vm_free(&resumer_hazard_vm);
 
+    static DiamondProgram nested_fiber_new_program;DiamondDiagnostic nested_fiber_new_diagnostic;
+    if(!diamond_compile(
+        "def level3()\n"
+        " def once()\n"
+        "  x = yield(10)\n"
+        "  x + 5\n"
+        " end\n"
+        " once\n"
+        "end\n"
+        "def level2()\n"
+        " level3()\n"
+        "end\n"
+        "def level1()\n"
+        " Fiber.new(level2())\n"
+        "end\n"
+        "level1()",
+        &nested_fiber_new_program,&nested_fiber_new_diagnostic))return 87;
+    DiamondChunk nested_fiber_new_chunk=diamond_program_chunk(&nested_fiber_new_program);
+    DiamondVm nested_fiber_new_vm;diamond_vm_init(&nested_fiber_new_vm);
+    DiamondValue nested_fiber_new_result=DIAMOND_NIL;
+    /* level1/level2/level3's own call frames -- including whatever
+     * transient stack-local `child` chunk was active at the FIBER_NEW
+     * site -- are long gone by the time this returns, since Fiber.new
+     * only constructs the fiber; nothing has resumed it yet. */
+    if(diamond_vm_run(&nested_fiber_new_vm,&nested_fiber_new_chunk,
+                       &nested_fiber_new_result)!=DIAMOND_VM_OK)return 88;
+    if(nested_fiber_new_result.kind!=DIAMOND_VALUE_OBJECT||
+       nested_fiber_new_result.as.object->kind!=DIAMOND_OBJECT_FIBER)return 89;
+    DiamondFiberHandle *nested_fiber_new_handle=
+        (DiamondFiberHandle *)nested_fiber_new_result.as.object;
+    DiamondFiber *nested_fiber_new_fiber=nested_fiber_new_handle->fiber;
+    if(diamond_fiber_bind_vm(nested_fiber_new_fiber,&nested_fiber_new_vm)!=DIAMOND_FIBER_OK||
+       diamond_fiber_resume(nested_fiber_new_fiber,DIAMOND_NIL)!=DIAMOND_FIBER_OK||
+       diamond_fiber_run(nested_fiber_new_fiber)!=DIAMOND_FIBER_OK||
+       nested_fiber_new_fiber->state!=DIAMOND_FIBER_SUSPENDED)return 90;
+    if(diamond_fiber_resume(nested_fiber_new_fiber,DIAMOND_INT(7))!=DIAMOND_FIBER_OK||
+       diamond_fiber_run(nested_fiber_new_fiber)!=DIAMOND_FIBER_OK||
+       nested_fiber_new_fiber->state!=DIAMOND_FIBER_COMPLETED)return 91;
+    DiamondValue nested_fiber_new_final=diamond_fiber_result(nested_fiber_new_fiber);
+    if(nested_fiber_new_final.kind!=DIAMOND_VALUE_INT||nested_fiber_new_final.as.integer!=12)return 92;
+    diamond_fiber_free(nested_fiber_new_fiber);diamond_vm_free(&nested_fiber_new_vm);
+
     puts("fiber run passed");
     return 0;
 }
