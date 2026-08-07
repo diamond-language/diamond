@@ -96,6 +96,16 @@ def array_swap_first_two(values: Array) -> Array
   values
 end
 
+def array_reverse(values: Array) -> Array
+  result = []
+  index = values.length() - 1
+  while index >= 0
+    result.push(values[index])
+    index = index - 1
+  end
+  result
+end
+
 def hash_fetch(values: Hash, key, fallback)
   found = values[key]
   if found == nil
