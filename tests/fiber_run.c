@@ -41,8 +41,8 @@ int main(void) {
     diamond_fiber_free(failing);
     diamond_vm_free(&failing_vm);
 
-    static const uint8_t yield_code[]={DIAMOND_OP_YIELD};
-    static const DiamondChunk yield_chunk={.name="yield",.code=yield_code,.code_count=1};
+    static const uint8_t yield_code[]={DIAMOND_OP_YIELD,0,0};
+    static const DiamondChunk yield_chunk={.name="yield",.code=yield_code,.code_count=3};
     DiamondVm yield_vm;diamond_vm_init(&yield_vm);
     DiamondFiber *yield_fiber=diamond_fiber_new(&yield_chunk);
     if(yield_fiber==nullptr||diamond_fiber_bind_vm(yield_fiber,&yield_vm)!=DIAMOND_FIBER_OK||
@@ -184,9 +184,9 @@ int main(void) {
     diamond_vm_free(&run_all_fail_vm);diamond_vm_free(&run_all_ok_vm);
 
     static const DiamondStringConstant gc_root_strings[]={{.chars="root-marked",.length=11}};
-    static const uint8_t gc_root_code[]={DIAMOND_OP_STRING,0,0,DIAMOND_OP_YIELD,DIAMOND_OP_RETURN,0};
+    static const uint8_t gc_root_code[]={DIAMOND_OP_STRING,0,0,DIAMOND_OP_YIELD,1,0,DIAMOND_OP_RETURN,0};
     static const DiamondChunk gc_root_chunk={.name="gc-root",.code=gc_root_code,
-        .code_count=6,.strings=gc_root_strings,.string_count=1};
+        .code_count=8,.strings=gc_root_strings,.string_count=1};
     DiamondVm gc_root_vm;diamond_vm_init(&gc_root_vm);
     DiamondFiberQueue gc_root_queue;diamond_fiber_queue_init(&gc_root_queue);
     DiamondFiber *gc_root_fiber=diamond_fiber_new(&gc_root_chunk);
@@ -212,10 +212,10 @@ int main(void) {
     static const DiamondStringConstant unbound_gc_strings[]={
         {.chars="alpha",.length=5},{.chars="beta",.length=4}};
     static const uint8_t unbound_gc_code[]={
-        DIAMOND_OP_STRING,0,0,DIAMOND_OP_YIELD,DIAMOND_OP_STRING,1,1,
+        DIAMOND_OP_STRING,0,0,DIAMOND_OP_YIELD,3,0,DIAMOND_OP_STRING,1,1,
         DIAMOND_OP_ARRAY,2,0,2,DIAMOND_OP_RETURN,2};
     static const DiamondChunk unbound_gc_chunk={.name="unbound-gc",.code=unbound_gc_code,
-        .code_count=13,.strings=unbound_gc_strings,.string_count=2};
+        .code_count=15,.strings=unbound_gc_strings,.string_count=2};
     DiamondVm unbound_gc_vm;diamond_vm_init(&unbound_gc_vm);
     unbound_gc_vm.stress_gc=true;
     DiamondFiber *unbound_gc_fiber=diamond_fiber_new(&unbound_gc_chunk);
@@ -241,13 +241,13 @@ int main(void) {
     diamond_fiber_free(unbound_gc_fiber);diamond_vm_free(&unbound_gc_vm);
 
     static const DiamondStringConstant shared_gc_strings_a[]={{.chars="fiber-a-value",.length=13}};
-    static const uint8_t shared_gc_code_a[]={DIAMOND_OP_STRING,0,0,DIAMOND_OP_YIELD,DIAMOND_OP_RETURN,0};
+    static const uint8_t shared_gc_code_a[]={DIAMOND_OP_STRING,0,0,DIAMOND_OP_YIELD,1,0,DIAMOND_OP_RETURN,0};
     static const DiamondChunk shared_gc_chunk_a={.name="shared-gc-a",.code=shared_gc_code_a,
-        .code_count=6,.strings=shared_gc_strings_a,.string_count=1};
+        .code_count=8,.strings=shared_gc_strings_a,.string_count=1};
     static const DiamondStringConstant shared_gc_strings_b[]={{.chars="fiber-b-value",.length=13}};
-    static const uint8_t shared_gc_code_b[]={DIAMOND_OP_STRING,0,0,DIAMOND_OP_YIELD,DIAMOND_OP_RETURN,0};
+    static const uint8_t shared_gc_code_b[]={DIAMOND_OP_STRING,0,0,DIAMOND_OP_YIELD,1,0,DIAMOND_OP_RETURN,0};
     static const DiamondChunk shared_gc_chunk_b={.name="shared-gc-b",.code=shared_gc_code_b,
-        .code_count=6,.strings=shared_gc_strings_b,.string_count=1};
+        .code_count=8,.strings=shared_gc_strings_b,.string_count=1};
     DiamondVm shared_gc_vm;diamond_vm_init(&shared_gc_vm);
     shared_gc_vm.stress_gc=true;
     DiamondFiberQueue shared_gc_queue;diamond_fiber_queue_init(&shared_gc_queue);

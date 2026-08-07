@@ -2222,11 +2222,12 @@ static uint8_t compile_return(Compiler *compiler) {
 }
 
 static uint8_t compile_yield(Compiler *compiler) {
-    const uint8_t result=allocate_register(compiler);
     advance_token(compiler);
-    emit_instruction(compiler,DIAMOND_OP_YIELD,0,0,0,0);
-    emit_instruction(compiler,DIAMOND_OP_NIL,result,0,0,1);
-    return result;
+    const uint8_t source=allocate_register(compiler);
+    emit_instruction(compiler,DIAMOND_OP_NIL,source,0,0,1);
+    const uint8_t dest=allocate_register(compiler);
+    emit_instruction(compiler,DIAMOND_OP_YIELD,dest,source,0,2);
+    return dest;
 }
 
 static uint8_t compile_raise(Compiler *compiler) {

@@ -2867,11 +2867,16 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 }
                 VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
             }
-            case DIAMOND_OP_YIELD:
+            case DIAMOND_OP_YIELD: {
+                uint8_t dest=0,source=0;
+                READ_BYTE(dest);READ_BYTE(source);
                 if(vm->running_fiber==nullptr) VM_RETURN(DIAMOND_VM_YIELD_WITHOUT_FIBER);
                 vm->running_fiber->status=DIAMOND_VM_YIELDED;
+                vm->running_fiber->result=registers[source];
                 swapcontext(&vm->running_fiber->context,vm->running_fiber->resume_target);
+                registers[dest]=vm->running_fiber->resume_value;
                 break;
+            }
             case DIAMOND_OP_REDEFINE_METHOD: {
                 uint8_t dest=0,class_operand=0,name_reg=0,callable_reg=0;
                 READ_BYTE(dest);READ_BYTE(class_operand);READ_BYTE(name_reg);READ_BYTE(callable_reg);
