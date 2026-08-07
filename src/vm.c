@@ -1927,6 +1927,18 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 VM_PROPAGATE(status);
                 registers[destination]=converted;break;
             }
+            case DIAMOND_OP_PRINT: {
+                uint8_t destination=0,source=0,newline=0;
+                READ_BYTE(destination);READ_BYTE(source);READ_BYTE(newline);
+                DiamondValue converted=DIAMOND_NIL;
+                DiamondVmStatus status=stringify_value(vm,chunk,depth,
+                    registers[source],&converted);
+                VM_PROPAGATE(status);
+                const DiamondString *text=(const DiamondString *)converted.as.object;
+                fwrite(text->chars,1,text->length,stdout);
+                if(newline!=0)fputc('\n',stdout);
+                registers[destination]=DIAMOND_NIL;break;
+            }
             case DIAMOND_OP_MOVE: {
                 uint8_t destination = 0;
                 uint8_t source = 0;
