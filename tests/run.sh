@@ -2309,4 +2309,40 @@ if "$diamond" -e $'module Constants\n VALUE = 42 if true\nend' >/dev/null 2>&1; 
     echo "conditional namespace constant unexpectedly compiled" >&2
     exit 1
 fi
-echo "557 tests passed"
+
+actual="$($diamond --dump-bytecode -e $'def make()\n def once()\n  1\n end\n once\nend\nFiber.new(make())')"
+grep -q 'FIBER_NEW' <<<"$actual"
+
+actual="$($diamond -e $'def make()\n def once()\n  1\n end\n once\nend\nf = Fiber.new(make())\n"ok"')"
+[[ "$actual" == "ok" ]]
+
+error_file="$(mktemp)"
+if "$diamond" -e 'Fiber.new(5)' >/dev/null 2>"$error_file"; then
+    echo "Fiber.new with a non-Callable argument unexpectedly succeeded" >&2
+    exit 1
+fi
+grep -q 'Fiber.new argument must be a Callable value' "$error_file"
+rm -f "$error_file"
+
+actual="$($diamond -e $'begin\n Fiber.new(5)\nrescue error: TypeError\n 42\nend')"
+[[ "$actual" == "42" ]]
+
+error_file="$(mktemp)"
+if "$diamond" -e $'def make()\n def once(x)\n  x\n end\n once\nend\nFiber.new(make())' \
+    >/dev/null 2>"$error_file"; then
+    echo "Fiber.new with a non-zero-arity callable unexpectedly succeeded" >&2
+    exit 1
+fi
+grep -q 'Fiber.new callable must take no arguments' "$error_file"
+rm -f "$error_file"
+
+actual="$($diamond -e $'def make()\n def once(x)\n  x\n end\n once\nend\nbegin\n Fiber.new(make())\nrescue error: ArgumentError\n 42\nend')"
+[[ "$actual" == "42" ]]
+
+actual="$($diamond --dump-bytecode -e $'Fiber = 5\nFiber.new(1)' 2>/dev/null || true)"
+if grep -q 'FIBER_NEW' <<<"$actual"; then
+    echo "Fiber.new on a shadowing local unexpectedly compiled to FIBER_NEW" >&2
+    exit 1
+fi
+
+echo "566 tests passed"
