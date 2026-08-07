@@ -241,3 +241,35 @@ def enumerable_all(values, callback: Callable[1]) -> Bool
   end
   result
 end
+
+def enumerable_map(values, callback: Callable[1]) -> Array
+  result = []
+  def transform_pair(key, value)
+    result.push(callback(value))
+  end
+  def transform_item(item)
+    result.push(callback(item))
+  end
+  if values is Hash
+    values.each(transform_pair)
+  else
+    values.each(transform_item)
+  end
+  result
+end
+
+def enumerable_reduce(values, initial, callback: Callable[2])
+  accumulator = initial
+  def combine_pair(key, value)
+    accumulator = callback(accumulator, value)
+  end
+  def combine_item(item)
+    accumulator = callback(accumulator, item)
+  end
+  if values is Hash
+    values.each(combine_pair)
+  else
+    values.each(combine_item)
+  end
+  accumulator
+end

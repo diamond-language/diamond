@@ -2593,4 +2593,16 @@ actual="$($diamond -e $'def run()\n def anything(x)\n  false\n end\n enumerable_
 actual="$($diamond -e $'def run()\n def anything(x)\n  true\n end\n enumerable_any([], anything)\nend\nrun()')"
 [[ "$actual" == "false" ]]
 
-echo "627 tests passed"
+actual="$($diamond -e $'def run()\n def double(x)\n  x * 2\n end\n enumerable_map([1,2,3], double)\nend\nrun()')"
+[[ "$actual" == "[2, 4, 6]" ]]
+
+actual="$($diamond -e $'def run()\n def double(x)\n  x * 2\n end\n enumerable_map({"a":1,"b":2}, double)\nend\nrun()')"
+[[ "$actual" == "[2, 4]" ]]
+
+actual="$($diamond -e $'def run()\n def add(acc, x)\n  acc + x\n end\n enumerable_reduce([1,2,3], 0, add)\nend\nrun()')"
+[[ "$actual" == "6" ]]
+
+actual="$($diamond -e $'def run()\n def add(acc, x)\n  acc + x\n end\n enumerable_reduce({"a":1,"b":2,"c":3}, 0, add)\nend\nrun()')"
+[[ "$actual" == "6" ]]
+
+echo "631 tests passed"
