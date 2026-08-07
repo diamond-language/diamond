@@ -162,6 +162,19 @@ def array_flatten(values: Array) -> Array
   result
 end
 
+def array_join(values: Array, separator: String = "") -> String
+  result = ""
+  index = 0
+  while index < values.length()
+    if index > 0
+      result = result + separator
+    end
+    result = result + "#{values[index]}"
+    index = index + 1
+  end
+  result
+end
+
 def hash_fetch(values: Hash, key, fallback)
   found = values[key]
   if found == nil
