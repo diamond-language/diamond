@@ -1939,6 +1939,35 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 if(newline!=0)fputc('\n',stdout);
                 registers[destination]=DIAMOND_NIL;break;
             }
+            case DIAMOND_OP_GETS: {
+                uint8_t destination=0;
+                READ_BYTE(destination);
+                StringBuilder builder={};
+                char chunk_buffer[256];
+                bool saw_any=false;
+                for(;;) {
+                    if(fgets(chunk_buffer,sizeof chunk_buffer,stdin)==nullptr)break;
+                    saw_any=true;
+                    const size_t piece_length=strlen(chunk_buffer);
+                    if(!builder_append(&builder,chunk_buffer,piece_length)) {
+                        free(builder.chars);VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                    }
+                    if(piece_length>0&&chunk_buffer[piece_length-1]=='\n')break;
+                }
+                if(!saw_any) {
+                    free(builder.chars);
+                    registers[destination]=DIAMOND_NIL;break;
+                }
+                if(builder.length>0&&builder.chars[builder.length-1]=='\n') {
+                    builder.length--;
+                    if(builder.length>0&&builder.chars[builder.length-1]=='\r')builder.length--;
+                    builder.chars[builder.length]='\0';
+                }
+                DiamondString *string=allocate_string(vm,builder.chars,builder.length);
+                free(builder.chars);
+                if(string==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                registers[destination]=DIAMOND_OBJECT(string);break;
+            }
             case DIAMOND_OP_MOVE: {
                 uint8_t destination = 0;
                 uint8_t source = 0;
