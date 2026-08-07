@@ -2783,4 +2783,10 @@ fi
 grep -q "index 0 out of bounds for String of length 5" "$error_file"
 rm -f "$error_file"
 
-echo "666 tests passed"
+stress_file_dir="$(mktemp -d)"
+stress_data_file="$stress_file_dir/data.txt"
+actual="$(DIAMOND_STRESS_GC=1 $diamond -e "$(printf 'f = File.open("%s", "w")\nf.write("hello, stress gc")\nf.close()\ng = File.open("%s", "r")\ncontent = g.read()\ng.close()\ncontent' "$stress_data_file" "$stress_data_file")")"
+[[ "$actual" == "hello, stress gc" ]]
+rm -rf "$stress_file_dir"
+
+echo "667 tests passed"
