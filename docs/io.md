@@ -1,8 +1,7 @@
 # I/O
 
-Diamond has no sockets yet. This document covers what exists today
-(stdout, stdin, and files) and will grow as later slices land (see
-`docs/roadmap.md`).
+This document covers Diamond's I/O surface (stdout, stdin, files, and
+TCP sockets) and will grow as later slices land (see `docs/roadmap.md`).
 
 ## stdout: `print`/`puts`
 
@@ -106,10 +105,57 @@ Any operation other than `.close()` on an already-closed handle, or a
 genuine read/write failure (checked via `ferror`, not just a short
 return value), raises a rescuable `IOError`.
 
+## TCP sockets: `TCPSocket.connect`/`TCPServer.listen`/`.accept`
+
+```ruby
+server = TCPServer.listen(8080)
+conn = server.accept()   # blocks until a client connects
+line = conn.gets()
+conn.write("echo: #{line}\n")
+conn.close()
+
+client = TCPSocket.connect("example.com", 8080)
+client.write("hello\n")
+client.gets()
+client.close()
+```
+
+`TCPSocket.connect(host, port)` and `TCPServer.listen(port)` both resolve
+addresses via `getaddrinfo` (protocol-agnostic — IPv4 and IPv6 both work,
+nothing hardcodes `sockaddr_in`), trying each candidate address in turn
+until one succeeds. `port` is an `Int` in both cases (converted to the
+string `getaddrinfo` expects internally); `host` is a `String` hostname
+or address. A connect/bind/listen failure raises a rescuable `IOError`
+with `strerror(errno)` from the actual failing attempt, even when
+multiple addresses were tried.
+
+The key design decision: a connected socket — whether from
+`TCPSocket.connect` or from `.accept()` — is `fdopen()`'d and wrapped in
+the *exact same* `DiamondFileHandle` a `File` uses. This means
+`.read()`/`.gets()`/`.write(value)`/`.close()` on a connected socket are
+the identical `File` dispatch code already described above; no new
+read/write logic exists for sockets at all. Only connection
+*establishment* is new:
+
+- `TCPServer.listen(port)` produces a different, new heap object kind,
+  `DIAMOND_OBJECT_LISTENER` (`DiamondListenerHandle`, wrapping a raw
+  listening-socket file descriptor rather than a `FILE *`, since a
+  listening socket is never read from or written to). Like `File`,
+  nothing inside it references another Diamond value, so it needs no
+  `mark_object` branch; sweeping an unreached handle whose fd is still
+  open closes it, same safety-net role as `File`/`Fiber`.
+- `.accept()` is native `DIAMOND_OP_INVOKE` dispatch on a
+  `DIAMOND_OBJECT_LISTENER` receiver (alongside `.close()`) — the only
+  genuinely new I/O *operation* in this slice. It blocks in `accept(2)`,
+  then hands the resulting connection to the same `fdopen`-and-wrap path
+  `TCPSocket.connect` uses.
+
+`TCPSocket.connect`/`TCPServer.listen` are recognized in the compiler the
+same way `File.open`/`Fiber.new` are.
+
 ## What's deliberately out of scope so far
 
-- **Sockets**: needed before the Rack-style web server idea on the
-  roadmap is possible at all.
+- **Non-blocking I/O, UDP, and TLS**: sockets are blocking TCP only.
 - **Multiple `print`/`puts` arguments**: `puts(a, b)` (Ruby-style, one
   line per argument) is not supported — exactly one argument, matching
   the narrowest useful slice.
