@@ -150,6 +150,9 @@ void diamond_vm_collect(DiamondVm *vm) {
             free(hash->entries);
         } else if(unreached->kind==DIAMOND_OBJECT_CLOSURE) {
             size=sizeof(DiamondClosure);
+        } else if(unreached->kind==DIAMOND_OBJECT_FIBER) {
+            size=sizeof(DiamondFiberHandle);
+            diamond_fiber_free(((DiamondFiberHandle *)unreached)->fiber);
         } else {
             size=sizeof(DiamondCell);
         }

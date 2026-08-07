@@ -390,7 +390,7 @@ int main(void) {
     sweep_vm.objects=&sweep_handle->object;
     diamond_vm_collect(&sweep_vm);
     if(sweep_vm.objects!=nullptr)return 72;
-    diamond_fiber_free(sweep_fiber);diamond_vm_free(&sweep_vm);
+    diamond_vm_free(&sweep_vm);
 
     static const DiamondStringConstant survive_strings[]={{.chars="fiber-survives-gc",.length=18}};
     static const uint8_t survive_code[]={DIAMOND_OP_STRING,0,0,DIAMOND_OP_YIELD,1,0,DIAMOND_OP_RETURN,0};
