@@ -2683,6 +2683,8 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                             memcmp(method_name->chars,"to_i",4)==0;
                         const bool downcase_method=method_name->length==8&&
                             memcmp(method_name->chars,"downcase",8)==0;
+                        const bool upcase_method=method_name->length==6&&
+                            memcmp(method_name->chars,"upcase",6)==0;
                         const DiamondString *source=
                             (const DiamondString *)registers[recv].as.object;
                         if(downcase_method) {
@@ -2694,6 +2696,16 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                                 lowered->chars[index]=
                                     (char)tolower((unsigned char)lowered->chars[index]);
                             registers[dest]=DIAMOND_OBJECT(lowered);break;
+                        }
+                        if(upcase_method) {
+                            if(argc!=0)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                            DiamondString *raised=
+                                allocate_string(vm,source->chars,source->length);
+                            if(raised==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                            for(size_t index=0;index<raised->length;index++)
+                                raised->chars[index]=
+                                    (char)toupper((unsigned char)raised->chars[index]);
+                            registers[dest]=DIAMOND_OBJECT(raised);break;
                         }
                         if(to_i_method) {
                             if(argc!=0)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
