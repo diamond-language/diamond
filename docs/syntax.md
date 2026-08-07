@@ -125,7 +125,12 @@ Strings support `.length()`, `.index_of(needle)` (position or `nil`),
 `.downcase()`/`.upcase()` (ASCII-only case conversion), and
 `.reverse()` (byte-level, not UTF-8-grapheme-aware — consistent with
 the rest of the language having no other Unicode awareness), and
-`.strip()` (trims leading/trailing ASCII whitespace).
+`.strip()` (trims leading/trailing ASCII whitespace). `.split(separator)`
+returns an `Array` of every piece around non-overlapping occurrences of
+`separator` (an empty `separator` splits into one-character strings);
+unlike Ruby, it keeps every piece including empty ones from consecutive
+or leading/trailing separators (no trailing-empty suppression) — a
+deliberate simplification, not an attempt at Ruby compatibility.
 
 `.each(callback)`, and the `Enumerable` methods derived from it —
 `.select`/`.count`/`.any?`/`.all?`/`.reduce`/`.map` — work as receiver

@@ -2943,6 +2943,41 @@ actual="$($diamond -e '"   ".strip()')"
 actual="$($diamond -e '"noSpaces".strip()')"
 [[ "$actual" == "noSpaces" ]]
 
+actual="$($diamond -e '"a,b,c".split(",")')"
+[[ "$actual" == "[a, b, c]" ]]
+
+actual="$($diamond -e '"a,,b".split(",")')"
+[[ "$actual" == "[a, , b]" ]]
+
+actual="$($diamond -e '",a".split(",")')"
+[[ "$actual" == "[, a]" ]]
+
+actual="$($diamond -e '"a,b,".split(",")')"
+[[ "$actual" == "[a, b, ]" ]]
+
+actual="$($diamond -e '"abc".split("")')"
+[[ "$actual" == "[a, b, c]" ]]
+
+actual="$($diamond -e '"".split(",")')"
+[[ "$actual" == "[]" ]]
+
+actual="$($diamond -e '"noseparator".split(",")')"
+[[ "$actual" == "[noseparator]" ]]
+
+actual="$($diamond -e '"aXXb".split("XX")')"
+[[ "$actual" == "[a, b]" ]]
+
+actual="$(DIAMOND_STRESS_GC=1 $diamond -e '"a,b,c,d,e,f".split(",")')"
+[[ "$actual" == "[a, b, c, d, e, f]" ]]
+
+error_file="$(mktemp)"
+if "$diamond" -e '"a".split(5)' >/dev/null 2>"$error_file"; then
+    echo "String#split with a non-String argument unexpectedly succeeded" >&2
+    exit 1
+fi
+grep -q "String#split argument must be a String" "$error_file"
+rm -f "$error_file"
+
 http_port=18743
 http_server_out="$(mktemp)"
 http_server_src="$(cat <<'HTTPEOF'
@@ -3293,4 +3328,4 @@ wait "$stress_http_pid" 2>/dev/null || true
 [[ "$stress_http_response" == $'HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 13\r\n\r\nhello, /world' ]]
 rm -f "$stress_http_out"
 
-echo "696 tests passed"
+echo "697 tests passed"
