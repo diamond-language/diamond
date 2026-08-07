@@ -154,7 +154,8 @@ formatting string interpolation uses) and joins them with `separator`
 between (not trailing); `array_delete_at(values, index)` mutates
 `values` in place (like the native `.push`/`.pop`), removing and
 returning the element at `index`, or `nil` without mutating if `index`
-is out of bounds.
+is out of bounds; `hash_merge(a, b)` returns a new `Hash` with `a`'s
+pairs then `b`'s applied on top (`b` wins on key conflicts).
 
 ## Fibers
 

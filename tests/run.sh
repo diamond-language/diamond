@@ -3133,6 +3133,15 @@ actual="$($diamond -e $'a = [1,2,3]\nremoved = array_delete_at(a, 5)\n"#{removed
 actual="$($diamond -e $'a = [1]\nremoved = array_delete_at(a, 0)\n"#{removed}, #{a}"')"
 [[ "$actual" == "1, []" ]]
 
+actual="$($diamond -e $'"#{hash_merge({"a":1,"b":2}, {"b":3,"c":4})}"')"
+[[ "$actual" == "{a: 1, b: 3, c: 4}" ]]
+
+actual="$($diamond -e $'"#{hash_merge({}, {"a":1})}"')"
+[[ "$actual" == "{a: 1}" ]]
+
+actual="$($diamond -e $'"#{hash_merge({"a":1}, {})}"')"
+[[ "$actual" == "{a: 1}" ]]
+
 stress_socket_port=18746
 stress_server_out="$(mktemp)"
 timeout 10 env DIAMOND_STRESS_GC=1 "$diamond" -e "$(printf 'server = TCPServer.listen(%d)
@@ -3198,4 +3207,4 @@ wait "$stress_http_pid" 2>/dev/null || true
 [[ "$stress_http_response" == $'HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 13\r\n\r\nhello, /world' ]]
 rm -f "$stress_http_out"
 
-echo "689 tests passed"
+echo "690 tests passed"
