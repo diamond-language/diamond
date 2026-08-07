@@ -2517,6 +2517,24 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                         ((DiamondFiberHandle *)registers[recv].as.object)->fiber;
                     const bool resume_method=method_name->length==6&&
                         memcmp(method_name->chars,"resume",6)==0;
+                    const bool status_method=method_name->length==6&&
+                        memcmp(method_name->chars,"status",6)==0;
+                    const bool alive_method=method_name->length==6&&
+                        memcmp(method_name->chars,"alive?",6)==0;
+                    if(status_method) {
+                        if(argc!=0)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                        const char *state_name=diamond_fiber_state_name(target_fiber->state);
+                        DiamondString *string=allocate_string(vm,state_name,strlen(state_name));
+                        if(string==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                        registers[dest]=DIAMOND_OBJECT(string);break;
+                    }
+                    if(alive_method) {
+                        if(argc!=0)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                        registers[dest]=DIAMOND_BOOL(
+                            target_fiber->state!=DIAMOND_FIBER_COMPLETED&&
+                            target_fiber->state!=DIAMOND_FIBER_FAILED);
+                        break;
+                    }
                     if(!resume_method)VM_RETURN(DIAMOND_VM_TYPE_ERROR);
                     if(argc>1)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
                     const DiamondValue resume_argument=argc==1?registers[base]:DIAMOND_NIL;
