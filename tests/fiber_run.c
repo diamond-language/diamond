@@ -1,9 +1,14 @@
+#define _DEFAULT_SOURCE
+
 #include "compiler.h"
 #include "vm.h"
 
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/mman.h>
+#include <unistd.h>
 
 int main(void) {
     static DiamondProgram program;
@@ -421,6 +426,28 @@ int main(void) {
     const DiamondString *survive_string=(const DiamondString *)survive_result.as.object;
     if(survive_string->length!=18||memcmp(survive_string->chars,"fiber-survives-gc",18)!=0)return 76;
     diamond_fiber_free(survive_fiber);diamond_vm_free(&survive_vm);
+
+    static const uint8_t stack_probe_code[]={DIAMOND_OP_RETURN,0};
+    static const DiamondChunk stack_probe_chunk={.name="stack-probe",
+        .code=stack_probe_code,.code_count=1};
+    DiamondVm stack_probe_vm;diamond_vm_init(&stack_probe_vm);
+    DiamondFiber *stack_probe_fiber=diamond_fiber_new(&stack_probe_chunk);
+    DiamondFiberHandle *stack_probe_handle=malloc(sizeof *stack_probe_handle);
+    if(stack_probe_fiber==nullptr||stack_probe_handle==nullptr||
+       diamond_fiber_prepare(stack_probe_fiber)!=DIAMOND_FIBER_OK)return 77;
+    void *stack_probe_addr=stack_probe_fiber->stack;
+    const size_t stack_probe_page=(size_t)sysconf(_SC_PAGESIZE);
+    unsigned char stack_probe_vec[1];
+    if(mincore(stack_probe_addr,stack_probe_page,stack_probe_vec)!=0)return 78;
+    *stack_probe_handle=(DiamondFiberHandle){
+        .object={.next=stack_probe_vm.objects,.kind=DIAMOND_OBJECT_FIBER},
+        .fiber=stack_probe_fiber};
+    stack_probe_vm.objects=&stack_probe_handle->object;
+    diamond_vm_collect(&stack_probe_vm);
+    if(stack_probe_vm.objects!=nullptr)return 79;
+    errno=0;
+    if(mincore(stack_probe_addr,stack_probe_page,stack_probe_vec)!=-1||errno!=ENOMEM)return 80;
+    diamond_vm_free(&stack_probe_vm);
 
     puts("fiber run passed");
     return 0;
