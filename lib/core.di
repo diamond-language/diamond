@@ -420,3 +420,24 @@ end
 def mod(a: Int, b: Int) -> Int
   a - (a / b) * b
 end
+
+def array_sort(values: Array[Int]) -> Array[Int]
+  result = []
+  index = 0
+  while index < values.length()
+    result.push(values[index])
+    index = index + 1
+  end
+  i = 1
+  while i < result.length()
+    key = result[i]
+    j = i - 1
+    while j >= 0 && result[j] > key
+      result[j + 1] = result[j]
+      j = j - 1
+    end
+    result[j + 1] = key
+    i = i + 1
+  end
+  result
+end
