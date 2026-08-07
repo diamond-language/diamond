@@ -101,6 +101,7 @@ typedef enum DiamondOpCode : uint8_t {
     DIAMOND_OP_FILE_OPEN,
     DIAMOND_OP_TCP_CONNECT,
     DIAMOND_OP_TCP_LISTEN,
+    DIAMOND_OP_CHR,
     DIAMOND_OP_COUNT,
 } DiamondOpCode;
 

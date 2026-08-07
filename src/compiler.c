@@ -1396,6 +1396,22 @@ static uint8_t parse_tcp_listen_call(Compiler *compiler) {
     return dest;
 }
 
+static uint8_t parse_chr_call(Compiler *compiler) {
+    advance_token(compiler); /* consume '(' */
+    const uint8_t source=parse_expression(compiler);
+    if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
+        fail(compiler,compiler->current.span,"expected ')' after arguments");
+        return 0;
+    }
+    advance_token(compiler);
+    const uint8_t dest=allocate_register(compiler);
+    emit_opcode(compiler,DIAMOND_OP_CHR);
+    emit_byte(compiler,dest);
+    emit_byte(compiler,source);
+    compiler->known_types[dest]=DIAMOND_TYPE_STRING;
+    return dest;
+}
+
 static uint8_t parse_print_call(Compiler *compiler, bool newline) {
     advance_token(compiler); /* consume '(' */
     const uint8_t source=parse_expression(compiler);
@@ -1512,6 +1528,10 @@ static uint8_t parse_name(Compiler *compiler) {
        compiler->current.kind==DIAMOND_TOKEN_LEFT_PAREN&&
        name_equals(compiler,"gets",name,false))
         return parse_gets_call(compiler);
+    if(find_local(compiler,name)<0&&find_function(compiler,name)<0&&
+       compiler->current.kind==DIAMOND_TOKEN_LEFT_PAREN&&
+       name_equals(compiler,"chr",name,false))
+        return parse_chr_call(compiler);
     if (class_index >= 0 && compiler->current.kind == DIAMOND_TOKEN_DOT) {
         advance_token(compiler);
         if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER) {

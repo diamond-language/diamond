@@ -368,6 +368,8 @@ static bool disassemble_chunk(FILE *stream, const char *name,
                 offset+=4;break;
             case DIAMOND_OP_TCP_LISTEN:
                 offset=two_registers(stream,chunk,"TCP_LISTEN",offset);break;
+            case DIAMOND_OP_CHR:
+                offset=two_registers(stream,chunk,"CHR",offset);break;
             case DIAMOND_OP_INVOKE:
                 if(!require_bytes(stream,chunk,offset,6)){valid=false;offset=chunk->code_count;break;}
                 fprintf(stream,"%-18s r%u, r%u, s%u, r%u, %u args\n","INVOKE",

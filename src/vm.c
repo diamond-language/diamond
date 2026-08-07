@@ -3736,6 +3736,24 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     .as.object=(DiamondObject *)listener_handle};
                 break;
             }
+            case DIAMOND_OP_CHR: {
+                uint8_t dest=0,source=0;
+                READ_BYTE(dest);READ_BYTE(source);
+                if(registers[source].kind!=DIAMOND_VALUE_INT) {
+                    snprintf(vm->error,sizeof vm->error,"chr argument must be an Int");
+                    VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                }
+                const int64_t code=registers[source].as.integer;
+                if(code<0||code>255) {
+                    snprintf(vm->error,sizeof vm->error,
+                             "chr argument must be between 0 and 255");
+                    VM_RETURN(DIAMOND_VM_INTEGER_OVERFLOW);
+                }
+                const char byte=(char)code;
+                DiamondString *string=allocate_string(vm,&byte,1);
+                if(string==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                registers[dest]=DIAMOND_OBJECT(string);break;
+            }
             default:
                 VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
         }
