@@ -699,7 +699,7 @@ static const DiamondMethod *lookup_method_cached(
  * excludes class/module methods (owner_class!=UINT8_MAX) and nested
  * def's, so a same-named local closure can never shadow a real
  * top-level prelude function. */
-[[maybe_unused]] static const DiamondFunction *find_top_level_function(
+static const DiamondFunction *find_top_level_function(
         const DiamondChunk *chunk, const char *name, size_t length) {
     for (size_t index = 0; index < chunk->function_count; index++) {
         const DiamondFunction *candidate = &chunk->functions[index];
@@ -2571,6 +2571,46 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                             length=((DiamondHash *)registers[recv].as.object)->count;
                         else length=((DiamondString *)registers[recv].as.object)->length;
                         registers[dest]=DIAMOND_INT((int64_t)length);break;
+                    }
+                    if(receiver_kind==DIAMOND_OBJECT_ARRAY||receiver_kind==DIAMOND_OBJECT_HASH) {
+                        const char *target_name=nullptr;
+                        if(method_name->length==4&&memcmp(method_name->chars,"each",4)==0)
+                            target_name=receiver_kind==DIAMOND_OBJECT_ARRAY?
+                                "array_each":"hash_each";
+                        if(target_name!=nullptr) {
+                            const DiamondFunction *target=
+                                find_top_level_function(chunk,target_name,strlen(target_name));
+                            if(target==nullptr) {
+                                snprintf(vm->error,sizeof vm->error,
+                                    "internal error: missing standard library function '%s'",
+                                    target_name);
+                                VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                            }
+                            const size_t total_argc=(size_t)argc+1;
+                            if(total_argc<target->required_arity||total_argc>target->arity)
+                                VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                            DiamondValue forward_args[17];
+                            forward_args[0]=registers[recv];
+                            for(size_t i=0;i<argc;i++)
+                                forward_args[i+1]=registers[(size_t)base+i];
+                            const DiamondChunk child={.name=target->name,.code=target->code,
+                              .lines=target->lines,.columns=target->columns,
+                              .code_count=target->code_count,
+                              .constants=target->constants,.constant_count=target->constant_count,
+                              .strings=target->strings,.string_count=target->string_count,
+                              .type_sets=target->type_sets,.type_set_count=target->type_set_count,
+                              .functions=chunk->functions,.function_count=chunk->function_count,
+                              .classes=chunk->classes,.class_count=chunk->class_count,
+                              .interfaces=chunk->interfaces,.interface_count=chunk->interface_count,
+                              .parameter_type_sets=target->parameter_type_sets,
+                              .type_variable_count=target->type_variable_count,
+                              .parameter_offset=target->owner_class==UINT8_MAX?0:1};
+                            DiamondValue call_result=DIAMOND_NIL;
+                            const DiamondVmStatus status=run_chunk(&child,vm,forward_args,
+                                total_argc,depth+1,nullptr,&call_result);
+                            VM_PROPAGATE(status);
+                            registers[dest]=call_result;break;
+                        }
                     }
                     if(receiver_kind==DIAMOND_OBJECT_HASH) {
                         const bool key_method=method_name->length==6&&

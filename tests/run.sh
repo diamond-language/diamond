@@ -2530,4 +2530,21 @@ fi
 actual="$($diamond -e $'server = TCPServer.listen(0)\nserver.close()\nbegin\n server.accept()\nrescue error: IOError\n 42\nend')"
 [[ "$actual" == "42" ]]
 
-echo "608 tests passed"
+actual="$($diamond -e $'def run()\n result = []\n def collect(item)\n  result.push(item + 1)\n end\n [1,2,3].each(collect)\n result\nend\nrun()')"
+[[ "$actual" == "[2, 3, 4]" ]]
+
+actual="$($diamond -e $'def run()\n result = []\n def collect(item)\n  result.push(item + 1)\n end\n values = [1,2,3]\n array_each(values, collect)\n result\nend\nrun()')"
+[[ "$actual" == "[2, 3, 4]" ]]
+
+actual="$($diamond -e $'def run()\n result = []\n def collect(k, v)\n  result.push(v)\n end\n {"a":1,"b":2}.each(collect)\n result\nend\nrun()')"
+[[ "$actual" == "[1, 2]" ]]
+
+actual="$($diamond -e $'def run()\n result = []\n def collect(k, v)\n  result.push(v)\n end\n values = {"a":1,"b":2}\n hash_each(values, collect)\n result\nend\nrun()')"
+[[ "$actual" == "[1, 2]" ]]
+
+if "$diamond" -e $'def run()\n def bad(a, b)\n  a + b\n end\n [1].each(bad)\nend\nrun()' >/dev/null 2>&1; then
+    echo "Array#each with a mismatched callback arity unexpectedly succeeded" >&2
+    exit 1
+fi
+
+echo "613 tests passed"
