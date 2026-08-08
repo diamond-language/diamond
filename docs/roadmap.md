@@ -581,15 +581,28 @@ future work.
   surface for Array/Hash/Int, unlike every other addition this round
   which was a purely additive, isolated branch — see `Next priorities`.
 
+- Stdlib round 3: char-indexing and string repeat, the two String
+  primitives deferred from round 2. Research before implementing found
+  the two weren't equally risky: `DIAMOND_OP_INDEX_GET`/`INDEX_SET`
+  turned out to have no quickening or specialization at all — a plain
+  receiver-kind dispatch — so `"abc"[0]` (bounds-checked, returns a new
+  one-character `String`) and an explicit `TypeError` rejection of
+  `"abc"[0]=...` (strings are immutable) were purely additive branches,
+  no different in risk from round 2's methods. `DIAMOND_OP_MULTIPLY`
+  was genuinely riskier: the compiler can statically emit
+  `MULTIPLY_INT` whenever both operands' types are known `Int`
+  (independent of the `DIAMOND_QUICKEN` env var), and unlike `ADD_INT`,
+  `MULTIPLY_INT` has no deopt-back-to-generic path at all — a call site
+  already specialized that later saw a String would hard-crash with no
+  string-repeat handling, and building a safe deopt mechanism for it
+  would have been real new complexity, not a small addition. Shipped as
+  `.repeat(n)` instead (a `DIAMOND_OP_INVOKE` branch, the same shape as
+  every other round-2/3 String method) rather than overloading `*` —
+  `"x" * 3` is intentionally not supported. See `docs/syntax.md`.
+
 ## Next priorities
 
-- Stdlib round 3: char-indexing (`"abc"[0]`) and string repeat
-  (`"x" * 3`), the two String primitives deliberately deferred from
-  round 2 for touching shared opcodes (`DIAMOND_OP_INDEX_GET`/
-  `INDEX_SET`, `DIAMOND_OP_MULTIPLY`) rather than being isolated
-  additions — needs more care than a typical new-method round, since a
-  mistake there risks regressing Array/Hash/Int code paths that have
-  nothing to do with strings.
+None queued.
 
 ## Later experiments
 
