@@ -2319,6 +2319,14 @@ static uint8_t parse_precedence(Compiler *compiler, Precedence precedence) {
         } else if(compiler->known_types[left]==DIAMOND_TYPE_INT &&
                   compiler->known_types[right]==DIAMOND_TYPE_INT) {
             compiler->known_types[destination]=DIAMOND_TYPE_INT;
+        } else if((compiler->known_types[left]==DIAMOND_TYPE_FLOAT||
+                   compiler->known_types[left]==DIAMOND_TYPE_INT) &&
+                  (compiler->known_types[right]==DIAMOND_TYPE_FLOAT||
+                   compiler->known_types[right]==DIAMOND_TYPE_INT) &&
+                  (compiler->known_types[left]==DIAMOND_TYPE_FLOAT||
+                   compiler->known_types[right]==DIAMOND_TYPE_FLOAT)) {
+            /* Mixed Int/Float statically known to auto-promote to Float. */
+            compiler->known_types[destination]=DIAMOND_TYPE_FLOAT;
         } else if(operator==DIAMOND_TOKEN_PLUS &&
                   compiler->known_types[left]==DIAMOND_TYPE_STRING &&
                   compiler->known_types[right]==DIAMOND_TYPE_STRING) {

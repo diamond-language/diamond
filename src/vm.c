@@ -2207,6 +2207,21 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     registers[destination] = DIAMOND_INT(sum);
                     break;
                 }
+                if ((registers[left].kind==DIAMOND_VALUE_FLOAT||
+                     registers[left].kind==DIAMOND_VALUE_INT) &&
+                    (registers[right].kind==DIAMOND_VALUE_FLOAT||
+                     registers[right].kind==DIAMOND_VALUE_INT) &&
+                    (registers[left].kind==DIAMOND_VALUE_FLOAT||
+                     registers[right].kind==DIAMOND_VALUE_FLOAT)) {
+                    /* Mixed Int/Float auto-promotes: the Int side widens to
+                     * double before the operation (user-confirmed design). */
+                    const double left_value=registers[left].kind==DIAMOND_VALUE_FLOAT?
+                        registers[left].as.real:(double)registers[left].as.integer;
+                    const double right_value=registers[right].kind==DIAMOND_VALUE_FLOAT?
+                        registers[right].as.real:(double)registers[right].as.integer;
+                    registers[destination]=DIAMOND_FLOAT(left_value+right_value);
+                    break;
+                }
                 if (registers[left].kind == DIAMOND_VALUE_OBJECT &&
                     registers[right].kind == DIAMOND_VALUE_OBJECT &&
                     registers[left].as.object->kind == DIAMOND_OBJECT_STRING &&
@@ -2286,6 +2301,30 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                         registers[destination]=DIAMOND_OBJECT(string);break;
                     }
                     VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                }
+                /* Scoped to the three generic (non-_INT) opcodes only - the
+                 * _INT forms stay exactly as they were, untouched, so this
+                 * can never interact with Int quickening/deoptimization. */
+                if ((opcode==DIAMOND_OP_SUBTRACT||opcode==DIAMOND_OP_MULTIPLY||
+                     opcode==DIAMOND_OP_DIVIDE) &&
+                    (registers[left].kind==DIAMOND_VALUE_FLOAT||
+                     registers[left].kind==DIAMOND_VALUE_INT) &&
+                    (registers[right].kind==DIAMOND_VALUE_FLOAT||
+                     registers[right].kind==DIAMOND_VALUE_INT) &&
+                    (registers[left].kind==DIAMOND_VALUE_FLOAT||
+                     registers[right].kind==DIAMOND_VALUE_FLOAT)) {
+                    const double left_real=registers[left].kind==DIAMOND_VALUE_FLOAT?
+                        registers[left].as.real:(double)registers[left].as.integer;
+                    const double right_real=registers[right].kind==DIAMOND_VALUE_FLOAT?
+                        registers[right].as.real:(double)registers[right].as.integer;
+                    double float_result=0;
+                    if(opcode==DIAMOND_OP_SUBTRACT)float_result=left_real-right_real;
+                    else if(opcode==DIAMOND_OP_MULTIPLY)float_result=left_real*right_real;
+                    /* DIVIDE: IEEE-754 double/0.0 naturally yields
+                     * +-Infinity/NaN, no UB and no check needed, unlike Int. */
+                    else float_result=left_real/right_real;
+                    registers[destination]=DIAMOND_FLOAT(float_result);
+                    break;
                 }
                 if (registers[left].kind != DIAMOND_VALUE_INT ||
                     registers[right].kind != DIAMOND_VALUE_INT) {
