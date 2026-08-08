@@ -104,7 +104,7 @@ static void mark_value(DiamondValue value) {
 static void mark_frame_chain(void *frames) {
     for (DiamondFrame *frame = frames; frame != nullptr;
          frame = frame->previous) {
-        for (size_t index = 0; index < DIAMOND_REGISTER_COUNT; index++) {
+        for (size_t index = 0; index < frame->register_count; index++) {
             mark_value(frame->registers[index]);
         }
         if(frame->pending!=nullptr && frame->pending->kind!=PENDING_NONE)
@@ -1884,10 +1884,16 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
         execution.type_variable_bindings=bindings;
         chunk=&execution;
     }
-    DiamondValue registers[DIAMOND_REGISTER_COUNT] = {};
+    DiamondValue registers[DIAMOND_REGISTER_COUNT];
     if (argument_count > DIAMOND_REGISTER_COUNT) {
         return DIAMOND_VM_ARITY_ERROR;
     }
+    /* Only registers ever allocated by this function body (the compiler's
+     * next_register high-water mark, chunk->register_count) need zeroing --
+     * allocate_register() never recycles a slot within one function body,
+     * so bytecode can never reference a register past this bound. Narrower
+     * than the fixed 256-slot array itself, which stays fully allocated. */
+    memset(registers, 0, chunk->register_count * sizeof(DiamondValue));
     for (size_t index = 0; index < argument_count; index++) {
         registers[index] = arguments[index];
     }
