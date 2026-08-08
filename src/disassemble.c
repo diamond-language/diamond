@@ -44,6 +44,7 @@ static bool print_type_set(FILE *stream,const DiamondChunk *chunk,
         const DiamondTypeMember member=set->members[index];
         const uint8_t type=member.id;
         if(type==DIAMOND_TYPE_INT) fputs("Int",stream);
+        else if(type==DIAMOND_TYPE_FLOAT) fputs("Float",stream);
         else if(type==DIAMOND_TYPE_STRING) fputs("String",stream);
         else if(type==DIAMOND_TYPE_BOOL) fputs("Bool",stream);
         else if(type==DIAMOND_TYPE_NIL) fputs("Nil",stream);
@@ -428,6 +429,7 @@ static bool disassemble_chunk(FILE *stream, const char *name,
                         chunk->code[offset+1],chunk->code[offset+2]);
                 const uint8_t type=chunk->code[offset+3];
                 if(type==DIAMOND_TYPE_INT) fputs("Int",stream);
+                else if(type==DIAMOND_TYPE_FLOAT) fputs("Float",stream);
                 else if(type==DIAMOND_TYPE_STRING) fputs("String",stream);
                 else if(type==DIAMOND_TYPE_BOOL) fputs("Bool",stream);
                 else if(type==DIAMOND_TYPE_NIL) fputs("Nil",stream);

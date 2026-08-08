@@ -890,6 +890,7 @@ static bool consume_qualified_name(Compiler *compiler,char *buffer,
 
 static int resolve_type(Compiler *compiler, DiamondSpan name) {
     if (name_equals(compiler, "Int", name, false)) return DIAMOND_TYPE_INT;
+    if (name_equals(compiler, "Float", name, false)) return DIAMOND_TYPE_FLOAT;
     if (name_equals(compiler, "String", name, false)) return DIAMOND_TYPE_STRING;
     if (name_equals(compiler, "Bool", name, false)) return DIAMOND_TYPE_BOOL;
     if (name_equals(compiler, "Nil", name, false)) return DIAMOND_TYPE_NIL;
@@ -911,7 +912,8 @@ static int resolve_type(Compiler *compiler, DiamondSpan name) {
 static int resolve_type_name(Compiler *compiler,const char *name,
                              DiamondSpan diagnostic) {
     static const struct {const char *name;uint8_t type;} builtins[]={
-        {"Int",DIAMOND_TYPE_INT},{"String",DIAMOND_TYPE_STRING},
+        {"Int",DIAMOND_TYPE_INT},{"Float",DIAMOND_TYPE_FLOAT},
+        {"String",DIAMOND_TYPE_STRING},
         {"Bool",DIAMOND_TYPE_BOOL},{"Nil",DIAMOND_TYPE_NIL},
         {"Array",DIAMOND_TYPE_ARRAY},{"Hash",DIAMOND_TYPE_HASH},
         {"Callable",DIAMOND_TYPE_CALLABLE},{"Sized",DIAMOND_TYPE_SIZED}};

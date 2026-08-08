@@ -931,6 +931,7 @@ static bool value_matches_type(const DiamondChunk *chunk, DiamondValue value,
             &chunk->type_variable_bindings[variable],0);
     }
     if(type==DIAMOND_TYPE_INT) return value.kind==DIAMOND_VALUE_INT;
+    if(type==DIAMOND_TYPE_FLOAT) return value.kind==DIAMOND_VALUE_FLOAT;
     if(type==DIAMOND_TYPE_BOOL) return value.kind==DIAMOND_VALUE_BOOL;
     if(type==DIAMOND_TYPE_NIL) return value.kind==DIAMOND_VALUE_NIL;
     if(type==DIAMOND_TYPE_STRING) return value.kind==DIAMOND_VALUE_OBJECT &&
@@ -1443,6 +1444,7 @@ static bool catch_runtime_error(DiamondVm *vm,const DiamondChunk *chunk,
 static const char *type_name(const DiamondChunk *chunk,uint8_t type) {
     const char *name="<invalid type>";
     if(type==DIAMOND_TYPE_INT) name="Int";
+    else if(type==DIAMOND_TYPE_FLOAT) name="Float";
     else if(type==DIAMOND_TYPE_STRING) name="String";
     else if(type==DIAMOND_TYPE_BOOL) name="Bool";
     else if(type==DIAMOND_TYPE_NIL) name="Nil";
@@ -1535,6 +1537,7 @@ static void format_value_type(char *buffer, size_t capacity,
     if(value.kind==DIAMOND_VALUE_NIL) name="Nil";
     else if(value.kind==DIAMOND_VALUE_BOOL) name="Bool";
     else if(value.kind==DIAMOND_VALUE_INT) name="Int";
+    else if(value.kind==DIAMOND_VALUE_FLOAT) name="Float";
     else if(value.as.object->kind==DIAMOND_OBJECT_STRING) name="String";
     else if(value.as.object->kind==DIAMOND_OBJECT_ARRAY) name="Array";
     else if(value.as.object->kind==DIAMOND_OBJECT_HASH) name="Hash";
@@ -1713,6 +1716,7 @@ static uint8_t runtime_value_type(const DiamondChunk *chunk,DiamondValue value) 
     if(value.kind==DIAMOND_VALUE_NIL)return DIAMOND_TYPE_NIL;
     if(value.kind==DIAMOND_VALUE_BOOL)return DIAMOND_TYPE_BOOL;
     if(value.kind==DIAMOND_VALUE_INT)return DIAMOND_TYPE_INT;
+    if(value.kind==DIAMOND_VALUE_FLOAT)return DIAMOND_TYPE_FLOAT;
     if(value.as.object->kind==DIAMOND_OBJECT_STRING)return DIAMOND_TYPE_STRING;
     if(value.as.object->kind==DIAMOND_OBJECT_ARRAY)return DIAMOND_TYPE_ARRAY;
     if(value.as.object->kind==DIAMOND_OBJECT_HASH)return DIAMOND_TYPE_HASH;
@@ -3621,7 +3625,15 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                              vm->exception.as.boolean?"true":"false");
                 else if(vm->exception.kind==DIAMOND_VALUE_NIL)
                     snprintf(vm->error,sizeof vm->error,"uncaught exception: nil");
-                else if(vm->exception.as.object->kind==DIAMOND_OBJECT_STRING) {
+                else if(vm->exception.kind==DIAMOND_VALUE_FLOAT) {
+                    StringBuilder message_builder={};
+                    if(builder_format_value(&message_builder,vm->exception))
+                        snprintf(vm->error,sizeof vm->error,"uncaught exception: %.*s",
+                                 (int)message_builder.length,message_builder.chars);
+                    else
+                        snprintf(vm->error,sizeof vm->error,"uncaught exception: <float>");
+                    free(message_builder.chars);
+                } else if(vm->exception.as.object->kind==DIAMOND_OBJECT_STRING) {
                     const DiamondString *string=(const DiamondString *)vm->exception.as.object;
                     snprintf(vm->error,sizeof vm->error,"uncaught exception: %.*s",
                              (int)string->length,string->chars);
