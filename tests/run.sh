@@ -3598,4 +3598,42 @@ actual="$($diamond --dump-bytecode -e $'def f(a: Int, b: Int) -> Bool = a < b\nf
 grep -q '== f ==' <<<"$actual"
 grep -q 'LESS_INT' <<<"$actual"
 
-echo "706 tests passed"
+actual="$($diamond -e '-5.0')"
+[[ "$actual" == "-5.0" ]]
+
+actual="$($diamond -e '-3.14')"
+[[ "$actual" == "-3.14" ]]
+
+actual="$($diamond -e $'x = 2.5\n-x')"
+[[ "$actual" == "-2.5" ]]
+
+actual="$($diamond -e '-3')"
+[[ "$actual" == "-3" ]]
+
+actual="$($diamond -e '(-5.0) / 0.0')"
+[[ "$actual" == "-Infinity" ]]
+
+actual="$($diamond -e '-(0.0 / 0.0)')"
+[[ "$actual" == "NaN" ]]
+
+actual="$($diamond -e $'def negf(x: Float) -> Float = -x\nnegf(3.5)')"
+[[ "$actual" == "-3.5" ]]
+
+actual="$($diamond -e $'def negi(x: Int) -> Int = -x\nnegi(3)')"
+[[ "$actual" == "-3" ]]
+
+actual="$($diamond --dump-bytecode -e $'def negf(x: Float) -> Float = -x\nnegf(3.5)')"
+grep -q 'NEGATE ' <<<"$actual"
+
+error_file="$(mktemp)"
+if "$diamond" -e '- (-9223372036854775807 - 1)' >/dev/null 2>"$error_file"; then
+    echo "negating INT64_MIN unexpectedly succeeded" >&2
+    exit 1
+fi
+grep -q "integer overflow" "$error_file"
+rm -f "$error_file"
+
+actual="$(DIAMOND_STRESS_GC=1 $diamond -e $'def f(x: Float) -> Float = -x\n"#{f(1.5)}, #{-3}"')"
+[[ "$actual" == "-1.5, -3" ]]
+
+echo "717 tests passed"
