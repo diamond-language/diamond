@@ -138,3 +138,55 @@ where a JIT's early wins are most likely to be.
 - The `dispatch_polymorphic` vs `dispatch_monomorphic` comparison has a
   confound (extra Array indexing in the polymorphic variant) noted
   above.
+
+## JIT experiment #1: narrow per-call register zero-init (results)
+
+Landed at `118db81`. `run_chunk` previously zero-initialized the full
+256-slot (4KB) `DiamondValue` register array on every call regardless of
+how many registers the callee actually uses. Added a `register_count`
+field (the compiler's `next_register` high-water mark) to
+`DiamondFunction`/`DiamondChunk`/`DiamondFrame`, and narrowed both the
+zero-init and `mark_frame_chain`'s GC mark-phase scan to
+`[0, register_count)` instead of the fixed 256 — these two bounds move
+together since they're safety-coupled (see commit messages for the
+memory-safety argument and the `register_count==0` defensive fallback
+for hand-authored `DiamondChunk` literals that predate the field).
+
+Re-ran `bash bench/run.sh quicken` after landing, same environment as
+the table above (`make release`, same machine). Deltas are
+`(before - after) / before`, computed from per-iteration times (repeat
+counts differ slightly between runs since `bench/run.sh` auto-tunes
+them to hit ~2-5s total, so per-iteration time is the only comparable
+number):
+
+| Benchmark | Before (per-iter) | After (per-iter) | Delta |
+|---|---:|---:|---:|
+| `fibonacci` (fib(30), one full run) | 301.2ms | 207.1ms | **+31.2%** |
+| `closures` | 109.0ns | 81.3ns | **+25.4%** |
+| `dispatch_monomorphic` | 133.2ns | 100.3ns | **+24.7%** |
+| `int_arithmetic_dynamic` | 131.4ns | 100.0ns | **+23.9%** |
+| `dispatch_polymorphic` | 162.2ns | 129.5ns | **+20.1%** |
+| `string_ops` | 490.5ns | 419.8ns | +14.4% |
+| `int_arithmetic` | 59.6ns | 52.2ns | +12.3% |
+| `array_ops` | 87.3ns | 78.4ns | +10.2% |
+| `hash_ops` | 18.35ms | 18.34ms | +0.1% (noise) |
+| `fiber_switch` | 836.6ns | 839.0ns | -0.3% (noise) |
+
+This lines up exactly with the hypothesis findings #1 and #5 above
+pointed to: every call-heavy benchmark improved 10-31%, with the
+biggest wins (24-31%) landing on the most call-dense benchmarks
+(`fibonacci`, monomorphic/polymorphic dispatch, closures). `hash_ops`
+and `fiber_switch` — the two benchmarks whose cost isn't dominated by
+function-call frequency (`fiber_switch`'s cost is the `ucontext`
+OS-level context switch itself, per finding #3) — are unchanged within
+noise, which is a useful negative control: the improvement really is
+call-overhead-specific, not a general/spurious speedup across the
+board.
+
+Confirms the baseline's core finding was actionable: call/frame-setup
+overhead, not opcode-level arithmetic specialization, was where the
+real cost was, and this is a first concrete win against it. Next
+candidates from the same vein (not yet started): skipping the
+`[0, argument_count)` zero-init prefix (redundant with the immediate
+argument copy-in), and the ~15-field `DiamondChunk` struct still built
+by value on every `CALL`.
