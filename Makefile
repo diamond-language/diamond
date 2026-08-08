@@ -7,6 +7,7 @@ CFLAGS_RELEASE := -O3 -DNDEBUG -march=native
 CFLAGS_SANITIZE := $(CFLAGS_DEBUG) -fsanitize=address,undefined \
 	-fno-omit-frame-pointer
 LDFLAGS_SANITIZE := -fsanitize=address,undefined
+LDLIBS := -lm
 
 BUILD_DIR := build
 TARGET := $(BUILD_DIR)/diamond
@@ -29,7 +30,7 @@ release: CFLAGS := $(CFLAGS_COMMON) $(CFLAGS_RELEASE)
 release: clean $(TARGET)
 
 $(TARGET): $(OBJECTS)
-	$(CC) $(OBJECTS) $(LDFLAGS) -o $@
+	$(CC) $(OBJECTS) $(LDFLAGS) $(LDLIBS) -o $@
 
 $(BUILD_DIR)/%.o: src/%.c
 	@mkdir -p $(BUILD_DIR)
@@ -48,14 +49,14 @@ API_SOURCES := $(filter-out src/main.c,$(SOURCES))
 
 $(BUILD_DIR)/api_invalidation: tests/api_invalidation.c $(API_SOURCES)
 	@mkdir -p $(BUILD_DIR)
-	$(CC) $(CPPFLAGS) $(CFLAGS_COMMON) $(CFLAGS_DEBUG) $(API_SOURCES) $< -o $@
+	$(CC) $(CPPFLAGS) $(CFLAGS_COMMON) $(CFLAGS_DEBUG) $(API_SOURCES) $< $(LDLIBS) -o $@
 
 test-api: $(BUILD_DIR)/api_invalidation
 	$(BUILD_DIR)/api_invalidation
 
 $(BUILD_DIR)/fiber_states: tests/fiber_states.c $(API_SOURCES)
 	@mkdir -p $(BUILD_DIR)
-	$(CC) $(CPPFLAGS) $(CFLAGS_COMMON) $(CFLAGS_DEBUG) $(API_SOURCES) $< -o $@
+	$(CC) $(CPPFLAGS) $(CFLAGS_COMMON) $(CFLAGS_DEBUG) $(API_SOURCES) $< $(LDLIBS) -o $@
 
 test-fibers: $(BUILD_DIR)/fiber_states
 	$(BUILD_DIR)/fiber_states
@@ -66,7 +67,7 @@ test-fiber-context: test-fibers
 
 $(BUILD_DIR)/fiber_run: tests/fiber_run.c $(API_SOURCES)
 	@mkdir -p $(BUILD_DIR)
-	$(CC) $(CPPFLAGS) $(CFLAGS_COMMON) $(CFLAGS_DEBUG) $(API_SOURCES) $< -o $@
+	$(CC) $(CPPFLAGS) $(CFLAGS_COMMON) $(CFLAGS_DEBUG) $(API_SOURCES) $< $(LDLIBS) -o $@
 
 test-fiber-run: $(BUILD_DIR)/fiber_run
 	$(BUILD_DIR)/fiber_run

@@ -104,8 +104,18 @@ typedef enum DiamondOpCode : uint8_t {
     DIAMOND_OP_CHR,
     DIAMOND_OP_TO_FLOAT,
     DIAMOND_OP_TO_INT,
+    DIAMOND_OP_MATH_UNARY,
+    DIAMOND_OP_MATH_BINARY,
     DIAMOND_OP_COUNT,
 } DiamondOpCode;
+
+typedef enum DiamondMathFunction : uint8_t {
+    DIAMOND_MATH_SQRT,
+    DIAMOND_MATH_SIN,
+    DIAMOND_MATH_COS,
+    DIAMOND_MATH_TAN,
+    DIAMOND_MATH_POW,
+} DiamondMathFunction;
 
 typedef enum DiamondTypeId : uint8_t {
     DIAMOND_TYPE_INT,

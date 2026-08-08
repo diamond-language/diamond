@@ -1480,6 +1480,47 @@ static uint8_t parse_to_int_call(Compiler *compiler) {
     return dest;
 }
 
+static uint8_t parse_math_unary_call(Compiler *compiler, DiamondMathFunction id) {
+    advance_token(compiler); /* consume '(' */
+    const uint8_t source = parse_expression(compiler);
+    if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
+        fail(compiler,compiler->current.span,"expected ')' after arguments");
+        return 0;
+    }
+    advance_token(compiler);
+    const uint8_t dest=allocate_register(compiler);
+    emit_opcode(compiler,DIAMOND_OP_MATH_UNARY);
+    emit_byte(compiler,dest);
+    emit_byte(compiler,source);
+    emit_byte(compiler,(uint8_t)id);
+    compiler->known_types[dest]=DIAMOND_TYPE_FLOAT;
+    return dest;
+}
+
+static uint8_t parse_math_binary_call(Compiler *compiler, DiamondMathFunction id) {
+    advance_token(compiler); /* consume '(' */
+    const uint8_t left = parse_expression(compiler);
+    if(compiler->current.kind!=DIAMOND_TOKEN_COMMA) {
+        fail(compiler,compiler->current.span,"expected ',' between arguments");
+        return 0;
+    }
+    advance_token(compiler);
+    const uint8_t right = parse_expression(compiler);
+    if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
+        fail(compiler,compiler->current.span,"expected ')' after arguments");
+        return 0;
+    }
+    advance_token(compiler);
+    const uint8_t dest=allocate_register(compiler);
+    emit_opcode(compiler,DIAMOND_OP_MATH_BINARY);
+    emit_byte(compiler,dest);
+    emit_byte(compiler,left);
+    emit_byte(compiler,right);
+    emit_byte(compiler,(uint8_t)id);
+    compiler->known_types[dest]=DIAMOND_TYPE_FLOAT;
+    return dest;
+}
+
 static uint8_t parse_print_call(Compiler *compiler, bool newline) {
     advance_token(compiler); /* consume '(' */
     const uint8_t source=parse_expression(compiler);
@@ -1608,6 +1649,26 @@ static uint8_t parse_name(Compiler *compiler) {
        compiler->current.kind==DIAMOND_TOKEN_LEFT_PAREN&&
        name_equals(compiler,"to_i",name,false))
         return parse_to_int_call(compiler);
+    if(find_local(compiler,name)<0&&find_function(compiler,name)<0&&
+       compiler->current.kind==DIAMOND_TOKEN_LEFT_PAREN&&
+       name_equals(compiler,"sqrt",name,false))
+        return parse_math_unary_call(compiler,DIAMOND_MATH_SQRT);
+    if(find_local(compiler,name)<0&&find_function(compiler,name)<0&&
+       compiler->current.kind==DIAMOND_TOKEN_LEFT_PAREN&&
+       name_equals(compiler,"sin",name,false))
+        return parse_math_unary_call(compiler,DIAMOND_MATH_SIN);
+    if(find_local(compiler,name)<0&&find_function(compiler,name)<0&&
+       compiler->current.kind==DIAMOND_TOKEN_LEFT_PAREN&&
+       name_equals(compiler,"cos",name,false))
+        return parse_math_unary_call(compiler,DIAMOND_MATH_COS);
+    if(find_local(compiler,name)<0&&find_function(compiler,name)<0&&
+       compiler->current.kind==DIAMOND_TOKEN_LEFT_PAREN&&
+       name_equals(compiler,"tan",name,false))
+        return parse_math_unary_call(compiler,DIAMOND_MATH_TAN);
+    if(find_local(compiler,name)<0&&find_function(compiler,name)<0&&
+       compiler->current.kind==DIAMOND_TOKEN_LEFT_PAREN&&
+       name_equals(compiler,"pow",name,false))
+        return parse_math_binary_call(compiler,DIAMOND_MATH_POW);
     if (class_index >= 0 && compiler->current.kind == DIAMOND_TOKEN_DOT) {
         advance_token(compiler);
         if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER) {

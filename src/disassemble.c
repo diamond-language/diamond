@@ -9,6 +9,17 @@ static bool require_bytes(FILE *stream, const DiamondChunk *chunk,
     return false;
 }
 
+static const char *math_function_name(uint8_t id) {
+    switch((DiamondMathFunction)id) {
+        case DIAMOND_MATH_SQRT: return "sqrt";
+        case DIAMOND_MATH_SIN: return "sin";
+        case DIAMOND_MATH_COS: return "cos";
+        case DIAMOND_MATH_TAN: return "tan";
+        case DIAMOND_MATH_POW: return "pow";
+        default: return "<invalid math function>";
+    }
+}
+
 static size_t one_register(FILE *stream, const DiamondChunk *chunk,
                            const char *name, size_t offset) {
     if (!require_bytes(stream, chunk, offset, 2)) return chunk->code_count;
@@ -375,6 +386,20 @@ static bool disassemble_chunk(FILE *stream, const char *name,
                 offset=two_registers(stream,chunk,"TO_FLOAT",offset);break;
             case DIAMOND_OP_TO_INT:
                 offset=two_registers(stream,chunk,"TO_INT",offset);break;
+            case DIAMOND_OP_MATH_UNARY: {
+                if(!require_bytes(stream,chunk,offset,4)){valid=false;offset=chunk->code_count;break;}
+                fprintf(stream,"%-18s r%u, r%u, %s\n","MATH_UNARY",
+                    chunk->code[offset+1],chunk->code[offset+2],
+                    math_function_name(chunk->code[offset+3]));
+                offset+=4;break;
+            }
+            case DIAMOND_OP_MATH_BINARY: {
+                if(!require_bytes(stream,chunk,offset,5)){valid=false;offset=chunk->code_count;break;}
+                fprintf(stream,"%-18s r%u, r%u, r%u, %s\n","MATH_BINARY",
+                    chunk->code[offset+1],chunk->code[offset+2],chunk->code[offset+3],
+                    math_function_name(chunk->code[offset+4]));
+                offset+=5;break;
+            }
             case DIAMOND_OP_INVOKE:
                 if(!require_bytes(stream,chunk,offset,6)){valid=false;offset=chunk->code_count;break;}
                 fprintf(stream,"%-18s r%u, r%u, s%u, r%u, %u args\n","INVOKE",

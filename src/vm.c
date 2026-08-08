@@ -596,6 +596,12 @@ static DiamondListenerHandle *allocate_listener_handle(DiamondVm *vm,int fd) {
     vm->objects=&handle->object;vm->bytes_allocated+=sizeof(DiamondListenerHandle);return handle;
 }
 
+static bool numeric_as_double(DiamondValue value, double *out) {
+    if(value.kind==DIAMOND_VALUE_INT) {*out=(double)value.as.integer;return true;}
+    if(value.kind==DIAMOND_VALUE_FLOAT) {*out=value.as.real;return true;}
+    return false;
+}
+
 static bool values_equal(DiamondValue left, DiamondValue right) {
     /* Cross-type numeric equality (3 == 3.0) ahead of the kind guard,
      * per the auto-promotion design: Int widens to double for the
@@ -4098,6 +4104,44 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     VM_RETURN(DIAMOND_VM_INTEGER_OVERFLOW);
                 }
                 registers[dest]=DIAMOND_INT((int64_t)real);
+                break;
+            }
+            case DIAMOND_OP_MATH_UNARY: {
+                uint8_t dest=0,source=0,function_id=0;
+                READ_BYTE(dest);READ_BYTE(source);READ_BYTE(function_id);
+                double operand=0.0;
+                if(!numeric_as_double(registers[source],&operand)) {
+                    snprintf(vm->error,sizeof vm->error,
+                             "math function argument must be an Int or Float");
+                    VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                }
+                double math_result=0.0;
+                switch((DiamondMathFunction)function_id) {
+                    case DIAMOND_MATH_SQRT: math_result=sqrt(operand); break;
+                    case DIAMOND_MATH_SIN: math_result=sin(operand); break;
+                    case DIAMOND_MATH_COS: math_result=cos(operand); break;
+                    case DIAMOND_MATH_TAN: math_result=tan(operand); break;
+                    default: VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
+                }
+                registers[dest]=DIAMOND_FLOAT(math_result);
+                break;
+            }
+            case DIAMOND_OP_MATH_BINARY: {
+                uint8_t dest=0,left=0,right=0,function_id=0;
+                READ_BYTE(dest);READ_BYTE(left);READ_BYTE(right);READ_BYTE(function_id);
+                double left_value=0.0,right_value=0.0;
+                if(!numeric_as_double(registers[left],&left_value)||
+                   !numeric_as_double(registers[right],&right_value)) {
+                    snprintf(vm->error,sizeof vm->error,
+                             "math function argument must be an Int or Float");
+                    VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                }
+                double math_result=0.0;
+                switch((DiamondMathFunction)function_id) {
+                    case DIAMOND_MATH_POW: math_result=pow(left_value,right_value); break;
+                    default: VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
+                }
+                registers[dest]=DIAMOND_FLOAT(math_result);
                 break;
             }
             default:
