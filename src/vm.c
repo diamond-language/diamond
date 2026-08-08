@@ -1867,13 +1867,18 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
     if (depth >= DIAMOND_MAX_CALL_DEPTH) {
         return DIAMOND_VM_STACK_OVERFLOW;
     }
-    DiamondChunk execution=*chunk;
+    DiamondChunk execution;
     DiamondTypeBinding bindings[8]={};
     if(chunk->type_variable_count>0&&chunk->type_variable_bindings!=nullptr)
         memcpy(bindings,chunk->type_variable_bindings,
                chunk->type_variable_count*sizeof(DiamondTypeBinding));
     if(chunk->type_variable_count>0&&chunk->parameter_type_sets!=nullptr&&
        chunk->type_variable_bindings==nullptr) {
+        /* Only copy `*chunk` when this generic-function-with-unbound-
+         * type-variable path is actually taken -- the common case
+         * (type_variable_count==0, essentially every non-generic call)
+         * never reads `execution`, so skip the 168-byte struct copy. */
+        execution=*chunk;
         for(size_t parameter=0;
             parameter+chunk->parameter_offset<argument_count;parameter++) {
             const uint8_t set=chunk->parameter_type_sets[parameter];
