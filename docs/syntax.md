@@ -138,6 +138,11 @@ returning a one-character `String`, recognized the same way `gets()`
 is (shadowable by a local or top-level function). `code` outside
 `0..255` raises a rescuable `RangeError`.
 
+Strings also support `[]` with a single `Int` index, returning a new
+one-character `String` (bounds-checked, `IndexError` outside the
+string — the same as `.slice()`); unlike Array/Hash, `[]=` on a String
+is rejected outright with a `TypeError` (strings are immutable).
+
 `.each(callback)`, and the `Enumerable` methods derived from it —
 `.select`/`.count`/`.any?`/`.all?`/`.reduce`/`.map` — work as receiver
 syntax on both arrays and hashes (a hash's Enumerable operates over

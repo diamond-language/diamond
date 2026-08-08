@@ -3022,6 +3022,47 @@ actual="$($diamond -e $'def chr(x)\n "shadowed"\nend\nchr(65)')"
 actual="$(DIAMOND_STRESS_GC=1 $diamond -e $'a = chr(72)\nb = chr(73)\n"#{a}#{b}"')"
 [[ "$actual" == "HI" ]]
 
+actual="$($diamond -e '"hello"[0]')"
+[[ "$actual" == "h" ]]
+
+actual="$($diamond -e '"hello"[4]')"
+[[ "$actual" == "o" ]]
+
+error_file="$(mktemp)"
+if "$diamond" -e '"hello"[10]' >/dev/null 2>"$error_file"; then
+    echo "String index out of bounds unexpectedly succeeded" >&2
+    exit 1
+fi
+grep -q "index 10 out of bounds for String of length 5" "$error_file"
+rm -f "$error_file"
+
+error_file="$(mktemp)"
+if "$diamond" -e '"hello"[-1]' >/dev/null 2>"$error_file"; then
+    echo "String index -1 unexpectedly succeeded" >&2
+    exit 1
+fi
+grep -q "index -1 out of bounds for String of length 5" "$error_file"
+rm -f "$error_file"
+
+error_file="$(mktemp)"
+if "$diamond" -e '""[0]' >/dev/null 2>"$error_file"; then
+    echo "Indexing an empty String unexpectedly succeeded" >&2
+    exit 1
+fi
+grep -q "index 0 out of bounds for String of length 0" "$error_file"
+rm -f "$error_file"
+
+error_file="$(mktemp)"
+if "$diamond" -e $'s = "hello"\ns[0] = "x"' >/dev/null 2>"$error_file"; then
+    echo "String element assignment unexpectedly succeeded" >&2
+    exit 1
+fi
+grep -q "String does not support element assignment" "$error_file"
+rm -f "$error_file"
+
+actual="$(DIAMOND_STRESS_GC=1 $diamond -e '"hello"[2]')"
+[[ "$actual" == "l" ]]
+
 http_port=18743
 http_server_out="$(mktemp)"
 http_server_src="$(cat <<'HTTPEOF'
@@ -3372,4 +3413,4 @@ wait "$stress_http_pid" 2>/dev/null || true
 [[ "$stress_http_response" == $'HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 13\r\n\r\nhello, /world' ]]
 rm -f "$stress_http_out"
 
-echo "699 tests passed"
+echo "700 tests passed"
