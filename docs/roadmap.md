@@ -628,10 +628,9 @@ future work.
   `Int`/`Float` arithmetic and comparisons auto-promote the `Int` side.
   `to_f`/`to_i` convert explicitly; `to_i` rejects `NaN`/`Infinity`/
   out-of-range values with a rescuable `RangeError` rather than
-  triggering undefined behavior in the C cast. Deferred to a later round:
-  exponent-notation literals (`1e10`), a Math library (`sqrt`/`pow`/
-  trig), and shortest-round-trip formatting (this round uses a fixed
-  `%.15g`-based format).
+  triggering undefined behavior in the C cast. Deferred to a later
+  round: exponent-notation literals (`1e10`) and shortest-round-trip
+  formatting (this round uses a fixed `%.15g`-based format).
 - Interpreter call-overhead reduction, from `jit-experimentation`
   baseline benchmarking that found call/frame-setup overhead — not
   opcode-level arithmetic dispatch — was the dominant cost in call-heavy
@@ -685,6 +684,23 @@ future work.
   RHS; the parser bug itself is unfixed and would need
   `postfix_modifier_ahead` to become structure-aware rather than a
   flat token scan.
+- A small Math library — `sqrt`/`sin`/`cos`/`tan`/`pow` — closing out
+  the Float milestone's last deferred item. Two new opcodes rather
+  than five: `DIAMOND_OP_MATH_UNARY`/`DIAMOND_OP_MATH_BINARY` take a
+  function-ID byte operand (a `DiamondMathFunction` enum), so future
+  additions (`log`, `exp`, `atan2`, ...) reuse the same two opcodes
+  instead of needing a new one each — the `chr`/`to_f`/`to_i`
+  one-opcode-per-primitive precedent doesn't scale as well once
+  there's a genuine *family* of similarly-shaped functions. All
+  arguments accept `Int | Float` (auto-widening); results are always
+  `Float`, even for all-`Int` input (`pow(2, 10)` is `1024.0`), rather
+  than adding "sometimes-`Int`" result logic. No extra validation —
+  results follow IEEE-754 directly (`sqrt(-1.0)` is `NaN`), matching
+  `Float` arithmetic's existing philosophy. Needed one build-system
+  fix: `sqrt`/`sin`/`cos`/`tan`/`pow` are real exported libm symbols
+  requiring `-lm` at link time (unlike `isnan`/`isinf`, which are
+  compiler builtins and need no library at all) — added a shared
+  `LDLIBS` Makefile variable applied to every build and test target.
 
 ## Next priorities
 

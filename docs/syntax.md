@@ -243,6 +243,14 @@ raises a rescuable `RangeError` instead (from `to_i` rejecting the
 resulting `Infinity`/`NaN` quotient — `Float` division by zero itself
 never raises, only the truncation step does).
 
+`sqrt(x)`, `sin(x)`, `cos(x)`, `tan(x)`, and `pow(base, exponent)` are
+native functions (no bytecode primitive to build on, same reasoning as
+`chr`/`to_f`/`to_i`) accepting `Int | Float` for every argument and
+always returning `Float` — `pow(2, 10)` is `1024.0`, not `1024`, even
+though both arguments are `Int`. No extra validation: results follow
+IEEE-754 directly, so `sqrt(-1.0)` is `NaN` rather than an error, the
+same philosophy `Float` arithmetic already uses throughout.
+
 `array_sort(values: Array[Int])` returns a new sorted array (input
 untouched); `Int` is the only type with a native ordering comparison,
 so this is Int-only, checked up front (`expected Array[Int], got
