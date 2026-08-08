@@ -3870,7 +3870,7 @@ actual="$($diamond -e 'pow(2, 10)')"
 [[ "$actual" == "1024.0" ]]
 
 actual="$($diamond -e 'pow(2.0, 0.5)')"
-[[ "$actual" == "1.4142135623731" ]]
+[[ "$actual" == "1.4142135623730951" ]]
 
 nines=""
 for _ in $(seq 1 200); do nines+="9"; done
@@ -3905,4 +3905,41 @@ grep -q 'MATH_BINARY.*pow' <<<"$actual"
 actual="$(DIAMOND_STRESS_GC=1 $diamond -e '"#{sqrt(16)}, #{pow(3, 2)}"')"
 [[ "$actual" == "4.0, 9.0" ]]
 
-echo "798 tests passed"
+actual="$($diamond -e '1e10')"
+[[ "$actual" == "10000000000.0" ]]
+
+actual="$($diamond -e '1.5e-3')"
+[[ "$actual" == "0.0015" ]]
+
+actual="$($diamond -e '2E+7')"
+[[ "$actual" == "20000000.0" ]]
+
+actual="$($diamond -e '1_000e1_0')"
+[[ "$actual" == "10000000000000.0" ]]
+
+error_file="$(mktemp)"
+if "$diamond" -e '5e' >/dev/null 2>"$error_file"; then
+    echo "bare 5e unexpectedly parsed as a valid program" >&2
+    exit 1
+fi
+grep -q "expected newline after expression" "$error_file"
+rm -f "$error_file"
+
+nines=""
+for _ in $(seq 1 300); do nines+="9"; done
+error_file="$(mktemp)"
+if "$diamond" -e "${nines}e300" >/dev/null 2>"$error_file"; then
+    echo "an oversized exponent-notation literal unexpectedly parsed" >&2
+    exit 1
+fi
+grep -q "float literal is too long" "$error_file"
+rm -f "$error_file"
+
+actual="$($diamond --dump-bytecode -e '1e10')"
+grep -q '^0000.*CONSTANT.*10000000000\.0' <<<"$actual"
+
+actual="$($diamond -e '1.5e-3')"
+puts_actual="$(DIAMOND_STRESS_GC=1 $diamond -e 'puts(1.5e-3)')"
+[[ "$actual" == "0.0015" && "$puts_actual" == $'0.0015\nnil' ]]
+
+echo "806 tests passed"
