@@ -3997,4 +3997,40 @@ actual="$($diamond -e $'interface A\n def foo()\nend\ninterface B < A\n def bar(
 actual="$($diamond -e $'interface A\n def foo()\nend\ninterface X\n def qux()\nend\ninterface B <\n A,\n X\n def bar()\nend\nclass C\n def foo()\n  1\n end\n def qux()\n  3\n end\n def bar()\n  2\n end\nend\nC.new() is B')"
 [[ "$actual" == "true" ]]
 
-echo "853 tests passed"
+actual="$($diamond -e $'x = if 1 < 2\n 10\nelse\n 20\nend\nx')"
+[[ "$actual" == "10" ]]
+
+actual="$($diamond -e $'x = unless false\n 10\nelse\n 20\nend\nx')"
+[[ "$actual" == "10" ]]
+
+actual="$($diamond -e $'x = 5 if true\nx')"
+[[ "$actual" == "5" ]]
+
+actual="$($diamond -e $'x = 5 if false\nx')"
+[[ "$actual" == "nil" ]]
+
+actual="$($diamond -e $'class C\n def initialize()\n  @x = if true\n   1\n  else\n   2\n  end\n end\n def x()\n  @x\n end\nend\nC.new().x()')"
+[[ "$actual" == "1" ]]
+
+actual="$($diamond -e $'if true\n y = if false\n  1\n else\n  2\n end\n y\nend')"
+[[ "$actual" == "2" ]]
+
+actual="$($diamond -e $'[if true\n 1\nelse\n 2\nend]')"
+[[ "$actual" == "[1]" ]]
+
+actual="$($diamond -e $'def f(flag)\n return if flag\n 99\nend\nf(true)')"
+[[ "$actual" == "nil" ]]
+
+actual="$($diamond -e $'def f(flag)\n return if flag\n 99\nend\nf(false)')"
+[[ "$actual" == "99" ]]
+
+actual="$($diamond -e $'def f(flag)\n return 5 if flag\n 99\nend\nf(true)')"
+[[ "$actual" == "5" ]]
+
+actual="$($diamond -e $'def f()\n return (if true\n  1\n else\n  2\n end)\nend\nf()')"
+[[ "$actual" == "1" ]]
+
+actual="$($diamond -e $'begin\n begin\n  raise "boom"\n rescue error\n  raise if true\n end\nrescue error\n error\nend')"
+[[ "$actual" == "boom" ]]
+
+echo "865 tests passed"
