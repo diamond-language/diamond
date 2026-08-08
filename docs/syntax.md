@@ -24,6 +24,44 @@ end
 block is its value. Blocks are `end`-delimited throughout; there are no
 braces. `next`/`break` work inside loops.
 
+## Numbers
+
+```ruby
+x = 3
+y = 2.5
+x + y        # => 5.5, Int auto-promotes to Float
+x == 5       # => true
+-y           # => -2.5
+to_f(x)      # => 3.0
+to_i(y)      # => 2
+```
+
+`Int` is a 64-bit signed integer; `Float` is an IEEE-754 double. Float
+literals need a digit on both sides of the `.` (`2.5`, not `.5` or `2.`),
+so `5.abs()` still parses as a method call rather than a float literal.
+Both accept `_` digit separators (`1_234.567_8`). There's no exponent
+notation (`1e10`) yet.
+
+Mixing `Int` and `Float` in arithmetic or comparisons auto-promotes the
+`Int` side to `Float` — `3 + 2.5` and `3 == 3.0` both behave as you'd
+expect from Ruby or Python. Division by `0.0` follows IEEE-754 rather
+than raising: `1.0 / 0.0` is `Infinity`, `-1.0 / 0.0` is `-Infinity`,
+`0.0 / 0.0` is `NaN`, and `NaN` compares unequal to everything, including
+itself. Integer division by zero still raises a rescuable
+`ZeroDivisionError`, and integer overflow (including negating the
+smallest representable `Int`) still raises a rescuable `RangeError`.
+
+`to_f`/`to_i` convert explicitly between the two. `to_i` rejects `NaN`,
+`Infinity`, and any `Float` outside `Int`'s range with a rescuable
+`RangeError` rather than performing an undefined C cast. Type
+annotations stay strict even though arithmetic auto-promotes: a
+parameter declared `x: Float` rejects an `Int` argument outright — pass
+it through `to_f` first.
+
+Floats print with a forced `.0` when they'd otherwise look like an
+integer (`3.0`, not `3`), so they stay visually distinct from `Int` in
+`puts` output and string interpolation.
+
 ## Functions and closures
 
 ```ruby

@@ -15,7 +15,8 @@ future work.
 
 ### Dynamic language core
 
-- Integers with checked arithmetic, booleans, `nil`, and strings.
+- Integers with checked arithmetic, IEEE-754 floats, booleans, `nil`, and
+  strings.
 - Locals, assignment, comparisons, expression-valued `if` and `while`.
 - Ruby-style truthiness and value-preserving `!`, `&&`, and `||`.
 - Explicit `return`, `break`, and `next` with nested control-flow targeting.
@@ -42,7 +43,8 @@ future work.
 ### Gradual typing
 
 - Optional parameter and return annotations.
-- `Int`, `String`, `Bool`, `Nil`, `Array`, `Hash`, and nominal class types.
+- `Int`, `Float`, `String`, `Bool`, `Nil`, `Array`, `Hash`, and nominal class
+  types.
 - Subtype-aware class checks and reusable unions of up to eight types.
 - Guards on every implicit and explicit typed return path.
 - Exact local type facts that remove proven guards and reject proven errors.
@@ -613,6 +615,24 @@ future work.
   1,000,000 Hash inserts + lookups now complete in well under half a
   second, versus effectively unbounded time under the old O(n²)
   behavior at that size.
+- Added `Float`, a single IEEE-754 double-precision type (Ruby/Python/JS
+  style — not a separate single/double pair like Java's `float`/`double`).
+  Adds no memory cost (`DiamondValue`'s union already had an 8-byte slot
+  free) and no new arithmetic/comparison opcodes: the existing `_INT`
+  compiler specialization only fires when both operands are provably
+  `Int`, so `Float` code — static or dynamic — already fell through to the
+  generic opcode paths, which were extended to handle `Float`/mixed
+  operands directly rather than building a parallel quickened `_FLOAT`
+  tier the project's own baseline benchmarks say would not pay for
+  itself (see `bench/BASELINE.md` on the JIT-experiment branch). Mixed
+  `Int`/`Float` arithmetic and comparisons auto-promote the `Int` side.
+  `to_f`/`to_i` convert explicitly; `to_i` rejects `NaN`/`Infinity`/
+  out-of-range values with a rescuable `RangeError` rather than
+  triggering undefined behavior in the C cast. Deferred to a later round:
+  exponent-notation literals (`1e10`), `Float` siblings for `abs`/`min`/
+  `max`/`mod`, `String#to_f`, a Math library (`sqrt`/`pow`/trig), and
+  shortest-round-trip formatting (this round uses a fixed `%.15g`-based
+  format).
 
 ## Next priorities
 
@@ -636,9 +656,9 @@ None queued.
 - Arbitrary-precision integers (a bignum type, auto-promoting on
   overflow — the Ruby/Python/Lisp-family style, not just a library
   type like Java's `BigInteger`). Currently `Int` is a fixed 64-bit
-  scalar (`DIAMOND_VALUE_INT` in `src/value.h`) with no `Float` at all;
-  64 bits covers the overwhelming majority of real use, so this is a
-  low-priority "eventually," not a near-term need.
+  scalar (`DIAMOND_VALUE_INT` in `src/value.h`); 64 bits covers the
+  overwhelming majority of real use, so this is a low-priority
+  "eventually," not a near-term need.
 
 ## Explicitly deferred
 

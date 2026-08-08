@@ -21,9 +21,27 @@ have one-byte opcodes and explicitly decoded operands; jumps contain absolute
 16-bit bytecode offsets.
 
 Runtime values use an explicit tagged union. Immediate values are `nil`,
-booleans, and signed 64-bit integers. Strings, arrays, hashes, and instances are
-managed heap objects with a common header. NaN boxing is deferred until
-measurement shows that representation density is worth the complexity.
+booleans, signed 64-bit integers, and IEEE-754 double-precision floats.
+Strings, arrays, hashes, and instances are managed heap objects with a common
+header. NaN boxing is deferred until measurement shows that representation
+density is worth the complexity.
+
+`Float` arithmetic and comparisons live entirely on the generic (non-`_INT`)
+opcode paths — there is no quickened or compiler-specialized `_FLOAT` opcode
+tier. Baseline benchmarking (see `bench/BASELINE.md` on the JIT-experiment
+branch) found the existing `_INT` specialization/quickening tier gives no
+measurable speedup even in code built specifically to exercise it, since
+call/frame overhead dominates; building an analogous `_FLOAT` tier would have
+meant replicating real complexity (several `_INT` opcodes have no
+deopt-back-to-generic path) for a tier the project's own data says would not
+pay for itself. The compiler's static `_INT` specialization already only
+fires when both operands are provably `Int`, so anything else — a `Float`
+literal, a `Float`-typed parameter, or fully dynamic code — already falls
+through to the generic opcode with no changes needed; static-typed and
+dynamic `Float` code are therefore identical at the bytecode level.
+Mixed `Int`/`Float` arithmetic and comparisons auto-promote the `Int`
+operand to `double`, matching Ruby/Python/JS rather than requiring explicit
+conversion.
 
 Integer arithmetic uses C23 checked arithmetic and reports overflow rather than
 invoking C undefined behavior. Addition, subtraction, multiplication, and
@@ -255,8 +273,8 @@ write barrier. Object finalizers and weak references do not exist.
 ## Gradual types
 
 Annotations describe acceptable runtime values and do not alter value layout.
-Supported types are `Int`, `String`, `Bool`, `Nil`, `Array`, `Hash`, and declared
-classes. An annotation is a reusable set of up to eight pipe-separated types;
+Supported types are `Int`, `Float`, `String`, `Bool`, `Nil`, `Array`, `Hash`, and
+declared classes. An annotation is a reusable set of up to eight pipe-separated types;
 nominal members accept subclasses. Type-set indexes are bytecode operands, so
 arbitrary unions do not consume opcode bits or alter runtime value layout.
 
