@@ -619,6 +619,12 @@ None queued.
   where it would first get read for something. Fetching specifically has
   no buildable target yet: there is no HTTP client and no registry to
   fetch from.
+- Arbitrary-precision integers (a bignum type, auto-promoting on
+  overflow — the Ruby/Python/Lisp-family style, not just a library
+  type like Java's `BigInteger`). Currently `Int` is a fixed 64-bit
+  scalar (`DIAMOND_VALUE_INT` in `src/value.h`) with no `Float` at all;
+  64 bits covers the overwhelming majority of real use, so this is a
+  low-priority "eventually," not a near-term need.
 
 ## Explicitly deferred
 
