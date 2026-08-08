@@ -877,6 +877,38 @@ future work.
   regressing the case that already worked, since `consume_block_start`
   fails outright if `current` isn't already a literal newline token
   when it runs (it doesn't tolerate having been skipped past already).
+- Fixed the long-documented `postfix_modifier_ahead` limitation:
+  `x = if cond ... end` (an `if`/`unless`-expression as an assignment's
+  RHS, on the same line as `=`) now parses correctly, instead of
+  misreading the RHS's own `if` as a misplaced trailing postfix
+  condition. Two independent gaps in the same lookahead scan, both in
+  `src/compiler.c`: (1) the scan's bracket-depth counter starts at 0
+  even when `compiler->current` itself is already an unclosed opening
+  bracket (e.g. a bracketed literal that's the *entire* statement, like
+  `[if x ... end]`), so a nested `if` at the literal's own top level
+  was miscounted as depth 0 and misread as a modifier on the whole
+  statement — fixed by seeding `depth` to 1 when `current` is `(`/`[`/
+  `{`. (2) An `if`/`unless` found immediately after `=` at depth 0 is
+  the start of the assignment's own RHS, not a modifier on a
+  not-yet-parsed value — fixed by tracking whether the previous
+  depth-0 token was `=`, and treating a same-position `if`/`unless` as
+  "no modifier here" rather than triggering on it. Deliberately did
+  **not** extend the same "expression expected" tracking to `return`/
+  `raise`: unlike assignment (which has no "bare, valueless" form),
+  `return if cond`/`raise if cond` already have an established,
+  different meaning — a bare return/raise, postfix-conditioned on
+  `cond` — that `compile_return`/`compile_raise` already implement via
+  their own `current.kind==IF`/`UNLESS` branches; an initial attempt at
+  extending the fix to `return`/`raise` broke that existing behavior
+  before being caught by the existing test suite and reverted. Getting
+  an `if`/`unless`-expression's *value* out of a `return`/`raise`
+  still needs explicit parens (`return (if cond ... end)`), matching
+  the deliberate ambiguity resolution already in place. Also
+  deliberately narrower than fully general: an `if`/`unless`
+  immediately after any operator *other* than `=` (e.g.
+  `x = y && if cond ... end`) is still misread the old way — the
+  `=` case is what the original bug report and every practical
+  instance of this actually was.
 
 ## Next priorities
 
