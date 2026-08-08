@@ -244,3 +244,53 @@ runs against a same-machine baseline via `git worktree`). Prefer that
 approach — a worktree at the prior commit, `/usr/bin/time -f '%e'`,
 several alternating rounds — for any future round expected to land
 in the single-digit-percent range.
+
+## JIT experiment #3: skip run_chunk's wasted internal DiamondChunk copy (results)
+
+Landed at `376b487`. `run_chunk` had its own second, separate,
+*unconditional* `DiamondChunk execution=*chunk;` copy (168 bytes) at
+its top, on every single call — but `execution` is only ever read
+inside the branch that infers type bindings for a generic function
+with an unbound type variable, which fires for essentially none of
+`bench/`'s benchmarks (none use generics). Moved the copy inside that
+branch, so the common (non-generic) path skips it entirely. Confined
+to one function, no signature changes, `make test-sanitize` clean.
+
+Expected this to be a small, possibly noise-level win by proportional
+reasoning against experiments #1/#2 (168 bytes is much smaller than
+either of those rounds' targets). It wasn't — measured via the same
+worktree/alternating-rounds methodology experiment #2's addendum
+recommended, against the pre-change commit (`d842733`):
+
+| Benchmark | Before (avg of N) | After (avg of N) | Delta |
+|---|---:|---:|---:|
+| `dispatch_monomorphic` (6 rounds, repeat=15) | 2.830s | 2.448s | **+13.5%**, after faster in all 6 rounds |
+| `fibonacci` (6 rounds, repeat=15) | 3.023s | 2.720s | **+10.0%**, after faster in all 6 rounds |
+| `closures` (5 rounds, repeat=25) | 2.030s | 1.902s | +6.3%, after faster in 4 of 5 rounds |
+| `hash_ops` (5 rounds, repeat=100, negative control) | 1.862s | 1.858s | +0.2%, unchanged as expected |
+
+Larger than experiment #2's comparable-magnitude NIL removal (5-8%),
+and closer to experiment #1's territory despite eliminating far fewer
+bytes. Best explanation: this wasn't just "168 fewer bytes written" —
+`execution` being written unconditionally (even though functionally
+dead on the common path) likely constrained the compiler's own
+optimization of `run_chunk` itself (register allocation, what it could
+prove dead vs. had to conservatively keep live across the branch),
+so removing it plausibly unlocked further codegen improvements beyond
+the literal copy's own cost. `hash_ops` staying flat confirms the win
+is still call-overhead-specific, not a general/spurious change.
+
+Takeaway for scoping future rounds: proportional reasoning from
+experiments #1/#2 ("smaller change → smaller expected win") doesn't
+reliably predict outcomes when the change also affects what the
+compiler can prove about the surrounding function, not just how many
+bytes move at runtime. Measure before deprioritizing a candidate on
+that basis alone.
+
+The originally-scoped, more invasive idea — eliminating the *external*
+per-call-site `DiamondChunk` construction (the ~9 sites in `vm.c`
+building `called_chunk` before calling `run_chunk`, requiring a
+`DiamondChunk` split and ~20 touched function signatures) — remains
+undone and is now a stronger candidate than before this round's
+result, given how much larger this smaller-scoped sibling change
+turned out to be.
