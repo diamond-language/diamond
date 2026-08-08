@@ -35,12 +35,27 @@ typedef struct LoopContext {
     size_t break_count;
 } LoopContext;
 
+enum { DIAMOND_MAX_NARROWING_FACTS = 8 };
+
+typedef struct NarrowingFact {
+    uint8_t reg;
+    int16_t type_set;
+} NarrowingFact;
+
+/* A pending narrowing, keyed by the register holding the boolean
+ * condition it came from (`condition`). when_true/when_false hold the
+ * per-register facts that are known if the condition turns out
+ * true/false, respectively. A plain `is`/nil-check produces exactly
+ * one fact in each array; `&&`/`||` compose facts from both operands
+ * into these same arrays (see the AND/OR handling in
+ * parse_precedence) rather than needing a separate mechanism. */
 typedef struct Narrowing {
     bool valid;
     uint8_t condition;
-    uint8_t reg;
-    int16_t when_true;
-    int16_t when_false;
+    NarrowingFact when_true[DIAMOND_MAX_NARROWING_FACTS];
+    size_t when_true_count;
+    NarrowingFact when_false[DIAMOND_MAX_NARROWING_FACTS];
+    size_t when_false_count;
 } Narrowing;
 
 typedef struct Compiler {
@@ -165,21 +180,12 @@ static bool known_type_satisfies_one(const Compiler *compiler, uint8_t known,
            known==DIAMOND_TYPE_HASH) {
             for(size_t required=0;required<interface->method_count;required++) {
                 const DiamondInterfaceMethod *method=&interface->methods[required];
-                const bool length=strcmp(method->name,"length")==0&&method->arity==0;
-                const bool array_method=known==DIAMOND_TYPE_ARRAY&&
-                    ((strcmp(method->name,"push")==0&&method->arity==1)||
-                     (strcmp(method->name,"pop")==0&&method->arity==0));
-                const bool hash_method=known==DIAMOND_TYPE_HASH&&method->arity==1&&
-                    (strcmp(method->name,"key_at")==0||
-                     strcmp(method->name,"value_at")==0);
-                if(!length&&!array_method&&!hash_method)return false;
+                uint8_t native_return=UINT8_MAX;
+                if(!diamond_native_method_satisfies(known,method->name,
+                    method->arity,&native_return))return false;
                 if(method->return_type_set!=UINT8_MAX) {
-                    uint8_t result=UINT8_MAX;
-                    if(length)result=DIAMOND_TYPE_INT;
-                    else if(known==DIAMOND_TYPE_ARRAY&&
-                            strcmp(method->name,"push")==0)result=DIAMOND_TYPE_ARRAY;
-                    if(result==UINT8_MAX)return false;
-                    const DiamondTypeSet native={.members={{.id=result,
+                    if(native_return==UINT8_MAX)return false;
+                    const DiamondTypeSet native={.members={{.id=native_return,
                         .argument_set=UINT8_MAX,.second_argument_set=UINT8_MAX,
                         .callable_arity=UINT8_MAX,.callable_return_set=UINT8_MAX}},.count=1};
                     if(!type_sets_satisfy_across(compiler,&native,0,
@@ -2000,6 +2006,19 @@ static void apply_type_set_fact(Compiler *compiler,uint8_t reg,int16_t set_index
     compiler->known_types[reg]=set->count==1?set->members[0].id:TYPE_UNKNOWN;
 }
 
+static void apply_narrowing_facts(Compiler *compiler,const NarrowingFact *facts,
+                                  size_t count) {
+    for(size_t index=0;index<count;index++)
+        apply_type_set_fact(compiler,facts[index].reg,facts[index].type_set);
+}
+
+static void append_narrowing_facts(NarrowingFact *destination,size_t *destination_count,
+                                   const NarrowingFact *source,size_t source_count) {
+    for(size_t index=0;index<source_count&&
+        *destination_count<DIAMOND_MAX_NARROWING_FACTS;index++)
+        destination[(*destination_count)++]=source[index];
+}
+
 static uint8_t parse_index(Compiler *compiler,uint8_t receiver) {
     advance_token(compiler);
     const uint8_t index=parse_expression(compiler);
@@ -2073,8 +2092,9 @@ static uint8_t parse_if(Compiler *compiler,bool inverted) {
         before_sets[index]=compiler->known_type_sets[index];
     }
     if(narrowing.valid)
-        apply_type_set_fact(compiler,narrowing.reg,
-                            inverted?narrowing.when_false:narrowing.when_true);
+        apply_narrowing_facts(compiler,
+            inverted?narrowing.when_false:narrowing.when_true,
+            inverted?narrowing.when_false_count:narrowing.when_true_count);
     const uint8_t then_result = compile_sequence(compiler);
     const uint8_t then_type=compiler->known_types[then_result];
     const int16_t then_set=compiler->known_type_sets[then_result];
@@ -2092,8 +2112,9 @@ static uint8_t parse_if(Compiler *compiler,bool inverted) {
         compiler->known_type_sets[index]=before_sets[index];
     }
     if(narrowing.valid)
-        apply_type_set_fact(compiler,narrowing.reg,
-                            inverted?narrowing.when_true:narrowing.when_false);
+        apply_narrowing_facts(compiler,
+            inverted?narrowing.when_true:narrowing.when_false,
+            inverted?narrowing.when_true_count:narrowing.when_false_count);
 
     uint8_t result_type=TYPE_UNKNOWN;int16_t result_set=-1;
     bool end_consumed=false;
@@ -2329,25 +2350,57 @@ static uint8_t parse_precedence(Compiler *compiler, Precedence precedence) {
                    (uint8_t)compiler->known_type_sets[left],tested_type,
                    &matching,&remaining))
                     compiler->narrowing=(Narrowing){.valid=true,
-                        .condition=destination,.reg=left,
-                        .when_true=matching,.when_false=remaining};
+                        .condition=destination,
+                        .when_true={{.reg=left,.type_set=matching}},
+                        .when_true_count=1,
+                        .when_false={{.reg=left,.type_set=remaining}},
+                        .when_false_count=1};
             }
             left=destination;continue;
         }
         if(operator==DIAMOND_TOKEN_AND_AND||operator==DIAMOND_TOKEN_AND||
            operator==DIAMOND_TOKEN_OR_OR||operator==DIAMOND_TOKEN_OR) {
+            const bool is_and=operator==DIAMOND_TOKEN_AND_AND||
+                operator==DIAMOND_TOKEN_AND;
+            const Narrowing left_narrowing=compiler->narrowing.condition==left
+                ?compiler->narrowing:(Narrowing){};
             const uint8_t destination=allocate_register(compiler);
             emit_instruction(compiler,DIAMOND_OP_MOVE,destination,left,0,2);
             const size_t end_jump=emit_jump(compiler,
-                operator==DIAMOND_TOKEN_AND_AND||operator==DIAMOND_TOKEN_AND
-                    ? DIAMOND_OP_JUMP_IF_FALSE:DIAMOND_OP_JUMP_IF_TRUE,
-                left);
+                is_and?DIAMOND_OP_JUMP_IF_FALSE:DIAMOND_OP_JUMP_IF_TRUE,left);
             const uint8_t right=parse_precedence(
                 compiler,(Precedence)(operator_precedence+1));
+            const Narrowing right_narrowing=compiler->narrowing.condition==right
+                ?compiler->narrowing:(Narrowing){};
             emit_instruction(compiler,DIAMOND_OP_MOVE,destination,right,0,2);
             patch_jump(compiler,end_jump,compiler->function->code_count);
             if(compiler->known_types[left]==compiler->known_types[right])
                 compiler->known_types[destination]=compiler->known_types[left];
+            /* AND: both sides must hold for the whole expression to be
+             * true, so the when-true facts compose (conjunction is
+             * sound). The false case of AND is a disjunction of
+             * failures, not soundly reducible to independent
+             * per-variable facts, so when_false stays empty rather
+             * than guessed. OR is the mirror image: when_false
+             * composes (both sides must have failed), when_true stays
+             * empty. An empty side is always safe to concatenate --
+             * it contributes nothing -- so this composes correctly
+             * through chains and mixed &&/|| automatically, with no
+             * special-casing for either. */
+            Narrowing merged={.condition=destination};
+            if(is_and) {
+                append_narrowing_facts(merged.when_true,&merged.when_true_count,
+                    left_narrowing.when_true,left_narrowing.when_true_count);
+                append_narrowing_facts(merged.when_true,&merged.when_true_count,
+                    right_narrowing.when_true,right_narrowing.when_true_count);
+            } else {
+                append_narrowing_facts(merged.when_false,&merged.when_false_count,
+                    left_narrowing.when_false,left_narrowing.when_false_count);
+                append_narrowing_facts(merged.when_false,&merged.when_false_count,
+                    right_narrowing.when_false,right_narrowing.when_false_count);
+            }
+            merged.valid=merged.when_true_count>0||merged.when_false_count>0;
+            compiler->narrowing=merged;
             left=destination;
             continue;
         }
@@ -2412,12 +2465,16 @@ static uint8_t parse_precedence(Compiler *compiler, Precedence precedence) {
                     if(split_nil_type_set(compiler,
                        (uint8_t)compiler->known_type_sets[narrowed],
                        &non_nil,&nil_only)) {
+                        const int16_t when_true=operator==DIAMOND_TOKEN_BANG_EQUAL
+                            ?non_nil:nil_only;
+                        const int16_t when_false=operator==DIAMOND_TOKEN_BANG_EQUAL
+                            ?nil_only:non_nil;
                         compiler->narrowing=(Narrowing){.valid=true,
-                            .condition=destination,.reg=narrowed,
-                            .when_true=operator==DIAMOND_TOKEN_BANG_EQUAL
-                                ?non_nil:nil_only,
-                            .when_false=operator==DIAMOND_TOKEN_BANG_EQUAL
-                                ?nil_only:non_nil};
+                            .condition=destination,
+                            .when_true={{.reg=narrowed,.type_set=when_true}},
+                            .when_true_count=1,
+                            .when_false={{.reg=narrowed,.type_set=when_false}},
+                            .when_false_count=1};
                     }
                 }
             }
@@ -3914,6 +3971,46 @@ static uint8_t compile_interface(Compiler *compiler) {
     interface->type_sets=compiler->program->entry.type_sets;
     (void)snprintf(interface->name,sizeof interface->name,"%s",stored_name);
     advance_token(compiler);
+    if(compiler->current.kind==DIAMOND_TOKEN_LESS) {
+        advance_token(compiler);
+        while(true) {
+            if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER) {
+                fail(compiler,compiler->current.span,
+                     "expected base interface name after '<'");return 0;
+            }
+            const int base_index=find_interface(compiler,compiler->current.span);
+            if(base_index<0) {
+                fail(compiler,compiler->current.span,"undefined base interface");
+                return 0;
+            }
+            /* interfaces[] is a fixed array (DIAMOND_MAX_INTERFACES),
+             * never reallocated, so this pointer stays valid even
+             * though `interface` itself points at a later slot in the
+             * same array. */
+            const DiamondInterface *base=
+                &compiler->program->interfaces[(size_t)base_index];
+            for(size_t index=0;index<base->method_count;index++) {
+                bool duplicate=false;
+                for(size_t existing=0;existing<interface->method_count;existing++)
+                    if(strcmp(interface->methods[existing].name,
+                              base->methods[index].name)==0) {
+                        duplicate=true;break;
+                    }
+                if(duplicate) {
+                    fail(compiler,compiler->current.span,
+                         "duplicate interface method");return 0;
+                }
+                if(interface->method_count==DIAMOND_MAX_METHODS) {
+                    fail(compiler,compiler->current.span,
+                         "interface has too many methods");return 0;
+                }
+                interface->methods[interface->method_count++]=base->methods[index];
+            }
+            advance_token(compiler);
+            if(compiler->current.kind!=DIAMOND_TOKEN_COMMA)break;
+            advance_token(compiler);
+        }
+    }
     if(!consume_block_start(compiler))return 0;
     while(!compiler->failed&&compiler->current.kind!=DIAMOND_TOKEN_END) {
         if(compiler->current.kind!=DIAMOND_TOKEN_DEF||

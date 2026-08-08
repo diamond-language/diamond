@@ -897,6 +897,64 @@ static bool runtime_set_satisfies(const DiamondChunk *chunk,
 static bool value_matches_type(const DiamondChunk *chunk,DiamondValue value,
                                uint8_t type);
 
+/* Every native method String/Array/Hash actually implement, for
+ * structural-interface matching (see diamond_native_method_satisfies
+ * below). Kept next to the real DIAMOND_OP_INVOKE dispatch further
+ * down in this file so a future native-method addition is naturally
+ * visible nearby. return_type is UINT8_MAX when a method's result
+ * isn't one fixed scalar type (pop/key_at/value_at return the
+ * container's stored element type; index_of returns Int | Nil) --
+ * such a method can still satisfy an interface method with no return
+ * annotation, just never one that requires a specific return type,
+ * matching the same conservative convention already used for
+ * user-class methods with an unannotated return. Enumerable-style
+ * receiver methods (.each/.select/.count/.any?/.all?/.reduce/.map)
+ * are deliberately not listed here -- they forward to ordinary prelude
+ * Diamond functions rather than being native primitives, so an
+ * interface already matches them the normal way, through a class's
+ * own method table. */
+typedef struct DiamondNativeMethod {
+    uint8_t receiver_type;
+    const char *name;
+    uint8_t arity;
+    uint8_t return_type;
+} DiamondNativeMethod;
+
+static const DiamondNativeMethod DIAMOND_NATIVE_METHODS[]={
+    {DIAMOND_TYPE_STRING,"length",0,DIAMOND_TYPE_INT},
+    {DIAMOND_TYPE_ARRAY,"length",0,DIAMOND_TYPE_INT},
+    {DIAMOND_TYPE_HASH,"length",0,DIAMOND_TYPE_INT},
+    {DIAMOND_TYPE_STRING,"repeat",1,DIAMOND_TYPE_STRING},
+    {DIAMOND_TYPE_STRING,"ord",0,DIAMOND_TYPE_INT},
+    {DIAMOND_TYPE_STRING,"split",1,DIAMOND_TYPE_ARRAY},
+    {DIAMOND_TYPE_STRING,"strip",0,DIAMOND_TYPE_STRING},
+    {DIAMOND_TYPE_STRING,"reverse",0,DIAMOND_TYPE_STRING},
+    {DIAMOND_TYPE_STRING,"downcase",0,DIAMOND_TYPE_STRING},
+    {DIAMOND_TYPE_STRING,"upcase",0,DIAMOND_TYPE_STRING},
+    {DIAMOND_TYPE_STRING,"to_i",0,DIAMOND_TYPE_INT},
+    {DIAMOND_TYPE_STRING,"to_f",0,DIAMOND_TYPE_FLOAT},
+    {DIAMOND_TYPE_STRING,"index_of",1,UINT8_MAX},
+    {DIAMOND_TYPE_STRING,"slice",2,DIAMOND_TYPE_STRING},
+    {DIAMOND_TYPE_ARRAY,"push",1,DIAMOND_TYPE_ARRAY},
+    {DIAMOND_TYPE_ARRAY,"pop",0,UINT8_MAX},
+    {DIAMOND_TYPE_HASH,"key_at",1,UINT8_MAX},
+    {DIAMOND_TYPE_HASH,"value_at",1,UINT8_MAX},
+};
+
+bool diamond_native_method_satisfies(uint8_t receiver_type,const char *name,
+                                     uint8_t arity,uint8_t *return_type) {
+    for(size_t index=0;index<sizeof DIAMOND_NATIVE_METHODS/
+        sizeof DIAMOND_NATIVE_METHODS[0];index++) {
+        const DiamondNativeMethod *method=&DIAMOND_NATIVE_METHODS[index];
+        if(method->receiver_type==receiver_type&&
+           strcmp(method->name,name)==0&&method->arity==arity) {
+            *return_type=method->return_type;
+            return true;
+        }
+    }
+    return false;
+}
+
 static bool value_matches_bound_node(const DiamondChunk *chunk,DiamondValue value,
                                      const DiamondTypeBinding *binding,
                                      uint8_t node_index) {
@@ -978,21 +1036,12 @@ static bool value_matches_type(const DiamondChunk *chunk, DiamondValue value,
         if(builtin!=UINT8_MAX) {
             for(size_t required=0;required<interface->method_count;required++) {
                 const DiamondInterfaceMethod *method=&interface->methods[required];
-                const bool length=strcmp(method->name,"length")==0&&method->arity==0;
-                const bool array_method=builtin==DIAMOND_TYPE_ARRAY&&
-                    ((strcmp(method->name,"push")==0&&method->arity==1)||
-                     (strcmp(method->name,"pop")==0&&method->arity==0));
-                const bool hash_method=builtin==DIAMOND_TYPE_HASH&&method->arity==1&&
-                    (strcmp(method->name,"key_at")==0||
-                     strcmp(method->name,"value_at")==0);
-                if(!length&&!array_method&&!hash_method)return false;
+                uint8_t native_return=UINT8_MAX;
+                if(!diamond_native_method_satisfies(builtin,method->name,
+                    method->arity,&native_return))return false;
                 if(method->return_type_set!=UINT8_MAX) {
-                    uint8_t result=UINT8_MAX;
-                    if(length)result=DIAMOND_TYPE_INT;
-                    else if(builtin==DIAMOND_TYPE_ARRAY&&
-                            strcmp(method->name,"push")==0)result=DIAMOND_TYPE_ARRAY;
-                    if(result==UINT8_MAX)return false;
-                    const DiamondTypeSet native={.members={{.id=result,
+                    if(native_return==UINT8_MAX)return false;
+                    const DiamondTypeSet native={.members={{.id=native_return,
                         .argument_set=UINT8_MAX,.second_argument_set=UINT8_MAX,
                         .callable_arity=UINT8_MAX,.callable_return_set=UINT8_MAX}},.count=1};
                     if(!runtime_set_satisfies(chunk,&native,0,interface->type_sets,
@@ -1113,21 +1162,12 @@ static bool runtime_type_id_satisfies(const DiamondChunk *chunk,uint8_t known,
            known==DIAMOND_TYPE_HASH) {
             for(size_t required=0;required<interface->method_count;required++) {
                 const DiamondInterfaceMethod *method=&interface->methods[required];
-                const bool length=strcmp(method->name,"length")==0&&method->arity==0;
-                const bool array_method=known==DIAMOND_TYPE_ARRAY&&
-                    ((strcmp(method->name,"push")==0&&method->arity==1)||
-                     (strcmp(method->name,"pop")==0&&method->arity==0));
-                const bool hash_method=known==DIAMOND_TYPE_HASH&&method->arity==1&&
-                    (strcmp(method->name,"key_at")==0||
-                     strcmp(method->name,"value_at")==0);
-                if(!length&&!array_method&&!hash_method)return false;
+                uint8_t native_return=UINT8_MAX;
+                if(!diamond_native_method_satisfies(known,method->name,
+                    method->arity,&native_return))return false;
                 if(method->return_type_set!=UINT8_MAX) {
-                    uint8_t result=UINT8_MAX;
-                    if(length)result=DIAMOND_TYPE_INT;
-                    else if(known==DIAMOND_TYPE_ARRAY&&
-                            strcmp(method->name,"push")==0)result=DIAMOND_TYPE_ARRAY;
-                    if(result==UINT8_MAX)return false;
-                    const DiamondTypeSet native={.members={{.id=result,
+                    if(native_return==UINT8_MAX)return false;
+                    const DiamondTypeSet native={.members={{.id=native_return,
                         .argument_set=UINT8_MAX,.second_argument_set=UINT8_MAX,
                         .callable_arity=UINT8_MAX,.callable_return_set=UINT8_MAX}},.count=1};
                     if(!runtime_set_satisfies(chunk,&native,0,interface->type_sets,

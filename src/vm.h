@@ -430,5 +430,7 @@ DiamondVmStatus diamond_vm_run(DiamondVm *vm, const DiamondChunk *chunk,
                                DiamondValue *result);
 const char *diamond_vm_status_name(DiamondVmStatus status);
 const char *diamond_vm_error(const DiamondVm *vm);
+bool diamond_native_method_satisfies(uint8_t receiver_type,const char *name,
+                                     uint8_t arity,uint8_t *return_type);
 
 #endif
