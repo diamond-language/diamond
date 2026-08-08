@@ -3696,4 +3696,27 @@ actual="$($diamond -e $'def f(x: Float) -> Float = x\nf(to_f(3))')"
 actual="$(DIAMOND_STRESS_GC=1 $diamond -e '"#{to_f(3)}, #{to_i(3.5)}"')"
 [[ "$actual" == "3.0, 3" ]]
 
-echo "735 tests passed"
+actual="$($diamond -e '-0.0')"
+[[ "$actual" == "-0.0" ]]
+
+actual="$($diamond -e '0.0 == -0.0')"
+[[ "$actual" == "true" ]]
+
+actual="$($diamond -e '1.0 / -0.0')"
+[[ "$actual" == "-Infinity" ]]
+
+actual="$($diamond -e '1_234.567_8')"
+[[ "$actual" == "1234.5678" ]]
+
+nines=""
+for _ in $(seq 1 70); do nines+="9"; done
+actual="$($diamond -e "${nines}.0")"
+[[ "$actual" == "1e+70" ]]
+
+actual="$($diamond -e $'x = 1.0\ni = 0\nwhile i < 400\n x = x / 10.0\n i = i + 1\nend\nx')"
+[[ "$actual" == "0.0" ]]
+
+actual="$(DIAMOND_STRESS_GC=1 $diamond -e '"#{-0.0}, #{1_234.567_8}"')"
+[[ "$actual" == "-0.0, 1234.5678" ]]
+
+echo "743 tests passed"
