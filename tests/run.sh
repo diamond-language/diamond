@@ -3500,4 +3500,38 @@ fi
 grep -q "runtime error" "$error_file"
 rm -f "$error_file"
 
-echo "703 tests passed"
+actual="$($diamond -e $'def f(x: Float) -> Float = x\nf(3.5)')"
+[[ "$actual" == "3.5" ]]
+
+actual="$($diamond -e '3.5 is Float')"
+[[ "$actual" == "true" ]]
+
+actual="$($diamond -e '3.5 is Int')"
+[[ "$actual" == "false" ]]
+
+actual="$($diamond -e '3 is Float')"
+[[ "$actual" == "false" ]]
+
+error_file="$(mktemp)"
+if "$diamond" -e $'def f(x: Float) -> Float = x\nf(3)' >/dev/null 2>"$error_file"; then
+    echo "Int argument for a Float-typed parameter unexpectedly succeeded" >&2
+    exit 1
+fi
+grep -q "expected Float, got Int" "$error_file"
+rm -f "$error_file"
+
+actual="$($diamond -e $'def f(x: Float) -> Float = x\nbegin\n f(3)\nrescue error: TypeError\n 42\nend')"
+[[ "$actual" == "42" ]]
+
+error_file="$(mktemp)"
+if "$diamond" -e 'raise 3.14' >/dev/null 2>"$error_file"; then
+    echo "raise with a bare Float unexpectedly succeeded" >&2
+    exit 1
+fi
+grep -q "uncaught exception: 3.14" "$error_file"
+rm -f "$error_file"
+
+actual="$($diamond -e $'begin\n raise 3.14\nrescue error: Float\n 42\nend')"
+[[ "$actual" == "42" ]]
+
+echo "704 tests passed"
