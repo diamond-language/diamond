@@ -973,6 +973,7 @@ static int parse_type_annotation(Compiler *compiler) {
         if(compiler->current.kind==DIAMOND_TOKEN_LEFT_BRACKET) {
             if(type==DIAMOND_TYPE_CALLABLE) {
                 advance_token(compiler);
+                skip_newlines(compiler);
                 if(compiler->current.kind==DIAMOND_TOKEN_INTEGER) {
                     size_t arity=0;
                     for(size_t index=0;index<compiler->current.span.length;index++) {
@@ -988,6 +989,7 @@ static int parse_type_annotation(Compiler *compiler) {
                 } else if(compiler->current.kind==DIAMOND_TOKEN_LEFT_BRACKET) {
                     advance_token(compiler);callable_arity=0;
                     callable_parameters_typed=true;
+                    skip_newlines(compiler);
                     while(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_BRACKET&&
                           !compiler->failed) {
                         if(callable_arity==16) {
@@ -996,8 +998,10 @@ static int parse_type_annotation(Compiler *compiler) {
                         }
                         callable_parameter_sets[callable_arity++]=
                             (uint8_t)parse_type_annotation(compiler);
+                        skip_newlines(compiler);
                         if(compiler->current.kind!=DIAMOND_TOKEN_COMMA)break;
                         advance_token(compiler);
+                        skip_newlines(compiler);
                     }
                     if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_BRACKET) {
                         fail(compiler,compiler->current.span,
@@ -1014,19 +1018,23 @@ static int parse_type_annotation(Compiler *compiler) {
                 }
             } else if(type==DIAMOND_TYPE_ARRAY||type==DIAMOND_TYPE_HASH) {
                 advance_token(compiler);
+                skip_newlines(compiler);
                 argument_set=(uint8_t)parse_type_annotation(compiler);
                 if(type==DIAMOND_TYPE_HASH) {
+                    skip_newlines(compiler);
                     if(compiler->current.kind!=DIAMOND_TOKEN_COMMA) {
                         fail(compiler,compiler->current.span,
                              "expected ',' between Hash key and value types");break;
                     }
                     advance_token(compiler);
+                    skip_newlines(compiler);
                     second_argument_set=(uint8_t)parse_type_annotation(compiler);
                 }
             } else {
                 fail(compiler,member_span,
                      "this type does not accept arguments");break;
             }
+            skip_newlines(compiler);
             if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_BRACKET) {
                 fail(compiler,compiler->current.span,
                      "expected ']' after collection type arguments");break;
@@ -1103,12 +1111,15 @@ static uint8_t parse_call(Compiler *compiler, DiamondSpan name) {
             callable=loaded;
         }
         advance_token(compiler);
+        skip_newlines(compiler);
         uint8_t arguments[16]; size_t argument_count=0;
         while(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN && !compiler->failed) {
             if(argument_count==16){fail(compiler,compiler->current.span,"too many call arguments");return 0;}
             arguments[argument_count++]=parse_expression(compiler);
+            skip_newlines(compiler);
             if(compiler->current.kind!=DIAMOND_TOKEN_COMMA)break;
             advance_token(compiler);
+            skip_newlines(compiler);
         }
         if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN){fail(compiler,compiler->current.span,"expected ')' after arguments");return 0;}
         advance_token(compiler);
@@ -1131,6 +1142,7 @@ static uint8_t parse_call(Compiler *compiler, DiamondSpan name) {
     size_t type_argument_count=0;
     if(compiler->current.kind==DIAMOND_TOKEN_LEFT_BRACKET) {
         advance_token(compiler);
+        skip_newlines(compiler);
         while(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_BRACKET&&
               !compiler->failed) {
             if(type_argument_count==8) {
@@ -1139,8 +1151,10 @@ static uint8_t parse_call(Compiler *compiler, DiamondSpan name) {
             }
             type_arguments[type_argument_count++]=
                 (uint8_t)parse_type_annotation(compiler);
+            skip_newlines(compiler);
             if(compiler->current.kind!=DIAMOND_TOKEN_COMMA)break;
             advance_token(compiler);
+            skip_newlines(compiler);
         }
         if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_BRACKET) {
             fail(compiler,compiler->current.span,
@@ -1156,6 +1170,7 @@ static uint8_t parse_call(Compiler *compiler, DiamondSpan name) {
         }
     }
     advance_token(compiler);
+    skip_newlines(compiler);
     uint8_t arguments[16];
     size_t argument_count = 0;
     if (compiler->current.kind != DIAMOND_TOKEN_RIGHT_PAREN) {
@@ -1165,8 +1180,10 @@ static uint8_t parse_call(Compiler *compiler, DiamondSpan name) {
                 return 0;
             }
             arguments[argument_count++] = parse_expression(compiler);
+            skip_newlines(compiler);
             if (compiler->current.kind != DIAMOND_TOKEN_COMMA) break;
             advance_token(compiler);
+            skip_newlines(compiler);
             if(compiler->current.kind==DIAMOND_TOKEN_RIGHT_PAREN) break;
         } while (!compiler->failed);
     }
@@ -1218,6 +1235,7 @@ static uint8_t parse_singleton_call(Compiler *compiler,
     uint8_t type_arguments[8];size_t type_argument_count=0;
     if(compiler->current.kind==DIAMOND_TOKEN_LEFT_BRACKET) {
         advance_token(compiler);
+        skip_newlines(compiler);
         while(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_BRACKET&&
               !compiler->failed) {
             if(type_argument_count==8) {
@@ -1226,8 +1244,10 @@ static uint8_t parse_singleton_call(Compiler *compiler,
             }
             type_arguments[type_argument_count++]=
                 (uint8_t)parse_type_annotation(compiler);
+            skip_newlines(compiler);
             if(compiler->current.kind!=DIAMOND_TOKEN_COMMA)break;
             advance_token(compiler);
+            skip_newlines(compiler);
         }
         if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_BRACKET) {
             fail(compiler,compiler->current.span,
@@ -1243,14 +1263,17 @@ static uint8_t parse_singleton_call(Compiler *compiler,
         return 0;
     }
     advance_token(compiler);
+    skip_newlines(compiler);
     uint8_t arguments[16];size_t argument_count=0;
     while(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN&&!compiler->failed) {
         if(argument_count==16) {
             fail(compiler,compiler->current.span,"too many call arguments");return 0;
         }
         arguments[argument_count++]=parse_expression(compiler);
+        skip_newlines(compiler);
         if(compiler->current.kind!=DIAMOND_TOKEN_COMMA)break;
         advance_token(compiler);
+        skip_newlines(compiler);
     }
     if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
         fail(compiler,compiler->current.span,"expected ')' after arguments");return 0;
@@ -1298,13 +1321,17 @@ static uint8_t parse_redefine_method_call(Compiler *compiler, int class_index) {
         return 0;
     }
     advance_token(compiler);
+    skip_newlines(compiler);
     const uint8_t name_register = parse_expression(compiler);
+    skip_newlines(compiler);
     if (compiler->current.kind != DIAMOND_TOKEN_COMMA) {
         fail(compiler, compiler->current.span, "expected ',' after redefine_method name");
         return 0;
     }
     advance_token(compiler);
+    skip_newlines(compiler);
     const uint8_t callable_register = parse_expression(compiler);
+    skip_newlines(compiler);
     if (compiler->current.kind != DIAMOND_TOKEN_RIGHT_PAREN) {
         fail(compiler, compiler->current.span, "expected ')' after redefine_method arguments");
         return 0;
@@ -1333,7 +1360,9 @@ static uint8_t parse_fiber_new_call(Compiler *compiler) {
         return 0;
     }
     advance_token(compiler);
+    skip_newlines(compiler);
     const uint8_t callable_register=parse_expression(compiler);
+    skip_newlines(compiler);
     if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
         fail(compiler,compiler->current.span,"expected ')' after Fiber.new argument");
         return 0;
@@ -1359,13 +1388,17 @@ static uint8_t parse_file_open_call(Compiler *compiler) {
         return 0;
     }
     advance_token(compiler);
+    skip_newlines(compiler);
     const uint8_t path_register=parse_expression(compiler);
+    skip_newlines(compiler);
     if(compiler->current.kind!=DIAMOND_TOKEN_COMMA) {
         fail(compiler,compiler->current.span,"expected ',' after File.open path");
         return 0;
     }
     advance_token(compiler);
+    skip_newlines(compiler);
     const uint8_t mode_register=parse_expression(compiler);
+    skip_newlines(compiler);
     if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
         fail(compiler,compiler->current.span,"expected ')' after File.open arguments");
         return 0;
@@ -1392,13 +1425,17 @@ static uint8_t parse_tcp_connect_call(Compiler *compiler) {
         return 0;
     }
     advance_token(compiler);
+    skip_newlines(compiler);
     const uint8_t host_register=parse_expression(compiler);
+    skip_newlines(compiler);
     if(compiler->current.kind!=DIAMOND_TOKEN_COMMA) {
         fail(compiler,compiler->current.span,"expected ',' after TCPSocket.connect host");
         return 0;
     }
     advance_token(compiler);
+    skip_newlines(compiler);
     const uint8_t port_register=parse_expression(compiler);
+    skip_newlines(compiler);
     if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
         fail(compiler,compiler->current.span,"expected ')' after TCPSocket.connect arguments");
         return 0;
@@ -1425,7 +1462,9 @@ static uint8_t parse_tcp_listen_call(Compiler *compiler) {
         return 0;
     }
     advance_token(compiler);
+    skip_newlines(compiler);
     const uint8_t port_register=parse_expression(compiler);
+    skip_newlines(compiler);
     if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
         fail(compiler,compiler->current.span,"expected ')' after TCPServer.listen argument");
         return 0;
@@ -1440,7 +1479,9 @@ static uint8_t parse_tcp_listen_call(Compiler *compiler) {
 
 static uint8_t parse_chr_call(Compiler *compiler) {
     advance_token(compiler); /* consume '(' */
+    skip_newlines(compiler);
     const uint8_t source=parse_expression(compiler);
+    skip_newlines(compiler);
     if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
         fail(compiler,compiler->current.span,"expected ')' after arguments");
         return 0;
@@ -1456,7 +1497,9 @@ static uint8_t parse_chr_call(Compiler *compiler) {
 
 static uint8_t parse_to_float_call(Compiler *compiler) {
     advance_token(compiler); /* consume '(' */
+    skip_newlines(compiler);
     const uint8_t source = parse_expression(compiler);
+    skip_newlines(compiler);
     if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
         fail(compiler,compiler->current.span,"expected ')' after arguments");
         return 0;
@@ -1472,7 +1515,9 @@ static uint8_t parse_to_float_call(Compiler *compiler) {
 
 static uint8_t parse_to_int_call(Compiler *compiler) {
     advance_token(compiler); /* consume '(' */
+    skip_newlines(compiler);
     const uint8_t source = parse_expression(compiler);
+    skip_newlines(compiler);
     if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
         fail(compiler,compiler->current.span,"expected ')' after arguments");
         return 0;
@@ -1488,7 +1533,9 @@ static uint8_t parse_to_int_call(Compiler *compiler) {
 
 static uint8_t parse_math_unary_call(Compiler *compiler, DiamondMathFunction id) {
     advance_token(compiler); /* consume '(' */
+    skip_newlines(compiler);
     const uint8_t source = parse_expression(compiler);
+    skip_newlines(compiler);
     if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
         fail(compiler,compiler->current.span,"expected ')' after arguments");
         return 0;
@@ -1505,13 +1552,17 @@ static uint8_t parse_math_unary_call(Compiler *compiler, DiamondMathFunction id)
 
 static uint8_t parse_math_binary_call(Compiler *compiler, DiamondMathFunction id) {
     advance_token(compiler); /* consume '(' */
+    skip_newlines(compiler);
     const uint8_t left = parse_expression(compiler);
+    skip_newlines(compiler);
     if(compiler->current.kind!=DIAMOND_TOKEN_COMMA) {
         fail(compiler,compiler->current.span,"expected ',' between arguments");
         return 0;
     }
     advance_token(compiler);
+    skip_newlines(compiler);
     const uint8_t right = parse_expression(compiler);
+    skip_newlines(compiler);
     if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
         fail(compiler,compiler->current.span,"expected ')' after arguments");
         return 0;
@@ -1708,12 +1759,15 @@ static uint8_t parse_name(Compiler *compiler) {
             return 0;
         }
         advance_token(compiler);
+        skip_newlines(compiler);
         uint8_t args[16]; size_t count = 0;
         while (compiler->current.kind != DIAMOND_TOKEN_RIGHT_PAREN && !compiler->failed) {
             if (count == 16) { fail(compiler, compiler->current.span, "too many arguments"); break; }
             args[count++] = parse_expression(compiler);
+            skip_newlines(compiler);
             if (compiler->current.kind != DIAMOND_TOKEN_COMMA) break;
             advance_token(compiler);
+            skip_newlines(compiler);
             if(compiler->current.kind==DIAMOND_TOKEN_RIGHT_PAREN) break;
         }
         if (compiler->current.kind != DIAMOND_TOKEN_RIGHT_PAREN) {
@@ -1753,6 +1807,7 @@ static uint8_t parse_invoke(Compiler *compiler, uint8_t receiver) {
     uint8_t type_arguments[8];size_t type_argument_count=0;
     if(compiler->current.kind==DIAMOND_TOKEN_LEFT_BRACKET) {
         advance_token(compiler);
+        skip_newlines(compiler);
         while(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_BRACKET&&
               !compiler->failed) {
             if(type_argument_count==8) {
@@ -1761,8 +1816,10 @@ static uint8_t parse_invoke(Compiler *compiler, uint8_t receiver) {
             }
             type_arguments[type_argument_count++]=
                 (uint8_t)parse_type_annotation(compiler);
+            skip_newlines(compiler);
             if(compiler->current.kind!=DIAMOND_TOKEN_COMMA)break;
             advance_token(compiler);
+            skip_newlines(compiler);
         }
         if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_BRACKET) {
             fail(compiler,compiler->current.span,
@@ -1774,12 +1831,15 @@ static uint8_t parse_invoke(Compiler *compiler, uint8_t receiver) {
         fail(compiler, compiler->current.span, "expected '(' after method name"); return 0;
     }
     advance_token(compiler);
+    skip_newlines(compiler);
     uint8_t args[16]; size_t count = 0;
     while (compiler->current.kind != DIAMOND_TOKEN_RIGHT_PAREN && !compiler->failed) {
         if (count == 16) { fail(compiler, compiler->current.span, "too many arguments"); break; }
         args[count++] = parse_expression(compiler);
+        skip_newlines(compiler);
         if (compiler->current.kind != DIAMOND_TOKEN_COMMA) break;
         advance_token(compiler);
+        skip_newlines(compiler);
         if(compiler->current.kind==DIAMOND_TOKEN_RIGHT_PAREN) break;
     }
     if (compiler->current.kind != DIAMOND_TOKEN_RIGHT_PAREN) {
@@ -1830,6 +1890,7 @@ static uint8_t parse_super(Compiler *compiler) {
         return 0;
     }
     advance_token(compiler);
+    skip_newlines(compiler);
     uint8_t arguments[16];
     size_t count = 0;
     while (compiler->current.kind != DIAMOND_TOKEN_RIGHT_PAREN && !compiler->failed) {
@@ -1838,8 +1899,10 @@ static uint8_t parse_super(Compiler *compiler) {
             return 0;
         }
         arguments[count++] = parse_expression(compiler);
+        skip_newlines(compiler);
         if (compiler->current.kind != DIAMOND_TOKEN_COMMA) break;
         advance_token(compiler);
+        skip_newlines(compiler);
         if(compiler->current.kind==DIAMOND_TOKEN_RIGHT_PAREN) break;
     }
     if (compiler->current.kind != DIAMOND_TOKEN_RIGHT_PAREN) {
@@ -1877,6 +1940,7 @@ static uint8_t parse_grouping(Compiler *compiler) {
 static uint8_t parse_array(Compiler *compiler) {
     uint8_t elements[32];
     size_t count=0;
+    skip_newlines(compiler);
     if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_BRACKET) {
         do {
             if(count==32) {
@@ -1884,8 +1948,10 @@ static uint8_t parse_array(Compiler *compiler) {
                 return 0;
             }
             elements[count++]=parse_expression(compiler);
+            skip_newlines(compiler);
             if(compiler->current.kind!=DIAMOND_TOKEN_COMMA) break;
             advance_token(compiler);
+            skip_newlines(compiler);
             if(compiler->current.kind==DIAMOND_TOKEN_RIGHT_BRACKET) break;
         } while(!compiler->failed);
     }
@@ -1907,6 +1973,7 @@ static uint8_t parse_array(Compiler *compiler) {
 static uint8_t parse_hash(Compiler *compiler) {
     uint8_t keys[16],values[16];
     size_t count=0;
+    skip_newlines(compiler);
     if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_BRACE) {
         do {
             if(count==16) {
@@ -1921,8 +1988,10 @@ static uint8_t parse_hash(Compiler *compiler) {
             advance_token(compiler);
             values[count]=parse_expression(compiler);
             count++;
+            skip_newlines(compiler);
             if(compiler->current.kind!=DIAMOND_TOKEN_COMMA) break;
             advance_token(compiler);
+            skip_newlines(compiler);
             if(compiler->current.kind==DIAMOND_TOKEN_RIGHT_BRACE) break;
         } while(!compiler->failed);
     }
@@ -2931,6 +3000,7 @@ static uint8_t compile_definition(Compiler *compiler) {
     }
     if(compiler->current.kind==DIAMOND_TOKEN_LEFT_BRACKET) {
         advance_token(compiler);
+        skip_newlines(compiler);
         while(!compiler->failed&&compiler->current.kind!=DIAMOND_TOKEN_RIGHT_BRACKET) {
             if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER||
                function->type_variable_count==8) {
@@ -2951,8 +3021,10 @@ static uint8_t compile_definition(Compiler *compiler) {
             for(size_t index=0;index<compiler->current.span.length;index++)
                 type_variable[index]=compiler->source[compiler->current.span.start+index];
             type_variable[compiler->current.span.length]='\0';advance_token(compiler);
+            skip_newlines(compiler);
             if(compiler->current.kind!=DIAMOND_TOKEN_COMMA)break;
             advance_token(compiler);
+            skip_newlines(compiler);
         }
         if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_BRACKET)
             fail(compiler,compiler->current.span,
@@ -3046,6 +3118,7 @@ static uint8_t compile_definition(Compiler *compiler) {
     const uint8_t parameter_base=(uint8_t)compiler->next_register;
     for(size_t index=0;index<parameter_count;index++)(void)allocate_register(compiler);
     size_t declared_parameter_count=0;bool saw_default=false;
+    skip_newlines(compiler);
     if (compiler->current.kind != DIAMOND_TOKEN_RIGHT_PAREN) {
         do {
             if (compiler->current.kind != DIAMOND_TOKEN_IDENTIFIER) {
@@ -3097,8 +3170,10 @@ static uint8_t compile_definition(Compiler *compiler) {
                     compiler->known_types[parameter]=parameter_set->members[0].id;
             }
             declared_parameter_count++;
+            skip_newlines(compiler);
             if (compiler->current.kind != DIAMOND_TOKEN_COMMA) break;
             advance_token(compiler);
+            skip_newlines(compiler);
             if(compiler->current.kind==DIAMOND_TOKEN_RIGHT_PAREN) break;
         } while (!compiler->failed);
     }
@@ -3448,7 +3523,7 @@ static void compile_attribute(Compiler *compiler,bool reader,bool writer,
                               bool predicate) {
     advance_token(compiler);
     const bool parenthesized=compiler->current.kind==DIAMOND_TOKEN_LEFT_PAREN;
-    if(parenthesized)advance_token(compiler);
+    if(parenthesized) {advance_token(compiler);skip_newlines(compiler);}
     while(!compiler->failed) {
         if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER) {
             fail(compiler,compiler->current.span,"expected attribute name");return;
@@ -3462,8 +3537,14 @@ static void compile_attribute(Compiler *compiler,bool reader,bool writer,
         if(writer&&!compiler->failed)
             compile_attribute_named(compiler,true,false,name,type_set);
         if(compiler->failed)return;
+        /* Only skip newlines in the parenthesized form -- a bare,
+         * unparenthesized list (`attr_accessor a, b`) relies on a bare
+         * trailing newline to end the statement; skipping it here would
+         * silently absorb the next line's tokens as more attributes. */
+        if(parenthesized)skip_newlines(compiler);
         if(compiler->current.kind!=DIAMOND_TOKEN_COMMA)break;
         advance_token(compiler);
+        if(parenthesized)skip_newlines(compiler);
     }
     if(parenthesized) {
         if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
@@ -3477,7 +3558,7 @@ static void compile_attribute(Compiler *compiler,bool reader,bool writer,
 static void compile_visibility(Compiler *compiler,bool is_private) {
     advance_token(compiler);
     const bool parenthesized=compiler->current.kind==DIAMOND_TOKEN_LEFT_PAREN;
-    if(parenthesized)advance_token(compiler);
+    if(parenthesized) {advance_token(compiler);skip_newlines(compiler);}
     if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER) {
         if(parenthesized) {
             fail(compiler,compiler->current.span,
@@ -3522,8 +3603,12 @@ static void compile_visibility(Compiler *compiler,bool is_private) {
         found->is_private=is_private;advance_token(compiler);
         if(writer_name&&compiler->current.kind==DIAMOND_TOKEN_EQUAL)
             advance_token(compiler);
+        /* Only skip newlines in the parenthesized form -- see the same
+         * note in compile_attribute. */
+        if(parenthesized)skip_newlines(compiler);
         if(compiler->current.kind!=DIAMOND_TOKEN_COMMA)break;
         advance_token(compiler);
+        if(parenthesized)skip_newlines(compiler);
         if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER) {
             fail(compiler,compiler->current.span,"expected method after ','");return;
         }
@@ -3542,7 +3627,7 @@ static void compile_module_function(Compiler *compiler) {
         &compiler->program->modules[(size_t)compiler->current_module];
     advance_token(compiler);
     const bool parenthesized=compiler->current.kind==DIAMOND_TOKEN_LEFT_PAREN;
-    if(parenthesized)advance_token(compiler);
+    if(parenthesized) {advance_token(compiler);skip_newlines(compiler);}
     if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER) {
         if(parenthesized) {
             fail(compiler,compiler->current.span,
@@ -3590,8 +3675,12 @@ static void compile_module_function(Compiler *compiler) {
         advance_token(compiler);
         if(writer_name&&compiler->current.kind==DIAMOND_TOKEN_EQUAL)
             advance_token(compiler);
+        /* Only skip newlines in the parenthesized form -- see the same
+         * note in compile_attribute. */
+        if(parenthesized)skip_newlines(compiler);
         if(compiler->current.kind!=DIAMOND_TOKEN_COMMA)break;
         advance_token(compiler);
+        if(parenthesized)skip_newlines(compiler);
     }
     if(parenthesized) {
         if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
@@ -3605,7 +3694,7 @@ static void compile_module_function(Compiler *compiler) {
 static void compile_alias_method(Compiler *compiler) {
     advance_token(compiler);
     const bool parenthesized=compiler->current.kind==DIAMOND_TOKEN_LEFT_PAREN;
-    if(parenthesized)advance_token(compiler);
+    if(parenthesized) {advance_token(compiler);skip_newlines(compiler);}
     if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER) {
         fail(compiler,compiler->current.span,"expected new alias name");return;
     }
@@ -3615,10 +3704,14 @@ static void compile_alias_method(Compiler *compiler) {
     if(alias.length+(alias_writer?1u:0u)>=DIAMOND_MAX_FUNCTION_NAME) {
         fail(compiler,alias,"alias name is too long");return;
     }
+    /* Only skip newlines in the parenthesized form -- see the same note
+     * in compile_attribute. */
+    if(parenthesized)skip_newlines(compiler);
     if(compiler->current.kind!=DIAMOND_TOKEN_COMMA) {
         fail(compiler,compiler->current.span,"expected ',' in alias_method");return;
     }
     advance_token(compiler);
+    if(parenthesized)skip_newlines(compiler);
     if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER) {
         fail(compiler,compiler->current.span,"expected existing method name");return;
     }
@@ -4043,6 +4136,7 @@ static uint8_t compile_interface(Compiler *compiler) {
             fail(compiler,compiler->current.span,"expected '(' after interface method");break;
         }
         advance_token(compiler);
+        skip_newlines(compiler);
         while(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN&&!compiler->failed) {
             if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER||method->arity==16) {
                 fail(compiler,compiler->current.span,"expected interface parameter");break;
@@ -4053,8 +4147,10 @@ static uint8_t compile_interface(Compiler *compiler) {
                 method->parameter_type_sets[method->arity-1]=
                     (uint8_t)parse_type_annotation(compiler);
             }
+            skip_newlines(compiler);
             if(compiler->current.kind!=DIAMOND_TOKEN_COMMA)break;
             advance_token(compiler);
+            skip_newlines(compiler);
         }
         if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
             fail(compiler,compiler->current.span,"expected ')' after interface parameters");break;
