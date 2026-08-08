@@ -3332,6 +3332,18 @@ actual="$($diamond -e $'"#{hash_merge({}, {"a":1})}"')"
 actual="$($diamond -e $'"#{hash_merge({"a":1}, {})}"')"
 [[ "$actual" == "{a: 1}" ]]
 
+actual="$($diamond -e $'def run()\n values = {}\n index = 0\n while index < 1000\n  values[index] = index * 2\n  index = index + 1\n end\n ok = true\n index = 0\n while index < 1000\n  if values.key_at(index) != index || values.value_at(index) != index * 2\n   ok = false\n  end\n  index = index + 1\n end\n "#{ok}, #{values.length()}"\nend\nrun()')"
+[[ "$actual" == "true, 1000" ]]
+
+actual="$($diamond -e $'def run()\n values = {}\n index = 0\n while index < 500\n  values["key" + "#{index}"] = index\n  index = index + 1\n end\n ok = true\n index = 0\n while index < 500\n  key = "key" + "#{index}"\n  if values[key] != index || values.key_at(index) != key\n   ok = false\n  end\n  index = index + 1\n end\n "#{ok}, #{values.length()}"\nend\nrun()')"
+[[ "$actual" == "true, 500" ]]
+
+actual="$($diamond -e $'def run()\n values = {}\n values["first"] = 1\n index = 0\n while index < 200\n  values["k#{index}"] = index\n  index = index + 1\n end\n values["first"] = 999\n "#{values.key_at(0)}, #{values.value_at(0)}, #{values.length()}"\nend\nrun()')"
+[[ "$actual" == "first, 999, 201" ]]
+
+actual="$(DIAMOND_STRESS_GC=1 $diamond -e $'def run()\n values = {}\n index = 0\n while index < 100\n  values[index] = index\n  index = index + 1\n end\n total = 0\n index = 0\n while index < 100\n  total = total + values[index]\n  index = index + 1\n end\n total\nend\nrun()')"
+[[ "$actual" == "4950" ]]
+
 actual="$($diamond -e 'abs(-5)')"
 [[ "$actual" == "5" ]]
 
@@ -3447,4 +3459,4 @@ wait "$stress_http_pid" 2>/dev/null || true
 [[ "$stress_http_response" == $'HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 13\r\n\r\nhello, /world' ]]
 rm -f "$stress_http_out"
 
-echo "701 tests passed"
+echo "702 tests passed"
