@@ -3,7 +3,28 @@
 #include "vm.h"
 
 #include <inttypes.h>
+#include <math.h>
 #include <stdio.h>
+
+/* Pragmatic %.15g-based format, not a shortest-round-trip algorithm
+ * (Grisu/Ryu-quality) - a documented simplification. Forces a trailing
+ * .0 for whole-number results so a Float never prints indistinguishably
+ * from an Int. */
+static void fprint_float(FILE *stream, double real) {
+    if (isnan(real)) { fputs("NaN", stream); return; }
+    if (isinf(real)) { fputs(real < 0 ? "-Infinity" : "Infinity", stream); return; }
+    char buffer[32];
+    const int length = snprintf(buffer, sizeof buffer, "%.15g", real);
+    bool has_marker = false;
+    for (int index = 0; index < length; index++) {
+        if (buffer[index] == '.' || buffer[index] == 'e' || buffer[index] == 'E') {
+            has_marker = true;
+            break;
+        }
+    }
+    fputs(buffer, stream);
+    if (!has_marker) fputs(".0", stream);
+}
 
 void diamond_value_fprint(FILE *stream, DiamondValue value) {
     switch (value.kind) {
@@ -15,6 +36,9 @@ void diamond_value_fprint(FILE *stream, DiamondValue value) {
             break;
         case DIAMOND_VALUE_INT:
             fprintf(stream, "%" PRId64, value.as.integer);
+            break;
+        case DIAMOND_VALUE_FLOAT:
+            fprint_float(stream, value.as.real);
             break;
         case DIAMOND_VALUE_OBJECT: {
             const DiamondString *string = (const DiamondString *)value.as.object;

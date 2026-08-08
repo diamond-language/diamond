@@ -107,6 +107,7 @@ typedef enum DiamondOpCode : uint8_t {
 
 typedef enum DiamondTypeId : uint8_t {
     DIAMOND_TYPE_INT,
+    DIAMOND_TYPE_FLOAT,
     DIAMOND_TYPE_STRING,
     DIAMOND_TYPE_BOOL,
     DIAMOND_TYPE_NIL,

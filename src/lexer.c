@@ -168,6 +168,35 @@ DiamondToken diamond_lexer_next(DiamondLexer *lexer) {
             }
             break;
         }
+        /* A '.' only continues the number into a float literal if
+         * immediately followed by a digit - '.' followed by anything
+         * else (an identifier-start character, for method calls like
+         * 5.abs(), or nothing) leaves the '.' for the next token, same
+         * disambiguation rule Ruby's own lexer uses. */
+        if(lexer->source[lexer->current]=='.') {
+            const char after_dot=lexer->source[lexer->current+1];
+            if(after_dot>='0' && after_dot<='9') {
+                advance(lexer);
+                while (true) {
+                    const char next=lexer->source[lexer->current];
+                    if(next>='0' && next<='9') {
+                        advance(lexer);
+                        continue;
+                    }
+                    if(next=='_') {
+                        const char after=lexer->source[lexer->current+1];
+                        if(after<'0' || after>'9') {
+                            advance(lexer);
+                            return token(lexer,DIAMOND_TOKEN_ERROR);
+                        }
+                        advance(lexer);
+                        continue;
+                    }
+                    break;
+                }
+                return token(lexer, DIAMOND_TOKEN_FLOAT);
+            }
+        }
         return token(lexer, DIAMOND_TOKEN_INTEGER);
     }
     if (character == '"') {

@@ -8,6 +8,7 @@ typedef enum DiamondValueKind : uint8_t {
     DIAMOND_VALUE_NIL,
     DIAMOND_VALUE_BOOL,
     DIAMOND_VALUE_INT,
+    DIAMOND_VALUE_FLOAT,
     DIAMOND_VALUE_OBJECT,
 } DiamondValueKind;
 
@@ -18,6 +19,7 @@ typedef struct DiamondValue {
     union {
         bool boolean;
         int64_t integer;
+        double real;
         DiamondObject *object;
     } as;
 } DiamondValue;
@@ -27,6 +29,8 @@ typedef struct DiamondValue {
     ((DiamondValue){.kind = DIAMOND_VALUE_BOOL, .as.boolean = (value_)})
 #define DIAMOND_INT(value_) \
     ((DiamondValue){.kind = DIAMOND_VALUE_INT, .as.integer = (value_)})
+#define DIAMOND_FLOAT(value_) \
+    ((DiamondValue){.kind = DIAMOND_VALUE_FLOAT, .as.real = (value_)})
 #define DIAMOND_OBJECT(value_) \
     ((DiamondValue){.kind = DIAMOND_VALUE_OBJECT, .as.object = (DiamondObject *)(value_)})
 

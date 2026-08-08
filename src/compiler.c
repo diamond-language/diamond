@@ -1,6 +1,9 @@
 #include "compiler.h"
 
+#include <errno.h>
 #include <limits.h>
+#include <math.h>
+#include <stdlib.h>
 #include <string.h>
 
 enum { DIAMOND_MAX_LOCALS = 64 };
@@ -573,6 +576,35 @@ static uint8_t parse_integer(Compiler *compiler) {
     const uint8_t constant = add_constant(compiler, DIAMOND_INT(value));
     emit_instruction(compiler, DIAMOND_OP_CONSTANT, destination, constant, 0, 2);
     compiler->known_types[destination]=DIAMOND_TYPE_INT;
+    return destination;
+}
+
+static uint8_t parse_float(Compiler *compiler) {
+    const DiamondSpan span = compiler->previous.span;
+    char buffer[80];
+    size_t length = 0;
+    for (size_t index = 0; index < span.length; index++) {
+        const char ch = compiler->source[span.start + index];
+        if (ch == '_') continue;
+        if (length >= sizeof(buffer) - 1) {
+            fail(compiler, span, "float literal is too long");
+            return 0;
+        }
+        buffer[length++] = ch;
+    }
+    buffer[length] = '\0';
+    errno = 0;
+    char *end = nullptr;
+    const double value = strtod(buffer, &end);
+    if (end != buffer + length ||
+        (errno == ERANGE && (value == HUGE_VAL || value == -HUGE_VAL))) {
+        fail(compiler, span, "float literal is too large");
+        return 0;
+    }
+    const uint8_t destination = allocate_register(compiler);
+    const uint8_t constant = add_constant(compiler, DIAMOND_FLOAT(value));
+    emit_instruction(compiler, DIAMOND_OP_CONSTANT, destination, constant, 0, 2);
+    compiler->known_types[destination]=DIAMOND_TYPE_FLOAT;
     return destination;
 }
 
@@ -2064,6 +2096,8 @@ static uint8_t parse_prefix(Compiler *compiler) {
     switch (compiler->previous.kind) {
         case DIAMOND_TOKEN_INTEGER:
             return parse_integer(compiler);
+        case DIAMOND_TOKEN_FLOAT:
+            return parse_float(compiler);
         case DIAMOND_TOKEN_STRING:
             return parse_string(compiler);
         case DIAMOND_TOKEN_TRUE:

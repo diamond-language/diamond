@@ -4,6 +4,7 @@
 
 #include <ctype.h>
 #include <errno.h>
+#include <math.h>
 #include <stdckdint.h>
 #include <inttypes.h>
 #include <stdio.h>
@@ -594,6 +595,13 @@ static DiamondListenerHandle *allocate_listener_handle(DiamondVm *vm,int fd) {
 }
 
 static bool values_equal(DiamondValue left, DiamondValue right) {
+    /* Cross-type numeric equality (3 == 3.0) ahead of the kind guard,
+     * per the auto-promotion design: Int widens to double for the
+     * comparison. */
+    if(left.kind==DIAMOND_VALUE_INT&&right.kind==DIAMOND_VALUE_FLOAT)
+        return (double)left.as.integer==right.as.real;
+    if(left.kind==DIAMOND_VALUE_FLOAT&&right.kind==DIAMOND_VALUE_INT)
+        return left.as.real==(double)right.as.integer;
     if (left.kind != right.kind) {
         return false;
     }
@@ -604,6 +612,8 @@ static bool values_equal(DiamondValue left, DiamondValue right) {
             return left.as.boolean == right.as.boolean;
         case DIAMOND_VALUE_INT:
             return left.as.integer == right.as.integer;
+        case DIAMOND_VALUE_FLOAT:
+            return left.as.real == right.as.real;
         case DIAMOND_VALUE_OBJECT: {
             if (left.as.object->kind != right.as.object->kind) return false;
             if(left.as.object->kind==DIAMOND_OBJECT_INSTANCE ||
@@ -650,6 +660,21 @@ static uint64_t hash_value(DiamondValue value) {
         case DIAMOND_VALUE_NIL:return hash_mix64(0);
         case DIAMOND_VALUE_BOOL:return hash_mix64(value.as.boolean?1:2);
         case DIAMOND_VALUE_INT:return hash_mix64((uint64_t)value.as.integer);
+        case DIAMOND_VALUE_FLOAT: {
+            const double real=value.as.real;
+            /* A Float that's exactly equal to some Int64 (e.g. 3.0)
+             * must hash the same way that Int64 does, since
+             * values_equal treats 3 == 3.0 as true. Bounds-checked
+             * before the int64 cast to avoid UB on an out-of-range or
+             * non-finite double. */
+            if(!isnan(real)&&!isinf(real)&&
+               real>=-9223372036854775808.0&&real<9223372036854775808.0&&
+               real==(double)(int64_t)real)
+                return hash_mix64((uint64_t)(int64_t)real);
+            uint64_t bits;
+            memcpy(&bits,&real,sizeof bits);
+            return hash_mix64(bits);
+        }
         case DIAMOND_VALUE_OBJECT: {
             const DiamondObject *object=value.as.object;
             if(object->kind==DIAMOND_OBJECT_INSTANCE||
@@ -1581,6 +1606,22 @@ static bool builder_format_value(StringBuilder *builder,DiamondValue value) {
         length=snprintf(scalar,sizeof scalar,"%" PRId64,value.as.integer);
         return length>=0&&(size_t)length<sizeof scalar&&
             builder_append(builder,scalar,(size_t)length);
+    }
+    if(value.kind==DIAMOND_VALUE_FLOAT) {
+        const double real=value.as.real;
+        if(isnan(real))return builder_append(builder,"NaN",3);
+        if(isinf(real))
+            return real<0?builder_append(builder,"-Infinity",9):
+                          builder_append(builder,"Infinity",8);
+        length=snprintf(scalar,sizeof scalar,"%.15g",real);
+        if(length<0||(size_t)length>=sizeof scalar)return false;
+        bool has_marker=false;
+        for(int index=0;index<length;index++)
+            if(scalar[index]=='.'||scalar[index]=='e'||scalar[index]=='E') {
+                has_marker=true;break;
+            }
+        if(!builder_append(builder,scalar,(size_t)length))return false;
+        return has_marker||builder_append(builder,".0",2);
     }
     const DiamondObject *object=value.as.object;
     if(object->kind==DIAMOND_OBJECT_STRING) {
