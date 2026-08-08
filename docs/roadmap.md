@@ -859,6 +859,24 @@ future work.
   inside `parse_expression`'s own recursive handling of an element's
   value, which already had its own correct newline handling untouched
   by any of this.
+- Follow-up: `interface Sub < Base1, Base2`'s base-interface list, the
+  one site explicitly deferred from the round above for having no
+  closing bracket to skip toward. The actual gap turned out narrower
+  than that made it sound: a trailing newline after the last base name
+  (`interface B < A\n def bar()\nend`) already worked, because falling
+  out of the loop (a newline is never `,`, so the loop's own
+  "not-a-comma" exit condition already handles it) lands directly on
+  `consume_block_start`, which already expects and skips exactly that
+  newline before a block body. The only real failure was a newline
+  right after `<` or right after a comma (`interface B <\n A,\n X`),
+  fixed with two `skip_newlines` calls — after consuming `<`, and after
+  consuming a comma. Deliberately did **not** add a third call right
+  after consuming a base name, before the comma check (the shape every
+  other site in the prior round uses): that would consume the same
+  trailing newline `consume_block_start` needs to see still present,
+  regressing the case that already worked, since `consume_block_start`
+  fails outright if `current` isn't already a literal newline token
+  when it runs (it doesn't tolerate having been skipped past already).
 
 ## Next priorities
 
