@@ -3447,4 +3447,13 @@ wait "$stress_http_pid" 2>/dev/null || true
 [[ "$stress_http_response" == $'HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 13\r\n\r\nhello, /world' ]]
 rm -f "$stress_http_out"
 
-echo "701 tests passed"
+actual="$($diamond -e $'def test(flag)\n if flag\n  x = 5\n end\n return x\nend\ntest(false)')"
+[[ "$actual" == "nil" ]]
+
+actual="$($diamond -e $'def test(flag)\n if flag\n  x = 5\n end\n return x\nend\ntest(true)')"
+[[ "$actual" == "5" ]]
+
+actual="$(DIAMOND_STRESS_GC=1 $diamond -e $'def fib(n)\n if n < 2\n  n\n else\n  fib(n - 1) + fib(n - 2)\n end\nend\nfib(15)')"
+[[ "$actual" == "610" ]]
+
+echo "704 tests passed"
