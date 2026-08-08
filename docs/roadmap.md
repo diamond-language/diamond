@@ -781,6 +781,32 @@ future work.
     return annotation, matching the existing conservative-return
     convention already used for user-class methods — just never one
     that requires a specific return type.
+- `facet`, a standalone package-manager CLI (`tools/facet.c`, its own
+  binary at `build/facet`, deliberately not part of the `diamond`
+  runtime or its release — the same relationship RubyGems' `gem` has to
+  `ruby`), closing out the package-manager line item's fetch/install/
+  lockfile pieces. Written in C rather than Diamond itself since Diamond
+  has no HTTP client or process-spawning primitive yet (and doesn't need
+  either now — see below); links the compiler+VM as a library exactly
+  like the existing `tests/*.c` binaries already do, reusing
+  `diamond_compile`/`diamond_vm_run` to read `package.di`/`facet.lock`
+  the same way `src/loader.c`'s `validate_package_manifest` already
+  evaluates manifests, rather than writing a second parser. Packages are
+  identified by git URL, not a registry — no index service to stand up;
+  `git clone`/`checkout` run via `fork`/`execvp` (argv array, never a
+  shell, so a URL/ref pulled from a manifest can't be interpreted as
+  shell syntax). Full design and rationale in `docs/packages.md`,
+  including why resolving a dependency graph here is inseparable from
+  fetching it (no registry to query metadata from without a clone) and
+  why a ref conflict between two requesters is a hard error rather than
+  something resolved (the same flat-namespace constraint that keeps
+  `version` unconsumed — two versions of one package could never coexist
+  in a single compiled program, so there's no "resolve to whichever"
+  fallback). Found and worked around a genuine, pre-existing parser
+  limitation along the way: Diamond's `Hash`-literal parser doesn't
+  accept a newline between `{` and its first entry, so `facet.lock` (and
+  any manifest) must be single-line — documented in `docs/packages.md`
+  rather than fixed, out of scope for this round.
 
 ## Next priorities
 
@@ -795,14 +821,6 @@ None queued.
   struct-copy elimination). Actual JIT compilation remains a distinct,
   larger, not-yet-attempted piece of work.
 - Self-hosting selected compiler and standard-library components.
-- Dependency resolution, a lockfile, and a way to fetch/install packages
-  into a project — the remainder of the "Bundler-like package manager"
-  idea beyond bare name resolution and manifests (see `docs/packages.md`
-  for what's already built). The manifest's `version` field is already
-  declared and type-validated but not yet consumed by anything — this is
-  where it would first get read for something. Fetching specifically has
-  no buildable target yet: there is no HTTP client and no registry to
-  fetch from.
 - Arbitrary-precision integers (a bignum type, auto-promoting on
   overflow — the Ruby/Python/Lisp-family style, not just a library
   type like Java's `BigInteger`). Currently `Int` is a fixed 64-bit

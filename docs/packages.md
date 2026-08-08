@@ -3,9 +3,11 @@
 This document covers Diamond's package resolution — a `diamond_packages/`
 convention `require` falls back to when a bare package name doesn't
 resolve as a relative file, plus the optional manifest a package can
-declare its identity with. See `docs/roadmap.md` for what's still
-aspirational (versions actually being used for anything, a lockfile, an
-installer).
+declare its identity with — and `facet`, the standalone tool that
+fetches and installs those packages. `facet` is a separate program (its
+own binary, `build/facet`, built from `tools/facet.c`), not part of the
+`diamond` runtime or its release — the same relationship RubyGems' `gem`
+has to `ruby`. See `docs/roadmap.md` for what's still aspirational.
 
 ## `require "name"` resolving a package
 
@@ -76,11 +78,90 @@ supported. A manifest is metadata, not a program — this keeps it to a
 single self-contained expression and avoids the loader recursing into
 itself to resolve a manifest's own dependencies. There's no sandboxing
 around manifest execution beyond that — same trust model the rest of the
-language already has for any program it runs, and packages are
-hand-installed locally, not fetched from anywhere untrusted.
+language already has for any program it runs.
 
 If no `package.di` exists at all, none of this applies — the package
 resolves exactly as it would with no manifest support at all.
+
+A manifest must be **one line**: Diamond's `Hash`-literal parser doesn't
+currently accept a newline between `{` and its first entry, so a
+pretty-printed multi-line manifest fails to compile — a pre-existing
+parser limitation, not specific to manifests. Every example in this
+document is single-line for that reason.
+
+### Dependencies
+
+```ruby
+# package.di
+{"name": "myapp", "version": "0.1.0", "dependencies": {"greeter": {"git": "https://example.com/user/greeter", "tag": "v1.0.0"}}}
+```
+
+An optional `dependencies` key, read only by `facet` (see below) — the
+runtime's own manifest validation ignores it entirely, so adding it to
+an existing manifest changes nothing about how `require` behaves. It's
+a `Hash` from package name to a spec `Hash` with a required String
+`git` key and **exactly one** of `tag`, `branch`, or `commit` (also
+String) — ambiguous or missing ref keys are rejected before anything is
+fetched.
+
+Declaring a dependency here does **not** implicitly `require` it —
+`require` and `dependencies` are separate mechanisms. A package that
+uses a dependency's functions still needs its own explicit
+`require "greeter"`, exactly as if that file were sitting locally;
+`dependencies` only tells `facet` what to fetch and where to put it so
+that `require` can find it.
+
+## `facet`
+
+`facet install` reads `package.di` in the current directory, resolves
+every dependency (recursively — a dependency's own `dependencies` are
+followed too), fetches each one via `git clone`/`checkout` (never a
+shell — arguments go straight to `execvp`, so a URL or ref pulled from
+a manifest can never be interpreted as shell syntax), and installs the
+result into `diamond_packages/<name>/` with `.git/` stripped (the
+lockfile below is the source of truth for "what commit," not a live
+repository sitting inside `diamond_packages/`). It writes `facet.lock`
+alongside `package.di`, also a single-line Diamond `Hash` literal:
+
+```ruby
+# facet.lock
+{"greeter": {"git": "https://example.com/user/greeter", "commit": "a1b2c3d..."}}
+```
+
+a flat map of every resolved package (the whole transitive set, already
+flattened) to its exact commit. Once `facet.lock` exists, `facet
+install` installs exactly what it says without re-resolving anything —
+the fast, reproducible path, unaffected by a tag or branch moving in
+the meantime. `facet update` always re-resolves from `package.di`
+(picking up anything a tracked branch has moved to) and rewrites the
+lock.
+
+Because Diamond has no registry to query dependency metadata from,
+resolving *is* fetching: discovering a dependency's own transitive
+dependencies requires a clone of it to read its `package.di`. There is
+therefore no separate "resolve, then fetch" phase.
+
+**Version conflicts are hard errors, not resolved.** If two different
+requesters in the dependency graph want a different `git`/ref for the
+same package name, `facet` reports both requesters by name and stops —
+it can never pick one over the other, because of the same flat-namespace
+constraint noted above: two versions of one package name could never
+coexist in a single compiled Diamond program anyway, so there is no
+"resolve to whichever" fallback to fall back to. A cycle in the
+dependency graph (A depends on B depends on A) terminates safely with
+no special handling — the second time the walk reaches an
+already-resolved name it just stops, the same check that would catch a
+genuine version conflict.
+
+A cloned dependency's own `package.di` must declare a `name` matching
+the dependency key it was fetched as — the same rule `require` already
+enforces for hand-installed packages (see above) — so a misconfigured
+or renamed dependency fails clearly at `facet install` time rather than
+surprising `require` later.
+
+No `facet init` or `facet add <dep>` — `package.di` stays a plain,
+hand-edited Diamond `Hash` literal; only the fetch/install/lock steps
+are automated.
 
 ## Precedence
 
@@ -93,25 +174,23 @@ alongside it.
 
 ## What's deliberately out of scope so far
 
-- **Dependencies in the manifest**: only `name` and `version` are read;
-  there is no `dependencies` key or anything that consults one.
-- **Versions actually meaning anything**: `version` is validated to be a
-  String if present, but nothing compares, selects, or otherwise consumes
-  it. This isn't just unbuilt — it's architecturally constrained:
-  Diamond compiles every `require`d file into *one* flat namespace with
-  small, global, shared tables (`DIAMOND_MAX_FUNCTIONS`,
-  `DIAMOND_MAX_CLASSES`, `DIAMOND_MAX_MODULES` in `src/vm.h`), so two
-  versions of the same package could never coexist in one compiled
-  program — same function/class names would collide. Any future
-  version-resolution logic can only ever mean "resolve to exactly one
-  version, or error," never real multi-version support.
-- **A lockfile**: meaningless without versions to lock.
-- **Fetching/installing**: there is no HTTP client in Diamond (only
-  outbound `TCPSocket.connect` and `lib/http.di`'s *server*-side pieces —
-  see `docs/io.md`/`docs/http.md`) and no process-spawning capability, so
-  there's no way to build fetch tooling yet even if there were a registry
-  to fetch from, which there also isn't. Populating `diamond_packages/` is
-  a manual, hand-managed step for now.
+- **The `version` key**: still validated to be a String if present, but
+  nothing compares, selects, or otherwise consumes it — `dependencies`
+  pins an exact git ref instead, entirely independent of `version`.
+  This isn't just unbuilt — it's architecturally constrained: Diamond
+  compiles every `require`d file into *one* flat namespace with small,
+  global, shared tables (`DIAMOND_MAX_FUNCTIONS`, `DIAMOND_MAX_CLASSES`,
+  `DIAMOND_MAX_MODULES` in `src/vm.h`), so two versions of the same
+  package could never coexist in one compiled program — same
+  function/class names would collide. This is also why `facet` treats a
+  ref conflict as a hard error rather than trying to resolve it (see
+  above): there is no such thing as "both," so nothing could ever be
+  resolved *to*.
+- **A hosted registry/index**: `facet install greeter` by short name,
+  search, or anything else that would need a service to query — package
+  identity is a git URL, full stop.
+- **`facet init`/`facet add`**: manifest-editing commands; `package.di`
+  is hand-edited.
 
 Each of these is a plausible next slice, sized independently rather than
 attempted together — see `docs/roadmap.md`.
