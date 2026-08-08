@@ -39,8 +39,12 @@ to_i(y)      # => 2
 `Int` is a 64-bit signed integer; `Float` is an IEEE-754 double. Float
 literals need a digit on both sides of the `.` (`2.5`, not `.5` or `2.`),
 so `5.abs()` still parses as a method call rather than a float literal.
-Both accept `_` digit separators (`1_234.567_8`). There's no exponent
-notation (`1e10`) yet.
+Both accept `_` digit separators (`1_234.567_8`). Exponent notation
+(`1e10`, `1.5e-3`, `2E+7`) is also accepted, with or without a `.`
+fraction, and always produces a `Float`; an `e`/`E` not followed by a
+valid exponent (no digits, e.g. `5e`) is left for the next token
+rather than erroring, the same "peek before committing" rule the `.`
+fraction already uses.
 
 Mixing `Int` and `Float` in arithmetic or comparisons auto-promotes the
 `Int` side to `Float` — `3 + 2.5` and `3 == 3.0` both behave as you'd
@@ -60,7 +64,12 @@ it through `to_f` first.
 
 Floats print with a forced `.0` when they'd otherwise look like an
 integer (`3.0`, not `3`), so they stay visually distinct from `Int` in
-`puts` output and string interpolation.
+`puts` output and string interpolation. Formatting always finds the
+shortest decimal that round-trips back to the exact same value (an
+iterative `%g`-precision search against `strtod`, not a fixed digit
+count), so every `Float` prints exactly and unambiguously — including
+values that need the full 17 significant digits a `double` can carry,
+which a naive fixed-precision format can silently get wrong.
 
 ## Functions and closures
 

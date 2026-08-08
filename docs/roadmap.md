@@ -701,6 +701,42 @@ future work.
   requiring `-lm` at link time (unlike `isnan`/`isinf`, which are
   compiler builtins and need no library at all) — added a shared
   `LDLIBS` Makefile variable applied to every build and test target.
+- Exponent-notation literals (`1e10`, `1.5e-3`, `2E+7`) and
+  shortest-round-trip `Float` formatting, closing out the Float
+  milestone's deferred list entirely. The lexer change is purely
+  additive: after the existing digit-run/`.`-fraction scan, peek for
+  `e`/`E` optionally followed by `+`/`-` and at least one digit,
+  same "peek before committing" shape the `.`-fraction check already
+  uses (a bare `5e` still leaves `e` for the next token rather than
+  erroring). `parse_float` needed no changes at all — it already
+  copies the token span into a buffer and calls `strtod`, which
+  handles exponent notation natively once the token span covers it.
+  Formatting replaced the fixed `%.15g` (not actually always
+  sufficient to round-trip an arbitrary `double` — 17 significant
+  digits is the number that provably is) with an iterative search:
+  try `%.*g` at precision 1 through 17, re-parse with `strtod`, stop
+  at the first precision whose bit pattern (not `==`, so `-0.0`/`0.0`
+  stay distinct) matches exactly. Needed one correction after the
+  initial version: `%g` switches to scientific notation once its
+  precision is less than or equal to the value's own decimal exponent,
+  so starting the search at precision 1 unconditionally made round
+  values like `10.0` hit that threshold immediately (`"%.1g"` →
+  `"1e+01"`, which round-trips exactly and so ended the search on the
+  wrong notation). Fixed by probing the exponent first via `"%.0e"`
+  (not `log10` — `log10(10.0)` can land a hair under `1.0` and round
+  the wrong way) and starting the search at a precision that keeps
+  `%g` in fixed-point mode for that magnitude — but only when doing so
+  can actually change the outcome (exponent 1–16); for larger
+  exponents `%g` would use scientific notation at every precision up
+  to 17 regardless, so starting at 1 there instead finds the
+  genuinely shortest scientific form (e.g. a 70-digit `Float` literal
+  one below `1e70` is exactly the same `double` as `1e+70`, and should
+  print that way, not as a needless 17-digit mantissa). Two
+  already-landed tests had been silently relying on the old fixed
+  15-digit format's rounding rather than an exact round-trip
+  (`pow(2.0, 0.5)`, whose old expected output `"1.4142135623731"` does
+  not parse back to the same bits as `sqrt(2)`) and were corrected to
+  their exact values as part of this change.
 
 ## Next priorities
 
