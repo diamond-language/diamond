@@ -2139,10 +2139,12 @@ static uint8_t parse_prefix(Compiler *compiler) {
         case DIAMOND_TOKEN_MINUS: {
             const uint8_t operand = parse_precedence(compiler, PREC_PREFIX);
             const uint8_t destination = allocate_register(compiler);
-            emit_instruction(compiler, DIAMOND_OP_NEGATE_INT, destination,
+            emit_instruction(compiler, DIAMOND_OP_NEGATE, destination,
                              operand, 0, 2);
             if(compiler->known_types[operand]==DIAMOND_TYPE_INT)
                 compiler->known_types[destination]=DIAMOND_TYPE_INT;
+            else if(compiler->known_types[operand]==DIAMOND_TYPE_FLOAT)
+                compiler->known_types[destination]=DIAMOND_TYPE_FLOAT;
             return destination;
         }
         case DIAMOND_TOKEN_BANG:

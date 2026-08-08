@@ -2357,11 +2357,16 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 registers[destination] = DIAMOND_INT(result_value);
                 break;
             }
-            case DIAMOND_OP_NEGATE_INT: {
+            case DIAMOND_OP_NEGATE: {
                 uint8_t destination = 0;
                 uint8_t operand = 0;
                 READ_BYTE(destination);
                 READ_BYTE(operand);
+                if (registers[operand].kind == DIAMOND_VALUE_FLOAT) {
+                    registers[destination] =
+                        DIAMOND_FLOAT(-registers[operand].as.real);
+                    break;
+                }
                 if (registers[operand].kind != DIAMOND_VALUE_INT) {
                     VM_RETURN(DIAMOND_VM_TYPE_ERROR);
                 }

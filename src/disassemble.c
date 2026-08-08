@@ -206,8 +206,8 @@ static bool disassemble_chunk(FILE *stream, const char *name,
             case DIAMOND_OP_GREATER_EQUAL:
                 offset = three_registers(stream, chunk, "GREATER_EQUAL", offset);
                 break;
-            case DIAMOND_OP_NEGATE_INT:
-                offset = two_registers(stream, chunk, "NEGATE_INT", offset);
+            case DIAMOND_OP_NEGATE:
+                offset = two_registers(stream, chunk, "NEGATE", offset);
                 break;
             case DIAMOND_OP_EQUAL:
                 offset = three_registers(stream, chunk, "EQUAL", offset);
