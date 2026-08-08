@@ -207,7 +207,24 @@ exceptions, and explicit `return` alike. Built-in exception classes:
 ## Collections
 
 `[1, 2]` for arrays and `{"key": value}` for hashes, both with optional
-type parameters. `.push`, `.pop`, and `.length()` are native on both.
+type parameters, and both can be split across lines — a newline is
+allowed right after the opening bracket, right after each `,`, and
+right before the closing bracket, the same as every other
+bracket-delimited, comma-separated list in the language (call
+arguments, `def` parameter declarations, generic type-argument lists,
+and more):
+
+```ruby
+config = {
+  "name": "myapp",
+  "values": [
+    1,
+    2,
+  ],
+}
+```
+
+`.push`, `.pop`, and `.length()` are native on both.
 Strings support `.length()`, `.index_of(needle)` (position or `nil`),
 `.slice(start, length)`, `.to_i()`/`.to_f()` (lenient decimal parsing —
 `.to_f()` additionally accepts exponent notation like `"1e3"` even

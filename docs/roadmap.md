@@ -820,6 +820,45 @@ future work.
   own `test.sh`. `docs/http.md` is gone from this repo along with it —
   the library's documentation now lives with the library, in the new
   repo's own README.
+- Fixed the `Hash`-literal newline limitation flagged in the previous
+  round: bracket-delimited, comma-separated lists across
+  `src/compiler.c` failed to parse when a newline appeared right after
+  the opening bracket, right after a comma, or right before the
+  closing bracket — not just `Hash` literals as originally scoped, but
+  the identical defect in array literals and every call-argument list
+  too, confirmed by direct testing (`[1,\n2]`, `add(1,\n2)` both failed
+  identically). Root cause: these parsing loops never called the
+  existing `skip_newlines` helper (already used elsewhere for
+  `then`/`do`/block-start newlines) at the three points a
+  bracket-delimited list needs it — right after the opening bracket,
+  right after a comma, and right before the closing bracket (the third
+  point turns out to be subsumed by placing the second one immediately
+  after parsing each element, before checking for a comma, rather than
+  needing a separate check). Applied uniformly across every genuinely
+  bracket-delimited construct: array/hash literals, every call-argument
+  list (closures, named functions, methods, `super`, `ClassName.new`,
+  module singleton calls), generic type-argument/parameter lists,
+  `def`/interface parameter declarations, `Array[T]`/`Hash[K,V]`/
+  `Callable[...]` type annotations, and the small fixed-arity builtin
+  calls (`File.open`, `TCPSocket.connect`, `redefine_method`, `chr`,
+  `to_f`, `to_i`, `sqrt`/`pow`/etc., `Fiber.new`, `TCPServer.listen`).
+  One class of site needed a narrower, conditional fix rather than the
+  same three-point pattern: `attr_accessor`/`private`/`module_function`/
+  `alias_method` accept an *optional* `(...)` — for the unparenthesized,
+  bare form (`attr_accessor a, b`), a bare trailing newline is what
+  already correctly ends the statement, so newline-skipping there is
+  gated on `parenthesized` being true, applied only within that branch,
+  leaving the bare form's behavior completely untouched. `interface
+  Sub < Base1, Base2`'s base-interface list was confirmed but
+  deliberately left alone — it isn't bracket-delimited at all (no
+  closing token to skip toward), a different fix shape out of scope for
+  this round. Verified the change doesn't touch newline handling
+  *inside* a nested block expression appearing as a list element (e.g.
+  a multi-statement `if...end` as a hash value): the fix only ever
+  skips newlines at a list's own boundary-checking points, never
+  inside `parse_expression`'s own recursive handling of an element's
+  value, which already had its own correct newline handling untouched
+  by any of this.
 
 ## Next priorities
 

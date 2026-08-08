@@ -83,11 +83,14 @@ language already has for any program it runs.
 If no `package.di` exists at all, none of this applies — the package
 resolves exactly as it would with no manifest support at all.
 
-A manifest must be **one line**: Diamond's `Hash`-literal parser doesn't
-currently accept a newline between `{` and its first entry, so a
-pretty-printed multi-line manifest fails to compile — a pre-existing
-parser limitation, not specific to manifests. Every example in this
-document is single-line for that reason.
+A manifest can be pretty-printed across multiple lines — a newline is
+allowed right after `{`, right after each `,`, and right before `}`
+(the natural positions a formatter would put one), matching the same
+support every other bracket-delimited list in the language has (array/
+hash literals, call arguments, parameter declarations, and more — see
+`docs/syntax.md`). Newlines are not accepted *inside* an entry (between
+a key and its `:`, or between `:` and the value) — an unusual style
+no formatter would actually produce.
 
 ### Dependencies
 
@@ -121,7 +124,11 @@ a manifest can never be interpreted as shell syntax), and installs the
 result into `diamond_packages/<name>/` with `.git/` stripped (the
 lockfile below is the source of truth for "what commit," not a live
 repository sitting inside `diamond_packages/`). It writes `facet.lock`
-alongside `package.di`, also a single-line Diamond `Hash` literal:
+alongside `package.di` — a Diamond `Hash` literal, same as a manifest.
+`facet` itself always writes it compact/single-line (it's
+machine-generated, not something you're meant to hand-edit), but
+reads one back the same way it reads any manifest, so a hand-edited
+lockfile can be pretty-printed too if you ever want to:
 
 ```ruby
 # facet.lock
