@@ -3337,6 +3337,24 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                         : hash->entries[(size_t)found].value;
                     break;
                 }
+                if(registers[receiver].as.object->kind==DIAMOND_OBJECT_STRING) {
+                    if(registers[index_register].kind!=DIAMOND_VALUE_INT)
+                        VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                    const DiamondString *source=
+                        (const DiamondString *)registers[receiver].as.object;
+                    const int64_t index=registers[index_register].as.integer;
+                    if(index<0 || (uint64_t)index>=source->length) {
+                        snprintf(vm->error,sizeof vm->error,
+                                 "index %" PRId64 " out of bounds for String of length %zu",
+                                 index,source->length);
+                        VM_RETURN(DIAMOND_VM_INDEX_ERROR);
+                    }
+                    DiamondString *character=
+                        allocate_string(vm,source->chars+(size_t)index,1);
+                    if(character==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                    registers[destination]=DIAMOND_OBJECT(character);
+                    break;
+                }
                 if(registers[receiver].as.object->kind!=DIAMOND_OBJECT_ARRAY ||
                    registers[index_register].kind!=DIAMOND_VALUE_INT)
                     VM_RETURN(DIAMOND_VM_TYPE_ERROR);
@@ -3367,6 +3385,11 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     if(!hash_set(vm,hash,registers[index_register],registers[source]))
                         VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
                     break;
+                }
+                if(registers[receiver].as.object->kind==DIAMOND_OBJECT_STRING) {
+                    snprintf(vm->error,sizeof vm->error,
+                             "String does not support element assignment");
+                    VM_RETURN(DIAMOND_VM_TYPE_ERROR);
                 }
                 if(registers[receiver].as.object->kind!=DIAMOND_OBJECT_ARRAY ||
                    registers[index_register].kind!=DIAMOND_VALUE_INT)
