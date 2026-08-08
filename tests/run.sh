@@ -3636,4 +3636,64 @@ rm -f "$error_file"
 actual="$(DIAMOND_STRESS_GC=1 $diamond -e $'def f(x: Float) -> Float = -x\n"#{f(1.5)}, #{-3}"')"
 [[ "$actual" == "-1.5, -3" ]]
 
-echo "717 tests passed"
+actual="$($diamond -e 'to_f(3)')"
+[[ "$actual" == "3.0" ]]
+
+actual="$($diamond -e 'to_f(0)')"
+[[ "$actual" == "0.0" ]]
+
+actual="$($diamond -e 'to_i(3.7)')"
+[[ "$actual" == "3" ]]
+
+actual="$($diamond -e 'to_i(-3.7)')"
+[[ "$actual" == "-3" ]]
+
+actual="$($diamond -e 'to_f(to_i(3.9))')"
+[[ "$actual" == "3.0" ]]
+
+actual="$($diamond -e 'to_i(-9223372036854775808.0)')"
+[[ "$actual" == "-9223372036854775808" ]]
+
+error_file="$(mktemp)"
+if "$diamond" -e 'to_f(3.5)' >/dev/null 2>"$error_file"; then
+    echo "to_f on a Float argument unexpectedly succeeded" >&2
+    exit 1
+fi
+grep -q "to_f argument must be an Int" "$error_file"
+rm -f "$error_file"
+
+error_file="$(mktemp)"
+if "$diamond" -e 'to_i(3)' >/dev/null 2>"$error_file"; then
+    echo "to_i on an Int argument unexpectedly succeeded" >&2
+    exit 1
+fi
+grep -q "to_i argument must be a Float" "$error_file"
+rm -f "$error_file"
+
+for bad_arg in '0.0 / 0.0' '1.0 / 0.0' '(0.0 - 1.0) / 0.0' \
+               '99999999999999999999999.0' '-99999999999999999999999.0'; do
+    error_file="$(mktemp)"
+    if "$diamond" -e "to_i($bad_arg)" >/dev/null 2>"$error_file"; then
+        echo "to_i($bad_arg) unexpectedly succeeded" >&2
+        exit 1
+    fi
+    grep -q "to_i argument must be a finite Float within Int range" "$error_file"
+    rm -f "$error_file"
+done
+
+actual="$($diamond -e $'begin\n to_i(0.0 / 0.0)\nrescue error: RangeError\n 42\nend')"
+[[ "$actual" == "42" ]]
+
+actual="$($diamond --dump-bytecode -e 'to_f(3)')"
+grep -q 'TO_FLOAT' <<<"$actual"
+
+actual="$($diamond --dump-bytecode -e 'to_i(3.5)')"
+grep -q 'TO_INT' <<<"$actual"
+
+actual="$($diamond -e $'def f(x: Float) -> Float = x\nf(to_f(3))')"
+[[ "$actual" == "3.0" ]]
+
+actual="$(DIAMOND_STRESS_GC=1 $diamond -e '"#{to_f(3)}, #{to_i(3.5)}"')"
+[[ "$actual" == "3.0, 3" ]]
+
+echo "735 tests passed"
