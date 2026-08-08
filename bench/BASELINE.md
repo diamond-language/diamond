@@ -294,3 +294,78 @@ building `called_chunk` before calling `run_chunk`, requiring a
 undone and is now a stronger candidate than before this round's
 result, given how much larger this smaller-scoped sibling change
 turned out to be.
+
+## JIT experiment #4: eliminate the external DiamondChunk copies (attempted, reverted)
+
+Implemented in full: `run_chunk(const DiamondFunction *function, const
+DiamondChunk *program, const DiamondTypeBinding *type_variable_bindings,
+...)` instead of one merged `DiamondChunk*`, with `program` simply
+forwarded (never rebuilt) at every one of the ~9 external call sites,
+a lazily-built merged view for the handful of downstream helpers that
+still need per-function fields (generalizing the `lazy_chunk_view`
+pattern from experiment #3), and `diamond_vm_run()`'s public signature
+changed to take a `DiamondProgram*` directly so it could hand
+`run_chunk` a real `DiamondFunction*` instead of synthesizing one.
+Fully correct — full test suite, `make test-sanitize`, `make test-all`
+all clean — and caught two real bugs along the way (a cache-poisoning
+issue in the lazy-view mechanism, and a wrong-table index bug in
+`CALL_TYPED`'s explicit type-argument resolution, both confirmed via
+`git stash` comparison against pre-change behavior before being ruled
+out as pre-existing).
+
+Measured via the same worktree/alternating-rounds methodology, plus
+self-comparison checks (same binary against itself) after an initial
+noisy reading, since the noise floor during this measurement session
+turned out higher than earlier rounds (confirmed via `hash_ops`
+self-comparison showing ~10% run-to-run variance on identical
+binaries — a useful reminder that the noise floor itself isn't
+constant across a long session and is worth re-establishing before
+trusting a surprising result):
+
+| Benchmark | Result | Confidence |
+|---|---|---|
+| `fibonacci` (repeat=40, 8 rounds) | +0.25%, flat | High — tight, non-overlapping-with-noise clustering |
+| `dispatch_monomorphic` (repeat=40, 8 rounds) | **-9.1%, real regression** | High — self-comparison on both binaries showed each is internally stable/tight, with a clean non-overlapping gap between them |
+| `dispatch_polymorphic` | ~-5%, likely real | Medium — fewer confirming rounds |
+| `hash_ops` (negative control) | inconclusive | Low — noise floor and observed delta were the same order of magnitude |
+
+Best explanation: `run_chunk`'s parameter count grew from 7 to 9
+(splitting one `DiamondChunk*` into three separate pointers). Every
+opcode handler in the ~2000-line function can potentially reference
+any of them, so more parameters likely means more register pressure
+across the *entire* function body, not just at call sites — a cost
+that "fewer bytes copied" reasoning doesn't capture, and the opposite
+of what made experiment #3 (which *removed* a variable's live range)
+pay off so well. Reverted in full (3 commits: `26b85d5`, `9073af5`,
+`279f1ed`) rather than landing a measured net regression on a common
+code path (method dispatch) for an architectural preference alone;
+none of it was ever pushed.
+
+## Where this branch stands
+
+Four experiments attempted, three landed:
+
+1. Narrow `run_chunk`'s per-call register zero-init to `register_count`
+   instead of the fixed 256 slots: **+10-31%** on call-heavy benchmarks.
+2. Elide 11 provably-redundant `DIAMOND_OP_NIL` emissions: **+5-8%**
+   on the highest `NIL`-per-call benchmarks.
+3. Skip `run_chunk`'s own wasted internal `DiamondChunk` copy (dead
+   outside the generic-function path): **+10-13.5%**, a bigger win
+   than experiments #1/#2's magnitude would have predicted.
+4. Eliminate the *external* per-call-site `DiamondChunk` copies:
+   attempted, correct, but a **confirmed regression** on method
+   dispatch — reverted.
+
+All three landed wins compound (they touch non-overlapping parts of
+`run_chunk`), so the net effect on call-heavy code across the branch
+is larger than any single number above. Consolidating here rather
+than continuing further interpreter-loop micro-optimization: the
+remaining candidates identified along the way are either explicitly
+out of scope by earlier design decisions (fiber `ucontext` switch
+cost — dominated by the OS context switch, not bytecode dispatch) or
+not measurable against the current benchmark suite (`CHECK_TYPE`/
+generic-dispatch paths, per the original baseline's own coverage-gap
+note). A genuine tracing/method JIT — actual native code generation,
+which nothing in this branch has attempted — is the natural next
+scope if this work continues, distinct in kind from what's been done
+here.
