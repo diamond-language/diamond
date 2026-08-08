@@ -3904,4 +3904,85 @@ actual="$($diamond -e $'interface UntypedKeyAt\n def key_at(index)\nend\n({"a": 
 actual="$($diamond -e $'interface Container\n def push(x) -> Array\n def pop()\n def length() -> Int\nend\n[1, 2, 3] is Container')"
 [[ "$actual" == "true" ]]
 
-echo "822 tests passed"
+actual="$($diamond -e $'[1,\n2,\n3]')"
+[[ "$actual" == "[1, 2, 3]" ]]
+
+actual="$($diamond -e $'[1,\n2,\n]')"
+[[ "$actual" == "[1, 2]" ]]
+
+actual="$($diamond -e $'[1,\n2\n]')"
+[[ "$actual" == "[1, 2]" ]]
+
+actual="$($diamond -e $'[\n]')"
+[[ "$actual" == "[]" ]]
+
+actual="$($diamond -e $'{"a": 1,\n"b": 2}')"
+[[ "$actual" == "{a: 1, b: 2}" ]]
+
+actual="$($diamond -e $'{"a": 1,\n"b": 2,\n}')"
+[[ "$actual" == "{a: 1, b: 2}" ]]
+
+actual="$($diamond -e $'{"a": 1,\n"b": 2\n}')"
+[[ "$actual" == "{a: 1, b: 2}" ]]
+
+actual="$($diamond -e $'{\n"a": 1\n}')"
+[[ "$actual" == "{a: 1}" ]]
+
+actual="$($diamond -e $'{"name": "myapp", "dependencies": {\n"greeter": {"git": "u",\n"tag": "v1.0.0"}\n}}')"
+[[ "$actual" == "{name: myapp, dependencies: {greeter: {git: u, tag: v1.0.0}}}" ]]
+
+actual="$($diamond -e $'def add(a, b)\n a + b\nend\nadd(1,\n2)')"
+[[ "$actual" == "3" ]]
+
+actual="$($diamond -e $'def add(a, b)\n a + b\nend\nadd(1,\n2,\n)')"
+[[ "$actual" == "3" ]]
+
+actual="$($diamond -e $'def make()\n def add(a, b)\n  a + b\n end\n add\nend\nf = make()\nf(1,\n2)')"
+[[ "$actual" == "3" ]]
+
+actual="$($diamond -e $'def id[T](x: T) -> T\n x\nend\nid[\nInt\n](5)')"
+[[ "$actual" == "5" ]]
+
+actual="$($diamond -e $'class C\n def initialize(a,\n  b)\n  @a = a\n  @b = b\n end\n def sum()\n  @a + @b\n end\nend\nC.new(1,\n2).sum()')"
+[[ "$actual" == "3" ]]
+
+actual="$($diamond -e $'class Animal\n def initialize(name)\n  @name = name\n end\n def greet()\n  "hi " + @name\n end\nend\nclass Dog < Animal\n def greet()\n  super(\n  ) + "!"\n end\nend\nDog.new("rex").greet()')"
+[[ "$actual" == "hi rex!" ]]
+
+actual="$($diamond -e $'def add(a,\n b,\n c)\n a + b + c\nend\nadd(1, 2, 3)')"
+[[ "$actual" == "6" ]]
+
+actual="$($diamond -e $'def greet(name: String,\n greeting: String = "hi")\n greeting + ", " + name\nend\ngreet("world")')"
+[[ "$actual" == "hi, world" ]]
+
+actual="$($diamond -e $'def pair[A,\n B](a: A, b: B)\n [a, b]\nend\npair(1, "x")')"
+[[ "$actual" == "[1, x]" ]]
+
+actual="$($diamond -e $'interface Adder\n def add(a,\n  b)\nend\nclass C\n def add(a, b)\n  a + b\n end\nend\nC.new() is Adder')"
+[[ "$actual" == "true" ]]
+
+actual="$($diamond -e $'class C\n attr_accessor(a,\n  b)\n def initialize()\n  @a = 1\n  @b = 2\n end\nend\nC.new().b()')"
+[[ "$actual" == "2" ]]
+
+actual="$($diamond -e $'class C\n attr_accessor a, b\n def initialize()\n  @a = 1\n  @b = 2\n end\nend\nC.new().a()')"
+[[ "$actual" == "1" ]]
+
+actual="$($diamond -e $'class C\n def pub()\n  1\n end\n private def priv()\n  2\n end\nend\nC.new().pub()')"
+[[ "$actual" == "1" ]]
+
+actual="$($diamond -e $'class C\n def greet()\n  "hi"\n end\n alias_method(hello,\n  greet)\nend\nC.new().hello()')"
+[[ "$actual" == "hi" ]]
+
+actual="$($diamond -e $'def f(x: Hash[\n String,\n Int\n])\n x.length()\nend\nf({"a": 1})')"
+[[ "$actual" == "1" ]]
+
+actual="$($diamond -e $'f = File.open(\n "/tmp/diamond_newline_hash_fix_test.txt",\n "w"\n)\nf.write("hi")\nf.close()\ng = File.open("/tmp/diamond_newline_hash_fix_test.txt", "r")\ng.read()')"
+[[ "$actual" == "hi" ]]
+
+actual="$($diamond -e $'sqrt(\n 4.0\n)')"
+[[ "$actual" == "2.0" ]]
+
+actual="$($diamond -e $'pow(\n 2,\n 3\n)')"
+[[ "$actual" == "8.0" ]]
+
+echo "849 tests passed"
