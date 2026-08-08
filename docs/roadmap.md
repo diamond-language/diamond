@@ -633,6 +633,30 @@ future work.
   `max`/`mod`, `String#to_f`, a Math library (`sqrt`/`pow`/trig), and
   shortest-round-trip formatting (this round uses a fixed `%.15g`-based
   format).
+- Interpreter call-overhead reduction, from `jit-experimentation`
+  baseline benchmarking that found call/frame-setup overhead — not
+  opcode-level arithmetic dispatch — was the dominant cost in call-heavy
+  code (existing `_INT` quickening measured no benefit even in code
+  built specifically to exercise it). Landed three compounding wins in
+  `run_chunk`, the single interpreter loop: narrowed its per-call
+  register zero-init from the fixed 256-slot array down to each
+  function's actual `register_count` high-water mark (+10-31% on
+  call-heavy benchmarks); elided 11 `DIAMOND_OP_NIL` emissions now
+  provably redundant with that narrower zero-init (+5-8%); and removed
+  a second, wholly separate `DiamondChunk` struct copy `run_chunk` built
+  on every call but only read for generic functions (+10-13.5%, a
+  bigger win than the first two rounds' magnitude predicted — evidence
+  that eliminating dead work can unlock further compiler optimization
+  of the surrounding function, not just save its own literal cost). A
+  fourth, more invasive attempt — eliminating the *external* per-call
+  `DiamondChunk` construction at each call site by splitting
+  `run_chunk`'s single chunk parameter into separate function/program
+  pointers — was fully implemented and verified correct, but measured
+  as a confirmed ~9% regression on method dispatch (more `run_chunk`
+  parameters likely means more register pressure across its entire
+  body, not just at call sites) and was reverted rather than landed.
+  Full methodology, numbers, and the reverted attempt's postmortem in
+  `bench/BASELINE.md`.
 
 ## Next priorities
 
@@ -640,10 +664,13 @@ None queued.
 
 ## Later experiments
 
-- JIT compilation for stable specialized bytecode paths.
 - Self-hosting the compiler and core libraries in Diamond.
 - Structural interfaces and more capable flow typing.
-- Native-code generation or a tracing/method JIT.
+- Native-code generation or a tracing/method JIT — nothing in the
+  `jit-experimentation` work above generates native code; it's all
+  interpreter-loop leaning (register zero-init, opcode dispatch,
+  struct-copy elimination). Actual JIT compilation remains a distinct,
+  larger, not-yet-attempted piece of work.
 - Self-hosting selected compiler and standard-library components.
 - Dependency resolution, a lockfile, and a way to fetch/install packages
   into a project — the remainder of the "Bundler-like package manager"
