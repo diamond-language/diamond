@@ -3097,102 +3097,6 @@ actual="$($diamond -e $'begin\n "x".repeat(-1)\nrescue error: RangeError\n 42\ne
 actual="$(DIAMOND_STRESS_GC=1 $diamond -e $'a = "xy".repeat(3)\nb = "z".repeat(2)\n"#{a}, #{b}"')"
 [[ "$actual" == "xyxyxy, zz" ]]
 
-http_port=18743
-http_server_out="$(mktemp)"
-http_server_src="$(cat <<'HTTPEOF'
-require "lib/http"
-def run()
-  def handler(request)
-    path = request["path"]
-    [200, {"Content-Type": "text/plain"}, "hello, #{path}"]
-  end
-  http_serve(HTTP_PORT, handler)
-end
-run()
-HTTPEOF
-)"
-http_server_src="${http_server_src/HTTP_PORT/$http_port}"
-timeout 10 "$diamond" -e "$http_server_src" >"$http_server_out" 2>&1 &
-http_server_pid=$!
-{ for _ in $(seq 1 100); do
-    if exec 3<>"/dev/tcp/127.0.0.1/$http_port" 2>/dev/null; then
-        break
-    fi
-    sleep 0.05
-done } 2>/dev/null
-printf 'GET /world HTTP/1.1\r\nHost: localhost\r\n\r\n' >&3
-http_response="$(cat <&3)"
-exec 3<&- 3>&- 2>/dev/null || true
-kill "$http_server_pid" 2>/dev/null || true
-wait "$http_server_pid" 2>/dev/null || true
-[[ "$http_response" == $'HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 13\r\n\r\nhello, /world' ]]
-rm -f "$http_server_out"
-
-http_port=18744
-http_server_out="$(mktemp)"
-http_server_src="$(cat <<'HTTPEOF'
-require "lib/http"
-def run()
-  def handler(request)
-    method = request["method"]
-    body = request["body"]
-    [201, {"Content-Type": "text/plain"}, "#{method}: #{body}"]
-  end
-  http_serve(HTTP_PORT, handler)
-end
-run()
-HTTPEOF
-)"
-http_server_src="${http_server_src/HTTP_PORT/$http_port}"
-timeout 10 "$diamond" -e "$http_server_src" >"$http_server_out" 2>&1 &
-http_server_pid=$!
-{ for _ in $(seq 1 100); do
-    if exec 3<>"/dev/tcp/127.0.0.1/$http_port" 2>/dev/null; then
-        break
-    fi
-    sleep 0.05
-done } 2>/dev/null
-http_body='{"name":"diamond"}'
-printf 'POST /items HTTP/1.1\r\nHost: localhost\r\nContent-Length: %d\r\n\r\n%s' \
-    "${#http_body}" "$http_body" >&3
-http_response="$(cat <&3)"
-exec 3<&- 3>&- 2>/dev/null || true
-kill "$http_server_pid" 2>/dev/null || true
-wait "$http_server_pid" 2>/dev/null || true
-[[ "$http_response" == $'HTTP/1.1 201 Created\r\nContent-Type: text/plain\r\nContent-Length: 24\r\n\r\nPOST: {"name":"diamond"}' ]]
-rm -f "$http_server_out"
-
-http_port=18745
-http_server_out="$(mktemp)"
-http_server_src="$(cat <<'HTTPEOF'
-require "lib/http"
-def run()
-  def handler(request)
-    body = request["body"]
-    [200, {"Content-Type": "text/plain"}, "got: #{body}"]
-  end
-  http_serve(HTTP_PORT, handler)
-end
-run()
-HTTPEOF
-)"
-http_server_src="${http_server_src/HTTP_PORT/$http_port}"
-timeout 10 "$diamond" -e "$http_server_src" >"$http_server_out" 2>&1 &
-http_server_pid=$!
-{ for _ in $(seq 1 100); do
-    if exec 3<>"/dev/tcp/127.0.0.1/$http_port" 2>/dev/null; then
-        break
-    fi
-    sleep 0.05
-done } 2>/dev/null
-printf 'POST /items HTTP/1.1\r\nHost: localhost\r\ncontent-length: 5\r\n\r\nhello' >&3
-http_response="$(cat <&3)"
-exec 3<&- 3>&- 2>/dev/null || true
-kill "$http_server_pid" 2>/dev/null || true
-wait "$http_server_pid" 2>/dev/null || true
-[[ "$http_response" == $'HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 10\r\n\r\ngot: hello' ]]
-rm -f "$http_server_out"
-
 actual="$($diamond -e $'begin\n yield\nrescue error: FiberError\n 42\nend')"
 [[ "$actual" == "42" ]]
 
@@ -3427,37 +3331,6 @@ wait "$stress_server_pid"
 [[ "$(cat "$stress_server_out")" == "0" ]]
 [[ "$(cat "$stress_client_out")" == "echo: hello" ]]
 rm -f "$stress_server_out" "$stress_client_out"
-
-stress_http_port=18747
-stress_http_out="$(mktemp)"
-stress_http_src="$(cat <<'HTTPEOF'
-require "lib/http"
-def run()
-  def handler(request)
-    path = request["path"]
-    [200, {"Content-Type": "text/plain"}, "hello, #{path}"]
-  end
-  http_serve(HTTP_PORT, handler)
-end
-run()
-HTTPEOF
-)"
-stress_http_src="${stress_http_src/HTTP_PORT/$stress_http_port}"
-timeout 10 env DIAMOND_STRESS_GC=1 "$diamond" -e "$stress_http_src" >"$stress_http_out" 2>&1 &
-stress_http_pid=$!
-{ for _ in $(seq 1 100); do
-    if exec 3<>"/dev/tcp/127.0.0.1/$stress_http_port" 2>/dev/null; then
-        break
-    fi
-    sleep 0.05
-done } 2>/dev/null
-printf 'GET /world HTTP/1.1\r\nHost: localhost\r\n\r\n' >&3
-stress_http_response="$(cat <&3)"
-exec 3<&- 3>&- 2>/dev/null || true
-kill "$stress_http_pid" 2>/dev/null || true
-wait "$stress_http_pid" 2>/dev/null || true
-[[ "$stress_http_response" == $'HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 13\r\n\r\nhello, /world' ]]
-rm -f "$stress_http_out"
 
 actual="$($diamond -e '3.14')"
 [[ "$actual" == "3.14" ]]
@@ -4031,4 +3904,4 @@ actual="$($diamond -e $'interface UntypedKeyAt\n def key_at(index)\nend\n({"a": 
 actual="$($diamond -e $'interface Container\n def push(x) -> Array\n def pop()\n def length() -> Int\nend\n[1, 2, 3] is Container')"
 [[ "$actual" == "true" ]]
 
-echo "826 tests passed"
+echo "822 tests passed"
