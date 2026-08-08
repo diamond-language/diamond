@@ -541,7 +541,7 @@ actual="$("$diamond" -e $'class Animal\nend\nclass Dog < Animal\nend\nDog.new() 
 
 actual="$("$diamond" --dump-bytecode -e $'def compound(value: String | Int, flag: Bool) -> String\n if value is String && flag\n  value\n else\n  "fallback"\n end\nend\ncompound("ok", true)')"
 compound_dump="$(sed -n '/^== compound ==$/,$p' <<<"$actual")"
-[[ "$(grep -c 'CHECK_TYPE' <<<"$compound_dump")" == "3" ]]
+[[ "$(grep -c 'CHECK_TYPE' <<<"$compound_dump")" == "2" ]]
 
 if "$diamond" -e '42 is Missing' >/dev/null 2>&1; then
     echo "is accepted an unknown type" >&2
@@ -3942,4 +3942,93 @@ actual="$($diamond -e '1.5e-3')"
 puts_actual="$(DIAMOND_STRESS_GC=1 $diamond -e 'puts(1.5e-3)')"
 [[ "$actual" == "0.0015" && "$puts_actual" == $'0.0015\nnil' ]]
 
-echo "806 tests passed"
+actual="$($diamond -e $'def test(x: Int | String, y: Int | String)\n if x is Int && y is Int\n  x + y\n else\n  0\n end\nend\ntest(3, 4)')"
+[[ "$actual" == "7" ]]
+
+actual="$($diamond -e $'def test(x: Int | String, y: Int | String)\n if x is Int && y is Int\n  x + y\n else\n  0\n end\nend\ntest(5, "b")')"
+[[ "$actual" == "0" ]]
+
+actual="$($diamond --dump-bytecode -e $'def test(x: Int | String, y: Int | String)\n if x is Int && y is Int\n  x + y\n else\n  0\n end\nend')"
+test_dump="$(sed -n '/^== test ==$/,$p' <<<"$actual")"
+grep -q 'ADD_INT' <<<"$test_dump"
+
+actual="$($diamond -e $'def test(x: Int | String, y: Int | String, z: Int | String)\n if x is Int && y is Int && z is Int\n  x + y + z\n else\n  0\n end\nend\ntest(1, 2, 3)')"
+[[ "$actual" == "6" ]]
+
+actual="$($diamond -e $'def test(a: Int | String, b: Int | String)\n unless a is Int || b is Int\n  "neither"\n else\n  "one-or-both"\n end\nend\ntest("x", "y")')"
+[[ "$actual" == "neither" ]]
+
+actual="$($diamond --dump-bytecode -e $'def test(a: Int | String, b: Int | String) -> String\n unless a is Int || b is Int\n  a\n else\n  "one-or-both"\n end\nend')"
+test_dump="$(sed -n '/^== test ==$/,$p' <<<"$actual")"
+[[ "$(grep -c 'CHECK_TYPE' <<<"$test_dump")" == "2" ]]
+
+actual="$($diamond -e $'def test(a: Int | String, b: Int | String, c: Int | String)\n if (a is Int && b is Int) || c is Int\n  if c is Int\n   c + 1\n  else\n   a + b\n  end\n else\n  -1\n end\nend\ntest("x", "y", 9)')"
+[[ "$actual" == "10" ]]
+
+actual="$($diamond -e $'def test(a: Int | String, b: Int | String, c: Int | String)\n if (a is Int && b is Int) || c is Int\n  if c is Int\n   c + 1\n  else\n   a + b\n  end\n else\n  -1\n end\nend\ntest(3, 4, "z")')"
+[[ "$actual" == "7" ]]
+
+actual="$($diamond -e $'interface A\n def foo()\nend\ninterface B < A\n def bar()\nend\nclass C\n def foo()\n  1\n end\n def bar()\n  2\n end\nend\nC.new() is B')"
+[[ "$actual" == "true" ]]
+
+actual="$($diamond -e $'interface A\n def foo()\nend\ninterface B < A\n def bar()\nend\nclass D\n def bar()\n  2\n end\nend\nD.new() is B')"
+[[ "$actual" == "false" ]]
+
+actual="$($diamond -e $'interface A\n def foo()\nend\ninterface X\n def qux()\nend\ninterface B < A, X\n def bar()\nend\nclass C\n def foo()\n  1\n end\n def qux()\n  3\n end\n def bar()\n  2\n end\nend\nC.new() is B')"
+[[ "$actual" == "true" ]]
+
+error_file="$(mktemp)"
+if "$diamond" -e $'interface B < NoSuchInterface\n def bar()\nend' >/dev/null 2>"$error_file"; then
+    echo "interface extension of an undefined base unexpectedly compiled" >&2
+    exit 1
+fi
+grep -q "undefined base interface" "$error_file"
+rm -f "$error_file"
+
+error_file="$(mktemp)"
+if "$diamond" -e $'interface A\n def foo()\nend\ninterface X\n def foo()\nend\ninterface B < A, X\nend' \
+    >/dev/null 2>"$error_file"; then
+    echo "interface extension with a name collision across bases unexpectedly compiled" >&2
+    exit 1
+fi
+grep -q "duplicate interface method" "$error_file"
+rm -f "$error_file"
+
+error_file="$(mktemp)"
+if "$diamond" -e $'interface A\n def foo()\nend\ninterface B < A\n def foo()\nend' \
+    >/dev/null 2>"$error_file"; then
+    echo "interface extension redeclaring an inherited method unexpectedly compiled" >&2
+    exit 1
+fi
+grep -q "duplicate interface method" "$error_file"
+rm -f "$error_file"
+
+methods1=""
+for i in $(seq 1 20); do methods1+="def m$i()"$'\n'; done
+methods2=""
+for i in $(seq 1 20); do methods2+="def n$i()"$'\n'; done
+overflow_program="interface Base1"$'\n'"$methods1""end"$'\n'"interface Base2"$'\n'"$methods2""end"$'\n'"interface Sub < Base1, Base2"$'\n'"end"
+error_file="$(mktemp)"
+if "$diamond" -e "$overflow_program" >/dev/null 2>"$error_file"; then
+    echo "interface method-count overflow via composition unexpectedly compiled" >&2
+    exit 1
+fi
+grep -q "interface has too many methods" "$error_file"
+rm -f "$error_file"
+
+actual="$($diamond -e $'interface Convertible\n def to_i() -> Int\n def slice(start, length) -> String\n def downcase() -> String\n def split(sep) -> Array\nend\n"Hi There" is Convertible')"
+[[ "$actual" == "true" ]]
+
+actual="$($diamond -e $'interface Bad\n def strip(x)\nend\n"hi" is Bad')"
+[[ "$actual" == "false" ]]
+
+actual="$($diamond -e $'interface TypedKeyAt\n def key_at(index) -> String\nend\n({"a": 1}) is TypedKeyAt')"
+[[ "$actual" == "false" ]]
+
+actual="$($diamond -e $'interface UntypedKeyAt\n def key_at(index)\nend\n({"a": 1}) is UntypedKeyAt')"
+[[ "$actual" == "true" ]]
+
+actual="$($diamond -e $'interface Container\n def push(x) -> Array\n def pop()\n def length() -> Int\nend\n[1, 2, 3] is Container')"
+[[ "$actual" == "true" ]]
+
+echo "826 tests passed"
