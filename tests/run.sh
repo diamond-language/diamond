@@ -3719,4 +3719,60 @@ actual="$($diamond -e $'x = 1.0\ni = 0\nwhile i < 400\n x = x / 10.0\n i = i + 1
 actual="$(DIAMOND_STRESS_GC=1 $diamond -e '"#{-0.0}, #{1_234.567_8}"')"
 [[ "$actual" == "-0.0, 1234.5678" ]]
 
-echo "743 tests passed"
+actual="$($diamond -e $'def test(flag)\n if flag\n  x = 5\n end\n return x\nend\ntest(false)')"
+[[ "$actual" == "nil" ]]
+
+actual="$($diamond -e $'def test(flag)\n if flag\n  x = 5\n end\n return x\nend\ntest(true)')"
+[[ "$actual" == "5" ]]
+
+actual="$(DIAMOND_STRESS_GC=1 $diamond -e $'def fib(n)\n if n < 2\n  n\n else\n  fib(n - 1) + fib(n - 2)\n end\nend\nfib(15)')"
+[[ "$actual" == "610" ]]
+
+actual="$($diamond -e 'nil')"
+[[ "$actual" == "nil" ]]
+
+actual="$($diamond -e $'def f()\n return\nend\nf()')"
+[[ "$actual" == "nil" ]]
+
+actual="$($diamond --dump-bytecode -e 'yield' 2>/dev/null || true)"
+yield_section="$(sed -n '/== -e ==/,/^== /p' <<<"$actual")"
+grep -Eq 'YIELD +r[0-9]+, r[0-9]+' <<<"$yield_section"
+[[ "$(grep -c NIL <<<"$yield_section")" == "0" ]]
+
+actual="$($diamond -e $'attempts = 0\nbegin\n attempts = attempts + 1\n if attempts < 3\n  raise "again"\n end\n attempts\nrescue error\n retry\nend')"
+[[ "$actual" == "3" ]]
+
+actual="$($diamond -e $'i = 0\nloop do\n i = i + 1\n break if i > 3\nend\ni')"
+[[ "$actual" == "4" ]]
+
+actual="$($diamond -e $'def f() = 1\nnil')"
+[[ "$actual" == "nil" ]]
+
+actual="$($diamond -e $'class Foo\nend\nnil')"
+[[ "$actual" == "nil" ]]
+
+actual="$($diamond -e $'module Bar\nend\nnil')"
+[[ "$actual" == "nil" ]]
+
+actual="$($diamond -e $'interface Baz\nend\nnil')"
+[[ "$actual" == "nil" ]]
+
+actual="$($diamond -e $'def f()\nend\nf()')"
+[[ "$actual" == "nil" ]]
+
+actual="$($diamond -e $'def outer()\n def inner(x)\n  x + 1\n end\n inner(4)\nend\nouter()')"
+[[ "$actual" == "5" ]]
+
+actual="$($diamond --dump-bytecode -e 'nil')"
+[[ "$(sed -n '/== -e ==/,/^== /p' <<<"$actual" | grep -c NIL)" == "0" ]]
+
+actual="$($diamond -e $'def test(flag)\n if flag\n  x = 5\n end\n return x\nend\ntest(false)')"
+[[ "$actual" == "nil" ]]
+
+actual="$($diamond -e $'def f()\n i = 0\n r = while i < 3\n  i = i + 1\n  break 99 if i == 2\n end\n r\nend\nf()')"
+[[ "$actual" == "99" ]]
+
+actual="$(DIAMOND_STRESS_GC=1 $diamond -e $'def f()\n i = 0\n r = while i < 3\n  i = i + 1\n  break 99 if i == 2\n end\n r\nend\n"#{f()}, #{nil}"')"
+[[ "$actual" == "99, nil" ]]
+
+echo "761 tests passed"

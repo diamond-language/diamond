@@ -235,6 +235,10 @@ typedef struct DiamondFunction {
     char type_variables[8][DIAMOND_MAX_FUNCTION_NAME];
     uint8_t type_variable_count;
     bool uses_instance_state;
+    /* High-water mark of allocate_register() within this function body.
+     * Safe as an exact zero-init/GC-scan bound only because register
+     * allocation is monotonic per function body (never recycled). */
+    uint16_t register_count;
 } DiamondFunction;
 
 typedef struct DiamondChunk {
@@ -259,6 +263,7 @@ typedef struct DiamondChunk {
     uint8_t type_variable_count;
     uint8_t parameter_offset;
     const DiamondTypeBinding *type_variable_bindings;
+    uint16_t register_count;
 } DiamondChunk;
 
 typedef enum DiamondVmStatus : uint8_t {

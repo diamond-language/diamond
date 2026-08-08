@@ -1,0 +1,371 @@
+# Baseline benchmarks (pre-JIT)
+
+Recorded at the start of `jit-experimentation`, branched from `main` @
+`0bafbc4` (2026-08-08). Purpose: a durable reference point to compare
+against as JIT work lands — re-run `bash bench/run.sh quicken` on any
+later commit and diff against the numbers here.
+
+## Environment
+
+- CPU: AMD Ryzen 5 Pro 7535U (12 logical cores; single-threaded workload,
+  no parallelism in the VM)
+- `gcc (GCC) 16.1.1`, built via `make release` (`-O3 -DNDEBUG -march=native`)
+- No `perf` available in this environment — hot-path data instead comes
+  from the interpreter's own exact per-opcode execution counters
+  (`DIAMOND_TRACE_OPCODES`), which is arguably better than sampling for
+  a bytecode interpreter: exact counts, zero sampling error.
+
+## Methodology
+
+- `bench/*.di` are hand-written microbenchmarks, each targeting one
+  hot-path category (see file comments for what each exercises and why).
+- Timed via `DIAMOND_REPEAT=N`, which re-runs the *already-compiled*
+  chunk N times inside one process — this measures interpreter
+  throughput, not process startup or compile time. Per-iteration time =
+  total wall time / N. `bench/run.sh` picks N per-benchmark to land
+  around 2-5s of total measured time.
+- Every benchmark's numeric result was manually verified for
+  correctness (e.g. `fibonacci.di` → `832040`, the known `fib(30)`)
+  before being trusted for timing.
+- Two passes: default (`DIAMOND_QUICKEN` unset) and `DIAMOND_QUICKEN=1`
+  (enables the VM's existing runtime opcode-specialization tier).
+- Opcode breakdown is one untimed single run per benchmark with
+  `DIAMOND_TRACE_OPCODES=1`, top 12 opcodes by execution count.
+
+## Results
+
+| Benchmark | Iterations | Default (per-iter) | Quicken=1 (per-iter) | Delta |
+|---|---:|---:|---:|---:|
+| `int_arithmetic` | 5,000,000 | 0.2978s /5M ≈ 59.6ns/iter | 0.2854s ≈ 57.1ns/iter | ~4%, noise-level |
+| `int_arithmetic_dynamic` | 5,000,000 | 0.6568s ≈ 131ns/iter | 0.6629s ≈ 133ns/iter | ~1% *slower*, noise-level |
+| `dispatch_monomorphic` | 2,000,000 | 0.2663s ≈ 133ns/iter | 0.2661s ≈ 133ns/iter | none |
+| `dispatch_polymorphic` | 2,000,000 | 0.3244s ≈ 162ns/iter | 0.3374s ≈ 169ns/iter | ~4% *slower*, noise-level |
+| `fibonacci` (fib(30), 2.69M calls) | 1 | 0.3012s | 0.2976s | ~1%, noise-level |
+| `array_ops` | 1,000,000 | 0.0873s ≈ 87ns/iter | 0.0816s ≈ 82ns/iter | ~6%, near noise |
+| `hash_ops` | 5,000 ins + 5,000 lookups | 0.01835s | 0.01843s | none |
+| `string_ops` | 200,000 | 0.0981s ≈ 490ns/iter | 0.1015s ≈ 508ns/iter | none |
+| `closures` | 1,000,000 | 0.1090s ≈ 109ns/iter | 0.1147s ≈ 115ns/iter | none |
+| `fiber_switch` | 500,000 resume/yield pairs | 0.4183s ≈ 837ns/iter | 0.4223s ≈ 845ns/iter | none |
+
+(Raw `bench/run.sh` output, including the opcode breakdowns, is
+reproducible on demand — not duplicated here to keep this table
+scannable. Numbers above are one run each, not averaged across
+multiple trials; treat single-digit percent deltas as noise, not
+signal, given the methodology.)
+
+## Findings
+
+**1. `DIAMOND_QUICKEN=1` shows no measurable benefit anywhere in this
+suite — including in a benchmark built specifically to require it.**
+`int_arithmetic.di` uses plain, locally-typed Int locals, which the
+*compiler* already statically specializes to `ADD_INT`/`SUBTRACT_INT`/
+`MULTIPLY_INT`/`DIVIDE_INT` at compile time (`src/compiler.c:2217-
+2260`, gated on `known_types[left]==DIAMOND_TYPE_INT` for both
+operands) — independent of `DIAMOND_QUICKEN`. So that benchmark never
+exercises the runtime tier at all.
+
+`int_arithmetic_dynamic.di` was added specifically to close that gap —
+it routes the same arithmetic through an untyped function parameter,
+confirmed via `--dump-bytecode` to compile to generic `ADD`/
+`SUBTRACT`/`MULTIPLY`/`DIVIDE` (no static specialization possible: the
+compiler's `known_types` inference is local to one function body, and
+an untyped parameter carries no type information into it). With
+`DIAMOND_QUICKEN=1`, `DIAMOND_TRACE_QUICKEN=1` confirms the mechanism
+*does* fire correctly — "quickened sites: 4, deoptimized sites: 0" —
+and `DIAMOND_TRACE_OPCODES` confirms the specialized opcodes actually
+ran (`SUBTRACT_INT`/`MULTIPLY_INT`/`DIVIDE_INT` each executed
+4,999,999 of 5,000,000 times, vs. their generic forms running only
+once, before the first-call quickening kicked in). So the tier isn't
+broken — it's just that eliminating one `registers[left].kind==
+DIAMOND_VALUE_INT` branch check per arithmetic op doesn't move the
+needle when `CALL`/`RETURN`/frame-setup overhead (`NIL`/`MOVE`/
+`CONSTANT` account for far more total instructions than the arithmetic
+itself in this benchmark — see opcode breakdown) already dominates.
+**Implication for JIT scope**: opcode-level specialization of
+individual arithmetic ops is not where the time is going in call-heavy
+code; call/dispatch overhead is a more promising target than further
+specializing arithmetic.
+
+**2. Inline caching for method dispatch clearly works and clearly
+matters.** `dispatch_monomorphic.di`'s opcode trace shows `INVOKE_MONO`
+(the monomorphic-cache fast path) used 1,999,998 of 2,000,000 calls —
+essentially every call after the first upgrades to the cached path.
+`dispatch_polymorphic.di` (4 alternating receiver classes) never
+upgrades — plain `INVOKE` runs all 2,000,000 times, as expected for a
+call site that can't stay monomorphic. Per-iteration cost: ~133ns
+(mono) vs. ~162-169ns (poly) — roughly 20-25% slower, though note the
+polymorphic benchmark also does extra `Array` indexing per iteration
+to select the receiver, so this isn't a perfectly isolated A/B (a
+cleaner poly-vs-mono comparison would be a good early JIT-branch task).
+
+**3. Fiber resume/yield is the single most expensive per-operation
+primitive measured.** ~837ns per round trip vs. ~133ns for a
+monomorphic method call — roughly 6x. Expected going in (`docs/fibers.md`
+already documents the `ucontext`-based stackful-coroutine design), now
+has a concrete number. Worth deciding early whether the JIT effort
+touches fiber boundaries at all, or explicitly scopes them out given
+this cost is dominated by the OS-level context switch, not bytecode
+dispatch.
+
+**4. `Hash` is a genuine O(n) linear scan (`hash_find`, `src/vm.c`),
+confirmed by reading the code, not just inferred from timing** — every
+`.length()`-preserving insert or lookup scans up to `count` entries.
+`hash_ops.di` is deliberately small (5,000 keys, not 50,000) because
+the insert phase is O(n²) overall; at 5,000 keys it's already fast in
+absolute terms (~18.4ms per repeat of the full 5,000-insert + 5,000-
+lookup workload) but this degrades quadratically — a `Hash` with tens
+of thousands of entries would be measurably slow today. Whether that's
+in scope for the JIT branch (a real hash table is a data-structure
+change, not a dispatch optimization) is worth an explicit decision
+rather than silently falling out of scope.
+
+**5. Function-call overhead is substantial and highly repetitive.**
+`fibonacci.di`'s opcode trace: `NIL` (5.39M) and `MOVE`/`CONSTANT`
+(5.39M each) each outnumber `CALL`/`RETURN` (2.69M each) roughly 2:1 —
+every call pays for local-slot `NIL`-initialization and register
+shuffling on top of the call/return machinery itself. This matches
+finding #1's implication: call overhead, not arithmetic dispatch, is
+where a JIT's early wins are most likely to be.
+
+## Coverage gaps in this baseline (for later rounds)
+
+- No benchmark exercises `CHECK_TYPE`/`INVOKE_TYPED`/`CALL_TYPED`
+  (typed-parameter/generic dispatch) as a hot path — none of the
+  current benchmarks show these opcodes in their top-12.
+- No benchmark isolates GC pressure specifically (allocation-heavy
+  code without a dominating loop-body cost elsewhere) — `array_ops.di`
+  touches this via array growth but doesn't isolate it.
+- The `dispatch_polymorphic` vs `dispatch_monomorphic` comparison has a
+  confound (extra Array indexing in the polymorphic variant) noted
+  above.
+
+## JIT experiment #1: narrow per-call register zero-init (results)
+
+Landed at `118db81`. `run_chunk` previously zero-initialized the full
+256-slot (4KB) `DiamondValue` register array on every call regardless of
+how many registers the callee actually uses. Added a `register_count`
+field (the compiler's `next_register` high-water mark) to
+`DiamondFunction`/`DiamondChunk`/`DiamondFrame`, and narrowed both the
+zero-init and `mark_frame_chain`'s GC mark-phase scan to
+`[0, register_count)` instead of the fixed 256 — these two bounds move
+together since they're safety-coupled (see commit messages for the
+memory-safety argument and the `register_count==0` defensive fallback
+for hand-authored `DiamondChunk` literals that predate the field).
+
+Re-ran `bash bench/run.sh quicken` after landing, same environment as
+the table above (`make release`, same machine). Deltas are
+`(before - after) / before`, computed from per-iteration times (repeat
+counts differ slightly between runs since `bench/run.sh` auto-tunes
+them to hit ~2-5s total, so per-iteration time is the only comparable
+number):
+
+| Benchmark | Before (per-iter) | After (per-iter) | Delta |
+|---|---:|---:|---:|
+| `fibonacci` (fib(30), one full run) | 301.2ms | 207.1ms | **+31.2%** |
+| `closures` | 109.0ns | 81.3ns | **+25.4%** |
+| `dispatch_monomorphic` | 133.2ns | 100.3ns | **+24.7%** |
+| `int_arithmetic_dynamic` | 131.4ns | 100.0ns | **+23.9%** |
+| `dispatch_polymorphic` | 162.2ns | 129.5ns | **+20.1%** |
+| `string_ops` | 490.5ns | 419.8ns | +14.4% |
+| `int_arithmetic` | 59.6ns | 52.2ns | +12.3% |
+| `array_ops` | 87.3ns | 78.4ns | +10.2% |
+| `hash_ops` | 18.35ms | 18.34ms | +0.1% (noise) |
+| `fiber_switch` | 836.6ns | 839.0ns | -0.3% (noise) |
+
+This lines up exactly with the hypothesis findings #1 and #5 above
+pointed to: every call-heavy benchmark improved 10-31%, with the
+biggest wins (24-31%) landing on the most call-dense benchmarks
+(`fibonacci`, monomorphic/polymorphic dispatch, closures). `hash_ops`
+and `fiber_switch` — the two benchmarks whose cost isn't dominated by
+function-call frequency (`fiber_switch`'s cost is the `ucontext`
+OS-level context switch itself, per finding #3) — are unchanged within
+noise, which is a useful negative control: the improvement really is
+call-overhead-specific, not a general/spurious speedup across the
+board.
+
+Confirms the baseline's core finding was actionable: call/frame-setup
+overhead, not opcode-level arithmetic specialization, was where the
+real cost was, and this is a first concrete win against it. Next
+candidates from the same vein (not yet started): skipping the
+`[0, argument_count)` zero-init prefix (redundant with the immediate
+argument copy-in), and the ~15-field `DiamondChunk` struct still built
+by value on every `CALL`.
+
+## JIT experiment #2: elide provably-redundant NIL opcodes (results)
+
+Landed at `14668db`/`8b2e4e6`. `run_chunk`'s zero-init (from experiment
+#1) already puts NIL in every register a function can reference before
+its bytecode starts, and register allocation is monotonic within a
+function body — so any `DIAMOND_OP_NIL` that's the *sole* bytecode-level
+writer of its destination register is provably redundant. Audited all
+16 `DIAMOND_OP_NIL` emission sites in `src/compiler.c` by direct code
+reading and removed the opcode at the 11 confirmed sole-writer sites
+(full list in the commit message and the round's plan), leaving the 5
+genuine multi-writer sites (if-without-else, while/loop's own result
+register, both postfix-modifier fallbacks) untouched since a prior loop
+iteration could leave a non-nil value in those registers.
+
+Confirmed via `DIAMOND_TRACE_OPCODES` that this isn't just a paper
+win: `fibonacci.di`'s `NIL` count dropped from 5,385,121 (baseline) to
+**0** — `compile_sequence`'s leading-placeholder site (the
+highest-frequency of the 11 removed) accounted for both NILs/call in
+fibonacci's original trace, and neither survives.
+
+Wall-clock measurement needed more care than experiment #1: a single
+`bash bench/run.sh quicken` run showed numbers within noise of (and in
+one case slightly worse than) the pre-change baseline, which didn't
+match the clear opcode-count win. Built a worktree at the
+pre-NIL-elision commit (`f78e574`) and ran 5-6 alternating rounds
+head-to-head instead of trusting one run each:
+
+| Benchmark | Before (avg of N) | After (avg of N) | Delta |
+|---|---:|---:|---:|
+| `dispatch_monomorphic` (5 rounds, repeat=15) | 3.240s | 2.998s | **+7.5%**, after faster in all 5 rounds |
+| `fibonacci` (6 rounds, repeat=15) | 3.362s | 3.163s | **+5.9%**, after faster in all 6 rounds |
+| `closures` (5 rounds, repeat=25) | 2.118s | 2.088s | +1.4%, after faster in 4 of 5 rounds — within noise |
+
+Smaller than experiment #1's 10-31%, as expected: removing one opcode
+dispatch per call is a lighter cost than the 3.8KB-of-zeroing
+experiment #1 already eliminated for a typical small function. Still a
+real, consistent, and free win (pure code deletion, zero added
+complexity or runtime cost) on the benchmarks with the highest
+NIL-per-call ratio. `closures`' weaker signal is consistent with its
+own opcode trace (`bench/BASELINE.md`'s original breakdown): its
+`GET_CELL`/`SET_CELL`/`CALL_CLOSURE` overhead dominates over the
+removed NILs' share of total dispatch, unlike `fibonacci`/
+`dispatch_monomorphic` where straight-line call/branch code makes up
+more of the total.
+
+**Methodology note for future rounds**: single-run `bench/run.sh`
+measurements are noisy enough to mask real effects in this ~5-8%
+range (experiment #1's 10-31% wins were large enough to survive that
+noise; this round's weren't, until measured with repeated alternating
+runs against a same-machine baseline via `git worktree`). Prefer that
+approach — a worktree at the prior commit, `/usr/bin/time -f '%e'`,
+several alternating rounds — for any future round expected to land
+in the single-digit-percent range.
+
+## JIT experiment #3: skip run_chunk's wasted internal DiamondChunk copy (results)
+
+Landed at `376b487`. `run_chunk` had its own second, separate,
+*unconditional* `DiamondChunk execution=*chunk;` copy (168 bytes) at
+its top, on every single call — but `execution` is only ever read
+inside the branch that infers type bindings for a generic function
+with an unbound type variable, which fires for essentially none of
+`bench/`'s benchmarks (none use generics). Moved the copy inside that
+branch, so the common (non-generic) path skips it entirely. Confined
+to one function, no signature changes, `make test-sanitize` clean.
+
+Expected this to be a small, possibly noise-level win by proportional
+reasoning against experiments #1/#2 (168 bytes is much smaller than
+either of those rounds' targets). It wasn't — measured via the same
+worktree/alternating-rounds methodology experiment #2's addendum
+recommended, against the pre-change commit (`d842733`):
+
+| Benchmark | Before (avg of N) | After (avg of N) | Delta |
+|---|---:|---:|---:|
+| `dispatch_monomorphic` (6 rounds, repeat=15) | 2.830s | 2.448s | **+13.5%**, after faster in all 6 rounds |
+| `fibonacci` (6 rounds, repeat=15) | 3.023s | 2.720s | **+10.0%**, after faster in all 6 rounds |
+| `closures` (5 rounds, repeat=25) | 2.030s | 1.902s | +6.3%, after faster in 4 of 5 rounds |
+| `hash_ops` (5 rounds, repeat=100, negative control) | 1.862s | 1.858s | +0.2%, unchanged as expected |
+
+Larger than experiment #2's comparable-magnitude NIL removal (5-8%),
+and closer to experiment #1's territory despite eliminating far fewer
+bytes. Best explanation: this wasn't just "168 fewer bytes written" —
+`execution` being written unconditionally (even though functionally
+dead on the common path) likely constrained the compiler's own
+optimization of `run_chunk` itself (register allocation, what it could
+prove dead vs. had to conservatively keep live across the branch),
+so removing it plausibly unlocked further codegen improvements beyond
+the literal copy's own cost. `hash_ops` staying flat confirms the win
+is still call-overhead-specific, not a general/spurious change.
+
+Takeaway for scoping future rounds: proportional reasoning from
+experiments #1/#2 ("smaller change → smaller expected win") doesn't
+reliably predict outcomes when the change also affects what the
+compiler can prove about the surrounding function, not just how many
+bytes move at runtime. Measure before deprioritizing a candidate on
+that basis alone.
+
+The originally-scoped, more invasive idea — eliminating the *external*
+per-call-site `DiamondChunk` construction (the ~9 sites in `vm.c`
+building `called_chunk` before calling `run_chunk`, requiring a
+`DiamondChunk` split and ~20 touched function signatures) — remains
+undone and is now a stronger candidate than before this round's
+result, given how much larger this smaller-scoped sibling change
+turned out to be.
+
+## JIT experiment #4: eliminate the external DiamondChunk copies (attempted, reverted)
+
+Implemented in full: `run_chunk(const DiamondFunction *function, const
+DiamondChunk *program, const DiamondTypeBinding *type_variable_bindings,
+...)` instead of one merged `DiamondChunk*`, with `program` simply
+forwarded (never rebuilt) at every one of the ~9 external call sites,
+a lazily-built merged view for the handful of downstream helpers that
+still need per-function fields (generalizing the `lazy_chunk_view`
+pattern from experiment #3), and `diamond_vm_run()`'s public signature
+changed to take a `DiamondProgram*` directly so it could hand
+`run_chunk` a real `DiamondFunction*` instead of synthesizing one.
+Fully correct — full test suite, `make test-sanitize`, `make test-all`
+all clean — and caught two real bugs along the way (a cache-poisoning
+issue in the lazy-view mechanism, and a wrong-table index bug in
+`CALL_TYPED`'s explicit type-argument resolution, both confirmed via
+`git stash` comparison against pre-change behavior before being ruled
+out as pre-existing).
+
+Measured via the same worktree/alternating-rounds methodology, plus
+self-comparison checks (same binary against itself) after an initial
+noisy reading, since the noise floor during this measurement session
+turned out higher than earlier rounds (confirmed via `hash_ops`
+self-comparison showing ~10% run-to-run variance on identical
+binaries — a useful reminder that the noise floor itself isn't
+constant across a long session and is worth re-establishing before
+trusting a surprising result):
+
+| Benchmark | Result | Confidence |
+|---|---|---|
+| `fibonacci` (repeat=40, 8 rounds) | +0.25%, flat | High — tight, non-overlapping-with-noise clustering |
+| `dispatch_monomorphic` (repeat=40, 8 rounds) | **-9.1%, real regression** | High — self-comparison on both binaries showed each is internally stable/tight, with a clean non-overlapping gap between them |
+| `dispatch_polymorphic` | ~-5%, likely real | Medium — fewer confirming rounds |
+| `hash_ops` (negative control) | inconclusive | Low — noise floor and observed delta were the same order of magnitude |
+
+Best explanation: `run_chunk`'s parameter count grew from 7 to 9
+(splitting one `DiamondChunk*` into three separate pointers). Every
+opcode handler in the ~2000-line function can potentially reference
+any of them, so more parameters likely means more register pressure
+across the *entire* function body, not just at call sites — a cost
+that "fewer bytes copied" reasoning doesn't capture, and the opposite
+of what made experiment #3 (which *removed* a variable's live range)
+pay off so well. Reverted in full (3 commits: `26b85d5`, `9073af5`,
+`279f1ed`) rather than landing a measured net regression on a common
+code path (method dispatch) for an architectural preference alone;
+none of it was ever pushed.
+
+## Where this branch stands
+
+Four experiments attempted, three landed:
+
+1. Narrow `run_chunk`'s per-call register zero-init to `register_count`
+   instead of the fixed 256 slots: **+10-31%** on call-heavy benchmarks.
+2. Elide 11 provably-redundant `DIAMOND_OP_NIL` emissions: **+5-8%**
+   on the highest `NIL`-per-call benchmarks.
+3. Skip `run_chunk`'s own wasted internal `DiamondChunk` copy (dead
+   outside the generic-function path): **+10-13.5%**, a bigger win
+   than experiments #1/#2's magnitude would have predicted.
+4. Eliminate the *external* per-call-site `DiamondChunk` copies:
+   attempted, correct, but a **confirmed regression** on method
+   dispatch — reverted.
+
+All three landed wins compound (they touch non-overlapping parts of
+`run_chunk`), so the net effect on call-heavy code across the branch
+is larger than any single number above. Consolidating here rather
+than continuing further interpreter-loop micro-optimization: the
+remaining candidates identified along the way are either explicitly
+out of scope by earlier design decisions (fiber `ucontext` switch
+cost — dominated by the OS context switch, not bytecode dispatch) or
+not measurable against the current benchmark suite (`CHECK_TYPE`/
+generic-dispatch paths, per the original baseline's own coverage-gap
+note). A genuine tracing/method JIT — actual native code generation,
+which nothing in this branch has attempted — is the natural next
+scope if this work continues, distinct in kind from what's been done
+here.
