@@ -2605,8 +2605,30 @@ static DiamondTokenKind postfix_modifier_ahead(const Compiler *compiler) {
         return DIAMOND_TOKEN_EOF;
     }
     DiamondLexer lookahead = compiler->lexer;
-    size_t depth = 0;
+    /* compiler->current may itself already be an opening bracket (this
+     * whole statement is a bracketed literal, e.g. `[if x ... end]`) --
+     * the scan below only sees tokens *after* current, so depth has to
+     * start accounting for that already-consumed bracket, or a nested
+     * if/unless at the literal's own top level would be miscounted as
+     * depth 0 and misread as a trailing modifier on the statement. */
+    size_t depth = compiler->current.kind == DIAMOND_TOKEN_LEFT_PAREN ||
+                   compiler->current.kind == DIAMOND_TOKEN_LEFT_BRACKET ||
+                   compiler->current.kind == DIAMOND_TOKEN_LEFT_BRACE ? 1 : 0;
     bool seen = true;
+    /* An if/unless immediately after '=' is the start of the
+     * assignment's own RHS expression (`x = if ... end`), not a
+     * trailing postfix modifier on a value that hasn't been parsed yet.
+     * Deliberately NOT extended to 'return'/'raise': `return if cond`/
+     * `raise if cond` already have an established, different meaning
+     * (a bare return/raise, postfix-conditioned on cond -- see
+     * compile_return/compile_raise's own current.kind==IF/UNLESS
+     * branches) that this function's callers already rely on; treating
+     * a leading if/unless there as the start of a value instead would
+     * silently change what `return if flag` means. Narrower than fully
+     * structure-aware (an if/unless immediately after some other
+     * operator, e.g. `x = y && if ... end`, is still misread the old
+     * way), but covers the position this most commonly comes up in. */
+    bool expression_expected = false;
     for (;;) {
         DiamondToken token = diamond_lexer_next(&lookahead);
         if (token.kind == DIAMOND_TOKEN_EOF ||
@@ -2617,6 +2639,7 @@ static DiamondTokenKind postfix_modifier_ahead(const Compiler *compiler) {
         if (depth == 0 && seen &&
             (token.kind == DIAMOND_TOKEN_IF ||
              token.kind == DIAMOND_TOKEN_UNLESS)) {
+            if (expression_expected) return DIAMOND_TOKEN_EOF;
             return token.kind;
         }
         switch (token.kind) {
@@ -2633,6 +2656,7 @@ static DiamondTokenKind postfix_modifier_ahead(const Compiler *compiler) {
             default:
                 break;
         }
+        expression_expected = depth == 0 && token.kind == DIAMOND_TOKEN_EQUAL;
         seen = true;
     }
 }
