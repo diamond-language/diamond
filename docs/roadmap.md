@@ -807,6 +807,19 @@ future work.
   accept a newline between `{` and its first entry, so `facet.lock` (and
   any manifest) must be single-line — documented in `docs/packages.md`
   rather than fixed, out of scope for this round.
+- Extracted `lib/http.di` out of the main repo entirely into
+  `diamond-http`, a standalone package in its own sibling git repo,
+  installable via `facet` (see above) rather than bundled with the
+  runtime — the position that Diamond itself shouldn't ship an HTTP
+  server at all, now that `facet` exists to make "install it as a
+  dependency" a real option instead of a hypothetical one. No functional
+  change to the library itself: same functions, same behavior, just a
+  new home (`require "http"`, not `require "lib/http"`) and its own
+  `package.di`/README/test script. The four HTTP tests that lived in
+  this repo's `tests/run.sh` moved with it, adapted into the new repo's
+  own `test.sh`. `docs/http.md` is gone from this repo along with it —
+  the library's documentation now lives with the library, in the new
+  repo's own README.
 
 ## Next priorities
 

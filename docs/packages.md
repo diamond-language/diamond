@@ -163,6 +163,18 @@ No `facet init` or `facet add <dep>` — `package.di` stays a plain,
 hand-edited Diamond `Hash` literal; only the fetch/install/lock steps
 are automated.
 
+### A real example: `diamond-http`
+
+Diamond's runtime has no HTTP support built in on purpose — `lib/http.di`
+used to be bundled with the language and was deliberately pulled back
+out into its own repo once `facet` made "install it as a dependency"
+a real option. It's a genuine, unmodified `facet`-installable package,
+not a toy example:
+
+```ruby
+{"name": "myapp", "dependencies": {"http": {"git": "https://gitlab.com/dmn9180/diamond-http", "tag": "v0.1.0"}}}
+```
+
 ## Precedence
 
 A relative file always wins over a same-named package when both exist —

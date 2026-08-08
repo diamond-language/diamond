@@ -4,8 +4,11 @@ Ruby-like surface syntax, but expression-oriented and gradually typed — no
 separate "typed" object model, just optional annotations on top of dynamic
 dispatch. This document is a tour of the surface syntax; see `docs/design.md`
 for how it compiles and executes, `docs/object-model.md` for the object
-model in more depth, `docs/fibers.md` for fibers, `docs/io.md` for I/O, and
-`docs/http.md` for the HTTP library.
+model in more depth, `docs/fibers.md` for fibers, and `docs/io.md` for I/O.
+Diamond's runtime intentionally has no HTTP support built in — see
+`docs/packages.md` for `facet`, the package manager, and
+`diamond-http` (a separate repo, installable via `facet`) for a minimal
+HTTP server built entirely on top of the I/O primitives below.
 
 ## Basics
 
@@ -339,8 +342,7 @@ client = TCPSocket.connect("example.com", 8080)
 
 A connected socket (from `.connect` or `.accept()`) is a `File` under the
 hood, so `.read()`/`.read(n)`/`.gets()`/`.write(value)`/`.close()` work
-identically on both. `require "lib/http"` adds a minimal Rack-style
-`http_serve(port, handler)` on top — see `docs/http.md`.
+identically on both.
 
 ## No AST
 
