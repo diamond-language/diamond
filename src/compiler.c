@@ -4066,6 +4066,7 @@ static uint8_t compile_interface(Compiler *compiler) {
     advance_token(compiler);
     if(compiler->current.kind==DIAMOND_TOKEN_LESS) {
         advance_token(compiler);
+        skip_newlines(compiler);
         while(true) {
             if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER) {
                 fail(compiler,compiler->current.span,
@@ -4102,6 +4103,7 @@ static uint8_t compile_interface(Compiler *compiler) {
             advance_token(compiler);
             if(compiler->current.kind!=DIAMOND_TOKEN_COMMA)break;
             advance_token(compiler);
+            skip_newlines(compiler);
         }
     }
     if(!consume_block_start(compiler))return 0;
