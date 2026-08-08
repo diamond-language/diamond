@@ -2911,6 +2911,8 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                             memcmp(method_name->chars,"slice",5)==0;
                         const bool to_i_method=method_name->length==4&&
                             memcmp(method_name->chars,"to_i",4)==0;
+                        const bool to_f_method=method_name->length==4&&
+                            memcmp(method_name->chars,"to_f",4)==0;
                         const bool downcase_method=method_name->length==8&&
                             memcmp(method_name->chars,"downcase",8)==0;
                         const bool upcase_method=method_name->length==6&&
@@ -3080,6 +3082,28 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                                 position++;
                             }
                             registers[dest]=DIAMOND_INT(saw_digit?(negative?-value:value):0);
+                            break;
+                        }
+                        if(to_f_method) {
+                            if(argc!=0)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                            /* No leading-whitespace skip, matching to_i's
+                             * convention -- strtod's own grammar would
+                             * otherwise skip it. Overflow is allowed to
+                             * become Infinity (unlike to_i, which must
+                             * reject out-of-range values): Float already
+                             * has a well-defined way to represent "too
+                             * large", Int does not. */
+                            double value=0.0;
+                            if(source->length>0) {
+                                const char first=source->chars[0];
+                                if((first>='0'&&first<='9')||
+                                   first=='+'||first=='-'||first=='.') {
+                                    char *end=nullptr;
+                                    const double parsed=strtod(source->chars,&end);
+                                    if(end!=source->chars)value=parsed;
+                                }
+                            }
+                            registers[dest]=DIAMOND_FLOAT(value);
                             break;
                         }
                         if(index_of_method) {

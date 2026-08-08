@@ -393,7 +393,7 @@ module Enumerable
   def reduce(initial, callback: Callable[2]) = enumerable_reduce(self, initial, callback)
 end
 
-def abs(x: Int) -> Int
+def abs(x: Int | Float) -> Int | Float
   if x < 0
     -x
   else
@@ -401,7 +401,7 @@ def abs(x: Int) -> Int
   end
 end
 
-def min(a: Int, b: Int) -> Int
+def min(a: Int | Float, b: Int | Float) -> Int | Float
   if a < b
     a
   else
@@ -409,7 +409,7 @@ def min(a: Int, b: Int) -> Int
   end
 end
 
-def max(a: Int, b: Int) -> Int
+def max(a: Int | Float, b: Int | Float) -> Int | Float
   if a > b
     a
   else
@@ -417,8 +417,13 @@ def max(a: Int, b: Int) -> Int
   end
 end
 
-def mod(a: Int, b: Int) -> Int
-  a - (a / b) * b
+def mod(a: Int | Float, b: Int | Float) -> Int | Float
+  quotient = a / b
+  if quotient is Int
+    a - quotient * b
+  else
+    a - to_f(to_i(quotient)) * b
+  end
 end
 
 def array_sort(values: Array[Int]) -> Array[Int]
