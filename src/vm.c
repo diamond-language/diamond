@@ -1624,7 +1624,33 @@ static bool builder_format_value(StringBuilder *builder,DiamondValue value) {
         if(isinf(real))
             return real<0?builder_append(builder,"-Infinity",9):
                           builder_append(builder,"Infinity",8);
-        length=snprintf(scalar,sizeof scalar,"%.15g",real);
+        /* Shortest decimal that round-trips exactly -- see value.c's
+         * fprint_float for the full rationale (same algorithm,
+         * duplicated per this codebase's existing Int/Float
+         * formatting convention between the two call sites), including
+         * probing the exponent first so %g doesn't jump to scientific
+         * notation for round values like 10.0 just because the search
+         * started at a low precision. */
+        uint64_t real_bits;memcpy(&real_bits,&real,sizeof real_bits);
+        char probe[32];
+        snprintf(probe,sizeof probe,"%.0e",real);
+        const char *exponent_marker=strchr(probe,'e');
+        const int exponent=exponent_marker?atoi(exponent_marker+1):0;
+        /* Only bump the starting precision when it can actually keep %g
+         * in fixed-point mode (exponent 1..16) -- see value.c's
+         * fprint_float for the full rationale (past that, %g would use
+         * scientific notation at every precision anyway, so starting at
+         * 1 costs nothing and finds a genuinely shorter form when one
+         * exists). */
+        const int start_precision=(exponent>=1&&exponent<=16)?exponent+1:1;
+        for(int precision=start_precision;precision<=17;precision++) {
+            length=snprintf(scalar,sizeof scalar,"%.*g",precision,real);
+            if(length<0||(size_t)length>=sizeof scalar)continue;
+            char *end=nullptr;
+            const double parsed=strtod(scalar,&end);
+            uint64_t parsed_bits;memcpy(&parsed_bits,&parsed,sizeof parsed_bits);
+            if(end!=scalar&&parsed_bits==real_bits)break;
+        }
         if(length<0||(size_t)length>=sizeof scalar)return false;
         bool has_marker=false;
         for(int index=0;index<length;index++)

@@ -173,6 +173,7 @@ DiamondToken diamond_lexer_next(DiamondLexer *lexer) {
          * else (an identifier-start character, for method calls like
          * 5.abs(), or nothing) leaves the '.' for the next token, same
          * disambiguation rule Ruby's own lexer uses. */
+        bool is_float = false;
         if(lexer->source[lexer->current]=='.') {
             const char after_dot=lexer->source[lexer->current+1];
             if(after_dot>='0' && after_dot<='9') {
@@ -194,10 +195,42 @@ DiamondToken diamond_lexer_next(DiamondLexer *lexer) {
                     }
                     break;
                 }
-                return token(lexer, DIAMOND_TOKEN_FLOAT);
+                is_float = true;
             }
         }
-        return token(lexer, DIAMOND_TOKEN_INTEGER);
+        /* Exponent notation (1e10, 1.5e-3, 2E+7) always produces a
+         * float literal, even with no preceding '.' - same convention
+         * as Ruby/JS/C. 'e'/'E' not followed by a valid exponent (no
+         * digits after an optional sign) is left for the next token,
+         * same "peek before committing" shape as the '.' case above. */
+        if(lexer->source[lexer->current]=='e' || lexer->source[lexer->current]=='E') {
+            size_t peek = lexer->current + 1;
+            if(lexer->source[peek]=='+' || lexer->source[peek]=='-') peek++;
+            if(lexer->source[peek]>='0' && lexer->source[peek]<='9') {
+                advance(lexer);
+                if(lexer->source[lexer->current]=='+' || lexer->source[lexer->current]=='-')
+                    advance(lexer);
+                while (true) {
+                    const char next=lexer->source[lexer->current];
+                    if(next>='0' && next<='9') {
+                        advance(lexer);
+                        continue;
+                    }
+                    if(next=='_') {
+                        const char after=lexer->source[lexer->current+1];
+                        if(after<'0' || after>'9') {
+                            advance(lexer);
+                            return token(lexer,DIAMOND_TOKEN_ERROR);
+                        }
+                        advance(lexer);
+                        continue;
+                    }
+                    break;
+                }
+                is_float = true;
+            }
+        }
+        return token(lexer, is_float ? DIAMOND_TOKEN_FLOAT : DIAMOND_TOKEN_INTEGER);
     }
     if (character == '"') {
         while (!at_end(lexer) && lexer->source[lexer->current] != '"') {

@@ -5,16 +5,60 @@
 #include <inttypes.h>
 #include <math.h>
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 
-/* Pragmatic %.15g-based format, not a shortest-round-trip algorithm
- * (Grisu/Ryu-quality) - a documented simplification. Forces a trailing
- * .0 for whole-number results so a Float never prints indistinguishably
- * from an Int. */
+/* Shortest decimal that round-trips back to the exact same bit pattern:
+ * try increasing precision until re-parsing matches (17 significant
+ * digits is provably always sufficient for any IEEE-754 double, so
+ * this always terminates) - not a full Grisu/Ryu digit-generation
+ * algorithm, but the same observable guarantee for a cold path where
+ * an O(17) snprintf+strtod search is an acceptable tradeoff. Compares
+ * bit patterns rather than `==` so -0.0 and 0.0 are told apart. Forces
+ * a trailing .0 for whole-number results so a Float never prints
+ * indistinguishably from an Int.
+ *
+ * %g switches to scientific notation whenever its precision is <= the
+ * value's own decimal exponent - starting the search at precision 1
+ * unconditionally means a round value like 10.0 hits that threshold
+ * immediately ("%.1g" -> "1e+01", which round-trips exactly and so
+ * would otherwise end the search right there). Probe the exponent
+ * first via "%.0e" (not log10 - log10(10.0) can land a hair under 1.0
+ * and round the wrong way) and start the search at a precision that
+ * keeps %g in fixed-point mode for that magnitude, so the search only
+ * has to decide how many digits are needed, never fight %g over
+ * notation. Values with large enough exponents still fall through to
+ * scientific notation once the (capped) starting precision itself
+ * can't outrun the exponent, same as every other language's Float
+ * formatting. */
 static void fprint_float(FILE *stream, double real) {
     if (isnan(real)) { fputs("NaN", stream); return; }
     if (isinf(real)) { fputs(real < 0 ? "-Infinity" : "Infinity", stream); return; }
     char buffer[32];
-    const int length = snprintf(buffer, sizeof buffer, "%.15g", real);
+    int length = 0;
+    uint64_t real_bits;
+    memcpy(&real_bits, &real, sizeof real_bits);
+    char probe[32];
+    snprintf(probe, sizeof probe, "%.0e", real);
+    const char *exponent_marker = strchr(probe, 'e');
+    const int exponent = exponent_marker ? atoi(exponent_marker + 1) : 0;
+    /* Only bump the starting precision when it can actually keep %g in
+     * fixed-point mode (exponent 1..16): past that, %g would use
+     * scientific notation at every precision from 1 to 17 anyway (the
+     * exponent alone already exceeds the max precision), so starting
+     * at 1 costs nothing and lets the search find a genuinely shorter
+     * scientific form when one exists (e.g. exactly 1e+70, rather than
+     * needlessly settling for a longer 17-digit mantissa). */
+    const int start_precision = (exponent >= 1 && exponent <= 16) ? exponent + 1 : 1;
+    for (int precision = start_precision; precision <= 17; precision++) {
+        length = snprintf(buffer, sizeof buffer, "%.*g", precision, real);
+        if (length < 0 || (size_t)length >= sizeof buffer) continue;
+        char *end = nullptr;
+        const double parsed = strtod(buffer, &end);
+        uint64_t parsed_bits;
+        memcpy(&parsed_bits, &parsed, sizeof parsed_bits);
+        if (end != buffer && parsed_bits == real_bits) break;
+    }
     bool has_marker = false;
     for (int index = 0; index < length; index++) {
         if (buffer[index] == '.' || buffer[index] == 'e' || buffer[index] == 'E') {
