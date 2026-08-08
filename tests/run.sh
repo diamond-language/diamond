@@ -3857,4 +3857,52 @@ actual="$($diamond -e "(\"$nines\" + \"$nines\").to_f()")"
 actual="$(DIAMOND_STRESS_GC=1 $diamond -e '"#{"3.5".to_f()}, #{"garbage".to_f()}"')"
 [[ "$actual" == "3.5, 0.0" ]]
 
-echo "786 tests passed"
+actual="$($diamond -e 'sqrt(4.0)')"
+[[ "$actual" == "2.0" ]]
+
+actual="$($diamond -e 'sqrt(9)')"
+[[ "$actual" == "3.0" ]]
+
+actual="$($diamond -e 'sqrt(-1.0)')"
+[[ "$actual" == "NaN" ]]
+
+actual="$($diamond -e 'pow(2, 10)')"
+[[ "$actual" == "1024.0" ]]
+
+actual="$($diamond -e 'pow(2.0, 0.5)')"
+[[ "$actual" == "1.4142135623731" ]]
+
+nines=""
+for _ in $(seq 1 200); do nines+="9"; done
+actual="$($diamond -e "pow((\"$nines\" + \"$nines\").to_f(), 2)")"
+[[ "$actual" == "Infinity" ]]
+
+actual="$($diamond -e '"#{sin(0)}, #{cos(0)}, #{tan(0)}"')"
+[[ "$actual" == "0.0, 1.0, 0.0" ]]
+
+error_file="$(mktemp)"
+if "$diamond" -e 'sqrt("x")' >/dev/null 2>"$error_file"; then
+    echo "sqrt with a non-numeric argument unexpectedly succeeded" >&2
+    exit 1
+fi
+grep -q "math function argument must be an Int or Float" "$error_file"
+rm -f "$error_file"
+
+error_file="$(mktemp)"
+if "$diamond" -e 'pow(2, "x")' >/dev/null 2>"$error_file"; then
+    echo "pow with a non-numeric argument unexpectedly succeeded" >&2
+    exit 1
+fi
+grep -q "math function argument must be an Int or Float" "$error_file"
+rm -f "$error_file"
+
+actual="$($diamond --dump-bytecode -e 'sqrt(4.0)')"
+grep -q 'MATH_UNARY.*sqrt' <<<"$actual"
+
+actual="$($diamond --dump-bytecode -e 'pow(2, 3)')"
+grep -q 'MATH_BINARY.*pow' <<<"$actual"
+
+actual="$(DIAMOND_STRESS_GC=1 $diamond -e '"#{sqrt(16)}, #{pow(3, 2)}"')"
+[[ "$actual" == "4.0, 9.0" ]]
+
+echo "798 tests passed"
