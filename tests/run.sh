@@ -3985,4 +3985,16 @@ actual="$($diamond -e $'sqrt(\n 4.0\n)')"
 actual="$($diamond -e $'pow(\n 2,\n 3\n)')"
 [[ "$actual" == "8.0" ]]
 
-echo "849 tests passed"
+actual="$($diamond -e $'interface A\n def foo()\nend\ninterface B <\n A\n def bar()\nend\nclass C\n def foo()\n  1\n end\n def bar()\n  2\n end\nend\nC.new() is B')"
+[[ "$actual" == "true" ]]
+
+actual="$($diamond -e $'interface A\n def foo()\nend\ninterface X\n def qux()\nend\ninterface B < A,\n X\n def bar()\nend\nclass C\n def foo()\n  1\n end\n def qux()\n  3\n end\n def bar()\n  2\n end\nend\nC.new() is B')"
+[[ "$actual" == "true" ]]
+
+actual="$($diamond -e $'interface A\n def foo()\nend\ninterface B < A\n def bar()\nend\nclass C\n def foo()\n  1\n end\n def bar()\n  2\n end\nend\nC.new() is B')"
+[[ "$actual" == "true" ]]
+
+actual="$($diamond -e $'interface A\n def foo()\nend\ninterface X\n def qux()\nend\ninterface B <\n A,\n X\n def bar()\nend\nclass C\n def foo()\n  1\n end\n def qux()\n  3\n end\n def bar()\n  2\n end\nend\nC.new() is B')"
+[[ "$actual" == "true" ]]
+
+echo "853 tests passed"
