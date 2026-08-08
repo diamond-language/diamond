@@ -737,6 +737,50 @@ future work.
   (`pow(2.0, 0.5)`, whose old expected output `"1.4142135623731"` does
   not parse back to the same bits as `sqrt(2)`) and were corrected to
   their exact values as part of this change.
+- Structural interfaces and more capable flow typing (three
+  independent gaps, picked out of several found while investigating
+  this open-ended "Later experiments" line item):
+  - `if x is Foo && y is Bar` now narrows both `x` and `y` inside the
+    branch where the whole condition is true, and the `unless`/`||`
+    mirror narrows both where the whole condition is false. Previously
+    only a single pending narrowing fact was tracked at all
+    (`Compiler.narrowing` in `src/compiler.c`), and compiling the
+    right-hand side of `&&`/`||` silently overwrote it before `parse_if`
+    ever saw it — so a composed condition narrowed neither operand.
+    Generalized to two small per-condition fact lists (`when_true`/
+    `when_false`, capped at 8 entries, silently stops merging past that
+    rather than erroring); `&&` composes `when_true` (both sides must
+    hold — sound), `||` composes `when_false` (both must have failed —
+    sound); the unsound direction of each (the disjunctive failure case
+    of `&&`, the disjunctive success case of `||`) is left empty rather
+    than guessed, which is what makes this compose correctly through
+    chains and mixed `&&`/`||` automatically with no special-casing —
+    an empty list contributes nothing when concatenated into an outer
+    expression's facts.
+  - `interface Sub < Base1, Base2` composes interfaces by flattening
+    each base's method signatures into the new interface at compile
+    time (`compile_interface`, `src/compiler.c`) — no runtime interface
+    hierarchy, so zero changes were needed to either matching function
+    (`known_type_satisfies_one` in `compiler.c`, `value_matches_type`/
+    `runtime_type_id_satisfies` in `vm.c`); a composed interface looks
+    identical to one written out by hand once compiled. Duplicate
+    method names (from two bases, or re-declaring an inherited one) are
+    rejected with the same "duplicate interface method" error a single
+    interface's own body already used for local duplicates.
+  - Structural matching against native `String`/`Array`/`Hash` values
+    was a 5-method hardcoded whitelist (`length`/`push`/`pop`/`key_at`/
+    `value_at`), duplicated across three call sites, so any other real
+    native method — `.slice`, `.strip`, `.to_i`, `.split`, etc. — could
+    never satisfy an interface even though the VM implements it.
+    Replaced with one canonical table (`DIAMOND_NATIVE_METHODS` in
+    `src/vm.c`) covering the VM's actual native method surface, queried
+    through a single new function (`diamond_native_method_satisfies`,
+    declared in `vm.h`) from all three call sites. A native method whose
+    return type isn't one fixed scalar (`pop`, `key_at`, `value_at`,
+    `String#index_of`) can still satisfy an interface method with no
+    return annotation, matching the existing conservative-return
+    convention already used for user-class methods — just never one
+    that requires a specific return type.
 
 ## Next priorities
 
@@ -745,7 +789,6 @@ None queued.
 ## Later experiments
 
 - Self-hosting the compiler and core libraries in Diamond.
-- Structural interfaces and more capable flow typing.
 - Native-code generation or a tracing/method JIT — nothing in the
   `jit-experimentation` work above generates native code; it's all
   interpreter-loop leaning (register zero-init, opcode dispatch,

@@ -142,6 +142,44 @@ annotations, pipe-separated unions, generics (`Array[T]`, `Hash[K, V]`),
 `is` for runtime type tests, and structural interfaces (`Sized`,
 `Callable[n]`-style).
 
+```ruby
+interface Named
+  def name() -> String
+end
+
+interface Greeter < Named
+  def greet() -> String
+end
+```
+
+`interface Name ... end` declares a bodyless list of method
+signatures; any class or native `String`/`Array`/`Hash` value that
+structurally implements them satisfies it — no `implements`
+declaration needed, and a value can satisfy any number of unrelated
+interfaces at once. `interface Sub < Base1, Base2` builds one
+interface out of others: their method signatures are flattened into
+`Sub` at compile time (no runtime interface hierarchy), so it's an
+error to redeclare a name a base already provides, or for two bases to
+share a method name — both are just "duplicate interface method",
+resolved by not repeating the signature. Native `String`/`Array`/`Hash`
+values satisfy an interface method against the VM's real method
+surface (e.g. `strip`/`slice`/`to_i`/`split` on `String`, `push`/`pop`
+on `Array`, `key_at`/`value_at` on `Hash`, `length` on all three), not
+just the handful of collection primitives structural interfaces
+originally recognized; a method whose native return type isn't one
+fixed scalar (`pop`, `key_at`, `value_at`, `String#index_of`) can still
+satisfy an interface method with no return annotation, just never one
+that requires a specific return type.
+
+`x is Foo && y is Bar` narrows both `x` and `y` inside the branch where
+the whole condition is true (and `unless ... || ...`'s branch narrows
+both operands where the whole condition is false) — composed the same
+way chained/nested `&&`/`||` naturally compose, including through a mix
+of both. The reverse direction of each (the `else` of an `&&`, the
+`then` of an `||`) isn't narrowed: `!(A && B)` doesn't reduce to a
+simple fact about either operand in general, so nothing is narrowed
+there rather than guessing.
+
 ## Exceptions
 
 ```ruby
