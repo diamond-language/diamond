@@ -190,3 +190,57 @@ candidates from the same vein (not yet started): skipping the
 `[0, argument_count)` zero-init prefix (redundant with the immediate
 argument copy-in), and the ~15-field `DiamondChunk` struct still built
 by value on every `CALL`.
+
+## JIT experiment #2: elide provably-redundant NIL opcodes (results)
+
+Landed at `14668db`/`8b2e4e6`. `run_chunk`'s zero-init (from experiment
+#1) already puts NIL in every register a function can reference before
+its bytecode starts, and register allocation is monotonic within a
+function body — so any `DIAMOND_OP_NIL` that's the *sole* bytecode-level
+writer of its destination register is provably redundant. Audited all
+16 `DIAMOND_OP_NIL` emission sites in `src/compiler.c` by direct code
+reading and removed the opcode at the 11 confirmed sole-writer sites
+(full list in the commit message and the round's plan), leaving the 5
+genuine multi-writer sites (if-without-else, while/loop's own result
+register, both postfix-modifier fallbacks) untouched since a prior loop
+iteration could leave a non-nil value in those registers.
+
+Confirmed via `DIAMOND_TRACE_OPCODES` that this isn't just a paper
+win: `fibonacci.di`'s `NIL` count dropped from 5,385,121 (baseline) to
+**0** — `compile_sequence`'s leading-placeholder site (the
+highest-frequency of the 11 removed) accounted for both NILs/call in
+fibonacci's original trace, and neither survives.
+
+Wall-clock measurement needed more care than experiment #1: a single
+`bash bench/run.sh quicken` run showed numbers within noise of (and in
+one case slightly worse than) the pre-change baseline, which didn't
+match the clear opcode-count win. Built a worktree at the
+pre-NIL-elision commit (`f78e574`) and ran 5-6 alternating rounds
+head-to-head instead of trusting one run each:
+
+| Benchmark | Before (avg of N) | After (avg of N) | Delta |
+|---|---:|---:|---:|
+| `dispatch_monomorphic` (5 rounds, repeat=15) | 3.240s | 2.998s | **+7.5%**, after faster in all 5 rounds |
+| `fibonacci` (6 rounds, repeat=15) | 3.362s | 3.163s | **+5.9%**, after faster in all 6 rounds |
+| `closures` (5 rounds, repeat=25) | 2.118s | 2.088s | +1.4%, after faster in 4 of 5 rounds — within noise |
+
+Smaller than experiment #1's 10-31%, as expected: removing one opcode
+dispatch per call is a lighter cost than the 3.8KB-of-zeroing
+experiment #1 already eliminated for a typical small function. Still a
+real, consistent, and free win (pure code deletion, zero added
+complexity or runtime cost) on the benchmarks with the highest
+NIL-per-call ratio. `closures`' weaker signal is consistent with its
+own opcode trace (`bench/BASELINE.md`'s original breakdown): its
+`GET_CELL`/`SET_CELL`/`CALL_CLOSURE` overhead dominates over the
+removed NILs' share of total dispatch, unlike `fibonacci`/
+`dispatch_monomorphic` where straight-line call/branch code makes up
+more of the total.
+
+**Methodology note for future rounds**: single-run `bench/run.sh`
+measurements are noisy enough to mask real effects in this ~5-8%
+range (experiment #1's 10-31% wins were large enough to survive that
+noise; this round's weren't, until measured with repeated alternating
+runs against a same-machine baseline via `git worktree`). Prefer that
+approach — a worktree at the prior commit, `/usr/bin/time -f '%e'`,
+several alternating rounds — for any future round expected to land
+in the single-digit-percent range.
