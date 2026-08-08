@@ -2693,8 +2693,40 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                             memcmp(method_name->chars,"split",5)==0;
                         const bool ord_method=method_name->length==3&&
                             memcmp(method_name->chars,"ord",3)==0;
+                        const bool repeat_method=method_name->length==6&&
+                            memcmp(method_name->chars,"repeat",6)==0;
                         const DiamondString *source=
                             (const DiamondString *)registers[recv].as.object;
+                        if(repeat_method) {
+                            if(argc!=1)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                            if(registers[base].kind!=DIAMOND_VALUE_INT) {
+                                snprintf(vm->error,sizeof vm->error,
+                                    "String#repeat argument must be an Int");
+                                VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                            }
+                            const int64_t count=registers[base].as.integer;
+                            if(count<0) {
+                                snprintf(vm->error,sizeof vm->error,
+                                    "String#repeat argument must be a non-negative Int");
+                                VM_RETURN(DIAMOND_VM_INTEGER_OVERFLOW);
+                            }
+                            size_t total_length=0;
+                            if(ckd_mul(&total_length,source->length,(size_t)count)) {
+                                snprintf(vm->error,sizeof vm->error,
+                                    "String#repeat result is too large");
+                                VM_RETURN(DIAMOND_VM_INTEGER_OVERFLOW);
+                            }
+                            char *buffer=malloc(total_length+1);
+                            if(buffer==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                            for(size_t copy=0;copy<(size_t)count;copy++)
+                                memcpy(buffer+copy*source->length,source->chars,
+                                       source->length);
+                            DiamondString *repeated=
+                                allocate_string(vm,buffer,total_length);
+                            free(buffer);
+                            if(repeated==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                            registers[dest]=DIAMOND_OBJECT(repeated);break;
+                        }
                         if(ord_method) {
                             if(argc!=0)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
                             if(source->length==0) {
