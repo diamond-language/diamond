@@ -142,6 +142,12 @@ Strings also support `[]` with a single `Int` index, returning a new
 one-character `String` (bounds-checked, `IndexError` outside the
 string — the same as `.slice()`); unlike Array/Hash, `[]=` on a String
 is rejected outright with a `TypeError` (strings are immutable).
+`.repeat(n)` returns a new `String` with the receiver repeated `n`
+times (`n == 0` → `""`); a negative `n` raises a rescuable `RangeError`.
+This is deliberately a method, not `*` — `"x" * 3` isn't supported,
+since making the `*` operator polymorphic over String would need a
+new deoptimization mechanism for the compiler's Int-only fast path
+(`MULTIPLY_INT`) that doesn't otherwise exist for it.
 
 `.each(callback)`, and the `Enumerable` methods derived from it —
 `.select`/`.count`/`.any?`/`.all?`/`.reduce`/`.map` — work as receiver

@@ -3063,6 +3063,40 @@ rm -f "$error_file"
 actual="$(DIAMOND_STRESS_GC=1 $diamond -e '"hello"[2]')"
 [[ "$actual" == "l" ]]
 
+actual="$($diamond -e '"ab".repeat(3)')"
+[[ "$actual" == "ababab" ]]
+
+actual="$($diamond -e '"x".repeat(0)')"
+[[ "$actual" == "" ]]
+
+actual="$($diamond -e '"".repeat(5)')"
+[[ "$actual" == "" ]]
+
+actual="$($diamond -e '"x".repeat(1)')"
+[[ "$actual" == "x" ]]
+
+error_file="$(mktemp)"
+if "$diamond" -e '"x".repeat(-1)' >/dev/null 2>"$error_file"; then
+    echo "String#repeat with a negative argument unexpectedly succeeded" >&2
+    exit 1
+fi
+grep -q "String#repeat argument must be a non-negative Int" "$error_file"
+rm -f "$error_file"
+
+error_file="$(mktemp)"
+if "$diamond" -e '"x".repeat("y")' >/dev/null 2>"$error_file"; then
+    echo "String#repeat with a non-Int argument unexpectedly succeeded" >&2
+    exit 1
+fi
+grep -q "String#repeat argument must be an Int" "$error_file"
+rm -f "$error_file"
+
+actual="$($diamond -e $'begin\n "x".repeat(-1)\nrescue error: RangeError\n 42\nend')"
+[[ "$actual" == "42" ]]
+
+actual="$(DIAMOND_STRESS_GC=1 $diamond -e $'a = "xy".repeat(3)\nb = "z".repeat(2)\n"#{a}, #{b}"')"
+[[ "$actual" == "xyxyxy, zz" ]]
+
 http_port=18743
 http_server_out="$(mktemp)"
 http_server_src="$(cat <<'HTTPEOF'
@@ -3413,4 +3447,4 @@ wait "$stress_http_pid" 2>/dev/null || true
 [[ "$stress_http_response" == $'HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 13\r\n\r\nhello, /world' ]]
 rm -f "$stress_http_out"
 
-echo "700 tests passed"
+echo "701 tests passed"
