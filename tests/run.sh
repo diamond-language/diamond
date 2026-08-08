@@ -3775,4 +3775,86 @@ actual="$($diamond -e $'def f()\n i = 0\n r = while i < 3\n  i = i + 1\n  break 
 actual="$(DIAMOND_STRESS_GC=1 $diamond -e $'def f()\n i = 0\n r = while i < 3\n  i = i + 1\n  break 99 if i == 2\n end\n r\nend\n"#{f()}, #{nil}"')"
 [[ "$actual" == "99, nil" ]]
 
-echo "761 tests passed"
+actual="$($diamond -e 'abs(-5)')"
+[[ "$actual" == "5" ]]
+
+actual="$($diamond -e 'abs(-5.5)')"
+[[ "$actual" == "5.5" ]]
+
+actual="$($diamond -e 'abs(5)')"
+[[ "$actual" == "5" ]]
+
+actual="$($diamond -e '"#{min(3, 7)}, #{min(3.5, 2)}, #{max(3, 7.5)}, #{max(7.5, 3)}"')"
+[[ "$actual" == "3, 2, 7.5, 7.5" ]]
+
+actual="$($diamond -e 'mod(7, 2)')"
+[[ "$actual" == "1" ]]
+
+actual="$($diamond -e 'mod(-7, 2)')"
+[[ "$actual" == "-1" ]]
+
+actual="$($diamond -e 'mod(7.5, 2.0)')"
+[[ "$actual" == "1.5" ]]
+
+actual="$($diamond -e 'mod(-7.0, 2.0)')"
+[[ "$actual" == "-1.0" ]]
+
+actual="$($diamond -e 'mod(7, 2.0)')"
+[[ "$actual" == "1.0" ]]
+
+error_file="$(mktemp)"
+if "$diamond" -e 'mod(5, 0)' >/dev/null 2>"$error_file"; then
+    echo "Int mod by zero unexpectedly succeeded" >&2
+    exit 1
+fi
+grep -q "division by zero" "$error_file"
+rm -f "$error_file"
+
+actual="$($diamond -e $'begin\n mod(5.0, 0.0)\nrescue error: RangeError\n 42\nend')"
+[[ "$actual" == "42" ]]
+
+actual="$(DIAMOND_STRESS_GC=1 $diamond -e '"#{abs(-3.5)}, #{mod(9.5, 3.0)}"')"
+[[ "$actual" == "3.5, 0.5" ]]
+
+actual="$($diamond -e '"42".to_f()')"
+[[ "$actual" == "42.0" ]]
+
+actual="$($diamond -e '"3.14".to_f()')"
+[[ "$actual" == "3.14" ]]
+
+actual="$($diamond -e '"-2.5".to_f()')"
+[[ "$actual" == "-2.5" ]]
+
+actual="$($diamond -e '".5".to_f()')"
+[[ "$actual" == "0.5" ]]
+
+actual="$($diamond -e '"5.".to_f()')"
+[[ "$actual" == "5.0" ]]
+
+actual="$($diamond -e '"1e3".to_f()')"
+[[ "$actual" == "1000.0" ]]
+
+actual="$($diamond -e '"  42".to_f()')"
+[[ "$actual" == "0.0" ]]
+
+actual="$($diamond -e '"nan".to_f()')"
+[[ "$actual" == "0.0" ]]
+
+actual="$($diamond -e '"inf".to_f()')"
+[[ "$actual" == "0.0" ]]
+
+actual="$($diamond -e '"".to_f()')"
+[[ "$actual" == "0.0" ]]
+
+actual="$($diamond -e '"garbage".to_f()')"
+[[ "$actual" == "0.0" ]]
+
+nines=""
+for _ in $(seq 1 200); do nines+="9"; done
+actual="$($diamond -e "(\"$nines\" + \"$nines\").to_f()")"
+[[ "$actual" == "Infinity" ]]
+
+actual="$(DIAMOND_STRESS_GC=1 $diamond -e '"#{"3.5".to_f()}, #{"garbage".to_f()}"')"
+[[ "$actual" == "3.5, 0.0" ]]
+
+echo "786 tests passed"
