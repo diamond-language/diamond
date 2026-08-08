@@ -3459,4 +3459,45 @@ wait "$stress_http_pid" 2>/dev/null || true
 [[ "$stress_http_response" == $'HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 13\r\n\r\nhello, /world' ]]
 rm -f "$stress_http_out"
 
-echo "702 tests passed"
+actual="$($diamond -e '3.14')"
+[[ "$actual" == "3.14" ]]
+
+actual="$($diamond -e '0.5')"
+[[ "$actual" == "0.5" ]]
+
+actual="$($diamond -e '3.0')"
+[[ "$actual" == "3.0" ]]
+
+actual="$($diamond -e '1_000.000_1')"
+[[ "$actual" == "1000.0001" ]]
+
+actual="$($diamond -e '5.5')"
+[[ "$actual" == "5.5" ]]
+
+actual="$($diamond -e $'"Float: #{3.14}"')"
+[[ "$actual" == "Float: 3.14" ]]
+
+actual="$($diamond -e '3 == 3.0')"
+[[ "$actual" == "true" ]]
+
+actual="$($diamond -e '3.0 == 3')"
+[[ "$actual" == "true" ]]
+
+actual="$($diamond -e '3 == 3.5')"
+[[ "$actual" == "false" ]]
+
+actual="$($diamond -e $'h = {}\nh[3] = "int-key"\nh[3.0]')"
+[[ "$actual" == "int-key" ]]
+
+actual="$($diamond -e $'h = {}\nh[3.0] = "float-key"\nh[3]')"
+[[ "$actual" == "float-key" ]]
+
+error_file="$(mktemp)"
+if "$diamond" -e '5.abs()' >/dev/null 2>"$error_file"; then
+    echo "Int literal .abs() unexpectedly succeeded (Int has no method dispatch)" >&2
+    exit 1
+fi
+grep -q "runtime error" "$error_file"
+rm -f "$error_file"
+
+echo "703 tests passed"
