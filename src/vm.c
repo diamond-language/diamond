@@ -2452,6 +2452,31 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     opcode=specialized;
                     vm->quickened_sites++;
                 }
+                /* Scoped to the four generic (non-_INT) opcodes only, same
+                 * reasoning as the arithmetic block: the _INT forms stay
+                 * untouched. */
+                if ((opcode==DIAMOND_OP_LESS||opcode==DIAMOND_OP_LESS_EQUAL||
+                     opcode==DIAMOND_OP_GREATER||opcode==DIAMOND_OP_GREATER_EQUAL) &&
+                    (registers[left].kind==DIAMOND_VALUE_FLOAT||
+                     registers[left].kind==DIAMOND_VALUE_INT) &&
+                    (registers[right].kind==DIAMOND_VALUE_FLOAT||
+                     registers[right].kind==DIAMOND_VALUE_INT) &&
+                    (registers[left].kind==DIAMOND_VALUE_FLOAT||
+                     registers[right].kind==DIAMOND_VALUE_FLOAT)) {
+                    const double left_real=registers[left].kind==DIAMOND_VALUE_FLOAT?
+                        registers[left].as.real:(double)registers[left].as.integer;
+                    const double right_real=registers[right].kind==DIAMOND_VALUE_FLOAT?
+                        registers[right].as.real:(double)registers[right].as.integer;
+                    bool float_comparison=false;
+                    if(opcode==DIAMOND_OP_LESS)float_comparison=left_real<right_real;
+                    else if(opcode==DIAMOND_OP_LESS_EQUAL)
+                        float_comparison=left_real<=right_real;
+                    else if(opcode==DIAMOND_OP_GREATER)
+                        float_comparison=left_real>right_real;
+                    else float_comparison=left_real>=right_real;
+                    registers[destination]=DIAMOND_BOOL(float_comparison);
+                    break;
+                }
                 if (registers[left].kind != DIAMOND_VALUE_INT ||
                     registers[right].kind != DIAMOND_VALUE_INT) {
                     VM_RETURN(DIAMOND_VM_TYPE_ERROR);
