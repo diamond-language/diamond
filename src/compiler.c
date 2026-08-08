@@ -2971,6 +2971,7 @@ static uint8_t compile_definition(Compiler *compiler) {
     }
 
     function->capture_count=(uint8_t)compiler->capture_count;
+    function->register_count=compiler->next_register;
     uint8_t captures[16];
     for(size_t i=0;i<compiler->capture_count;i++)captures[i]=compiler->capture_registers[i];
     const size_t capture_count=compiler->capture_count;
@@ -4024,6 +4025,7 @@ bool diamond_compile(const char *source, DiamondProgram *program,
     if (!compiler.failed && compiler.current.kind != DIAMOND_TOKEN_EOF) {
         fail(&compiler, compiler.current.span, "unexpected block terminator");
     }
+    program->entry.register_count = compiler.next_register;
     if (!compiler.failed) {
         emit_instruction(&compiler, DIAMOND_OP_RETURN, result, 0, 0, 1);
         for(size_t class_index=0;class_index<program->class_count;class_index++) {
@@ -4056,5 +4058,6 @@ DiamondChunk diamond_program_chunk(const DiamondProgram *program) {
         .class_count = program->class_count,
         .interfaces=program->interfaces,
         .interface_count=program->interface_count,
+        .register_count=program->entry.register_count,
     };
 }

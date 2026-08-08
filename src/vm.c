@@ -54,6 +54,7 @@ typedef struct DiamondFrame {
     struct DiamondFrame *previous;
     DiamondValue *registers;
     PendingUnwind *pending;
+    size_t register_count;
 } DiamondFrame;
 
 static void mark_value(DiamondValue value);
@@ -269,7 +270,8 @@ static void diamond_fiber_trampoline(void) {
           .interfaces=self->program_tables.interfaces,.interface_count=self->program_tables.interface_count,
           .parameter_type_sets=fn->parameter_type_sets,
           .type_variable_count=fn->type_variable_count,
-          .parameter_offset=fn->owner_class==UINT8_MAX?0:1};
+          .parameter_offset=fn->owner_class==UINT8_MAX?0:1,
+          .register_count=fn->register_count};
         self->status=run_chunk(&child,self->vm,nullptr,0,0,self->entry_closure,&self->result);
     } else {
         self->status = run_chunk(self->chunk, self->vm, nullptr, 0, 0, nullptr,
@@ -1556,7 +1558,8 @@ static DiamondVmStatus stringify_value(DiamondVm *vm,const DiamondChunk *chunk,
               .interfaces=chunk->interfaces,.interface_count=chunk->interface_count,
               .parameter_type_sets=fn->parameter_type_sets,
               .type_variable_count=fn->type_variable_count,
-              .parameter_offset=fn->owner_class==UINT8_MAX?0:1};
+              .parameter_offset=fn->owner_class==UINT8_MAX?0:1,
+              .register_count=fn->register_count};
             DiamondValue converted=DIAMOND_NIL;
             DiamondVmStatus status=run_chunk(&child,vm,&value,1,
                                               depth+1,nullptr,&converted);
@@ -1893,6 +1896,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
         .previous = vm->frames,
         .registers = registers,
         .pending = &pending,
+        .register_count = chunk->register_count,
     };
     vm->frames = &frame;
     size_t ip = 0;
@@ -2374,6 +2378,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     .parameter_type_sets=function->parameter_type_sets,
                     .type_variable_count=function->type_variable_count,
                     .parameter_offset=function->owner_class==UINT8_MAX?0:1,
+                    .register_count=function->register_count,
                 };
                 DiamondValue call_result = DIAMOND_NIL;
                 const DiamondVmStatus status = run_chunk(
@@ -2422,7 +2427,8 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     .parameter_type_sets=function->parameter_type_sets,
                     .type_variable_count=function->type_variable_count,
                     .parameter_offset=function->owner_class==UINT8_MAX?0:1,
-                    .type_variable_bindings=explicit_bindings};
+                    .type_variable_bindings=explicit_bindings,
+                    .register_count=function->register_count};
                 DiamondValue call_result=DIAMOND_NIL;
                 const DiamondVmStatus status=run_chunk(&called_chunk,vm,
                     &registers[argument_base],call_argument_count,depth+1,nullptr,
@@ -2504,7 +2510,8 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                   .interfaces=chunk->interfaces,.interface_count=chunk->interface_count,
                   .parameter_type_sets=fn->parameter_type_sets,
                   .type_variable_count=fn->type_variable_count,
-                  .parameter_offset=fn->owner_class==UINT8_MAX?0:1};
+                  .parameter_offset=fn->owner_class==UINT8_MAX?0:1,
+                  .register_count=fn->register_count};
                 DiamondValue call_result=DIAMOND_NIL;
                 DiamondVmStatus status=run_chunk(&child,vm,&registers[base],argc,depth+1,called,&call_result);
                 VM_PROPAGATE(status);
@@ -2537,7 +2544,8 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                       .interfaces=chunk->interfaces,.interface_count=chunk->interface_count,
                       .parameter_type_sets=fn->parameter_type_sets,
                       .type_variable_count=fn->type_variable_count,
-                      .parameter_offset=fn->owner_class==UINT8_MAX?0:1};
+                      .parameter_offset=fn->owner_class==UINT8_MAX?0:1,
+                      .register_count=fn->register_count};
                     DiamondValue ignored=DIAMOND_NIL;
                     DiamondVmStatus s=run_chunk(&child,vm,args,(size_t)argc+1,depth+1,nullptr,&ignored);
                     VM_PROPAGATE(s);
@@ -2641,7 +2649,8 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                               .interfaces=chunk->interfaces,.interface_count=chunk->interface_count,
                               .parameter_type_sets=target->parameter_type_sets,
                               .type_variable_count=target->type_variable_count,
-                              .parameter_offset=target->owner_class==UINT8_MAX?0:1};
+                              .parameter_offset=target->owner_class==UINT8_MAX?0:1,
+                              .register_count=target->register_count};
                             DiamondValue call_result=DIAMOND_NIL;
                             const DiamondVmStatus status=run_chunk(&child,vm,forward_args,
                                 total_argc,depth+1,nullptr,&call_result);
@@ -3205,7 +3214,8 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                   .type_variable_count=fn->type_variable_count,
                   .parameter_offset=fn->owner_class==UINT8_MAX?0:1,
                   .type_variable_bindings=type_argument_count==0?nullptr:
-                      explicit_bindings};
+                      explicit_bindings,
+                  .register_count=fn->register_count};
                 DiamondValue call_result=DIAMOND_NIL;
                 DiamondVmStatus s=run_chunk(&child,vm,args,(size_t)argc+1,depth+1,nullptr,&call_result);
                 VM_PROPAGATE(s);
@@ -3243,7 +3253,8 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                   .interfaces=chunk->interfaces,.interface_count=chunk->interface_count,
                   .parameter_type_sets=fn->parameter_type_sets,
                   .type_variable_count=fn->type_variable_count,
-                  .parameter_offset=fn->owner_class==UINT8_MAX?0:1};
+                  .parameter_offset=fn->owner_class==UINT8_MAX?0:1,
+                  .register_count=fn->register_count};
                 DiamondValue call_result=DIAMOND_NIL;
                 DiamondVmStatus status=run_chunk(&child,vm,args,(size_t)argc+1,
                                                   depth+1,nullptr,&call_result);
