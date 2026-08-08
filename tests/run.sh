@@ -3534,4 +3534,52 @@ rm -f "$error_file"
 actual="$($diamond -e $'begin\n raise 3.14\nrescue error: Float\n 42\nend')"
 [[ "$actual" == "42" ]]
 
-echo "704 tests passed"
+actual="$($diamond -e '1.5 + 2.5')"
+[[ "$actual" == "4.0" ]]
+
+actual="$($diamond -e '5.0 - 2.5')"
+[[ "$actual" == "2.5" ]]
+
+actual="$($diamond -e '2.5 * 4.0')"
+[[ "$actual" == "10.0" ]]
+
+actual="$($diamond -e '5.0 / 2.0')"
+[[ "$actual" == "2.5" ]]
+
+actual="$($diamond -e '"#{3 + 2.5}, #{2.5 + 3}, #{10 - 2.5}, #{3 * 2.5}, #{5 / 2.0}"')"
+[[ "$actual" == "5.5, 5.5, 7.5, 7.5, 2.5" ]]
+
+actual="$($diamond -e '10 + 20')"
+[[ "$actual" == "30" ]]
+
+actual="$($diamond -e '10 / 3')"
+[[ "$actual" == "3" ]]
+
+error_file="$(mktemp)"
+if "$diamond" -e '5 / 0' >/dev/null 2>"$error_file"; then
+    echo "Int division by zero unexpectedly succeeded" >&2
+    exit 1
+fi
+grep -q "division by zero" "$error_file"
+rm -f "$error_file"
+
+actual="$($diamond -e '5.0 / 0.0')"
+[[ "$actual" == "Infinity" ]]
+
+actual="$($diamond -e '(0.0 - 5.0) / 0.0')"
+[[ "$actual" == "-Infinity" ]]
+
+actual="$($diamond -e '0.0 / 0.0')"
+[[ "$actual" == "NaN" ]]
+
+actual="$($diamond -e '"a" + "b"')"
+[[ "$actual" == "ab" ]]
+
+actual="$($diamond --dump-bytecode -e $'def f(a: Int, b: Int) -> Int = a * b\nf(3, 4)')"
+grep -q '== f ==' <<<"$actual"
+grep -q 'MULTIPLY_INT' <<<"$actual"
+
+actual="$(DIAMOND_STRESS_GC=1 $diamond -e '"#{1.5 + 2.5}, #{5.0 / 2.0}"')"
+[[ "$actual" == "4.0, 2.5" ]]
+
+echo "705 tests passed"
