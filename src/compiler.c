@@ -629,7 +629,9 @@ static uint8_t parse_string(Compiler *compiler) {
 static uint8_t parse_literal(Compiler *compiler) {
     const uint8_t destination = allocate_register(compiler);
     if (compiler->previous.kind == DIAMOND_TOKEN_NIL) {
-        emit_instruction(compiler, DIAMOND_OP_NIL, destination, 0, 0, 1);
+        /* No NIL opcode needed: run_chunk already zero-inits every
+         * register in [0, register_count), and this destination is a
+         * sole writer (freshly allocated for this literal). */
         compiler->known_types[destination]=DIAMOND_TYPE_NIL;
     } else {
         emit_instruction(compiler, DIAMOND_OP_BOOL, destination,
@@ -1220,8 +1222,8 @@ static uint8_t parse_singleton_call(Compiler *compiler,
     const size_t call_count=argument_count+(method->needs_receiver?1:0);
     const uint8_t base=allocate_register(compiler);
     for(size_t index=1;index<call_count;index++)(void)allocate_register(compiler);
-    if(method->needs_receiver)
-        emit_instruction(compiler,DIAMOND_OP_NIL,base,0,0,1);
+    /* No NIL for `base` when needs_receiver: sole writer, already
+     * zero-inited by run_chunk's [0, register_count) init. */
     for(size_t index=0;index<argument_count;index++)
         emit_instruction(compiler,DIAMOND_OP_MOVE,
                          (uint8_t)(base+index+(method->needs_receiver?1:0)),
@@ -2405,7 +2407,7 @@ static uint8_t compile_return(Compiler *compiler) {
        compiler->current.kind==DIAMOND_TOKEN_UNLESS ||
        compiler->current.kind==DIAMOND_TOKEN_EOF) {
         value=allocate_register(compiler);
-        emit_instruction(compiler,DIAMOND_OP_NIL,value,0,0,1);
+        /* Sole writer; run_chunk's zero-init already covers this. */
         compiler->known_types[value]=DIAMOND_TYPE_NIL;
     } else {
         value=parse_expression(compiler);
@@ -2429,7 +2431,7 @@ static uint8_t compile_yield(Compiler *compiler) {
         advance_token(compiler);
     } else {
         source = allocate_register(compiler);
-        emit_instruction(compiler, DIAMOND_OP_NIL, source, 0, 0, 1);
+        /* Sole writer; run_chunk's zero-init already covers this. */
     }
     const uint8_t dest = allocate_register(compiler);
     emit_instruction(compiler, DIAMOND_OP_YIELD, dest, source, 0, 2);
@@ -2612,7 +2614,9 @@ static uint8_t compile_retry(Compiler *compiler) {
     }
     emit_absolute_jump(compiler,compiler->current_retry_target);
     const uint8_t result=allocate_register(compiler);
-    emit_instruction(compiler,DIAMOND_OP_NIL,result,0,0,1);
+    /* Dead code: the unconditional jump above means this NIL would
+     * never execute at runtime, on top of being a sole-writer register
+     * run_chunk's zero-init already covers. */
     compiler->known_types[result]=DIAMOND_TYPE_NIL;
     return result;
 }
@@ -2657,7 +2661,9 @@ static uint8_t compile_loop_control(Compiler *compiler) {
         emit_absolute_jump(compiler,compiler->current_loop->redo_target);
     }
     const uint8_t result=allocate_register(compiler);
-    emit_instruction(compiler,DIAMOND_OP_NIL,result,0,0,1);
+    /* Dead code: break/next/redo all jump unconditionally above, so
+     * this NIL never executes -- also a sole-writer register run_chunk's
+     * zero-init already covers even if it somehow did. */
     compiler->known_types[result]=DIAMOND_TYPE_NIL;
     return result;
 }
@@ -3113,7 +3119,9 @@ static uint8_t compile_definition(Compiler *compiler) {
         emit_byte(compiler,(uint8_t)function_index);emit_byte(compiler,(uint8_t)capture_count);
         for(size_t i=0;i<capture_count;i++)emit_byte(compiler,captures[i]);
         compiler->locals[compiler->local_count++]=(Local){.name=name,.reg=result};
-    } else emit_instruction(compiler, DIAMOND_OP_NIL, result, 0, 0, 1);
+    }
+    /* else: top-level def -- no NIL needed, sole writer for `result`
+     * on this compile-time-exclusive branch, already zero-inited. */
     return result;
 }
 
@@ -3579,7 +3587,8 @@ static uint8_t compile_class(Compiler *compiler) {
     compiler->methods_private=outer_private;
     if(compiler->current.kind==DIAMOND_TOKEN_END) advance_token(compiler);
     const uint8_t result=allocate_register(compiler);
-    emit_instruction(compiler,DIAMOND_OP_NIL,result,0,0,1); return result;
+    /* Sole writer; run_chunk's zero-init already covers this. */
+    return result;
 }
 
 static uint8_t compile_module(Compiler *compiler) {
@@ -3729,7 +3738,7 @@ static uint8_t compile_module(Compiler *compiler) {
     compiler->module_function_mode=outer_module_function;
     if(compiler->current.kind==DIAMOND_TOKEN_END)advance_token(compiler);
     const uint8_t result=allocate_register(compiler);
-    emit_instruction(compiler,DIAMOND_OP_NIL,result,0,0,1);
+    /* Sole writer; run_chunk's zero-init already covers this. */
     return result;
 }
 
@@ -3819,7 +3828,8 @@ static uint8_t compile_interface(Compiler *compiler) {
     }
     if(compiler->current.kind==DIAMOND_TOKEN_END)advance_token(compiler);
     const uint8_t result=allocate_register(compiler);
-    emit_instruction(compiler,DIAMOND_OP_NIL,result,0,0,1);return result;
+    /* Sole writer; run_chunk's zero-init already covers this. */
+    return result;
 }
 
 static uint8_t compile_assignment(Compiler *compiler) {
@@ -3881,7 +3891,11 @@ static bool at_block_end(const Compiler *compiler) {
 static uint8_t compile_sequence(Compiler *compiler) {
     skip_newlines(compiler);
     uint8_t result = allocate_register(compiler);
-    emit_instruction(compiler, DIAMOND_OP_NIL, result, 0, 0, 1);
+    /* No NIL here: `result` is a sole writer for an empty block (still
+     * correctly nil via run_chunk's zero-init), and is superseded by
+     * the first statement's own result register whenever the block is
+     * non-empty -- the highest-frequency NIL-elision site, since this
+     * fires once per compiled block. */
 
     while (!compiler->failed && !at_block_end(compiler)) {
         const DiamondTokenKind postfix = postfix_modifier_ahead(compiler);
