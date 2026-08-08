@@ -1892,8 +1892,15 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
      * next_register high-water mark, chunk->register_count) need zeroing --
      * allocate_register() never recycles a slot within one function body,
      * so bytecode can never reference a register past this bound. Narrower
-     * than the fixed 256-slot array itself, which stays fully allocated. */
-    memset(registers, 0, chunk->register_count * sizeof(DiamondValue));
+     * than the fixed 256-slot array itself, which stays fully allocated.
+     * register_count==0 means an unset field -- every compiler-generated
+     * function has at least one register for its return value, so 0 only
+     * happens for hand-authored DiamondChunk literals (e.g. tests driving
+     * the C API directly) that predate this field; fall back to the full
+     * width rather than silently under-zeroing/under-scanning those. */
+    const size_t live_register_count =
+        chunk->register_count == 0 ? DIAMOND_REGISTER_COUNT : chunk->register_count;
+    memset(registers, 0, live_register_count * sizeof(DiamondValue));
     for (size_t index = 0; index < argument_count; index++) {
         registers[index] = arguments[index];
     }
@@ -1902,7 +1909,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
         .previous = vm->frames,
         .registers = registers,
         .pending = &pending,
-        .register_count = chunk->register_count,
+        .register_count = live_register_count,
     };
     vm->frames = &frame;
     size_t ip = 0;
