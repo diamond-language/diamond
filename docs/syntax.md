@@ -159,8 +159,13 @@ exceptions, and explicit `return` alike. Built-in exception classes:
 `[1, 2]` for arrays and `{"key": value}` for hashes, both with optional
 type parameters. `.push`, `.pop`, and `.length()` are native on both.
 Strings support `.length()`, `.index_of(needle)` (position or `nil`),
-`.slice(start, length)`, `.to_i()` (lenient decimal parsing), and
-`.downcase()`/`.upcase()` (ASCII-only case conversion), and
+`.slice(start, length)`, `.to_i()`/`.to_f()` (lenient decimal parsing —
+`.to_f()` additionally accepts exponent notation like `"1e3"` even
+though Diamond's own float literals don't, and overflows to `Infinity`
+rather than raising, unlike `.to_i()`; neither skips leading
+whitespace, and `"nan"`/`"inf"` parse as `0.0`, matching Ruby's
+`String#to_f`), and `.downcase()`/`.upcase()` (ASCII-only case
+conversion), and
 `.reverse()` (byte-level, not UTF-8-grapheme-aware — consistent with
 the rest of the language having no other Unicode awareness), and
 `.strip()` (trims leading/trailing ASCII whitespace). `.split(separator)`
@@ -220,16 +225,23 @@ returning the element at `index`, or `nil` without mutating if `index`
 is out of bounds; `hash_merge(a, b)` returns a new `Hash` with `a`'s
 pairs then `b`'s applied on top (`b` wins on key conflicts).
 
-`Int` has no per-value method dispatch (it's a scalar `DiamondValue`,
-not a heap object), so numeric helpers are plain functions:
-`abs(x)`/`min(a, b)`/`max(a, b)`. `abs` inherits the overflow check
-already on negation, so `abs` of the most negative `Int` raises a
-rescuable `RangeError` rather than silently wrapping. `mod(a, b)`
-computes `a - (a / b) * b`; since `/` is C-style truncating division,
-`mod`'s result takes the sign of `a`, not always non-negative (not
-Euclidean/Python-style mod) — `mod(-7, 3)` is `-1`, not `2`. `b == 0`
-raises the same `ZeroDivisionError` the division inside it already
-would.
+`Int`/`Float` have no per-value method dispatch (both are scalar
+`DiamondValue`s, not heap objects), so numeric helpers are plain
+functions: `abs(x)`/`min(a, b)`/`max(a, b)`/`mod(a, b)`, all accepting
+`Int | Float` (mixed `Int`/`Float` arguments auto-promote, same as
+arithmetic). `abs` inherits the overflow check already on negation, so
+`abs` of the most negative `Int` raises a rescuable `RangeError`
+rather than silently wrapping (`Float` negation has no such concept —
+`abs` on a `Float` never raises). `mod(a, b)` truncates `a / b` toward
+zero before multiplying back (via `to_i`/`to_f` for the `Float` case,
+since `/` between two `Float`s doesn't truncate the way `Int`
+division does), so its result keeps the same C-style sign convention
+for both types — `mod(-7, 3)` is `-1`, not `2` (not Euclidean/
+Python-style mod), and `mod(-7.0, 3.0)` is likewise `-1.0`. `b == 0`
+raises the same `ZeroDivisionError` integer division would; `b == 0.0`
+raises a rescuable `RangeError` instead (from `to_i` rejecting the
+resulting `Infinity`/`NaN` quotient — `Float` division by zero itself
+never raises, only the truncation step does).
 
 `array_sort(values: Array[Int])` returns a new sorted array (input
 untouched); `Int` is the only type with a native ordering comparison,

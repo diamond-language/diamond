@@ -629,10 +629,9 @@ future work.
   `to_f`/`to_i` convert explicitly; `to_i` rejects `NaN`/`Infinity`/
   out-of-range values with a rescuable `RangeError` rather than
   triggering undefined behavior in the C cast. Deferred to a later round:
-  exponent-notation literals (`1e10`), `Float` siblings for `abs`/`min`/
-  `max`/`mod`, `String#to_f`, a Math library (`sqrt`/`pow`/trig), and
-  shortest-round-trip formatting (this round uses a fixed `%.15g`-based
-  format).
+  exponent-notation literals (`1e10`), a Math library (`sqrt`/`pow`/
+  trig), and shortest-round-trip formatting (this round uses a fixed
+  `%.15g`-based format).
 - Interpreter call-overhead reduction, from `jit-experimentation`
   baseline benchmarking that found call/frame-setup overhead — not
   opcode-level arithmetic dispatch — was the dominant cost in call-heavy
@@ -657,6 +656,35 @@ future work.
   body, not just at call sites) and was reverted rather than landed.
   Full methodology, numbers, and the reverted attempt's postmortem in
   `bench/BASELINE.md`.
+- `Float` siblings for `abs`/`min`/`max`/`mod` (now `Int | Float`,
+  auto-promoting) and `String#to_f`, closing out the Float milestone's
+  own deferred list. `abs`/`min`/`max` needed no body changes — their
+  logic was already just generic comparisons and negation, both
+  already kind-dispatching for `Float`. `mod`'s old formula
+  (`a - (a / b) * b`) relied on `/` truncating, true for `Int` but not
+  `Float` (exact division makes it algebraically collapse to always
+  `0`); fixed by explicitly truncating the quotient toward zero via
+  `to_i`/`to_f` before multiplying back, preserving the same C-style
+  sign convention `Int`'s `mod` already had rather than introducing a
+  new one. `String#to_f` mirrors `String#to_i`'s existing dispatch
+  (native, in `src/vm.c`'s `INVOKE` string-method chain) but leans on
+  `strtod` for the actual parsing rather than hand-rolling it, gated
+  on a leading-character check so it doesn't inherit `strtod`'s
+  whitespace-skipping (kept consistent with `to_i`'s no-skip
+  convention). Found and worked around a genuine, pre-existing parser
+  limitation along the way: `postfix_modifier_ahead` (`src/compiler.c`)
+  detects a trailing `stmt if cond` postfix modifier via a lexer-only
+  lookahead that scans the rest of the current line for a top-level
+  `if`/`unless` token, with no assignment-structure awareness — so
+  `x = if ... end` (an `if`-expression as an assignment's right-hand
+  side, on the same line as the `=`) misparses, treating the RHS's own
+  `if` as a misplaced trailing postfix condition. `if` as a
+  statement's own leading token (the existing, working pattern
+  throughout `lib/core.di`) is unaffected. Worked around by keeping
+  `if`/`else`/`end` as the whole statement rather than an assignment's
+  RHS; the parser bug itself is unfixed and would need
+  `postfix_modifier_ahead` to become structure-aware rather than a
+  flat token scan.
 
 ## Next priorities
 
