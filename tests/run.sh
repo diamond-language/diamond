@@ -3582,4 +3582,20 @@ grep -q 'MULTIPLY_INT' <<<"$actual"
 actual="$(DIAMOND_STRESS_GC=1 $diamond -e '"#{1.5 + 2.5}, #{5.0 / 2.0}"')"
 [[ "$actual" == "4.0, 2.5" ]]
 
-echo "705 tests passed"
+actual="$($diamond -e '"#{1.5 < 2.5}, #{2.5 < 1.5}, #{2.5 <= 2.5}, #{3.5 > 2.5}, #{3.5 >= 3.5}"')"
+[[ "$actual" == "true, false, true, true, true" ]]
+
+actual="$($diamond -e '"#{3 < 3.5}, #{3.5 < 3}, #{3 <= 3.0}"')"
+[[ "$actual" == "true, false, true" ]]
+
+actual="$($diamond -e $'nan = 0.0 / 0.0\n"#{nan < 1.0}, #{nan > 1.0}, #{nan == nan}"')"
+[[ "$actual" == "false, false, false" ]]
+
+actual="$($diamond -e '"#{3 < 5}, #{5 <= 5}"')"
+[[ "$actual" == "true, true" ]]
+
+actual="$($diamond --dump-bytecode -e $'def f(a: Int, b: Int) -> Bool = a < b\nf(3, 4)')"
+grep -q '== f ==' <<<"$actual"
+grep -q 'LESS_INT' <<<"$actual"
+
+echo "706 tests passed"
