@@ -4020,6 +4020,33 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 if(string==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
                 registers[dest]=DIAMOND_OBJECT(string);break;
             }
+            case DIAMOND_OP_TO_FLOAT: {
+                uint8_t dest=0,source=0;
+                READ_BYTE(dest);READ_BYTE(source);
+                if(registers[source].kind!=DIAMOND_VALUE_INT) {
+                    snprintf(vm->error,sizeof vm->error,"to_f argument must be an Int");
+                    VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                }
+                registers[dest]=DIAMOND_FLOAT((double)registers[source].as.integer);
+                break;
+            }
+            case DIAMOND_OP_TO_INT: {
+                uint8_t dest=0,source=0;
+                READ_BYTE(dest);READ_BYTE(source);
+                if(registers[source].kind!=DIAMOND_VALUE_FLOAT) {
+                    snprintf(vm->error,sizeof vm->error,"to_i argument must be a Float");
+                    VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                }
+                const double real=registers[source].as.real;
+                if(isnan(real)||isinf(real)||
+                   real>=9223372036854775808.0||real<-9223372036854775808.0) {
+                    snprintf(vm->error,sizeof vm->error,
+                             "to_i argument must be a finite Float within Int range");
+                    VM_RETURN(DIAMOND_VM_INTEGER_OVERFLOW);
+                }
+                registers[dest]=DIAMOND_INT((int64_t)real);
+                break;
+            }
             default:
                 VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
         }
