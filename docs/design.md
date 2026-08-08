@@ -134,6 +134,17 @@ invalid positions raise `IndexError`. The prelude builds key/value extraction,
 membership, callback traversal, and value mapping on them. `hash_each` snapshots
 the initial length, so callback insertions are not visited during that traversal.
 
+Internally, a `Hash` keeps its existing insertion-ordered entry array (what
+`key_at`/`value_at` read directly) plus a separate open-addressing bucket
+table mapping each key's hash to an index into that array, giving average
+O(1) lookup/insert rather than scanning every entry. The bucket table is
+rebuilt (not the entry array, which is never reordered) when its load
+factor crosses 0.75; entry hashes are cached at insertion to avoid
+recomputing a String key's hash on every rebuild. Key hashing matches
+value equality exactly: `Int`/`Bool`/`Nil` by value, `String` by content
+(FNV-1a), `Array`/`Hash`/instances by identity (pointer, via a MurmurHash3
+finalizer for good bit distribution).
+
 ### Enumerable
 
 Arrays and hashes are native VM object kinds, not classes — they have no

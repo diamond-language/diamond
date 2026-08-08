@@ -599,6 +599,20 @@ future work.
   `.repeat(n)` instead (a `DIAMOND_OP_INVOKE` branch, the same shape as
   every other round-2/3 String method) rather than overloading `*` —
   `"x" * 3` is intentionally not supported. See `docs/syntax.md`.
+- Replaced `Hash`'s O(n) linear-scan lookup with a real hash table.
+  Found via the JIT-branch baseline benchmarks (`hash_find` was a plain
+  loop over every entry — no hashing happened anywhere despite the
+  name); fixed on `main` since it's a data-structure issue, not a
+  bytecode-dispatch one. Kept the existing insertion-ordered entry
+  array exactly as-is (so `key_at`/`value_at`, GC marking, and every
+  `lib/core.di` Hash function needed zero changes) and added a
+  separate open-addressing bucket table alongside it mapping each key's
+  hash to an entry index — the same shape CPython's `dict` uses
+  internally to stay insertion-ordered while still being O(1) average.
+  See `docs/design.md` for the exact mechanism. Confirmed at scale:
+  1,000,000 Hash inserts + lookups now complete in well under half a
+  second, versus effectively unbounded time under the old O(n²)
+  behavior at that size.
 
 ## Next priorities
 
