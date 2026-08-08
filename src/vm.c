@@ -153,10 +153,11 @@ void diamond_vm_collect(DiamondVm *vm) {
             free(array->values);
         } else if(unreached->kind==DIAMOND_OBJECT_HASH) {
             DiamondHash *hash=(DiamondHash *)unreached;
-            size=sizeof(DiamondHash)+hash->capacity*sizeof(DiamondHashEntry);
+            size=sizeof(DiamondHash)+hash->capacity*sizeof(DiamondHashEntry)+
+                hash->bucket_capacity*sizeof(size_t);
             for(size_t index=0;index<hash->constraint_count;index++)
                 free(hash->constraints[index].type_variable_bindings);
-            free(hash->entries);
+            free(hash->entries);free(hash->buckets);
         } else if(unreached->kind==DIAMOND_OBJECT_CLOSURE) {
             size=sizeof(DiamondClosure);
         } else if(unreached->kind==DIAMOND_OBJECT_FIBER) {
@@ -199,7 +200,7 @@ void diamond_vm_free(DiamondVm *vm) {
             DiamondHash *hash=(DiamondHash *)object;
             for(size_t index=0;index<hash->constraint_count;index++)
                 free(hash->constraints[index].type_variable_bindings);
-            free(hash->entries);
+            free(hash->entries);free(hash->buckets);
         } else if(object->kind==DIAMOND_OBJECT_ARRAY) {
             DiamondArray *array=(DiamondArray *)object;
             for(size_t index=0;index<array->constraint_count;index++)
@@ -618,9 +619,84 @@ static bool values_equal(DiamondValue left, DiamondValue right) {
     return false;
 }
 
+/* MurmurHash3's fmix64 finalizer (public domain) -- gives scalar/pointer
+ * keys good bit distribution across all bits, not just the low bits a
+ * power-of-two bucket mask would otherwise expose (a real risk for the
+ * common case of small sequential Int keys). */
+static uint64_t hash_mix64(uint64_t value) {
+    value^=value>>33;value*=0xff51afd7ed558ccdULL;
+    value^=value>>33;value*=0xc4ceb9fe1a85ec53ULL;
+    value^=value>>33;
+    return value;
+}
+
+/* FNV-1a over String content -- keys with equal bytes (values_equal's
+ * String case, memcmp) must hash equal regardless of which String
+ * object holds them. */
+static uint64_t hash_bytes(const char *data,size_t length) {
+    uint64_t hash=0xcbf29ce484222325ULL;
+    for(size_t index=0;index<length;index++) {
+        hash^=(unsigned char)data[index];
+        hash*=0x100000001b3ULL;
+    }
+    return hash;
+}
+
+/* Must stay consistent with values_equal's exact equality semantics:
+ * Int/Bool/Nil by value, String by content, Array/Hash/Instance by
+ * pointer identity. */
+static uint64_t hash_value(DiamondValue value) {
+    switch(value.kind) {
+        case DIAMOND_VALUE_NIL:return hash_mix64(0);
+        case DIAMOND_VALUE_BOOL:return hash_mix64(value.as.boolean?1:2);
+        case DIAMOND_VALUE_INT:return hash_mix64((uint64_t)value.as.integer);
+        case DIAMOND_VALUE_OBJECT: {
+            const DiamondObject *object=value.as.object;
+            if(object->kind==DIAMOND_OBJECT_INSTANCE||
+               object->kind==DIAMOND_OBJECT_ARRAY||
+               object->kind==DIAMOND_OBJECT_HASH)
+                return hash_mix64((uint64_t)(uintptr_t)object);
+            const DiamondString *string=(const DiamondString *)object;
+            return hash_bytes(string->chars,string->length);
+        }
+    }
+    return 0;
+}
+
+/* Rebuilds only the bucket index table from entries[]'s already-cached
+ * per-entry hash -- entries[] itself is never reordered, which is what
+ * keeps insertion order (and "update doesn't move position") intact
+ * across any number of rehashes. No tombstones: nothing ever deletes a
+ * Hash entry, so an empty slot (SIZE_MAX) always safely ends a probe. */
+static bool hash_rehash(DiamondVm *vm,DiamondHash *hash,size_t new_capacity) {
+    size_t *buckets=malloc(new_capacity*sizeof(size_t));
+    if(buckets==nullptr)return false;
+    for(size_t index=0;index<new_capacity;index++)buckets[index]=SIZE_MAX;
+    for(size_t index=0;index<hash->count;index++) {
+        size_t slot=(size_t)(hash->entries[index].hash&(new_capacity-1));
+        while(buckets[slot]!=SIZE_MAX)slot=(slot+1)&(new_capacity-1);
+        buckets[slot]=index;
+    }
+    free(hash->buckets);
+    if(hash->bucket_capacity>0)
+        vm->bytes_allocated-=hash->bucket_capacity*sizeof(size_t);
+    hash->buckets=buckets;hash->bucket_capacity=new_capacity;
+    vm->bytes_allocated+=new_capacity*sizeof(size_t);
+    return true;
+}
+
 static ptrdiff_t hash_find(const DiamondHash *hash,DiamondValue key) {
-    for(size_t i=0;i<hash->count;i++)
-        if(values_equal(hash->entries[i].key,key)) return (ptrdiff_t)i;
+    if(hash->bucket_capacity==0)return -1;
+    const uint64_t key_hash=hash_value(key);
+    size_t slot=(size_t)(key_hash&(hash->bucket_capacity-1));
+    for(size_t probe=0;probe<hash->bucket_capacity;probe++) {
+        const size_t index=hash->buckets[slot];
+        if(index==SIZE_MAX)return -1;
+        if(hash->entries[index].hash==key_hash&&
+           values_equal(hash->entries[index].key,key))
+            return (ptrdiff_t)index;
+        slot=(slot+1)&(hash->bucket_capacity-1);
+    }
     return -1;
 }
 
@@ -637,7 +713,20 @@ static bool hash_set(DiamondVm *vm,DiamondHash *hash,DiamondValue key,
         hash->entries=entries;hash->capacity=capacity;
         vm->bytes_allocated+=(capacity-old_capacity)*sizeof(DiamondHashEntry);
     }
-    hash->entries[hash->count++]=(DiamondHashEntry){.key=key,.value=value};
+    /* Load factor >= 0.75, checked with integer arithmetic. */
+    if(hash->bucket_capacity==0||
+       (hash->count+1)*4>=hash->bucket_capacity*3) {
+        const size_t new_capacity=
+            hash->bucket_capacity==0?8:hash->bucket_capacity*2;
+        if(!hash_rehash(vm,hash,new_capacity))return false;
+    }
+    const uint64_t key_hash=hash_value(key);
+    const size_t new_index=hash->count;
+    hash->entries[hash->count++]=
+        (DiamondHashEntry){.key=key,.value=value,.hash=key_hash};
+    size_t slot=(size_t)(key_hash&(hash->bucket_capacity-1));
+    while(hash->buckets[slot]!=SIZE_MAX)slot=(slot+1)&(hash->bucket_capacity-1);
+    hash->buckets[slot]=new_index;
     return true;
 }
 

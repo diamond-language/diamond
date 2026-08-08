@@ -81,6 +81,7 @@ typedef struct DiamondArray {
 typedef struct DiamondHashEntry {
     DiamondValue key;
     DiamondValue value;
+    uint64_t hash;
 } DiamondHashEntry;
 
 typedef struct DiamondHash {
@@ -88,6 +89,8 @@ typedef struct DiamondHash {
     size_t count;
     size_t capacity;
     DiamondHashEntry *entries;
+    size_t *buckets;
+    size_t bucket_capacity;
     struct {
         const DiamondTypeSet *type_sets;
         size_t type_set_count;
