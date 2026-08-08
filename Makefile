@@ -15,7 +15,7 @@ SOURCES := $(wildcard src/*.c)
 OBJECTS := $(SOURCES:src/%.c=$(BUILD_DIR)/%.o)
 DEPS := $(OBJECTS:.o=.d)
 
-.PHONY: all debug sanitize release test test-release test-sanitize test-api test-fibers test-fiber-run test-fiber-context test-vm-context test-yield test-continuation test-multi-yield test-scheduler test-scheduler-run-all test-fiber-gc-roots test-fiber-guards test-nested-yield-guard test-stack-overflow test-all clean
+.PHONY: all debug sanitize release test test-release test-sanitize test-api test-fibers test-fiber-run test-fiber-context test-vm-context test-yield test-continuation test-multi-yield test-scheduler test-scheduler-run-all test-fiber-gc-roots test-fiber-guards test-nested-yield-guard test-stack-overflow test-all test-facet facet clean
 
 all: debug
 
@@ -90,6 +90,15 @@ test-nested-yield-guard: test-fiber-run
 
 test-stack-overflow: test-fiber-run
 
+$(BUILD_DIR)/facet: tools/facet.c $(API_SOURCES)
+	@mkdir -p $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS_COMMON) $(CFLAGS_DEBUG) $(API_SOURCES) $< $(LDLIBS) -o $@
+
+facet: $(BUILD_DIR)/facet
+
+test-facet: $(BUILD_DIR)/facet
+	bash tests/facet_test.sh
+
 test-all:
 	$(MAKE) clean
 	$(MAKE) test
@@ -107,6 +116,7 @@ test-all:
 	$(MAKE) test-fiber-gc-roots
 	$(MAKE) test-nested-yield-guard
 	$(MAKE) test-stack-overflow
+	$(MAKE) test-facet
 
 clean:
 	rm -rf $(BUILD_DIR)
