@@ -80,6 +80,7 @@ module Opcode
   SET_CELL = 38
   NEW = 39
   INVOKE = 40
+  SUPER = 43
   GET_IVAR = 44
   SET_IVAR = 45
   NOT = 55
@@ -151,6 +152,17 @@ class Parser
     # surfacing as an uncaught exception from declare_method's own
     # (separate, VM-level) duplicate check.
     @current_class_method_names = []
+    # The class_index of the class currently being compiled's
+    # superclass, or nil if it has none -- gates `super`'s own "used in
+    # a class without a superclass" check. Doesn't need the superclass's
+    # full identity beyond "does one exist": SUPER's own opcode operand
+    # is the *current* class's index, not the superclass's -- the VM
+    # itself walks `owner->superclass` at runtime (see docs/roadmap.md).
+    @current_class_superclass_index = nil
+    # The name of the method currently being compiled (compile_method),
+    # needed by `super(...)`: it always calls the superclass's version
+    # of *this same* method, never an explicitly named one.
+    @current_method_name = nil
     @failed = false
     @error_message = nil
   end
@@ -560,12 +572,11 @@ class Parser
     result
   end
 
-  # `class Name ... end` -- top-level only (no nested classes, no class
-  # declared inside a function/method body: a much narrower scope cut
-  # than compiler.c's own class declarations, which have no such
-  # restriction). No `< Superclass` yet -- see this file's header
-  # comment; inheritance and `super` are a deliberately separate,
-  # later round, matching how closures were split from plain functions.
+  # `class Name ... end` or `class Name < Superclass ... end` --
+  # top-level only (no nested classes, no class declared inside a
+  # function/method body: a much narrower scope cut than compiler.c's
+  # own class declarations, which have no such restriction -- confirmed
+  # by testing directly against the real compiler, not assumed).
   def compile_class()
     self.advance_token()
     if @function_nesting_depth != 0 || @current_class_index != nil
@@ -582,13 +593,20 @@ class Parser
       return 0
     end
     self.advance_token()
-    class_index = @builder.declare_class(name, -1)
+    superclass_index = self.parse_optional_superclass()
+    return 0 if @failed
+    class_index = @builder.declare_class(name, if superclass_index == nil
+      -1
+    else
+      superclass_index
+    end)
     @classes.push([name, class_index])
     @current_class_index = class_index
+    @current_class_superclass_index = superclass_index
     @current_class_method_names = []
 
     if !self.consume_block_start()
-      @current_class_index = nil
+      self.leave_class()
       return 0
     end
     while !@failed && @current.kind() != :end
@@ -601,14 +619,40 @@ class Parser
     end
     if @current.kind() != :end
       self.fail("expected 'end' after class body") unless @failed
-      @current_class_index = nil
+      self.leave_class()
       return 0
     end
     self.advance_token()
-    @current_class_index = nil
+    self.leave_class()
     # Sole-writer fresh register; run_chunk's zero-init already covers
     # nil, matching compile_class.c's own return value exactly.
     self.allocate_register()
+  end
+
+  # Returns the superclass's class_index, or nil if there's no `<
+  # Superclass` clause at all. Doesn't itself call declare_class --
+  # compile_class still needs the -1-vs-index translation for that call,
+  # so it stays the caller's job.
+  def parse_optional_superclass()
+    return nil unless @current.kind() == :less
+    self.advance_token()
+    if @current.kind() != :identifier
+      self.fail("expected superclass name after '<'")
+      return nil
+    end
+    superclass_name = self.token_text(@current)
+    entry = self.find_class(superclass_name)
+    if entry == nil
+      self.fail("undefined superclass")
+      return nil
+    end
+    self.advance_token()
+    entry[1]
+  end
+
+  def leave_class()
+    @current_class_index = nil
+    @current_class_superclass_index = nil
   end
 
   # An instance method: register 0 is always `self` (allocated before
@@ -646,7 +690,10 @@ class Parser
 
     arity = parameter_names.length()
     function_index = @builder.declare_function(name, arity + 1, arity + 1)
+    outer_method_name = @current_method_name
+    @current_method_name = name
     self.compile_method_body(function_index, parameter_names)
+    @current_method_name = outer_method_name
     @current_class_method_names.push(name)
     @builder.declare_method(@current_class_index, name, function_index, arity, arity, false)
   end
@@ -1127,8 +1174,36 @@ class Parser
     return self.parse_while(false) if kind == :while
     return self.parse_while(true) if kind == :until
     return self.parse_loop() if kind == :loop
+    return self.parse_super() if kind == :super
     self.fail("expected expression")
     0
+  end
+
+  def parse_super()
+    if @current_class_index == nil
+      self.fail("'super' used outside a method")
+      return 0
+    end
+    if @current_class_superclass_index == nil
+      self.fail("'super' used in a class without a superclass")
+      return 0
+    end
+    if @current.kind() != :left_paren
+      self.fail("expected '(' after 'super'")
+      return 0
+    end
+    self.advance_token()
+    parsed = self.parse_call_arguments()
+    return 0 if parsed == nil
+    destination = self.allocate_register()
+    method_name_index = self.add_string(@current_method_name)
+    self.emit_byte(Opcode::SUPER)
+    self.emit_byte(destination)
+    self.emit_byte(@current_class_index)
+    self.emit_byte(method_name_index)
+    self.emit_byte(parsed[0])
+    self.emit_byte(parsed[1])
+    destination
   end
 
   def parse_grouping()

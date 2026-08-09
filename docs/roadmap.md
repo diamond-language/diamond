@@ -1623,25 +1623,55 @@ future work.
   no leaks) given classes exercise new instance-allocation and
   shape-transition paths for the first time in this port.
 
+- Self-hosting, Phase 3 sub-phase 3 follow-up: inheritance (`class Sub <
+  Base`) and `super(...)`. Needed no new C bridge work at all — the
+  previous round's `declare_class(name, superclass_index)` already
+  copied superclass fields and set the class link, unused until now;
+  this round was purely `compile_class` gaining `< Superclass` parsing
+  (a new `parse_optional_superclass` helper) and a new `parse_super`
+  emitting the `SUPER` opcode. `SUPER`'s own operand shape mirrors
+  `compiler.c`'s own `parse_super` exactly: the opcode's `class_index`
+  operand is the *current* class (not the superclass directly) and the
+  receiver is implicitly register 0 (`self`, never an explicit operand)
+  — the VM walks `owner->superclass` and looks up the same-named method
+  there itself at runtime, so the parser only needs to track "does the
+  current class have a superclass at all" (a new
+  `@current_class_superclass_index`) for a friendly compile-time
+  rejection, not the superclass's full identity. `super(...)` always
+  calls the superclass's version of *this same* method — a new
+  `@current_method_name`, set for the duration of `compile_method`,
+  supplies the name `SUPER` needs.
+
+  Inherited (non-overridden) method dispatch needed zero parser-side
+  work: `receiver.method(...)` already compiles to a plain `INVOKE`
+  regardless of whether `method` is declared on the receiver's own
+  class or inherited from a superclass — the superclass-chain walk is
+  entirely `lookup_method`'s own existing runtime behavior, already
+  correct and already tested before this port touched it at all.
+
+  New regression coverage: five more `tests/parser_cases/class_*.di`
+  cases (an overridden method, an inherited method used unchanged,
+  `super(...)` from a constructor, `super()` from an ordinary
+  non-constructor method, and a three-level inheritance chain each
+  level calling `super()`) bring the differential harness to 42 cases,
+  all matching. Verified with the same `make test-all` pass as every
+  other round.
+
 ## Next priorities
 
-- Self-hosting, Phase 3 sub-phase 3 follow-up: inheritance (`class Sub
-  < Base`) and `super(...)` — `declare_class`'s superclass parameter is
-  already there from this round, unused until the Diamond-side
-  `compile_class` gains `< Superclass` parsing and the `SUPER` opcode
-  gets emitted for `super(...)` calls. After that, sub-phase 2's
-  remaining gaps (keyword arguments, explicit `return`) and sub-phase 4
-  (interfaces, generics, gradual typing, narrowing) remain, per the
-  plan's own sequencing.
+- Self-hosting, Phase 3 sub-phase 2's remaining gaps (keyword arguments,
+  explicit `return`) and sub-phase 4 (interfaces, generics, gradual
+  typing, narrowing) remain, per the plan's own sequencing — sub-phase 3
+  (classes, methods, inheritance, `super`) is now complete.
 
 ## Later experiments
 
 - Self-hosting the compiler and core libraries in Diamond (in progress —
   see `Completed foundation` for Phase 0-2 and Phase 3 sub-phases 2
-  (including closures) and 3 (basic classes), landed, and `Next
-  priorities` for the inheritance/`super` follow-up; the rest of the
-  compiler port and bootstrap validation remain multi-session future
-  work beyond that).
+  (functions, closures, calls) and 3 (classes, inheritance, `super`),
+  landed, and `Next priorities` for what's left of sub-phase 2 plus
+  sub-phase 4; the rest of the compiler port and bootstrap validation
+  remain multi-session future work beyond that).
 - Native-code generation or a tracing/method JIT — nothing in the
   `jit-experimentation` work above generates native code; it's all
   interpreter-loop leaning (register zero-init, opcode dispatch,
