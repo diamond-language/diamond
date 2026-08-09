@@ -1126,19 +1126,72 @@ future work.
   inline, since the cost of getting this wrong is invisible until
   something exercises deep recursion specifically.
 
+- Self-hosting, Phase 0: raised every `DIAMOND_MAX_*` fixed-size limit in
+  `src/vm.h` substantially (functions 64→512, code-per-function 1024→4096,
+  classes 32→128, methods 32→128, constants 256→512, string constants
+  64→256, interfaces/modules 16→32, type sets 64→256, fields 32→64,
+  namespace constants 64→128 — `DIAMOND_MAX_FUNCTION_NAME`,
+  `DIAMOND_MAX_STRING_LENGTH`, `DIAMOND_MAX_UNION_TYPES`, and
+  `DIAMOND_REGISTER_COUNT` left unchanged), the first step of the
+  self-hosting roadmap (see `Later experiments`): a Diamond-language
+  reimplementation of the compiler will need far more than 64 top-level
+  functions (`src/compiler.c` alone already has ~89), so the existing
+  limits were sized for ordinary Diamond programs, not a program the
+  size and shape of a compiler.
+
+  The plan for this change described it as a pure capacity increase with
+  no logic changes, since these are `enum` constants sizing fixed arrays
+  already embedded (not pointed to) inside `DiamondProgram` and its
+  nested structs. That assumption turned out to be incomplete. Measuring
+  `sizeof(DiamondProgram)` directly (rather than trusting the "no logic
+  changes" characterization) found it grows from an already-nontrivial
+  ~3.19MB at the old limits to ~85.9MB at the new ones — and
+  `src/main.c`'s `run_source`, the function behind every single Diamond
+  program execution, was declaring its `DiamondProgram` as a plain stack
+  local. The ~3.19MB figure was already a known, carefully-managed
+  constraint (`diamond_compile` itself uses `memset` instead of a
+  compound-literal zero-init specifically to avoid a second 3MB+ stack
+  temporary during nested `require`d-package compilation, and
+  `src/loader.c` already heap-allocates its own `DiamondProgram` for
+  exactly this reason — see the package-manifest entry earlier in this
+  doc). At ~85.9MB, leaving `main.c`'s copy on the stack would have
+  turned every program run into an immediate stack-overflow crash, not
+  an edge case. Fixed by heap-allocating it there (`malloc`, freed at
+  every exit path, matching `loader.c`'s existing precedent) and
+  converting `tests/api_invalidation.c`'s equivalent stack local to
+  `static` storage (mirroring `tests/fiber_run.c`'s existing convention
+  for the same struct). Caught and fixed before any build or test was
+  attempted against the raised limits, not after a crash.
+
+  One test needed updating rather than the implementation: `tests/run.sh`
+  asserted that composing two 20-method interfaces (40 methods total)
+  overflows `DIAMOND_MAX_METHODS` and fails to compile — a correct test
+  of the *old* 32-method limit that necessarily stopped being true once
+  the limit became 128. Raised to two 70-method interfaces (140 total)
+  to keep exercising the real overflow path at the new limit. Verified
+  with `make test-all` (debug/release/sanitizer builds, all C-level test
+  binaries) — all 845 `tests/run.sh` cases plus every C-level test still
+  pass.
+
 ## Next priorities
 
-None queued.
+- Self-hosting, Phase 1: a native `ProgramBuilder` bridge letting Diamond
+  code construct and run a `DiamondProgram` at runtime — the prerequisite
+  for a Diamond-language compiler to produce anything executable. See the
+  self-hosting roadmap plan for the full design (mirrors `compiler.c`'s
+  own internal `emit_byte`/`add_constant`/`allocate_register` functions).
 
 ## Later experiments
 
-- Self-hosting the compiler and core libraries in Diamond.
+- Self-hosting the compiler and core libraries in Diamond (in progress —
+  see `Completed foundation` for Phase 0, landed, and `Next priorities`
+  for Phase 1, not yet started; lexer and compiler ports, plus bootstrap
+  validation, remain multi-session future work beyond Phase 1).
 - Native-code generation or a tracing/method JIT — nothing in the
   `jit-experimentation` work above generates native code; it's all
   interpreter-loop leaning (register zero-init, opcode dispatch,
   struct-copy elimination). Actual JIT compilation remains a distinct,
   larger, not-yet-attempted piece of work.
-- Self-hosting selected compiler and standard-library components.
 
 ## Explicitly deferred
 

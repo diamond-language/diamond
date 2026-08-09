@@ -91,17 +91,33 @@ static int run_source(const char *name, const char *source, bool dump_bytecode) 
     memcpy(combined,DIAMOND_CORE_SOURCE,core_length);
     memcpy(combined+core_length,DIAMOND_USER_LINE_RESET,reset_length);
     memcpy(combined+core_length+reset_length,bundle.source,source_length+1);
-    DiamondProgram program;
+    /* Heap-allocated, not a stack local: DiamondProgram embeds fixed-size
+     * arrays throughout (functions/classes/interfaces/modules, each with
+     * their own fixed-size code/constant/string/type-set arrays), and
+     * its true size (tens of MB, sized for self-hosting-scale programs --
+     * see docs/roadmap.md) would blow the stack outright as a local. This
+     * mirrors loader.c's own diamond_load_program, which already
+     * heap-allocates a DiamondProgram for a required package's manifest
+     * for exactly this reason (see diamond_compile's own memset comment,
+     * src/compiler.c). */
+    DiamondProgram *program=malloc(sizeof *program);
+    if(program==nullptr) {
+        fprintf(stderr,"diamond: out of memory allocating program\n");
+        free(combined);
+        diamond_source_bundle_free(&bundle);
+        return 74;
+    }
     DiamondDiagnostic diagnostic;
-    if (!diamond_compile(combined, &program, &diagnostic)) {
+    if (!diamond_compile(combined, program, &diagnostic)) {
         print_diagnostic(name,combined,diagnostic,&bundle,
                          core_length+reset_length);
+        free(program);
         free(combined);
         diamond_source_bundle_free(&bundle);
         return 65;
     }
 
-    DiamondChunk chunk = diamond_program_chunk(&program);
+    DiamondChunk chunk = diamond_program_chunk(program);
     chunk.name = name;
     if (dump_bytecode) {
         (void)diamond_disassemble(stdout, name, &chunk);
@@ -153,6 +169,7 @@ static int run_source(const char *name, const char *source, bool dump_bytecode) 
         fprintf(stderr, "%s: runtime error: %s\n", name,
                 detail != nullptr ? detail : diamond_vm_status_name(status));
         diamond_vm_free(&vm);
+        free(program);
         free(combined);
         diamond_source_bundle_free(&bundle);
         return 70;
@@ -198,6 +215,7 @@ static int run_source(const char *name, const char *source, bool dump_bytecode) 
         fprintf(stderr,"quickened sites: %zu, deoptimized sites: %zu\n",
                 vm.quickened_sites,vm.deoptimized_sites);
     diamond_vm_free(&vm);
+    free(program);
     free(combined);
     diamond_source_bundle_free(&bundle);
     return 0;

@@ -25,7 +25,7 @@ int main(void) {
         "end\n"
         "a = Child.new()\n"
         "read(a) + read_replacement(a)\n";
-    DiamondProgram program;
+    static DiamondProgram program;
     DiamondDiagnostic diagnostic;
     if (!diamond_compile(source,&program,&diagnostic)) {
         fprintf(stderr,"compile failed: %s\n",diagnostic.message);return 1;
