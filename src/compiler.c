@@ -1184,15 +1184,52 @@ static uint8_t parse_call(Compiler *compiler, DiamondSpan name) {
     }
     advance_token(compiler);
     skip_newlines(compiler);
-    uint8_t arguments[16];
-    size_t argument_count = 0;
+    /* Keyword arguments (direct top-level calls only -- see docs/roadmap.md):
+     * each argument is placed into its declared positional slot rather than
+     * appended, so a keyword can fill any parameter regardless of the order
+     * it's written at the call site. Positional arguments still fill slots
+     * left-to-right in declaration order. */
+    uint8_t slot_registers[16];
+    bool slot_filled[16]={};
+    size_t next_positional_slot=0;
+    bool seen_keyword=false;
     if (compiler->current.kind != DIAMOND_TOKEN_RIGHT_PAREN) {
         do {
-            if (argument_count == sizeof arguments / sizeof arguments[0]) {
-                fail(compiler, compiler->current.span, "too many call arguments");
+            DiamondLexer keyword_lookahead=compiler->lexer;
+            const bool is_keyword=compiler->current.kind==DIAMOND_TOKEN_IDENTIFIER&&
+                diamond_lexer_next(&keyword_lookahead).kind==DIAMOND_TOKEN_COLON;
+            size_t slot;
+            if(is_keyword) {
+                const DiamondSpan keyword_name=compiler->current.span;
+                advance_token(compiler); /* consume the name */
+                advance_token(compiler); /* consume ':' */
+                slot=SIZE_MAX;
+                for(size_t index=0;index<function->arity&&index<16;index++)
+                    if(name_equals(compiler,function->parameter_names[index],
+                                  keyword_name,false)) {slot=index;break;}
+                if(slot==SIZE_MAX) {
+                    fail(compiler,keyword_name,"no parameter with this name");
+                    return 0;
+                }
+                seen_keyword=true;
+            } else {
+                if(seen_keyword) {
+                    fail(compiler,compiler->current.span,
+                         "positional argument cannot follow a keyword argument");
+                    return 0;
+                }
+                if(next_positional_slot==16) {
+                    fail(compiler,compiler->current.span,"too many call arguments");
+                    return 0;
+                }
+                slot=next_positional_slot++;
+            }
+            if(slot_filled[slot]) {
+                fail(compiler,name,"multiple values for the same argument");
                 return 0;
             }
-            arguments[argument_count++] = parse_expression(compiler);
+            slot_registers[slot]=parse_expression(compiler);
+            slot_filled[slot]=true;
             skip_newlines(compiler);
             if (compiler->current.kind != DIAMOND_TOKEN_COMMA) break;
             advance_token(compiler);
@@ -1205,6 +1242,21 @@ static uint8_t parse_call(Compiler *compiler, DiamondSpan name) {
         return 0;
     }
     advance_token(compiler);
+    size_t argument_count=0;
+    for(size_t index=0;index<16;index++)
+        if(slot_filled[index])argument_count=index+1;
+    /* Every slot below the highest filled one must be filled too -- a
+     * keyword argument can fill any slot, but a gap below the highest one
+     * (an earlier default relied on while a later slot is explicitly
+     * supplied) isn't supported: Diamond's default values are compiled
+     * inline into the callee's own bytecode, conditioned on a contiguous
+     * argument_count, not stored as independently re-evaluable
+     * expressions a call site could reach around a gap. */
+    for(size_t index=0;index<argument_count;index++)
+        if(!slot_filled[index]) {
+            fail(compiler,name,"missing argument");
+            return 0;
+        }
     if (argument_count < function->required_arity||argument_count > function->arity) {
         fail(compiler, name, "wrong number of arguments");
         return 0;
@@ -1216,7 +1268,7 @@ static uint8_t parse_call(Compiler *compiler, DiamondSpan name) {
     }
     for (size_t index = 0; index < argument_count; index++) {
         emit_instruction(compiler, DIAMOND_OP_MOVE,
-                         (uint8_t)(argument_base + index), arguments[index], 0, 2);
+                         (uint8_t)(argument_base + index), slot_registers[index], 0, 2);
     }
     const uint8_t destination = allocate_register(compiler);
     emit_opcode(compiler,type_argument_count==0?
@@ -3218,6 +3270,16 @@ static uint8_t compile_definition(Compiler *compiler) {
             const uint8_t parameter=(uint8_t)(parameter_base+declared_parameter_count);
             compiler->locals[compiler->local_count++]=(Local){
                 .name=compiler->current.span,.reg=parameter};
+            if(declared_parameter_count<16) {
+                const DiamondSpan parameter_name_span=compiler->current.span;
+                size_t parameter_name_length=parameter_name_span.length;
+                if(parameter_name_length>=DIAMOND_MAX_FUNCTION_NAME)
+                    parameter_name_length=DIAMOND_MAX_FUNCTION_NAME-1;
+                for(size_t index=0;index<parameter_name_length;index++)
+                    function->parameter_names[declared_parameter_count][index]=
+                        compiler->source[parameter_name_span.start+index];
+                function->parameter_names[declared_parameter_count][parameter_name_length]='\0';
+            }
             function->arity++;
             advance_token(compiler);
             int parameter_type=-1;DiamondSpan parameter_type_span={};

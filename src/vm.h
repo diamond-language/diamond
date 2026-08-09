@@ -245,6 +245,12 @@ typedef struct DiamondFunction {
     uint8_t capture_count;
     uint8_t return_type_set;
     uint8_t parameter_type_sets[16];
+    /* Only meaningful for a genuine top-level def (see find_function's
+     * owner_class/nested exclusion) -- keyword-argument call sites
+     * (parse_name, compiler.c) resolve a name against this; nothing else
+     * reads it, since methods/closures dispatch dynamically and don't
+     * support keyword arguments in this round. */
+    char parameter_names[16][DIAMOND_MAX_FUNCTION_NAME];
     char type_variables[8][DIAMOND_MAX_FUNCTION_NAME];
     uint8_t type_variable_count;
     bool uses_instance_state;
