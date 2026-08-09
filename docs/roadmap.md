@@ -1467,23 +1467,95 @@ future work.
   `declare_function`/`CALL` interaction this round exercises for the
   first time.
 
+- Self-hosting, Phase 3 sub-phase 2 follow-up: closures. `selfhost/
+  parser.di`'s `compile_definition` now handles a nested `def` (one
+  written directly inside a top-level function's own body) as a
+  closure: it becomes a local variable named after the function, holding
+  a `Closure` value, called through `CALL_CLOSURE` like any other
+  closure-valued local — mirroring `compiler.c`'s own distinction
+  between a top-level `def` (found later by name, called with `CALL`)
+  and a nested one (`at_top_level`, computed from a new
+  `@function_nesting_depth` counter). Every local in scope at the moment
+  a nested `def` is encountered becomes a capture candidate
+  unconditionally, whether or not the nested body actually references
+  it — mirroring `compiler.c`'s own eager design exactly, not a
+  reference-counting optimization. `GET_CAPTURE_CELL` loads each capture
+  into the nested body as an ordinary (but `captured`-flagged) local, so
+  the *existing* `find_local`/`read_local`/`compile_assignment` machinery
+  handles reads and writes with no special-casing; only `compile_assignment`
+  needed a small addition (a captured local's write goes through
+  `SET_CELL` on its cell register rather than a plain `MOVE`). Back in
+  the enclosing scope, `BOX_LOCAL` converts each captured local's
+  register from a plain value to a `Cell` in place (idempotent, matching
+  `compiler.c`'s own "always emit, even if a sibling branch already
+  boxed it" reasoning from earlier this session — see the nested-`def`-
+  in-sibling-branches entry above), and marks that local's own
+  `@locals` entry `captured` too, so every subsequent read/write of it
+  in the *enclosing* function also routes through `GET_CELL`/`SET_CELL`
+  from that point on — the same "once boxed, always boxed" semantics
+  `compiler.c` has.
+
+  `@locals` entries grew a third field (`[name, register, captured]`,
+  up from `[name, register]`) and `find_local` now returns the whole
+  entry (or `nil`) rather than a bare register, since callers need
+  `captured` to decide between a direct read/`MOVE` and a
+  `GET_CELL`/`SET_CELL` unwrap.
+
+  Deliberately narrower than `compiler.c`'s own general mechanism:
+  exactly one level of function nesting is supported (a `def` inside a
+  top-level `def`'s body), not arbitrary depth — `compiler.c`'s own
+  `enclosing_locals`-walk-with-dedup logic (letting a doubly-nested
+  closure transitively reach two levels up) was skipped as real,
+  separate complexity with no bearing on getting one level of nesting
+  correct first. A `def` written inside an already-nested `def` is a
+  clear compile error ("only one level of function nesting is
+  supported"), not a silent miscompile or a crash.
+
+  The first, single-method implementation of `compile_definition` hit
+  the same register-budget wall Phase 2's lexer port already found and
+  documented — unsurprising in hindsight (more local variables than any
+  method written so far in this port) but a useful confirmation that the
+  lesson generalizes: split into `compile_definition` (orchestration),
+  `parse_parameter_names`, `compile_function_body` (the switch-state/
+  compile-body/restore-state work shared identically by both a top-level
+  function and a nested closure), and `emit_closure` (the `BOX_LOCAL`+
+  `CLOSURE` emission, only reached for the nested case). Any method of
+  comparable size should be split from the start, not after hitting the
+  limit.
+
+  New regression coverage: five more `tests/parser_cases/*.di` closure
+  cases (a classic counter/adder pair, mutation of a captured variable
+  visible after the closure returns control to its definer, multiple
+  captures combined in one expression, and a parameter shadowing a
+  captured name of the same spelling) bring the differential harness to
+  32 cases, all matching. Also hand-verified two negative cases directly
+  against the real compiler (confirming, not just asserting, that they
+  *should* fail): a top-level `def` can't see the top-level script's own
+  locals (`compiler.c` rejects it too — top-level functions never
+  capture, only nested ones do), and a doubly-nested `def` correctly
+  hits this round's own one-level-only scope cut. Verified with the same
+  `make test-all` pass as every other round, plus the parser
+  differential harness re-run directly under
+  `-fsanitize=address,undefined` (clean, no leaks) given closures
+  exercise new heap allocation and GC-marking paths (`Closure`/`Cell`
+  objects) for the first time in this port.
+
 ## Next priorities
 
-- Self-hosting, Phase 3 sub-phase 2 follow-up: closures (nested `def`
-  capturing enclosing locals) — split out of this round for being a
-  self-contained mechanism of its own (`BOX_LOCAL`/`GET_CAPTURE`/
-  `SET_CAPTURE`/`GET_CELL`/`SET_CELL`/`CLOSURE`/`CALL_CLOSURE`). Also
-  still missing from sub-phase 2's own stated scope: keyword arguments
-  and explicit `return`. After that, sub-phase 3 (classes, methods,
-  inheritance, `super`) per the plan's sequencing.
+- Self-hosting, Phase 3 sub-phase 2 remaining gaps: keyword arguments
+  and explicit `return` (a function's last expression is still its only
+  way to produce a result). Neither blocks sub-phase 3 (classes,
+  methods, inheritance, `super`) per the plan's own sequencing, so
+  either can be picked up opportunistically alongside it rather than
+  strictly before it.
 
 ## Later experiments
 
 - Self-hosting the compiler and core libraries in Diamond (in progress —
-  see `Completed foundation` for Phase 0-2 and Phase 3 sub-phases 1-2,
-  landed, and `Next priorities` for the sub-phase 2 closures follow-up;
-  the rest of the compiler port and bootstrap validation remain
-  multi-session future work beyond that).
+  see `Completed foundation` for Phase 0-2 and Phase 3 sub-phase 2
+  (including closures), landed, and `Next priorities` for sub-phase 2's
+  remaining gaps; the rest of the compiler port and bootstrap validation
+  remain multi-session future work beyond that).
 - Native-code generation or a tracing/method JIT — nothing in the
   `jit-experimentation` work above generates native code; it's all
   interpreter-loop leaning (register zero-init, opcode dispatch,
