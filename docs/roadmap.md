@@ -909,6 +909,62 @@ future work.
   `x = y && if cond ... end`) is still misread the old way — the
   `=` case is what the original bug report and every practical
   instance of this actually was.
+- Arbitrary-precision integers: `Int` arithmetic overflow now
+  auto-promotes to a heap-allocated `DiamondBignum`
+  (`DIAMOND_OBJECT_BIGNUM`, sign + base-10⁹ limbs, `src/bignum.c`/
+  `src/bignum.h`) instead of raising `RangeError`, the Ruby/Python/Lisp
+  style rather than a separate `BigInteger`-like type — `Int` now has no
+  user-visible size limit, only a representation that changes
+  transparently. `Int` literals in source stay capped at 64-bit (a
+  deliberate scope cut, confirmed up front); only runtime arithmetic
+  overflow (`+`/`-`/`*`/unary `-`), `String#to_i`, and `to_i` on an
+  out-of-range `Float` promote. Every producing operation canonicalizes
+  its result back to a plain inline `Int` whenever it still fits
+  `int64_t`, so a bignum object only ever exists when genuinely needed.
+  Three real bugs surfaced during implementation, not just new code:
+  - **Anticipated by the plan**: `SUBTRACT_INT`/`MULTIPLY_INT`/
+    `DIVIDE_INT` and the four comparison `_INT` opcodes had no
+    deopt-to-generic branch at all before bignums existed (only
+    `ADD_INT`/`EQUAL_INT`/`NOT_EQUAL_INT` did) — fine when the only way
+    an already-quickened `Int` operand could stop being
+    `DIAMOND_VALUE_INT` was a genuine type violation, but not once a
+    value can legitimately become a bignum mid-execution. Fixed by
+    mirroring `ADD_INT`'s existing deopt branch onto all seven.
+  - **Not anticipated**: `ADD_INT`'s *existing* deopt branch doesn't
+    retarget-and-fall-through like the new branches above — it handles
+    the string-concatenation special case inline and then
+    unconditionally returns `TypeError`, so a bignum operand reaching a
+    directly-compiled (never-quickened) `ADD_INT` instruction hit that
+    early return and never reached `ADD`'s own bignum-aware logic.
+    Found via a concrete failing test, fixed by adding an explicit
+    bignum check inside that deopt branch before its final return.
+  - **Not anticipated, GC-unsafety**: widening two operands to bignums
+    back-to-back (`diamond_bignum_from_int64` called once per operand)
+    is unsafe — the first widened bignum is reachable from no GC root
+    (not yet written into any register) while the second widening's own
+    allocation can trigger a collection, sweeping the first one away out
+    from under the subsequent arithmetic call. Caught by a real
+    AddressSanitizer heap-use-after-free, root-caused against
+    `mark_frame_chain`'s exact rooting semantics (only
+    `frame->registers[0..count)` are roots). Fixed structurally rather
+    than patched per call site: every bignum arithmetic/comparison
+    function now takes a `DiamondIntView` (stack-local, non-allocating
+    — a small `int64_t` backed by its own array, or an existing
+    bignum's limbs referenced directly), guaranteeing at most one
+    allocation per call — the final result, if any — never two in a
+    row, eliminating the bug class rather than one instance of it. A
+    second, subtler bug turned up building that fix: `DiamondIntView`
+    is self-referential (`.limbs` points at its own `.small_limbs`
+    member), and returning such a struct *by value* doesn't relocate
+    that pointer into the caller's copy — the copy's `.limbs` keeps
+    pointing at the original, now-dead callee stack slot. Two views
+    built this way at the same call site landed on the same reused
+    stack address, so both ended up reading the same (garbage) memory —
+    caught by manifestly wrong arithmetic results (`INT64_MAX + 1`
+    computing to `2`), not a crash. Fixed by making
+    `diamond_int_view`/`diamond_int_view_int64` take an out-parameter
+    instead of returning by value, so the pointer is always built
+    directly inside the caller's real storage.
 
 ## Next priorities
 
@@ -923,12 +979,6 @@ None queued.
   struct-copy elimination). Actual JIT compilation remains a distinct,
   larger, not-yet-attempted piece of work.
 - Self-hosting selected compiler and standard-library components.
-- Arbitrary-precision integers (a bignum type, auto-promoting on
-  overflow — the Ruby/Python/Lisp-family style, not just a library
-  type like Java's `BigInteger`). Currently `Int` is a fixed 64-bit
-  scalar (`DIAMOND_VALUE_INT` in `src/value.h`); 64 bits covers the
-  overwhelming majority of real use, so this is a low-priority
-  "eventually," not a near-term need.
 
 ## Explicitly deferred
 

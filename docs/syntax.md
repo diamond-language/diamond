@@ -39,7 +39,11 @@ to_f(x)      # => 3.0
 to_i(y)      # => 2
 ```
 
-`Int` is a 64-bit signed integer; `Float` is an IEEE-754 double. Float
+`Int` has no fixed size limit: arithmetic that overflows 64 bits
+transparently promotes to an arbitrary-precision representation, the same
+auto-promoting behavior as Ruby, Python, or Lisp. `Int` *literals* in source
+still cap at 64-bit, though — only runtime arithmetic overflow promotes, not
+literal syntax. `Float` is an IEEE-754 double. Float
 literals need a digit on both sides of the `.` (`2.5`, not `.5` or `2.`),
 so `5.abs()` still parses as a method call rather than a float literal.
 Both accept `_` digit separators (`1_234.567_8`). Exponent notation
@@ -55,15 +59,18 @@ expect from Ruby or Python. Division by `0.0` follows IEEE-754 rather
 than raising: `1.0 / 0.0` is `Infinity`, `-1.0 / 0.0` is `-Infinity`,
 `0.0 / 0.0` is `NaN`, and `NaN` compares unequal to everything, including
 itself. Integer division by zero still raises a rescuable
-`ZeroDivisionError`, and integer overflow (including negating the
-smallest representable `Int`) still raises a rescuable `RangeError`.
+`ZeroDivisionError`. Integer overflow (including negating the smallest
+representable 64-bit `Int`) no longer raises — it promotes to an
+arbitrary-precision `Int` instead, transparently; `is Int` and arithmetic
+both keep working the same way on a promoted value as on any other `Int`.
 
-`to_f`/`to_i` convert explicitly between the two. `to_i` rejects `NaN`,
-`Infinity`, and any `Float` outside `Int`'s range with a rescuable
-`RangeError` rather than performing an undefined C cast. Type
-annotations stay strict even though arithmetic auto-promotes: a
-parameter declared `x: Float` rejects an `Int` argument outright — pass
-it through `to_f` first.
+`to_f`/`to_i` convert explicitly between the two. `to_i` rejects `NaN` and
+`Infinity` with a rescuable `RangeError` (there's no finite integer to
+convert to), but a finite `Float` outside 64-bit range now promotes to an
+arbitrary-precision `Int` rather than raising, consistent with arithmetic
+overflow. Type annotations stay strict even though arithmetic
+auto-promotes: a parameter declared `x: Float` rejects an `Int` argument
+outright — pass it through `to_f` first.
 
 Floats print with a forced `.0` when they'd otherwise look like an
 integer (`3.0`, not `3`), so they stay visually distinct from `Int` in
@@ -296,10 +303,10 @@ pairs then `b`'s applied on top (`b` wins on key conflicts).
 `DiamondValue`s, not heap objects), so numeric helpers are plain
 functions: `abs(x)`/`min(a, b)`/`max(a, b)`/`mod(a, b)`, all accepting
 `Int | Float` (mixed `Int`/`Float` arguments auto-promote, same as
-arithmetic). `abs` inherits the overflow check already on negation, so
-`abs` of the most negative `Int` raises a rescuable `RangeError`
-rather than silently wrapping (`Float` negation has no such concept —
-`abs` on a `Float` never raises). `mod(a, b)` truncates `a / b` toward
+arithmetic). `abs` inherits negation's overflow behavior, so `abs` of the
+most negative 64-bit `Int` promotes to an arbitrary-precision `Int`
+instead of raising or silently wrapping — there is no longer a most
+negative `Int` that `abs` can't represent. `mod(a, b)` truncates `a / b` toward
 zero before multiplying back (via `to_i`/`to_f` for the `Float` case,
 since `/` between two `Float`s doesn't truncate the way `Int`
 division does), so its result keeps the same C-style sign convention

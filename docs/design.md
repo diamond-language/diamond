@@ -22,9 +22,9 @@ have one-byte opcodes and explicitly decoded operands; jumps contain absolute
 
 Runtime values use an explicit tagged union. Immediate values are `nil`,
 booleans, signed 64-bit integers, and IEEE-754 double-precision floats.
-Strings, arrays, hashes, and instances are managed heap objects with a common
-header. NaN boxing is deferred until measurement shows that representation
-density is worth the complexity.
+Strings, arrays, hashes, instances, and arbitrary-precision integers are
+managed heap objects with a common header. NaN boxing is deferred until
+measurement shows that representation density is worth the complexity.
 
 `Float` arithmetic and comparisons live entirely on the generic (non-`_INT`)
 opcode paths — there is no quickened or compiler-specialized `_FLOAT` opcode
@@ -43,15 +43,31 @@ Mixed `Int`/`Float` arithmetic and comparisons auto-promote the `Int`
 operand to `double`, matching Ruby/Python/JS rather than requiring explicit
 conversion.
 
-Integer arithmetic uses C23 checked arithmetic and reports overflow rather than
+Integer arithmetic uses C23 checked arithmetic to detect overflow rather than
 invoking C undefined behavior. Addition, subtraction, multiplication, and
 negation all detect overflow through `ckd_add`/`ckd_sub`/`ckd_mul`; division
 additionally special-cases `INT64_MIN / -1`, the classic two's-complement
 overflow that checked-arithmetic division alone would not catch, since the
 mathematically correct magnitude has no representable positive counterpart.
-Every overflow raises the rescuable `RangeError` class rather than wrapping
-or invoking undefined behavior, on both the generic and quickened arithmetic
-opcode paths.
+Rather than raising, every overflow auto-promotes to an arbitrary-precision
+`DiamondBignum` (`src/bignum.c`), matching Ruby/Python/Lisp rather than
+Java's separate `BigInteger` type — `Int` has no user-visible size limit,
+only a representation that changes transparently once a value stops fitting
+in 64 bits. A bignum stores sign and magnitude as base-10⁹ limbs (chosen so
+decimal stringification — exercised on every `puts`/interpolation/error
+message — is close to trivial, at a cost to raw arithmetic throughput that
+doesn't matter for a cold path); every operation that produces one checks
+whether the true result still fits `int64_t` and demotes back to a plain
+inline `Int` if so, so a bignum object only ever exists to represent a value
+that genuinely needs it. `Int` literals in source stay capped at 64-bit —
+only runtime arithmetic overflow promotes. Bignum-producing arithmetic takes
+operand "views" (`DiamondIntView`, either a small `int64_t` widened onto a
+stack-local array or an existing bignum's limbs referenced directly) rather
+than heap-allocated operands, so combining two values never allocates more
+than once (the final result, if any) — allocating twice in a row to widen
+both operands first would leave the first allocation unrooted from any GC
+scan between the two calls, letting a collection triggered by the second
+allocation sweep it away while it was still needed.
 
 Nested Diamond calls recurse through the C call stack, one native activation
 per call depth, and a call-depth counter enforces a hard ceiling
