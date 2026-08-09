@@ -4188,4 +4188,40 @@ actual="$($diamond -e $'class Box\n def initialize(x)\n  @x = x\n end\n def ==(o
 actual="$($diamond -e $'class Box\n def initialize(x)\n  @x = x\n end\n def <(other) = @x < other.x()\n def x() = @x\nend\ndef lt(a, b) = a < b\ni = 0\nwhile i < 5\n lt(1, 2)\n i = i + 1\nend\nlt(Box.new(3), Box.new(5))')"
 [[ "$actual" == "true" ]]
 
-echo "920 tests passed"
+actual="$($diamond -e $'def f(a, b) = a - b\nf(a: 10, b: 3)')"
+[[ "$actual" == "7" ]]
+
+actual="$($diamond -e $'def f(a, b) = a - b\nf(b: 3, a: 10)')"
+[[ "$actual" == "7" ]]
+
+actual="$($diamond -e $'def f(a, b) = a - b\nf(10, b: 3)')"
+[[ "$actual" == "7" ]]
+
+actual="$($diamond -e $'def f(a, b = 2) = a + b\nf(a: 5)')"
+[[ "$actual" == "7" ]]
+
+actual="$($diamond -e $'def f(a, b) = a - b\nf(10, 3)')"
+[[ "$actual" == "7" ]]
+
+actual="$($diamond -e $'def identity[T](x: T) -> T\n x\nend\nidentity[Int](x: 42)')"
+[[ "$actual" == "42" ]]
+
+actual="$($diamond -e $'def f(a, b) = a + b\nf(a: 1, c: 2)' 2>&1 || true)"
+[[ "$actual" == *"no parameter with this name"* ]]
+
+actual="$($diamond -e $'def f(a, b) = a + b\nf(a: 1, a: 2)' 2>&1 || true)"
+[[ "$actual" == *"multiple values for the same argument"* ]]
+
+actual="$($diamond -e $'def f(a, b) = a + b\nf(a: 1, 2)' 2>&1 || true)"
+[[ "$actual" == *"positional argument cannot follow a keyword argument"* ]]
+
+actual="$($diamond -e $'def f(a, b) = a + b\nf(1, a: 2)' 2>&1 || true)"
+[[ "$actual" == *"multiple values for the same argument"* ]]
+
+actual="$($diamond -e $'def f(a, b = 2, c = 3) = a + b + c\nf(1, c: 5)' 2>&1 || true)"
+[[ "$actual" == *"missing argument"* ]]
+
+actual="$($diamond -e $'def f(a, b) = a + b\nf(a: 1)' 2>&1 || true)"
+[[ "$actual" == *"wrong number of arguments"* ]]
+
+echo "932 tests passed"
