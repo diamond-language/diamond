@@ -104,65 +104,30 @@ if "$diamond" -e '1 / 0' >/dev/null 2>&1; then
     exit 1
 fi
 
-error_file="$(mktemp)"
-if "$diamond" -e '9223372036854775807 + 1' >/dev/null 2>"$error_file"; then
-    echo "integer add overflow unexpectedly succeeded" >&2
-    exit 1
-fi
-grep -q 'runtime error: integer overflow' "$error_file"
-rm -f "$error_file"
+actual="$("$diamond" -e '9223372036854775807 + 1')"
+[[ "$actual" == "9223372036854775808" ]]
 
-error_file="$(mktemp)"
-if "$diamond" -e $'x = -9223372036854775807 - 1\nx + -1' >/dev/null 2>"$error_file"; then
-    echo "integer add negative overflow unexpectedly succeeded" >&2
-    exit 1
-fi
-grep -q 'runtime error: integer overflow' "$error_file"
-rm -f "$error_file"
+actual="$("$diamond" -e $'x = -9223372036854775807 - 1\nx + -1')"
+[[ "$actual" == "-9223372036854775809" ]]
 
-error_file="$(mktemp)"
-if "$diamond" -e $'x = -9223372036854775807 - 1\nx - 1' >/dev/null 2>"$error_file"; then
-    echo "integer subtract overflow unexpectedly succeeded" >&2
-    exit 1
-fi
-grep -q 'runtime error: integer overflow' "$error_file"
-rm -f "$error_file"
+actual="$("$diamond" -e $'x = -9223372036854775807 - 1\nx - 1')"
+[[ "$actual" == "-9223372036854775809" ]]
 
-error_file="$(mktemp)"
-if "$diamond" -e '9223372036854775807 * 2' >/dev/null 2>"$error_file"; then
-    echo "integer multiply overflow unexpectedly succeeded" >&2
-    exit 1
-fi
-grep -q 'runtime error: integer overflow' "$error_file"
-rm -f "$error_file"
+actual="$("$diamond" -e '9223372036854775807 * 2')"
+[[ "$actual" == "18446744073709551614" ]]
 
-error_file="$(mktemp)"
-if "$diamond" -e $'x = -9223372036854775807 - 1\nx / -1' >/dev/null 2>"$error_file"; then
-    echo "integer divide overflow unexpectedly succeeded" >&2
-    exit 1
-fi
-grep -q 'runtime error: integer overflow' "$error_file"
-rm -f "$error_file"
+actual="$("$diamond" -e $'x = -9223372036854775807 - 1\nx / -1')"
+[[ "$actual" == "9223372036854775808" ]]
 
-error_file="$(mktemp)"
-if "$diamond" -e $'x = -9223372036854775807 - 1\n-x' >/dev/null 2>"$error_file"; then
-    echo "integer negate overflow unexpectedly succeeded" >&2
-    exit 1
-fi
-grep -q 'runtime error: integer overflow' "$error_file"
-rm -f "$error_file"
+actual="$("$diamond" -e $'x = -9223372036854775807 - 1\n-x')"
+[[ "$actual" == "9223372036854775808" ]]
 
-actual="$("$diamond" -e $'begin\n 9223372036854775807 + 1\nrescue error: RangeError\n error.message()\nend')"
-[[ "$actual" == "integer overflow" ]]
+actual="$("$diamond" -e $'begin\n 9223372036854775807 + 1\nrescue error: RangeError\n "raised"\nend')"
+[[ "$actual" == "9223372036854775808" ]]
 
-error_file="$(mktemp)"
-if DIAMOND_QUICKEN=1 "$diamond" -e \
-    $'def add(a, b) = a + b\nadd(1, 2)\nadd(9223372036854775807, 1)' >/dev/null 2>"$error_file"; then
-    echo "quickened integer overflow unexpectedly succeeded" >&2
-    exit 1
-fi
-grep -q 'runtime error: integer overflow' "$error_file"
-rm -f "$error_file"
+actual="$(DIAMOND_QUICKEN=1 "$diamond" -e \
+    $'def add(a, b) = a + b\nadd(1, 2)\nadd(9223372036854775807, 1)')"
+[[ "$actual" == "9223372036854775808" ]]
 
 actual="$($diamond tests/cases/control_flow.di)"
 [[ "$actual" == "42" ]] || {
@@ -2895,8 +2860,8 @@ actual="$($diamond -e '"abc".to_i()')"
 actual="$($diamond -e '"3.14".to_i()')"
 [[ "$actual" == "3" ]]
 
-actual="$($diamond -e $'begin\n "99999999999999999999".to_i()\nrescue error: RangeError\n 42\nend')"
-[[ "$actual" == "42" ]]
+actual="$($diamond -e '"99999999999999999999".to_i()')"
+[[ "$actual" == "99999999999999999999" ]]
 
 actual="$($diamond -e '"HeLLo, World!".downcase()')"
 [[ "$actual" == "hello, world!" ]]
@@ -3257,8 +3222,8 @@ actual="$($diamond -e 'abs(5)')"
 actual="$($diamond -e 'abs(0)')"
 [[ "$actual" == "0" ]]
 
-actual="$($diamond -e $'begin\n min_val = -9223372036854775807 - 1\n abs(min_val)\nrescue error: RangeError\n 42\nend')"
-[[ "$actual" == "42" ]]
+actual="$($diamond -e $'min_val = -9223372036854775807 - 1\nabs(min_val)')"
+[[ "$actual" == "9223372036854775808" ]]
 
 actual="$($diamond -e '"#{min(3, 7)}, #{min(7, 3)}, #{max(3, 7)}, #{max(7, 3)}"')"
 [[ "$actual" == "3, 3, 7, 7" ]]
@@ -3498,13 +3463,8 @@ actual="$($diamond -e $'def negi(x: Int) -> Int = -x\nnegi(3)')"
 actual="$($diamond --dump-bytecode -e $'def negf(x: Float) -> Float = -x\nnegf(3.5)')"
 grep -q 'NEGATE ' <<<"$actual"
 
-error_file="$(mktemp)"
-if "$diamond" -e '- (-9223372036854775807 - 1)' >/dev/null 2>"$error_file"; then
-    echo "negating INT64_MIN unexpectedly succeeded" >&2
-    exit 1
-fi
-grep -q "integer overflow" "$error_file"
-rm -f "$error_file"
+actual="$($diamond -e '- (-9223372036854775807 - 1)')"
+[[ "$actual" == "9223372036854775808" ]]
 
 actual="$(DIAMOND_STRESS_GC=1 $diamond -e $'def f(x: Float) -> Float = -x\n"#{f(1.5)}, #{-3}"')"
 [[ "$actual" == "-1.5, -3" ]]
@@ -3543,19 +3503,24 @@ fi
 grep -q "to_i argument must be a Float" "$error_file"
 rm -f "$error_file"
 
-for bad_arg in '0.0 / 0.0' '1.0 / 0.0' '(0.0 - 1.0) / 0.0' \
-               '99999999999999999999999.0' '-99999999999999999999999.0'; do
+for bad_arg in '0.0 / 0.0' '1.0 / 0.0' '(0.0 - 1.0) / 0.0'; do
     error_file="$(mktemp)"
     if "$diamond" -e "to_i($bad_arg)" >/dev/null 2>"$error_file"; then
         echo "to_i($bad_arg) unexpectedly succeeded" >&2
         exit 1
     fi
-    grep -q "to_i argument must be a finite Float within Int range" "$error_file"
+    grep -q "to_i argument must be a finite Float" "$error_file"
     rm -f "$error_file"
 done
 
 actual="$($diamond -e $'begin\n to_i(0.0 / 0.0)\nrescue error: RangeError\n 42\nend')"
 [[ "$actual" == "42" ]]
+
+actual="$($diamond -e 'to_i(99999999999999999999999.0)')"
+[[ "$actual" == "99999999999999991611392" ]]
+
+actual="$($diamond -e 'to_i(-99999999999999999999999.0)')"
+[[ "$actual" == "-99999999999999991611392" ]]
 
 actual="$($diamond --dump-bytecode -e 'to_f(3)')"
 grep -q 'TO_FLOAT' <<<"$actual"
@@ -4033,4 +3998,47 @@ actual="$($diamond -e $'def f()\n return (if true\n  1\n else\n  2\n end)\nend\n
 actual="$($diamond -e $'begin\n begin\n  raise "boom"\n rescue error\n  raise if true\n end\nrescue error\n error\nend')"
 [[ "$actual" == "boom" ]]
 
-echo "865 tests passed"
+actual="$($diamond -e $'a = 9223372036854775807 + 1\nb = 9223372036854775807 + 1\na + b')"
+[[ "$actual" == "18446744073709551616" ]]
+
+actual="$($diamond -e $'a = 9223372036854775807 + 100\nb = 9223372036854775807 + 1\na - b')"
+[[ "$actual" == "99" ]]
+
+actual="$($diamond -e $'a = 9223372036854775807 + 1\nb = 9223372036854775807 + 1\na * b')"
+[[ "$actual" == "85070591730234615865843651857942052864" ]]
+
+actual="$($diamond -e $'a = (9223372036854775807 + 1) * 100\nb = 9223372036854775807 + 1\na / b')"
+[[ "$actual" == "100" ]]
+
+actual="$($diamond -e $'a = -(9223372036854775807 + 1)\na / 3')"
+[[ "$actual" == "-3074457345618258602" ]]
+
+actual="$($diamond -e $'a = 9223372036854775807 + 1\nb = 9223372036854775807 + 2\n"#{a < b}, #{a > b}, #{a <= a}, #{a >= b}, #{a == a}, #{a == b}"')"
+[[ "$actual" == "true, false, true, false, true, false" ]]
+
+actual="$($diamond -e $'a = -(9223372036854775807 + 1)\nb = 9223372036854775807 + 1\na < b')"
+[[ "$actual" == "true" ]]
+
+actual="$($diamond -e $'big = 9223372036854775807 + 1\nbig is Int')"
+[[ "$actual" == "true" ]]
+
+actual="$($diamond -e $'big = 9223372036854775807 + 1\nh = {}\nh[big] = "value"\nh[big]')"
+[[ "$actual" == "value" ]]
+
+actual="$($diamond -e $'x = 9223372036854775807 + 1\nx')"
+puts_actual="$(DIAMOND_STRESS_GC=1 $diamond -e $'x = 9223372036854775807 + 1\nputs(x)')"
+[[ "$actual" == "9223372036854775808" && "$puts_actual" == $'9223372036854775808\nnil' ]]
+
+actual="$($diamond -e $'def sub(a, b) = a - b\nsub(5, 3)\nbig = 9223372036854775807 + 1\nsub(big, 1)')"
+[[ "$actual" == "9223372036854775807" ]]
+
+actual="$($diamond -e $'def mul(a, b) = a * b\nmul(5, 3)\nbig = 9223372036854775807 + 1\nmul(big, 2)')"
+[[ "$actual" == "18446744073709551616" ]]
+
+actual="$($diamond -e $'def div(a, b) = a / b\ndiv(6, 3)\nbig = (9223372036854775807 + 1) * 10\ndiv(big, 2)')"
+[[ "$actual" == "46116860184273879040" ]]
+
+actual="$($diamond -e $'def lt(a, b) = a < b\nlt(1, 2)\nbig = 9223372036854775807 + 1\nlt(big, big)')"
+[[ "$actual" == "false" ]]
+
+echo "881 tests passed"
