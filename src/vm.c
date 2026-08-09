@@ -2,6 +2,7 @@
 
 #include "vm.h"
 #include "bignum.h"
+#include "compiler.h"
 
 #include <ctype.h>
 #include <errno.h>
@@ -183,6 +184,9 @@ void diamond_vm_collect(DiamondVm *vm) {
         } else if(unreached->kind==DIAMOND_OBJECT_REGEXP) {
             size=sizeof(DiamondRegexp);
             reginold_regex_free(((DiamondRegexp *)unreached)->handle);
+        } else if(unreached->kind==DIAMOND_OBJECT_PROGRAM_BUILDER) {
+            size=sizeof(DiamondProgramBuilder)+sizeof(DiamondProgram);
+            free(((DiamondProgramBuilder *)unreached)->program);
         } else {
             size=sizeof(DiamondCell);
         }
@@ -228,6 +232,8 @@ void diamond_vm_free(DiamondVm *vm) {
             if(fd>=0)close(fd);
         } else if(object->kind==DIAMOND_OBJECT_REGEXP) {
             reginold_regex_free(((DiamondRegexp *)object)->handle);
+        } else if(object->kind==DIAMOND_OBJECT_PROGRAM_BUILDER) {
+            free(((DiamondProgramBuilder *)object)->program);
         }
         free(object);
         object = next;
@@ -636,6 +642,36 @@ static DiamondRegexp *allocate_regexp_handle(DiamondVm *vm,reginold_regex *compi
     vm->objects=&regexp->object;vm->bytes_allocated+=sizeof(DiamondRegexp);return regexp;
 }
 
+/* Unlike every other allocate_* helper here, the payload
+ * (sizeof(DiamondProgram), tens of MB -- see docs/roadmap.md) dwarfs the
+ * handle itself, so bytes_allocated counts it too (mirroring
+ * allocate_array's own capacity-inclusive accounting), keeping GC
+ * pressure honest about the real memory this handle commits. */
+static DiamondProgramBuilder *allocate_program_builder(DiamondVm *vm) {
+    if(vm->stress_gc||vm->bytes_allocated>=vm->next_gc)diamond_vm_collect(vm);
+    DiamondProgram *built=malloc(sizeof *built);
+    if(built==nullptr)return nullptr;
+    diamond_program_init(built);
+    DiamondProgramBuilder *handle=malloc(sizeof(DiamondProgramBuilder));
+    if(handle==nullptr){free(built);return nullptr;}
+    *handle=(DiamondProgramBuilder){
+        .object={.next=vm->objects,.kind=DIAMOND_OBJECT_PROGRAM_BUILDER},
+        .program=built};
+    vm->objects=&handle->object;
+    vm->bytes_allocated+=sizeof(DiamondProgramBuilder)+sizeof(DiamondProgram);
+    return handle;
+}
+
+/* function_index==-1 targets the program's entry function; 0..function_count-1
+ * targets program->functions[index]. Returns nullptr on any other value. */
+static DiamondFunction *program_builder_target(DiamondProgram *program,
+                                                int64_t function_index) {
+    if(function_index==-1) return &program->entry;
+    if(function_index<0||(uint64_t)function_index>=program->function_count)
+        return nullptr;
+    return &program->functions[function_index];
+}
+
 /* DIAMOND_OP_REGEXP_NEW's real body, factored out of run_chunk's own
  * switch statement deliberately, not just for readability: every local
  * variable declared anywhere in that switch contributes to run_chunk's
@@ -725,6 +761,257 @@ static DiamondVmStatus regexp_match_helper(DiamondVm *vm, const DiamondRegexp *r
     if(result_array==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
     *result=DIAMOND_OBJECT(result_array);
     return DIAMOND_VM_OK;
+}
+
+/* ProgramBuilder#run's real body, factored out of run_chunk's own opcode
+ * switch for the same stack-frame-isolation reason as regexp_new_helper
+ * above -- but far more load-bearing here: a bare local DiamondVm is
+ * ~50KB (method/field caches, rewritten_sites[DIAMOND_MAX_CODE], opcode
+ * counters, namespace constants), not the ~100 bytes regexp_new_helper's
+ * own locals needed. At -O0, every local anywhere in run_chunk's switch
+ * contributes to its one shared stack frame regardless of which case
+ * actually runs, so leaving `DiamondVm run_vm` inline in the INVOKE case
+ * body would have added that ~50KB to *every* recursive run_chunk level
+ * unconditionally -- confirmed by a real crash: depth(5000) (the existing
+ * regression test for the DIAMOND_MAX_CALL_DEPTH guard) segfaulted before
+ * that guard could trip, a worse version of the exact bug the Regexp
+ * round already found and fixed this way (see docs/roadmap.md). Returns
+ * DIAMOND_VM_PROGRAM_ERROR (not the constructed program's own status) for
+ * a nonzero exit, and DIAMOND_VM_TYPE_ERROR for a non-scalar result --
+ * see docs/roadmap.md's self-hosting Phase 1 entry for why both are
+ * deliberate v1 scope cuts rather than gaps. */
+static DiamondVmStatus program_builder_run_helper(DiamondVm *vm,
+        DiamondProgram *built, DiamondValue *result) {
+    const DiamondChunk built_chunk=diamond_program_chunk(built);
+    DiamondVm run_vm;diamond_vm_init(&run_vm);
+    DiamondValue run_result=DIAMOND_NIL;
+    const DiamondVmStatus run_status=diamond_vm_run(&run_vm,&built_chunk,&run_result);
+    if(run_status!=DIAMOND_VM_OK) {
+        snprintf(vm->error,sizeof vm->error,"%s",
+            run_vm.error[0]!='\0'?run_vm.error:diamond_vm_status_name(run_status));
+        diamond_vm_free(&run_vm);
+        return DIAMOND_VM_PROGRAM_ERROR;
+    }
+    if(run_result.kind==DIAMOND_VALUE_OBJECT) {
+        diamond_vm_free(&run_vm);
+        snprintf(vm->error,sizeof vm->error,"ProgramBuilder#%s",
+            "run only supports a scalar (Int, Float, Bool, or Nil) result");
+        return DIAMOND_VM_TYPE_ERROR;
+    }
+    diamond_vm_free(&run_vm);
+    *result=run_result;
+    return DIAMOND_VM_OK;
+}
+
+/* All six ProgramBuilder instance methods, factored out of run_chunk's own
+ * INVOKE case for the same stack-frame-isolation reason as
+ * program_builder_run_helper above -- not because any *one* branch here has
+ * a large local (they don't), but because at -O0 every local anywhere in
+ * run_chunk's switch, across *every* branch, contributes to its one shared
+ * stack frame regardless of which branch actually runs. Six method-name
+ * flags plus each branch's own few pointers/integers added up to enough
+ * that depth(5000) -- the existing regression test for the
+ * DIAMOND_MAX_CALL_DEPTH guard -- segfaulted before that guard could trip,
+ * even after program_builder_run_helper's extraction alone (confirmed by
+ * testing that fix in isolation first). Takes `registers`/`base`/`argc`
+ * directly rather than pre-extracted arguments, unlike
+ * regexp_new_helper/regexp_match_helper, since six methods with different
+ * arities would otherwise need six different call signatures. */
+static DiamondVmStatus program_builder_invoke_helper(DiamondVm *vm,
+        DiamondProgramBuilder *builder, const DiamondStringConstant *method_name,
+        DiamondValue *registers, uint8_t base, uint8_t argc, size_t depth,
+        DiamondValue *result) {
+    DiamondProgram *built=builder->program;
+    const bool declare_function_method=
+        method_name->length==sizeof("declare_function")-1&&
+        memcmp(method_name->chars,"declare_function",
+            sizeof("declare_function")-1)==0;
+    const bool emit_byte_method=
+        method_name->length==sizeof("emit_byte")-1&&
+        memcmp(method_name->chars,"emit_byte",sizeof("emit_byte")-1)==0;
+    const bool add_constant_method=
+        method_name->length==sizeof("add_constant")-1&&
+        memcmp(method_name->chars,"add_constant",
+            sizeof("add_constant")-1)==0;
+    const bool add_string_method=
+        method_name->length==sizeof("add_string")-1&&
+        memcmp(method_name->chars,"add_string",sizeof("add_string")-1)==0;
+    const bool set_register_count_method=
+        method_name->length==sizeof("set_register_count")-1&&
+        memcmp(method_name->chars,"set_register_count",
+            sizeof("set_register_count")-1)==0;
+    const bool run_method=method_name->length==sizeof("run")-1&&
+        memcmp(method_name->chars,"run",sizeof("run")-1)==0;
+    if(!declare_function_method&&!emit_byte_method&&
+       !add_constant_method&&!add_string_method&&
+       !set_register_count_method&&!run_method) {
+        snprintf(vm->error,sizeof vm->error,"undefined method '%.*s' for %s",
+            (int)method_name->length,method_name->chars,"ProgramBuilder");
+        return DIAMOND_VM_TYPE_ERROR;
+    }
+    if(declare_function_method) {
+        if(argc!=3)return DIAMOND_VM_ARITY_ERROR;
+        if(registers[base].kind!=DIAMOND_VALUE_OBJECT||
+           registers[base].as.object->kind!=DIAMOND_OBJECT_STRING||
+           registers[(size_t)base+1].kind!=DIAMOND_VALUE_INT||
+           registers[(size_t)base+2].kind!=DIAMOND_VALUE_INT) {
+            snprintf(vm->error,sizeof vm->error,"ProgramBuilder#%s",
+                "declare_function arguments must be (String, Int, Int)");
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        const DiamondString *fname=
+            (const DiamondString *)registers[base].as.object;
+        const int64_t arity_value=registers[(size_t)base+1].as.integer;
+        const int64_t required_value=registers[(size_t)base+2].as.integer;
+        if(fname->length==0||fname->length>=DIAMOND_MAX_FUNCTION_NAME||
+           arity_value<0||arity_value>UINT8_MAX||
+           required_value<0||required_value>arity_value) {
+            snprintf(vm->error,sizeof vm->error,
+                "ProgramBuilder#declare_function has an invalid name or arity");
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        if(built->function_count==DIAMOND_MAX_FUNCTIONS) {
+            snprintf(vm->error,sizeof vm->error,"program has too many functions");
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        DiamondFunction *function=&built->functions[built->function_count];
+        *function=(DiamondFunction){};
+        memcpy(function->name,fname->chars,fname->length);
+        function->name[fname->length]='\0';
+        function->owner_class=UINT8_MAX;
+        function->arity=(uint8_t)arity_value;
+        function->required_arity=(uint8_t)required_value;
+        function->return_type_set=UINT8_MAX;
+        for(size_t index=0;index<16;index++)
+            function->parameter_type_sets[index]=UINT8_MAX;
+        const int64_t new_index=(int64_t)built->function_count;
+        built->function_count++;
+        *result=DIAMOND_INT(new_index);return DIAMOND_VM_OK;
+    }
+    if(emit_byte_method) {
+        if(argc!=2)return DIAMOND_VM_ARITY_ERROR;
+        if(registers[base].kind!=DIAMOND_VALUE_INT||
+           registers[(size_t)base+1].kind!=DIAMOND_VALUE_INT) {
+            snprintf(vm->error,sizeof vm->error,
+                "ProgramBuilder#emit_byte arguments must be (Int, Int)");
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        DiamondFunction *target=
+            program_builder_target(built,registers[base].as.integer);
+        const int64_t byte_value=registers[(size_t)base+1].as.integer;
+        if(target==nullptr||byte_value<0||byte_value>UINT8_MAX) {
+            snprintf(vm->error,sizeof vm->error,"ProgramBuilder#%s",
+                "emit_byte has an invalid function index or byte value");
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        if(target->code_count==DIAMOND_MAX_CODE) {
+            snprintf(vm->error,sizeof vm->error,
+                "function produces too much bytecode");
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        target->code[target->code_count]=(uint8_t)byte_value;
+        target->lines[target->code_count]=0;
+        target->columns[target->code_count]=0;
+        target->code_count++;
+        *result=DIAMOND_NIL;return DIAMOND_VM_OK;
+    }
+    if(add_constant_method) {
+        if(argc!=2)return DIAMOND_VM_ARITY_ERROR;
+        if(registers[base].kind!=DIAMOND_VALUE_INT) {
+            snprintf(vm->error,sizeof vm->error,
+                "ProgramBuilder#add_constant's function index must be an Int");
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        const DiamondValue value=registers[(size_t)base+1];
+        if(value.kind==DIAMOND_VALUE_OBJECT) {
+            snprintf(vm->error,sizeof vm->error,"ProgramBuilder#%s",
+                "add_constant only accepts Int, Float, Bool, or Nil");
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        DiamondFunction *target=
+            program_builder_target(built,registers[base].as.integer);
+        if(target==nullptr) {
+            snprintf(vm->error,sizeof vm->error,
+                "ProgramBuilder#add_constant has an invalid function index");
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        if(target->constant_count==DIAMOND_MAX_CONSTANTS) {
+            snprintf(vm->error,sizeof vm->error,
+                "function has too many constants");
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        const int64_t new_index=(int64_t)target->constant_count;
+        target->constants[target->constant_count++]=value;
+        *result=DIAMOND_INT(new_index);return DIAMOND_VM_OK;
+    }
+    if(add_string_method) {
+        if(argc!=2)return DIAMOND_VM_ARITY_ERROR;
+        if(registers[base].kind!=DIAMOND_VALUE_INT||
+           registers[(size_t)base+1].kind!=DIAMOND_VALUE_OBJECT||
+           registers[(size_t)base+1].as.object->kind!=DIAMOND_OBJECT_STRING) {
+            snprintf(vm->error,sizeof vm->error,
+                "ProgramBuilder#add_string arguments must be (Int, String)");
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        DiamondFunction *target=
+            program_builder_target(built,registers[base].as.integer);
+        const DiamondString *text=
+            (const DiamondString *)registers[(size_t)base+1].as.object;
+        if(target==nullptr||text->length>DIAMOND_MAX_STRING_LENGTH) {
+            snprintf(vm->error,sizeof vm->error,"ProgramBuilder#%s",
+                "add_string has an invalid function index or an oversized string");
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        if(target->string_count==DIAMOND_MAX_STRING_CONSTANTS) {
+            snprintf(vm->error,sizeof vm->error,
+                "function has too many string constants");
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        DiamondStringConstant *slot=&target->strings[target->string_count];
+        memcpy(slot->chars,text->chars,text->length);
+        slot->chars[text->length]='\0';
+        slot->length=text->length;
+        const int64_t new_index=(int64_t)target->string_count;
+        target->string_count++;
+        *result=DIAMOND_INT(new_index);return DIAMOND_VM_OK;
+    }
+    if(set_register_count_method) {
+        if(argc!=2)return DIAMOND_VM_ARITY_ERROR;
+        if(registers[base].kind!=DIAMOND_VALUE_INT||
+           registers[(size_t)base+1].kind!=DIAMOND_VALUE_INT) {
+            snprintf(vm->error,sizeof vm->error,
+                "ProgramBuilder#set_register_count arguments must be (Int, Int)");
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        DiamondFunction *target=
+            program_builder_target(built,registers[base].as.integer);
+        const int64_t count_value=registers[(size_t)base+1].as.integer;
+        if(target==nullptr||count_value<0||count_value>UINT16_MAX) {
+            snprintf(vm->error,sizeof vm->error,"ProgramBuilder#%s",
+                "set_register_count has an invalid function index or count");
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        target->register_count=(uint16_t)count_value;
+        *result=DIAMOND_NIL;return DIAMOND_VM_OK;
+    }
+    /* run_method: the only remaining possibility once the combined
+     * "no method matched" check above passed. */
+    if(argc!=0)return DIAMOND_VM_ARITY_ERROR;
+    /* Refuses to nest past a conservative depth rather than the full
+     * DIAMOND_MAX_CALL_DEPTH: program_builder_run_helper's diamond_vm_run
+     * starts a *fresh* run_chunk recursion (depth 0) on top of this
+     * call's own C stack frame, which is itself already `depth` levels of
+     * run_chunk deep -- so real C-stack usage is the *sum* of outer and
+     * inner depth, not bounded by either guard alone. Capping outer depth
+     * at 10 keeps that sum within the same call-depth budget already
+     * verified safe under ASan (see the DIAMOND_MAX_CALL_DEPTH regression
+     * entry in docs/roadmap.md) even if the inner program recurses to its
+     * own full limit. */
+    if(depth>=10) {
+        snprintf(vm->error,sizeof vm->error,"ProgramBuilder#run nested too deeply");
+        return DIAMOND_VM_STACK_OVERFLOW;
+    }
+    return program_builder_run_helper(vm,built,result);
 }
 
 static bool value_is_bignum(DiamondValue value) {
@@ -1701,6 +1988,7 @@ static uint8_t exception_class_for_status(DiamondVmStatus status) {
         case DIAMOND_VM_YIELD_WITHOUT_FIBER: return DIAMOND_CLASS_FIBER_ERROR;
         case DIAMOND_VM_IO_ERROR: return DIAMOND_CLASS_IO_ERROR;
         case DIAMOND_VM_REGEXP_ERROR: return DIAMOND_CLASS_REGEXP_ERROR;
+        case DIAMOND_VM_PROGRAM_ERROR: return DIAMOND_CLASS_RUNTIME_ERROR;
         default: return UINT8_MAX;
     }
 }
@@ -4058,6 +4346,15 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     registers[dest]=match_dest;
                     break;
                 }
+                if(receiver_kind==DIAMOND_OBJECT_PROGRAM_BUILDER) {
+                    if(type_argument_count!=0)VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                    DiamondValue invoke_result=DIAMOND_NIL;
+                    const DiamondVmStatus invoke_status=program_builder_invoke_helper(vm,
+                        (DiamondProgramBuilder *)registers[recv].as.object,method_name,
+                        registers,base,argc,depth,&invoke_result);
+                    VM_PROPAGATE(invoke_status);
+                    registers[dest]=invoke_result;break;
+                }
                 if(receiver_kind!=DIAMOND_OBJECT_INSTANCE)
                     VM_RETURN(DIAMOND_VM_TYPE_ERROR);
                 DiamondInstance *instance=(DiamondInstance *)registers[recv].as.object;
@@ -4648,6 +4945,15 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 registers[dest]=new_result;
                 break;
             }
+            case DIAMOND_OP_PROGRAM_BUILDER_NEW: {
+                uint8_t dest=0;
+                READ_BYTE(dest);
+                DiamondProgramBuilder *handle=allocate_program_builder(vm);
+                if(handle==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                registers[dest]=(DiamondValue){.kind=DIAMOND_VALUE_OBJECT,
+                    .as.object=(DiamondObject *)handle};
+                break;
+            }
             case DIAMOND_OP_TCP_CONNECT: {
                 uint8_t dest=0,host_reg=0,port_reg=0;
                 READ_BYTE(dest);READ_BYTE(host_reg);READ_BYTE(port_reg);
@@ -4943,6 +5249,8 @@ const char *diamond_vm_status_name(DiamondVmStatus status) {
             return "I/O error";
         case DIAMOND_VM_REGEXP_ERROR:
             return "regexp error";
+        case DIAMOND_VM_PROGRAM_ERROR:
+            return "constructed program failed";
     }
     return "unknown VM status";
 }

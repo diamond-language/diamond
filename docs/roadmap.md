@@ -1203,20 +1203,105 @@ future work.
   commit; a second, corrective commit landed the fix rather than amending
   history.
 
+- Self-hosting, Phase 1: `ProgramBuilder`, a native bridge letting Diamond
+  code construct and run a `DiamondProgram` at runtime — the prerequisite
+  for a Diamond-language compiler to produce anything executable, since
+  bytecode execution doesn't care whether a `DiamondChunk` came from
+  `diamond_compile` (C) or was assembled by a Diamond program at runtime.
+  `ProgramBuilder.new()` is new dedicated compiler recognition (mirroring
+  `Regexp.new`/`File.open`, a new `DIAMOND_OP_PROGRAM_BUILDER_NEW`
+  opcode); every instance method
+  (`.declare_function`/`.emit_byte`/`.add_constant`/`.add_string`/
+  `.set_register_count`/`.run`) dispatches through the ordinary `INVOKE`
+  opcode like any other native-kind receiver, needing no compiler changes
+  at all — mirroring `compiler.c`'s own internal `emit_byte`/
+  `add_constant`/`allocate_register` functions closely enough that the
+  eventual Diamond-language port (Phase 3) can be a close transliteration.
+  `diamond_compile`'s built-in-exception-class setup (previously inlined)
+  was extracted into a shared `diamond_program_init`, so a builder-created
+  program has the same immediately-instantiable `Exception`/`TypeError`/
+  etc. hierarchy `diamond_compile` itself provides, without going through
+  the parser at all.
+
+  Deliberately scoped narrower than the full design sketched when this
+  phase was planned: `.declare_class`/`.declare_method` don't exist yet
+  (added when Phase 3's class-compiling logic actually needs them);
+  `.add_constant` rejects any heap-object `DiamondValue` (matches
+  `compiler.c`'s own `add_constant`, which in practice is only ever
+  called with `Int`/`Float`); and `.run()` rejects a heap-object result
+  and reports any failure as a plain `RuntimeError` in the calling
+  program, never the original status or exception object. That last cut
+  is the load-bearing one: `.run()` executes the constructed program on
+  a *separate* `DiamondVm`, and a returned heap object would live in that
+  VM's own object list, invisible to the calling VM's GC the moment the
+  inner VM is freed — correctly transplanting a live object graph across
+  two independent GC heaps is real, separate work, deferred rather than
+  gotten wrong. Restricting constants and results to scalars sidesteps
+  the whole problem for this round.
+
+  Two real bugs surfaced during implementation, not just new code:
+  - **Not anticipated, a second confirmed stack-overflow-guard
+    regression**: mirroring the Regexp round's own "factor large locals
+    out of run_chunk's switch" fix wasn't enough on the first attempt.
+    Moving only the `~50KB` `DiamondVm run_vm` local (by far the largest
+    single addition) into its own helper function still left `depth(5000)`
+    — the existing regression test for the `DIAMOND_MAX_CALL_DEPTH` guard
+    — segfaulting before that guard could trip. Root cause: at `-O0`,
+    *every* local anywhere in `run_chunk`'s switch contributes to its one
+    shared stack frame regardless of which branch runs, so six method-name
+    flags plus each of six branches' own few pointers/integers — individually
+    tiny — added up to enough combined footprint to matter, given how
+    tightly `DIAMOND_MAX_CALL_DEPTH=100` was already calibrated (see the
+    original call-depth regression entry above: real recursion already
+    failed around depth ~150-220 with the *pre-existing* frame size, before
+    any of this round's additions). Confirmed by testing the partial fix in
+    isolation and watching it still crash. Fixed completely by factoring
+    the *entire* `ProgramBuilder` dispatch block — all six methods, not
+    just `.run()` — into its own `program_builder_invoke_helper` function,
+    leaving only a handful of small locals in `run_chunk` itself. Re-verified
+    `depth(5000)` passes clean under both the plain debug build and
+    `make test-sanitize` afterward.
+  - **Anticipated by the design, confirmed necessary by testing it
+    directly**: `.run()` starts a *fresh* `run_chunk` recursion (depth 0)
+    on top of its own call's C stack frame, which is itself already
+    `depth` levels deep in the *calling* VM — so a program that calls
+    `.run()` from inside deeply recursive Diamond code could overflow the
+    real C stack well before either VM's own `DIAMOND_MAX_CALL_DEPTH`
+    guard, individually, would trip. Guarded by refusing to nest past
+    `depth>=10` (leaving headroom for the inner program's own full
+    recursion budget within the same overall margin already verified safe
+    under ASan), raising the existing, already-rescuable
+    `DIAMOND_VM_STACK_OVERFLOW`/`SystemStackError` rather than crashing.
+    Verified with a real 20-deep nested-`.run()` test that raises cleanly
+    instead of segfaulting.
+
+  New regression coverage: eight `tests/cases/program_builder_*` cases —
+  a hand-assembled "return 42" program (the concrete verification target
+  named when this phase was planned), a real `CALL` between two
+  builder-declared functions (`double(5) == 10`), and one case each for
+  the scope cuts and guards above (bad builder arguments, an unknown
+  method, a non-scalar constant, a non-scalar `.run()` result, a failing
+  constructed program, and the nesting-depth guard) — plus the
+  `depth(5000)` regression already in `tests/run.sh`, which is what
+  caught the stack-frame bug above in the first place. Verified with the
+  same `make test-all` pass (debug/release/sanitizer builds, every
+  C-level test binary) as every other round this session.
+
 ## Next priorities
 
-- Self-hosting, Phase 1: a native `ProgramBuilder` bridge letting Diamond
-  code construct and run a `DiamondProgram` at runtime — the prerequisite
-  for a Diamond-language compiler to produce anything executable. See the
-  self-hosting roadmap plan for the full design (mirrors `compiler.c`'s
-  own internal `emit_byte`/`add_constant`/`allocate_register` functions).
+- Self-hosting, Phase 2: port `src/lexer.c` (332 lines, no dependency on
+  `compiler.c`) to a Diamond `class Lexer`, verified by a differential
+  token-stream harness against every existing `tests/cases/*.di` file.
+  See the self-hosting roadmap plan for the full phase breakdown
+  (lexer, then the much larger parser/emitter port, then bootstrap
+  fixpoint validation).
 
 ## Later experiments
 
 - Self-hosting the compiler and core libraries in Diamond (in progress —
-  see `Completed foundation` for Phase 0, landed, and `Next priorities`
-  for Phase 1, not yet started; lexer and compiler ports, plus bootstrap
-  validation, remain multi-session future work beyond Phase 1).
+  see `Completed foundation` for Phases 0-1, landed, and `Next
+  priorities` for Phase 2; the lexer and compiler ports, plus bootstrap
+  validation, remain multi-session future work beyond Phase 2).
 - Native-code generation or a tracing/method JIT — nothing in the
   `jit-experimentation` work above generates native code; it's all
   interpreter-loop leaning (register zero-init, opcode dispatch,

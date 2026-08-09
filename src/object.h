@@ -22,6 +22,7 @@ typedef enum DiamondObjectKind : uint8_t {
     DIAMOND_OBJECT_BIGNUM,
     DIAMOND_OBJECT_SYMBOL,
     DIAMOND_OBJECT_REGEXP,
+    DIAMOND_OBJECT_PROGRAM_BUILDER,
 } DiamondObjectKind;
 
 typedef struct DiamondObject {
@@ -177,5 +178,21 @@ typedef struct DiamondRegexp {
     DiamondObject object;
     reginold_regex *handle;
 } DiamondRegexp;
+
+/* Forward-declared, not included: DiamondProgram is defined in compiler.h,
+ * which itself includes vm.h (and so, transitively, this file) -- a
+ * pointer to the incomplete type is all this struct needs. See
+ * docs/roadmap.md's self-hosting Phase 1 entry for the full design: this
+ * is the ProgramBuilder native bridge letting Diamond code construct and
+ * run a DiamondProgram at runtime. Like DiamondFileHandle/
+ * DiamondListenerHandle, no mark_object branch is needed -- the wrapped
+ * DiamondProgram's own constants are restricted to scalar DiamondValues
+ * (see ProgramBuilder#add_constant in vm.c), so nothing inside one ever
+ * references another Diamond value. */
+typedef struct DiamondProgram DiamondProgram;
+typedef struct DiamondProgramBuilder {
+    DiamondObject object;
+    DiamondProgram *program;
+} DiamondProgramBuilder;
 
 #endif

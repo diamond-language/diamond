@@ -115,6 +115,7 @@ typedef enum DiamondOpCode : uint8_t {
     DIAMOND_OP_TO_SYMBOL,
     DIAMOND_OP_MATH_UNARY,
     DIAMOND_OP_MATH_BINARY,
+    DIAMOND_OP_PROGRAM_BUILDER_NEW,
     DIAMOND_OP_COUNT,
 } DiamondOpCode;
 
@@ -309,6 +310,13 @@ typedef enum DiamondVmStatus : uint8_t {
     DIAMOND_VM_FIBER_NOT_RESUMABLE,
     DIAMOND_VM_IO_ERROR,
     DIAMOND_VM_REGEXP_ERROR,
+    /* Raised when a ProgramBuilder-constructed DiamondProgram fails while
+     * executing under .run() -- a distinct status from DIAMOND_VM_TYPE_ERROR
+     * (which covers builder API misuse: bad argument types, out-of-range
+     * indices) specifically because the two need different rescue targets:
+     * "you called the builder wrong" vs. "the program you built didn't
+     * work." See docs/roadmap.md. */
+    DIAMOND_VM_PROGRAM_ERROR,
 } DiamondVmStatus;
 
 typedef struct DiamondMethodCacheEntry {

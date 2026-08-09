@@ -1521,6 +1521,38 @@ static uint8_t parse_regexp_new_call(Compiler *compiler) {
     return dest;
 }
 
+/* ProgramBuilder.new() -- the one ProgramBuilder call needing dedicated
+ * compiler recognition (constructing the object). Every instance method
+ * (.declare_function/.emit_byte/.add_constant/.add_string/
+ * .set_register_count/.run) dispatches through the ordinary INVOKE opcode
+ * like any other native-kind receiver (Fiber/File/Regexp), needing no
+ * compiler changes at all. See docs/roadmap.md's self-hosting Phase 1
+ * entry. */
+static uint8_t parse_program_builder_new_call(Compiler *compiler) {
+    advance_token(compiler); /* consume '.' */
+    if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER||
+       !name_equals(compiler,"new",compiler->current.span,false)) {
+        fail(compiler,compiler->current.span,"expected 'new' after 'ProgramBuilder'");
+        return 0;
+    }
+    advance_token(compiler); /* consume 'new' */
+    if(compiler->current.kind!=DIAMOND_TOKEN_LEFT_PAREN) {
+        fail(compiler,compiler->current.span,"expected '(' after 'ProgramBuilder.new'");
+        return 0;
+    }
+    advance_token(compiler);
+    skip_newlines(compiler);
+    if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
+        fail(compiler,compiler->current.span,"expected ')' after ProgramBuilder.new arguments");
+        return 0;
+    }
+    advance_token(compiler);
+    const uint8_t dest=allocate_register(compiler);
+    emit_opcode(compiler,DIAMOND_OP_PROGRAM_BUILDER_NEW);
+    emit_byte(compiler,dest);
+    return dest;
+}
+
 static uint8_t parse_tcp_connect_call(Compiler *compiler) {
     advance_token(compiler); /* consume '.' */
     if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER||
@@ -1808,6 +1840,10 @@ static uint8_t parse_name(Compiler *compiler) {
        compiler->current.kind==DIAMOND_TOKEN_DOT&&
        name_equals(compiler,"Regexp",name,false))
         return parse_regexp_new_call(compiler);
+    if(class_index<0&&find_local(compiler,name)<0&&find_function(compiler,name)<0&&
+       compiler->current.kind==DIAMOND_TOKEN_DOT&&
+       name_equals(compiler,"ProgramBuilder",name,false))
+        return parse_program_builder_new_call(compiler);
     if(class_index<0&&find_local(compiler,name)<0&&find_function(compiler,name)<0&&
        compiler->current.kind==DIAMOND_TOKEN_DOT&&
        name_equals(compiler,"TCPSocket",name,false))
@@ -4532,8 +4568,7 @@ static uint8_t compile_sequence(Compiler *compiler) {
     return result;
 }
 
-bool diamond_compile(const char *source, DiamondProgram *program,
-                     DiamondDiagnostic *diagnostic) {
+void diamond_program_init(DiamondProgram *program) {
     /* memset rather than `*program = (DiamondProgram){};`: a compound-literal
      * assignment materializes a full temporary DiamondProgram (3MB+) on this
      * function's own stack frame regardless of where `program` itself points,
@@ -4567,8 +4602,24 @@ bool diamond_compile(const char *source, DiamondProgram *program,
         class->field_count=2;
         (void)snprintf(class->fields[0],DIAMOND_MAX_FUNCTION_NAME,"message");
         (void)snprintf(class->fields[1],DIAMOND_MAX_FUNCTION_NAME,"cause");
+        /* diamond_compile only computes shapes for every class (built-in
+         * and user-declared) once compilation finishes -- done here too,
+         * scoped to just these built-ins, so a program that never gets
+         * that far (e.g. a ProgramBuilder that only ever calls this
+         * function, never diamond_compile) still has instantiable
+         * built-in exception classes from construction on, the same
+         * guarantee diamond_compile itself provides. */
+        for(size_t field_count=0;field_count<=class->field_count;field_count++) {
+            class->shapes[field_count]=(DiamondShape){
+                .class=class,.field_count=(uint8_t)field_count};
+        }
     }
     snprintf(program->entry.name, sizeof(program->entry.name), "<main>");
+}
+
+bool diamond_compile(const char *source, DiamondProgram *program,
+                     DiamondDiagnostic *diagnostic) {
+    diamond_program_init(program);
     *diagnostic = (DiamondDiagnostic){};
     Compiler compiler = {
         .source = source,
