@@ -4041,4 +4041,103 @@ actual="$($diamond -e $'def div(a, b) = a / b\ndiv(6, 3)\nbig = (922337203685477
 actual="$($diamond -e $'def lt(a, b) = a < b\nlt(1, 2)\nbig = 9223372036854775807 + 1\nlt(big, big)')"
 [[ "$actual" == "false" ]]
 
-echo "881 tests passed"
+actual="$($diamond -e ':foo')"
+[[ "$actual" == "foo" ]]
+
+actual="$($diamond -e '[:valid?, :save!]')"
+[[ "$actual" == "[valid?, save!]" ]]
+
+actual="$($diamond -e '[:a, :b, :c]')"
+[[ "$actual" == "[a, b, c]" ]]
+
+actual="$($diamond -e 'def f(x) = x
+f(:foo)')"
+[[ "$actual" == "foo" ]]
+
+actual="$($diamond -e ':foo == :foo')"
+[[ "$actual" == "true" ]]
+
+actual="$($diamond -e ':foo != :bar')"
+[[ "$actual" == "true" ]]
+
+actual="$($diamond -e ':foo == "foo"')"
+[[ "$actual" == "false" ]]
+
+actual="$($diamond -e '"foo" == :foo')"
+[[ "$actual" == "false" ]]
+
+actual="$($diamond -e 'h = {:a: 1, :b: 2}
+[h[:a], h[:b]]')"
+[[ "$actual" == "[1, 2]" ]]
+
+actual="$($diamond -e 'h = {}
+h[:key] = "value"
+h[:key]')"
+[[ "$actual" == "value" ]]
+
+actual="$($diamond -e ':foo is Symbol')"
+[[ "$actual" == "true" ]]
+
+actual="$($diamond -e '"foo" is Symbol')"
+[[ "$actual" == "false" ]]
+
+actual="$($diamond -e 'def f(x: Symbol) -> Symbol
+ x
+end
+f(:foo)')"
+[[ "$actual" == "foo" ]]
+
+actual="$($diamond -e 'def f(x: Symbol | Nil)
+ x
+end
+[f(:foo), f(nil)]')"
+[[ "$actual" == "[foo, nil]" ]]
+
+actual="$($diamond -e 'def h(x: Symbol)
+ x
+end
+begin
+ h("nope")
+rescue error: TypeError
+ 42
+end')"
+[[ "$actual" == "42" ]]
+
+actual="$($diamond -e 'to_sym("foo") == :foo')"
+[[ "$actual" == "true" ]]
+
+actual="$($diamond -e 'begin
+ to_sym(5)
+rescue error: TypeError
+ 42
+end')"
+[[ "$actual" == "42" ]]
+
+actual="$($diamond -e 'to_sym("#{:foo}") == :foo')"
+[[ "$actual" == "true" ]]
+
+actual="$($diamond -e 'puts(:foo)')"
+[[ "$actual" == $'foo\nnil' ]]
+
+actual="$($diamond -e '"#{:foo}"')"
+[[ "$actual" == "foo" ]]
+
+# Regression coverage: a colon immediately glued to the end of a preceding
+# identifier/digit/closing bracket/quote (no space) must still mean what it
+# meant before Symbol literals existed, not misparse as a Symbol.
+actual="$($diamond -e 'def f(x:Int) = x
+f(5)')"
+[[ "$actual" == "5" ]]
+
+actual="$($diamond -e 'b = 7
+{"a":b}')"
+[[ "$actual" == "{a: 7}" ]]
+
+actual="$($diamond -e 'begin
+ 1/0
+rescue e:ZeroDivisionError
+ 42
+end')"
+[[ "$actual" == "42" ]]
+
+echo "904 tests passed"
