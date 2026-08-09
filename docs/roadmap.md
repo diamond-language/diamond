@@ -1414,23 +1414,76 @@ future work.
   recurring cost for hand-written Diamond code with non-trivial boolean
   logic, not a one-off in the lexer port.
 
+- Self-hosting, Phase 3 sub-phase 2: `selfhost/parser.di` gained
+  top-level named functions (purely positional parameters, no defaults)
+  and direct calls, including self-recursion (a function's own entry is
+  registered in the parser's own function table before its body is
+  compiled, exactly mirroring `compiler.c`'s ordering, so mutual
+  recursion between two functions has the same "must already be
+  declared" constraint the real compiler has) — plus `puts`/`print`,
+  finally closing the gap flagged when sub-phase 1 landed: string
+  literals can now be verified directly through printed output rather
+  than only equality comparison.
+
+  Closures (nested `def`) were deliberately split out of this round
+  despite the plan's phase header bundling "functions, closures, calls"
+  together — captures are their own self-contained mechanism (`BOX_LOCAL`/
+  `GET_CAPTURE`/`SET_CAPTURE`/`GET_CELL`/`SET_CELL`/`CLOSURE`/
+  `CALL_CLOSURE`) with no bearing on plain top-level functions working
+  correctly first; a nested `def` is a clear, explicit compile error
+  here ("nested function definitions are not yet supported"), not a
+  silent miscompile.
+
+  Needed one small addition beyond what sub-phase 1 already required
+  from the Phase 1 bridge: `emit_byte`/`add_constant`/`add_string`/
+  `patch_byte` all previously hardcoded `-1` (the ProgramBuilder entry
+  function) — no new C code, since `ProgramBuilder`'s methods already
+  took a function index; `Parser` just needed to route every emission
+  call through a `@current_function_index` field that `compile_definition`
+  switches to the new function (and restores afterward) instead of
+  hardcoding the entry function everywhere.
+
+  One real, subtle correctness gap surfaced during implementation, not
+  from the differential harness: an early draft only recognized a
+  function call when `find_function` already succeeded, falling back to
+  `parse_identifier`'s "undefined local variable" message otherwise —
+  producing a misleading diagnostic for `undefined_fn(1)` (a clearly
+  attempted call, not a bare variable reference). `compiler.c`'s real
+  `parse_name` unconditionally treats an identifier followed by `(` as a
+  call attempt and lets `parse_call` itself fail with "undefined
+  function"; restructured to match that exactly, resolving the function
+  lookup *inside* `compile_call` rather than before deciding whether to
+  call it at all.
+
+  New regression coverage: eight more `tests/parser_cases/*.di` cases
+  (direct calls, recursion, mutual self-recursion via `fib`, multiple
+  independent functions, local-variable isolation between a function's
+  own parameters and the outer script's locals of the same name,
+  `puts`/`print` with string arguments including the no-newline `print`
+  form) — bringing the differential harness to 27 cases, all matching.
+  Verified with the same `make test-all` pass as every other round,
+  plus the parser differential harness re-run directly under
+  `-fsanitize=address,undefined` (clean, no leaks) given the new
+  `declare_function`/`CALL` interaction this round exercises for the
+  first time.
+
 ## Next priorities
 
-- Self-hosting, Phase 3 sub-phase 2: functions, closures, and calls —
-  the next slice per the plan's suggested sequencing, needed before
-  sub-phase 1's `parser.di` can do anything past hand-fed snippets (no
-  `def`, no calls, and critically no way to observe a `puts`/method-call
-  result, since `ProgramBuilder#run` is still scalar-result-only). Expect
-  this to also finally allow verifying string literals directly (via
-  `puts` or `.length()`) rather than only through equality comparison.
+- Self-hosting, Phase 3 sub-phase 2 follow-up: closures (nested `def`
+  capturing enclosing locals) — split out of this round for being a
+  self-contained mechanism of its own (`BOX_LOCAL`/`GET_CAPTURE`/
+  `SET_CAPTURE`/`GET_CELL`/`SET_CELL`/`CLOSURE`/`CALL_CLOSURE`). Also
+  still missing from sub-phase 2's own stated scope: keyword arguments
+  and explicit `return`. After that, sub-phase 3 (classes, methods,
+  inheritance, `super`) per the plan's sequencing.
 
 ## Later experiments
 
 - Self-hosting the compiler and core libraries in Diamond (in progress —
-  see `Completed foundation` for Phase 0-2 and Phase 3 sub-phase 1,
-  landed, and `Next priorities` for Phase 3 sub-phase 2; the rest of the
-  compiler port and bootstrap validation remain multi-session future
-  work beyond that).
+  see `Completed foundation` for Phase 0-2 and Phase 3 sub-phases 1-2,
+  landed, and `Next priorities` for the sub-phase 2 closures follow-up;
+  the rest of the compiler port and bootstrap validation remain
+  multi-session future work beyond that).
 - Native-code generation or a tracing/method JIT — nothing in the
   `jit-experimentation` work above generates native code; it's all
   interpreter-loop leaning (register zero-init, opcode dispatch,

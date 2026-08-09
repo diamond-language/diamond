@@ -1,19 +1,31 @@
 require "lexer"
 
-# Self-hosting Phase 3, sub-phase 1 ("expression evaluator core"): a
-# Diamond-language port of the parts of src/compiler.c's single-pass
-# parser needed for literals, arithmetic/comparison/logical expressions,
-# local variables, and if/while/loop/break -- the smallest genuinely
-# useful vertical slice of the parser, built first per the self-hosting
-# roadmap plan's suggested internal sequencing. Uses selfhost/lexer.di
-# for tokenizing and the native ProgramBuilder bridge (see
-# docs/roadmap.md's Phase 1 entry) to emit and run real bytecode.
+# Self-hosting Phase 3: a Diamond-language port of src/compiler.c's
+# single-pass parser. Uses selfhost/lexer.di for tokenizing and the
+# native ProgramBuilder bridge (see docs/roadmap.md's Phase 1 entry) to
+# emit and run real bytecode. Built incrementally, sub-phase by
+# sub-phase, per the self-hosting roadmap plan's suggested sequencing:
 #
-# Deliberately narrower than the eventual full port, matching this
-# sub-phase's own scope in the plan:
-#   - No functions/closures/calls, classes/methods/`super`, interfaces/
+#   Sub-phase 1 ("expression evaluator core"): literals, arithmetic/
+#   comparison/logical expressions, local variables, if/while/loop/break.
+#
+#   Sub-phase 2 (this addition): top-level named functions with purely
+#   positional parameters (no defaults, no type annotations, no
+#   generics), direct calls to already-declared functions (including
+#   self-recursion -- a function's own entry is registered before its
+#   body is compiled, exactly mirroring compiler.c's own ordering, so
+#   forward/mutual recursion between two functions declared in either
+#   order has the same "must already exist" constraint the real compiler
+#   has), and `puts`/`print`.
+#
+# Deliberately narrower than the eventual full port throughout:
+#   - No closures/nested `def`, classes/methods/`super`, interfaces/
 #     generics/narrowing, or exceptions/modules/`require` -- each is a
-#     separate later sub-phase.
+#     separate later sub-phase. A nested `def` (one not at the top
+#     level) is a clear, explicit compile error here, not a silent
+#     miscompile.
+#   - No keyword arguments, explicit `return`, or compile-time arity
+#     defaults -- a function's last expression is always its result.
 #   - No compile-time `_INT` opcode quickening (compiler.c's own
 #     `known_types` optimization): every arithmetic/comparison opcode
 #     emitted here is the generic form (ADD, not ADD_INT), which is
@@ -58,10 +70,12 @@ module Opcode
   EQUAL = 19
   NOT_EQUAL = 20
   JUMP = 27
+  CALL = 29
   JUMP_IF_FALSE = 28
   NOT = 55
   JUMP_IF_TRUE = 56
   RETURN = 57
+  PRINT = 70
 end
 
 module Precedence
@@ -86,6 +100,13 @@ class Parser
     @next_register = 0
     @locals = []
     @loops = []
+    @functions = []
+    # -1 targets the ProgramBuilder entry function; a real function's own
+    # index once compile_definition switches into its body. Every
+    # emit_byte/add_constant/add_string/patch_byte call routes through
+    # this so the same emission helpers work unmodified regardless of
+    # which function is currently being compiled.
+    @current_function_index = -1
     @failed = false
     @error_message = nil
   end
@@ -139,7 +160,7 @@ class Parser
   # emit_instruction/allocate_register/add_constant/add_string ---
 
   def emit_byte(byte)
-    @builder.emit_byte(-1, byte)
+    @builder.emit_byte(@current_function_index, byte)
     @code_count = @code_count + 1
   end
 
@@ -168,11 +189,11 @@ class Parser
   end
 
   def add_constant(value)
-    @builder.add_constant(-1, value)
+    @builder.add_constant(@current_function_index, value)
   end
 
   def add_string(text)
-    @builder.add_string(-1, text)
+    @builder.add_string(@current_function_index, text)
   end
 
   # JUMP: [opcode][hi][lo]. JUMP_IF_FALSE/JUMP_IF_TRUE:
@@ -196,8 +217,8 @@ class Parser
   end
 
   def patch_jump(operand, target)
-    @builder.patch_byte(-1, operand, target / 256)
-    @builder.patch_byte(-1, operand + 1, mod(target, 256))
+    @builder.patch_byte(@current_function_index, operand, target / 256)
+    @builder.patch_byte(@current_function_index, operand + 1, mod(target, 256))
   end
 
   def emit_absolute_jump(target)
@@ -229,13 +250,32 @@ class Parser
     register
   end
 
+  # --- functions: an Array of [name, function_index, arity] entries,
+  # scanned the same reverse-shadowing way as locals (compiler.c's own
+  # find_function scans its fixed-size program->functions array forward,
+  # but since redeclaration is already rejected in compile_definition,
+  # forward vs. reverse never actually differs in practice here). ---
+
+  def find_function(name)
+    index = @functions.length() - 1
+    result = nil
+    while index >= 0 && result == nil
+      entry = @functions[index]
+      result = entry if entry[0] == name
+      index = index - 1
+    end
+    result
+  end
+
   # --- statement sequencing ---
 
   def compile_sequence()
     self.skip_newlines()
     result = self.allocate_register()
     while !@failed && !self.at_block_end?()
-      if @current.kind() == :break
+      if @current.kind() == :def
+        result = self.compile_definition()
+      elsif @current.kind() == :break
         result = self.compile_break()
       elsif self.assignment_ahead?()
         result = self.compile_assignment()
@@ -249,6 +289,178 @@ class Parser
       end
     end
     result
+  end
+
+  # Top-level named functions only (see this file's header comment for
+  # the full scope cut): purely positional parameters, no defaults, no
+  # forward references except a function calling itself (its own entry
+  # is registered in @functions before its body is compiled, exactly
+  # mirroring compiler.c's own ordering).
+  def compile_definition()
+    self.advance_token()
+    if @current_function_index != -1
+      self.fail("nested function definitions are not yet supported")
+      return 0
+    end
+    if @current.kind() != :identifier
+      self.fail("expected function name after 'def'")
+      return 0
+    end
+    name = self.token_text(@current)
+    if self.find_function(name) != nil
+      self.fail("function is already defined")
+      return 0
+    end
+    self.advance_token()
+    if @current.kind() != :left_paren
+      self.fail("expected '(' after function name")
+      return 0
+    end
+    self.advance_token()
+    self.skip_newlines()
+    parameter_names = []
+    if @current.kind() != :right_paren
+      more = true
+      while more && !@failed
+        if @current.kind() != :identifier
+          self.fail("expected parameter name")
+          more = false
+        else
+          parameter_names.push(self.token_text(@current))
+          self.advance_token()
+          self.skip_newlines()
+          if @current.kind() == :comma
+            self.advance_token()
+            self.skip_newlines()
+            more = @current.kind() != :right_paren
+          else
+            more = false
+          end
+        end
+      end
+    end
+    return 0 if @failed
+    if @current.kind() != :right_paren
+      self.fail("expected ')' after parameters")
+      return 0
+    end
+    self.advance_token()
+
+    arity = parameter_names.length()
+    function_index = @builder.declare_function(name, arity, arity)
+    @functions.push([name, function_index, arity])
+
+    outer_locals = @locals
+    outer_loops = @loops
+    outer_next_register = @next_register
+    outer_code_count = @code_count
+    outer_function_index = @current_function_index
+
+    @locals = []
+    @loops = []
+    @next_register = 0
+    @code_count = 0
+    @current_function_index = function_index
+
+    index = 0
+    while index < parameter_names.length()
+      self.define_local(parameter_names[index])
+      index = index + 1
+    end
+
+    if self.consume_block_start()
+      body_result = self.compile_sequence()
+      self.emit_instruction1(Opcode::RETURN, body_result)
+      if @current.kind() != :end
+        self.fail("expected 'end' after function body")
+      else
+        self.advance_token()
+      end
+    end
+    @builder.set_register_count(function_index, @next_register)
+
+    @locals = outer_locals
+    @loops = outer_loops
+    @next_register = outer_next_register
+    @code_count = outer_code_count
+    @current_function_index = outer_function_index
+
+    # Top-level def evaluates to nil, a sole-writer fresh register in the
+    # (now-restored) outer function -- matching compile_definition.c's
+    # own at_top_level branch exactly (no opcode needed).
+    self.allocate_register()
+  end
+
+  def compile_call(name)
+    function_entry = self.find_function(name)
+    if function_entry == nil
+      self.fail("undefined function")
+      return 0
+    end
+    self.advance_token()
+    self.skip_newlines()
+    arguments = []
+    if @current.kind() != :right_paren
+      more = true
+      while more
+        arguments.push(self.parse_expression())
+        self.skip_newlines()
+        if @current.kind() == :comma
+          self.advance_token()
+          self.skip_newlines()
+          more = @current.kind() != :right_paren
+        else
+          more = false
+        end
+      end
+    end
+    if @current.kind() != :right_paren
+      self.fail("expected ')' after arguments")
+      return 0
+    end
+    self.advance_token()
+    if arguments.length() != function_entry[2]
+      self.fail("wrong number of arguments")
+      return 0
+    end
+    argument_base = self.allocate_register()
+    i = 1
+    while i < arguments.length()
+      self.allocate_register()
+      i = i + 1
+    end
+    i = 0
+    while i < arguments.length()
+      self.emit_instruction2(Opcode::MOVE, argument_base + i, arguments[i])
+      i = i + 1
+    end
+    destination = self.allocate_register()
+    self.emit_byte(Opcode::CALL)
+    self.emit_byte(destination)
+    self.emit_byte(function_entry[1])
+    self.emit_byte(argument_base)
+    self.emit_byte(arguments.length())
+    destination
+  end
+
+  def parse_print_call(newline)
+    self.advance_token()
+    source = self.parse_expression()
+    if @current.kind() != :right_paren
+      self.fail("expected ')' after arguments")
+      return 0
+    end
+    self.advance_token()
+    destination = self.allocate_register()
+    self.emit_byte(Opcode::PRINT)
+    self.emit_byte(destination)
+    self.emit_byte(source)
+    self.emit_byte(if newline
+      1
+    else
+      0
+    end)
+    destination
   end
 
   def assignment_ahead?()
@@ -306,6 +518,10 @@ class Parser
       self.skip_newlines()
       return true
     end
+    self.consume_block_start()
+  end
+
+  def consume_block_start()
     if @current.kind() != :newline
       self.fail("expected newline before block body")
       return false
@@ -474,7 +690,7 @@ class Parser
     return self.parse_float() if kind == :float
     return self.parse_string() if kind == :string
     return self.parse_literal() if kind == :true || kind == :false || kind == :nil
-    return self.parse_identifier() if kind == :identifier
+    return self.parse_name() if kind == :identifier
     return self.parse_grouping() if kind == :left_paren
     if kind == :minus
       operand = self.parse_precedence(Precedence::PREFIX)
@@ -507,14 +723,26 @@ class Parser
     result
   end
 
-  def parse_identifier()
+  # Dispatch precedence mirrors parse_name/parse_call in compiler.c: a
+  # local variable always shadows a same-named builtin or function (so
+  # `puts = 1; puts(2)` is a runtime TypeError on calling an Int, not a
+  # print), builtins are checked before user functions (matching
+  # `find_local(name)<0&&find_function(name)<0&&name_equals(...,"puts")`
+  # exactly), and a bare identifier with no following `(` is always a
+  # local read.
+  def parse_name()
     name = self.token_text(@previous)
-    register = self.find_local(name)
-    if register == -1
+    local = self.find_local(name)
+    if @current.kind() == :left_paren && local == -1
+      return self.parse_print_call(true) if name == "puts"
+      return self.parse_print_call(false) if name == "print"
+      return self.compile_call(name)
+    end
+    if local == -1
       self.fail("undefined local variable")
       return 0
     end
-    register
+    local
   end
 
   def parse_literal()
