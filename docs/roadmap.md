@@ -1287,21 +1287,88 @@ future work.
   same `make test-all` pass (debug/release/sanitizer builds, every
   C-level test binary) as every other round this session.
 
+- Self-hosting, Phase 2: `selfhost/lexer.di`, a Diamond-language port of
+  `src/lexer.c`'s `diamond_lexer_next` — `class Token`
+  (`kind`/`start`/`length`/`line`/`column`, via `attr_reader`) and `class
+  Lexer` mirroring the C `DiamondLexer` struct's own fields
+  (`@source`/`@start`/`@current`/`@line`/`@column`/`@token_line`/
+  `@token_column`). Token kinds are Symbols named after the C
+  `DIAMOND_TOKEN_*` constants in lower\_snake\_case with the prefix
+  dropped (`:left_paren`, `:identifier`, ...) — Diamond has no `enum`
+  keyword, and Symbols already give readable, content-compared values
+  with no interning table needed (see the Symbol entry above). Diamond
+  has no `char` type, so every character comparison works on `Int`
+  codepoints via `String#ord()` rather than C `char` values; a new
+  `code_at(index)` helper (the one primitive the C original didn't need)
+  stands in for C's implicit "index past the end reads a safe `'\0'`"
+  null-terminator behavior with an explicit bounds check instead, since
+  Diamond's own bounds-checked `String#[]` would otherwise raise.
+
+  Verified with a new differential harness (`tests/lexer_diff.sh`, wired
+  into `make test-lexer-diff` and `test-all`): a new C-side tool
+  (`tests/lexer_dump.c`, linking only `src/lexer.c` — confirming the
+  lexer's own documented independence from `compiler.c`) and a Diamond
+  driver (`selfhost/lexer_dump.di`) print an identical
+  `kind start length line column` line per token, and the harness diffs
+  them across every one of the 806 `tests/cases/*.di` files. All 806
+  matched byte-for-byte on the first full run after fixing the two
+  issues below — including `selfhost/lexer.di`'s own source file,
+  lexed against itself as an extra dogfooding check (not part of the
+  automated suite, but confirms the port doesn't just pass on the
+  narrower "ordinary program" style of the existing corpus).
+
+  Two real, non-obvious constraints surfaced during the port, neither
+  anticipated when this phase was scoped:
+  - **Register-budget exhaustion, a new failure mode this session's
+    prior rounds hadn't hit**: an initial `next_token()` covering every
+    branch (whitespace/comment skipping, number/string/identifier/
+    instance-variable dispatch, *and* the full punctuation chain) failed
+    to compile at all -- "program needs too many registers". Register
+    allocation is monotonic per function body and never recycled (see
+    `Compiler.next_register`, `src/compiler.c`), and unlike the
+    `DIAMOND_MAX_*` constants raised in Phase 0, the 256-register
+    ceiling is a hard architectural limit, not a struct-sizing choice:
+    register operands are single bytes throughout the bytecode format,
+    the exact same constraint Phase 0's follow-up fix already found for
+    function/constant indices. Fixed by splitting the punctuation chain
+    into its own `scan_punctuation` method, resetting the register
+    counter for a fresh function. Worth remembering for Phase 3's much
+    larger parser/emitter port: a single large method covering many
+    branches is a real, previously-untested way to run out of registers,
+    not just a style preference.
+  - **No multi-line boolean expressions**: a boolean expression split
+    across lines with a trailing `&&`/`||` (e.g. a parenthesized
+    condition wrapped for readability) fails to parse — newline-skipping
+    only exists at the three points a bracket-delimited *list* needs it
+    (after an opening bracket, after a comma, before a closing bracket —
+    see the bracket-delimited-newlines entry above), not inside a general
+    expression between two operands of a binary operator. Not a bug to
+    fix (out of scope for this round, and arguably correct given Ruby's
+    own similar restriction) — worked around by keeping each condition on
+    one line, confirmed as a real, previously-undocumented parser
+    constraint the C compiler itself was never tested against, since
+    every existing `tests/cases/*.di` file happens not to need it.
+
 ## Next priorities
 
-- Self-hosting, Phase 2: port `src/lexer.c` (332 lines, no dependency on
-  `compiler.c`) to a Diamond `class Lexer`, verified by a differential
-  token-stream harness against every existing `tests/cases/*.di` file.
-  See the self-hosting roadmap plan for the full phase breakdown
-  (lexer, then the much larger parser/emitter port, then bootstrap
-  fixpoint validation).
+- Self-hosting, Phase 3: port `src/compiler.c` (~4400 lines, single-pass
+  recursive-descent parsing directly to bytecode, no AST) to Diamond,
+  the large remaining piece before a fixpoint bootstrap check is even
+  possible. See the self-hosting roadmap plan's suggested internal
+  sequencing (expressions/control-flow/locals; functions/closures/calls;
+  classes/methods/inheritance/`super`; interfaces/generics/gradual-typing/
+  narrowing; exceptions/modules/`require`) and Phase 1's `ProgramBuilder`
+  bridge for how the port actually produces executable bytecode. Expect
+  the same register-budget and single-line-boolean-expression
+  constraints Phase 2 found to matter far more here, given how much
+  larger and more branch-heavy the parser is than the lexer.
 
 ## Later experiments
 
 - Self-hosting the compiler and core libraries in Diamond (in progress —
-  see `Completed foundation` for Phases 0-1, landed, and `Next
-  priorities` for Phase 2; the lexer and compiler ports, plus bootstrap
-  validation, remain multi-session future work beyond Phase 2).
+  see `Completed foundation` for Phases 0-2, landed, and `Next
+  priorities` for Phase 3; the compiler port and bootstrap validation
+  remain multi-session future work beyond Phase 3).
 - Native-code generation or a tracing/method JIT — nothing in the
   `jit-experimentation` work above generates native code; it's all
   interpreter-loop leaning (register zero-init, opcode dispatch,
