@@ -4140,4 +4140,52 @@ rescue e:ZeroDivisionError
 end')"
 [[ "$actual" == "42" ]]
 
-echo "904 tests passed"
+actual="$($diamond -e $'class Vector\n def initialize(x, y)\n  @x = x\n  @y = y\n end\n def +(other)\n  Vector.new(@x + other.x(), @y + other.y())\n end\n def x() = @x\n def y() = @y\nend\nv = Vector.new(1, 2) + Vector.new(3, 4)\n[v.x(), v.y()]')"
+[[ "$actual" == "[4, 6]" ]]
+
+actual="$($diamond -e $'class Box\n def initialize(x)\n  @x = x\n end\n def -(other) = Box.new(@x - other.x())\n def *(other) = Box.new(@x * other.x())\n def /(other) = Box.new(@x / other.x())\n def x() = @x\nend\n[(Box.new(10) - Box.new(3)).x(), (Box.new(4) * Box.new(5)).x(), (Box.new(20) / Box.new(4)).x()]')"
+[[ "$actual" == "[7, 20, 5]" ]]
+
+actual="$($diamond -e $'class Vector\n def initialize(x, y)\n  @x = x\n  @y = y\n end\n def negate()\n  Vector.new(-@x, -@y)\n end\n def x() = @x\n def y() = @y\nend\nv = -Vector.new(1, 2)\n[v.x(), v.y()]')"
+[[ "$actual" == "[-1, -2]" ]]
+
+actual="$($diamond -e $'class Point\n def initialize(x)\n  @x = x\n end\n def ==(other)\n  other is Point && @x == other.x()\n end\n def x() = @x\nend\n[Point.new(1) == Point.new(1), Point.new(1) != Point.new(2), Point.new(1) == "not a point"]')"
+[[ "$actual" == "[true, true, false]" ]]
+
+actual="$($diamond -e $'class Bare\nend\n[Bare.new() == Bare.new(), Bare.new() != Bare.new()]')"
+[[ "$actual" == "[false, true]" ]]
+
+actual="$($diamond -e $'class Box\n def initialize(x)\n  @x = x\n end\n def <(other) = @x < other.x()\n def <=(other) = @x <= other.x()\n def >(other) = @x > other.x()\n def >=(other) = @x >= other.x()\n def x() = @x\nend\n[Box.new(1) < Box.new(2), Box.new(2) <= Box.new(2), Box.new(3) > Box.new(2), Box.new(2) >= Box.new(2)]')"
+[[ "$actual" == "[true, true, true, true]" ]]
+
+actual="$($diamond -e $'class Base\n def initialize(x)\n  @x = x\n end\n def +(other) = Base.new(@x + other.x())\n def x() = @x\nend\nclass Child < Base\nend\n(Child.new(1) + Child.new(2)).x()')"
+[[ "$actual" == "3" ]]
+
+actual="$($diamond -e $'class Base\n def initialize(x)\n  @x = x\n end\n def +(other) = Base.new(@x + other.x())\n def x() = @x\nend\nclass Child < Base\n def +(other)\n  result = super(other)\n  Base.new(result.x() * 10)\n end\nend\n(Child.new(1) + Child.new(2)).x()')"
+[[ "$actual" == "30" ]]
+
+actual="$($diamond -e $'class Bad\n def +()\n  42\n end\nend\nbegin\n Bad.new() + 5\nrescue error: ArgumentError\n 99\nend')"
+[[ "$actual" == "99" ]]
+
+actual="$($diamond -e $'class Plain\nend\nbegin\n Plain.new() + 5\nrescue error: TypeError\n 42\nend')"
+[[ "$actual" == "42" ]]
+
+actual="$($diamond -e $'class Box\n def initialize(x)\n  @x = x\n end\n private\n def +(other) = Box.new(@x + other.x())\n public\n def x() = @x\nend\n(Box.new(1) + Box.new(2)).x()')"
+[[ "$actual" == "3" ]]
+
+actual="$($diamond -e $'interface Addable\n def +(other)\nend\nclass Box\n def initialize(x)\n  @x = x\n end\n def +(other) = Box.new(@x)\nend\nBox.new(1) is Addable')"
+[[ "$actual" == "true" ]]
+
+actual="$($diamond -e $'def f(a, b)\n a + b\nend\ndef +(a, b)\n a\nend' 2>&1 || true)"
+[[ "$actual" == *"operator methods can only be defined inside a class"* ]]
+
+actual="$($diamond -e $'class Box\n def initialize(x)\n  @x = x\n end\n def +(other) = Box.new(@x + other.x())\n def x() = @x\nend\ndef add(a, b) = a + b\ni = 0\nwhile i < 5\n add(1, 2)\n i = i + 1\nend\nadd(Box.new(10), Box.new(5)).x()')"
+[[ "$actual" == "15" ]]
+
+actual="$($diamond -e $'class Box\n def initialize(x)\n  @x = x\n end\n def ==(other) = @x == other.x()\n def x() = @x\nend\ndef eq(a, b) = a == b\ni = 0\nwhile i < 5\n eq(1, 2)\n i = i + 1\nend\neq(Box.new(3), Box.new(3))')"
+[[ "$actual" == "true" ]]
+
+actual="$($diamond -e $'class Box\n def initialize(x)\n  @x = x\n end\n def <(other) = @x < other.x()\n def x() = @x\nend\ndef lt(a, b) = a < b\ni = 0\nwhile i < 5\n lt(1, 2)\n i = i + 1\nend\nlt(Box.new(3), Box.new(5))')"
+[[ "$actual" == "true" ]]
+
+echo "920 tests passed"
