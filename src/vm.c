@@ -829,6 +829,17 @@ static DiamondVmStatus program_builder_invoke_helper(DiamondVm *vm,
     const bool emit_byte_method=
         method_name->length==sizeof("emit_byte")-1&&
         memcmp(method_name->chars,"emit_byte",sizeof("emit_byte")-1)==0;
+    /* Needed for jump backpatching: compiler.c's own patch_jump (see
+     * src/compiler.c) directly overwrites function->code[operand] after
+     * the fact, once a forward jump's real target is known -- a single-pass
+     * emitter can't know a forward target's offset before emitting the
+     * jump itself. Phase 3's Diamond-language parser needs the same
+     * capability for if/while/loop, so this mirrors patch_jump exactly
+     * (overwrite an already-emitted byte, never append). See
+     * docs/roadmap.md's self-hosting Phase 3 entry. */
+    const bool patch_byte_method=
+        method_name->length==sizeof("patch_byte")-1&&
+        memcmp(method_name->chars,"patch_byte",sizeof("patch_byte")-1)==0;
     const bool add_constant_method=
         method_name->length==sizeof("add_constant")-1&&
         memcmp(method_name->chars,"add_constant",
@@ -842,7 +853,7 @@ static DiamondVmStatus program_builder_invoke_helper(DiamondVm *vm,
             sizeof("set_register_count")-1)==0;
     const bool run_method=method_name->length==sizeof("run")-1&&
         memcmp(method_name->chars,"run",sizeof("run")-1)==0;
-    if(!declare_function_method&&!emit_byte_method&&
+    if(!declare_function_method&&!emit_byte_method&&!patch_byte_method&&
        !add_constant_method&&!add_string_method&&
        !set_register_count_method&&!run_method) {
         snprintf(vm->error,sizeof vm->error,"undefined method '%.*s' for %s",
@@ -913,6 +924,29 @@ static DiamondVmStatus program_builder_invoke_helper(DiamondVm *vm,
         target->lines[target->code_count]=0;
         target->columns[target->code_count]=0;
         target->code_count++;
+        *result=DIAMOND_NIL;return DIAMOND_VM_OK;
+    }
+    if(patch_byte_method) {
+        if(argc!=3)return DIAMOND_VM_ARITY_ERROR;
+        if(registers[base].kind!=DIAMOND_VALUE_INT||
+           registers[(size_t)base+1].kind!=DIAMOND_VALUE_INT||
+           registers[(size_t)base+2].kind!=DIAMOND_VALUE_INT) {
+            snprintf(vm->error,sizeof vm->error,
+                "ProgramBuilder#patch_byte arguments must be (Int, Int, Int)");
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        DiamondFunction *target=
+            program_builder_target(built,registers[base].as.integer);
+        const int64_t offset_value=registers[(size_t)base+1].as.integer;
+        const int64_t byte_value=registers[(size_t)base+2].as.integer;
+        if(target==nullptr||offset_value<0||
+           (uint64_t)offset_value>=target->code_count||
+           byte_value<0||byte_value>UINT8_MAX) {
+            snprintf(vm->error,sizeof vm->error,"ProgramBuilder#%s",
+                "patch_byte has an invalid function index, offset, or byte value");
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        target->code[offset_value]=(uint8_t)byte_value;
         *result=DIAMOND_NIL;return DIAMOND_VM_OK;
     }
     if(add_constant_method) {

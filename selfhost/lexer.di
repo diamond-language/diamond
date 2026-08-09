@@ -106,6 +106,31 @@ class Lexer
     self.scan_punctuation(code)
   end
 
+  # Snapshot-and-restore, not a struct copy: Diamond has no direct
+  # instance-field access from outside a class other than through methods,
+  # so this is how a caller peeks ahead by one token (build a copy, advance
+  # only the copy, discard it) without a lexer clone constructor overload --
+  # Diamond has no overloading, and adding an alternate-state constructor
+  # parameter list to `initialize` risked the existing, already-verified
+  # single-argument construction path. Used by Phase 3's Parser for
+  # single-token lookahead (e.g. "is the next token '=' ", deciding
+  # whether an identifier starts an assignment), mirroring compiler.c's own
+  # `DiamondLexer lookahead = compiler->lexer;` snapshot idiom.
+  def clone()
+    copy = Lexer.new(@source)
+    copy.restore_state(@start, @current, @line, @column, @token_line, @token_column)
+    copy
+  end
+
+  def restore_state(start, current, line, column, token_line, token_column)
+    @start = start
+    @current = current
+    @line = line
+    @column = column
+    @token_line = token_line
+    @token_column = token_column
+  end
+
   private
 
   # Split out of next_token() itself, not just for readability: register

@@ -1349,26 +1349,88 @@ future work.
     constraint the C compiler itself was never tested against, since
     every existing `tests/cases/*.di` file happens not to need it.
 
+- Self-hosting, Phase 3 sub-phase 1 ("expression evaluator core"):
+  `selfhost/parser.di`, a Diamond-language port of the parts of
+  `src/compiler.c`'s single-pass parser needed for literals, arithmetic/
+  comparison/logical expressions, local variables, and `if`/`while`/
+  `loop`/`break` — the first, smallest vertical slice of the parser, per
+  the self-hosting roadmap plan's suggested internal sequencing. `class
+  Parser` mirrors `Compiler`'s own fields it actually needs at this stage
+  (source/lexer/current/previous token, a locals list, a loop-context
+  stack, a running register counter, failure state) and emits real
+  bytecode through Phase 1's `ProgramBuilder` bridge, closely enough that
+  the port is a transliteration rather than a redesign — `emit_jump`/
+  `patch_jump`/`allocate_register`/`add_constant`/`add_string` are
+  near-identical to their C namesakes. Opcode/precedence values are
+  declared as `module Opcode`/`module Precedence` namespace constants
+  (not plain top-level locals, which turn out to be invisible from
+  inside a class method's own separate function/frame — a genuine, only
+  now-relevant Diamond scoping rule this session's earlier top-level-only
+  constant usage never had to confront) — referenced via qualified
+  `Opcode::NAME` lookup, which works from any lexical scope regardless of
+  the referencing code's own module/class nesting.
+
+  Required one new, small addition to the Phase 1 bridge:
+  `ProgramBuilder#patch_byte(function_index, offset, byte)`, overwriting
+  an already-emitted byte rather than appending one — needed because
+  `if`/`while`/`loop`/`break`/`&&`/`||` all backpatch a forward jump's
+  real target only once it's known, exactly like `compiler.c`'s own
+  `patch_jump` directly rewrites `function->code[operand]`. `emit_byte`
+  alone can't express this (append-only).
+
+  Deliberately narrower than the eventual full parser, matching this
+  sub-phase's own scope in the plan: no functions/closures/calls,
+  classes/methods/`super`, interfaces/generics/narrowing, or exceptions/
+  modules/`require` (each a separate later sub-phase); no compile-time
+  `_INT` opcode quickening (every arithmetic/comparison opcode emitted
+  is the generic form — always correct, just not compile-time
+  specialized, since the VM's own opt-in runtime quickening can still
+  apply); no string interpolation (only `\n`/`\t`/`\r`/`\"`/`\\`/`\#`
+  escape decoding); no `next`/`redo` or postfix `if`/`unless` modifiers.
+
+  Verified with a new differential harness (`tests/parser_diff.sh`,
+  `make test-parser-diff`, wired into `test-all`) comparing the real
+  compiler's output against `selfhost/parser_run.di` (parse, build, and
+  run a file's source through `selfhost/parser.di`) across 19
+  hand-curated `tests/parser_cases/*.di` files — unlike Phase 2's lexer
+  harness, this can't reuse the full `tests/cases/*` corpus, since almost
+  all of it exercises syntax well beyond this sub-phase's deliberately
+  narrow grammar. All 19 match, covering arithmetic/float/comparison/
+  logical precedence and short-circuiting, locals and shadowing,
+  `if`/`elsif`/`else`/`unless` (including as an assignment's RHS on one
+  line), `while`/`until`/`loop`+`break` (including multiple break sites
+  and a break value), string literal escaping (verified indirectly via
+  equality, since `ProgramBuilder#run`'s scalar-only result restriction
+  from Phase 1 means a bare String can't be the final observed result
+  yet), and underscored integer literals.
+
+  One real, previously-undocumented parser constraint surfaced building
+  this (Phase 2's own "no multi-line boolean expressions" note
+  undersold how often it actually bites): every multi-line `&&`/`||`
+  chain written the natural way while porting `token_precedence`/
+  `parse_precedence`/`at_block_end?`/`compile_break`'s own conditions
+  had to be collapsed onto one line. Not fixed (out of scope for this
+  round, see Phase 2's entry above) — but confirms this is a real,
+  recurring cost for hand-written Diamond code with non-trivial boolean
+  logic, not a one-off in the lexer port.
+
 ## Next priorities
 
-- Self-hosting, Phase 3: port `src/compiler.c` (~4400 lines, single-pass
-  recursive-descent parsing directly to bytecode, no AST) to Diamond,
-  the large remaining piece before a fixpoint bootstrap check is even
-  possible. See the self-hosting roadmap plan's suggested internal
-  sequencing (expressions/control-flow/locals; functions/closures/calls;
-  classes/methods/inheritance/`super`; interfaces/generics/gradual-typing/
-  narrowing; exceptions/modules/`require`) and Phase 1's `ProgramBuilder`
-  bridge for how the port actually produces executable bytecode. Expect
-  the same register-budget and single-line-boolean-expression
-  constraints Phase 2 found to matter far more here, given how much
-  larger and more branch-heavy the parser is than the lexer.
+- Self-hosting, Phase 3 sub-phase 2: functions, closures, and calls —
+  the next slice per the plan's suggested sequencing, needed before
+  sub-phase 1's `parser.di` can do anything past hand-fed snippets (no
+  `def`, no calls, and critically no way to observe a `puts`/method-call
+  result, since `ProgramBuilder#run` is still scalar-result-only). Expect
+  this to also finally allow verifying string literals directly (via
+  `puts` or `.length()`) rather than only through equality comparison.
 
 ## Later experiments
 
 - Self-hosting the compiler and core libraries in Diamond (in progress —
-  see `Completed foundation` for Phases 0-2, landed, and `Next
-  priorities` for Phase 3; the compiler port and bootstrap validation
-  remain multi-session future work beyond Phase 3).
+  see `Completed foundation` for Phase 0-2 and Phase 3 sub-phase 1,
+  landed, and `Next priorities` for Phase 3 sub-phase 2; the rest of the
+  compiler port and bootstrap validation remain multi-session future
+  work beyond that).
 - Native-code generation or a tracing/method JIT — nothing in the
   `jit-experimentation` work above generates native code; it's all
   interpreter-loop leaning (register zero-init, opcode dispatch,

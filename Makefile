@@ -16,7 +16,7 @@ SOURCES := $(wildcard src/*.c)
 OBJECTS := $(SOURCES:src/%.c=$(BUILD_DIR)/%.o)
 DEPS := $(OBJECTS:.o=.d)
 
-.PHONY: all debug sanitize release test test-release test-sanitize test-api test-fibers test-fiber-run test-fiber-context test-vm-context test-yield test-continuation test-multi-yield test-scheduler test-scheduler-run-all test-fiber-gc-roots test-fiber-guards test-nested-yield-guard test-stack-overflow test-all test-facet facet test-lexer-diff clean
+.PHONY: all debug sanitize release test test-release test-sanitize test-api test-fibers test-fiber-run test-fiber-context test-vm-context test-yield test-continuation test-multi-yield test-scheduler test-scheduler-run-all test-fiber-gc-roots test-fiber-guards test-nested-yield-guard test-stack-overflow test-all test-facet facet test-lexer-diff test-parser-diff clean
 
 all: debug
 
@@ -107,6 +107,9 @@ $(BUILD_DIR)/lexer_dump: tests/lexer_dump.c src/lexer.c src/lexer.h
 test-lexer-diff: debug $(BUILD_DIR)/lexer_dump
 	bash tests/lexer_diff.sh
 
+test-parser-diff: debug
+	bash tests/parser_diff.sh
+
 test-all:
 	$(MAKE) clean
 	$(MAKE) test
@@ -126,6 +129,7 @@ test-all:
 	$(MAKE) test-stack-overflow
 	$(MAKE) test-facet
 	$(MAKE) test-lexer-diff
+	$(MAKE) test-parser-diff
 
 clean:
 	rm -rf $(BUILD_DIR)
