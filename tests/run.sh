@@ -4041,187 +4041,40 @@ actual="$($diamond -e $'def div(a, b) = a / b\ndiv(6, 3)\nbig = (922337203685477
 actual="$($diamond -e $'def lt(a, b) = a < b\nlt(1, 2)\nbig = 9223372036854775807 + 1\nlt(big, big)')"
 [[ "$actual" == "false" ]]
 
-actual="$($diamond -e ':foo')"
-[[ "$actual" == "foo" ]]
+# File-based test cases: tests/cases/<name>.di paired with either
+# <name>.expected (exact stdout match, trailing newline stripped the same
+# way $() strips it on both sides) or <name>.expected_error (a substring
+# expected in combined stdout+stderr, for compile-error regressions --
+# those can't share a program with a successful test, so each stays its
+# own file). This is the newer convention going forward, growing this
+# directory instead of this file; the inline -e assertions above are the
+# older convention, most of them predating tests/cases/*.expected files
+# existing at all.
+case_count=0
+for case_file in tests/cases/*.di; do
+    case_name="${case_file%.di}"
+    if [[ -f "$case_name.expected" ]]; then
+        actual="$("$diamond" "$case_file")"
+        expected="$(cat "$case_name.expected")"
+        if [[ "$actual" != "$expected" ]]; then
+            echo "FAIL: $case_file" >&2
+            echo "  expected: $expected" >&2
+            echo "  actual:   $actual" >&2
+            exit 1
+        fi
+        case_count=$((case_count + 1))
+    elif [[ -f "$case_name.expected_error" ]]; then
+        actual="$("$diamond" "$case_file" 2>&1 || true)"
+        pattern="$(cat "$case_name.expected_error")"
+        if [[ "$actual" != *"$pattern"* ]]; then
+            echo "FAIL: $case_file" >&2
+            echo "  expected error containing: $pattern" >&2
+            echo "  actual: $actual" >&2
+            exit 1
+        fi
+        case_count=$((case_count + 1))
+    fi
+done
 
-actual="$($diamond -e '[:valid?, :save!]')"
-[[ "$actual" == "[valid?, save!]" ]]
-
-actual="$($diamond -e '[:a, :b, :c]')"
-[[ "$actual" == "[a, b, c]" ]]
-
-actual="$($diamond -e 'def f(x) = x
-f(:foo)')"
-[[ "$actual" == "foo" ]]
-
-actual="$($diamond -e ':foo == :foo')"
-[[ "$actual" == "true" ]]
-
-actual="$($diamond -e ':foo != :bar')"
-[[ "$actual" == "true" ]]
-
-actual="$($diamond -e ':foo == "foo"')"
-[[ "$actual" == "false" ]]
-
-actual="$($diamond -e '"foo" == :foo')"
-[[ "$actual" == "false" ]]
-
-actual="$($diamond -e 'h = {:a: 1, :b: 2}
-[h[:a], h[:b]]')"
-[[ "$actual" == "[1, 2]" ]]
-
-actual="$($diamond -e 'h = {}
-h[:key] = "value"
-h[:key]')"
-[[ "$actual" == "value" ]]
-
-actual="$($diamond -e ':foo is Symbol')"
-[[ "$actual" == "true" ]]
-
-actual="$($diamond -e '"foo" is Symbol')"
-[[ "$actual" == "false" ]]
-
-actual="$($diamond -e 'def f(x: Symbol) -> Symbol
- x
-end
-f(:foo)')"
-[[ "$actual" == "foo" ]]
-
-actual="$($diamond -e 'def f(x: Symbol | Nil)
- x
-end
-[f(:foo), f(nil)]')"
-[[ "$actual" == "[foo, nil]" ]]
-
-actual="$($diamond -e 'def h(x: Symbol)
- x
-end
-begin
- h("nope")
-rescue error: TypeError
- 42
-end')"
-[[ "$actual" == "42" ]]
-
-actual="$($diamond -e 'to_sym("foo") == :foo')"
-[[ "$actual" == "true" ]]
-
-actual="$($diamond -e 'begin
- to_sym(5)
-rescue error: TypeError
- 42
-end')"
-[[ "$actual" == "42" ]]
-
-actual="$($diamond -e 'to_sym("#{:foo}") == :foo')"
-[[ "$actual" == "true" ]]
-
-actual="$($diamond -e 'puts(:foo)')"
-[[ "$actual" == $'foo\nnil' ]]
-
-actual="$($diamond -e '"#{:foo}"')"
-[[ "$actual" == "foo" ]]
-
-# Regression coverage: a colon immediately glued to the end of a preceding
-# identifier/digit/closing bracket/quote (no space) must still mean what it
-# meant before Symbol literals existed, not misparse as a Symbol.
-actual="$($diamond -e 'def f(x:Int) = x
-f(5)')"
-[[ "$actual" == "5" ]]
-
-actual="$($diamond -e 'b = 7
-{"a":b}')"
-[[ "$actual" == "{a: 7}" ]]
-
-actual="$($diamond -e 'begin
- 1/0
-rescue e:ZeroDivisionError
- 42
-end')"
-[[ "$actual" == "42" ]]
-
-actual="$($diamond -e $'class Vector\n def initialize(x, y)\n  @x = x\n  @y = y\n end\n def +(other)\n  Vector.new(@x + other.x(), @y + other.y())\n end\n def x() = @x\n def y() = @y\nend\nv = Vector.new(1, 2) + Vector.new(3, 4)\n[v.x(), v.y()]')"
-[[ "$actual" == "[4, 6]" ]]
-
-actual="$($diamond -e $'class Box\n def initialize(x)\n  @x = x\n end\n def -(other) = Box.new(@x - other.x())\n def *(other) = Box.new(@x * other.x())\n def /(other) = Box.new(@x / other.x())\n def x() = @x\nend\n[(Box.new(10) - Box.new(3)).x(), (Box.new(4) * Box.new(5)).x(), (Box.new(20) / Box.new(4)).x()]')"
-[[ "$actual" == "[7, 20, 5]" ]]
-
-actual="$($diamond -e $'class Vector\n def initialize(x, y)\n  @x = x\n  @y = y\n end\n def negate()\n  Vector.new(-@x, -@y)\n end\n def x() = @x\n def y() = @y\nend\nv = -Vector.new(1, 2)\n[v.x(), v.y()]')"
-[[ "$actual" == "[-1, -2]" ]]
-
-actual="$($diamond -e $'class Point\n def initialize(x)\n  @x = x\n end\n def ==(other)\n  other is Point && @x == other.x()\n end\n def x() = @x\nend\n[Point.new(1) == Point.new(1), Point.new(1) != Point.new(2), Point.new(1) == "not a point"]')"
-[[ "$actual" == "[true, true, false]" ]]
-
-actual="$($diamond -e $'class Bare\nend\n[Bare.new() == Bare.new(), Bare.new() != Bare.new()]')"
-[[ "$actual" == "[false, true]" ]]
-
-actual="$($diamond -e $'class Box\n def initialize(x)\n  @x = x\n end\n def <(other) = @x < other.x()\n def <=(other) = @x <= other.x()\n def >(other) = @x > other.x()\n def >=(other) = @x >= other.x()\n def x() = @x\nend\n[Box.new(1) < Box.new(2), Box.new(2) <= Box.new(2), Box.new(3) > Box.new(2), Box.new(2) >= Box.new(2)]')"
-[[ "$actual" == "[true, true, true, true]" ]]
-
-actual="$($diamond -e $'class Base\n def initialize(x)\n  @x = x\n end\n def +(other) = Base.new(@x + other.x())\n def x() = @x\nend\nclass Child < Base\nend\n(Child.new(1) + Child.new(2)).x()')"
-[[ "$actual" == "3" ]]
-
-actual="$($diamond -e $'class Base\n def initialize(x)\n  @x = x\n end\n def +(other) = Base.new(@x + other.x())\n def x() = @x\nend\nclass Child < Base\n def +(other)\n  result = super(other)\n  Base.new(result.x() * 10)\n end\nend\n(Child.new(1) + Child.new(2)).x()')"
-[[ "$actual" == "30" ]]
-
-actual="$($diamond -e $'class Bad\n def +()\n  42\n end\nend\nbegin\n Bad.new() + 5\nrescue error: ArgumentError\n 99\nend')"
-[[ "$actual" == "99" ]]
-
-actual="$($diamond -e $'class Plain\nend\nbegin\n Plain.new() + 5\nrescue error: TypeError\n 42\nend')"
-[[ "$actual" == "42" ]]
-
-actual="$($diamond -e $'class Box\n def initialize(x)\n  @x = x\n end\n private\n def +(other) = Box.new(@x + other.x())\n public\n def x() = @x\nend\n(Box.new(1) + Box.new(2)).x()')"
-[[ "$actual" == "3" ]]
-
-actual="$($diamond -e $'interface Addable\n def +(other)\nend\nclass Box\n def initialize(x)\n  @x = x\n end\n def +(other) = Box.new(@x)\nend\nBox.new(1) is Addable')"
-[[ "$actual" == "true" ]]
-
-actual="$($diamond -e $'def f(a, b)\n a + b\nend\ndef +(a, b)\n a\nend' 2>&1 || true)"
-[[ "$actual" == *"operator methods can only be defined inside a class"* ]]
-
-actual="$($diamond -e $'class Box\n def initialize(x)\n  @x = x\n end\n def +(other) = Box.new(@x + other.x())\n def x() = @x\nend\ndef add(a, b) = a + b\ni = 0\nwhile i < 5\n add(1, 2)\n i = i + 1\nend\nadd(Box.new(10), Box.new(5)).x()')"
-[[ "$actual" == "15" ]]
-
-actual="$($diamond -e $'class Box\n def initialize(x)\n  @x = x\n end\n def ==(other) = @x == other.x()\n def x() = @x\nend\ndef eq(a, b) = a == b\ni = 0\nwhile i < 5\n eq(1, 2)\n i = i + 1\nend\neq(Box.new(3), Box.new(3))')"
-[[ "$actual" == "true" ]]
-
-actual="$($diamond -e $'class Box\n def initialize(x)\n  @x = x\n end\n def <(other) = @x < other.x()\n def x() = @x\nend\ndef lt(a, b) = a < b\ni = 0\nwhile i < 5\n lt(1, 2)\n i = i + 1\nend\nlt(Box.new(3), Box.new(5))')"
-[[ "$actual" == "true" ]]
-
-actual="$($diamond -e $'def f(a, b) = a - b\nf(a: 10, b: 3)')"
-[[ "$actual" == "7" ]]
-
-actual="$($diamond -e $'def f(a, b) = a - b\nf(b: 3, a: 10)')"
-[[ "$actual" == "7" ]]
-
-actual="$($diamond -e $'def f(a, b) = a - b\nf(10, b: 3)')"
-[[ "$actual" == "7" ]]
-
-actual="$($diamond -e $'def f(a, b = 2) = a + b\nf(a: 5)')"
-[[ "$actual" == "7" ]]
-
-actual="$($diamond -e $'def f(a, b) = a - b\nf(10, 3)')"
-[[ "$actual" == "7" ]]
-
-actual="$($diamond -e $'def identity[T](x: T) -> T\n x\nend\nidentity[Int](x: 42)')"
-[[ "$actual" == "42" ]]
-
-actual="$($diamond -e $'def f(a, b) = a + b\nf(a: 1, c: 2)' 2>&1 || true)"
-[[ "$actual" == *"no parameter with this name"* ]]
-
-actual="$($diamond -e $'def f(a, b) = a + b\nf(a: 1, a: 2)' 2>&1 || true)"
-[[ "$actual" == *"multiple values for the same argument"* ]]
-
-actual="$($diamond -e $'def f(a, b) = a + b\nf(a: 1, 2)' 2>&1 || true)"
-[[ "$actual" == *"positional argument cannot follow a keyword argument"* ]]
-
-actual="$($diamond -e $'def f(a, b) = a + b\nf(1, a: 2)' 2>&1 || true)"
-[[ "$actual" == *"multiple values for the same argument"* ]]
-
-actual="$($diamond -e $'def f(a, b = 2, c = 3) = a + b + c\nf(1, c: 5)' 2>&1 || true)"
-[[ "$actual" == *"missing argument"* ]]
-
-actual="$($diamond -e $'def f(a, b) = a + b\nf(a: 1)' 2>&1 || true)"
-[[ "$actual" == *"wrong number of arguments"* ]]
-
-echo "932 tests passed"
+inline_count="$(grep -cE '^\[\[' "$0")"
+echo "$((inline_count + case_count)) tests passed"
