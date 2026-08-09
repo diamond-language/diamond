@@ -158,6 +158,56 @@ first-class heap values, with one narrow exception:
 `ClassName.redefine_method(name, callable)` repoints an existing method's
 compiled body at runtime.
 
+## Operator overloading
+
+```ruby
+class Vector
+  def initialize(x, y)
+    @x = x
+    @y = y
+  end
+  def +(other)
+    Vector.new(@x + other.x(), @y + other.y())
+  end
+  def negate()
+    Vector.new(-@x, -@y)
+  end
+  def ==(other)
+    other is Vector && @x == other.x() && @y == other.y()
+  end
+  def x() = @x
+  def y() = @y
+end
+
+Vector.new(1, 2) + Vector.new(3, 4)  # => Vector(4, 6)
+-Vector.new(1, 2)                    # => Vector(-1, -2)
+```
+
+A class can define `+`, `-`, `*`, `/`, `==`, `<`, `<=`, `>`, `>=` as
+ordinary instance methods, and Diamond's own operator syntax (`a + b`, `a ==
+b`, ...) dispatches to them — same mechanism as any other method (inherited,
+overridable, reachable through `super`, and satisfies an `interface` that
+requires a method of the same name). Unary minus (`-x`) is a method named
+`negate`, not Ruby's `-@` spelling — a plain identifier, since `-` alone
+already names the binary form and Diamond doesn't need new lexer syntax to
+tell them apart by name (they're already told apart by arity: `negate`
+takes no extra arguments, `-` takes exactly one).
+
+Dispatch is receiver-based only, same as every other method call in
+Diamond: `a + b` checks whether `a` is an instance whose class defines `+`.
+There's no coercion protocol — if `a` is a plain `Int`/`Float`/`String` and
+`b` is an instance, `a + b` still raises `TypeError`; the instance has to be
+on the left. `!=` isn't separately overloadable — it's always the negation
+of `==`'s result (run through the same truthiness `if`/`while` use, not
+required to be exactly `Bool`), matching Ruby's own default. Two instances
+of a class that doesn't define `==` still compare by identity, exactly as
+before this feature existed — defining `==` only changes behavior for
+classes that opt in.
+
+`[]`/`[]=` indexing, `<<`, and `<=>` (a single method deriving all four
+comparisons, Ruby's `Comparable` convenience) aren't overloadable — define
+`<`/`<=`/`>`/`>=` individually if a class needs ordering.
+
 ## Modules
 
 `module Name ... end` declares a module; `include Name` copies its method

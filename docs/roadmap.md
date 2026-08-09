@@ -1003,6 +1003,63 @@ future work.
   genuine undefined behavior. Fixed by giving `DIAMOND_OBJECT_BIGNUM` its
   own explicit `"Int"` case, alongside the new `DIAMOND_OBJECT_SYMBOL`
   case this round needed anyway.
+- Operator overloading: a class can define `+`/`-`/`*`/`/`/`==`/`<`/`<=`/
+  `>`/`>=` as ordinary instance methods, dispatched to from Diamond's own
+  operator syntax. Landed with almost no new machinery: `lookup_method`
+  already dispatches purely by name-string with no charset restriction, so
+  a method literally named `"+"` was already legal at the VM level before
+  this round — the only real barrier was `compile_definition` requiring an
+  `IDENTIFIER` token right after `def`, broadened to also accept the nine
+  binary operator tokens (restricted to inside a class body; an operator
+  method has no meaning without a receiver). Unary minus is a method named
+  `negate` rather than Ruby's `-@` spelling — a deliberate choice
+  (confirmed with the user) to avoid new lexer syntax entirely, since `-`
+  alone already names the binary form and arity (0 args vs. 1) already
+  tells them apart without needing a name that does too. Dispatch itself
+  is one new helper (`invoke_operator_method`, `src/vm.c`) reusing
+  `lookup_method_cached` (the same monomorphic-class inline cache
+  `INVOKE`/`INVOKE_MONO` already get, for free) and the same
+  `DiamondChunk child`/`run_chunk` sub-dispatch shape every other
+  same-chunk method call in this file already uses (`to_s`'s dispatch in
+  `stringify_value`, the real `INVOKE` case, the `Enumerable`-forwarding
+  block) — called from each arithmetic/comparison opcode's existing
+  `TypeError` fallback.
+
+  A real bug surfaced immediately on first manual test, not from the test
+  suite: `DiamondMethod.arity`/`required_arity` are stored **receiver-
+  exclusive** (`compile_definition` stores `function->arity-1` when
+  registering a class method — `function->arity` itself includes the
+  implicit `self` slot, set before parameter parsing begins). The first
+  version of `invoke_operator_method` compared a receiver-*inclusive*
+  argument count against those fields directly, so every single overload
+  call raised a spurious `ArityError` (`negate()`, arity 0 excluding self,
+  compared against 1; `==(other)`, arity 1 excluding self, compared
+  against 2) — caught by trying the feature by hand before writing any
+  permanent test, not by an existing regression. Fixed by computing the
+  explicit (non-receiver) argument count separately for the arity check,
+  matching exactly how the real `INVOKE` opcode's own `argc` (also
+  receiver-exclusive) is checked against the same fields.
+
+  A second gap, found the same way: `interface`'s own method-signature
+  parser (`compile_interface`) has an *independent* `IDENTIFIER`-only
+  check for a required method's name, separate from
+  `compile_definition`'s — writing `interface Addable\n def +(other)\nend`
+  to test that a class satisfies an interface via an operator method
+  failed to even parse. Broadened the same way, so an interface can
+  require an operator-named method and a class satisfies it through the
+  ordinary name-matching interface-satisfaction path, no interface-side
+  dispatch changes needed beyond accepting the name.
+
+  Known, deliberately unfixed wart: `ADD_INT`'s deopt branch handles a
+  deopted instruction inline instead of falling through to a fresh
+  dispatch of the now-generic `ADD` (the same reason the bignum round
+  needed its own inline bignum check there) — so the `"+"`
+  operator-overload check has to be duplicated a second time inside that
+  block rather than living in one place. Not restructured this round
+  (would mean merging `ADD`'s case block into the shared
+  `SUBTRACT`/`MULTIPLY`/`DIVIDE`/`_INT` one, a bigger and riskier change to
+  stable, heavily-exercised arithmetic dispatch than either the bignum or
+  this round actually needed).
 
 ## Next priorities
 
