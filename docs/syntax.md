@@ -81,6 +81,40 @@ count), so every `Float` prints exactly and unambiguously — including
 values that need the full 17 significant digits a `double` can carry,
 which a naive fixed-precision format can silently get wrong.
 
+## Symbols
+
+```ruby
+status = :ok
+status == :ok        # => true
+status == "ok"        # => false, different kind entirely
+to_sym("ok") == status # => true
+```
+
+`:name` is a `Symbol` literal — a small, immutable, name-like value distinct
+from `String`, useful for enum-like constants and Hash keys. `Symbol`
+equality and hashing are by byte content, exactly like `String` (`:ok ==
+:ok` is `true` even across two separately-created `:ok` literals) — unlike
+Ruby, where `Symbol` is interned and pointer-equal. Diamond deliberately
+scoped Symbol this way: interning would mean every Symbol ever created lives
+for the rest of the process (Ruby's own tradeoff), and this codebase defers
+that kind of complexity until profiling shows it's actually worth it (see
+`docs/design.md`'s note on why NaN-boxing is likewise deferred).
+
+`to_sym(string)` converts a `String` to a `Symbol`; the reverse direction
+goes through `puts`/string interpolation/a class's `to_s` method, all of
+which print a Symbol as its bare name with **no** leading colon — matching
+Ruby's `to_s`/`puts` convention (Ruby's colon only shows via `inspect`/`p`,
+which Diamond has no equivalent of). This keeps `to_sym` and printing true
+inverses of each other: `to_sym("#{:ok}") == :ok`. The practical tradeoff is
+that a Symbol and a same-named String print identically — Ruby has this
+same tradeoff for the same reason.
+
+A colon starts a Symbol literal only when it isn't immediately glued (no
+space) onto the end of a preceding identifier, digit, or closing
+`)`/`]`/`}`/`"` — so a parameter type annotation (`x:Int`), a hash-literal
+separator (`{"a":b}`), and a `rescue e:Type` binding all keep meaning
+exactly what they meant before Symbols existed, even written with no space.
+
 ## Functions and closures
 
 ```ruby

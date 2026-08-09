@@ -965,6 +965,44 @@ future work.
     `diamond_int_view`/`diamond_int_view_int64` take an out-parameter
     instead of returning by value, so the pointer is always built
     directly inside the caller's real storage.
+- Symbols: a `:name` literal (`DIAMOND_OBJECT_SYMBOL`, `src/object.h`) —
+  content-compared and content-hashed like `String` rather than Ruby-style
+  interned/pointer-equal singletons, a deliberate scope decision (confirmed
+  up front) to avoid a new VM-level intern table that would need to be a
+  permanent GC root — Symbol gets ordinary GC lifetime instead, matching
+  how `String` literals already re-allocate fresh on every execution rather
+  than being cached. `to_sym(string)` converts `String` → `Symbol`; the
+  reverse direction is free once the shared value formatter
+  (`builder_format_value`/`diamond_value_fprint`) gained a Symbol case,
+  printing the bare name with no leading colon specifically so
+  `to_sym(to_s_output) == symbol` holds as a true round trip (printing
+  *with* the colon was the first instinct, and was rejected once it broke
+  exactly that round trip).
+
+  The one real lexer subtlety: `:` immediately followed by an
+  identifier-start character only begins a Symbol when the colon *isn't*
+  glued (no space) onto the end of a preceding identifier, digit, or
+  closing `)`/`]`/`}`/`"`. Without that check, a parameter type annotation
+  written with no space (`x:Int`), a hash-literal separator with no space
+  (`{"a":b}`), and a `rescue e:Type` binding with no space would all
+  silently misparse as Symbol tokens — every current use of all three in
+  `tests/run.sh` happens to include a space, so this wasn't caught by
+  running the existing suite; it was caught by deliberately checking for
+  it during planning, mirroring this session's `postfix_modifier_ahead`
+  fix's "narrower than fully general, covers the real case" scoping.
+
+  A second, unrelated latent bug was found and fixed along the way, in
+  code this same session's bignum round touched: `format_value_type`
+  (`src/vm.c`, backs the "expected X, got Y" `CHECK_TYPE` error message)
+  had no case for `DIAMOND_OBJECT_BIGNUM` — a bignum value failing a type
+  check fell into the function's catch-all branch, which reads
+  `((DiamondInstance*)value)->class->name`, reinterpreting a
+  `DiamondBignum`'s `bool negative`/`limb_count` fields as a class
+  pointer. It didn't crash outright (produced `"got (null)"` rather than a
+  segfault, apparently by chance of struct layout/padding) but was
+  genuine undefined behavior. Fixed by giving `DIAMOND_OBJECT_BIGNUM` its
+  own explicit `"Int"` case, alongside the new `DIAMOND_OBJECT_SYMBOL`
+  case this round needed anyway.
 
 ## Next priorities
 
