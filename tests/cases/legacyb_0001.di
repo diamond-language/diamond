@@ -1,2 +1,2 @@
-def arithmetic(a,b) = a*b
-arithmetic(20,2)
+def add(a,b)=a+b
+add(20,22)

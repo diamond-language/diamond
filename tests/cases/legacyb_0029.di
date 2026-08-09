@@ -1,6 +1,3 @@
-interface Named
- def name()
-end
-def accept(value: Named)
- value
-end
+value=0
+value=42 if false
+value

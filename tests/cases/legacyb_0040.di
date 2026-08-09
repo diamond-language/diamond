@@ -1,2 +1,4 @@
-def f(a: Int, b: Int) -> Int = a * b
-f(3, 4)
+loop do
+ redo if false
+ break 42
+end

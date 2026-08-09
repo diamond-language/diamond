@@ -1,2 +1,4 @@
-def first[T](values: Array[T]) -> T = values[0]
-first([42])
+def ready()
+ true
+end
+42 if ready()

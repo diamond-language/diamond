@@ -1,2 +1,5 @@
-def f(a: Int, b: Int) -> Bool = a < b
-f(3, 4)
+def conditional_return(flag)
+ return if flag
+ 42
+end
+[conditional_return(false), conditional_return(true)]

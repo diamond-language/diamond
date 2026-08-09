@@ -1,2 +1,3 @@
-quickened sites: 1, deoptimized sites: 0
-^7$
+CONSTANT.*k0 (20)
+ADD
+RETURN

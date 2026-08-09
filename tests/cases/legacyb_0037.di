@@ -1,7 +1,5 @@
-def make()
- def once()
-  1
- end
- once
+begin
+ raise TypeError.new("bad") if true
+rescue : TypeError
+ 42
 end
-Fiber.new(make())

@@ -1,1 +1,3 @@
-chr(65)
+loop do
+ break if true
+end

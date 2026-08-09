@@ -1,7 +1,3 @@
-module State
- def value() = @value
+loop do
+ break 42 unless false
 end
-class Box
- include State
-end
-Box.new().value()

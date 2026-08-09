@@ -1,4 +1,5 @@
-def dynamic(x) -> Int
-  x
+begin
+ 1 / 0
+rescue error: ZeroDivisionError
+ error.message()
 end
-dynamic(42)

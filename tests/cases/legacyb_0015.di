@@ -1,4 +1,5 @@
-def nested(values: Hash[String, Array[Int | Nil]])
- values
+begin
+ 1 / 0
+rescue error: ZeroDivisionError
+ error.message()
 end
-nested({"items": [nil]})

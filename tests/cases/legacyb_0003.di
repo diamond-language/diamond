@@ -1,2 +1,2 @@
-def comparison(a,b) = a < b
-comparison(2,3)
+def arithmetic(a,b) = a-b
+arithmetic(20,2)

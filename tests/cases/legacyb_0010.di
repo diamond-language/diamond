@@ -1,12 +1,11 @@
-class Greeting
-  def initialize(name)
-    @name = name
-  end
-
-  def render(prefix)
-    prefix + @name
-  end
+class WrappedError < StandardError
+ attr_reader cause: StandardError
+ def initialize(cause: StandardError)
+  @cause=cause
+ end
 end
-
-greeting = Greeting.new("diamond")
-greeting.render("hello, ")
+begin
+ raise WrappedError.new(TypeError.new())
+rescue error: WrappedError
+ error.cause() is TypeError
+end

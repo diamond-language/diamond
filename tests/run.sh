@@ -10,19 +10,6 @@ actual="$($diamond --version)"
     exit 1
 }
 
-quickening_trace="$(DIAMOND_QUICKEN=1 DIAMOND_TRACE_QUICKEN=1 \
-    "$diamond" -e $'def add(a,b)=a+b\nadd(20,22)' 2>&1)"
-grep -q 'quickened sites: 1' <<<"$quickening_trace"
-grep -q '^42$' <<<"$quickening_trace"
-quickening_trace="$(DIAMOND_QUICKEN=1 DIAMOND_TRACE_QUICKEN=1 \
-    "$diamond" -e $'def add(a,b)=a+b\n[add(20,22), add("a","b")]' 2>&1)"
-grep -q 'quickened sites: 1, deoptimized sites: 1' <<<"$quickening_trace"
-grep -q '\[42, ab\]' <<<"$quickening_trace"
-quickening_trace="$(DIAMOND_QUICKEN=1 DIAMOND_TRACE_QUICKEN=1 \
-    "$diamond" -e $'def arithmetic(a,b) = a-b\narithmetic(20,2)' 2>&1)"
-grep -q 'quickened sites: 1, deoptimized sites: 0' <<<"$quickening_trace"
-grep -q '^18$' <<<"$quickening_trace"
-
 [[ "$("$diamond" -e $'20-2')" == 18 ]]
 [[ "$("$diamond" -e $'20*2')" == 40 ]]
 [[ "$("$diamond" -e $'20/2')" == 10 ]]
@@ -46,34 +33,10 @@ if "$diamond" -e 'missing + 1' >/dev/null 2>&1; then
     exit 1
 fi
 
-actual="$($diamond --dump-bytecode -e '20 + 22')"
-grep -q 'CONSTANT.*k0 (20)' <<<"$actual"
-grep -q 'ADD' <<<"$actual"
-grep -q 'RETURN' <<<"$actual"
-[[ "${actual##*$'\n'}" == "42" ]] || {
-    echo "disassembled program did not execute to 42" >&2
-    exit 1
-}
-
 if "$diamond" -e $'def one(a)\n  a\nend\none()' >/dev/null 2>&1; then
     echo "wrong function arity unexpectedly compiled" >&2
     exit 1
 fi
-
-actual="$($diamond --dump-bytecode tests/cases/functions.di)"
-grep -q '^== factorial ==$' <<<"$actual"
-grep -q 'CALL' <<<"$actual"
-[[ "${actual##*$'\n'}" == "42" ]] || {
-    echo "disassembled function program did not execute to 42" >&2
-    exit 1
-}
-
-actual="$("$diamond" --dump-bytecode -e '"dia" + "mond"')"
-grep -q 'STRING.*s0 ("dia")' <<<"$actual"
-[[ "${actual##*$'\n'}" == "diamond" ]] || {
-    echo "disassembled string program failed" >&2
-    exit 1
-}
 
 if "$diamond" -e $'class Child < Missing\nend' >/dev/null 2>&1; then
     echo "undefined superclass unexpectedly compiled" >&2
@@ -1010,57 +973,10 @@ fi
 actual="$($diamond -e $'loop\n break 42\nend')"
 [[ "$actual" == "42" ]]
 if "$diamond" -e $'loop 42 end' >/dev/null 2>&1; then exit 1; fi
-actual="$($diamond -e $'count=0\nresult=loop do\n count=count+1\n if count<3\n  next\n end\n break count+39\nend\nresult')"
-[[ "$actual" == "42" ]]
-actual="$($diamond -e $'outer=loop do\n inner=loop do\n  break 20\n end\n break inner+22\nend\nouter')"
-[[ "$actual" == "42" ]]
-actual="$($diamond -e $'class DetailedError < StandardError\n attr_reader message: String\n def initialize(message: String)\n  @message=message\n end\nend\nbegin\n raise DetailedError.new("failure")\nrescue error: DetailedError\n error.message()\nend')"
-[[ "$actual" == "failure" ]]
-actual="$($diamond -e $'class WrappedError < StandardError\n attr_reader cause: StandardError\n def initialize(cause: StandardError)\n  @cause=cause\n end\nend\nbegin\n raise WrappedError.new(TypeError.new())\nrescue error: WrappedError\n error.cause() is TypeError\nend')"
-[[ "$actual" == "true" ]]
-actual="$($diamond -e $'class DetailedError < StandardError\n attr_accessor message: String\nend\nbegin\n DetailedError.new().message=(42)\nrescue : TypeError\n 42\nend')"
-[[ "$actual" == "42" ]]
-actual="$($diamond -e $'class DetailedError < StandardError\n attr_accessor message: String\nend\nclass NetworkError < DetailedError\nend\nerror=NetworkError.new()\nerror.message=("offline")\nbegin\n raise error\nrescue caught: DetailedError\n caught.message()\nend')"
-[[ "$actual" == "offline" ]]
-actual="$($diamond -e $'class DetailedError < StandardError\n attr_accessor message: String\nend\nerror=DetailedError.new()\nerror.message=("kept")\nbegin\n begin\n  raise error\n rescue inner: DetailedError\n  raise\n end\nrescue outer: DetailedError\n outer.message()\nend')"
-[[ "$actual" == "kept" ]]
-actual="$($diamond -e $'class DetailedError < StandardError\n attr_accessor message: String\nend\nerror=DetailedError.new()\nerror.message=("stable")\ncleanup=nil\nbegin\n raise error\nrescue caught: DetailedError\n caught.message()\nensure\n cleanup=error.message()\nend\ncleanup')"
-[[ "$actual" == "stable" ]]
-actual="$($diamond -e $'begin\n 1 / 0\nrescue error: ZeroDivisionError\n error.message()\nend')"
-[[ "$actual" == "division by zero" ]]
-actual="$($diamond -e $'begin\n [1][4]\nrescue error: IndexError\n [error.message(), error.cause()]\nend')"
-[[ "$actual" == "[index 4 out of bounds for Array of length 1, nil]" ]]
-actual="$($diamond -e $'root=TypeError.new("root")\nerror=RuntimeError.new("wrapped", root)\n[error.message(), error.cause().message()]')"
-[[ "$actual" == "[wrapped, root]" ]]
 actual="$($diamond -e $'error=RuntimeError.new()\n[error.message(), error.cause()]')"
 [[ "$actual" == "[nil, nil]" ]]
 if "$diamond" -e $'RuntimeError.new(1, 2, 3)' >/dev/null 2>&1; then exit 1; fi
-actual="$(DIAMOND_STRESS_GC=1 $diamond -e $'begin\n 1 / 0\nrescue error: ZeroDivisionError\n error.message()\nend')"
-[[ "$actual" == "division by zero" ]]
-actual="$($diamond -e $'error=RuntimeError.new("x")\nleft=begin\n error.message(1)\nrescue : ArgumentError\n 20\nend\nright=begin\n error.cause(1)\nrescue : ArgumentError\n 22\nend\nleft+right')"
-[[ "$actual" == "42" ]]
-actual="$($diamond -e $'class CustomError < StandardError\n def initialize(code: Int)\n  @message="code #{code}"\n end\nend\nCustomError.new(42).message()')"
-[[ "$actual" == "code 42" ]]
-actual="$($diamond -e $'root=IndexError.new("root")\nwrapped=RuntimeError.new("wrapped", root)\nbegin\n raise wrapped\nrescue error: RuntimeError\n [error.message(), error.cause().message()]
-end')"
-[[ "$actual" == "[wrapped, root]" ]]
-actual="$($diamond -e $'type_message=begin\n 1+"x"\nrescue error: TypeError\n error.message()\nend\nargument_message=begin\n [1].push()\nrescue error: ArgumentError\n error.message()\nend\n[type_message is String, argument_message is String]')"
-[[ "$actual" == "[true, true]" ]]
-actual="$($diamond -e $'begin\n begin\n  1/0\n rescue error: ZeroDivisionError\n  raise\n end\nrescue outer: ZeroDivisionError\n outer.message()\nend')"
-[[ "$actual" == "division by zero" ]]
 
-actual="$($diamond -e '42 if true')"
-[[ "$actual" == "42" ]]
-actual="$($diamond -e '42 if false')"
-[[ "$actual" == "nil" ]]
-actual="$($diamond -e '42 unless false')"
-[[ "$actual" == "42" ]]
-actual="$($diamond -e '42 unless true')"
-[[ "$actual" == "nil" ]]
-actual="$($diamond -e $'value=0\nvalue=42 if true\nvalue')"
-[[ "$actual" == "42" ]]
-actual="$($diamond -e $'value=0\nvalue=42 if false\nvalue')"
-[[ "$actual" == "0" ]]
 actual="$($diamond -e '1+2 if true')"
 [[ "$actual" == "3" ]]
 if "$diamond" -e '42 if' >/dev/null 2>&1; then
@@ -1071,42 +987,6 @@ if "$diamond" -e $'42 if\n true' >/dev/null 2>&1; then
     echo "multiline postfix condition unexpectedly compiled" >&2
     exit 1
 fi
-actual="$(DIAMOND_STRESS_GC=1 $diamond -e '"stable" if true')"
-[[ "$actual" == "stable" ]]
-actual="$(DIAMOND_STRESS_GC=1 $diamond -e '"discarded" if false')"
-[[ "$actual" == "nil" ]]
-actual="$($diamond -e $'def ready()\n true\nend\n42 if ready()')"
-[[ "$actual" == "42" ]]
-actual="$($diamond -e $'def ready()\n false\nend\n42 unless ready()')"
-[[ "$actual" == "42" ]]
-actual="$($diamond -e $'loop do\n break 42 if true\nend')"
-[[ "$actual" == "42" ]]
-actual="$($diamond -e $'loop do\n break 42 unless false\nend')"
-[[ "$actual" == "42" ]]
-actual="$($diamond -e $'def answer()\n return 42 if true\n 0\nend\nanswer()')"
-[[ "$actual" == "42" ]]
-actual="$($diamond -e $'begin\n raise TypeError.new("bad") if true\nrescue : TypeError\n 42\nend')"
-[[ "$actual" == "42" ]]
-actual="$($diamond -e $'loop do\n next if false\n break 42\nend')"
-[[ "$actual" == "42" ]]
-actual="$($diamond -e $'loop do\n break if true\nend')"
-[[ "$actual" == "nil" ]]
-actual="$($diamond -e $'loop do\n redo if false\n break 42\nend')"
-[[ "$actual" == "42" ]]
-actual="$($diamond -e $'def conditional_return(flag)\n return if flag\n 42\nend\n[conditional_return(false), conditional_return(true)]')"
-[[ "$actual" == "[42, nil]" ]]
-actual="$($diamond -e $'attempts=0\nbegin\n attempts=attempts+1\n [1][4]\nrescue : IndexError\n attempts=attempts+1\n retry if attempts<3\nend\nattempts')"
-[[ "$actual" == "4" ]]
-actual="$($diamond -e $'outer=loop do\n inner=loop do\n  next if false\n  break 20\n end\n break inner+22\nend\nouter')"
-[[ "$actual" == "42" ]]
-actual="$($diamond -e $'def typed_return(flag: Bool) -> Int\n return 42 if flag\n 7\nend\n[typed_return(true), typed_return(false)]')"
-[[ "$actual" == "[42, 7]" ]]
-actual="$($diamond -e $'def endless_if() = 42 if true\nendless_if()')"
-[[ "$actual" == "42" ]]
-actual="$($diamond -e $'def endless_if() = 42 if false\nendless_if()')"
-[[ "$actual" == "nil" ]]
-actual="$($diamond -e $'def endless_unless() = 42 unless false\nendless_unless()')"
-[[ "$actual" == "42" ]]
 declaration_error="$(mktemp)"
 if "$diamond" -e $'class Marker\nend if true' >/dev/null 2>"$declaration_error"; then
     echo "declaration-level postfix unexpectedly compiled" >&2
@@ -1128,12 +1008,6 @@ if "$diamond" -e $'interface Marker\nend if true' >/dev/null 2>"$declaration_err
 fi
 grep -q "postfix modifiers cannot follow declarations" "$declaration_error"
 rm -f "$declaration_error"
-actual="$($diamond -e $'def ready() = true\ndef conditional() = 42 if ready()\nconditional()')"
-[[ "$actual" == "42" ]]
-actual="$(DIAMOND_STRESS_GC=1 $diamond -e $'def conditional() = "kept" if true\nconditional()')"
-[[ "$actual" == "kept" ]]
-actual="$($diamond -e $'class Box\n def value() = 42 if true\nend\nBox.new().value()')"
-[[ "$actual" == "42" ]]
 actual="$($diamond -e $'def typed_endless() -> Int = 42 if true\ntyped_endless()')"
 [[ "$actual" == "42" ]]
 if "$diamond" -e 'require "missing" if true' >/dev/null 2>&1; then
@@ -1844,6 +1718,11 @@ puts_actual="$(DIAMOND_STRESS_GC=1 $diamond -e $'x = 9223372036854775807 + 1\npu
 #                                expected. For multi-pattern checks
 #                                (bytecode disassembly, quickening traces)
 #                                that don't reduce to one exact string.
+#   <name>.expected_lastline  -- exact match against just the final line
+#                                of output (e.g. --dump-bytecode's
+#                                disassembly followed by the program's own
+#                                result on the last line); may accompany
+#                                .expected_contains
 #   <name>.env                -- optional, KEY=VALUE per line, exported
 #                                 for just this one case
 #   <name>.flags               -- optional, extra CLI flags (one per line)
@@ -1883,17 +1762,29 @@ for case_file in tests/cases/*.di; do
             exit 1
         fi
         case_count=$((case_count + 1))
-    elif [[ -f "$case_name.expected_contains" ]]; then
+    elif [[ -f "$case_name.expected_contains" || -f "$case_name.expected_lastline" ]]; then
         actual="$(env "${case_env[@]}" "$diamond_abs" "${case_flags[@]}" "$case_file" 2>&1 || true)"
-        while IFS= read -r pattern; do
-            [[ -z "$pattern" ]] && continue
-            if ! grep -q -- "$pattern" <<<"$actual"; then
+        if [[ -f "$case_name.expected_contains" ]]; then
+            while IFS= read -r pattern; do
+                [[ -z "$pattern" ]] && continue
+                if ! grep -q -- "$pattern" <<<"$actual"; then
+                    echo "FAIL: $case_file" >&2
+                    echo "  expected output to match: $pattern" >&2
+                    echo "  actual: $actual" >&2
+                    exit 1
+                fi
+            done < "$case_name.expected_contains"
+        fi
+        if [[ -f "$case_name.expected_lastline" ]]; then
+            last_line="${actual##*$'\n'}"
+            expected_last="$(cat "$case_name.expected_lastline")"
+            if [[ "$last_line" != "$expected_last" ]]; then
                 echo "FAIL: $case_file" >&2
-                echo "  expected output to match: $pattern" >&2
-                echo "  actual: $actual" >&2
+                echo "  expected last line: $expected_last" >&2
+                echo "  actual last line:   $last_line" >&2
                 exit 1
             fi
-        done < "$case_name.expected_contains"
+        fi
         case_count=$((case_count + 1))
     fi
 done

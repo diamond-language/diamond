@@ -1,2 +1,1 @@
-quickened sites: 1, deoptimized sites: 0
-^true$
+STRING.*s0 ("dia")

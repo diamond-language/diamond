@@ -1,2 +1,3 @@
-def empty[T]() -> Array[T] = []
-empty[Array[String]]()
+loop do
+ break 42 if true
+end

@@ -1,1 +1,2 @@
-1e10
+def endless_unless() = 42 unless false
+endless_unless()

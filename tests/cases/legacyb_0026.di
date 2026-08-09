@@ -1,5 +1,1 @@
-begin
- 42
-ensure
- nil
-end
+42 unless false

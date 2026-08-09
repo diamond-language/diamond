@@ -1,2 +1,1 @@
-value = 42
-"value=#{value}"
+"discarded" if false

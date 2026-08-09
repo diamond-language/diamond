@@ -1,4 +1,14 @@
-def nested(values: Array[Array[Int | Nil]])
- values
+class DetailedError < StandardError
+ attr_accessor message: String
 end
-nested([[nil]])
+error=DetailedError.new()
+error.message=("stable")
+cleanup=nil
+begin
+ raise error
+rescue caught: DetailedError
+ caught.message()
+ensure
+ cleanup=error.message()
+end
+cleanup

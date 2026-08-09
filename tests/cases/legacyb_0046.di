@@ -1,1 +1,2 @@
-pow(2, 3)
+def endless_if() = 42 if false
+endless_if()

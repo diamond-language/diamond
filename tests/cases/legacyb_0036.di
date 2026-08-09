@@ -1,4 +1,5 @@
-module Types
- def self.empty[T]() -> Array[T] = []
+def answer()
+ return 42 if true
+ 0
 end
-Types.empty[String]()
+answer()

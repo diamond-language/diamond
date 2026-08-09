@@ -1,4 +1,3 @@
-def maybe(x: String | Nil) -> String | Nil
- x
-end
-maybe(nil)
+root=TypeError.new("root")
+error=RuntimeError.new("wrapped", root)
+[error.message(), error.cause().message()]

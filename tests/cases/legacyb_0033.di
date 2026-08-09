@@ -1,2 +1,4 @@
-def accepts(callback: Callable[[Int, String], Bool]) = true
-true
+def ready()
+ false
+end
+42 unless ready()

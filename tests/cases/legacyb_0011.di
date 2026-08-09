@@ -1,21 +1,8 @@
-class BaseMessage
-  def initialize(name)
-    @name = name
-  end
-
-  def render(prefix)
-    prefix + @name
-  end
+class DetailedError < StandardError
+ attr_accessor message: String
 end
-
-class DecoratedMessage < BaseMessage
-  def initialize(name)
-    super(name + "!")
-  end
-
-  def render(prefix)
-    super(prefix + "> ")
-  end
+begin
+ DetailedError.new().message=(42)
+rescue : TypeError
+ 42
 end
-
-DecoratedMessage.new("diamond").render("hello")

@@ -1,1 +1,4 @@
-File.open("x", "r")
+loop do
+ next if false
+ break 42
+end

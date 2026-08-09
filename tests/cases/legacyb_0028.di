@@ -1,3 +1,3 @@
-def size(value: Sized)
- value.length()
-end
+value=0
+value=42 if true
+value

@@ -1,2 +1,7 @@
-def equality(a,b) = a==b
-[equality(4,4), equality("x","x")]
+outer=loop do
+ inner=loop do
+  break 20
+ end
+ break inner+22
+end
+outer
