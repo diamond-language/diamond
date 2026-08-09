@@ -17,6 +17,7 @@ typedef enum DiamondObjectKind : uint8_t {
     DIAMOND_OBJECT_FIBER,
     DIAMOND_OBJECT_FILE,
     DIAMOND_OBJECT_LISTENER,
+    DIAMOND_OBJECT_BIGNUM,
 } DiamondObjectKind;
 
 typedef struct DiamondObject {
@@ -30,6 +31,23 @@ typedef struct DiamondString {
     size_t length;
     char chars[];
 } DiamondString;
+
+/* An Int that overflowed int64_t. Sign + magnitude, base 10^9 limbs
+ * (each 0..999999999), little-endian (limbs[0] is least significant) --
+ * chosen over a binary base specifically to make decimal stringification
+ * (the operation a bignum actually exercises on every puts/interpolation/
+ * error message) close to trivial, at an acceptable cost to raw
+ * arithmetic throughput that doesn't matter on this cold path. Never
+ * represents a value that fits in int64_t -- every operation that
+ * produces a bignum result canonicalizes back to a plain DIAMOND_VALUE_INT
+ * when it fits, so downstream code never has two representations of the
+ * same value to worry about. */
+typedef struct DiamondBignum {
+    DiamondObject object;
+    bool negative;
+    size_t limb_count;
+    uint32_t limbs[];
+} DiamondBignum;
 
 typedef struct DiamondClass DiamondClass;
 typedef struct DiamondShape DiamondShape;

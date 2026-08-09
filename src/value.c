@@ -1,6 +1,7 @@
 #include "value.h"
 
 #include "vm.h"
+#include "bignum.h"
 
 #include <inttypes.h>
 #include <math.h>
@@ -109,6 +110,15 @@ void diamond_value_fprint(FILE *stream, DiamondValue value) {
             } else if(value.as.object->kind==DIAMOND_OBJECT_INSTANCE) {
                 const DiamondInstance *instance=(const DiamondInstance *)value.as.object;
                 fprintf(stream,"#<%s>",instance->class->name);
+            } else if(value.as.object->kind==DIAMOND_OBJECT_BIGNUM) {
+                const DiamondBignum *bignum=(const DiamondBignum *)value.as.object;
+                char *digits=malloc(diamond_bignum_string_length(bignum));
+                if(digits!=nullptr) {
+                    const size_t length=diamond_bignum_to_string(bignum,digits,
+                        diamond_bignum_string_length(bignum));
+                    fwrite(digits,1,length,stream);
+                    free(digits);
+                }
             } else {
                 fputs("#<Closure>",stream);
             }

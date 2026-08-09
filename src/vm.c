@@ -1,6 +1,7 @@
 #define _DEFAULT_SOURCE
 
 #include "vm.h"
+#include "bignum.h"
 
 #include <ctype.h>
 #include <errno.h>
@@ -173,6 +174,9 @@ void diamond_vm_collect(DiamondVm *vm) {
             size=sizeof(DiamondListenerHandle);
             const int fd=((DiamondListenerHandle *)unreached)->fd;
             if(fd>=0)close(fd);
+        } else if(unreached->kind==DIAMOND_OBJECT_BIGNUM) {
+            const DiamondBignum *bignum=(const DiamondBignum *)unreached;
+            size=sizeof(DiamondBignum)+bignum->limb_count*sizeof(uint32_t);
         } else {
             size=sizeof(DiamondCell);
         }
@@ -596,13 +600,46 @@ static DiamondListenerHandle *allocate_listener_handle(DiamondVm *vm,int fd) {
     vm->objects=&handle->object;vm->bytes_allocated+=sizeof(DiamondListenerHandle);return handle;
 }
 
+static bool value_is_bignum(DiamondValue value) {
+    return value.kind==DIAMOND_VALUE_OBJECT&&
+        value.as.object->kind==DIAMOND_OBJECT_BIGNUM;
+}
+
+/* True for both representations an Int can have -- a plain inline
+ * int64_t (kind==DIAMOND_VALUE_INT) or a promoted DiamondBignum. Used
+ * everywhere "is this conceptually an Int" matters (type checks,
+ * cross-type dispatch); arithmetic fast paths that specifically need
+ * "is this a small int64_t I can compute on directly" still check
+ * kind==DIAMOND_VALUE_INT alone, unchanged. */
+static bool is_int_value(DiamondValue value) {
+    return value.kind==DIAMOND_VALUE_INT||value_is_bignum(value);
+}
+
 static bool numeric_as_double(DiamondValue value, double *out) {
     if(value.kind==DIAMOND_VALUE_INT) {*out=(double)value.as.integer;return true;}
     if(value.kind==DIAMOND_VALUE_FLOAT) {*out=value.as.real;return true;}
+    if(value_is_bignum(value)) {
+        *out=diamond_bignum_to_double((const DiamondBignum *)value.as.object);
+        return true;
+    }
     return false;
 }
 
 static bool values_equal(DiamondValue left, DiamondValue right) {
+    /* Bignum-aware equality ahead of everything else: a Float, however
+     * large, is deliberately never treated as equal to a bignum (the
+     * existing Int/Float cross-equality special-case below only
+     * handles floats within int64 range, and that's left as-is rather
+     * than extended -- see the bignum design notes). Two bignums, or a
+     * bignum and a small Int, compare by value either way. */
+    if(value_is_bignum(left)||value_is_bignum(right)) {
+        if(left.kind==DIAMOND_VALUE_FLOAT||right.kind==DIAMOND_VALUE_FLOAT)return false;
+        if(!is_int_value(left)||!is_int_value(right))return false;
+        DiamondIntView left_view, right_view;
+        diamond_int_view(left,&left_view);
+        diamond_int_view(right,&right_view);
+        return diamond_bignum_compare(left_view,right_view)==0;
+    }
     /* Cross-type numeric equality (3 == 3.0) ahead of the kind guard,
      * per the auto-promotion design: Int widens to double for the
      * comparison. */
@@ -689,6 +726,13 @@ static uint64_t hash_value(DiamondValue value) {
                object->kind==DIAMOND_OBJECT_ARRAY||
                object->kind==DIAMOND_OBJECT_HASH)
                 return hash_mix64((uint64_t)(uintptr_t)object);
+            /* No consistency requirement with the small-int hash path
+             * above: the canonicalization invariant guarantees a
+             * bignum and a small Int can never represent the same
+             * value, so there's nothing for their hashes to need to
+             * agree with. */
+            if(object->kind==DIAMOND_OBJECT_BIGNUM)
+                return diamond_bignum_hash((const DiamondBignum *)object);
             const DiamondString *string=(const DiamondString *)object;
             return hash_bytes(string->chars,string->length);
         }
@@ -996,7 +1040,7 @@ static bool value_matches_type(const DiamondChunk *chunk, DiamondValue value,
         return value_matches_bound_node(chunk,value,
             &chunk->type_variable_bindings[variable],0);
     }
-    if(type==DIAMOND_TYPE_INT) return value.kind==DIAMOND_VALUE_INT;
+    if(type==DIAMOND_TYPE_INT) return is_int_value(value);
     if(type==DIAMOND_TYPE_FLOAT) return value.kind==DIAMOND_VALUE_FLOAT;
     if(type==DIAMOND_TYPE_BOOL) return value.kind==DIAMOND_VALUE_BOOL;
     if(type==DIAMOND_TYPE_NIL) return value.kind==DIAMOND_VALUE_NIL;
@@ -1658,6 +1702,19 @@ static bool builder_format_value(StringBuilder *builder,DiamondValue value) {
         return length>=0&&(size_t)length<sizeof scalar&&
             builder_append(builder,scalar,(size_t)length);
     }
+    if(value_is_bignum(value)) {
+        /* Writes into a freshly-sized buffer rather than through the
+         * fixed 96-byte `scalar` array above -- a bignum has no bound
+         * on its digit count. */
+        const DiamondBignum *bignum=(const DiamondBignum *)value.as.object;
+        const size_t capacity=diamond_bignum_string_length(bignum);
+        char *digits=malloc(capacity);
+        if(digits==nullptr)return false;
+        const size_t digit_length=diamond_bignum_to_string(bignum,digits,capacity);
+        const bool ok=builder_append(builder,digits,digit_length);
+        free(digits);
+        return ok;
+    }
     if(value.kind==DIAMOND_VALUE_FLOAT) {
         const double real=value.as.real;
         if(isnan(real))return builder_append(builder,"NaN",3);
@@ -2296,9 +2353,30 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     int64_t sum = 0;
                     if (ckd_add(&sum, registers[left].as.integer,
                                 registers[right].as.integer)) {
-                        VM_RETURN(DIAMOND_VM_INTEGER_OVERFLOW);
+                        DiamondIntView left_view, right_view;
+                        diamond_int_view(registers[left],&left_view);
+                        diamond_int_view(registers[right],&right_view);
+                        const DiamondValue bignum_result=
+                            diamond_bignum_add(vm,left_view,right_view);
+                        if(bignum_result.kind==DIAMOND_VALUE_NIL)
+                            VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                        registers[destination]=bignum_result;
+                        break;
                     }
                     registers[destination] = DIAMOND_INT(sum);
+                    break;
+                }
+                if (is_int_value(registers[left]) && is_int_value(registers[right]) &&
+                    (value_is_bignum(registers[left]) ||
+                     value_is_bignum(registers[right]))) {
+                    DiamondIntView left_view, right_view;
+                    diamond_int_view(registers[left],&left_view);
+                    diamond_int_view(registers[right],&right_view);
+                    const DiamondValue bignum_result=
+                        diamond_bignum_add(vm,left_view,right_view);
+                    if(bignum_result.kind==DIAMOND_VALUE_NIL)
+                        VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                    registers[destination]=bignum_result;
                     break;
                 }
                 if ((registers[left].kind==DIAMOND_VALUE_FLOAT||
@@ -2394,11 +2472,85 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                         if(string==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
                         registers[destination]=DIAMOND_OBJECT(string);break;
                     }
+                    /* A directly-compiled ADD_INT (both operands statically
+                     * known Int, not one that arrived here via runtime
+                     * quickening -- that path is DIAMOND_OP_ADD's own case
+                     * block, which already has this same check) needs its
+                     * own bignum check here too: this block retargets the
+                     * opcode and handles the deopted instruction inline
+                     * rather than truly falling through to a fresh dispatch
+                     * of the now-generic ADD, so ADD's own bignum handling
+                     * never gets a chance to run for *this* instruction
+                     * otherwise. */
+                    if (is_int_value(registers[left])&&is_int_value(registers[right])&&
+                        (value_is_bignum(registers[left])||
+                         value_is_bignum(registers[right]))) {
+                        DiamondIntView left_view, right_view;
+                        diamond_int_view(registers[left],&left_view);
+                        diamond_int_view(registers[right],&right_view);
+                        const DiamondValue bignum_result=
+                            diamond_bignum_add(vm,left_view,right_view);
+                        if(bignum_result.kind==DIAMOND_VALUE_NIL)
+                            VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                        registers[destination]=bignum_result;
+                        break;
+                    }
                     VM_RETURN(DIAMOND_VM_TYPE_ERROR);
                 }
+                /* SUBTRACT_INT/MULTIPLY_INT/DIVIDE_INT never had a deopt
+                 * branch at all before bignums existed: the only way an
+                 * already-observed-Int operand's kind could stop being
+                 * DIAMOND_VALUE_INT was a genuine type violation, so
+                 * falling straight to the type-error path below was
+                 * correct. Once an Int can legitimately become a bignum
+                 * mid-execution that's no longer true -- mirror ADD_INT's
+                 * deopt (no string special-case needed here, since only
+                 * ADD supports string concatenation). Retargets and falls
+                 * through rather than returning, so the bignum check just
+                 * below gets a chance at it. */
+                if ((opcode==DIAMOND_OP_SUBTRACT_INT||
+                     opcode==DIAMOND_OP_MULTIPLY_INT||
+                     opcode==DIAMOND_OP_DIVIDE_INT) &&
+                    (registers[left].kind!=DIAMOND_VALUE_INT||
+                     registers[right].kind!=DIAMOND_VALUE_INT)) {
+                    const DiamondOpCode generic=opcode==DIAMOND_OP_SUBTRACT_INT
+                        ?DIAMOND_OP_SUBTRACT
+                        :opcode==DIAMOND_OP_MULTIPLY_INT
+                            ?DIAMOND_OP_MULTIPLY:DIAMOND_OP_DIVIDE;
+                    uint8_t *code=(uint8_t *)(void *)chunk->code;
+                    code[instruction_offset]=(uint8_t)generic;
+                    opcode=generic;
+                    vm->deoptimized_sites++;
+                }
                 /* Scoped to the three generic (non-_INT) opcodes only - the
-                 * _INT forms stay exactly as they were, untouched, so this
-                 * can never interact with Int quickening/deoptimization. */
+                 * _INT forms, once past the deopt check above, always have
+                 * both operands confirmed DIAMOND_VALUE_INT by this point. */
+                if ((opcode==DIAMOND_OP_SUBTRACT||opcode==DIAMOND_OP_MULTIPLY||
+                     opcode==DIAMOND_OP_DIVIDE) &&
+                    is_int_value(registers[left])&&is_int_value(registers[right])&&
+                    (value_is_bignum(registers[left])||
+                     value_is_bignum(registers[right]))) {
+                    DiamondIntView left_view, right_view;
+                    diamond_int_view(registers[left],&left_view);
+                    diamond_int_view(registers[right],&right_view);
+                    DiamondValue bignum_result;
+                    if(opcode==DIAMOND_OP_SUBTRACT)
+                        bignum_result=diamond_bignum_subtract(vm,left_view,right_view);
+                    else if(opcode==DIAMOND_OP_MULTIPLY)
+                        bignum_result=diamond_bignum_multiply(vm,left_view,right_view);
+                    else {
+                        DiamondIntView zero_view;
+                        diamond_int_view_int64(0,&zero_view);
+                        if(diamond_bignum_compare(right_view,zero_view)==0)
+                            VM_RETURN(DIAMOND_VM_DIVISION_BY_ZERO);
+                        bignum_result=
+                            diamond_bignum_divide_truncated(vm,left_view,right_view);
+                    }
+                    if(bignum_result.kind==DIAMOND_VALUE_NIL)
+                        VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                    registers[destination]=bignum_result;
+                    break;
+                }
                 if ((opcode==DIAMOND_OP_SUBTRACT||opcode==DIAMOND_OP_MULTIPLY||
                      opcode==DIAMOND_OP_DIVIDE) &&
                     (registers[left].kind==DIAMOND_VALUE_FLOAT||
@@ -2441,12 +2593,37 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                         VM_RETURN(DIAMOND_VM_DIVISION_BY_ZERO);
                     }
                     if (left_value == INT64_MIN && right_value == -1) {
-                        VM_RETURN(DIAMOND_VM_INTEGER_OVERFLOW);
+                        /* -INT64_MIN doesn't fit int64_t; promote
+                         * instead of erroring, matching every other
+                         * overflow site here (negating left_value's
+                         * bignum view flips its sign to positive,
+                         * which is exactly -INT64_MIN = 2^63). */
+                        DiamondIntView left_view;
+                        diamond_int_view(registers[left],&left_view);
+                        const DiamondValue bignum_result=
+                            diamond_bignum_negate(vm,left_view);
+                        if(bignum_result.kind==DIAMOND_VALUE_NIL)
+                            VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                        registers[destination]=bignum_result;
+                        break;
                     }
                     result_value = left_value / right_value;
                 }
                 if (overflow) {
-                    VM_RETURN(DIAMOND_VM_INTEGER_OVERFLOW);
+                    DiamondIntView left_view, right_view;
+                    diamond_int_view(registers[left],&left_view);
+                    diamond_int_view(registers[right],&right_view);
+                    DiamondValue bignum_result;
+                    if(opcode==DIAMOND_OP_ADD_INT)
+                        bignum_result=diamond_bignum_add(vm,left_view,right_view);
+                    else if(opcode==DIAMOND_OP_SUBTRACT_INT||opcode==DIAMOND_OP_SUBTRACT)
+                        bignum_result=diamond_bignum_subtract(vm,left_view,right_view);
+                    else
+                        bignum_result=diamond_bignum_multiply(vm,left_view,right_view);
+                    if(bignum_result.kind==DIAMOND_VALUE_NIL)
+                        VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                    registers[destination]=bignum_result;
+                    break;
                 }
                 registers[destination] = DIAMOND_INT(result_value);
                 break;
@@ -2461,12 +2638,29 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                         DIAMOND_FLOAT(-registers[operand].as.real);
                     break;
                 }
+                if (value_is_bignum(registers[operand])) {
+                    DiamondIntView operand_view;
+                    diamond_int_view(registers[operand],&operand_view);
+                    const DiamondValue bignum_result=
+                        diamond_bignum_negate(vm,operand_view);
+                    if(bignum_result.kind==DIAMOND_VALUE_NIL)
+                        VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                    registers[destination]=bignum_result;
+                    break;
+                }
                 if (registers[operand].kind != DIAMOND_VALUE_INT) {
                     VM_RETURN(DIAMOND_VM_TYPE_ERROR);
                 }
                 int64_t result_value = 0;
                 if (ckd_sub(&result_value, 0, registers[operand].as.integer)) {
-                    VM_RETURN(DIAMOND_VM_INTEGER_OVERFLOW);
+                    DiamondIntView operand_view;
+                    diamond_int_view(registers[operand],&operand_view);
+                    const DiamondValue bignum_result=
+                        diamond_bignum_negate(vm,operand_view);
+                    if(bignum_result.kind==DIAMOND_VALUE_NIL)
+                        VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                    registers[destination]=bignum_result;
+                    break;
                 }
                 registers[destination] = DIAMOND_INT(result_value);
                 break;
@@ -2551,9 +2745,47 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     opcode=specialized;
                     vm->quickened_sites++;
                 }
+                /* Same reasoning as SUBTRACT_INT/MULTIPLY_INT/DIVIDE_INT:
+                 * these four _INT comparisons never had a deopt branch
+                 * before bignums existed (a non-Int operand was always a
+                 * genuine type error). Mirror the arithmetic block's fix. */
+                if ((opcode==DIAMOND_OP_LESS_INT||opcode==DIAMOND_OP_LESS_EQUAL_INT||
+                     opcode==DIAMOND_OP_GREATER_INT||
+                     opcode==DIAMOND_OP_GREATER_EQUAL_INT) &&
+                    (registers[left].kind!=DIAMOND_VALUE_INT||
+                     registers[right].kind!=DIAMOND_VALUE_INT)) {
+                    const DiamondOpCode generic=opcode==DIAMOND_OP_LESS_INT
+                        ?DIAMOND_OP_LESS
+                        :opcode==DIAMOND_OP_LESS_EQUAL_INT
+                            ?DIAMOND_OP_LESS_EQUAL
+                            :opcode==DIAMOND_OP_GREATER_INT
+                                ?DIAMOND_OP_GREATER:DIAMOND_OP_GREATER_EQUAL;
+                    uint8_t *code=(uint8_t *)(void *)chunk->code;
+                    code[instruction_offset]=(uint8_t)generic;
+                    opcode=generic;
+                    vm->deoptimized_sites++;
+                }
+                if ((opcode==DIAMOND_OP_LESS||opcode==DIAMOND_OP_LESS_EQUAL||
+                     opcode==DIAMOND_OP_GREATER||opcode==DIAMOND_OP_GREATER_EQUAL) &&
+                    is_int_value(registers[left])&&is_int_value(registers[right])&&
+                    (value_is_bignum(registers[left])||
+                     value_is_bignum(registers[right]))) {
+                    DiamondIntView left_view, right_view;
+                    diamond_int_view(registers[left],&left_view);
+                    diamond_int_view(registers[right],&right_view);
+                    const int comparison=diamond_bignum_compare(left_view,right_view);
+                    bool bignum_comparison=false;
+                    if(opcode==DIAMOND_OP_LESS)bignum_comparison=comparison<0;
+                    else if(opcode==DIAMOND_OP_LESS_EQUAL)bignum_comparison=comparison<=0;
+                    else if(opcode==DIAMOND_OP_GREATER)bignum_comparison=comparison>0;
+                    else bignum_comparison=comparison>=0;
+                    registers[destination]=DIAMOND_BOOL(bignum_comparison);
+                    break;
+                }
                 /* Scoped to the four generic (non-_INT) opcodes only, same
-                 * reasoning as the arithmetic block: the _INT forms stay
-                 * untouched. */
+                 * reasoning as the arithmetic block: the _INT forms, once
+                 * past the deopt check above, always have both operands
+                 * confirmed DIAMOND_VALUE_INT by this point. */
                 if ((opcode==DIAMOND_OP_LESS||opcode==DIAMOND_OP_LESS_EQUAL||
                      opcode==DIAMOND_OP_GREATER||opcode==DIAMOND_OP_GREATER_EQUAL) &&
                     (registers[left].kind==DIAMOND_VALUE_FLOAT||
@@ -3143,17 +3375,38 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                                (source->chars[position]=='-'||source->chars[position]=='+')) {
                                 negative=source->chars[position]=='-';position++;
                             }
-                            int64_t value=0;bool saw_digit=false;
+                            const size_t digit_start=position;
+                            int64_t value=0;bool saw_digit=false;bool overflowed=false;
                             while(position<source->length&&
                                   source->chars[position]>='0'&&source->chars[position]<='9') {
                                 saw_digit=true;
-                                int64_t widened=0;
-                                if(ckd_mul(&widened,value,(int64_t)10)||
-                                   ckd_add(&value,widened,(int64_t)(source->chars[position]-'0')))
-                                    VM_RETURN(DIAMOND_VM_INTEGER_OVERFLOW);
+                                if(!overflowed) {
+                                    int64_t widened=0;
+                                    if(ckd_mul(&widened,value,(int64_t)10)||
+                                       ckd_add(&value,widened,
+                                               (int64_t)(source->chars[position]-'0')))
+                                        overflowed=true;
+                                }
                                 position++;
                             }
-                            registers[dest]=DIAMOND_INT(saw_digit?(negative?-value:value):0);
+                            if(!saw_digit) {
+                                registers[dest]=DIAMOND_INT(0);
+                                break;
+                            }
+                            if(overflowed) {
+                                /* Wider than int64_t: promote instead of
+                                 * raising, matching every other overflow
+                                 * site now that Int auto-promotes. */
+                                const DiamondValue bignum_result=
+                                    diamond_bignum_from_decimal_digits(vm,
+                                        source->chars+digit_start,
+                                        position-digit_start,negative);
+                                if(bignum_result.kind==DIAMOND_VALUE_NIL)
+                                    VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                                registers[dest]=bignum_result;
+                                break;
+                            }
+                            registers[dest]=DIAMOND_INT(negative?-value:value);
                             break;
                         }
                         if(to_f_method) {
@@ -4148,11 +4401,13 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
             case DIAMOND_OP_TO_FLOAT: {
                 uint8_t dest=0,source=0;
                 READ_BYTE(dest);READ_BYTE(source);
-                if(registers[source].kind!=DIAMOND_VALUE_INT) {
+                double as_double=0.0;
+                if(!is_int_value(registers[source])||
+                   !numeric_as_double(registers[source],&as_double)) {
                     snprintf(vm->error,sizeof vm->error,"to_f argument must be an Int");
                     VM_RETURN(DIAMOND_VM_TYPE_ERROR);
                 }
-                registers[dest]=DIAMOND_FLOAT((double)registers[source].as.integer);
+                registers[dest]=DIAMOND_FLOAT(as_double);
                 break;
             }
             case DIAMOND_OP_TO_INT: {
@@ -4163,11 +4418,20 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     VM_RETURN(DIAMOND_VM_TYPE_ERROR);
                 }
                 const double real=registers[source].as.real;
-                if(isnan(real)||isinf(real)||
-                   real>=9223372036854775808.0||real<-9223372036854775808.0) {
+                if(isnan(real)||isinf(real)) {
                     snprintf(vm->error,sizeof vm->error,
-                             "to_i argument must be a finite Float within Int range");
+                             "to_i argument must be a finite Float");
                     VM_RETURN(DIAMOND_VM_INTEGER_OVERFLOW);
+                }
+                if(real>=9223372036854775808.0||real<-9223372036854775808.0) {
+                    /* Outside int64_t range: promote instead of raising,
+                     * matching every other overflow site now that Int
+                     * auto-promotes to a bignum. */
+                    const DiamondValue bignum_result=diamond_bignum_from_double(vm,real);
+                    if(bignum_result.kind==DIAMOND_VALUE_NIL)
+                        VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                    registers[dest]=bignum_result;
+                    break;
                 }
                 registers[dest]=DIAMOND_INT((int64_t)real);
                 break;
