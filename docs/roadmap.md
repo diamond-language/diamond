@@ -1540,22 +1540,108 @@ future work.
   exercise new heap allocation and GC-marking paths (`Closure`/`Cell`
   objects) for the first time in this port.
 
+- Self-hosting, Phase 3 sub-phase 3 (first slice): basic classes.
+  `selfhost/parser.di` gained `class Name ... end` (methods, `@ivar`
+  read/write, `self`, `ClassName.new(args)`, and `receiver.method(args)`
+  dispatch through the existing postfix-`.` loop in `parse_precedence`)
+  — deliberately without inheritance/`super` yet, split out the same way
+  closures were split from plain functions in sub-phase 2.
+
+  Required three new `ProgramBuilder` methods — the class-declaration
+  surface Phase 1's own design note flagged as deferred until a
+  class-compiling sub-phase actually needed it:
+  - `declare_class(name, superclass_index)` → class index (`-1` for no
+    superclass; superclass support is included in the C method even
+    though this round's Diamond-side `compile_class` doesn't use it
+    yet, since inheritance is purely a *frontend* addition once this
+    lands — no further bridge work needed for the sub-phase 3 follow-up).
+  - `declare_field(class_index, name)` → field index, idempotent (a
+    second call with the same name returns the existing index rather
+    than adding a duplicate) — mirroring `field_index`'s own
+    find-or-create behavior in `compiler.c`, used identically for both
+    a field's first read and its first write, so callers never need to
+    ask "does this field already exist" themselves.
+  - `declare_method(class_index, name, function_index, arity,
+    required_arity, is_private)`.
+
+  Both `declare_class` and `declare_field` recompute the owning class's
+  `shapes[]` array on every change (a new `program_builder_recompute_shapes`
+  helper, mirroring the loop `diamond_compile` itself runs once, over
+  every class, right after compilation finishes) — necessary because a
+  `ProgramBuilder`-built program never goes through `diamond_compile` at
+  all, so nothing else would ever populate shapes for a class declared
+  this way.
+
+  `GET_IVAR`/`SET_IVAR`'s receiver operand is an ordinary register
+  operand, not implicitly `self` at the opcode level — `self` being
+  register 0 is purely a *convention* `compile_method` establishes by
+  always allocating it first, before any user-declared parameter,
+  exactly mirroring `compile_definition`'s own class/module branch.
+
+  Two design decisions confirmed by directly testing against the real
+  compiler rather than assumed: a nested `def` inside a function body
+  compiling a `class` is accepted by `compiler.c` (no top-level
+  restriction on class declarations in the real language) — this
+  round's own top-level-only restriction is a genuine, deliberate
+  narrowing beyond what the real compiler requires, not a mirroring of
+  an existing constraint (documented as such in `compile_class`'s own
+  comment). Method-name duplicate detection is handled in the Parser's
+  own `@current_class_method_names` tracking (checked *before* calling
+  `declare_method`) rather than relying on `declare_method`'s own
+  VM-level duplicate rejection, so a duplicate method surfaces through
+  this parser's own `fail()`/`error_message()` mechanism instead of an
+  uncaught exception escaping mid-compile.
+
+  A genuinely new failure mode surfaced while iterating on this round,
+  worth remembering going forward: hand-assembling bytecode
+  instruction-by-instruction as literal top-level Diamond statements
+  (one `builder.emit_byte(...)` call per source line, as every earlier
+  round's scratch verification scripts did) burns through the *real*
+  compiler's own 256-register budget fast, since `compiler.c`'s
+  register allocator is monotonic at every scope including the
+  top level, never recycled — confirmed by a ~40-line hand-assembled
+  scratch script failing to compile at all. Fixed by wrapping repeated
+  emission in an ordinary Diamond function taking an array of bytes,
+  called in a loop, so the *function's* own register frame absorbs the
+  repetition instead of the top-level script's. Also caught, again, the
+  same register-budget wall this port has now hit three times running
+  (Phase 2's lexer, sub-phase 2's `compile_definition`, and this round):
+  the first version of `compile_class` combined with method-compiling
+  logic in one method and needed splitting into `compile_class`/
+  `compile_method`/`current_class_has_method?`/`compile_method_body`
+  from the start.
+
+  New regression coverage: five more `tests/parser_cases/class_*.di`
+  cases (fields plus a self-call between two methods, a mutating
+  method, a class relying entirely on `initialize`'s implicit `nil`
+  defaults for state it never explicitly sets before first use, two
+  independent instances confirming field storage isn't shared, and one
+  method calling a sibling method on `self`) bring the differential
+  harness to 37 cases, all matching. Verified with the same `make
+  test-all` pass as every other round, plus the parser differential
+  harness re-run directly under `-fsanitize=address,undefined` (clean,
+  no leaks) given classes exercise new instance-allocation and
+  shape-transition paths for the first time in this port.
+
 ## Next priorities
 
-- Self-hosting, Phase 3 sub-phase 2 remaining gaps: keyword arguments
-  and explicit `return` (a function's last expression is still its only
-  way to produce a result). Neither blocks sub-phase 3 (classes,
-  methods, inheritance, `super`) per the plan's own sequencing, so
-  either can be picked up opportunistically alongside it rather than
-  strictly before it.
+- Self-hosting, Phase 3 sub-phase 3 follow-up: inheritance (`class Sub
+  < Base`) and `super(...)` — `declare_class`'s superclass parameter is
+  already there from this round, unused until the Diamond-side
+  `compile_class` gains `< Superclass` parsing and the `SUPER` opcode
+  gets emitted for `super(...)` calls. After that, sub-phase 2's
+  remaining gaps (keyword arguments, explicit `return`) and sub-phase 4
+  (interfaces, generics, gradual typing, narrowing) remain, per the
+  plan's own sequencing.
 
 ## Later experiments
 
 - Self-hosting the compiler and core libraries in Diamond (in progress —
-  see `Completed foundation` for Phase 0-2 and Phase 3 sub-phase 2
-  (including closures), landed, and `Next priorities` for sub-phase 2's
-  remaining gaps; the rest of the compiler port and bootstrap validation
-  remain multi-session future work beyond that).
+  see `Completed foundation` for Phase 0-2 and Phase 3 sub-phases 2
+  (including closures) and 3 (basic classes), landed, and `Next
+  priorities` for the inheritance/`super` follow-up; the rest of the
+  compiler port and bootstrap validation remain multi-session future
+  work beyond that).
 - Native-code generation or a tracing/method JIT — nothing in the
   `jit-experimentation` work above generates native code; it's all
   interpreter-loop leaning (register zero-init, opcode dispatch,

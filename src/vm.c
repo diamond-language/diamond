@@ -672,6 +672,25 @@ static DiamondFunction *program_builder_target(DiamondProgram *program,
     return &program->functions[function_index];
 }
 
+static DiamondClass *program_builder_class(DiamondProgram *program,
+                                           int64_t class_index) {
+    if(class_index<0||(uint64_t)class_index>=program->class_count)
+        return nullptr;
+    return &program->classes[class_index];
+}
+
+/* Recomputes shapes[0..field_count] for a class -- mirrors the loop
+ * diamond_compile itself runs once, over every class, right after
+ * compilation finishes (src/compiler.c). ProgramBuilder#declare_field
+ * needs the same recomputation done incrementally, since a
+ * ProgramBuilder-built program never goes through diamond_compile at
+ * all. See docs/roadmap.md's self-hosting Phase 3 entry. */
+static void program_builder_recompute_shapes(DiamondClass *class) {
+    for(size_t field_count=0;field_count<=class->field_count;field_count++)
+        class->shapes[field_count]=(DiamondShape){
+            .class=class,.field_count=(uint8_t)field_count};
+}
+
 /* DIAMOND_OP_REGEXP_NEW's real body, factored out of run_chunk's own
  * switch statement deliberately, not just for readability: every local
  * variable declared anywhere in that switch contributes to run_chunk's
@@ -851,11 +870,27 @@ static DiamondVmStatus program_builder_invoke_helper(DiamondVm *vm,
         method_name->length==sizeof("set_register_count")-1&&
         memcmp(method_name->chars,"set_register_count",
             sizeof("set_register_count")-1)==0;
+    /* Phase 3 sub-phase 3 (classes): declare_class/declare_field/
+     * declare_method mirror compile_class/field_index/compile_definition's
+     * own class-registration side effects in compiler.c -- fields not
+     * needed by any sub-phase before this one (Phase 1's own design note
+     * flagged them as deferred until class-compiling logic actually
+     * needed them). See docs/roadmap.md. */
+    const bool declare_class_method=
+        method_name->length==sizeof("declare_class")-1&&
+        memcmp(method_name->chars,"declare_class",sizeof("declare_class")-1)==0;
+    const bool declare_field_method=
+        method_name->length==sizeof("declare_field")-1&&
+        memcmp(method_name->chars,"declare_field",sizeof("declare_field")-1)==0;
+    const bool declare_method_method=
+        method_name->length==sizeof("declare_method")-1&&
+        memcmp(method_name->chars,"declare_method",sizeof("declare_method")-1)==0;
     const bool run_method=method_name->length==sizeof("run")-1&&
         memcmp(method_name->chars,"run",sizeof("run")-1)==0;
     if(!declare_function_method&&!emit_byte_method&&!patch_byte_method&&
        !add_constant_method&&!add_string_method&&
-       !set_register_count_method&&!run_method) {
+       !set_register_count_method&&!declare_class_method&&
+       !declare_field_method&&!declare_method_method&&!run_method) {
         snprintf(vm->error,sizeof vm->error,"undefined method '%.*s' for %s",
             (int)method_name->length,method_name->chars,"ProgramBuilder");
         return DIAMOND_VM_TYPE_ERROR;
@@ -1026,6 +1061,136 @@ static DiamondVmStatus program_builder_invoke_helper(DiamondVm *vm,
             return DIAMOND_VM_TYPE_ERROR;
         }
         target->register_count=(uint16_t)count_value;
+        *result=DIAMOND_NIL;return DIAMOND_VM_OK;
+    }
+    if(declare_class_method) {
+        if(argc!=2)return DIAMOND_VM_ARITY_ERROR;
+        if(registers[base].kind!=DIAMOND_VALUE_OBJECT||
+           registers[base].as.object->kind!=DIAMOND_OBJECT_STRING||
+           registers[(size_t)base+1].kind!=DIAMOND_VALUE_INT) {
+            snprintf(vm->error,sizeof vm->error,
+                "ProgramBuilder#declare_class arguments must be (String, Int)");
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        const DiamondString *cname=
+            (const DiamondString *)registers[base].as.object;
+        const int64_t superclass_index=registers[(size_t)base+1].as.integer;
+        DiamondClass *parent=nullptr;
+        if(superclass_index!=-1) {
+            parent=program_builder_class(built,superclass_index);
+            if(parent==nullptr) {
+                snprintf(vm->error,sizeof vm->error,
+                    "ProgramBuilder#declare_class has an invalid superclass index");
+                return DIAMOND_VM_TYPE_ERROR;
+            }
+        }
+        if(cname->length==0||cname->length>=DIAMOND_MAX_FUNCTION_NAME) {
+            snprintf(vm->error,sizeof vm->error,
+                "ProgramBuilder#declare_class has an invalid name");
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        if(built->class_count==DIAMOND_MAX_CLASSES) {
+            snprintf(vm->error,sizeof vm->error,"program has too many classes");
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        const int64_t new_index=(int64_t)built->class_count;
+        DiamondClass *class=&built->classes[built->class_count++];
+        *class=(DiamondClass){};
+        memcpy(class->name,cname->chars,cname->length);
+        class->name[cname->length]='\0';
+        class->superclass=parent==nullptr?UINT8_MAX:(uint8_t)superclass_index;
+        if(parent!=nullptr) {
+            class->field_count=parent->field_count;
+            memcpy(class->fields,parent->fields,
+                parent->field_count*DIAMOND_MAX_FUNCTION_NAME);
+        }
+        program_builder_recompute_shapes(class);
+        *result=DIAMOND_INT(new_index);return DIAMOND_VM_OK;
+    }
+    if(declare_field_method) {
+        if(argc!=2)return DIAMOND_VM_ARITY_ERROR;
+        if(registers[base].kind!=DIAMOND_VALUE_INT||
+           registers[(size_t)base+1].kind!=DIAMOND_VALUE_OBJECT||
+           registers[(size_t)base+1].as.object->kind!=DIAMOND_OBJECT_STRING) {
+            snprintf(vm->error,sizeof vm->error,
+                "ProgramBuilder#declare_field arguments must be (Int, String)");
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        DiamondClass *class=
+            program_builder_class(built,registers[base].as.integer);
+        const DiamondString *fname=
+            (const DiamondString *)registers[(size_t)base+1].as.object;
+        if(class==nullptr||fname->length==0||
+           fname->length>=DIAMOND_MAX_FUNCTION_NAME) {
+            snprintf(vm->error,sizeof vm->error,"ProgramBuilder#%s",
+                "declare_field has an invalid class index or field name");
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        for(size_t index=0;index<class->field_count;index++)
+            if(strlen(class->fields[index])==fname->length&&
+               memcmp(class->fields[index],fname->chars,fname->length)==0) {
+                *result=DIAMOND_INT((int64_t)index);return DIAMOND_VM_OK;
+            }
+        if(class->field_count==DIAMOND_MAX_FIELDS) {
+            snprintf(vm->error,sizeof vm->error,"class has too many fields");
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        const int64_t new_index=(int64_t)class->field_count;
+        memcpy(class->fields[class->field_count],fname->chars,fname->length);
+        class->fields[class->field_count][fname->length]='\0';
+        class->field_count++;
+        program_builder_recompute_shapes(class);
+        *result=DIAMOND_INT(new_index);return DIAMOND_VM_OK;
+    }
+    if(declare_method_method) {
+        if(argc!=6)return DIAMOND_VM_ARITY_ERROR;
+        if(registers[base].kind!=DIAMOND_VALUE_INT||
+           registers[(size_t)base+1].kind!=DIAMOND_VALUE_OBJECT||
+           registers[(size_t)base+1].as.object->kind!=DIAMOND_OBJECT_STRING||
+           registers[(size_t)base+2].kind!=DIAMOND_VALUE_INT||
+           registers[(size_t)base+3].kind!=DIAMOND_VALUE_INT||
+           registers[(size_t)base+4].kind!=DIAMOND_VALUE_INT||
+           registers[(size_t)base+5].kind!=DIAMOND_VALUE_BOOL) {
+            snprintf(vm->error,sizeof vm->error,"ProgramBuilder#%s",
+                "declare_method arguments must be "
+                "(Int, String, Int, Int, Int, Bool)");
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        DiamondClass *class=
+            program_builder_class(built,registers[base].as.integer);
+        const DiamondString *mname=
+            (const DiamondString *)registers[(size_t)base+1].as.object;
+        const int64_t target_function=registers[(size_t)base+2].as.integer;
+        const int64_t arity_value=registers[(size_t)base+3].as.integer;
+        const int64_t required_value=registers[(size_t)base+4].as.integer;
+        if(class==nullptr||mname->length==0||
+           mname->length>=DIAMOND_MAX_FUNCTION_NAME||
+           target_function<0||(uint64_t)target_function>=built->function_count||
+           arity_value<0||arity_value>UINT8_MAX||
+           required_value<0||required_value>arity_value) {
+            snprintf(vm->error,sizeof vm->error,"ProgramBuilder#%s",
+                "declare_method has invalid arguments");
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        for(size_t index=0;index<class->method_count;index++)
+            if(!class->methods[index].included&&
+               strlen(class->methods[index].name)==mname->length&&
+               memcmp(class->methods[index].name,mname->chars,mname->length)==0) {
+                snprintf(vm->error,sizeof vm->error,"method is already defined");
+                return DIAMOND_VM_TYPE_ERROR;
+            }
+        if(class->method_count==DIAMOND_MAX_METHODS) {
+            snprintf(vm->error,sizeof vm->error,"class has too many methods");
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        DiamondMethod *method=&class->methods[class->method_count++];
+        *method=(DiamondMethod){};
+        memcpy(method->name,mname->chars,mname->length);
+        method->name[mname->length]='\0';
+        method->function_index=(uint8_t)target_function;
+        method->arity=(uint8_t)arity_value;
+        method->required_arity=(uint8_t)required_value;
+        method->is_private=registers[(size_t)base+5].as.boolean;
         *result=DIAMOND_NIL;return DIAMOND_VM_OK;
     }
     /* run_method: the only remaining possibility once the combined

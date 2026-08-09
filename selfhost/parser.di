@@ -78,6 +78,10 @@ module Opcode
   BOX_LOCAL = 36
   GET_CELL = 37
   SET_CELL = 38
+  NEW = 39
+  INVOKE = 40
+  GET_IVAR = 44
+  SET_IVAR = 45
   NOT = 55
   JUMP_IF_TRUE = 56
   RETURN = 57
@@ -133,6 +137,20 @@ class Parser
     # arbitrary depth compiler.c's own general enclosing_locals-walk
     # supports.
     @function_nesting_depth = 0
+    # Array of [name, class_index] entries, mirroring @functions --
+    # `ClassName.new(...)` resolves against this via find_class.
+    @classes = []
+    # The class_index currently being compiled (compile_class), or nil
+    # outside any class body -- gates `self`/`@ivar` (both require being
+    # inside a method) and rejects a class or `def` nested inside a
+    # class body beyond one plain method (see compile_class/compile_method).
+    @current_class_index = nil
+    # Names already declared as methods on the class currently being
+    # compiled, checked before declare_method so a duplicate method
+    # produces this Parser's own fail()/error_message() instead of
+    # surfacing as an uncaught exception from declare_method's own
+    # (separate, VM-level) duplicate check.
+    @current_class_method_names = []
     @failed = false
     @error_message = nil
   end
@@ -305,6 +323,19 @@ class Parser
     result
   end
 
+  # --- classes: an Array of [name, class_index] entries. ---
+
+  def find_class(name)
+    index = @classes.length() - 1
+    result = nil
+    while index >= 0 && result == nil
+      entry = @classes[index]
+      result = entry if entry[0] == name
+      index = index - 1
+    end
+    result
+  end
+
   # --- statement sequencing ---
 
   def compile_sequence()
@@ -313,6 +344,8 @@ class Parser
     while !@failed && !self.at_block_end?()
       if @current.kind() == :def
         result = self.compile_definition()
+      elsif @current.kind() == :class
+        result = self.compile_class()
       elsif @current.kind() == :break
         result = self.compile_break()
       elsif self.assignment_ahead?()
@@ -527,6 +560,145 @@ class Parser
     result
   end
 
+  # `class Name ... end` -- top-level only (no nested classes, no class
+  # declared inside a function/method body: a much narrower scope cut
+  # than compiler.c's own class declarations, which have no such
+  # restriction). No `< Superclass` yet -- see this file's header
+  # comment; inheritance and `super` are a deliberately separate,
+  # later round, matching how closures were split from plain functions.
+  def compile_class()
+    self.advance_token()
+    if @function_nesting_depth != 0 || @current_class_index != nil
+      self.fail("classes must be declared at the top level")
+      return 0
+    end
+    if @current.kind() != :identifier
+      self.fail("expected class name after 'class'")
+      return 0
+    end
+    name = self.token_text(@current)
+    if self.find_class(name) != nil
+      self.fail("class is already defined")
+      return 0
+    end
+    self.advance_token()
+    class_index = @builder.declare_class(name, -1)
+    @classes.push([name, class_index])
+    @current_class_index = class_index
+    @current_class_method_names = []
+
+    if !self.consume_block_start()
+      @current_class_index = nil
+      return 0
+    end
+    while !@failed && @current.kind() != :end
+      if @current.kind() == :def
+        self.compile_method()
+      else
+        self.fail("expected method definition in class")
+      end
+      self.skip_newlines() if @current.kind() == :newline
+    end
+    if @current.kind() != :end
+      self.fail("expected 'end' after class body") unless @failed
+      @current_class_index = nil
+      return 0
+    end
+    self.advance_token()
+    @current_class_index = nil
+    # Sole-writer fresh register; run_chunk's zero-init already covers
+    # nil, matching compile_class.c's own return value exactly.
+    self.allocate_register()
+  end
+
+  # An instance method: register 0 is always `self` (allocated before
+  # any user-declared parameter, exactly mirroring compile_definition.c's
+  # own class/module branch), and the compiled function is registered
+  # into the class via declare_method rather than @functions -- resolved
+  # later at INVOKE time by the VM against the receiver's runtime class,
+  # not by this parser at compile time the way a direct top-level call
+  # is. No closures inside a method body this round (methods don't
+  # participate in @function_nesting_depth at all).
+  def compile_method()
+    self.advance_token()
+    if @current.kind() != :identifier
+      self.fail("expected method name after 'def'")
+      return
+    end
+    name = self.token_text(@current)
+    if self.current_class_has_method?(name)
+      self.fail("method is already defined")
+      return
+    end
+    self.advance_token()
+    if @current.kind() != :left_paren
+      self.fail("expected '(' after method name")
+      return
+    end
+    self.advance_token()
+    parameter_names = self.parse_parameter_names()
+    return if @failed
+    if @current.kind() != :right_paren
+      self.fail("expected ')' after parameters")
+      return
+    end
+    self.advance_token()
+
+    arity = parameter_names.length()
+    function_index = @builder.declare_function(name, arity + 1, arity + 1)
+    self.compile_method_body(function_index, parameter_names)
+    @current_class_method_names.push(name)
+    @builder.declare_method(@current_class_index, name, function_index, arity, arity, false)
+  end
+
+  def current_class_has_method?(name)
+    index = 0
+    found = false
+    while index < @current_class_method_names.length()
+      found = true if @current_class_method_names[index] == name
+      index = index + 1
+    end
+    found
+  end
+
+  def compile_method_body(function_index, parameter_names)
+    outer_locals = @locals
+    outer_loops = @loops
+    outer_next_register = @next_register
+    outer_code_count = @code_count
+    outer_function_index = @current_function_index
+
+    @locals = []
+    @loops = []
+    @next_register = 0
+    @code_count = 0
+    @current_function_index = function_index
+    self.allocate_register()
+
+    index = 0
+    while index < parameter_names.length()
+      self.define_local(parameter_names[index])
+      index = index + 1
+    end
+
+    if self.consume_block_start()
+      body_result = self.compile_sequence()
+      self.emit_instruction1(Opcode::RETURN, body_result)
+      if @current.kind() != :end
+        self.fail("expected 'end' after method body")
+      else
+        self.advance_token()
+      end
+    end
+    @builder.set_register_count(function_index, @next_register)
+
+    @locals = outer_locals
+    @loops = outer_loops
+    @next_register = outer_next_register
+    @code_count = outer_code_count
+    @current_function_index = outer_function_index
+  end
+
   # Shared by compile_call/compile_closure_call: parses `(arg, arg, ...)`
   # (the opening '(' already consumed by the caller) and moves each
   # argument's value register into a fresh, contiguous block starting at
@@ -632,16 +804,19 @@ class Parser
   end
 
   def assignment_ahead?()
-    return false if @current.kind() != :identifier
+    return false if @current.kind() != :identifier && @current.kind() != :instance_variable
     lookahead = @lexer.clone()
     lookahead.next_token().kind() == :equal
   end
 
   def compile_assignment()
-    name = self.token_text(@current)
+    instance_variable = @current.kind() == :instance_variable
+    token = @current
     self.advance_token()
     self.advance_token()
     value = self.parse_expression()
+    return self.compile_ivar_write(token, value) if instance_variable
+    name = self.token_text(token)
     existing = self.find_local(name)
     if existing != nil && existing[2]
       self.emit_instruction2(Opcode::SET_CELL, existing[1], value)
@@ -653,6 +828,64 @@ class Parser
       existing[1]
     end
     self.emit_instruction2(Opcode::MOVE, destination, value)
+    destination
+  end
+
+  def compile_ivar_write(token, value)
+    if @current_class_index == nil
+      self.fail("instance variable used outside a method")
+      return 0
+    end
+    field_text = self.token_text(token)
+    field_name = field_text.slice(1, field_text.length() - 1)
+    field_index = @builder.declare_field(@current_class_index, field_name)
+    self.emit_instruction3(Opcode::SET_IVAR, 0, field_index, value)
+    value
+  end
+
+  def compile_ivar_read(token)
+    if @current_class_index == nil
+      self.fail("instance variable used outside a method")
+      return 0
+    end
+    field_text = self.token_text(token)
+    field_name = field_text.slice(1, field_text.length() - 1)
+    field_index = @builder.declare_field(@current_class_index, field_name)
+    destination = self.allocate_register()
+    self.emit_instruction3(Opcode::GET_IVAR, destination, 0, field_index)
+    destination
+  end
+
+  # `receiver.method(args)` -- reached from parse_precedence's own
+  # postfix-dot loop, so `receiver` can be any already-compiled
+  # expression (a local, `self`, a call result, ...), not just an
+  # identifier. Unlike a direct top-level call, the method name is
+  # resolved by the VM at INVOKE time against the receiver's *runtime*
+  # class, so there's no arity check here -- an ordinary ArityError
+  # surfaces from the VM instead, mirroring compiler.c's own parse_invoke.
+  def compile_invoke(receiver)
+    self.advance_token()
+    if @current.kind() != :identifier
+      self.fail("expected method name after '.'")
+      return 0
+    end
+    name = self.token_text(@current)
+    self.advance_token()
+    if @current.kind() != :left_paren
+      self.fail("expected '(' after method name")
+      return 0
+    end
+    self.advance_token()
+    method_name_index = self.add_string(name)
+    parsed = self.parse_call_arguments()
+    return 0 if parsed == nil
+    destination = self.allocate_register()
+    self.emit_byte(Opcode::INVOKE)
+    self.emit_byte(destination)
+    self.emit_byte(receiver)
+    self.emit_byte(method_name_index)
+    self.emit_byte(parsed[0])
+    self.emit_byte(parsed[1])
     destination
   end
 
@@ -828,6 +1061,9 @@ class Parser
 
   def parse_precedence(precedence)
     left = self.parse_prefix()
+    while !@failed && @current.kind() == :dot
+      left = self.compile_invoke(left)
+    end
     while !@failed && self.token_precedence(@current.kind()) >= precedence
       operator = @current.kind()
       operator_precedence = self.token_precedence(operator)
@@ -864,6 +1100,16 @@ class Parser
     return self.parse_literal() if kind == :true || kind == :false || kind == :nil
     return self.parse_name() if kind == :identifier
     return self.parse_grouping() if kind == :left_paren
+    if kind == :self
+      if @current_class_index == nil
+        self.fail("'self' used outside a method")
+        return 0
+      end
+      return 0
+    end
+    if kind == :instance_variable
+      return self.compile_ivar_read(@previous)
+    end
     if kind == :minus
       operand = self.parse_precedence(Precedence::PREFIX)
       destination = self.allocate_register()
@@ -904,6 +1150,8 @@ class Parser
   # with no following `(` is always a local read.
   def parse_name()
     name = self.token_text(@previous)
+    class_entry = self.find_class(name)
+    return self.compile_new_call(class_entry[1]) if class_entry != nil && @current.kind() == :dot
     local = self.find_local(name)
     if @current.kind() == :left_paren
       return self.compile_closure_call(local) if local != nil
@@ -916,6 +1164,29 @@ class Parser
       return 0
     end
     self.read_local(local)
+  end
+
+  def compile_new_call(class_index)
+    self.advance_token()
+    if @current.kind() != :identifier || self.token_text(@current) != "new"
+      self.fail("expected 'new' after class name")
+      return 0
+    end
+    self.advance_token()
+    if @current.kind() != :left_paren
+      self.fail("expected '(' after 'new'")
+      return 0
+    end
+    self.advance_token()
+    parsed = self.parse_call_arguments()
+    return 0 if parsed == nil
+    destination = self.allocate_register()
+    self.emit_byte(Opcode::NEW)
+    self.emit_byte(destination)
+    self.emit_byte(class_index)
+    self.emit_byte(parsed[0])
+    self.emit_byte(parsed[1])
+    destination
   end
 
   def parse_literal()
