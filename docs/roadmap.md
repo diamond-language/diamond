@@ -1082,6 +1082,49 @@ future work.
   into the callee's own bytecode, conditioned on a contiguous supplied
   count from the start, not stored as independently re-evaluable
   expressions a call site could reach around a gap.
+- `Regexp`: `Regexp.new(pattern, options = 0)`, `.match(string)` (returns
+  `Array[String | Nil]`, `nil` on no match), `.match?(string)`. Backed by
+  `reginold`, a companion regex engine (Thompson NFA / Laurikari tagged
+  NFA / Onigmo fallback across three tiers, transparent to callers) built
+  and maintained as a separate project, linked in via a sibling checkout
+  at `../reginold` — the first dependency this project has taken on code
+  outside its own repo, an accepted, intentional hard dependency rather
+  than an optional one, since `reginold` exists specifically to serve
+  this integration. `Regexp.new`/`.match`/`.match?` mirror `File.open`'s
+  existing pseudo-class pattern (a magic name recognized at a `.` call
+  site, dispatching to a dedicated opcode; the compiled handle wrapped in
+  a plain GC-tracked object with no OS resource to explicitly `.close()`,
+  simpler than `File`'s lifecycle). No `/pattern/` literal syntax, no
+  `String` integration, no richer `MatchData` object — all confirmed,
+  deliberate v1 scope cuts, not gaps.
+
+  A real regression surfaced by `make test-sanitize`, not by hand-testing
+  (every match/no-match/capture-group/invalid-pattern scenario worked
+  correctly on the first try): the initial implementation declared its
+  `reginold_error`/`reginold_match` locals directly inside `run_chunk`'s
+  own giant opcode switch, the same way every other native-handle opcode
+  in this file already does. At `-O0` (this project's debug and sanitize
+  builds), every local variable declared anywhere in a switch statement
+  contributes to the enclosing function's one stack frame regardless of
+  which case actually runs — sibling blocks don't get to share stack
+  space the way they might under optimization. `reginold_error` alone is
+  ~112 bytes (its message buffer is `REGINOLD_ERROR_MSG_MAX=90`); adding
+  it and `reginold_match`'s fields pushed `run_chunk`'s per-level frame
+  size past what `DIAMOND_MAX_CALL_DEPTH` was calibrated for under
+  AddressSanitizer's redzone-inflated frames (see the call-depth
+  regression entry earlier in this doc — the exact same class of bug,
+  now triggered from a new direction), turning `depth(5000)`-style deep
+  recursion into a genuine ASan stack-overflow crash instead of the
+  clean, rescuable `SystemStackError` it's supposed to raise. Fixed by
+  moving the regex opcode bodies into their own `static` helper functions
+  (`regexp_new_helper`/`regexp_match_helper`), so their locals live in a
+  separate, transient frame that only exists while regex code is actually
+  executing — not baked into every recursive `run_chunk` level the way an
+  inline case body's locals are. Worth remembering for any future
+  opcode whose handler needs a nontrivial local (a struct, not just a
+  handful of scalars): factor it out from the start rather than adding it
+  inline, since the cost of getting this wrong is invisible until
+  something exercises deep recursion specifically.
 
 ## Next priorities
 

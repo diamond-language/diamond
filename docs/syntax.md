@@ -486,6 +486,45 @@ A connected socket (from `.connect` or `.accept()`) is a `File` under the
 hood, so `.read()`/`.read(n)`/`.gets()`/`.write(value)`/`.close()` work
 identically on both.
 
+## Regexp
+
+```ruby
+re = Regexp.new("(\\d+)-(\\d+)")
+m = re.match("id:42-99")   # => ["42-99", "42", "99"]
+m[0]                        # full match
+m[1]                        # first capture group
+
+re.match?("id:42-99")       # => true, no captures allocated
+re.match("no digits")       # => nil, no match
+
+Regexp.new("foo", 1)        # 1 = case-insensitive (see options below)
+```
+
+Backed by `reginold`, a companion regex engine — not part of this repo,
+built separately and linked in from a sibling checkout at `../reginold`
+— compiled under Ruby regex syntax. `Regexp.new(pattern, options = 0)` —
+the options argument is a plain `Int` bitmask: `1` = ignore case, `2` = `.`
+matches newline, `4` = extended (whitespace and `#` comments ignored in
+the pattern). Diamond has no bitwise-OR operator, so combine flags by
+adding them (they're disjoint bits — addition and OR coincide): `3` for
+case-insensitive *and* dot-matches-newline together.
+
+`.match(string)` returns an `Array` — index `0` is the full match, indices
+`1..` are capture groups in order, `nil` at any index for an unmatched
+optional group (`(a)|(b)` matched against `"b"` gives
+`["b", nil, "b"]`) — or `nil` if the pattern didn't match at all.
+`.match?(string)` is the same search without allocating capture data, for
+a plain yes/no check. An invalid pattern raises a rescuable `RegexpError`
+at `Regexp.new` time.
+
+This is deliberately a small first cut: no `/pattern/` literal syntax yet
+(`/` already means division; telling a leading regex apart from division
+needs the same kind of disambiguation Symbol's `:` got, not yet done for
+`/`), no `String` integration (`"x".match(re)`, `=~`, `.split`/`.gsub`
+taking a `Regexp`), and no richer `MatchData` object (`pre_match`, named
+captures) — the plain-`Array` result covers the common case; `Regexp.new`
++ `.match`/`.match?` is the whole surface for now.
+
 ## No AST
 
 The compiler is a single-pass Pratt parser that emits register bytecode
