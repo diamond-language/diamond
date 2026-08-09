@@ -1,0 +1,1 @@
+"aXXb".split("XX")

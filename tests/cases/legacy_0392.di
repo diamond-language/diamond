@@ -1,0 +1,1 @@
+"noSpaces".strip()

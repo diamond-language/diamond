@@ -1,0 +1,3 @@
+interface Baz
+end
+nil

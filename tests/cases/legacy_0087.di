@@ -1,0 +1,16 @@
+class Parent
+  def value()
+    40
+  end
+end
+
+class Child < Parent
+end
+
+def read(object)
+  object.value()
+end
+
+parent = Parent.new()
+child = Child.new()
+read(parent) + read(child) + read(child) + read(parent)

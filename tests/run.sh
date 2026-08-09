@@ -4,27 +4,9 @@ set -euo pipefail
 diamond=./build/diamond
 diamond_abs="$(realpath "$diamond")"
 
-actual="$($diamond -e '20 + 22')"
-[[ "$actual" == "42" ]] || {
-    echo "expected expression result 42, got: $actual" >&2
-    exit 1
-}
-
 actual="$($diamond --version)"
 [[ "$actual" == "diamond 0.1.0-dev" ]] || {
     echo "unexpected version output: $actual" >&2
-    exit 1
-}
-
-actual="$($diamond tests/cases/arithmetic.di)"
-[[ "$actual" == "42" ]] || {
-    echo "expected file result 42, got: $actual" >&2
-    exit 1
-}
-
-actual="$($diamond -e '2 + 3 * 4 - -1')"
-[[ "$actual" == "15" ]] || {
-    echo "precedence or unary arithmetic failed: $actual" >&2
     exit 1
 }
 
@@ -104,43 +86,6 @@ if "$diamond" -e '1 / 0' >/dev/null 2>&1; then
     exit 1
 fi
 
-actual="$("$diamond" -e '9223372036854775807 + 1')"
-[[ "$actual" == "9223372036854775808" ]]
-
-actual="$("$diamond" -e $'x = -9223372036854775807 - 1\nx + -1')"
-[[ "$actual" == "-9223372036854775809" ]]
-
-actual="$("$diamond" -e $'x = -9223372036854775807 - 1\nx - 1')"
-[[ "$actual" == "-9223372036854775809" ]]
-
-actual="$("$diamond" -e '9223372036854775807 * 2')"
-[[ "$actual" == "18446744073709551614" ]]
-
-actual="$("$diamond" -e $'x = -9223372036854775807 - 1\nx / -1')"
-[[ "$actual" == "9223372036854775808" ]]
-
-actual="$("$diamond" -e $'x = -9223372036854775807 - 1\n-x')"
-[[ "$actual" == "9223372036854775808" ]]
-
-actual="$("$diamond" -e $'begin\n 9223372036854775807 + 1\nrescue error: RangeError\n "raised"\nend')"
-[[ "$actual" == "9223372036854775808" ]]
-
-actual="$(DIAMOND_QUICKEN=1 "$diamond" -e \
-    $'def add(a, b) = a + b\nadd(1, 2)\nadd(9223372036854775807, 1)')"
-[[ "$actual" == "9223372036854775808" ]]
-
-actual="$($diamond tests/cases/control_flow.di)"
-[[ "$actual" == "42" ]] || {
-    echo "control flow program failed: $actual" >&2
-    exit 1
-}
-
-actual="$($diamond -e $'if false\n  1\nelse\n  2\nend')"
-[[ "$actual" == "2" ]] || {
-    echo "false branch failed: $actual" >&2
-    exit 1
-}
-
 if "$diamond" -e 'missing + 1' >/dev/null 2>&1; then
     echo "undefined local unexpectedly succeeded" >&2
     exit 1
@@ -152,12 +97,6 @@ grep -q 'ADD' <<<"$actual"
 grep -q 'RETURN' <<<"$actual"
 [[ "${actual##*$'\n'}" == "42" ]] || {
     echo "disassembled program did not execute to 42" >&2
-    exit 1
-}
-
-actual="$($diamond tests/cases/functions.di)"
-[[ "$actual" == "42" ]] || {
-    echo "function or recursion test failed: $actual" >&2
     exit 1
 }
 
@@ -174,28 +113,10 @@ grep -q 'CALL' <<<"$actual"
     exit 1
 }
 
-actual="$(DIAMOND_STRESS_GC=1 "$diamond" tests/cases/strings.di)"
-[[ "$actual" == "[hahahahahahahaha]" ]] || {
-    echo "string or stress-GC test failed: $actual" >&2
-    exit 1
-}
-
-actual="$("$diamond" -e '"same" == "same"')"
-[[ "$actual" == "true" ]] || {
-    echo "string value equality failed: $actual" >&2
-    exit 1
-}
-
 actual="$("$diamond" --dump-bytecode -e '"dia" + "mond"')"
 grep -q 'STRING.*s0 ("dia")' <<<"$actual"
 [[ "${actual##*$'\n'}" == "diamond" ]] || {
     echo "disassembled string program failed" >&2
-    exit 1
-}
-
-actual="$(DIAMOND_STRESS_GC=1 "$diamond" tests/cases/classes.di)"
-[[ "$actual" == "hello, diamond" ]] || {
-    echo "class, method, field, or stress-GC test failed: $actual" >&2
     exit 1
 }
 
@@ -205,22 +126,10 @@ grep -q 'INVOKE' <<<"$actual"
 grep -q 'GET_IVAR' <<<"$actual"
 grep -q 'SET_IVAR' <<<"$actual"
 
-actual="$(DIAMOND_STRESS_GC=1 "$diamond" tests/cases/inheritance.di)"
-[[ "$actual" == "hello> diamond" ]] || {
-    echo "inheritance, override, self, or inherited constructor failed: $actual" >&2
-    exit 1
-}
-
 if "$diamond" -e $'class Child < Missing\nend' >/dev/null 2>&1; then
     echo "undefined superclass unexpectedly compiled" >&2
     exit 1
 fi
-
-actual="$(DIAMOND_STRESS_GC=1 "$diamond" tests/cases/super.di)"
-[[ "$actual" == "hello> diamond!" ]] || {
-    echo "super method or constructor chaining failed: $actual" >&2
-    exit 1
-}
 
 actual="$("$diamond" --dump-bytecode tests/cases/super.di)"
 grep -q 'SUPER' <<<"$actual"
@@ -229,12 +138,6 @@ if "$diamond" -e $'class Root\n  def value()\n    super()\n  end\nend' >/dev/nul
     echo "super without a superclass unexpectedly compiled" >&2
     exit 1
 fi
-
-actual="$(DIAMOND_STRESS_GC=1 "$diamond" tests/cases/types.di)"
-[[ "$actual" == "Ruby: 42" ]] || {
-    echo "typed primitive, class, or subtype boundary failed: $actual" >&2
-    exit 1
-}
 
 if "$diamond" -e $'def typed(x: String)\n  x\nend\ntyped(42)' >/dev/null 2>&1; then
     echo "typed parameter accepted wrong runtime type" >&2
@@ -254,25 +157,10 @@ fi
 actual="$("$diamond" --dump-bytecode -e $'def add(x: Int) -> Int\n  x + 1\nend\nadd(41)')"
 grep -q 'CHECK_TYPE' <<<"$actual"
 
-actual="$(DIAMOND_STRESS_GC=1 "$diamond" tests/cases/nilable_types.di)"
-[[ "$actual" == "#<ChildRecord>" ]] || {
-    echo "nilable nominal subtype check failed: $actual" >&2
-    exit 1
-}
-
-actual="$("$diamond" -e $'def accept(x: Int | Nil) -> Int | Nil\n  x\nend\naccept(nil)')"
-[[ "$actual" == "nil" ]] || {
-    echo "nilable parameter rejected nil: $actual" >&2
-    exit 1
-}
-
 if "$diamond" -e $'def accept(x: Int | Nil)\n x\nend\naccept("bad")' >/dev/null 2>&1; then
     echo "nilable parameter accepted wrong non-nil type" >&2
     exit 1
 fi
-
-actual="$("$diamond" -e $'def accept(x: Int | String) -> Int | String\n x\nend\naccept("diamond")')"
-[[ "$actual" == "diamond" ]]
 
 error_file="$(mktemp)"
 if "$diamond" -e $'def accept(x: Int | String)\n x\nend\naccept(true)' \
@@ -287,12 +175,6 @@ rm -f "$error_file"
 actual="$("$diamond" --dump-bytecode -e $'def accept(x: Int | String)\n x\nend\naccept(42)')"
 grep -q 'CHECK_TYPE.*Int | String' <<<"$actual"
 
-actual="$(DIAMOND_STRESS_GC=1 "$diamond" tests/cases/general_unions.di)"
-[[ "$actual" == "diamond" ]]
-
-actual="$(DIAMOND_STRESS_GC=1 "$diamond" tests/cases/array_generics.di)"
-[[ "$actual" == "42" ]]
-
 error_file="$(mktemp)"
 if "$diamond" -e $'def ints(values: Array[Int])\n values\nend\nints([1, "bad"])' \
     >/dev/null 2>"$error_file"; then
@@ -305,9 +187,6 @@ rm -f "$error_file"
 
 actual="$("$diamond" --dump-bytecode -e $'def nested(values: Array[Array[Int | Nil]])\n values\nend\nnested([[nil]])')"
 grep -q 'Array\[Array\[Int | Nil\]\]' <<<"$actual"
-
-actual="$(DIAMOND_STRESS_GC=1 "$diamond" tests/cases/hash_generics.di)"
-[[ "$actual" == "42" ]]
 
 error_file="$(mktemp)"
 if "$diamond" -e $'def scores(values: Hash[String, Int])\n values\nend\nscores({"ok": "bad"})' \
@@ -322,42 +201,9 @@ rm -f "$error_file"
 actual="$("$diamond" --dump-bytecode -e $'def nested(values: Hash[String, Array[Int | Nil]])\n values\nend\nnested({"items": [nil]})')"
 grep -q 'Hash\[String, Array\[Int | Nil\]\]' <<<"$actual"
 
-actual="$(DIAMOND_STRESS_GC=1 "$diamond" -e 'array_first([42])')"
-[[ "$actual" == "42" ]]
-
-actual="$(DIAMOND_STRESS_GC=1 "$diamond" -e 'array_swap_first_two([20, 22])')"
-[[ "$actual" == "[22, 20]" ]]
-
-actual="$(DIAMOND_STRESS_GC=1 "$diamond" -e 'hash_fetch({"answer": 42}, "answer", 0)')"
-[[ "$actual" == "42" ]]
-
-actual="$("$diamond" -e 'hash_fetch({}, "missing", 42)')"
-[[ "$actual" == "42" ]]
-
 actual="$("$diamond" --dump-bytecode -e 'array_first([42])')"
 grep -q '^== array_first ==$' <<<"$actual"
 grep -q 'INDEX_GET' <<<"$actual"
-
-actual="$("$diamond" -e '[20, 22].length()')"
-[[ "$actual" == "2" ]]
-
-actual="$("$diamond" -e '{"answer": 42}.length()')"
-[[ "$actual" == "1" ]]
-
-actual="$("$diamond" -e '"diamond".length()')"
-[[ "$actual" == "7" ]]
-
-actual="$(DIAMOND_STRESS_GC=1 "$diamond" -e 'array_first_or([], 40) + array_last([1, 2])')"
-[[ "$actual" == "42" ]]
-
-actual="$("$diamond" -e 'array_last_or([], 42)')"
-[[ "$actual" == "42" ]]
-
-actual="$("$diamond" -e 'array_empty([]) && hash_empty({})')"
-[[ "$actual" == "true" ]]
-
-actual="$("$diamond" -e $'begin\n [1].length(2)\nrescue error: ArgumentError\n 42\nend')"
-[[ "$actual" == "42" ]]
 
 error_file="$(mktemp)"
 if "$diamond" -e $'class Foo\n def bar(a, b)\n  a + b\n end\nend\nFoo.new().bar(1)' >/dev/null 2>"$error_file"; then
@@ -375,12 +221,6 @@ fi
 grep -q 'runtime error: wrong number of arguments' "$error_file"
 rm -f "$error_file"
 
-actual="$("$diamond" -e $'class Foo\n def bar(a, b)\n  a + b\n end\nend\nbegin\n Foo.new().bar(1)\nrescue error: ArgumentError\n error.message()\nend')"
-[[ "$actual" == "wrong number of arguments" ]]
-
-actual="$("$diamond" -e $'class Foo\n def initialize(a, b)\n  @a = a\n end\nend\nbegin\n Foo.new(1)\nrescue error: ArgumentError\n 42\nend')"
-[[ "$actual" == "42" ]]
-
 error_file="$(mktemp)"
 if "$diamond" -e $'class Foo\n def bar(a, b)\n  a + b\n end\nend\nf = Foo.new()\nf.bar(1, 2)\nf.bar(1, 2)\nf.bar(1, 2)\nf.bar(1)' \
     >/dev/null 2>"$error_file"; then
@@ -389,9 +229,6 @@ if "$diamond" -e $'class Foo\n def bar(a, b)\n  a + b\n end\nend\nf = Foo.new()\
 fi
 grep -q 'runtime error: wrong number of arguments' "$error_file"
 rm -f "$error_file"
-
-actual="$("$diamond" -e $'class Foo\n def bar(a, b)\n  a + b\n end\nend\nclass Baz\n def bar(a)\n  a\n end\nend\ndef call_it(x)\n x.bar(1)\nend\ncall_it(Baz.new())\nbegin\n call_it(Foo.new())\nrescue error: ArgumentError\n 42\nend')"
-[[ "$actual" == "42" ]]
 
 error_file="$(mktemp)"
 if "$diamond" -e $'class Foo\n def bar(a, b)\n  a + b\n end\nend\ndef inner(x)\n x.bar(1)\nend\ndef outer(x)\n inner(x)\nend\nouter(Foo.new())' \
@@ -423,30 +260,6 @@ if "$diamond" -e $'def unsafe(values: Hash[String, Int]) -> Int\n values["missin
     exit 1
 fi
 
-actual="$(DIAMOND_STRESS_GC=1 "$diamond" -e $'values = []\nindex = 0\nwhile index < 20\n values.push(index)\n index = index + 1\nend\nvalues.length()')"
-[[ "$actual" == "20" ]]
-
-actual="$(DIAMOND_STRESS_GC=1 "$diamond" -e $'values = [20, 22]\nlast = values.pop()\nlast + values.length() + 19')"
-[[ "$actual" == "42" ]]
-
-actual="$("$diamond" -e '[].pop()')"
-[[ "$actual" == "nil" ]]
-
-actual="$("$diamond" -e $'def checked(values: Array[Int])\n values\nend\nvalues = []\nchecked(values)\nbegin\n values.push("bad")\nrescue error: TypeError\n 42\nend')"
-[[ "$actual" == "42" ]]
-
-actual="$("$diamond" -e $'def checked(values: Array[Array[Int]])\n values\nend\nouter = []\ninner = []\nchecked(outer)\nouter.push(inner)\nbegin\n inner.push("bad")\nrescue error: TypeError\n 42\nend')"
-[[ "$actual" == "42" ]]
-
-actual="$("$diamond" -e 'array_include([20, 22], 22)')"
-[[ "$actual" == "true" ]]
-
-actual="$(DIAMOND_STRESS_GC=1 "$diamond" -e $'def mapped()\n def double(value)\n  value * 2\n end\n array_map([10, 11], double)\nend\nmapped()')"
-[[ "$actual" == "[20, 22]" ]]
-
-actual="$(DIAMOND_STRESS_GC=1 "$diamond" -e $'def total()\n sum = 0\n def add(value)\n  sum = sum + value\n end\n array_each([20, 22], add)\n sum\nend\ntotal()')"
-[[ "$actual" == "42" ]]
-
 actual="$("$diamond" --dump-bytecode -e $'def present(value: String | Nil) -> String\n if value != nil\n  value\n else\n  "fallback"\n end\nend\npresent(nil)')"
 present_dump="$(sed -n '/^== present ==$/,$p' <<<"$actual")"
 [[ "$(grep -c 'CHECK_TYPE' <<<"$present_dump")" == "1" ]]
@@ -455,42 +268,9 @@ actual="$("$diamond" --dump-bytecode -e $'def lookup(values: Hash[String, Int]) 
 lookup_dump="$(sed -n '/^== lookup ==$/,$p' <<<"$actual")"
 [[ "$(grep -c 'CHECK_TYPE' <<<"$lookup_dump")" == "1" ]]
 
-actual="$("$diamond" -e $'def answer(value: Int | Nil) -> Int\n if value != nil\n  value\n else\n  42\n end\nend\nanswer(nil)')"
-[[ "$actual" == "42" ]]
-
 actual="$("$diamond" --dump-bytecode -e $'def unstable(value: String | Nil, flag: Bool) -> String\n if flag\n  value = "changed"\n end\n value\nend\nunstable("ok", false)')"
 unstable_dump="$(sed -n '/^== unstable ==$/,$p' <<<"$actual")"
 [[ "$(grep -c 'CHECK_TYPE' <<<"$unstable_dump")" == "3" ]]
-
-actual="$("$diamond" -e '{"first": 20, "second": 22}.key_at(1)')"
-[[ "$actual" == "second" ]]
-
-actual="$("$diamond" -e '{"first": 20, "second": 22}.value_at(1)')"
-[[ "$actual" == "22" ]]
-
-actual="$(DIAMOND_STRESS_GC=1 "$diamond" -e 'hash_keys({"first": 20, "second": 22})')"
-[[ "$actual" == "[first, second]" ]]
-
-actual="$(DIAMOND_STRESS_GC=1 "$diamond" -e 'hash_values({"first": 20, "second": 22})')"
-[[ "$actual" == "[20, 22]" ]]
-
-actual="$("$diamond" -e 'hash_include_key({"answer": 42}, "answer")')"
-[[ "$actual" == "true" ]]
-
-actual="$(DIAMOND_STRESS_GC=1 "$diamond" -e $'def sum_values()\n total = 0\n def add(key, value)\n  total = total + value\n end\n hash_each({"a": 20, "b": 22}, add)\n total\nend\nsum_values()')"
-[[ "$actual" == "42" ]]
-
-actual="$(DIAMOND_STRESS_GC=1 "$diamond" -e $'def transform()\n def double(value)\n  value * 2\n end\n hash_map_values({"a": 20, "b": 1}, double)\nend\ntransform()')"
-[[ "$actual" == "{a: 40, b: 2}" ]]
-
-actual="$("$diamond" -e $'begin\n {}.key_at(0)\nrescue error: IndexError\n 42\nend')"
-[[ "$actual" == "42" ]]
-
-actual="$("$diamond" -e '42 is Int')"
-[[ "$actual" == "true" ]]
-
-actual="$("$diamond" -e '42 is String')"
-[[ "$actual" == "false" ]]
 
 actual="$("$diamond" --dump-bytecode -e $'def text(value: String | Int) -> String\n if value is String\n  value\n else\n  "number"\n end\nend\ntext(42)')"
 text_dump="$(sed -n '/^== text ==$/,$p' <<<"$actual")"
@@ -501,9 +281,6 @@ actual="$("$diamond" --dump-bytecode -e $'def number(value: String | Int) -> Int
 number_dump="$(sed -n '/^== number ==$/,$p' <<<"$actual")"
 [[ "$(grep -c 'CHECK_TYPE' <<<"$number_dump")" == "1" ]]
 
-actual="$("$diamond" -e $'class Animal\nend\nclass Dog < Animal\nend\nDog.new() is Animal')"
-[[ "$actual" == "true" ]]
-
 actual="$("$diamond" --dump-bytecode -e $'def compound(value: String | Int, flag: Bool) -> String\n if value is String && flag\n  value\n else\n  "fallback"\n end\nend\ncompound("ok", true)')"
 compound_dump="$(sed -n '/^== compound ==$/,$p' <<<"$actual")"
 [[ "$(grep -c 'CHECK_TYPE' <<<"$compound_dump")" == "2" ]]
@@ -512,12 +289,6 @@ if "$diamond" -e '42 is Missing' >/dev/null 2>&1; then
     echo "is accepted an unknown type" >&2
     exit 1
 fi
-
-actual="$("$diamond" -e $'def run()\n def identity(value)\n  value\n end\n array_each([], identity).length()\nend\nrun()')"
-[[ "$actual" == "0" ]]
-
-actual="$("$diamond" -e $'def run()\n def wrong()\n  42\n end\n begin\n  array_each([], wrong)\n rescue error: TypeError\n  42\n end\nend\nrun()')"
-[[ "$actual" == "42" ]]
 
 error_file="$(mktemp)"
 if "$diamond" -e $'def run()\n def wrong()\n  42\n end\n array_map([], wrong)\nend\nrun()' \
@@ -528,9 +299,6 @@ if "$diamond" -e $'def run()\n def wrong()\n  42\n end\n array_map([], wrong)\ne
 fi
 grep -q 'expected Callable\[1\], got Callable' "$error_file"
 rm -f "$error_file"
-
-actual="$("$diamond" -e $'def run()\n def pair(key, value)\n  key\n end\n hash_each({}, pair).length()\nend\nrun()')"
-[[ "$actual" == "0" ]]
 
 actual="$("$diamond" --dump-bytecode -e '42')"
 array_each_dump="$(sed -n '/^== array_each ==$/,/^== /p' <<<"$actual")"
@@ -592,18 +360,6 @@ if grep -q 'CHECK_TYPE' <<<"$absent_dump"; then
     exit 1
 fi
 
-actual="$(DIAMOND_STRESS_GC=1 "$diamond" tests/cases/arrays.di)"
-[[ "$actual" == "22" ]] || {
-    echo "array indexing, typing, or recursive GC tracing failed: $actual" >&2
-    exit 1
-}
-
-actual="$(DIAMOND_STRESS_GC=1 "$diamond" -e '[["diamond"], [42], []]')"
-[[ "$actual" == "[[diamond], [42], []]" ]] || {
-    echo "nested array printing failed: $actual" >&2
-    exit 1
-}
-
 error_file="$(mktemp)"
 if "$diamond" -e '[1][2]' >/dev/null 2>"$error_file"; then
     echo "out-of-bounds array read unexpectedly succeeded" >&2
@@ -623,18 +379,6 @@ actual="$("$diamond" --dump-bytecode -e '[20, 22][1]')"
 grep -q 'ARRAY' <<<"$actual"
 grep -q 'INDEX_GET' <<<"$actual"
 
-actual="$(DIAMOND_STRESS_GC=1 "$diamond" tests/cases/array_mutation.di)"
-[[ "$actual" == "survived" ]] || {
-    echo "array mutation or post-frame GC tracing failed: $actual" >&2
-    exit 1
-}
-
-actual="$("$diamond" -e $'values = [20, 0]\nvalues[1] = 22\nvalues[0] + values[1]')"
-[[ "$actual" == "42" ]] || {
-    echo "indexed assignment did not update array: $actual" >&2
-    exit 1
-}
-
 error_file="$(mktemp)"
 if "$diamond" -e $'values = [1]\nvalues[-1] = 2' >/dev/null 2>"$error_file"; then
     echo "negative indexed assignment unexpectedly succeeded" >&2
@@ -647,50 +391,8 @@ rm -f "$error_file"
 actual="$("$diamond" --dump-bytecode -e $'values = [0]\nvalues[0] = 42\nvalues')"
 grep -q 'INDEX_SET' <<<"$actual"
 
-actual="$("$diamond" -e 'false && (1 / 0)')"
-[[ "$actual" == "false" ]] || {
-    echo "&& did not short-circuit or preserve false operand" >&2
-    exit 1
-}
-
-actual="$("$diamond" -e 'true || (1 / 0)')"
-[[ "$actual" == "true" ]] || {
-    echo "|| did not short-circuit or preserve true operand" >&2
-    exit 1
-}
-
-actual="$("$diamond" -e 'nil || "fallback"')"
-[[ "$actual" == "fallback" ]] || {
-    echo "|| did not return its evaluated right operand" >&2
-    exit 1
-}
-
-actual="$("$diamond" -e 'false || true && 42')"
-[[ "$actual" == "42" ]] || {
-    echo "&& and || precedence is incorrect" >&2
-    exit 1
-}
-
-actual="$("$diamond" -e '!nil')"
-[[ "$actual" == "true" ]] || {
-    echo "truthiness negation failed" >&2
-    exit 1
-}
-
 actual="$("$diamond" --dump-bytecode -e 'nil || 42')"
 grep -q 'JUMP_IF_TRUE' <<<"$actual"
-
-actual="$("$diamond" tests/cases/returns.di)"
-[[ "$actual" == "4" ]] || {
-    echo "nested explicit return did not exit its function: $actual" >&2
-    exit 1
-}
-
-actual="$("$diamond" -e $'def empty() -> Nil\n  return\nend\nempty()')"
-[[ "$actual" == "nil" ]] || {
-    echo "bare return did not produce nil: $actual" >&2
-    exit 1
-}
 
 if "$diamond" -e $'def bad(flag) -> Int\n  if flag\n    return "bad"\n  end\n  0\nend' \
     >/dev/null 2>&1; then
@@ -713,18 +415,6 @@ if "$diamond" -e 'return 1' >/dev/null 2>&1; then
     exit 1
 fi
 
-actual="$("$diamond" tests/cases/loop_control.di)"
-[[ "$actual" == "12" ]] || {
-    echo "break or next produced the wrong loop result: $actual" >&2
-    exit 1
-}
-
-actual="$("$diamond" -e $'outer = 0\ntotal = 0\nwhile outer < 3\n  outer = outer + 1\n  inner = 0\n  while true\n    inner = inner + 1\n    if inner == 2\n      break\n    end\n    total = total + 1\n  end\nend\ntotal')"
-[[ "$actual" == "3" ]] || {
-    echo "nested break targeted the wrong loop: $actual" >&2
-    exit 1
-}
-
 if "$diamond" -e 'break' >/dev/null 2>&1; then
     echo "top-level break unexpectedly compiled" >&2
     exit 1
@@ -740,24 +430,6 @@ if "$diamond" -e $'while true\n  next 42\nend' >/dev/null 2>&1; then
     exit 1
 fi
 
-actual="$("$diamond" tests/cases/source_ergonomics.di)"
-[[ "$actual" == "42" ]] || {
-    echo "comments, separators, or trailing commas failed: $actual" >&2
-    exit 1
-}
-
-actual="$("$diamond" -e '1_000_000 + 24')"
-[[ "$actual" == "1000024" ]] || {
-    echo "numeric digit separators decoded incorrectly: $actual" >&2
-    exit 1
-}
-
-actual="$("$diamond" -e '"# not a comment"')"
-[[ "$actual" == "# not a comment" ]] || {
-    echo "comment marker inside string was misinterpreted: $actual" >&2
-    exit 1
-}
-
 if "$diamond" -e '1__000' >/dev/null 2>&1; then
     echo "malformed numeric separators unexpectedly compiled" >&2
     exit 1
@@ -767,30 +439,6 @@ if "$diamond" -e '1_' >/dev/null 2>&1; then
     echo "trailing numeric separator unexpectedly compiled" >&2
     exit 1
 fi
-
-actual="$(DIAMOND_STRESS_GC=1 "$diamond" tests/cases/hashes.di)"
-[[ "$actual" == "42" ]] || {
-    echo "hash lookup, mutation, typing, or tracing failed: $actual" >&2
-    exit 1
-}
-
-actual="$("$diamond" -e '{"name": "Diamond", "answer": 42,}')"
-[[ "$actual" == "{name: Diamond, answer: 42}" ]] || {
-    echo "hash literal or printing failed: $actual" >&2
-    exit 1
-}
-
-actual="$("$diamond" -e $'data = {}\ndata["new"] = 42\ndata["new"]')"
-[[ "$actual" == "42" ]] || {
-    echo "hash insertion failed: $actual" >&2
-    exit 1
-}
-
-actual="$("$diamond" -e '{}["missing"]')"
-[[ "$actual" == "nil" ]] || {
-    echo "missing hash key did not return nil: $actual" >&2
-    exit 1
-}
 
 if "$diamond" -e $'def typed(value: Hash)\n value\nend\ntyped([])' \
     >/dev/null 2>&1; then
@@ -814,15 +462,6 @@ rm -f "$error_file"
 
 actual="$("$diamond" --dump-bytecode -e '40 + 2')"
 grep -Eq '^[0-9]{4} +1:[0-9]+ +ADD' <<<"$actual"
-
-actual="$(DIAMOND_STRESS_GC=1 "$diamond" tests/cases/closure_capture.di)"
-[[ "$actual" == "47" ]]
-
-actual="$(DIAMOND_STRESS_GC=1 "$diamond" tests/cases/mutable_closure.di)"
-[[ "$actual" == "2" ]]
-
-actual="$(DIAMOND_STRESS_GC=1 "$diamond" tests/cases/deep_closure.di)"
-[[ "$actual" == "42" ]]
 
 error_file="$(mktemp)"
 actual="$(DIAMOND_TRACE_IC=1 "$diamond" tests/cases/inline_cache.di 2>"$error_file")"
@@ -917,15 +556,6 @@ actual="$(DIAMOND_TRACE_IC_SITES=1 "$diamond" tests/cases/inherited_cache.di 2>"
 grep -Eq 'inline cache site\[[0-9]+\]: 2 hits, 2 misses, 2 classes' "$error_file"
 rm -f "$error_file"
 
-actual="$("$diamond" tests/cases/inherited_cache.di)"
-[[ "$actual" == "160" ]]
-
-actual="$("$diamond" tests/cases/mono_deopt.di)"
-[[ "$actual" == "82" ]]
-
-actual="$("$diamond" tests/cases/dispatch_benchmark.di)"
-[[ "$actual" == "42" ]]
-
 error_file="$(mktemp)"
 actual="$(DIAMOND_TRACE_IC_PROBES=1 "$diamond" tests/cases/dispatch_benchmark.di 2>"$error_file")"
 [[ "$actual" == "42" ]]
@@ -947,9 +577,6 @@ actual="$(DIAMOND_IC_MONO_THRESHOLD=100 DIAMOND_REPEAT=2 \
 grep -q 'run 1: inline caches: 99 hits, 1 misses, rewrites: 0' "$error_file"
 grep -q 'run 2: inline caches: 99 hits, 1 misses, rewrites: 0' "$error_file"
 rm -f "$error_file"
-
-actual="$("$diamond" tests/cases/mixed_dispatch_workload.di)"
-[[ "$actual" == "1500" ]]
 
 error_file="$(mktemp)"
 actual="$(DIAMOND_TRACE_IC_FAST=1 "$diamond" tests/cases/mixed_dispatch_workload.di 2>"$error_file")"
@@ -1023,9 +650,6 @@ grep -q 'at call_fail:6:' "$error_file"
 grep -q 'at tests/cases/raise_stack.di:9:' "$error_file"
 rm -f "$error_file"
 
-actual="$("$diamond" -e $'def depth(n)\n if n <= 0\n  0\n else\n  depth(n - 1) + 1\n end\nend\ndepth(90)')"
-[[ "$actual" == "90" ]]
-
 error_file="$(mktemp)"
 if "$diamond" -e $'def depth(n)\n if n <= 0\n  0\n else\n  depth(n - 1) + 1\n end\nend\ndepth(5000)' \
     >/dev/null 2>"$error_file"; then
@@ -1034,9 +658,6 @@ if "$diamond" -e $'def depth(n)\n if n <= 0\n  0\n else\n  depth(n - 1) + 1\n en
 fi
 grep -q 'runtime error: call stack overflow' "$error_file"
 rm -f "$error_file"
-
-actual="$("$diamond" -e $'def depth(n)\n if n <= 0\n  0\n else\n  depth(n - 1) + 1\n end\nend\nbegin\n depth(5000)\nrescue error: SystemStackError\n 42\nend')"
-[[ "$actual" == "42" ]]
 
 actual="$("$diamond" --dump-bytecode -e 'raise 42' 2>/dev/null || true)"
 grep -q 'RAISE' <<<"$actual"
@@ -1058,12 +679,6 @@ fi
 grep -q 'runtime error: yield outside a fiber' "$error_file"
 rm -f "$error_file"
 
-actual="$("$diamond" -e $'class Shape\n def initialize(width, height)\n  @width = width\n  @height = height\n end\n def area()\n  @width * @height\n end\n def self.square_area_patch()\n  def square_area()\n   @width * @width\n  end\n  square_area\n end\nend\ns = Shape.new(3, 4)\nbefore = s.area()\nShape.redefine_method("area", Shape.square_area_patch())\nafter = s.area()\n"#{before}, #{after}"')"
-[[ "$actual" == "12, 9" ]]
-
-actual="$("$diamond" -e $'class Shape\n def initialize(width, height)\n  @width = width\n  @height = height\n end\n def area()\n  @width * @height\n end\n def self.square_area_patch()\n  def square_area()\n   @width * @width\n  end\n  square_area\n end\nend\ns = Shape.new(3, 4)\ns.area()\ns.area()\ns.area()\nShape.redefine_method("area", Shape.square_area_patch())\ns.area()')"
-[[ "$actual" == "9" ]]
-
 error_file="$(mktemp)"
 if "$diamond" -e $'class Foo\n def bar(a)\n  a\n end\n def self.make_patch()\n  def replacement(a, b)\n   a + b\n  end\n  replacement\n end\nend\nFoo.redefine_method("bar", Foo.make_patch())' \
     >/dev/null 2>"$error_file"; then
@@ -1072,9 +687,6 @@ if "$diamond" -e $'class Foo\n def bar(a)\n  a\n end\n def self.make_patch()\n  
 fi
 grep -q 'runtime error: wrong number of arguments' "$error_file"
 rm -f "$error_file"
-
-actual="$("$diamond" -e $'class Foo\n def bar(a)\n  a\n end\n def self.make_patch()\n  def replacement(a, b)\n   a + b\n  end\n  replacement\n end\nend\nbegin\n Foo.redefine_method("bar", Foo.make_patch())\nrescue error: ArgumentError\n 42\nend')"
-[[ "$actual" == "42" ]]
 
 error_file="$(mktemp)"
 if "$diamond" -e $'class Foo\n def bar(a)\n  a\n end\n def self.make_patch()\n  def replacement(a)\n   a\n  end\n  replacement\n end\nend\nFoo.redefine_method("nonexistent", Foo.make_patch())' \
@@ -1103,41 +715,14 @@ fi
 grep -q "redefine_method callable must be a method of 'Foo'" "$error_file"
 rm -f "$error_file"
 
-actual="$(DIAMOND_STRESS_GC=1 "$diamond" tests/cases/rescue.di)"
-[[ "$actual" == "diamond rescued!" ]]
-
-actual="$("$diamond" -e $'begin\n 40 + 2\nrescue error\n 0\nend')"
-[[ "$actual" == "42" ]]
-
 actual="$("$diamond" --dump-bytecode tests/cases/rescue.di)"
 grep -q 'PUSH_RESCUE' <<<"$actual"
 grep -q 'POP_RESCUE' <<<"$actual"
-
-actual="$(DIAMOND_STRESS_GC=1 "$diamond" tests/cases/typed_rescue.di)"
-[[ "$actual" == "42" ]]
-
-actual="$(DIAMOND_STRESS_GC=1 "$diamond" tests/cases/standard_exceptions.di)"
-[[ "$actual" == "42" ]]
-
-actual="$("$diamond" -e $'begin\n true + 1\nrescue error: StandardError\n 42\nend')"
-[[ "$actual" == "42" ]]
-
-actual="$(DIAMOND_STRESS_GC=1 "$diamond" tests/cases/ensure.di)"
-[[ "$actual" == "42" ]]
-
-actual="$("$diamond" -e $'begin\n begin\n  1 / 0\n ensure\n  40 + 2\n end\nrescue error: ZeroDivisionError\n 42\nend')"
-[[ "$actual" == "42" ]]
 
 actual="$("$diamond" --dump-bytecode -e $'begin\n 42\nensure\n nil\nend')"
 grep -q 'PUSH_ENSURE' <<<"$actual"
 grep -q 'RUN_ENSURE' <<<"$actual"
 grep -q 'END_ENSURE' <<<"$actual"
-
-actual="$("$diamond" -e $'def answer()\n begin\n  return 1\n ensure\n  return 42\n end\nend\nanswer()')"
-[[ "$actual" == "42" ]]
-
-actual="$("$diamond" -e $'begin\n begin\n  raise "old"\n ensure\n  raise 42\n end\nrescue error: Int\n error\nend')"
-[[ "$actual" == "42" ]]
 
 if "$diamond" -e $'begin\n raise 1\nrescue error: Int |\n 0\nend' \
     >/dev/null 2>&1; then
@@ -1145,92 +730,14 @@ if "$diamond" -e $'begin\n raise 1\nrescue error: Int |\n 0\nend' \
     exit 1
 fi
 
-actual="$(DIAMOND_STRESS_GC=1 "$diamond" -e $'def run()\n def stringify(value) -> String\n  "ok"\n end\n array_map_string([1, 2], stringify)\nend\nrun()')"
-[[ "$actual" == "[ok, ok]" ]]
-
-actual="$($diamond -e $'def run()\n def stringify(value) -> String\n  "ok"\n end\n result = array_map_string([1], stringify)\n begin\n  result.push(42)\n rescue error: TypeError\n  42\n end\nend\nrun()')"
-[[ "$actual" == "42" ]]
-
-actual="$($diamond -e $'def run()\n def wrong(value) -> Int\n  value\n end\n begin\n  array_map_string([], wrong)\n rescue error: TypeError\n  42\n end\nend\nrun()')"
-[[ "$actual" == "42" ]]
-
-actual="$($diamond -e $'def run()\n def unknown(value)\n  "ok"\n end\n begin\n  array_map_string([], unknown)\n rescue error: TypeError\n  42\n end\nend\nrun()')"
-[[ "$actual" == "42" ]]
-
-actual="$($diamond -e $'class Animal\nend\nclass Dog < Animal\nend\ndef run()\n def make_dog() -> Dog\n  Dog.new()\n end\n def accept(callback: Callable[0, Animal]) -> Animal\n  callback()\n end\n accept(make_dog)\nend\nrun()')"
-[[ "$actual" == "#<Dog>" ]]
-
 actual="$($diamond --dump-bytecode -e $'def accept(callback: Callable[1, String])\n callback(1)\nend')"
 grep -q 'Callable\[1, String\]' <<<"$actual"
-
-actual="$($diamond -e $'def size(value: Sized) -> Int\n value.length()\nend\n[size("abc"), size([1, 2]), size({"a": 1})]')"
-[[ "$actual" == "[3, 2, 1]" ]]
-
-actual="$($diamond -e $'class Box\n def length() -> Int\n  42\n end\nend\ndef size(value: Sized) -> Int\n value.length()\nend\n[size(Box.new()), Box.new() is Sized, 42 is Sized]')"
-[[ "$actual" == "[42, true, false]" ]]
-
-actual="$($diamond -e $'class Parent\n def length() -> Int\n  42\n end\nend\nclass Child < Parent\nend\ndef size(value: Sized) -> Int\n value.length()\nend\nsize(Child.new())')"
-[[ "$actual" == "42" ]]
-
-actual="$($diamond -e $'def size(value: Sized) -> Int\n value.length()\nend\ndef dynamic(values: Array)\n begin\n  size(values[0])\n rescue error: TypeError\n  42\n end\nend\ndynamic([1])')"
-[[ "$actual" == "42" ]]
-
-actual="$($diamond -e $'def length_or_zero(value: Sized | Nil) -> Int\n if value is Sized\n  value.length()\n else\n  0\n end\nend\n[length_or_zero([1, 2]), length_or_zero(nil)]')"
-[[ "$actual" == "[2, 0]" ]]
 
 actual="$($diamond --dump-bytecode -e $'def size(value: Sized)\n value.length()\nend')"
 grep -q 'CHECK_TYPE.*Sized' <<<"$actual"
 
-actual="$($diamond -e $'interface Greetable\n def greet(name)\nend\nclass Person\n def greet(name) -> String\n  name\n end\nend\ndef greet(value: Greetable) -> String\n value.greet("hi")\nend\n[greet(Person.new()), Person.new() is Greetable]')"
-[[ "$actual" == "[hi, true]" ]]
-
-actual="$($diamond -e $'interface Greetable\n def greet(name)\nend\nclass Wrong\n def greet()\n  "no"\n end\nend\nWrong.new() is Greetable')"
-[[ "$actual" == "false" ]]
-
-actual="$($diamond -e $'interface LengthLike\n def length()\nend\ndef size(value: LengthLike) -> Int\n value.length()\nend\n[size("abc"), size([1, 2]), size({"a": 1})]')"
-[[ "$actual" == "[3, 2, 1]" ]]
-
-actual="$($diamond -e $'interface Named\n def name()\nend\nclass Parent\n def name() -> String\n  "diamond"\n end\nend\nclass Child < Parent\nend\nChild.new() is Named')"
-[[ "$actual" == "true" ]]
-
-actual="$($diamond -e $'interface Greetable\n def greet(name)\nend\ndef accept(value: Greetable)\n value\nend\ndef dynamic(values: Array)\n begin\n  accept(values[0])\n rescue error: TypeError\n  42\n end\nend\ndynamic([1])')"
-[[ "$actual" == "42" ]]
-
-actual="$($diamond -e $'interface Named\n def name()\nend\nclass Person\n def name() -> String\n  "diamond"\n end\nend\ndef name_or_nil(value: Named | Nil)\n if value is Named\n  value.name()\n else\n  nil\n end\nend\n[name_or_nil(Person.new()), name_or_nil(nil)]')"
-[[ "$actual" == "[diamond, nil]" ]]
-
 actual="$($diamond --dump-bytecode -e $'interface Named\n def name()\nend\ndef accept(value: Named)\n value\nend')"
 grep -q 'CHECK_TYPE.*Named' <<<"$actual"
-
-actual="$($diamond -e $'class Animal\nend\nclass Dog < Animal\nend\ninterface Maker\n def make(value: Dog) -> Animal\nend\nclass Good\n def make(value: Animal) -> Dog\n  Dog.new()\n end\nend\nclass BadParameter\n def make(value: String) -> Dog\n  Dog.new()\n end\nend\nclass BadReturn\n def make(value: Animal) -> String\n  "no"\n end\nend\n[Good.new() is Maker, BadParameter.new() is Maker, BadReturn.new() is Maker]')"
-[[ "$actual" == "[true, false, false]" ]]
-
-actual="$($diamond -e $'interface Consumer\n def accept(value)\nend\nclass Typed\n def accept(value: Int)\n  value\n end\nend\nclass Dynamic\n def accept(value)\n  value\n end\nend\n[Typed.new() is Consumer, Dynamic.new() is Consumer]')"
-[[ "$actual" == "[false, true]" ]]
-
-actual="$($diamond -e $'interface StringMaker\n def make() -> String\nend\nclass Untyped\n def make()\n  "diamond"\n end\nend\nUntyped.new() is StringMaker')"
-[[ "$actual" == "false" ]]
-
-actual="$($diamond -e $'interface IntegerLength\n def length() -> Int\nend\ninterface StringLength\n def length() -> String\nend\n[[] is IntegerLength, [] is StringLength]')"
-[[ "$actual" == "[true, false]" ]]
-
-actual="$($diamond -e $'interface StringMaker\n def make() -> String\nend\nclass Wrong\n def make() -> Int\n  1\n end\nend\ndef accept(value: StringMaker)\n value\nend\ndef dynamic(values: Array)\n begin\n  accept(values[0])\n rescue error: TypeError\n  42\n end\nend\ndynamic([Wrong.new()])')"
-[[ "$actual" == "42" ]]
-
-actual="$($diamond -e $'def answer() = 42\nanswer()')"
-[[ "$actual" == "42" ]]
-
-actual="$($diamond -e $'def identity(value: String) -> String = value\nidentity("diamond")')"
-[[ "$actual" == "diamond" ]]
-
-actual="$($diamond -e $'class Greeter\n def greet(name: String) -> String = name\nend\nGreeter.new().greet("diamond")')"
-[[ "$actual" == "diamond" ]]
-
-actual="$($diamond -e $'def outer(value)\n def captured() = value\n captured()\nend\nouter(42)')"
-[[ "$actual" == "42" ]]
-
-actual="$($diamond -e $'interface Maker\n def make() -> String\nend\nclass DiamondMaker\n def make() -> String = "diamond"\nend\nDiamondMaker.new() is Maker')"
-[[ "$actual" == "true" ]]
 
 if "$diamond" -e $'def wrong() -> String = 42\nwrong()' >/dev/null 2>&1; then
     echo "endless method bypassed its return contract" >&2
@@ -1245,27 +752,6 @@ fi
 actual="$($diamond --dump-bytecode -e $'def answer() -> Int = 42\nanswer()')"
 grep -A3 '== answer ==' <<<"$actual" | grep -q 'RETURN'
 
-actual="$($diamond -e $'def greet(name = "world") = name\n[greet(), greet(nil), greet("diamond")]')"
-[[ "$actual" == "[world, nil, diamond]" ]]
-
-actual="$($diamond -e $'def values(a = 20, b = a + 2) = [a, b]\n[values(), values(40), values(40, 2)]')"
-[[ "$actual" == "[[20, 22], [40, 42], [40, 2]]" ]]
-
-actual="$($diamond -e $'class Greeter\n def greet(name = "world") = name\nend\n[Greeter.new().greet(), Greeter.new().greet(nil)]')"
-[[ "$actual" == "[world, nil]" ]]
-
-actual="$($diamond -e $'class Point\n def initialize(value = 42)\n  @value = value\n end\n def value() = @value\nend\n[Point.new().value(), Point.new(7).value()]')"
-[[ "$actual" == "[42, 7]" ]]
-
-actual="$($diamond -e $'def run()\n def greet(name = "world") = name\n [greet(), greet("diamond")]\nend\nrun()')"
-[[ "$actual" == "[world, diamond]" ]]
-
-actual="$($diamond -e $'interface Greeter\n def greet(name: String) -> String\nend\nclass Friendly\n def greet(name: String = "world") -> String = name\nend\nFriendly.new() is Greeter')"
-[[ "$actual" == "true" ]]
-
-actual="$($diamond -e $'def typed(value: Int = 42) -> Int = value\nbegin\n typed(nil)\nrescue error: TypeError\n 42\nend')"
-[[ "$actual" == "42" ]]
-
 if "$diamond" -e $'def invalid(optional = 1, required) = required' \
     >/dev/null 2>&1; then
     echo "required parameter followed a default parameter" >&2
@@ -1274,21 +760,6 @@ fi
 
 actual="$($diamond --dump-bytecode -e $'def answer(value = 42) = value\nanswer()')"
 grep -q 'ARGUMENT_PROVIDED' <<<"$actual"
-
-actual="$($diamond -e $'def greet(name = "world") = "Hello, #{name}"\n[greet(), greet("Diamond")]')"
-[[ "$actual" == "[Hello, world, Hello, Diamond]" ]]
-
-actual="$($diamond -e $'value = 42\n"x=#{value}, bool=#{true}, nil=#{nil}, math=#{value + 1}"')"
-[[ "$actual" == "x=42, bool=true, nil=nil, math=43" ]]
-
-actual="$($diamond -e $'"nested #{"text"}"')"
-[[ "$actual" == "nested text" ]]
-
-actual="$($diamond -e $'class Box\nend\n"value=#{Box.new()}"')"
-[[ "$actual" == "value=#<Box>" ]]
-
-actual="$($diamond -e $'"escaped \\#{42}"')"
-[[ "$actual" == 'escaped #{42}' ]]
 
 if "$diamond" -e $'"missing #{42"' >/dev/null 2>&1; then
     echo "unterminated interpolation unexpectedly compiled" >&2
@@ -1501,33 +972,6 @@ actual="$(cd "$manifest_dir" && DIAMOND_STRESS_GC=1 "$diamond_abs" main.di)"
 [[ "$actual" == "hi, world" ]]
 rm -rf "$manifest_dir"
 
-actual="$($diamond -e $'class User\n def initialize(name)\n  @name = name\n end\n def to_s() -> String = "User(#{@name})"\nend\n"hello #{User.new("Ada")}"')"
-[[ "$actual" == "hello User(Ada)" ]]
-
-actual="$($diamond -e $'class Box\nend\n"#{Box.new()}"')"
-[[ "$actual" == "#<Box>" ]]
-
-actual="$($diamond -e $'values = [1, "two", [true, nil]]\nmap = {"values": values}\n"#{map}"')"
-[[ "$actual" == "{values: [1, two, [true, nil]]}" ]]
-
-actual="$($diamond -e $'values = []\nvalues.push(values)\n"#{values}"')"
-[[ "$actual" == "[[...]]" ]]
-
-actual="$($diamond -e $'class Bad\n def to_s() = 42\nend\nbegin\n "#{Bad.new()}"\nrescue error: TypeError\n 42\nend')"
-[[ "$actual" == "42" ]]
-
-actual="$($diamond -e $'class Parent\n def to_s() -> String = "parent"\nend\nclass Child < Parent\nend\n"#{Child.new()}"')"
-[[ "$actual" == "parent" ]]
-
-actual="$(DIAMOND_STRESS_GC=1 "$diamond" -e $'class Item\n def to_s() -> String = "item"\nend\n"#{Item.new()} #{[1, 2]}"')"
-[[ "$actual" == "item [1, 2]" ]]
-
-actual="$($diamond -e $'def identity[T](value: T) -> T = value\n[identity(42), identity("diamond")]')"
-[[ "$actual" == "[42, diamond]" ]]
-
-actual="$($diamond -e $'def pair[K, V](key: K, value: V) -> Hash[K, V] = {key: value}\npair("answer", 42)')"
-[[ "$actual" == "{answer: 42}" ]]
-
 if "$diamond" -e $'def invalid[T, T](value: T) = value' >/dev/null 2>&1; then
     echo "duplicate generic type variable unexpectedly compiled" >&2
     exit 1
@@ -1547,89 +991,8 @@ fi
 actual="$($diamond --dump-bytecode -e $'def first[T](values: Array[T]) -> T = values[0]\nfirst([42])')"
 grep -q 'Array\[T0\]' <<<"$actual"
 
-actual="$($diamond -e $'def run()\n def stringify(value: Int) -> String = "#{value}"\n result = array_map_typed([1, 2], stringify)\n begin\n  result.push(3)\n rescue error: TypeError\n  result\n end\nend\nrun()')"
-[[ "$actual" == "[1, 2]" ]]
-
-actual="$($diamond -e $'def run()\n def stringify(value: Int) -> String = "#{value}"\n result = array_map_typed([], stringify)\n begin\n  result.push(42)\n rescue error: TypeError\n  42\n end\nend\nrun()')"
-[[ "$actual" == "42" ]]
-
-actual="$($diamond -e $'def pair[K, V](key: K, value: V) -> Hash[K, V] = {key: value}\nresult = pair("answer", 42)\nbegin\n result[1] = 2\nrescue error: TypeError\n result["answer"]\nend')"
-[[ "$actual" == "42" ]]
-
-actual="$($diamond -e $'def pair[K, V](key: K, value: V) -> Hash[K, V] = {key: value}\nresult = pair("answer", 42)\nbegin\n result["other"] = "wrong"\nrescue error: TypeError\n result["answer"]\nend')"
-[[ "$actual" == "42" ]]
-
-actual="$($diamond -e $'class Box\n def wrap[T](value: T) -> Array[T] = [value]\nend\nresult = Box.new().wrap("diamond")\nbegin\n result.push(42)\nrescue error: TypeError\n result\nend')"
-[[ "$actual" == "[diamond]" ]]
-
-actual="$($diamond -e $'class Animal\nend\nclass Dog < Animal\nend\ndef singleton[T](value: T) -> Array[T] = [value]\nresult = singleton(Dog.new())\nbegin\n result.push(Animal.new())\nrescue error: TypeError\n 42\nend')"
-[[ "$actual" == "42" ]]
-
-actual="$(DIAMOND_STRESS_GC=1 "$diamond" -e $'def singleton[T](value: T) -> Array[T] = [value]\nresult = singleton("diamond")\nbegin\n result.push(42)\nrescue error: TypeError\n result\nend')"
-[[ "$actual" == "[diamond]" ]]
-
-actual="$($diamond -e $'def bad[T](value: T) -> T = "wrong"\nbegin\n bad(42)\nrescue error: TypeError\n 42\nend')"
-[[ "$actual" == "42" ]]
-
-actual="$($diamond -e $'def singleton[T](value: T) -> Array[T] = [value]\nresult = singleton(["diamond"])\nbegin\n result.push([42])\nrescue error: TypeError\n 42\nend')"
-[[ "$actual" == "42" ]]
-
-actual="$($diamond -e $'def run()\n def words(value: Int) -> Array[String] = ["#{value}"]\n result = array_map_typed([], words)\n begin\n  result.push([42])\n rescue error: TypeError\n 42\n end\nend\nrun()')"
-[[ "$actual" == "42" ]]
-
-actual="$($diamond -e $'def singleton[T](value: T) -> Array[T] = [value]\nresult = singleton({"items": [1]})\nbegin\n result.push({"items": ["wrong"]})\nrescue error: TypeError\n 42\nend')"
-[[ "$actual" == "42" ]]
-
-actual="$(DIAMOND_STRESS_GC=1 "$diamond" -e $'def singleton[T](value: T) -> Array[T] = [value]\nresult = singleton([["diamond"]])\nbegin\n result.push([[42]])\nrescue error: TypeError\n 42\nend')"
-[[ "$actual" == "42" ]]
-
-actual="$($diamond -e $'def run()\n def accepts(callback: Callable[[Int], String]) = callback(42)\n def stringify(value: Int) -> String = "#{value}"\n accepts(stringify)\nend\nrun()')"
-[[ "$actual" == "42" ]]
-
-actual="$($diamond -e $'def run()\n def accepts(callback: Callable[[Int], String]) = 1\n def wrong(value: String) -> String = value\n begin\n  accepts(wrong)\n rescue error: TypeError\n  42\n end\nend\nrun()')"
-[[ "$actual" == "42" ]]
-
-actual="$($diamond -e $'def run()\n def accepts(callback: Callable[[Int], String]) = callback(42)\n def broad(value: Int | String) -> String = "#{value}"\n accepts(broad)\nend\nrun()')"
-[[ "$actual" == "42" ]]
-
-actual="$($diamond -e $'def run()\n def accepts(callback: Callable[[Int], String]) = callback(42)\n def dynamic(value) -> String = "#{value}"\n accepts(dynamic)\nend\nrun()')"
-[[ "$actual" == "42" ]]
-
-actual="$($diamond -e $'def run()\n def accepts(callback: Callable[[], String]) = callback()\n def greeting() -> String = "diamond"\n accepts(greeting)\nend\nrun()')"
-[[ "$actual" == "diamond" ]]
-
-actual="$($diamond -e $'def run()\n def accepts(callback: Callable[[Int], String]) = 1\n def wrong(value: Int) -> Int = value\n begin\n  accepts(wrong)\n rescue error: TypeError\n  42\n end\nend\nrun()')"
-[[ "$actual" == "42" ]]
-
 actual="$($diamond --dump-bytecode -e $'def accepts(callback: Callable[[Int, String], Bool]) = true\ntrue')"
 grep -q 'Callable\[\[Int, String\], Bool\]' <<<"$actual"
-
-actual="$($diamond -e $'def empty_ints() -> Array[Int] = []\ndef preserve[T](values: Array[T]) -> Array[T] = values\nresult = preserve(empty_ints())\nbegin\n result.push("wrong")\nrescue error: TypeError\n 42\nend')"
-[[ "$actual" == "42" ]]
-
-actual="$($diamond -e $'def empty_scores() -> Hash[String, Int] = {}\ndef preserve[K, V](values: Hash[K, V]) -> Hash[K, V] = values\nresult = preserve(empty_scores())\nbegin\n result["wrong"] = "wrong"\nrescue error: TypeError\n 42\nend')"
-[[ "$actual" == "42" ]]
-
-actual="$($diamond -e $'def empty_ints() -> Array[Int] = []\ndef run()\n def wrong(value: String) -> String = value\n begin\n  array_map_typed(empty_ints(), wrong)\n rescue error: TypeError\n  42\n end\nend\nrun()')"
-[[ "$actual" == "42" ]]
-
-actual="$(DIAMOND_STRESS_GC=1 "$diamond" -e $'def empty_like[T](sample: T) -> Array[T] = []\ndef preserve[T](values: Array[T]) -> Array[T] = values\nresult = preserve(empty_like(["diamond"]))\nbegin\n result.push([42])\nrescue error: TypeError\n 42\nend')"
-[[ "$actual" == "42" ]]
-
-actual="$($diamond -e $'def empty[T]() -> Array[T] = []\nresult = empty[Int]()\nbegin\n result.push("wrong")\nrescue error: TypeError\n 42\nend')"
-[[ "$actual" == "42" ]]
-
-actual="$($diamond -e $'def empty_pair[K, V]() -> Hash[K, V] = {}\nresult = empty_pair[String, Int]()\nresult["answer"] = 42\nresult["answer"]')"
-[[ "$actual" == "42" ]]
-
-actual="$($diamond -e $'def identity[T](value: T) -> T = value\nbegin\n identity[Int]("wrong")\nrescue error: TypeError\n 42\nend')"
-[[ "$actual" == "42" ]]
-
-actual="$($diamond -e $'def empty[T]() -> Array[T] = []\ndef outer[T](value: T) -> Array[T] = empty[T]()\nresult = outer("diamond")\nbegin\n result.push(42)\nrescue error: TypeError\n 42\nend')"
-[[ "$actual" == "42" ]]
-
-actual="$($diamond -e $'class Factory\n def empty[T]() -> Array[T] = []\nend\nresult = Factory.new().empty[String]()\nbegin\n result.push(42)\nrescue error: TypeError\n 42\nend')"
-[[ "$actual" == "42" ]]
 
 if "$diamond" -e $'def empty[T]() -> Array[T] = []\nempty[Int, String]()' \
     >/dev/null 2>&1; then
@@ -1639,27 +1002,6 @@ fi
 
 actual="$($diamond --dump-bytecode -e $'def empty[T]() -> Array[T] = []\nempty[Array[String]]()')"
 grep -q 'CALL_TYPED.*\[Array\[String\]\]' <<<"$actual"
-
-actual="$($diamond -e $'def values[T]() -> Array[T] = []\ndef run()\n values = [42]\n values[0]\nend\nrun()')"
-[[ "$actual" == "42" ]]
-
-actual="$($diamond -e $'module Greetable\n def greet(name: String) -> String = "Hello, #{name}"\nend\nclass Person\n include Greetable\nend\nPerson.new().greet("sir")')"
-[[ "$actual" == "Hello, sir" ]]
-
-actual="$($diamond -e $'module Identity\n def itself() = self\nend\nclass Box\n include Identity\nend\nBox.new().itself()')"
-[[ "$actual" == "#<Box>" ]]
-
-actual="$($diamond -e $'module First\n def value() = 1\nend\nmodule Second\n def value() = 2\nend\nclass Box\n include First\n include Second\nend\nBox.new().value()')"
-[[ "$actual" == "2" ]]
-
-actual="$($diamond -e $'module Values\n def value() = 1\nend\nclass Box\n include Values\n def value() = 3\nend\nBox.new().value()')"
-[[ "$actual" == "3" ]]
-
-actual="$($diamond -e $'module Values\n def value() = 42\nend\nclass Parent\n include Values\nend\nclass Child < Parent\nend\nChild.new().value()')"
-[[ "$actual" == "42" ]]
-
-actual="$($diamond -e $'module Collections\n def empty[T]() -> Array[T] = []\nend\nclass Factory\n include Collections\nend\nresult = Factory.new().empty[String]()\nbegin\n result.push(42)\nrescue error: TypeError\n 42\nend')"
-[[ "$actual" == "42" ]]
 
 if "$diamond" -e $'class Box\n include Missing\nend' >/dev/null 2>&1; then
     echo "undefined included module unexpectedly compiled" >&2
@@ -1671,72 +1013,18 @@ if "$diamond" -e $'module Box\nend\nclass Box\nend' >/dev/null 2>&1; then
     exit 1
 fi
 
-actual="$($diamond -e $'module Base\n def value() = 1\nend\nmodule Combined\n include Base\n def other() = 41\nend\nclass Box\n include Combined\nend\nBox.new().value() + Box.new().other()')"
-[[ "$actual" == "42" ]]
-
-actual="$($diamond -e $'module Base\n def value() = 1\nend\nmodule Combined\n include Base\n def value() = 2\nend\nclass Box\n include Combined\nend\nBox.new().value()')"
-[[ "$actual" == "2" ]]
-
-actual="$($diamond -e $'module First\n def value() = 1\nend\nmodule Second\n def value() = 2\nend\nmodule Combined\n include First\n include Second\nend\nclass Box\n include Combined\nend\nBox.new().value()')"
-[[ "$actual" == "2" ]]
-
-actual="$($diamond -e $'module Base\n def empty[T]() -> Array[T] = []\nend\nmodule Combined\n include Base\nend\nclass Factory\n include Combined\nend\nresult = Factory.new().empty[Int]()\nbegin\n result.push("wrong")\nrescue error: TypeError\n 42\nend')"
-[[ "$actual" == "42" ]]
-
 if "$diamond" -e $'module Recursive\n include Recursive\nend' >/dev/null 2>&1; then
     echo "self-including module unexpectedly compiled" >&2
     exit 1
 fi
-
-actual="$($diamond -e $'module Models\n class User\n end\nend\nModels::User.new()')"
-[[ "$actual" == "#<Models::User>" ]]
-
-actual="$($diamond -e $'module Outer\n module Greetings\n  def greet() = "hello"\n end\n class Person\n  include Outer::Greetings\n end\nend\nOuter::Person.new().greet()')"
-[[ "$actual" == "hello" ]]
-
-actual="$($diamond -e $'module Outer\n module Greetings\n  def greet() = "hello"\n end\n class Person\n  include Greetings\n end\nend\nOuter::Person.new().greet()')"
-[[ "$actual" == "hello" ]]
-
-actual="$($diamond -e $'module Models\n class Box\n end\nend\ndef accept(value: Models::Box) -> Models::Box = value\naccept(Models::Box.new())')"
-[[ "$actual" == "#<Models::Box>" ]]
-
-actual="$($diamond -e $'module First\n class Box\n end\nend\nmodule Second\n class Box\n end\nend\n[First::Box.new(), Second::Box.new()]')"
-[[ "$actual" == "[#<First::Box>, #<Second::Box>]" ]]
 
 if "$diamond" -e 'Missing::Thing.new()' >/dev/null 2>&1; then
     echo "undefined qualified name unexpectedly compiled" >&2
     exit 1
 fi
 
-actual="$($diamond -e $'module Counter\n def increment()\n  if @count == nil\n   @count = 1\n  else\n   @count = @count + 1\n  end\n end\n def count() = @count\nend\nclass Box\n include Counter\nend\nbox = Box.new()\nbox.increment()\nbox.increment()\nbox.count()')"
-[[ "$actual" == "2" ]]
-
-actual="$($diamond -e $'module Named\n def set_name(value)\n  @name = value\n end\n def name() = @name\nend\nclass Person\n include Named\nend\nclass Product\n include Named\nend\nperson = Person.new()\nproduct = Product.new()\nperson.set_name("Ada")\nproduct.set_name("Diamond")\n[person.name(), product.name()]')"
-[[ "$actual" == "[Ada, Diamond]" ]]
-
-actual="$(DIAMOND_STRESS_GC=1 "$diamond" -e $'module State\n def set_value(value)\n  @value = value\n end\n def value() = @value\nend\nmodule Combined\n include State\nend\nclass Box\n include Combined\nend\nbox = Box.new()\nbox.set_value(["diamond"])\nbox.value()')"
-[[ "$actual" == "[diamond]" ]]
-
-actual="$($diamond -e $'module State\n def module_value() = @value\nend\nclass Box\n include State\n def set_value(value)\n  @value = value\n end\nend\nbox = Box.new()\nbox.set_value(42)\nbox.module_value()')"
-[[ "$actual" == "42" ]]
-
 actual="$($diamond --dump-bytecode -e $'module State\n def value() = @value\nend\nclass Box\n include State\nend\nBox.new().value()')"
 grep -q 'GET_IVAR_NAME' <<<"$actual"
-
-actual="$($diamond -e $'module Contracts\n interface Named\n  def name() -> String\n end\nend\nclass Person\n def name() -> String = "Ada"\nend\ndef read(value: Contracts::Named) -> String = value.name()\nread(Person.new())')"
-[[ "$actual" == "Ada" ]]
-
-actual="$($diamond -e $'module Config\n ANSWER = 42\n def answer() = ANSWER\nend\nclass Reader\n include Config\nend\n[Config::ANSWER, Reader.new().answer()]')"
-[[ "$actual" == "[42, 42]" ]]
-
-actual="$($diamond -e $'module Outer\n VALUE = 40\n module Inner\n  OFFSET = 2\n  def total() = VALUE + OFFSET\n end\n class Box\n  include Inner\n end\nend\nOuter::Box.new().total()')"
-[[ "$actual" == "42" ]]
-
-actual="$(DIAMOND_STRESS_GC=1 "$diamond" -e $'module Config\n NAMES = ["diamond"]\n def names() = NAMES\nend\nclass Reader\n include Config\nend\nReader.new().names()')"
-[[ "$actual" == "[diamond]" ]]
-
-actual="$($diamond -e $'module First\n VALUE = 1\nend\nmodule Second\n VALUE = 2\nend\n[First::VALUE, Second::VALUE]')"
-[[ "$actual" == "[1, 2]" ]]
 
 if "$diamond" -e $'module Config\n VALUE = 1\n VALUE = 2\nend' >/dev/null 2>&1; then
     echo "namespace constant reassignment unexpectedly compiled" >&2
@@ -1748,18 +1036,6 @@ if "$diamond" -e $'module Config\n value = 1\nend' >/dev/null 2>&1; then
     exit 1
 fi
 
-actual="$($diamond -e $'module Config\n VALUE = 40\n def self.load(offset: Int = 2) -> Int = VALUE + offset\nend\n[Config.load(), Config.load(1)]')"
-[[ "$actual" == "[42, 41]" ]]
-
-actual="$($diamond -e $'module Types\n def self.empty[T]() -> Array[T] = []\nend\nresult = Types.empty[String]()\nbegin\n result.push(42)\nrescue error: TypeError\n 42\nend')"
-[[ "$actual" == "42" ]]
-
-actual="$($diamond -e $'module Outer\n module Math\n  def self.answer() = 42\n end\nend\nOuter::Math.answer()')"
-[[ "$actual" == "42" ]]
-
-actual="$($diamond -e $'module Tools\n def self.answer() = 42\n def included() = 1\nend\nclass Box\n include Tools\nend\nbegin\n Box.new().answer()\nrescue error: TypeError\n Tools.answer()\nend')"
-[[ "$actual" == "42" ]]
-
 if "$diamond" -e $'module Tools\n def self.answer() = 1\n def self.answer() = 2\nend' >/dev/null 2>&1; then
     echo "duplicate module singleton function unexpectedly compiled" >&2
     exit 1
@@ -1768,43 +1044,10 @@ fi
 actual="$($diamond --dump-bytecode -e $'module Types\n def self.empty[T]() -> Array[T] = []\nend\nTypes.empty[String]()')"
 grep -q 'CALL_TYPED.*\[String\]' <<<"$actual"
 
-actual="$($diamond -e $'class Factory\n def self.answer() = 42\nend\nFactory.answer()')"
-[[ "$actual" == "42" ]]
-
-actual="$($diamond -e $'class Parent\n def self.answer() = 42\nend\nclass Child < Parent\nend\nChild.answer()')"
-[[ "$actual" == "42" ]]
-
-actual="$($diamond -e $'class Parent\n def self.answer() = 1\nend\nclass Child < Parent\n def self.answer(offset = 1) = 41 + offset\nend\n[Parent.answer(), Child.answer()]')"
-[[ "$actual" == "[1, 42]" ]]
-
-actual="$($diamond -e $'class Factory\n def self.empty[T]() -> Array[T] = []\nend\nresult = Factory.empty[Int]()\nbegin\n result.push("wrong")\nrescue error: TypeError\n 42\nend')"
-[[ "$actual" == "42" ]]
-
 if "$diamond" -e $'class Factory\n def self.answer() = 1\n def self.answer() = 2\nend' >/dev/null 2>&1; then
     echo "duplicate class singleton method unexpectedly compiled" >&2
     exit 1
 fi
-
-actual="$($diamond -e $'class Vault\n def reveal() = self.answer()\n private\n def answer() = 42\nend\nVault.new().reveal()')"
-[[ "$actual" == "42" ]]
-
-actual="$($diamond -e $'class Vault\n private\n def answer() = 42\nend\nbegin\n Vault.new().answer()\nrescue error: TypeError\n 42\nend')"
-[[ "$actual" == "42" ]]
-
-actual="$($diamond -e $'class Parent\n private\n def answer() = 42\nend\nclass Child < Parent\n def reveal() = self.answer()\nend\nChild.new().reveal()')"
-[[ "$actual" == "42" ]]
-
-actual="$($diamond -e $'module Hidden\n private\n def answer() = 42\nend\nclass Box\n def reveal() = self.answer()\n include Hidden\nend\nBox.new().reveal()')"
-[[ "$actual" == "42" ]]
-
-actual="$($diamond -e $'module Hidden\n private\n def answer() = 42\nend\nclass Box\n include Hidden\nend\nbegin\n Box.new().answer()\nrescue error: TypeError\n 42\nend')"
-[[ "$actual" == "42" ]]
-
-actual="$($diamond -e $'class Box\n private\n def hidden() = 1\n public\n def visible() = 42\nend\nBox.new().visible()')"
-[[ "$actual" == "42" ]]
-
-actual="$($diamond -e $'module Mixed\n private\n def hidden() = 1\n public\n def visible() = 42\nend\nclass Box\n include Mixed\nend\nBox.new().visible()')"
-[[ "$actual" == "42" ]]
 
 if ! error="$($diamond -e $'class Box\n private\n def hidden() = 1\nend\nBox.new().hidden()' 2>&1 >/dev/null)"; then
     grep -q "private method 'hidden' called with an explicit receiver" <<<"$error"
@@ -1813,84 +1056,15 @@ else
     exit 1
 fi
 
-actual="$($diamond -e $'class Person\n attr_reader name\n attr_writer name\nend\nperson = Person.new()\nperson.name=("Ada")\nperson.name()')"
-[[ "$actual" == "Ada" ]]
-
-actual="$($diamond -e $'module Named\n attr_reader name\n attr_writer name\nend\nclass Person\n include Named\nend\nperson = Person.new()\nperson.name=("Ada")\nperson.name()')"
-[[ "$actual" == "Ada" ]]
-
-actual="$($diamond -e $'class Parent\n attr_reader value\n attr_writer value\nend\nclass Child < Parent\nend\nchild=Child.new()\nchild.value=(42)\nchild.value()')"
-[[ "$actual" == "42" ]]
-
-actual="$($diamond -e $'class Box\n private\n attr_reader value\n public\n def reveal() = self.value()\nend\nbegin\n Box.new().value()\nrescue error: TypeError\n Box.new().reveal()\nend')"
-[[ "$actual" == "nil" ]]
-
-actual="$($diamond -e $'class Box\n attr_reader value\n def value=(incoming: Int) -> Int\n  @value = incoming\n end\nend\nbox=Box.new()\nbox.value=(42)\nbox.value()')"
-[[ "$actual" == "42" ]]
-
-actual="$($diamond -e $'module Named\n def name=(value)\n  @name = value\n end\n def name() = @name\nend\nclass Person\n include Named\nend\nperson=Person.new()\nperson.name=("Ada")\nperson.name()')"
-[[ "$actual" == "Ada" ]]
-
-actual="$($diamond -e $'class Box\n attr_reader value\n def value=(incoming = 42)\n  @value = incoming\n end\nend\nbox=Box.new()\nbox.value=()\nbox.value()')"
-[[ "$actual" == "42" ]]
-
-actual="$($diamond -e $'class Box\n def assign() = self.value=(42)\n private\n def value=(incoming)\n  @value = incoming\n end\nend\nBox.new().assign()')"
-[[ "$actual" == "42" ]]
-
-actual="$($diamond -e $'class Box\n attr_accessor value\nend\nbox=Box.new()\nbox.value=(42)\nbox.value()')"
-[[ "$actual" == "42" ]]
-
-actual="$($diamond -e $'module Named\n attr_accessor name\nend\nclass Person\n include Named\nend\nperson=Person.new()\nperson.name=("Ada")\nperson.name()')"
-[[ "$actual" == "Ada" ]]
-
-actual="$($diamond -e $'class Point\n attr_accessor x, y\nend\npoint=Point.new()\npoint.x=(20)\npoint.y=(22)\npoint.x() + point.y()')"
-[[ "$actual" == "42" ]]
-
-actual="$($diamond -e $'module Pair\n attr_reader left, right\nend\nclass Box\n include Pair\nend\n[Box.new().left(), Box.new().right()]')"
-[[ "$actual" == "[nil, nil]" ]]
-
 if "$diamond" -e $'class Broken\n attr_reader value,\nend' >/dev/null 2>&1; then
     echo "trailing attribute comma unexpectedly compiled" >&2
     exit 1
 fi
 
-actual="$($diamond -e $'class Box\n def hidden() = 42\n private hidden\n def reveal() = self.hidden()\nend\nBox.new().reveal()')"
-[[ "$actual" == "42" ]]
-
-actual="$($diamond -e $'class Box\n private\n def visible() = 42\n public visible\nend\nBox.new().visible()')"
-[[ "$actual" == "42" ]]
-
-actual="$($diamond -e $'module Mixed\n attr_reader first, second\n private first, second\nend\nclass Box\n include Mixed\n def reveal() = [self.first(), self.second()]\nend\nBox.new().reveal()')"
-[[ "$actual" == "[nil, nil]" ]]
-
 if "$diamond" -e $'class Box\n private missing\nend' >/dev/null 2>&1; then
     echo "undefined visibility target unexpectedly compiled" >&2
     exit 1
 fi
-
-actual="$($diamond -e $'module Math\n BASE = 40\n def add(value: Int = 2) -> Int = BASE + value\n module_function add\nend\n[Math.add(), Math.add(1)]')"
-[[ "$actual" == "[42, 41]" ]]
-
-actual="$($diamond -e $'module Types\n def empty[T]() -> Array[T] = []\n module_function empty\nend\nresult=Types.empty[String]()\nbegin\n result.push(42)\nrescue error: TypeError\n 42\nend')"
-[[ "$actual" == "42" ]]
-
-actual="$($diamond -e $'module Helpers\n def answer() = 42\n module_function answer\nend\nclass Box\n def reveal() = self.answer()\n include Helpers\nend\nBox.new().reveal()')"
-[[ "$actual" == "42" ]]
-
-actual="$($diamond -e $'module Helpers\n def answer() = 42\n module_function answer\nend\nclass Box\n include Helpers\nend\nbegin\n Box.new().answer()\nrescue error: TypeError\n Helpers.answer()\nend')"
-[[ "$actual" == "42" ]]
-
-actual="$($diamond -e $'module Math\n BASE = 40\n module_function\n def add(value = 2) = BASE + value\n def answer() = 42\nend\n[Math.add(), Math.answer()]')"
-[[ "$actual" == "[42, 42]" ]]
-
-actual="$($diamond -e $'module Types\n module_function\n def empty[T]() -> Array[T] = []\nend\nresult=Types.empty[Int]()\nbegin\n result.push("wrong")\nrescue error: TypeError\n 42\nend')"
-[[ "$actual" == "42" ]]
-
-actual="$($diamond -e $'module Helpers\n module_function\n def answer() = 42\nend\nclass Box\n def reveal() = self.answer()\n include Helpers\nend\nbegin\n Box.new().answer()\nrescue error: TypeError\n Box.new().reveal()\nend')"
-[[ "$actual" == "42" ]]
-
-actual="$($diamond -e $'module Outer\n module_function\n def outer() = 40\n module Inner\n  def value() = 2\n end\nend\nclass Box\n include Outer::Inner\nend\nOuter.outer() + Box.new().value()')"
-[[ "$actual" == "42" ]]
 
 if "$diamond" -e $'class Box\n attr_reader value\n attr_reader value\nend' >/dev/null 2>&1; then
     echo "duplicate generated reader unexpectedly compiled" >&2
@@ -1912,244 +1086,40 @@ if "$diamond" -e $'module Stateful\n module_function\n attr_reader value\nend' >
     exit 1
 fi
 
-actual="$($diamond -e $'class Box\n def self.value=(incoming: Int) -> Int = incoming\nend\nBox.value=(42)')"
-[[ "$actual" == "42" ]]
-
-actual="$($diamond -e $'module Config\n def self.value=(incoming = 42) = incoming\nend\nConfig.value=()')"
-[[ "$actual" == "42" ]]
-
-actual="$($diamond -e $'class Box\n attr_writer value\n private value=\n def assign() = self.value=(42)\nend\nbegin\n Box.new().value=(1)\nrescue error: TypeError\n Box.new().assign()\nend')"
-[[ "$actual" == "42" ]]
-
-actual="$($diamond -e $'class Point\n attr_accessor(x, y)\nend\npoint=Point.new()\npoint.x=(20)\npoint.y=(22)\npoint.x() + point.y()')"
-[[ "$actual" == "42" ]]
-
-actual="$($diamond -e $'class Box\n attr_reader value\n private(value)\n def reveal() = self.value()\nend\nBox.new().reveal()')"
-[[ "$actual" == "nil" ]]
-
-actual="$($diamond -e $'module Values\n def first() = 20\n def second() = 22\n module_function(first, second)\nend\nValues.first() + Values.second()')"
-[[ "$actual" == "42" ]]
-
-actual="$($diamond -e $'module Values\n def value=(incoming) = incoming\n module_function value=\nend\nValues.value=(42)')"
-[[ "$actual" == "42" ]]
-
-actual="$($diamond -e $'class Pair\n attr(left, right)\nend\n[Pair.new().left(), Pair.new().right()]')"
-[[ "$actual" == "[nil, nil]" ]]
-
-actual="$($diamond -e $'class Answer\n def value() = 42\n alias_method result, value\nend\nAnswer.new().result()')"
-[[ "$actual" == "42" ]]
-
-actual="$($diamond -e $'module Named\n attr_reader name\n alias_method label, name\nend\nclass Person\n include Named\nend\nPerson.new().label()')"
-[[ "$actual" == "nil" ]]
-
 if "$diamond" -e $'class Broken\n alias_method answer, missing\nend' >/dev/null 2>&1; then
     echo "undefined alias source unexpectedly compiled" >&2
     exit 1
 fi
-
-actual="$($diamond -e $'class Box\n attr_accessor value: Int\n def raw() = @value\nend\nbox=Box.new()\nbox.value=(42)\n[box.value(), box.raw()]')"
-[[ "$actual" == "[42, 42]" ]]
-
-actual="$($diamond -e $'class Box\n attr_accessor value: Int\n def raw() = @value\nend\nbox=Box.new()\nbegin\n box.value=("wrong")\nrescue error: TypeError\n box.raw()\nend')"
-[[ "$actual" == "nil" ]]
-
-actual="$($diamond -e $'class Box\n attr_reader value: Int\nend\nbegin\n Box.new().value()\nrescue error: TypeError\n 42\nend')"
-[[ "$actual" == "42" ]]
-
-actual="$($diamond -e $'class Pair\n attr_accessor left: Int, right: String\nend\npair=Pair.new()\npair.left=(42)\npair.right=("answer")\n[pair.left(), pair.right()]')"
-[[ "$actual" == "[42, answer]" ]]
-
-actual="$($diamond -e $'class Box\n def empty?() = true\nend\nBox.new().empty?()')"
-[[ "$actual" == "true" ]]
-
-actual="$($diamond -e $'def ready?(value: Int) = value == 42\nready?(42)')"
-[[ "$actual" == "true" ]]
-
-actual="$($diamond -e $'module Query\n def valid?() = true\nend\nclass Box\n include Query\nend\nBox.new().valid?()')"
-[[ "$actual" == "true" ]]
-
-actual="$($diamond -e $'class Counter\n attr_accessor value\n def reset!()\n  @value = 0\n end\nend\ncounter=Counter.new()\ncounter.value=(42)\ncounter.reset!()\ncounter.value()')"
-[[ "$actual" == "0" ]]
-
-actual="$($diamond -e $'def assert!(value: Bool) = value\nassert!(true)')"
-[[ "$actual" == "true" ]]
-
-actual="$($diamond -e $'module Mutation\n def clear!() = 42\nend\nclass Box\n include Mutation\nend\nBox.new().clear!()')"
-[[ "$actual" == "42" ]]
-
-actual="$($diamond -e $'class Box\n attr_accessor value\n alias_method assign=, value=\nend\nbox=Box.new()\nbox.assign=(42)\nbox.value()')"
-[[ "$actual" == "42" ]]
-
-actual="$($diamond -e $'module Named\n attr_accessor name\n alias_method label=, name=\nend\nclass Person\n include Named\nend\nperson=Person.new()\nperson.label=("Ada")\nperson.name()')"
-[[ "$actual" == "Ada" ]]
 
 if "$diamond" -e $'class Broken\n attr_writer value\n alias_method value=, value=\nend' >/dev/null 2>&1; then
     echo "duplicate writer alias unexpectedly compiled" >&2
     exit 1
 fi
 
-actual="$($diamond -e $'class Answer\n def value() = 42\n alias_method(result, value)\nend\nAnswer.new().result()')"
-[[ "$actual" == "42" ]]
-
-actual="$($diamond -e $'class Box\n attr_accessor value\n alias_method(assign=, value=)\nend\nbox=Box.new()\nbox.assign=(42)\nbox.value()')"
-[[ "$actual" == "42" ]]
-
 if "$diamond" -e $'class Broken\n def value() = 42\n alias_method(result, value\nend' >/dev/null 2>&1; then
     echo "unterminated parenthesized alias unexpectedly compiled" >&2
     exit 1
 fi
-
-actual="$($diamond -e $'unless false\n 42\nend')"
-[[ "$actual" == "42" ]]
-
-actual="$($diamond -e $'unless true\n 0\nelse\n 42\nend')"
-[[ "$actual" == "42" ]]
-
-actual="$($diamond -e $'def answer(value: Int | Nil) -> Int\n unless value == nil\n  value + 0\n else\n  0\n end\nend\nanswer(42)')"
-[[ "$actual" == "42" ]]
-
-actual="$($diamond -e $'value = 0\nuntil value == 3\n value = value + 1\nend\nvalue')"
-[[ "$actual" == "3" ]]
-
-actual="$($diamond -e $'value = 0\nuntil false\n value = value + 1\n break\nend\nvalue')"
-[[ "$actual" == "1" ]]
-
-actual="$($diamond -e $'value = 0\nuntil value == 3\n value = value + 1\n next\n value = 99\nend\nvalue')"
-[[ "$actual" == "3" ]]
-
-actual="$($diamond -e $'value = 2\nif value == 1\n "one"\nelsif value == 2\n "two"\nelse\n "other"\nend')"
-[[ "$actual" == "two" ]]
-
-actual="$($diamond -e $'value = 3\nif value == 1\n 1\nelsif value == 2\n 2\nelsif value == 3\n 42\nelse\n 0\nend')"
-[[ "$actual" == "42" ]]
-
-actual="$($diamond -e $'if false\n 0\nelsif false\n 1\nend')"
-[[ "$actual" == "nil" ]]
-
-actual="$($diamond -e $'class Feature\n attr_writer enabled\n attr_predicate enabled: Bool\nend\nfeature=Feature.new()\nfeature.enabled=(true)\nfeature.enabled?()')"
-[[ "$actual" == "true" ]]
-
-actual="$($diamond -e $'module State\n attr_predicate ready\nend\nclass Job\n include State\nend\nJob.new().ready?()')"
-[[ "$actual" == "nil" ]]
 
 if "$diamond" -e $'class Broken\n attr_predicate ready\n attr_predicate ready\nend' >/dev/null 2>&1; then
     echo "duplicate predicate attribute unexpectedly compiled" >&2
     exit 1
 fi
 
-actual="$($diamond -e $'class Vault\n attr_writer ready\n attr_predicate ready\n private ready?\n def reveal() = self.ready?()\nend\nvault=Vault.new()\nvault.ready=(true)\nvault.reveal()')"
-[[ "$actual" == "true" ]]
-
-actual="$($diamond -e $'class State\n def valid?() = true\n def reset!() = 42\n alias_method acceptable?, valid?\n alias_method clear!, reset!\nend\nstate=State.new()\n[state.acceptable?(), state.clear!()]')"
-[[ "$actual" == "[true, 42]" ]]
-
-actual="$($diamond -e $'module Query\n def valid?(value) = value == 42\n module_function valid?\nend\nQuery.valid?(42)')"
-[[ "$actual" == "true" ]]
-
-actual="$($diamond -e $'begin\n 20\nrescue error\n 0\nelse\n 42\nend')"
-[[ "$actual" == "42" ]]
-
-actual="$($diamond -e $'begin\n raise "failure"\nrescue error\n 42\nelse\n 0\nend')"
-[[ "$actual" == "42" ]]
-
-actual="$($diamond -e $'value = 0\nbegin\n 1\nrescue error\n value = 1\nelse\n value = 40\nensure\n value = value + 2\nend\nvalue')"
-[[ "$actual" == "42" ]]
-
-actual="$($diamond -e $'begin\n begin\n  raise "failure"\n rescue error\n  raise\n end\nrescue outer\n 42\nend')"
-[[ "$actual" == "42" ]]
-
-actual="$($diamond -e $'begin\n begin\n  1 / 0\n rescue error: ZeroDivisionError\n  raise\n end\nrescue outer: ZeroDivisionError\n 42\nend')"
-[[ "$actual" == "42" ]]
-
 if "$diamond" -e $'raise' >/dev/null 2>&1; then
     echo "bare raise outside rescue unexpectedly compiled" >&2
     exit 1
 fi
-
-actual="$($diamond -e $'attempts = 0\nbegin\n attempts = attempts + 1\n if attempts < 3\n  raise "again"\n end\n attempts\nrescue error\n retry\nend')"
-[[ "$actual" == "3" ]]
-
-actual="$($diamond -e $'attempts = 0\ncleanups = 0\nbegin\n attempts = attempts + 1\n if attempts < 2\n  raise "again"\n end\nrescue error\n retry\nensure\n cleanups = cleanups + 1\nend\n[attempts, cleanups]')"
-[[ "$actual" == "[2, 1]" ]]
 
 if "$diamond" -e $'retry' >/dev/null 2>&1; then
     echo "retry outside rescue unexpectedly compiled" >&2
     exit 1
 fi
 
-actual="$($diamond -e $'begin\n 1 / 0\nrescue : ZeroDivisionError\n 42\nend')"
-[[ "$actual" == "42" ]]
-
-actual="$($diamond -e $'begin\n [1][4]\nrescue : TypeError | IndexError\n 42\nend')"
-[[ "$actual" == "42" ]]
-
-actual="$($diamond -e $'begin\n 1 / 0\nrescue error: ZeroDivisionError\n error\nend')"
-[[ "$actual" == "#<ZeroDivisionError>" ]]
-
-actual="$($diamond -e $'condition_checks = 0\nbody_runs = 0\nwhile condition_checks < 1\n condition_checks = condition_checks + 1\n body_runs = body_runs + 1\n if body_runs < 3\n  redo\n end\nend\n[condition_checks, body_runs]')"
-[[ "$actual" == "[3, 3]" ]]
-
-actual="$($diamond -e $'runs = 0\nuntil true\n runs = 99\nend\nuntil runs == 2\n runs = runs + 1\n if runs == 1\n  redo\n end\nend\nruns')"
-[[ "$actual" == "2" ]]
-
 if "$diamond" -e $'redo' >/dev/null 2>&1; then
     echo "redo outside loop unexpectedly compiled" >&2
     exit 1
 fi
-
-actual="$($diamond -e $'result = while true\n break 42\nend\nresult')"
-[[ "$actual" == "42" ]]
-
-actual="$($diamond -e $'result = until false\n break "done"\nend\nresult')"
-[[ "$actual" == "done" ]]
-
-actual="$($diamond -e $'outer = while true\n inner = while true\n  break 20\n end\n break inner + 22\nend\nouter')"
-[[ "$actual" == "42" ]]
-
-actual="$($diamond -e $'if true then 42 else 0 end')"
-[[ "$actual" == "42" ]]
-
-actual="$($diamond -e $'unless true then 0 else 42 end')"
-[[ "$actual" == "42" ]]
-
-actual="$($diamond -e $'if false then\n 0\nelsif true then\n 42\nelse\n 1\nend')"
-[[ "$actual" == "42" ]]
-
-actual="$($diamond -e $'value = 0\nwhile value < 3 do value = value + 1 end\nvalue')"
-[[ "$actual" == "3" ]]
-
-actual="$($diamond -e $'value = 0\nuntil value == 3 do\n value = value + 1\nend\nvalue')"
-[[ "$actual" == "3" ]]
-
-actual="$($diamond -e $'result = while true do break 42 end\nresult')"
-[[ "$actual" == "42" ]]
-
-actual="$($diamond -e $'not false')"
-[[ "$actual" == "true" ]]
-
-actual="$($diamond -e $'not nil')"
-[[ "$actual" == "true" ]]
-
-actual="$($diamond -e $'not (20 + 22 == 42)')"
-[[ "$actual" == "false" ]]
-
-actual="$($diamond -e $'true and 42')"
-[[ "$actual" == "42" ]]
-
-actual="$($diamond -e $'nil or "fallback"')"
-[[ "$actual" == "fallback" ]]
-
-actual="$($diamond -e $'[(false and (1 / 0)), (true or (1 / 0))]')"
-[[ "$actual" == "[false, true]" ]]
-
-actual="$($diamond -e $'begin\n [1][4]\nrescue : TypeError\n 0\nrescue : IndexError\n 42\nend')"
-[[ "$actual" == "42" ]]
-
-actual="$($diamond -e $'begin\n 1 / 0\nrescue type: TypeError\n 0\nrescue division: ZeroDivisionError\n 42\nrescue error\n 1\nend')"
-[[ "$actual" == "42" ]]
-
-actual="$($diamond -e $'begin\n begin\n  raise "text"\n rescue : TypeError\n  0\n rescue : IndexError\n  1\n end\nrescue outer\n 42\nend')"
-[[ "$actual" == "42" ]]
 
 if "$diamond" -e $'begin\n raise "x"\nrescue error\n 1\nrescue : TypeError\n 2\nend' >/dev/null 2>&1; then
     echo "rescue after catch-all unexpectedly compiled" >&2
@@ -2166,34 +1136,10 @@ if "$diamond" -e $'begin\n 1 / 0\nrescue : TypeError\n 1\nrescue : TypeError\n 2
     exit 1
 fi
 
-actual="$($diamond -e $'begin\n 40\nrescue : TypeError\n 0\nrescue : IndexError\n 1\nelse\n 42\nend')"
-[[ "$actual" == "42" ]]
-
-attempt="$($diamond -e $'attempts=0\nbegin\n attempts=attempts+1\n if attempts==1\n  [1][4]\n end\nrescue : TypeError\n 0\nrescue : IndexError\n retry\nelse\n 42\nend')"
-[[ "$attempt" == "42" ]]
-
-actual="$($diamond -e $'cleanup=0\nvalue=begin\n [1][4]\nrescue : TypeError\n 0\nrescue : IndexError\n 40\nensure\n cleanup=cleanup+1\nend\n[value+2, cleanup]')"
-[[ "$actual" == "[42, 1]" ]]
-
-actual="$($diamond -e $'begin\n begin\n  [1][4]\n rescue : TypeError\n  0\n rescue error: IndexError\n  raise\n end\nrescue outer: IndexError\n 42\nend')"
-[[ "$actual" == "42" ]]
-
-actual="$($diamond -e $'begin\n 1 / 0\nrescue : TypeError | IndexError\n 0\nrescue : ZeroDivisionError | RangeError\n 42\nend')"
-[[ "$actual" == "42" ]]
-
-actual="$($diamond -e $'class NetworkError < StandardError\nend\nclass TimeoutError < NetworkError\nend\nbegin\n raise TimeoutError.new()\nrescue : TypeError\n 0\nrescue error: NetworkError\n 42\nend')"
-[[ "$actual" == "42" ]]
-
 if "$diamond" -e $'begin\n 1 / 0\nrescue : StandardError\n 1\nrescue : ZeroDivisionError\n 2\nend' >/dev/null 2>&1; then
     echo "shadowed rescue subclass unexpectedly compiled" >&2
     exit 1
 fi
-
-actual="$($diamond -e $'result=loop do\n break 42\nend\nresult')"
-[[ "$actual" == "42" ]]
-
-actual="$($diamond -e $'count=0\nloop do\n count=count+1\n if count<3\n  redo\n end\n break count\nend')"
-[[ "$actual" == "3" ]]
 
 actual="$($diamond -e $'loop\n break 42\nend')"
 [[ "$actual" == "42" ]]
@@ -2376,9 +1322,6 @@ fi
 actual="$($diamond --dump-bytecode -e $'def make()\n def once()\n  1\n end\n once\nend\nFiber.new(make())')"
 grep -q 'FIBER_NEW' <<<"$actual"
 
-actual="$($diamond -e $'def make()\n def once()\n  1\n end\n once\nend\nf = Fiber.new(make())\n"ok"')"
-[[ "$actual" == "ok" ]]
-
 error_file="$(mktemp)"
 if "$diamond" -e 'Fiber.new(5)' >/dev/null 2>"$error_file"; then
     echo "Fiber.new with a non-Callable argument unexpectedly succeeded" >&2
@@ -2386,9 +1329,6 @@ if "$diamond" -e 'Fiber.new(5)' >/dev/null 2>"$error_file"; then
 fi
 grep -q 'Fiber.new argument must be a Callable value' "$error_file"
 rm -f "$error_file"
-
-actual="$($diamond -e $'begin\n Fiber.new(5)\nrescue error: TypeError\n 42\nend')"
-[[ "$actual" == "42" ]]
 
 error_file="$(mktemp)"
 if "$diamond" -e $'def make()\n def once(x)\n  x\n end\n once\nend\nFiber.new(make())' \
@@ -2398,9 +1338,6 @@ if "$diamond" -e $'def make()\n def once(x)\n  x\n end\n once\nend\nFiber.new(ma
 fi
 grep -q 'Fiber.new callable must take no arguments' "$error_file"
 rm -f "$error_file"
-
-actual="$($diamond -e $'def make()\n def once(x)\n  x\n end\n once\nend\nbegin\n Fiber.new(make())\nrescue error: ArgumentError\n 42\nend')"
-[[ "$actual" == "42" ]]
 
 actual="$($diamond --dump-bytecode -e $'Fiber = 5\nFiber.new(1)' 2>/dev/null || true)"
 if grep -q 'FIBER_NEW' <<<"$actual"; then
@@ -2423,24 +1360,6 @@ if "$diamond" -e $'def File()\n 1\nend\nFile.open("x", "r")' >/dev/null 2>"$erro
 fi
 grep -q "undefined local variable" "$error_file"
 rm -f "$error_file"
-
-actual="$($diamond -e $'def make_counter()\n def counter()\n  i = 0\n  loop do\n   got = yield(i)\n   i = i + got\n  end\n end\n counter\nend\nf = Fiber.new(make_counter())\nfirst = f.resume(0)\nsecond = f.resume(10)\nthird = f.resume(5)\n"#{first}, #{second}, #{third}"')"
-[[ "$actual" == "0, 10, 15" ]]
-
-actual="$($diamond -e $'def make()\n def once()\n  1\n end\n once\nend\nf = Fiber.new(make())\nbefore = f.status()\na = f.resume(0)\nafter = f.status()\nalive_before = f.alive?()\n"#{before}, #{a}, #{after}, #{alive_before}"')"
-[[ "$actual" == "runnable, 1, completed, false" ]]
-
-actual="$($diamond -e $'def make()\n def once()\n  yield(1)\n  99\n end\n once\nend\nf = Fiber.new(make())\na = f.resume(0)\nb = f.resume(0)\ns = f.status()\n"#{a}, #{b}, #{s}"')"
-[[ "$actual" == "1, 99, completed" ]]
-
-actual="$($diamond -e $'def make()\n def once()\n  yield(1)\n  99\n end\n once\nend\nf = Fiber.new(make())\nf.resume(0)\nf.resume(0)\nbegin\n f.resume(0)\nrescue error: FiberError\n 42\nend')"
-[[ "$actual" == "42" ]]
-
-actual="$($diamond -e $'def make()\n def bad()\n  yield(1)\n  raise RuntimeError.new("boom")\n end\n bad\nend\nf = Fiber.new(make())\nf.resume(0)\nbegin\n f.resume(0)\nrescue error: RuntimeError\n error.message()\nend')"
-[[ "$actual" == "boom" ]]
-
-actual="$(DIAMOND_STRESS_GC=1 $diamond -e $'def make()\n def once()\n  yield(7)\n end\n once\nend\nf = Fiber.new(make())\nf.resume(0)')"
-[[ "$actual" == "7" ]]
 
 error_file="$(mktemp)"
 if "$diamond" -e $'def make()\n def once()\n  1\n end\n once\nend\nf = Fiber.new(make())\nf.resume(0, 1)' \
@@ -2466,24 +1385,6 @@ grep -Eq 'PRINT +r[0-9]+, r[0-9]+, newline=0' <<<"$actual"
 actual="$($diamond --dump-bytecode -e 'puts("x")')"
 grep -Eq 'PRINT +r[0-9]+, r[0-9]+, newline=1' <<<"$actual"
 
-actual="$($diamond -e $'print("a")\nprint("b")\n"c"')"
-[[ "$actual" == "abc" ]]
-
-actual="$($diamond -e $'puts("a")\nputs("b")\n0')"
-[[ "$actual" == $'a\nb\n0' ]]
-
-actual="$($diamond -e $'class Foo\n def to_s()\n  "a Foo"\n end\nend\nputs(Foo.new())\n0')"
-[[ "$actual" == $'a Foo\n0' ]]
-
-actual="$($diamond -e $'def print(x)\n "shadowed"\nend\nprint("real")')"
-[[ "$actual" == "shadowed" ]]
-
-actual="$($diamond -e $'x = puts("hi")\nx == nil')"
-[[ "$actual" == $'hi\ntrue' ]]
-
-actual="$($diamond -e $'class Bad\n def to_s(x)\n  "no"\n end\nend\nbegin\n puts(Bad.new())\nrescue error: ArgumentError\n 42\nend')"
-[[ "$actual" == "42" ]]
-
 if "$diamond" -e 'puts(1, 2)' >/dev/null 2>&1; then
     echo "puts with more than one argument unexpectedly compiled" >&2
     exit 1
@@ -2503,9 +1404,6 @@ actual="$(printf 'no trailing newline' | $diamond -e $'gets()')"
 
 actual="$(printf 'line1\r\nline2\n' | $diamond -e $'a = gets()\nb = gets()\n"#{a}|#{b}"')"
 [[ "$actual" == "line1|line2" ]]
-
-actual="$($diamond -e $'def gets()\n "shadowed"\nend\ngets()')"
-[[ "$actual" == "shadowed" ]]
 
 if "$diamond" -e 'gets(1)' >/dev/null 2>&1; then
     echo "gets with an argument unexpectedly compiled" >&2
@@ -2609,18 +1507,6 @@ fi
 actual="$($diamond -e $'server = TCPServer.listen(0)\nserver.close()\nbegin\n server.accept()\nrescue error: IOError\n 42\nend')"
 [[ "$actual" == "42" ]]
 
-actual="$($diamond -e $'def run()\n result = []\n def collect(item)\n  result.push(item + 1)\n end\n [1,2,3].each(collect)\n result\nend\nrun()')"
-[[ "$actual" == "[2, 3, 4]" ]]
-
-actual="$($diamond -e $'def run()\n result = []\n def collect(item)\n  result.push(item + 1)\n end\n values = [1,2,3]\n array_each(values, collect)\n result\nend\nrun()')"
-[[ "$actual" == "[2, 3, 4]" ]]
-
-actual="$($diamond -e $'def run()\n result = []\n def collect(k, v)\n  result.push(v)\n end\n {"a":1,"b":2}.each(collect)\n result\nend\nrun()')"
-[[ "$actual" == "[1, 2]" ]]
-
-actual="$($diamond -e $'def run()\n result = []\n def collect(k, v)\n  result.push(v)\n end\n values = {"a":1,"b":2}\n hash_each(values, collect)\n result\nend\nrun()')"
-[[ "$actual" == "[1, 2]" ]]
-
 if "$diamond" -e $'def run()\n def bad(a, b)\n  a + b\n end\n [1].each(bad)\nend\nrun()' >/dev/null 2>&1; then
     echo "Array#each with a mismatched callback arity unexpectedly succeeded" >&2
     exit 1
@@ -2641,111 +1527,6 @@ if "$diamond" -e '{}.nope()' >/dev/null 2>"$error_file"; then
 fi
 grep -q "undefined method 'nope' for Hash" "$error_file"
 rm -f "$error_file"
-
-actual="$($diamond -e $'def run()\n def is_even(x)\n  x - (x / 2) * 2 == 0\n end\n enumerable_select([1,2,3,4,5,6], is_even)\nend\nrun()')"
-[[ "$actual" == "[2, 4, 6]" ]]
-
-actual="$($diamond -e $'def run()\n def is_positive(x)\n  x > 0\n end\n enumerable_select({"a":1,"b":-2,"c":3}, is_positive)\nend\nrun()')"
-[[ "$actual" == "[1, 3]" ]]
-
-actual="$($diamond -e $'def run()\n def is_even(x)\n  x - (x / 2) * 2 == 0\n end\n enumerable_count([1,2,3,4], is_even)\nend\nrun()')"
-[[ "$actual" == "2" ]]
-
-actual="$($diamond -e $'def run()\n def is_positive(x)\n  x > 0\n end\n enumerable_count({"a":1,"b":-2,"c":3}, is_positive)\nend\nrun()')"
-[[ "$actual" == "2" ]]
-
-actual="$($diamond -e $'def run()\n def is_even(x)\n  x - (x / 2) * 2 == 0\n end\n enumerable_any([1,3,5,6], is_even)\nend\nrun()')"
-[[ "$actual" == "true" ]]
-
-actual="$($diamond -e $'def run()\n def is_even(x)\n  x - (x / 2) * 2 == 0\n end\n enumerable_any([1,3,5], is_even)\nend\nrun()')"
-[[ "$actual" == "false" ]]
-
-actual="$($diamond -e $'def run()\n def is_positive(x)\n  x > 0\n end\n enumerable_all({"a":1,"b":2}, is_positive)\nend\nrun()')"
-[[ "$actual" == "true" ]]
-
-actual="$($diamond -e $'def run()\n def is_positive(x)\n  x > 0\n end\n enumerable_all({"a":1,"b":-2}, is_positive)\nend\nrun()')"
-[[ "$actual" == "false" ]]
-
-actual="$($diamond -e $'def run()\n def anything(x)\n  false\n end\n enumerable_all([], anything)\nend\nrun()')"
-[[ "$actual" == "true" ]]
-
-actual="$($diamond -e $'def run()\n def anything(x)\n  true\n end\n enumerable_any([], anything)\nend\nrun()')"
-[[ "$actual" == "false" ]]
-
-actual="$($diamond -e $'def run()\n def double(x)\n  x * 2\n end\n enumerable_map([1,2,3], double)\nend\nrun()')"
-[[ "$actual" == "[2, 4, 6]" ]]
-
-actual="$($diamond -e $'def run()\n def double(x)\n  x * 2\n end\n enumerable_map({"a":1,"b":2}, double)\nend\nrun()')"
-[[ "$actual" == "[2, 4]" ]]
-
-actual="$($diamond -e $'def run()\n def add(acc, x)\n  acc + x\n end\n enumerable_reduce([1,2,3], 0, add)\nend\nrun()')"
-[[ "$actual" == "6" ]]
-
-actual="$($diamond -e $'def run()\n def add(acc, x)\n  acc + x\n end\n enumerable_reduce({"a":1,"b":2,"c":3}, 0, add)\nend\nrun()')"
-[[ "$actual" == "6" ]]
-
-actual="$($diamond -e $'def run()\n def is_even(x)\n  x - (x / 2) * 2 == 0\n end\n [1,2,3,4,5,6].select(is_even)\nend\nrun()')"
-[[ "$actual" == "[2, 4, 6]" ]]
-
-actual="$($diamond -e $'def run()\n def is_positive(x)\n  x > 0\n end\n {"a":1,"b":-2,"c":3}.select(is_positive)\nend\nrun()')"
-[[ "$actual" == "[1, 3]" ]]
-
-actual="$($diamond -e $'def run()\n def is_even(x)\n  x - (x / 2) * 2 == 0\n end\n [1,2,3,4].count(is_even)\nend\nrun()')"
-[[ "$actual" == "2" ]]
-
-actual="$($diamond -e $'def run()\n def is_positive(x)\n  x > 0\n end\n {"a":1,"b":-2}.count(is_positive)\nend\nrun()')"
-[[ "$actual" == "1" ]]
-
-actual="$($diamond -e $'def run()\n def is_even(x)\n  x - (x / 2) * 2 == 0\n end\n [1,3,5,6].any?(is_even)\nend\nrun()')"
-[[ "$actual" == "true" ]]
-
-actual="$($diamond -e $'def run()\n def is_positive(x)\n  x > 0\n end\n [1,2,3].all?(is_positive)\nend\nrun()')"
-[[ "$actual" == "true" ]]
-
-actual="$($diamond -e $'def run()\n def double(x)\n  x * 2\n end\n [1,2,3].map(double)\nend\nrun()')"
-[[ "$actual" == "[2, 4, 6]" ]]
-
-actual="$($diamond -e $'def run()\n def double(x)\n  x * 2\n end\n {"a":1,"b":2}.map(double)\nend\nrun()')"
-[[ "$actual" == "[2, 4]" ]]
-
-actual="$($diamond -e $'def run()\n def add(acc, x)\n  acc + x\n end\n [1,2,3].reduce(0, add)\nend\nrun()')"
-[[ "$actual" == "6" ]]
-
-actual="$($diamond -e $'def run()\n def add(acc, x)\n  acc + x\n end\n {"a":1,"b":2,"c":3}.reduce(0, add)\nend\nrun()')"
-[[ "$actual" == "6" ]]
-
-actual="$($diamond -e $'class NumberBag\n include Enumerable\n def initialize(values)\n  @values = values\n end\n def each(callback)\n  @values.each(callback)\n end\nend\ndef run()\n def is_even(x)\n  x - (x / 2) * 2 == 0\n end\n bag = NumberBag.new([1,2,3,4,5,6])\n bag.select(is_even)\nend\nrun()')"
-[[ "$actual" == "[2, 4, 6]" ]]
-
-actual="$($diamond -e $'class NumberBag\n include Enumerable\n def initialize(values)\n  @values = values\n end\n def each(callback)\n  @values.each(callback)\n end\nend\ndef run()\n def is_even(x)\n  x - (x / 2) * 2 == 0\n end\n def double(x)\n  x * 2\n end\n def add(acc, x)\n  acc + x\n end\n bag = NumberBag.new([1,2,3,4])\n a = bag.count(is_even)\n b = bag.any?(is_even)\n c = bag.all?(is_even)\n d = bag.map(double)\n e = bag.reduce(0, add)\n "#{a}, #{b}, #{c}, #{d}, #{e}"\nend\nrun()')"
-[[ "$actual" == "2, true, false, [2, 4, 6, 8], 10" ]]
-
-actual="$(DIAMOND_STRESS_GC=1 $diamond -e $'class NumberBag\n include Enumerable\n def initialize(values)\n  @values = values\n end\n def each(callback)\n  @values.each(callback)\n end\nend\ndef run()\n def is_even(x)\n  x - (x / 2) * 2 == 0\n end\n def double(x)\n  x * 2\n end\n def add(acc, x)\n  acc + x\n end\n bag = NumberBag.new([1,2,3,4])\n a = bag.count(is_even)\n b = bag.any?(is_even)\n c = bag.all?(is_even)\n d = bag.map(double)\n e = bag.reduce(0, add)\n "#{a}, #{b}, #{c}, #{d}, #{e}"\nend\nrun()')"
-[[ "$actual" == "2, true, false, [2, 4, 6, 8], 10" ]]
-
-actual="$($diamond -e $'def run()\n def anything(x)\n  x\n end\n def add(acc, x)\n  acc + x\n end\n a = {}.select(anything)\n b = {}.count(anything)\n c = {}.map(anything)\n d = {}.reduce(0, add)\n "#{a}, #{b}, #{c}, #{d}"\nend\nrun()')"
-[[ "$actual" == "[], 0, [], 0" ]]
-
-actual="$($diamond -e $'def run()\n def anything(x)\n  x\n end\n def add(acc, x)\n  acc + x\n end\n a = enumerable_select([], anything)\n b = enumerable_count([], anything)\n c = enumerable_map([], anything)\n d = enumerable_reduce([], 0, add)\n "#{a}, #{b}, #{c}, #{d}"\nend\nrun()')"
-[[ "$actual" == "[], 0, [], 0" ]]
-
-actual="$($diamond -e $'def run(flag)\n result = 0\n if flag\n  def add_a(x)\n   result = result + x\n  end\n  add_a(1)\n else\n  def add_b(x)\n   result = result + x\n  end\n  add_b(2)\n end\n result\nend\n"#{run(true)}, #{run(false)}"')"
-[[ "$actual" == "1, 2" ]]
-
-actual="$($diamond -e '"hello world".index_of("world")')"
-[[ "$actual" == "6" ]]
-
-actual="$($diamond -e '"hello world".index_of("xyz")')"
-[[ "$actual" == "nil" ]]
-
-actual="$($diamond -e '"hello".index_of("")')"
-[[ "$actual" == "0" ]]
-
-actual="$($diamond -e '"hello world".slice(0, 5)')"
-[[ "$actual" == "hello" ]]
-
-actual="$($diamond -e '"hello world".slice(6, 100)')"
-[[ "$actual" == "world" ]]
 
 error_file="$(mktemp)"
 if "$diamond" -e '"hi".slice(10, 1)' >/dev/null 2>"$error_file"; then
@@ -2848,93 +1629,6 @@ fi
 grep -q "expected 'listen' after 'TCPServer'" "$error_file"
 rm -f "$error_file"
 
-actual="$($diamond -e '"42".to_i()')"
-[[ "$actual" == "42" ]]
-
-actual="$($diamond -e '"-17".to_i()')"
-[[ "$actual" == "-17" ]]
-
-actual="$($diamond -e '"abc".to_i()')"
-[[ "$actual" == "0" ]]
-
-actual="$($diamond -e '"3.14".to_i()')"
-[[ "$actual" == "3" ]]
-
-actual="$($diamond -e '"99999999999999999999".to_i()')"
-[[ "$actual" == "99999999999999999999" ]]
-
-actual="$($diamond -e '"HeLLo, World!".downcase()')"
-[[ "$actual" == "hello, world!" ]]
-
-actual="$($diamond -e '"already lower".downcase()')"
-[[ "$actual" == "already lower" ]]
-
-actual="$($diamond -e '"".downcase()')"
-[[ "$actual" == "" ]]
-
-actual="$($diamond -e '"HeLLo, World!".upcase()')"
-[[ "$actual" == "HELLO, WORLD!" ]]
-
-actual="$($diamond -e '"ALREADY UPPER".upcase()')"
-[[ "$actual" == "ALREADY UPPER" ]]
-
-actual="$($diamond -e '"".upcase()')"
-[[ "$actual" == "" ]]
-
-actual="$($diamond -e '"hello".reverse()')"
-[[ "$actual" == "olleh" ]]
-
-actual="$($diamond -e '"".reverse()')"
-[[ "$actual" == "" ]]
-
-actual="$($diamond -e '"a".reverse()')"
-[[ "$actual" == "a" ]]
-
-actual="$($diamond -e '"ab".reverse()')"
-[[ "$actual" == "ba" ]]
-
-actual="$($diamond -e '"  hello world  ".strip()')"
-[[ "$actual" == "hello world" ]]
-
-actual="$($diamond -e $'"\\t\\n hi \\r\\n".strip()')"
-[[ "$actual" == "hi" ]]
-
-actual="$($diamond -e '"".strip()')"
-[[ "$actual" == "" ]]
-
-actual="$($diamond -e '"   ".strip()')"
-[[ "$actual" == "" ]]
-
-actual="$($diamond -e '"noSpaces".strip()')"
-[[ "$actual" == "noSpaces" ]]
-
-actual="$($diamond -e '"a,b,c".split(",")')"
-[[ "$actual" == "[a, b, c]" ]]
-
-actual="$($diamond -e '"a,,b".split(",")')"
-[[ "$actual" == "[a, , b]" ]]
-
-actual="$($diamond -e '",a".split(",")')"
-[[ "$actual" == "[, a]" ]]
-
-actual="$($diamond -e '"a,b,".split(",")')"
-[[ "$actual" == "[a, b, ]" ]]
-
-actual="$($diamond -e '"abc".split("")')"
-[[ "$actual" == "[a, b, c]" ]]
-
-actual="$($diamond -e '"".split(",")')"
-[[ "$actual" == "[]" ]]
-
-actual="$($diamond -e '"noseparator".split(",")')"
-[[ "$actual" == "[noseparator]" ]]
-
-actual="$($diamond -e '"aXXb".split("XX")')"
-[[ "$actual" == "[a, b]" ]]
-
-actual="$(DIAMOND_STRESS_GC=1 $diamond -e '"a,b,c,d,e,f".split(",")')"
-[[ "$actual" == "[a, b, c, d, e, f]" ]]
-
 error_file="$(mktemp)"
 if "$diamond" -e '"a".split(5)' >/dev/null 2>"$error_file"; then
     echo "String#split with a non-String argument unexpectedly succeeded" >&2
@@ -2942,27 +1636,6 @@ if "$diamond" -e '"a".split(5)' >/dev/null 2>"$error_file"; then
 fi
 grep -q "String#split argument must be a String" "$error_file"
 rm -f "$error_file"
-
-actual="$($diamond -e '"A".ord()')"
-[[ "$actual" == "65" ]]
-
-actual="$($diamond -e '"abc".ord()')"
-[[ "$actual" == "97" ]]
-
-actual="$($diamond -e '" ".ord()')"
-[[ "$actual" == "32" ]]
-
-actual="$($diamond -e $'begin\n "".ord()\nrescue error: IndexError\n 42\nend')"
-[[ "$actual" == "42" ]]
-
-actual="$($diamond -e 'chr(65)')"
-[[ "$actual" == "A" ]]
-
-actual="$($diamond -e 'chr(97)')"
-[[ "$actual" == "a" ]]
-
-actual="$($diamond -e 'chr("A".ord())')"
-[[ "$actual" == "A" ]]
 
 actual="$($diamond --dump-bytecode -e 'chr(65)')"
 grep -q 'CHR' <<<"$actual"
@@ -2974,24 +1647,6 @@ if "$diamond" -e 'chr("x")' >/dev/null 2>"$error_file"; then
 fi
 grep -q "chr argument must be an Int" "$error_file"
 rm -f "$error_file"
-
-actual="$($diamond -e $'begin\n chr(300)\nrescue error: RangeError\n 42\nend')"
-[[ "$actual" == "42" ]]
-
-actual="$($diamond -e $'begin\n chr(-1)\nrescue error: RangeError\n 42\nend')"
-[[ "$actual" == "42" ]]
-
-actual="$($diamond -e $'def chr(x)\n "shadowed"\nend\nchr(65)')"
-[[ "$actual" == "shadowed" ]]
-
-actual="$(DIAMOND_STRESS_GC=1 $diamond -e $'a = chr(72)\nb = chr(73)\n"#{a}#{b}"')"
-[[ "$actual" == "HI" ]]
-
-actual="$($diamond -e '"hello"[0]')"
-[[ "$actual" == "h" ]]
-
-actual="$($diamond -e '"hello"[4]')"
-[[ "$actual" == "o" ]]
 
 error_file="$(mktemp)"
 if "$diamond" -e '"hello"[10]' >/dev/null 2>"$error_file"; then
@@ -3025,21 +1680,6 @@ fi
 grep -q "String does not support element assignment" "$error_file"
 rm -f "$error_file"
 
-actual="$(DIAMOND_STRESS_GC=1 $diamond -e '"hello"[2]')"
-[[ "$actual" == "l" ]]
-
-actual="$($diamond -e '"ab".repeat(3)')"
-[[ "$actual" == "ababab" ]]
-
-actual="$($diamond -e '"x".repeat(0)')"
-[[ "$actual" == "" ]]
-
-actual="$($diamond -e '"".repeat(5)')"
-[[ "$actual" == "" ]]
-
-actual="$($diamond -e '"x".repeat(1)')"
-[[ "$actual" == "x" ]]
-
 error_file="$(mktemp)"
 if "$diamond" -e '"x".repeat(-1)' >/dev/null 2>"$error_file"; then
     echo "String#repeat with a negative argument unexpectedly succeeded" >&2
@@ -3056,15 +1696,6 @@ fi
 grep -q "String#repeat argument must be an Int" "$error_file"
 rm -f "$error_file"
 
-actual="$($diamond -e $'begin\n "x".repeat(-1)\nrescue error: RangeError\n 42\nend')"
-[[ "$actual" == "42" ]]
-
-actual="$(DIAMOND_STRESS_GC=1 $diamond -e $'a = "xy".repeat(3)\nb = "z".repeat(2)\n"#{a}, #{b}"')"
-[[ "$actual" == "xyxyxy, zz" ]]
-
-actual="$($diamond -e $'begin\n yield\nrescue error: FiberError\n 42\nend')"
-[[ "$actual" == "42" ]]
-
 error_file="$(mktemp)"
 if "$diamond" -e '"hello".slice(0, -1)' >/dev/null 2>"$error_file"; then
     echo "String#slice with a negative length unexpectedly succeeded" >&2
@@ -3078,9 +1709,6 @@ stress_data_file="$stress_file_dir/data.txt"
 actual="$(DIAMOND_STRESS_GC=1 $diamond -e "$(printf 'f = File.open("%s", "w")\nf.write("hello, stress gc")\nf.close()\ng = File.open("%s", "r")\ncontent = g.read()\ng.close()\ncontent' "$stress_data_file" "$stress_data_file")")"
 [[ "$actual" == "hello, stress gc" ]]
 rm -rf "$stress_file_dir"
-
-actual="$($diamond -e $'def run()\n def cb(x) = true\n def add(acc,x) = acc+x\n s = [].select(cb)\n c = [].count(cb)\n m = [].map(cb)\n r = [].reduce(99, add)\n "#{s}, #{c}, #{m}, #{r}"\nend\nrun()')"
-[[ "$actual" == "[], 0, [], 99" ]]
 
 error_file="$(mktemp)"
 if "$diamond" -e '"hi".nope()' >/dev/null 2>"$error_file"; then
@@ -3120,138 +1748,6 @@ fi
 grep -q "undefined method 'nope' for Listener" "$error_file"
 rm -f "$error_file"
 
-actual="$($diamond -e $'def run()\n def double(x) -> Int\n  x * 2\n end\n array_map_int([1,2,3], double)\nend\nrun()')"
-[[ "$actual" == "[2, 4, 6]" ]]
-
-actual="$($diamond -e 'array_reverse([1,2,3])')"
-[[ "$actual" == "[3, 2, 1]" ]]
-
-actual="$($diamond -e 'array_reverse([])')"
-[[ "$actual" == "[]" ]]
-
-actual="$(DIAMOND_STRESS_GC=1 $diamond -e 'array_reverse([1,2,3,4,5])')"
-[[ "$actual" == "[5, 4, 3, 2, 1]" ]]
-
-actual="$($diamond -e 'array_concat([1,2], [3,4])')"
-[[ "$actual" == "[1, 2, 3, 4]" ]]
-
-actual="$($diamond -e 'array_concat([], [])')"
-[[ "$actual" == "[]" ]]
-
-actual="$($diamond -e 'array_concat([1], [])')"
-[[ "$actual" == "[1]" ]]
-
-actual="$($diamond -e 'array_compact([1, nil, 2, nil, 3])')"
-[[ "$actual" == "[1, 2, 3]" ]]
-
-actual="$($diamond -e 'array_compact([nil, nil])')"
-[[ "$actual" == "[]" ]]
-
-actual="$($diamond -e 'array_compact([])')"
-[[ "$actual" == "[]" ]]
-
-actual="$($diamond -e 'array_uniq([1,2,2,3,1,4])')"
-[[ "$actual" == "[1, 2, 3, 4]" ]]
-
-actual="$($diamond -e 'array_uniq([])')"
-[[ "$actual" == "[]" ]]
-
-actual="$($diamond -e 'array_uniq([1,1,1])')"
-[[ "$actual" == "[1]" ]]
-
-actual="$($diamond -e 'array_flatten([1, [2, 3], [4, [5, 6]], 7])')"
-[[ "$actual" == "[1, 2, 3, 4, 5, 6, 7]" ]]
-
-actual="$($diamond -e 'array_flatten([])')"
-[[ "$actual" == "[]" ]]
-
-actual="$($diamond -e 'array_flatten([[], [[]]])')"
-[[ "$actual" == "[]" ]]
-
-actual="$($diamond -e 'array_join([1,2,3], ", ")')"
-[[ "$actual" == "1, 2, 3" ]]
-
-actual="$($diamond -e 'array_join([1,2,3])')"
-[[ "$actual" == "123" ]]
-
-actual="$($diamond -e 'array_join([])')"
-[[ "$actual" == "" ]]
-
-actual="$($diamond -e 'array_join(["a", nil, true])')"
-[[ "$actual" == "aniltrue" ]]
-
-actual="$($diamond -e $'a = [1,2,3,4]\nremoved = array_delete_at(a, 1)\n"#{removed}, #{a}"')"
-[[ "$actual" == "2, [1, 3, 4]" ]]
-
-actual="$($diamond -e $'a = [1,2,3]\nremoved = array_delete_at(a, 2)\n"#{removed}, #{a}"')"
-[[ "$actual" == "3, [1, 2]" ]]
-
-actual="$($diamond -e $'a = [1,2,3]\nremoved = array_delete_at(a, 5)\n"#{removed}, #{a}"')"
-[[ "$actual" == "nil, [1, 2, 3]" ]]
-
-actual="$($diamond -e $'a = [1]\nremoved = array_delete_at(a, 0)\n"#{removed}, #{a}"')"
-[[ "$actual" == "1, []" ]]
-
-actual="$($diamond -e $'"#{hash_merge({"a":1,"b":2}, {"b":3,"c":4})}"')"
-[[ "$actual" == "{a: 1, b: 3, c: 4}" ]]
-
-actual="$($diamond -e $'"#{hash_merge({}, {"a":1})}"')"
-[[ "$actual" == "{a: 1}" ]]
-
-actual="$($diamond -e $'"#{hash_merge({"a":1}, {})}"')"
-[[ "$actual" == "{a: 1}" ]]
-
-actual="$($diamond -e $'def run()\n values = {}\n index = 0\n while index < 1000\n  values[index] = index * 2\n  index = index + 1\n end\n ok = true\n index = 0\n while index < 1000\n  if values.key_at(index) != index || values.value_at(index) != index * 2\n   ok = false\n  end\n  index = index + 1\n end\n "#{ok}, #{values.length()}"\nend\nrun()')"
-[[ "$actual" == "true, 1000" ]]
-
-actual="$($diamond -e $'def run()\n values = {}\n index = 0\n while index < 500\n  values["key" + "#{index}"] = index\n  index = index + 1\n end\n ok = true\n index = 0\n while index < 500\n  key = "key" + "#{index}"\n  if values[key] != index || values.key_at(index) != key\n   ok = false\n  end\n  index = index + 1\n end\n "#{ok}, #{values.length()}"\nend\nrun()')"
-[[ "$actual" == "true, 500" ]]
-
-actual="$($diamond -e $'def run()\n values = {}\n values["first"] = 1\n index = 0\n while index < 200\n  values["k#{index}"] = index\n  index = index + 1\n end\n values["first"] = 999\n "#{values.key_at(0)}, #{values.value_at(0)}, #{values.length()}"\nend\nrun()')"
-[[ "$actual" == "first, 999, 201" ]]
-
-actual="$(DIAMOND_STRESS_GC=1 $diamond -e $'def run()\n values = {}\n index = 0\n while index < 100\n  values[index] = index\n  index = index + 1\n end\n total = 0\n index = 0\n while index < 100\n  total = total + values[index]\n  index = index + 1\n end\n total\nend\nrun()')"
-[[ "$actual" == "4950" ]]
-
-actual="$($diamond -e 'abs(-5)')"
-[[ "$actual" == "5" ]]
-
-actual="$($diamond -e 'abs(5)')"
-[[ "$actual" == "5" ]]
-
-actual="$($diamond -e 'abs(0)')"
-[[ "$actual" == "0" ]]
-
-actual="$($diamond -e $'min_val = -9223372036854775807 - 1\nabs(min_val)')"
-[[ "$actual" == "9223372036854775808" ]]
-
-actual="$($diamond -e '"#{min(3, 7)}, #{min(7, 3)}, #{max(3, 7)}, #{max(7, 3)}"')"
-[[ "$actual" == "3, 3, 7, 7" ]]
-
-actual="$($diamond -e '"#{mod(7, 3)}, #{mod(-7, 3)}, #{mod(7, -3)}, #{mod(0, 5)}"')"
-[[ "$actual" == "1, -1, 1, 0" ]]
-
-actual="$($diamond -e $'begin\n mod(5, 0)\nrescue error: ZeroDivisionError\n 42\nend')"
-[[ "$actual" == "42" ]]
-
-actual="$($diamond -e 'array_sort([5,3,1,4,2])')"
-[[ "$actual" == "[1, 2, 3, 4, 5]" ]]
-
-actual="$($diamond -e 'array_sort([])')"
-[[ "$actual" == "[]" ]]
-
-actual="$($diamond -e 'array_sort([1])')"
-[[ "$actual" == "[1]" ]]
-
-actual="$($diamond -e 'array_sort([-1,-5,3,0])')"
-[[ "$actual" == "[-5, -1, 0, 3]" ]]
-
-actual="$($diamond -e 'array_sort([2,2,1,1])')"
-[[ "$actual" == "[1, 1, 2, 2]" ]]
-
-actual="$($diamond -e $'a = [3,1,2]\nsorted = array_sort(a)\n"#{a}, #{sorted}"')"
-[[ "$actual" == "[3, 1, 2], [1, 2, 3]" ]]
-
 error_file="$(mktemp)"
 if "$diamond" -e 'array_sort([1, "bad", 2])' >/dev/null 2>"$error_file"; then
     echo "array_sort with a non-Int element unexpectedly succeeded" >&2
@@ -3259,9 +1755,6 @@ if "$diamond" -e 'array_sort([1, "bad", 2])' >/dev/null 2>"$error_file"; then
 fi
 grep -q "expected Array\[Int\], got Array" "$error_file"
 rm -f "$error_file"
-
-actual="$(DIAMOND_STRESS_GC=1 $diamond -e 'array_sort([5,3,1,4,2])')"
-[[ "$actual" == "[1, 2, 3, 4, 5]" ]]
 
 stress_socket_port=18746
 stress_server_out="$(mktemp)"
@@ -3297,39 +1790,6 @@ wait "$stress_server_pid"
 [[ "$(cat "$stress_client_out")" == "echo: hello" ]]
 rm -f "$stress_server_out" "$stress_client_out"
 
-actual="$($diamond -e '3.14')"
-[[ "$actual" == "3.14" ]]
-
-actual="$($diamond -e '0.5')"
-[[ "$actual" == "0.5" ]]
-
-actual="$($diamond -e '3.0')"
-[[ "$actual" == "3.0" ]]
-
-actual="$($diamond -e '1_000.000_1')"
-[[ "$actual" == "1000.0001" ]]
-
-actual="$($diamond -e '5.5')"
-[[ "$actual" == "5.5" ]]
-
-actual="$($diamond -e $'"Float: #{3.14}"')"
-[[ "$actual" == "Float: 3.14" ]]
-
-actual="$($diamond -e '3 == 3.0')"
-[[ "$actual" == "true" ]]
-
-actual="$($diamond -e '3.0 == 3')"
-[[ "$actual" == "true" ]]
-
-actual="$($diamond -e '3 == 3.5')"
-[[ "$actual" == "false" ]]
-
-actual="$($diamond -e $'h = {}\nh[3] = "int-key"\nh[3.0]')"
-[[ "$actual" == "int-key" ]]
-
-actual="$($diamond -e $'h = {}\nh[3.0] = "float-key"\nh[3]')"
-[[ "$actual" == "float-key" ]]
-
 error_file="$(mktemp)"
 if "$diamond" -e '5.abs()' >/dev/null 2>"$error_file"; then
     echo "Int literal .abs() unexpectedly succeeded (Int has no method dispatch)" >&2
@@ -3337,18 +1797,6 @@ if "$diamond" -e '5.abs()' >/dev/null 2>"$error_file"; then
 fi
 grep -q "runtime error" "$error_file"
 rm -f "$error_file"
-
-actual="$($diamond -e $'def f(x: Float) -> Float = x\nf(3.5)')"
-[[ "$actual" == "3.5" ]]
-
-actual="$($diamond -e '3.5 is Float')"
-[[ "$actual" == "true" ]]
-
-actual="$($diamond -e '3.5 is Int')"
-[[ "$actual" == "false" ]]
-
-actual="$($diamond -e '3 is Float')"
-[[ "$actual" == "false" ]]
 
 error_file="$(mktemp)"
 if "$diamond" -e $'def f(x: Float) -> Float = x\nf(3)' >/dev/null 2>"$error_file"; then
@@ -3358,9 +1806,6 @@ fi
 grep -q "expected Float, got Int" "$error_file"
 rm -f "$error_file"
 
-actual="$($diamond -e $'def f(x: Float) -> Float = x\nbegin\n f(3)\nrescue error: TypeError\n 42\nend')"
-[[ "$actual" == "42" ]]
-
 error_file="$(mktemp)"
 if "$diamond" -e 'raise 3.14' >/dev/null 2>"$error_file"; then
     echo "raise with a bare Float unexpectedly succeeded" >&2
@@ -3368,30 +1813,6 @@ if "$diamond" -e 'raise 3.14' >/dev/null 2>"$error_file"; then
 fi
 grep -q "uncaught exception: 3.14" "$error_file"
 rm -f "$error_file"
-
-actual="$($diamond -e $'begin\n raise 3.14\nrescue error: Float\n 42\nend')"
-[[ "$actual" == "42" ]]
-
-actual="$($diamond -e '1.5 + 2.5')"
-[[ "$actual" == "4.0" ]]
-
-actual="$($diamond -e '5.0 - 2.5')"
-[[ "$actual" == "2.5" ]]
-
-actual="$($diamond -e '2.5 * 4.0')"
-[[ "$actual" == "10.0" ]]
-
-actual="$($diamond -e '5.0 / 2.0')"
-[[ "$actual" == "2.5" ]]
-
-actual="$($diamond -e '"#{3 + 2.5}, #{2.5 + 3}, #{10 - 2.5}, #{3 * 2.5}, #{5 / 2.0}"')"
-[[ "$actual" == "5.5, 5.5, 7.5, 7.5, 2.5" ]]
-
-actual="$($diamond -e '10 + 20')"
-[[ "$actual" == "30" ]]
-
-actual="$($diamond -e '10 / 3')"
-[[ "$actual" == "3" ]]
 
 error_file="$(mktemp)"
 if "$diamond" -e '5 / 0' >/dev/null 2>"$error_file"; then
@@ -3401,91 +1822,16 @@ fi
 grep -q "division by zero" "$error_file"
 rm -f "$error_file"
 
-actual="$($diamond -e '5.0 / 0.0')"
-[[ "$actual" == "Infinity" ]]
-
-actual="$($diamond -e '(0.0 - 5.0) / 0.0')"
-[[ "$actual" == "-Infinity" ]]
-
-actual="$($diamond -e '0.0 / 0.0')"
-[[ "$actual" == "NaN" ]]
-
-actual="$($diamond -e '"a" + "b"')"
-[[ "$actual" == "ab" ]]
-
 actual="$($diamond --dump-bytecode -e $'def f(a: Int, b: Int) -> Int = a * b\nf(3, 4)')"
 grep -q '== f ==' <<<"$actual"
 grep -q 'MULTIPLY_INT' <<<"$actual"
-
-actual="$(DIAMOND_STRESS_GC=1 $diamond -e '"#{1.5 + 2.5}, #{5.0 / 2.0}"')"
-[[ "$actual" == "4.0, 2.5" ]]
-
-actual="$($diamond -e '"#{1.5 < 2.5}, #{2.5 < 1.5}, #{2.5 <= 2.5}, #{3.5 > 2.5}, #{3.5 >= 3.5}"')"
-[[ "$actual" == "true, false, true, true, true" ]]
-
-actual="$($diamond -e '"#{3 < 3.5}, #{3.5 < 3}, #{3 <= 3.0}"')"
-[[ "$actual" == "true, false, true" ]]
-
-actual="$($diamond -e $'nan = 0.0 / 0.0\n"#{nan < 1.0}, #{nan > 1.0}, #{nan == nan}"')"
-[[ "$actual" == "false, false, false" ]]
-
-actual="$($diamond -e '"#{3 < 5}, #{5 <= 5}"')"
-[[ "$actual" == "true, true" ]]
 
 actual="$($diamond --dump-bytecode -e $'def f(a: Int, b: Int) -> Bool = a < b\nf(3, 4)')"
 grep -q '== f ==' <<<"$actual"
 grep -q 'LESS_INT' <<<"$actual"
 
-actual="$($diamond -e '-5.0')"
-[[ "$actual" == "-5.0" ]]
-
-actual="$($diamond -e '-3.14')"
-[[ "$actual" == "-3.14" ]]
-
-actual="$($diamond -e $'x = 2.5\n-x')"
-[[ "$actual" == "-2.5" ]]
-
-actual="$($diamond -e '-3')"
-[[ "$actual" == "-3" ]]
-
-actual="$($diamond -e '(-5.0) / 0.0')"
-[[ "$actual" == "-Infinity" ]]
-
-actual="$($diamond -e '-(0.0 / 0.0)')"
-[[ "$actual" == "NaN" ]]
-
-actual="$($diamond -e $'def negf(x: Float) -> Float = -x\nnegf(3.5)')"
-[[ "$actual" == "-3.5" ]]
-
-actual="$($diamond -e $'def negi(x: Int) -> Int = -x\nnegi(3)')"
-[[ "$actual" == "-3" ]]
-
 actual="$($diamond --dump-bytecode -e $'def negf(x: Float) -> Float = -x\nnegf(3.5)')"
 grep -q 'NEGATE ' <<<"$actual"
-
-actual="$($diamond -e '- (-9223372036854775807 - 1)')"
-[[ "$actual" == "9223372036854775808" ]]
-
-actual="$(DIAMOND_STRESS_GC=1 $diamond -e $'def f(x: Float) -> Float = -x\n"#{f(1.5)}, #{-3}"')"
-[[ "$actual" == "-1.5, -3" ]]
-
-actual="$($diamond -e 'to_f(3)')"
-[[ "$actual" == "3.0" ]]
-
-actual="$($diamond -e 'to_f(0)')"
-[[ "$actual" == "0.0" ]]
-
-actual="$($diamond -e 'to_i(3.7)')"
-[[ "$actual" == "3" ]]
-
-actual="$($diamond -e 'to_i(-3.7)')"
-[[ "$actual" == "-3" ]]
-
-actual="$($diamond -e 'to_f(to_i(3.9))')"
-[[ "$actual" == "3.0" ]]
-
-actual="$($diamond -e 'to_i(-9223372036854775808.0)')"
-[[ "$actual" == "-9223372036854775808" ]]
 
 error_file="$(mktemp)"
 if "$diamond" -e 'to_f(3.5)' >/dev/null 2>"$error_file"; then
@@ -3513,132 +1859,24 @@ for bad_arg in '0.0 / 0.0' '1.0 / 0.0' '(0.0 - 1.0) / 0.0'; do
     rm -f "$error_file"
 done
 
-actual="$($diamond -e $'begin\n to_i(0.0 / 0.0)\nrescue error: RangeError\n 42\nend')"
-[[ "$actual" == "42" ]]
-
-actual="$($diamond -e 'to_i(99999999999999999999999.0)')"
-[[ "$actual" == "99999999999999991611392" ]]
-
-actual="$($diamond -e 'to_i(-99999999999999999999999.0)')"
-[[ "$actual" == "-99999999999999991611392" ]]
-
 actual="$($diamond --dump-bytecode -e 'to_f(3)')"
 grep -q 'TO_FLOAT' <<<"$actual"
 
 actual="$($diamond --dump-bytecode -e 'to_i(3.5)')"
 grep -q 'TO_INT' <<<"$actual"
 
-actual="$($diamond -e $'def f(x: Float) -> Float = x\nf(to_f(3))')"
-[[ "$actual" == "3.0" ]]
-
-actual="$(DIAMOND_STRESS_GC=1 $diamond -e '"#{to_f(3)}, #{to_i(3.5)}"')"
-[[ "$actual" == "3.0, 3" ]]
-
-actual="$($diamond -e '-0.0')"
-[[ "$actual" == "-0.0" ]]
-
-actual="$($diamond -e '0.0 == -0.0')"
-[[ "$actual" == "true" ]]
-
-actual="$($diamond -e '1.0 / -0.0')"
-[[ "$actual" == "-Infinity" ]]
-
-actual="$($diamond -e '1_234.567_8')"
-[[ "$actual" == "1234.5678" ]]
-
 nines=""
 for _ in $(seq 1 70); do nines+="9"; done
 actual="$($diamond -e "${nines}.0")"
 [[ "$actual" == "1e+70" ]]
-
-actual="$($diamond -e $'x = 1.0\ni = 0\nwhile i < 400\n x = x / 10.0\n i = i + 1\nend\nx')"
-[[ "$actual" == "0.0" ]]
-
-actual="$(DIAMOND_STRESS_GC=1 $diamond -e '"#{-0.0}, #{1_234.567_8}"')"
-[[ "$actual" == "-0.0, 1234.5678" ]]
-
-actual="$($diamond -e $'def test(flag)\n if flag\n  x = 5\n end\n return x\nend\ntest(false)')"
-[[ "$actual" == "nil" ]]
-
-actual="$($diamond -e $'def test(flag)\n if flag\n  x = 5\n end\n return x\nend\ntest(true)')"
-[[ "$actual" == "5" ]]
-
-actual="$(DIAMOND_STRESS_GC=1 $diamond -e $'def fib(n)\n if n < 2\n  n\n else\n  fib(n - 1) + fib(n - 2)\n end\nend\nfib(15)')"
-[[ "$actual" == "610" ]]
-
-actual="$($diamond -e 'nil')"
-[[ "$actual" == "nil" ]]
-
-actual="$($diamond -e $'def f()\n return\nend\nf()')"
-[[ "$actual" == "nil" ]]
 
 actual="$($diamond --dump-bytecode -e 'yield' 2>/dev/null || true)"
 yield_section="$(sed -n '/== -e ==/,/^== /p' <<<"$actual")"
 grep -Eq 'YIELD +r[0-9]+, r[0-9]+' <<<"$yield_section"
 [[ "$(grep -c NIL <<<"$yield_section")" == "0" ]]
 
-actual="$($diamond -e $'attempts = 0\nbegin\n attempts = attempts + 1\n if attempts < 3\n  raise "again"\n end\n attempts\nrescue error\n retry\nend')"
-[[ "$actual" == "3" ]]
-
-actual="$($diamond -e $'i = 0\nloop do\n i = i + 1\n break if i > 3\nend\ni')"
-[[ "$actual" == "4" ]]
-
-actual="$($diamond -e $'def f() = 1\nnil')"
-[[ "$actual" == "nil" ]]
-
-actual="$($diamond -e $'class Foo\nend\nnil')"
-[[ "$actual" == "nil" ]]
-
-actual="$($diamond -e $'module Bar\nend\nnil')"
-[[ "$actual" == "nil" ]]
-
-actual="$($diamond -e $'interface Baz\nend\nnil')"
-[[ "$actual" == "nil" ]]
-
-actual="$($diamond -e $'def f()\nend\nf()')"
-[[ "$actual" == "nil" ]]
-
-actual="$($diamond -e $'def outer()\n def inner(x)\n  x + 1\n end\n inner(4)\nend\nouter()')"
-[[ "$actual" == "5" ]]
-
 actual="$($diamond --dump-bytecode -e 'nil')"
 [[ "$(sed -n '/== -e ==/,/^== /p' <<<"$actual" | grep -c NIL)" == "0" ]]
-
-actual="$($diamond -e $'def test(flag)\n if flag\n  x = 5\n end\n return x\nend\ntest(false)')"
-[[ "$actual" == "nil" ]]
-
-actual="$($diamond -e $'def f()\n i = 0\n r = while i < 3\n  i = i + 1\n  break 99 if i == 2\n end\n r\nend\nf()')"
-[[ "$actual" == "99" ]]
-
-actual="$(DIAMOND_STRESS_GC=1 $diamond -e $'def f()\n i = 0\n r = while i < 3\n  i = i + 1\n  break 99 if i == 2\n end\n r\nend\n"#{f()}, #{nil}"')"
-[[ "$actual" == "99, nil" ]]
-
-actual="$($diamond -e 'abs(-5)')"
-[[ "$actual" == "5" ]]
-
-actual="$($diamond -e 'abs(-5.5)')"
-[[ "$actual" == "5.5" ]]
-
-actual="$($diamond -e 'abs(5)')"
-[[ "$actual" == "5" ]]
-
-actual="$($diamond -e '"#{min(3, 7)}, #{min(3.5, 2)}, #{max(3, 7.5)}, #{max(7.5, 3)}"')"
-[[ "$actual" == "3, 2, 7.5, 7.5" ]]
-
-actual="$($diamond -e 'mod(7, 2)')"
-[[ "$actual" == "1" ]]
-
-actual="$($diamond -e 'mod(-7, 2)')"
-[[ "$actual" == "-1" ]]
-
-actual="$($diamond -e 'mod(7.5, 2.0)')"
-[[ "$actual" == "1.5" ]]
-
-actual="$($diamond -e 'mod(-7.0, 2.0)')"
-[[ "$actual" == "-1.0" ]]
-
-actual="$($diamond -e 'mod(7, 2.0)')"
-[[ "$actual" == "1.0" ]]
 
 error_file="$(mktemp)"
 if "$diamond" -e 'mod(5, 0)' >/dev/null 2>"$error_file"; then
@@ -3648,75 +1886,15 @@ fi
 grep -q "division by zero" "$error_file"
 rm -f "$error_file"
 
-actual="$($diamond -e $'begin\n mod(5.0, 0.0)\nrescue error: RangeError\n 42\nend')"
-[[ "$actual" == "42" ]]
-
-actual="$(DIAMOND_STRESS_GC=1 $diamond -e '"#{abs(-3.5)}, #{mod(9.5, 3.0)}"')"
-[[ "$actual" == "3.5, 0.5" ]]
-
-actual="$($diamond -e '"42".to_f()')"
-[[ "$actual" == "42.0" ]]
-
-actual="$($diamond -e '"3.14".to_f()')"
-[[ "$actual" == "3.14" ]]
-
-actual="$($diamond -e '"-2.5".to_f()')"
-[[ "$actual" == "-2.5" ]]
-
-actual="$($diamond -e '".5".to_f()')"
-[[ "$actual" == "0.5" ]]
-
-actual="$($diamond -e '"5.".to_f()')"
-[[ "$actual" == "5.0" ]]
-
-actual="$($diamond -e '"1e3".to_f()')"
-[[ "$actual" == "1000.0" ]]
-
-actual="$($diamond -e '"  42".to_f()')"
-[[ "$actual" == "0.0" ]]
-
-actual="$($diamond -e '"nan".to_f()')"
-[[ "$actual" == "0.0" ]]
-
-actual="$($diamond -e '"inf".to_f()')"
-[[ "$actual" == "0.0" ]]
-
-actual="$($diamond -e '"".to_f()')"
-[[ "$actual" == "0.0" ]]
-
-actual="$($diamond -e '"garbage".to_f()')"
-[[ "$actual" == "0.0" ]]
-
 nines=""
 for _ in $(seq 1 200); do nines+="9"; done
 actual="$($diamond -e "(\"$nines\" + \"$nines\").to_f()")"
 [[ "$actual" == "Infinity" ]]
 
-actual="$(DIAMOND_STRESS_GC=1 $diamond -e '"#{"3.5".to_f()}, #{"garbage".to_f()}"')"
-[[ "$actual" == "3.5, 0.0" ]]
-
-actual="$($diamond -e 'sqrt(4.0)')"
-[[ "$actual" == "2.0" ]]
-
-actual="$($diamond -e 'sqrt(9)')"
-[[ "$actual" == "3.0" ]]
-
-actual="$($diamond -e 'sqrt(-1.0)')"
-[[ "$actual" == "NaN" ]]
-
-actual="$($diamond -e 'pow(2, 10)')"
-[[ "$actual" == "1024.0" ]]
-
-actual="$($diamond -e 'pow(2.0, 0.5)')"
-[[ "$actual" == "1.4142135623730951" ]]
-
 nines=""
 for _ in $(seq 1 200); do nines+="9"; done
 actual="$($diamond -e "pow((\"$nines\" + \"$nines\").to_f(), 2)")"
 [[ "$actual" == "Infinity" ]]
-
-actual="$($diamond -e '"#{sin(0)}, #{cos(0)}, #{tan(0)}"')"
-[[ "$actual" == "0.0, 1.0, 0.0" ]]
 
 error_file="$(mktemp)"
 if "$diamond" -e 'sqrt("x")' >/dev/null 2>"$error_file"; then
@@ -3739,21 +1917,6 @@ grep -q 'MATH_UNARY.*sqrt' <<<"$actual"
 
 actual="$($diamond --dump-bytecode -e 'pow(2, 3)')"
 grep -q 'MATH_BINARY.*pow' <<<"$actual"
-
-actual="$(DIAMOND_STRESS_GC=1 $diamond -e '"#{sqrt(16)}, #{pow(3, 2)}"')"
-[[ "$actual" == "4.0, 9.0" ]]
-
-actual="$($diamond -e '1e10')"
-[[ "$actual" == "10000000000.0" ]]
-
-actual="$($diamond -e '1.5e-3')"
-[[ "$actual" == "0.0015" ]]
-
-actual="$($diamond -e '2E+7')"
-[[ "$actual" == "20000000.0" ]]
-
-actual="$($diamond -e '1_000e1_0')"
-[[ "$actual" == "10000000000000.0" ]]
 
 error_file="$(mktemp)"
 if "$diamond" -e '5e' >/dev/null 2>"$error_file"; then
@@ -3780,40 +1943,13 @@ actual="$($diamond -e '1.5e-3')"
 puts_actual="$(DIAMOND_STRESS_GC=1 $diamond -e 'puts(1.5e-3)')"
 [[ "$actual" == "0.0015" && "$puts_actual" == $'0.0015\nnil' ]]
 
-actual="$($diamond -e $'def test(x: Int | String, y: Int | String)\n if x is Int && y is Int\n  x + y\n else\n  0\n end\nend\ntest(3, 4)')"
-[[ "$actual" == "7" ]]
-
-actual="$($diamond -e $'def test(x: Int | String, y: Int | String)\n if x is Int && y is Int\n  x + y\n else\n  0\n end\nend\ntest(5, "b")')"
-[[ "$actual" == "0" ]]
-
 actual="$($diamond --dump-bytecode -e $'def test(x: Int | String, y: Int | String)\n if x is Int && y is Int\n  x + y\n else\n  0\n end\nend')"
 test_dump="$(sed -n '/^== test ==$/,$p' <<<"$actual")"
 grep -q 'ADD_INT' <<<"$test_dump"
 
-actual="$($diamond -e $'def test(x: Int | String, y: Int | String, z: Int | String)\n if x is Int && y is Int && z is Int\n  x + y + z\n else\n  0\n end\nend\ntest(1, 2, 3)')"
-[[ "$actual" == "6" ]]
-
-actual="$($diamond -e $'def test(a: Int | String, b: Int | String)\n unless a is Int || b is Int\n  "neither"\n else\n  "one-or-both"\n end\nend\ntest("x", "y")')"
-[[ "$actual" == "neither" ]]
-
 actual="$($diamond --dump-bytecode -e $'def test(a: Int | String, b: Int | String) -> String\n unless a is Int || b is Int\n  a\n else\n  "one-or-both"\n end\nend')"
 test_dump="$(sed -n '/^== test ==$/,$p' <<<"$actual")"
 [[ "$(grep -c 'CHECK_TYPE' <<<"$test_dump")" == "2" ]]
-
-actual="$($diamond -e $'def test(a: Int | String, b: Int | String, c: Int | String)\n if (a is Int && b is Int) || c is Int\n  if c is Int\n   c + 1\n  else\n   a + b\n  end\n else\n  -1\n end\nend\ntest("x", "y", 9)')"
-[[ "$actual" == "10" ]]
-
-actual="$($diamond -e $'def test(a: Int | String, b: Int | String, c: Int | String)\n if (a is Int && b is Int) || c is Int\n  if c is Int\n   c + 1\n  else\n   a + b\n  end\n else\n  -1\n end\nend\ntest(3, 4, "z")')"
-[[ "$actual" == "7" ]]
-
-actual="$($diamond -e $'interface A\n def foo()\nend\ninterface B < A\n def bar()\nend\nclass C\n def foo()\n  1\n end\n def bar()\n  2\n end\nend\nC.new() is B')"
-[[ "$actual" == "true" ]]
-
-actual="$($diamond -e $'interface A\n def foo()\nend\ninterface B < A\n def bar()\nend\nclass D\n def bar()\n  2\n end\nend\nD.new() is B')"
-[[ "$actual" == "false" ]]
-
-actual="$($diamond -e $'interface A\n def foo()\nend\ninterface X\n def qux()\nend\ninterface B < A, X\n def bar()\nend\nclass C\n def foo()\n  1\n end\n def qux()\n  3\n end\n def bar()\n  2\n end\nend\nC.new() is B')"
-[[ "$actual" == "true" ]]
 
 error_file="$(mktemp)"
 if "$diamond" -e $'interface B < NoSuchInterface\n def bar()\nend' >/dev/null 2>"$error_file"; then
@@ -3854,207 +1990,46 @@ fi
 grep -q "interface has too many methods" "$error_file"
 rm -f "$error_file"
 
-actual="$($diamond -e $'interface Convertible\n def to_i() -> Int\n def slice(start, length) -> String\n def downcase() -> String\n def split(sep) -> Array\nend\n"Hi There" is Convertible')"
-[[ "$actual" == "true" ]]
-
-actual="$($diamond -e $'interface Bad\n def strip(x)\nend\n"hi" is Bad')"
-[[ "$actual" == "false" ]]
-
-actual="$($diamond -e $'interface TypedKeyAt\n def key_at(index) -> String\nend\n({"a": 1}) is TypedKeyAt')"
-[[ "$actual" == "false" ]]
-
-actual="$($diamond -e $'interface UntypedKeyAt\n def key_at(index)\nend\n({"a": 1}) is UntypedKeyAt')"
-[[ "$actual" == "true" ]]
-
-actual="$($diamond -e $'interface Container\n def push(x) -> Array\n def pop()\n def length() -> Int\nend\n[1, 2, 3] is Container')"
-[[ "$actual" == "true" ]]
-
-actual="$($diamond -e $'[1,\n2,\n3]')"
-[[ "$actual" == "[1, 2, 3]" ]]
-
-actual="$($diamond -e $'[1,\n2,\n]')"
-[[ "$actual" == "[1, 2]" ]]
-
-actual="$($diamond -e $'[1,\n2\n]')"
-[[ "$actual" == "[1, 2]" ]]
-
-actual="$($diamond -e $'[\n]')"
-[[ "$actual" == "[]" ]]
-
-actual="$($diamond -e $'{"a": 1,\n"b": 2}')"
-[[ "$actual" == "{a: 1, b: 2}" ]]
-
-actual="$($diamond -e $'{"a": 1,\n"b": 2,\n}')"
-[[ "$actual" == "{a: 1, b: 2}" ]]
-
-actual="$($diamond -e $'{"a": 1,\n"b": 2\n}')"
-[[ "$actual" == "{a: 1, b: 2}" ]]
-
-actual="$($diamond -e $'{\n"a": 1\n}')"
-[[ "$actual" == "{a: 1}" ]]
-
-actual="$($diamond -e $'{"name": "myapp", "dependencies": {\n"greeter": {"git": "u",\n"tag": "v1.0.0"}\n}}')"
-[[ "$actual" == "{name: myapp, dependencies: {greeter: {git: u, tag: v1.0.0}}}" ]]
-
-actual="$($diamond -e $'def add(a, b)\n a + b\nend\nadd(1,\n2)')"
-[[ "$actual" == "3" ]]
-
-actual="$($diamond -e $'def add(a, b)\n a + b\nend\nadd(1,\n2,\n)')"
-[[ "$actual" == "3" ]]
-
-actual="$($diamond -e $'def make()\n def add(a, b)\n  a + b\n end\n add\nend\nf = make()\nf(1,\n2)')"
-[[ "$actual" == "3" ]]
-
-actual="$($diamond -e $'def id[T](x: T) -> T\n x\nend\nid[\nInt\n](5)')"
-[[ "$actual" == "5" ]]
-
-actual="$($diamond -e $'class C\n def initialize(a,\n  b)\n  @a = a\n  @b = b\n end\n def sum()\n  @a + @b\n end\nend\nC.new(1,\n2).sum()')"
-[[ "$actual" == "3" ]]
-
-actual="$($diamond -e $'class Animal\n def initialize(name)\n  @name = name\n end\n def greet()\n  "hi " + @name\n end\nend\nclass Dog < Animal\n def greet()\n  super(\n  ) + "!"\n end\nend\nDog.new("rex").greet()')"
-[[ "$actual" == "hi rex!" ]]
-
-actual="$($diamond -e $'def add(a,\n b,\n c)\n a + b + c\nend\nadd(1, 2, 3)')"
-[[ "$actual" == "6" ]]
-
-actual="$($diamond -e $'def greet(name: String,\n greeting: String = "hi")\n greeting + ", " + name\nend\ngreet("world")')"
-[[ "$actual" == "hi, world" ]]
-
-actual="$($diamond -e $'def pair[A,\n B](a: A, b: B)\n [a, b]\nend\npair(1, "x")')"
-[[ "$actual" == "[1, x]" ]]
-
-actual="$($diamond -e $'interface Adder\n def add(a,\n  b)\nend\nclass C\n def add(a, b)\n  a + b\n end\nend\nC.new() is Adder')"
-[[ "$actual" == "true" ]]
-
-actual="$($diamond -e $'class C\n attr_accessor(a,\n  b)\n def initialize()\n  @a = 1\n  @b = 2\n end\nend\nC.new().b()')"
-[[ "$actual" == "2" ]]
-
-actual="$($diamond -e $'class C\n attr_accessor a, b\n def initialize()\n  @a = 1\n  @b = 2\n end\nend\nC.new().a()')"
-[[ "$actual" == "1" ]]
-
-actual="$($diamond -e $'class C\n def pub()\n  1\n end\n private def priv()\n  2\n end\nend\nC.new().pub()')"
-[[ "$actual" == "1" ]]
-
-actual="$($diamond -e $'class C\n def greet()\n  "hi"\n end\n alias_method(hello,\n  greet)\nend\nC.new().hello()')"
-[[ "$actual" == "hi" ]]
-
-actual="$($diamond -e $'def f(x: Hash[\n String,\n Int\n])\n x.length()\nend\nf({"a": 1})')"
-[[ "$actual" == "1" ]]
-
-actual="$($diamond -e $'f = File.open(\n "/tmp/diamond_newline_hash_fix_test.txt",\n "w"\n)\nf.write("hi")\nf.close()\ng = File.open("/tmp/diamond_newline_hash_fix_test.txt", "r")\ng.read()')"
-[[ "$actual" == "hi" ]]
-
-actual="$($diamond -e $'sqrt(\n 4.0\n)')"
-[[ "$actual" == "2.0" ]]
-
-actual="$($diamond -e $'pow(\n 2,\n 3\n)')"
-[[ "$actual" == "8.0" ]]
-
-actual="$($diamond -e $'interface A\n def foo()\nend\ninterface B <\n A\n def bar()\nend\nclass C\n def foo()\n  1\n end\n def bar()\n  2\n end\nend\nC.new() is B')"
-[[ "$actual" == "true" ]]
-
-actual="$($diamond -e $'interface A\n def foo()\nend\ninterface X\n def qux()\nend\ninterface B < A,\n X\n def bar()\nend\nclass C\n def foo()\n  1\n end\n def qux()\n  3\n end\n def bar()\n  2\n end\nend\nC.new() is B')"
-[[ "$actual" == "true" ]]
-
-actual="$($diamond -e $'interface A\n def foo()\nend\ninterface B < A\n def bar()\nend\nclass C\n def foo()\n  1\n end\n def bar()\n  2\n end\nend\nC.new() is B')"
-[[ "$actual" == "true" ]]
-
-actual="$($diamond -e $'interface A\n def foo()\nend\ninterface X\n def qux()\nend\ninterface B <\n A,\n X\n def bar()\nend\nclass C\n def foo()\n  1\n end\n def qux()\n  3\n end\n def bar()\n  2\n end\nend\nC.new() is B')"
-[[ "$actual" == "true" ]]
-
-actual="$($diamond -e $'x = if 1 < 2\n 10\nelse\n 20\nend\nx')"
-[[ "$actual" == "10" ]]
-
-actual="$($diamond -e $'x = unless false\n 10\nelse\n 20\nend\nx')"
-[[ "$actual" == "10" ]]
-
-actual="$($diamond -e $'x = 5 if true\nx')"
-[[ "$actual" == "5" ]]
-
-actual="$($diamond -e $'x = 5 if false\nx')"
-[[ "$actual" == "nil" ]]
-
-actual="$($diamond -e $'class C\n def initialize()\n  @x = if true\n   1\n  else\n   2\n  end\n end\n def x()\n  @x\n end\nend\nC.new().x()')"
-[[ "$actual" == "1" ]]
-
-actual="$($diamond -e $'if true\n y = if false\n  1\n else\n  2\n end\n y\nend')"
-[[ "$actual" == "2" ]]
-
-actual="$($diamond -e $'[if true\n 1\nelse\n 2\nend]')"
-[[ "$actual" == "[1]" ]]
-
-actual="$($diamond -e $'def f(flag)\n return if flag\n 99\nend\nf(true)')"
-[[ "$actual" == "nil" ]]
-
-actual="$($diamond -e $'def f(flag)\n return if flag\n 99\nend\nf(false)')"
-[[ "$actual" == "99" ]]
-
-actual="$($diamond -e $'def f(flag)\n return 5 if flag\n 99\nend\nf(true)')"
-[[ "$actual" == "5" ]]
-
-actual="$($diamond -e $'def f()\n return (if true\n  1\n else\n  2\n end)\nend\nf()')"
-[[ "$actual" == "1" ]]
-
-actual="$($diamond -e $'begin\n begin\n  raise "boom"\n rescue error\n  raise if true\n end\nrescue error\n error\nend')"
-[[ "$actual" == "boom" ]]
-
-actual="$($diamond -e $'a = 9223372036854775807 + 1\nb = 9223372036854775807 + 1\na + b')"
-[[ "$actual" == "18446744073709551616" ]]
-
-actual="$($diamond -e $'a = 9223372036854775807 + 100\nb = 9223372036854775807 + 1\na - b')"
-[[ "$actual" == "99" ]]
-
-actual="$($diamond -e $'a = 9223372036854775807 + 1\nb = 9223372036854775807 + 1\na * b')"
-[[ "$actual" == "85070591730234615865843651857942052864" ]]
-
-actual="$($diamond -e $'a = (9223372036854775807 + 1) * 100\nb = 9223372036854775807 + 1\na / b')"
-[[ "$actual" == "100" ]]
-
-actual="$($diamond -e $'a = -(9223372036854775807 + 1)\na / 3')"
-[[ "$actual" == "-3074457345618258602" ]]
-
-actual="$($diamond -e $'a = 9223372036854775807 + 1\nb = 9223372036854775807 + 2\n"#{a < b}, #{a > b}, #{a <= a}, #{a >= b}, #{a == a}, #{a == b}"')"
-[[ "$actual" == "true, false, true, false, true, false" ]]
-
-actual="$($diamond -e $'a = -(9223372036854775807 + 1)\nb = 9223372036854775807 + 1\na < b')"
-[[ "$actual" == "true" ]]
-
-actual="$($diamond -e $'big = 9223372036854775807 + 1\nbig is Int')"
-[[ "$actual" == "true" ]]
-
-actual="$($diamond -e $'big = 9223372036854775807 + 1\nh = {}\nh[big] = "value"\nh[big]')"
-[[ "$actual" == "value" ]]
-
 actual="$($diamond -e $'x = 9223372036854775807 + 1\nx')"
 puts_actual="$(DIAMOND_STRESS_GC=1 $diamond -e $'x = 9223372036854775807 + 1\nputs(x)')"
 [[ "$actual" == "9223372036854775808" && "$puts_actual" == $'9223372036854775808\nnil' ]]
 
-actual="$($diamond -e $'def sub(a, b) = a - b\nsub(5, 3)\nbig = 9223372036854775807 + 1\nsub(big, 1)')"
-[[ "$actual" == "9223372036854775807" ]]
-
-actual="$($diamond -e $'def mul(a, b) = a * b\nmul(5, 3)\nbig = 9223372036854775807 + 1\nmul(big, 2)')"
-[[ "$actual" == "18446744073709551616" ]]
-
-actual="$($diamond -e $'def div(a, b) = a / b\ndiv(6, 3)\nbig = (9223372036854775807 + 1) * 10\ndiv(big, 2)')"
-[[ "$actual" == "46116860184273879040" ]]
-
-actual="$($diamond -e $'def lt(a, b) = a < b\nlt(1, 2)\nbig = 9223372036854775807 + 1\nlt(big, big)')"
-[[ "$actual" == "false" ]]
-
-# File-based test cases: tests/cases/<name>.di paired with either
-# <name>.expected (exact stdout match, trailing newline stripped the same
-# way $() strips it on both sides) or <name>.expected_error (a substring
-# expected in combined stdout+stderr, for compile-error regressions --
-# those can't share a program with a successful test, so each stays its
-# own file). This is the newer convention going forward, growing this
-# directory instead of this file; the inline -e assertions above are the
-# older convention, most of them predating tests/cases/*.expected files
-# existing at all.
+# File-based test cases: tests/cases/<name>.di paired with:
+#   <name>.expected          -- exact stdout match (trailing newline
+#                                stripped the same way $() strips it on
+#                                both sides)
+#   <name>.expected_error    -- a substring expected in combined
+#                                stdout+stderr, for compile/runtime-error
+#                                regressions (can't share a program with a
+#                                successful test, so each stays its own
+#                                file)
+#   <name>.expected_contains -- one or more required substrings (one per
+#                                line), all of which must appear somewhere
+#                                in stdout; success still expected. For
+#                                multi-pattern checks (bytecode
+#                                disassembly, quickening traces) that don't
+#                                reduce to one exact string.
+#   <name>.env                -- optional, KEY=VALUE per line, exported
+#                                 for just this one case
+#   <name>.flags               -- optional, extra CLI flags (one per line)
+#                                 inserted before the file argument, e.g.
+#                                 --dump-bytecode
+# This is the newer convention going forward, growing this directory
+# instead of this file; the inline -e assertions above are the older
+# convention, most of them predating tests/cases/*.expected existing.
 case_count=0
 for case_file in tests/cases/*.di; do
     case_name="${case_file%.di}"
+    case_env=()
+    if [[ -f "$case_name.env" ]]; then
+        mapfile -t case_env < "$case_name.env"
+    fi
+    case_flags=()
+    if [[ -f "$case_name.flags" ]]; then
+        mapfile -t case_flags < "$case_name.flags"
+    fi
     if [[ -f "$case_name.expected" ]]; then
-        actual="$("$diamond" "$case_file")"
+        actual="$(env "${case_env[@]}" "$diamond_abs" "${case_flags[@]}" "$case_file")"
         expected="$(cat "$case_name.expected")"
         if [[ "$actual" != "$expected" ]]; then
             echo "FAIL: $case_file" >&2
@@ -4064,7 +2039,7 @@ for case_file in tests/cases/*.di; do
         fi
         case_count=$((case_count + 1))
     elif [[ -f "$case_name.expected_error" ]]; then
-        actual="$("$diamond" "$case_file" 2>&1 || true)"
+        actual="$(env "${case_env[@]}" "$diamond_abs" "${case_flags[@]}" "$case_file" 2>&1 || true)"
         pattern="$(cat "$case_name.expected_error")"
         if [[ "$actual" != *"$pattern"* ]]; then
             echo "FAIL: $case_file" >&2
@@ -4072,6 +2047,18 @@ for case_file in tests/cases/*.di; do
             echo "  actual: $actual" >&2
             exit 1
         fi
+        case_count=$((case_count + 1))
+    elif [[ -f "$case_name.expected_contains" ]]; then
+        actual="$(env "${case_env[@]}" "$diamond_abs" "${case_flags[@]}" "$case_file")"
+        while IFS= read -r pattern; do
+            [[ -z "$pattern" ]] && continue
+            if [[ "$actual" != *"$pattern"* ]]; then
+                echo "FAIL: $case_file" >&2
+                echo "  expected output to contain: $pattern" >&2
+                echo "  actual: $actual" >&2
+                exit 1
+            fi
+        done < "$case_name.expected_contains"
         case_count=$((case_count + 1))
     fi
 done
