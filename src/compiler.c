@@ -1477,6 +1477,50 @@ static uint8_t parse_file_open_call(Compiler *compiler) {
     return dest;
 }
 
+static uint8_t parse_regexp_new_call(Compiler *compiler) {
+    advance_token(compiler); /* consume '.' */
+    if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER||
+       !name_equals(compiler,"new",compiler->current.span,false)) {
+        fail(compiler,compiler->current.span,"expected 'new' after 'Regexp'");
+        return 0;
+    }
+    advance_token(compiler); /* consume 'new' */
+    if(compiler->current.kind!=DIAMOND_TOKEN_LEFT_PAREN) {
+        fail(compiler,compiler->current.span,"expected '(' after 'Regexp.new'");
+        return 0;
+    }
+    advance_token(compiler);
+    skip_newlines(compiler);
+    const uint8_t pattern_register=parse_expression(compiler);
+    skip_newlines(compiler);
+    /* options is optional -- Regexp.new(pattern) is the common case,
+     * defaulting to a compile-time 0 constant (REGINOLD_OPTION_NONE)
+     * rather than requiring every call site to spell it out, unlike
+     * File.open's two always-required arguments. */
+    uint8_t options_register;
+    if(compiler->current.kind==DIAMOND_TOKEN_COMMA) {
+        advance_token(compiler);
+        skip_newlines(compiler);
+        options_register=parse_expression(compiler);
+        skip_newlines(compiler);
+    } else {
+        options_register=allocate_register(compiler);
+        const uint8_t zero=add_constant(compiler,DIAMOND_INT(0));
+        emit_instruction(compiler,DIAMOND_OP_CONSTANT,options_register,zero,0,2);
+    }
+    if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
+        fail(compiler,compiler->current.span,"expected ')' after Regexp.new arguments");
+        return 0;
+    }
+    advance_token(compiler);
+    const uint8_t dest=allocate_register(compiler);
+    emit_opcode(compiler,DIAMOND_OP_REGEXP_NEW);
+    emit_byte(compiler,dest);
+    emit_byte(compiler,pattern_register);
+    emit_byte(compiler,options_register);
+    return dest;
+}
+
 static uint8_t parse_tcp_connect_call(Compiler *compiler) {
     advance_token(compiler); /* consume '.' */
     if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER||
@@ -1760,6 +1804,10 @@ static uint8_t parse_name(Compiler *compiler) {
        compiler->current.kind==DIAMOND_TOKEN_DOT&&
        name_equals(compiler,"File",name,false))
         return parse_file_open_call(compiler);
+    if(class_index<0&&find_local(compiler,name)<0&&find_function(compiler,name)<0&&
+       compiler->current.kind==DIAMOND_TOKEN_DOT&&
+       name_equals(compiler,"Regexp",name,false))
+        return parse_regexp_new_call(compiler);
     if(class_index<0&&find_local(compiler,name)<0&&find_function(compiler,name)<0&&
        compiler->current.kind==DIAMOND_TOKEN_DOT&&
        name_equals(compiler,"TCPSocket",name,false))
@@ -4509,6 +4557,7 @@ bool diamond_compile(const char *source, DiamondProgram *program,
         [DIAMOND_CLASS_SYSTEM_STACK_ERROR]={"SystemStackError",DIAMOND_CLASS_EXCEPTION},
         [DIAMOND_CLASS_FIBER_ERROR]={"FiberError",DIAMOND_CLASS_STANDARD_ERROR},
         [DIAMOND_CLASS_IO_ERROR]={"IOError",DIAMOND_CLASS_STANDARD_ERROR},
+        [DIAMOND_CLASS_REGEXP_ERROR]={"RegexpError",DIAMOND_CLASS_STANDARD_ERROR},
     };
     program->class_count=DIAMOND_BUILTIN_CLASS_COUNT;
     for(size_t index=0;index<DIAMOND_BUILTIN_CLASS_COUNT;index++) {

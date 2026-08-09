@@ -102,6 +102,7 @@ typedef enum DiamondOpCode : uint8_t {
     DIAMOND_OP_FILE_OPEN,
     DIAMOND_OP_TCP_CONNECT,
     DIAMOND_OP_TCP_LISTEN,
+    DIAMOND_OP_REGEXP_NEW,
     DIAMOND_OP_CHR,
     DIAMOND_OP_TO_FLOAT,
     DIAMOND_OP_TO_INT,
@@ -150,6 +151,7 @@ typedef enum DiamondBuiltinClass : uint8_t {
     DIAMOND_CLASS_SYSTEM_STACK_ERROR,
     DIAMOND_CLASS_FIBER_ERROR,
     DIAMOND_CLASS_IO_ERROR,
+    DIAMOND_CLASS_REGEXP_ERROR,
     DIAMOND_BUILTIN_CLASS_COUNT,
 } DiamondBuiltinClass;
 
@@ -300,6 +302,7 @@ typedef enum DiamondVmStatus : uint8_t {
     DIAMOND_VM_YIELD_WITHOUT_FIBER,
     DIAMOND_VM_FIBER_NOT_RESUMABLE,
     DIAMOND_VM_IO_ERROR,
+    DIAMOND_VM_REGEXP_ERROR,
 } DiamondVmStatus;
 
 typedef struct DiamondMethodCacheEntry {

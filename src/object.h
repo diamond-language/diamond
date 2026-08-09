@@ -5,6 +5,8 @@
 #include <stdint.h>
 #include <stdio.h>
 
+#include <reginold.h>
+
 #include "value.h"
 
 typedef enum DiamondObjectKind : uint8_t {
@@ -19,6 +21,7 @@ typedef enum DiamondObjectKind : uint8_t {
     DIAMOND_OBJECT_LISTENER,
     DIAMOND_OBJECT_BIGNUM,
     DIAMOND_OBJECT_SYMBOL,
+    DIAMOND_OBJECT_REGEXP,
 } DiamondObjectKind;
 
 typedef struct DiamondObject {
@@ -165,5 +168,14 @@ typedef struct DiamondListenerHandle {
     DiamondObject object;
     int fd;
 } DiamondListenerHandle;
+
+/* A compiled reginold pattern. Unlike DiamondFileHandle/DiamondListenerHandle,
+ * this owns no OS resource (fd/socket) -- just heap memory reginold itself
+ * allocated -- so there's no explicit .close() method; GC-time
+ * reginold_regex_free (see diamond_vm_collect's sweep loop) is sufficient. */
+typedef struct DiamondRegexp {
+    DiamondObject object;
+    reginold_regex *handle;
+} DiamondRegexp;
 
 #endif

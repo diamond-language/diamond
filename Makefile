@@ -1,5 +1,6 @@
 CC := gcc
-CPPFLAGS := -Isrc
+REGINOLD_DIR := ../reginold
+CPPFLAGS := -Isrc -I$(REGINOLD_DIR)
 CFLAGS_COMMON := -std=c23 -Wall -Wextra -Wpedantic -Wconversion -Wshadow \
 	-Wstrict-prototypes -Werror=implicit-function-declaration
 CFLAGS_DEBUG := -O0 -g3 -DDIAMOND_DEBUG
@@ -7,7 +8,7 @@ CFLAGS_RELEASE := -O3 -DNDEBUG -march=native
 CFLAGS_SANITIZE := $(CFLAGS_DEBUG) -fsanitize=address,undefined \
 	-fno-omit-frame-pointer
 LDFLAGS_SANITIZE := -fsanitize=address,undefined
-LDLIBS := -lm
+LDLIBS := -lm $(REGINOLD_DIR)/libreginold.a -ldl -lpthread
 
 BUILD_DIR := build
 TARGET := $(BUILD_DIR)/diamond

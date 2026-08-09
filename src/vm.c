@@ -180,6 +180,9 @@ void diamond_vm_collect(DiamondVm *vm) {
         } else if(unreached->kind==DIAMOND_OBJECT_SYMBOL) {
             const DiamondSymbol *symbol=(const DiamondSymbol *)unreached;
             size=sizeof(DiamondSymbol)+symbol->length+1;
+        } else if(unreached->kind==DIAMOND_OBJECT_REGEXP) {
+            size=sizeof(DiamondRegexp);
+            reginold_regex_free(((DiamondRegexp *)unreached)->handle);
         } else {
             size=sizeof(DiamondCell);
         }
@@ -223,6 +226,8 @@ void diamond_vm_free(DiamondVm *vm) {
         } else if(object->kind==DIAMOND_OBJECT_LISTENER) {
             const int fd=((DiamondListenerHandle *)object)->fd;
             if(fd>=0)close(fd);
+        } else if(object->kind==DIAMOND_OBJECT_REGEXP) {
+            reginold_regex_free(((DiamondRegexp *)object)->handle);
         }
         free(object);
         object = next;
@@ -620,6 +625,106 @@ static DiamondListenerHandle *allocate_listener_handle(DiamondVm *vm,int fd) {
     if(handle==nullptr)return nullptr;
     *handle=(DiamondListenerHandle){.object={.next=vm->objects,.kind=DIAMOND_OBJECT_LISTENER},.fd=fd};
     vm->objects=&handle->object;vm->bytes_allocated+=sizeof(DiamondListenerHandle);return handle;
+}
+
+static DiamondRegexp *allocate_regexp_handle(DiamondVm *vm,reginold_regex *compiled) {
+    if(vm->stress_gc||vm->bytes_allocated>=vm->next_gc)diamond_vm_collect(vm);
+    DiamondRegexp *regexp=malloc(sizeof(DiamondRegexp));
+    if(regexp==nullptr)return nullptr;
+    *regexp=(DiamondRegexp){.object={.next=vm->objects,.kind=DIAMOND_OBJECT_REGEXP},
+        .handle=compiled};
+    vm->objects=&regexp->object;vm->bytes_allocated+=sizeof(DiamondRegexp);return regexp;
+}
+
+/* DIAMOND_OP_REGEXP_NEW's real body, factored out of run_chunk's own
+ * switch statement deliberately, not just for readability: every local
+ * variable declared anywhere in that switch contributes to run_chunk's
+ * one stack frame regardless of which case actually runs (a -O0 build,
+ * which this project's debug/sanitize builds both are, does not reuse
+ * stack slots across sibling blocks), and DIAMOND_MAX_CALL_DEPTH is
+ * calibrated against that frame's worst-case size to stay safe under
+ * AddressSanitizer's redzone-inflated frames (see docs/design.md). A
+ * reginold_error alone is ~112 bytes (its message buffer is
+ * REGINOLD_ERROR_MSG_MAX=90); adding it and reginold_match's fields
+ * directly into run_chunk's frame regressed depth(5000)-style recursion
+ * into a genuine ASan stack-overflow crash before the depth counter ever
+ * tripped -- caught by make test-sanitize, not by hand-testing, since the
+ * regex feature itself worked perfectly right up until deep recursion
+ * was exercised. Splitting this into its own function moves those locals
+ * into a separate, transient frame that only exists while regex code is
+ * actually running, not on every recursive run_chunk level. */
+static DiamondVmStatus regexp_new_helper(DiamondVm *vm, const DiamondString *pattern,
+        int64_t options, DiamondValue *result) {
+    reginold_regex *compiled=nullptr;
+    reginold_error compile_error={0};
+    const reginold_status compile_status=reginold_compile(pattern->chars,
+        pattern->length,(unsigned int)options,&compiled,&compile_error);
+    if(compile_status!=REGINOLD_OK) {
+        snprintf(vm->error,sizeof vm->error,"%.*s",
+            (int)compile_error.message_len,compile_error.message);
+        return DIAMOND_VM_REGEXP_ERROR;
+    }
+    DiamondRegexp *regexp=allocate_regexp_handle(vm,compiled);
+    if(regexp==nullptr) {
+        reginold_regex_free(compiled);
+        return DIAMOND_VM_OUT_OF_MEMORY;
+    }
+    *result=DIAMOND_OBJECT(regexp);
+    return DIAMOND_VM_OK;
+}
+
+/* Regexp#match/#match? real body -- same stack-frame-isolation reasoning
+ * as regexp_new_helper above (reginold_match's own fields would otherwise
+ * land directly in run_chunk's frame too). */
+static DiamondVmStatus regexp_match_helper(DiamondVm *vm, const DiamondRegexp *regexp,
+        const DiamondString *subject, bool test_only, DiamondValue *result) {
+    if(test_only) {
+        const reginold_status search_status=reginold_search(regexp->handle,
+            subject->chars,subject->length,0,nullptr);
+        if(search_status==REGINOLD_ERROR) {
+            snprintf(vm->error,sizeof vm->error,"regexp match failed");
+            return DIAMOND_VM_REGEXP_ERROR;
+        }
+        *result=DIAMOND_BOOL(search_status==REGINOLD_OK);
+        return DIAMOND_VM_OK;
+    }
+    reginold_match match_result={0};
+    const reginold_status search_status=reginold_search(regexp->handle,
+        subject->chars,subject->length,0,&match_result);
+    if(search_status==REGINOLD_ERROR) {
+        snprintf(vm->error,sizeof vm->error,"regexp match failed");
+        return DIAMOND_VM_REGEXP_ERROR;
+    }
+    if(search_status==REGINOLD_MISMATCH) {
+        *result=DIAMOND_NIL;
+        return DIAMOND_VM_OK;
+    }
+    const size_t group_count=1+match_result.capture_count;
+    DiamondValue *groups=malloc(group_count*sizeof(DiamondValue));
+    if(groups==nullptr) {
+        reginold_match_free(&match_result);
+        return DIAMOND_VM_OUT_OF_MEMORY;
+    }
+    bool build_ok=true;
+    for(size_t index=0;index<group_count&&build_ok;index++) {
+        const reginold_span span=index==0?match_result.overall:
+            match_result.captures[index-1];
+        if(span.beg<0||span.end<0) {
+            groups[index]=DIAMOND_NIL;
+            continue;
+        }
+        DiamondString *group_string=allocate_string(vm,
+            subject->chars+span.beg,(size_t)(span.end-span.beg));
+        if(group_string==nullptr) {build_ok=false;break;}
+        groups[index]=DIAMOND_OBJECT(group_string);
+    }
+    reginold_match_free(&match_result);
+    if(!build_ok) {free(groups);return DIAMOND_VM_OUT_OF_MEMORY;}
+    DiamondArray *result_array=allocate_array(vm,groups,group_count);
+    free(groups);
+    if(result_array==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+    *result=DIAMOND_OBJECT(result_array);
+    return DIAMOND_VM_OK;
 }
 
 static bool value_is_bignum(DiamondValue value) {
@@ -1595,6 +1700,7 @@ static uint8_t exception_class_for_status(DiamondVmStatus status) {
         case DIAMOND_VM_FIBER_NOT_RESUMABLE: return DIAMOND_CLASS_FIBER_ERROR;
         case DIAMOND_VM_YIELD_WITHOUT_FIBER: return DIAMOND_CLASS_FIBER_ERROR;
         case DIAMOND_VM_IO_ERROR: return DIAMOND_CLASS_IO_ERROR;
+        case DIAMOND_VM_REGEXP_ERROR: return DIAMOND_CLASS_REGEXP_ERROR;
         default: return UINT8_MAX;
     }
 }
@@ -3924,6 +4030,34 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                         .as.object=(DiamondObject *)client_handle};
                     break;
                 }
+                if(receiver_kind==DIAMOND_OBJECT_REGEXP) {
+                    if(type_argument_count!=0)VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                    const bool match_method=method_name->length==5&&
+                        memcmp(method_name->chars,"match",5)==0;
+                    const bool match_p_method=method_name->length==6&&
+                        memcmp(method_name->chars,"match?",6)==0;
+                    if(!match_method&&!match_p_method) {
+                        snprintf(vm->error,sizeof vm->error,"undefined method '%.*s' for %s",
+                            (int)method_name->length,method_name->chars,"Regexp");
+                        VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                    }
+                    if(argc!=1)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                    if(registers[base].kind!=DIAMOND_VALUE_OBJECT||
+                       registers[base].as.object->kind!=DIAMOND_OBJECT_STRING) {
+                        snprintf(vm->error,sizeof vm->error,
+                            "Regexp#%.*s argument must be a String",
+                            (int)method_name->length,method_name->chars);
+                        VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                    }
+                    DiamondValue match_dest=DIAMOND_NIL;
+                    const DiamondVmStatus match_status=regexp_match_helper(vm,
+                        (const DiamondRegexp *)registers[recv].as.object,
+                        (const DiamondString *)registers[base].as.object,
+                        match_p_method,&match_dest);
+                    VM_PROPAGATE(match_status);
+                    registers[dest]=match_dest;
+                    break;
+                }
                 if(receiver_kind!=DIAMOND_OBJECT_INSTANCE)
                     VM_RETURN(DIAMOND_VM_TYPE_ERROR);
                 DiamondInstance *instance=(DiamondInstance *)registers[recv].as.object;
@@ -4496,6 +4630,24 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     .as.object=(DiamondObject *)handle};
                 break;
             }
+            case DIAMOND_OP_REGEXP_NEW: {
+                uint8_t dest=0,pattern_reg=0,options_reg=0;
+                READ_BYTE(dest);READ_BYTE(pattern_reg);READ_BYTE(options_reg);
+                if(registers[pattern_reg].kind!=DIAMOND_VALUE_OBJECT||
+                   registers[pattern_reg].as.object->kind!=DIAMOND_OBJECT_STRING||
+                   registers[options_reg].kind!=DIAMOND_VALUE_INT) {
+                    snprintf(vm->error,sizeof vm->error,
+                        "Regexp.new arguments must be a String pattern and an Int options");
+                    VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                }
+                DiamondValue new_result=DIAMOND_NIL;
+                const DiamondVmStatus new_status=regexp_new_helper(vm,
+                    (const DiamondString *)registers[pattern_reg].as.object,
+                    registers[options_reg].as.integer,&new_result);
+                VM_PROPAGATE(new_status);
+                registers[dest]=new_result;
+                break;
+            }
             case DIAMOND_OP_TCP_CONNECT: {
                 uint8_t dest=0,host_reg=0,port_reg=0;
                 READ_BYTE(dest);READ_BYTE(host_reg);READ_BYTE(port_reg);
@@ -4789,6 +4941,8 @@ const char *diamond_vm_status_name(DiamondVmStatus status) {
             return "fiber is not resumable";
         case DIAMOND_VM_IO_ERROR:
             return "I/O error";
+        case DIAMOND_VM_REGEXP_ERROR:
+            return "regexp error";
     }
     return "unknown VM status";
 }
