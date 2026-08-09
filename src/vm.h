@@ -10,8 +10,14 @@
 
 enum {
     DIAMOND_MAX_CODE = 4096,
-    DIAMOND_MAX_CONSTANTS = 512,
-    DIAMOND_MAX_FUNCTIONS = 512,
+    /* Capped at 256, not raised further like the other DIAMOND_MAX_*
+     * limits: constant/function indices are single bytes throughout the
+     * bytecode format and structs (CONSTANT/CALL opcode operands,
+     * DiamondMethod/DiamondClosure.function_index) -- (uint8_t)index
+     * silently wraps past 256, so this is a hard architectural ceiling,
+     * not just a struct-sizing choice. See docs/roadmap.md. */
+    DIAMOND_MAX_CONSTANTS = 256,
+    DIAMOND_MAX_FUNCTIONS = 256,
     DIAMOND_MAX_FUNCTION_NAME = 64,
     DIAMOND_MAX_STRING_CONSTANTS = 256,
     DIAMOND_MAX_STRING_LENGTH = 255,

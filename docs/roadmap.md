@@ -1127,12 +1127,13 @@ future work.
   something exercises deep recursion specifically.
 
 - Self-hosting, Phase 0: raised every `DIAMOND_MAX_*` fixed-size limit in
-  `src/vm.h` substantially (functions 64→512, code-per-function 1024→4096,
-  classes 32→128, methods 32→128, constants 256→512, string constants
-  64→256, interfaces/modules 16→32, type sets 64→256, fields 32→64,
-  namespace constants 64→128 — `DIAMOND_MAX_FUNCTION_NAME`,
-  `DIAMOND_MAX_STRING_LENGTH`, `DIAMOND_MAX_UNION_TYPES`, and
-  `DIAMOND_REGISTER_COUNT` left unchanged), the first step of the
+  `src/vm.h` substantially (functions 64→256, code-per-function 1024→4096,
+  classes 32→128, methods 32→128, constants 256→256 (unchanged — see
+  below), string constants 64→256, interfaces/modules 16→32, type sets
+  64→256, fields 32→64, namespace constants 64→128 —
+  `DIAMOND_MAX_FUNCTION_NAME`, `DIAMOND_MAX_STRING_LENGTH`,
+  `DIAMOND_MAX_UNION_TYPES`, and `DIAMOND_REGISTER_COUNT` left unchanged),
+  the first step of the
   self-hosting roadmap (see `Later experiments`): a Diamond-language
   reimplementation of the compiler will need far more than 64 top-level
   functions (`src/compiler.c` alone already has ~89), so the existing
@@ -1172,6 +1173,35 @@ future work.
   with `make test-all` (debug/release/sanitizer builds, all C-level test
   binaries) — all 845 `tests/run.sh` cases plus every C-level test still
   pass.
+
+  **Follow-up correction, found while scoping Phase 1**: the initial
+  Phase 0 commit raised `DIAMOND_MAX_FUNCTIONS` and `DIAMOND_MAX_CONSTANTS`
+  to 512, past a hard architectural ceiling neither this round nor the
+  original design ever named explicitly — every function/constant index
+  is a single byte throughout the bytecode format and the structs that
+  reference one (`CALL`/`CONSTANT` opcode operands are one byte;
+  `DiamondMethod.function_index`/`DiamondClosure.function_index` are
+  `uint8_t`). `add_constant`/the function-declaration sites already guard
+  with `if (count == DIAMOND_MAX_FUNCTIONS)` before incrementing, but that
+  guard only prevents exceeding the *configured* limit — at 512 it happily
+  permits `count` to reach 511, and `(uint8_t)511` truncates to `255`,
+  silently colliding with whatever real function or constant already
+  lives at index 255 rather than erroring. `DIAMOND_MAX_STRING_CONSTANTS`
+  and `DIAMOND_MAX_TYPE_SETS` were, by contrast, already correctly capped
+  at exactly 256 in the same original commit (256 possible values at
+  indices 0–255 is the actual ceiling a one-byte index allows, not 255) —
+  which is what made the other two constants' jump to 512 a visible
+  outlier worth double-checking rather than something that looked
+  consistent with the rest of the change. Every other raised constant
+  (classes, interfaces, modules, methods, fields, namespace constants) was
+  checked against the same question and confirmed safe: all sit well
+  under 256 already. Fixed by capping both back to 256 — still 4x their
+  original value (64 and 256, respectively; constants was in fact already
+  at 256, so it is unchanged from Phase 0's own starting point) — and
+  re-verified with the same `make test-all` pass. This was caught and
+  fixed before it shipped in anything beyond this one already-pushed
+  commit; a second, corrective commit landed the fix rather than amending
+  history.
 
 ## Next priorities
 
