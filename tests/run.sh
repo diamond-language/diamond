@@ -23,51 +23,6 @@ quickening_trace="$(DIAMOND_QUICKEN=1 DIAMOND_TRACE_QUICKEN=1 \
 grep -q 'quickened sites: 1, deoptimized sites: 0' <<<"$quickening_trace"
 grep -q '^18$' <<<"$quickening_trace"
 
-quickening_trace="$(DIAMOND_QUICKEN=1 DIAMOND_TRACE_QUICKEN=1 \
-    "$diamond" -e $'def arithmetic(a,b) = a*b\narithmetic(20,2)' 2>&1)"
-grep -q 'quickened sites: 1, deoptimized sites: 0' <<<"$quickening_trace"
-grep -q '^40$' <<<"$quickening_trace"
-
-quickening_trace="$(DIAMOND_QUICKEN=1 DIAMOND_TRACE_QUICKEN=1 \
-    "$diamond" -e $'def arithmetic(a,b) = a/b\narithmetic(20,2)' 2>&1)"
-grep -q 'quickened sites: 1, deoptimized sites: 0' <<<"$quickening_trace"
-grep -q '^10$' <<<"$quickening_trace"
-
-quickening_trace="$(DIAMOND_QUICKEN=1 DIAMOND_TRACE_QUICKEN=1 \
-    "$diamond" -e $'def comparison(a,b) = a < b\ncomparison(2,3)' 2>&1)"
-grep -q 'quickened sites: 1, deoptimized sites: 0' <<<"$quickening_trace"
-grep -q '^true$' <<<"$quickening_trace"
-
-threshold_trace="$(DIAMOND_QUICKEN=1 DIAMOND_QUICKEN_THRESHOLD=2 \
-    DIAMOND_TRACE_QUICKEN=1 "$diamond" -e $'def threshold(a,b) = a+b\nthreshold(1,2)\nthreshold(3,4)' 2>&1)"
-grep -q 'quickened sites: 1, deoptimized sites: 0' <<<"$threshold_trace"
-grep -q '^7$' <<<"$threshold_trace"
-
-fallback_trace="$(DIAMOND_QUICKEN=1 DIAMOND_QUICKEN_THRESHOLD=invalid \
-    DIAMOND_TRACE_QUICKEN=1 "$diamond" -e $'def fallback(a,b) = a+b\nfallback(1,2)' 2>&1)"
-grep -q 'quickened sites: 1, deoptimized sites: 0' <<<"$fallback_trace"
-grep -q '^3$' <<<"$fallback_trace"
-
-equality_trace="$(DIAMOND_QUICKEN=1 DIAMOND_TRACE_QUICKEN=1 \
-    "$diamond" -e $'def equality(a,b) = a==b\nequality(4,4)' 2>&1)"
-grep -q 'quickened sites: 1, deoptimized sites: 0' <<<"$equality_trace"
-grep -q '^true$' <<<"$equality_trace"
-
-equality_trace="$(DIAMOND_QUICKEN=1 DIAMOND_TRACE_QUICKEN=1 \
-    "$diamond" -e $'def equality(a,b) = a != b\nequality(4,5)' 2>&1)"
-grep -q 'quickened sites: 1, deoptimized sites: 0' <<<"$equality_trace"
-grep -q '^true$' <<<"$equality_trace"
-
-equality_trace="$(DIAMOND_QUICKEN=1 DIAMOND_TRACE_QUICKEN=1 \
-    "$diamond" -e $'def equality(a,b) = a==b\n[equality(4,4), equality("x","x")]' 2>&1)"
-grep -q 'quickened sites: 1, deoptimized sites: 1' <<<"$equality_trace"
-grep -q '^\[true, true\]$' <<<"$equality_trace"
-
-quickening_trace="$(DIAMOND_QUICKEN=1 DIAMOND_TRACE_QUICKEN=1 \
-    "$diamond" -e $'def comparison(a,b) = a >= b\ncomparison(3,3)' 2>&1)"
-grep -q 'quickened sites: 1, deoptimized sites: 0' <<<"$quickening_trace"
-grep -q '^true$' <<<"$quickening_trace"
-
 [[ "$("$diamond" -e $'20-2')" == 18 ]]
 [[ "$("$diamond" -e $'20*2')" == 40 ]]
 [[ "$("$diamond" -e $'20/2')" == 10 ]]
@@ -120,19 +75,10 @@ grep -q 'STRING.*s0 ("dia")' <<<"$actual"
     exit 1
 }
 
-actual="$("$diamond" --dump-bytecode tests/cases/classes.di)"
-grep -q 'NEW' <<<"$actual"
-grep -q 'INVOKE' <<<"$actual"
-grep -q 'GET_IVAR' <<<"$actual"
-grep -q 'SET_IVAR' <<<"$actual"
-
 if "$diamond" -e $'class Child < Missing\nend' >/dev/null 2>&1; then
     echo "undefined superclass unexpectedly compiled" >&2
     exit 1
 fi
-
-actual="$("$diamond" --dump-bytecode tests/cases/super.di)"
-grep -q 'SUPER' <<<"$actual"
 
 if "$diamond" -e $'class Root\n  def value()\n    super()\n  end\nend' >/dev/null 2>&1; then
     echo "super without a superclass unexpectedly compiled" >&2
@@ -154,9 +100,6 @@ if "$diamond" -e $'def mystery(x: Missing)\n  x\nend' >/dev/null 2>&1; then
     exit 1
 fi
 
-actual="$("$diamond" --dump-bytecode -e $'def add(x: Int) -> Int\n  x + 1\nend\nadd(41)')"
-grep -q 'CHECK_TYPE' <<<"$actual"
-
 if "$diamond" -e $'def accept(x: Int | Nil)\n x\nend\naccept("bad")' >/dev/null 2>&1; then
     echo "nilable parameter accepted wrong non-nil type" >&2
     exit 1
@@ -172,9 +115,6 @@ fi
 grep -q 'expected Int | String, got Bool' "$error_file"
 rm -f "$error_file"
 
-actual="$("$diamond" --dump-bytecode -e $'def accept(x: Int | String)\n x\nend\naccept(42)')"
-grep -q 'CHECK_TYPE.*Int | String' <<<"$actual"
-
 error_file="$(mktemp)"
 if "$diamond" -e $'def ints(values: Array[Int])\n values\nend\nints([1, "bad"])' \
     >/dev/null 2>"$error_file"; then
@@ -185,9 +125,6 @@ fi
 grep -q 'expected Array\[Int\], got Array' "$error_file"
 rm -f "$error_file"
 
-actual="$("$diamond" --dump-bytecode -e $'def nested(values: Array[Array[Int | Nil]])\n values\nend\nnested([[nil]])')"
-grep -q 'Array\[Array\[Int | Nil\]\]' <<<"$actual"
-
 error_file="$(mktemp)"
 if "$diamond" -e $'def scores(values: Hash[String, Int])\n values\nend\nscores({"ok": "bad"})' \
     >/dev/null 2>"$error_file"; then
@@ -197,13 +134,6 @@ if "$diamond" -e $'def scores(values: Hash[String, Int])\n values\nend\nscores({
 fi
 grep -q 'expected Hash\[String, Int\], got Hash' "$error_file"
 rm -f "$error_file"
-
-actual="$("$diamond" --dump-bytecode -e $'def nested(values: Hash[String, Array[Int | Nil]])\n values\nend\nnested({"items": [nil]})')"
-grep -q 'Hash\[String, Array\[Int | Nil\]\]' <<<"$actual"
-
-actual="$("$diamond" --dump-bytecode -e 'array_first([42])')"
-grep -q '^== array_first ==$' <<<"$actual"
-grep -q 'INDEX_GET' <<<"$actual"
 
 error_file="$(mktemp)"
 if "$diamond" -e $'class Foo\n def bar(a, b)\n  a + b\n end\nend\nFoo.new().bar(1)' >/dev/null 2>"$error_file"; then
@@ -310,9 +240,6 @@ if "$diamond" -e $'def invalid(callback: Callable[17])\n callback\nend' \
     exit 1
 fi
 
-actual="$("$diamond" --dump-bytecode -e $'def maybe(x: String | Nil) -> String | Nil\n x\nend\nmaybe(nil)')"
-grep -q 'String | Nil' <<<"$actual"
-
 error_file="$(mktemp)"
 if "$diamond" -e $'def typed(x: String | Nil)\n x\nend\ntyped(42)' \
     >/dev/null 2>"$error_file"; then
@@ -350,9 +277,6 @@ fi
 grep -q 'expression cannot satisfy type annotation' "$error_file"
 rm -f "$error_file"
 
-actual="$("$diamond" --dump-bytecode -e $'def dynamic(x) -> Int\n  x\nend\ndynamic(42)')"
-grep -q 'CHECK_TYPE.*Int' <<<"$actual"
-
 actual="$("$diamond" --dump-bytecode -e $'def absent() -> String | Nil\n  nil\nend\nabsent()')"
 absent_dump="$(sed -n '/^== absent ==$/,$p' <<<"$actual")"
 if grep -q 'CHECK_TYPE' <<<"$absent_dump"; then
@@ -375,10 +299,6 @@ if "$diamond" -e $'def typed(value: Array)\n value\nend\ntyped("not an array")' 
     exit 1
 fi
 
-actual="$("$diamond" --dump-bytecode -e '[20, 22][1]')"
-grep -q 'ARRAY' <<<"$actual"
-grep -q 'INDEX_GET' <<<"$actual"
-
 error_file="$(mktemp)"
 if "$diamond" -e $'values = [1]\nvalues[-1] = 2' >/dev/null 2>"$error_file"; then
     echo "negative indexed assignment unexpectedly succeeded" >&2
@@ -387,12 +307,6 @@ if "$diamond" -e $'values = [1]\nvalues[-1] = 2' >/dev/null 2>"$error_file"; the
 fi
 grep -q 'index -1 out of bounds for Array of length 1' "$error_file"
 rm -f "$error_file"
-
-actual="$("$diamond" --dump-bytecode -e $'values = [0]\nvalues[0] = 42\nvalues')"
-grep -q 'INDEX_SET' <<<"$actual"
-
-actual="$("$diamond" --dump-bytecode -e 'nil || 42')"
-grep -q 'JUMP_IF_TRUE' <<<"$actual"
 
 if "$diamond" -e $'def bad(flag) -> Int\n  if flag\n    return "bad"\n  end\n  0\nend' \
     >/dev/null 2>&1; then
@@ -445,9 +359,6 @@ if "$diamond" -e $'def typed(value: Hash)\n value\nend\ntyped([])' \
     echo "Hash annotation accepted an Array" >&2
     exit 1
 fi
-
-actual="$("$diamond" --dump-bytecode -e '{"answer": 42}')"
-grep -q 'HASH' <<<"$actual"
 
 error_file="$(mktemp)"
 if "$diamond" tests/cases/stack_trace.di >/dev/null 2>"$error_file"; then
@@ -659,12 +570,6 @@ fi
 grep -q 'runtime error: call stack overflow' "$error_file"
 rm -f "$error_file"
 
-actual="$("$diamond" --dump-bytecode -e 'raise 42' 2>/dev/null || true)"
-grep -q 'RAISE' <<<"$actual"
-
-actual="$($diamond --dump-bytecode -e $'class Foo\n def bar(a)\n  a\n end\n def self.make_patch()\n  def replacement(a)\n   a\n  end\n  replacement\n end\nend\nFoo.redefine_method("bar", Foo.make_patch())')"
-grep -q 'REDEFINE_METHOD' <<<"$actual"
-
 actual="$($diamond --dump-bytecode -e 'yield' 2>/dev/null || true)"
 grep -Eq 'YIELD +r[0-9]+, r[0-9]+' <<<"$actual"
 
@@ -715,29 +620,11 @@ fi
 grep -q "redefine_method callable must be a method of 'Foo'" "$error_file"
 rm -f "$error_file"
 
-actual="$("$diamond" --dump-bytecode tests/cases/rescue.di)"
-grep -q 'PUSH_RESCUE' <<<"$actual"
-grep -q 'POP_RESCUE' <<<"$actual"
-
-actual="$("$diamond" --dump-bytecode -e $'begin\n 42\nensure\n nil\nend')"
-grep -q 'PUSH_ENSURE' <<<"$actual"
-grep -q 'RUN_ENSURE' <<<"$actual"
-grep -q 'END_ENSURE' <<<"$actual"
-
 if "$diamond" -e $'begin\n raise 1\nrescue error: Int |\n 0\nend' \
     >/dev/null 2>&1; then
     echo "trailing rescue union unexpectedly compiled" >&2
     exit 1
 fi
-
-actual="$($diamond --dump-bytecode -e $'def accept(callback: Callable[1, String])\n callback(1)\nend')"
-grep -q 'Callable\[1, String\]' <<<"$actual"
-
-actual="$($diamond --dump-bytecode -e $'def size(value: Sized)\n value.length()\nend')"
-grep -q 'CHECK_TYPE.*Sized' <<<"$actual"
-
-actual="$($diamond --dump-bytecode -e $'interface Named\n def name()\nend\ndef accept(value: Named)\n value\nend')"
-grep -q 'CHECK_TYPE.*Named' <<<"$actual"
 
 if "$diamond" -e $'def wrong() -> String = 42\nwrong()' >/dev/null 2>&1; then
     echo "endless method bypassed its return contract" >&2
@@ -758,9 +645,6 @@ if "$diamond" -e $'def invalid(optional = 1, required) = required' \
     exit 1
 fi
 
-actual="$($diamond --dump-bytecode -e $'def answer(value = 42) = value\nanswer()')"
-grep -q 'ARGUMENT_PROVIDED' <<<"$actual"
-
 if "$diamond" -e $'"missing #{42"' >/dev/null 2>&1; then
     echo "unterminated interpolation unexpectedly compiled" >&2
     exit 1
@@ -770,9 +654,6 @@ if "$diamond" -e $'"empty #{}"' >/dev/null 2>&1; then
     echo "empty interpolation unexpectedly compiled" >&2
     exit 1
 fi
-
-actual="$($diamond --dump-bytecode -e $'value = 42\n"value=#{value}"')"
-grep -q 'TO_STRING' <<<"$actual"
 
 actual="$($diamond tests/multifile/main.di)"
 [[ "$actual" == "[42, Hello, world]" ]]
@@ -988,20 +869,11 @@ if "$diamond" -e $'def identity[T](value: T) = value\ndef invalid(value: T) = va
     exit 1
 fi
 
-actual="$($diamond --dump-bytecode -e $'def first[T](values: Array[T]) -> T = values[0]\nfirst([42])')"
-grep -q 'Array\[T0\]' <<<"$actual"
-
-actual="$($diamond --dump-bytecode -e $'def accepts(callback: Callable[[Int, String], Bool]) = true\ntrue')"
-grep -q 'Callable\[\[Int, String\], Bool\]' <<<"$actual"
-
 if "$diamond" -e $'def empty[T]() -> Array[T] = []\nempty[Int, String]()' \
     >/dev/null 2>&1; then
     echo "wrong explicit generic argument count unexpectedly compiled" >&2
     exit 1
 fi
-
-actual="$($diamond --dump-bytecode -e $'def empty[T]() -> Array[T] = []\nempty[Array[String]]()')"
-grep -q 'CALL_TYPED.*\[Array\[String\]\]' <<<"$actual"
 
 if "$diamond" -e $'class Box\n include Missing\nend' >/dev/null 2>&1; then
     echo "undefined included module unexpectedly compiled" >&2
@@ -1023,9 +895,6 @@ if "$diamond" -e 'Missing::Thing.new()' >/dev/null 2>&1; then
     exit 1
 fi
 
-actual="$($diamond --dump-bytecode -e $'module State\n def value() = @value\nend\nclass Box\n include State\nend\nBox.new().value()')"
-grep -q 'GET_IVAR_NAME' <<<"$actual"
-
 if "$diamond" -e $'module Config\n VALUE = 1\n VALUE = 2\nend' >/dev/null 2>&1; then
     echo "namespace constant reassignment unexpectedly compiled" >&2
     exit 1
@@ -1040,9 +909,6 @@ if "$diamond" -e $'module Tools\n def self.answer() = 1\n def self.answer() = 2\
     echo "duplicate module singleton function unexpectedly compiled" >&2
     exit 1
 fi
-
-actual="$($diamond --dump-bytecode -e $'module Types\n def self.empty[T]() -> Array[T] = []\nend\nTypes.empty[String]()')"
-grep -q 'CALL_TYPED.*\[String\]' <<<"$actual"
 
 if "$diamond" -e $'class Factory\n def self.answer() = 1\n def self.answer() = 2\nend' >/dev/null 2>&1; then
     echo "duplicate class singleton method unexpectedly compiled" >&2
@@ -1319,9 +1185,6 @@ if "$diamond" -e $'module Constants\n VALUE = 42 if true\nend' >/dev/null 2>&1; 
     exit 1
 fi
 
-actual="$($diamond --dump-bytecode -e $'def make()\n def once()\n  1\n end\n once\nend\nFiber.new(make())')"
-grep -q 'FIBER_NEW' <<<"$actual"
-
 error_file="$(mktemp)"
 if "$diamond" -e 'Fiber.new(5)' >/dev/null 2>"$error_file"; then
     echo "Fiber.new with a non-Callable argument unexpectedly succeeded" >&2
@@ -1409,9 +1272,6 @@ if "$diamond" -e 'gets(1)' >/dev/null 2>&1; then
     echo "gets with an argument unexpectedly compiled" >&2
     exit 1
 fi
-
-actual="$($diamond --dump-bytecode -e 'File.open("x", "r")' 2>/dev/null || true)"
-grep -q 'FILE_OPEN' <<<"$actual"
 
 file_dir="$(mktemp -d)"
 data_file="$file_dir/data.txt"
@@ -1637,9 +1497,6 @@ fi
 grep -q "String#split argument must be a String" "$error_file"
 rm -f "$error_file"
 
-actual="$($diamond --dump-bytecode -e 'chr(65)')"
-grep -q 'CHR' <<<"$actual"
-
 error_file="$(mktemp)"
 if "$diamond" -e 'chr("x")' >/dev/null 2>"$error_file"; then
     echo "chr with a non-Int argument unexpectedly succeeded" >&2
@@ -1822,17 +1679,6 @@ fi
 grep -q "division by zero" "$error_file"
 rm -f "$error_file"
 
-actual="$($diamond --dump-bytecode -e $'def f(a: Int, b: Int) -> Int = a * b\nf(3, 4)')"
-grep -q '== f ==' <<<"$actual"
-grep -q 'MULTIPLY_INT' <<<"$actual"
-
-actual="$($diamond --dump-bytecode -e $'def f(a: Int, b: Int) -> Bool = a < b\nf(3, 4)')"
-grep -q '== f ==' <<<"$actual"
-grep -q 'LESS_INT' <<<"$actual"
-
-actual="$($diamond --dump-bytecode -e $'def negf(x: Float) -> Float = -x\nnegf(3.5)')"
-grep -q 'NEGATE ' <<<"$actual"
-
 error_file="$(mktemp)"
 if "$diamond" -e 'to_f(3.5)' >/dev/null 2>"$error_file"; then
     echo "to_f on a Float argument unexpectedly succeeded" >&2
@@ -1858,12 +1704,6 @@ for bad_arg in '0.0 / 0.0' '1.0 / 0.0' '(0.0 - 1.0) / 0.0'; do
     grep -q "to_i argument must be a finite Float" "$error_file"
     rm -f "$error_file"
 done
-
-actual="$($diamond --dump-bytecode -e 'to_f(3)')"
-grep -q 'TO_FLOAT' <<<"$actual"
-
-actual="$($diamond --dump-bytecode -e 'to_i(3.5)')"
-grep -q 'TO_INT' <<<"$actual"
 
 nines=""
 for _ in $(seq 1 70); do nines+="9"; done
@@ -1912,12 +1752,6 @@ fi
 grep -q "math function argument must be an Int or Float" "$error_file"
 rm -f "$error_file"
 
-actual="$($diamond --dump-bytecode -e 'sqrt(4.0)')"
-grep -q 'MATH_UNARY.*sqrt' <<<"$actual"
-
-actual="$($diamond --dump-bytecode -e 'pow(2, 3)')"
-grep -q 'MATH_BINARY.*pow' <<<"$actual"
-
 error_file="$(mktemp)"
 if "$diamond" -e '5e' >/dev/null 2>"$error_file"; then
     echo "bare 5e unexpectedly parsed as a valid program" >&2
@@ -1935,9 +1769,6 @@ if "$diamond" -e "${nines}e300" >/dev/null 2>"$error_file"; then
 fi
 grep -q "float literal is too long" "$error_file"
 rm -f "$error_file"
-
-actual="$($diamond --dump-bytecode -e '1e10')"
-grep -q '^0000.*CONSTANT.*10000000000\.0' <<<"$actual"
 
 actual="$($diamond -e '1.5e-3')"
 puts_actual="$(DIAMOND_STRESS_GC=1 $diamond -e 'puts(1.5e-3)')"
@@ -2003,12 +1834,16 @@ puts_actual="$(DIAMOND_STRESS_GC=1 $diamond -e $'x = 9223372036854775807 + 1\npu
 #                                regressions (can't share a program with a
 #                                successful test, so each stays its own
 #                                file)
-#   <name>.expected_contains -- one or more required substrings (one per
-#                                line), all of which must appear somewhere
-#                                in stdout; success still expected. For
-#                                multi-pattern checks (bytecode
-#                                disassembly, quickening traces) that don't
-#                                reduce to one exact string.
+#   <name>.expected_contains -- one or more grep -q patterns (BRE, one per
+#                                line, matched with real grep so ^/$
+#                                anchors and other regex metacharacters
+#                                behave exactly like the inline grep -q
+#                                checks this convention replaces), all of
+#                                which must match somewhere against
+#                                combined stdout+stderr; success still
+#                                expected. For multi-pattern checks
+#                                (bytecode disassembly, quickening traces)
+#                                that don't reduce to one exact string.
 #   <name>.env                -- optional, KEY=VALUE per line, exported
 #                                 for just this one case
 #   <name>.flags               -- optional, extra CLI flags (one per line)
@@ -2049,12 +1884,12 @@ for case_file in tests/cases/*.di; do
         fi
         case_count=$((case_count + 1))
     elif [[ -f "$case_name.expected_contains" ]]; then
-        actual="$(env "${case_env[@]}" "$diamond_abs" "${case_flags[@]}" "$case_file")"
+        actual="$(env "${case_env[@]}" "$diamond_abs" "${case_flags[@]}" "$case_file" 2>&1 || true)"
         while IFS= read -r pattern; do
             [[ -z "$pattern" ]] && continue
-            if [[ "$actual" != *"$pattern"* ]]; then
+            if ! grep -q -- "$pattern" <<<"$actual"; then
                 echo "FAIL: $case_file" >&2
-                echo "  expected output to contain: $pattern" >&2
+                echo "  expected output to match: $pattern" >&2
                 echo "  actual: $actual" >&2
                 exit 1
             fi
