@@ -3015,8 +3015,30 @@ static uint8_t compile_definition(Compiler *compiler) {
         }
         advance_token(compiler);
     }
-    if (compiler->current.kind != DIAMOND_TOKEN_IDENTIFIER) {
+    /* Operator overloading: a method literally named "+"/"=="/etc. is
+     * already legal at the VM level (lookup_method dispatches purely by
+     * name-string + arity, no charset restriction) -- the only barrier is
+     * this check. Unary minus is deliberately NOT included here: it's
+     * named "negate", an ordinary identifier, recognized by name at
+     * NEGATE's dispatch point the same way "to_s" is recognized for
+     * stringification, needing no parser accommodation at all. */
+    const bool operator_name =
+        compiler->current.kind==DIAMOND_TOKEN_PLUS||
+        compiler->current.kind==DIAMOND_TOKEN_MINUS||
+        compiler->current.kind==DIAMOND_TOKEN_STAR||
+        compiler->current.kind==DIAMOND_TOKEN_SLASH||
+        compiler->current.kind==DIAMOND_TOKEN_EQUAL_EQUAL||
+        compiler->current.kind==DIAMOND_TOKEN_LESS||
+        compiler->current.kind==DIAMOND_TOKEN_LESS_EQUAL||
+        compiler->current.kind==DIAMOND_TOKEN_GREATER||
+        compiler->current.kind==DIAMOND_TOKEN_GREATER_EQUAL;
+    if (compiler->current.kind != DIAMOND_TOKEN_IDENTIFIER && !operator_name) {
         fail(compiler, compiler->current.span, "expected function name after 'def'");
+        return 0;
+    }
+    if (operator_name && !(compiler->current_class>=0 && !module_singleton)) {
+        fail(compiler, compiler->current.span,
+             "operator methods can only be defined inside a class");
         return 0;
     }
     if (compiler->program->function_count == DIAMOND_MAX_FUNCTIONS) {
@@ -4175,7 +4197,22 @@ static uint8_t compile_interface(Compiler *compiler) {
                  "expected method signature in interface");break;
         }
         advance_token(compiler);
-        if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER) {
+        /* An interface may require an operator method (see
+         * compile_definition's identical broadening for class method
+         * definitions) -- a class satisfies it the same way it satisfies
+         * any other required method name, no interface-side dispatch
+         * changes needed beyond accepting the name here. */
+        const bool operator_name=
+            compiler->current.kind==DIAMOND_TOKEN_PLUS||
+            compiler->current.kind==DIAMOND_TOKEN_MINUS||
+            compiler->current.kind==DIAMOND_TOKEN_STAR||
+            compiler->current.kind==DIAMOND_TOKEN_SLASH||
+            compiler->current.kind==DIAMOND_TOKEN_EQUAL_EQUAL||
+            compiler->current.kind==DIAMOND_TOKEN_LESS||
+            compiler->current.kind==DIAMOND_TOKEN_LESS_EQUAL||
+            compiler->current.kind==DIAMOND_TOKEN_GREATER||
+            compiler->current.kind==DIAMOND_TOKEN_GREATER_EQUAL;
+        if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER&&!operator_name) {
             fail(compiler,compiler->current.span,"expected interface method name");break;
         }
         const DiamondSpan method_name=compiler->current.span;

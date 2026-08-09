@@ -901,6 +901,58 @@ static const DiamondMethod *lookup_method_cached(
     return method;
 }
 
+/* Operator overloading (see docs/syntax.md): dispatches to a user-class
+ * method named "+"/"=="/"negate"/etc. when a builtin arithmetic/comparison
+ * opcode's operand doesn't otherwise know how to combine with the other
+ * one. `argument` is the other operand for a binary operator; nullptr for
+ * a unary one (negate), meaning the receiver is the method's only
+ * argument. `*found` tells the caller whether a method was located at
+ * all -- when false, the caller falls through to its own existing
+ * TypeError path unchanged, so this never changes behavior for a class
+ * that doesn't define the operator. Uses lookup_method_cached (the same
+ * cache INVOKE/INVOKE_MONO use, keyed off `site`) rather than a plain
+ * lookup_method, so a hot operator-overload call site gets the same
+ * monomorphic-class fast path any other polymorphic call site does, with
+ * no new caching mechanism needed. Deliberately does not check
+ * method->is_private: `a + b` is operator syntax, not an explicit-receiver
+ * method call the way `a.plus(b)` would be -- matches how the to_s
+ * dispatch in stringify_value below also ignores privacy. */
+static DiamondVmStatus invoke_operator_method(DiamondVm *vm, const DiamondChunk *chunk,
+        size_t depth, const uint8_t *site, const DiamondInstance *receiver,
+        const char *name, size_t name_length, const DiamondValue *argument,
+        DiamondValue *result, bool *found) {
+    const DiamondMethod *method=lookup_method_cached(vm,chunk,site,
+        receiver->class,name,name_length);
+    if(method==nullptr) {*found=false;return DIAMOND_VM_OK;}
+    *found=true;
+    /* method->arity/required_arity are stored receiver-exclusive (see
+     * compile_definition's `function->arity-1` when registering a class
+     * method), matching how the real INVOKE site checks its own `argc`
+     * (also receiver-exclusive) against them -- only the explicit operand
+     * counts here, not the receiver. */
+    const size_t explicit_argument_count=argument==nullptr?0:1;
+    if(explicit_argument_count<method->required_arity||
+       explicit_argument_count>method->arity)
+        return DIAMOND_VM_ARITY_ERROR;
+    const size_t argument_count=argument==nullptr?1:2;
+    DiamondValue args[2]={DIAMOND_OBJECT((DiamondObject *)receiver)};
+    if(argument!=nullptr)args[1]=*argument;
+    const DiamondFunction *fn=&chunk->functions[method->function_index];
+    const DiamondChunk child={.name=fn->name,.code=fn->code,
+      .lines=fn->lines,.columns=fn->columns,.code_count=fn->code_count,
+      .constants=fn->constants,.constant_count=fn->constant_count,
+      .strings=fn->strings,.string_count=fn->string_count,
+      .type_sets=fn->type_sets,.type_set_count=fn->type_set_count,
+      .functions=chunk->functions,.function_count=chunk->function_count,
+      .classes=chunk->classes,.class_count=chunk->class_count,
+      .interfaces=chunk->interfaces,.interface_count=chunk->interface_count,
+      .parameter_type_sets=fn->parameter_type_sets,
+      .type_variable_count=fn->type_variable_count,
+      .parameter_offset=fn->owner_class==UINT8_MAX?0:1,
+      .register_count=fn->register_count};
+    return run_chunk(&child,vm,args,argument_count,depth+1,nullptr,result);
+}
+
 /* Mirrors find_function's two filters (compiler.c) exactly, operating on
  * the runtime DiamondChunk instead of the compile-time DiamondProgram:
  * excludes class/module methods (owner_class!=UINT8_MAX) and nested
@@ -2479,6 +2531,19 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     registers[destination] = DIAMOND_OBJECT(string);
                     break;
                 }
+                if (registers[left].kind==DIAMOND_VALUE_OBJECT &&
+                    registers[left].as.object->kind==DIAMOND_OBJECT_INSTANCE) {
+                    bool found=false;DiamondValue op_result=DIAMOND_NIL;
+                    const uint8_t *site=chunk->code+instruction_offset;
+                    const DiamondVmStatus status=invoke_operator_method(vm,chunk,depth,
+                        site,(const DiamondInstance *)registers[left].as.object,
+                        "+",1,&registers[right],&op_result,&found);
+                    if(found) {
+                        VM_PROPAGATE(status);
+                        registers[destination]=op_result;
+                        break;
+                    }
+                }
                 VM_RETURN(DIAMOND_VM_TYPE_ERROR);
                 break;
             }
@@ -2560,6 +2625,24 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                         registers[destination]=bignum_result;
                         break;
                     }
+                    /* Same reasoning as the bignum check just above: this
+                     * deopt handles the instruction inline rather than
+                     * falling through to ADD's own case block, so an
+                     * operator-overload check is needed here too, not just
+                     * in ADD's own already-checked TYPE_ERROR fallback. */
+                    if (registers[left].kind==DIAMOND_VALUE_OBJECT &&
+                        registers[left].as.object->kind==DIAMOND_OBJECT_INSTANCE) {
+                        bool found=false;DiamondValue op_result=DIAMOND_NIL;
+                        const uint8_t *site=chunk->code+instruction_offset;
+                        const DiamondVmStatus status=invoke_operator_method(vm,chunk,
+                            depth,site,(const DiamondInstance *)registers[left].as.object,
+                            "+",1,&registers[right],&op_result,&found);
+                        if(found) {
+                            VM_PROPAGATE(status);
+                            registers[destination]=op_result;
+                            break;
+                        }
+                    }
                     VM_RETURN(DIAMOND_VM_TYPE_ERROR);
                 }
                 /* SUBTRACT_INT/MULTIPLY_INT/DIVIDE_INT never had a deopt
@@ -2639,6 +2722,30 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 }
                 if (registers[left].kind != DIAMOND_VALUE_INT ||
                     registers[right].kind != DIAMOND_VALUE_INT) {
+                    /* Reached by SUBTRACT/MULTIPLY/DIVIDE (generic, or
+                     * retargeted here from their _INT deopt above) with a
+                     * non-Int left operand -- ADD_INT can't reach this
+                     * point with a non-Int operand, since its own deopt
+                     * branch above already handles (and returns for) that
+                     * case, so it's never a candidate for "+" dispatch
+                     * here. */
+                    if (registers[left].kind==DIAMOND_VALUE_OBJECT &&
+                        registers[left].as.object->kind==DIAMOND_OBJECT_INSTANCE &&
+                        (opcode==DIAMOND_OP_SUBTRACT||opcode==DIAMOND_OP_MULTIPLY||
+                         opcode==DIAMOND_OP_DIVIDE)) {
+                        const char *name=opcode==DIAMOND_OP_SUBTRACT?"-":
+                            opcode==DIAMOND_OP_MULTIPLY?"*":"/";
+                        bool found=false;DiamondValue op_result=DIAMOND_NIL;
+                        const uint8_t *site=chunk->code+instruction_offset;
+                        const DiamondVmStatus status=invoke_operator_method(vm,chunk,
+                            depth,site,(const DiamondInstance *)registers[left].as.object,
+                            name,strlen(name),&registers[right],&op_result,&found);
+                        if(found) {
+                            VM_PROPAGATE(status);
+                            registers[destination]=op_result;
+                            break;
+                        }
+                    }
                     VM_RETURN(DIAMOND_VM_TYPE_ERROR);
                 }
                 const int64_t left_value = registers[left].as.integer;
@@ -2713,6 +2820,19 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     registers[destination]=bignum_result;
                     break;
                 }
+                if (registers[operand].kind==DIAMOND_VALUE_OBJECT &&
+                    registers[operand].as.object->kind==DIAMOND_OBJECT_INSTANCE) {
+                    bool found=false;DiamondValue op_result=DIAMOND_NIL;
+                    const uint8_t *site=chunk->code+instruction_offset;
+                    const DiamondVmStatus status=invoke_operator_method(vm,chunk,depth,
+                        site,(const DiamondInstance *)registers[operand].as.object,
+                        "negate",6,nullptr,&op_result,&found);
+                    if(found) {
+                        VM_PROPAGATE(status);
+                        registers[destination]=op_result;
+                        break;
+                    }
+                }
                 if (registers[operand].kind != DIAMOND_VALUE_INT) {
                     VM_RETURN(DIAMOND_VM_TYPE_ERROR);
                 }
@@ -2769,6 +2889,28 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     registers[destination] = DIAMOND_BOOL(
                         opcode == DIAMOND_OP_EQUAL_INT ? equal : !equal);
                     break;
+                }
+                /* By this point opcode is guaranteed plain EQUAL/NOT_EQUAL
+                 * (never the _INT forms -- either integer_operands was
+                 * true and the fast path above already broke out, or the
+                 * deopt just above already retargeted). No override found
+                 * falls through to values_equal unchanged, so two
+                 * instances of a class with no "==" compare by identity
+                 * exactly as before this feature existed. */
+                if (registers[left].kind==DIAMOND_VALUE_OBJECT &&
+                    registers[left].as.object->kind==DIAMOND_OBJECT_INSTANCE) {
+                    bool found=false;DiamondValue op_result=DIAMOND_NIL;
+                    const uint8_t *site=chunk->code+instruction_offset;
+                    const DiamondVmStatus status=invoke_operator_method(vm,chunk,depth,
+                        site,(const DiamondInstance *)registers[left].as.object,
+                        "==",2,&registers[right],&op_result,&found);
+                    if(found) {
+                        VM_PROPAGATE(status);
+                        const bool overloaded_equal=is_truthy(op_result);
+                        registers[destination]=DIAMOND_BOOL(
+                            opcode==DIAMOND_OP_EQUAL?overloaded_equal:!overloaded_equal);
+                        break;
+                    }
                 }
                 const bool equal = values_equal(registers[left], registers[right]);
                 registers[destination] = DIAMOND_BOOL(
@@ -2875,6 +3017,25 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 }
                 if (registers[left].kind != DIAMOND_VALUE_INT ||
                     registers[right].kind != DIAMOND_VALUE_INT) {
+                    /* By this point opcode is guaranteed one of the four
+                     * generic (non-_INT) comparisons, same reasoning as
+                     * EQUAL/NOT_EQUAL above. */
+                    if (registers[left].kind==DIAMOND_VALUE_OBJECT &&
+                        registers[left].as.object->kind==DIAMOND_OBJECT_INSTANCE) {
+                        const char *name=opcode==DIAMOND_OP_LESS?"<":
+                            opcode==DIAMOND_OP_LESS_EQUAL?"<=":
+                            opcode==DIAMOND_OP_GREATER?">":">=";
+                        bool found=false;DiamondValue op_result=DIAMOND_NIL;
+                        const uint8_t *site=chunk->code+instruction_offset;
+                        const DiamondVmStatus status=invoke_operator_method(vm,chunk,
+                            depth,site,(const DiamondInstance *)registers[left].as.object,
+                            name,strlen(name),&registers[right],&op_result,&found);
+                        if(found) {
+                            VM_PROPAGATE(status);
+                            registers[destination]=DIAMOND_BOOL(is_truthy(op_result));
+                            break;
+                        }
+                    }
                     VM_RETURN(DIAMOND_VM_TYPE_ERROR);
                 }
                 const int64_t a = registers[left].as.integer;
