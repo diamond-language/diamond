@@ -1060,6 +1060,28 @@ future work.
   `SUBTRACT`/`MULTIPLY`/`DIVIDE`/`_INT` one, a bigger and riskier change to
   stable, heavily-exercised arithmetic dispatch than either the bignum or
   this round actually needed).
+- Keyword arguments for direct calls to a top-level `def`: `f(x: 1, y: 2)`,
+  or mixed with positional arguments (positional first, then keyword).
+  Entirely compiler-side, no new opcodes or VM changes — `find_function`
+  (the resolver `parse_name`'s call-compiling path already uses) already
+  excludes class/module methods and nested closures, matching its runtime
+  counterpart `find_top_level_function` exactly, so this call path only
+  ever reaches a genuine top-level `def` whose exact signature the
+  compiler already has non-polymorphic, compile-time access to — unlike
+  `INVOKE` (resolved by the receiver's *runtime* class) or `CALL_CLOSURE`
+  (the target value isn't known until runtime), which is why this round
+  scopes keyword arguments to direct calls only. `DiamondFunction` gained
+  a `parameter_names[16][...]` field (previously only parameter *types*
+  were tracked outside a function's own body); the call site resolves
+  each keyword to its declared slot and reorders into the same
+  positionally-ordered `MOVE`-then-`CALL` sequence a plain positional call
+  already emits, so the runtime experiences every keyword call exactly
+  like an ordinary positional one. Keyword arguments can't skip an
+  earlier defaulted parameter to reach a later one (`f(1, c: 5)` when `b`
+  has a default is a compile error) — default values are compiled inline
+  into the callee's own bytecode, conditioned on a contiguous supplied
+  count from the start, not stored as independently re-evaluable
+  expressions a call site could reach around a gap.
 
 ## Next priorities
 

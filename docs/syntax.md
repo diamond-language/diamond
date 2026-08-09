@@ -133,6 +133,40 @@ add_forty(2)
 a top-level `def`'s name is not itself a value. Closures are invoked
 directly as `f(x)`; there is no `.call` method.
 
+### Keyword arguments
+
+```ruby
+def move(x, y, speed = 1)
+  # ...
+end
+move(3, 4)                    # positional
+move(x: 3, y: 4)               # keyword, any order
+move(3, y: 4, speed: 2)        # positional then keyword
+```
+
+A call to a top-level `def` may name its arguments instead of (or in
+addition to) supplying them positionally. Positional arguments must come
+first; once a keyword argument appears, every argument after it must also
+be a keyword. A keyword argument can fill any parameter regardless of the
+order it's written at the call site — the compiler resolves each name to
+its declared position and reorders at compile time, so there's no runtime
+cost or new bytecode involved.
+
+Keyword arguments can't skip over an earlier defaulted parameter to reach
+a later one: `def f(a, b = 2, c = 3) ... end` called as `f(1, c: 5)` is a
+compile error (`missing argument`) — you'd need to also pass `b`. Default
+values are compiled inline into the function's own body, conditioned on
+how many arguments were actually supplied counting from the start, not on
+which specific ones were; keyword arguments let you name and reorder the
+arguments you *do* supply, not skip an arbitrary one in the middle.
+
+This only works for direct calls to a top-level `def` — a name the
+compiler can resolve to one specific function at the call site. Method
+calls (`obj.foo(x: 1)`), calls through a closure value, module singleton
+calls, and `ClassName.new(x: 1)` constructor calls all stay
+positional-only for now, since none of those resolve to one fixed target
+at compile time.
+
 ## Classes
 
 ```ruby
