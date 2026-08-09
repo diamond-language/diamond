@@ -89,6 +89,9 @@ void diamond_value_fprint(FILE *stream, DiamondValue value) {
             const DiamondString *string = (const DiamondString *)value.as.object;
             if (value.as.object->kind == DIAMOND_OBJECT_STRING) {
                 fprintf(stream, "%.*s", (int)string->length, string->chars);
+            } else if(value.as.object->kind==DIAMOND_OBJECT_SYMBOL) {
+                const DiamondSymbol *symbol=(const DiamondSymbol *)value.as.object;
+                fprintf(stream,"%.*s",(int)symbol->length,symbol->chars);
             } else if(value.as.object->kind==DIAMOND_OBJECT_ARRAY) {
                 const DiamondArray *array=(const DiamondArray *)value.as.object;
                 fputc('[',stream);

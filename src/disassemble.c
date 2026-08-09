@@ -63,6 +63,7 @@ static bool print_type_set(FILE *stream,const DiamondChunk *chunk,
         else if(type==DIAMOND_TYPE_HASH) fputs("Hash",stream);
         else if(type==DIAMOND_TYPE_CALLABLE) fputs("Callable",stream);
         else if(type==DIAMOND_TYPE_SIZED) fputs("Sized",stream);
+        else if(type==DIAMOND_TYPE_SYMBOL) fputs("Symbol",stream);
         else if(type>=DIAMOND_TYPE_VARIABLE_BASE&&type<DIAMOND_TYPE_INTERFACE_BASE)
             fprintf(stream,"T%u",type-DIAMOND_TYPE_VARIABLE_BASE);
         else if(type>=DIAMOND_TYPE_INTERFACE_BASE&&
@@ -150,6 +151,27 @@ static bool disassemble_chunk(FILE *stream, const char *name,
                 if ((size_t)string < chunk->string_count) {
                     const DiamondStringConstant *constant = &chunk->strings[string];
                     fprintf(stream, " (\"%.*s\")", (int)constant->length,
+                            constant->chars);
+                } else {
+                    fputs(" <invalid string>", stream);
+                    valid = false;
+                }
+                fputc('\n', stream);
+                offset += 3;
+                break;
+            }
+            case DIAMOND_OP_SYMBOL: {
+                if (!require_bytes(stream, chunk, offset, 3)) {
+                    valid = false;
+                    offset = chunk->code_count;
+                    break;
+                }
+                const uint8_t destination = chunk->code[offset + 1];
+                const uint8_t string = chunk->code[offset + 2];
+                fprintf(stream, "%-18s r%u, s%u", "SYMBOL", destination, string);
+                if ((size_t)string < chunk->string_count) {
+                    const DiamondStringConstant *constant = &chunk->strings[string];
+                    fprintf(stream, " (:%.*s)", (int)constant->length,
                             constant->chars);
                 } else {
                     fputs(" <invalid string>", stream);
@@ -386,6 +408,8 @@ static bool disassemble_chunk(FILE *stream, const char *name,
                 offset=two_registers(stream,chunk,"TO_FLOAT",offset);break;
             case DIAMOND_OP_TO_INT:
                 offset=two_registers(stream,chunk,"TO_INT",offset);break;
+            case DIAMOND_OP_TO_SYMBOL:
+                offset=two_registers(stream,chunk,"TO_SYMBOL",offset);break;
             case DIAMOND_OP_MATH_UNARY: {
                 if(!require_bytes(stream,chunk,offset,4)){valid=false;offset=chunk->code_count;break;}
                 fprintf(stream,"%-18s r%u, r%u, %s\n","MATH_UNARY",
@@ -466,6 +490,7 @@ static bool disassemble_chunk(FILE *stream, const char *name,
                 else if(type==DIAMOND_TYPE_HASH) fputs("Hash",stream);
                 else if(type==DIAMOND_TYPE_CALLABLE) fputs("Callable",stream);
                 else if(type==DIAMOND_TYPE_SIZED) fputs("Sized",stream);
+        else if(type==DIAMOND_TYPE_SYMBOL) fputs("Symbol",stream);
                 else if(type>=DIAMOND_TYPE_VARIABLE_BASE&&
                         type<DIAMOND_TYPE_INTERFACE_BASE)
                     fprintf(stream,"T%u",type-DIAMOND_TYPE_VARIABLE_BASE);

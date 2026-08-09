@@ -18,6 +18,7 @@ typedef enum DiamondObjectKind : uint8_t {
     DIAMOND_OBJECT_FILE,
     DIAMOND_OBJECT_LISTENER,
     DIAMOND_OBJECT_BIGNUM,
+    DIAMOND_OBJECT_SYMBOL,
 } DiamondObjectKind;
 
 typedef struct DiamondObject {
@@ -31,6 +32,18 @@ typedef struct DiamondString {
     size_t length;
     char chars[];
 } DiamondString;
+
+/* An interned-free, content-compared name: equality and hashing are by
+ * byte content (exactly like DiamondString), and lifetime is ordinary GC,
+ * not permanent -- see docs/roadmap.md for why Symbol was scoped this way
+ * rather than as Ruby-style pointer-equal singletons. Deliberately its own
+ * struct (not just DiamondString reused under a different kind) purely for
+ * type clarity, even though the layout is identical. */
+typedef struct DiamondSymbol {
+    DiamondObject object;
+    size_t length;
+    char chars[];
+} DiamondSymbol;
 
 /* An Int that overflowed int64_t. Sign + magnitude, base 10^9 limbs
  * (each 0..999999999), little-endian (limbs[0] is least significant) --

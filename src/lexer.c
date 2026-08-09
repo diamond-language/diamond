@@ -292,9 +292,29 @@ DiamondToken diamond_lexer_next(DiamondLexer *lexer) {
             return token(lexer, DIAMOND_TOKEN_COMMA);
         case '.':
             return token(lexer, DIAMOND_TOKEN_DOT);
-        case ':':
-            return token(lexer,match(lexer,':')?DIAMOND_TOKEN_DOUBLE_COLON:
-                         DIAMOND_TOKEN_COLON);
+        case ':': {
+            if(match(lexer,':'))return token(lexer,DIAMOND_TOKEN_DOUBLE_COLON);
+            /* :name is a Symbol literal, but only when the colon starts a
+             * fresh token rather than being glued onto the end of a
+             * preceding value -- x:Int (a type annotation), {"a":b} (a
+             * hash-literal separator), and rescue e:Type all already put a
+             * colon directly against an identifier/digit/closing bracket or
+             * quote with no space, and must keep meaning what they meant
+             * before Symbols existed. */
+            const bool glued = lexer->start > 0 &&
+                (identifier_part(lexer->source[lexer->start - 1]) ||
+                 lexer->source[lexer->start - 1] == ')' ||
+                 lexer->source[lexer->start - 1] == ']' ||
+                 lexer->source[lexer->start - 1] == '}' ||
+                 lexer->source[lexer->start - 1] == '"');
+            if (!glued && identifier_start(lexer->source[lexer->current])) {
+                while (identifier_part(lexer->source[lexer->current])) advance(lexer);
+                if(lexer->source[lexer->current]=='?'||
+                   lexer->source[lexer->current]=='!')advance(lexer);
+                return token(lexer, DIAMOND_TOKEN_SYMBOL);
+            }
+            return token(lexer, DIAMOND_TOKEN_COLON);
+        }
         case '|':
             return token(lexer, match(lexer, '|') ? DIAMOND_TOKEN_OR_OR
                                                    : DIAMOND_TOKEN_PIPE);

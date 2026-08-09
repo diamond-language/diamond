@@ -664,6 +664,17 @@ static uint8_t parse_string(Compiler *compiler) {
     compiler->known_types[result]=DIAMOND_TYPE_STRING;return result;
 }
 
+static uint8_t parse_symbol(Compiler *compiler) {
+    const DiamondSpan span=compiler->previous.span;
+    const DiamondSpan name_span={.start=span.start+1,.length=span.length-1,
+        .line=span.line,.column=span.column+1};
+    const uint8_t destination=allocate_register(compiler);
+    const uint8_t name=add_name_string(compiler,name_span);
+    emit_instruction(compiler,DIAMOND_OP_SYMBOL,destination,name,0,2);
+    compiler->known_types[destination]=DIAMOND_TYPE_SYMBOL;
+    return destination;
+}
+
 static uint8_t parse_literal(Compiler *compiler) {
     const uint8_t destination = allocate_register(compiler);
     if (compiler->previous.kind == DIAMOND_TOKEN_NIL) {
@@ -906,6 +917,7 @@ static int resolve_type(Compiler *compiler, DiamondSpan name) {
     if (name_equals(compiler, "Hash", name, false)) return DIAMOND_TYPE_HASH;
     if (name_equals(compiler, "Callable", name, false)) return DIAMOND_TYPE_CALLABLE;
     if (name_equals(compiler, "Sized", name, false)) return DIAMOND_TYPE_SIZED;
+    if (name_equals(compiler, "Symbol", name, false)) return DIAMOND_TYPE_SYMBOL;
     for(size_t index=0;index<compiler->function->type_variable_count;index++)
         if(name_equals(compiler,compiler->function->type_variables[index],name,false))
             return DIAMOND_TYPE_VARIABLE_BASE+(int)index;
@@ -924,7 +936,8 @@ static int resolve_type_name(Compiler *compiler,const char *name,
         {"String",DIAMOND_TYPE_STRING},
         {"Bool",DIAMOND_TYPE_BOOL},{"Nil",DIAMOND_TYPE_NIL},
         {"Array",DIAMOND_TYPE_ARRAY},{"Hash",DIAMOND_TYPE_HASH},
-        {"Callable",DIAMOND_TYPE_CALLABLE},{"Sized",DIAMOND_TYPE_SIZED}};
+        {"Callable",DIAMOND_TYPE_CALLABLE},{"Sized",DIAMOND_TYPE_SIZED},
+        {"Symbol",DIAMOND_TYPE_SYMBOL}};
     for(size_t index=0;index<sizeof builtins/sizeof builtins[0];index++)
         if(strcmp(name,builtins[index].name)==0)return builtins[index].type;
     for(size_t index=0;index<compiler->function->type_variable_count;index++)
@@ -1531,6 +1544,24 @@ static uint8_t parse_to_int_call(Compiler *compiler) {
     return dest;
 }
 
+static uint8_t parse_to_sym_call(Compiler *compiler) {
+    advance_token(compiler); /* consume '(' */
+    skip_newlines(compiler);
+    const uint8_t source = parse_expression(compiler);
+    skip_newlines(compiler);
+    if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
+        fail(compiler,compiler->current.span,"expected ')' after arguments");
+        return 0;
+    }
+    advance_token(compiler);
+    const uint8_t dest=allocate_register(compiler);
+    emit_opcode(compiler,DIAMOND_OP_TO_SYMBOL);
+    emit_byte(compiler,dest);
+    emit_byte(compiler,source);
+    compiler->known_types[dest]=DIAMOND_TYPE_SYMBOL;
+    return dest;
+}
+
 static uint8_t parse_math_unary_call(Compiler *compiler, DiamondMathFunction id) {
     advance_token(compiler); /* consume '(' */
     skip_newlines(compiler);
@@ -1706,6 +1737,10 @@ static uint8_t parse_name(Compiler *compiler) {
        compiler->current.kind==DIAMOND_TOKEN_LEFT_PAREN&&
        name_equals(compiler,"to_i",name,false))
         return parse_to_int_call(compiler);
+    if(find_local(compiler,name)<0&&find_function(compiler,name)<0&&
+       compiler->current.kind==DIAMOND_TOKEN_LEFT_PAREN&&
+       name_equals(compiler,"to_sym",name,false))
+        return parse_to_sym_call(compiler);
     if(find_local(compiler,name)<0&&find_function(compiler,name)<0&&
        compiler->current.kind==DIAMOND_TOKEN_LEFT_PAREN&&
        name_equals(compiler,"sqrt",name,false))
@@ -2295,6 +2330,8 @@ static uint8_t parse_prefix(Compiler *compiler) {
             return parse_float(compiler);
         case DIAMOND_TOKEN_STRING:
             return parse_string(compiler);
+        case DIAMOND_TOKEN_SYMBOL:
+            return parse_symbol(compiler);
         case DIAMOND_TOKEN_TRUE:
         case DIAMOND_TOKEN_FALSE:
         case DIAMOND_TOKEN_NIL:

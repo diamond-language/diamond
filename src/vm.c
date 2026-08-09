@@ -177,6 +177,9 @@ void diamond_vm_collect(DiamondVm *vm) {
         } else if(unreached->kind==DIAMOND_OBJECT_BIGNUM) {
             const DiamondBignum *bignum=(const DiamondBignum *)unreached;
             size=sizeof(DiamondBignum)+bignum->limb_count*sizeof(uint32_t);
+        } else if(unreached->kind==DIAMOND_OBJECT_SYMBOL) {
+            const DiamondSymbol *symbol=(const DiamondSymbol *)unreached;
+            size=sizeof(DiamondSymbol)+symbol->length+1;
         } else {
             size=sizeof(DiamondCell);
         }
@@ -529,6 +532,25 @@ static DiamondString *allocate_string(DiamondVm *vm, const char *chars,
     return string;
 }
 
+static DiamondSymbol *allocate_symbol(DiamondVm *vm, const char *chars,
+                                      size_t length) {
+    if (vm->stress_gc || vm->bytes_allocated >= vm->next_gc) {
+        diamond_vm_collect(vm);
+    }
+    DiamondSymbol *symbol = malloc(sizeof(DiamondSymbol) + length + 1);
+    if (symbol == nullptr) return nullptr;
+    symbol->object = (DiamondObject){
+        .next = vm->objects,
+        .kind = DIAMOND_OBJECT_SYMBOL,
+    };
+    symbol->length = length;
+    memcpy(symbol->chars, chars, length);
+    symbol->chars[length] = '\0';
+    vm->objects = &symbol->object;
+    vm->bytes_allocated += sizeof(DiamondSymbol) + length + 1;
+    return symbol;
+}
+
 static DiamondInstance *allocate_instance(DiamondVm *vm,const DiamondClass *class) {
     if(vm->stress_gc||vm->bytes_allocated>=vm->next_gc) diamond_vm_collect(vm);
     const size_t size=sizeof(DiamondInstance)+class->field_count*sizeof(DiamondValue);
@@ -665,6 +687,12 @@ static bool values_equal(DiamondValue left, DiamondValue right) {
                left.as.object->kind==DIAMOND_OBJECT_ARRAY ||
                left.as.object->kind==DIAMOND_OBJECT_HASH)
                 return left.as.object==right.as.object;
+            if(left.as.object->kind==DIAMOND_OBJECT_SYMBOL) {
+                const DiamondSymbol *a=(const DiamondSymbol *)left.as.object;
+                const DiamondSymbol *b=(const DiamondSymbol *)right.as.object;
+                return a->length==b->length&&
+                    memcmp(a->chars,b->chars,a->length)==0;
+            }
             const DiamondString *a = (const DiamondString *)left.as.object;
             const DiamondString *b = (const DiamondString *)right.as.object;
             return a->length == b->length &&
@@ -698,7 +726,7 @@ static uint64_t hash_bytes(const char *data,size_t length) {
 }
 
 /* Must stay consistent with values_equal's exact equality semantics:
- * Int/Bool/Nil by value, String by content, Array/Hash/Instance by
+ * Int/Bool/Nil by value, String/Symbol by content, Array/Hash/Instance by
  * pointer identity. */
 static uint64_t hash_value(DiamondValue value) {
     switch(value.kind) {
@@ -733,6 +761,10 @@ static uint64_t hash_value(DiamondValue value) {
              * agree with. */
             if(object->kind==DIAMOND_OBJECT_BIGNUM)
                 return diamond_bignum_hash((const DiamondBignum *)object);
+            if(object->kind==DIAMOND_OBJECT_SYMBOL) {
+                const DiamondSymbol *symbol=(const DiamondSymbol *)object;
+                return hash_bytes(symbol->chars,symbol->length);
+            }
             const DiamondString *string=(const DiamondString *)object;
             return hash_bytes(string->chars,string->length);
         }
@@ -1046,6 +1078,8 @@ static bool value_matches_type(const DiamondChunk *chunk, DiamondValue value,
     if(type==DIAMOND_TYPE_NIL) return value.kind==DIAMOND_VALUE_NIL;
     if(type==DIAMOND_TYPE_STRING) return value.kind==DIAMOND_VALUE_OBJECT &&
         value.as.object->kind==DIAMOND_OBJECT_STRING;
+    if(type==DIAMOND_TYPE_SYMBOL) return value.kind==DIAMOND_VALUE_OBJECT &&
+        value.as.object->kind==DIAMOND_OBJECT_SYMBOL;
     if(type==DIAMOND_TYPE_ARRAY) return value.kind==DIAMOND_VALUE_OBJECT &&
         value.as.object->kind==DIAMOND_OBJECT_ARRAY;
     if(type==DIAMOND_TYPE_HASH) return value.kind==DIAMOND_VALUE_OBJECT &&
@@ -1538,6 +1572,7 @@ static const char *type_name(const DiamondChunk *chunk,uint8_t type) {
     if(type==DIAMOND_TYPE_INT) name="Int";
     else if(type==DIAMOND_TYPE_FLOAT) name="Float";
     else if(type==DIAMOND_TYPE_STRING) name="String";
+    else if(type==DIAMOND_TYPE_SYMBOL) name="Symbol";
     else if(type==DIAMOND_TYPE_BOOL) name="Bool";
     else if(type==DIAMOND_TYPE_NIL) name="Nil";
     else if(type==DIAMOND_TYPE_ARRAY) name="Array";
@@ -1631,9 +1666,15 @@ static void format_value_type(char *buffer, size_t capacity,
     else if(value.kind==DIAMOND_VALUE_INT) name="Int";
     else if(value.kind==DIAMOND_VALUE_FLOAT) name="Float";
     else if(value.as.object->kind==DIAMOND_OBJECT_STRING) name="String";
+    else if(value.as.object->kind==DIAMOND_OBJECT_SYMBOL) name="Symbol";
     else if(value.as.object->kind==DIAMOND_OBJECT_ARRAY) name="Array";
     else if(value.as.object->kind==DIAMOND_OBJECT_HASH) name="Hash";
     else if(value.as.object->kind==DIAMOND_OBJECT_CLOSURE) name="Callable";
+    /* A promoted Int (see object.h's DiamondBignum) is still
+     * conceptually an Int, not a distinct user-facing type -- must be
+     * checked before the catch-all DiamondInstance branch below, or its
+     * memory gets misread through an unrelated struct's layout. */
+    else if(value.as.object->kind==DIAMOND_OBJECT_BIGNUM) name="Int";
     else {
         const DiamondInstance *instance=(const DiamondInstance *)value.as.object;
         name=instance->class->name;
@@ -1761,6 +1802,14 @@ static bool builder_format_value(StringBuilder *builder,DiamondValue value) {
     if(object->kind==DIAMOND_OBJECT_STRING) {
         const DiamondString *string=(const DiamondString *)object;
         return builder_append(builder,string->chars,string->length);
+    }
+    if(object->kind==DIAMOND_OBJECT_SYMBOL) {
+        /* Bare name, no leading ':' -- matches Ruby's to_s/puts/
+         * interpolation convention (only inspect/p show the colon there,
+         * and Diamond has no separate inspect mechanism), and keeps
+         * to_sym(to_s(sym)) == sym a true round trip. */
+        const DiamondSymbol *symbol=(const DiamondSymbol *)object;
+        return builder_append(builder,symbol->chars,symbol->length);
     }
     for(size_t index=0;index<builder->active_count;index++)
         if(builder->active[index]==object)
@@ -2266,6 +2315,22 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     vm, constant->chars, constant->length);
                 if (string == nullptr) VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
                 registers[destination] = DIAMOND_OBJECT(string);
+                break;
+            }
+            case DIAMOND_OP_SYMBOL: {
+                uint8_t destination = 0;
+                uint8_t string_index = 0;
+                READ_BYTE(destination);
+                READ_BYTE(string_index);
+                if ((size_t)string_index >= chunk->string_count) {
+                    VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
+                }
+                const DiamondStringConstant *constant =
+                    &chunk->strings[string_index];
+                DiamondSymbol *symbol = allocate_symbol(
+                    vm, constant->chars, constant->length);
+                if (symbol == nullptr) VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                registers[destination] = DIAMOND_OBJECT(symbol);
                 break;
             }
             case DIAMOND_OP_NIL: {
@@ -4434,6 +4499,22 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     break;
                 }
                 registers[dest]=DIAMOND_INT((int64_t)real);
+                break;
+            }
+            case DIAMOND_OP_TO_SYMBOL: {
+                uint8_t dest=0,source=0;
+                READ_BYTE(dest);READ_BYTE(source);
+                if(registers[source].kind!=DIAMOND_VALUE_OBJECT||
+                   registers[source].as.object->kind!=DIAMOND_OBJECT_STRING) {
+                    snprintf(vm->error,sizeof vm->error,"to_sym argument must be a String");
+                    VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                }
+                const DiamondString *source_string=
+                    (const DiamondString *)registers[source].as.object;
+                DiamondSymbol *symbol=allocate_symbol(vm,source_string->chars,
+                    source_string->length);
+                if(symbol==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                registers[dest]=DIAMOND_OBJECT(symbol);
                 break;
             }
             case DIAMOND_OP_MATH_UNARY: {
