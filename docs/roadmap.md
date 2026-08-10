@@ -1884,6 +1884,12 @@ future work.
   Boolean-to-integer two-branch reassignment brings the parser harness to 70
   cases.
 
+- Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
+  The self-hosted parser now lowers empty and populated array literals with the
+  VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,
+  and records the exact collection fact. A runtime length check brings the
+  parser harness to 71 cases.
+
 ## Next priorities
 
 - Self-hosting, Phase 3 sub-phase 4 remaining slices:

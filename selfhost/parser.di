@@ -85,6 +85,7 @@ module Opcode
   GET_IVAR = 44
   SET_IVAR = 45
   CHECK_TYPE = 50
+  ARRAY = 51
   NOT = 55
   JUMP_IF_TRUE = 56
   RETURN = 57
@@ -1988,6 +1989,7 @@ class Parser
     return self.parse_literal() if kind == :true || kind == :false || kind == :nil
     return self.parse_name() if kind == :identifier
     return self.parse_grouping() if kind == :left_paren
+    return self.parse_array() if kind == :left_bracket
     if kind == :self
       if @current_class_index == nil
         self.fail("'self' used outside a method")
@@ -2055,6 +2057,45 @@ class Parser
     end
     self.advance_token()
     result
+  end
+
+  def parse_array()
+    elements = []
+    self.skip_newlines()
+    while !@failed && @current.kind() != :right_bracket
+      if elements.length() == 32
+        self.fail("array literal has too many elements")
+      else
+        elements.push(self.parse_expression())
+        self.skip_newlines()
+        if @current.kind() == :comma
+          self.advance_token()
+          self.skip_newlines()
+        else
+          break
+        end
+      end
+    end
+    if !@failed && @current.kind() != :right_bracket
+      self.fail("expected ']' after array literal")
+    else
+      self.advance_token() unless @failed
+    end
+    base = self.allocate_register()
+    index = 1
+    while index < elements.length()
+      self.allocate_register()
+      index = index + 1
+    end
+    index = 0
+    while index < elements.length()
+      self.emit_instruction2(Opcode::MOVE, base + index, elements[index])
+      index = index + 1
+    end
+    destination = self.allocate_register()
+    self.emit_instruction3(Opcode::ARRAY, destination, base, elements.length())
+    self.set_type_fact(destination, Type::ARRAY)
+    destination
   end
 
   # Dispatch precedence mirrors parse_name/parse_call in compiler.c: a
