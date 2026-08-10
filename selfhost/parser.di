@@ -2316,6 +2316,12 @@ class Parser
     destination = self.allocate_register()
     self.emit_instruction3(Opcode::HASH, destination, base, keys.length())
     self.set_type_fact(destination, Type::HASH)
+    key_annotation = self.homogeneous_element_annotation(keys)
+    value_annotation = self.homogeneous_element_annotation(values)
+    if key_annotation != nil && value_annotation != nil
+      @declared_types.push([destination,
+        [["Hash", key_annotation, value_annotation, -1, nil, nil]]])
+    end
     destination
   end
 

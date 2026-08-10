@@ -1952,6 +1952,12 @@ future work.
   fact now infer `Array[T]`, feeding immediate indexed reads and aliases. A
   typed literal lookup brings the parser harness to 83 cases.
 
+- Self-hosting, Phase 3 sub-phase 4 (thirty-fifth slice): homogeneous hash
+  literal contracts. Non-empty primitive hashes with uniform key and value
+  facts now infer `Hash[K, V]`, so immediate lookups receive `V | Nil` and can
+  use nil narrowing. A typed literal lookup brings the parser harness to 84
+  cases.
+
 ## Next priorities
 
 - Self-hosting, Phase 3 sub-phase 4 remaining slices:
