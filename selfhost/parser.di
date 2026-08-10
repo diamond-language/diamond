@@ -1719,7 +1719,7 @@ class Parser
 
   def apply_condition_fact(condition, narrowing, type_narrowing, when_true)
     if narrowing != nil && narrowing[0] == condition
-      if when_true
+      if when_true == narrowing[2]
         self.set_type_fact(narrowing[1], Type::NIL)
       else
         remaining = self.non_nil_single_type(self.declared_type(narrowing[1]))
@@ -1914,11 +1914,12 @@ class Parser
         right = self.parse_precedence(operator_precedence + 1)
         destination = self.allocate_register()
         self.emit_instruction3(self.binary_opcode(operator), destination, left, right)
-        if operator == :equal_equal
+        if operator == :equal_equal || operator == :bang_equal
+          nil_when_true = operator == :equal_equal
           if self.type_fact(left) == Type::NIL && self.declared_type(right) != nil
-            @pending_nil_narrowing = [destination, right]
+            @pending_nil_narrowing = [destination, right, nil_when_true]
           elsif self.type_fact(right) == Type::NIL && self.declared_type(left) != nil
-            @pending_nil_narrowing = [destination, left]
+            @pending_nil_narrowing = [destination, left, nil_when_true]
           end
         end
         left = destination

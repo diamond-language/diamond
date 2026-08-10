@@ -1842,6 +1842,11 @@ future work.
   that also keeps `parse_if` within the language's register ceiling. A nilable
   unwrap case brings the harness to 63 cases.
 
+- Self-hosting, Phase 3 sub-phase 4 (fifteenth slice): nil-inequality facts.
+  Narrowing records whether `Nil` belongs to the condition's true or false
+  side, so both `== nil` and `!= nil` compose correctly with `if` and `unless`.
+  A non-nil true-branch return brings the harness to 64 cases.
+
 ## Next priorities
 
 - Self-hosting, Phase 3 sub-phase 4 remaining slices:
