@@ -86,6 +86,7 @@ module Opcode
   SET_IVAR = 45
   CHECK_TYPE = 50
   ARRAY = 51
+  INDEX_GET = 52
   HASH = 54
   NOT = 55
   JUMP_IF_TRUE = 56
@@ -1678,6 +1679,19 @@ class Parser
     destination
   end
 
+  def parse_index(receiver)
+    self.advance_token()
+    index = self.parse_expression()
+    if @current.kind() != :right_bracket
+      self.fail("expected ']' after index")
+      return 0
+    end
+    self.advance_token()
+    destination = self.allocate_register()
+    self.emit_instruction3(Opcode::INDEX_GET, destination, receiver, index)
+    destination
+  end
+
   def compile_break()
     if @loops.length() == 0
       self.fail("'break' used outside a loop")
@@ -1926,8 +1940,12 @@ class Parser
 
   def parse_precedence(precedence)
     left = self.parse_prefix()
-    while !@failed && @current.kind() == :dot
-      left = self.compile_invoke(left)
+    while !@failed && (@current.kind() == :dot || @current.kind() == :left_bracket)
+      left = if @current.kind() == :dot
+        self.compile_invoke(left)
+      else
+        self.parse_index(left)
+      end
     end
     while !@failed && self.token_precedence(@current.kind()) >= precedence
       operator = @current.kind()
@@ -2159,12 +2177,13 @@ class Parser
     class_entry = self.find_class(name)
     return self.compile_new_call(class_entry[1]) if class_entry != nil && @current.kind() == :dot
     local = self.find_local(name)
-    if @current.kind() == :left_paren || @current.kind() == :left_bracket
+    if @current.kind() == :left_paren
       return self.compile_closure_call(local) if local != nil
-      return self.parse_print_call(true) if name == "puts" && @current.kind() == :left_paren
-      return self.parse_print_call(false) if name == "print" && @current.kind() == :left_paren
+      return self.parse_print_call(true) if name == "puts"
+      return self.parse_print_call(false) if name == "print"
       return self.compile_call(name)
     end
+    return self.compile_call(name) if @current.kind() == :left_bracket && local == nil
     if local == nil
       self.fail("undefined local variable")
       return 0

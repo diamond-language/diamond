@@ -1895,6 +1895,11 @@ future work.
   register layout with the 16-entry parser limit and an exact `Hash` fact. A
   runtime length check brings the parser harness to 72 cases.
 
+- Self-hosting, Phase 3 sub-phase 4 (twenty-fourth slice): indexed reads.
+  Postfix brackets now lower to `INDEX_GET` for arbitrary receivers, including
+  chained expressions, while local indexing is disambiguated from explicit
+  generic calls. A runtime array lookup brings the parser harness to 73 cases.
+
 ## Next priorities
 
 - Self-hosting, Phase 3 sub-phase 4 remaining slices:
