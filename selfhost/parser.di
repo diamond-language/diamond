@@ -101,9 +101,9 @@ module Precedence
   PREFIX = 7
 end
 
-# Phase 3 sub-phase 4 (gradual typing, first slice): scalar-only type
-# annotations (`Int`/`Float`/`String`/`Bool`/`Nil`/a declared class name)
-# on parameters and return types. Deliberately no unions, `Array[T]`/
+# Phase 3 sub-phase 4 (gradual typing): scalar and union type annotations
+# (`Int`/`Float`/`String`/`Bool`/`Nil`/a declared class name, separated by
+# `|`) on parameters and return types. Deliberately no `Array[T]`/
 # `Hash[K,V]`, `Callable`, interfaces, generics, or narrowing yet --
 # each is a natural, separate extension of the same
 # ProgramBuilder#declare_type_set bridge method this round adds, not
@@ -484,8 +484,8 @@ class Parser
     self.emit_closure(function_index, enclosing_locals, name)
   end
 
-  # Returns [names, types]: parallel arrays, `types[i]` is the type
-  # *name* text (e.g. "Int") for parameter `i`, or nil if that parameter
+  # Returns [names, types]: parallel arrays, `types[i]` is an array of
+  # type-name texts (e.g. ["Int", "Nil"]) for parameter `i`, or nil if it
   # had no `: Type` annotation. Resolving a type name to a type id and
   # declaring its type set happens later, inside the callee's own
   # switched-in context (see compile_function_body/emit_parameter_type_checks)
@@ -508,13 +508,8 @@ class Parser
           type_name = nil
           if @current.kind() == :colon
             self.advance_token()
-            if @current.kind() != :identifier
-              self.fail("expected type after ':'")
-              more = false
-            else
-              type_name = self.token_text(@current)
-              self.advance_token()
-            end
+            type_name = self.parse_type_annotation()
+            more = false if @failed
           end
           types.push(type_name)
           self.skip_newlines()
@@ -531,6 +526,35 @@ class Parser
     [names, types]
   end
 
+  def parse_type_annotation()
+    names = []
+    parsing = true
+    while parsing && !@failed
+      if @current.kind() != :identifier
+        self.fail("expected type annotation")
+      else
+        name = self.token_text(@current)
+        index = 0
+        while index < names.length()
+          self.fail("duplicate type in union") if names[index] == name
+          index = index + 1
+        end
+        if names.length() == 8
+          self.fail("too many types in union")
+        else
+          names.push(name) unless @failed
+        end
+        self.advance_token() unless @failed
+        if !@failed && @current.kind() == :pipe
+          self.advance_token()
+        else
+          parsing = false
+        end
+      end
+    end
+    names
+  end
+
   def resolve_type_name(name)
     return Type::INT if name == "Int"
     return Type::FLOAT if name == "Float"
@@ -545,23 +569,22 @@ class Parser
     0
   end
 
-  def emit_type_check(reg, type_name)
-    type_id = self.resolve_type_name(type_name)
+  def emit_type_check(reg, type_names)
+    type_ids = []
+    index = 0
+    while index < type_names.length() && !@failed
+      type_ids.push(self.resolve_type_name(type_names[index]))
+      index = index + 1
+    end
     return if @failed
-    set_index = @builder.declare_type_set(@current_function_index, type_id)
+    set_index = @builder.declare_type_set(@current_function_index, type_ids)
     self.emit_instruction2(Opcode::CHECK_TYPE, reg, set_index)
   end
 
   def parse_optional_return_type()
     return nil unless @current.kind() == :arrow
     self.advance_token()
-    if @current.kind() != :identifier
-      self.fail("expected type after '->'")
-      return nil
-    end
-    name = self.token_text(@current)
-    self.advance_token()
-    name
+    self.parse_type_annotation()
   end
 
   # Switches compiler state into the new function, compiles its body,

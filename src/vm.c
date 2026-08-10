@@ -885,11 +885,9 @@ static DiamondVmStatus program_builder_invoke_helper(DiamondVm *vm,
     const bool declare_method_method=
         method_name->length==sizeof("declare_method")-1&&
         memcmp(method_name->chars,"declare_method",sizeof("declare_method")-1)==0;
-    /* Phase 3 sub-phase 4 (gradual typing, first slice): a single-member
-     * type set -- one scalar type (a primitive or a declared class), no
-     * unions/Array[T]/Hash[K,V]/Callable/interfaces/generics yet, each a
-     * natural, separate future extension of this same method rather than
-     * something this round needs. See docs/roadmap.md. */
+    /* Phase 3 sub-phase 4 (gradual typing): a scalar or union type set.
+     * Nested Array[T]/Hash[K,V]/Callable/interfaces/generics remain
+     * separate future extensions. See docs/roadmap.md. */
     const bool declare_type_set_method=
         method_name->length==sizeof("declare_type_set")-1&&
         memcmp(method_name->chars,"declare_type_set",
@@ -1206,21 +1204,37 @@ static DiamondVmStatus program_builder_invoke_helper(DiamondVm *vm,
     if(declare_type_set_method) {
         if(argc!=2)return DIAMOND_VM_ARITY_ERROR;
         if(registers[base].kind!=DIAMOND_VALUE_INT||
-           registers[(size_t)base+1].kind!=DIAMOND_VALUE_INT) {
+           registers[(size_t)base+1].kind!=DIAMOND_VALUE_OBJECT||
+           registers[(size_t)base+1].as.object->kind!=DIAMOND_OBJECT_ARRAY) {
             snprintf(vm->error,sizeof vm->error,
-                "ProgramBuilder#declare_type_set arguments must be (Int, Int)");
+                "ProgramBuilder#declare_type_set arguments must be (Int, Array)");
             return DIAMOND_VM_TYPE_ERROR;
         }
         DiamondFunction *target=
             program_builder_target(built,registers[base].as.integer);
-        const int64_t type_id=registers[(size_t)base+1].as.integer;
-        const bool primitive=type_id>=0&&type_id<DIAMOND_TYPE_CLASS_BASE;
-        const bool class_type=type_id>=DIAMOND_TYPE_CLASS_BASE&&
-            (uint64_t)(type_id-DIAMOND_TYPE_CLASS_BASE)<built->class_count;
-        if(target==nullptr||!(primitive||class_type)) {
+        const DiamondArray *type_ids=
+            (const DiamondArray *)registers[(size_t)base+1].as.object;
+        if(target==nullptr||type_ids->count==0||
+           type_ids->count>DIAMOND_MAX_UNION_TYPES) {
             snprintf(vm->error,sizeof vm->error,"ProgramBuilder#%s",
-                "declare_type_set has an invalid function index or type id");
+                "declare_type_set has an invalid function index or type list");
             return DIAMOND_VM_TYPE_ERROR;
+        }
+        for(size_t index=0;index<type_ids->count;index++) {
+            if(type_ids->values[index].kind!=DIAMOND_VALUE_INT) {
+                snprintf(vm->error,sizeof vm->error,"ProgramBuilder#%s",
+                    "declare_type_set has an invalid function index or type list");
+                return DIAMOND_VM_TYPE_ERROR;
+            }
+            const int64_t type_id=type_ids->values[index].as.integer;
+            const bool primitive=type_id>=0&&type_id<DIAMOND_TYPE_CLASS_BASE;
+            const bool class_type=type_id>=DIAMOND_TYPE_CLASS_BASE&&
+                (uint64_t)(type_id-DIAMOND_TYPE_CLASS_BASE)<built->class_count;
+            if(!(primitive||class_type)) {
+                snprintf(vm->error,sizeof vm->error,"ProgramBuilder#%s",
+                    "declare_type_set has an invalid function index or type list");
+                return DIAMOND_VM_TYPE_ERROR;
+            }
         }
         if(target->type_set_count==DIAMOND_MAX_TYPE_SETS) {
             snprintf(vm->error,sizeof vm->error,
@@ -1229,12 +1243,15 @@ static DiamondVmStatus program_builder_invoke_helper(DiamondVm *vm,
         }
         const int64_t new_index=(int64_t)target->type_set_count;
         DiamondTypeSet *set=&target->type_sets[target->type_set_count++];
-        *set=(DiamondTypeSet){.count=1};
-        set->members[0]=(DiamondTypeMember){.id=(uint8_t)type_id,
-            .argument_set=UINT8_MAX,.second_argument_set=UINT8_MAX,
-            .callable_arity=UINT8_MAX,.callable_return_set=UINT8_MAX};
-        for(size_t index=0;index<16;index++)
-            set->members[0].callable_parameter_sets[index]=UINT8_MAX;
+        *set=(DiamondTypeSet){.count=(uint8_t)type_ids->count};
+        for(size_t member=0;member<type_ids->count;member++) {
+            set->members[member]=(DiamondTypeMember){
+                .id=(uint8_t)type_ids->values[member].as.integer,
+                .argument_set=UINT8_MAX,.second_argument_set=UINT8_MAX,
+                .callable_arity=UINT8_MAX,.callable_return_set=UINT8_MAX};
+            for(size_t index=0;index<16;index++)
+                set->members[member].callable_parameter_sets[index]=UINT8_MAX;
+        }
         *result=DIAMOND_INT(new_index);return DIAMOND_VM_OK;
     }
     /* run_method: the only remaining possibility once the combined

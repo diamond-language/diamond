@@ -1749,9 +1749,19 @@ future work.
   every other round, plus the parser differential harness re-run
   directly under `-fsanitize=address,undefined` (clean, no leaks).
 
+- Self-hosting, Phase 3 sub-phase 4 (second slice): union annotations.
+  The Diamond-language parser now accepts up to eight pipe-separated
+  primitive or nominal class types in function, closure, and method
+  parameter and return annotations. The `ProgramBuilder` bridge now
+  constructs a complete scalar/nominal `DiamondTypeSet` from an array of
+  resolved type IDs, retaining the same runtime `CHECK_TYPE` path used by
+  the first slice. Duplicate members and over-wide unions are rejected
+  during parsing. A parameter-and-return union differential case brings
+  the parser harness to 51 cases, all matching the C compiler.
+
 ## Next priorities
 
-- Self-hosting, Phase 3 sub-phase 4 remaining slices: unions,
+- Self-hosting, Phase 3 sub-phase 4 remaining slices:
   `Array[T]`/`Hash[K,V]`, `Callable`, interfaces, generics, and
   narrowing — each landed as its own substantial, multi-round feature
   earlier this session, so porting the rest of sub-phase 4 is unlikely
