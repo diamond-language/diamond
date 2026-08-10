@@ -1419,6 +1419,9 @@ class Parser
       nil
     end
     self.set_type_fact(destination, return_fact) if return_fact != nil
+    if function_entry[4] == 0 && function_entry[5] != nil
+      @declared_types.push([destination, function_entry[5]])
+    end
     destination
   end
 

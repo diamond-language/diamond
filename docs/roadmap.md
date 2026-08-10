@@ -1853,6 +1853,12 @@ future work.
   narrowing without treating unrelated reassignment as permanently narrowed.
   A nominal union alias case brings the parser harness to 65 cases.
 
+- Self-hosting, Phase 3 sub-phase 4 (seventeenth slice): declared call-result
+  contracts. Results of non-generic direct calls now retain the callee's full
+  declared return union in addition to an exact single-member fact, allowing
+  immediate `is` and nil narrowing before or after local aliasing. A nominal
+  union-returning call brings the parser harness to 66 cases.
+
 ## Next priorities
 
 - Self-hosting, Phase 3 sub-phase 4 remaining slices:
