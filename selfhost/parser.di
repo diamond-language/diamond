@@ -1963,6 +1963,7 @@ class Parser
     retry_target = @code_count
     handler = self.emit_rescue_handler(exception)
     body = self.compile_sequence()
+    body_fact = self.type_fact(body)
     destination = self.allocate_register()
     self.emit_instruction2(Opcode::MOVE, destination, body)
     self.emit_byte(Opcode::POP_RESCUE)
@@ -1985,6 +1986,7 @@ class Parser
     @current_exception = exception
     @current_retry_target = retry_target
     rescued = self.compile_sequence()
+    rescued_fact = self.type_fact(rescued)
     @current_exception = outer_exception
     @current_retry_target = outer_retry_target
     self.emit_instruction2(Opcode::MOVE, destination, rescued)
@@ -2018,6 +2020,9 @@ class Parser
     self.advance_token()
     self.patch_jump(continuation_operand, @code_count)
     @type_facts = original_facts
+    if body_fact != nil && body_fact == rescued_fact
+      self.set_type_fact(destination, body_fact)
+    end
     destination
   end
 

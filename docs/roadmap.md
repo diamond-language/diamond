@@ -2005,6 +2005,11 @@ future work.
   contexts restored on exit. A two-attempt recovery brings the parser harness
   to 93 cases.
 
+- Self-hosting, Phase 3 sub-phase 5 (ninth slice): exact rescue-result joins.
+  A `begin` expression now retains an exact destination fact when its normal
+  body and rescue body produce the same type. A typed integer recovery brings
+  the parser harness to 94 cases.
+
 ## Next priorities
 
 - Self-hosting, Phase 3 sub-phase 5: exceptions, modules, and `require`.
