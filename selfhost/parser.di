@@ -363,7 +363,15 @@ class Parser
           self.fail("too many rescue types")
         else
           name = self.token_text(@current)
-          types.push(self.resolve_type_name(name))
+          type_id = self.resolve_type_name(name)
+          duplicate = false
+          index = 0
+          while index < types.length()
+            duplicate = true if types[index] == type_id
+            index = index + 1
+          end
+          self.fail("duplicate rescue type") if duplicate
+          types.push(type_id)
           annotation.push([name, nil, nil, -1, nil, nil])
           self.advance_token()
           if @current.kind() == :pipe

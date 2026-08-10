@@ -1894,6 +1894,10 @@ future work.
   self-hosted compilers to reject curated invalid programs with the same
   diagnostic fragment. Bare raise seeds the error corpus with one case.
 
+- Self-hosting, Phase 3 sub-phase 5 (fifteenth slice): duplicate rescue-filter
+  validation. Repeated runtime type IDs within one filter are now rejected
+  before handler emission, with a native/self-hosted differential error case.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,
