@@ -1900,6 +1900,11 @@ future work.
   chained expressions, while local indexing is disambiguated from explicit
   generic calls. A runtime array lookup brings the parser harness to 73 cases.
 
+- Self-hosting, Phase 3 sub-phase 4 (twenty-fifth slice): array index result
+  contracts. Indexing a value declared as `Array[T]` now attaches `T` to the
+  result and records an exact fact for single-member element contracts. A
+  typed integer lookup and return brings the parser harness to 74 cases.
+
 ## Next priorities
 
 - Self-hosting, Phase 3 sub-phase 4 remaining slices:
