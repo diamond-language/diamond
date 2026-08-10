@@ -2021,6 +2021,12 @@ future work.
   normal results and propagating exceptions. A normal cleanup case brings the
   parser harness to 96 cases.
 
+- Self-hosting, Phase 3 sub-phase 5 (twelfth slice): rescue-filter contracts.
+  Typed rescue bindings now retain the full filtered union, not just a
+  single-member exact fact, enabling `is` and complementary narrowing inside
+  multi-type handlers. A two-type predicate brings the parser harness to 97
+  cases.
+
 ## Next priorities
 
 - Self-hosting, Phase 3 sub-phase 5: exceptions, modules, and `require`.

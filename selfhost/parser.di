@@ -353,6 +353,7 @@ class Parser
 
   def parse_rescue_types(handler, exception)
     types = []
+    annotation = []
     if @current.kind() == :colon
       self.advance_token()
       while !@failed
@@ -361,7 +362,9 @@ class Parser
         elsif types.length() == 8
           self.fail("too many rescue types")
         else
-          types.push(self.resolve_type_name(self.token_text(@current)))
+          name = self.token_text(@current)
+          types.push(self.resolve_type_name(name))
+          annotation.push([name, nil, nil, -1, nil, nil])
           self.advance_token()
           if @current.kind() == :pipe
             self.advance_token()
@@ -378,6 +381,7 @@ class Parser
       index = index + 1
     end
     self.set_type_fact(exception, types[0]) if types.length() == 1
+    @declared_types.push([exception, annotation]) if annotation.length() > 0
   end
 
   # --- locals: an Array of [name, register, captured] entries, scanned
