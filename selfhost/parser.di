@@ -2067,6 +2067,7 @@ class Parser
         destination = self.allocate_register()
         self.emit_instruction3(self.binary_opcode(operator), destination, left, right)
         if operator == :equal_equal || operator == :bang_equal
+          self.set_type_fact(destination, Type::BOOL)
           nil_when_true = operator == :equal_equal
           if self.type_fact(left) == Type::NIL && self.declared_type(right) != nil
             @pending_nil_narrowing = [destination, right, nil_when_true]

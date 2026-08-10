@@ -1926,6 +1926,11 @@ future work.
   while unknown operands remain conservative. A typed negative integer return
   brings the parser harness to 78 cases.
 
+- Self-hosting, Phase 3 sub-phase 4 (thirtieth slice): equality result facts.
+  `==` and `!=` destinations now retain their guaranteed `Bool` type alongside
+  any nil-narrowing metadata. A typed equality predicate brings the parser
+  harness to 79 cases.
+
 ## Next priorities
 
 - Self-hosting, Phase 3 sub-phase 4 remaining slices:
