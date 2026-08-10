@@ -1,0 +1,2 @@
+def identity()
+  1
