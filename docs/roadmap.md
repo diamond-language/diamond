@@ -2010,6 +2010,11 @@ future work.
   body and rescue body produce the same type. A typed integer recovery brings
   the parser harness to 94 cases.
 
+- Self-hosting, Phase 3 sub-phase 5 (tenth slice): declared rescue-result
+  joins. When normal and rescued values carry the same full contract, the
+  `begin` destination now retains it for subsequent nil and `is` narrowing. A
+  nominal union recovery brings the parser harness to 95 cases.
+
 ## Next priorities
 
 - Self-hosting, Phase 3 sub-phase 5: exceptions, modules, and `require`.
