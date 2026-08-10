@@ -908,6 +908,10 @@ static DiamondVmStatus program_builder_invoke_helper(DiamondVm *vm,
         method_name->length==sizeof("declare_interface_method")-1&&
         memcmp(method_name->chars,"declare_interface_method",
             sizeof("declare_interface_method")-1)==0;
+    const bool set_type_variables_method=
+        method_name->length==sizeof("set_type_variables")-1&&
+        memcmp(method_name->chars,"set_type_variables",
+            sizeof("set_type_variables")-1)==0;
     const bool run_method=method_name->length==sizeof("run")-1&&
         memcmp(method_name->chars,"run",sizeof("run")-1)==0;
     if(!declare_function_method&&!emit_byte_method&&!patch_byte_method&&
@@ -916,7 +920,8 @@ static DiamondVmStatus program_builder_invoke_helper(DiamondVm *vm,
        !declare_field_method&&!declare_method_method&&
        !declare_type_set_method&&!set_parameter_type_method&&
        !set_return_type_method&&!declare_interface_method&&
-       !declare_interface_method_method&&!run_method) {
+       !declare_interface_method_method&&!set_type_variables_method&&
+       !run_method) {
         snprintf(vm->error,sizeof vm->error,"undefined method '%.*s' for %s",
             (int)method_name->length,method_name->chars,"ProgramBuilder");
         return DIAMOND_VM_TYPE_ERROR;
@@ -1273,6 +1278,10 @@ static DiamondVmStatus program_builder_invoke_helper(DiamondVm *vm,
             const bool interface_type=type_id>=DIAMOND_TYPE_INTERFACE_BASE&&
                 (uint64_t)(type_id-DIAMOND_TYPE_INTERFACE_BASE)<
                     built->interface_count;
+            const bool variable_type=type_id>=DIAMOND_TYPE_VARIABLE_BASE&&
+                type_id<DIAMOND_TYPE_INTERFACE_BASE&&
+                (uint64_t)(type_id-DIAMOND_TYPE_VARIABLE_BASE)<
+                    target->type_variable_count;
             const bool valid_argument=argument_set==-1||
                 (argument_set>=0&&(uint64_t)argument_set<target->type_set_count);
             const bool valid_second=second_argument_set==-1||
@@ -1300,7 +1309,8 @@ static DiamondVmStatus program_builder_invoke_helper(DiamondVm *vm,
                     valid_parameters&&
                     (callable_parameters->count==0||
                      callable_parameters->count==(size_t)callable_arity);
-            if(!(primitive||class_type||interface_type)||!collection_arguments||
+            if(!(primitive||class_type||interface_type||variable_type)||
+               !collection_arguments||
                !callable_arguments) {
                 snprintf(vm->error,sizeof vm->error,"ProgramBuilder#%s",
                     "declare_type_set has an invalid function index or type list");
@@ -1380,6 +1390,31 @@ static DiamondVmStatus program_builder_invoke_helper(DiamondVm *vm,
             return DIAMOND_VM_TYPE_ERROR;
         }
         target->return_type_set=(uint8_t)set;
+        *result=DIAMOND_NIL;return DIAMOND_VM_OK;
+    }
+    if(set_type_variables_method) {
+        if(argc!=2)return DIAMOND_VM_ARITY_ERROR;
+        if(registers[base].kind!=DIAMOND_VALUE_INT||
+           registers[(size_t)base+1].kind!=DIAMOND_VALUE_OBJECT||
+           registers[(size_t)base+1].as.object->kind!=DIAMOND_OBJECT_ARRAY)
+            return DIAMOND_VM_TYPE_ERROR;
+        DiamondFunction *target=
+            program_builder_target(built,registers[base].as.integer);
+        const DiamondArray *variables=
+            (const DiamondArray *)registers[(size_t)base+1].as.object;
+        if(target==nullptr||variables->count>8)return DIAMOND_VM_TYPE_ERROR;
+        target->type_variable_count=(uint8_t)variables->count;
+        for(size_t index=0;index<variables->count;index++) {
+            if(variables->values[index].kind!=DIAMOND_VALUE_OBJECT||
+               variables->values[index].as.object->kind!=DIAMOND_OBJECT_STRING)
+                return DIAMOND_VM_TYPE_ERROR;
+            const DiamondString *name=
+                (const DiamondString *)variables->values[index].as.object;
+            if(name->length==0||name->length>=DIAMOND_MAX_FUNCTION_NAME)
+                return DIAMOND_VM_TYPE_ERROR;
+            memcpy(target->type_variables[index],name->chars,name->length);
+            target->type_variables[index][name->length]='\0';
+        }
         *result=DIAMOND_NIL;return DIAMOND_VM_OK;
     }
     if(declare_interface_method) {

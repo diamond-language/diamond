@@ -167,6 +167,7 @@ class Parser
     # `ClassName.new(...)` resolves against this via find_class.
     @classes = []
     @interfaces = []
+    @current_type_variables = []
     # The class_index currently being compiled (compile_class), or nil
     # outside any class body -- gates `self`/`@ivar` (both require being
     # inside a method) and rejects a class or `def` nested inside a
@@ -461,6 +462,9 @@ class Parser
       return 0
     end
     self.advance_token()
+    outer_type_variables = @current_type_variables
+    @current_type_variables = self.parse_type_variables()
+    return 0 if @failed
     if @current.kind() != :left_paren
       self.fail("expected '(' after function name")
       return 0
@@ -480,6 +484,7 @@ class Parser
 
     arity = parameter_names.length()
     function_index = @builder.declare_function(name, arity, arity)
+    @builder.set_type_variables(function_index, @current_type_variables)
     @functions.push([name, function_index, arity, parameter_names]) if at_top_level
     # Every entry currently in scope becomes a capture candidate,
     # unconditionally -- mirroring compiler.c's own eager design (not
@@ -494,6 +499,7 @@ class Parser
 
     self.compile_function_body(function_index, parameter_names, parameter_types,
                                return_type, enclosing_locals)
+    @current_type_variables = outer_type_variables
 
     if at_top_level
       # Evaluates to nil, a sole-writer fresh register in the
@@ -502,6 +508,40 @@ class Parser
       return self.allocate_register()
     end
     self.emit_closure(function_index, enclosing_locals, name)
+  end
+
+  def parse_type_variables()
+    variables = []
+    return variables unless @current.kind() == :left_bracket
+    self.advance_token()
+    self.skip_newlines()
+    while !@failed && @current.kind() != :right_bracket
+      if @current.kind() != :identifier || variables.length() == 8
+        self.fail("expected generic type variable")
+      else
+        name = self.token_text(@current)
+        index = 0
+        while index < variables.length()
+          self.fail("duplicate generic type variable") if variables[index] == name
+          index = index + 1
+        end
+        variables.push(name) unless @failed
+        self.advance_token() unless @failed
+        self.skip_newlines()
+        if @current.kind() == :comma
+          self.advance_token()
+          self.skip_newlines()
+        else
+          break
+        end
+      end
+    end
+    if !@failed && @current.kind() != :right_bracket
+      self.fail("expected ']' after generic type variables")
+    else
+      self.advance_token() unless @failed
+    end
+    variables
   end
 
   # Returns [names, types]: parallel arrays, `types[i]` is a recursive
@@ -679,6 +719,11 @@ class Parser
     return Type::ARRAY if name == "Array"
     return Type::HASH if name == "Hash"
     return Type::CALLABLE if name == "Callable"
+    variable = 0
+    while variable < @current_type_variables.length()
+      return 96 + variable if @current_type_variables[variable] == name
+      variable = variable + 1
+    end
     interface_entry = self.find_interface(name)
     if interface_entry != nil
       return 128 + interface_entry[1]

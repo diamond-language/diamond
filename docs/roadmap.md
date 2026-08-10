@@ -1783,11 +1783,20 @@ future work.
   declared conforming class brings the parser harness to 54 cases, all
   matching. Interface inheritance remains outside this initial slice.
 
+- Self-hosting, Phase 3 sub-phase 4 (sixth slice): inferred generics. Function
+  declarations now accept up to eight scoped type variables, recursive type
+  annotations resolve them to VM variable IDs, and `ProgramBuilder` retains
+  their names/count so the existing runtime inference machinery binds argument
+  types through checked returns. Scalar identity inference is exercised at
+  runtime, with a persistent `Array[T]` signature covering recursive metadata;
+  the parser harness now has 55 matching cases. Explicit generic call arguments
+  remain a later extension.
+
 ## Next priorities
 
 - Self-hosting, Phase 3 sub-phase 4 remaining slices:
-  interface inheritance, generics, and narrowing — each landed as its own
-  substantial, multi-round feature
+  interface inheritance, explicit generic call arguments, and narrowing —
+  each landed as its own substantial, multi-round feature
   earlier this session, so porting the rest of sub-phase 4 is unlikely
   to compress into a single round the way most of sub-phases 1-3 did.
   Sub-phase 5 (exceptions, modules, `require`) and Phase 4 (bootstrap
