@@ -754,6 +754,31 @@ class Parser
     interface_index = @builder.declare_interface(name)
     @interfaces.push([name, interface_index])
     self.advance_token()
+    if @current.kind() == :less
+      self.advance_token()
+      self.skip_newlines()
+      parsing_bases = true
+      while parsing_bases && !@failed
+        if @current.kind() != :identifier
+          self.fail("expected base interface name after '<'")
+        else
+          base_name = self.token_text(@current)
+          base = self.find_interface(base_name)
+          if base == nil
+            self.fail("undefined base interface")
+          else
+            @builder.inherit_interface(interface_index, base[1])
+            self.advance_token()
+            if @current.kind() == :comma
+              self.advance_token()
+              self.skip_newlines()
+            else
+              parsing_bases = false
+            end
+          end
+        end
+      end
+    end
     return 0 unless self.consume_block_start()
     while !@failed && @current.kind() != :end
       self.compile_interface_method(interface_index)

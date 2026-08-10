@@ -912,6 +912,10 @@ static DiamondVmStatus program_builder_invoke_helper(DiamondVm *vm,
         method_name->length==sizeof("set_type_variables")-1&&
         memcmp(method_name->chars,"set_type_variables",
             sizeof("set_type_variables")-1)==0;
+    const bool inherit_interface_method=
+        method_name->length==sizeof("inherit_interface")-1&&
+        memcmp(method_name->chars,"inherit_interface",
+            sizeof("inherit_interface")-1)==0;
     const bool run_method=method_name->length==sizeof("run")-1&&
         memcmp(method_name->chars,"run",sizeof("run")-1)==0;
     if(!declare_function_method&&!emit_byte_method&&!patch_byte_method&&
@@ -921,7 +925,7 @@ static DiamondVmStatus program_builder_invoke_helper(DiamondVm *vm,
        !declare_type_set_method&&!set_parameter_type_method&&
        !set_return_type_method&&!declare_interface_method&&
        !declare_interface_method_method&&!set_type_variables_method&&
-       !run_method) {
+       !inherit_interface_method&&!run_method) {
         snprintf(vm->error,sizeof vm->error,"undefined method '%.*s' for %s",
             (int)method_name->length,method_name->chars,"ProgramBuilder");
         return DIAMOND_VM_TYPE_ERROR;
@@ -1438,6 +1442,33 @@ static DiamondVmStatus program_builder_invoke_helper(DiamondVm *vm,
         memcpy(interface->name,name->chars,name->length);
         interface->name[name->length]='\0';
         *result=DIAMOND_INT(index);return DIAMOND_VM_OK;
+    }
+    if(inherit_interface_method) {
+        if(argc!=2)return DIAMOND_VM_ARITY_ERROR;
+        if(registers[base].kind!=DIAMOND_VALUE_INT||
+           registers[(size_t)base+1].kind!=DIAMOND_VALUE_INT)
+            return DIAMOND_VM_TYPE_ERROR;
+        const int64_t target_index=registers[base].as.integer;
+        const int64_t base_index=registers[(size_t)base+1].as.integer;
+        if(target_index<0||base_index<0||
+           (uint64_t)target_index>=built->interface_count||
+           (uint64_t)base_index>=built->interface_count||
+           target_index==base_index)return DIAMOND_VM_TYPE_ERROR;
+        DiamondInterface *target=&built->interfaces[(size_t)target_index];
+        const DiamondInterface *source=&built->interfaces[(size_t)base_index];
+        if(target->method_count+source->method_count>DIAMOND_MAX_METHODS)
+            return DIAMOND_VM_TYPE_ERROR;
+        for(size_t method=0;method<source->method_count;method++) {
+            for(size_t existing=0;existing<target->method_count;existing++)
+                if(strcmp(target->methods[existing].name,
+                          source->methods[method].name)==0) {
+                    snprintf(vm->error,sizeof vm->error,
+                        "duplicate interface method");
+                    return DIAMOND_VM_TYPE_ERROR;
+                }
+            target->methods[target->method_count++]=source->methods[method];
+        }
+        *result=DIAMOND_NIL;return DIAMOND_VM_OK;
     }
     if(declare_interface_method_method) {
         if(argc!=5)return DIAMOND_VM_ARITY_ERROR;
