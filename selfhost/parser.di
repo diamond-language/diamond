@@ -2012,6 +2012,7 @@ class Parser
     end
     exit_jump = self.emit_jump(Opcode::JUMP_IF_FALSE, branch_condition)
     frame = [destination, []]
+    entry_facts = self.copy_type_facts()
     @loops.push(frame)
     self.compile_sequence()
     @loops.pop()
@@ -2023,6 +2024,7 @@ class Parser
       return 0
     end
     self.advance_token()
+    @type_facts = entry_facts
     destination
   end
 

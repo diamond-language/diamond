@@ -1958,15 +1958,17 @@ future work.
   use nil narrowing. A typed literal lookup brings the parser harness to 84
   cases.
 
+- Self-hosting, Phase 3 sub-phase 4 (thirty-sixth slice): conservative loop
+  exits. `while` and `until` now restore entry facts after their body because
+  the body may execute zero times, preventing branch-local assignments from
+  becoming unconditional post-loop proofs. A zero-iteration typed-local case
+  brings the parser harness to 85 cases and completes sub-phase 4.
+
 ## Next priorities
 
-- Self-hosting, Phase 3 sub-phase 4 remaining slices:
-  richer multi-member fact joins and propagation through indexing;
-  the core annotation, generic, predicate, and branch-narrowing path is landed
-  earlier this session, so porting the rest of sub-phase 4 is unlikely
-  to compress into a single round the way most of sub-phases 1-3 did.
-  Sub-phase 5 (exceptions, modules, `require`) and Phase 4 (bootstrap
-  validation) remain after that.
+- Self-hosting, Phase 3 sub-phase 5: exceptions, modules, and `require`.
+  Phase 4 bootstrap validation remains after the final parser surface is
+  ported.
 
 ## Later experiments
 
