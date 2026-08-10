@@ -1908,6 +1908,10 @@ future work.
   differential harness, locking the VM handler's eight-type limit across both
   compilers.
 
+- Self-hosting, Phase 3 sub-phase 5 (eighteenth slice): retry-context error
+  coverage. A top-level `retry` must be rejected by both compilers, locking the
+  scoped retry-target invariant into the negative differential harness.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,
