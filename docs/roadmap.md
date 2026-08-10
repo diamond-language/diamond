@@ -1871,6 +1871,12 @@ future work.
   expressions and the implicit nil path. An integer-valued conditional brings
   the parser harness to 68 cases.
 
+- Self-hosting, Phase 3 sub-phase 4 (twentieth slice): declared conditional
+  result joins. When both branches produce values carrying the same declared
+  contract, the `if`/`unless` destination now retains that full annotation for
+  subsequent nil or `is` narrowing. A union-valued conditional brings the
+  parser harness to 69 cases.
+
 ## Next priorities
 
 - Self-hosting, Phase 3 sub-phase 4 remaining slices:

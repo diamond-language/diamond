@@ -1761,6 +1761,7 @@ class Parser
     self.apply_condition_fact(condition, narrowing, type_narrowing, !inverted)
     then_result = self.compile_sequence()
     then_fact = self.type_fact(then_result)
+    then_declaration = self.declared_type(then_result)
     self.emit_instruction2(Opcode::MOVE, destination, then_result)
     end_jump = self.emit_jump(Opcode::JUMP, 0)
     self.patch_jump(false_jump, @code_count)
@@ -1773,18 +1774,21 @@ class Parser
       self.skip_newlines() if @current.kind() == :newline
       else_result = self.compile_sequence()
       else_fact = self.type_fact(else_result)
+      else_declaration = self.declared_type(else_result)
       self.emit_instruction2(Opcode::MOVE, destination, else_result)
     elsif @current.kind() == :elsif
       @type_facts = original_facts
       self.advance_token()
       else_result = self.parse_if(false)
       else_fact = self.type_fact(else_result)
+      else_declaration = self.declared_type(else_result)
       self.emit_instruction2(Opcode::MOVE, destination, else_result)
       end_consumed = true
     else
       @type_facts = original_facts
       self.emit_instruction1(Opcode::NIL, destination)
       else_fact = Type::NIL
+      else_declaration = nil
     end
 
     if !end_consumed && @current.kind() != :end
@@ -1796,6 +1800,9 @@ class Parser
     @type_facts = original_facts
     if then_fact != nil && then_fact == else_fact
       self.set_type_fact(destination, then_fact)
+    end
+    if then_declaration != nil && then_declaration == else_declaration
+      @declared_types.push([destination, then_declaration])
     end
     destination
   end
