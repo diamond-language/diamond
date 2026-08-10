@@ -1847,6 +1847,12 @@ future work.
   side, so both `== nil` and `!= nil` compose correctly with `if` and `unless`.
   A non-nil true-branch return brings the harness to 64 cases.
 
+- Self-hosting, Phase 3 sub-phase 4 (sixteenth slice): declared-contract alias
+  propagation. Assigning a typed local to another local now carries both its
+  current exact fact and its full declared union, preserving later `is`/nil
+  narrowing without treating unrelated reassignment as permanently narrowed.
+  A nominal union alias case brings the parser harness to 65 cases.
+
 ## Next priorities
 
 - Self-hosting, Phase 3 sub-phase 4 remaining slices:

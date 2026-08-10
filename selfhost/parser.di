@@ -1583,6 +1583,10 @@ class Parser
     end
     self.emit_instruction2(Opcode::MOVE, destination, value)
     self.set_type_fact(destination, self.type_fact(value))
+    source_declaration = self.declared_type(value)
+    if source_declaration != nil
+      @declared_types.push([destination, source_declaration])
+    end
     destination
   end
 
