@@ -1903,6 +1903,11 @@ future work.
   rescue filters, matching the native compiler and adding a third negative
   differential case.
 
+- Self-hosting, Phase 3 sub-phase 5 (seventeenth slice): rescue-filter capacity
+  coverage. A ninth type in one clause is now exercised through the negative
+  differential harness, locking the VM handler's eight-type limit across both
+  compilers.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,
