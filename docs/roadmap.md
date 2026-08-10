@@ -1984,6 +1984,12 @@ future work.
   those IDs into the VM handler, and narrow a single-type exception binding.
   An integer-filtered rescue brings the parser harness to 89 cases.
 
+- Self-hosting, Phase 3 sub-phase 5 (fifth slice): ensured rescue expressions.
+  Rescued `begin` forms now install an outer ensure handler and run optional
+  `ensure` bodies through `RUN_ENSURE`/`END_ENSURE`, covering normal, rescued,
+  escaping, and return unwinds. A mutating ensure case brings the parser
+  harness to 90 cases.
+
 ## Next priorities
 
 - Self-hosting, Phase 3 sub-phase 5: exceptions, modules, and `require`.

@@ -95,6 +95,9 @@ module Opcode
   RAISE = 58
   PUSH_RESCUE = 59
   POP_RESCUE = 60
+  PUSH_ENSURE = 61
+  RUN_ENSURE = 62
+  END_ENSURE = 63
   IS_TYPE = 64
   PRINT = 70
 end
@@ -1934,6 +1937,10 @@ class Parser
   def compile_begin()
     return 0 unless self.consume_block_start()
     original_facts = self.copy_type_facts()
+    ensure_operand = @code_count + 1
+    self.emit_byte(Opcode::PUSH_ENSURE)
+    self.emit_byte(0)
+    self.emit_byte(0)
     exception = self.allocate_register()
     handler = self.emit_rescue_handler(exception)
     body = self.compile_sequence()
@@ -1959,12 +1966,24 @@ class Parser
     while @locals.length() > rescue_local_count
       @locals.pop()
     end
+    self.patch_jump(finished, @code_count)
+    self.emit_byte(Opcode::RUN_ENSURE)
+    continuation_operand = @code_count
+    self.emit_byte(0)
+    self.emit_byte(0)
+    self.patch_jump(ensure_operand, @code_count)
+    if @current.kind() == :ensure
+      self.advance_token()
+      return destination unless self.consume_block_start()
+      self.compile_sequence()
+    end
+    self.emit_byte(Opcode::END_ENSURE)
     if @current.kind() != :end
       self.fail("expected 'end' after begin body")
       return destination
     end
     self.advance_token()
-    self.patch_jump(finished, @code_count)
+    self.patch_jump(continuation_operand, @code_count)
     @type_facts = original_facts
     destination
   end
