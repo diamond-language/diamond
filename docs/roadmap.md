@@ -1929,6 +1929,10 @@ future work.
   coverage. A top-level `return` must be rejected by both compilers, locking
   the active-function invariant into the negative differential harness.
 
+- Self-hosting, Phase 3 sub-phase 5 (twenty-third slice): receiver-context
+  coverage. A top-level `self` must be rejected by both compilers, locking
+  the active-method invariant into the negative differential harness.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,
