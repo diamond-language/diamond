@@ -1990,6 +1990,11 @@ future work.
   escaping, and return unwinds. A mutating ensure case brings the parser
   harness to 90 cases.
 
+- Self-hosting, Phase 3 sub-phase 5 (sixth slice): bare re-raise. Rescue bodies
+  now expose their active exception register to `raise` without an operand,
+  restoring any outer rescue context across nesting. A nested re-raise caught
+  by an outer clause brings the parser harness to 91 cases.
+
 ## Next priorities
 
 - Self-hosting, Phase 3 sub-phase 5: exceptions, modules, and `require`.

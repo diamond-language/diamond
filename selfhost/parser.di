@@ -184,6 +184,7 @@ class Parser
     @declared_types = []
     @pending_nil_narrowing = nil
     @pending_type_narrowing = nil
+    @current_exception = nil
     # The class_index currently being compiled (compile_class), or nil
     # outside any class body -- gates `self`/`@ivar` (both require being
     # inside a method) and rejects a class or `def` nested inside a
@@ -1925,9 +1926,13 @@ class Parser
 
   def compile_raise()
     self.advance_token()
-    if @current.kind() == :newline || @current.kind() == :end || @current.kind() == :eof
-      self.fail("bare 'raise' used outside rescue")
-      return 0
+    if @current.kind() == :newline || @current.kind() == :end || @current.kind() == :rescue || @current.kind() == :ensure || @current.kind() == :eof
+      if @current_exception == nil
+        self.fail("bare 'raise' used outside rescue")
+        return 0
+      end
+      self.emit_instruction1(Opcode::RAISE, @current_exception)
+      return @current_exception
     end
     value = self.parse_expression()
     self.emit_instruction1(Opcode::RAISE, value)
@@ -1961,7 +1966,10 @@ class Parser
     end
     self.parse_rescue_types(handler, exception)
     return destination unless self.consume_block_start()
+    outer_exception = @current_exception
+    @current_exception = exception
     rescued = self.compile_sequence()
+    @current_exception = outer_exception
     self.emit_instruction2(Opcode::MOVE, destination, rescued)
     while @locals.length() > rescue_local_count
       @locals.pop()
