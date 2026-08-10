@@ -1921,6 +1921,11 @@ future work.
   type through assignments and returns. A typed negation function brings the
   parser harness to 77 cases.
 
+- Self-hosting, Phase 3 sub-phase 4 (twenty-ninth slice): numeric-negation
+  facts. Unary minus now preserves known `Int` and `Float` facts on its result,
+  while unknown operands remain conservative. A typed negative integer return
+  brings the parser harness to 78 cases.
+
 ## Next priorities
 
 - Self-hosting, Phase 3 sub-phase 4 remaining slices:

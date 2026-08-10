@@ -2105,6 +2105,10 @@ class Parser
       operand = self.parse_precedence(Precedence::PREFIX)
       destination = self.allocate_register()
       self.emit_instruction2(Opcode::NEGATE, destination, operand)
+      operand_fact = self.type_fact(operand)
+      if operand_fact == Type::INT || operand_fact == Type::FLOAT
+        self.set_type_fact(destination, operand_fact)
+      end
       return destination
     end
     if kind == :bang || kind == :not
