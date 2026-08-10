@@ -1309,12 +1309,12 @@ class Parser
       if @current.kind() == :def
         self.compile_method()
       else
-        self.fail("expected method definition in class")
+        self.fail("expected method definition or include in class")
       end
       self.skip_newlines() if @current.kind() == :newline
     end
     if @current.kind() != :end
-      self.fail("expected 'end' after class body") unless @failed
+      self.fail("expected method definition or include in class") unless @failed
       self.leave_class()
       return 0
     end
