@@ -2011,6 +2011,8 @@ class Parser
       return destination unless self.consume_block_start()
       normal = self.compile_sequence()
       self.emit_instruction2(Opcode::MOVE, destination, normal)
+      body_fact = self.type_fact(normal)
+      body_declaration = self.declared_type(normal)
     end
     self.patch_jump(rescued_finished, @code_count) if rescued_finished != nil
     self.emit_byte(Opcode::RUN_ENSURE)

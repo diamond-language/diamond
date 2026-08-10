@@ -1884,6 +1884,11 @@ future work.
   Boolean-to-integer two-branch reassignment brings the parser harness to 70
   cases.
 
+- Self-hosting, Phase 3 sub-phase 5 (thirteenth slice): rescue-else result
+  facts. When `else` is present, normal-path fact and contract joins now use
+  the replacing else value rather than the protected body's discarded result.
+  A typed else result brings the parser harness to 98 cases.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,
