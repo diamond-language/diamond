@@ -1004,6 +1004,26 @@ class Parser
     member[1]
   end
 
+  def hash_value_annotation(annotation)
+    return nil if annotation == nil || annotation.length() != 1
+    member = annotation[0]
+    return nil if self.resolve_type_name(member[0]) != Type::HASH
+    member[2]
+  end
+
+  def annotation_with_nil(annotation)
+    result = []
+    has_nil = false
+    index = 0
+    while index < annotation.length()
+      result.push(annotation[index])
+      has_nil = true if self.resolve_type_name(annotation[index][0]) == Type::NIL
+      index = index + 1
+    end
+    result.push(["Nil", nil, nil, -1, nil, nil]) unless has_nil
+    result
+  end
+
   def parse_optional_return_type()
     return nil unless @current.kind() == :arrow
     self.advance_token()
@@ -1701,6 +1721,11 @@ class Parser
       @declared_types.push([destination, element])
       fact = self.annotation_single_type(element)
       self.set_type_fact(destination, fact) if fact != nil
+    else
+      value = self.hash_value_annotation(self.declared_type(receiver))
+      if value != nil
+        @declared_types.push([destination, self.annotation_with_nil(value)])
+      end
     end
     destination
   end

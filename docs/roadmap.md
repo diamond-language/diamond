@@ -1905,6 +1905,12 @@ future work.
   result and records an exact fact for single-member element contracts. A
   typed integer lookup and return brings the parser harness to 74 cases.
 
+- Self-hosting, Phase 3 sub-phase 4 (twenty-sixth slice): hash index result
+  contracts. Indexing `Hash[K, V]` now declares the destination as `V | Nil`,
+  reflecting missing-key behavior and feeding the existing nil-sensitive
+  branch analysis. A narrowed typed hash lookup brings the parser harness to
+  75 cases and completes the planned collection-index propagation path.
+
 ## Next priorities
 
 - Self-hosting, Phase 3 sub-phase 4 remaining slices:
