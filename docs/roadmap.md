@@ -1805,10 +1805,16 @@ future work.
   Two-variable calls with different specializations bring the differential
   harness to 57 cases.
 
+- Self-hosting, Phase 3 sub-phase 4 (ninth slice): non-throwing `is`
+  predicates. Primitive, nominal, and structural type names now emit the VM's
+  `IS_TYPE` operation at equality precedence, including membership tests over
+  union-annotated values and the same unbound-generic rejection as the C
+  compiler. A union predicate case brings the harness to 58 cases.
+
 ## Next priorities
 
 - Self-hosting, Phase 3 sub-phase 4 remaining slices:
-  narrowing, still best landed as focused, multi-round work
+  branch-sensitive narrowing and conservative fact joins
   earlier this session, so porting the rest of sub-phase 4 is unlikely
   to compress into a single round the way most of sub-phases 1-3 did.
   Sub-phase 5 (exceptions, modules, `require`) and Phase 4 (bootstrap

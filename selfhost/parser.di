@@ -88,6 +88,7 @@ module Opcode
   NOT = 55
   JUMP_IF_TRUE = 56
   RETURN = 57
+  IS_TYPE = 64
   PRINT = 70
 end
 
@@ -1712,7 +1713,7 @@ class Parser
   def token_precedence(kind)
     return Precedence::OR if kind == :or_or || kind == :or
     return Precedence::AND if kind == :and_and || kind == :and
-    return Precedence::EQUALITY if kind == :equal_equal || kind == :bang_equal
+    return Precedence::EQUALITY if kind == :equal_equal || kind == :bang_equal || kind == :is
     return Precedence::COMPARISON if kind == :less || kind == :less_equal || kind == :greater || kind == :greater_equal
     return Precedence::TERM if kind == :plus || kind == :minus
     return Precedence::FACTOR if kind == :star || kind == :slash
@@ -1745,7 +1746,21 @@ class Parser
       operator = @current.kind()
       operator_precedence = self.token_precedence(operator)
       self.advance_token()
-      if operator == :and_and || operator == :and || operator == :or_or || operator == :or
+      if operator == :is
+        if @current.kind() != :identifier
+          self.fail("expected type after 'is'")
+        else
+          type_name = self.token_text(@current)
+          type_id = self.resolve_type_name(type_name)
+          if type_id >= 96 && type_id < 128
+            self.fail("generic type variables cannot be used with 'is' before binding")
+          end
+          self.advance_token() unless @failed
+          destination = self.allocate_register()
+          self.emit_instruction3(Opcode::IS_TYPE, destination, left, type_id)
+          left = destination
+        end
+      elsif operator == :and_and || operator == :and || operator == :or_or || operator == :or
         is_and = operator == :and_and || operator == :and
         destination = self.allocate_register()
         self.emit_instruction2(Opcode::MOVE, destination, left)
@@ -1758,7 +1773,7 @@ class Parser
         self.emit_instruction2(Opcode::MOVE, destination, right)
         self.patch_jump(end_jump, @code_count)
         left = destination
-      else
+      elsif operator != :is
         right = self.parse_precedence(operator_precedence + 1)
         destination = self.allocate_register()
         self.emit_instruction3(self.binary_opcode(operator), destination, left, right)
