@@ -103,8 +103,9 @@ end
 
 # Phase 3 sub-phase 4 (gradual typing): scalar and union type annotations
 # (`Int`/`Float`/`String`/`Bool`/`Nil`/a declared class name, separated by
-# `|`) on parameters and return types. Deliberately no `Array[T]`/
-# `Hash[K,V]`, `Callable`, interfaces, generics, or narrowing yet --
+# `|`) plus recursively typed `Array[T]` and `Hash[K, V]` contracts on
+# parameters and return types. Deliberately no `Callable`, interfaces,
+# generics, or narrowing yet --
 # each is a natural, separate extension of the same
 # ProgramBuilder#declare_type_set bridge method this round adds, not
 # something this round itself needs. Values must exactly match
@@ -116,6 +117,8 @@ module Type
   STRING = 2
   BOOL = 3
   NIL = 4
+  ARRAY = 5
+  HASH = 6
   CLASS_BASE = 10
 end
 
@@ -484,8 +487,8 @@ class Parser
     self.emit_closure(function_index, enclosing_locals, name)
   end
 
-  # Returns [names, types]: parallel arrays, `types[i]` is an array of
-  # type-name texts (e.g. ["Int", "Nil"]) for parameter `i`, or nil if it
+  # Returns [names, types]: parallel arrays, `types[i]` is a recursive
+  # annotation tree, or nil if it
   # had no `: Type` annotation. Resolving a type name to a type id and
   # declaring its type set happens later, inside the callee's own
   # switched-in context (see compile_function_body/emit_parameter_type_checks)
@@ -527,7 +530,7 @@ class Parser
   end
 
   def parse_type_annotation()
-    names = []
+    members = []
     parsing = true
     while parsing && !@failed
       if @current.kind() != :identifier
@@ -535,16 +538,45 @@ class Parser
       else
         name = self.token_text(@current)
         index = 0
-        while index < names.length()
-          self.fail("duplicate type in union") if names[index] == name
+        while index < members.length()
+          self.fail("duplicate type in union") if members[index][0] == name
           index = index + 1
         end
-        if names.length() == 8
+        if members.length() == 8
           self.fail("too many types in union")
         else
-          names.push(name) unless @failed
+          self.advance_token()
+          argument = nil
+          second_argument = nil
+          if !@failed && @current.kind() == :left_bracket
+            if name != "Array" && name != "Hash"
+              self.fail("this type does not accept arguments")
+            else
+              self.advance_token()
+              self.skip_newlines()
+              argument = self.parse_type_annotation()
+              self.skip_newlines()
+              if name == "Hash"
+                if @current.kind() != :comma
+                  self.fail("expected ',' between Hash key and value types")
+                else
+                  self.advance_token()
+                  self.skip_newlines()
+                  second_argument = self.parse_type_annotation()
+                  self.skip_newlines()
+                end
+              end
+              if !@failed && @current.kind() != :right_bracket
+                self.fail("expected ']' after collection type arguments")
+              else
+                self.advance_token() unless @failed
+              end
+            end
+          elsif name == "Array" || name == "Hash"
+            # Unparameterized collections remain valid dynamic contracts.
+          end
+          members.push([name, argument, second_argument]) unless @failed
         end
-        self.advance_token() unless @failed
         if !@failed && @current.kind() == :pipe
           self.advance_token()
         else
@@ -552,7 +584,7 @@ class Parser
         end
       end
     end
-    names
+    members
   end
 
   def resolve_type_name(name)
@@ -561,6 +593,8 @@ class Parser
     return Type::STRING if name == "String"
     return Type::BOOL if name == "Bool"
     return Type::NIL if name == "Nil"
+    return Type::ARRAY if name == "Array"
+    return Type::HASH if name == "Hash"
     class_entry = self.find_class(name)
     if class_entry != nil
       return Type::CLASS_BASE + class_entry[1]
@@ -569,15 +603,32 @@ class Parser
     0
   end
 
-  def emit_type_check(reg, type_names)
-    type_ids = []
+  def declare_annotation(type_annotation)
+    descriptors = []
     index = 0
-    while index < type_names.length() && !@failed
-      type_ids.push(self.resolve_type_name(type_names[index]))
+    while index < type_annotation.length() && !@failed
+      member = type_annotation[index]
+      type_id = self.resolve_type_name(member[0])
+      argument_set = if member[1] == nil
+        -1
+      else
+        self.declare_annotation(member[1])
+      end
+      second_argument_set = if member[2] == nil
+        -1
+      else
+        self.declare_annotation(member[2])
+      end
+      descriptors.push([type_id, argument_set, second_argument_set])
       index = index + 1
     end
+    return 0 if @failed
+    @builder.declare_type_set(@current_function_index, descriptors)
+  end
+
+  def emit_type_check(reg, type_annotation)
+    set_index = self.declare_annotation(type_annotation)
     return if @failed
-    set_index = @builder.declare_type_set(@current_function_index, type_ids)
     self.emit_instruction2(Opcode::CHECK_TYPE, reg, set_index)
   end
 

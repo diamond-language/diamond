@@ -1759,11 +1759,19 @@ future work.
   during parsing. A parameter-and-return union differential case brings
   the parser harness to 51 cases, all matching the C compiler.
 
+- Self-hosting, Phase 3 sub-phase 4 (third slice): persistent collection
+  contracts. Recursive annotation trees now represent `Array[Element]` and
+  `Hash[Key, Value]`, including nested unions and collections. The
+  `ProgramBuilder` bridge accepts member descriptors referencing previously
+  declared nested type sets, producing the same persistent runtime contracts
+  used by the C compiler. A nested collection-signature differential case
+  brings the parser harness to 52 cases, all matching.
+
 ## Next priorities
 
 - Self-hosting, Phase 3 sub-phase 4 remaining slices:
-  `Array[T]`/`Hash[K,V]`, `Callable`, interfaces, generics, and
-  narrowing — each landed as its own substantial, multi-round feature
+  `Callable`, interfaces, generics, and narrowing — each landed as its own
+  substantial, multi-round feature
   earlier this session, so porting the rest of sub-phase 4 is unlikely
   to compress into a single round the way most of sub-phases 1-3 did.
   Sub-phase 5 (exceptions, modules, `require`) and Phase 4 (bootstrap

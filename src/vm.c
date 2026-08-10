@@ -1221,16 +1221,38 @@ static DiamondVmStatus program_builder_invoke_helper(DiamondVm *vm,
             return DIAMOND_VM_TYPE_ERROR;
         }
         for(size_t index=0;index<type_ids->count;index++) {
-            if(type_ids->values[index].kind!=DIAMOND_VALUE_INT) {
+            if(type_ids->values[index].kind!=DIAMOND_VALUE_OBJECT||
+               type_ids->values[index].as.object->kind!=DIAMOND_OBJECT_ARRAY) {
                 snprintf(vm->error,sizeof vm->error,"ProgramBuilder#%s",
                     "declare_type_set has an invalid function index or type list");
                 return DIAMOND_VM_TYPE_ERROR;
             }
-            const int64_t type_id=type_ids->values[index].as.integer;
+            const DiamondArray *descriptor=
+                (const DiamondArray *)type_ids->values[index].as.object;
+            if(descriptor->count!=3||
+               descriptor->values[0].kind!=DIAMOND_VALUE_INT||
+               descriptor->values[1].kind!=DIAMOND_VALUE_INT||
+               descriptor->values[2].kind!=DIAMOND_VALUE_INT) {
+                snprintf(vm->error,sizeof vm->error,"ProgramBuilder#%s",
+                    "declare_type_set has an invalid function index or type list");
+                return DIAMOND_VM_TYPE_ERROR;
+            }
+            const int64_t type_id=descriptor->values[0].as.integer;
+            const int64_t argument_set=descriptor->values[1].as.integer;
+            const int64_t second_argument_set=descriptor->values[2].as.integer;
             const bool primitive=type_id>=0&&type_id<DIAMOND_TYPE_CLASS_BASE;
             const bool class_type=type_id>=DIAMOND_TYPE_CLASS_BASE&&
                 (uint64_t)(type_id-DIAMOND_TYPE_CLASS_BASE)<built->class_count;
-            if(!(primitive||class_type)) {
+            const bool valid_argument=argument_set==-1||
+                (argument_set>=0&&(uint64_t)argument_set<target->type_set_count);
+            const bool valid_second=second_argument_set==-1||
+                (second_argument_set>=0&&
+                 (uint64_t)second_argument_set<target->type_set_count);
+            const bool collection_arguments=
+                (type_id==DIAMOND_TYPE_ARRAY&&valid_argument&&second_argument_set==-1)||
+                (type_id==DIAMOND_TYPE_HASH&&valid_argument&&valid_second)||
+                (argument_set==-1&&second_argument_set==-1);
+            if(!(primitive||class_type)||!collection_arguments) {
                 snprintf(vm->error,sizeof vm->error,"ProgramBuilder#%s",
                     "declare_type_set has an invalid function index or type list");
                 return DIAMOND_VM_TYPE_ERROR;
@@ -1245,9 +1267,15 @@ static DiamondVmStatus program_builder_invoke_helper(DiamondVm *vm,
         DiamondTypeSet *set=&target->type_sets[target->type_set_count++];
         *set=(DiamondTypeSet){.count=(uint8_t)type_ids->count};
         for(size_t member=0;member<type_ids->count;member++) {
+            const DiamondArray *descriptor=
+                (const DiamondArray *)type_ids->values[member].as.object;
+            const int64_t argument_set=descriptor->values[1].as.integer;
+            const int64_t second_argument_set=descriptor->values[2].as.integer;
             set->members[member]=(DiamondTypeMember){
-                .id=(uint8_t)type_ids->values[member].as.integer,
-                .argument_set=UINT8_MAX,.second_argument_set=UINT8_MAX,
+                .id=(uint8_t)descriptor->values[0].as.integer,
+                .argument_set=argument_set<0?UINT8_MAX:(uint8_t)argument_set,
+                .second_argument_set=second_argument_set<0?UINT8_MAX:
+                    (uint8_t)second_argument_set,
                 .callable_arity=UINT8_MAX,.callable_return_set=UINT8_MAX};
             for(size_t index=0;index<16;index++)
                 set->members[member].callable_parameter_sets[index]=UINT8_MAX;
