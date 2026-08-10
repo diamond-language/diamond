@@ -1015,6 +1015,17 @@ class Parser
     nil
   end
 
+  def apply_result_join(destination, left, right)
+    left_fact = self.type_fact(left)
+    right_fact = self.type_fact(right)
+    self.set_type_fact(destination, left_fact) if left_fact != nil && left_fact == right_fact
+    left_declaration = self.declared_type(left)
+    right_declaration = self.declared_type(right)
+    if left_declaration != nil && left_declaration == right_declaration
+      @declared_types.push([destination, left_declaration])
+    end
+  end
+
   def array_element_annotation(annotation)
     return nil if annotation == nil || annotation.length() != 1
     member = annotation[0]
@@ -2076,6 +2087,7 @@ class Parser
         right = self.parse_precedence(operator_precedence + 1)
         self.emit_instruction2(Opcode::MOVE, destination, right)
         self.patch_jump(end_jump, @code_count)
+        self.apply_result_join(destination, left, right)
         left = destination
       elsif operator != :is
         right = self.parse_precedence(operator_precedence + 1)

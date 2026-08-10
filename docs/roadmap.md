@@ -1942,6 +1942,11 @@ future work.
   C compiler while leaving VM quickening independent. A typed arithmetic
   return brings the parser harness to 81 cases.
 
+- Self-hosting, Phase 3 sub-phase 4 (thirty-third slice): short-circuit result
+  joins. Logical `and`/`or` expressions now retain an exact fact or full
+  declaration only when their left and right outcomes agree. A typed Boolean
+  conjunction brings the parser harness to 82 cases.
+
 ## Next priorities
 
 - Self-hosting, Phase 3 sub-phase 4 remaining slices:
