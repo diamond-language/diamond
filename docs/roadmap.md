@@ -1890,6 +1890,11 @@ future work.
   and records the exact collection fact. A runtime length check brings the
   parser harness to 71 cases.
 
+- Self-hosting, Phase 3 sub-phase 4 (twenty-third slice): hash literals. Empty
+  and populated hashes now lower through the VM's interleaved key/value
+  register layout with the 16-entry parser limit and an exact `Hash` fact. A
+  runtime length check brings the parser harness to 72 cases.
+
 ## Next priorities
 
 - Self-hosting, Phase 3 sub-phase 4 remaining slices:

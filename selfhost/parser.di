@@ -86,6 +86,7 @@ module Opcode
   SET_IVAR = 45
   CHECK_TYPE = 50
   ARRAY = 51
+  HASH = 54
   NOT = 55
   JUMP_IF_TRUE = 56
   RETURN = 57
@@ -1990,6 +1991,7 @@ class Parser
     return self.parse_name() if kind == :identifier
     return self.parse_grouping() if kind == :left_paren
     return self.parse_array() if kind == :left_bracket
+    return self.parse_hash() if kind == :left_brace
     if kind == :self
       if @current_class_index == nil
         self.fail("'self' used outside a method")
@@ -2095,6 +2097,53 @@ class Parser
     destination = self.allocate_register()
     self.emit_instruction3(Opcode::ARRAY, destination, base, elements.length())
     self.set_type_fact(destination, Type::ARRAY)
+    destination
+  end
+
+  def parse_hash()
+    keys = []
+    values = []
+    self.skip_newlines()
+    while !@failed && @current.kind() != :right_brace
+      if keys.length() == 16
+        self.fail("hash literal has too many entries")
+      else
+        keys.push(self.parse_expression())
+        if @current.kind() != :colon
+          self.fail("expected ':' after hash key")
+        else
+          self.advance_token()
+          values.push(self.parse_expression())
+          self.skip_newlines()
+          if @current.kind() == :comma
+            self.advance_token()
+            self.skip_newlines()
+          else
+            break
+          end
+        end
+      end
+    end
+    if !@failed && @current.kind() != :right_brace
+      self.fail("expected '}' after hash literal")
+    else
+      self.advance_token() unless @failed
+    end
+    base = self.allocate_register()
+    index = 1
+    while index < keys.length() * 2
+      self.allocate_register()
+      index = index + 1
+    end
+    index = 0
+    while index < keys.length()
+      self.emit_instruction2(Opcode::MOVE, base + index * 2, keys[index])
+      self.emit_instruction2(Opcode::MOVE, base + index * 2 + 1, values[index])
+      index = index + 1
+    end
+    destination = self.allocate_register()
+    self.emit_instruction3(Opcode::HASH, destination, base, keys.length())
+    self.set_type_fact(destination, Type::HASH)
     destination
   end
 
