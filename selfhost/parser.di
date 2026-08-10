@@ -1000,6 +1000,21 @@ class Parser
     self.resolve_type_name(annotation[0][0])
   end
 
+  def binary_result_fact(operator, left, right)
+    left_fact = self.type_fact(left)
+    right_fact = self.type_fact(right)
+    return Type::INT if left_fact == Type::INT && right_fact == Type::INT
+    left_numeric = left_fact == Type::INT || left_fact == Type::FLOAT
+    right_numeric = right_fact == Type::INT || right_fact == Type::FLOAT
+    if left_numeric && right_numeric && (left_fact == Type::FLOAT || right_fact == Type::FLOAT)
+      return Type::FLOAT
+    end
+    if operator == :plus && left_fact == Type::STRING && right_fact == Type::STRING
+      return Type::STRING
+    end
+    nil
+  end
+
   def array_element_annotation(annotation)
     return nil if annotation == nil || annotation.length() != 1
     member = annotation[0]
@@ -2076,6 +2091,9 @@ class Parser
           end
         elsif operator == :less || operator == :less_equal || operator == :greater || operator == :greater_equal
           self.set_type_fact(destination, Type::BOOL)
+        else
+          result_fact = self.binary_result_fact(operator, left, right)
+          self.set_type_fact(destination, result_fact) if result_fact != nil
         end
         left = destination
       end

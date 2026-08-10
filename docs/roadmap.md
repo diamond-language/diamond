@@ -1936,6 +1936,12 @@ future work.
   `Bool` type through local propagation and typed returns. A typed comparison
   predicate brings the parser harness to 80 cases.
 
+- Self-hosting, Phase 3 sub-phase 4 (thirty-second slice): arithmetic result
+  facts. Known integer operands retain `Int`, mixed known numeric operands
+  promote to `Float`, and string concatenation retains `String`, matching the
+  C compiler while leaving VM quickening independent. A typed arithmetic
+  return brings the parser harness to 81 cases.
+
 ## Next priorities
 
 - Self-hosting, Phase 3 sub-phase 4 remaining slices:
