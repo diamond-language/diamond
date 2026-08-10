@@ -170,6 +170,9 @@ class Parser
     @classes = []
     @interfaces = []
     @current_type_variables = []
+    @type_facts = []
+    @declared_types = []
+    @pending_nil_narrowing = nil
     # The class_index currently being compiled (compile_class), or nil
     # outside any class body -- gates `self`/`@ivar` (both require being
     # inside a method) and rejects a class or `def` nested inside a
@@ -881,10 +884,69 @@ class Parser
   end
 
   def emit_type_check(reg, type_annotation)
+    fact = self.type_fact(reg)
+    if fact != nil && self.annotation_accepts_type?(type_annotation, fact)
+      return self.declare_annotation(type_annotation)
+    end
     set_index = self.declare_annotation(type_annotation)
     return if @failed
     self.emit_instruction2(Opcode::CHECK_TYPE, reg, set_index)
     set_index
+  end
+
+  def type_fact(reg)
+    index = @type_facts.length() - 1
+    while index >= 0
+      return @type_facts[index][1] if @type_facts[index][0] == reg
+      index = index - 1
+    end
+    nil
+  end
+
+  def set_type_fact(reg, type_id)
+    @type_facts.push([reg, type_id])
+  end
+
+  def copy_type_facts()
+    copy = []
+    index = 0
+    while index < @type_facts.length()
+      copy.push(@type_facts[index])
+      index = index + 1
+    end
+    copy
+  end
+
+  def annotation_accepts_type?(annotation, type_id)
+    index = 0
+    while index < annotation.length()
+      return true if self.resolve_type_name(annotation[index][0]) == type_id
+      index = index + 1
+    end
+    false
+  end
+
+  def declared_type(reg)
+    index = @declared_types.length() - 1
+    while index >= 0
+      return @declared_types[index][1] if @declared_types[index][0] == reg
+      index = index - 1
+    end
+    nil
+  end
+
+  def non_nil_single_type(annotation)
+    found = nil
+    index = 0
+    while index < annotation.length()
+      type_id = self.resolve_type_name(annotation[index][0])
+      if type_id != Type::NIL
+        return nil if found != nil
+        found = type_id
+      end
+      index = index + 1
+    end
+    found
   end
 
   def parse_optional_return_type()
@@ -908,6 +970,8 @@ class Parser
     outer_function_index = @current_function_index
     outer_enclosing_locals = @enclosing_locals
     outer_return_type = @current_return_type
+    outer_type_facts = @type_facts
+    outer_declared_types = @declared_types
 
     @locals = []
     @loops = []
@@ -916,6 +980,8 @@ class Parser
     @current_function_index = function_index
     @enclosing_locals = enclosing_locals
     @current_return_type = return_type
+    @type_facts = []
+    @declared_types = []
     @function_nesting_depth = @function_nesting_depth + 1
 
     index = 0
@@ -923,6 +989,7 @@ class Parser
       register = self.define_local(parameter_names[index])
       type_name = parameter_types[index]
       if type_name != nil
+        @declared_types.push([register, type_name])
         set_index = self.emit_type_check(register, type_name)
         @builder.set_parameter_type(function_index, index, set_index)
       end
@@ -967,6 +1034,8 @@ class Parser
     @current_function_index = outer_function_index
     @enclosing_locals = outer_enclosing_locals
     @current_return_type = outer_return_type
+    @type_facts = outer_type_facts
+    @declared_types = outer_declared_types
     @function_nesting_depth = @function_nesting_depth - 1
   end
 
@@ -1149,6 +1218,8 @@ class Parser
     outer_code_count = @code_count
     outer_function_index = @current_function_index
     outer_return_type = @current_return_type
+    outer_type_facts = @type_facts
+    outer_declared_types = @declared_types
 
     @locals = []
     @loops = []
@@ -1156,6 +1227,8 @@ class Parser
     @code_count = 0
     @current_function_index = function_index
     @current_return_type = return_type
+    @type_facts = []
+    @declared_types = []
     self.allocate_register()
 
     index = 0
@@ -1163,6 +1236,7 @@ class Parser
       register = self.define_local(parameter_names[index])
       type_name = parameter_types[index]
       if type_name != nil
+        @declared_types.push([register, type_name])
         set_index = self.emit_type_check(register, type_name)
         @builder.set_parameter_type(function_index, index + 1, set_index)
       end
@@ -1190,6 +1264,8 @@ class Parser
     @code_count = outer_code_count
     @current_function_index = outer_function_index
     @current_return_type = outer_return_type
+    @type_facts = outer_type_facts
+    @declared_types = outer_declared_types
   end
 
   # Shared by compile_call/compile_closure_call: parses `(arg, arg, ...)`
@@ -1623,6 +1699,12 @@ class Parser
     end
     false_jump = self.emit_jump(Opcode::JUMP_IF_FALSE, branch_condition)
     destination = self.allocate_register()
+    original_facts = self.copy_type_facts()
+    narrowing = @pending_nil_narrowing
+    @pending_nil_narrowing = nil
+    if narrowing != nil && narrowing[0] == condition
+      self.set_type_fact(narrowing[1], Type::NIL)
+    end
     then_result = self.compile_sequence()
     self.emit_instruction2(Opcode::MOVE, destination, then_result)
     end_jump = self.emit_jump(Opcode::JUMP, 0)
@@ -1630,16 +1712,23 @@ class Parser
 
     end_consumed = false
     if @current.kind() == :else
+      @type_facts = original_facts
+      if narrowing != nil && narrowing[0] == condition
+        remaining = self.non_nil_single_type(self.declared_type(narrowing[1]))
+        self.set_type_fact(narrowing[1], remaining) if remaining != nil
+      end
       self.advance_token()
       self.skip_newlines() if @current.kind() == :newline
       else_result = self.compile_sequence()
       self.emit_instruction2(Opcode::MOVE, destination, else_result)
     elsif @current.kind() == :elsif
+      @type_facts = original_facts
       self.advance_token()
       else_result = self.parse_if(false)
       self.emit_instruction2(Opcode::MOVE, destination, else_result)
       end_consumed = true
     else
+      @type_facts = original_facts
       self.emit_instruction1(Opcode::NIL, destination)
     end
 
@@ -1649,6 +1738,7 @@ class Parser
     end
     self.advance_token() unless end_consumed
     self.patch_jump(end_jump, @code_count)
+    @type_facts = original_facts
     destination
   end
 
@@ -1777,6 +1867,13 @@ class Parser
         right = self.parse_precedence(operator_precedence + 1)
         destination = self.allocate_register()
         self.emit_instruction3(self.binary_opcode(operator), destination, left, right)
+        if operator == :equal_equal
+          if self.type_fact(left) == Type::NIL && self.declared_type(right) != nil
+            @pending_nil_narrowing = [destination, right]
+          elsif self.type_fact(right) == Type::NIL && self.declared_type(left) != nil
+            @pending_nil_narrowing = [destination, left]
+          end
+        end
         left = destination
       end
     end
@@ -1912,6 +2009,7 @@ class Parser
   def parse_literal()
     destination = self.allocate_register()
     if @previous.kind() == :nil
+      self.set_type_fact(destination, Type::NIL)
       # Sole-writer register; run_chunk's zero-init already covers nil,
       # matching compiler.c's parse_literal (no NIL opcode emitted here).
     else
@@ -1921,6 +2019,7 @@ class Parser
         0
       end
       self.emit_instruction2(Opcode::BOOL, destination, value)
+      self.set_type_fact(destination, Type::BOOL)
     end
     destination
   end
@@ -1937,6 +2036,7 @@ class Parser
     destination = self.allocate_register()
     constant = self.add_constant(digits.to_i())
     self.emit_instruction2(Opcode::CONSTANT, destination, constant)
+    self.set_type_fact(destination, Type::INT)
     destination
   end
 
@@ -1952,6 +2052,7 @@ class Parser
     destination = self.allocate_register()
     constant = self.add_constant(digits.to_f())
     self.emit_instruction2(Opcode::CONSTANT, destination, constant)
+    self.set_type_fact(destination, Type::FLOAT)
     destination
   end
 
@@ -1988,6 +2089,7 @@ class Parser
     destination = self.allocate_register()
     constant = self.add_string(text)
     self.emit_instruction2(Opcode::STRING, destination, constant)
+    self.set_type_fact(destination, Type::STRING)
     destination
   end
 end

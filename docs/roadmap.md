@@ -1811,10 +1811,17 @@ future work.
   union-annotated values and the same unbound-generic rejection as the C
   compiler. A union predicate case brings the harness to 58 cases.
 
+- Self-hosting, Phase 3 sub-phase 4 (tenth slice): nil-sensitive branch facts.
+  The port now retains declared parameter annotations and exact literal facts;
+  equality against `nil` splits a two-way union across `if` branches, allowing
+  a proven explicit return to reuse its declared type set without emitting a
+  redundant runtime guard. Facts are restored conservatively at the join. A
+  nil-or-integer early-return case brings the harness to 59 cases.
+
 ## Next priorities
 
 - Self-hosting, Phase 3 sub-phase 4 remaining slices:
-  branch-sensitive narrowing and conservative fact joins
+  general `is`-driven branch narrowing and broader fact joins
   earlier this session, so porting the rest of sub-phase 4 is unlikely
   to compress into a single round the way most of sub-phases 1-3 did.
   Sub-phase 5 (exceptions, modules, `require`) and Phase 4 (bootstrap
