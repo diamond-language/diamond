@@ -185,6 +185,7 @@ class Parser
     @pending_nil_narrowing = nil
     @pending_type_narrowing = nil
     @current_exception = nil
+    @current_retry_target = nil
     # The class_index currently being compiled (compile_class), or nil
     # outside any class body -- gates `self`/`@ivar` (both require being
     # inside a method) and rejects a class or `def` nested inside a
@@ -472,6 +473,8 @@ class Parser
         result = self.compile_return()
       elsif @current.kind() == :raise
         result = self.compile_raise()
+      elsif @current.kind() == :retry
+        result = self.compile_retry()
       elsif self.index_assignment_ahead?()
         result = self.compile_index_assignment()
       elsif self.assignment_ahead?()
@@ -1939,6 +1942,16 @@ class Parser
     value
   end
 
+  def compile_retry()
+    self.advance_token()
+    if @current_retry_target == nil
+      self.fail("'retry' used outside rescue")
+      return 0
+    end
+    self.emit_absolute_jump(@current_retry_target)
+    self.allocate_register()
+  end
+
   def compile_begin()
     return 0 unless self.consume_block_start()
     original_facts = self.copy_type_facts()
@@ -1947,6 +1960,7 @@ class Parser
     self.emit_byte(0)
     self.emit_byte(0)
     exception = self.allocate_register()
+    retry_target = @code_count
     handler = self.emit_rescue_handler(exception)
     body = self.compile_sequence()
     destination = self.allocate_register()
@@ -1967,9 +1981,12 @@ class Parser
     self.parse_rescue_types(handler, exception)
     return destination unless self.consume_block_start()
     outer_exception = @current_exception
+    outer_retry_target = @current_retry_target
     @current_exception = exception
+    @current_retry_target = retry_target
     rescued = self.compile_sequence()
     @current_exception = outer_exception
+    @current_retry_target = outer_retry_target
     self.emit_instruction2(Opcode::MOVE, destination, rescued)
     rescued_finished = self.emit_jump(Opcode::JUMP, 0)
     while @locals.length() > rescue_local_count

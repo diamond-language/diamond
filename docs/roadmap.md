@@ -2000,6 +2000,11 @@ future work.
   rescued paths skip it and both paths still enter `ensure`. A normal-path
   else result brings the parser harness to 92 cases.
 
+- Self-hosting, Phase 3 sub-phase 5 (eighth slice): rescue retry. Rescue bodies
+  now expose the protected handler-installation offset to `retry`, with nested
+  contexts restored on exit. A two-attempt recovery brings the parser harness
+  to 93 cases.
+
 ## Next priorities
 
 - Self-hosting, Phase 3 sub-phase 5: exceptions, modules, and `require`.
