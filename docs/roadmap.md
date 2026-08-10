@@ -1767,10 +1767,18 @@ future work.
   used by the C compiler. A nested collection-signature differential case
   brings the parser harness to 52 cases, all matching.
 
+- Self-hosting, Phase 3 sub-phase 4 (fourth slice): callable contracts.
+  Arity-only, return-typed, and fully parameter-typed `Callable` annotations
+  now compile through recursive member descriptors. `ProgramBuilder` also
+  records parameter and return type-set metadata on generated functions, so
+  structural callable checks see the same signatures as C-compiled code in
+  addition to the emitted entry/return guards. An invoked typed-closure case
+  brings the parser harness to 53 cases, all matching.
+
 ## Next priorities
 
 - Self-hosting, Phase 3 sub-phase 4 remaining slices:
-  `Callable`, interfaces, generics, and narrowing — each landed as its own
+  interfaces, generics, and narrowing — each landed as its own
   substantial, multi-round feature
   earlier this session, so porting the rest of sub-phase 4 is unlikely
   to compress into a single round the way most of sub-phases 1-3 did.

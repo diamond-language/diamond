@@ -104,7 +104,8 @@ end
 # Phase 3 sub-phase 4 (gradual typing): scalar and union type annotations
 # (`Int`/`Float`/`String`/`Bool`/`Nil`/a declared class name, separated by
 # `|`) plus recursively typed `Array[T]` and `Hash[K, V]` contracts on
-# parameters and return types. Deliberately no `Callable`, interfaces,
+# parameters and return types, plus `Callable[n]`, `Callable[n, Return]`,
+# and `Callable[[Parameters], Return]`. Deliberately no interfaces,
 # generics, or narrowing yet --
 # each is a natural, separate extension of the same
 # ProgramBuilder#declare_type_set bridge method this round adds, not
@@ -119,6 +120,7 @@ module Type
   NIL = 4
   ARRAY = 5
   HASH = 6
+  CALLABLE = 7
   CLASS_BASE = 10
 end
 
@@ -548,8 +550,16 @@ class Parser
           self.advance_token()
           argument = nil
           second_argument = nil
+          callable_arity = -1
+          callable_return = nil
+          callable_parameters = nil
           if !@failed && @current.kind() == :left_bracket
-            if name != "Array" && name != "Hash"
+            if name == "Callable"
+              callable = self.parse_callable_arguments()
+              callable_arity = callable[0]
+              callable_return = callable[1]
+              callable_parameters = callable[2]
+            elsif name != "Array" && name != "Hash"
               self.fail("this type does not accept arguments")
             else
               self.advance_token()
@@ -575,7 +585,11 @@ class Parser
           elsif name == "Array" || name == "Hash"
             # Unparameterized collections remain valid dynamic contracts.
           end
-          members.push([name, argument, second_argument]) unless @failed
+          if !@failed
+            member = [name, argument, second_argument, callable_arity,
+                      callable_return, callable_parameters]
+            members.push(member)
+          end
         end
         if !@failed && @current.kind() == :pipe
           self.advance_token()
@@ -587,6 +601,60 @@ class Parser
     members
   end
 
+  def parse_callable_arguments()
+    self.advance_token()
+    self.skip_newlines()
+    arity = -1
+    return_type = nil
+    parameter_types = nil
+    if @current.kind() == :integer
+      text = self.token_text(@current)
+      arity = text.to_i()
+      if arity > 16
+        self.fail("Callable arity cannot exceed 16")
+      end
+      self.advance_token() unless @failed
+    elsif @current.kind() == :left_bracket
+      self.advance_token()
+      self.skip_newlines()
+      parameter_types = []
+      while !@failed && @current.kind() != :right_bracket
+        if parameter_types.length() == 16
+          self.fail("Callable cannot exceed 16 parameters")
+        else
+          parameter_types.push(self.parse_type_annotation())
+          self.skip_newlines()
+          if @current.kind() == :comma
+            self.advance_token()
+            self.skip_newlines()
+          else
+            break
+          end
+        end
+      end
+      if !@failed && @current.kind() != :right_bracket
+        self.fail("expected ']' after Callable parameters")
+      else
+        self.advance_token() unless @failed
+      end
+      arity = parameter_types.length() unless @failed
+    else
+      self.fail("expected Callable arity or parameter list")
+    end
+    if !@failed && @current.kind() == :comma
+      self.advance_token()
+      self.skip_newlines()
+      return_type = self.parse_type_annotation()
+    end
+    self.skip_newlines()
+    if !@failed && @current.kind() != :right_bracket
+      self.fail("expected ']' after collection type arguments")
+    else
+      self.advance_token() unless @failed
+    end
+    [arity, return_type, parameter_types]
+  end
+
   def resolve_type_name(name)
     return Type::INT if name == "Int"
     return Type::FLOAT if name == "Float"
@@ -595,6 +663,7 @@ class Parser
     return Type::NIL if name == "Nil"
     return Type::ARRAY if name == "Array"
     return Type::HASH if name == "Hash"
+    return Type::CALLABLE if name == "Callable"
     class_entry = self.find_class(name)
     if class_entry != nil
       return Type::CLASS_BASE + class_entry[1]
@@ -619,7 +688,21 @@ class Parser
       else
         self.declare_annotation(member[2])
       end
-      descriptors.push([type_id, argument_set, second_argument_set])
+      callable_return_set = if member[4] == nil
+        -1
+      else
+        self.declare_annotation(member[4])
+      end
+      callable_parameter_sets = []
+      if member[5] != nil
+        parameter = 0
+        while parameter < member[5].length()
+          callable_parameter_sets.push(self.declare_annotation(member[5][parameter]))
+          parameter = parameter + 1
+        end
+      end
+      descriptors.push([type_id, argument_set, second_argument_set, member[3],
+                        callable_return_set, callable_parameter_sets])
       index = index + 1
     end
     return 0 if @failed
@@ -630,6 +713,7 @@ class Parser
     set_index = self.declare_annotation(type_annotation)
     return if @failed
     self.emit_instruction2(Opcode::CHECK_TYPE, reg, set_index)
+    set_index
   end
 
   def parse_optional_return_type()
@@ -667,7 +751,10 @@ class Parser
     while index < parameter_names.length()
       register = self.define_local(parameter_names[index])
       type_name = parameter_types[index]
-      self.emit_type_check(register, type_name) if type_name != nil
+      if type_name != nil
+        set_index = self.emit_type_check(register, type_name)
+        @builder.set_parameter_type(function_index, index, set_index)
+      end
       index = index + 1
     end
 
@@ -689,7 +776,10 @@ class Parser
 
     if self.consume_block_start()
       body_result = self.compile_sequence()
-      self.emit_type_check(body_result, return_type) if return_type != nil
+      if return_type != nil
+        set_index = self.emit_type_check(body_result, return_type)
+        @builder.set_return_type(function_index, set_index)
+      end
       self.emit_instruction1(Opcode::RETURN, body_result)
       if @current.kind() != :end
         self.fail("expected 'end' after function body")
@@ -901,13 +991,19 @@ class Parser
     while index < parameter_names.length()
       register = self.define_local(parameter_names[index])
       type_name = parameter_types[index]
-      self.emit_type_check(register, type_name) if type_name != nil
+      if type_name != nil
+        set_index = self.emit_type_check(register, type_name)
+        @builder.set_parameter_type(function_index, index + 1, set_index)
+      end
       index = index + 1
     end
 
     if self.consume_block_start()
       body_result = self.compile_sequence()
-      self.emit_type_check(body_result, return_type) if return_type != nil
+      if return_type != nil
+        set_index = self.emit_type_check(body_result, return_type)
+        @builder.set_return_type(function_index, set_index)
+      end
       self.emit_instruction1(Opcode::RETURN, body_result)
       if @current.kind() != :end
         self.fail("expected 'end' after method body")

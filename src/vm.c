@@ -892,13 +892,22 @@ static DiamondVmStatus program_builder_invoke_helper(DiamondVm *vm,
         method_name->length==sizeof("declare_type_set")-1&&
         memcmp(method_name->chars,"declare_type_set",
             sizeof("declare_type_set")-1)==0;
+    const bool set_parameter_type_method=
+        method_name->length==sizeof("set_parameter_type")-1&&
+        memcmp(method_name->chars,"set_parameter_type",
+            sizeof("set_parameter_type")-1)==0;
+    const bool set_return_type_method=
+        method_name->length==sizeof("set_return_type")-1&&
+        memcmp(method_name->chars,"set_return_type",
+            sizeof("set_return_type")-1)==0;
     const bool run_method=method_name->length==sizeof("run")-1&&
         memcmp(method_name->chars,"run",sizeof("run")-1)==0;
     if(!declare_function_method&&!emit_byte_method&&!patch_byte_method&&
        !add_constant_method&&!add_string_method&&
        !set_register_count_method&&!declare_class_method&&
        !declare_field_method&&!declare_method_method&&
-       !declare_type_set_method&&!run_method) {
+       !declare_type_set_method&&!set_parameter_type_method&&
+       !set_return_type_method&&!run_method) {
         snprintf(vm->error,sizeof vm->error,"undefined method '%.*s' for %s",
             (int)method_name->length,method_name->chars,"ProgramBuilder");
         return DIAMOND_VM_TYPE_ERROR;
@@ -1229,10 +1238,14 @@ static DiamondVmStatus program_builder_invoke_helper(DiamondVm *vm,
             }
             const DiamondArray *descriptor=
                 (const DiamondArray *)type_ids->values[index].as.object;
-            if(descriptor->count!=3||
+            if(descriptor->count!=6||
                descriptor->values[0].kind!=DIAMOND_VALUE_INT||
                descriptor->values[1].kind!=DIAMOND_VALUE_INT||
-               descriptor->values[2].kind!=DIAMOND_VALUE_INT) {
+               descriptor->values[2].kind!=DIAMOND_VALUE_INT||
+               descriptor->values[3].kind!=DIAMOND_VALUE_INT||
+               descriptor->values[4].kind!=DIAMOND_VALUE_INT||
+               descriptor->values[5].kind!=DIAMOND_VALUE_OBJECT||
+               descriptor->values[5].as.object->kind!=DIAMOND_OBJECT_ARRAY) {
                 snprintf(vm->error,sizeof vm->error,"ProgramBuilder#%s",
                     "declare_type_set has an invalid function index or type list");
                 return DIAMOND_VM_TYPE_ERROR;
@@ -1240,6 +1253,10 @@ static DiamondVmStatus program_builder_invoke_helper(DiamondVm *vm,
             const int64_t type_id=descriptor->values[0].as.integer;
             const int64_t argument_set=descriptor->values[1].as.integer;
             const int64_t second_argument_set=descriptor->values[2].as.integer;
+            const int64_t callable_arity=descriptor->values[3].as.integer;
+            const int64_t callable_return=descriptor->values[4].as.integer;
+            const DiamondArray *callable_parameters=
+                (const DiamondArray *)descriptor->values[5].as.object;
             const bool primitive=type_id>=0&&type_id<DIAMOND_TYPE_CLASS_BASE;
             const bool class_type=type_id>=DIAMOND_TYPE_CLASS_BASE&&
                 (uint64_t)(type_id-DIAMOND_TYPE_CLASS_BASE)<built->class_count;
@@ -1248,11 +1265,30 @@ static DiamondVmStatus program_builder_invoke_helper(DiamondVm *vm,
             const bool valid_second=second_argument_set==-1||
                 (second_argument_set>=0&&
                  (uint64_t)second_argument_set<target->type_set_count);
+            const bool valid_return=callable_return==-1||
+                (callable_return>=0&&
+                 (uint64_t)callable_return<target->type_set_count);
+            bool valid_parameters=callable_parameters->count<=16;
+            for(size_t parameter=0;parameter<callable_parameters->count;
+                parameter++) {
+                const DiamondValue value=callable_parameters->values[parameter];
+                if(value.kind!=DIAMOND_VALUE_INT||value.as.integer<0||
+                   (uint64_t)value.as.integer>=target->type_set_count)
+                    valid_parameters=false;
+            }
             const bool collection_arguments=
                 (type_id==DIAMOND_TYPE_ARRAY&&valid_argument&&second_argument_set==-1)||
                 (type_id==DIAMOND_TYPE_HASH&&valid_argument&&valid_second)||
                 (argument_set==-1&&second_argument_set==-1);
-            if(!(primitive||class_type)||!collection_arguments) {
+            const bool callable_arguments=type_id!=DIAMOND_TYPE_CALLABLE?
+                callable_arity==-1&&callable_return==-1&&
+                    callable_parameters->count==0:
+                callable_arity>=0&&callable_arity<=16&&valid_return&&
+                    valid_parameters&&
+                    (callable_parameters->count==0||
+                     callable_parameters->count==(size_t)callable_arity);
+            if(!(primitive||class_type)||!collection_arguments||
+               !callable_arguments) {
                 snprintf(vm->error,sizeof vm->error,"ProgramBuilder#%s",
                     "declare_type_set has an invalid function index or type list");
                 return DIAMOND_VM_TYPE_ERROR;
@@ -1271,16 +1307,67 @@ static DiamondVmStatus program_builder_invoke_helper(DiamondVm *vm,
                 (const DiamondArray *)type_ids->values[member].as.object;
             const int64_t argument_set=descriptor->values[1].as.integer;
             const int64_t second_argument_set=descriptor->values[2].as.integer;
+            const int64_t callable_arity=descriptor->values[3].as.integer;
+            const int64_t callable_return=descriptor->values[4].as.integer;
+            const DiamondArray *callable_parameters=
+                (const DiamondArray *)descriptor->values[5].as.object;
             set->members[member]=(DiamondTypeMember){
                 .id=(uint8_t)descriptor->values[0].as.integer,
                 .argument_set=argument_set<0?UINT8_MAX:(uint8_t)argument_set,
                 .second_argument_set=second_argument_set<0?UINT8_MAX:
                     (uint8_t)second_argument_set,
-                .callable_arity=UINT8_MAX,.callable_return_set=UINT8_MAX};
+                .callable_arity=callable_arity<0?UINT8_MAX:(uint8_t)callable_arity,
+                .callable_return_set=callable_return<0?UINT8_MAX:
+                    (uint8_t)callable_return,
+                .callable_parameters_typed=callable_parameters->count>0};
             for(size_t index=0;index<16;index++)
                 set->members[member].callable_parameter_sets[index]=UINT8_MAX;
+            for(size_t index=0;index<callable_parameters->count;index++)
+                set->members[member].callable_parameter_sets[index]=
+                    (uint8_t)callable_parameters->values[index].as.integer;
         }
         *result=DIAMOND_INT(new_index);return DIAMOND_VM_OK;
+    }
+    if(set_parameter_type_method) {
+        if(argc!=3)return DIAMOND_VM_ARITY_ERROR;
+        if(registers[base].kind!=DIAMOND_VALUE_INT||
+           registers[(size_t)base+1].kind!=DIAMOND_VALUE_INT||
+           registers[(size_t)base+2].kind!=DIAMOND_VALUE_INT) {
+            snprintf(vm->error,sizeof vm->error,"ProgramBuilder#%s",
+                "set_parameter_type arguments must be (Int, Int, Int)");
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        DiamondFunction *target=
+            program_builder_target(built,registers[base].as.integer);
+        const int64_t parameter=registers[(size_t)base+1].as.integer;
+        const int64_t set=registers[(size_t)base+2].as.integer;
+        if(target==nullptr||parameter<0||parameter>=target->arity||
+           set<0||(uint64_t)set>=target->type_set_count) {
+            snprintf(vm->error,sizeof vm->error,
+                "ProgramBuilder#set_parameter_type has an invalid index");
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        target->parameter_type_sets[(size_t)parameter]=(uint8_t)set;
+        *result=DIAMOND_NIL;return DIAMOND_VM_OK;
+    }
+    if(set_return_type_method) {
+        if(argc!=2)return DIAMOND_VM_ARITY_ERROR;
+        if(registers[base].kind!=DIAMOND_VALUE_INT||
+           registers[(size_t)base+1].kind!=DIAMOND_VALUE_INT) {
+            snprintf(vm->error,sizeof vm->error,"ProgramBuilder#%s",
+                "set_return_type arguments must be (Int, Int)");
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        DiamondFunction *target=
+            program_builder_target(built,registers[base].as.integer);
+        const int64_t set=registers[(size_t)base+1].as.integer;
+        if(target==nullptr||set<0||(uint64_t)set>=target->type_set_count) {
+            snprintf(vm->error,sizeof vm->error,
+                "ProgramBuilder#set_return_type has an invalid index");
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        target->return_type_set=(uint8_t)set;
+        *result=DIAMOND_NIL;return DIAMOND_VM_OK;
     }
     /* run_method: the only remaining possibility once the combined
      * "no method matched" check above passed. */
