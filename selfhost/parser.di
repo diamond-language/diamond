@@ -2058,6 +2058,7 @@ class Parser
     self.emit_byte(class_index)
     self.emit_byte(parsed[0])
     self.emit_byte(parsed[1])
+    self.set_type_fact(destination, Type::CLASS_BASE + class_index)
     destination
   end
 

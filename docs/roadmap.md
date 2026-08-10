@@ -1859,6 +1859,12 @@ future work.
   immediate `is` and nil narrowing before or after local aliasing. A nominal
   union-returning call brings the parser harness to 66 cases.
 
+- Self-hosting, Phase 3 sub-phase 4 (eighteenth slice): constructor result
+  facts. `Class.new(...)` destinations now carry their exact nominal class type,
+  allowing constructor values and their local aliases to satisfy matching
+  returns without a redundant runtime guard. A direct nominal constructor
+  return brings the parser harness to 67 cases.
+
 ## Next priorities
 
 - Self-hosting, Phase 3 sub-phase 4 remaining slices:
