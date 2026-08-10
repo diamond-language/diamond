@@ -900,6 +900,14 @@ static DiamondVmStatus program_builder_invoke_helper(DiamondVm *vm,
         method_name->length==sizeof("set_return_type")-1&&
         memcmp(method_name->chars,"set_return_type",
             sizeof("set_return_type")-1)==0;
+    const bool declare_interface_method=
+        method_name->length==sizeof("declare_interface")-1&&
+        memcmp(method_name->chars,"declare_interface",
+            sizeof("declare_interface")-1)==0;
+    const bool declare_interface_method_method=
+        method_name->length==sizeof("declare_interface_method")-1&&
+        memcmp(method_name->chars,"declare_interface_method",
+            sizeof("declare_interface_method")-1)==0;
     const bool run_method=method_name->length==sizeof("run")-1&&
         memcmp(method_name->chars,"run",sizeof("run")-1)==0;
     if(!declare_function_method&&!emit_byte_method&&!patch_byte_method&&
@@ -907,7 +915,8 @@ static DiamondVmStatus program_builder_invoke_helper(DiamondVm *vm,
        !set_register_count_method&&!declare_class_method&&
        !declare_field_method&&!declare_method_method&&
        !declare_type_set_method&&!set_parameter_type_method&&
-       !set_return_type_method&&!run_method) {
+       !set_return_type_method&&!declare_interface_method&&
+       !declare_interface_method_method&&!run_method) {
         snprintf(vm->error,sizeof vm->error,"undefined method '%.*s' for %s",
             (int)method_name->length,method_name->chars,"ProgramBuilder");
         return DIAMOND_VM_TYPE_ERROR;
@@ -1259,7 +1268,11 @@ static DiamondVmStatus program_builder_invoke_helper(DiamondVm *vm,
                 (const DiamondArray *)descriptor->values[5].as.object;
             const bool primitive=type_id>=0&&type_id<DIAMOND_TYPE_CLASS_BASE;
             const bool class_type=type_id>=DIAMOND_TYPE_CLASS_BASE&&
+                type_id<DIAMOND_TYPE_VARIABLE_BASE&&
                 (uint64_t)(type_id-DIAMOND_TYPE_CLASS_BASE)<built->class_count;
+            const bool interface_type=type_id>=DIAMOND_TYPE_INTERFACE_BASE&&
+                (uint64_t)(type_id-DIAMOND_TYPE_INTERFACE_BASE)<
+                    built->interface_count;
             const bool valid_argument=argument_set==-1||
                 (argument_set>=0&&(uint64_t)argument_set<target->type_set_count);
             const bool valid_second=second_argument_set==-1||
@@ -1287,7 +1300,7 @@ static DiamondVmStatus program_builder_invoke_helper(DiamondVm *vm,
                     valid_parameters&&
                     (callable_parameters->count==0||
                      callable_parameters->count==(size_t)callable_arity);
-            if(!(primitive||class_type)||!collection_arguments||
+            if(!(primitive||class_type||interface_type)||!collection_arguments||
                !callable_arguments) {
                 snprintf(vm->error,sizeof vm->error,"ProgramBuilder#%s",
                     "declare_type_set has an invalid function index or type list");
@@ -1367,6 +1380,67 @@ static DiamondVmStatus program_builder_invoke_helper(DiamondVm *vm,
             return DIAMOND_VM_TYPE_ERROR;
         }
         target->return_type_set=(uint8_t)set;
+        *result=DIAMOND_NIL;return DIAMOND_VM_OK;
+    }
+    if(declare_interface_method) {
+        if(argc!=1)return DIAMOND_VM_ARITY_ERROR;
+        if(registers[base].kind!=DIAMOND_VALUE_OBJECT||
+           registers[base].as.object->kind!=DIAMOND_OBJECT_STRING) {
+            snprintf(vm->error,sizeof vm->error,
+                "ProgramBuilder#declare_interface argument must be String");
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        const DiamondString *name=(const DiamondString *)registers[base].as.object;
+        if(name->length==0||name->length>=DIAMOND_MAX_FUNCTION_NAME||
+           built->interface_count==DIAMOND_MAX_INTERFACES) {
+            snprintf(vm->error,sizeof vm->error,
+                "ProgramBuilder#declare_interface has an invalid name");
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        const int64_t index=(int64_t)built->interface_count;
+        DiamondInterface *interface=&built->interfaces[built->interface_count++];
+        *interface=(DiamondInterface){.type_sets=built->entry.type_sets};
+        memcpy(interface->name,name->chars,name->length);
+        interface->name[name->length]='\0';
+        *result=DIAMOND_INT(index);return DIAMOND_VM_OK;
+    }
+    if(declare_interface_method_method) {
+        if(argc!=5)return DIAMOND_VM_ARITY_ERROR;
+        if(registers[base].kind!=DIAMOND_VALUE_INT||
+           registers[(size_t)base+1].kind!=DIAMOND_VALUE_OBJECT||
+           registers[(size_t)base+1].as.object->kind!=DIAMOND_OBJECT_STRING||
+           registers[(size_t)base+2].kind!=DIAMOND_VALUE_INT||
+           registers[(size_t)base+3].kind!=DIAMOND_VALUE_OBJECT||
+           registers[(size_t)base+3].as.object->kind!=DIAMOND_OBJECT_ARRAY||
+           registers[(size_t)base+4].kind!=DIAMOND_VALUE_INT)
+            return DIAMOND_VM_TYPE_ERROR;
+        const int64_t interface_index=registers[base].as.integer;
+        const DiamondString *name=
+            (const DiamondString *)registers[(size_t)base+1].as.object;
+        const int64_t arity=registers[(size_t)base+2].as.integer;
+        const DiamondArray *sets=
+            (const DiamondArray *)registers[(size_t)base+3].as.object;
+        const int64_t return_set=registers[(size_t)base+4].as.integer;
+        if(interface_index<0||(uint64_t)interface_index>=built->interface_count||
+           name->length==0||name->length>=DIAMOND_MAX_FUNCTION_NAME||
+           arity<0||arity>16||sets->count!=(size_t)arity||
+           (return_set>=0&&(uint64_t)return_set>=built->entry.type_set_count))
+            return DIAMOND_VM_TYPE_ERROR;
+        DiamondInterface *interface=&built->interfaces[(size_t)interface_index];
+        if(interface->method_count==DIAMOND_MAX_METHODS)return DIAMOND_VM_TYPE_ERROR;
+        DiamondInterfaceMethod *method=&interface->methods[interface->method_count++];
+        *method=(DiamondInterfaceMethod){.arity=(uint8_t)arity,
+            .return_type_set=return_set<0?UINT8_MAX:(uint8_t)return_set};
+        memcpy(method->name,name->chars,name->length);
+        method->name[name->length]='\0';
+        for(size_t index=0;index<16;index++)method->parameter_type_sets[index]=UINT8_MAX;
+        for(size_t index=0;index<sets->count;index++) {
+            if(sets->values[index].kind!=DIAMOND_VALUE_INT)return DIAMOND_VM_TYPE_ERROR;
+            const int64_t set=sets->values[index].as.integer;
+            if(set>=0&&(uint64_t)set>=built->entry.type_set_count)
+                return DIAMOND_VM_TYPE_ERROR;
+            method->parameter_type_sets[index]=set<0?UINT8_MAX:(uint8_t)set;
+        }
         *result=DIAMOND_NIL;return DIAMOND_VM_OK;
     }
     /* run_method: the only remaining possibility once the combined

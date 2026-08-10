@@ -1775,10 +1775,18 @@ future work.
   addition to the emitted entry/return guards. An invoked typed-closure case
   brings the parser harness to 53 cases, all matching.
 
+- Self-hosting, Phase 3 sub-phase 4 (fifth slice): structural interfaces.
+  Top-level interface declarations with typed method signatures now register
+  through `ProgramBuilder`, interface names resolve in recursive annotations,
+  and generated class method metadata participates in the VM's existing
+  structural conformance checks. An interface accepted by an independently
+  declared conforming class brings the parser harness to 54 cases, all
+  matching. Interface inheritance remains outside this initial slice.
+
 ## Next priorities
 
 - Self-hosting, Phase 3 sub-phase 4 remaining slices:
-  interfaces, generics, and narrowing — each landed as its own
+  interface inheritance, generics, and narrowing — each landed as its own
   substantial, multi-round feature
   earlier this session, so porting the rest of sub-phase 4 is unlikely
   to compress into a single round the way most of sub-phases 1-3 did.

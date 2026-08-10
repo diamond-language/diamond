@@ -105,8 +105,9 @@ end
 # (`Int`/`Float`/`String`/`Bool`/`Nil`/a declared class name, separated by
 # `|`) plus recursively typed `Array[T]` and `Hash[K, V]` contracts on
 # parameters and return types, plus `Callable[n]`, `Callable[n, Return]`,
-# and `Callable[[Parameters], Return]`. Deliberately no interfaces,
-# generics, or narrowing yet --
+# and `Callable[[Parameters], Return]`, plus top-level structural interface
+# declarations. Deliberately no interface inheritance, generics, or
+# narrowing yet --
 # each is a natural, separate extension of the same
 # ProgramBuilder#declare_type_set bridge method this round adds, not
 # something this round itself needs. Values must exactly match
@@ -165,6 +166,7 @@ class Parser
     # Array of [name, class_index] entries, mirroring @functions --
     # `ClassName.new(...)` resolves against this via find_class.
     @classes = []
+    @interfaces = []
     # The class_index currently being compiled (compile_class), or nil
     # outside any class body -- gates `self`/`@ivar` (both require being
     # inside a method) and rejects a class or `def` nested inside a
@@ -380,6 +382,17 @@ class Parser
     result
   end
 
+  def find_interface(name)
+    index = @interfaces.length() - 1
+    result = nil
+    while index >= 0 && result == nil
+      entry = @interfaces[index]
+      result = entry if entry[0] == name
+      index = index - 1
+    end
+    result
+  end
+
   # --- statement sequencing ---
 
   def compile_sequence()
@@ -390,6 +403,8 @@ class Parser
         result = self.compile_definition()
       elsif @current.kind() == :class
         result = self.compile_class()
+      elsif @current.kind() == :interface
+        result = self.compile_interface()
       elsif @current.kind() == :break
         result = self.compile_break()
       elsif @current.kind() == :return
@@ -664,12 +679,93 @@ class Parser
     return Type::ARRAY if name == "Array"
     return Type::HASH if name == "Hash"
     return Type::CALLABLE if name == "Callable"
+    interface_entry = self.find_interface(name)
+    if interface_entry != nil
+      return 128 + interface_entry[1]
+    end
     class_entry = self.find_class(name)
     if class_entry != nil
       return Type::CLASS_BASE + class_entry[1]
     end
     self.fail("unknown type annotation")
     0
+  end
+
+  def compile_interface()
+    self.advance_token()
+    if @function_nesting_depth != 0 || @current_class_index != nil
+      self.fail("interfaces must be declared at top level")
+      return 0
+    end
+    if @current.kind() != :identifier
+      self.fail("expected valid interface name")
+      return 0
+    end
+    name = self.token_text(@current)
+    if self.find_interface(name) != nil || self.find_class(name) != nil
+      self.fail("type name is already defined")
+      return 0
+    end
+    interface_index = @builder.declare_interface(name)
+    @interfaces.push([name, interface_index])
+    self.advance_token()
+    return 0 unless self.consume_block_start()
+    while !@failed && @current.kind() != :end
+      self.compile_interface_method(interface_index)
+      self.skip_newlines()
+    end
+    if @current.kind() == :end
+      self.advance_token()
+    else
+      self.fail("expected 'end' after interface")
+    end
+    self.allocate_register()
+  end
+
+  def compile_interface_method(interface_index)
+    if @current.kind() != :def
+      self.fail("expected method signature in interface")
+      return
+    end
+    self.advance_token()
+    if @current.kind() != :identifier
+      self.fail("expected interface method name")
+      return
+    end
+    name = self.token_text(@current)
+    self.advance_token()
+    if @current.kind() != :left_paren
+      self.fail("expected '(' after interface method")
+      return
+    end
+    self.advance_token()
+    parsed = self.parse_parameter_names()
+    if @current.kind() != :right_paren
+      self.fail("expected ')' after interface parameters")
+      return
+    end
+    self.advance_token()
+    return_type = self.parse_optional_return_type()
+    parameter_sets = []
+    index = 0
+    while index < parsed[1].length() && !@failed
+      annotation = parsed[1][index]
+      if annotation == nil
+        parameter_sets.push(-1)
+      else
+        parameter_sets.push(self.declare_annotation(annotation))
+      end
+      index = index + 1
+    end
+    return_set = if return_type == nil
+      -1
+    else
+      self.declare_annotation(return_type)
+    end
+    if !@failed
+      @builder.declare_interface_method(interface_index, name,
+        parsed[0].length(), parameter_sets, return_set)
+    end
   end
 
   def declare_annotation(type_annotation)
