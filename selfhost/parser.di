@@ -360,6 +360,8 @@ class Parser
         result = self.compile_class()
       elsif @current.kind() == :break
         result = self.compile_break()
+      elsif @current.kind() == :return
+        result = self.compile_return()
       elsif self.assignment_ahead?()
         result = self.compile_assignment()
       else
@@ -427,7 +429,7 @@ class Parser
 
     arity = parameter_names.length()
     function_index = @builder.declare_function(name, arity, arity)
-    @functions.push([name, function_index, arity]) if at_top_level
+    @functions.push([name, function_index, arity, parameter_names]) if at_top_level
     # Every entry currently in scope becomes a capture candidate,
     # unconditionally -- mirroring compiler.c's own eager design (not
     # just names the nested body actually goes on to reference). Empty
@@ -788,6 +790,15 @@ class Parser
     [argument_base, arguments.length()]
   end
 
+  # Direct calls to a top-level function support keyword arguments
+  # (`f(y: 2, x: 1)`), unlike closure calls/NEW/INVOKE (which stay
+  # positional-only, via parse_call_arguments) -- compiler.c scopes
+  # keyword arguments the same way, since only a direct call has
+  # compile-time, non-polymorphic access to the target's exact
+  # parameter names. No defaults exist in this port (see this file's
+  # header comment), so unlike compiler.c's own version, every
+  # declared slot must always be filled -- there's no partial-call
+  # case to allow.
   def compile_call(name)
     function_entry = self.find_function(name)
     if function_entry == nil
@@ -795,19 +806,122 @@ class Parser
       return 0
     end
     self.advance_token()
-    parsed = self.parse_call_arguments()
-    return 0 if parsed == nil
-    if parsed[1] != function_entry[2]
-      self.fail("wrong number of arguments")
-      return 0
+    self.skip_newlines()
+    slot_values = self.parse_keyword_call_arguments(function_entry)
+    return 0 if slot_values == nil
+    arity = function_entry[2]
+    argument_base = self.allocate_register()
+    i = 1
+    while i < arity
+      self.allocate_register()
+      i = i + 1
+    end
+    i = 0
+    while i < arity
+      self.emit_instruction2(Opcode::MOVE, argument_base + i, slot_values[i])
+      i = i + 1
     end
     destination = self.allocate_register()
     self.emit_byte(Opcode::CALL)
     self.emit_byte(destination)
     self.emit_byte(function_entry[1])
-    self.emit_byte(parsed[0])
-    self.emit_byte(parsed[1])
+    self.emit_byte(argument_base)
+    self.emit_byte(arity)
     destination
+  end
+
+  def keyword_argument_ahead?()
+    return false if @current.kind() != :identifier
+    lookahead = @lexer.clone()
+    lookahead.next_token().kind() == :colon
+  end
+
+  def find_parameter_slot(parameter_names, name)
+    index = 0
+    result = -1
+    while index < parameter_names.length() && result == -1
+      result = index if parameter_names[index] == name
+      index = index + 1
+    end
+    result
+  end
+
+  # Returns an Array of `arity` value registers, one per declared
+  # parameter slot (in declaration order, regardless of the order
+  # arguments were written at the call site), or nil on a parse
+  # failure. Mirrors compiler.c's own slot_registers/slot_filled
+  # tracking: a keyword fills its named slot directly; a positional
+  # argument fills the next not-yet-seen slot in order; a positional
+  # argument can't follow a keyword one.
+  def parse_keyword_call_arguments(function_entry)
+    arity = function_entry[2]
+    parameter_names = function_entry[3]
+    slot_values = []
+    slot_filled = []
+    index = 0
+    while index < arity
+      slot_values.push(nil)
+      slot_filled.push(false)
+      index = index + 1
+    end
+    next_positional_slot = 0
+    seen_keyword = false
+    if @current.kind() != :right_paren
+      more = true
+      while more
+        slot = -1
+        if self.keyword_argument_ahead?()
+          keyword_name = self.token_text(@current)
+          self.advance_token()
+          self.advance_token()
+          slot = self.find_parameter_slot(parameter_names, keyword_name)
+          if slot == -1
+            self.fail("no parameter with this name")
+            return nil
+          end
+          seen_keyword = true
+        else
+          if seen_keyword
+            self.fail("positional argument cannot follow a keyword argument")
+            return nil
+          end
+          if next_positional_slot >= arity
+            self.fail("too many call arguments")
+            return nil
+          end
+          slot = next_positional_slot
+          next_positional_slot = next_positional_slot + 1
+        end
+        if slot_filled[slot]
+          self.fail("multiple values for the same argument")
+          return nil
+        end
+        slot_values[slot] = self.parse_expression()
+        slot_filled[slot] = true
+        self.skip_newlines()
+        if @current.kind() == :comma
+          self.advance_token()
+          self.skip_newlines()
+          more = @current.kind() != :right_paren
+        else
+          more = false
+        end
+      end
+    end
+    if @current.kind() != :right_paren
+      self.fail("expected ')' after arguments")
+      return nil
+    end
+    self.advance_token()
+    index = 0
+    while index < arity
+      if !slot_filled[index]
+        self.fail("missing argument")
+        return nil
+      end
+      index = index + 1
+    end
+    slot_values
   end
 
   # Calling a closure-valued local (see compile_definition's nested-`def`
@@ -950,6 +1064,32 @@ class Parser
     end
     frame[1].push(self.emit_jump(Opcode::JUMP, 0))
     self.allocate_register()
+  end
+
+  # RETURN halts run_chunk unconditionally the instant it executes,
+  # wherever it is in the bytecode -- no jump/patch bookkeeping needed
+  # here the way if/while/loop need, since a mid-body `return` (nested
+  # inside an if, say) doesn't need any special-cased early exit at the
+  # bytecode level, unlike a source-level structured return would in a
+  # language whose VM required one. Simpler than compile_return.c's own
+  # postfix-if/-unless handling in `has_value`'s scan, since postfix
+  # modifiers aren't supported anywhere else in this port either --
+  # `return if cond` would (like `break if cond`) misparse as returning
+  # an if-expression's value, a documented, consistent divergence.
+  def compile_return()
+    if @current_function_index == -1
+      self.fail("'return' used outside a function")
+      return 0
+    end
+    self.advance_token()
+    has_value = @current.kind() != :newline && @current.kind() != :end && @current.kind() != :else && @current.kind() != :eof
+    value = if has_value
+      self.parse_expression()
+    else
+      self.allocate_register()
+    end
+    self.emit_instruction1(Opcode::RETURN, value)
+    value
   end
 
   # --- control flow ---

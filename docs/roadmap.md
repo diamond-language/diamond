@@ -1657,21 +1657,69 @@ future work.
   all matching. Verified with the same `make test-all` pass as every
   other round.
 
+- Self-hosting, Phase 3 sub-phase 2's remaining gaps: explicit `return`
+  and keyword arguments, closing sub-phase 2 out entirely. Neither
+  needed any C bridge changes — both compile purely to opcodes the port
+  already emits (`RETURN`/`CALL`/`MOVE`).
+
+  `return` turned out simpler than `if`/`while`/`loop`/`break` needed to
+  be: `RETURN` halts `run_chunk` unconditionally the instant it
+  executes, wherever it is in the bytecode, so a mid-body `return`
+  (nested inside an `if`, say) needs no jump/patch bookkeeping at all —
+  unlike every other control-flow construct this port has added so far.
+  Scoped the same documented way `break` already was: no postfix
+  `if`/`unless` modifier form (`return if cond` isn't supported, and
+  would misparse as returning an `if`-expression's value, the same
+  divergence `break if cond` already has).
+
+  Keyword arguments (`f(y: 2, x: 1)`, or positional-then-keyword mixed)
+  are direct-call-only, matching `compiler.c`'s own scoping exactly:
+  only a direct call to an already-declared top-level function has
+  compile-time, non-polymorphic access to the callee's exact parameter
+  names, unlike a closure call (target unknown until runtime) or an
+  `INVOKE` (resolved by the receiver's runtime class). `@functions`
+  entries grew a fourth field (the function's `parameter_names`,
+  already available in `compile_definition` but previously discarded)
+  so a call site can resolve a keyword to its slot. Simpler than
+  `compiler.c`'s own version in exactly one way: since this port has no
+  default parameter values at all, every declared slot must always be
+  filled by the call site — there's no partial-call case needing a
+  separate `required_arity` bound the way the real compiler's version
+  has, so `arity` alone is both bounds here.
+
+  New regression coverage: four more `tests/parser_cases/*.di` cases
+  (an early `return` from inside a nested `if`, a bare `return` inside
+  a class method, and two keyword-argument call shapes — fully
+  reordered and positional-then-keyword mixed) bring the differential
+  harness to 46 cases, all matching. Also hand-verified four error
+  cases directly (an unknown keyword name, a positional argument
+  following a keyword one, a missing required slot, and supplying the
+  same slot twice) — all produce the expected `fail()`/`error_message()`
+  rejection. Verified with the same `make test-all` pass as every other
+  round. This closes out Phase 3 sub-phase 2 (functions, closures,
+  calls) exactly as scoped by the plan.
+
 ## Next priorities
 
-- Self-hosting, Phase 3 sub-phase 2's remaining gaps (keyword arguments,
-  explicit `return`) and sub-phase 4 (interfaces, generics, gradual
-  typing, narrowing) remain, per the plan's own sequencing — sub-phase 3
-  (classes, methods, inheritance, `super`) is now complete.
+- Self-hosting, Phase 3 sub-phase 4: interfaces, generics, gradual
+  typing, narrowing — per the plan's own sequencing, the next and by
+  far the largest remaining sub-phase (structural interface matching,
+  the full generic type-variable/binding machinery, and flow-sensitive
+  narrowing all landed as substantial, multi-round features in their
+  own right earlier this session — porting them is unlikely to compress
+  into a single round the way sub-phases 1-3 mostly did). Sub-phase 5
+  (exceptions, modules, `require`) and Phase 4 (bootstrap validation)
+  remain after that.
 
 ## Later experiments
 
 - Self-hosting the compiler and core libraries in Diamond (in progress —
   see `Completed foundation` for Phase 0-2 and Phase 3 sub-phases 2
   (functions, closures, calls) and 3 (classes, inheritance, `super`),
-  landed, and `Next priorities` for what's left of sub-phase 2 plus
-  sub-phase 4; the rest of the compiler port and bootstrap validation
-  remain multi-session future work beyond that).
+  both now fully landed, and `Next priorities` for sub-phase 4
+  (interfaces, generics, gradual typing, narrowing); the rest of the
+  compiler port and bootstrap validation remain multi-session future
+  work beyond that).
 - Native-code generation or a tracing/method JIT — nothing in the
   `jit-experimentation` work above generates native code; it's all
   interpreter-loop leaning (register zero-init, opcode dispatch,
