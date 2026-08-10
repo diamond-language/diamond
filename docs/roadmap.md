@@ -1937,6 +1937,10 @@ future work.
   coverage. A top-level `super` call must be rejected by both compilers,
   locking superclass dispatch to active method bodies.
 
+- Self-hosting, Phase 3 sub-phase 5 (twenty-fifth slice): instance-variable
+  context coverage. A top-level instance-variable read must be rejected by
+  both compilers, locking receiver storage access to active method bodies.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,
