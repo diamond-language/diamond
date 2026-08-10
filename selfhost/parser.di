@@ -93,6 +93,8 @@ module Opcode
   JUMP_IF_TRUE = 56
   RETURN = 57
   RAISE = 58
+  PUSH_RESCUE = 59
+  POP_RESCUE = 60
   IS_TYPE = 64
   PRINT = 70
 end
@@ -251,7 +253,7 @@ class Parser
   end
 
   def at_block_end?()
-    @current.kind() == :eof || @current.kind() == :else || @current.kind() == :elsif || @current.kind() == :end
+    @current.kind() == :eof || @current.kind() == :else || @current.kind() == :elsif || @current.kind() == :rescue || @current.kind() == :ensure || @current.kind() == :end
   end
 
   def token_text(token)
@@ -327,6 +329,21 @@ class Parser
     self.emit_byte(Opcode::JUMP)
     self.emit_byte(target / 256)
     self.emit_byte(mod(target, 256))
+  end
+
+  def emit_rescue_handler(exception)
+    self.emit_byte(Opcode::PUSH_RESCUE)
+    self.emit_byte(exception)
+    self.emit_byte(0)
+    index = 0
+    while index < 8
+      self.emit_byte(0)
+      index = index + 1
+    end
+    operand = @code_count
+    self.emit_byte(0)
+    self.emit_byte(0)
+    operand
   end
 
   # --- locals: an Array of [name, register, captured] entries, scanned
@@ -1886,6 +1903,35 @@ class Parser
     value
   end
 
+  def compile_begin()
+    return 0 unless self.consume_block_start()
+    original_facts = self.copy_type_facts()
+    exception = self.allocate_register()
+    handler = self.emit_rescue_handler(exception)
+    body = self.compile_sequence()
+    destination = self.allocate_register()
+    self.emit_instruction2(Opcode::MOVE, destination, body)
+    self.emit_byte(Opcode::POP_RESCUE)
+    finished = self.emit_jump(Opcode::JUMP, 0)
+    self.patch_jump(handler, @code_count)
+    if @current.kind() != :rescue
+      self.fail("expected 'rescue' after begin body")
+      return destination
+    end
+    self.advance_token()
+    return destination unless self.consume_block_start()
+    rescued = self.compile_sequence()
+    self.emit_instruction2(Opcode::MOVE, destination, rescued)
+    if @current.kind() != :end
+      self.fail("expected 'end' after begin body")
+      return destination
+    end
+    self.advance_token()
+    self.patch_jump(finished, @code_count)
+    @type_facts = original_facts
+    destination
+  end
+
   # --- control flow ---
 
   def consume_conditional_start()
@@ -2202,6 +2248,7 @@ class Parser
     return self.parse_while(false) if kind == :while
     return self.parse_while(true) if kind == :until
     return self.parse_loop() if kind == :loop
+    return self.compile_begin() if kind == :begin
     return self.parse_super() if kind == :super
     self.fail("expected expression")
     0

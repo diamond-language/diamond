@@ -1969,6 +1969,11 @@ future work.
   closure, and method bodies; bare re-raise remains reserved for rescue
   context. A compiled raising function brings the parser harness to 86 cases.
 
+- Self-hosting, Phase 3 sub-phase 5 (second slice): catch-all rescue. `begin`
+  expressions with one unfiltered `rescue` now register and pop VM rescue
+  handlers on the appropriate paths and merge their result value. A raised
+  string recovered as an integer brings the parser harness to 87 cases.
+
 ## Next priorities
 
 - Self-hosting, Phase 3 sub-phase 5: exceptions, modules, and `require`.
