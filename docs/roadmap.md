@@ -1916,6 +1916,11 @@ future work.
   nested index expressions and captured receivers, and lower to `INDEX_SET`.
   A write-then-read array case brings the parser harness to 76 cases.
 
+- Self-hosting, Phase 3 sub-phase 4 (twenty-eighth slice): logical-negation
+  facts. Prefix `!` and `not` destinations now carry their guaranteed `Bool`
+  type through assignments and returns. A typed negation function brings the
+  parser harness to 77 cases.
+
 ## Next priorities
 
 - Self-hosting, Phase 3 sub-phase 4 remaining slices:

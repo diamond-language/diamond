@@ -2111,6 +2111,7 @@ class Parser
       operand = self.parse_precedence(Precedence::PREFIX)
       destination = self.allocate_register()
       self.emit_instruction2(Opcode::NOT, destination, operand)
+      self.set_type_fact(destination, Type::BOOL)
       return destination
     end
     return self.parse_if(false) if kind == :if
