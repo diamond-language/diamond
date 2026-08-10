@@ -1995,6 +1995,11 @@ future work.
   restoring any outer rescue context across nesting. A nested re-raise caught
   by an outer clause brings the parser harness to 91 cases.
 
+- Self-hosting, Phase 3 sub-phase 5 (seventh slice): rescue `else`. An optional
+  `else` body now replaces the result only after normal protected completion;
+  rescued paths skip it and both paths still enter `ensure`. A normal-path
+  else result brings the parser harness to 92 cases.
+
 ## Next priorities
 
 - Self-hosting, Phase 3 sub-phase 5: exceptions, modules, and `require`.

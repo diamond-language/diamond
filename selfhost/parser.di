@@ -1971,10 +1971,18 @@ class Parser
     rescued = self.compile_sequence()
     @current_exception = outer_exception
     self.emit_instruction2(Opcode::MOVE, destination, rescued)
+    rescued_finished = self.emit_jump(Opcode::JUMP, 0)
     while @locals.length() > rescue_local_count
       @locals.pop()
     end
     self.patch_jump(finished, @code_count)
+    if @current.kind() == :else
+      self.advance_token()
+      return destination unless self.consume_block_start()
+      normal = self.compile_sequence()
+      self.emit_instruction2(Opcode::MOVE, destination, normal)
+    end
+    self.patch_jump(rescued_finished, @code_count)
     self.emit_byte(Opcode::RUN_ENSURE)
     continuation_operand = @code_count
     self.emit_byte(0)
