@@ -364,6 +364,9 @@ class Parser
         else
           name = self.token_text(@current)
           type_id = self.resolve_type_name(name)
+          if type_id >= 96 && type_id < 128
+            self.fail("generic type variables cannot filter rescue")
+          end
           duplicate = false
           index = 0
           while index < types.length()

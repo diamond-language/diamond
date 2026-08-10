@@ -1898,6 +1898,11 @@ future work.
   validation. Repeated runtime type IDs within one filter are now rejected
   before handler emission, with a native/self-hosted differential error case.
 
+- Self-hosting, Phase 3 sub-phase 5 (sixteenth slice): generic rescue-filter
+  validation. Unbound function type variables are now rejected as runtime
+  rescue filters, matching the native compiler and adding a third negative
+  differential case.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,
