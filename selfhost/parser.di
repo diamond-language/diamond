@@ -1760,6 +1760,7 @@ class Parser
     @pending_type_narrowing = nil
     self.apply_condition_fact(condition, narrowing, type_narrowing, !inverted)
     then_result = self.compile_sequence()
+    then_fact = self.type_fact(then_result)
     self.emit_instruction2(Opcode::MOVE, destination, then_result)
     end_jump = self.emit_jump(Opcode::JUMP, 0)
     self.patch_jump(false_jump, @code_count)
@@ -1771,16 +1772,19 @@ class Parser
       self.advance_token()
       self.skip_newlines() if @current.kind() == :newline
       else_result = self.compile_sequence()
+      else_fact = self.type_fact(else_result)
       self.emit_instruction2(Opcode::MOVE, destination, else_result)
     elsif @current.kind() == :elsif
       @type_facts = original_facts
       self.advance_token()
       else_result = self.parse_if(false)
+      else_fact = self.type_fact(else_result)
       self.emit_instruction2(Opcode::MOVE, destination, else_result)
       end_consumed = true
     else
       @type_facts = original_facts
       self.emit_instruction1(Opcode::NIL, destination)
+      else_fact = Type::NIL
     end
 
     if !end_consumed && @current.kind() != :end
@@ -1790,6 +1794,9 @@ class Parser
     self.advance_token() unless end_consumed
     self.patch_jump(end_jump, @code_count)
     @type_facts = original_facts
+    if then_fact != nil && then_fact == else_fact
+      self.set_type_fact(destination, then_fact)
+    end
     destination
   end
 

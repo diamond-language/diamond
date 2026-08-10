@@ -1865,6 +1865,12 @@ future work.
   returns without a redundant runtime guard. A direct nominal constructor
   return brings the parser harness to 67 cases.
 
+- Self-hosting, Phase 3 sub-phase 4 (nineteenth slice): exact conditional
+  result joins. An `if`/`unless` expression now retains an exact destination
+  fact when every result path has the same type, including nested `elsif`
+  expressions and the implicit nil path. An integer-valued conditional brings
+  the parser harness to 68 cases.
+
 ## Next priorities
 
 - Self-hosting, Phase 3 sub-phase 4 remaining slices:
