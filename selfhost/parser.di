@@ -1717,6 +1717,25 @@ class Parser
     true
   end
 
+  def apply_condition_fact(condition, narrowing, type_narrowing, when_true)
+    if narrowing != nil && narrowing[0] == condition
+      if when_true
+        self.set_type_fact(narrowing[1], Type::NIL)
+      else
+        remaining = self.non_nil_single_type(self.declared_type(narrowing[1]))
+        self.set_type_fact(narrowing[1], remaining) if remaining != nil
+      end
+    elsif type_narrowing != nil && type_narrowing[0] == condition
+      if when_true
+        self.set_type_fact(type_narrowing[1], type_narrowing[2])
+      else
+        remaining = self.remaining_single_type(
+          self.declared_type(type_narrowing[1]), type_narrowing[2])
+        self.set_type_fact(type_narrowing[1], remaining) if remaining != nil
+      end
+    end
+  end
+
   def parse_if(inverted)
     condition = self.parse_expression()
     return 0 unless self.consume_conditional_start()
@@ -1732,11 +1751,7 @@ class Parser
     type_narrowing = @pending_type_narrowing
     @pending_nil_narrowing = nil
     @pending_type_narrowing = nil
-    if narrowing != nil && narrowing[0] == condition
-      self.set_type_fact(narrowing[1], Type::NIL)
-    elsif type_narrowing != nil && type_narrowing[0] == condition
-      self.set_type_fact(type_narrowing[1], type_narrowing[2])
-    end
+    self.apply_condition_fact(condition, narrowing, type_narrowing, !inverted)
     then_result = self.compile_sequence()
     self.emit_instruction2(Opcode::MOVE, destination, then_result)
     end_jump = self.emit_jump(Opcode::JUMP, 0)
@@ -1745,14 +1760,7 @@ class Parser
     end_consumed = false
     if @current.kind() == :else
       @type_facts = original_facts
-      if narrowing != nil && narrowing[0] == condition
-        remaining = self.non_nil_single_type(self.declared_type(narrowing[1]))
-        self.set_type_fact(narrowing[1], remaining) if remaining != nil
-      elsif type_narrowing != nil && type_narrowing[0] == condition
-        remaining = self.remaining_single_type(
-          self.declared_type(type_narrowing[1]), type_narrowing[2])
-        self.set_type_fact(type_narrowing[1], remaining) if remaining != nil
-      end
+      self.apply_condition_fact(condition, narrowing, type_narrowing, inverted)
       self.advance_token()
       self.skip_newlines() if @current.kind() == :newline
       else_result = self.compile_sequence()

@@ -1836,6 +1836,12 @@ future work.
   generic results remain conservatively runtime-bound. A typed forwarding call
   brings the parser harness to 62 cases.
 
+- Self-hosting, Phase 3 sub-phase 4 (fourteenth slice): polarity-aware
+  narrowing for `unless`. The inverted branch receives the condition's false
+  fact and its `else` receives the true fact, sharing a fact-application helper
+  that also keeps `parse_if` within the language's register ceiling. A nilable
+  unwrap case brings the harness to 63 cases.
+
 ## Next priorities
 
 - Self-hosting, Phase 3 sub-phase 4 remaining slices:
