@@ -1962,6 +1962,10 @@ future work.
   identically by the native and self-hosted parsers; failed hash parsing now
   stops before lowering partially populated key/value arrays.
 
+- Self-hosting, Phase 3 sub-phase 5 (thirty-first slice): unterminated hash
+  coverage. A missing closing brace in a hash literal must produce the same
+  explicit diagnostic in both compilers.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,
