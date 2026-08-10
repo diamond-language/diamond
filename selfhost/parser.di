@@ -493,7 +493,7 @@ class Parser
     @builder.set_type_variables(function_index, @current_type_variables)
     if at_top_level
       @functions.push([name, function_index, arity, parameter_names,
-                       @current_type_variables.length()])
+                       @current_type_variables.length(), return_type])
     end
     # Every entry currently in scope becomes a capture candidate,
     # unconditionally -- mirroring compiler.c's own eager design (not
@@ -964,6 +964,11 @@ class Parser
     found
   end
 
+  def annotation_single_type(annotation)
+    return nil if annotation == nil || annotation.length() != 1
+    self.resolve_type_name(annotation[0][0])
+  end
+
   def parse_optional_return_type()
     return nil unless @current.kind() == :arrow
     self.advance_token()
@@ -1408,6 +1413,12 @@ class Parser
         i = i + 1
       end
     end
+    return_fact = if function_entry[4] == 0
+      self.annotation_single_type(function_entry[5])
+    else
+      nil
+    end
+    self.set_type_fact(destination, return_fact) if return_fact != nil
     destination
   end
 

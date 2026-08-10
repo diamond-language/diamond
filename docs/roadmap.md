@@ -1830,6 +1830,12 @@ future work.
   fact unless both paths can safely reuse it. A two-branch integer assignment
   feeding an explicit typed return brings the harness to 61 cases.
 
+- Self-hosting, Phase 3 sub-phase 4 (thirteenth slice): direct-call result
+  facts. A non-generic function's single declared return member is now attached
+  to the destination register and follows subsequent local assignment, while
+  generic results remain conservatively runtime-bound. A typed forwarding call
+  brings the parser harness to 62 cases.
+
 ## Next priorities
 
 - Self-hosting, Phase 3 sub-phase 4 remaining slices:
