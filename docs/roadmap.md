@@ -1947,6 +1947,11 @@ future work.
   declaration only when their left and right outcomes agree. A typed Boolean
   conjunction brings the parser harness to 82 cases.
 
+- Self-hosting, Phase 3 sub-phase 4 (thirty-fourth slice): homogeneous array
+  literal contracts. Non-empty primitive arrays whose elements share an exact
+  fact now infer `Array[T]`, feeding immediate indexed reads and aliases. A
+  typed literal lookup brings the parser harness to 83 cases.
+
 ## Next priorities
 
 - Self-hosting, Phase 3 sub-phase 4 remaining slices:

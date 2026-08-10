@@ -1053,6 +1053,36 @@ class Parser
     result
   end
 
+  def primitive_annotation(type_id)
+    name = if type_id == Type::INT
+      "Int"
+    elsif type_id == Type::FLOAT
+      "Float"
+    elsif type_id == Type::STRING
+      "String"
+    elsif type_id == Type::BOOL
+      "Bool"
+    elsif type_id == Type::NIL
+      "Nil"
+    else
+      nil
+    end
+    return nil if name == nil
+    [[name, nil, nil, -1, nil, nil]]
+  end
+
+  def homogeneous_element_annotation(elements)
+    return nil if elements.length() == 0
+    fact = self.type_fact(elements[0])
+    return nil if fact == nil
+    index = 1
+    while index < elements.length()
+      return nil if self.type_fact(elements[index]) != fact
+      index = index + 1
+    end
+    self.primitive_annotation(fact)
+  end
+
   def parse_optional_return_type()
     return nil unless @current.kind() == :arrow
     self.advance_token()
@@ -2234,6 +2264,11 @@ class Parser
     destination = self.allocate_register()
     self.emit_instruction3(Opcode::ARRAY, destination, base, elements.length())
     self.set_type_fact(destination, Type::ARRAY)
+    element_annotation = self.homogeneous_element_annotation(elements)
+    if element_annotation != nil
+      @declared_types.push([destination,
+        [["Array", element_annotation, nil, -1, nil, nil]]])
+    end
     destination
   end
 
