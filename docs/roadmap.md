@@ -1818,10 +1818,17 @@ future work.
   redundant runtime guard. Facts are restored conservatively at the join. A
   nil-or-integer early-return case brings the harness to 59 cases.
 
+- Self-hosting, Phase 3 sub-phase 4 (eleventh slice): `is`-driven branch facts.
+  A tested primitive, nominal, or structural type becomes the true-branch fact;
+  when removing it leaves one union member, that complementary type becomes the
+  false-branch fact. Both are scoped to their branch and discarded at the join.
+  A nominal `Dog | Cat` return-narrowing case brings the harness to 60 cases.
+
 ## Next priorities
 
 - Self-hosting, Phase 3 sub-phase 4 remaining slices:
-  general `is`-driven branch narrowing and broader fact joins
+  richer multi-member fact joins and propagation through assignments/indexing;
+  the core annotation, generic, predicate, and branch-narrowing path is landed
   earlier this session, so porting the rest of sub-phase 4 is unlikely
   to compress into a single round the way most of sub-phases 1-3 did.
   Sub-phase 5 (exceptions, modules, `require`) and Phase 4 (bootstrap

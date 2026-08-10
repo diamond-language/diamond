@@ -173,6 +173,7 @@ class Parser
     @type_facts = []
     @declared_types = []
     @pending_nil_narrowing = nil
+    @pending_type_narrowing = nil
     # The class_index currently being compiled (compile_class), or nil
     # outside any class body -- gates `self`/`@ivar` (both require being
     # inside a method) and rejects a class or `def` nested inside a
@@ -949,6 +950,20 @@ class Parser
     found
   end
 
+  def remaining_single_type(annotation, excluded)
+    found = nil
+    index = 0
+    while index < annotation.length()
+      type_id = self.resolve_type_name(annotation[index][0])
+      if type_id != excluded
+        return nil if found != nil
+        found = type_id
+      end
+      index = index + 1
+    end
+    found
+  end
+
   def parse_optional_return_type()
     return nil unless @current.kind() == :arrow
     self.advance_token()
@@ -1701,9 +1716,13 @@ class Parser
     destination = self.allocate_register()
     original_facts = self.copy_type_facts()
     narrowing = @pending_nil_narrowing
+    type_narrowing = @pending_type_narrowing
     @pending_nil_narrowing = nil
+    @pending_type_narrowing = nil
     if narrowing != nil && narrowing[0] == condition
       self.set_type_fact(narrowing[1], Type::NIL)
+    elsif type_narrowing != nil && type_narrowing[0] == condition
+      self.set_type_fact(type_narrowing[1], type_narrowing[2])
     end
     then_result = self.compile_sequence()
     self.emit_instruction2(Opcode::MOVE, destination, then_result)
@@ -1716,6 +1735,10 @@ class Parser
       if narrowing != nil && narrowing[0] == condition
         remaining = self.non_nil_single_type(self.declared_type(narrowing[1]))
         self.set_type_fact(narrowing[1], remaining) if remaining != nil
+      elsif type_narrowing != nil && type_narrowing[0] == condition
+        remaining = self.remaining_single_type(
+          self.declared_type(type_narrowing[1]), type_narrowing[2])
+        self.set_type_fact(type_narrowing[1], remaining) if remaining != nil
       end
       self.advance_token()
       self.skip_newlines() if @current.kind() == :newline
@@ -1848,6 +1871,9 @@ class Parser
           self.advance_token() unless @failed
           destination = self.allocate_register()
           self.emit_instruction3(Opcode::IS_TYPE, destination, left, type_id)
+          if self.declared_type(left) != nil
+            @pending_type_narrowing = [destination, left, type_id]
+          end
           left = destination
         end
       elsif operator == :and_and || operator == :and || operator == :or_or || operator == :or
