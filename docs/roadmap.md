@@ -1921,6 +1921,10 @@ future work.
   the implemented sub-phases and positive/negative corpora without stale
   claims that landed functions, classes, modules, and exceptions are absent.
 
+- Self-hosting, Phase 3 sub-phase 5 (twenty-first slice): loop-control context
+  coverage. A top-level `break` must be rejected by both compilers, locking
+  the loop-target invariant into the negative differential harness.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,
