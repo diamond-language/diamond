@@ -2074,6 +2074,8 @@ class Parser
           elsif self.type_fact(right) == Type::NIL && self.declared_type(left) != nil
             @pending_nil_narrowing = [destination, left, nil_when_true]
           end
+        elsif operator == :less || operator == :less_equal || operator == :greater || operator == :greater_equal
+          self.set_type_fact(destination, Type::BOOL)
         end
         left = destination
       end

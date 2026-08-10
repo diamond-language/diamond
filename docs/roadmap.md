@@ -1931,6 +1931,11 @@ future work.
   any nil-narrowing metadata. A typed equality predicate brings the parser
   harness to 79 cases.
 
+- Self-hosting, Phase 3 sub-phase 4 (thirty-first slice): ordered-comparison
+  facts. `<`, `<=`, `>`, and `>=` destinations now carry their guaranteed
+  `Bool` type through local propagation and typed returns. A typed comparison
+  predicate brings the parser harness to 80 cases.
+
 ## Next priorities
 
 - Self-hosting, Phase 3 sub-phase 4 remaining slices:
