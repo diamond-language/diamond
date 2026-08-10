@@ -1986,6 +1986,11 @@ future work.
   coverage. A receiver followed by `.` without a method name must be rejected
   identically by the native and self-hosted parsers.
 
+- Self-hosting, Phase 3 sub-phase 5 (thirty-seventh slice): missing class-name
+  coverage. A `class` declaration without an identifier must produce the same
+  explicit diagnostic in both compilers; the self-hosted wording now matches
+  the native compiler's `expected valid class name` contract.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,

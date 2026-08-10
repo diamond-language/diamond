@@ -1280,7 +1280,7 @@ class Parser
       return 0
     end
     if @current.kind() != :identifier
-      self.fail("expected class name after 'class'")
+      self.fail("expected valid class name")
       return 0
     end
     name = self.token_text(@current)
