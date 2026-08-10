@@ -28,3 +28,28 @@ for case_file in tests/parser_cases/*.di; do
 done
 
 echo "$count parser differential cases passed"
+
+error_count=0
+for case_file in tests/parser_error_cases/*.di; do
+    expected_file="${case_file%.di}.err"
+    expected="$(cat "$expected_file")"
+    if "$diamond" "$case_file" >/tmp/diamond-parser-native.out 2>&1; then
+        echo "native compiler accepted parser error case $case_file" >&2
+        exit 1
+    fi
+    if ! grep -Fq "$expected" /tmp/diamond-parser-native.out; then
+        echo "native compiler error mismatch for $case_file" >&2
+        exit 1
+    fi
+    if echo "$case_file" | "$diamond" selfhost/parser_check.di >/tmp/diamond-parser-selfhost.out 2>&1; then
+        echo "self-hosted parser accepted error case $case_file" >&2
+        exit 1
+    fi
+    if ! grep -Fq "$expected" /tmp/diamond-parser-selfhost.out; then
+        echo "self-hosted parser error mismatch for $case_file" >&2
+        exit 1
+    fi
+    error_count=$((error_count + 1))
+done
+
+echo "$error_count parser error differential cases passed"
