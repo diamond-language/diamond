@@ -9,23 +9,15 @@ require "lexer"
 #   Sub-phase 1 ("expression evaluator core"): literals, arithmetic/
 #   comparison/logical expressions, local variables, if/while/loop/break.
 #
-#   Sub-phase 2 (this addition): top-level named functions with purely
-#   positional parameters (no defaults, no type annotations, no
-#   generics), direct calls to already-declared functions (including
-#   self-recursion -- a function's own entry is registered before its
-#   body is compiled, exactly mirroring compiler.c's own ordering, so
-#   forward/mutual recursion between two functions declared in either
-#   order has the same "must already exist" constraint the real compiler
-#   has), and `puts`/`print`.
+#   Sub-phases 2-5 extend that core with named functions and closures,
+#   classes and interfaces, typed and generic declarations, collection
+#   literals and indexing, namespaces/modules and `require`, and exception
+#   handling. The differential corpus in tests/parser_cases records the
+#   exact supported surface and grows with each slice.
 #
 # Deliberately narrower than the eventual full port throughout:
-#   - No closures/nested `def`, classes/methods/`super`, interfaces/
-#     generics/narrowing, or exceptions/modules/`require` -- each is a
-#     separate later sub-phase. A nested `def` (one not at the top
-#     level) is a clear, explicit compile error here, not a silent
-#     miscompile.
-#   - No keyword arguments, explicit `return`, or compile-time arity
-#     defaults -- a function's last expression is always its result.
+#   - Unsupported constructs fail explicitly; the port must never silently
+#     accept a construct it cannot lower with native-compiler semantics.
 #   - No compile-time `_INT` opcode quickening (compiler.c's own
 #     `known_types` optimization): every arithmetic/comparison opcode
 #     emitted here is the generic form (ADD, not ADD_INT), which is
@@ -37,8 +29,8 @@ require "lexer"
 #     as plain text rather than evaluated -- needs the same
 #     lexer/compiler-state save-and-restore compiler.c's parse_string
 #     uses, deferred until interpolation is specifically in scope.
-#   - `next`/`redo` and postfix `if`/`unless` modifiers are not
-#     supported; only `break` (with an optional value).
+#   - Remaining grammar and semantic gaps are tracked by the Phase 3 roadmap
+#     and are added as independently differential-tested slices.
 #
 # The opcode constants below must exactly match src/vm.h's DiamondOpCode
 # enum ordinals -- this file and the VM only ever need to agree the same

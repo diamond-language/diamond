@@ -1916,6 +1916,11 @@ future work.
   coverage. A `begin` expression without either `rescue` or `ensure` must be
   rejected by both compilers through the negative differential harness.
 
+- Self-hosting, Phase 3 sub-phase 5 (twentieth slice): parser scope
+  documentation. The parser and differential-harness headers now describe
+  the implemented sub-phases and positive/negative corpora without stale
+  claims that landed functions, classes, modules, and exceptions are absent.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,
