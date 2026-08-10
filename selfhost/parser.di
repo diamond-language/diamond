@@ -71,6 +71,7 @@ module Opcode
   NOT_EQUAL = 20
   JUMP = 27
   CALL = 29
+  CALL_TYPED = 30
   JUMP_IF_FALSE = 28
   CLOSURE = 31
   CALL_CLOSURE = 32
@@ -485,7 +486,10 @@ class Parser
     arity = parameter_names.length()
     function_index = @builder.declare_function(name, arity, arity)
     @builder.set_type_variables(function_index, @current_type_variables)
-    @functions.push([name, function_index, arity, parameter_names]) if at_top_level
+    if at_top_level
+      @functions.push([name, function_index, arity, parameter_names,
+                       @current_type_variables.length()])
+    end
     # Every entry currently in scope becomes a capture candidate,
     # unconditionally -- mirroring compiler.c's own eager design (not
     # just names the nested body actually goes on to reference). Empty
@@ -1244,6 +1248,40 @@ class Parser
       self.fail("undefined function")
       return 0
     end
+    type_arguments = []
+    if @current.kind() == :left_bracket
+      self.advance_token()
+      self.skip_newlines()
+      while !@failed && @current.kind() != :right_bracket
+        if type_arguments.length() == 8
+          self.fail("too many generic arguments")
+        else
+          annotation = self.parse_type_annotation()
+          type_arguments.push(self.declare_annotation(annotation))
+          self.skip_newlines()
+          if @current.kind() == :comma
+            self.advance_token()
+            self.skip_newlines()
+          else
+            break
+          end
+        end
+      end
+      if !@failed && @current.kind() != :right_bracket
+        self.fail("expected ']' after generic arguments")
+      else
+        self.advance_token() unless @failed
+      end
+      if !@failed && type_arguments.length() != function_entry[4]
+        self.fail("wrong number of generic arguments")
+      end
+      if !@failed && @current.kind() != :left_paren
+        self.fail("expected '(' after generic arguments")
+      end
+    elsif function_entry[4] > 0
+      # Omitted arguments use the VM's ordinary runtime inference.
+    end
+    return 0 if @failed
     self.advance_token()
     self.skip_newlines()
     slot_values = self.parse_keyword_call_arguments(function_entry)
@@ -1261,11 +1299,23 @@ class Parser
       i = i + 1
     end
     destination = self.allocate_register()
-    self.emit_byte(Opcode::CALL)
+    if type_arguments.length() == 0
+      self.emit_byte(Opcode::CALL)
+    else
+      self.emit_byte(Opcode::CALL_TYPED)
+    end
     self.emit_byte(destination)
     self.emit_byte(function_entry[1])
     self.emit_byte(argument_base)
     self.emit_byte(arity)
+    if type_arguments.length() > 0
+      self.emit_byte(type_arguments.length())
+      i = 0
+      while i < type_arguments.length()
+        self.emit_byte(type_arguments[i])
+        i = i + 1
+      end
+    end
     destination
   end
 
@@ -1808,10 +1858,10 @@ class Parser
     class_entry = self.find_class(name)
     return self.compile_new_call(class_entry[1]) if class_entry != nil && @current.kind() == :dot
     local = self.find_local(name)
-    if @current.kind() == :left_paren
+    if @current.kind() == :left_paren || @current.kind() == :left_bracket
       return self.compile_closure_call(local) if local != nil
-      return self.parse_print_call(true) if name == "puts"
-      return self.parse_print_call(false) if name == "print"
+      return self.parse_print_call(true) if name == "puts" && @current.kind() == :left_paren
+      return self.parse_print_call(false) if name == "print" && @current.kind() == :left_paren
       return self.compile_call(name)
     end
     if local == nil

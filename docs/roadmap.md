@@ -1798,11 +1798,17 @@ future work.
   capacity checks. A derived-interface contract satisfied by a class providing
   both inherited and direct methods brings the parser harness to 56 cases.
 
+- Self-hosting, Phase 3 sub-phase 4 (eighth slice): explicit generic calls.
+  Direct calls now parse up to eight recursive type arguments, enforce the
+  callee's generic arity, declare the specializations in the caller's type-set
+  table, and emit `CALL_TYPED`; omitted arguments retain runtime inference.
+  Two-variable calls with different specializations bring the differential
+  harness to 57 cases.
+
 ## Next priorities
 
 - Self-hosting, Phase 3 sub-phase 4 remaining slices:
-  explicit generic call arguments and narrowing — each landed as its own
-  substantial, multi-round feature
+  narrowing, still best landed as focused, multi-round work
   earlier this session, so porting the rest of sub-phase 4 is unlikely
   to compress into a single round the way most of sub-phases 1-3 did.
   Sub-phase 5 (exceptions, modules, `require`) and Phase 4 (bootstrap
