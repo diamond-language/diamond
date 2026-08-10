@@ -1562,6 +1562,7 @@ class Parser
     existing = self.find_local(name)
     if existing != nil && existing[2]
       self.emit_instruction2(Opcode::SET_CELL, existing[1], value)
+      self.set_type_fact(existing[1], self.type_fact(value))
       return value
     end
     destination = if existing == nil
@@ -1570,6 +1571,7 @@ class Parser
       existing[1]
     end
     self.emit_instruction2(Opcode::MOVE, destination, value)
+    self.set_type_fact(destination, self.type_fact(value))
     destination
   end
 

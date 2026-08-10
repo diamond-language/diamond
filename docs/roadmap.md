@@ -1824,10 +1824,16 @@ future work.
   false-branch fact. Both are scoped to their branch and discarded at the join.
   A nominal `Dog | Cat` return-narrowing case brings the harness to 60 cases.
 
+- Self-hosting, Phase 3 sub-phase 4 (twelfth slice): local assignment facts and
+  joins. Exact scalar facts now follow local creation and reassignment, while
+  branch-local writes are discarded at the join in favor of the pre-branch
+  fact unless both paths can safely reuse it. A two-branch integer assignment
+  feeding an explicit typed return brings the harness to 61 cases.
+
 ## Next priorities
 
 - Self-hosting, Phase 3 sub-phase 4 remaining slices:
-  richer multi-member fact joins and propagation through assignments/indexing;
+  richer multi-member fact joins and propagation through indexing;
   the core annotation, generic, predicate, and branch-narrowing path is landed
   earlier this session, so porting the rest of sub-phase 4 is unlikely
   to compress into a single round the way most of sub-phases 1-3 did.
