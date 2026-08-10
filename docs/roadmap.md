@@ -1979,6 +1979,11 @@ future work.
   body, matching the native compiler without an extra move. Returning the
   rescued integer brings the parser harness to 88 cases.
 
+- Self-hosting, Phase 3 sub-phase 5 (fourth slice): typed rescue filters.
+  Rescue clauses now accept up to eight `|`-separated runtime types, patch
+  those IDs into the VM handler, and narrow a single-type exception binding.
+  An integer-filtered rescue brings the parser harness to 89 cases.
+
 ## Next priorities
 
 - Self-hosting, Phase 3 sub-phase 5: exceptions, modules, and `require`.

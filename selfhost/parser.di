@@ -346,6 +346,34 @@ class Parser
     operand
   end
 
+  def parse_rescue_types(handler, exception)
+    return if @current.kind() != :colon
+    self.advance_token()
+    types = []
+    while !@failed
+      if @current.kind() != :identifier
+        self.fail("expected rescue type")
+      elsif types.length() == 8
+        self.fail("too many rescue types")
+      else
+        types.push(self.resolve_type_name(self.token_text(@current)))
+        self.advance_token()
+        if @current.kind() == :pipe
+          self.advance_token()
+        else
+          break
+        end
+      end
+    end
+    @builder.patch_byte(@current_function_index, handler - 9, types.length())
+    index = 0
+    while index < types.length()
+      @builder.patch_byte(@current_function_index, handler - 8 + index, types[index])
+      index = index + 1
+    end
+    self.set_type_fact(exception, types[0]) if types.length() == 1
+  end
+
   # --- locals: an Array of [name, register, captured] entries, scanned
   # in reverse so the most recently declared match wins on shadowing
   # (mirroring compiler.c's find_local's own reverse scan over its
@@ -1924,6 +1952,7 @@ class Parser
       @locals.push([self.token_text(@current), exception, false])
       self.advance_token()
     end
+    self.parse_rescue_types(handler, exception)
     return destination unless self.consume_block_start()
     rescued = self.compile_sequence()
     self.emit_instruction2(Opcode::MOVE, destination, rescued)
