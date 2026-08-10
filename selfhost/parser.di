@@ -92,6 +92,7 @@ module Opcode
   NOT = 55
   JUMP_IF_TRUE = 56
   RETURN = 57
+  RAISE = 58
   IS_TYPE = 64
   PRINT = 70
 end
@@ -420,6 +421,8 @@ class Parser
         result = self.compile_break()
       elsif @current.kind() == :return
         result = self.compile_return()
+      elsif @current.kind() == :raise
+        result = self.compile_raise()
       elsif self.index_assignment_ahead?()
         result = self.compile_index_assignment()
       elsif self.assignment_ahead?()
@@ -1869,6 +1872,17 @@ class Parser
     end
     self.emit_type_check(value, @current_return_type) if @current_return_type != nil
     self.emit_instruction1(Opcode::RETURN, value)
+    value
+  end
+
+  def compile_raise()
+    self.advance_token()
+    if @current.kind() == :newline || @current.kind() == :end || @current.kind() == :eof
+      self.fail("bare 'raise' used outside rescue")
+      return 0
+    end
+    value = self.parse_expression()
+    self.emit_instruction1(Opcode::RAISE, value)
     value
   end
 

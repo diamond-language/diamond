@@ -1964,6 +1964,11 @@ future work.
   becoming unconditional post-loop proofs. A zero-iteration typed-local case
   brings the parser harness to 85 cases and completes sub-phase 4.
 
+- Self-hosting, Phase 3 sub-phase 5 (first slice): explicit raises. `raise`
+  with a value now lowers to the VM's `RAISE` instruction in entry, function,
+  closure, and method bodies; bare re-raise remains reserved for rescue
+  context. A compiled raising function brings the parser harness to 86 cases.
+
 ## Next priorities
 
 - Self-hosting, Phase 3 sub-phase 5: exceptions, modules, and `require`.
