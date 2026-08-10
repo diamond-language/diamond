@@ -87,6 +87,7 @@ module Opcode
   CHECK_TYPE = 50
   ARRAY = 51
   INDEX_GET = 52
+  INDEX_SET = 53
   HASH = 54
   NOT = 55
   JUMP_IF_TRUE = 56
@@ -419,6 +420,8 @@ class Parser
         result = self.compile_break()
       elsif @current.kind() == :return
         result = self.compile_return()
+      elsif self.index_assignment_ahead?()
+        result = self.compile_index_assignment()
       elsif self.assignment_ahead?()
         result = self.compile_assignment()
       else
@@ -1618,6 +1621,46 @@ class Parser
     return false if @current.kind() != :identifier && @current.kind() != :instance_variable
     lookahead = @lexer.clone()
     lookahead.next_token().kind() == :equal
+  end
+
+  def index_assignment_ahead?()
+    return false if @current.kind() != :identifier
+    lookahead = @lexer.clone()
+    return false if lookahead.next_token().kind() != :left_bracket
+    depth = 1
+    while depth > 0
+      kind = lookahead.next_token().kind()
+      return false if kind == :eof || kind == :newline
+      depth = depth + 1 if kind == :left_bracket
+      depth = depth - 1 if kind == :right_bracket
+    end
+    lookahead.next_token().kind() == :equal
+  end
+
+  def compile_index_assignment()
+    name = self.token_text(@current)
+    local = self.find_local(name)
+    if local == nil
+      self.fail("undefined local variable")
+      return 0
+    end
+    receiver = self.read_local(local)
+    self.advance_token()
+    self.advance_token()
+    index = self.parse_expression()
+    if @current.kind() != :right_bracket
+      self.fail("expected ']' after assignment index")
+      return 0
+    end
+    self.advance_token()
+    if @current.kind() != :equal
+      self.fail("expected '=' after indexed target")
+      return 0
+    end
+    self.advance_token()
+    value = self.parse_expression()
+    self.emit_instruction3(Opcode::INDEX_SET, receiver, index, value)
+    value
   end
 
   def compile_assignment()

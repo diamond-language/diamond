@@ -1911,6 +1911,11 @@ future work.
   branch analysis. A narrowed typed hash lookup brings the parser harness to
   75 cases and completes the planned collection-index propagation path.
 
+- Self-hosting, Phase 3 sub-phase 4 (twenty-seventh slice): indexed writes.
+  Local array and hash targets now recognize bracket assignment, including
+  nested index expressions and captured receivers, and lower to `INDEX_SET`.
+  A write-then-read array case brings the parser harness to 76 cases.
+
 ## Next priorities
 
 - Self-hosting, Phase 3 sub-phase 4 remaining slices:
