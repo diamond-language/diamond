@@ -1699,25 +1699,72 @@ future work.
   round. This closes out Phase 3 sub-phase 2 (functions, closures,
   calls) exactly as scoped by the plan.
 
+- Self-hosting, Phase 3 sub-phase 4 (first slice): scalar gradual
+  typing. `selfhost/parser.di` gained `param: Type`/`-> Type`
+  annotations (`Int`/`Float`/`String`/`Bool`/`Nil`, or a declared class
+  name) on functions, closures, and methods, checked at every return
+  path (both the implicit final-expression return and every explicit
+  `return` statement) via a new `CHECK_TYPE` emission — deliberately
+  without unions, `Array[T]`/`Hash[K,V]`, `Callable`, interfaces,
+  generics, or narrowing yet, each its own separate later slice of this
+  sub-phase.
+
+  Required one new `ProgramBuilder` method: `declare_type_set(function_index,
+  type_id)` → type-set index, creating a single-member `DiamondTypeSet`
+  (no union/array/hash/callable support in the bridge method itself
+  either — a natural, separate future extension, the same "add it when
+  a sub-phase actually needs it" precedent `declare_class`/
+  `declare_field`/`declare_method` already set in sub-phase 3).
+
+  Simpler than `compiler.c`'s own `emit_type_check` in one deliberate
+  way: since this port tracks no compile-time type information at all
+  (no `known_types`/`known_type_sets` — the same `_INT`-quickening
+  scope cut from sub-phase 1, generalized), every type-annotated
+  parameter or return unconditionally emits a real `CHECK_TYPE`
+  instruction rather than sometimes eliding it when the value's type is
+  already known statically. Always correct, just not optimized —
+  consistent with every other place this port has made the same
+  trade-off.
+
+  A correctness gap surfaced and was fixed while implementing this, not
+  found by the differential harness: an early version only checked the
+  return type at the implicit final-expression return path, missing
+  every explicit `return` statement entirely (confirmed against
+  `compiler.c`'s own `compile_return`, which checks
+  `current_return_type` on *every* return path, not just the implicit
+  one). Fixed by threading a new `@current_return_type` field through
+  `compile_function_body`/`compile_method_body` (save/set/restore, the
+  same pattern already used for `@current_method_name`/
+  `@current_class_index`) so `compile_return` can check it too.
+
+  New regression coverage: four more `tests/parser_cases/*.di` cases
+  (a function with `Int` parameter and return types, an early `return`
+  path also getting return-type-checked, a class constructor/method
+  pair with typed parameters, and mixed `Float`/`Int` parameter types)
+  bring the differential harness to 50 cases, all matching. Also
+  hand-verified three type-violation cases directly against the real
+  compiler (a bad argument type, a bad implicit return, and a bad
+  explicit `return`) — all three produce the identical `"expected X,
+  got Y"` error message. Verified with the same `make test-all` pass as
+  every other round, plus the parser differential harness re-run
+  directly under `-fsanitize=address,undefined` (clean, no leaks).
+
 ## Next priorities
 
-- Self-hosting, Phase 3 sub-phase 4: interfaces, generics, gradual
-  typing, narrowing — per the plan's own sequencing, the next and by
-  far the largest remaining sub-phase (structural interface matching,
-  the full generic type-variable/binding machinery, and flow-sensitive
-  narrowing all landed as substantial, multi-round features in their
-  own right earlier this session — porting them is unlikely to compress
-  into a single round the way sub-phases 1-3 mostly did). Sub-phase 5
-  (exceptions, modules, `require`) and Phase 4 (bootstrap validation)
-  remain after that.
+- Self-hosting, Phase 3 sub-phase 4 remaining slices: unions,
+  `Array[T]`/`Hash[K,V]`, `Callable`, interfaces, generics, and
+  narrowing — each landed as its own substantial, multi-round feature
+  earlier this session, so porting the rest of sub-phase 4 is unlikely
+  to compress into a single round the way most of sub-phases 1-3 did.
+  Sub-phase 5 (exceptions, modules, `require`) and Phase 4 (bootstrap
+  validation) remain after that.
 
 ## Later experiments
 
 - Self-hosting the compiler and core libraries in Diamond (in progress —
-  see `Completed foundation` for Phase 0-2 and Phase 3 sub-phases 2
-  (functions, closures, calls) and 3 (classes, inheritance, `super`),
-  both now fully landed, and `Next priorities` for sub-phase 4
-  (interfaces, generics, gradual typing, narrowing); the rest of the
+  see `Completed foundation` for Phase 0-2, Phase 3 sub-phases 2-3 (both
+  fully landed), and sub-phase 4's first slice (scalar gradual typing),
+  and `Next priorities` for the rest of sub-phase 4; the rest of the
   compiler port and bootstrap validation remain multi-session future
   work beyond that).
 - Native-code generation or a tracing/method JIT — nothing in the

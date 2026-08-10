@@ -83,6 +83,7 @@ module Opcode
   SUPER = 43
   GET_IVAR = 44
   SET_IVAR = 45
+  CHECK_TYPE = 50
   NOT = 55
   JUMP_IF_TRUE = 56
   RETURN = 57
@@ -98,6 +99,24 @@ module Precedence
   TERM = 5
   FACTOR = 6
   PREFIX = 7
+end
+
+# Phase 3 sub-phase 4 (gradual typing, first slice): scalar-only type
+# annotations (`Int`/`Float`/`String`/`Bool`/`Nil`/a declared class name)
+# on parameters and return types. Deliberately no unions, `Array[T]`/
+# `Hash[K,V]`, `Callable`, interfaces, generics, or narrowing yet --
+# each is a natural, separate extension of the same
+# ProgramBuilder#declare_type_set bridge method this round adds, not
+# something this round itself needs. Values must exactly match
+# src/vm.h's DiamondTypeId enum ordinals, the same way Opcode above
+# does for DiamondOpCode.
+module Type
+  INT = 0
+  FLOAT = 1
+  STRING = 2
+  BOOL = 3
+  NIL = 4
+  CLASS_BASE = 10
 end
 
 class Parser
@@ -163,6 +182,14 @@ class Parser
     # needed by `super(...)`: it always calls the superclass's version
     # of *this same* method, never an explicitly named one.
     @current_method_name = nil
+    # The current function/method/closure's declared `-> Type` return
+    # type name (a String), or nil if it has none -- needed by both the
+    # implicit final-expression return path (compile_function_body/
+    # compile_method_body) and every explicit `return` statement
+    # (compile_return) anywhere in its body, mirroring compiler.c's own
+    # current_return_type field exactly (checked on *every* return path,
+    # not just the implicit one).
+    @current_return_type = nil
     @failed = false
     @error_message = nil
   end
@@ -419,13 +446,17 @@ class Parser
       return 0
     end
     self.advance_token()
-    parameter_names = self.parse_parameter_names()
+    parsed_parameters = self.parse_parameter_names()
     return 0 if @failed
     if @current.kind() != :right_paren
       self.fail("expected ')' after parameters")
       return 0
     end
     self.advance_token()
+    parameter_names = parsed_parameters[0]
+    parameter_types = parsed_parameters[1]
+    return_type = self.parse_optional_return_type()
+    return 0 if @failed
 
     arity = parameter_names.length()
     function_index = @builder.declare_function(name, arity, arity)
@@ -441,7 +472,8 @@ class Parser
       @locals
     end
 
-    self.compile_function_body(function_index, parameter_names, enclosing_locals)
+    self.compile_function_body(function_index, parameter_names, parameter_types,
+                               return_type, enclosing_locals)
 
     if at_top_level
       # Evaluates to nil, a sole-writer fresh register in the
@@ -452,9 +484,18 @@ class Parser
     self.emit_closure(function_index, enclosing_locals, name)
   end
 
+  # Returns [names, types]: parallel arrays, `types[i]` is the type
+  # *name* text (e.g. "Int") for parameter `i`, or nil if that parameter
+  # had no `: Type` annotation. Resolving a type name to a type id and
+  # declaring its type set happens later, inside the callee's own
+  # switched-in context (see compile_function_body/emit_parameter_type_checks)
+  # -- declare_type_set needs the *callee's* function_index, which isn't
+  # known yet while still parsing the parameter list in the caller's
+  # (outer) context.
   def parse_parameter_names()
     self.skip_newlines()
-    parameter_names = []
+    names = []
+    types = []
     if @current.kind() != :right_paren
       more = true
       while more && !@failed
@@ -462,10 +503,22 @@ class Parser
           self.fail("expected parameter name")
           more = false
         else
-          parameter_names.push(self.token_text(@current))
+          names.push(self.token_text(@current))
           self.advance_token()
+          type_name = nil
+          if @current.kind() == :colon
+            self.advance_token()
+            if @current.kind() != :identifier
+              self.fail("expected type after ':'")
+              more = false
+            else
+              type_name = self.token_text(@current)
+              self.advance_token()
+            end
+          end
+          types.push(type_name)
           self.skip_newlines()
-          if @current.kind() == :comma
+          if !@failed && @current.kind() == :comma
             self.advance_token()
             self.skip_newlines()
             more = @current.kind() != :right_paren
@@ -475,7 +528,40 @@ class Parser
         end
       end
     end
-    parameter_names
+    [names, types]
+  end
+
+  def resolve_type_name(name)
+    return Type::INT if name == "Int"
+    return Type::FLOAT if name == "Float"
+    return Type::STRING if name == "String"
+    return Type::BOOL if name == "Bool"
+    return Type::NIL if name == "Nil"
+    class_entry = self.find_class(name)
+    if class_entry != nil
+      return Type::CLASS_BASE + class_entry[1]
+    end
+    self.fail("unknown type annotation")
+    0
+  end
+
+  def emit_type_check(reg, type_name)
+    type_id = self.resolve_type_name(type_name)
+    return if @failed
+    set_index = @builder.declare_type_set(@current_function_index, type_id)
+    self.emit_instruction2(Opcode::CHECK_TYPE, reg, set_index)
+  end
+
+  def parse_optional_return_type()
+    return nil unless @current.kind() == :arrow
+    self.advance_token()
+    if @current.kind() != :identifier
+      self.fail("expected type after '->'")
+      return nil
+    end
+    name = self.token_text(@current)
+    self.advance_token()
+    name
   end
 
   # Switches compiler state into the new function, compiles its body,
@@ -484,13 +570,15 @@ class Parser
   # nested closure alike (the only difference between the two is what
   # happens with the result *after* this returns, handled by
   # compile_definition/emit_closure).
-  def compile_function_body(function_index, parameter_names, enclosing_locals)
+  def compile_function_body(function_index, parameter_names, parameter_types,
+                            return_type, enclosing_locals)
     outer_locals = @locals
     outer_loops = @loops
     outer_next_register = @next_register
     outer_code_count = @code_count
     outer_function_index = @current_function_index
     outer_enclosing_locals = @enclosing_locals
+    outer_return_type = @current_return_type
 
     @locals = []
     @loops = []
@@ -498,11 +586,14 @@ class Parser
     @code_count = 0
     @current_function_index = function_index
     @enclosing_locals = enclosing_locals
+    @current_return_type = return_type
     @function_nesting_depth = @function_nesting_depth + 1
 
     index = 0
     while index < parameter_names.length()
-      self.define_local(parameter_names[index])
+      register = self.define_local(parameter_names[index])
+      type_name = parameter_types[index]
+      self.emit_type_check(register, type_name) if type_name != nil
       index = index + 1
     end
 
@@ -524,6 +615,7 @@ class Parser
 
     if self.consume_block_start()
       body_result = self.compile_sequence()
+      self.emit_type_check(body_result, return_type) if return_type != nil
       self.emit_instruction1(Opcode::RETURN, body_result)
       if @current.kind() != :end
         self.fail("expected 'end' after function body")
@@ -539,6 +631,7 @@ class Parser
     @code_count = outer_code_count
     @current_function_index = outer_function_index
     @enclosing_locals = outer_enclosing_locals
+    @current_return_type = outer_return_type
     @function_nesting_depth = @function_nesting_depth - 1
   end
 
@@ -682,19 +775,23 @@ class Parser
       return
     end
     self.advance_token()
-    parameter_names = self.parse_parameter_names()
+    parsed_parameters = self.parse_parameter_names()
     return if @failed
     if @current.kind() != :right_paren
       self.fail("expected ')' after parameters")
       return
     end
     self.advance_token()
+    parameter_names = parsed_parameters[0]
+    parameter_types = parsed_parameters[1]
+    return_type = self.parse_optional_return_type()
+    return if @failed
 
     arity = parameter_names.length()
     function_index = @builder.declare_function(name, arity + 1, arity + 1)
     outer_method_name = @current_method_name
     @current_method_name = name
-    self.compile_method_body(function_index, parameter_names)
+    self.compile_method_body(function_index, parameter_names, parameter_types, return_type)
     @current_method_name = outer_method_name
     @current_class_method_names.push(name)
     @builder.declare_method(@current_class_index, name, function_index, arity, arity, false)
@@ -710,28 +807,33 @@ class Parser
     found
   end
 
-  def compile_method_body(function_index, parameter_names)
+  def compile_method_body(function_index, parameter_names, parameter_types, return_type)
     outer_locals = @locals
     outer_loops = @loops
     outer_next_register = @next_register
     outer_code_count = @code_count
     outer_function_index = @current_function_index
+    outer_return_type = @current_return_type
 
     @locals = []
     @loops = []
     @next_register = 0
     @code_count = 0
     @current_function_index = function_index
+    @current_return_type = return_type
     self.allocate_register()
 
     index = 0
     while index < parameter_names.length()
-      self.define_local(parameter_names[index])
+      register = self.define_local(parameter_names[index])
+      type_name = parameter_types[index]
+      self.emit_type_check(register, type_name) if type_name != nil
       index = index + 1
     end
 
     if self.consume_block_start()
       body_result = self.compile_sequence()
+      self.emit_type_check(body_result, return_type) if return_type != nil
       self.emit_instruction1(Opcode::RETURN, body_result)
       if @current.kind() != :end
         self.fail("expected 'end' after method body")
@@ -746,6 +848,7 @@ class Parser
     @next_register = outer_next_register
     @code_count = outer_code_count
     @current_function_index = outer_function_index
+    @current_return_type = outer_return_type
   end
 
   # Shared by compile_call/compile_closure_call: parses `(arg, arg, ...)`
@@ -1088,6 +1191,7 @@ class Parser
     else
       self.allocate_register()
     end
+    self.emit_type_check(value, @current_return_type) if @current_return_type != nil
     self.emit_instruction1(Opcode::RETURN, value)
     value
   end

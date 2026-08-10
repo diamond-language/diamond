@@ -885,12 +885,22 @@ static DiamondVmStatus program_builder_invoke_helper(DiamondVm *vm,
     const bool declare_method_method=
         method_name->length==sizeof("declare_method")-1&&
         memcmp(method_name->chars,"declare_method",sizeof("declare_method")-1)==0;
+    /* Phase 3 sub-phase 4 (gradual typing, first slice): a single-member
+     * type set -- one scalar type (a primitive or a declared class), no
+     * unions/Array[T]/Hash[K,V]/Callable/interfaces/generics yet, each a
+     * natural, separate future extension of this same method rather than
+     * something this round needs. See docs/roadmap.md. */
+    const bool declare_type_set_method=
+        method_name->length==sizeof("declare_type_set")-1&&
+        memcmp(method_name->chars,"declare_type_set",
+            sizeof("declare_type_set")-1)==0;
     const bool run_method=method_name->length==sizeof("run")-1&&
         memcmp(method_name->chars,"run",sizeof("run")-1)==0;
     if(!declare_function_method&&!emit_byte_method&&!patch_byte_method&&
        !add_constant_method&&!add_string_method&&
        !set_register_count_method&&!declare_class_method&&
-       !declare_field_method&&!declare_method_method&&!run_method) {
+       !declare_field_method&&!declare_method_method&&
+       !declare_type_set_method&&!run_method) {
         snprintf(vm->error,sizeof vm->error,"undefined method '%.*s' for %s",
             (int)method_name->length,method_name->chars,"ProgramBuilder");
         return DIAMOND_VM_TYPE_ERROR;
@@ -1192,6 +1202,40 @@ static DiamondVmStatus program_builder_invoke_helper(DiamondVm *vm,
         method->required_arity=(uint8_t)required_value;
         method->is_private=registers[(size_t)base+5].as.boolean;
         *result=DIAMOND_NIL;return DIAMOND_VM_OK;
+    }
+    if(declare_type_set_method) {
+        if(argc!=2)return DIAMOND_VM_ARITY_ERROR;
+        if(registers[base].kind!=DIAMOND_VALUE_INT||
+           registers[(size_t)base+1].kind!=DIAMOND_VALUE_INT) {
+            snprintf(vm->error,sizeof vm->error,
+                "ProgramBuilder#declare_type_set arguments must be (Int, Int)");
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        DiamondFunction *target=
+            program_builder_target(built,registers[base].as.integer);
+        const int64_t type_id=registers[(size_t)base+1].as.integer;
+        const bool primitive=type_id>=0&&type_id<DIAMOND_TYPE_CLASS_BASE;
+        const bool class_type=type_id>=DIAMOND_TYPE_CLASS_BASE&&
+            (uint64_t)(type_id-DIAMOND_TYPE_CLASS_BASE)<built->class_count;
+        if(target==nullptr||!(primitive||class_type)) {
+            snprintf(vm->error,sizeof vm->error,"ProgramBuilder#%s",
+                "declare_type_set has an invalid function index or type id");
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        if(target->type_set_count==DIAMOND_MAX_TYPE_SETS) {
+            snprintf(vm->error,sizeof vm->error,
+                "function has too many type annotations");
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        const int64_t new_index=(int64_t)target->type_set_count;
+        DiamondTypeSet *set=&target->type_sets[target->type_set_count++];
+        *set=(DiamondTypeSet){.count=1};
+        set->members[0]=(DiamondTypeMember){.id=(uint8_t)type_id,
+            .argument_set=UINT8_MAX,.second_argument_set=UINT8_MAX,
+            .callable_arity=UINT8_MAX,.callable_return_set=UINT8_MAX};
+        for(size_t index=0;index<16;index++)
+            set->members[0].callable_parameter_sets[index]=UINT8_MAX;
+        *result=DIAMOND_INT(new_index);return DIAMOND_VM_OK;
     }
     /* run_method: the only remaining possibility once the combined
      * "no method matched" check above passed. */
