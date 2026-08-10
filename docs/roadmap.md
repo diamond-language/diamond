@@ -2015,6 +2015,12 @@ future work.
   `begin` destination now retains it for subsequent nil and `is` narrowing. A
   nominal union recovery brings the parser harness to 95 cases.
 
+- Self-hosting, Phase 3 sub-phase 5 (eleventh slice): ensure-only expressions.
+  Rescue handlers now begin disabled and are enabled only by an actual rescue
+  clause, allowing `begin ... ensure ... end` to run cleanup while preserving
+  normal results and propagating exceptions. A normal cleanup case brings the
+  parser harness to 96 cases.
+
 ## Next priorities
 
 - Self-hosting, Phase 3 sub-phase 5: exceptions, modules, and `require`.

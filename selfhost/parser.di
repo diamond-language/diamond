@@ -339,7 +339,7 @@ class Parser
   def emit_rescue_handler(exception)
     self.emit_byte(Opcode::PUSH_RESCUE)
     self.emit_byte(exception)
-    self.emit_byte(0)
+    self.emit_byte(128)
     index = 0
     while index < 8
       self.emit_byte(0)
@@ -352,21 +352,22 @@ class Parser
   end
 
   def parse_rescue_types(handler, exception)
-    return if @current.kind() != :colon
-    self.advance_token()
     types = []
-    while !@failed
-      if @current.kind() != :identifier
-        self.fail("expected rescue type")
-      elsif types.length() == 8
-        self.fail("too many rescue types")
-      else
-        types.push(self.resolve_type_name(self.token_text(@current)))
-        self.advance_token()
-        if @current.kind() == :pipe
-          self.advance_token()
+    if @current.kind() == :colon
+      self.advance_token()
+      while !@failed
+        if @current.kind() != :identifier
+          self.fail("expected rescue type")
+        elsif types.length() == 8
+          self.fail("too many rescue types")
         else
-          break
+          types.push(self.resolve_type_name(self.token_text(@current)))
+          self.advance_token()
+          if @current.kind() == :pipe
+            self.advance_token()
+          else
+            break
+          end
         end
       end
     end
@@ -1970,31 +1971,35 @@ class Parser
     self.emit_byte(Opcode::POP_RESCUE)
     finished = self.emit_jump(Opcode::JUMP, 0)
     self.patch_jump(handler, @code_count)
-    if @current.kind() != :rescue
-      self.fail("expected 'rescue' after begin body")
-      return destination
-    end
-    self.advance_token()
-    rescue_local_count = @locals.length()
-    if @current.kind() == :identifier
-      @locals.push([self.token_text(@current), exception, false])
+    rescued_fact = body_fact
+    rescued_declaration = body_declaration
+    rescued_finished = nil
+    if @current.kind() == :rescue
       self.advance_token()
-    end
-    self.parse_rescue_types(handler, exception)
-    return destination unless self.consume_block_start()
-    outer_exception = @current_exception
-    outer_retry_target = @current_retry_target
-    @current_exception = exception
-    @current_retry_target = retry_target
-    rescued = self.compile_sequence()
-    rescued_fact = self.type_fact(rescued)
-    rescued_declaration = self.declared_type(rescued)
-    @current_exception = outer_exception
-    @current_retry_target = outer_retry_target
-    self.emit_instruction2(Opcode::MOVE, destination, rescued)
-    rescued_finished = self.emit_jump(Opcode::JUMP, 0)
-    while @locals.length() > rescue_local_count
-      @locals.pop()
+      rescue_local_count = @locals.length()
+      if @current.kind() == :identifier
+        @locals.push([self.token_text(@current), exception, false])
+        self.advance_token()
+      end
+      self.parse_rescue_types(handler, exception)
+      return destination unless self.consume_block_start()
+      outer_exception = @current_exception
+      outer_retry_target = @current_retry_target
+      @current_exception = exception
+      @current_retry_target = retry_target
+      rescued = self.compile_sequence()
+      rescued_fact = self.type_fact(rescued)
+      rescued_declaration = self.declared_type(rescued)
+      @current_exception = outer_exception
+      @current_retry_target = outer_retry_target
+      self.emit_instruction2(Opcode::MOVE, destination, rescued)
+      rescued_finished = self.emit_jump(Opcode::JUMP, 0)
+      while @locals.length() > rescue_local_count
+        @locals.pop()
+      end
+    elsif @current.kind() != :ensure
+      self.fail("expected 'rescue' or 'ensure' after begin body")
+      return destination
     end
     self.patch_jump(finished, @code_count)
     if @current.kind() == :else
@@ -2003,7 +2008,7 @@ class Parser
       normal = self.compile_sequence()
       self.emit_instruction2(Opcode::MOVE, destination, normal)
     end
-    self.patch_jump(rescued_finished, @code_count)
+    self.patch_jump(rescued_finished, @code_count) if rescued_finished != nil
     self.emit_byte(Opcode::RUN_ENSURE)
     continuation_operand = @code_count
     self.emit_byte(0)
