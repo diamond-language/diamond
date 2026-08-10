@@ -2472,6 +2472,7 @@ class Parser
         end
       end
     end
+    return self.allocate_register() if @failed
     if !@failed && @current.kind() != :right_brace
       self.fail("expected '}' after hash literal")
     else
