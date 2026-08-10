@@ -1919,9 +1919,17 @@ class Parser
       return destination
     end
     self.advance_token()
+    rescue_local_count = @locals.length()
+    if @current.kind() == :identifier
+      @locals.push([self.token_text(@current), exception, false])
+      self.advance_token()
+    end
     return destination unless self.consume_block_start()
     rescued = self.compile_sequence()
     self.emit_instruction2(Opcode::MOVE, destination, rescued)
+    while @locals.length() > rescue_local_count
+      @locals.pop()
+    end
     if @current.kind() != :end
       self.fail("expected 'end' after begin body")
       return destination

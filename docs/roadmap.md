@@ -1974,6 +1974,11 @@ future work.
   handlers on the appropriate paths and merge their result value. A raised
   string recovered as an integer brings the parser harness to 87 cases.
 
+- Self-hosting, Phase 3 sub-phase 5 (third slice): rescue bindings. A catch-all
+  clause may bind its exception register to a local name scoped to the rescue
+  body, matching the native compiler without an extra move. Returning the
+  rescued integer brings the parser harness to 88 cases.
+
 ## Next priorities
 
 - Self-hosting, Phase 3 sub-phase 5: exceptions, modules, and `require`.
