@@ -918,6 +918,31 @@ class Parser
     copy
   end
 
+  def type_fact_in(facts, reg)
+    index = facts.length() - 1
+    while index >= 0
+      return facts[index][1] if facts[index][0] == reg
+      index = index - 1
+    end
+    nil
+  end
+
+  def merge_local_type_facts(original, then_facts, else_facts)
+    @type_facts = original
+    index = 0
+    while index < @locals.length()
+      local = @locals[index]
+      unless local[2]
+        then_fact = self.type_fact_in(then_facts, local[1])
+        else_fact = self.type_fact_in(else_facts, local[1])
+        if then_fact != nil && then_fact == else_fact
+          self.set_type_fact(local[1], then_fact)
+        end
+      end
+      index = index + 1
+    end
+  end
+
   def annotation_accepts_type?(annotation, type_id)
     index = 0
     while index < annotation.length()
@@ -1762,6 +1787,7 @@ class Parser
     then_result = self.compile_sequence()
     then_fact = self.type_fact(then_result)
     then_declaration = self.declared_type(then_result)
+    then_branch_facts = self.copy_type_facts()
     self.emit_instruction2(Opcode::MOVE, destination, then_result)
     end_jump = self.emit_jump(Opcode::JUMP, 0)
     self.patch_jump(false_jump, @code_count)
@@ -1775,6 +1801,7 @@ class Parser
       else_result = self.compile_sequence()
       else_fact = self.type_fact(else_result)
       else_declaration = self.declared_type(else_result)
+      else_branch_facts = self.copy_type_facts()
       self.emit_instruction2(Opcode::MOVE, destination, else_result)
     elsif @current.kind() == :elsif
       @type_facts = original_facts
@@ -1782,6 +1809,7 @@ class Parser
       else_result = self.parse_if(false)
       else_fact = self.type_fact(else_result)
       else_declaration = self.declared_type(else_result)
+      else_branch_facts = self.copy_type_facts()
       self.emit_instruction2(Opcode::MOVE, destination, else_result)
       end_consumed = true
     else
@@ -1789,6 +1817,7 @@ class Parser
       self.emit_instruction1(Opcode::NIL, destination)
       else_fact = Type::NIL
       else_declaration = nil
+      else_branch_facts = original_facts
     end
 
     if !end_consumed && @current.kind() != :end
@@ -1797,7 +1826,8 @@ class Parser
     end
     self.advance_token() unless end_consumed
     self.patch_jump(end_jump, @code_count)
-    @type_facts = original_facts
+    self.merge_local_type_facts(original_facts, then_branch_facts,
+                                else_branch_facts)
     if then_fact != nil && then_fact == else_fact
       self.set_type_fact(destination, then_fact)
     end

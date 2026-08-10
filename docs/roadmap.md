@@ -1877,6 +1877,13 @@ future work.
   subsequent nil or `is` narrowing. A union-valued conditional brings the
   parser harness to 69 cases.
 
+- Self-hosting, Phase 3 sub-phase 4 (twenty-first slice): matching local fact
+  joins. Existing uncaptured locals assigned the same exact type on every
+  branch now retain that type after the conditional, even when it differs from
+  the incoming fact; divergent and captured values remain conservative. A
+  Boolean-to-integer two-branch reassignment brings the parser harness to 70
+  cases.
+
 ## Next priorities
 
 - Self-hosting, Phase 3 sub-phase 4 remaining slices:
