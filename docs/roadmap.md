@@ -2428,6 +2428,10 @@ future work.
   inclusion builder bridge. One module can copy another module's fields and
   includable methods through an index-safe dedicated ProgramBuilder operation.
 
+- Self-hosting, Phase 3 follow-up (one-hundred-forty-fifth slice): transitive
+  module inclusion. Module bodies resolve `include`, copy symbolic state and
+  methods, and preserve both through a later class inclusion and invocation.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,

@@ -1486,6 +1486,8 @@ class Parser
       while !@failed && @current.kind() != :end
         if @current.kind() == :def
           self.compile_method()
+        elsif @current.kind() == :include
+          self.compile_module_include()
         elsif self.assignment_ahead?()
           constant_name = self.token_text(@current)
           first = constant_name.slice(0, 1)
@@ -1525,6 +1527,29 @@ class Parser
     self.allocate_register()
   end
 
+  def compile_module_include()
+    self.advance_token()
+    if @current.kind() != :identifier
+      self.fail("expected module name after 'include'")
+      return
+    end
+    name = self.token_text(@current)
+    included = nil
+    index = 0
+    while index < @modules.length()
+      included = @modules[index][1] if @modules[index][0] == name
+      index = index + 1
+    end
+    if included == nil
+      self.fail("undefined module")
+    elsif included == @current_module_index
+      self.fail("module cannot include itself")
+    else
+      @builder.include_module_in_module(@current_module_index, included)
+      self.advance_token()
+    end
+  end
+
   # An instance method: register 0 is always `self` (allocated before
   # any user-declared parameter, exactly mirroring compile_definition.c's
   # own class/module branch), and the compiled function is registered
@@ -1548,8 +1573,12 @@ class Parser
       end
       return if @failed
     else
-      if self.current_class_has_method?(name)
-        self.fail("method is already defined")
+      index = 0
+      while index < @current_class_method_names.length()
+        self.fail("method is already defined") if @current_class_method_names[index] == name
+        index = index + 1
+      end
+      if @failed
         return
       end
     end
@@ -1584,16 +1613,6 @@ class Parser
       @current_class_method_names.push(name)
       @builder.declare_method(@current_class_index, name, function_index, arity, arity, false)
     end
-  end
-
-  def current_class_has_method?(name)
-    index = 0
-    found = false
-    while index < @current_class_method_names.length()
-      found = true if @current_class_method_names[index] == name
-      index = index + 1
-    end
-    found
   end
 
   def compile_method_body(function_index, parameter_names, parameter_types, return_type)
