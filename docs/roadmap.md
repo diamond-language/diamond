@@ -2279,6 +2279,10 @@ future work.
   `return`. Modifier boundaries produce a nil early return on the taken path
   while a false condition falls through to the rest of the function body.
 
+- Self-hosting, Phase 3 follow-up (one-hundred-eighth slice): postfix bare
+  `raise`. A taken rescue-local modifier re-raises the current exception value,
+  while a false condition continues through the handler normally.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,

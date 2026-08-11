@@ -1999,7 +1999,7 @@ class Parser
 
   def compile_raise()
     self.advance_token()
-    if @current.kind() == :newline || @current.kind() == :end || @current.kind() == :rescue || @current.kind() == :ensure || @current.kind() == :eof
+    if @current.kind() == :newline || @current.kind() == :end || @current.kind() == :rescue || @current.kind() == :ensure || @current.kind() == :if || @current.kind() == :unless || @current.kind() == :eof
       if @current_exception == nil
         self.fail("bare 'raise' used outside rescue")
         return 0
