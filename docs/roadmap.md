@@ -2319,6 +2319,10 @@ future work.
   declaration modifier diagnostics. Completed structural-interface bodies also
   reject trailing postfix conditions with the declaration-specific message.
 
+- Self-hosting, Phase 3 follow-up (one-hundred-eighteenth slice): endless
+  nested closures. Equals-delimited nested functions retain captured outer
+  locals and restore the enclosing function's compiler state after emission.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,
