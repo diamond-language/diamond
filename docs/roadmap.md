@@ -2352,6 +2352,10 @@ future work.
   conditioned endless functions. Both concrete and skipped nil results flow
   through an explicit union return contract.
 
+- Self-hosting, Phase 3 follow-up (one-hundred-twenty-sixth slice): module
+  builder bridge. `ProgramBuilder#declare_module` now creates validated module
+  descriptors for the self-hosted parser's upcoming namespace lowering.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,

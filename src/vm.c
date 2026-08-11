@@ -879,6 +879,9 @@ static DiamondVmStatus program_builder_invoke_helper(DiamondVm *vm,
     const bool declare_class_method=
         method_name->length==sizeof("declare_class")-1&&
         memcmp(method_name->chars,"declare_class",sizeof("declare_class")-1)==0;
+    const bool declare_module_method=
+        method_name->length==sizeof("declare_module")-1&&
+        memcmp(method_name->chars,"declare_module",sizeof("declare_module")-1)==0;
     const bool declare_field_method=
         method_name->length==sizeof("declare_field")-1&&
         memcmp(method_name->chars,"declare_field",sizeof("declare_field")-1)==0;
@@ -921,6 +924,7 @@ static DiamondVmStatus program_builder_invoke_helper(DiamondVm *vm,
     if(!declare_function_method&&!emit_byte_method&&!patch_byte_method&&
        !add_constant_method&&!add_string_method&&
        !set_register_count_method&&!declare_class_method&&
+       !declare_module_method&&
        !declare_field_method&&!declare_method_method&&
        !declare_type_set_method&&!set_parameter_type_method&&
        !set_return_type_method&&!declare_interface_method&&
@@ -1141,6 +1145,34 @@ static DiamondVmStatus program_builder_invoke_helper(DiamondVm *vm,
         }
         program_builder_recompute_shapes(class);
         *result=DIAMOND_INT(new_index);return DIAMOND_VM_OK;
+    }
+    if(declare_module_method) {
+        if(argc!=1)return DIAMOND_VM_ARITY_ERROR;
+        if(registers[base].kind!=DIAMOND_VALUE_OBJECT||
+           registers[base].as.object->kind!=DIAMOND_OBJECT_STRING) {
+            snprintf(vm->error,sizeof vm->error,
+                "ProgramBuilder#declare_module argument must be String");
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        const DiamondString *name=(const DiamondString *)registers[base].as.object;
+        if(name->length==0||name->length>=DIAMOND_MAX_FUNCTION_NAME||
+           built->module_count==DIAMOND_MAX_MODULES) {
+            snprintf(vm->error,sizeof vm->error,
+                "ProgramBuilder#declare_module has an invalid name");
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        for(size_t index=0;index<built->module_count;index++)
+            if(strlen(built->modules[index].name)==name->length&&
+               memcmp(built->modules[index].name,name->chars,name->length)==0) {
+                snprintf(vm->error,sizeof vm->error,"module name is already defined");
+                return DIAMOND_VM_TYPE_ERROR;
+            }
+        const int64_t index=(int64_t)built->module_count;
+        DiamondModule *module=&built->modules[built->module_count++];
+        *module=(DiamondModule){};
+        memcpy(module->name,name->chars,name->length);
+        module->name[name->length]='\0';
+        *result=DIAMOND_INT(index);return DIAMOND_VM_OK;
     }
     if(declare_field_method) {
         if(argc!=2)return DIAMOND_VM_ARITY_ERROR;
