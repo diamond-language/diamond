@@ -2516,6 +2516,10 @@ future work.
   function metadata. Self-hosted module entries retain direct function indices
   and arities plus the ordered singleton-export descriptor set.
 
+- Self-hosting, Phase 3 follow-up (one-hundred-sixty-seventh slice): qualified
+  module calls. Exported descriptors lower `Module.function(...)` through a
+  receiver-aware direct `CALL`, matching native `module_function` dispatch.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,

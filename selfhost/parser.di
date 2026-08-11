@@ -2499,11 +2499,6 @@ class Parser
 
   # --- control flow ---
 
-  def consume_loop_start()
-    return false unless self.consume_block_start_or(:do)
-    true
-  end
-
   def consume_block_start_or(delimiter)
     if @current.kind() == delimiter
       self.advance_token()
@@ -2624,7 +2619,7 @@ class Parser
     self.emit_instruction1(Opcode::NIL, destination)
     loop_start = @code_count
     condition = self.parse_expression()
-    return 0 unless self.consume_loop_start()
+    return 0 unless self.consume_block_start_or(:do)
     branch_condition = condition
     if inverted
       branch_condition = self.allocate_register()
@@ -2653,7 +2648,7 @@ class Parser
   def parse_loop()
     destination = self.allocate_register()
     self.emit_instruction1(Opcode::NIL, destination)
-    return destination unless self.consume_loop_start()
+    return destination unless self.consume_block_start_or(:do)
     body_start = @code_count
     frame = [destination, [], body_start, body_start]
     @loops.push(frame)
@@ -2962,13 +2957,17 @@ class Parser
   # with no following `(` is always a local read.
   def parse_name()
     name = self.token_text(@previous)
+    module_entry = nil
+    module_index = 0
+    while module_index < @modules.length()
+      module_entry = @modules[module_index] if @modules[module_index][0] == name
+      module_index = module_index + 1
+    end
+    if module_entry != nil && @current.kind() == :dot
+      self.advance_token()
+      return self.compile_module_singleton_call(module_entry)
+    end
     if @current.kind() == :double_colon
-      module_entry = nil
-      module_index = 0
-      while module_index < @modules.length()
-        module_entry = @modules[module_index] if @modules[module_index][0] == name
-        module_index = module_index + 1
-      end
       self.advance_token()
       if @current.kind() != :identifier
         self.fail("expected name after '::'")
@@ -3021,6 +3020,50 @@ class Parser
       return 0
     end
     self.read_local(local)
+  end
+
+  def compile_module_singleton_call(module_entry)
+    if @current.kind() != :identifier
+      self.fail("expected singleton function after module name")
+      return 0
+    end
+    name = self.token_text(@current)
+    descriptor = nil
+    index = 0
+    while index < module_entry[7].length()
+      descriptor = module_entry[7][index] if module_entry[7][index][0] == name
+      index = index + 1
+    end
+    if descriptor == nil
+      self.fail("undefined module singleton function")
+      return 0
+    end
+    self.advance_token()
+    if @current.kind() != :left_paren
+      self.fail("expected '(' after singleton function")
+      return 0
+    end
+    self.advance_token()
+    parsed = self.parse_call_arguments()
+    return 0 if parsed == nil
+    if parsed[1] != descriptor[2]
+      self.fail("wrong number of arguments")
+      return 0
+    end
+    base = self.allocate_register()
+    index = 0
+    while index < parsed[1]
+      self.allocate_register()
+      self.emit_instruction2(Opcode::MOVE, base + index + 1, parsed[0] + index)
+      index = index + 1
+    end
+    destination = self.allocate_register()
+    self.emit_byte(Opcode::CALL)
+    self.emit_byte(destination)
+    self.emit_byte(descriptor[1])
+    self.emit_byte(base)
+    self.emit_byte(parsed[1] + 1)
+    destination
   end
 
   def compile_new_call(class_index)
