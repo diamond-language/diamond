@@ -2356,6 +2356,10 @@ future work.
   builder bridge. `ProgramBuilder#declare_module` now creates validated module
   descriptors for the self-hosted parser's upcoming namespace lowering.
 
+- Self-hosting, Phase 3 follow-up (one-hundred-twenty-seventh slice): namespace
+  constant builder bridge. Qualified names now reserve validated constant slots
+  and expose their bytecode operand indexes to the self-hosted parser.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,
