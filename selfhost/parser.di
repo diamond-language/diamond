@@ -2817,6 +2817,20 @@ class Parser
     class_entry = self.find_class(name)
     return self.compile_new_call(class_entry[1]) if class_entry != nil && @current.kind() == :dot
     local = self.find_local(name)
+    if local == nil && @current_module_index != nil
+      constant_index = nil
+      constants = @modules[@modules.length() - 1][2]
+      index = 0
+      while index < constants.length()
+        constant_index = constants[index][1] if constants[index][0] == name
+        index = index + 1
+      end
+      if constant_index != nil
+        destination = self.allocate_register()
+        self.emit_instruction2(48, destination, constant_index)
+        return destination
+      end
+    end
     if @current.kind() == :left_paren
       return self.compile_closure_call(local) if local != nil
       return self.parse_print_call(true) if name == "puts"

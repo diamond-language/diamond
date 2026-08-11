@@ -2376,6 +2376,10 @@ future work.
   constant modifier diagnostics. A trailing postfix condition now receives the
   native compiler's module-body rejection message.
 
+- Self-hosting, Phase 3 follow-up (one-hundred-thirty-second slice): lexical
+  module constant reads. Later definitions can reference earlier constants in
+  the active module and emit the same namespace-slot lookup as qualified reads.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,
