@@ -2044,6 +2044,10 @@ future work.
   parameters coverage. An interface method parameter list missing `)` must be
   rejected identically by the native and self-hosted parsers.
 
+- Self-hosting, Phase 3 sub-phase 5 (fifty-first slice): missing superclass
+  coverage. A class inheritance `<` without a following superclass name must
+  produce the same explicit diagnostic in both compilers.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,
