@@ -2492,6 +2492,10 @@ future work.
   visibility-list diagnostics. Parenthesized target lists require their closing
   delimiter and match the native compiler's diagnostic.
 
+- Self-hosting, Phase 3 follow-up (one-hundred-sixty-first slice): module
+  singleton export bridge. `ProgramBuilder#export_module_method` privatizes a
+  direct module method and installs its receiver-aware singleton descriptor.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,
