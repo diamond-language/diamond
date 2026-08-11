@@ -2183,6 +2183,10 @@ future work.
   dispatch. Exceptions rejected by earlier filtered clauses now reach a final
   catch-all clause in source order with native runtime parity.
 
+- Self-hosting, Phase 3 sub-phase 5 (eighty-fourth slice): declared
+  multi-rescue result joins. Matching declared unions across the protected
+  body and every handler remain available for downstream type narrowing.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,
