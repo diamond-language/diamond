@@ -2139,6 +2139,10 @@ future work.
   propagation. A value rejected by every inner filtered clause now re-raises
   into an outer matching rescue, with native/self-hosted runtime parity.
 
+- Self-hosting, Phase 3 sub-phase 5 (seventy-third slice): catch-all ordering
+  diagnostics. Any rescue clause following a catch-all is unreachable and is
+  now rejected identically by both compilers.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,
