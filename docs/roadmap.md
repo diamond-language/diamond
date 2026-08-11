@@ -2255,6 +2255,10 @@ future work.
   Statement-level modifier lookahead and bytecode re-entry now skip or execute
   an ordinary expression without evaluating its body eagerly.
 
+- Self-hosting, Phase 3 follow-up (one-hundred-second slice): postfix `unless`.
+  Inverted modifier branches execute only for false conditions and preserve
+  the same lazy statement-body behavior as postfix `if`.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,
