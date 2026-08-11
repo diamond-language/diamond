@@ -2199,6 +2199,10 @@ future work.
   `redo` jumps directly to the active body target without reevaluating the
   condition, matching native behavior when the condition has become false.
 
+- Self-hosting, Phase 3 follow-up (eighty-eighth slice): unconditional-loop
+  `next`. A skipped iteration re-enters the body target while a later valued
+  `break` still supplies the loop expression result.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,
