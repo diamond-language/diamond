@@ -2488,6 +2488,10 @@ future work.
   visibility-list diagnostics. Parenthesized visibility directives require a
   method name and match the native compiler's rejection message.
 
+- Self-hosting, Phase 3 follow-up (one-hundred-sixtieth slice): unterminated
+  visibility-list diagnostics. Parenthesized target lists require their closing
+  delimiter and match the native compiler's diagnostic.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,
