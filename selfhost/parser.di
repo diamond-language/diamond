@@ -1155,13 +1155,6 @@ class Parser
     end
   end
 
-  def array_element_annotation(annotation)
-    return nil if annotation == nil || annotation.length() != 1
-    member = annotation[0]
-    return nil if self.resolve_type_name(member[0]) != Type::ARRAY
-    member[1]
-  end
-
   def hash_value_annotation(annotation)
     return nil if annotation == nil || annotation.length() != 1
     member = annotation[0]
@@ -2269,7 +2262,12 @@ class Parser
     self.advance_token()
     destination = self.allocate_register()
     self.emit_instruction3(Opcode::INDEX_GET, destination, receiver, index)
-    element = self.array_element_annotation(self.declared_type(receiver))
+    receiver_annotation = self.declared_type(receiver)
+    element = nil
+    if receiver_annotation != nil && receiver_annotation.length() == 1
+      member = receiver_annotation[0]
+      element = member[1] if self.resolve_type_name(member[0]) == Type::ARRAY
+    end
     if element != nil
       @declared_types.push([destination, element])
       fact = self.annotation_single_type(element)
@@ -2988,38 +2986,17 @@ class Parser
   def parse_name()
     name = self.token_text(@previous)
     module_entry = nil
-    module_index = 0
-    while module_index < @modules.length()
-      module_entry = @modules[module_index] if @modules[module_index][0] == name
-      module_index = module_index + 1
+    index = 0
+    while index < @modules.length()
+      module_entry = @modules[index] if @modules[index][0] == name
+      index = index + 1
     end
     if module_entry != nil && @current.kind() == :dot
       self.advance_token()
       return self.compile_module_singleton_call(module_entry)
     end
     if @current.kind() == :double_colon
-      self.advance_token()
-      if @current.kind() != :identifier
-        self.fail("expected name after '::'")
-        return 0
-      end
-      constant_name = self.token_text(@current)
-      self.advance_token()
-      constant_index = nil
-      if module_entry != nil
-        index = 0
-        while index < module_entry[2].length()
-          constant_index = module_entry[2][index][1] if module_entry[2][index][0] == constant_name
-          index = index + 1
-        end
-      end
-      if constant_index == nil
-        self.fail("undefined namespaced class")
-        return 0
-      end
-      destination = self.allocate_register()
-      self.emit_instruction2(48, destination, constant_index)
-      return destination
+      return self.parse_qualified_name(name, module_entry)
     end
     class_entry = self.find_class(name)
     return self.compile_new_call(class_entry[1]) if class_entry != nil && @current.kind() == :dot
@@ -3050,6 +3027,42 @@ class Parser
       return 0
     end
     self.read_local(local)
+  end
+
+  def parse_qualified_name(name, module_entry)
+    self.advance_token()
+    if @current.kind() != :identifier
+      self.fail("expected name after '::'")
+      return 0
+    end
+    constant_name = self.token_text(@current)
+    qualified_name = name + "::" + constant_name
+    self.advance_token()
+    nested_module = nil
+    index = 0
+    while index < @modules.length()
+      nested_module = @modules[index] if @modules[index][0] == qualified_name
+      index = index + 1
+    end
+    if nested_module != nil && @current.kind() == :dot
+      self.advance_token()
+      return self.compile_module_singleton_call(nested_module)
+    end
+    constant_index = nil
+    if module_entry != nil
+      index = 0
+      while index < module_entry[2].length()
+        constant_index = module_entry[2][index][1] if module_entry[2][index][0] == constant_name
+        index = index + 1
+      end
+    end
+    if constant_index == nil
+      self.fail("undefined namespaced class")
+      return 0
+    end
+    destination = self.allocate_register()
+    self.emit_instruction2(48, destination, constant_index)
+    destination
   end
 
   def compile_module_singleton_call(module_entry)
