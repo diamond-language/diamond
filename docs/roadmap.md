@@ -2032,6 +2032,10 @@ future work.
   interface coverage. An inheritance `<` without a following interface name
   must produce the same explicit diagnostic in both compilers.
 
+- Self-hosting, Phase 3 sub-phase 5 (forty-eighth slice): missing interface
+  method-name coverage. An interface `def` without an identifier must be
+  rejected identically by the native and self-hosted parsers.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,
