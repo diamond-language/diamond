@@ -1541,7 +1541,17 @@ class Parser
         more = true
         while more && !@failed
           name = self.token_text(@current)
-          @builder.set_module_method_visibility(@current_module_index, name, private_mode)
+          found = false
+          index = 0
+          while index < @modules[@modules.length() - 1][3].length()
+            found = true if @modules[@modules.length() - 1][3][index] == name
+            index = index + 1
+          end
+          if found
+            @builder.set_module_method_visibility(@current_module_index, name, private_mode)
+          else
+            self.fail("visibility target is not defined here")
+          end
           self.advance_token()
           if @current.kind() == :comma
             self.advance_token()

@@ -2472,6 +2472,10 @@ future work.
   private visibility. Private method descriptors retain their visibility while
   being copied through an intermediate module and then into a class.
 
+- Self-hosting, Phase 3 follow-up (one-hundred-fifty-sixth slice): targeted
+  visibility diagnostics. Named visibility directives reject methods that were
+  not directly declared by the active module with the native diagnostic.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,
