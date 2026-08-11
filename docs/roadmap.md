@@ -2024,6 +2024,10 @@ future work.
   block coverage. A rescued `begin` expression missing its closing `end` must
   produce the same explicit diagnostic in both compilers.
 
+- Self-hosting, Phase 3 sub-phase 5 (forty-sixth slice): missing interface-name
+  coverage. An `interface` declaration without an identifier must be rejected
+  identically by the native and self-hosted parsers.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,
