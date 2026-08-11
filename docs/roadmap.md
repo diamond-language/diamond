@@ -2219,6 +2219,10 @@ future work.
   diagnostics. Unlike value-bearing `break`, `next` rejects a following value
   identically in the native and self-hosted parsers.
 
+- Self-hosting, Phase 3 follow-up (ninety-third slice): `redo` value
+  diagnostics. `redo` likewise rejects a following value through the shared
+  loop-control contract in both compilers.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,
