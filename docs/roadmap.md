@@ -2323,6 +2323,10 @@ future work.
   nested closures. Equals-delimited nested functions retain captured outer
   locals and restore the enclosing function's compiler state after emission.
 
+- Self-hosting, Phase 3 follow-up (one-hundred-nineteenth slice): typed
+  conditioned endless methods. Taken values and skipped nil results both pass
+  through the declared union return contract.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,
