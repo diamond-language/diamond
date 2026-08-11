@@ -2508,6 +2508,10 @@ future work.
   export mode. A standalone `module_function` directive exports and privatizes
   each subsequently compiled direct module method.
 
+- Self-hosting, Phase 3 follow-up (one-hundred-sixty-fifth slice): undefined
+  module export diagnostics. Targeted `module_function` rejects names not
+  directly declared by the active module with the native compiler's message.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,
