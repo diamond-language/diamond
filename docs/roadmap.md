@@ -2520,6 +2520,10 @@ future work.
   module calls. Exported descriptors lower `Module.function(...)` through a
   receiver-aware direct `CALL`, matching native `module_function` dispatch.
 
+- Self-hosting, Phase 3 follow-up (one-hundred-sixty-eighth slice): module-call
+  arity diagnostics. Qualified singleton calls validate their argument count
+  against the exported method descriptor before emitting bytecode.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,
