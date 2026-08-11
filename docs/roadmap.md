@@ -2122,6 +2122,10 @@ future work.
   capacity coverage. An explicit `Callable` type list above sixteen parameters
   must produce the same explicit diagnostic in both compilers.
 
+- Self-hosting, Phase 3 sub-phase 5 (sixty-ninth slice): unterminated generic
+  call coverage. An explicit generic invocation missing `]` must be rejected
+  identically by the native and self-hosted parsers.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,
