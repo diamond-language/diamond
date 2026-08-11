@@ -2432,6 +2432,10 @@ future work.
   module inclusion. Module bodies resolve `include`, copy symbolic state and
   methods, and preserve both through a later class inclusion and invocation.
 
+- Self-hosting, Phase 3 follow-up (one-hundred-forty-sixth slice): module
+  self-inclusion diagnostics. The active module rejects including its own
+  descriptor with the native compiler's explicit cycle message.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,
