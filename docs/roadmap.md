@@ -2476,6 +2476,10 @@ future work.
   visibility diagnostics. Named visibility directives reject methods that were
   not directly declared by the active module with the native diagnostic.
 
+- Self-hosting, Phase 3 follow-up (one-hundred-fifty-seventh slice): multiple
+  visibility targets. Comma-separated named directives update every direct
+  descriptor and permit a later targeted promotion of one method.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,
