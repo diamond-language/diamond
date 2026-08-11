@@ -2648,7 +2648,7 @@ class Parser
     return self.parse_array() if kind == :left_bracket
     return self.parse_hash() if kind == :left_brace
     if kind == :self
-      if @current_class_index == nil
+      if @current_class_index == nil && @current_module_index == nil
         self.fail("'self' used outside a method")
         return 0
       end

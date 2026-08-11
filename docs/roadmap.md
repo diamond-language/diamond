@@ -2404,6 +2404,10 @@ future work.
   method dispatch. A module-owned typed method copied into a class resolves and
   executes through ordinary instance invocation.
 
+- Self-hosting, Phase 3 follow-up (one-hundred-thirty-ninth slice): module
+  method receivers. `self` resolves to register zero in module-owned method
+  bodies and preserves the including instance's identity at invocation time.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,
