@@ -1478,6 +1478,9 @@ class Parser
             self.advance_token()
             value = self.parse_expression()
             self.emit_instruction2(49, constant_index, value)
+            if @current.kind() == :if || @current.kind() == :unless
+              self.fail("expected definition or include in module")
+            end
           end
         else
           self.fail("expected module constant or method definition")
