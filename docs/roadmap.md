@@ -2524,6 +2524,10 @@ future work.
   arity diagnostics. Qualified singleton calls validate their argument count
   against the exported method descriptor before emitting bytecode.
 
+- Self-hosting, Phase 3 follow-up (one-hundred-sixty-ninth slice): undefined
+  module-call diagnostics. Qualified calls reject names absent from the active
+  module's singleton export set with the native compiler's message.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,
