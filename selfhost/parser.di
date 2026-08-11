@@ -1486,7 +1486,7 @@ class Parser
     return 0 if @failed
     module_index = @builder.declare_module(name)
     module_entry = @modules.length()
-    @modules.push([name, module_index, [], [], [false], [false], [], []])
+    @modules.push([name, module_index, [], [], [false], [false], [], [], @current_module_name])
     outer_module_index = @current_module_index
     outer_module_name = @current_module_name
     outer_module_entry = @current_module_entry
@@ -1666,6 +1666,14 @@ class Parser
     while index < @modules.length()
       included = @modules[index][1] if @modules[index][0] == name
       index = index + 1
+    end
+    if included == nil && @modules[@current_module_entry][8] != nil
+      name = @modules[@current_module_entry][8] + "::" + name
+      index = 0
+      while index < @modules.length()
+        included = @modules[index][1] if @modules[index][0] == name
+        index = index + 1
+      end
     end
     if included == nil
       self.fail("undefined module")

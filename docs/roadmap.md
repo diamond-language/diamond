@@ -2600,6 +2600,10 @@ future work.
   outer module declarations. Methods declared after a nested module attach to
   the restored parent descriptor and remain exportable as parent singletons.
 
+- Self-hosting, Phase 3 follow-up (one-hundred-eighty-eighth slice): lexical
+  child includes. Nested modules retain their parent namespace and resolve an
+  unqualified sibling include against that lexical scope.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,
