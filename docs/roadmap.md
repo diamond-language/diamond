@@ -2259,6 +2259,10 @@ future work.
   Inverted modifier branches execute only for false conditions and preserve
   the same lazy statement-body behavior as postfix `if`.
 
+- Self-hosting, Phase 3 follow-up (one-hundred-third slice): conditioned
+  assignment. Postfix branches apply local mutation only on their taken path,
+  leaving the prior value unchanged when the condition skips the statement.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,
