@@ -497,6 +497,7 @@ class Parser
         0
       end
       body_start = @code_count
+      declaration_statement = @current.kind() == :def || @current.kind() == :class || @current.kind() == :interface
       if @current.kind() == :def
         result = self.compile_definition()
       elsif @current.kind() == :class
@@ -539,7 +540,9 @@ class Parser
         self.patch_jump(body_jump, body_start)
         result = postfix_result
       end
-      if @current.kind() == :newline
+      if !has_postfix && declaration_statement && (@current.kind() == :if || @current.kind() == :unless)
+        self.fail("postfix modifiers cannot follow declarations")
+      elsif @current.kind() == :newline
         self.skip_newlines()
       elsif !self.at_block_end?()
         self.fail("expected newline after expression")
