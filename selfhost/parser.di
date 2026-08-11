@@ -1978,22 +1978,15 @@ class Parser
   end
 
   # RETURN halts run_chunk unconditionally the instant it executes,
-  # wherever it is in the bytecode -- no jump/patch bookkeeping needed
-  # here the way if/while/loop need, since a mid-body `return` (nested
-  # inside an if, say) doesn't need any special-cased early exit at the
-  # bytecode level, unlike a source-level structured return would in a
-  # language whose VM required one. Simpler than compile_return.c's own
-  # postfix-if/-unless handling in `has_value`'s scan, since postfix
-  # modifiers aren't supported anywhere else in this port either --
-  # `return if cond` would (like `break if cond`) misparse as returning
-  # an if-expression's value, a documented, consistent divergence.
+  # wherever it is in the bytecode. Postfix if/unless delimit a bare return;
+  # compile_sequence's modifier layout makes the opcode itself conditional.
   def compile_return()
     if @current_function_index == -1
       self.fail("'return' used outside a function")
       return 0
     end
     self.advance_token()
-    has_value = @current.kind() != :newline && @current.kind() != :end && @current.kind() != :else && @current.kind() != :eof
+    has_value = @current.kind() != :newline && @current.kind() != :end && @current.kind() != :else && @current.kind() != :if && @current.kind() != :unless && @current.kind() != :eof
     value = if has_value
       self.parse_expression()
     else
