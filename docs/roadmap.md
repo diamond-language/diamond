@@ -2235,6 +2235,10 @@ future work.
   isolation. An inner `redo` targets only the innermost body and preserves the
   outer loop's iteration progress and output order.
 
+- Self-hosting, Phase 3 follow-up (ninety-seventh slice): `redo` in `until`.
+  Body re-entry bypasses the inverted condition even after it becomes true,
+  then ordinary back-edge evaluation exits the loop.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,
