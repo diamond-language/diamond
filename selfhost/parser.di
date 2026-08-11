@@ -470,7 +470,7 @@ class Parser
         result = self.compile_class()
       elsif @current.kind() == :interface
         result = self.compile_interface()
-      elsif @current.kind() == :break
+      elsif @current.kind() == :break || @current.kind() == :next || @current.kind() == :redo
         result = self.compile_break()
       elsif @current.kind() == :return
         result = self.compile_return()
@@ -1888,18 +1888,34 @@ class Parser
   end
 
   def compile_break()
+    kind = @current.kind()
     if @loops.length() == 0
-      self.fail("'break' used outside a loop")
+      if kind == :break
+        self.fail("'break' used outside a loop")
+      elsif kind == :next
+        self.fail("'next' used outside a loop")
+      else
+        self.fail("'redo' used outside a loop")
+      end
       return self.allocate_register()
     end
     self.advance_token()
     has_value = @current.kind() != :newline && @current.kind() != :end && @current.kind() != :else && @current.kind() != :eof
     frame = @loops[@loops.length() - 1]
-    if has_value
+    if kind != :break && has_value
+      self.fail("next and redo do not accept values")
+      return self.allocate_register()
+    elsif has_value
       value = self.parse_expression()
       self.emit_instruction2(Opcode::MOVE, frame[0], value)
     end
-    frame[1].push(self.emit_jump(Opcode::JUMP, 0))
+    if kind == :break
+      frame[1].push(self.emit_jump(Opcode::JUMP, 0))
+    elsif kind == :next
+      self.emit_absolute_jump(frame[2])
+    else
+      self.emit_absolute_jump(frame[3])
+    end
     self.allocate_register()
   end
 
@@ -2255,7 +2271,7 @@ class Parser
       self.emit_instruction2(Opcode::NOT, branch_condition, condition)
     end
     exit_jump = self.emit_jump(Opcode::JUMP_IF_FALSE, branch_condition)
-    frame = [destination, []]
+    frame = [destination, [], loop_start, @code_count]
     entry_facts = self.copy_type_facts()
     @loops.push(frame)
     self.compile_sequence()
@@ -2277,7 +2293,7 @@ class Parser
     self.emit_instruction1(Opcode::NIL, destination)
     return destination unless self.consume_loop_start()
     body_start = @code_count
-    frame = [destination, []]
+    frame = [destination, [], body_start, body_start]
     @loops.push(frame)
     self.compile_sequence()
     @loops.pop()
