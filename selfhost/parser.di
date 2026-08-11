@@ -3049,6 +3049,11 @@ class Parser
       return 0
     end
     name = self.token_text(@current)
+    self.advance_token()
+    if @current.kind() == :equal
+      name = name + "="
+      self.advance_token()
+    end
     descriptor = nil
     index = 0
     while index < module_entry[7].length()
@@ -3059,7 +3064,6 @@ class Parser
       self.fail("undefined module singleton function")
       return 0
     end
-    self.advance_token()
     if @current.kind() != :left_paren
       self.fail("expected '(' after singleton function")
       return 0
