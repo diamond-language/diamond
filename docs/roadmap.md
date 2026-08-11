@@ -2271,6 +2271,10 @@ future work.
   A taken modifier re-enters the active loop body directly, while later false
   conditions fall through and allow ordinary loop progress.
 
+- Self-hosting, Phase 3 follow-up (one-hundred-sixth slice): postfix `break`.
+  A conditioned valued exit updates the loop result only on the taken branch
+  and otherwise permits later iterations to reach their own exit.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,
