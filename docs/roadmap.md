@@ -2082,6 +2082,10 @@ future work.
   identically by the native and self-hosted parsers, completing consistent
   native `generic type parameters` terminology on declaration errors.
 
+- Self-hosting, Phase 3 sub-phase 5 (fifty-ninth slice): missing parameter-type
+  coverage. A parameter annotation colon without a following type must be
+  rejected identically by the native and self-hosted parsers.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,
