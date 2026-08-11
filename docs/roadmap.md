@@ -2408,6 +2408,10 @@ future work.
   method receivers. `self` resolves to register zero in module-owned method
   bodies and preserves the including instance's identity at invocation time.
 
+- Self-hosting, Phase 3 follow-up (one-hundred-fortieth slice): module method
+  lexical constants. Included methods retain namespace-slot reads compiled in
+  their declaring module and return those values through instance dispatch.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,
