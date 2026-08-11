@@ -2392,6 +2392,10 @@ future work.
   instance methods. Module `def` bodies reuse the method compiler and register
   their descriptors against the active module with duplicate tracking.
 
+- Self-hosting, Phase 3 follow-up (one-hundred-thirty-sixth slice): module
+  inclusion builder bridge. `ProgramBuilder#include_module` copies module fields
+  and includable methods into a target class and recomputes its shape metadata.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,
