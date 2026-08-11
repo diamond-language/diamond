@@ -2179,6 +2179,10 @@ future work.
   result facts. Matching exact results across the protected body and every
   rescue clause retain their fact for downstream typed dispatch.
 
+- Self-hosting, Phase 3 sub-phase 5 (eighty-third slice): final catch-all
+  dispatch. Exceptions rejected by earlier filtered clauses now reach a final
+  catch-all clause in source order with native runtime parity.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,
