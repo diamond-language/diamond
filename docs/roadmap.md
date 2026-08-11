@@ -2135,6 +2135,10 @@ future work.
   clauses in source order with `IS_TYPE`, preserving catch-all behavior and
   re-raising an exception unmatched by every filtered clause.
 
+- Self-hosting, Phase 3 sub-phase 5 (seventy-second slice): unmatched rescue
+  propagation. A value rejected by every inner filtered clause now re-raises
+  into an outer matching rescue, with native/self-hosted runtime parity.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,
