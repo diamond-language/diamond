@@ -2155,6 +2155,10 @@ future work.
   ensure integration. A shared `ensure` executes exactly once after a later
   rescue clause handles the exception, with matching result behavior.
 
+- Self-hosting, Phase 3 sub-phase 5 (seventy-seventh slice): multiple-rescue
+  else integration. The `else` body runs only after normal protected-body
+  completion and supplies the expression result without entering handlers.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,
