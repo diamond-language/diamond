@@ -2480,6 +2480,10 @@ future work.
   visibility targets. Comma-separated named directives update every direct
   descriptor and permit a later targeted promotion of one method.
 
+- Self-hosting, Phase 3 follow-up (one-hundred-fifty-eighth slice):
+  parenthesized module visibility. Named `private(...)` and `public(...)`
+  directives accept the native compiler's call-like target-list form.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,

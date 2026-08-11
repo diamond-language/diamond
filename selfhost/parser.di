@@ -1537,6 +1537,8 @@ class Parser
     if @current.kind() == :private || @current.kind() == :public
       private_mode = @current.kind() == :private
       self.advance_token()
+      parenthesized = @current.kind() == :left_paren
+      self.advance_token() if parenthesized
       if @current.kind() == :identifier
         more = true
         while more && !@failed
@@ -1559,6 +1561,15 @@ class Parser
             more = false
           end
         end
+        if parenthesized
+          if @current.kind() == :right_paren
+            self.advance_token()
+          else
+            self.fail("expected ')' after visibility targets")
+          end
+        end
+      elsif parenthesized
+        self.fail("expected method in visibility list")
       else
         mode = @modules[@modules.length() - 1][4]
         mode[0] = private_mode
