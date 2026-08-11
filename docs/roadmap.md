@@ -2348,6 +2348,10 @@ future work.
   endless nested closures. Taken bodies read captured outer locals, and skipped
   invocations return nil without disturbing later closure calls.
 
+- Self-hosting, Phase 3 follow-up (one-hundred-twenty-fifth slice): typed
+  conditioned endless functions. Both concrete and skipped nil results flow
+  through an explicit union return contract.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,
