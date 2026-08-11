@@ -1448,7 +1448,7 @@ class Parser
       end
       self.emit_instruction1(Opcode::RETURN, body_result)
       if @current.kind() != :end
-        self.fail("expected 'end' after method body")
+        self.fail("expected 'end' after function body")
       else
         self.advance_token()
       end
