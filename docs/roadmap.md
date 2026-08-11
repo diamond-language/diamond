@@ -2102,6 +2102,10 @@ future work.
   arguments coverage. Applying collection-style arguments to a scalar type
   must be rejected identically by the native and self-hosted parsers.
 
+- Self-hosting, Phase 3 sub-phase 5 (sixty-fourth slice): duplicate union-type
+  coverage. Repeating a member in a union annotation must produce the same
+  explicit diagnostic in both compilers.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,
