@@ -1527,7 +1527,33 @@ class Parser
     endless = @current.kind() == :equal
     if endless
       self.advance_token()
+      postfix = self.postfix_modifier_ahead()
+      has_postfix = postfix == :if || postfix == :unless
+      postfix_result = self.allocate_register() if has_postfix
+      condition_jump = self.emit_jump(Opcode::JUMP, 0) if has_postfix
+      body_start = @code_count
       body_result = self.parse_expression()
+      if has_postfix
+        if @current.kind() != postfix
+          self.fail("expected postfix condition")
+        else
+          self.advance_token()
+          self.emit_instruction2(Opcode::MOVE, postfix_result, body_result)
+          body_exit = self.emit_jump(Opcode::JUMP, 0)
+          condition_start = @code_count
+          condition = self.parse_expression()
+          body_jump = self.emit_jump(if postfix == :if
+            Opcode::JUMP_IF_TRUE
+          else
+            Opcode::JUMP_IF_FALSE
+          end, condition)
+          self.emit_instruction1(Opcode::NIL, postfix_result)
+          self.patch_jump(condition_jump, condition_start)
+          self.patch_jump(body_exit, @code_count)
+          self.patch_jump(body_jump, body_start)
+          body_result = postfix_result
+        end
+      end
       if return_type != nil
         set_index = self.emit_type_check(body_result, return_type)
         @builder.set_return_type(function_index, set_index)

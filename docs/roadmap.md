@@ -2303,6 +2303,10 @@ future work.
   endless functions. Postfix `if` and `unless` lazily select the expression
   body, returning nil when its modifier condition skips execution.
 
+- Self-hosting, Phase 3 follow-up (one-hundred-fourteenth slice): conditioned
+  endless methods. Modifier branches execute receiver-local expression bodies
+  lazily and return nil from skipped method invocations.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,
