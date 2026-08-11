@@ -171,6 +171,9 @@ class Parser
     # `ClassName.new(...)` resolves against this via find_class.
     @classes = []
     @interfaces = []
+    @modules = []
+    @current_module_index = nil
+    @current_module_name = nil
     @current_type_variables = []
     @type_facts = []
     @declared_types = []
@@ -455,7 +458,7 @@ class Parser
   # --- statement sequencing ---
 
   def postfix_modifier_ahead()
-    return nil if @current.kind() == :def || @current.kind() == :class || @current.kind() == :interface
+    return nil if @current.kind() == :def || @current.kind() == :class || @current.kind() == :interface || @current.kind() == :module
     lookahead = @lexer.clone()
     depth = if @current.kind() == :left_paren || @current.kind() == :left_bracket || @current.kind() == :left_brace
       1
@@ -497,13 +500,15 @@ class Parser
         0
       end
       body_start = @code_count
-      declaration_statement = @current.kind() == :def || @current.kind() == :class || @current.kind() == :interface
+      declaration_statement = @current.kind() == :def || @current.kind() == :class || @current.kind() == :interface || @current.kind() == :module
       if @current.kind() == :def
         result = self.compile_definition()
       elsif @current.kind() == :class
         result = self.compile_class()
       elsif @current.kind() == :interface
         result = self.compile_interface()
+      elsif @current.kind() == :module
+        result = self.compile_module()
       elsif @current.kind() == :break || @current.kind() == :next || @current.kind() == :redo
         result = self.compile_break()
       elsif @current.kind() == :return
@@ -1389,7 +1394,8 @@ class Parser
     @current_class_method_names = []
 
     if !self.consume_block_start()
-      self.leave_class()
+      @current_class_index = nil
+      @current_class_superclass_index = nil
       return 0
     end
     while !@failed && @current.kind() != :end
@@ -1402,11 +1408,13 @@ class Parser
     end
     if @current.kind() != :end
       self.fail("expected method definition or include in class") unless @failed
-      self.leave_class()
+      @current_class_index = nil
+      @current_class_superclass_index = nil
       return 0
     end
     self.advance_token()
-    self.leave_class()
+    @current_class_index = nil
+    @current_class_superclass_index = nil
     # Sole-writer fresh register; run_chunk's zero-init already covers
     # nil, matching compile_class.c's own return value exactly.
     self.allocate_register()
@@ -1433,9 +1441,38 @@ class Parser
     entry[1]
   end
 
-  def leave_class()
-    @current_class_index = nil
-    @current_class_superclass_index = nil
+  def compile_module()
+    self.advance_token()
+    if @function_nesting_depth != 0 || @current_class_index != nil || @current_module_index != nil
+      self.fail("modules must be declared at top level")
+      return 0
+    end
+    if @current.kind() != :identifier
+      self.fail("expected valid module name")
+      return 0
+    end
+    name = self.token_text(@current)
+    index = 0
+    while index < @modules.length()
+      self.fail("module name is already defined") if @modules[index][0] == name
+      index = index + 1
+    end
+    return 0 if @failed
+    module_index = @builder.declare_module(name)
+    @modules.push([name, module_index])
+    @current_module_index = module_index
+    @current_module_name = name
+    self.advance_token()
+    if self.consume_block_start()
+      if @current.kind() != :end
+        self.fail("expected module constant or method definition")
+      else
+        self.advance_token()
+      end
+    end
+    @current_module_index = nil
+    @current_module_name = nil
+    self.allocate_register()
   end
 
   # An instance method: register 0 is always `self` (allocated before
