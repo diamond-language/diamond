@@ -2251,6 +2251,10 @@ future work.
   Continue targets compile correctly inside an instance method, skipping the
   rest of the current iteration while preserving later method-local work.
 
+- Self-hosting, Phase 3 follow-up (one-hundred-first slice): postfix `if`.
+  Statement-level modifier lookahead and bytecode re-entry now skip or execute
+  an ordinary expression without evaluating its body eagerly.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,

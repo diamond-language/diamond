@@ -322,12 +322,6 @@ class Parser
     @builder.patch_byte(@current_function_index, operand + 1, mod(target, 256))
   end
 
-  def emit_absolute_jump(target)
-    self.emit_byte(Opcode::JUMP)
-    self.emit_byte(target / 256)
-    self.emit_byte(mod(target, 256))
-  end
-
   def emit_rescue_handler(exception)
     self.emit_byte(Opcode::PUSH_RESCUE)
     self.emit_byte(exception)
@@ -460,10 +454,49 @@ class Parser
 
   # --- statement sequencing ---
 
+  def postfix_modifier_ahead()
+    return nil if @current.kind() == :def || @current.kind() == :class || @current.kind() == :interface
+    lookahead = @lexer.clone()
+    depth = if @current.kind() == :left_paren || @current.kind() == :left_bracket || @current.kind() == :left_brace
+      1
+    else
+      0
+    end
+    expression_expected = false
+    while true
+      kind = lookahead.next_token().kind()
+      return nil if kind == :eof || kind == :error || kind == :newline
+      if depth == 0 && (kind == :if || kind == :unless)
+        return nil if expression_expected
+        return kind
+      end
+      if kind == :left_paren || kind == :left_bracket || kind == :left_brace
+        depth = depth + 1
+      elsif kind == :right_paren || kind == :right_bracket || kind == :right_brace
+        depth = depth - 1 if depth > 0
+      end
+      expression_expected = depth == 0 && kind == :equal
+    end
+    nil
+  end
+
   def compile_sequence()
     self.skip_newlines()
     result = self.allocate_register()
     while !@failed && !self.at_block_end?()
+      postfix = self.postfix_modifier_ahead()
+      has_postfix = postfix == :if || postfix == :unless
+      postfix_result = if has_postfix
+        self.allocate_register()
+      else
+        result
+      end
+      condition_jump = if has_postfix
+        self.emit_jump(Opcode::JUMP, 0)
+      else
+        0
+      end
+      body_start = @code_count
       if @current.kind() == :def
         result = self.compile_definition()
       elsif @current.kind() == :class
@@ -484,6 +517,27 @@ class Parser
         result = self.compile_assignment()
       else
         result = self.parse_expression()
+      end
+      if has_postfix
+        if @current.kind() != postfix
+          self.fail("expected postfix condition")
+          return result
+        end
+        self.advance_token()
+        self.emit_instruction2(Opcode::MOVE, postfix_result, result)
+        body_exit = self.emit_jump(Opcode::JUMP, 0)
+        condition_start = @code_count
+        condition = self.parse_expression()
+        body_jump = self.emit_jump(if postfix == :if
+          Opcode::JUMP_IF_TRUE
+        else
+          Opcode::JUMP_IF_FALSE
+        end, condition)
+        self.emit_instruction1(Opcode::NIL, postfix_result)
+        self.patch_jump(condition_jump, condition_start)
+        self.patch_jump(body_exit, @code_count)
+        self.patch_jump(body_jump, body_start)
+        result = postfix_result
       end
       if @current.kind() == :newline
         self.skip_newlines()
@@ -1912,9 +1966,13 @@ class Parser
     if kind == :break
       frame[1].push(self.emit_jump(Opcode::JUMP, 0))
     elsif kind == :next
-      self.emit_absolute_jump(frame[2])
+      self.emit_byte(Opcode::JUMP)
+      self.emit_byte(frame[2] / 256)
+      self.emit_byte(mod(frame[2], 256))
     else
-      self.emit_absolute_jump(frame[3])
+      self.emit_byte(Opcode::JUMP)
+      self.emit_byte(frame[3] / 256)
+      self.emit_byte(mod(frame[3], 256))
     end
     self.allocate_register()
   end
@@ -1967,7 +2025,9 @@ class Parser
       self.fail("'retry' used outside rescue")
       return 0
     end
-    self.emit_absolute_jump(@current_retry_target)
+    self.emit_byte(Opcode::JUMP)
+    self.emit_byte(@current_retry_target / 256)
+    self.emit_byte(mod(@current_retry_target, 256))
     self.allocate_register()
   end
 
@@ -2276,7 +2336,9 @@ class Parser
     @loops.push(frame)
     self.compile_sequence()
     @loops.pop()
-    self.emit_absolute_jump(loop_start)
+    self.emit_byte(Opcode::JUMP)
+    self.emit_byte(loop_start / 256)
+    self.emit_byte(mod(loop_start, 256))
     self.patch_jump(exit_jump, @code_count)
     self.patch_breaks(frame)
     if @current.kind() != :end
@@ -2297,7 +2359,9 @@ class Parser
     @loops.push(frame)
     self.compile_sequence()
     @loops.pop()
-    self.emit_absolute_jump(body_start)
+    self.emit_byte(Opcode::JUMP)
+    self.emit_byte(body_start / 256)
+    self.emit_byte(mod(body_start, 256))
     self.patch_breaks(frame)
     if @current.kind() != :end
       self.fail("expected 'end' after loop")
