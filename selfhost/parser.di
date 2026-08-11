@@ -595,7 +595,7 @@ class Parser
     self.skip_newlines()
     while !@failed && @current.kind() != :right_bracket
       if @current.kind() != :identifier || variables.length() == 8
-        self.fail("expected generic type variable")
+        self.fail("expected generic type parameter")
       else
         name = self.token_text(@current)
         index = 0

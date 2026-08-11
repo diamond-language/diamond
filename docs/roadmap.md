@@ -2067,6 +2067,11 @@ future work.
   the same explicit diagnostic in both compilers; self-hosted methods now use
   the native shared `function body` wording.
 
+- Self-hosting, Phase 3 sub-phase 5 (fifty-sixth slice): missing generic
+  parameter coverage. An empty generic parameter slot must be rejected
+  identically by the native and self-hosted parsers; self-hosted declarations
+  now use the native `generic type parameter` terminology.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,
