@@ -2227,6 +2227,10 @@ future work.
   Skipped iterations jump back through the inverted condition path and retain
   native output ordering.
 
+- Self-hosting, Phase 3 follow-up (ninety-fifth slice): `redo` in unconditional
+  loops. Body re-entry repeats the iteration without resetting the loop result,
+  allowing a later valued `break` to complete the expression normally.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,
