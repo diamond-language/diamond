@@ -2568,6 +2568,10 @@ future work.
   arity diagnostics. Qualified module writers validate their single argument
   against the exported descriptor before emitting a call.
 
+- Self-hosting, Phase 3 follow-up (one-hundred-eightieth slice): duplicate
+  writer exports. Re-exporting a suffixed singleton descriptor is rejected with
+  the same native duplicate-module-function diagnostic as ordinary methods.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,
