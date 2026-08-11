@@ -2512,6 +2512,10 @@ future work.
   module export diagnostics. Targeted `module_function` rejects names not
   directly declared by the active module with the native compiler's message.
 
+- Self-hosting, Phase 3 follow-up (one-hundred-sixty-sixth slice): exported
+  function metadata. Self-hosted module entries retain direct function indices
+  and arities plus the ordered singleton-export descriptor set.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,

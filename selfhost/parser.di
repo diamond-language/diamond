@@ -1480,7 +1480,7 @@ class Parser
     end
     return 0 if @failed
     module_index = @builder.declare_module(name)
-    @modules.push([name, module_index, [], [], [false], [false]])
+    @modules.push([name, module_index, [], [], [false], [false], [], []])
     @current_module_index = module_index
     @current_module_name = name
     self.advance_token()
@@ -1515,13 +1515,18 @@ class Parser
       while more && !@failed
         method_name = self.token_text(@current)
         found = false
+        descriptor = nil
         index = 0
         while index < @modules[@modules.length() - 1][3].length()
-          found = true if @modules[@modules.length() - 1][3][index] == method_name
+          if @modules[@modules.length() - 1][3][index] == method_name
+            found = true
+            descriptor = @modules[@modules.length() - 1][6][index]
+          end
           index = index + 1
         end
         if found
           @builder.export_module_method(@current_module_index, method_name)
+          @modules[@modules.length() - 1][7].push(descriptor)
         else
           self.fail("module_function target is not defined here")
         end
@@ -1703,10 +1708,13 @@ class Parser
     @current_method_name = outer_method_name
     if @current_module_index != nil
       @modules[@modules.length() - 1][3].push(name)
+      descriptor = [name, function_index, arity]
+      @modules[@modules.length() - 1][6].push(descriptor)
       @builder.declare_module_method(@current_module_index, name, function_index,
         arity, arity, @modules[@modules.length() - 1][4][0])
       if @modules[@modules.length() - 1][5][0]
         @builder.export_module_method(@current_module_index, name)
+        @modules[@modules.length() - 1][7].push(descriptor)
       end
     else
       @current_class_method_names.push(name)
