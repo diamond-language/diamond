@@ -1372,7 +1372,7 @@ class Parser
     end
     self.advance_token()
     if @current.kind() != :left_paren
-      self.fail("expected '(' after method name")
+      self.fail("expected '(' after function name")
       return
     end
     self.advance_token()

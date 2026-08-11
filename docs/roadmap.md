@@ -2053,6 +2053,11 @@ future work.
   identically by the native and self-hosted parsers; self-hosted method
   declarations now use the native `function name after def` wording.
 
+- Self-hosting, Phase 3 sub-phase 5 (fifty-third slice): missing class-method
+  parameter opener coverage. A named class method without `(` must produce
+  the same explicit diagnostic in both compilers; self-hosted declarations
+  now use the native `after function name` wording.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,
