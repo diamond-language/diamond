@@ -2211,6 +2211,10 @@ future work.
   A top-level `next` is rejected identically by the native and self-hosted
   parsers when no active loop frame supplies a continuation target.
 
+- Self-hosting, Phase 3 follow-up (ninety-first slice): `redo` context
+  diagnostics. A top-level `redo` is rejected identically when no active loop
+  frame supplies a body-reentry target.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,
