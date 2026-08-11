@@ -1489,24 +1489,7 @@ class Parser
         if @current.kind() == :def
           self.compile_method()
         elsif @current.kind() == :module_function
-          self.advance_token()
-          if @current.kind() != :identifier
-            self.fail("expected module_function target")
-          else
-            method_name = self.token_text(@current)
-            found = false
-            index = 0
-            while index < @modules[@modules.length() - 1][3].length()
-              found = true if @modules[@modules.length() - 1][3][index] == method_name
-              index = index + 1
-            end
-            if found
-              @builder.export_module_method(@current_module_index, method_name)
-            else
-              self.fail("module_function target is not defined here")
-            end
-            self.advance_token()
-          end
+          self.compile_module_function()
         elsif @current.kind() == :include || @current.kind() == :private || @current.kind() == :public
           self.compile_module_include()
         elsif self.assignment_ahead?()
@@ -1521,6 +1504,46 @@ class Parser
     @current_module_index = nil
     @current_module_name = nil
     self.allocate_register()
+  end
+
+  def compile_module_function()
+    self.advance_token()
+    parenthesized = @current.kind() == :left_paren
+    self.advance_token() if parenthesized
+    if @current.kind() == :identifier
+      more = true
+      while more && !@failed
+        method_name = self.token_text(@current)
+        found = false
+        index = 0
+        while index < @modules[@modules.length() - 1][3].length()
+          found = true if @modules[@modules.length() - 1][3][index] == method_name
+          index = index + 1
+        end
+        if found
+          @builder.export_module_method(@current_module_index, method_name)
+        else
+          self.fail("module_function target is not defined here")
+        end
+        self.advance_token()
+        if @current.kind() == :comma
+          self.advance_token()
+        else
+          more = false
+        end
+      end
+      if parenthesized
+        if @current.kind() == :right_paren
+          self.advance_token()
+        else
+          self.fail("expected ')' after module_function targets")
+        end
+      end
+    elsif parenthesized
+      self.fail("expected method in module_function list")
+    else
+      self.fail("expected module_function target")
+    end
   end
 
   def compile_module_constant(module_name)
@@ -2464,11 +2487,6 @@ class Parser
 
   # --- control flow ---
 
-  def consume_conditional_start()
-    return false unless self.consume_block_start_or(:then)
-    true
-  end
-
   def consume_loop_start()
     return false unless self.consume_block_start_or(:do)
     true
@@ -2513,7 +2531,7 @@ class Parser
 
   def parse_if(inverted)
     condition = self.parse_expression()
-    return 0 unless self.consume_conditional_start()
+    return 0 unless self.consume_block_start_or(:then)
     branch_condition = condition
     if inverted
       branch_condition = self.allocate_register()
