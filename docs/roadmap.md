@@ -2267,6 +2267,10 @@ future work.
   Modifier keywords terminate loop-control value scanning, and a taken branch
   continues at the active loop's condition target without running later work.
 
+- Self-hosting, Phase 3 follow-up (one-hundred-fifth slice): postfix `redo`.
+  A taken modifier re-enters the active loop body directly, while later false
+  conditions fall through and allow ordinary loop progress.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,
