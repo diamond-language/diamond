@@ -2548,6 +2548,10 @@ future work.
   module-call delimiters. Resolved singleton function names require an opening
   parenthesis and match the native missing-call-delimiter diagnostic.
 
+- Self-hosting, Phase 3 follow-up (one-hundred-seventy-fifth slice):
+  unterminated module export lists. Parenthesized `module_function` target lists
+  require a closing delimiter and match the native compiler's diagnostic.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,
