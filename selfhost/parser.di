@@ -1535,9 +1535,24 @@ class Parser
 
   def compile_module_include()
     if @current.kind() == :private || @current.kind() == :public
-      mode = @modules[@modules.length() - 1][4]
-      mode[0] = @current.kind() == :private
+      private_mode = @current.kind() == :private
       self.advance_token()
+      if @current.kind() == :identifier
+        more = true
+        while more && !@failed
+          name = self.token_text(@current)
+          @builder.set_module_method_visibility(@current_module_index, name, private_mode)
+          self.advance_token()
+          if @current.kind() == :comma
+            self.advance_token()
+          else
+            more = false
+          end
+        end
+      else
+        mode = @modules[@modules.length() - 1][4]
+        mode[0] = private_mode
+      end
       return
     end
     self.advance_token()

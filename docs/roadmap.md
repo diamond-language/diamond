@@ -2464,6 +2464,10 @@ future work.
   private enforcement. A private module method retains its visibility after
   descriptor copying and external invocation raises the native `TypeError`.
 
+- Self-hosting, Phase 3 follow-up (one-hundred-fifty-fourth slice): targeted
+  module visibility. Named `private`/`public` directives mutate existing direct
+  method descriptors, including targeted promotion back to public visibility.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,
