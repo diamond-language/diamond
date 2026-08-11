@@ -611,7 +611,11 @@ class Parser
     self.advance_token()
     parameter_names = parsed_parameters[0]
     parameter_types = parsed_parameters[1]
-    return_type = self.parse_optional_return_type()
+    return_type = nil
+    if @current.kind() == :arrow
+      self.advance_token()
+      return_type = self.parse_type_annotation()
+    end
     return 0 if @failed
 
     arity = parameter_names.length()
@@ -950,7 +954,11 @@ class Parser
       return
     end
     self.advance_token()
-    return_type = self.parse_optional_return_type()
+    return_type = nil
+    if @current.kind() == :arrow
+      self.advance_token()
+      return_type = self.parse_type_annotation()
+    end
     parameter_sets = []
     index = 0
     while index < parsed[1].length() && !@failed
@@ -1201,12 +1209,6 @@ class Parser
       index = index + 1
     end
     self.primitive_annotation(fact)
-  end
-
-  def parse_optional_return_type()
-    return nil unless @current.kind() == :arrow
-    self.advance_token()
-    self.parse_type_annotation()
   end
 
   # Switches compiler state into the new function, compiles its body,
@@ -1478,7 +1480,7 @@ class Parser
     end
     return 0 if @failed
     module_index = @builder.declare_module(name)
-    @modules.push([name, module_index, [], []])
+    @modules.push([name, module_index, [], [], [false]])
     @current_module_index = module_index
     @current_module_name = name
     self.advance_token()
@@ -1486,35 +1488,10 @@ class Parser
       while !@failed && @current.kind() != :end
         if @current.kind() == :def
           self.compile_method()
-        elsif @current.kind() == :include
+        elsif @current.kind() == :include || @current.kind() == :private || @current.kind() == :public
           self.compile_module_include()
         elsif self.assignment_ahead?()
-          constant_name = self.token_text(@current)
-          first = constant_name.slice(0, 1)
-          if first == "_" || first != first.upcase()
-            self.fail("module constants must begin with an uppercase letter")
-          else
-            qualified = name + "::" + constant_name
-            constant_index = nil
-            index = 0
-            while index < @modules[@modules.length() - 1][2].length()
-              constant_index = 0 if @modules[@modules.length() - 1][2][index][0] == constant_name
-              index = index + 1
-            end
-            if constant_index != nil
-              self.fail("constant is already defined")
-            else
-              constant_index = @builder.declare_namespace_constant(qualified)
-              @modules[@modules.length() - 1][2].push([constant_name, constant_index])
-              self.advance_token()
-              self.advance_token()
-              value = self.parse_expression()
-              self.emit_instruction2(49, constant_index, value)
-              if @current.kind() == :if || @current.kind() == :unless
-                self.fail("expected definition or include in module")
-              end
-            end
-          end
+          self.compile_module_constant(name)
         else
           self.fail("expected module constant or method definition")
         end
@@ -1527,7 +1504,42 @@ class Parser
     self.allocate_register()
   end
 
+  def compile_module_constant(module_name)
+    constant_name = self.token_text(@current)
+    first = constant_name.slice(0, 1)
+    if first == "_" || first != first.upcase()
+      self.fail("module constants must begin with an uppercase letter")
+      return
+    end
+    qualified = module_name + "::" + constant_name
+    constant_index = nil
+    index = 0
+    while index < @modules[@modules.length() - 1][2].length()
+      constant_index = 0 if @modules[@modules.length() - 1][2][index][0] == constant_name
+      index = index + 1
+    end
+    if constant_index != nil
+      self.fail("constant is already defined")
+      return
+    end
+    constant_index = @builder.declare_namespace_constant(qualified)
+    @modules[@modules.length() - 1][2].push([constant_name, constant_index])
+    self.advance_token()
+    self.advance_token()
+    value = self.parse_expression()
+    self.emit_instruction2(49, constant_index, value)
+    if @current.kind() == :if || @current.kind() == :unless
+      self.fail("expected definition or include in module")
+    end
+  end
+
   def compile_module_include()
+    if @current.kind() == :private || @current.kind() == :public
+      mode = @modules[@modules.length() - 1][4]
+      mode[0] = @current.kind() == :private
+      self.advance_token()
+      return
+    end
     self.advance_token()
     if @current.kind() != :identifier
       self.fail("expected module name after 'include'")
@@ -1597,7 +1609,11 @@ class Parser
     self.advance_token()
     parameter_names = parsed_parameters[0]
     parameter_types = parsed_parameters[1]
-    return_type = self.parse_optional_return_type()
+    return_type = nil
+    if @current.kind() == :arrow
+      self.advance_token()
+      return_type = self.parse_type_annotation()
+    end
     return if @failed
 
     arity = parameter_names.length()
@@ -1608,7 +1624,8 @@ class Parser
     @current_method_name = outer_method_name
     if @current_module_index != nil
       @modules[@modules.length() - 1][3].push(name)
-      @builder.declare_module_method(@current_module_index, name, function_index, arity, arity, false)
+      @builder.declare_module_method(@current_module_index, name, function_index,
+        arity, arity, @modules[@modules.length() - 1][4][0])
     else
       @current_class_method_names.push(name)
       @builder.declare_method(@current_class_index, name, function_index, arity, arity, false)
