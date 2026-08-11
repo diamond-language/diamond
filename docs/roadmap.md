@@ -2327,6 +2327,11 @@ future work.
   conditioned endless methods. Taken values and skipped nil results both pass
   through the declared union return contract.
 
+- Self-hosting, Phase 3 follow-up (one-hundred-twentieth slice): bracket-aware
+  modifier lookahead. Conditional expressions nested inside array literals are
+  ignored, while a true trailing condition on a single-line literal remains
+  discoverable.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,
