@@ -203,6 +203,7 @@ class Parser
     # needed by `super(...)`: it always calls the superclass's version
     # of *this same* method, never an explicitly named one.
     @current_method_name = nil
+    @current_method_uses_state = false
     # The current function/method/closure's declared `-> Type` return
     # type name (a String), or nil if it has none -- needed by both the
     # implicit final-expression return path (compile_function_body/
@@ -1525,8 +1526,12 @@ class Parser
           index = index + 1
         end
         if found
-          @builder.export_module_method(@current_module_index, method_name)
-          @modules[@modules.length() - 1][7].push(descriptor)
+          if descriptor[3]
+            self.fail("stateful module method cannot become a module_function")
+          else
+            @builder.export_module_method(@current_module_index, method_name)
+            @modules[@modules.length() - 1][7].push(descriptor)
+          end
         else
           self.fail("module_function target is not defined here")
         end
@@ -1704,11 +1709,12 @@ class Parser
     function_index = @builder.declare_function(name, arity + 1, arity + 1)
     outer_method_name = @current_method_name
     @current_method_name = name
+    @current_method_uses_state = false
     self.compile_method_body(function_index, parameter_names, parameter_types, return_type)
     @current_method_name = outer_method_name
     if @current_module_index != nil
       @modules[@modules.length() - 1][3].push(name)
-      descriptor = [name, function_index, arity]
+      descriptor = [name, function_index, arity, @current_method_uses_state]
       @modules[@modules.length() - 1][6].push(descriptor)
       @builder.declare_module_method(@current_module_index, name, function_index,
         arity, arity, @modules[@modules.length() - 1][4][0])
@@ -1720,6 +1726,7 @@ class Parser
       @current_class_method_names.push(name)
       @builder.declare_method(@current_class_index, name, function_index, arity, arity, false)
     end
+    @current_method_uses_state = false
   end
 
   def compile_method_body(function_index, parameter_names, parameter_types, return_type)
@@ -2167,6 +2174,7 @@ class Parser
     field_text = self.token_text(token)
     field_name = field_text.slice(1, field_text.length() - 1)
     if @current_module_index != nil
+      @current_method_uses_state = true
       @builder.declare_module_field(@current_module_index, field_name)
       field_index = self.add_string(field_name)
       self.emit_instruction3(47, 0, field_index, value)
@@ -2186,6 +2194,7 @@ class Parser
     field_name = field_text.slice(1, field_text.length() - 1)
     destination = self.allocate_register()
     if @current_module_index != nil
+      @current_method_uses_state = true
       @builder.declare_module_field(@current_module_index, field_name)
       field_index = self.add_string(field_name)
       self.emit_instruction3(46, destination, 0, field_index)
