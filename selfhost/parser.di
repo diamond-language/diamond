@@ -1488,6 +1488,25 @@ class Parser
       while !@failed && @current.kind() != :end
         if @current.kind() == :def
           self.compile_method()
+        elsif @current.kind() == :module_function
+          self.advance_token()
+          if @current.kind() != :identifier
+            self.fail("expected module_function target")
+          else
+            method_name = self.token_text(@current)
+            found = false
+            index = 0
+            while index < @modules[@modules.length() - 1][3].length()
+              found = true if @modules[@modules.length() - 1][3][index] == method_name
+              index = index + 1
+            end
+            if found
+              @builder.export_module_method(@current_module_index, method_name)
+            else
+              self.fail("module_function target is not defined here")
+            end
+            self.advance_token()
+          end
         elsif @current.kind() == :include || @current.kind() == :private || @current.kind() == :public
           self.compile_module_include()
         elsif self.assignment_ahead?()

@@ -2496,6 +2496,10 @@ future work.
   singleton export bridge. `ProgramBuilder#export_module_method` privatizes a
   direct module method and installs its receiver-aware singleton descriptor.
 
+- Self-hosting, Phase 3 follow-up (one-hundred-sixty-second slice): targeted
+  module exports. `module_function name` exports a directly declared method and
+  makes its subsequently included instance descriptor private.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,
