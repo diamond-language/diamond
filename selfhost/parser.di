@@ -1399,6 +1399,16 @@ class Parser
           self.fail("expected module name after 'include'")
         else
           module_name = self.token_text(@current)
+          self.advance_token()
+          if @current.kind() == :double_colon
+            self.advance_token()
+            if @current.kind() != :identifier
+              self.fail("invalid qualified module name")
+            else
+              module_name = module_name + "::" + self.token_text(@current)
+              self.advance_token()
+            end
+          end
           module_index = nil
           index = 0
           while index < @modules.length()
@@ -1409,7 +1419,6 @@ class Parser
             self.fail("undefined module")
           else
             @builder.include_module(@current_class_index, module_index)
-            self.advance_token()
           end
         end
       else
@@ -1637,6 +1646,16 @@ class Parser
       return
     end
     name = self.token_text(@current)
+    self.advance_token()
+    if @current.kind() == :double_colon
+      self.advance_token()
+      if @current.kind() != :identifier
+        self.fail("invalid qualified module name")
+        return
+      end
+      name = name + "::" + self.token_text(@current)
+      self.advance_token()
+    end
     included = nil
     index = 0
     while index < @modules.length()
@@ -1649,7 +1668,6 @@ class Parser
       self.fail("module cannot include itself")
     else
       @builder.include_module_in_module(@current_module_index, included)
-      self.advance_token()
     end
   end
 

@@ -2580,6 +2580,10 @@ future work.
   module singleton calls. A two-segment qualified module name resolves its
   exported descriptor set before lowering the singleton call.
 
+- Self-hosting, Phase 3 follow-up (one-hundred-eighty-third slice): qualified
+  module includes. Class and module include directives consume a two-segment
+  module name and resolve its fully qualified builder descriptor.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,
