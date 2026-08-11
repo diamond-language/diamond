@@ -615,7 +615,7 @@ class Parser
       end
     end
     if !@failed && @current.kind() != :right_bracket
-      self.fail("expected ']' after generic type variables")
+      self.fail("expected ']' after generic type parameters")
     else
       self.advance_token() unless @failed
     end
