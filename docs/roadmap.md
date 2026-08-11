@@ -2126,6 +2126,10 @@ future work.
   call coverage. An explicit generic invocation missing `]` must be rejected
   identically by the native and self-hosted parsers.
 
+- Self-hosting, Phase 3 sub-phase 5 (seventieth slice): generic-call type
+  argument arity coverage. An explicit invocation supplying the wrong number
+  of generic arguments must produce the same diagnostic in both compilers.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,
