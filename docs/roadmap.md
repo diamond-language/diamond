@@ -2187,6 +2187,10 @@ future work.
   multi-rescue result joins. Matching declared unions across the protected
   body and every handler remain available for downstream type narrowing.
 
+- Self-hosting, Phase 3 sub-phase 5 (eighty-fifth slice): later-clause binding
+  contracts. Each rescue binding receives its clause's filtered type, allowing
+  a later handler to pass the exception into a matching typed call.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,
