@@ -2239,6 +2239,10 @@ future work.
   Body re-entry bypasses the inverted condition even after it becomes true,
   then ordinary back-edge evaluation exits the loop.
 
+- Self-hosting, Phase 3 follow-up (ninety-eighth slice): function-local
+  `next`. Loop continuation targets compile correctly inside a named function's
+  independent bytecode and register frame.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,
