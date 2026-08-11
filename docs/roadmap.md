@@ -2332,6 +2332,10 @@ future work.
   ignored, while a true trailing condition on a single-line literal remains
   discoverable.
 
+- Self-hosting, Phase 3 follow-up (one-hundred-twenty-first slice):
+  parenthesis-aware modifier lookahead. Nested conditional expressions remain
+  inside their grouping, while trailing conditions on single-line groups work.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,
