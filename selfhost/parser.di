@@ -600,7 +600,7 @@ class Parser
         name = self.token_text(@current)
         index = 0
         while index < variables.length()
-          self.fail("duplicate generic type variable") if variables[index] == name
+          self.fail("duplicate generic type parameter") if variables[index] == name
           index = index + 1
         end
         variables.push(name) unless @failed

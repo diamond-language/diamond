@@ -2072,6 +2072,11 @@ future work.
   identically by the native and self-hosted parsers; self-hosted declarations
   now use the native `generic type parameter` terminology.
 
+- Self-hosting, Phase 3 sub-phase 5 (fifty-seventh slice): duplicate generic
+  parameter coverage. Repeating a generic parameter name must produce the
+  same explicit diagnostic in both compilers, using the native parameter
+  terminology throughout the self-hosted declaration parser.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,
