@@ -1362,7 +1362,7 @@ class Parser
   def compile_method()
     self.advance_token()
     if @current.kind() != :identifier
-      self.fail("expected method name after 'def'")
+      self.fail("expected function name after 'def'")
       return
     end
     name = self.token_text(@current)
