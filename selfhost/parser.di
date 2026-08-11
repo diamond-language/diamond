@@ -434,7 +434,7 @@ class Parser
     result
   end
 
-  # --- classes: an Array of [name, class_index] entries. ---
+  # --- classes: an Array of [name, class_index, superclass_index] entries. ---
 
   def find_class(name)
     index = @classes.length() - 1
@@ -1291,7 +1291,7 @@ class Parser
     else
       superclass_index
     end)
-    @classes.push([name, class_index])
+    @classes.push([name, class_index, superclass_index])
     @current_class_index = class_index
     @current_class_superclass_index = superclass_index
     @current_class_method_names = []
@@ -1967,7 +1967,26 @@ class Parser
     while type_index < types.length() && !@failed
       seen_index = 0
       while seen_index < seen_types.length()
-        self.fail("rescue type was already handled") if seen_types[seen_index] == types[type_index]
+        if seen_types[seen_index] == types[type_index]
+          self.fail("rescue type was already handled")
+        elsif seen_types[seen_index] >= Type::CLASS_BASE && seen_types[seen_index] < 96 && types[type_index] >= Type::CLASS_BASE && types[type_index] < 96
+          ancestor = seen_types[seen_index] - Type::CLASS_BASE
+          child = types[type_index] - Type::CLASS_BASE
+          while child != nil && child != ancestor
+            entry = nil
+            class_index = 0
+            while class_index < @classes.length() && entry == nil
+              entry = @classes[class_index] if @classes[class_index][1] == child
+              class_index = class_index + 1
+            end
+            child = if entry == nil
+              nil
+            else
+              entry[2]
+            end
+          end
+          self.fail("rescue type is covered by an earlier clause") if child == ancestor
+        end
         seen_index = seen_index + 1
       end
       seen_types.push(types[type_index]) unless @failed
