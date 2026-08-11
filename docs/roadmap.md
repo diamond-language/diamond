@@ -2396,6 +2396,10 @@ future work.
   inclusion builder bridge. `ProgramBuilder#include_module` copies module fields
   and includable methods into a target class and recomputes its shape metadata.
 
+- Self-hosting, Phase 3 follow-up (one-hundred-thirty-seventh slice): class
+  inclusion syntax. Class bodies resolve `include Module` against declared
+  modules and apply the descriptor-copy bridge before later method definitions.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,

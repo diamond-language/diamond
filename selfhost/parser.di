@@ -1401,6 +1401,25 @@ class Parser
     while !@failed && @current.kind() != :end
       if @current.kind() == :def
         self.compile_method()
+      elsif @current.kind() == :include
+        self.advance_token()
+        if @current.kind() != :identifier
+          self.fail("expected module name after 'include'")
+        else
+          module_name = self.token_text(@current)
+          module_index = nil
+          index = 0
+          while index < @modules.length()
+            module_index = @modules[index][1] if @modules[index][0] == module_name
+            index = index + 1
+          end
+          if module_index == nil
+            self.fail("undefined module")
+          else
+            @builder.include_module(@current_class_index, module_index)
+            self.advance_token()
+          end
+        end
       else
         self.fail("expected method definition or include in class")
       end
