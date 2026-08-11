@@ -2243,6 +2243,10 @@ future work.
   `next`. Loop continuation targets compile correctly inside a named function's
   independent bytecode and register frame.
 
+- Self-hosting, Phase 3 follow-up (ninety-ninth slice): method-local `redo`.
+  Body-reentry targets compile correctly inside an instance method and preserve
+  a later valued loop result.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,
