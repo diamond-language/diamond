@@ -2151,6 +2151,10 @@ future work.
   A `retry` executed from a later matching rescue restarts the protected body
   and preserves the eventual expression result in both compilers.
 
+- Self-hosting, Phase 3 sub-phase 5 (seventy-sixth slice): multiple-rescue
+  ensure integration. A shared `ensure` executes exactly once after a later
+  rescue clause handles the exception, with matching result behavior.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,
