@@ -1461,7 +1461,7 @@ class Parser
 
   def compile_module()
     self.advance_token()
-    if @function_nesting_depth != 0 || @current_class_index != nil || @current_module_index != nil
+    if @function_nesting_depth != 0 || @current_class_index != nil
       self.fail("modules must be declared at top level")
       return 0
     end
@@ -1469,7 +1469,12 @@ class Parser
       self.fail("expected valid module name")
       return 0
     end
-    name = self.token_text(@current)
+    local_name = self.token_text(@current)
+    name = if @current_module_name == nil
+      local_name
+    else
+      @current_module_name + "::" + local_name
+    end
     index = 0
     while index < @modules.length()
       self.fail("module name is already defined") if @modules[index][0] == name
@@ -1478,6 +1483,8 @@ class Parser
     return 0 if @failed
     module_index = @builder.declare_module(name)
     @modules.push([name, module_index, [], [], [false], [false], [], []])
+    outer_module_index = @current_module_index
+    outer_module_name = @current_module_name
     @current_module_index = module_index
     @current_module_name = name
     self.advance_token()
@@ -1485,6 +1492,8 @@ class Parser
       while !@failed && @current.kind() != :end
         if @current.kind() == :def
           self.compile_method()
+        elsif @current.kind() == :module
+          self.compile_module()
         elsif @current.kind() == :module_function
           self.compile_module_function()
         elsif @current.kind() == :include || @current.kind() == :private || @current.kind() == :public
@@ -1498,8 +1507,8 @@ class Parser
       end
       self.advance_token() if @current.kind() == :end
     end
-    @current_module_index = nil
-    @current_module_name = nil
+    @current_module_index = outer_module_index
+    @current_module_name = outer_module_name
     self.allocate_register()
   end
 
