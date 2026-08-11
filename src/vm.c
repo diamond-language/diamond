@@ -889,6 +889,10 @@ static DiamondVmStatus program_builder_invoke_helper(DiamondVm *vm,
     const bool declare_field_method=
         method_name->length==sizeof("declare_field")-1&&
         memcmp(method_name->chars,"declare_field",sizeof("declare_field")-1)==0;
+    const bool declare_module_field_method=
+        method_name->length==sizeof("declare_module_field")-1&&
+        memcmp(method_name->chars,"declare_module_field",
+            sizeof("declare_module_field")-1)==0;
     const bool declare_method_method=
         method_name->length==sizeof("declare_method")-1&&
         memcmp(method_name->chars,"declare_method",sizeof("declare_method")-1)==0;
@@ -936,7 +940,7 @@ static DiamondVmStatus program_builder_invoke_helper(DiamondVm *vm,
        !add_constant_method&&!add_string_method&&
        !set_register_count_method&&!declare_class_method&&
        !declare_module_method&&!declare_namespace_constant_method&&
-       !declare_field_method&&!declare_method_method&&
+       !declare_field_method&&!declare_module_field_method&&!declare_method_method&&
        !declare_module_method_method&&!include_module_method&&
        !declare_type_set_method&&!set_parameter_type_method&&
        !set_return_type_method&&!declare_interface_method&&
@@ -1248,6 +1252,31 @@ static DiamondVmStatus program_builder_invoke_helper(DiamondVm *vm,
         class->field_count++;
         program_builder_recompute_shapes(class);
         *result=DIAMOND_INT(new_index);return DIAMOND_VM_OK;
+    }
+    if(declare_module_field_method) {
+        if(argc!=2)return DIAMOND_VM_ARITY_ERROR;
+        if(registers[base].kind!=DIAMOND_VALUE_INT||
+           registers[(size_t)base+1].kind!=DIAMOND_VALUE_OBJECT||
+           registers[(size_t)base+1].as.object->kind!=DIAMOND_OBJECT_STRING)
+            return DIAMOND_VM_TYPE_ERROR;
+        const int64_t module_index=registers[base].as.integer;
+        const DiamondString *name=
+            (const DiamondString *)registers[(size_t)base+1].as.object;
+        if(module_index<0||(uint64_t)module_index>=built->module_count||
+           name->length==0||name->length>=DIAMOND_MAX_FUNCTION_NAME)
+            return DIAMOND_VM_TYPE_ERROR;
+        DiamondModule *module=&built->modules[(size_t)module_index];
+        for(size_t index=0;index<module->field_count;index++)
+            if(strlen(module->fields[index])==name->length&&
+               memcmp(module->fields[index],name->chars,name->length)==0) {
+                *result=DIAMOND_INT((int64_t)index);return DIAMOND_VM_OK;
+            }
+        if(module->field_count==DIAMOND_MAX_FIELDS)return DIAMOND_VM_TYPE_ERROR;
+        const int64_t index=(int64_t)module->field_count;
+        memcpy(module->fields[module->field_count],name->chars,name->length);
+        module->fields[module->field_count][name->length]='\0';
+        module->field_count++;
+        *result=DIAMOND_INT(index);return DIAMOND_VM_OK;
     }
     if(declare_method_method) {
         if(argc!=6)return DIAMOND_VM_ARITY_ERROR;
