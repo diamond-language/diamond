@@ -2528,6 +2528,10 @@ future work.
   module-call diagnostics. Qualified calls reject names absent from the active
   module's singleton export set with the native compiler's message.
 
+- Self-hosting, Phase 3 follow-up (one-hundred-seventieth slice): missing
+  module-call names. A module qualifier followed by `.` requires an identifier
+  before call arguments and reports the native undefined-singleton diagnostic.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,

@@ -3024,7 +3024,7 @@ class Parser
 
   def compile_module_singleton_call(module_entry)
     if @current.kind() != :identifier
-      self.fail("expected singleton function after module name")
+      self.fail("undefined module singleton function")
       return 0
     end
     name = self.token_text(@current)
