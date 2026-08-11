@@ -2336,6 +2336,10 @@ future work.
   parenthesis-aware modifier lookahead. Nested conditional expressions remain
   inside their grouping, while trailing conditions on single-line groups work.
 
+- Self-hosting, Phase 3 follow-up (one-hundred-twenty-second slice): brace-aware
+  modifier lookahead. Conditional hash values remain nested, while a postfix
+  condition after a complete single-line hash is still recognized.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,
