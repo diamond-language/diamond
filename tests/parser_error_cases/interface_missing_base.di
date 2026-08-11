@@ -1,0 +1,2 @@
+interface Child <
+end
