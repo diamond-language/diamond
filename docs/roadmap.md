@@ -2203,6 +2203,10 @@ future work.
   `next`. A skipped iteration re-enters the body target while a later valued
   `break` still supplies the loop expression result.
 
+- Self-hosting, Phase 3 follow-up (eighty-ninth slice): nested loop-control
+  isolation. An inner `next` targets only the innermost loop frame and leaves
+  the outer loop's progress and output intact.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,
