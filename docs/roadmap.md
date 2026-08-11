@@ -2315,6 +2315,10 @@ future work.
   declaration modifier diagnostics. Completed class bodies retain the same
   explicit postfix rejection as function declarations.
 
+- Self-hosting, Phase 3 follow-up (one-hundred-seventeenth slice): interface
+  declaration modifier diagnostics. Completed structural-interface bodies also
+  reject trailing postfix conditions with the declaration-specific message.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,
