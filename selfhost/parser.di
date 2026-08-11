@@ -1480,7 +1480,7 @@ class Parser
     end
     return 0 if @failed
     module_index = @builder.declare_module(name)
-    @modules.push([name, module_index, [], [], [false]])
+    @modules.push([name, module_index, [], [], [false], [false]])
     @current_module_index = module_index
     @current_module_name = name
     self.advance_token()
@@ -1542,7 +1542,8 @@ class Parser
     elsif parenthesized
       self.fail("expected method in module_function list")
     else
-      self.fail("expected module_function target")
+      mode = @modules[@modules.length() - 1][5]
+      mode[0] = true
     end
   end
 
@@ -1704,6 +1705,9 @@ class Parser
       @modules[@modules.length() - 1][3].push(name)
       @builder.declare_module_method(@current_module_index, name, function_index,
         arity, arity, @modules[@modules.length() - 1][4][0])
+      if @modules[@modules.length() - 1][5][0]
+        @builder.export_module_method(@current_module_index, name)
+      end
     else
       @current_class_method_names.push(name)
       @builder.declare_method(@current_class_index, name, function_index, arity, arity, false)

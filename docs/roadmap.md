@@ -2504,6 +2504,10 @@ future work.
   export lists. `module_function` accepts comma-separated targets in both bare
   and parenthesized forms while privatizing every exported instance method.
 
+- Self-hosting, Phase 3 follow-up (one-hundred-sixty-fourth slice): module
+  export mode. A standalone `module_function` directive exports and privatizes
+  each subsequently compiled direct module method.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,
