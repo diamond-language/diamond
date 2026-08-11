@@ -1459,13 +1459,15 @@ class Parser
     end
     return 0 if @failed
     module_index = @builder.declare_module(name)
-    @modules.push([name, module_index, []])
+    @modules.push([name, module_index, [], []])
     @current_module_index = module_index
     @current_module_name = name
     self.advance_token()
     if self.consume_block_start()
       while !@failed && @current.kind() != :end
-        if self.assignment_ahead?()
+        if @current.kind() == :def
+          self.compile_method()
+        elsif self.assignment_ahead?()
           constant_name = self.token_text(@current)
           first = constant_name.slice(0, 1)
           if first == "_" || first != first.upcase()
@@ -1519,9 +1521,18 @@ class Parser
       return
     end
     name = self.token_text(@current)
-    if self.current_class_has_method?(name)
-      self.fail("method is already defined")
-      return
+    if @current_module_index != nil
+      index = 0
+      while index < @modules[@modules.length() - 1][3].length()
+        self.fail("method is already defined") if @modules[@modules.length() - 1][3][index] == name
+        index = index + 1
+      end
+      return if @failed
+    else
+      if self.current_class_has_method?(name)
+        self.fail("method is already defined")
+        return
+      end
     end
     self.advance_token()
     if @current.kind() != :left_paren
@@ -1547,8 +1558,13 @@ class Parser
     @current_method_name = name
     self.compile_method_body(function_index, parameter_names, parameter_types, return_type)
     @current_method_name = outer_method_name
-    @current_class_method_names.push(name)
-    @builder.declare_method(@current_class_index, name, function_index, arity, arity, false)
+    if @current_module_index != nil
+      @modules[@modules.length() - 1][3].push(name)
+      @builder.declare_module_method(@current_module_index, name, function_index, arity, arity, false)
+    else
+      @current_class_method_names.push(name)
+      @builder.declare_method(@current_class_index, name, function_index, arity, arity, false)
+    end
   end
 
   def current_class_has_method?(name)
