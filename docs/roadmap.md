@@ -2400,6 +2400,10 @@ future work.
   inclusion syntax. Class bodies resolve `include Module` against declared
   modules and apply the descriptor-copy bridge before later method definitions.
 
+- Self-hosting, Phase 3 follow-up (one-hundred-thirty-eighth slice): included
+  method dispatch. A module-owned typed method copied into a class resolves and
+  executes through ordinary instance invocation.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,
