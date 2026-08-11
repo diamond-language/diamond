@@ -2340,6 +2340,10 @@ future work.
   modifier lookahead. Conditional hash values remain nested, while a postfix
   condition after a complete single-line hash is still recognized.
 
+- Self-hosting, Phase 3 follow-up (one-hundred-twenty-third slice): assignment
+  RHS lookahead. An `if` immediately after `=` begins the assigned expression,
+  while a later top-level `if` continues to act as a statement modifier.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,
