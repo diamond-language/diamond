@@ -1182,24 +1182,6 @@ class Parser
     result
   end
 
-  def primitive_annotation(type_id)
-    name = if type_id == Type::INT
-      "Int"
-    elsif type_id == Type::FLOAT
-      "Float"
-    elsif type_id == Type::STRING
-      "String"
-    elsif type_id == Type::BOOL
-      "Bool"
-    elsif type_id == Type::NIL
-      "Nil"
-    else
-      nil
-    end
-    return nil if name == nil
-    [[name, nil, nil, -1, nil, nil]]
-  end
-
   def homogeneous_element_annotation(elements)
     return nil if elements.length() == 0
     fact = self.type_fact(elements[0])
@@ -1209,7 +1191,21 @@ class Parser
       return nil if self.type_fact(elements[index]) != fact
       index = index + 1
     end
-    self.primitive_annotation(fact)
+    name = if fact == Type::INT
+      "Int"
+    elsif fact == Type::FLOAT
+      "Float"
+    elsif fact == Type::STRING
+      "String"
+    elsif fact == Type::BOOL
+      "Bool"
+    elsif fact == Type::NIL
+      "Nil"
+    else
+      nil
+    end
+    return nil if name == nil
+    [[name, nil, nil, -1, nil, nil]]
   end
 
   # Switches compiler state into the new function, compiles its body,
@@ -1713,20 +1709,28 @@ class Parser
     self.compile_method_body(function_index, parameter_names, parameter_types, return_type)
     @current_method_name = outer_method_name
     if @current_module_index != nil
-      @modules[@modules.length() - 1][3].push(name)
-      descriptor = [name, function_index, arity, @current_method_uses_state]
-      @modules[@modules.length() - 1][6].push(descriptor)
-      @builder.declare_module_method(@current_module_index, name, function_index,
-        arity, arity, @modules[@modules.length() - 1][4][0])
-      if @modules[@modules.length() - 1][5][0]
-        @builder.export_module_method(@current_module_index, name)
-        @modules[@modules.length() - 1][7].push(descriptor)
-      end
+      self.register_module_method(name, function_index, arity)
     else
       @current_class_method_names.push(name)
       @builder.declare_method(@current_class_index, name, function_index, arity, arity, false)
     end
     @current_method_uses_state = false
+  end
+
+  def register_module_method(name, function_index, arity)
+    @modules[@modules.length() - 1][3].push(name)
+    descriptor = [name, function_index, arity, @current_method_uses_state]
+    @modules[@modules.length() - 1][6].push(descriptor)
+    @builder.declare_module_method(@current_module_index, name, function_index,
+      arity, arity, @modules[@modules.length() - 1][4][0])
+    if @modules[@modules.length() - 1][5][0]
+      if descriptor[3]
+        self.fail("stateful method cannot use module_function mode")
+      else
+        @builder.export_module_method(@current_module_index, name)
+        @modules[@modules.length() - 1][7].push(descriptor)
+      end
+    end
   end
 
   def compile_method_body(function_index, parameter_names, parameter_types, return_type)

@@ -2536,6 +2536,10 @@ future work.
   targeted exports. Module method metadata records instance-state access and
   targeted `module_function` rejects such methods with the native diagnostic.
 
+- Self-hosting, Phase 3 follow-up (one-hundred-seventy-second slice): stateful
+  export-mode diagnostics. Methods compiled after standalone `module_function`
+  reject instance-state access with the mode-specific native message.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,
