@@ -1472,14 +1472,24 @@ class Parser
             self.fail("module constants must begin with an uppercase letter")
           else
             qualified = name + "::" + constant_name
-            constant_index = @builder.declare_namespace_constant(qualified)
-            @modules[@modules.length() - 1][2].push([constant_name, constant_index])
-            self.advance_token()
-            self.advance_token()
-            value = self.parse_expression()
-            self.emit_instruction2(49, constant_index, value)
-            if @current.kind() == :if || @current.kind() == :unless
-              self.fail("expected definition or include in module")
+            constant_index = nil
+            index = 0
+            while index < @modules[@modules.length() - 1][2].length()
+              constant_index = 0 if @modules[@modules.length() - 1][2][index][0] == constant_name
+              index = index + 1
+            end
+            if constant_index != nil
+              self.fail("constant is already defined")
+            else
+              constant_index = @builder.declare_namespace_constant(qualified)
+              @modules[@modules.length() - 1][2].push([constant_name, constant_index])
+              self.advance_token()
+              self.advance_token()
+              value = self.parse_expression()
+              self.emit_instruction2(49, constant_index, value)
+              if @current.kind() == :if || @current.kind() == :unless
+                self.fail("expected definition or include in module")
+              end
             end
           end
         else

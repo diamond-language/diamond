@@ -2380,6 +2380,10 @@ future work.
   module constant reads. Later definitions can reference earlier constants in
   the active module and emit the same namespace-slot lookup as qualified reads.
 
+- Self-hosting, Phase 3 follow-up (one-hundred-thirty-third slice): module
+  constant diagnostics. Lowercase definitions and duplicate write-once names
+  are rejected in the parser with native-compatible messages.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,
