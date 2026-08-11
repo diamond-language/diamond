@@ -2484,6 +2484,10 @@ future work.
   parenthesized module visibility. Named `private(...)` and `public(...)`
   directives accept the native compiler's call-like target-list form.
 
+- Self-hosting, Phase 3 follow-up (one-hundred-fifty-ninth slice): empty
+  visibility-list diagnostics. Parenthesized visibility directives require a
+  method name and match the native compiler's rejection message.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,

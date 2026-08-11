@@ -1569,7 +1569,7 @@ class Parser
           end
         end
       elsif parenthesized
-        self.fail("expected method in visibility list")
+        self.fail("expected method name in visibility list")
       else
         mode = @modules[@modules.length() - 1][4]
         mode[0] = private_mode
