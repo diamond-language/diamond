@@ -892,6 +892,10 @@ static DiamondVmStatus program_builder_invoke_helper(DiamondVm *vm,
     const bool declare_method_method=
         method_name->length==sizeof("declare_method")-1&&
         memcmp(method_name->chars,"declare_method",sizeof("declare_method")-1)==0;
+    const bool declare_module_method_method=
+        method_name->length==sizeof("declare_module_method")-1&&
+        memcmp(method_name->chars,"declare_module_method",
+            sizeof("declare_module_method")-1)==0;
     /* Phase 3 sub-phase 4 (gradual typing): a scalar or union type set.
      * Nested Array[T]/Hash[K,V]/Callable/interfaces/generics remain
      * separate future extensions. See docs/roadmap.md. */
@@ -930,6 +934,7 @@ static DiamondVmStatus program_builder_invoke_helper(DiamondVm *vm,
        !set_register_count_method&&!declare_class_method&&
        !declare_module_method&&!declare_namespace_constant_method&&
        !declare_field_method&&!declare_method_method&&
+       !declare_module_method_method&&
        !declare_type_set_method&&!set_parameter_type_method&&
        !set_return_type_method&&!declare_interface_method&&
        !declare_interface_method_method&&!set_type_variables_method&&
@@ -1289,6 +1294,45 @@ static DiamondVmStatus program_builder_invoke_helper(DiamondVm *vm,
         method->function_index=(uint8_t)target_function;
         method->arity=(uint8_t)arity_value;
         method->required_arity=(uint8_t)required_value;
+        method->is_private=registers[(size_t)base+5].as.boolean;
+        *result=DIAMOND_NIL;return DIAMOND_VM_OK;
+    }
+    if(declare_module_method_method) {
+        if(argc!=6)return DIAMOND_VM_ARITY_ERROR;
+        if(registers[base].kind!=DIAMOND_VALUE_INT||
+           registers[(size_t)base+1].kind!=DIAMOND_VALUE_OBJECT||
+           registers[(size_t)base+1].as.object->kind!=DIAMOND_OBJECT_STRING||
+           registers[(size_t)base+2].kind!=DIAMOND_VALUE_INT||
+           registers[(size_t)base+3].kind!=DIAMOND_VALUE_INT||
+           registers[(size_t)base+4].kind!=DIAMOND_VALUE_INT||
+           registers[(size_t)base+5].kind!=DIAMOND_VALUE_BOOL)
+            return DIAMOND_VM_TYPE_ERROR;
+        const int64_t module_index=registers[base].as.integer;
+        const DiamondString *name=
+            (const DiamondString *)registers[(size_t)base+1].as.object;
+        const int64_t function_index=registers[(size_t)base+2].as.integer;
+        const int64_t arity=registers[(size_t)base+3].as.integer;
+        const int64_t required=registers[(size_t)base+4].as.integer;
+        if(module_index<0||(uint64_t)module_index>=built->module_count||
+           name->length==0||name->length>=DIAMOND_MAX_FUNCTION_NAME||
+           function_index<0||(uint64_t)function_index>=built->function_count||
+           arity<0||arity>UINT8_MAX||required<0||required>arity)
+            return DIAMOND_VM_TYPE_ERROR;
+        DiamondModule *module=&built->modules[(size_t)module_index];
+        for(size_t index=0;index<module->method_count;index++)
+            if(strlen(module->methods[index].name)==name->length&&
+               memcmp(module->methods[index].name,name->chars,name->length)==0) {
+                snprintf(vm->error,sizeof vm->error,"method is already defined");
+                return DIAMOND_VM_TYPE_ERROR;
+            }
+        if(module->method_count==DIAMOND_MAX_METHODS)return DIAMOND_VM_TYPE_ERROR;
+        DiamondMethod *method=&module->methods[module->method_count++];
+        *method=(DiamondMethod){};
+        memcpy(method->name,name->chars,name->length);
+        method->name[name->length]='\0';
+        method->function_index=(uint8_t)function_index;
+        method->arity=(uint8_t)arity;
+        method->required_arity=(uint8_t)required;
         method->is_private=registers[(size_t)base+5].as.boolean;
         *result=DIAMOND_NIL;return DIAMOND_VM_OK;
     }

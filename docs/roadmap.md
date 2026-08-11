@@ -2384,6 +2384,10 @@ future work.
   constant diagnostics. Lowercase definitions and duplicate write-once names
   are rejected in the parser with native-compatible messages.
 
+- Self-hosting, Phase 3 follow-up (one-hundred-thirty-fourth slice): module
+  method builder bridge. Validated function descriptors can now be registered
+  in a module's includable instance-method table.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,
