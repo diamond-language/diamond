@@ -2058,6 +2058,10 @@ future work.
   the same explicit diagnostic in both compilers; self-hosted declarations
   now use the native `after function name` wording.
 
+- Self-hosting, Phase 3 sub-phase 5 (fifty-fourth slice): unterminated
+  class-method parameters coverage. A method parameter list missing `)` must
+  be rejected identically by the native and self-hosted parsers.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,
