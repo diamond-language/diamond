@@ -2588,6 +2588,10 @@ future work.
   module constants. Three-segment qualified reads resolve constants stored on a
   lexical child module through its namespace descriptor.
 
+- Self-hosting, Phase 3 follow-up (one-hundred-eighty-fifth slice): undefined
+  nested namespace diagnostics. Qualified paths whose child segment resolves
+  to neither a module nor a constant report the native namespaced-name error.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,
