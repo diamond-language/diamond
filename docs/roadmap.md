@@ -2444,6 +2444,10 @@ future work.
   module overrides. Locally declared methods may replace imported descriptors,
   and later class inclusion dispatches to the direct implementation.
 
+- Self-hosting, Phase 3 follow-up (one-hundred-forty-ninth slice): multiple
+  module precedence. When imported modules define the same method, the later
+  include wins through reverse descriptor lookup.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,
