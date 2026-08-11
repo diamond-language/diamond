@@ -2143,6 +2143,10 @@ future work.
   diagnostics. Any rescue clause following a catch-all is unreachable and is
   now rejected identically by both compilers.
 
+- Self-hosting, Phase 3 sub-phase 5 (seventy-fourth slice): cross-clause
+  duplicate filters. Rescue dispatch now tracks previously handled type IDs
+  and rejects exact repeats in later clauses with native diagnostic parity.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,

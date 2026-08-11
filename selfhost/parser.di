@@ -1955,7 +1955,7 @@ class Parser
     self.allocate_register()
   end
 
-  def compile_rescue_clause(exception, retry_target, destination)
+  def compile_rescue_clause(exception, retry_target, destination, seen_types)
     self.advance_token()
     rescue_local_count = @locals.length()
     if @current.kind() == :identifier
@@ -1963,6 +1963,17 @@ class Parser
       self.advance_token()
     end
     types = self.parse_rescue_types(exception)
+    type_index = 0
+    while type_index < types.length() && !@failed
+      seen_index = 0
+      while seen_index < seen_types.length()
+        self.fail("rescue type was already handled") if seen_types[seen_index] == types[type_index]
+        seen_index = seen_index + 1
+      end
+      seen_types.push(types[type_index]) unless @failed
+      type_index = type_index + 1
+    end
+    return nil if @failed
     match_jumps = []
     type_index = 0
     while type_index < types.length()
@@ -2021,6 +2032,7 @@ class Parser
     rescued_fact = body_fact
     rescued_declaration = body_declaration
     rescue_finished = []
+    seen_rescue_types = []
     saw_rescue = false
     catch_all = false
     while @current.kind() == :rescue && !@failed
@@ -2029,7 +2041,7 @@ class Parser
         break
       end
       saw_rescue = true
-      clause = self.compile_rescue_clause(exception, retry_target, destination)
+      clause = self.compile_rescue_clause(exception, retry_target, destination, seen_rescue_types)
       return destination if clause == nil
       rescue_finished.push(clause[0])
       rescued_fact = nil if rescued_fact != clause[1]
