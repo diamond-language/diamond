@@ -2781,6 +2781,36 @@ class Parser
   # with no following `(` is always a local read.
   def parse_name()
     name = self.token_text(@previous)
+    if @current.kind() == :double_colon
+      module_entry = nil
+      module_index = 0
+      while module_index < @modules.length()
+        module_entry = @modules[module_index] if @modules[module_index][0] == name
+        module_index = module_index + 1
+      end
+      self.advance_token()
+      if @current.kind() != :identifier
+        self.fail("expected name after '::'")
+        return 0
+      end
+      constant_name = self.token_text(@current)
+      self.advance_token()
+      constant_index = nil
+      if module_entry != nil
+        index = 0
+        while index < module_entry[2].length()
+          constant_index = module_entry[2][index][1] if module_entry[2][index][0] == constant_name
+          index = index + 1
+        end
+      end
+      if constant_index == nil
+        self.fail("undefined namespaced class")
+        return 0
+      end
+      destination = self.allocate_register()
+      self.emit_instruction2(48, destination, constant_index)
+      return destination
+    end
     class_entry = self.find_class(name)
     return self.compile_new_call(class_entry[1]) if class_entry != nil && @current.kind() == :dot
     local = self.find_local(name)

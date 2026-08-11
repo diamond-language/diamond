@@ -2368,6 +2368,10 @@ future work.
   constants. Uppercase assignments reserve qualified namespace slots and emit
   write-once `SET_NAMESPACE_CONSTANT` bytecode.
 
+- Self-hosting, Phase 3 follow-up (one-hundred-thirtieth slice): qualified
+  namespace constant reads. `Module::NAME` resolves through parser module
+  metadata and emits `GET_NAMESPACE_CONSTANT` with the reserved slot index.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,
