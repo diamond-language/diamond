@@ -1357,7 +1357,8 @@ static DiamondVmStatus program_builder_invoke_helper(DiamondVm *vm,
             return DIAMOND_VM_TYPE_ERROR;
         DiamondModule *module=&built->modules[(size_t)module_index];
         for(size_t index=0;index<module->method_count;index++)
-            if(strlen(module->methods[index].name)==name->length&&
+            if(!module->methods[index].included&&
+               strlen(module->methods[index].name)==name->length&&
                memcmp(module->methods[index].name,name->chars,name->length)==0) {
                 snprintf(vm->error,sizeof vm->error,"method is already defined");
                 return DIAMOND_VM_TYPE_ERROR;
