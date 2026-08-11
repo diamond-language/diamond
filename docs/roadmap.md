@@ -2544,6 +2544,10 @@ future work.
   module exports. Re-exporting an existing singleton descriptor is rejected by
   the validated builder bridge with the native duplicate-export diagnostic.
 
+- Self-hosting, Phase 3 follow-up (one-hundred-seventy-fourth slice): qualified
+  module-call delimiters. Resolved singleton function names require an opening
+  parenthesis and match the native missing-call-delimiter diagnostic.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,
