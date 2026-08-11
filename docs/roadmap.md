@@ -2175,6 +2175,10 @@ future work.
   rescue diagnostics. Class metadata now retains superclass indexes so a later
   subclass filter already covered by an earlier superclass is rejected.
 
+- Self-hosting, Phase 3 sub-phase 5 (eighty-second slice): exact multi-rescue
+  result facts. Matching exact results across the protected body and every
+  rescue clause retain their fact for downstream typed dispatch.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,
