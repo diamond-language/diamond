@@ -1498,7 +1498,16 @@ class Parser
       index = index + 1
     end
 
-    if self.consume_block_start()
+    endless = @current.kind() == :equal
+    if endless
+      self.advance_token()
+      body_result = self.parse_expression()
+      if return_type != nil
+        set_index = self.emit_type_check(body_result, return_type)
+        @builder.set_return_type(function_index, set_index)
+      end
+      self.emit_instruction1(Opcode::RETURN, body_result)
+    elsif self.consume_block_start()
       body_result = self.compile_sequence()
       if return_type != nil
         set_index = self.emit_type_check(body_result, return_type)
