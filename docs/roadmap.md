@@ -2556,6 +2556,10 @@ future work.
   method definitions. The self-hosted method parser preserves a trailing `=`
   as part of class and module method names before parsing parameters.
 
+- Self-hosting, Phase 3 follow-up (one-hundred-seventy-seventh slice): writer
+  module exports. Targeted `module_function value=` resolves and exports the
+  complete suffixed direct-method descriptor.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,

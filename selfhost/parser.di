@@ -1511,6 +1511,11 @@ class Parser
       more = true
       while more && !@failed
         method_name = self.token_text(@current)
+        self.advance_token()
+        if @current.kind() == :equal
+          method_name = method_name + "="
+          self.advance_token()
+        end
         found = false
         descriptor = nil
         index = 0
@@ -1531,7 +1536,6 @@ class Parser
         else
           self.fail("module_function target is not defined here")
         end
-        self.advance_token()
         if @current.kind() == :comma
           self.advance_token()
         else
