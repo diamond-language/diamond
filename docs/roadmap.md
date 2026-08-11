@@ -2130,6 +2130,11 @@ future work.
   argument arity coverage. An explicit invocation supplying the wrong number
   of generic arguments must produce the same diagnostic in both compilers.
 
+- Self-hosting, Phase 3 sub-phase 5 (seventy-first slice): ordered multiple
+  rescue clauses. The self-hosted parser now catches once and dispatches typed
+  clauses in source order with `IS_TYPE`, preserving catch-all behavior and
+  re-raising an exception unmatched by every filtered clause.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,

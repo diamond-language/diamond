@@ -343,7 +343,7 @@ class Parser
     operand
   end
 
-  def parse_rescue_types(handler, exception)
+  def parse_rescue_types(exception)
     types = []
     annotation = []
     if @current.kind() == :colon
@@ -377,14 +377,9 @@ class Parser
         end
       end
     end
-    @builder.patch_byte(@current_function_index, handler - 9, types.length())
-    index = 0
-    while index < types.length()
-      @builder.patch_byte(@current_function_index, handler - 8 + index, types[index])
-      index = index + 1
-    end
     self.set_type_fact(exception, types[0]) if types.length() == 1
     @declared_types.push([exception, annotation]) if annotation.length() > 0
+    types
   end
 
   # --- locals: an Array of [name, register, captured] entries, scanned
@@ -1960,6 +1955,51 @@ class Parser
     self.allocate_register()
   end
 
+  def compile_rescue_clause(exception, retry_target, destination)
+    self.advance_token()
+    rescue_local_count = @locals.length()
+    if @current.kind() == :identifier
+      @locals.push([self.token_text(@current), exception, false])
+      self.advance_token()
+    end
+    types = self.parse_rescue_types(exception)
+    match_jumps = []
+    type_index = 0
+    while type_index < types.length()
+      matched = self.allocate_register()
+      self.emit_instruction3(Opcode::IS_TYPE, matched, exception, types[type_index])
+      match_jumps.push(self.emit_jump(Opcode::JUMP_IF_TRUE, matched))
+      type_index = type_index + 1
+    end
+    mismatch_jump = if types.length() > 0
+      self.emit_jump(Opcode::JUMP, 0)
+    else
+      nil
+    end
+    return nil unless self.consume_block_start()
+    type_index = 0
+    while type_index < match_jumps.length()
+      self.patch_jump(match_jumps[type_index], @code_count)
+      type_index = type_index + 1
+    end
+    outer_exception = @current_exception
+    outer_retry_target = @current_retry_target
+    @current_exception = exception
+    @current_retry_target = retry_target
+    rescued = self.compile_sequence()
+    @current_exception = outer_exception
+    @current_retry_target = outer_retry_target
+    rescued_fact = self.type_fact(rescued)
+    rescued_declaration = self.declared_type(rescued)
+    self.emit_instruction2(Opcode::MOVE, destination, rescued)
+    finished = self.emit_jump(Opcode::JUMP, 0)
+    while @locals.length() > rescue_local_count
+      @locals.pop()
+    end
+    self.patch_jump(mismatch_jump, @code_count) if mismatch_jump != nil
+    [finished, rescued_fact, rescued_declaration, mismatch_jump == nil]
+  end
+
   def compile_begin()
     return 0 unless self.consume_block_start()
     original_facts = self.copy_type_facts()
@@ -1980,34 +2020,30 @@ class Parser
     self.patch_jump(handler, @code_count)
     rescued_fact = body_fact
     rescued_declaration = body_declaration
-    rescued_finished = nil
-    if @current.kind() == :rescue
-      self.advance_token()
-      rescue_local_count = @locals.length()
-      if @current.kind() == :identifier
-        @locals.push([self.token_text(@current), exception, false])
-        self.advance_token()
+    rescue_finished = []
+    saw_rescue = false
+    catch_all = false
+    while @current.kind() == :rescue && !@failed
+      if catch_all
+        self.fail("rescue clause after catch-all is unreachable")
+        break
       end
-      self.parse_rescue_types(handler, exception)
-      return destination unless self.consume_block_start()
-      outer_exception = @current_exception
-      outer_retry_target = @current_retry_target
-      @current_exception = exception
-      @current_retry_target = retry_target
-      rescued = self.compile_sequence()
-      rescued_fact = self.type_fact(rescued)
-      rescued_declaration = self.declared_type(rescued)
-      @current_exception = outer_exception
-      @current_retry_target = outer_retry_target
-      self.emit_instruction2(Opcode::MOVE, destination, rescued)
-      rescued_finished = self.emit_jump(Opcode::JUMP, 0)
-      while @locals.length() > rescue_local_count
-        @locals.pop()
-      end
-    elsif @current.kind() != :ensure
+      saw_rescue = true
+      clause = self.compile_rescue_clause(exception, retry_target, destination)
+      return destination if clause == nil
+      rescue_finished.push(clause[0])
+      rescued_fact = nil if rescued_fact != clause[1]
+      rescued_declaration = nil if rescued_declaration != clause[2]
+      catch_all = clause[3]
+    end
+    if saw_rescue && !catch_all
+      self.emit_instruction1(Opcode::RAISE, exception)
+    end
+    if @current.kind() != :ensure && !saw_rescue
       self.fail("expected 'rescue' or 'ensure' after begin body")
       return destination
     end
+    @builder.patch_byte(@current_function_index, handler - 9, 0) if saw_rescue
     self.patch_jump(finished, @code_count)
     if @current.kind() == :else
       self.advance_token()
@@ -2017,7 +2053,11 @@ class Parser
       body_fact = self.type_fact(normal)
       body_declaration = self.declared_type(normal)
     end
-    self.patch_jump(rescued_finished, @code_count) if rescued_finished != nil
+    rescue_index = 0
+    while rescue_index < rescue_finished.length()
+      self.patch_jump(rescue_finished[rescue_index], @code_count)
+      rescue_index = rescue_index + 1
+    end
     self.emit_byte(Opcode::RUN_ENSURE)
     continuation_operand = @code_count
     self.emit_byte(0)
