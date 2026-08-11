@@ -1954,7 +1954,7 @@ class Parser
       return self.allocate_register()
     end
     self.advance_token()
-    has_value = @current.kind() != :newline && @current.kind() != :end && @current.kind() != :else && @current.kind() != :eof
+    has_value = @current.kind() != :newline && @current.kind() != :end && @current.kind() != :else && @current.kind() != :if && @current.kind() != :unless && @current.kind() != :eof
     frame = @loops[@loops.length() - 1]
     if kind != :break && has_value
       self.fail("next and redo do not accept values")

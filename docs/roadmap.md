@@ -2263,6 +2263,10 @@ future work.
   assignment. Postfix branches apply local mutation only on their taken path,
   leaving the prior value unchanged when the condition skips the statement.
 
+- Self-hosting, Phase 3 follow-up (one-hundred-fourth slice): postfix `next`.
+  Modifier keywords terminate loop-control value scanning, and a taken branch
+  continues at the active loop's condition target without running later work.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,
