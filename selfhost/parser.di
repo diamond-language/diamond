@@ -174,6 +174,7 @@ class Parser
     @modules = []
     @current_module_index = nil
     @current_module_name = nil
+    @current_module_entry = nil
     @current_type_variables = []
     @type_facts = []
     @declared_types = []
@@ -1484,11 +1485,14 @@ class Parser
     end
     return 0 if @failed
     module_index = @builder.declare_module(name)
+    module_entry = @modules.length()
     @modules.push([name, module_index, [], [], [false], [false], [], []])
     outer_module_index = @current_module_index
     outer_module_name = @current_module_name
+    outer_module_entry = @current_module_entry
     @current_module_index = module_index
     @current_module_name = name
+    @current_module_entry = module_entry
     self.advance_token()
     if self.consume_block_start()
       while !@failed && @current.kind() != :end
@@ -1511,6 +1515,7 @@ class Parser
     end
     @current_module_index = outer_module_index
     @current_module_name = outer_module_name
+    @current_module_entry = outer_module_entry
     self.allocate_register()
   end
 
@@ -1530,10 +1535,10 @@ class Parser
         found = false
         descriptor = nil
         index = 0
-        while index < @modules[@modules.length() - 1][3].length()
-          if @modules[@modules.length() - 1][3][index] == method_name
+        while index < @modules[@current_module_entry][3].length()
+          if @modules[@current_module_entry][3][index] == method_name
             found = true
-            descriptor = @modules[@modules.length() - 1][6][index]
+            descriptor = @modules[@current_module_entry][6][index]
           end
           index = index + 1
         end
@@ -1542,7 +1547,7 @@ class Parser
             self.fail("stateful module method cannot become a module_function")
           else
             @builder.export_module_method(@current_module_index, method_name)
-            @modules[@modules.length() - 1][7].push(descriptor)
+            @modules[@current_module_entry][7].push(descriptor)
           end
         else
           self.fail("module_function target is not defined here")
@@ -1563,7 +1568,7 @@ class Parser
     elsif parenthesized
       self.fail("expected method in module_function list")
     else
-      mode = @modules[@modules.length() - 1][5]
+      mode = @modules[@current_module_entry][5]
       mode[0] = true
     end
   end
@@ -1578,8 +1583,8 @@ class Parser
     qualified = module_name + "::" + constant_name
     constant_index = nil
     index = 0
-    while index < @modules[@modules.length() - 1][2].length()
-      constant_index = 0 if @modules[@modules.length() - 1][2][index][0] == constant_name
+    while index < @modules[@current_module_entry][2].length()
+      constant_index = 0 if @modules[@current_module_entry][2][index][0] == constant_name
       index = index + 1
     end
     if constant_index != nil
@@ -1587,7 +1592,7 @@ class Parser
       return
     end
     constant_index = @builder.declare_namespace_constant(qualified)
-    @modules[@modules.length() - 1][2].push([constant_name, constant_index])
+    @modules[@current_module_entry][2].push([constant_name, constant_index])
     self.advance_token()
     self.advance_token()
     value = self.parse_expression()
@@ -1609,8 +1614,8 @@ class Parser
           name = self.token_text(@current)
           found = false
           index = 0
-          while index < @modules[@modules.length() - 1][3].length()
-            found = true if @modules[@modules.length() - 1][3][index] == name
+          while index < @modules[@current_module_entry][3].length()
+            found = true if @modules[@current_module_entry][3][index] == name
             index = index + 1
           end
           if found
@@ -1635,7 +1640,7 @@ class Parser
       elsif parenthesized
         self.fail("expected method name in visibility list")
       else
-        mode = @modules[@modules.length() - 1][4]
+        mode = @modules[@current_module_entry][4]
         mode[0] = private_mode
       end
       return
@@ -1693,8 +1698,8 @@ class Parser
     end
     if @current_module_index != nil
       index = 0
-      while index < @modules[@modules.length() - 1][3].length()
-        self.fail("method is already defined") if @modules[@modules.length() - 1][3][index] == name
+      while index < @modules[@current_module_entry][3].length()
+        self.fail("method is already defined") if @modules[@current_module_entry][3][index] == name
         index = index + 1
       end
       return if @failed
@@ -1746,17 +1751,17 @@ class Parser
   end
 
   def register_module_method(name, function_index, arity)
-    @modules[@modules.length() - 1][3].push(name)
+    @modules[@current_module_entry][3].push(name)
     descriptor = [name, function_index, arity, @current_method_uses_state]
-    @modules[@modules.length() - 1][6].push(descriptor)
+    @modules[@current_module_entry][6].push(descriptor)
     @builder.declare_module_method(@current_module_index, name, function_index,
-      arity, arity, @modules[@modules.length() - 1][4][0])
-    if @modules[@modules.length() - 1][5][0]
+      arity, arity, @modules[@current_module_entry][4][0])
+    if @modules[@current_module_entry][5][0]
       if descriptor[3]
         self.fail("stateful method cannot use module_function mode")
       else
         @builder.export_module_method(@current_module_index, name)
-        @modules[@modules.length() - 1][7].push(descriptor)
+        @modules[@current_module_entry][7].push(descriptor)
       end
     end
   end
@@ -3021,7 +3026,7 @@ class Parser
     local = self.find_local(name)
     if local == nil && @current_module_index != nil
       constant_index = nil
-      constants = @modules[@modules.length() - 1][2]
+      constants = @modules[@current_module_entry][2]
       index = 0
       while index < constants.length()
         constant_index = constants[index][1] if constants[index][0] == name
