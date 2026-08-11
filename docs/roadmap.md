@@ -2159,6 +2159,10 @@ future work.
   else integration. The `else` body runs only after normal protected-body
   completion and supplies the expression result without entering handlers.
 
+- Self-hosting, Phase 3 sub-phase 5 (seventy-eighth slice): later-clause bare
+  re-raise. A bare `raise` in a later matching clause preserves the current
+  exception and propagates it to an outer handler in both compilers.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,
