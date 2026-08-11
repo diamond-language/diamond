@@ -3066,6 +3066,16 @@ class Parser
       self.advance_token()
       return self.compile_module_singleton_call(nested_module)
     end
+    if nested_module != nil && @current.kind() == :double_colon
+      self.advance_token()
+      if @current.kind() != :identifier
+        self.fail("expected name after '::'")
+        return 0
+      end
+      constant_name = self.token_text(@current)
+      self.advance_token()
+      module_entry = nested_module
+    end
     constant_index = nil
     if module_entry != nil
       index = 0
