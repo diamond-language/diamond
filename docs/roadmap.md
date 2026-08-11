@@ -2604,6 +2604,10 @@ future work.
   child includes. Nested modules retain their parent namespace and resolve an
   unqualified sibling include against that lexical scope.
 
+- Self-hosting, Phase 3 follow-up (one-hundred-eighty-ninth slice): nested
+  class declarations. Module bodies may compile child classes whose builder and
+  parser identities carry the enclosing module's qualified namespace.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,

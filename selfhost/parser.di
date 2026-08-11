@@ -1369,6 +1369,9 @@ class Parser
       return 0
     end
     name = self.token_text(@current)
+    if @current_module_name != nil
+      name = @current_module_name + "::" + name
+    end
     if self.find_class(name) != nil
       self.fail("class is already defined")
       return 0
@@ -1498,6 +1501,8 @@ class Parser
       while !@failed && @current.kind() != :end
         if @current.kind() == :def
           self.compile_method()
+        elsif @current.kind() == :class
+          self.compile_class()
         elsif @current.kind() == :module
           self.compile_module()
         elsif @current.kind() == :module_function
