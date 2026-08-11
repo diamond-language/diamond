@@ -1459,16 +1459,32 @@ class Parser
     end
     return 0 if @failed
     module_index = @builder.declare_module(name)
-    @modules.push([name, module_index])
+    @modules.push([name, module_index, []])
     @current_module_index = module_index
     @current_module_name = name
     self.advance_token()
     if self.consume_block_start()
-      if @current.kind() != :end
-        self.fail("expected module constant or method definition")
-      else
-        self.advance_token()
+      while !@failed && @current.kind() != :end
+        if self.assignment_ahead?()
+          constant_name = self.token_text(@current)
+          first = constant_name.slice(0, 1)
+          if first == "_" || first != first.upcase()
+            self.fail("module constants must begin with an uppercase letter")
+          else
+            qualified = name + "::" + constant_name
+            constant_index = @builder.declare_namespace_constant(qualified)
+            @modules[@modules.length() - 1][2].push([constant_name, constant_index])
+            self.advance_token()
+            self.advance_token()
+            value = self.parse_expression()
+            self.emit_instruction2(49, constant_index, value)
+          end
+        else
+          self.fail("expected module constant or method definition")
+        end
+        self.skip_newlines() if @current.kind() == :newline
       end
+      self.advance_token() if @current.kind() == :end
     end
     @current_module_index = nil
     @current_module_name = nil

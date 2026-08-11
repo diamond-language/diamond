@@ -2364,6 +2364,10 @@ future work.
   module declarations. The self-hosted parser validates top-level module names,
   registers descriptors through ProgramBuilder, and restores namespace state.
 
+- Self-hosting, Phase 3 follow-up (one-hundred-twenty-ninth slice): module
+  constants. Uppercase assignments reserve qualified namespace slots and emit
+  write-once `SET_NAMESPACE_CONSTANT` bytecode.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,
