@@ -2416,6 +2416,10 @@ future work.
   builder bridge. `ProgramBuilder#declare_module_field` reserves stable symbolic
   field slots on module descriptors for later inclusion into class shapes.
 
+- Self-hosting, Phase 3 follow-up (one-hundred-forty-second slice): module
+  instance variables. Module methods emit symbolic ivar reads and writes while
+  declaring fields for materialization in each including class shape.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,

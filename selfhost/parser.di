@@ -2034,27 +2034,39 @@ class Parser
   end
 
   def compile_ivar_write(token, value)
-    if @current_class_index == nil
+    if @current_class_index == nil && @current_module_index == nil
       self.fail("instance variable used outside a method")
       return 0
     end
     field_text = self.token_text(token)
     field_name = field_text.slice(1, field_text.length() - 1)
-    field_index = @builder.declare_field(@current_class_index, field_name)
-    self.emit_instruction3(Opcode::SET_IVAR, 0, field_index, value)
+    if @current_module_index != nil
+      @builder.declare_module_field(@current_module_index, field_name)
+      field_index = self.add_string(field_name)
+      self.emit_instruction3(47, 0, field_index, value)
+    else
+      field_index = @builder.declare_field(@current_class_index, field_name)
+      self.emit_instruction3(Opcode::SET_IVAR, 0, field_index, value)
+    end
     value
   end
 
   def compile_ivar_read(token)
-    if @current_class_index == nil
+    if @current_class_index == nil && @current_module_index == nil
       self.fail("instance variable used outside a method")
       return 0
     end
     field_text = self.token_text(token)
     field_name = field_text.slice(1, field_text.length() - 1)
-    field_index = @builder.declare_field(@current_class_index, field_name)
     destination = self.allocate_register()
-    self.emit_instruction3(Opcode::GET_IVAR, destination, 0, field_index)
+    if @current_module_index != nil
+      @builder.declare_module_field(@current_module_index, field_name)
+      field_index = self.add_string(field_name)
+      self.emit_instruction3(46, destination, 0, field_index)
+    else
+      field_index = @builder.declare_field(@current_class_index, field_name)
+      self.emit_instruction3(Opcode::GET_IVAR, destination, 0, field_index)
+    end
     destination
   end
 
