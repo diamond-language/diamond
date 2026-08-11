@@ -1662,6 +1662,11 @@ class Parser
       return
     end
     name = self.token_text(@current)
+    self.advance_token()
+    if @current.kind() == :equal
+      name = name + "="
+      self.advance_token()
+    end
     if @current_module_index != nil
       index = 0
       while index < @modules[@modules.length() - 1][3].length()
@@ -1679,7 +1684,6 @@ class Parser
         return
       end
     end
-    self.advance_token()
     if @current.kind() != :left_paren
       self.fail("expected '(' after function name")
       return
