@@ -907,6 +907,10 @@ static DiamondVmStatus program_builder_invoke_helper(DiamondVm *vm,
         method_name->length==sizeof("include_module_in_module")-1&&
         memcmp(method_name->chars,"include_module_in_module",
             sizeof("include_module_in_module")-1)==0;
+    const bool set_module_method_visibility_method=
+        method_name->length==sizeof("set_module_method_visibility")-1&&
+        memcmp(method_name->chars,"set_module_method_visibility",
+            sizeof("set_module_method_visibility")-1)==0;
     /* Phase 3 sub-phase 4 (gradual typing): a scalar or union type set.
      * Nested Array[T]/Hash[K,V]/Callable/interfaces/generics remain
      * separate future extensions. See docs/roadmap.md. */
@@ -947,6 +951,7 @@ static DiamondVmStatus program_builder_invoke_helper(DiamondVm *vm,
        !declare_field_method&&!declare_module_field_method&&!declare_method_method&&
        !declare_module_method_method&&!include_module_method&&
        !include_module_in_module_method&&
+       !set_module_method_visibility_method&&
        !declare_type_set_method&&!set_parameter_type_method&&
        !set_return_type_method&&!declare_interface_method&&
        !declare_interface_method_method&&!set_type_variables_method&&
@@ -1435,6 +1440,32 @@ static DiamondVmStatus program_builder_invoke_helper(DiamondVm *vm,
             target->methods[target->method_count]=source->methods[method];
             target->methods[target->method_count++].included=true;
         }
+        *result=DIAMOND_NIL;return DIAMOND_VM_OK;
+    }
+    if(set_module_method_visibility_method) {
+        if(argc!=3)return DIAMOND_VM_ARITY_ERROR;
+        if(registers[base].kind!=DIAMOND_VALUE_INT||
+           registers[(size_t)base+1].kind!=DIAMOND_VALUE_OBJECT||
+           registers[(size_t)base+1].as.object->kind!=DIAMOND_OBJECT_STRING||
+           registers[(size_t)base+2].kind!=DIAMOND_VALUE_BOOL)
+            return DIAMOND_VM_TYPE_ERROR;
+        const int64_t module_index=registers[base].as.integer;
+        const DiamondString *name=
+            (const DiamondString *)registers[(size_t)base+1].as.object;
+        if(module_index<0||(uint64_t)module_index>=built->module_count)
+            return DIAMOND_VM_TYPE_ERROR;
+        DiamondModule *module=&built->modules[(size_t)module_index];
+        DiamondMethod *found=nullptr;
+        for(size_t index=0;index<module->method_count;index++)
+            if(!module->methods[index].included&&
+               strlen(module->methods[index].name)==name->length&&
+               memcmp(module->methods[index].name,name->chars,name->length)==0)
+                found=&module->methods[index];
+        if(found==nullptr) {
+            snprintf(vm->error,sizeof vm->error,"undefined method for visibility change");
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        found->is_private=registers[(size_t)base+2].as.boolean;
         *result=DIAMOND_NIL;return DIAMOND_VM_OK;
     }
     if(declare_type_set_method) {

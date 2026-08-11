@@ -2452,6 +2452,10 @@ future work.
   override preservation. A direct method replacing an imported descriptor keeps
   precedence after another module layer and final class inclusion.
 
+- Self-hosting, Phase 3 follow-up (one-hundred-fifty-first slice): module
+  visibility builder bridge. Named direct module methods can be switched between
+  private and public descriptors through a validated ProgramBuilder mutation.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,
