@@ -2424,6 +2424,10 @@ future work.
   module state. Symbolic fields persist on their receiver and remain isolated
   across independently constructed instances of the including class.
 
+- Self-hosting, Phase 3 follow-up (one-hundred-forty-fourth slice): transitive
+  inclusion builder bridge. One module can copy another module's fields and
+  includable methods through an index-safe dedicated ProgramBuilder operation.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,

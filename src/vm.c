@@ -903,6 +903,10 @@ static DiamondVmStatus program_builder_invoke_helper(DiamondVm *vm,
     const bool include_module_method=
         method_name->length==sizeof("include_module")-1&&
         memcmp(method_name->chars,"include_module",sizeof("include_module")-1)==0;
+    const bool include_module_in_module_method=
+        method_name->length==sizeof("include_module_in_module")-1&&
+        memcmp(method_name->chars,"include_module_in_module",
+            sizeof("include_module_in_module")-1)==0;
     /* Phase 3 sub-phase 4 (gradual typing): a scalar or union type set.
      * Nested Array[T]/Hash[K,V]/Callable/interfaces/generics remain
      * separate future extensions. See docs/roadmap.md. */
@@ -942,6 +946,7 @@ static DiamondVmStatus program_builder_invoke_helper(DiamondVm *vm,
        !declare_module_method&&!declare_namespace_constant_method&&
        !declare_field_method&&!declare_module_field_method&&!declare_method_method&&
        !declare_module_method_method&&!include_module_method&&
+       !include_module_in_module_method&&
        !declare_type_set_method&&!set_parameter_type_method&&
        !set_return_type_method&&!declare_interface_method&&
        !declare_interface_method_method&&!set_type_variables_method&&
@@ -1396,6 +1401,39 @@ static DiamondVmStatus program_builder_invoke_helper(DiamondVm *vm,
             class->methods[class->method_count++].included=true;
         }
         program_builder_recompute_shapes(class);
+        *result=DIAMOND_NIL;return DIAMOND_VM_OK;
+    }
+    if(include_module_in_module_method) {
+        if(argc!=2)return DIAMOND_VM_ARITY_ERROR;
+        if(registers[base].kind!=DIAMOND_VALUE_INT||
+           registers[(size_t)base+1].kind!=DIAMOND_VALUE_INT)
+            return DIAMOND_VM_TYPE_ERROR;
+        const int64_t target_index=registers[base].as.integer;
+        const int64_t source_index=registers[(size_t)base+1].as.integer;
+        if(target_index<0||source_index<0||target_index==source_index||
+           (uint64_t)target_index>=built->module_count||
+           (uint64_t)source_index>=built->module_count)
+            return DIAMOND_VM_TYPE_ERROR;
+        DiamondModule *target=&built->modules[(size_t)target_index];
+        const DiamondModule *source=&built->modules[(size_t)source_index];
+        if(target->field_count+source->field_count>DIAMOND_MAX_FIELDS||
+           target->method_count+source->method_count>DIAMOND_MAX_METHODS)
+            return DIAMOND_VM_TYPE_ERROR;
+        for(size_t field=0;field<source->field_count;field++) {
+            bool present=false;
+            for(size_t existing=0;existing<target->field_count;existing++)
+                if(strcmp(target->fields[existing],source->fields[field])==0)
+                    present=true;
+            if(!present) {
+                const size_t length=strlen(source->fields[field]);
+                memcpy(target->fields[target->field_count],source->fields[field],length+1);
+                target->field_count++;
+            }
+        }
+        for(size_t method=0;method<source->method_count;method++) {
+            target->methods[target->method_count]=source->methods[method];
+            target->methods[target->method_count++].included=true;
+        }
         *result=DIAMOND_NIL;return DIAMOND_VM_OK;
     }
     if(declare_type_set_method) {
