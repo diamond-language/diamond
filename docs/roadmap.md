@@ -2846,6 +2846,10 @@ future work.
   require mapping. Canonically identical dependency spellings emit one source
   segment and preserve one stable imported runtime frame.
 
+- Self-hosting, Phase 3 follow-up (two-hundred-forty-ninth slice): package
+  compile locations. Syntax failures in validated package source map to the
+  canonical package file and original line through both parser pipelines.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,
