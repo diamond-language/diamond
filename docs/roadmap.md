@@ -2704,6 +2704,10 @@ future work.
   require suppression. A single expansion tracks canonical loaded paths and
   avoids inlining the same required source twice.
 
+- Self-hosting, Phase 3 follow-up (two-hundred-fourteenth slice): circular
+  require propagation. Loader cycle failures surface through the bridge as an
+  `IOError` that self-hosted callers can diagnose or rescue.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,
