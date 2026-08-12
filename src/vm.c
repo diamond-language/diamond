@@ -1364,6 +1364,20 @@ static DiamondVmStatus program_builder_invoke_helper(DiamondVm *vm,
         method->arity=(uint8_t)arity_value;
         method->required_arity=(uint8_t)required_value;
         method->is_private=registers[(size_t)base+5].as.boolean;
+        /* declare_function always leaves owner_class at UINT8_MAX (not a
+         * method) since it runs before the caller knows whether this
+         * function will end up registered as one -- diamond_compile's own
+         * compile_definition sets it inline instead, once current_class is
+         * known. Matched here now that it's known: parameter_offset (see
+         * run_chunk's INVOKE handler) derives from owner_class, and a
+         * method whose owner_class is still UINT8_MAX gets parameter_offset
+         * 0 instead of 1, which silently breaks the private-method
+         * "explicit self receiver" bypass for every ProgramBuilder-built
+         * class -- caught by the self-hosted parser's own private/public
+         * support calling a private method via `self.foo()`, not by any
+         * existing scalar-argument differential case. See docs/roadmap.md's
+         * self-hosting Phase 3 follow-up entry. */
+        built->functions[target_function].owner_class=(uint8_t)registers[base].as.integer;
         *result=DIAMOND_NIL;return DIAMOND_VM_OK;
     }
     if(declare_module_method_method) {
@@ -1404,6 +1418,13 @@ static DiamondVmStatus program_builder_invoke_helper(DiamondVm *vm,
         method->arity=(uint8_t)arity;
         method->required_arity=(uint8_t)required;
         method->is_private=registers[(size_t)base+5].as.boolean;
+        /* Same owner_class fix as declare_method just above, using
+         * diamond_compile's own module-method sentinel (UINT8_MAX-1,
+         * distinct from UINT8_MAX's "not a method at all" so the private-
+         * bypass's parameter_offset==1 check still fires for module
+         * methods too). See docs/roadmap.md's self-hosting Phase 3
+         * follow-up entry. */
+        built->functions[function_index].owner_class=UINT8_MAX-1;
         *result=DIAMOND_NIL;return DIAMOND_VM_OK;
     }
     if(include_module_method) {

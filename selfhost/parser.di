@@ -203,6 +203,13 @@ class Parser
     # surfacing as an uncaught exception from declare_method's own
     # (separate, VM-level) duplicate check.
     @current_class_method_names = []
+    # Default visibility for methods declared for the rest of the class
+    # currently being compiled -- set by a bare `private`/`public` in the
+    # class body (compile_class_visibility). Named visibility targets
+    # (`private(name)`) aren't supported: unlike compile_module's own
+    # bare-vs-named split, there's no bridge method to flip an
+    # already-declared class method's visibility after the fact.
+    @current_class_methods_private = false
     # The class_index of the class currently being compiled's
     # superclass, or nil if it has none -- gates `super`'s own "used in
     # a class without a superclass" check. Doesn't need the superclass's
@@ -1427,10 +1434,12 @@ class Parser
     @current_class_index = class_index
     @current_class_superclass_index = superclass_index
     @current_class_method_names = []
+    @current_class_methods_private = false
 
     if !self.consume_block_start()
       @current_class_index = nil
       @current_class_superclass_index = nil
+      @current_class_methods_private = false
       return 0
     end
     while !@failed && @current.kind() != :end
@@ -1438,24 +1447,10 @@ class Parser
         self.compile_method()
       elsif self.attribute_keyword?(@current.kind())
         self.compile_attribute()
+      elsif @current.kind() == :private || @current.kind() == :public
+        self.compile_class_visibility()
       elsif @current.kind() == :include
-        self.advance_token()
-        if @current.kind() != :identifier
-          self.fail("expected module name after 'include'")
-        else
-          module_name = self.consume_qualified_module_name()
-          module_index = nil
-          index = 0
-          while index < @modules.length()
-            module_index = @modules[index][1] if @modules[index][0] == module_name
-            index = index + 1
-          end
-          if module_index == nil
-            self.fail("undefined module")
-          else
-            @builder.include_module(@current_class_index, module_index)
-          end
-        end
+        self.compile_class_include()
       else
         self.fail("expected method definition or include in class")
       end
@@ -1465,14 +1460,55 @@ class Parser
       self.fail("expected method definition or include in class") unless @failed
       @current_class_index = nil
       @current_class_superclass_index = nil
+      @current_class_methods_private = false
       return 0
     end
     self.advance_token()
     @current_class_index = nil
     @current_class_superclass_index = nil
+    @current_class_methods_private = false
     # Sole-writer fresh register; run_chunk's zero-init already covers
     # nil, matching compile_class.c's own return value exactly.
     self.allocate_register()
+  end
+
+  def compile_class_include()
+    self.advance_token()
+    if @current.kind() != :identifier
+      self.fail("expected module name after 'include'")
+      return
+    end
+    module_name = self.consume_qualified_module_name()
+    module_index = nil
+    index = 0
+    while index < @modules.length()
+      module_index = @modules[index][1] if @modules[index][0] == module_name
+      index = index + 1
+    end
+    if module_index == nil
+      self.fail("undefined module")
+    else
+      @builder.include_module(@current_class_index, module_index)
+    end
+  end
+
+  # Bare `private`/`public` only -- sets the default visibility for
+  # methods declared for the remainder of the current class body. Native
+  # also accepts a parenthesized or bare comma-separated name list to
+  # retroactively flip already-declared methods' visibility
+  # (compiler.c's compile_visibility); that form fails explicitly here
+  # rather than being silently mishandled, since there's no bridge
+  # method to flip an already-declared class method's visibility (unlike
+  # compile_module_include's own named-list handling, which has
+  # set_module_method_visibility to call).
+  def compile_class_visibility()
+    private_mode = @current.kind() == :private
+    self.advance_token()
+    if @current.kind() == :left_paren || @current.kind() == :identifier
+      self.fail("named class visibility targets are not supported here")
+      return
+    end
+    @current_class_methods_private = private_mode
   end
 
   # Returns the superclass's class_index, or nil if there's no `<
@@ -1800,7 +1836,7 @@ class Parser
       self.register_module_method(name, function_index, arity)
     else
       @current_class_method_names.push(name)
-      @builder.declare_method(@current_class_index, name, function_index, arity, arity, false)
+      @builder.declare_method(@current_class_index, name, function_index, arity, arity, @current_class_methods_private)
     end
     @current_method_uses_state = false
   end
@@ -2021,7 +2057,7 @@ class Parser
     @declared_types = outer_declared_types
 
     @current_class_method_names.push(method_name)
-    @builder.declare_method(@current_class_index, method_name, function_index, arity, arity, false)
+    @builder.declare_method(@current_class_index, method_name, function_index, arity, arity, @current_class_methods_private)
   end
 
   # Shared by compile_call/compile_closure_call: parses `(arg, arg, ...)`

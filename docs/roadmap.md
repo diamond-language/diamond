@@ -3168,6 +3168,48 @@ future work.
   real distance left -- each probe so far has traded one blocker for the
   next rather than reaching the end.
 
+- Self-hosting, Phase 3 follow-up (two-hundred-eighty-third slice): bare
+  `private`/`public` in class bodies, and a real bridge bug this
+  uncovered. `compile_class` gains the same `:private`/`:public` handling
+  `compile_module` already had, scoped to the bare (mode-flag) form only
+  -- native's other form, `private(name, ...)` retroactively flipping an
+  already-declared method's visibility, fails explicitly rather than
+  being silently mishandled, since (unlike `compile_module_include`'s own
+  named-list handling, backed by `set_module_method_visibility`) no
+  bridge method exists to flip an already-declared *class* method's
+  visibility after the fact. Neither self-hosted source file uses the
+  named form. `compile_class`'s own register budget needed the same
+  relief as `parse_name` two slices ago: extracted the previously-inlined
+  `include` handling into its own `compile_class_include`, mirroring
+  `compile_module_include`, to make room for the two-line dispatch
+  addition.
+
+  Verifying the bare form surfaced a real, previously-undiscovered bug in
+  the native `ProgramBuilder` bridge, not the self-hosted parser: calling
+  a private method through an explicit `self.foo()` receiver -- allowed,
+  via `run_chunk`'s own `parameter_offset==1 && recv==0` bypass in its
+  `INVOKE` handler -- failed with "private method ... called with an
+  explicit receiver" even though `self` correctly compiles to register 0
+  on both sides. Root cause: `declare_function` always leaves the new
+  function's `owner_class` at `UINT8_MAX` ("not a method"), since it runs
+  before the caller knows whether the function will end up registered as
+  one -- `diamond_compile`'s own `compile_definition` sets it inline once
+  `current_class`/`current_module` are known, but neither
+  `declare_method` nor `declare_module_method` (the bridge's own,
+  separate registration step) ever did the same. Since `parameter_offset`
+  derives from `owner_class` at every call site that constructs a
+  `DiamondChunk` (see `run_chunk`), every method compiled through
+  `ProgramBuilder` -- not just self-hosted-parser output, anything using
+  the bridge directly -- silently got `parameter_offset` 0 instead of 1.
+  Fixed by having `declare_method`/`declare_module_method` set
+  `owner_class` themselves (the class index, and `UINT8_MAX-1` --
+  `diamond_compile`'s own module-method sentinel -- respectively) once
+  the target function's role is known. A private-method-via-`self` case
+  (mirroring `run_chunk`'s exact bypass condition) confirms both the
+  allowed and rejected paths differentially. Verified with `make
+  test-all` given the fix lives in shared runtime dispatch code, not
+  anything self-hosting-specific.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,
