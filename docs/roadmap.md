@@ -2928,6 +2928,18 @@ future work.
   CRLF-terminated required file reports matching line and column locations
   in both compilers.
 
+- Self-hosting, Phase 3 follow-up (two-hundred-sixty-ninth slice): package
+  interpolation frames, and a real root-name bug this uncovered. Requiring a
+  package whose combined path exceeded 64 bytes silently dropped the
+  self-hosted root frame to `<main>`, because `ProgramBuilder#expand_source`
+  copied it into `DiamondFunction.name`, a buffer shared with every ordinary
+  function/class name (`DIAMOND_MAX_FUNCTION_NAME`). `DiamondProgram` now
+  carries a dedicated `entry_path` field sized to `DIAMOND_MAX_SOURCE_PATH`,
+  and `diamond_program_chunk` prefers it once set. A package fixture whose
+  path exceeds the old limit brings the parser harness in line with native,
+  which never had this bug (`run_source` overwrites `chunk.name` with its
+  own unbounded pointer after compiling).
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,

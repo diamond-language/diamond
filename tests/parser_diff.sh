@@ -280,3 +280,14 @@ rm -rf "$crlf_interpolation_dir"
 trap - EXIT
 
 echo "CRLF interpolation runtime source-map differential case passed"
+
+package_interpolation_runtime_fixture="tests/parser_runtime_fixtures/package_interpolation_runtime_main.di"
+native_package_interpolation_runtime="$($diamond "$package_interpolation_runtime_fixture" 2>&1 || true)"
+selfhost_package_interpolation_runtime="$(echo "$package_interpolation_runtime_fixture" | \
+    $diamond selfhost/parser_run.di 2>&1 || true)"
+for output in "$native_package_interpolation_runtime" "$selfhost_package_interpolation_runtime"; do
+    grep -Fq "at interpolation_pkg_explode:2:19" <<<"$output"
+    grep -Fq "at $package_interpolation_runtime_fixture:" <<<"$output"
+done
+
+echo "package interpolation runtime source-map differential case passed"

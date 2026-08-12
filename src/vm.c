@@ -1547,10 +1547,9 @@ static DiamondVmStatus program_builder_invoke_helper(DiamondVm *vm,
         char path[DIAMOND_MAX_SOURCE_PATH];
         if(name->length>=sizeof path)return DIAMOND_VM_TYPE_ERROR;
         memcpy(path,name->chars,name->length);path[name->length]='\0';
-        if(name->length<sizeof built->entry.name) {
-            memcpy(built->entry.name,name->chars,name->length);
-            built->entry.name[name->length]='\0';
-        }
+        /* entry_path (not entry.name's 64-byte function-name buffer) holds
+         * the root chunk's display name -- see src/compiler.h. */
+        memcpy(built->entry_path,path,name->length+1);
         char *source_text=malloc(source->length+1);
         if(source_text==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
         memcpy(source_text,source->chars,source->length);source_text[source->length]='\0';

@@ -4657,7 +4657,8 @@ bool diamond_compile(const char *source, DiamondProgram *program,
 
 DiamondChunk diamond_program_chunk(const DiamondProgram *program) {
     return (DiamondChunk){
-        .name = program->entry.name,
+        .name = program->entry_path[0] != '\0'
+            ? program->entry_path : program->entry.name,
         .code = program->entry.code,
         .lines = program->entry.lines,
         .columns = program->entry.columns,

@@ -2,10 +2,22 @@
 #define DIAMOND_COMPILER_H
 
 #include "lexer.h"
+#include "loader.h"
 #include "vm.h"
 
 typedef struct DiamondProgram {
     DiamondFunction entry;
+    /* Root chunk display name, kept separate from entry.name: that field
+     * shares DiamondFunction's DIAMOND_MAX_FUNCTION_NAME (64-byte) buffer
+     * with every ordinary function/class/field name, but a real source
+     * path (as set by the ProgramBuilder#expand_source native bridge, see
+     * src/vm.c) routinely exceeds that. diamond_program_chunk() prefers
+     * this field over entry.name when it's set. Native's own run_source
+     * (src/main.c) sidesteps the whole problem by overwriting chunk.name
+     * with its own unbounded `name` pointer after compiling; the bridge
+     * has no equivalent post-compile hook, so it needs a field to persist
+     * the untruncated path across expand_source and the later run. */
+    char entry_path[DIAMOND_MAX_SOURCE_PATH];
     DiamondFunction functions[DIAMOND_MAX_FUNCTIONS];
     size_t function_count;
     DiamondClass classes[DIAMOND_MAX_CLASSES];
