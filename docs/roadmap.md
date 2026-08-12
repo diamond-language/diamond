@@ -2640,6 +2640,10 @@ future work.
   interface qualification diagnostics. Unqualified nested interface names are
   rejected like the native compiler, requiring the explicit qualified form.
 
+- Self-hosting, Phase 3 follow-up (one-hundred-ninety-eighth slice): deep
+  module constants. Four-segment qualified reads select the deepest module's
+  constant table before namespace-constant lowering.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,
