@@ -1,0 +1,5 @@
+builder = ProgramBuilder.new()
+builder.expand_source("first.di", "42\n")
+puts(builder.source_location(9, 1, 1))
+builder.expand_source("second.di", "43\n")
+puts(builder.source_location(9, 1, 1))
