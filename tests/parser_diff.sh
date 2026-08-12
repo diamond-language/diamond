@@ -304,3 +304,15 @@ for output in "$native_package_local_interpolation_runtime" \
 done
 
 echo "package-local interpolation runtime source-map differential case passed"
+
+duplicate_package_interpolation_fixture="tests/parser_runtime_fixtures/duplicate_package_interpolation_main.di"
+native_duplicate_package_interpolation="$($diamond "$duplicate_package_interpolation_fixture" 2>&1 || true)"
+selfhost_duplicate_package_interpolation="$(echo "$duplicate_package_interpolation_fixture" | \
+    $diamond selfhost/parser_run.di 2>&1 || true)"
+for output in "$native_duplicate_package_interpolation" \
+        "$selfhost_duplicate_package_interpolation"; do
+    grep -Fq "at interpolation_pkg_explode:2:19" <<<"$output"
+    [[ "$(grep -Fc "at interpolation_pkg_explode:" <<<"$output")" -eq 1 ]]
+done
+
+echo "duplicate-package interpolation source-map differential case passed"

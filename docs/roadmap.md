@@ -2945,6 +2945,13 @@ future work.
   a package's own internally required helper reports matching helper,
   package-entry, and root frames in both compilers.
 
+- Self-hosting, Phase 3 follow-up (two-hundred-seventy-first slice):
+  duplicate-package interpolation. Requiring the same interpolation-bearing
+  package twice still emits a single dependency frame in both compilers,
+  completing the interpolation source-map matrix (basic, scalar, repeated,
+  escaped, structured, calls, unterminated, imported, GC-stressed, nested,
+  duplicate-require, CRLF, package, package-local, and duplicate-package).
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,
