@@ -2826,6 +2826,10 @@ future work.
   diagnostics. Dynamically generated CRLF root and dependency files preserve
   the imported compile-error path and line through both parser pipelines.
 
+- Self-hosting, Phase 3 follow-up (two-hundred-forty-fourth slice): CRLF runtime
+  locations. Required-function and root-caller frames retain native path and
+  line/column parity when both source files use CRLF line endings.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,

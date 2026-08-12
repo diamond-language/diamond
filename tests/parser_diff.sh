@@ -122,3 +122,21 @@ for output in "$native_runtime" "$selfhost_runtime"; do
 done
 
 echo "runtime source-map differential case passed"
+
+crlf_runtime_dir="$(mktemp -d)"
+trap 'rm -rf "$crlf_runtime_dir"' EXIT
+printf 'def crlf_explode(value)\r\n  value[4]\r\nend\r\n' \
+    >"$crlf_runtime_dir/runtime.di"
+printf 'require "runtime"\r\ncrlf_explode([1])\r\n' \
+    >"$crlf_runtime_dir/main.di"
+native_crlf_runtime="$($diamond "$crlf_runtime_dir/main.di" 2>&1 || true)"
+selfhost_crlf_runtime="$(echo "$crlf_runtime_dir/main.di" | \
+    $diamond selfhost/parser_run.di 2>&1 || true)"
+for output in "$native_crlf_runtime" "$selfhost_crlf_runtime"; do
+    grep -Fq "at crlf_explode:2:10" <<<"$output"
+    grep -Fq "at $crlf_runtime_dir/main.di:" <<<"$output"
+done
+rm -rf "$crlf_runtime_dir"
+trap - EXIT
+
+echo "CRLF runtime source-map differential case passed"
