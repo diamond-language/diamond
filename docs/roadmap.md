@@ -2854,6 +2854,10 @@ future work.
   locations. Runtime failures retain the package function's line/column and
   the requiring root frame through the self-hosted execution path.
 
+- Self-hosting, Phase 3 follow-up (two-hundred-fifty-first slice): package-local
+  compile locations. Syntax failures in a package's relative helper map to the
+  helper's canonical path and original line through both parser pipelines.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,
