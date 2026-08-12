@@ -2728,6 +2728,10 @@ future work.
   require diagnostics. File-based self-hosted loading preserves the native
   loader's cycle message and including-file location.
 
+- Self-hosting, Phase 3 follow-up (two-hundred-twentieth slice): missing
+  require diagnostics. Self-hosted error checks preserve the loader's resolved
+  missing-file message before parser construction begins.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,
