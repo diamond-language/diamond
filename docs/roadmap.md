@@ -2776,6 +2776,10 @@ future work.
   runtime diagnostics. Exceptions raised while evaluating package metadata
   propagate through the loader bridge with native manifest context.
 
+- Self-hosting, Phase 3 follow-up (two-hundred-thirty-second slice): require
+  precedence. A relative file matching a bare require name wins over an
+  installed package in the self-hosted loading pipeline.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,
