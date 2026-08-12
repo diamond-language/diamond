@@ -735,6 +735,16 @@ class Parser
         self.fail("expected type annotation")
       else
         name = self.token_text(@current)
+        self.advance_token()
+        while !@failed && @current.kind() == :double_colon
+          self.advance_token()
+          if @current.kind() != :identifier
+            self.fail("expected name after '::'")
+          else
+            name = name + "::" + self.token_text(@current)
+            self.advance_token()
+          end
+        end
         index = 0
         while index < members.length()
           self.fail("duplicate type in union") if members[index][0] == name
@@ -743,7 +753,6 @@ class Parser
         if members.length() == 8
           self.fail("too many types in union")
         else
-          self.advance_token()
           argument = nil
           second_argument = nil
           callable_arity = -1
