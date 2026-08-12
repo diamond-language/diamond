@@ -2952,6 +2952,12 @@ future work.
   escaped, structured, calls, unterminated, imported, GC-stressed, nested,
   duplicate-require, CRLF, package, package-local, and duplicate-package).
 
+- Self-hosting, Phase 3 follow-up (two-hundred-seventy-second slice):
+  imported unterminated-interpolation diagnostics. A missing closing brace
+  inside a required file's string now reports that file's own path, line,
+  and column in both compilers, joining the general `require_*` error
+  corpus rather than a bespoke `parser_diff.sh` block.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,
