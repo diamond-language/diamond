@@ -1484,6 +1484,7 @@ class Parser
       self.fail("module name is already defined") if @modules[index][0] == name
       index = index + 1
     end
+    self.fail("module name is already defined") if self.find_class(name) != nil || self.find_interface(name) != nil
     return 0 if @failed
     module_index = @builder.declare_module(name)
     module_entry = @modules.length()

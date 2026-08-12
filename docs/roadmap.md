@@ -2660,6 +2660,10 @@ future work.
   includes. Classes resolve and copy descriptors from module paths containing
   three namespace segments.
 
+- Self-hosting, Phase 3 follow-up (two-hundred-third slice): module cross-kind
+  collisions. Module declarations reject qualified names already occupied by a
+  class or interface using the native duplicate-module diagnostic.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,
