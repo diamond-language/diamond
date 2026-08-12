@@ -49,3 +49,28 @@ for case_file in tests/parser_error_cases/*.di; do
 done
 
 echo "$error_count parser error differential cases passed"
+
+depth_dir="$(mktemp -d)"
+trap 'rm -rf "$depth_dir"' EXIT
+for depth in $(seq 0 128); do
+    if [[ "$depth" -eq 128 ]]; then
+        printf '42\n' >"$depth_dir/f$depth.di"
+    else
+        printf 'require "f%s"\n' "$((depth + 1))" >"$depth_dir/f$depth.di"
+    fi
+done
+if "$diamond" "$depth_dir/f0.di" >/tmp/diamond-parser-native.out 2>&1; then
+    echo "native require-depth limit unexpectedly succeeded" >&2
+    exit 1
+fi
+grep -Fq "require nesting limit reached" /tmp/diamond-parser-native.out
+if echo "$depth_dir/f0.di" | "$diamond" selfhost/parser_check.di \
+        >/tmp/diamond-parser-selfhost.out 2>&1; then
+    echo "self-hosted require-depth limit unexpectedly succeeded" >&2
+    exit 1
+fi
+grep -Fq "require nesting limit reached" /tmp/diamond-parser-selfhost.out
+rm -rf "$depth_dir"
+trap - EXIT
+
+echo "require-depth differential case passed"
