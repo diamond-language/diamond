@@ -2724,6 +2724,10 @@ future work.
   require execution. Requiring the same canonical file twice still declares
   and executes its contents only once in the self-hosted pipeline.
 
+- Self-hosting, Phase 3 follow-up (two-hundred-nineteenth slice): circular
+  require diagnostics. File-based self-hosted loading preserves the native
+  loader's cycle message and including-file location.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,
