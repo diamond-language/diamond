@@ -2890,6 +2890,10 @@ future work.
   interpolation markers. An escaped hash remains literal text and never opens
   an embedded lexer, matching native string decoding.
 
+- Self-hosting, Phase 3 follow-up (two-hundred-sixtieth slice): structured
+  interpolation expressions. Embedded grouping, array construction, indexing,
+  and arithmetic compile through the ordinary expression pipeline.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,
