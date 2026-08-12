@@ -2910,6 +2910,10 @@ future work.
   runtime locations. Failures inside an imported embedded expression retain
   the dependency function and requiring-root frames.
 
+- Self-hosting, Phase 3 follow-up (two-hundred-sixty-fifth slice): interpolation
+  GC retention. Embedded-expression bytecode and imported source locations
+  remain valid when every self-host allocation triggers collection.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,

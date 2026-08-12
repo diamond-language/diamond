@@ -230,3 +230,11 @@ for output in "$native_interpolation_runtime" "$selfhost_interpolation_runtime";
 done
 
 echo "interpolation runtime source-map differential case passed"
+
+stress_interpolation_runtime="$(echo "$interpolation_runtime_fixture" | \
+    DIAMOND_STRESS_GC=1 $diamond selfhost/parser_run.di 2>&1 || true)"
+grep -Fq "at interpolation_explode:2:" <<<"$stress_interpolation_runtime"
+grep -Fq "at tests/parser_runtime_fixtures/interpolation_runtime_main.di:" \
+    <<<"$stress_interpolation_runtime"
+
+echo "stress-GC interpolation source-map case passed"
