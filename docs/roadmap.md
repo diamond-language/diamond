@@ -2760,6 +2760,10 @@ future work.
   package names. Manifests whose `name` value is not a String are rejected with
   the same native contract diagnostic as a missing name.
 
+- Self-hosting, Phase 3 follow-up (two-hundred-twenty-eighth slice): package
+  local requires. Required package source resolves a nested relative require
+  from the package directory and compiles both files into one program.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,
