@@ -2923,6 +2923,11 @@ future work.
   under two spellings still emits a single dependency frame in both
   compilers.
 
+- Self-hosting, Phase 3 follow-up (two-hundred-sixty-eighth slice): CRLF
+  interpolation frames. An embedded expression failing inside a
+  CRLF-terminated required file reports matching line and column locations
+  in both compilers.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,

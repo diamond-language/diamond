@@ -262,3 +262,21 @@ for output in "$native_duplicate_interpolation" "$selfhost_duplicate_interpolati
 done
 
 echo "duplicate-require interpolation source-map differential case passed"
+
+crlf_interpolation_dir="$(mktemp -d)"
+trap 'rm -rf "$crlf_interpolation_dir"' EXIT
+printf 'def crlf_interpolation_explode(value)\r\n  "value=#{value[4]}"\r\nend\r\n' \
+    >"$crlf_interpolation_dir/runtime.di"
+printf 'require "runtime"\r\ncrlf_interpolation_explode([1])\r\n' \
+    >"$crlf_interpolation_dir/main.di"
+native_crlf_interpolation="$($diamond "$crlf_interpolation_dir/main.di" 2>&1 || true)"
+selfhost_crlf_interpolation="$(echo "$crlf_interpolation_dir/main.di" | \
+    $diamond selfhost/parser_run.di 2>&1 || true)"
+for output in "$native_crlf_interpolation" "$selfhost_crlf_interpolation"; do
+    grep -Fq "at crlf_interpolation_explode:2:19" <<<"$output"
+    grep -Fq "at $crlf_interpolation_dir/main.di:" <<<"$output"
+done
+rm -rf "$crlf_interpolation_dir"
+trap - EXIT
+
+echo "CRLF interpolation runtime source-map differential case passed"
