@@ -1390,6 +1390,10 @@ class Parser
       self.fail("class is already defined")
       return 0
     end
+    if self.find_interface(name) != nil
+      self.fail("type name is already defined")
+      return 0
+    end
     index = 0
     while index < @modules.length()
       self.fail("type name is already defined") if @modules[index][0] == name

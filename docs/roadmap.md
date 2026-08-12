@@ -2676,6 +2676,10 @@ future work.
   interfaces. Nested interface declarations resolve unqualified base names
   against their active module namespace before inheriting method contracts.
 
+- Self-hosting, Phase 3 follow-up (two-hundred-seventh slice): nested
+  class/interface collisions. Qualified class declarations reject an interface
+  already occupying the same lexical namespace name.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,
