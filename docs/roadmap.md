@@ -2644,6 +2644,10 @@ future work.
   module constants. Four-segment qualified reads select the deepest module's
   constant table before namespace-constant lowering.
 
+- Self-hosting, Phase 3 follow-up (one-hundred-ninety-ninth slice): deep nested
+  construction. Three namespace segments resolve a deeply nested class before
+  lowering its constructor call.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,

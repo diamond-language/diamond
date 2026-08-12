@@ -3136,6 +3136,10 @@ class Parser
         self.advance_token()
         return self.compile_module_singleton_call(name)
       end
+      if name == nil && @current.kind() == :dot
+        name = self.find_class(qualified_name)
+        return self.compile_new_call(name[1]) if name != nil
+      end
       if name != nil && @current.kind() == :double_colon
         self.advance_token()
         if @current.kind() != :identifier
