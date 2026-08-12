@@ -209,3 +209,12 @@ for output in "$native_duplicate_package" "$selfhost_duplicate_package"; do
 done
 
 echo "duplicate-package source-map differential case passed"
+
+stress_package_runtime="$(echo "$package_local_runtime_fixture" | \
+    DIAMOND_STRESS_GC=1 $diamond selfhost/parser_run.di 2>&1 || true)"
+grep -Fq "at package_helper_explode:2:10" <<<"$stress_package_runtime"
+grep -Fq "at package_runtime_mid:" <<<"$stress_package_runtime"
+grep -Fq "at tests/parser_runtime_fixtures/package_local_runtime_main.di:" \
+    <<<"$stress_package_runtime"
+
+echo "stress-GC package source-map case passed"

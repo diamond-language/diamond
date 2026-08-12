@@ -2866,6 +2866,10 @@ future work.
   package mapping. Requiring one package twice emits one canonical source
   segment and retains a single stable runtime frame.
 
+- Self-hosting, Phase 3 follow-up (two-hundred-fifty-fourth slice): package-map
+  GC retention. Package helper, entry, and root locations remain intact when
+  every allocation in the self-hosted execution path triggers collection.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,
