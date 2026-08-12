@@ -739,7 +739,7 @@ class Parser
         while !@failed && @current.kind() == :double_colon
           self.advance_token()
           if @current.kind() != :identifier
-            self.fail("expected name after '::'")
+            self.fail("type name is too long")
           else
             name = name + "::" + self.token_text(@current)
             self.advance_token()
