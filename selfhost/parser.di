@@ -94,6 +94,8 @@ module Opcode
   TO_FLOAT = 77
   TO_INT = 78
   TO_SYMBOL = 79
+  MATH_UNARY = 80
+  MATH_BINARY = 81
 end
 
 module Precedence
@@ -3110,19 +3112,23 @@ class Parser
         return destination
       end
     end
-    if @current.kind() == :left_paren
-      return self.compile_closure_call(local) if local != nil
-      return self.parse_print_call(true) if name == "puts"
-      return self.parse_print_call(false) if name == "print"
-      return self.parse_builtin_scalar_call(name) if self.is_builtin_scalar_target(name)
-      return self.compile_call(name)
-    end
+    return self.parse_name_call(name, local) if @current.kind() == :left_paren
     return self.compile_call(name) if @current.kind() == :left_bracket && local == nil
     if local == nil
       self.fail("undefined local variable")
       return 0
     end
     self.read_local(local)
+  end
+
+  def parse_name_call(name, local)
+    return self.compile_closure_call(local) if local != nil
+    return self.parse_print_call(true) if name == "puts"
+    return self.parse_print_call(false) if name == "print"
+    return self.parse_builtin_scalar_call(name) if self.is_builtin_scalar_target(name)
+    return self.parse_math_unary_call(self.math_unary_id(name)) if self.is_math_unary_target(name)
+    return self.parse_math_binary_call(4) if self.is_math_binary_target(name)
+    self.compile_call(name)
   end
 
   def parse_qualified_name(name, module_entry)
@@ -3332,6 +3338,70 @@ class Parser
 
   def parse_to_sym_call()
     self.parse_scalar_conversion_call(Opcode::TO_SYMBOL, Type::SYMBOL)
+  end
+
+  def is_math_unary_target(name)
+    return false if self.find_function(name) != nil
+    return true if name == "sqrt"
+    return true if name == "sin"
+    return true if name == "cos"
+    name == "tan"
+  end
+
+  def is_math_binary_target(name)
+    return false if self.find_function(name) != nil
+    name == "pow"
+  end
+
+  def math_unary_id(name)
+    return 0 if name == "sqrt"
+    return 1 if name == "sin"
+    return 2 if name == "cos"
+    3
+  end
+
+  def parse_math_unary_call(id)
+    self.advance_token()
+    self.skip_newlines()
+    source = self.parse_expression()
+    self.skip_newlines()
+    if @current.kind() != :right_paren
+      self.fail("expected ')' after arguments")
+      return 0
+    end
+    self.advance_token()
+    destination = self.allocate_register()
+    self.emit_instruction3(Opcode::MATH_UNARY, destination, source, id)
+    self.set_type_fact(destination, Type::FLOAT)
+    destination
+  end
+
+  def parse_math_binary_call(id)
+    self.advance_token()
+    self.skip_newlines()
+    left = self.parse_expression()
+    self.skip_newlines()
+    if @current.kind() != :comma
+      self.fail("expected ',' between arguments")
+      return 0
+    end
+    self.advance_token()
+    self.skip_newlines()
+    right = self.parse_expression()
+    self.skip_newlines()
+    if @current.kind() != :right_paren
+      self.fail("expected ')' after arguments")
+      return 0
+    end
+    self.advance_token()
+    destination = self.allocate_register()
+    self.emit_byte(Opcode::MATH_BINARY)
+    self.emit_byte(destination)
+    self.emit_byte(left)
+    self.emit_byte(right)
+    self.emit_byte(id)
+    self.set_type_fact(destination, Type::FLOAT)
+    destination
   end
 
   def is_file_open_target(name, class_entry, local)

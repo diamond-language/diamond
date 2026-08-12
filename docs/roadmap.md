@@ -3041,6 +3041,22 @@ future work.
   helper plus five small call-parsers) was the exact amount of new
   class-member surface that broke without it.
 
+- Self-hosting, Phase 3 follow-up (two-hundred-seventy-ninth slice):
+  `sqrt`/`sin`/`cos`/`tan`/`pow` recognition. `selfhost/parser.di` now
+  recognizes all five `Math` builtins (mirroring `compiler.c`'s
+  `parse_math_unary_call`/`parse_math_binary_call`, encoding the specific
+  function as a `DiamondMathFunction` byte operand rather than a distinct
+  opcode per function). Two new dispatch lines in `parse_name`'s
+  LEFT_PAREN handling were, on their own, enough to overflow *that
+  function's own* register budget -- a different failure mode than the
+  entry-scope waste the prior two slices fixed, and the same one Phase
+  2's lexer port first hit: one large function covering many branches,
+  not a shared/cumulative cost. Fixed by extracting the whole LEFT_PAREN
+  dispatch chain (closures, `puts`/`print`, the scalar builtins, now the
+  Math builtins) into its own `parse_name_call` method, giving it a fresh
+  256-register budget separate from the rest of `parse_name`. A round
+  trip through all five joins the differential parser-case corpus.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,

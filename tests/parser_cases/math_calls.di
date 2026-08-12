@@ -1,0 +1,5 @@
+puts(sqrt(4.0))
+puts(sin(0.0))
+puts(cos(0.0))
+puts(tan(0.0))
+puts(pow(2.0, 3.0))
