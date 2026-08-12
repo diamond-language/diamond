@@ -2940,6 +2940,11 @@ future work.
   which never had this bug (`run_source` overwrites `chunk.name` with its
   own unbounded pointer after compiling).
 
+- Self-hosting, Phase 3 follow-up (two-hundred-seventieth slice):
+  package-local interpolation frames. An embedded expression failing inside
+  a package's own internally required helper reports matching helper,
+  package-entry, and root frames in both compilers.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,
