@@ -1381,6 +1381,12 @@ class Parser
       self.fail("class is already defined")
       return 0
     end
+    index = 0
+    while index < @modules.length()
+      self.fail("type name is already defined") if @modules[index][0] == name
+      index = index + 1
+    end
+    return 0 if @failed
     self.advance_token()
     superclass_index = self.parse_optional_superclass()
     return 0 if @failed

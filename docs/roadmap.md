@@ -2664,6 +2664,10 @@ future work.
   collisions. Module declarations reject qualified names already occupied by a
   class or interface using the native duplicate-module diagnostic.
 
+- Self-hosting, Phase 3 follow-up (two-hundred-fourth slice): class cross-kind
+  collisions. Class declarations reject names already occupied by modules with
+  the native duplicate-type diagnostic.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,
