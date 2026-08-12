@@ -2656,6 +2656,10 @@ future work.
   parsing. Class and module include paths share a compact, register-safe helper
   that consumes arbitrary namespace segments.
 
+- Self-hosting, Phase 3 follow-up (two-hundred-second slice): deep qualified
+  includes. Classes resolve and copy descriptors from module paths containing
+  three namespace segments.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,
