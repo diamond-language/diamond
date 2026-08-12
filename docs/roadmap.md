@@ -2862,6 +2862,10 @@ future work.
   runtime locations. Helper, package entry, and requiring-root frames survive
   nested package loading with native/self-hosted location parity.
 
+- Self-hosting, Phase 3 follow-up (two-hundred-fifty-third slice): duplicate
+  package mapping. Requiring one package twice emits one canonical source
+  segment and retains a single stable runtime frame.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,
