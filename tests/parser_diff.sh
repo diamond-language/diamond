@@ -332,3 +332,11 @@ rm -rf "$crlf_interpolation_diagnostic_dir"
 trap - EXIT
 
 echo "CRLF unterminated-interpolation diagnostic differential case passed"
+
+self_parse_result="$(echo "selfhost/parser.di" | $diamond selfhost/self_parse_check.di 2>&1)"
+if [[ "$self_parse_result" != "PARSED OK"* ]]; then
+    echo "self-hosted parser failed to parse its own source: $self_parse_result" >&2
+    exit 1
+fi
+
+echo "self-hosted parser self-parse bootstrap check passed"

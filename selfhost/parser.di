@@ -102,6 +102,7 @@ module Opcode
   TO_SYMBOL = 79
   MATH_UNARY = 80
   MATH_BINARY = 81
+  PROGRAM_BUILDER_NEW = 82
 end
 
 module Precedence
@@ -533,7 +534,32 @@ class Parser
       result = entry if entry[0] == name
       index = index - 1
     end
+    result = self.find_builtin_class(name) if result == nil
     result
+  end
+
+  # The native VM's built-in exception hierarchy (DiamondBuiltinClass,
+  # src/vm.h) is constructed directly by diamond_program_init -- called
+  # by both diamond_compile and the ProgramBuilder native bridge -- and
+  # never goes through any .di source at all, so it's otherwise invisible
+  # to a parser whose class bookkeeping only ever sees what it compiles
+  # from `class ... end` syntax. These twelve indices are fixed and
+  # already occupied before this parser (or any target program) declares
+  # its own first class, so they're safe to hardcode rather than query.
+  def find_builtin_class(name)
+    return ["Exception", 0, nil] if name == "Exception"
+    return ["StandardError", 1, 0] if name == "StandardError"
+    return ["RuntimeError", 2, 1] if name == "RuntimeError"
+    return ["TypeError", 3, 1] if name == "TypeError"
+    return ["ArgumentError", 4, 1] if name == "ArgumentError"
+    return ["IndexError", 5, 1] if name == "IndexError"
+    return ["ZeroDivisionError", 6, 1] if name == "ZeroDivisionError"
+    return ["RangeError", 7, 1] if name == "RangeError"
+    return ["SystemStackError", 8, 0] if name == "SystemStackError"
+    return ["FiberError", 9, 1] if name == "FiberError"
+    return ["IOError", 10, 1] if name == "IOError"
+    return ["RegexpError", 11, 1] if name == "RegexpError"
+    nil
   end
 
   def find_interface(name)
@@ -3698,6 +3724,7 @@ class Parser
     return 1 if name == "Regexp"
     return 2 if name == "TCPSocket"
     return 3 if name == "TCPServer"
+    return 4 if name == "ProgramBuilder"
     -1
   end
 
@@ -3705,7 +3732,31 @@ class Parser
     return self.parse_fiber_new_call() if id == 0
     return self.parse_regexp_new_call() if id == 1
     return self.parse_tcp_connect_call() if id == 2
-    self.parse_tcp_listen_call()
+    return self.parse_tcp_listen_call() if id == 3
+    self.parse_program_builder_new_call()
+  end
+
+  def parse_program_builder_new_call()
+    self.advance_token()
+    if @current.kind() != :identifier || self.token_text(@current) != "new"
+      self.fail("expected 'new' after 'ProgramBuilder'")
+      return 0
+    end
+    self.advance_token()
+    if @current.kind() != :left_paren
+      self.fail("expected '(' after 'ProgramBuilder.new'")
+      return 0
+    end
+    self.advance_token()
+    self.skip_newlines()
+    if @current.kind() != :right_paren
+      self.fail("expected ')' after ProgramBuilder.new arguments")
+      return 0
+    end
+    self.advance_token()
+    destination = self.allocate_register()
+    self.emit_instruction1(Opcode::PROGRAM_BUILDER_NEW, destination)
+    destination
   end
 
   def parse_fiber_new_call()

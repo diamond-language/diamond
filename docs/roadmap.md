@@ -3275,6 +3275,47 @@ future work.
   `def self.foo` module singleton methods are a separate, pre-existing,
   still-unsupported gap while probing this -- not fixed here.
 
+- Self-hosting, Phase 3 follow-up (two-hundred-eighty-fifth slice): the
+  self-hosted parser successfully compiles its own two source files
+  end-to-end for the first time. Two remaining gaps, both found by
+  literally running the previous slice's `core.di`-prepending probe
+  against `selfhost/lexer.di` and `selfhost/parser.di` themselves and
+  reading where it stopped:
+
+  - `ProgramBuilder.new()` -- the exact construct `parse_and_run` itself
+    uses -- had never been ported, unlike the other native-recognized
+    DOT constructs (`File`/`Fiber`/`Regexp`/`TCPSocket`/`TCPServer`) an
+    earlier slice added. Folded into the existing `dot_construct_id`/
+    `parse_dot_construct_call` dispatch as a fifth case, mirroring
+    `compiler.c`'s own `parse_program_builder_new_call` (no arguments,
+    straight to `PROGRAM_BUILDER_NEW`).
+  - `RuntimeError.new(...)` -- the exact construct `parse_and_run`'s own
+    failure path uses -- turned out to share task #15's root cause
+    (`find_class` only tracks classes parsed from `.di` source, and
+    native's built-in exception hierarchy never is one), but that gap is
+    broader than "rescue/type filters": *any* reference to a built-in
+    exception class name fails the same way, including constructing one,
+    which is an extremely common pattern. Fixed at the root: a new
+    `find_builtin_class`, checked as `find_class`'s fallback, hardcodes
+    the twelve `DiamondBuiltinClass` names to the fixed indices and
+    superclass relationships `diamond_program_init` (`src/compiler.c`)
+    already establishes before any `.di` source -- including
+    `ProgramBuilder.new()` -- ever declares its own first class. Verified
+    both a `.new()` construction and a rescue-filter match differentially
+    against a real `TCPSocket.connect` failure.
+
+  A new `selfhost/self_parse_check.di` -- pointed at the real,
+  unmodified `selfhost/parser.di` (which itself `require`s
+  `selfhost/lexer.di`), `lib/core.di`-prepended the same way
+  `parse_and_run_with_core` handles any real target program -- reports
+  `parser.compile()` succeeding, and joins `tests/parser_diff.sh` as a
+  permanent regression check rather than a one-off probe. This confirms
+  the self-hosted parser can now compile arbitrary real Diamond source,
+  not just its own curated differential corpus -- it does not yet mean
+  the self-hosted parser can *bootstrap* (compile itself and use that
+  *result* to compile something else); that remains real, distinct,
+  future work, and nothing here attempts it.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,
