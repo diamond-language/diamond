@@ -2756,6 +2756,10 @@ future work.
   package names. Manifests without a `name` key are rejected through the
   self-hosted loader bridge with the native contract diagnostic.
 
+- Self-hosting, Phase 3 follow-up (two-hundred-twenty-seventh slice): typed
+  package names. Manifests whose `name` value is not a String are rejected with
+  the same native contract diagnostic as a missing name.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,
