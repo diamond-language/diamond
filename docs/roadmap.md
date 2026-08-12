@@ -2680,6 +2680,10 @@ future work.
   class/interface collisions. Qualified class declarations reject an interface
   already occupying the same lexical namespace name.
 
+- Self-hosting, Phase 3 follow-up (two-hundred-eighth slice): nested
+  module/interface collisions. Qualified module declarations reject an
+  interface already occupying the same lexical namespace name.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,
