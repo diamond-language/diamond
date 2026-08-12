@@ -3045,6 +3045,19 @@ class Parser
         constant_index = constants[index][1] if constants[index][0] == name
         index = index + 1
       end
+      if constant_index == nil && @modules[@current_module_entry][8] != nil
+        parent_name = @modules[@current_module_entry][8]
+        index = 0
+        while index < @modules.length()
+          constants = @modules[index][2] if @modules[index][0] == parent_name
+          index = index + 1
+        end
+        index = 0
+        while index < constants.length()
+          constant_index = constants[index][1] if constants[index][0] == name
+          index = index + 1
+        end
+      end
       if constant_index != nil
         destination = self.allocate_register()
         self.emit_instruction2(48, destination, constant_index)

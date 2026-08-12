@@ -2612,6 +2612,10 @@ future work.
   nested construction. Two-segment class names resolve through the class table
   and lower `Namespace::Class.new(...)` through the existing constructor path.
 
+- Self-hosting, Phase 3 follow-up (one-hundred-ninety-first slice): lexical
+  parent constants. Nested module methods fall back from their local constant
+  table to the enclosing module's constants for unqualified reads.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,
