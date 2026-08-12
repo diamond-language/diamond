@@ -2628,6 +2628,10 @@ future work.
   interfaces. Module bodies may declare interfaces whose builder and parser
   type identities carry the enclosing module namespace.
 
+- Self-hosting, Phase 3 follow-up (one-hundred-ninety-fifth slice): deeper
+  module paths. Three module segments resolve their fully qualified singleton
+  export descriptor before call lowering.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,

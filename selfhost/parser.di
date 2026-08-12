@@ -3116,6 +3116,17 @@ class Parser
       end
       constant_name = self.token_text(@current)
       self.advance_token()
+      qualified_name = qualified_name + "::" + constant_name
+      name = nil
+      index = 0
+      while index < @modules.length()
+        name = @modules[index] if @modules[index][0] == qualified_name
+        index = index + 1
+      end
+      if name != nil && @current.kind() == :dot
+        self.advance_token()
+        return self.compile_module_singleton_call(name)
+      end
       module_entry = nested_module
     end
     if nested_module == nil && @current.kind() == :dot
