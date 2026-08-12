@@ -87,9 +87,13 @@ module Opcode
   END_ENSURE = 63
   IS_TYPE = 64
   TO_STRING = 66
+  FIBER_NEW = 69
   PRINT = 70
   GETS = 71
   FILE_OPEN = 72
+  TCP_CONNECT = 73
+  TCP_LISTEN = 74
+  REGEXP_NEW = 75
   CHR = 76
   TO_FLOAT = 77
   TO_INT = 78
@@ -3080,6 +3084,8 @@ class Parser
     return self.compile_new_call(class_entry[1]) if class_entry != nil && @current.kind() == :dot
     local = self.find_local(name)
     return self.parse_file_open_call() if self.is_file_open_target(name, class_entry, local)
+    dot_construct = self.dot_construct_id(name, class_entry, local)
+    return self.parse_dot_construct_call(dot_construct) if dot_construct >= 0
     if local == nil && @current_module_index != nil
       constant_index = nil
       constants = @modules[@current_module_entry][2]
@@ -3401,6 +3407,144 @@ class Parser
     self.emit_byte(right)
     self.emit_byte(id)
     self.set_type_fact(destination, Type::FLOAT)
+    destination
+  end
+
+  def dot_construct_id(name, class_entry, local)
+    return -1 if class_entry != nil
+    return -1 if local != nil
+    return -1 if self.find_function(name) != nil
+    return -1 if @current.kind() != :dot
+    return 0 if name == "Fiber"
+    return 1 if name == "Regexp"
+    return 2 if name == "TCPSocket"
+    return 3 if name == "TCPServer"
+    -1
+  end
+
+  def parse_dot_construct_call(id)
+    return self.parse_fiber_new_call() if id == 0
+    return self.parse_regexp_new_call() if id == 1
+    return self.parse_tcp_connect_call() if id == 2
+    self.parse_tcp_listen_call()
+  end
+
+  def parse_fiber_new_call()
+    self.advance_token()
+    if @current.kind() != :identifier || self.token_text(@current) != "new"
+      self.fail("expected 'new' after 'Fiber'")
+      return 0
+    end
+    self.advance_token()
+    if @current.kind() != :left_paren
+      self.fail("expected '(' after 'Fiber.new'")
+      return 0
+    end
+    self.advance_token()
+    self.skip_newlines()
+    callable = self.parse_expression()
+    self.skip_newlines()
+    if @current.kind() != :right_paren
+      self.fail("expected ')' after Fiber.new argument")
+      return 0
+    end
+    self.advance_token()
+    destination = self.allocate_register()
+    self.emit_instruction2(Opcode::FIBER_NEW, destination, callable)
+    destination
+  end
+
+  def parse_regexp_new_call()
+    self.advance_token()
+    if @current.kind() != :identifier || self.token_text(@current) != "new"
+      self.fail("expected 'new' after 'Regexp'")
+      return 0
+    end
+    self.advance_token()
+    if @current.kind() != :left_paren
+      self.fail("expected '(' after 'Regexp.new'")
+      return 0
+    end
+    self.advance_token()
+    self.skip_newlines()
+    pattern = self.parse_expression()
+    self.skip_newlines()
+    options = 0
+    if @current.kind() == :comma
+      self.advance_token()
+      self.skip_newlines()
+      options = self.parse_expression()
+      self.skip_newlines()
+    else
+      options = self.allocate_register()
+      zero = self.add_constant(0)
+      self.emit_instruction2(Opcode::CONSTANT, options, zero)
+    end
+    if @current.kind() != :right_paren
+      self.fail("expected ')' after Regexp.new arguments")
+      return 0
+    end
+    self.advance_token()
+    destination = self.allocate_register()
+    self.emit_instruction3(Opcode::REGEXP_NEW, destination, pattern, options)
+    destination
+  end
+
+  def parse_tcp_connect_call()
+    self.advance_token()
+    if @current.kind() != :identifier || self.token_text(@current) != "connect"
+      self.fail("expected 'connect' after 'TCPSocket'")
+      return 0
+    end
+    self.advance_token()
+    if @current.kind() != :left_paren
+      self.fail("expected '(' after 'TCPSocket.connect'")
+      return 0
+    end
+    self.advance_token()
+    self.skip_newlines()
+    host = self.parse_expression()
+    self.skip_newlines()
+    if @current.kind() != :comma
+      self.fail("expected ',' after TCPSocket.connect host")
+      return 0
+    end
+    self.advance_token()
+    self.skip_newlines()
+    port = self.parse_expression()
+    self.skip_newlines()
+    if @current.kind() != :right_paren
+      self.fail("expected ')' after TCPSocket.connect arguments")
+      return 0
+    end
+    self.advance_token()
+    destination = self.allocate_register()
+    self.emit_instruction3(Opcode::TCP_CONNECT, destination, host, port)
+    destination
+  end
+
+  def parse_tcp_listen_call()
+    self.advance_token()
+    if @current.kind() != :identifier || self.token_text(@current) != "listen"
+      self.fail("expected 'listen' after 'TCPServer'")
+      return 0
+    end
+    self.advance_token()
+    if @current.kind() != :left_paren
+      self.fail("expected '(' after 'TCPServer.listen'")
+      return 0
+    end
+    self.advance_token()
+    self.skip_newlines()
+    port = self.parse_expression()
+    self.skip_newlines()
+    if @current.kind() != :right_paren
+      self.fail("expected ')' after TCPServer.listen argument")
+      return 0
+    end
+    self.advance_token()
+    destination = self.allocate_register()
+    self.emit_instruction2(Opcode::TCP_LISTEN, destination, port)
     destination
   end
 

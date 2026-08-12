@@ -3057,6 +3057,53 @@ future work.
   256-register budget separate from the rest of `parse_name`. A round
   trip through all five joins the differential parser-case corpus.
 
+- Self-hosting, Phase 3 follow-up (two-hundred-eightieth slice):
+  `Fiber.new`/`Regexp.new`/`TCPSocket.connect`/`TCPServer.listen`
+  recognition, and raising `DIAMOND_MAX_METHODS` 128 -> 256. Adding these
+  four DOT-triggered constructs (mirroring `compiler.c`'s
+  `parse_fiber_new_call`/`parse_regexp_new_call`/`parse_tcp_connect_call`/
+  `parse_tcp_listen_call`) pushed `class Parser` to 131 methods, past
+  `DIAMOND_MAX_METHODS`'s old 128-entry cap on `DiamondClass.methods[]`.
+  Unlike `DIAMOND_MAX_FUNCTIONS`/`DIAMOND_MAX_CONSTANTS` (Phase 0's
+  follow-up correction found those genuinely capped at 256 by one-byte
+  `CALL`/`CONSTANT` operands), nothing indexes into a class's own
+  `methods[]` by position -- methods resolve by name via linear scan at
+  runtime, and `DiamondMethod.function_index` is a separate index into
+  the already-256-capped global function table. So this is a pure
+  capacity constant, not a hard ceiling, and raising it (matching Phase
+  0's own precedent of raising it once already, 32 -> 128) is safe.
+  `tests/run.sh`'s interface-composition overflow regression (two
+  70-method interfaces, chosen specifically to exceed the old 128 cap)
+  needed the same treatment Phase 0 gave it originally: raised to two
+  130-method interfaces to keep exercising the real overflow path at the
+  new limit. `Regexp.new`'s optional-options default (a compile-time `0`
+  constant when the second argument is omitted) reuses the same
+  `add_constant`/`CONSTANT`-emission path integer literals already use.
+  `TCPSocket.connect`/`TCPServer.listen` differential-verified manually
+  (a real loopback connection and refusal, and a real ephemeral-port
+  listen/close) rather than through the exact-match parser-case corpus,
+  since real socket I/O isn't suitable for that harness's byte-for-byte
+  comparison; a `Fiber.new`/`Regexp.new`/`TCPServer.listen` round trip
+  that *is* deterministic joins the differential corpus instead.
+  `redefine_method` deliberately deferred: it requires class singleton
+  methods beyond `.new`, which `parse_name`'s `class_entry != nil` DOT
+  branch doesn't support at all yet (it unconditionally assumes `.new`) --
+  a separate, larger gap than a single dispatch addition.
+
+  Manually probing turned up an unrelated, pre-existing gap while testing
+  `TCPSocket.connect` inside a `rescue error: IOError` clause: rescue-type
+  and parameter/return-type annotations resolve unknown names through
+  `resolve_type_name` -> `find_class`, but `find_class` only tracks
+  classes the self-hosted parser itself compiled from `class ... end`
+  syntax -- the native VM's built-in exception hierarchy
+  (`Exception`/`RuntimeError`/`IOError`/etc.) is constructed directly in
+  `diamond_program_init` (`src/compiler.c`) and never goes through any
+  `.di` source at all, so the self-hosted parser has no way to see it.
+  Confirmed this isn't specific to `IOError`: `rescue error: RuntimeError`
+  fails identically. The existing rescue-filter differential corpus never
+  caught this because every case filters on a locally-declared exception
+  subclass, never a bare built-in name. Left for a future slice.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,

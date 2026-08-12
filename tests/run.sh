@@ -1683,9 +1683,9 @@ grep -q "duplicate interface method" "$error_file"
 rm -f "$error_file"
 
 methods1=""
-for i in $(seq 1 70); do methods1+="def m$i()"$'\n'; done
+for i in $(seq 1 130); do methods1+="def m$i()"$'\n'; done
 methods2=""
-for i in $(seq 1 70); do methods2+="def n$i()"$'\n'; done
+for i in $(seq 1 130); do methods2+="def n$i()"$'\n'; done
 overflow_program="interface Base1"$'\n'"$methods1""end"$'\n'"interface Base2"$'\n'"$methods2""end"$'\n'"interface Sub < Base1, Base2"$'\n'"end"
 error_file="$(mktemp)"
 if "$diamond" -e "$overflow_program" >/dev/null 2>"$error_file"; then
