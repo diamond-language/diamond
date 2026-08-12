@@ -2830,6 +2830,10 @@ future work.
   locations. Required-function and root-caller frames retain native path and
   line/column parity when both source files use CRLF line endings.
 
+- Self-hosting, Phase 3 follow-up (two-hundred-forty-fifth slice): source-map
+  GC retention. Required-function and root-caller locations remain intact when
+  every self-host allocation triggers a garbage collection.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,

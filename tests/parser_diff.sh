@@ -140,3 +140,14 @@ rm -rf "$crlf_runtime_dir"
 trap - EXIT
 
 echo "CRLF runtime source-map differential case passed"
+
+stress_native_runtime="$(DIAMOND_STRESS_GC=1 $diamond "$runtime_fixture" 2>&1 || true)"
+stress_selfhost_runtime="$(echo "$runtime_fixture" | DIAMOND_STRESS_GC=1 \
+    $diamond selfhost/parser_run.di 2>&1 || true)"
+for output in "$stress_native_runtime" "$stress_selfhost_runtime"; do
+    grep -Fq "at mapped_explode:2:10" <<<"$output"
+    grep -Fq "at tests/parser_runtime_fixtures/mapped_runtime_main.di:1:19" \
+        <<<"$output"
+done
+
+echo "stress-GC runtime source-map differential case passed"
