@@ -2809,6 +2809,11 @@ future work.
   preserving required-function and root-caller frames with native line/column
   parity.
 
+- Self-hosting, Phase 3 follow-up (two-hundred-fortieth slice): manifest read
+  diagnostics. A package whose manifest path is not a readable regular file
+  preserves the native manifest-specific I/O context through the self-hosted
+  loader bridge.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,
