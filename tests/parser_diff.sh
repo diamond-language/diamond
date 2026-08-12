@@ -218,3 +218,15 @@ grep -Fq "at tests/parser_runtime_fixtures/package_local_runtime_main.di:" \
     <<<"$stress_package_runtime"
 
 echo "stress-GC package source-map case passed"
+
+interpolation_runtime_fixture="tests/parser_runtime_fixtures/interpolation_runtime_main.di"
+native_interpolation_runtime="$($diamond "$interpolation_runtime_fixture" 2>&1 || true)"
+selfhost_interpolation_runtime="$(echo "$interpolation_runtime_fixture" | \
+    $diamond selfhost/parser_run.di 2>&1 || true)"
+for output in "$native_interpolation_runtime" "$selfhost_interpolation_runtime"; do
+    grep -Fq "at interpolation_explode:2:" <<<"$output"
+    grep -Fq "at tests/parser_runtime_fixtures/interpolation_runtime_main.di:" \
+        <<<"$output"
+done
+
+echo "interpolation runtime source-map differential case passed"
