@@ -251,3 +251,14 @@ for output in "$native_nested_interpolation" "$selfhost_nested_interpolation"; d
 done
 
 echo "nested interpolation runtime source-map differential case passed"
+
+duplicate_interpolation_fixture="tests/parser_runtime_fixtures/duplicate_interpolation_main.di"
+native_duplicate_interpolation="$($diamond "$duplicate_interpolation_fixture" 2>&1 || true)"
+selfhost_duplicate_interpolation="$(echo "$duplicate_interpolation_fixture" | \
+    $diamond selfhost/parser_run.di 2>&1 || true)"
+for output in "$native_duplicate_interpolation" "$selfhost_duplicate_interpolation"; do
+    grep -Fq "at interpolation_explode:2:19" <<<"$output"
+    [[ "$(grep -Fc "at interpolation_explode:" <<<"$output")" -eq 1 ]]
+done
+
+echo "duplicate-require interpolation source-map differential case passed"
