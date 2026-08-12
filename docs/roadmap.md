@@ -3104,6 +3104,50 @@ future work.
   caught this because every case filters on a locally-declared exception
   subclass, never a bare built-in name. Left for a future slice.
 
+- Self-hosting, Phase 3 follow-up (two-hundred-eighty-first slice):
+  `attr`/`attr_reader`/`attr_writer`/`attr_accessor` recognition. Rather
+  than mirroring `compiler.c`'s `compile_attribute_named` (which
+  hand-assembles bytecode by writing straight into `DiamondFunction`'s C
+  struct fields), the self-hosted version synthesizes each generated
+  reader/writer through the *same* `declare_function`/`declare_field`/
+  `declare_method` bridge calls and register-scoping save/restore
+  `compile_method_body` already uses for ordinary method bodies -- a
+  four-or-five-instruction body (`GET_IVAR`/`SET_IVAR` then `RETURN`)
+  instead of a parsed one. `attr_predicate` isn't ported: unused by
+  either self-hosted source file, and native's own version is a plain
+  reader with a `?`-suffixed name (not an actual Bool conversion), a
+  third method-naming case for no behavioral difference over
+  `attr_reader`. A four-name round trip (`attr`, `attr_reader` with two
+  names, `attr_writer`, `attr_accessor`) joins the differential
+  parser-case corpus, verifying every generated reader.
+
+  Also surfaced, independent of the fix above: calling *any*
+  `=`-suffixed method via `.name=(value)` isn't supported by
+  `compile_invoke` at all -- it unconditionally fails after an
+  identifier unless a bare `(` follows, with no case for `=` first.
+  Confirmed this isn't attr-specific (a plain hand-written `def
+  name=(value)` has the same problem) and confirmed native itself
+  requires exactly that `.name=(value)` call syntax (bare `receiver.field
+  = value` is rejected by both compilers identically) rather than some
+  alternate assignment-target path selfhost could fall back to. This
+  means `attr_writer`/`attr_accessor`'s generated writer, while
+  correctly declared, has no way to be invoked yet through the
+  self-hosted parser -- verified via the reader half and a declaration
+  that doesn't error, not a full write/read round trip. Left for a
+  future slice.
+
+  Directly checked whether `attr_reader` was actually sufficient for
+  the self-hosted parser to parse its own source end-to-end (the
+  original motivation, per the File.open slice's own probe): pointing
+  it at `selfhost/lexer.di` now gets past the `attr_reader` line in
+  `Token` and fails later, at `self.make_token(:eof)` -- a *much*
+  larger, previously-unknown gap: `parse_prefix` has no case for
+  `:symbol`-kind tokens at all, so no target program using a bare
+  symbol literal can compile through the self-hosted parser, a
+  construct both self-hosted source files use pervasively (every
+  `@current.kind() == :foo` comparison is itself one). Given how
+  fundamental this is, it's the next slice, not folded into this one.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,

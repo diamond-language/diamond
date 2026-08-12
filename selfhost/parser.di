@@ -1435,6 +1435,8 @@ class Parser
     while !@failed && @current.kind() != :end
       if @current.kind() == :def
         self.compile_method()
+      elsif self.attribute_keyword?(@current.kind())
+        self.compile_attribute()
       elsif @current.kind() == :include
         self.advance_token()
         if @current.kind() != :identifier
@@ -1908,6 +1910,117 @@ class Parser
     @current_return_type = outer_return_type
     @type_facts = outer_type_facts
     @declared_types = outer_declared_types
+  end
+
+  def attribute_keyword?(kind)
+    return true if kind == :attr
+    return true if kind == :attr_reader
+    return true if kind == :attr_writer
+    kind == :attr_accessor
+  end
+
+  # `attr`/`attr_reader`/`attr_writer`/`attr_accessor`, parenthesized or
+  # not, one or more comma-separated names -- mirrors compiler.c's
+  # compile_attribute. `attr_predicate` isn't ported (unused by either
+  # of the self-hosted compiler's own source files, and its native
+  # semantics -- a reader whose method name gets a `?` suffix without
+  # actually converting the field to a Bool -- add a distinct third
+  # method-naming case for no behavioral difference over attr_reader).
+  def compile_attribute()
+    reader = @current.kind() != :attr_writer
+    writer = @current.kind() == :attr_writer || @current.kind() == :attr_accessor
+    self.advance_token()
+    parenthesized = @current.kind() == :left_paren
+    if parenthesized
+      self.advance_token()
+      self.skip_newlines()
+    end
+    while !@failed
+      if @current.kind() != :identifier
+        self.fail("expected attribute name")
+        return
+      end
+      field_name = self.token_text(@current)
+      self.advance_token()
+      self.compile_attribute_method(field_name, false) if reader
+      self.compile_attribute_method(field_name, true) if writer && !@failed
+      return if @failed
+      self.skip_newlines() if parenthesized
+      break if @current.kind() != :comma
+      self.advance_token()
+      self.skip_newlines() if parenthesized
+    end
+    return if @failed
+    if parenthesized
+      if @current.kind() != :right_paren
+        self.fail("expected ')' after attribute names")
+        return
+      end
+      self.advance_token()
+    end
+  end
+
+  def compile_attribute_method(field_name, writer)
+    method_name = if writer
+      field_name + "="
+    else
+      field_name
+    end
+    index = 0
+    while index < @current_class_method_names.length()
+      self.fail("attribute method is already defined") if @current_class_method_names[index] == method_name
+      index = index + 1
+    end
+    return if @failed
+
+    arity = if writer
+      1
+    else
+      0
+    end
+    function_index = @builder.declare_function(method_name, arity + 1, arity + 1)
+
+    outer_locals = @locals
+    outer_loops = @loops
+    outer_next_register = @next_register
+    outer_code_count = @code_count
+    outer_function_index = @current_function_index
+    outer_return_type = @current_return_type
+    outer_type_facts = @type_facts
+    outer_declared_types = @declared_types
+
+    @locals = []
+    @loops = []
+    @next_register = 0
+    @code_count = 0
+    @current_function_index = function_index
+    @current_return_type = nil
+    @type_facts = []
+    @declared_types = []
+    self.allocate_register()
+    field_index = @builder.declare_field(@current_class_index, field_name)
+    if writer
+      value = self.allocate_register()
+      self.emit_instruction3(Opcode::SET_IVAR, 0, field_index, value)
+      self.emit_instruction1(Opcode::RETURN, value)
+    else
+      destination = self.allocate_register()
+      self.emit_instruction3(Opcode::GET_IVAR, destination, 0, field_index)
+      self.emit_instruction1(Opcode::RETURN, destination)
+    end
+    @builder.set_register_count(function_index, @next_register)
+
+    @locals = outer_locals
+    @loops = outer_loops
+    @next_register = outer_next_register
+    @code_count = outer_code_count
+    @current_function_index = outer_function_index
+    @current_return_type = outer_return_type
+    @type_facts = outer_type_facts
+    @declared_types = outer_declared_types
+
+    @current_class_method_names.push(method_name)
+    @builder.declare_method(@current_class_index, method_name, function_index, arity, arity, false)
   end
 
   # Shared by compile_call/compile_closure_call: parses `(arg, arg, ...)`
