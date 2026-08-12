@@ -3148,6 +3148,26 @@ future work.
   `@current.kind() == :foo` comparison is itself one). Given how
   fundamental this is, it's the next slice, not folded into this one.
 
+- Self-hosting, Phase 3 follow-up (two-hundred-eighty-second slice): symbol
+  literal expressions. `parse_prefix` now recognizes `:symbol`-kind tokens
+  (mirroring `compiler.c`'s `parse_symbol`), stripping the leading `:` and
+  adding the rest as a name string via the same `add_string` bridge call
+  `compile_ivar_read`/`compile_ivar_write` already use for field names,
+  then emitting `SYMBOL`. A literal/comparison round trip (including a
+  `?`-suffixed name) joins the differential parser-case corpus.
+
+  Re-probed the self-hosted parser against its own two source files with
+  this fix in place: it now gets past `selfhost/lexer.di`'s entire
+  symbol-heavy `next_token` (previously unreachable) and fails later, on
+  a bare `private` inside `class Lexer`'s body -- visibility modifiers
+  are already supported inside module bodies (`compile_module`'s own
+  `:private`/`:public` handling) but were never added to `compile_class`'s
+  parallel loop. Confirms symbol literals were worth fixing on their own
+  terms (a large, previously-invisible gap independent of this
+  self-parsing investigation) while also showing self-parsing still has
+  real distance left -- each probe so far has traded one blocker for the
+  next rather than reaching the end.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,

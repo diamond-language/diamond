@@ -42,6 +42,7 @@ require "lexer"
 module Opcode
   CONSTANT = 0
   STRING = 1
+  SYMBOL = 2
   NIL = 3
   BOOL = 4
   MOVE = 5
@@ -2990,6 +2991,7 @@ class Parser
     return self.parse_integer() if kind == :integer
     return self.parse_float() if kind == :float
     return self.parse_string() if kind == :string
+    return self.parse_symbol() if kind == :symbol
     return self.parse_literal() if kind == :true || kind == :false || kind == :nil
     return self.parse_name() if kind == :identifier
     return self.parse_grouping() if kind == :left_paren
@@ -3778,6 +3780,16 @@ class Parser
       index = index + 1
     end
     result
+  end
+
+  def parse_symbol()
+    text = self.token_text(@previous)
+    name = text.slice(1, text.length() - 1)
+    destination = self.allocate_register()
+    name_index = self.add_string(name)
+    self.emit_instruction2(Opcode::SYMBOL, destination, name_index)
+    self.set_type_fact(destination, Type::SYMBOL)
+    destination
   end
 
   def parse_string()
