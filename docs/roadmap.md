@@ -3027,6 +3027,20 @@ future work.
   unchanged. This is a shared native-compiler fix, not specific to
   self-hosting, but it directly unblocks the next slice below.
 
+- Self-hosting, Phase 3 follow-up (two-hundred-seventy-eighth slice):
+  `gets`/`chr`/`to_f`/`to_i`/`to_sym` recognition. `selfhost/parser.di`
+  now recognizes all five as dedicated LEFT_PAREN-triggered constructs
+  (mirroring `compiler.c`'s `parse_gets_call`/`parse_chr_call`/
+  `parse_to_float_call`/`parse_to_int_call`/`parse_to_sym_call`),
+  including the same function-name shadowing check native applies before
+  treating the bare name as a builtin. The four scalar-conversion
+  builtins share one `parse_scalar_conversion_call(opcode, type_fact)`
+  helper rather than four near-identical bodies. A round trip through
+  all five joins the differential parser-case corpus. Directly depended
+  on the prior slice's register-budget fix -- this shape (one dispatch
+  helper plus five small call-parsers) was the exact amount of new
+  class-member surface that broke without it.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,

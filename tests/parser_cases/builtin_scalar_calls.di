@@ -1,0 +1,5 @@
+puts(chr(65))
+puts(to_f(3))
+puts(to_i(3.9))
+puts(to_sym("abc"))
+puts(gets())

@@ -88,7 +88,12 @@ module Opcode
   IS_TYPE = 64
   TO_STRING = 66
   PRINT = 70
+  GETS = 71
   FILE_OPEN = 72
+  CHR = 76
+  TO_FLOAT = 77
+  TO_INT = 78
+  TO_SYMBOL = 79
 end
 
 module Precedence
@@ -123,6 +128,7 @@ module Type
   ARRAY = 5
   HASH = 6
   CALLABLE = 7
+  SYMBOL = 9
   CLASS_BASE = 10
 end
 
@@ -3108,6 +3114,7 @@ class Parser
       return self.compile_closure_call(local) if local != nil
       return self.parse_print_call(true) if name == "puts"
       return self.parse_print_call(false) if name == "print"
+      return self.parse_builtin_scalar_call(name) if self.is_builtin_scalar_target(name)
       return self.compile_call(name)
     end
     return self.compile_call(name) if @current.kind() == :left_bracket && local == nil
@@ -3264,6 +3271,67 @@ class Parser
     self.emit_byte(parsed[1])
     self.set_type_fact(destination, Type::CLASS_BASE + class_index)
     destination
+  end
+
+  def is_builtin_scalar_target(name)
+    return false if self.find_function(name) != nil
+    return true if name == "gets"
+    return true if name == "chr"
+    return true if name == "to_f"
+    return true if name == "to_i"
+    name == "to_sym"
+  end
+
+  def parse_builtin_scalar_call(name)
+    return self.parse_gets_call() if name == "gets"
+    return self.parse_chr_call() if name == "chr"
+    return self.parse_to_float_call() if name == "to_f"
+    return self.parse_to_int_call() if name == "to_i"
+    self.parse_to_sym_call()
+  end
+
+  def parse_gets_call()
+    self.advance_token()
+    if @current.kind() != :right_paren
+      self.fail("expected ')' after arguments")
+      return 0
+    end
+    self.advance_token()
+    destination = self.allocate_register()
+    self.emit_instruction1(Opcode::GETS, destination)
+    destination
+  end
+
+  def parse_scalar_conversion_call(opcode, type_fact)
+    self.advance_token()
+    self.skip_newlines()
+    source = self.parse_expression()
+    self.skip_newlines()
+    if @current.kind() != :right_paren
+      self.fail("expected ')' after arguments")
+      return 0
+    end
+    self.advance_token()
+    destination = self.allocate_register()
+    self.emit_instruction2(opcode, destination, source)
+    self.set_type_fact(destination, type_fact)
+    destination
+  end
+
+  def parse_chr_call()
+    self.parse_scalar_conversion_call(Opcode::CHR, Type::STRING)
+  end
+
+  def parse_to_float_call()
+    self.parse_scalar_conversion_call(Opcode::TO_FLOAT, Type::FLOAT)
+  end
+
+  def parse_to_int_call()
+    self.parse_scalar_conversion_call(Opcode::TO_INT, Type::INT)
+  end
+
+  def parse_to_sym_call()
+    self.parse_scalar_conversion_call(Opcode::TO_SYMBOL, Type::SYMBOL)
   end
 
   def is_file_open_target(name, class_entry, local)
