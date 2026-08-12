@@ -2822,6 +2822,10 @@ future work.
   imported EOF locations. EOF diagnostics advance from a dependency segment's
   original starting line and report the same final line as the native parser.
 
+- Self-hosting, Phase 3 follow-up (two-hundred-forty-third slice): CRLF import
+  diagnostics. Dynamically generated CRLF root and dependency files preserve
+  the imported compile-error path and line through both parser pipelines.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,

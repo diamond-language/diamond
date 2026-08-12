@@ -98,6 +98,21 @@ trap - EXIT
 
 echo "loaded-file differential case passed"
 
+crlf_compile_dir="$(mktemp -d)"
+trap 'rm -rf "$crlf_compile_dir"' EXIT
+printf 'if true\r\n  1\r\n' >"$crlf_compile_dir/broken.di"
+printf 'require "broken"\r\n' >"$crlf_compile_dir/main.di"
+native_crlf_compile="$($diamond "$crlf_compile_dir/main.di" 2>&1 || true)"
+selfhost_crlf_compile="$(echo "$crlf_compile_dir/main.di" | \
+    $diamond selfhost/parser_check.di 2>&1 || true)"
+for output in "$native_crlf_compile" "$selfhost_crlf_compile"; do
+    grep -Fq "broken.di:2:1" <<<"$output"
+done
+rm -rf "$crlf_compile_dir"
+trap - EXIT
+
+echo "CRLF compile source-map differential case passed"
+
 runtime_fixture="tests/parser_runtime_fixtures/mapped_runtime_main.di"
 native_runtime="$($diamond "$runtime_fixture" 2>&1 || true)"
 selfhost_runtime="$(echo "$runtime_fixture" | $diamond selfhost/parser_run.di 2>&1 || true)"
