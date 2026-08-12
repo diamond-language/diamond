@@ -211,6 +211,7 @@ class Parser
     @current_return_type = nil
     @failed = false
     @error_message = nil
+    self.fail("unexpected character") if @current.kind() == :error
   end
 
   def error_message()
@@ -244,6 +245,7 @@ class Parser
   def advance_token()
     @previous = @current
     @current = @lexer.next_token()
+    self.fail("unexpected character") if @current.kind() == :error
   end
 
   def skip_newlines()
