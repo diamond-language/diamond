@@ -904,6 +904,12 @@ class Parser
       self.fail("type name is already defined")
       return 0
     end
+    index = 0
+    while index < @modules.length()
+      self.fail("type name is already defined") if @modules[index][0] == name
+      index = index + 1
+    end
+    return 0 if @failed
     interface_index = @builder.declare_interface(name)
     @interfaces.push([name, interface_index])
     self.advance_token()
