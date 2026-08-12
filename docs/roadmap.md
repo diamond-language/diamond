@@ -2748,6 +2748,10 @@ future work.
   manifest shape diagnostics. A manifest returning a non-Hash value is rejected
   through the self-hosted loader bridge with the native message.
 
+- Self-hosting, Phase 3 follow-up (two-hundred-twenty-fifth slice): package
+  manifest version diagnostics. A present non-String version field is rejected
+  through the self-hosted loader bridge with the native message.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,
