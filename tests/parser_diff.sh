@@ -175,3 +175,14 @@ for output in "$native_duplicate_runtime" "$selfhost_duplicate_runtime"; do
 done
 
 echo "duplicate-require source-map differential case passed"
+
+package_runtime_fixture="tests/parser_runtime_fixtures/package_runtime_main.di"
+native_package_runtime="$($diamond "$package_runtime_fixture" 2>&1 || true)"
+selfhost_package_runtime="$(echo "$package_runtime_fixture" | \
+    $diamond selfhost/parser_run.di 2>&1 || true)"
+for output in "$native_package_runtime" "$selfhost_package_runtime"; do
+    grep -Fq "at package_explode:2:10" <<<"$output"
+    grep -Fq "at tests/parser_runtime_fixtures/package_runtime_main.di:" <<<"$output"
+done
+
+echo "package runtime source-map differential case passed"
