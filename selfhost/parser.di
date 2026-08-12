@@ -923,6 +923,9 @@ class Parser
         else
           base_name = self.token_text(@current)
           base = self.find_interface(base_name)
+          if base == nil && @current_module_name != nil
+            base = self.find_interface(@current_module_name + "::" + base_name)
+          end
           if base == nil
             self.fail("undefined base interface")
           else
