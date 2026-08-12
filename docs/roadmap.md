@@ -2608,6 +2608,10 @@ future work.
   class declarations. Module bodies may compile child classes whose builder and
   parser identities carry the enclosing module's qualified namespace.
 
+- Self-hosting, Phase 3 follow-up (one-hundred-ninetieth slice): qualified
+  nested construction. Two-segment class names resolve through the class table
+  and lower `Namespace::Class.new(...)` through the existing constructor path.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,

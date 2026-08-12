@@ -1709,7 +1709,7 @@ class Parser
       name = name + "="
       self.advance_token()
     end
-    if @current_module_index != nil
+    if @current_module_index != nil && @current_class_index == nil
       index = 0
       while index < @modules[@current_module_entry][3].length()
         self.fail("method is already defined") if @modules[@current_module_entry][3][index] == name
@@ -1754,7 +1754,7 @@ class Parser
     @current_method_uses_state = false
     self.compile_method_body(function_index, parameter_names, parameter_types, return_type)
     @current_method_name = outer_method_name
-    if @current_module_index != nil
+    if @current_module_index != nil && @current_class_index == nil
       self.register_module_method(name, function_index, arity)
     else
       @current_class_method_names.push(name)
@@ -2223,7 +2223,7 @@ class Parser
     end
     field_text = self.token_text(token)
     field_name = field_text.slice(1, field_text.length() - 1)
-    if @current_module_index != nil
+    if @current_module_index != nil && @current_class_index == nil
       @current_method_uses_state = true
       @builder.declare_module_field(@current_module_index, field_name)
       field_index = self.add_string(field_name)
@@ -2243,7 +2243,7 @@ class Parser
     field_text = self.token_text(token)
     field_name = field_text.slice(1, field_text.length() - 1)
     destination = self.allocate_register()
-    if @current_module_index != nil
+    if @current_module_index != nil && @current_class_index == nil
       @current_method_uses_state = true
       @builder.declare_module_field(@current_module_index, field_name)
       field_index = self.add_string(field_name)
@@ -3093,6 +3093,10 @@ class Parser
       constant_name = self.token_text(@current)
       self.advance_token()
       module_entry = nested_module
+    end
+    if nested_module == nil && @current.kind() == :dot
+      nested_module = self.find_class(qualified_name)
+      return self.compile_new_call(nested_module[1]) if nested_module != nil
     end
     constant_index = nil
     if module_entry != nil
