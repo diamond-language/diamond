@@ -2780,6 +2780,10 @@ future work.
   precedence. A relative file matching a bare require name wins over an
   installed package in the self-hosted loading pipeline.
 
+- Self-hosting, Phase 3 follow-up (two-hundred-thirty-third slice): optional
+  package versions. A package manifest containing only its required name is
+  accepted and its source executes through the self-hosted loading pipeline.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,
