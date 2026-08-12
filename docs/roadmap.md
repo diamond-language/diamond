@@ -2744,6 +2744,10 @@ future work.
   manifest diagnostics. A mismatched declared package name propagates through
   the self-hosted error runner with the native loader message.
 
+- Self-hosting, Phase 3 follow-up (two-hundred-twenty-fourth slice): package
+  manifest shape diagnostics. A manifest returning a non-Hash value is rejected
+  through the self-hosted loader bridge with the native message.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,
