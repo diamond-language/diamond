@@ -1586,9 +1586,10 @@ static DiamondVmStatus program_builder_invoke_helper(DiamondVm *vm,
         const char *mapped_path="<expanded>";
         for(size_t index=0;index<builder->source_bundle->segment_count;index++) {
             const DiamondSourceSegment *segment=&builder->source_bundle->segments[index];
-            if((uint64_t)offset>=segment->start&&(uint64_t)offset<=segment->end) {
-                mapped_path=segment->path;break;
-            }
+            const uint64_t source_offset=(uint64_t)offset;
+            if(source_offset<segment->start||
+               (source_offset>segment->end&&source_offset-segment->end>9))continue;
+            mapped_path=segment->path;break;
         }
         char location[DIAMOND_MAX_SOURCE_PATH+64];
         const int written=snprintf(location,sizeof location,"%s:%lld:%lld",

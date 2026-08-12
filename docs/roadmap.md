@@ -2814,6 +2814,10 @@ future work.
   preserves the native manifest-specific I/O context through the self-hosted
   loader bridge.
 
+- Self-hosting, Phase 3 follow-up (two-hundred-forty-first slice): imported EOF
+  locations. An unterminated required file retains its dependency path at the
+  expanded-source segment boundary in self-hosted parser diagnostics.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,
