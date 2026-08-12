@@ -2620,6 +2620,10 @@ future work.
   sibling classes. Code compiled within a module resolves an unqualified class
   name against the active module namespace before constructor lowering.
 
+- Self-hosting, Phase 3 follow-up (one-hundred-ninety-third slice): lexical
+  superclasses. A nested class resolves an unqualified superclass name against
+  its active module namespace before inheritance setup.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,

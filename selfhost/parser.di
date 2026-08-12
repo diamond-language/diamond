@@ -1457,6 +1457,9 @@ class Parser
     end
     superclass_name = self.token_text(@current)
     entry = self.find_class(superclass_name)
+    if entry == nil && @current_module_name != nil
+      entry = self.find_class(@current_module_name + "::" + superclass_name)
+    end
     if entry == nil
       self.fail("undefined superclass")
       return nil
