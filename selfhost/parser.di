@@ -3035,6 +3035,9 @@ class Parser
       return self.parse_qualified_name(name, module_entry)
     end
     class_entry = self.find_class(name)
+    if class_entry == nil && @current_module_name != nil
+      class_entry = self.find_class(@current_module_name + "::" + name)
+    end
     return self.compile_new_call(class_entry[1]) if class_entry != nil && @current.kind() == :dot
     local = self.find_local(name)
     if local == nil && @current_module_index != nil
