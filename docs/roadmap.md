@@ -2842,6 +2842,10 @@ future work.
   runtime locations. Leaf, intermediate, and root frames survive a two-level
   required-file chain with native/self-hosted source-location parity.
 
+- Self-hosting, Phase 3 follow-up (two-hundred-forty-eighth slice): duplicate
+  require mapping. Canonically identical dependency spellings emit one source
+  segment and preserve one stable imported runtime frame.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,

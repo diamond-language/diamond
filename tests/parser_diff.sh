@@ -163,3 +163,15 @@ for output in "$native_nested_runtime" "$selfhost_nested_runtime"; do
 done
 
 echo "nested runtime source-map differential case passed"
+
+duplicate_runtime_fixture="tests/parser_runtime_fixtures/duplicate_runtime_main.di"
+native_duplicate_runtime="$($diamond "$duplicate_runtime_fixture" 2>&1 || true)"
+selfhost_duplicate_runtime="$(echo "$duplicate_runtime_fixture" | \
+    $diamond selfhost/parser_run.di 2>&1 || true)"
+for output in "$native_duplicate_runtime" "$selfhost_duplicate_runtime"; do
+    grep -Fq "at mapped_explode:2:10" <<<"$output"
+    grep -Fq "at tests/parser_runtime_fixtures/duplicate_runtime_main.di:" <<<"$output"
+    [[ "$(grep -Fc "at mapped_explode:" <<<"$output")" -eq 1 ]]
+done
+
+echo "duplicate-require source-map differential case passed"
