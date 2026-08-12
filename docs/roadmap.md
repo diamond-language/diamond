@@ -2652,6 +2652,10 @@ future work.
   diagnostics. A namespace separator in an annotation requires a following
   identifier and matches the native qualified-type diagnostic.
 
+- Self-hosting, Phase 3 follow-up (two-hundred-first slice): qualified include
+  parsing. Class and module include paths share a compact, register-safe helper
+  that consumes arbitrary namespace segments.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,

@@ -1168,13 +1168,6 @@ class Parser
     end
   end
 
-  def hash_value_annotation(annotation)
-    return nil if annotation == nil || annotation.length() != 1
-    member = annotation[0]
-    return nil if self.resolve_type_name(member[0]) != Type::HASH
-    member[2]
-  end
-
   def annotation_with_nil(annotation)
     result = []
     has_nil = false
@@ -1414,17 +1407,7 @@ class Parser
         if @current.kind() != :identifier
           self.fail("expected module name after 'include'")
         else
-          module_name = self.token_text(@current)
-          self.advance_token()
-          if @current.kind() == :double_colon
-            self.advance_token()
-            if @current.kind() != :identifier
-              self.fail("invalid qualified module name")
-            else
-              module_name = module_name + "::" + self.token_text(@current)
-              self.advance_token()
-            end
-          end
+          module_name = self.consume_qualified_module_name()
           module_index = nil
           index = 0
           while index < @modules.length()
@@ -1672,17 +1655,7 @@ class Parser
       self.fail("expected module name after 'include'")
       return
     end
-    name = self.token_text(@current)
-    self.advance_token()
-    if @current.kind() == :double_colon
-      self.advance_token()
-      if @current.kind() != :identifier
-        self.fail("invalid qualified module name")
-        return
-      end
-      name = name + "::" + self.token_text(@current)
-      self.advance_token()
-    end
+    name = self.consume_qualified_module_name()
     included = nil
     index = 0
     while index < @modules.length()
@@ -1704,6 +1677,21 @@ class Parser
     else
       @builder.include_module_in_module(@current_module_index, included)
     end
+  end
+
+  def consume_qualified_module_name()
+    name = self.token_text(@current)
+    self.advance_token()
+    while !@failed && @current.kind() == :double_colon
+      self.advance_token()
+      if @current.kind() != :identifier
+        self.fail("invalid qualified module name")
+      else
+        name = name + "::" + self.token_text(@current)
+        self.advance_token()
+      end
+    end
+    name
   end
 
   # An instance method: register 0 is always `self` (allocated before
@@ -2326,7 +2314,11 @@ class Parser
       fact = self.annotation_single_type(element)
       self.set_type_fact(destination, fact) if fact != nil
     else
-      value = self.hash_value_annotation(self.declared_type(receiver))
+      value = nil
+      if receiver_annotation != nil && receiver_annotation.length() == 1
+        member = receiver_annotation[0]
+        value = member[2] if self.resolve_type_name(member[0]) == Type::HASH
+      end
       if value != nil
         @declared_types.push([destination, self.annotation_with_nil(value)])
       end
