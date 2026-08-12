@@ -151,3 +151,15 @@ for output in "$stress_native_runtime" "$stress_selfhost_runtime"; do
 done
 
 echo "stress-GC runtime source-map differential case passed"
+
+nested_runtime_fixture="tests/parser_runtime_fixtures/nested_runtime_main.di"
+native_nested_runtime="$($diamond "$nested_runtime_fixture" 2>&1 || true)"
+selfhost_nested_runtime="$(echo "$nested_runtime_fixture" | \
+    $diamond selfhost/parser_run.di 2>&1 || true)"
+for output in "$native_nested_runtime" "$selfhost_nested_runtime"; do
+    grep -Fq "at nested_explode:2:10" <<<"$output"
+    grep -Fq "at nested_runtime_mid:1:46" <<<"$output"
+    grep -Fq "at tests/parser_runtime_fixtures/nested_runtime_main.di:" <<<"$output"
+done
+
+echo "nested runtime source-map differential case passed"
