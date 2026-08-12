@@ -89,6 +89,7 @@ module Opcode
   IS_TYPE = 64
   ARGUMENT_PROVIDED = 65
   TO_STRING = 66
+  REDEFINE_METHOD = 68
   FIBER_NEW = 69
   PRINT = 70
   GETS = 71
@@ -214,6 +215,18 @@ class Parser
     # surfacing as an uncaught exception from declare_method's own
     # (separate, VM-level) duplicate check.
     @current_class_method_names = []
+    # Same, for `def self.foo`-declared class singleton methods -- a
+    # separate namespace from instance methods (native's own
+    # class->singleton_methods[] is a distinct array from
+    # class->methods[], so the same name can be both).
+    @current_class_singleton_method_names = []
+    # Index into @classes of the class currently being compiled's own
+    # entry -- mirrors @current_module_entry's own indexing pattern.
+    # register_compiled_method appends each `def self.foo` singleton's
+    # descriptor to @classes[@current_class_entry][3] so a later,
+    # unrelated call site (Klass.foo(...)) can look it up by class_entry
+    # alone, the same way it already looks up class_index/superclass.
+    @current_class_entry = nil
     # Default visibility for methods declared for the rest of the class
     # currently being compiled -- set by a bare `private`/`public` in the
     # class body (compile_class_visibility). Named visibility targets
@@ -546,19 +559,24 @@ class Parser
   # from `class ... end` syntax. These twelve indices are fixed and
   # already occupied before this parser (or any target program) declares
   # its own first class, so they're safe to hardcode rather than query.
+  # Fourth element is the class's singleton-method descriptor list
+  # (see compile_class's own @classes.push), empty here since none of
+  # the built-ins declare any -- kept for a uniform four-element shape
+  # across every class_entry source (find_class doesn't otherwise care
+  # which of the two returned it).
   def find_builtin_class(name)
-    return ["Exception", 0, nil] if name == "Exception"
-    return ["StandardError", 1, 0] if name == "StandardError"
-    return ["RuntimeError", 2, 1] if name == "RuntimeError"
-    return ["TypeError", 3, 1] if name == "TypeError"
-    return ["ArgumentError", 4, 1] if name == "ArgumentError"
-    return ["IndexError", 5, 1] if name == "IndexError"
-    return ["ZeroDivisionError", 6, 1] if name == "ZeroDivisionError"
-    return ["RangeError", 7, 1] if name == "RangeError"
-    return ["SystemStackError", 8, 0] if name == "SystemStackError"
-    return ["FiberError", 9, 1] if name == "FiberError"
-    return ["IOError", 10, 1] if name == "IOError"
-    return ["RegexpError", 11, 1] if name == "RegexpError"
+    return ["Exception", 0, nil, []] if name == "Exception"
+    return ["StandardError", 1, 0, []] if name == "StandardError"
+    return ["RuntimeError", 2, 1, []] if name == "RuntimeError"
+    return ["TypeError", 3, 1, []] if name == "TypeError"
+    return ["ArgumentError", 4, 1, []] if name == "ArgumentError"
+    return ["IndexError", 5, 1, []] if name == "IndexError"
+    return ["ZeroDivisionError", 6, 1, []] if name == "ZeroDivisionError"
+    return ["RangeError", 7, 1, []] if name == "RangeError"
+    return ["SystemStackError", 8, 0, []] if name == "SystemStackError"
+    return ["FiberError", 9, 1, []] if name == "FiberError"
+    return ["IOError", 10, 1, []] if name == "IOError"
+    return ["RegexpError", 11, 1, []] if name == "RegexpError"
     nil
   end
 
@@ -1572,10 +1590,12 @@ class Parser
     else
       superclass_index
     end)
-    @classes.push([name, class_index, superclass_index])
+    @classes.push([name, class_index, superclass_index, []])
+    @current_class_entry = @classes.length() - 1
     @current_class_index = class_index
     @current_class_superclass_index = superclass_index
     @current_class_method_names = []
+    @current_class_singleton_method_names = []
     @current_class_methods_private = false
 
     if !self.consume_block_start()
@@ -1702,7 +1722,7 @@ class Parser
     return 0 if @failed
     module_index = @builder.declare_module(name)
     module_entry = @modules.length()
-    @modules.push([name, module_index, [], [], [false], [false], [], [], @current_module_name])
+    @modules.push([name, module_index, [], [], [false], [false], [], [], @current_module_name, []])
     outer_module_index = @current_module_index
     outer_module_name = @current_module_name
     outer_module_entry = @current_module_entry
@@ -1921,6 +1941,16 @@ class Parser
   # participate in @function_nesting_depth at all).
   def compile_method()
     self.advance_token()
+    module_singleton = false
+    if @current.kind() == :self && (@current_class_index != nil || @current_module_index != nil)
+      module_singleton = true
+      self.advance_token()
+      if @current.kind() != :dot
+        self.fail("expected '.' after 'self'")
+        return
+      end
+      self.advance_token()
+    end
     if @current.kind() != :identifier
       self.fail("expected function name after 'def'")
       return
@@ -1931,23 +1961,8 @@ class Parser
       name = name + "="
       self.advance_token()
     end
-    if @current_module_index != nil && @current_class_index == nil
-      index = 0
-      while index < @modules[@current_module_entry][3].length()
-        self.fail("method is already defined") if @modules[@current_module_entry][3][index] == name
-        index = index + 1
-      end
-      return if @failed
-    else
-      index = 0
-      while index < @current_class_method_names.length()
-        self.fail("method is already defined") if @current_class_method_names[index] == name
-        index = index + 1
-      end
-      if @failed
-        return
-      end
-    end
+    self.fail("method is already defined") if self.duplicate_method_name?(name, module_singleton)
+    return if @failed
     if @current.kind() != :left_paren
       self.fail("expected '(' after function name")
       return
@@ -1971,20 +1986,79 @@ class Parser
     return if @failed
 
     arity = parameter_names.length()
-    function_index = @builder.declare_function(name, arity + 1, self.required_parameter_count(parameter_defaults) + 1)
+    required_arity = self.required_parameter_count(parameter_defaults)
+    self_offset = if module_singleton
+      0
+    else
+      1
+    end
+    function_index = @builder.declare_function(name, arity + self_offset, required_arity + self_offset)
     outer_method_name = @current_method_name
     @current_method_name = name
     @current_method_uses_state = false
-    self.compile_method_body(function_index, parameter_names, parameter_types, parameter_defaults, return_type)
+    self.compile_method_body(function_index, parameter_names, parameter_types, parameter_defaults, return_type, module_singleton)
     @current_method_name = outer_method_name
-    required_arity = self.required_parameter_count(parameter_defaults)
-    if @current_module_index != nil && @current_class_index == nil
-      self.register_module_method(name, function_index, arity, required_arity)
-    else
-      @current_class_method_names.push(name)
-      @builder.declare_method(@current_class_index, name, function_index, arity, required_arity, @current_class_methods_private)
-    end
+    self.register_compiled_method(name, function_index, arity, required_arity, module_singleton)
     @current_method_uses_state = false
+  end
+
+  # Whether `name` is already declared in whichever of the four method
+  # lists (class instance/singleton, module instance/singleton) `def
+  # self.`-ness and the current class/module context select.
+  def duplicate_method_name?(name, module_singleton)
+    names = self.existing_method_names(module_singleton)
+    index = 0
+    found = false
+    while index < names.length()
+      found = true if names[index] == name
+      index = index + 1
+    end
+    found
+  end
+
+  def existing_method_names(module_singleton)
+    class_context = @current_module_index == nil || @current_class_index != nil
+    if module_singleton
+      return @current_class_singleton_method_names if class_context
+      descriptors = @modules[@current_module_entry][9]
+      names = []
+      index = 0
+      while index < descriptors.length()
+        names.push(descriptors[index][0])
+        index = index + 1
+      end
+      names
+    else
+      return @current_class_method_names if class_context
+      @modules[@current_module_entry][3]
+    end
+  end
+
+  # Registers a just-compiled method into whichever of the four targets
+  # (class instance/singleton, module instance/singleton) it belongs to.
+  # A directly-declared singleton (`def self.foo`) goes through the new
+  # declare_class_singleton_method/declare_module_singleton_method bridge
+  # calls -- distinct from module_function's export_module_method, which
+  # instead re-exports an already-declared regular method.
+  def register_compiled_method(name, function_index, arity, required_arity, module_singleton)
+    class_context = @current_module_index == nil || @current_class_index != nil
+    if module_singleton
+      if class_context
+        @current_class_singleton_method_names.push(name)
+        @classes[@current_class_entry][3].push([name, function_index, arity, required_arity])
+        @builder.declare_class_singleton_method(@current_class_index, name, function_index, arity, required_arity)
+      else
+        @modules[@current_module_entry][9].push([name, function_index, arity, required_arity])
+        @builder.declare_module_singleton_method(@current_module_index, name, function_index, arity, required_arity)
+      end
+    else
+      if class_context
+        @current_class_method_names.push(name)
+        @builder.declare_method(@current_class_index, name, function_index, arity, required_arity, @current_class_methods_private)
+      else
+        self.register_module_method(name, function_index, arity, required_arity)
+      end
+    end
   end
 
   def register_module_method(name, function_index, arity, required_arity)
@@ -2003,7 +2077,7 @@ class Parser
     end
   end
 
-  def compile_method_body(function_index, parameter_names, parameter_types, parameter_defaults, return_type)
+  def compile_method_body(function_index, parameter_names, parameter_types, parameter_defaults, return_type, module_singleton)
     outer_locals = @locals
     outer_loops = @loops
     outer_next_register = @next_register
@@ -2021,9 +2095,14 @@ class Parser
     @current_return_type = return_type
     @type_facts = []
     @declared_types = []
-    self.allocate_register()
+    index_offset = if module_singleton
+      0
+    else
+      self.allocate_register()
+      1
+    end
 
-    self.bind_parameters(function_index, parameter_names, parameter_types, parameter_defaults, 1)
+    self.bind_parameters(function_index, parameter_names, parameter_types, parameter_defaults, index_offset)
 
     endless = @current.kind() == :equal
     if endless
@@ -3416,7 +3495,7 @@ class Parser
     if class_entry == nil && @current_module_name != nil
       class_entry = self.find_class(@current_module_name + "::" + name)
     end
-    return self.compile_new_call(class_entry[1]) if class_entry != nil && @current.kind() == :dot
+    return self.compile_class_dot_call(class_entry) if class_entry != nil && @current.kind() == :dot
     local = self.find_local(name)
     return self.parse_file_open_call() if self.is_file_open_target(name, class_entry, local)
     dot_construct = self.dot_construct_id(name, class_entry, local)
@@ -3548,6 +3627,55 @@ class Parser
     destination
   end
 
+  # Shared by compile_module_singleton_call and compile_class_singleton_call.
+  # needs_receiver mirrors native's own DiamondMethod field of the same
+  # name: true only for a module_function-exported method (which wraps a
+  # real instance method that already reserves register 0 for self), so
+  # its call still needs a leading, unused receiver slot to keep argument
+  # positions aligned with the wrapped function's real parameter layout.
+  # A directly-declared singleton (`def self.foo`, class or module) never
+  # reserves self in the first place, so its call has no such slot.
+  def emit_singleton_call(function_index, parsed, needs_receiver)
+    offset = if needs_receiver
+      1
+    else
+      0
+    end
+    base = self.allocate_register()
+    index = 1
+    while index < offset + parsed[1]
+      self.allocate_register()
+      index = index + 1
+    end
+    index = 0
+    while index < parsed[1]
+      self.emit_instruction2(Opcode::MOVE, base + index + offset, parsed[0] + index)
+      index = index + 1
+    end
+    destination = self.allocate_register()
+    self.emit_byte(Opcode::CALL)
+    self.emit_byte(destination)
+    self.emit_byte(function_index)
+    self.emit_byte(base)
+    self.emit_byte(parsed[1] + offset)
+    destination
+  end
+
+  def find_descriptor(descriptors, name)
+    index = 0
+    result = nil
+    while index < descriptors.length()
+      result = descriptors[index] if descriptors[index][0] == name
+      index = index + 1
+    end
+    result
+  end
+
+  # module_entry[7] holds module_function-exported descriptors
+  # ([name, function_index, arity, uses_state]); module_entry[9] holds
+  # def self.foo-declared ones ([name, function_index, arity,
+  # required_arity]) -- see register_compiled_method. Both are searched
+  # since either syntax can produce a callable `ModuleName.foo(...)`.
   def compile_module_singleton_call(module_entry)
     if @current.kind() != :identifier
       self.fail("undefined module singleton function")
@@ -3559,13 +3687,9 @@ class Parser
       name = name + "="
       self.advance_token()
     end
-    descriptor = nil
-    index = 0
-    while index < module_entry[7].length()
-      descriptor = module_entry[7][index] if module_entry[7][index][0] == name
-      index = index + 1
-    end
-    if descriptor == nil
+    exported = self.find_descriptor(module_entry[7], name)
+    declared = self.find_descriptor(module_entry[9], name)
+    if exported == nil && declared == nil
       self.fail("undefined module singleton function")
       return 0
     end
@@ -3576,23 +3700,110 @@ class Parser
     self.advance_token()
     parsed = self.parse_call_arguments()
     return 0 if parsed == nil
-    if parsed[1] != descriptor[2]
+    if exported != nil
+      if parsed[1] != exported[2]
+        self.fail("wrong number of arguments")
+        return 0
+      end
+      return self.emit_singleton_call(exported[1], parsed, true)
+    end
+    if parsed[1] < declared[3] || parsed[1] > declared[2]
       self.fail("wrong number of arguments")
       return 0
     end
-    base = self.allocate_register()
-    index = 0
-    while index < parsed[1]
-      self.allocate_register()
-      self.emit_instruction2(Opcode::MOVE, base + index + 1, parsed[0] + index)
-      index = index + 1
+    self.emit_singleton_call(declared[1], parsed, false)
+  end
+
+  # class_entry[3] holds def self.foo-declared descriptors ([name,
+  # function_index, arity, required_arity]) -- see register_compiled_method.
+  # Unlike modules, a class has no module_function-style export path, so
+  # there's only ever one list to search.
+  def compile_class_singleton_call(class_entry)
+    if @current.kind() != :identifier
+      self.fail("undefined class singleton method")
+      return 0
     end
+    name = self.token_text(@current)
+    self.advance_token()
+    if @current.kind() == :equal
+      name = name + "="
+      self.advance_token()
+    end
+    descriptor = self.find_descriptor(class_entry[3], name)
+    if descriptor == nil
+      self.fail("undefined class singleton method")
+      return 0
+    end
+    if @current.kind() != :left_paren
+      self.fail("expected '(' after singleton function")
+      return 0
+    end
+    self.advance_token()
+    parsed = self.parse_call_arguments()
+    return 0 if parsed == nil
+    if parsed[1] < descriptor[3] || parsed[1] > descriptor[2]
+      self.fail("wrong number of arguments")
+      return 0
+    end
+    self.emit_singleton_call(descriptor[1], parsed, false)
+  end
+
+  # `Klass.` at this point could mean `.new(...)`, `redefine_method(...)`,
+  # or a `def self.foo` singleton call. A one-token lookahead (mirroring
+  # keyword_argument_ahead?'s own cloned-lexer peek) decides which
+  # without committing to any of them by consuming the dot first --
+  # compile_new_call, compile_redefine_method_call, and
+  # compile_class_singleton_call each expect to consume it themselves,
+  # matching compile_module_singleton_call's own call site.
+  # "redefine_method" is a plain identifier, not a dedicated keyword
+  # token (mirroring compiler.c's own name_equals check here, not a
+  # DIAMOND_TOKEN_* comparison), so it's matched by text like any other
+  # singleton name would be -- checked first since it's never a real
+  # declared singleton method name.
+  def compile_class_dot_call(class_entry)
+    lookahead = @lexer.clone()
+    peeked = lookahead.next_token()
+    if peeked.kind() == :identifier && self.token_text(peeked) == "redefine_method"
+      self.advance_token()
+      return self.compile_redefine_method_call(class_entry[1])
+    end
+    if peeked.kind() == :identifier && self.find_descriptor(class_entry[3], self.token_text(peeked)) != nil
+      self.advance_token()
+      return self.compile_class_singleton_call(class_entry)
+    end
+    self.compile_new_call(class_entry[1])
+  end
+
+  def compile_redefine_method_call(class_index)
+    self.advance_token()
+    if @current.kind() != :left_paren
+      self.fail("expected '(' after 'redefine_method'")
+      return 0
+    end
+    self.advance_token()
+    self.skip_newlines()
+    name_register = self.parse_expression()
+    self.skip_newlines()
+    if @current.kind() != :comma
+      self.fail("expected ',' after redefine_method name")
+      return 0
+    end
+    self.advance_token()
+    self.skip_newlines()
+    callable_register = self.parse_expression()
+    self.skip_newlines()
+    if @current.kind() != :right_paren
+      self.fail("expected ')' after redefine_method arguments")
+      return 0
+    end
+    self.advance_token()
     destination = self.allocate_register()
-    self.emit_byte(Opcode::CALL)
+    self.emit_byte(Opcode::REDEFINE_METHOD)
     self.emit_byte(destination)
-    self.emit_byte(descriptor[1])
-    self.emit_byte(base)
-    self.emit_byte(parsed[1] + 1)
+    self.emit_byte(class_index)
+    self.emit_byte(name_register)
+    self.emit_byte(callable_register)
+    self.set_type_fact(destination, Type::NIL)
     destination
   end
 

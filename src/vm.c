@@ -911,6 +911,22 @@ static DiamondVmStatus program_builder_invoke_helper(DiamondVm *vm,
         method_name->length==sizeof("declare_module_method")-1&&
         memcmp(method_name->chars,"declare_module_method",
             sizeof("declare_module_method")-1)==0;
+    /* Declares a function directly as a class/module singleton method
+     * (`def self.foo` syntax) -- distinct from export_module_method,
+     * which instead re-exports an *already-declared* regular method
+     * (the `module_function :name` syntax). Neither has a needs_receiver
+     * counterpart here: diamond_compile's own module_singleton branch
+     * (src/compiler.c's compile_definition) never sets it either, since
+     * a directly-declared singleton never reserves register 0 for an
+     * implicit self the way an ordinary method does. */
+    const bool declare_class_singleton_method_method=
+        method_name->length==sizeof("declare_class_singleton_method")-1&&
+        memcmp(method_name->chars,"declare_class_singleton_method",
+            sizeof("declare_class_singleton_method")-1)==0;
+    const bool declare_module_singleton_method_method=
+        method_name->length==sizeof("declare_module_singleton_method")-1&&
+        memcmp(method_name->chars,"declare_module_singleton_method",
+            sizeof("declare_module_singleton_method")-1)==0;
     const bool include_module_method=
         method_name->length==sizeof("include_module")-1&&
         memcmp(method_name->chars,"include_module",sizeof("include_module")-1)==0;
@@ -974,7 +990,9 @@ static DiamondVmStatus program_builder_invoke_helper(DiamondVm *vm,
        !set_register_count_method&&!declare_class_method&&
        !declare_module_method&&!declare_namespace_constant_method&&
        !declare_field_method&&!declare_module_field_method&&!declare_method_method&&
-       !declare_module_method_method&&!include_module_method&&
+       !declare_module_method_method&&
+       !declare_class_singleton_method_method&&
+       !declare_module_singleton_method_method&&!include_module_method&&
        !include_module_in_module_method&&
        !set_module_method_visibility_method&&
        !export_module_method_method&&
@@ -1425,6 +1443,115 @@ static DiamondVmStatus program_builder_invoke_helper(DiamondVm *vm,
          * methods too). See docs/roadmap.md's self-hosting Phase 3
          * follow-up entry. */
         built->functions[function_index].owner_class=UINT8_MAX-1;
+        *result=DIAMOND_NIL;return DIAMOND_VM_OK;
+    }
+    if(declare_class_singleton_method_method) {
+        if(argc!=5)return DIAMOND_VM_ARITY_ERROR;
+        if(registers[base].kind!=DIAMOND_VALUE_INT||
+           registers[(size_t)base+1].kind!=DIAMOND_VALUE_OBJECT||
+           registers[(size_t)base+1].as.object->kind!=DIAMOND_OBJECT_STRING||
+           registers[(size_t)base+2].kind!=DIAMOND_VALUE_INT||
+           registers[(size_t)base+3].kind!=DIAMOND_VALUE_INT||
+           registers[(size_t)base+4].kind!=DIAMOND_VALUE_INT) {
+            snprintf(vm->error,sizeof vm->error,"ProgramBuilder#%s",
+                "declare_class_singleton_method arguments must be "
+                "(Int, String, Int, Int, Int)");
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        DiamondClass *class=
+            program_builder_class(built,registers[base].as.integer);
+        const DiamondString *mname=
+            (const DiamondString *)registers[(size_t)base+1].as.object;
+        const int64_t target_function=registers[(size_t)base+2].as.integer;
+        const int64_t arity_value=registers[(size_t)base+3].as.integer;
+        const int64_t required_value=registers[(size_t)base+4].as.integer;
+        if(class==nullptr||mname->length==0||
+           mname->length>=DIAMOND_MAX_FUNCTION_NAME||
+           target_function<0||(uint64_t)target_function>=built->function_count||
+           arity_value<0||arity_value>UINT8_MAX||
+           required_value<0||required_value>arity_value) {
+            snprintf(vm->error,sizeof vm->error,"ProgramBuilder#%s",
+                "declare_class_singleton_method has invalid arguments");
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        for(size_t index=0;index<class->singleton_method_count;index++)
+            if(strlen(class->singleton_methods[index].name)==mname->length&&
+               memcmp(class->singleton_methods[index].name,mname->chars,
+                      mname->length)==0) {
+                snprintf(vm->error,sizeof vm->error,
+                    "duplicate or excessive class singleton method");
+                return DIAMOND_VM_TYPE_ERROR;
+            }
+        if(class->singleton_method_count==DIAMOND_MAX_METHODS) {
+            snprintf(vm->error,sizeof vm->error,
+                "duplicate or excessive class singleton method");
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        /* No needs_receiver/owner_class here, matching diamond_compile's
+         * own module_singleton branch exactly: a directly-declared
+         * singleton (`def self.foo`) never reserves register 0 for an
+         * implicit self, unlike an ordinary method -- see declare_method
+         * just above for the contrasting case that does. */
+        DiamondMethod *method=
+            &class->singleton_methods[class->singleton_method_count++];
+        *method=(DiamondMethod){};
+        memcpy(method->name,mname->chars,mname->length);
+        method->name[mname->length]='\0';
+        method->function_index=(uint8_t)target_function;
+        method->arity=(uint8_t)arity_value;
+        method->required_arity=(uint8_t)required_value;
+        *result=DIAMOND_NIL;return DIAMOND_VM_OK;
+    }
+    if(declare_module_singleton_method_method) {
+        if(argc!=5)return DIAMOND_VM_ARITY_ERROR;
+        if(registers[base].kind!=DIAMOND_VALUE_INT||
+           registers[(size_t)base+1].kind!=DIAMOND_VALUE_OBJECT||
+           registers[(size_t)base+1].as.object->kind!=DIAMOND_OBJECT_STRING||
+           registers[(size_t)base+2].kind!=DIAMOND_VALUE_INT||
+           registers[(size_t)base+3].kind!=DIAMOND_VALUE_INT||
+           registers[(size_t)base+4].kind!=DIAMOND_VALUE_INT) {
+            snprintf(vm->error,sizeof vm->error,"ProgramBuilder#%s",
+                "declare_module_singleton_method arguments must be "
+                "(Int, String, Int, Int, Int)");
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        const int64_t module_index=registers[base].as.integer;
+        const DiamondString *mname=
+            (const DiamondString *)registers[(size_t)base+1].as.object;
+        const int64_t target_function=registers[(size_t)base+2].as.integer;
+        const int64_t arity_value=registers[(size_t)base+3].as.integer;
+        const int64_t required_value=registers[(size_t)base+4].as.integer;
+        if(module_index<0||(uint64_t)module_index>=built->module_count||
+           mname->length==0||mname->length>=DIAMOND_MAX_FUNCTION_NAME||
+           target_function<0||(uint64_t)target_function>=built->function_count||
+           arity_value<0||arity_value>UINT8_MAX||
+           required_value<0||required_value>arity_value) {
+            snprintf(vm->error,sizeof vm->error,"ProgramBuilder#%s",
+                "declare_module_singleton_method has invalid arguments");
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        DiamondModule *module=&built->modules[(size_t)module_index];
+        for(size_t index=0;index<module->singleton_method_count;index++)
+            if(strlen(module->singleton_methods[index].name)==mname->length&&
+               memcmp(module->singleton_methods[index].name,mname->chars,
+                      mname->length)==0) {
+                snprintf(vm->error,sizeof vm->error,
+                    "duplicate or excessive module singleton function");
+                return DIAMOND_VM_TYPE_ERROR;
+            }
+        if(module->singleton_method_count==DIAMOND_MAX_METHODS) {
+            snprintf(vm->error,sizeof vm->error,
+                "duplicate or excessive module singleton function");
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        DiamondMethod *method=
+            &module->singleton_methods[module->singleton_method_count++];
+        *method=(DiamondMethod){};
+        memcpy(method->name,mname->chars,mname->length);
+        method->name[mname->length]='\0';
+        method->function_index=(uint8_t)target_function;
+        method->arity=(uint8_t)arity_value;
+        method->required_arity=(uint8_t)required_value;
         *result=DIAMOND_NIL;return DIAMOND_VM_OK;
     }
     if(include_module_method) {

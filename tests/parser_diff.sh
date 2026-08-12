@@ -333,6 +333,35 @@ trap - EXIT
 
 echo "CRLF unterminated-interpolation diagnostic differential case passed"
 
+redefine_method_dir="$(mktemp -d)"
+trap 'rm -rf "$redefine_method_dir"' EXIT
+cat > "$redefine_method_dir/main.di" <<'PROGRAM'
+def make_replacement()
+  def replacement()
+    99
+  end
+  replacement
+end
+
+class Shape
+  def area()
+    1
+  end
+end
+s = Shape.new()
+Shape.redefine_method("area", make_replacement())
+PROGRAM
+native_redefine_method="$($diamond "$redefine_method_dir/main.di" 2>&1 || true)"
+selfhost_redefine_method="$(echo "$redefine_method_dir/main.di" | \
+    $diamond selfhost/parser_run.di 2>&1 || true)"
+for output in "$native_redefine_method" "$selfhost_redefine_method"; do
+    grep -Fq "redefine_method callable must be a method of 'Shape'" <<<"$output"
+done
+rm -rf "$redefine_method_dir"
+trap - EXIT
+
+echo "redefine_method dispatch differential case passed"
+
 self_parse_result="$(echo "selfhost/parser.di" | $diamond selfhost/self_parse_check.di 2>&1)"
 if [[ "$self_parse_result" != "PARSED OK"* ]]; then
     echo "self-hosted parser failed to parse its own source: $self_parse_result" >&2

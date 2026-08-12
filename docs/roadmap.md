@@ -3346,6 +3346,67 @@ future work.
   parser-case corpus. `def self.foo` module singleton methods remain a
   separate, still-open gap.
 
+- Self-hosting, Phase 3 follow-up (two-hundred-eighty-seventh slice):
+  `def self.foo` singleton methods (class and module) and
+  `redefine_method`, closing out two tasks that turned out to share one
+  root cause. Bigger in scope than this session's other slices: unlike
+  every other gap found, native's own registration path for a directly
+  declared singleton (`compile_definition`'s `module_singleton` branches,
+  `src/compiler.c`) has no bridge equivalent at all -- `export_module_method`
+  exists but only *re-exports an already-declared regular method*
+  (the `module_function :name` syntax), a genuinely different mechanism.
+  Added two new bridge methods, `declare_class_singleton_method`/
+  `declare_module_singleton_method`, mirroring `declare_method`'s own
+  shape but writing into `singleton_methods[]` and -- matching
+  `compile_definition`'s `module_singleton` branches exactly -- never
+  touching `owner_class`, since a directly-declared singleton never
+  reserves register 0 for an implicit self the way an ordinary method
+  does.
+
+  On the parser side: `compile_method` now recognizes a leading `self.`
+  (only where `current_class`/`current_module` make it meaningful,
+  matching native's own guard), threads a `module_singleton` flag through
+  arity computation (no implicit-self slot), `compile_method_body`
+  (skips reserving register 0), and registration (one of four targets:
+  class instance/singleton, module instance/singleton -- extracted into
+  `register_compiled_method`/`duplicate_method_name?`/
+  `existing_method_names` rather than inlining a four-way branch, given
+  how tight `compile_method`'s own register budget already was after
+  the default-parameter-values slice).
+
+  Calling a class singleton (`Klass.foo(...)`) needed its own
+  lookup path from scratch: `parse_name`'s `class_entry`+DOT branch
+  unconditionally assumed `.new`, exactly the `redefine_method` blocker
+  from task #16. Fixed by extending `@classes`' own tuple with a fourth
+  element (each class's singleton-method descriptors, mirroring how
+  `@modules` already carries several such lists) and a one-token
+  lookahead (`compile_class_dot_call`, mirroring
+  `keyword_argument_ahead?`'s own cloned-lexer peek) that checks for
+  `redefine_method` by name, then a matching descriptor, before falling
+  back to `.new`. A shared `emit_singleton_call` (parameterized by
+  `needs_receiver`, native's own distinguishing field: true only for a
+  `module_function` export, which wraps a self-reserving regular method
+  and so still needs a leading unused receiver slot) now backs both the
+  class and module singleton call paths. `redefine_method` itself was a
+  small, final addition once this dispatch groundwork existed --
+  `compile_redefine_method_call`, straight to the existing
+  `REDEFINE_METHOD` opcode, no bridge changes needed.
+
+  Verifying `redefine_method` against its real usage pattern (both
+  existing `tests/cases` fixtures: a nested `def` inside a class
+  singleton method, referenced bare and returned as the replacement
+  closure) surfaced a distinct, separately-documented, pre-existing
+  limitation instead of a bug in this slice: `compile_method_body`'s own
+  comment already says closures aren't supported inside a method body
+  this round ("methods don't participate in `@function_nesting_depth` at
+  all"). Confirmed `redefine_method`'s own mechanics are correct despite
+  this by testing a callable built the *supported* way (a closure nested
+  in a top-level function, not a method) -- native and the self-hosted
+  parser reject it with an identical error and location
+  ("redefine_method callable must be a method of 'Shape'"), which joins
+  `tests/parser_diff.sh` as a differential case. The full success-path
+  scenario needs that separate closures-in-methods gap closed first.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,
