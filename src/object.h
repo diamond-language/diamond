@@ -190,9 +190,11 @@ typedef struct DiamondRegexp {
  * (see ProgramBuilder#add_constant in vm.c), so nothing inside one ever
  * references another Diamond value. */
 typedef struct DiamondProgram DiamondProgram;
+typedef struct DiamondSourceBundle DiamondSourceBundle;
 typedef struct DiamondProgramBuilder {
     DiamondObject object;
     DiamondProgram *program;
+    DiamondSourceBundle *source_bundle;
 } DiamondProgramBuilder;
 
 #endif

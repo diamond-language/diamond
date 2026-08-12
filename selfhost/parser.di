@@ -239,7 +239,9 @@ class Parser
   private
 
   def fail(message)
-    @error_message = message unless @failed
+    if !@failed
+      @error_message = @builder.source_location(@current.start(), @current.line(), @current.column()) + ": " + message
+    end
     @failed = true
   end
 

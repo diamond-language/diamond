@@ -187,7 +187,12 @@ void diamond_vm_collect(DiamondVm *vm) {
             reginold_regex_free(((DiamondRegexp *)unreached)->handle);
         } else if(unreached->kind==DIAMOND_OBJECT_PROGRAM_BUILDER) {
             size=sizeof(DiamondProgramBuilder)+sizeof(DiamondProgram);
-            free(((DiamondProgramBuilder *)unreached)->program);
+            DiamondProgramBuilder *builder=(DiamondProgramBuilder *)unreached;
+            if(builder->source_bundle!=nullptr) {
+                diamond_source_bundle_free(builder->source_bundle);
+                free(builder->source_bundle);
+            }
+            free(builder->program);
         } else {
             size=sizeof(DiamondCell);
         }
@@ -234,7 +239,12 @@ void diamond_vm_free(DiamondVm *vm) {
         } else if(object->kind==DIAMOND_OBJECT_REGEXP) {
             reginold_regex_free(((DiamondRegexp *)object)->handle);
         } else if(object->kind==DIAMOND_OBJECT_PROGRAM_BUILDER) {
-            free(((DiamondProgramBuilder *)object)->program);
+            DiamondProgramBuilder *builder=(DiamondProgramBuilder *)object;
+            if(builder->source_bundle!=nullptr) {
+                diamond_source_bundle_free(builder->source_bundle);
+                free(builder->source_bundle);
+            }
+            free(builder->program);
         }
         free(object);
         object = next;
@@ -657,7 +667,7 @@ static DiamondProgramBuilder *allocate_program_builder(DiamondVm *vm) {
     if(handle==nullptr){free(built);return nullptr;}
     *handle=(DiamondProgramBuilder){
         .object={.next=vm->objects,.kind=DIAMOND_OBJECT_PROGRAM_BUILDER},
-        .program=built};
+        .program=built,.source_bundle=nullptr};
     vm->objects=&handle->object;
     vm->bytes_allocated+=sizeof(DiamondProgramBuilder)+sizeof(DiamondProgram);
     return handle;
@@ -919,6 +929,9 @@ static DiamondVmStatus program_builder_invoke_helper(DiamondVm *vm,
     const bool expand_source_method=
         method_name->length==sizeof("expand_source")-1&&
         memcmp(method_name->chars,"expand_source",sizeof("expand_source")-1)==0;
+    const bool source_location_method=
+        method_name->length==sizeof("source_location")-1&&
+        memcmp(method_name->chars,"source_location",sizeof("source_location")-1)==0;
     /* Phase 3 sub-phase 4 (gradual typing): a scalar or union type set.
      * Nested Array[T]/Hash[K,V]/Callable/interfaces/generics remain
      * separate future extensions. See docs/roadmap.md. */
@@ -961,7 +974,7 @@ static DiamondVmStatus program_builder_invoke_helper(DiamondVm *vm,
        !include_module_in_module_method&&
        !set_module_method_visibility_method&&
        !export_module_method_method&&
-       !expand_source_method&&
+       !expand_source_method&&!source_location_method&&
        !declare_type_set_method&&!set_parameter_type_method&&
        !set_return_type_method&&!declare_interface_method&&
        !declare_interface_method_method&&!set_type_variables_method&&
@@ -1533,17 +1546,49 @@ static DiamondVmStatus program_builder_invoke_helper(DiamondVm *vm,
         char *source_text=malloc(source->length+1);
         if(source_text==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
         memcpy(source_text,source->chars,source->length);source_text[source->length]='\0';
-        DiamondSourceBundle bundle;char error[512];
-        const bool loaded=diamond_load_program(path,source_text,&bundle,error,sizeof error);
+        DiamondSourceBundle *bundle=malloc(sizeof *bundle);char error[512];
+        if(bundle==nullptr){free(source_text);return DIAMOND_VM_OUT_OF_MEMORY;}
+        const bool loaded=diamond_load_program(path,source_text,bundle,error,sizeof error);
         free(source_text);
         if(!loaded) {
+            free(bundle);
             snprintf(vm->error,sizeof vm->error,"%s",error);
             return DIAMOND_VM_IO_ERROR;
         }
-        DiamondString *expanded=allocate_string(vm,bundle.source,strlen(bundle.source));
-        diamond_source_bundle_free(&bundle);
-        if(expanded==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+        DiamondString *expanded=allocate_string(vm,bundle->source,strlen(bundle->source));
+        free(bundle->source);bundle->source=nullptr;
+        if(expanded==nullptr){free(bundle);return DIAMOND_VM_OUT_OF_MEMORY;}
+        if(builder->source_bundle!=nullptr) {
+            diamond_source_bundle_free(builder->source_bundle);
+            free(builder->source_bundle);
+        }
+        builder->source_bundle=bundle;
         *result=DIAMOND_OBJECT(expanded);return DIAMOND_VM_OK;
+    }
+    if(source_location_method) {
+        if(argc!=3||registers[base].kind!=DIAMOND_VALUE_INT||
+           registers[(size_t)base+1].kind!=DIAMOND_VALUE_INT||
+           registers[(size_t)base+2].kind!=DIAMOND_VALUE_INT)
+            return DIAMOND_VM_TYPE_ERROR;
+        const int64_t offset=registers[base].as.integer;
+        const int64_t line=registers[(size_t)base+1].as.integer;
+        const int64_t column=registers[(size_t)base+2].as.integer;
+        if(offset<0||line<1||column<1||builder->source_bundle==nullptr)
+            return DIAMOND_VM_TYPE_ERROR;
+        const char *mapped_path="<expanded>";
+        for(size_t index=0;index<builder->source_bundle->segment_count;index++) {
+            const DiamondSourceSegment *segment=&builder->source_bundle->segments[index];
+            if((uint64_t)offset>=segment->start&&(uint64_t)offset<=segment->end) {
+                mapped_path=segment->path;break;
+            }
+        }
+        char location[DIAMOND_MAX_SOURCE_PATH+64];
+        const int written=snprintf(location,sizeof location,"%s:%lld:%lld",
+            mapped_path,(long long)line,(long long)column);
+        if(written<0||(size_t)written>=sizeof location)return DIAMOND_VM_TYPE_ERROR;
+        DiamondString *mapped=allocate_string(vm,location,(size_t)written);
+        if(mapped==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+        *result=DIAMOND_OBJECT(mapped);return DIAMOND_VM_OK;
     }
     if(declare_type_set_method) {
         if(argc!=2)return DIAMOND_VM_ARITY_ERROR;
