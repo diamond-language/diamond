@@ -1823,7 +1823,7 @@ class Parser
       if type_name != nil
         @declared_types.push([register, type_name])
         set_index = self.emit_type_check(register, type_name)
-        @builder.set_parameter_type(function_index, index + 1, set_index)
+        @builder.set_parameter_type(function_index, index + 1, set_index) unless @failed
       end
       index = index + 1
     end
@@ -1860,14 +1860,14 @@ class Parser
       end
       if return_type != nil
         set_index = self.emit_type_check(body_result, return_type)
-        @builder.set_return_type(function_index, set_index)
+        @builder.set_return_type(function_index, set_index) unless @failed
       end
       self.emit_instruction1(Opcode::RETURN, body_result)
     elsif self.consume_block_start()
       body_result = self.compile_sequence()
       if return_type != nil
         set_index = self.emit_type_check(body_result, return_type)
-        @builder.set_return_type(function_index, set_index)
+        @builder.set_return_type(function_index, set_index) unless @failed
       end
       self.emit_instruction1(Opcode::RETURN, body_result)
       if @current.kind() != :end

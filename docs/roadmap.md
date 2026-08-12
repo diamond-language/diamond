@@ -2636,6 +2636,10 @@ future work.
   interface annotations. Type parsing preserves namespace segments so nested
   interface identities resolve in parameter and return contracts.
 
+- Self-hosting, Phase 3 follow-up (one-hundred-ninety-seventh slice): nested
+  interface qualification diagnostics. Unqualified nested interface names are
+  rejected like the native compiler, requiring the explicit qualified form.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,
