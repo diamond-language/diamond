@@ -756,7 +756,37 @@ class Parser
     return 0 if @failed
 
     arity = parameter_names.length()
-    function_index = @builder.declare_function(name, arity, self.required_parameter_count(parameter_defaults))
+    # A `def` nested directly inside a method or module-method body
+    # (never at_top_level, since a class/module body itself routes `def`
+    # to compile_method instead -- see compile_method's own comment)
+    # reserves register 0 for its OWN independent `self`, exactly like
+    # an ordinary instance method, rather than capturing the enclosing
+    # method's self as a lexical binding -- mirroring compiler.c's
+    # compile_definition, which applies this reservation purely from
+    # current_class/current_module context, unconditionally on nesting.
+    # Confirmed directly against the real compiler's bytecode output for
+    # tests/cases/legacy_0093.di's `def self.square_area_patch` /
+    # `def square_area` pattern: the nested closure's own body reads
+    # `@width` via GET_IVAR on ITS OWN register 0, with zero captures.
+    self_offset = if @current_class_index != nil || @current_module_index != nil
+      1
+    else
+      0
+    end
+    function_index = @builder.declare_function(name, arity + self_offset,
+      self.required_parameter_count(parameter_defaults) + self_offset)
+    if self_offset == 1
+      # 254 (UINT8_MAX-1) is the same module-method sentinel
+      # declare_module_method's bridge handler uses -- distinct from 255
+      # ("not a method"), so REDEFINE_METHOD's owner_class check (and
+      # the private-method parameter_offset bypass) both still treat
+      # this function as belonging to its class/module.
+      @builder.set_function_owner_class(function_index, if @current_class_index != nil
+        @current_class_index
+      else
+        254
+      end)
+    end
     @builder.set_type_variables(function_index, @current_type_variables)
     if at_top_level
       @functions.push([name, function_index, arity, parameter_names,
@@ -775,7 +805,7 @@ class Parser
     end
 
     self.compile_function_body(function_index, parameter_names, parameter_types,
-                               parameter_defaults, return_type, enclosing_locals)
+                               parameter_defaults, return_type, enclosing_locals, self_offset)
     @current_type_variables = outer_type_variables
 
     if at_top_level
@@ -1415,7 +1445,7 @@ class Parser
   # happens with the result *after* this returns, handled by
   # compile_definition/emit_closure).
   def compile_function_body(function_index, parameter_names, parameter_types,
-                            parameter_defaults, return_type, enclosing_locals)
+                            parameter_defaults, return_type, enclosing_locals, self_offset)
     outer_locals = @locals
     outer_loops = @loops
     outer_next_register = @next_register
@@ -1437,7 +1467,8 @@ class Parser
     @declared_types = []
     @function_nesting_depth = @function_nesting_depth + 1
 
-    self.bind_parameters(function_index, parameter_names, parameter_types, parameter_defaults, 0)
+    self.allocate_register() if self_offset == 1
+    self.bind_parameters(function_index, parameter_names, parameter_types, parameter_defaults, self_offset)
 
     # GET_CAPTURE_CELL for every enclosing local not shadowed by one of
     # this function's own parameters -- from here on, referencing that
@@ -1937,8 +1968,11 @@ class Parser
   # into the class via declare_method rather than @functions -- resolved
   # later at INVOKE time by the VM against the receiver's runtime class,
   # not by this parser at compile time the way a direct top-level call
-  # is. No closures inside a method body this round (methods don't
-  # participate in @function_nesting_depth at all).
+  # is. One level of nested `def` is supported inside a method body (see
+  # compile_method_body's own function_nesting_depth increment and
+  # compile_definition's self_offset handling) -- the nested closure gets
+  # its own independent `self`, not a captured one, so it can be handed
+  # to redefine_method and later invoked normally against any receiver.
   def compile_method()
     self.advance_token()
     module_singleton = false
@@ -2101,6 +2135,12 @@ class Parser
       self.allocate_register()
       1
     end
+    # One level of nested `def` is supported inside a method body too
+    # (see compile_definition's self_offset handling) -- counted the
+    # same way a nested def inside a plain function body is, so the
+    # existing function_nesting_depth>=2 cap in compile_definition
+    # rejects a second level consistently either way.
+    @function_nesting_depth = @function_nesting_depth + 1
 
     self.bind_parameters(function_index, parameter_names, parameter_types, parameter_defaults, index_offset)
 
@@ -2162,6 +2202,7 @@ class Parser
     @current_return_type = outer_return_type
     @type_facts = outer_type_facts
     @declared_types = outer_declared_types
+    @function_nesting_depth = @function_nesting_depth - 1
   end
 
   def attribute_keyword?(kind)

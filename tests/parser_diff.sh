@@ -362,6 +362,49 @@ trap - EXIT
 
 echo "redefine_method dispatch differential case passed"
 
+# The full success path (a `def` nested directly inside a method body,
+# used as redefine_method's replacement): needs its own register-0-self
+# reservation distinct from the enclosing method's, set up by
+# compile_definition's self_offset handling and confirmed against
+# tests/cases/legacy_0093.di/legacy_0094.di's own real-world use of this
+# exact pattern. See docs/roadmap.md's self-hosting Phase 3 entry.
+redefine_method_success_dir="$(mktemp -d)"
+trap 'rm -rf "$redefine_method_success_dir"' EXIT
+cat > "$redefine_method_success_dir/main.di" <<'PROGRAM'
+class Shape
+  def initialize(width, height)
+    @width = width
+    @height = height
+  end
+  def area()
+    @width * @height
+  end
+  def self.square_area_patch()
+    def square_area()
+      @width * @width
+    end
+    square_area
+  end
+end
+s = Shape.new(3, 4)
+puts(s.area())
+Shape.redefine_method("area", Shape.square_area_patch())
+puts(s.area())
+PROGRAM
+native_redefine_method_success="$($diamond "$redefine_method_success_dir/main.di" 2>&1 || true)"
+selfhost_redefine_method_success="$(echo "$redefine_method_success_dir/main.di" | \
+    $diamond selfhost/parser_run.di 2>&1 | sed '$d' || true)"
+if [[ "$selfhost_redefine_method_success" != "$native_redefine_method_success" ]]; then
+    echo "redefine_method success-path differential mismatch" >&2
+    echo "  expected: $native_redefine_method_success" >&2
+    echo "  actual:   $selfhost_redefine_method_success" >&2
+    exit 1
+fi
+rm -rf "$redefine_method_success_dir"
+trap - EXIT
+
+echo "redefine_method success-path differential case passed"
+
 self_parse_result="$(echo "selfhost/parser.di" | $diamond selfhost/self_parse_check.di 2>&1)"
 if [[ "$self_parse_result" != "PARSED OK"* ]]; then
     echo "self-hosted parser failed to parse its own source: $self_parse_result" >&2

@@ -3407,6 +3407,74 @@ future work.
   `tests/parser_diff.sh` as a differential case. The full success-path
   scenario needs that separate closures-in-methods gap closed first.
 
+- Self-hosting, Phase 3 follow-up (two-hundred-eighty-eighth slice):
+  closures nested inside a method body, closing the gap the previous
+  slice's `redefine_method` verification deliberately left open.
+  `compile_definition`'s `at_top_level` check only ever looked at
+  `@function_nesting_depth`, which `compile_method_body` never touched --
+  so a `def` written directly inside a method body was silently
+  miscompiled as a genuine *top-level* function (registered into
+  `@functions`, no local binding created for its name), not rejected
+  outright. The bare, no-parens reference to it a line later (the shape
+  every real usage of this pattern takes: capture the nested `def` as a
+  value, don't call it) then failed with "undefined local variable" --
+  looking like an unsupported-nesting error but actually a scoping bug.
+  Fixed by having `compile_method_body` increment/decrement
+  `@function_nesting_depth` around the body exactly like
+  `compile_function_body` already does, so the existing nested-closure
+  machinery (`enclosing_locals`/`emit_closure`/the `>=2` one-level cap)
+  applies unchanged.
+
+  Getting the actual redefine_method success path working (not just
+  correct rejection) needed one more piece, found by disassembling
+  native's own bytecode for `tests/cases/legacy_0093.di`'s
+  `square_area`/`square_area_patch` pair rather than guessing: a `def`
+  nested inside a method or module-method body reserves register 0 for
+  its *own independent* `self` -- unconditionally, regardless of
+  nesting -- rather than capturing the enclosing method's self as a
+  lexical binding. `compiler.c`'s `compile_definition` applies this
+  purely from `current_class`/`current_module` context, the same
+  reservation an ordinary (non-nested) method gets, which is why the
+  resulting closure can later be installed via `redefine_method` and
+  invoked normally against any receiver, capturing zero variables.
+  Ported as `compile_definition`'s new `self_offset` (bumps the declared
+  arity/required-arity by one and widens `compile_function_body`'s
+  parameter-binding offset to match, mirroring `compile_method_body`'s
+  own `index_offset` exactly).
+
+  This self-reservation has one consequence `declare_function` alone
+  can't produce: `REDEFINE_METHOD`'s VM-side dispatch checks the
+  replacement closure's `owner_class` against the target class operand,
+  and a plain `declare_function` call always leaves `owner_class` at
+  `UINT8_MAX` ("not a method"), since the nested closure is never
+  registered as a *named* class method the way `declare_method` would
+  set it as a side effect -- it stays a bare `Closure` value, known only
+  by the local variable holding it, until `redefine_method` installs it.
+  Needed a new bridge method, `set_function_owner_class` (a direct
+  `(Int function_index, Int owner_class)` setter, no name/duplicate
+  bookkeeping at all, unlike every other `declare_*` bridge method),
+  called from `compile_definition` right after `declare_function` when
+  `self_offset` is set, passing either the enclosing class index or the
+  same `UINT8_MAX-1` module-method sentinel `declare_module_method`'s
+  bridge already uses.
+
+  `tests/cases/legacy_0093.di`/`legacy_0094.di` now match natively
+  end-to-end through the self-hosted parser (confirmed by hand, both
+  outside the differential harness's scalar-only `run` limitation), and
+  the redefine_method differential block in `tests/parser_diff.sh` was
+  upgraded from asserting the rejection message to asserting the full
+  success-path output matches byte-for-byte. Calling the nested closure
+  *directly* rather than handing it to `redefine_method` (e.g.
+  `helper()` right after `def helper()...end` inside a method body)
+  still fails identically on both compilers with "wrong number of
+  arguments" -- confirmed deliberately, not just left alone: the
+  self-reservation means the closure's own declared arity always
+  expects an explicit receiver-shaped first argument that no bare
+  `CALL_CLOSURE` site supplies, a real property of native's own design
+  rather than a self-hosted gap, matching every real fixture's own usage
+  (bare reference, immediately handed to `redefine_method`, never
+  called directly).
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,

@@ -927,6 +927,21 @@ static DiamondVmStatus program_builder_invoke_helper(DiamondVm *vm,
         method_name->length==sizeof("declare_module_singleton_method")-1&&
         memcmp(method_name->chars,"declare_module_singleton_method",
             sizeof("declare_module_singleton_method")-1)==0;
+    /* A `def` nested directly inside a method body (never registered as
+     * a named class method itself -- it stays a plain Closure value,
+     * only ever installed via redefine_method) still needs owner_class
+     * set so REDEFINE_METHOD's "callable must be a method of X" check
+     * (which compares owner_class against the target class operand)
+     * accepts it. declare_method/declare_module_method set this as a
+     * side effect of registering a *named* method; this is the same
+     * fix for a function that's deliberately never named. Mirrors
+     * diamond_compile's own compile_definition, which sets
+     * function->owner_class from current_class/current_module
+     * unconditionally, independent of at_top_level. */
+    const bool set_function_owner_class_method=
+        method_name->length==sizeof("set_function_owner_class")-1&&
+        memcmp(method_name->chars,"set_function_owner_class",
+            sizeof("set_function_owner_class")-1)==0;
     const bool include_module_method=
         method_name->length==sizeof("include_module")-1&&
         memcmp(method_name->chars,"include_module",sizeof("include_module")-1)==0;
@@ -992,7 +1007,8 @@ static DiamondVmStatus program_builder_invoke_helper(DiamondVm *vm,
        !declare_field_method&&!declare_module_field_method&&!declare_method_method&&
        !declare_module_method_method&&
        !declare_class_singleton_method_method&&
-       !declare_module_singleton_method_method&&!include_module_method&&
+       !declare_module_singleton_method_method&&!set_function_owner_class_method&&
+       !include_module_method&&
        !include_module_in_module_method&&
        !set_module_method_visibility_method&&
        !export_module_method_method&&
@@ -1552,6 +1568,25 @@ static DiamondVmStatus program_builder_invoke_helper(DiamondVm *vm,
         method->function_index=(uint8_t)target_function;
         method->arity=(uint8_t)arity_value;
         method->required_arity=(uint8_t)required_value;
+        *result=DIAMOND_NIL;return DIAMOND_VM_OK;
+    }
+    if(set_function_owner_class_method) {
+        if(argc!=2)return DIAMOND_VM_ARITY_ERROR;
+        if(registers[base].kind!=DIAMOND_VALUE_INT||
+           registers[(size_t)base+1].kind!=DIAMOND_VALUE_INT) {
+            snprintf(vm->error,sizeof vm->error,"ProgramBuilder#%s",
+                "set_function_owner_class arguments must be (Int, Int)");
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        const int64_t function_index=registers[base].as.integer;
+        const int64_t owner_class=registers[(size_t)base+1].as.integer;
+        if(function_index<0||(uint64_t)function_index>=built->function_count||
+           owner_class<0||owner_class>UINT8_MAX) {
+            snprintf(vm->error,sizeof vm->error,"ProgramBuilder#%s",
+                "set_function_owner_class has invalid arguments");
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        built->functions[function_index].owner_class=(uint8_t)owner_class;
         *result=DIAMOND_NIL;return DIAMOND_VM_OK;
     }
     if(include_module_method) {
