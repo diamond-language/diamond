@@ -88,6 +88,7 @@ module Opcode
   IS_TYPE = 64
   TO_STRING = 66
   PRINT = 70
+  FILE_OPEN = 72
 end
 
 module Precedence
@@ -3070,6 +3071,7 @@ class Parser
     end
     return self.compile_new_call(class_entry[1]) if class_entry != nil && @current.kind() == :dot
     local = self.find_local(name)
+    return self.parse_file_open_call() if self.is_file_open_target(name, class_entry, local)
     if local == nil && @current_module_index != nil
       constant_index = nil
       constants = @modules[@current_module_entry][2]
@@ -3261,6 +3263,47 @@ class Parser
     self.emit_byte(parsed[0])
     self.emit_byte(parsed[1])
     self.set_type_fact(destination, Type::CLASS_BASE + class_index)
+    destination
+  end
+
+  def is_file_open_target(name, class_entry, local)
+    return false if class_entry != nil
+    return false if local != nil
+    return false if self.find_function(name) != nil
+    return false if @current.kind() != :dot
+    name == "File"
+  end
+
+  def parse_file_open_call()
+    self.advance_token()
+    if @current.kind() != :identifier || self.token_text(@current) != "open"
+      self.fail("expected 'open' after 'File'")
+      return 0
+    end
+    self.advance_token()
+    if @current.kind() != :left_paren
+      self.fail("expected '(' after 'File.open'")
+      return 0
+    end
+    self.advance_token()
+    self.skip_newlines()
+    path_register = self.parse_expression()
+    self.skip_newlines()
+    if @current.kind() != :comma
+      self.fail("expected ',' after File.open path")
+      return 0
+    end
+    self.advance_token()
+    self.skip_newlines()
+    mode_register = self.parse_expression()
+    self.skip_newlines()
+    if @current.kind() != :right_paren
+      self.fail("expected ')' after File.open arguments")
+      return 0
+    end
+    self.advance_token()
+    destination = self.allocate_register()
+    self.emit_instruction3(Opcode::FILE_OPEN, destination, path_register, mode_register)
     destination
   end
 

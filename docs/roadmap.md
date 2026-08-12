@@ -2973,6 +2973,27 @@ future work.
   required package's entry file reports that package file's own path, line,
   and column in both compilers.
 
+- Self-hosting, Phase 3 follow-up (two-hundred-seventy-sixth slice): `File.open`
+  recognition. `selfhost/parser.di` now recognizes `File.open(path, mode)`
+  as a dedicated construct (mirroring `compiler.c`'s `parse_file_open_call`)
+  and lowers it to `FILE_OPEN`, closing a real gap: the self-hosted parser
+  had never supported the one native-recognized construct its own source
+  (`parse_and_run`'s `File.open(path, "r").read()`) actually uses. The
+  dispatch condition (class/local/function shadowing plus the `.` lookahead)
+  moved into its own `is_file_open_target` helper rather than inlining it
+  into `parse_name`, which was already close enough to the 256-register
+  ceiling (see Phase 2's own register-budget note) that a naive inline
+  `&&` chain pushed it over. A `File.open(...).read()` round trip against
+  a real fixture file joins the differential parser-case corpus.
+
+  Manually probing with the self-hosted parser pointed at its own two
+  source files (`selfhost/lexer.di` and `selfhost/parser.di`) confirms
+  `File.open` support alone is not sufficient for genuine
+  self-compilation: it now gets past reading its own source and fails
+  further in, on `attr_reader` (a class-body construct, not a call-site
+  one) in `lexer.di`'s `Token` class. Left for a future slice; not
+  something this round's dispatch-based fix touches.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,
