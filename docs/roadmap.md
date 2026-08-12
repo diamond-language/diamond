@@ -2696,6 +2696,10 @@ future work.
   bridge. `ProgramBuilder#expand_source` exposes the native loader's canonical
   require expansion as a GC-managed String for self-hosted compilation.
 
+- Self-hosting, Phase 3 follow-up (two-hundred-twelfth slice): direct require
+  expansion. The builder bridge resolves and inlines an existing required file
+  through the native loader's canonical path rules.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,
