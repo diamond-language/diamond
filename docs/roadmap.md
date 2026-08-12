@@ -2886,6 +2886,10 @@ future work.
   interpolation. Adjacent substitutions and surrounding literal pieces join
   in source order without losing empty boundary segments.
 
+- Self-hosting, Phase 3 follow-up (two-hundred-fifty-ninth slice): escaped
+  interpolation markers. An escaped hash remains literal text and never opens
+  an embedded lexer, matching native string decoding.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,
