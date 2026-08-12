@@ -2692,6 +2692,10 @@ future work.
   interface/class collisions. Qualified interface declarations reject a class
   already occupying the same lexical namespace name.
 
+- Self-hosting, Phase 3 follow-up (two-hundred-eleventh slice): source-expansion
+  bridge. `ProgramBuilder#expand_source` exposes the native loader's canonical
+  require expansion as a GC-managed String for self-hosted compilation.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,

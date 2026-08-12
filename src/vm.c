@@ -3,6 +3,7 @@
 #include "vm.h"
 #include "bignum.h"
 #include "compiler.h"
+#include "loader.h"
 
 #include <ctype.h>
 #include <errno.h>
@@ -915,6 +916,9 @@ static DiamondVmStatus program_builder_invoke_helper(DiamondVm *vm,
         method_name->length==sizeof("export_module_method")-1&&
         memcmp(method_name->chars,"export_module_method",
             sizeof("export_module_method")-1)==0;
+    const bool expand_source_method=
+        method_name->length==sizeof("expand_source")-1&&
+        memcmp(method_name->chars,"expand_source",sizeof("expand_source")-1)==0;
     /* Phase 3 sub-phase 4 (gradual typing): a scalar or union type set.
      * Nested Array[T]/Hash[K,V]/Callable/interfaces/generics remain
      * separate future extensions. See docs/roadmap.md. */
@@ -957,6 +961,7 @@ static DiamondVmStatus program_builder_invoke_helper(DiamondVm *vm,
        !include_module_in_module_method&&
        !set_module_method_visibility_method&&
        !export_module_method_method&&
+       !expand_source_method&&
        !declare_type_set_method&&!set_parameter_type_method&&
        !set_return_type_method&&!declare_interface_method&&
        !declare_interface_method_method&&!set_type_variables_method&&
@@ -1511,6 +1516,34 @@ static DiamondVmStatus program_builder_invoke_helper(DiamondVm *vm,
         exported.needs_receiver=true;
         module->singleton_methods[module->singleton_method_count++]=exported;
         *result=DIAMOND_NIL;return DIAMOND_VM_OK;
+    }
+    if(expand_source_method) {
+        if(argc!=2)return DIAMOND_VM_ARITY_ERROR;
+        if(registers[base].kind!=DIAMOND_VALUE_OBJECT||
+           registers[base].as.object->kind!=DIAMOND_OBJECT_STRING||
+           registers[(size_t)base+1].kind!=DIAMOND_VALUE_OBJECT||
+           registers[(size_t)base+1].as.object->kind!=DIAMOND_OBJECT_STRING)
+            return DIAMOND_VM_TYPE_ERROR;
+        const DiamondString *name=(const DiamondString *)registers[base].as.object;
+        const DiamondString *source=
+            (const DiamondString *)registers[(size_t)base+1].as.object;
+        char path[DIAMOND_MAX_SOURCE_PATH];
+        if(name->length>=sizeof path)return DIAMOND_VM_TYPE_ERROR;
+        memcpy(path,name->chars,name->length);path[name->length]='\0';
+        char *source_text=malloc(source->length+1);
+        if(source_text==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+        memcpy(source_text,source->chars,source->length);source_text[source->length]='\0';
+        DiamondSourceBundle bundle;char error[512];
+        const bool loaded=diamond_load_program(path,source_text,&bundle,error,sizeof error);
+        free(source_text);
+        if(!loaded) {
+            snprintf(vm->error,sizeof vm->error,"%s",error);
+            return DIAMOND_VM_IO_ERROR;
+        }
+        DiamondString *expanded=allocate_string(vm,bundle.source,strlen(bundle.source));
+        diamond_source_bundle_free(&bundle);
+        if(expanded==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+        *result=DIAMOND_OBJECT(expanded);return DIAMOND_VM_OK;
     }
     if(declare_type_set_method) {
         if(argc!=2)return DIAMOND_VM_ARITY_ERROR;
