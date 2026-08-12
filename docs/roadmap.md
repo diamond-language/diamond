@@ -2796,6 +2796,10 @@ future work.
   depth parity. A generated 129-file dependency chain confirms that the
   self-hosted loader bridge preserves the native nesting-limit diagnostic.
 
+- Self-hosting, Phase 3 follow-up (two-hundred-thirty-seventh slice): loaded
+  file parity. A generated 128-dependency fan-out confirms that the self-hosted
+  loader bridge preserves the native loaded-file-limit diagnostic.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,

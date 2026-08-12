@@ -74,3 +74,26 @@ rm -rf "$depth_dir"
 trap - EXIT
 
 echo "require-depth differential case passed"
+
+files_dir="$(mktemp -d)"
+trap 'rm -rf "$files_dir"' EXIT
+: >"$files_dir/main.di"
+for file_index in $(seq 0 127); do
+    printf '42\n' >"$files_dir/f$file_index.di"
+    printf 'require "f%s"\n' "$file_index" >>"$files_dir/main.di"
+done
+if "$diamond" "$files_dir/main.di" >/tmp/diamond-parser-native.out 2>&1; then
+    echo "native loaded-file limit unexpectedly succeeded" >&2
+    exit 1
+fi
+grep -Fq "loaded-file limit reached" /tmp/diamond-parser-native.out
+if echo "$files_dir/main.di" | "$diamond" selfhost/parser_check.di \
+        >/tmp/diamond-parser-selfhost.out 2>&1; then
+    echo "self-hosted loaded-file limit unexpectedly succeeded" >&2
+    exit 1
+fi
+grep -Fq "loaded-file limit reached" /tmp/diamond-parser-selfhost.out
+rm -rf "$files_dir"
+trap - EXIT
+
+echo "loaded-file differential case passed"
