@@ -3210,6 +3210,71 @@ future work.
   test-all` given the fix lives in shared runtime dispatch code, not
   anything self-hosting-specific.
 
+- Self-hosting, Phase 3 follow-up (two-hundred-eighty-fourth slice):
+  default parameter values, and a genuine step toward real self-parsing.
+  Investigating what it'd take for the self-hosted parser to compile a
+  *real* program (not just its own differential corpus) found that no
+  target program can call anything `lib/core.di` defines, since native's
+  `run_source` always prepends `core.di`'s source before compiling
+  (`src/main.c`) but `Parser.compile()` only ever sees a target file's
+  own text. A new `parse_and_run_with_core` entry point (kept separate
+  from `parse_and_run`, which the entire existing differential suite
+  depends on) splices `core.di` in front the same way, threading the
+  prefix length into a new `Parser#set_offset_correction` so
+  `fail()`'s diagnostic offset -- computed against `expand_source`'s
+  segments, which stay relative to the *unprefixed* string -- still maps
+  correctly; verified by confirming a real parse error's line was
+  unaffected while `mod()` (a `core.di` function) became callable.
+
+  Exercising that path against `core.di` itself (448 lines, a real
+  library rather than curated test cases) immediately found default
+  parameter values entirely unported -- `array_join`'s `separator:
+  String = ""`. This is a genuinely different shape of gap than
+  anything else this session: it's not "one function/receiver
+  `parse_name` doesn't recognize," it's a parse-time/compile-time split
+  the self-hosted architecture doesn't have room for as-is.
+  `parse_parameter_names` runs *before* `compile_method_body`'s
+  register-scope reset (needed to know arity before `declare_function`),
+  but a default is a real expression needing to compile into the
+  *function's own* frame. Solved the same way `parse_string` already
+  solves interpolation: `parse_parameter_names` records each default's
+  start position (offset/line/column, via a new nesting-aware
+  `skip_default_expression` mirroring `compiler.c`'s own
+  `parameter_count` lookahead) and skips over it without parsing;
+  `compile_parameter_default`, called from inside the callee's own reset
+  scope, re-lexes and compiles it for real from that saved position via
+  the same embedded-Lexer save/restore trick.
+
+  That alone wasn't sufficient: `declare_function`/`declare_method`
+  always passed the same value for both arity and required_arity
+  (no self-hosted concept of "optional" existed before this), and
+  `compile_call`'s keyword-argument machinery (`parse_keyword_call_arguments`)
+  required *every* declared slot filled, with no notion that a trailing
+  unfilled one might have a default. Fixed both: a new
+  `required_parameter_count` helper (index of the first parameter with a
+  default, matching `parse_parameter_names`' own now-enforced "required
+  parameter cannot follow a default parameter" rule) feeds
+  `declare_function`/`declare_method`/`declare_module_method`, and
+  `parse_keyword_call_arguments` now computes the call's actual argument
+  count as the highest *filled* slot's index plus one (not the full
+  declared arity) -- mirroring `compiler.c`'s own `parse_call` exactly,
+  down to rejecting a gap *below* the highest filled slot ("missing
+  argument", since defaults compile inline conditioned on a contiguous
+  argument count, not as independently re-evaluable expressions a call
+  site could reach around a gap) while accepting omitted *trailing*
+  slots.
+
+  Also extracted the parameter-binding loop (`define_local` + type-check
+  + now defaults) into a shared `bind_parameters`, used by both
+  `compile_function_body` and `compile_method_body`: each was already
+  close enough to its own 256-register ceiling that the two-line default
+  addition alone overflowed both independently, the same wall hit
+  repeatedly this session. A call/definition round trip (positional,
+  keyword, and omitted-default forms, for both a plain function and a
+  constructor) joins the differential parser-case corpus. Confirmed
+  `def self.foo` module singleton methods are a separate, pre-existing,
+  still-unsupported gap while probing this -- not fixed here.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,

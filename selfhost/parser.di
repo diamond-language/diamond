@@ -87,6 +87,7 @@ module Opcode
   RUN_ENSURE = 62
   END_ENSURE = 63
   IS_TYPE = 64
+  ARGUMENT_PROVIDED = 65
   TO_STRING = 66
   FIBER_NEW = 69
   PRINT = 70
@@ -148,6 +149,15 @@ class Parser
     @previous = @current
     @code_count = 0
     @next_register = 0
+    # Bytes prepended to `source` by a caller before it reached this
+    # constructor (e.g. parse_and_run_with_core splicing lib/core.di in
+    # front so target programs can call its functions) -- subtracted from
+    # @current.start() in fail() before it's handed to
+    # ProgramBuilder#source_location, whose segment offsets (recorded by
+    # expand_source, called *before* any such prepending) are relative to
+    # the unprefixed string. Zero by default: only a caller that actually
+    # prepends something needs to call set_offset_correction.
+    @offset_correction = 0
     # Each entry is [name, register, captured] -- captured marks a local
     # whose register holds a Cell (either a nested closure captured it,
     # or this local itself is a captured-from-outside binding inside a
@@ -254,11 +264,20 @@ class Parser
     !@failed
   end
 
+  def set_offset_correction(value)
+    @offset_correction = value
+  end
+
   private
 
   def fail(message)
     if !@failed
-      @error_message = @builder.source_location(@current.start(), @current.line(), @current.column()) + ": " + message
+      offset = if @current.start() >= @offset_correction
+        @current.start() - @offset_correction
+      else
+        @current.start()
+      end
+      @error_message = @builder.source_location(offset, @current.line(), @current.column()) + ": " + message
     end
     @failed = true
   end
@@ -347,6 +366,55 @@ class Parser
   def patch_jump(operand, target)
     @builder.patch_byte(@current_function_index, operand, target / 256)
     @builder.patch_byte(@current_function_index, operand + 1, mod(target, 256))
+  end
+
+  # `position` is [start_offset, line, column] as recorded by
+  # parse_parameter_names, already inside the callee's own reset
+  # register scope by the time this runs. Mirrors compiler.c's own
+  # ARGUMENT_PROVIDED/JUMP_IF_TRUE guard around the fallback expression,
+  # re-lexing and compiling that expression for real via the same
+  # embedded-Lexer save/restore trick parse_string's interpolation
+  # already uses, since the first pass only skipped over its tokens.
+  # Shared by compile_function_body (index_offset 0: no implicit self)
+  # and compile_method_body (index_offset 1: register 0/parameter slot 0
+  # is self), both of which were, on their own, already close enough to
+  # the 256-register ceiling that inlining this same handful of lines
+  # directly overflowed each of them -- the same register-budget wall
+  # parse_name and compile_class already hit this session, worth a
+  # shared helper here instead of duplicating the loop twice.
+  def bind_parameters(function_index, parameter_names, parameter_types, parameter_defaults, index_offset)
+    index = 0
+    while index < parameter_names.length()
+      register = self.define_local(parameter_names[index])
+      type_name = parameter_types[index]
+      if type_name != nil
+        @declared_types.push([register, type_name])
+        set_index = self.emit_type_check(register, type_name)
+        @builder.set_parameter_type(function_index, index + index_offset, set_index) unless @failed
+      end
+      default_position = parameter_defaults[index]
+      self.compile_parameter_default(register, index + index_offset, default_position) if default_position != nil
+      index = index + 1
+    end
+  end
+
+  def compile_parameter_default(register, parameter_index, position)
+    provided = self.allocate_register()
+    self.emit_instruction2(Opcode::ARGUMENT_PROVIDED, provided, parameter_index)
+    skip = self.emit_jump(Opcode::JUMP_IF_TRUE, provided)
+    outer_lexer = @lexer
+    outer_current = @current
+    outer_previous = @previous
+    embedded = Lexer.new(@source)
+    embedded.restore_state(position[0], position[0], position[1], position[2], position[1], position[2])
+    @lexer = embedded
+    @current = @lexer.next_token()
+    fallback = self.parse_expression()
+    @lexer = outer_lexer
+    @current = outer_current
+    @previous = outer_previous
+    self.emit_instruction2(Opcode::MOVE, register, fallback)
+    self.patch_jump(skip, @code_count)
   end
 
   def emit_rescue_handler(exception)
@@ -635,6 +703,7 @@ class Parser
     self.advance_token()
     parameter_names = parsed_parameters[0]
     parameter_types = parsed_parameters[1]
+    parameter_defaults = parsed_parameters[2]
     return_type = nil
     if @current.kind() == :arrow
       self.advance_token()
@@ -643,11 +712,12 @@ class Parser
     return 0 if @failed
 
     arity = parameter_names.length()
-    function_index = @builder.declare_function(name, arity, arity)
+    function_index = @builder.declare_function(name, arity, self.required_parameter_count(parameter_defaults))
     @builder.set_type_variables(function_index, @current_type_variables)
     if at_top_level
       @functions.push([name, function_index, arity, parameter_names,
-                       @current_type_variables.length(), return_type])
+                       @current_type_variables.length(), return_type,
+                       self.required_parameter_count(parameter_defaults)])
     end
     # Every entry currently in scope becomes a capture candidate,
     # unconditionally -- mirroring compiler.c's own eager design (not
@@ -661,7 +731,7 @@ class Parser
     end
 
     self.compile_function_body(function_index, parameter_names, parameter_types,
-                               return_type, enclosing_locals)
+                               parameter_defaults, return_type, enclosing_locals)
     @current_type_variables = outer_type_variables
 
     if at_top_level
@@ -707,6 +777,18 @@ class Parser
     variables
   end
 
+  # parse_parameter_names already rejects a required parameter following
+  # a default one, so the first non-nil entry (if any) marks where
+  # optional parameters begin -- everything before it is required.
+  def required_parameter_count(parameter_defaults)
+    index = 0
+    while index < parameter_defaults.length()
+      return index if parameter_defaults[index] != nil
+      index = index + 1
+    end
+    index
+  end
+
   # Returns [names, types]: parallel arrays, `types[i]` is a recursive
   # annotation tree, or nil if it
   # had no `: Type` annotation. Resolving a type name to a type id and
@@ -715,10 +797,21 @@ class Parser
   # -- declare_type_set needs the *callee's* function_index, which isn't
   # known yet while still parsing the parameter list in the caller's
   # (outer) context.
+  # Default-value expressions aren't parsed here -- this runs before
+  # compile_method_body's own register-scope reset, and a default is a
+  # real expression that needs to compile into the *function's* frame,
+  # not the caller's. Each default's position (start offset, line,
+  # column, right after its '=') is recorded instead and skipped over
+  # with a nesting-aware scan (mirroring compiler.c's own parameter_count
+  # lookahead), so compile_method_body can later re-lex and compile it
+  # for real from that saved position -- the same embedded-Lexer
+  # save/restore trick parse_string already uses for interpolation.
   def parse_parameter_names()
     self.skip_newlines()
     names = []
     types = []
+    defaults = []
+    saw_default = false
     if @current.kind() != :right_paren
       more = true
       while more && !@failed
@@ -735,6 +828,16 @@ class Parser
             more = false if @failed
           end
           types.push(type_name)
+          default_position = nil
+          if !@failed && @current.kind() == :equal
+            self.advance_token()
+            default_position = [@current.start(), @current.line(), @current.column()]
+            self.skip_default_expression()
+            saw_default = true
+          elsif saw_default
+            self.fail("required parameter cannot follow a default parameter")
+          end
+          defaults.push(default_position)
           self.skip_newlines()
           if !@failed && @current.kind() == :comma
             self.advance_token()
@@ -746,7 +849,30 @@ class Parser
         end
       end
     end
-    [names, types]
+    [names, types, defaults]
+  end
+
+  def skip_default_expression()
+    nesting = 0
+    scanning = true
+    while scanning && !@failed
+      kind = @current.kind()
+      if kind == :left_paren || kind == :left_bracket || kind == :left_brace
+        nesting = nesting + 1
+      elsif kind == :right_paren || kind == :right_bracket || kind == :right_brace
+        if nesting == 0
+          scanning = false
+        else
+          nesting = nesting - 1
+        end
+      elsif kind == :comma && nesting == 0
+        scanning = false
+      elsif kind == :eof
+        self.fail("expected ')' after parameters")
+        scanning = false
+      end
+      self.advance_token() if scanning
+    end
   end
 
   def parse_type_annotation()
@@ -1245,7 +1371,7 @@ class Parser
   # happens with the result *after* this returns, handled by
   # compile_definition/emit_closure).
   def compile_function_body(function_index, parameter_names, parameter_types,
-                            return_type, enclosing_locals)
+                            parameter_defaults, return_type, enclosing_locals)
     outer_locals = @locals
     outer_loops = @loops
     outer_next_register = @next_register
@@ -1267,17 +1393,7 @@ class Parser
     @declared_types = []
     @function_nesting_depth = @function_nesting_depth + 1
 
-    index = 0
-    while index < parameter_names.length()
-      register = self.define_local(parameter_names[index])
-      type_name = parameter_types[index]
-      if type_name != nil
-        @declared_types.push([register, type_name])
-        set_index = self.emit_type_check(register, type_name)
-        @builder.set_parameter_type(function_index, index, set_index)
-      end
-      index = index + 1
-    end
+    self.bind_parameters(function_index, parameter_names, parameter_types, parameter_defaults, 0)
 
     # GET_CAPTURE_CELL for every enclosing local not shadowed by one of
     # this function's own parameters -- from here on, referencing that
@@ -1818,6 +1934,7 @@ class Parser
     self.advance_token()
     parameter_names = parsed_parameters[0]
     parameter_types = parsed_parameters[1]
+    parameter_defaults = parsed_parameters[2]
     return_type = nil
     if @current.kind() == :arrow
       self.advance_token()
@@ -1826,27 +1943,28 @@ class Parser
     return if @failed
 
     arity = parameter_names.length()
-    function_index = @builder.declare_function(name, arity + 1, arity + 1)
+    function_index = @builder.declare_function(name, arity + 1, self.required_parameter_count(parameter_defaults) + 1)
     outer_method_name = @current_method_name
     @current_method_name = name
     @current_method_uses_state = false
-    self.compile_method_body(function_index, parameter_names, parameter_types, return_type)
+    self.compile_method_body(function_index, parameter_names, parameter_types, parameter_defaults, return_type)
     @current_method_name = outer_method_name
+    required_arity = self.required_parameter_count(parameter_defaults)
     if @current_module_index != nil && @current_class_index == nil
-      self.register_module_method(name, function_index, arity)
+      self.register_module_method(name, function_index, arity, required_arity)
     else
       @current_class_method_names.push(name)
-      @builder.declare_method(@current_class_index, name, function_index, arity, arity, @current_class_methods_private)
+      @builder.declare_method(@current_class_index, name, function_index, arity, required_arity, @current_class_methods_private)
     end
     @current_method_uses_state = false
   end
 
-  def register_module_method(name, function_index, arity)
+  def register_module_method(name, function_index, arity, required_arity)
     @modules[@current_module_entry][3].push(name)
     descriptor = [name, function_index, arity, @current_method_uses_state]
     @modules[@current_module_entry][6].push(descriptor)
     @builder.declare_module_method(@current_module_index, name, function_index,
-      arity, arity, @modules[@current_module_entry][4][0])
+      arity, required_arity, @modules[@current_module_entry][4][0])
     if @modules[@current_module_entry][5][0]
       if descriptor[3]
         self.fail("stateful method cannot use module_function mode")
@@ -1857,7 +1975,7 @@ class Parser
     end
   end
 
-  def compile_method_body(function_index, parameter_names, parameter_types, return_type)
+  def compile_method_body(function_index, parameter_names, parameter_types, parameter_defaults, return_type)
     outer_locals = @locals
     outer_loops = @loops
     outer_next_register = @next_register
@@ -1877,17 +1995,7 @@ class Parser
     @declared_types = []
     self.allocate_register()
 
-    index = 0
-    while index < parameter_names.length()
-      register = self.define_local(parameter_names[index])
-      type_name = parameter_types[index]
-      if type_name != nil
-        @declared_types.push([register, type_name])
-        set_index = self.emit_type_check(register, type_name)
-        @builder.set_parameter_type(function_index, index + 1, set_index) unless @failed
-      end
-      index = index + 1
-    end
+    self.bind_parameters(function_index, parameter_names, parameter_types, parameter_defaults, 1)
 
     endless = @current.kind() == :equal
     if endless
@@ -2153,17 +2261,18 @@ class Parser
     return 0 if @failed
     self.advance_token()
     self.skip_newlines()
-    slot_values = self.parse_keyword_call_arguments(function_entry)
-    return 0 if slot_values == nil
-    arity = function_entry[2]
+    parsed_arguments = self.parse_keyword_call_arguments(function_entry)
+    return 0 if parsed_arguments == nil
+    slot_values = parsed_arguments[0]
+    argument_count = parsed_arguments[1]
     argument_base = self.allocate_register()
     i = 1
-    while i < arity
+    while i < argument_count
       self.allocate_register()
       i = i + 1
     end
     i = 0
-    while i < arity
+    while i < argument_count
       self.emit_instruction2(Opcode::MOVE, argument_base + i, slot_values[i])
       i = i + 1
     end
@@ -2176,7 +2285,7 @@ class Parser
     self.emit_byte(destination)
     self.emit_byte(function_entry[1])
     self.emit_byte(argument_base)
-    self.emit_byte(arity)
+    self.emit_byte(argument_count)
     if type_arguments.length() > 0
       self.emit_byte(type_arguments.length())
       i = 0
@@ -2280,15 +2389,34 @@ class Parser
       return nil
     end
     self.advance_token()
+    # The call's own argument count is the highest filled slot's index
+    # plus one, not the declared arity -- omitted *trailing* slots are
+    # exactly what a default parameter relies on. A gap *below* the
+    # highest filled slot (an earlier default relied on while a later
+    # slot is explicitly supplied via keyword) isn't supported: defaults
+    # compile inline into the callee's own bytecode, conditioned on a
+    # contiguous argument count, not stored as independently
+    # re-evaluable expressions a call site could reach around a gap --
+    # mirrors compiler.c's own parse_call exactly.
+    argument_count = 0
     index = 0
     while index < arity
+      argument_count = index + 1 if slot_filled[index]
+      index = index + 1
+    end
+    index = 0
+    while index < argument_count
       if !slot_filled[index]
         self.fail("missing argument")
         return nil
       end
       index = index + 1
     end
-    slot_values
+    if argument_count < function_entry[6] || argument_count > arity
+      self.fail("wrong number of arguments")
+      return nil
+    end
+    [slot_values, argument_count]
   end
 
   # Calling a closure-valued local (see compile_definition's nested-`def`
@@ -3900,6 +4028,32 @@ def parse_and_run(path)
   builder = ProgramBuilder.new()
   expanded = builder.expand_source(path, source)
   parser = Parser.new(expanded, builder)
+  if parser.compile()
+    builder.run()
+  else
+    raise RuntimeError.new(parser.error_message())
+  end
+end
+
+# Like parse_and_run, but splices lib/core.di in front the same way
+# src/main.c's run_source does natively (core source, then a "\n#line 1\n"
+# reset so line numbers stay 1-based from the target's own first line),
+# so a target program can call core.di-defined functions (mod, abs, ...)
+# the way it always can when compiled natively. expand_source is still
+# called on the target alone first, exactly as parse_and_run does --
+# its segment offsets stay relative to the unprefixed `expanded` string,
+# so the core.di+reset prefix length is threaded into the parser via
+# set_offset_correction rather than by re-deriving segments against the
+# now-shifted combined string.
+def parse_and_run_with_core(path)
+  core_source = File.open("lib/core.di", "r").read()
+  source = File.open(path, "r").read()
+  builder = ProgramBuilder.new()
+  expanded = builder.expand_source(path, source)
+  reset = "\n#line 1\n"
+  combined = core_source + reset + expanded
+  parser = Parser.new(combined, builder)
+  parser.set_offset_correction(core_source.length() + reset.length())
   if parser.compile()
     builder.run()
   else
