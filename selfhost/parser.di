@@ -3356,9 +3356,11 @@ end
 # here, ProgramBuilder#run does both at once. Returns the parser on
 # failure (so the caller can read .error_message()) or runs the program
 # and returns its result on success.
-def parse_and_run(source)
+def parse_and_run(path)
+  source = File.open(path, "r").read()
   builder = ProgramBuilder.new()
-  parser = Parser.new(source, builder)
+  expanded = builder.expand_source(path, source)
+  parser = Parser.new(expanded, builder)
   if parser.compile()
     builder.run()
   else

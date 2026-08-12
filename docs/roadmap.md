@@ -2708,6 +2708,10 @@ future work.
   require propagation. Loader cycle failures surface through the bridge as an
   `IOError` that self-hosted callers can diagnose or rescue.
 
+- Self-hosting, Phase 3 follow-up (two-hundred-fifteenth slice): file-based
+  self-hosted loading. The parser runner expands a source file's complete
+  require graph into its shared builder before compilation and execution.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,
