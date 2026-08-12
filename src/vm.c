@@ -667,7 +667,7 @@ static DiamondProgramBuilder *allocate_program_builder(DiamondVm *vm) {
     if(handle==nullptr){free(built);return nullptr;}
     *handle=(DiamondProgramBuilder){
         .object={.next=vm->objects,.kind=DIAMOND_OBJECT_PROGRAM_BUILDER},
-        .program=built,.source_bundle=nullptr};
+        .program=built,.source_bundle=nullptr,.source_line=0,.source_column=0};
     vm->objects=&handle->object;
     vm->bytes_allocated+=sizeof(DiamondProgramBuilder)+sizeof(DiamondProgram);
     return handle;
@@ -932,6 +932,10 @@ static DiamondVmStatus program_builder_invoke_helper(DiamondVm *vm,
     const bool source_location_method=
         method_name->length==sizeof("source_location")-1&&
         memcmp(method_name->chars,"source_location",sizeof("source_location")-1)==0;
+    const bool set_source_location_method=
+        method_name->length==sizeof("set_source_location")-1&&
+        memcmp(method_name->chars,"set_source_location",
+            sizeof("set_source_location")-1)==0;
     /* Phase 3 sub-phase 4 (gradual typing): a scalar or union type set.
      * Nested Array[T]/Hash[K,V]/Callable/interfaces/generics remain
      * separate future extensions. See docs/roadmap.md. */
@@ -974,7 +978,7 @@ static DiamondVmStatus program_builder_invoke_helper(DiamondVm *vm,
        !include_module_in_module_method&&
        !set_module_method_visibility_method&&
        !export_module_method_method&&
-       !expand_source_method&&!source_location_method&&
+       !expand_source_method&&!source_location_method&&!set_source_location_method&&
        !declare_type_set_method&&!set_parameter_type_method&&
        !set_return_type_method&&!declare_interface_method&&
        !declare_interface_method_method&&!set_type_variables_method&&
@@ -1044,8 +1048,8 @@ static DiamondVmStatus program_builder_invoke_helper(DiamondVm *vm,
             return DIAMOND_VM_TYPE_ERROR;
         }
         target->code[target->code_count]=(uint8_t)byte_value;
-        target->lines[target->code_count]=0;
-        target->columns[target->code_count]=0;
+        target->lines[target->code_count]=builder->source_line;
+        target->columns[target->code_count]=builder->source_column;
         target->code_count++;
         *result=DIAMOND_NIL;return DIAMOND_VM_OK;
     }
@@ -1543,6 +1547,10 @@ static DiamondVmStatus program_builder_invoke_helper(DiamondVm *vm,
         char path[DIAMOND_MAX_SOURCE_PATH];
         if(name->length>=sizeof path)return DIAMOND_VM_TYPE_ERROR;
         memcpy(path,name->chars,name->length);path[name->length]='\0';
+        if(name->length<sizeof built->entry.name) {
+            memcpy(built->entry.name,name->chars,name->length);
+            built->entry.name[name->length]='\0';
+        }
         char *source_text=malloc(source->length+1);
         if(source_text==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
         memcpy(source_text,source->chars,source->length);source_text[source->length]='\0';
@@ -1589,6 +1597,18 @@ static DiamondVmStatus program_builder_invoke_helper(DiamondVm *vm,
         DiamondString *mapped=allocate_string(vm,location,(size_t)written);
         if(mapped==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
         *result=DIAMOND_OBJECT(mapped);return DIAMOND_VM_OK;
+    }
+    if(set_source_location_method) {
+        if(argc!=2||registers[base].kind!=DIAMOND_VALUE_INT||
+           registers[(size_t)base+1].kind!=DIAMOND_VALUE_INT)
+            return DIAMOND_VM_TYPE_ERROR;
+        const int64_t line=registers[base].as.integer;
+        const int64_t column=registers[(size_t)base+1].as.integer;
+        if(line<0||line>UINT32_MAX||column<0||column>UINT32_MAX)
+            return DIAMOND_VM_TYPE_ERROR;
+        builder->source_line=(uint32_t)line;
+        builder->source_column=(uint32_t)column;
+        *result=DIAMOND_NIL;return DIAMOND_VM_OK;
     }
     if(declare_type_set_method) {
         if(argc!=2)return DIAMOND_VM_ARITY_ERROR;

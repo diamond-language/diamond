@@ -195,6 +195,8 @@ typedef struct DiamondProgramBuilder {
     DiamondObject object;
     DiamondProgram *program;
     DiamondSourceBundle *source_bundle;
+    uint32_t source_line;
+    uint32_t source_column;
 } DiamondProgramBuilder;
 
 #endif

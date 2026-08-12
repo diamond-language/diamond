@@ -97,3 +97,13 @@ rm -rf "$files_dir"
 trap - EXIT
 
 echo "loaded-file differential case passed"
+
+runtime_fixture="tests/parser_runtime_fixtures/mapped_runtime_main.di"
+native_runtime="$($diamond "$runtime_fixture" 2>&1 || true)"
+selfhost_runtime="$(echo "$runtime_fixture" | $diamond selfhost/parser_run.di 2>&1 || true)"
+for output in "$native_runtime" "$selfhost_runtime"; do
+    grep -Fq "at mapped_explode:2:10" <<<"$output"
+    grep -Fq "at tests/parser_runtime_fixtures/mapped_runtime_main.di:1:19" <<<"$output"
+done
+
+echo "runtime source-map differential case passed"

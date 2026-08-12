@@ -268,6 +268,7 @@ class Parser
   # emit_instruction/allocate_register/add_constant/add_string ---
 
   def emit_byte(byte)
+    @builder.set_source_location(@previous.line(), @previous.column())
     @builder.emit_byte(@current_function_index, byte)
     @code_count = @code_count + 1
   end

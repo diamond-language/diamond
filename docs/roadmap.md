@@ -2804,6 +2804,11 @@ future work.
   compile locations. Required-file syntax failures retain the dependency path
   and original line through the self-hosted loader and parser pipeline.
 
+- Self-hosting, Phase 3 follow-up (two-hundred-thirty-ninth slice): imported
+  runtime locations. ProgramBuilder bytecode records self-host lexer positions,
+  preserving required-function and root-caller frames with native line/column
+  parity.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,
