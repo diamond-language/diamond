@@ -238,3 +238,16 @@ grep -Fq "at tests/parser_runtime_fixtures/interpolation_runtime_main.di:" \
     <<<"$stress_interpolation_runtime"
 
 echo "stress-GC interpolation source-map case passed"
+
+nested_interpolation_fixture="tests/parser_runtime_fixtures/nested_interpolation_main.di"
+native_nested_interpolation="$($diamond "$nested_interpolation_fixture" 2>&1 || true)"
+selfhost_nested_interpolation="$(echo "$nested_interpolation_fixture" | \
+    $diamond selfhost/parser_run.di 2>&1 || true)"
+for output in "$native_nested_interpolation" "$selfhost_nested_interpolation"; do
+    grep -Fq "at nested_interpolation_explode:2:19" <<<"$output"
+    grep -Fq "at nested_interpolation_mid:1:66" <<<"$output"
+    grep -Fq "at tests/parser_runtime_fixtures/nested_interpolation_main.di:" \
+        <<<"$output"
+done
+
+echo "nested interpolation runtime source-map differential case passed"

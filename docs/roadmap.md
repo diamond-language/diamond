@@ -2914,6 +2914,10 @@ future work.
   GC retention. Embedded-expression bytecode and imported source locations
   remain valid when every self-host allocation triggers collection.
 
+- Self-hosting, Phase 3 follow-up (two-hundred-sixty-sixth slice): nested
+  interpolation frames. A failing embedded expression compiled two requires
+  deep reports the same leaf, mid, and root frames in both compilers.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,
