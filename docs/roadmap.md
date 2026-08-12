@@ -2768,6 +2768,10 @@ future work.
   package suppression. Requiring the same bare package twice validates and
   compiles its canonical source only once.
 
+- Self-hosting, Phase 3 follow-up (two-hundred-thirtieth slice): manifest
+  compilation diagnostics. Syntax failures in package manifests propagate
+  through the loader bridge with their native validation context.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,
