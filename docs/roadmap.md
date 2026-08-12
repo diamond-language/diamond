@@ -2736,6 +2736,10 @@ future work.
   package fixture. A repository-local package with a valid manifest provides a
   deterministic target for loader-bridge and self-hosted require coverage.
 
+- Self-hosting, Phase 3 follow-up (two-hundred-twenty-second slice): package
+  execution. The file-based self-hosted runner resolves a bare package name,
+  validates its manifest, and compiles the package function into the program.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,
