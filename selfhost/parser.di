@@ -24,11 +24,6 @@ require "lexer"
 #     always correct and only foregoes a speed optimization the VM would
 #     otherwise apply lazily at runtime via the interpreter's own
 #     quickening (`DIAMOND_QUICKEN`) instead -- see docs/roadmap.md.
-#   - No string interpolation (`"#{...}"`): a string literal's `\n`/`\t`/
-#     `\r`/`\"`/`\\`/`\#` escapes are decoded, but a literal `#{` is left
-#     as plain text rather than evaluated -- needs the same
-#     lexer/compiler-state save-and-restore compiler.c's parse_string
-#     uses, deferred until interpolation is specifically in scope.
 #   - Remaining grammar and semantic gaps are tracked by the Phase 3 roadmap
 #     and are added as independently differential-tested slices.
 #
@@ -91,6 +86,7 @@ module Opcode
   RUN_ENSURE = 62
   END_ENSURE = 63
   IS_TYPE = 64
+  TO_STRING = 66
   PRINT = 70
 end
 
@@ -3316,8 +3312,8 @@ class Parser
     destination
   end
 
-  def decode_string(token)
-    raw = @source.slice(token.start() + 1, token.length() - 2)
+  def decode_string_range(start, length)
+    raw = @source.slice(start, length)
     result = ""
     index = 0
     while index < raw.length()
@@ -3345,12 +3341,64 @@ class Parser
   end
 
   def parse_string()
-    text = self.decode_string(@previous)
-    destination = self.allocate_register()
-    constant = self.add_string(text)
-    self.emit_instruction2(Opcode::STRING, destination, constant)
-    self.set_type_fact(destination, Type::STRING)
-    destination
+    span = @previous
+    finish = span.start() + span.length() - 1
+    piece = span.start() + 1
+    result = nil
+    while piece < finish && !@failed
+      index = piece
+      while index + 1 < finish
+        if @source[index] == "\\"
+          index = index + 2
+          next
+        end
+        break if @source[index] == "#" && @source[index + 1] == "{"
+        index = index + 1
+      end
+      index = finish if index + 1 >= finish
+      literal_register = self.allocate_register()
+      literal = self.add_string(self.decode_string_range(piece, index - piece))
+      self.emit_instruction2(Opcode::STRING, literal_register, literal)
+      if result == nil
+        result = literal_register
+      else
+        joined = self.allocate_register()
+        self.emit_instruction3(Opcode::ADD, joined, result, literal_register)
+        result = joined
+      end
+      break if index >= finish
+
+      outer_lexer = @lexer
+      outer_current = @current
+      outer_previous = @previous
+      embedded = Lexer.new(@source)
+      embedded.restore_state(index + 2, index + 2, span.line(),
+        span.column() + index - span.start() + 2, span.line(),
+        span.column() + index - span.start() + 2)
+      @lexer = embedded
+      @current = @lexer.next_token()
+      value = self.parse_expression()
+      if @current.kind() != :right_brace
+        self.fail("expected '}' after interpolation")
+      end
+      close = @current.start()
+      @lexer = outer_lexer
+      @current = outer_current
+      @previous = outer_previous
+      converted = self.allocate_register()
+      self.emit_instruction2(Opcode::TO_STRING, converted, value)
+      joined = self.allocate_register()
+      self.emit_instruction3(Opcode::ADD, joined, result, converted)
+      result = joined
+      piece = close + 1
+    end
+    if result == nil
+      result = self.allocate_register()
+      literal = self.add_string("")
+      self.emit_instruction2(Opcode::STRING, result, literal)
+    end
+    self.set_type_fact(result, Type::STRING)
+    result
   end
 end
 

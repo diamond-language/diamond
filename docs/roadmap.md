@@ -2874,6 +2874,10 @@ future work.
   replacement. Re-expanding through one ProgramBuilder releases the previous
   bundle and resolves subsequent locations only against the replacement map.
 
+- Self-hosting, Phase 3 follow-up (two-hundred-fifty-sixth slice): string
+  interpolation. The self-hosted parser now saves and restores lexer state,
+  parses embedded expressions, stringifies their values, and joins the pieces.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,
