@@ -316,3 +316,19 @@ for output in "$native_duplicate_package_interpolation" \
 done
 
 echo "duplicate-package interpolation source-map differential case passed"
+
+crlf_interpolation_diagnostic_dir="$(mktemp -d)"
+trap 'rm -rf "$crlf_interpolation_diagnostic_dir"' EXIT
+printf 'value = 1\r\nother = 2\r\nbroken = "value #{other"\r\n' \
+    >"$crlf_interpolation_diagnostic_dir/broken.di"
+printf 'require "broken"\r\n' >"$crlf_interpolation_diagnostic_dir/main.di"
+native_crlf_interpolation_diagnostic="$($diamond "$crlf_interpolation_diagnostic_dir/main.di" 2>&1 || true)"
+selfhost_crlf_interpolation_diagnostic="$(echo "$crlf_interpolation_diagnostic_dir/main.di" | \
+    $diamond selfhost/parser_check.di 2>&1 || true)"
+for output in "$native_crlf_interpolation_diagnostic" "$selfhost_crlf_interpolation_diagnostic"; do
+    grep -Fq "broken.di:3:10" <<<"$output"
+done
+rm -rf "$crlf_interpolation_diagnostic_dir"
+trap - EXIT
+
+echo "CRLF unterminated-interpolation diagnostic differential case passed"
