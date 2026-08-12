@@ -3606,7 +3606,23 @@ static uint8_t compile_definition(Compiler *compiler) {
             method->required_arity=function->required_arity;
         }
     }
-    const uint8_t result = allocate_register(compiler);
+    /* A class/module member def's "value" is never read: both call sites
+     * that reach this point with at_top_level true and current_class/
+     * current_module set (compile_class's and compile_module's own
+     * DIAMOND_TOKEN_DEF branches) discard compile_definition's return with
+     * an explicit (void). Only a genuine top-level def -- one that could be
+     * the final statement compile_sequence threads through as the whole
+     * sequence's value -- needs a real, permanently-reserved register here.
+     * Register allocation is monotonic and never recycled within a
+     * function body (see docs/roadmap.md's self-hosting register-budget
+     * notes), so for a large class this reservation is pure, cumulative
+     * waste against the entry function's own 256-register ceiling --
+     * confirmed the hard way while porting the self-hosted parser
+     * (docs/roadmap.md's Phase 3 follow-up File.open entry). */
+    const bool member_result_discarded =
+        at_top_level && (compiler->current_class>=0||compiler->current_module>=0);
+    const uint8_t result =
+        member_result_discarded ? 0 : allocate_register(compiler);
     if(!at_top_level) {
         /* Always emit BOX_LOCAL here, even if this local was already boxed
          * at an earlier capture site elsewhere in the function: that earlier
@@ -3628,8 +3644,11 @@ static uint8_t compile_definition(Compiler *compiler) {
         for(size_t i=0;i<capture_count;i++)emit_byte(compiler,captures[i]);
         compiler->locals[compiler->local_count++]=(Local){.name=name,.reg=result};
     }
-    /* else: top-level def -- no NIL needed, sole writer for `result`
-     * on this compile-time-exclusive branch, already zero-inited. */
+    /* else: top-level def -- no NIL needed. A genuine top-level def's
+     * `result` is the sole writer of its (allocated) register, already
+     * zero-inited; a class/module member's `result` is the unallocated
+     * placeholder 0 from above, safe only because both callers that reach
+     * this path discard it. */
     return result;
 }
 

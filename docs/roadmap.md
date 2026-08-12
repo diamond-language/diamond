@@ -2994,6 +2994,39 @@ future work.
   one) in `lexer.di`'s `Token` class. Left for a future slice; not
   something this round's dispatch-based fix touches.
 
+- Self-hosting, Phase 3 follow-up (two-hundred-seventy-seventh slice):
+  reclaim wasted class/module-member registers in `compile_definition`
+  (`src/compiler.c`). Root-caused the register ceiling the File.open slice
+  ran into: every `def` permanently reserves one register in its
+  *enclosing* scope's frame via `const uint8_t result =
+  allocate_register(compiler);`, and Diamond's register allocator is
+  monotonic and never recycles within a function body (the same
+  constraint the roadmap's Phase 2 and sub-phase 3 entries already
+  flagged, now hit a fourth time). For a method or module function,
+  `compiler->function` is still the program's top-level entry function
+  while its enclosing `class`/`module` body compiles, so that reservation
+  comes out of the *entry* function's own 256-register budget, not a
+  per-class one — and both call sites that reach this path
+  (`compile_class`'s and `compile_module`'s own `DIAMOND_TOKEN_DEF`
+  branches) immediately discard the return value with an explicit
+  `(void)`. Confirmed empirically before touching anything: instrumenting
+  `allocate_register` and `compile_definition` directly showed the entry
+  function's register count climbing by exactly one for every method
+  compiled inside `class Parser` (into the 220s-250s partway through its
+  ~113 methods), and swapping one existing method for one new one (net
+  method count unchanged) made a failing build compile clean again --
+  ruling out per-method body size or file position, isolating it to a
+  pure per-member-declaration count. Fixed by skipping the allocation
+  when `at_top_level && (current_class>=0||current_module>=0)`, returning
+  the placeholder `0` instead -- safe precisely because that value is
+  never read on either call site; a genuine top-level `def` (whose value
+  `compile_sequence` may thread through as the whole sequence's result)
+  keeps allocating as before. Verified with `make test-all` (debug/
+  release/sanitizer builds, every C-level test, `tests/lexer_diff.sh`'s
+  820 cases, and the full parser differential harness) -- all pass
+  unchanged. This is a shared native-compiler fix, not specific to
+  self-hosting, but it directly unblocks the next slice below.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,
