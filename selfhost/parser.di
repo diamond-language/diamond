@@ -1714,6 +1714,8 @@ class Parser
       while !@failed && @current.kind() != :end
         if @current.kind() == :def
           self.compile_method()
+        elsif self.attribute_keyword?(@current.kind())
+          self.compile_attribute()
         elsif @current.kind() == :interface
           self.compile_interface()
         elsif @current.kind() == :class
@@ -2137,9 +2139,14 @@ class Parser
     else
       field_name
     end
+    existing_names = if @current_module_index != nil && @current_class_index == nil
+      @modules[@current_module_entry][3]
+    else
+      @current_class_method_names
+    end
     index = 0
-    while index < @current_class_method_names.length()
-      self.fail("attribute method is already defined") if @current_class_method_names[index] == method_name
+    while index < existing_names.length()
+      self.fail("attribute method is already defined") if existing_names[index] == method_name
       index = index + 1
     end
     return if @failed
@@ -2169,14 +2176,29 @@ class Parser
     @type_facts = []
     @declared_types = []
     self.allocate_register()
-    field_index = @builder.declare_field(@current_class_index, field_name)
+    module_only = @current_module_index != nil && @current_class_index == nil
+    field_index = if module_only
+      @current_method_uses_state = true
+      @builder.declare_module_field(@current_module_index, field_name)
+      self.add_string(field_name)
+    else
+      @builder.declare_field(@current_class_index, field_name)
+    end
     if writer
       value = self.allocate_register()
-      self.emit_instruction3(Opcode::SET_IVAR, 0, field_index, value)
+      self.emit_instruction3(if module_only
+        47
+      else
+        Opcode::SET_IVAR
+      end, 0, field_index, value)
       self.emit_instruction1(Opcode::RETURN, value)
     else
       destination = self.allocate_register()
-      self.emit_instruction3(Opcode::GET_IVAR, destination, 0, field_index)
+      self.emit_instruction3(if module_only
+        46
+      else
+        Opcode::GET_IVAR
+      end, destination, 0, field_index)
       self.emit_instruction1(Opcode::RETURN, destination)
     end
     @builder.set_register_count(function_index, @next_register)
@@ -2190,8 +2212,12 @@ class Parser
     @type_facts = outer_type_facts
     @declared_types = outer_declared_types
 
-    @current_class_method_names.push(method_name)
-    @builder.declare_method(@current_class_index, method_name, function_index, arity, arity, @current_class_methods_private)
+    if module_only
+      self.register_module_method(method_name, function_index, arity, arity)
+    else
+      @current_class_method_names.push(method_name)
+      @builder.declare_method(@current_class_index, method_name, function_index, arity, arity, @current_class_methods_private)
+    end
   end
 
   # Shared by compile_call/compile_closure_call: parses `(arg, arg, ...)`
@@ -2613,6 +2639,10 @@ class Parser
     end
     name = self.token_text(@current)
     self.advance_token()
+    if @current.kind() == :equal
+      name = name + "="
+      self.advance_token()
+    end
     if @current.kind() != :left_paren
       self.fail("expected '(' after method name")
       return 0
