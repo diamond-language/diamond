@@ -1564,8 +1564,10 @@ static DiamondVmStatus program_builder_invoke_helper(DiamondVm *vm,
             return DIAMOND_VM_IO_ERROR;
         }
         DiamondString *expanded=allocate_string(vm,bundle->source,strlen(bundle->source));
-        free(bundle->source);bundle->source=nullptr;
-        if(expanded==nullptr){free(bundle);return DIAMOND_VM_OUT_OF_MEMORY;}
+        if(expanded==nullptr) {
+            diamond_source_bundle_free(bundle);free(bundle);
+            return DIAMOND_VM_OUT_OF_MEMORY;
+        }
         if(builder->source_bundle!=nullptr) {
             diamond_source_bundle_free(builder->source_bundle);
             free(builder->source_bundle);
@@ -1584,16 +1586,24 @@ static DiamondVmStatus program_builder_invoke_helper(DiamondVm *vm,
         if(offset<0||line<1||column<1||builder->source_bundle==nullptr)
             return DIAMOND_VM_TYPE_ERROR;
         const char *mapped_path="<expanded>";
+        uint64_t mapped_line=(uint64_t)line;
         for(size_t index=0;index<builder->source_bundle->segment_count;index++) {
             const DiamondSourceSegment *segment=&builder->source_bundle->segments[index];
             const uint64_t source_offset=(uint64_t)offset;
             if(source_offset<segment->start||
                (source_offset>segment->end&&source_offset-segment->end>9))continue;
-            mapped_path=segment->path;break;
+            mapped_path=segment->path;mapped_line=segment->original_line;
+            size_t limit=source_offset<segment->end
+                ?(size_t)source_offset:segment->end;
+            if(limit==segment->end&&limit>segment->start&&
+               builder->source_bundle->source[limit-1]=='\n')limit--;
+            for(size_t cursor=segment->start;cursor<limit;cursor++)
+                if(builder->source_bundle->source[cursor]=='\n')mapped_line++;
+            break;
         }
         char location[DIAMOND_MAX_SOURCE_PATH+64];
         const int written=snprintf(location,sizeof location,"%s:%lld:%lld",
-            mapped_path,(long long)line,(long long)column);
+            mapped_path,(long long)mapped_line,(long long)column);
         if(written<0||(size_t)written>=sizeof location)return DIAMOND_VM_TYPE_ERROR;
         DiamondString *mapped=allocate_string(vm,location,(size_t)written);
         if(mapped==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
