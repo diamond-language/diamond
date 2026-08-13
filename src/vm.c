@@ -803,7 +803,13 @@ static DiamondVmStatus regexp_match_helper(DiamondVm *vm, const DiamondRegexp *r
  * own classes[] array, which has no guaranteed lifetime relative to the
  * copy once dest_vm's caller lets go of the ProgramBuilder that owns it,
  * so copying the DiamondValue wouldn't make the reference itself safe.
- * All of those return false; the caller reports a TypeError. */
+ * All of those return false; the caller reports a TypeError. Composite
+ * kinds (Array, Hash, ...) recurse into this same function per element,
+ * and deliberately drop the source's own generic constraint metadata --
+ * `constraints[]` holds pointers into the *source* type-set/class tables
+ * with the same lifetime problem as Instance's ->class above, so a copy
+ * comes back a plain, unconstrained collection rather than trying to
+ * carry that metadata across intact. */
 static bool copy_value_into_vm(DiamondVm *dest_vm, DiamondValue value,
                                DiamondValue *out) {
     if(value.kind!=DIAMOND_VALUE_OBJECT) {*out=value;return true;}
@@ -817,6 +823,24 @@ static bool copy_value_into_vm(DiamondVm *dest_vm, DiamondValue value,
         case DIAMOND_OBJECT_SYMBOL: {
             const DiamondSymbol *source=(const DiamondSymbol *)value.as.object;
             DiamondSymbol *copy=allocate_symbol(dest_vm,source->chars,source->length);
+            if(copy==nullptr)return false;
+            *out=DIAMOND_OBJECT(copy);return true;
+        }
+        case DIAMOND_OBJECT_ARRAY: {
+            const DiamondArray *source=(const DiamondArray *)value.as.object;
+            DiamondValue *elements=nullptr;
+            if(source->count>0) {
+                elements=malloc(source->count*sizeof(DiamondValue));
+                if(elements==nullptr)return false;
+                for(size_t index=0;index<source->count;index++) {
+                    if(!copy_value_into_vm(dest_vm,source->values[index],
+                                           &elements[index])) {
+                        free(elements);return false;
+                    }
+                }
+            }
+            DiamondArray *copy=allocate_array(dest_vm,elements,source->count);
+            free(elements);
             if(copy==nullptr)return false;
             *out=DIAMOND_OBJECT(copy);return true;
         }

@@ -4089,6 +4089,18 @@ future work.
   copied this way, unlike the plain-data kinds landing here and in the
   slices immediately following.
 
+- `copy_value_into_vm` now recurses into `Array`, so `ProgramBuilder#run`
+  can return an array (including nested arrays/strings) as easily as a
+  bare `String`. Each element copies through the same function, so a
+  still-unsupported element (an `Instance`, say) fails the whole array's
+  copy the same way a bare unsupported result would, rather than
+  returning a partially-copied array. Deliberately drops the source
+  array's own generic constraint metadata (`constraints[]`) rather than
+  trying to carry it across — those hold pointers into the *source*
+  program's type-set/class tables with the same lifetime problem as
+  Instance's `->class` above, so a copied array comes back a plain,
+  unconstrained one.
+
 ## Next priorities
 
 - Self-hosting, Phase 3 sub-phase 5: exceptions, modules, and `require`.
