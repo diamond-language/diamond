@@ -1,7 +1,9 @@
 #include "diagnostics.h"
 
 #include "compiler.h"
+#include "loader.h"
 
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -17,7 +19,44 @@ static constexpr unsigned char DIAMOND_CORE_SOURCE[] = {
 };
 static constexpr char DIAMOND_USER_LINE_RESET[] = "\n#line 1\n";
 
-static JsonValue *build_diagnostic(DiamondDiagnostic diagnostic) {
+/* LSP URIs are `file:///absolute/path`, percent-encoded (a real editor
+ * encodes at least spaces and non-ASCII bytes). Only the `file` scheme
+ * is understood -- anything else (an in-memory/untitled buffer with a
+ * different scheme) has no on-disk location `require` could resolve
+ * against anyway. Returns a freshly malloc'd, null-terminated path, or
+ * nullptr if `uri` isn't a `file://` URI or on allocation failure. */
+static char *uri_to_path(const char *uri) {
+    static constexpr char prefix[]="file://";
+    static constexpr size_t prefix_length=sizeof(prefix)-1;
+    if(strncmp(uri,prefix,prefix_length)!=0)return nullptr;
+    const char *encoded=uri+prefix_length;
+    const size_t encoded_length=strlen(encoded);
+    char *path=malloc(encoded_length+1);
+    if(path==nullptr)return nullptr;
+    size_t out=0;
+    for(size_t index=0;index<encoded_length;index++) {
+        if(encoded[index]=='%'&&index+2<encoded_length) {
+            const char high=encoded[index+1],low=encoded[index+2];
+            const bool high_hex=(high>='0'&&high<='9')||(high>='a'&&high<='f')||
+                (high>='A'&&high<='F');
+            const bool low_hex=(low>='0'&&low<='9')||(low>='a'&&low<='f')||
+                (low>='A'&&low<='F');
+            if(high_hex&&low_hex) {
+                unsigned value=0;
+                sscanf((char[]){high,low,'\0'},"%x",&value);
+                path[out++]=(char)value;
+                index+=2;
+                continue;
+            }
+        }
+        path[out++]=encoded[index];
+    }
+    path[out]='\0';
+    return path;
+}
+
+static JsonValue *build_diagnostic(size_t line,size_t column,size_t highlight_length,
+                                   const char *message) {
     JsonValue *entry=json_object();
     if(entry==nullptr)return nullptr;
     JsonValue *range=json_object();
@@ -37,23 +76,23 @@ static JsonValue *build_diagnostic(DiamondDiagnostic diagnostic) {
      * exactly right for the common case (a single token), an
      * underestimate for a span that itself contains a newline, which no
      * diagnostic message in this compiler currently produces. */
-    const double line=diagnostic.span.line>0?(double)(diagnostic.span.line-1):0;
-    const double character=diagnostic.span.column>0?(double)(diagnostic.span.column-1):0;
-    const double highlight_width=diagnostic.span.length>0?(double)diagnostic.span.length:1;
-    json_object_set(start,"line",json_number(line));
-    json_object_set(start,"character",json_number(character));
-    json_object_set(end,"line",json_number(line));
-    json_object_set(end,"character",json_number(character+highlight_width));
+    const double lsp_line=line>0?(double)(line-1):0;
+    const double lsp_character=column>0?(double)(column-1):0;
+    const double highlight_width=highlight_length>0?(double)highlight_length:1;
+    json_object_set(start,"line",json_number(lsp_line));
+    json_object_set(start,"character",json_number(lsp_character));
+    json_object_set(end,"line",json_number(lsp_line));
+    json_object_set(end,"character",json_number(lsp_character+highlight_width));
     json_object_set(range,"start",start);
     json_object_set(range,"end",end);
     json_object_set(entry,"range",range);
     json_object_set(entry,"severity",json_number(1));
     json_object_set(entry,"source",json_string_z("diamond"));
-    json_object_set(entry,"message",json_string_z(diagnostic.message));
+    json_object_set(entry,"message",json_string_z(message));
     return entry;
 }
 
-JsonValue *diagnostics_compute(const char *text,size_t length) {
+JsonValue *diagnostics_compute(const char *uri,const char *text,size_t length) {
     /* DiamondProgram is tens of MB (fixed-size arrays sized for
      * self-hosting-scale programs, per src/compiler.h's own comment on
      * the struct) -- heap-allocated here for the same reason main.c
@@ -68,32 +107,120 @@ JsonValue *diagnostics_compute(const char *text,size_t length) {
         scratch=malloc(sizeof *scratch);
         if(scratch==nullptr)return nullptr;
     }
-    const size_t core_length=sizeof(DIAMOND_CORE_SOURCE)-1;
-    const size_t reset_length=sizeof(DIAMOND_USER_LINE_RESET)-1;
-    char *combined=malloc(core_length+reset_length+length+1);
-    if(combined==nullptr)return nullptr;
-    memcpy(combined,DIAMOND_CORE_SOURCE,core_length);
-    memcpy(combined+core_length,DIAMOND_USER_LINE_RESET,reset_length);
-    memcpy(combined+core_length+reset_length,text,length);
-    combined[core_length+reset_length+length]='\0';
-
-    DiamondDiagnostic diagnostic;
-    const bool ok=diamond_compile(combined,scratch,&diagnostic);
-    free(combined);
 
     JsonValue *diagnostics=json_array();
     if(diagnostics==nullptr)return nullptr;
-    if(!ok) {
-        JsonValue *entry=build_diagnostic(diagnostic);
-        if(entry==nullptr) {
+
+    /* No on-disk location (an untitled/unsaved buffer, or a non-file://
+     * scheme): compile the document in isolation, same as before this
+     * required-file support existed. A bare `require` line in such a
+     * document still can't resolve (there's no directory to resolve it
+     * against), but that's the same "no false diagnostic for valid code,
+     * no cross-file resolution either" tradeoff every path through this
+     * function makes for a *different* file's own errors -- see
+     * docs/lsp.md. */
+    char *path=uri_to_path(uri);
+    if(path==nullptr) {
+        char *combined=malloc(sizeof(DIAMOND_CORE_SOURCE)-1+sizeof(DIAMOND_USER_LINE_RESET)-1+length+1);
+        if(combined==nullptr) {
             json_free(diagnostics);
             return nullptr;
         }
-        if(!json_array_push(diagnostics,entry)) {
+        const size_t core_length=sizeof(DIAMOND_CORE_SOURCE)-1;
+        const size_t reset_length=sizeof(DIAMOND_USER_LINE_RESET)-1;
+        memcpy(combined,DIAMOND_CORE_SOURCE,core_length);
+        memcpy(combined+core_length,DIAMOND_USER_LINE_RESET,reset_length);
+        memcpy(combined+core_length+reset_length,text,length);
+        combined[core_length+reset_length+length]='\0';
+        DiamondDiagnostic diagnostic;
+        const bool ok=diamond_compile(combined,scratch,&diagnostic);
+        free(combined);
+        if(!ok) {
+            JsonValue *entry=build_diagnostic(diagnostic.span.line,diagnostic.span.column,
+                diagnostic.span.length,diagnostic.message);
+            if(entry==nullptr||!json_array_push(diagnostics,entry)) {
+                json_free(entry);
+                json_free(diagnostics);
+                return nullptr;
+            }
+        }
+        return diagnostics;
+    }
+
+    /* A null-terminated copy: document_get_text's own buffer is already
+     * null-terminated, but diamond_load_program takes a plain `const
+     * char *`, and length-bounding it against `length` here (rather than
+     * trusting the caller's null terminator) keeps this function correct
+     * even if that guarantee ever changes upstream. */
+    char *text_copy=malloc(length+1);
+    if(text_copy==nullptr) {
+        free(path);
+        json_free(diagnostics);
+        return nullptr;
+    }
+    memcpy(text_copy,text,length);
+    text_copy[length]='\0';
+
+    DiamondSourceBundle bundle;
+    char load_error[768];
+    const bool loaded=diamond_load_program(path,text_copy,&bundle,load_error,sizeof load_error);
+    free(text_copy);
+    if(!loaded) {
+        free(path);
+        /* No resolvable range for a require-resolution failure (the
+         * message is prose, not a machine-parseable location) -- anchor
+         * it at the document's own start rather than reporting nothing,
+         * since this is a real problem with *this* document (an
+         * unresolvable require), not a downstream file's own error. */
+        JsonValue *entry=build_diagnostic(1,1,1,load_error);
+        if(entry==nullptr||!json_array_push(diagnostics,entry)) {
             json_free(entry);
             json_free(diagnostics);
             return nullptr;
         }
+        return diagnostics;
     }
+
+    const size_t core_length=sizeof(DIAMOND_CORE_SOURCE)-1;
+    const size_t reset_length=sizeof(DIAMOND_USER_LINE_RESET)-1;
+    const size_t bundle_length=strlen(bundle.source);
+    char *combined=malloc(core_length+reset_length+bundle_length+1);
+    if(combined==nullptr) {
+        free(path);
+        diamond_source_bundle_free(&bundle);
+        json_free(diagnostics);
+        return nullptr;
+    }
+    memcpy(combined,DIAMOND_CORE_SOURCE,core_length);
+    memcpy(combined+core_length,DIAMOND_USER_LINE_RESET,reset_length);
+    memcpy(combined+core_length+reset_length,bundle.source,bundle_length+1);
+
+    DiamondDiagnostic diagnostic;
+    const bool ok=diamond_compile(combined,scratch,&diagnostic);
+    if(!ok) {
+        const DiamondResolvedLocation resolved=diamond_resolve_diagnostic_location(
+            path,combined,diagnostic,&bundle,core_length+reset_length);
+        /* Only report a diagnostic that actually lands in *this*
+         * document -- one resolved to a different (required) file's own
+         * source is a real error, but publishing it against this
+         * document's uri would point an editor at the wrong file. See
+         * docs/lsp.md for why that's left for a later slice rather than
+         * also publishing against the dependency's own uri here. */
+        if(strcmp(resolved.path,path)==0) {
+            JsonValue *entry=build_diagnostic(resolved.line,resolved.column,
+                diagnostic.span.length,diagnostic.message);
+            if(entry==nullptr||!json_array_push(diagnostics,entry)) {
+                json_free(entry);
+                free(combined);
+                free(path);
+                diamond_source_bundle_free(&bundle);
+                json_free(diagnostics);
+                return nullptr;
+            }
+        }
+    }
+    free(combined);
+    free(path);
+    diamond_source_bundle_free(&bundle);
     return diagnostics;
 }

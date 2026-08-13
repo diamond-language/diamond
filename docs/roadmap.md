@@ -3903,6 +3903,48 @@ future work.
   Code window to check by eye. Diagnostics are `lsp/`'s job (see above),
   not this extension's — no semantic highlighting here, regex-only.
 
+- Fixed a real bug in `lsp/`'s own diagnostics found immediately after
+  shipping it: `diagnostics_compute` compiled a document's raw text
+  directly, but `require` isn't a lexer/parser token at all (confirmed by
+  its absence from `src/lexer.h`'s token list) -- it's resolved entirely
+  by `diamond_load_program` (`src/loader.c`) as a source-level
+  preprocessing step *before* `diamond_compile` ever runs, which
+  `diagnostics_compute` skipped. Every document containing a `require`
+  line -- a large fraction of any real multi-file project, demonstrated
+  throughout this project's own `README.md` -- reported a bogus
+  "undefined local variable" diagnostic on that line, regardless of
+  whether the code was valid.
+
+  Fixed by converting the document's `file://` uri to a filesystem path
+  (percent-decoded; `require` resolves relative to it, dependencies read
+  from disk) and calling `diamond_load_program` first, matching
+  `src/main.c`'s own `run_source` exactly. Uncovered a second, deeper
+  problem doing this correctly: a diagnostic's line/column, once
+  `require`d content is bundled in, can only be correctly attributed
+  through `DiamondSourceBundle`'s segment table -- logic that already
+  existed, but only as 30-odd lines buried inside `src/main.c`'s
+  file-local, stderr-writing `print_diagnostic`, with no way for a
+  second caller to reuse it short of reimplementing the same
+  offset/newline-counting arithmetic. Extracted into a new shared
+  `diamond_resolve_diagnostic_location` (`src/compiler.h`/`.c`,
+  returning data instead of printing), with `src/main.c`'s own
+  `print_diagnostic` rewritten as a thin formatting layer over it —
+  verified byte-for-byte behavior-preserving via the full native test
+  suite and every source-map differential case in `tests/parser_diff.sh`
+  before trusting the extraction, not just by inspection.
+
+  A diagnostic that resolves to a `require`d file rather than the open
+  document itself currently reports nothing for that document (not
+  misattributed to the wrong file, but not shown anywhere yet either) --
+  and an unresolvable `require` reports `diamond_load_program`'s own
+  error text anchored at the document's start, since its message has no
+  machine-parseable location to extract a precise range from. Both
+  documented as known v1 scope in `docs/lsp.md`, along with three new
+  `tests/lsp_test.sh` cases (a valid multi-file project publishing no
+  false diagnostic, a real error on the line *after* a require reporting
+  the correct line, and an unresolvable require) against a real on-disk
+  temp directory.
+
 ## Next priorities
 
 - Self-hosting, Phase 3 sub-phase 5: exceptions, modules, and `require`.

@@ -12,6 +12,18 @@ set -euo pipefail
 diamond_lsp="$(realpath ./build/diamond-lsp)"
 count=0
 
+# A real on-disk directory for the require-resolution cases below --
+# `require` only resolves against an actual directory, so unlike every
+# other case in this script (which use a uri that was never a real path
+# at all), these need one.
+work="$(mktemp -d)"
+trap 'rm -rf "$work"' EXIT
+cat > "$work/helper.di" <<'EOF'
+def greet(name)
+  "hello, " + name
+end
+EOF
+
 send() {
     local body="$1"
     printf 'Content-Length: %d\r\n\r\n%s' "${#body}" "$body" >&"${LSP[1]}"
@@ -79,6 +91,37 @@ response="$(read_message)"
 count=$((count + 1))
 [[ "$response" == *'"diagnostics":[]'* ]]
 count=$((count + 1))
+
+# --- a valid require against a real on-disk file: no false diagnostic ---
+
+main_uri="file://$work/main.di"
+send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$main_uri"'","text":"require \"helper\"\nputs(greet(\"world\"))"}}}'
+response="$(read_message)"
+[[ "$response" == *"\"uri\":\"$main_uri\""* ]]
+count=$((count + 1))
+[[ "$response" == *'"diagnostics":[]'* ]]
+count=$((count + 1))
+
+# --- a real error on the line *after* a require reports the right line/message ---
+
+send '{"jsonrpc":"2.0","method":"textDocument/didChange","params":{"textDocument":{"uri":"'"$main_uri"'"},"contentChanges":[{"text":"require \"helper\"\nputs(missing_function())"}]}}'
+response="$(read_message)"
+[[ "$response" == *'"message":"undefined function"'* ]]
+count=$((count + 1))
+[[ "$response" == *'"start":{"line":1,'* ]]
+count=$((count + 1))
+
+# --- an unresolvable require reports diamond_load_program's own error ---
+
+send '{"jsonrpc":"2.0","method":"textDocument/didChange","params":{"textDocument":{"uri":"'"$main_uri"'"},"contentChanges":[{"text":"require \"nonexistent\""}]}}'
+response="$(read_message)"
+[[ "$response" == *"cannot require"* ]]
+count=$((count + 1))
+[[ "$response" == *"nonexistent"* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$main_uri"'"}}}'
+read_message >/dev/null
 
 # --- an unrecognized method gets a JSON-RPC MethodNotFound error ---
 

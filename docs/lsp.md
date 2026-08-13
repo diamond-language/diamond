@@ -35,14 +35,26 @@ Diagnostics only:
   any other notification is silently ignored.
 
 A document's text is compiled exactly the way `src/main.c`'s own
-`run_source` compiles a file natively: `lib/core.di` prepended, then a
-`#line 1` reset so the prelude's own line numbers never leak into a
-reported diagnostic's position — confirmed against `src/lexer.c`'s
-handling of that exact comment, not assumed. One consequence worth
-knowing: a document that only makes sense as part of a larger project
-(referring to a class or function defined in a file it `require`s) will
-report spurious "undefined" diagnostics on its own — there's no
-cross-file `require` resolution yet (see below).
+`run_source` compiles a file natively: `require`d files resolved and
+bundled in via `diamond_load_program` (read from disk — so a `require`
+only resolves correctly once the document has a real `file://` uri
+*and* its dependencies exist on disk at their expected relative
+locations; an unsaved dependency's in-editor-only edits aren't seen),
+then `lib/core.di` prepended and a `#line 1` reset so the prelude's own
+line numbers never leak into a reported diagnostic's position —
+confirmed against `src/lexer.c`'s handling of that exact comment, not
+assumed. A diagnostic's line/column are re-resolved back through
+`diamond_load_program`'s own segment table
+(`diamond_resolve_diagnostic_location`, shared with `src/main.c`'s CLI
+diagnostic printing — not a separate reimplementation) so they land on
+the right line even when a `require`d file's inlined content shifts
+everything after it. One consequence worth knowing: if the *actual*
+error is inside a `require`d file rather than the open document itself,
+this document currently reports nothing at all (not the dependency's
+error misattributed to the wrong file, but not the dependency's own
+diagnostic either) — publishing a second `publishDiagnostics`
+notification against the dependency's own uri is real, separable work
+for later.
 
 ## Building and connecting an editor
 
@@ -71,10 +83,13 @@ exit-without-shutdown edge cases.
   which nothing in `lsp/` builds yet. Diagnostics don't need one:
   `diamond_compile` already does all the work and hands back exactly the
   one thing needed.
-- **Cross-file `require` resolution** — a document is compiled in
-  isolation, prelude aside. Teaching the server to resolve a `require`d
-  path relative to the requesting file (and re-diagnose the right open
-  document when a file it depends on changes) is real, separable work.
+- **Diagnostics for a broken dependency, published against its own
+  file** — `require` itself resolves (see above), but if the error is
+  inside the required file rather than the open document, nothing gets
+  published for it at all yet. Doing this properly means tracking which
+  open documents depend on which files (so editing a dependency
+  re-diagnoses everything that requires it, not just itself) — real,
+  separable work.
 - **Incremental sync** — `textDocumentSync` only ever advertises `Full`.
   Diamond has no incremental-recompile story at all yet (every compile is
   a fresh `diamond_compile` call over the whole combined buffer), so

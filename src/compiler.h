@@ -47,4 +47,37 @@ bool diamond_compile(const char *source, DiamondProgram *program,
                      DiamondDiagnostic *diagnostic);
 DiamondChunk diamond_program_chunk(const DiamondProgram *program);
 
+typedef struct DiamondResolvedLocation {
+    /* Either `name` unchanged (the diagnostic landed in the entry file
+     * itself) or one of `bundle`'s own segment paths (it landed inside a
+     * `require`d file that got inlined into the bundled source) --
+     * never separately allocated, always borrowed from one of those two
+     * existing sources. */
+    const char *path;
+    size_t line;
+    size_t column;
+    /* Byte offsets into `source` bracketing the offending line, for
+     * printing it back out (e.g. with a caret under the column) --
+     * excludes the trailing newline/EOF. */
+    size_t line_start;
+    size_t line_end;
+} DiamondResolvedLocation;
+
+/* Maps a diagnostic's span (an offset into `source`, the fully expanded
+ * buffer diamond_compile actually saw -- core prelude + reset + bundled
+ * user source) back to whichever original file and line it actually
+ * came from, using `bundle`'s segment table the same way
+ * diamond_load_program built it. `user_offset` is the byte offset where
+ * the bundled user source begins within `source` (i.e. where the
+ * prelude+reset prefix ends) -- segment offsets are relative to the
+ * bundle's own source, not `source` as a whole. `name` is the entry
+ * file's own display name/path, used verbatim when the diagnostic never
+ * left it. Extracted from src/main.c's own print_diagnostic so a second
+ * caller (the LSP) doesn't have to reimplement this segment-mapping
+ * arithmetic -- src/main.c's own diagnostic printing is now a thin
+ * formatting layer over this. */
+DiamondResolvedLocation diamond_resolve_diagnostic_location(
+    const char *name, const char *source, DiamondDiagnostic diagnostic,
+    const DiamondSourceBundle *bundle, size_t user_offset);
+
 #endif

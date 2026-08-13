@@ -63,7 +63,7 @@ static void send_notification(const char *method,JsonValue *params) {
 }
 
 static void publish_diagnostics(const char *uri,const char *text,size_t length) {
-    JsonValue *diagnostics=diagnostics_compute(text,length);
+    JsonValue *diagnostics=diagnostics_compute(uri,text,length);
     if(diagnostics==nullptr)return;
     JsonValue *params=json_object();
     if(params==nullptr) {

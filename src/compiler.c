@@ -4636,6 +4636,48 @@ void diamond_program_init(DiamondProgram *program) {
     snprintf(program->entry.name, sizeof(program->entry.name), "<main>");
 }
 
+DiamondResolvedLocation diamond_resolve_diagnostic_location(
+        const char *name,const char *source,DiamondDiagnostic diagnostic,
+        const DiamondSourceBundle *bundle,size_t user_offset) {
+    size_t line=diagnostic.span.line;
+    bool mapped_segment=false;
+    size_t mapped_segment_start=0;
+    size_t mapped_segment_end=0;
+    size_t mapped_original_line=1;
+    if(diagnostic.span.start>=user_offset) {
+        const size_t offset=diagnostic.span.start-user_offset;
+        for(size_t index=0;index<bundle->segment_count;index++) {
+            const DiamondSourceSegment *segment=&bundle->segments[index];
+            if(offset<segment->start||
+               (offset>segment->end&&offset-segment->end>9))continue;
+            name=segment->path;
+            mapped_segment=true;
+            mapped_segment_start=user_offset+segment->start;
+            mapped_segment_end=user_offset+segment->end;
+            mapped_original_line=segment->original_line;
+            break;
+        }
+    }
+    size_t line_start=diagnostic.span.start;
+    if(mapped_segment&&line_start>=mapped_segment_end)
+        line_start=mapped_segment_end;
+    if(mapped_segment&&line_start>0&&source[line_start]=='\n')line_start--;
+    if(mapped_segment&&source[line_start]=='#'&&line_start>0) {
+        line_start--;
+        while(line_start>0&&source[line_start-1]!='\n')line_start--;
+    }
+    while(line_start>0&&source[line_start-1]!='\n')line_start--;
+    if(mapped_segment) {
+        line=mapped_original_line;
+        for(size_t index=mapped_segment_start;index<line_start;index++)
+            if(source[index]=='\n')line++;
+    }
+    size_t line_end=line_start;
+    while(source[line_end]!='\0'&&source[line_end]!='\n')line_end++;
+    return (DiamondResolvedLocation){.path=name,.line=line,
+        .column=diagnostic.span.column,.line_start=line_start,.line_end=line_end};
+}
+
 bool diamond_compile(const char *source, DiamondProgram *program,
                      DiamondDiagnostic *diagnostic) {
     diamond_program_init(program);
