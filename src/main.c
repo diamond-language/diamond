@@ -1,3 +1,5 @@
+#define _DEFAULT_SOURCE
+
 #include "compiler.h"
 #include "disassemble.h"
 #include "loader.h"
@@ -9,6 +11,7 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <string.h>
+#include <sys/stat.h>
 
 static constexpr char DIAMOND_VERSION[] = "0.1.0-dev";
 static constexpr unsigned char DIAMOND_CORE_SOURCE[] = {
@@ -189,6 +192,21 @@ static char *read_file(const char *path) {
     FILE *file = fopen(path, "rb");
     if (file == nullptr) {
         fprintf(stderr, "diamond: cannot open '%s': %s\n", path, strerror(errno));
+        return nullptr;
+    }
+    /* open(2)/fopen(3) succeed on a directory on Linux -- it's read(2)
+     * that's meant to fail with EISDIR, but that's a filesystem-driver
+     * behavior, not a POSIX guarantee: some drivers (seen in practice on
+     * overlayfs, common for container build directories) return a
+     * plain short/empty read instead of setting errno at all, which
+     * previously surfaced as a misleading "unexpected end of file"
+     * instead of "Is a directory". Checking the file type explicitly
+     * up front makes this deterministic across filesystems, rather than
+     * depending on how a given driver's read(2) happens to behave. */
+    struct stat file_status;
+    if (fstat(fileno(file), &file_status) == 0 && S_ISDIR(file_status.st_mode)) {
+        fprintf(stderr, "diamond: cannot read '%s': %s\n", path, strerror(EISDIR));
+        fclose(file);
         return nullptr;
     }
     if (fseek(file, 0, SEEK_END) != 0) {

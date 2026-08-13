@@ -4365,6 +4365,31 @@ future work.
   not a mechanical change; reverted rather than shipped partially
   verified.
 
+- Setting up GitLab CI (`.gitlab-ci.yml`, a `fedora:latest` image; `../
+  reginold` cloned from its own now-independent private GitLab project
+  via a read-only project access token, since `make test-all` needs it
+  as a sibling checkout) surfaced a real, previously-unnoticed
+  portability bug: `tests/run.sh`'s directory-as-argument case (`diamond
+  tests` should fail with `cannot read 'tests': Is a directory`) failed
+  silently and consistently on GitLab's actual runner while passing
+  every time in a locally-reproduced fresh-clone container, including
+  under a deliberately CPU-throttled one — ruling out resource
+  constraints as the cause. Root cause, found via a temporary diagnostic
+  `bash -x tests/run.sh` CI run: `read_file` (`main.c`) opens the path
+  and later expects `fread` to fail with `EISDIR` when it's actually a
+  directory — true on this development machine's filesystem, but `read
+  (2)` returning `EISDIR` for a directory descriptor is a Linux
+  filesystem-driver behavior, not a POSIX guarantee, and evidently
+  doesn't hold on whatever backs GitLab's own runner's build directory
+  (very plausibly overlayfs, common for container CI). Fixed by checking
+  `fstat`+`S_ISDIR` immediately after `fopen` and reporting `EISDIR`
+  explicitly, rather than inferring "is a directory" indirectly from how
+  a specific filesystem's `read(2)` happens to fail — deterministic
+  across filesystems instead of dependent on driver behavior. A real
+  correctness fix, not a CI-specific workaround; verified locally against
+  both this machine's own filesystem and a fresh-clone `fedora:latest`
+  podman reproduction of the CI environment.
+
 ## Next priorities
 
 - The native `compiler.c` bug found above: an ordinary closure nested

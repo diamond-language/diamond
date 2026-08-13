@@ -14,7 +14,7 @@ test-all:
   stage: test
   timeout: 1h
   before_script:
-    - dnf install -y gcc clang make git diffutils findutils compiler-rt libasan libubsan procps-ng
+    - dnf install -y gcc clang make git diffutils findutils compiler-rt libasan libubsan
     # diamond's Makefile expects a sibling ../reginold checkout with a
     # built libreginold.a -- reginold is its own private GitLab project,
     # cloned here with a read-only project access token
@@ -23,6 +23,4 @@ test-all:
     - git clone --depth 1 "https://gitlab-ci-token:${REGINOLD_READ_TOKEN}@gitlab.com/dmn9180/reginold.git" ../reginold
     - make -C ../reginold libreginold.a
   script:
-    - echo "nproc=$(nproc)"; free -h; ulimit -a
-    - make debug
-    - bash -x tests/run.sh 2>&1 | tail -200
+    - make test-all
