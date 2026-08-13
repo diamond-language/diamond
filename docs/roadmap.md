@@ -3574,6 +3574,112 @@ future work.
   keyword) that native rejects at compile time but the self-hosted
   parser currently accepts and fails differently at runtime instead.
 
+- Self-hosting, Phase 3 follow-up (two-hundred-ninetieth slice): closed
+  every gap the previous slice's sweep catalogued, then kept sweeping --
+  the differential corpus grew from 223 to 231 cases and the
+  `tests/cases` mismatch count fell from 44 to 13 (all 13 confirmed
+  harmless: diagnostic-format-only differences for intentional negative
+  tests, the documented one-level-nesting scope cut, and two newly
+  found deep gaps deliberately deferred -- see below).
+
+  Keyword-argument diagnostics (`multiple values for the same
+  argument`, `missing argument`, `wrong number of arguments`) pointed
+  at the wrong column: `self.fail` always reports `@current`'s
+  position, but `compiler.c` anchors these specific messages to the
+  call's own function-name span, captured *before* the offending
+  argument is even parsed. Added `fail_at(start, line, column,
+  message)` alongside the existing position-implicit `fail`, threaded
+  a saved name/keyword token through `compile_call`/
+  `parse_keyword_call_arguments`/`compile_alias_method` wherever native
+  anchors a diagnostic somewhere other than "wherever parsing currently
+  is" -- six new `parser_error_cases` pairs lock in exact column
+  matches now, not just matching message text.
+
+  Named `private`/`public` visibility targets for classes
+  (`private foo, bar`, retroactively flipping already-declared
+  methods' visibility) needed a new bridge, `set_class_method_visibility`,
+  mirroring `set_module_method_visibility` exactly. `alias_method`
+  needed two more, `alias_class_method`/`alias_module_method`, copying
+  an already-declared `DiamondMethod` struct under a new name (the
+  parser pre-checks source-exists/alias-not-taken itself first, the
+  same reason `duplicate_method_name?` guards every `declare_method`
+  call -- a bridge failure has no rescue anywhere in this parser and
+  would crash the whole compile attempt instead of a clean
+  `error_message()`). Both features share one subtlety compiler.c's own
+  `compile_visibility` already handles: a writer target (`private
+  value=`) is registered under `"value="`, found only by peeking one
+  token ahead for a trailing `=`, not by the bare name alone.
+
+  Explicit generic call arguments (`obj.method[Type](...)`,
+  `Klass.method[Type](...)`) were wired at the two remaining call
+  sites -- `compile_invoke` (new `Opcode::INVOKE_TYPED = 42`) and both
+  class/module singleton call paths (reusing `CALL_TYPED`) -- extracted
+  into a shared `parse_explicit_type_arguments` helper alongside
+  `compile_call`'s own preexisting (and left untouched) copy. Unlike
+  `compile_call`, none of these three validate the parsed count against
+  a statically-known `type_variable_count`: `compile_invoke` can't (the
+  method is only resolved at INVOKE time against the receiver's runtime
+  class, mirroring `compiler.c`'s `parse_invoke` exactly), and the two
+  singleton paths don't carry `type_variable_count` in their descriptor
+  tuples at all -- a deliberate simplification, not a bug, since the VM
+  itself still enforces the count at runtime either way.
+
+  Sweeping the newly-unblocked syntax against real usage surfaced three
+  genuine, pre-existing runtime bugs, none related to this slice's own
+  additions:
+  - `bind_parameters` emitted a parameter's `CHECK_TYPE` *before* its
+    default-value fallback, so any typed parameter with a default
+    (`greeting: String = "hi"`, including `lib/core.di`'s own
+    `array_join`) rejected every call that actually relied on the
+    default -- the omitted argument's register still held the VM's
+    ordinary zero-init `Nil` at that point, not the eventual fallback
+    value. `compiler.c`'s own parameter loop parses the default first
+    and only calls `emit_type_check` afterward; reordered to match.
+  - A `module_function`-exported method's call-site arity check used
+    exact equality against its declared arity, with no way to represent
+    "optional" at all -- the exported descriptor tuple never carried
+    `required_arity` in the first place (unlike the directly-declared
+    `def self.foo` descriptor, which always did). Added it as a fifth
+    element and switched the check to the same range test the
+    directly-declared path already used.
+  - `attr_predicate` was entirely unported, previously reasoned to be
+    safely skippable as "unused by either of the self-hosted compiler's
+    own source files" -- true for the compiler's own sources, but not
+    for arbitrary target programs, several of which use it. Confirmed
+    against `compile_attribute_named` that it really is just a reader
+    whose method name gets a `?` suffix (no Bool-conversion behavior
+    anywhere), then ported as a third suffix case alongside the
+    existing writer-suffix (`=`) handling.
+
+  Two deep gaps found and deliberately left open rather than expanding
+  this slice further, both confirmed via minimal repros isolated from
+  the original failing fixtures, not guessed at:
+  - Runtime constraint enforcement for a generic collection's element
+    type (`Array[T]`/`Hash[K, V]`) doesn't propagate through the
+    self-hosted parser's compiled output the way it does natively --
+    native tags the returned collection with its resolved type-variable
+    bindings via `CHECK_TYPE`'s constraint-attachment machinery, and a
+    later mutation (`array.push`, `hash[key] =`) checks against that
+    tag; the self-hosted parser's own generic method/function bodies
+    compile the same `CHECK_TYPE` shape, so this needs deeper VM-level
+    tracing to isolate, not a call-site fix. Reproduces even without
+    this slice's own explicit-type-argument work, using only
+    already-supported inferred generics (`def pair[K, V](key: K, value:
+    V) -> Hash[K, V]`), confirming it predates this slice entirely.
+  - Every native builtin-name recognition (`print`/`puts`/`gets`,
+    `File.open`, the Math functions, `Fiber.new`, `Regexp.new`,
+    `TCPSocket`/`TCPServer`, `ProgramBuilder`, `chr`/`to_f`/`to_i`/
+    `to_sym`) is gated behind `find_local(...)<0 && find_function(...)<0`
+    in `compiler.c` -- a user-defined top-level function can shadow any
+    of them. The self-hosted parser's equivalent dispatch chain
+    (`parse_name_call`'s `is_builtin_scalar_target`/`is_math_unary_target`/
+    `dot_construct_id`/etc.) has no such guard anywhere, so a
+    program defining its own `print`/`gets`/etc. gets the builtin
+    unconditionally instead. Confirmed with a minimal `def print(x) =
+    "shadowed"` repro; fixing it properly means threading the same
+    guard through every one of these dispatch sites, a wide, mechanical
+    change better suited to its own dedicated slice than a bolt-on here.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,

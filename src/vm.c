@@ -953,6 +953,30 @@ static DiamondVmStatus program_builder_invoke_helper(DiamondVm *vm,
         method_name->length==sizeof("set_module_method_visibility")-1&&
         memcmp(method_name->chars,"set_module_method_visibility",
             sizeof("set_module_method_visibility")-1)==0;
+    /* Named `private`/`public` visibility targets (`private foo, bar`)
+     * for a class -- the class-side counterpart to
+     * set_module_method_visibility, retroactively flipping an
+     * already-declared method's is_private flag by name. */
+    const bool set_class_method_visibility_method=
+        method_name->length==sizeof("set_class_method_visibility")-1&&
+        memcmp(method_name->chars,"set_class_method_visibility",
+            sizeof("set_class_method_visibility")-1)==0;
+    /* `alias_method new_name, existing_name` (compiler.c's
+     * compile_alias_method): copies an already-declared method's
+     * DiamondMethod struct verbatim under a new name -- same
+     * function_index/arity/required_arity/is_private, just re-registered
+     * so a second name can call the identical implementation. The
+     * caller (selfhost/parser.di) is expected to have already appended
+     * "=" to either name string when aliasing a writer method, the same
+     * way declare_method's own name argument already does. */
+    const bool alias_class_method_method=
+        method_name->length==sizeof("alias_class_method")-1&&
+        memcmp(method_name->chars,"alias_class_method",
+            sizeof("alias_class_method")-1)==0;
+    const bool alias_module_method_method=
+        method_name->length==sizeof("alias_module_method")-1&&
+        memcmp(method_name->chars,"alias_module_method",
+            sizeof("alias_module_method")-1)==0;
     const bool export_module_method_method=
         method_name->length==sizeof("export_module_method")-1&&
         memcmp(method_name->chars,"export_module_method",
@@ -1010,7 +1034,8 @@ static DiamondVmStatus program_builder_invoke_helper(DiamondVm *vm,
        !declare_module_singleton_method_method&&!set_function_owner_class_method&&
        !include_module_method&&
        !include_module_in_module_method&&
-       !set_module_method_visibility_method&&
+       !set_module_method_visibility_method&&!set_class_method_visibility_method&&
+       !alias_class_method_method&&!alias_module_method_method&&
        !export_module_method_method&&
        !expand_source_method&&!source_location_method&&!set_source_location_method&&
        !declare_type_set_method&&!set_parameter_type_method&&
@@ -1676,6 +1701,129 @@ static DiamondVmStatus program_builder_invoke_helper(DiamondVm *vm,
             return DIAMOND_VM_TYPE_ERROR;
         }
         found->is_private=registers[(size_t)base+2].as.boolean;
+        *result=DIAMOND_NIL;return DIAMOND_VM_OK;
+    }
+    if(set_class_method_visibility_method) {
+        if(argc!=3)return DIAMOND_VM_ARITY_ERROR;
+        if(registers[base].kind!=DIAMOND_VALUE_INT||
+           registers[(size_t)base+1].kind!=DIAMOND_VALUE_OBJECT||
+           registers[(size_t)base+1].as.object->kind!=DIAMOND_OBJECT_STRING||
+           registers[(size_t)base+2].kind!=DIAMOND_VALUE_BOOL)
+            return DIAMOND_VM_TYPE_ERROR;
+        DiamondClass *class=program_builder_class(built,registers[base].as.integer);
+        const DiamondString *name=
+            (const DiamondString *)registers[(size_t)base+1].as.object;
+        if(class==nullptr)return DIAMOND_VM_TYPE_ERROR;
+        DiamondMethod *found=nullptr;
+        for(size_t index=0;index<class->method_count;index++)
+            if(!class->methods[index].included&&
+               strlen(class->methods[index].name)==name->length&&
+               memcmp(class->methods[index].name,name->chars,name->length)==0)
+                found=&class->methods[index];
+        if(found==nullptr) {
+            snprintf(vm->error,sizeof vm->error,"undefined method for visibility change");
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        found->is_private=registers[(size_t)base+2].as.boolean;
+        *result=DIAMOND_NIL;return DIAMOND_VM_OK;
+    }
+    if(alias_class_method_method) {
+        if(argc!=3)return DIAMOND_VM_ARITY_ERROR;
+        if(registers[base].kind!=DIAMOND_VALUE_INT||
+           registers[(size_t)base+1].kind!=DIAMOND_VALUE_OBJECT||
+           registers[(size_t)base+1].as.object->kind!=DIAMOND_OBJECT_STRING||
+           registers[(size_t)base+2].kind!=DIAMOND_VALUE_OBJECT||
+           registers[(size_t)base+2].as.object->kind!=DIAMOND_OBJECT_STRING)
+            return DIAMOND_VM_TYPE_ERROR;
+        DiamondClass *class=program_builder_class(built,registers[base].as.integer);
+        const DiamondString *alias_name=
+            (const DiamondString *)registers[(size_t)base+1].as.object;
+        const DiamondString *original_name=
+            (const DiamondString *)registers[(size_t)base+2].as.object;
+        if(class==nullptr||alias_name->length==0||
+           alias_name->length>=DIAMOND_MAX_FUNCTION_NAME) {
+            snprintf(vm->error,sizeof vm->error,"ProgramBuilder#%s",
+                "alias_class_method has invalid arguments");
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        DiamondMethod *source=nullptr;
+        for(size_t index=class->method_count;index>0;index--)
+            if(!class->methods[index-1].included&&
+               strlen(class->methods[index-1].name)==original_name->length&&
+               memcmp(class->methods[index-1].name,original_name->chars,
+                      original_name->length)==0) {
+                source=&class->methods[index-1];break;
+            }
+        if(source==nullptr) {
+            snprintf(vm->error,sizeof vm->error,"alias source is not defined here");
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        for(size_t index=0;index<class->method_count;index++)
+            if(!class->methods[index].included&&
+               strlen(class->methods[index].name)==alias_name->length&&
+               memcmp(class->methods[index].name,alias_name->chars,
+                      alias_name->length)==0) {
+                snprintf(vm->error,sizeof vm->error,"alias name is already defined");
+                return DIAMOND_VM_TYPE_ERROR;
+            }
+        if(class->method_count==DIAMOND_MAX_METHODS) {
+            snprintf(vm->error,sizeof vm->error,"too many methods");
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        DiamondMethod copied=*source;
+        memcpy(copied.name,alias_name->chars,alias_name->length);
+        copied.name[alias_name->length]='\0';copied.included=false;
+        class->methods[class->method_count++]=copied;
+        *result=DIAMOND_NIL;return DIAMOND_VM_OK;
+    }
+    if(alias_module_method_method) {
+        if(argc!=3)return DIAMOND_VM_ARITY_ERROR;
+        if(registers[base].kind!=DIAMOND_VALUE_INT||
+           registers[(size_t)base+1].kind!=DIAMOND_VALUE_OBJECT||
+           registers[(size_t)base+1].as.object->kind!=DIAMOND_OBJECT_STRING||
+           registers[(size_t)base+2].kind!=DIAMOND_VALUE_OBJECT||
+           registers[(size_t)base+2].as.object->kind!=DIAMOND_OBJECT_STRING)
+            return DIAMOND_VM_TYPE_ERROR;
+        const int64_t module_index=registers[base].as.integer;
+        const DiamondString *alias_name=
+            (const DiamondString *)registers[(size_t)base+1].as.object;
+        const DiamondString *original_name=
+            (const DiamondString *)registers[(size_t)base+2].as.object;
+        if(module_index<0||(uint64_t)module_index>=built->module_count||
+           alias_name->length==0||alias_name->length>=DIAMOND_MAX_FUNCTION_NAME) {
+            snprintf(vm->error,sizeof vm->error,"ProgramBuilder#%s",
+                "alias_module_method has invalid arguments");
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        DiamondModule *module=&built->modules[(size_t)module_index];
+        DiamondMethod *source=nullptr;
+        for(size_t index=module->method_count;index>0;index--)
+            if(!module->methods[index-1].included&&
+               strlen(module->methods[index-1].name)==original_name->length&&
+               memcmp(module->methods[index-1].name,original_name->chars,
+                      original_name->length)==0) {
+                source=&module->methods[index-1];break;
+            }
+        if(source==nullptr) {
+            snprintf(vm->error,sizeof vm->error,"alias source is not defined here");
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        for(size_t index=0;index<module->method_count;index++)
+            if(!module->methods[index].included&&
+               strlen(module->methods[index].name)==alias_name->length&&
+               memcmp(module->methods[index].name,alias_name->chars,
+                      alias_name->length)==0) {
+                snprintf(vm->error,sizeof vm->error,"alias name is already defined");
+                return DIAMOND_VM_TYPE_ERROR;
+            }
+        if(module->method_count==DIAMOND_MAX_METHODS) {
+            snprintf(vm->error,sizeof vm->error,"too many methods");
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        DiamondMethod copied=*source;
+        memcpy(copied.name,alias_name->chars,alias_name->length);
+        copied.name[alias_name->length]='\0';copied.included=false;
+        module->methods[module->method_count++]=copied;
         *result=DIAMOND_NIL;return DIAMOND_VM_OK;
     }
     if(export_module_method_method) {

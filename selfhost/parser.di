@@ -69,6 +69,7 @@ module Opcode
   SET_CELL = 38
   NEW = 39
   INVOKE = 40
+  INVOKE_TYPED = 42
   SUPER = 43
   GET_IVAR = 44
   SET_IVAR = 45
@@ -287,13 +288,23 @@ class Parser
   private
 
   def fail(message)
+    self.fail_at(@current.start(), @current.line(), @current.column(), message)
+  end
+
+  # Like fail, but reporting a previously-saved token's position instead
+  # of wherever @current has since advanced to -- needed for the handful
+  # of diagnostics compiler.c itself anchors to a token other than the
+  # one currently being parsed (e.g. parse_call's keyword-argument
+  # checks, anchored to the call's own function name rather than the
+  # specific offending argument).
+  def fail_at(start, line, column, message)
     if !@failed
-      offset = if @current.start() >= @offset_correction
-        @current.start() - @offset_correction
+      offset = if start >= @offset_correction
+        start - @offset_correction
       else
-        @current.start()
+        start
       end
-      @error_message = @builder.source_location(offset, @current.line(), @current.column()) + ": " + message
+      @error_message = @builder.source_location(offset, line, column) + ": " + message
     end
     @failed = true
   end
@@ -402,14 +413,22 @@ class Parser
     index = 0
     while index < parameter_names.length()
       register = self.define_local(parameter_names[index])
+      # The default-value fallback must run *before* the type check: an
+      # omitted argument's register holds whatever the VM's ordinary
+      # zero-init leaves it as (Nil), not the type the annotation
+      # promises, until the fallback MOVE actually runs. Checking first
+      # would reject every omitted-and-defaulted call outright, which is
+      # exactly backwards -- mirrors compiler.c's own parameter loop,
+      # which parses the default (`= expr`) before ever calling
+      # emit_type_check on this parameter.
+      default_position = parameter_defaults[index]
+      self.compile_parameter_default(register, index + index_offset, default_position) if default_position != nil
       type_name = parameter_types[index]
       if type_name != nil
         @declared_types.push([register, type_name])
         set_index = self.emit_type_check(register, type_name)
         @builder.set_parameter_type(function_index, index + index_offset, set_index) unless @failed
       end
-      default_position = parameter_defaults[index]
-      self.compile_parameter_default(register, index + index_offset, default_position) if default_position != nil
       index = index + 1
     end
   end
@@ -1658,6 +1677,8 @@ class Parser
         self.compile_class_visibility()
       elsif @current.kind() == :include
         self.compile_class_include()
+      elsif @current.kind() == :alias_method
+        self.compile_alias_method()
       else
         self.fail("expected method definition or include in class")
       end
@@ -1707,20 +1728,142 @@ class Parser
     end
   end
 
-  # Bare `private`/`public` only -- sets the default visibility for
-  # methods declared for the remainder of the current class body. Native
-  # also accepts a parenthesized or bare comma-separated name list to
-  # retroactively flip already-declared methods' visibility
-  # (compiler.c's compile_visibility); that form fails explicitly here
-  # rather than being silently mishandled, since there's no bridge
-  # method to flip an already-declared class method's visibility (unlike
-  # compile_module_include's own named-list handling, which has
-  # set_module_method_visibility to call).
+  # `alias_method new_name, existing_name` inside a class or module body
+  # -- copies an already-declared method's implementation under a second
+  # name, mirroring compiler.c's own compile_alias_method exactly.
+  # Existence/duplicate checks happen here rather than being left to
+  # alias_class_method/alias_module_method's own failure paths: unlike
+  # compile()'s ordinary self.fail() outcomes, a bridge call failure has
+  # no rescue anywhere in this parser and would crash the whole compile
+  # attempt instead of a clean error_message() -- the same reason
+  # duplicate_method_name? is checked before every declare_method call.
+  def compile_alias_method()
+    self.advance_token()
+    parenthesized = @current.kind() == :left_paren
+    self.advance_token() if parenthesized
+    if @current.kind() != :identifier
+      self.fail("expected new alias name")
+      return
+    end
+    alias_token = @current
+    alias_name = self.token_text(@current)
+    self.advance_token()
+    if @current.kind() == :equal
+      alias_name = alias_name + "="
+      self.advance_token()
+    end
+    if @current.kind() != :comma
+      self.fail("expected ',' in alias_method")
+      return
+    end
+    self.advance_token()
+    self.skip_newlines() if parenthesized
+    if @current.kind() != :identifier
+      self.fail("expected existing method name")
+      return
+    end
+    original_token = @current
+    original_name = self.token_text(@current)
+    self.advance_token()
+    if @current.kind() == :equal
+      original_name = original_name + "="
+      self.advance_token()
+    end
+    class_context = @current_module_index == nil || @current_class_index != nil
+    names = if class_context
+      @current_class_method_names
+    else
+      @modules[@current_module_entry][3]
+    end
+    found_source = false
+    index = 0
+    while index < names.length()
+      found_source = true if names[index] == original_name
+      index = index + 1
+    end
+    if !found_source
+      self.fail_at(original_token.start(), original_token.line(), original_token.column(),
+        "alias source is not defined here")
+      return
+    end
+    index = 0
+    while index < names.length()
+      if names[index] == alias_name
+        self.fail_at(alias_token.start(), alias_token.line(), alias_token.column(),
+          "alias name is already defined")
+      end
+      index = index + 1
+    end
+    return if @failed
+    if class_context
+      @builder.alias_class_method(@current_class_index, alias_name, original_name)
+      @current_class_method_names.push(alias_name)
+    else
+      @builder.alias_module_method(@current_module_index, alias_name, original_name)
+      @modules[@current_module_entry][3].push(alias_name)
+    end
+    if parenthesized
+      if @current.kind() != :right_paren
+        self.fail("expected ')' after alias_method names")
+        return
+      end
+      self.advance_token()
+    end
+  end
+
+  # Bare `private`/`public` sets the default visibility for methods
+  # declared for the remainder of the current class body; a parenthesized
+  # or bare comma-separated name list instead retroactively flips
+  # already-declared methods' visibility (compiler.c's
+  # compile_visibility), mirroring compile_module_include's own
+  # named-list handling exactly, just against set_class_method_visibility
+  # and @current_class_method_names instead.
   def compile_class_visibility()
     private_mode = @current.kind() == :private
     self.advance_token()
-    if @current.kind() == :left_paren || @current.kind() == :identifier
-      self.fail("named class visibility targets are not supported here")
+    if @current.kind() == :identifier || @current.kind() == :left_paren
+      parenthesized = @current.kind() == :left_paren
+      self.advance_token() if parenthesized
+      if @current.kind() == :identifier
+        more = true
+        while more && !@failed
+          # A writer target (`private value=`) is registered under
+          # "value=" -- peek one token ahead to see whether this name is
+          # immediately followed by '=', mirroring compiler.c's own
+          # compile_visibility exactly (writer_name lookahead).
+          name = self.token_text(@current)
+          lookahead = @lexer.clone()
+          writer_name = lookahead.next_token().kind() == :equal
+          name = name + "=" if writer_name
+          found = false
+          index = 0
+          while index < @current_class_method_names.length()
+            found = true if @current_class_method_names[index] == name
+            index = index + 1
+          end
+          if found
+            @builder.set_class_method_visibility(@current_class_index, name, private_mode)
+          else
+            self.fail("visibility target is not defined here")
+          end
+          self.advance_token()
+          self.advance_token() if writer_name && @current.kind() == :equal
+          if @current.kind() == :comma
+            self.advance_token()
+          else
+            more = false
+          end
+        end
+        if parenthesized
+          if @current.kind() == :right_paren
+            self.advance_token()
+          else
+            self.fail("expected ')' after visibility targets")
+          end
+        end
+      elsif parenthesized
+        self.fail("expected method name in visibility list")
+      end
       return
     end
     @current_class_methods_private = private_mode
@@ -1799,6 +1942,8 @@ class Parser
           self.compile_module_function()
         elsif @current.kind() == :include || @current.kind() == :private || @current.kind() == :public
           self.compile_module_include()
+        elsif @current.kind() == :alias_method
+          self.compile_alias_method()
         elsif self.assignment_ahead?()
           self.compile_module_constant(name)
         else
@@ -1906,7 +2051,14 @@ class Parser
       if @current.kind() == :identifier
         more = true
         while more && !@failed
+          # A writer target (`private value=`) is registered under
+          # "value=" -- peek one token ahead to see whether this name is
+          # immediately followed by '=', mirroring compiler.c's own
+          # compile_visibility exactly (writer_name lookahead).
           name = self.token_text(@current)
+          lookahead = @lexer.clone()
+          writer_name = lookahead.next_token().kind() == :equal
+          name = name + "=" if writer_name
           found = false
           index = 0
           while index < @modules[@current_module_entry][3].length()
@@ -1919,6 +2071,7 @@ class Parser
             self.fail("visibility target is not defined here")
           end
           self.advance_token()
+          self.advance_token() if writer_name && @current.kind() == :equal
           if @current.kind() == :comma
             self.advance_token()
           else
@@ -2149,7 +2302,7 @@ class Parser
 
   def register_module_method(name, function_index, arity, required_arity)
     @modules[@current_module_entry][3].push(name)
-    descriptor = [name, function_index, arity, @current_method_uses_state]
+    descriptor = [name, function_index, arity, @current_method_uses_state, required_arity]
     @modules[@current_module_entry][6].push(descriptor)
     @builder.declare_module_method(@current_module_index, name, function_index,
       arity, required_arity, @modules[@current_module_entry][4][0])
@@ -2261,17 +2414,19 @@ class Parser
     return true if kind == :attr
     return true if kind == :attr_reader
     return true if kind == :attr_writer
-    kind == :attr_accessor
+    return true if kind == :attr_accessor
+    kind == :attr_predicate
   end
 
-  # `attr`/`attr_reader`/`attr_writer`/`attr_accessor`, parenthesized or
-  # not, one or more comma-separated names -- mirrors compiler.c's
-  # compile_attribute. `attr_predicate` isn't ported (unused by either
-  # of the self-hosted compiler's own source files, and its native
-  # semantics -- a reader whose method name gets a `?` suffix without
-  # actually converting the field to a Bool -- add a distinct third
-  # method-naming case for no behavioral difference over attr_reader).
+  # `attr`/`attr_reader`/`attr_writer`/`attr_accessor`/`attr_predicate`,
+  # parenthesized or not, one or more comma-separated names -- mirrors
+  # compiler.c's compile_attribute. `attr_predicate` is a reader whose
+  # method name gets a `?` suffix instead of a plain field name (field
+  # type itself is unaffected -- confirmed against compile_attribute_named,
+  # which only ever changes the method_name suffix, never adds any
+  # Bool-specific behavior), never a writer.
   def compile_attribute()
+    predicate = @current.kind() == :attr_predicate
     reader = @current.kind() != :attr_writer
     writer = @current.kind() == :attr_writer || @current.kind() == :attr_accessor
     self.advance_token()
@@ -2293,8 +2448,8 @@ class Parser
         type_annotation = self.parse_type_annotation()
       end
       return if @failed
-      self.compile_attribute_method(field_name, false, type_annotation) if reader
-      self.compile_attribute_method(field_name, true, type_annotation) if writer && !@failed
+      self.compile_attribute_method(field_name, false, type_annotation, predicate) if reader
+      self.compile_attribute_method(field_name, true, type_annotation, false) if writer && !@failed
       return if @failed
       self.skip_newlines() if parenthesized
       break if @current.kind() != :comma
@@ -2311,9 +2466,11 @@ class Parser
     end
   end
 
-  def compile_attribute_method(field_name, writer, type_annotation)
+  def compile_attribute_method(field_name, writer, type_annotation, predicate)
     method_name = if writer
       field_name + "="
+    elsif predicate
+      field_name + "?"
     else
       field_name
     end
@@ -2460,6 +2617,7 @@ class Parser
   # declared slot must always be filled -- there's no partial-call
   # case to allow.
   def compile_call(name)
+    name_token = @previous
     function_entry = self.find_function(name)
     if function_entry == nil
       self.fail("undefined function")
@@ -2501,7 +2659,7 @@ class Parser
     return 0 if @failed
     self.advance_token()
     self.skip_newlines()
-    parsed_arguments = self.parse_keyword_call_arguments(function_entry)
+    parsed_arguments = self.parse_keyword_call_arguments(function_entry, name_token)
     return 0 if parsed_arguments == nil
     slot_values = parsed_arguments[0]
     argument_count = parsed_arguments[1]
@@ -2569,7 +2727,7 @@ class Parser
   # tracking: a keyword fills its named slot directly; a positional
   # argument fills the next not-yet-seen slot in order; a positional
   # argument can't follow a keyword one.
-  def parse_keyword_call_arguments(function_entry)
+  def parse_keyword_call_arguments(function_entry, name_token)
     arity = function_entry[2]
     parameter_names = function_entry[3]
     slot_values = []
@@ -2587,12 +2745,14 @@ class Parser
       while more
         slot = -1
         if self.keyword_argument_ahead?()
+          keyword_token = @current
           keyword_name = self.token_text(@current)
           self.advance_token()
           self.advance_token()
           slot = self.find_parameter_slot(parameter_names, keyword_name)
           if slot == -1
-            self.fail("no parameter with this name")
+            self.fail_at(keyword_token.start(), keyword_token.line(), keyword_token.column(),
+              "no parameter with this name")
             return nil
           end
           seen_keyword = true
@@ -2609,7 +2769,8 @@ class Parser
           next_positional_slot = next_positional_slot + 1
         end
         if slot_filled[slot]
-          self.fail("multiple values for the same argument")
+          self.fail_at(name_token.start(), name_token.line(), name_token.column(),
+            "multiple values for the same argument")
           return nil
         end
         slot_values[slot] = self.parse_expression()
@@ -2647,13 +2808,15 @@ class Parser
     index = 0
     while index < argument_count
       if !slot_filled[index]
-        self.fail("missing argument")
+        self.fail_at(name_token.start(), name_token.line(), name_token.column(),
+          "missing argument")
         return nil
       end
       index = index + 1
     end
     if argument_count < function_entry[6] || argument_count > arity
-      self.fail("wrong number of arguments")
+      self.fail_at(name_token.start(), name_token.line(), name_token.column(),
+        "wrong number of arguments")
       return nil
     end
     [slot_values, argument_count]
@@ -2812,6 +2975,43 @@ class Parser
     destination
   end
 
+  # Parses an optional `[Type, Type, ...]` explicit generic-argument
+  # list right after a callable's name, before its own '(' argument
+  # list -- shared by every call site that accepts one
+  # (compile_invoke and the class/module singleton call paths;
+  # compile_call keeps its own copy since it alone also validates the
+  # count against a statically-known type_variable_count). Returns an
+  # Array of declared type-set indices (empty if there's no '[' at
+  # all), or nil on a parse failure.
+  def parse_explicit_type_arguments()
+    type_arguments = []
+    return type_arguments unless @current.kind() == :left_bracket
+    self.advance_token()
+    self.skip_newlines()
+    while !@failed && @current.kind() != :right_bracket
+      if type_arguments.length() == 8
+        self.fail("too many generic arguments")
+      else
+        annotation = self.parse_type_annotation()
+        type_arguments.push(self.declare_annotation(annotation))
+        self.skip_newlines()
+        if @current.kind() == :comma
+          self.advance_token()
+          self.skip_newlines()
+        else
+          break
+        end
+      end
+    end
+    if !@failed && @current.kind() != :right_bracket
+      self.fail("expected ']' after generic arguments")
+    else
+      self.advance_token() unless @failed
+    end
+    return nil if @failed
+    type_arguments
+  end
+
   # `receiver.method(args)` -- reached from parse_precedence's own
   # postfix-dot loop, so `receiver` can be any already-compiled
   # expression (a local, `self`, a call result, ...), not just an
@@ -2831,6 +3031,14 @@ class Parser
       name = name + "="
       self.advance_token()
     end
+    # Explicit generic arguments (`obj.method[Type](...)`) -- unlike
+    # compile_call's own handling, there's no arity check against a
+    # known type_variable_count here either: the target method is only
+    # resolved at INVOKE time against the receiver's runtime class, the
+    # same reason there's no argument-count check above. Mirrors
+    # compiler.c's own parse_invoke exactly.
+    type_arguments = self.parse_explicit_type_arguments()
+    return 0 if type_arguments == nil
     if @current.kind() != :left_paren
       self.fail("expected '(' after method name")
       return 0
@@ -2840,12 +3048,24 @@ class Parser
     parsed = self.parse_call_arguments()
     return 0 if parsed == nil
     destination = self.allocate_register()
-    self.emit_byte(Opcode::INVOKE)
+    if type_arguments.length() == 0
+      self.emit_byte(Opcode::INVOKE)
+    else
+      self.emit_byte(Opcode::INVOKE_TYPED)
+    end
     self.emit_byte(destination)
     self.emit_byte(receiver)
     self.emit_byte(method_name_index)
     self.emit_byte(parsed[0])
     self.emit_byte(parsed[1])
+    if type_arguments.length() > 0
+      self.emit_byte(type_arguments.length())
+      i = 0
+      while i < type_arguments.length()
+        self.emit_byte(type_arguments[i])
+        i = i + 1
+      end
+    end
     destination
   end
 
@@ -3763,7 +3983,7 @@ class Parser
   # positions aligned with the wrapped function's real parameter layout.
   # A directly-declared singleton (`def self.foo`, class or module) never
   # reserves self in the first place, so its call has no such slot.
-  def emit_singleton_call(function_index, parsed, needs_receiver)
+  def emit_singleton_call(function_index, parsed, needs_receiver, type_arguments)
     offset = if needs_receiver
       1
     else
@@ -3781,11 +4001,23 @@ class Parser
       index = index + 1
     end
     destination = self.allocate_register()
-    self.emit_byte(Opcode::CALL)
+    if type_arguments.length() == 0
+      self.emit_byte(Opcode::CALL)
+    else
+      self.emit_byte(Opcode::CALL_TYPED)
+    end
     self.emit_byte(destination)
     self.emit_byte(function_index)
     self.emit_byte(base)
     self.emit_byte(parsed[1] + offset)
+    if type_arguments.length() > 0
+      self.emit_byte(type_arguments.length())
+      index = 0
+      while index < type_arguments.length()
+        self.emit_byte(type_arguments[index])
+        index = index + 1
+      end
+    end
     destination
   end
 
@@ -3852,6 +4084,8 @@ class Parser
       self.fail("undefined module singleton function")
       return 0
     end
+    type_arguments = self.parse_explicit_type_arguments()
+    return 0 if type_arguments == nil
     if @current.kind() != :left_paren
       self.fail("expected '(' after singleton function")
       return 0
@@ -3860,17 +4094,17 @@ class Parser
     parsed = self.parse_call_arguments()
     return 0 if parsed == nil
     if exported != nil
-      if parsed[1] != exported[2]
+      if parsed[1] < exported[4] || parsed[1] > exported[2]
         self.fail("wrong number of arguments")
         return 0
       end
-      return self.emit_singleton_call(exported[1], parsed, true)
+      return self.emit_singleton_call(exported[1], parsed, true, type_arguments)
     end
     if parsed[1] < declared[3] || parsed[1] > declared[2]
       self.fail("wrong number of arguments")
       return 0
     end
-    self.emit_singleton_call(declared[1], parsed, false)
+    self.emit_singleton_call(declared[1], parsed, false, type_arguments)
   end
 
   # class_entry[3] holds def self.foo-declared descriptors ([name,
@@ -3893,6 +4127,8 @@ class Parser
       self.fail("undefined class singleton method")
       return 0
     end
+    type_arguments = self.parse_explicit_type_arguments()
+    return 0 if type_arguments == nil
     if @current.kind() != :left_paren
       self.fail("expected '(' after singleton function")
       return 0
@@ -3904,7 +4140,7 @@ class Parser
       self.fail("wrong number of arguments")
       return 0
     end
-    self.emit_singleton_call(descriptor[1], parsed, false)
+    self.emit_singleton_call(descriptor[1], parsed, false, type_arguments)
   end
 
   # `Klass.` at this point could mean `.new(...)`, `redefine_method(...)`,
