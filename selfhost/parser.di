@@ -184,13 +184,13 @@ class Parser
     # 0 while compiling the top-level script -- a `def` encountered here
     # is a plain top-level function (compile_definition's own
     # at_top_level check reads this *before* incrementing). Entering any
-    # function body increments it; a `def` encountered at depth 1
-    # (inside a top-level function's own body) becomes a nested closure
-    # and is allowed, but a `def` encountered at depth 2 (inside that
-    # closure's own body) is rejected -- a deliberate scope cut
-    # supporting exactly one level of function nesting, not the
-    # arbitrary depth compiler.c's own general enclosing_locals-walk
-    # supports.
+    # function body increments it; a `def` encountered at any depth
+    # becomes a nested closure. Used to be capped at depth 1 (arity/self-
+    # register budget concerns from before compile_function_body/
+    # parse_parameter_names/emit_closure were split out) -- that cap
+    # turned out stale by the time it was actually tested against real
+    # nested-closure fixtures and was removed; arbitrary depth works
+    # exactly like compiler.c's own general enclosing_locals-walk.
     @function_nesting_depth = 0
     # Array of [name, class_index] entries, mirroring @functions --
     # `ClassName.new(...)` resolves against this via find_class.
@@ -756,10 +756,9 @@ class Parser
     result
   end
 
-  # Top-level named functions (purely positional parameters, no
-  # defaults) and exactly one level of nested closures -- see this
-  # file's header comment and @function_nesting_depth's own comment for
-  # the full scope. A top-level function is found later by name via
+  # Top-level named functions and nested closures at any depth -- see
+  # @function_nesting_depth's own comment for the full scope. A
+  # top-level function is found later by name via
   # @functions/find_function and called with CALL; a nested `def`
   # instead becomes a local variable (named after the function) holding
   # a Closure value, called with CALL_CLOSURE like any other
@@ -779,10 +778,6 @@ class Parser
   # hitting the limit.
   def compile_definition()
     self.advance_token()
-    if @function_nesting_depth >= 2
-      self.fail("only one level of function nesting is supported")
-      return 0
-    end
     at_top_level = @function_nesting_depth == 0
     # A plain `def` (as opposed to a class body's own `def`, routed to
     # compile_method instead) never legitimately names an operator --

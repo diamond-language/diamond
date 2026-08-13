@@ -4321,13 +4321,60 @@ future work.
   check" right after the existing compile-only one, so this doesn't
   silently regress.
 
+- Lifted the self-hosted parser's nested-closure depth restriction
+  (`@function_nesting_depth >= 2` in `compile_definition`, rejecting
+  `deep_closure.di`). Turned out stale, not load-bearing: `compile_
+  function_body` already fully saves and restores every relevant piece of
+  compiler state (`@locals`, `@next_register`, `@code_count`, `@type_
+  facts`, ...) around each nested function body, and ordinary recursion —
+  Diamond's own call frames — handles arbitrary depth correctly with no
+  shared-state risk, register budget or otherwise. The restriction
+  predates that state-save/restore existing at all (the era the header
+  comment's "first, single-method version... exhausted [the budget]
+  outright" describes) and was simply never revisited once the split
+  happened. Verified 2 and 3 levels of nested closures both compile and
+  run correctly, byte-for-byte matching native, including inside a class
+  instance method. New `tests/parser_cases/deep_nested_closures.di` locks
+  it in.
+
+  Investigating *why* it seemed unsafe surfaced a real, separate, native
+  `compiler.c` bug, deliberately left unfixed here rather than rushed: an
+  ordinary closure nested inside a class's *instance* method (not a
+  `self.`-prefixed singleton method) gets `function->owner_class` and a
+  self-register reservation it shouldn't — `compiler->current_class` is a
+  compiler-wide "lexically inside a class body" flag, true for a nested
+  closure at any depth, not just a direct member, and this code path
+  doesn't yet distinguish the two. Confirmed via `--dump-bytecode`: a
+  `def add(x)` nested inside an instance method read its own `x` from
+  register 1 (assuming a self slot at register 0), while `CALL_CLOSURE`
+  (the actual calling convention for an ordinary closure — no receiver)
+  always places argument 0 in register 0, off by exactly one both in
+  where the value landed and in the resulting arity check. Attempting the
+  obvious fix (gate both the self-reservation and the `owner_class`
+  assignment on genuine top-level-member status) broke a real, different,
+  already-tested feature: `redefine_method`'s "patch factory" idiom
+  (`def self.make_patch(); def replacement(); @ivar...; end; replacement;
+  end`, see `legacy_0093.di`/`legacy_0094.di`/`legacy_0095.di`)
+  *deliberately* relies on a closure nested inside a *singleton* method
+  getting a self slot and `@ivar` access — confirmed by reverting the fix
+  and watching `Shape.redefine_method("area", ...)` break with "callable
+  must be a method of 'Shape'" on code that's supposed to succeed. The
+  real fix needs a narrower signal than `at_top_level` — something like
+  "was the *immediately enclosing* def itself a class singleton method,"
+  not "is this def nested at all" — which is real, careful design work,
+  not a mechanical change; reverted rather than shipped partially
+  verified.
+
 ## Next priorities
 
-- The nested-closure depth restriction (`deep_closure.di`,
-  `@function_nesting_depth >= 2`) — a genuine, understood, self-hosted-
-  parser-only register-budget limitation, not a language or VM one. Real
-  candidate for a dedicated slice, deliberately not attempted in this run
-  (see its own entry above for why).
+- The native `compiler.c` bug found above: an ordinary closure nested
+  inside a class instance method incorrectly gets a self-register
+  reservation and `owner_class` stamp. Needs a properly-scoped condition
+  distinguishing "nested inside a singleton method" (where `redefine_
+  method`'s patch-factory idiom deliberately relies on today's behavior)
+  from "nested inside an instance method or anywhere else" (where it's a
+  genuine bug) — not the blanket `at_top_level` gate this run tried and
+  reverted.
 
 ## Later experiments
 
@@ -4337,11 +4384,11 @@ future work.
   many dozens of slices), and the real Phase 4 bootstrap demonstration
   just above: the self-compiled parser successfully compiling and running
   a third, independent program. What remains multi-session future work:
-  the nested-closure depth restriction (`Next priorities`), any narrower
-  compiler.c feature-parity gaps a future differential sweep might still
-  turn up, and `Instance` results crossing a `ProgramBuilder#run`
-  boundary, the one documented gap this run's own bootstrap test hit
-  directly).
+  the native `compiler.c` closure-inside-a-method bug (`Next priorities`),
+  any narrower compiler.c feature-parity gaps a future differential sweep
+  might still turn up, and `Instance` results crossing a
+  `ProgramBuilder#run` boundary, the one documented gap this run's own
+  bootstrap test hit directly).
 - Native-code generation or a tracing/method JIT — nothing in the
   `jit-experimentation` work above generates native code; it's all
   interpreter-loop leaning (register zero-init, opcode dispatch,
