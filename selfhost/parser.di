@@ -419,9 +419,29 @@ class Parser
   # parse_name and compile_class already hit this session, worth a
   # shared helper here instead of duplicating the loop twice.
   def bind_parameters(function_index, parameter_names, parameter_types, parameter_defaults, index_offset)
+    # Parameter registers must land in a single contiguous block,
+    # reserved *before* any default expression is compiled -- mirroring
+    # compiler.c's own parameter_base/allocate_register pre-pass exactly.
+    # Interleaving define_local (one register) with compile_parameter_
+    # default's own scratch registers (one for ARGUMENT_PROVIDED's result,
+    # more for the fallback expression) used to push each later
+    # parameter's register past where the VM's fixed calling convention
+    # (registers[index] = arguments[index], see run_chunk) actually placed
+    # its argument -- a real bug, not just a register-numbering quirk: any
+    # function with two or more defaulted parameters silently read every
+    # parameter after the first from the wrong register. Found via
+    # legacy_0132.di once ProgramBuilder#run could finally return its
+    # Array result to expose the wrong value at all.
+    parameter_base = @next_register
     index = 0
     while index < parameter_names.length()
-      register = self.define_local(parameter_names[index])
+      self.allocate_register()
+      index = index + 1
+    end
+    index = 0
+    while index < parameter_names.length()
+      register = parameter_base + index
+      @locals.push([parameter_names[index], register, false])
       # The default-value fallback must run *before* the type check: an
       # omitted argument's register holds whatever the VM's ordinary
       # zero-init leaves it as (Nil), not the type the annotation

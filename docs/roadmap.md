@@ -4141,6 +4141,30 @@ future work.
     a wrong-typed push through instead of raising `TypeError`.
   Each becomes its own slice next.
 
+- Fixed the first: `legacy_0132`'s wrong-value bug. Root cause was in
+  `selfhost/parser.di`'s `bind_parameters`, not the default-fallback logic
+  it looked like at first — `define_local` (one register per parameter)
+  was interleaved with `compile_parameter_default`'s own scratch-register
+  allocations (one for `ARGUMENT_PROVIDED`'s result, more for the
+  fallback expression), so a *second* defaulted parameter's register
+  landed wherever `@next_register` happened to be after the first
+  parameter's default finished compiling, not at the fixed slot the VM's
+  calling convention actually uses (`registers[index] = arguments[index]`
+  at function entry, see `run_chunk`). A single defaulted parameter never
+  showed the bug — nothing came after it to get bumped — which is why
+  `legacy_0132` (two defaults) failed while dozens of one-default fixtures
+  already in the corpus passed. Fixed by mirroring `compiler.c`'s own
+  two-phase pattern exactly: reserve a contiguous register block for
+  every parameter first (`parameter_base` + one `allocate_register()` per
+  parameter, no binding or default-compiling yet), *then* walk the
+  parameters again binding each name to its pre-reserved register and
+  compiling its default/type-check. New `tests/parser_cases/
+  multiple_defaulted_parameters.di` covers plain functions and a
+  three-defaulted-parameter constructor (exercising the method
+  `index_offset=1` path, where register 0 is already reserved for `self`
+  before this function even runs) — the exact shape of function this bug
+  needed and the existing corpus never had.
+
 ## Next priorities
 
 - Self-hosting, Phase 3 sub-phase 5: exceptions, modules, and `require`.
