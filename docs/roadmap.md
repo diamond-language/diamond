@@ -3945,6 +3945,31 @@ future work.
   the correct line, and an unresolvable require) against a real on-disk
   temp directory.
 
+- `fuzz/compile_fuzzer.c`, a libFuzzer harness for `diamond_compile` —
+  lexer, parser, and bytecode emitter together, the exact surface a `.di`
+  file's raw bytes are exposed to. Clang-only (`-fsanitize=fuzzer` is a
+  Clang/LLVM feature GCC doesn't implement), so it gets its own compiler
+  variable (`CC_FUZZ`) and its own from-scratch object build in the
+  Makefile rather than reusing any GCC-built `.o` — libFuzzer's coverage
+  instrumentation has to cover the actual compiler code it's fuzzing, not
+  just the harness entry point. Deliberately compile-only, never
+  `diamond_vm_run`: Diamond's real `File`/`TCPSocket`/`Regexp` bridges
+  mean actually executing an arbitrary mutated program isn't safe without
+  sandboxing/resource limits this harness doesn't attempt. Full reasoning,
+  how to run a real (unbounded) campaign vs. the bounded regression check,
+  and what's still out of scope in `docs/fuzzing.md`.
+
+  `make test-fuzz` (`tests/fuzz_smoke.sh`) is a 20-second bounded run
+  seeded from `tests/parser_cases/*.di`, wired into `test-all` as a
+  regression check, not a real campaign. Verified the crash-detection path
+  itself actually works (not just the happy path) with a throwaway
+  always-`abort()` harness before trusting it: confirmed the script
+  reports nonzero and surfaces the crashing input the same way it would
+  for a real one. An initial ~23,000-run manual campaign against the seed
+  corpus (well beyond the smoke test's own 20-second/~6,000-run bound)
+  found nothing — expected, given the extensive existing differential
+  test suite, not evidence fuzzing has nothing left to find.
+
 ## Next priorities
 
 - Self-hosting, Phase 3 sub-phase 5: exceptions, modules, and `require`.

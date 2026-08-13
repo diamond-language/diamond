@@ -100,7 +100,8 @@ Build variants:
 make debug
 make release
 make sanitize # requires GCC sanitizer runtime libraries
-make test-all # debug/release/sanitizer builds plus every suite (fibers, facet, lsp, lexer/parser differentials) sequentially
+make fuzz     # requires clang (see docs/fuzzing.md) -- not part of the default build
+make test-all # debug/release/sanitizer builds plus every suite (fibers, facet, lsp, fuzz smoke, lexer/parser differentials) sequentially
 make clean
 ```
 
@@ -479,6 +480,7 @@ runtime error: expected String | Nil, got Int
 - [I/O](docs/io.md)
 - [Packages and `facet`](docs/packages.md)
 - [Language server](docs/lsp.md)
+- [Fuzzing](docs/fuzzing.md)
 - [Completed work and roadmap](docs/roadmap.md)
 
 The implementation is intentionally compact: the lexer, direct bytecode
