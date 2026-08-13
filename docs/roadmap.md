@@ -4208,6 +4208,39 @@ future work.
   so it stays fixed regardless of what future changes touch either code
   path.
 
+- Ran down the remaining audit findings. Two turned out not to be gaps at
+  all, just an artifact of the ad-hoc full-corpus diff script this whole
+  run has been driven by: it compares `$diamond "$case_file"`'s direct
+  compile-error format (`path:line:col: error: message` + source snippet
+  + caret) against `parse_and_run_with_core`'s own `raise RuntimeError.
+  new(parser.error_message())`, which an uncaught-exception harness like
+  `parser_run_with_core.di` presents completely differently (`runtime
+  error: uncaught exception: RuntimeError` + a stack trace) even when the
+  underlying `parser.error_message()` text is byte-identical. Checked all
+  7 via `selfhost/parser_check.di`, which prints `error_message()`
+  directly: the 6 `keyword_args_error_*` cases already matched natively,
+  word for word, already covered by the existing `tests/parser_error_
+  cases` corpus (122 cases) that compares error text correctly.
+  `operator_def_outside_class_rejected.di` also already matched but had
+  no dedicated coverage there yet — added `tests/parser_error_cases/
+  operator_def_outside_class.di`/`.err` to close that.
+
+  The one genuine remaining item, `deep_closure.di`'s "only one level of
+  function nesting is supported" restriction, is confirmed real and
+  deliberate, not a bug: `compile_definition`'s own comment traces it to
+  the self-hosted parser's *own* compile-time register budget (this
+  method itself needed splitting into `parse_parameter_names`/
+  `compile_function_body`/`emit_closure` earlier in Phase 3 specifically
+  because a single-method version exhausted 256 registers), not any limit
+  in the bytecode format or VM — native's own nested closures have no
+  depth limit at all (see this file's own "Nested functions are
+  first-class closures" line). Left as-is rather than attempting a risky
+  register-budget restructuring under this run's own time pressure — a
+  real candidate for a dedicated future slice, but the two genuine
+  register-indexing bugs already found and fixed this run are reason
+  enough to want more room to test a similar change properly rather than
+  rush it.
+
 ## Next priorities
 
 - Self-hosting, Phase 3 sub-phase 5: exceptions, modules, and `require`.
