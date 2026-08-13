@@ -16,7 +16,7 @@ SOURCES := $(wildcard src/*.c)
 OBJECTS := $(SOURCES:src/%.c=$(BUILD_DIR)/%.o)
 DEPS := $(OBJECTS:.o=.d)
 
-.PHONY: all debug sanitize release test test-release test-sanitize test-api test-fibers test-fiber-run test-fiber-context test-vm-context test-yield test-continuation test-multi-yield test-scheduler test-scheduler-run-all test-fiber-gc-roots test-fiber-guards test-nested-yield-guard test-stack-overflow test-all test-facet facet test-lexer-diff test-parser-diff clean
+.PHONY: all debug sanitize release test test-release test-sanitize test-api test-fibers test-fiber-run test-fiber-context test-vm-context test-yield test-continuation test-multi-yield test-scheduler test-scheduler-run-all test-fiber-gc-roots test-fiber-guards test-nested-yield-guard test-stack-overflow test-all test-facet facet test-lexer-diff test-parser-diff lsp test-lsp clean
 
 all: debug
 
@@ -100,6 +100,17 @@ facet: $(BUILD_DIR)/facet
 test-facet: $(BUILD_DIR)/facet
 	bash tests/facet_test.sh
 
+LSP_SOURCES := $(wildcard lsp/*.c)
+
+$(BUILD_DIR)/diamond-lsp: $(LSP_SOURCES) $(API_SOURCES)
+	@mkdir -p $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) -Ilsp $(CFLAGS_COMMON) $(CFLAGS_DEBUG) $(API_SOURCES) $(LSP_SOURCES) $(LDLIBS) -o $@
+
+lsp: $(BUILD_DIR)/diamond-lsp
+
+test-lsp: $(BUILD_DIR)/diamond-lsp
+	bash tests/lsp_test.sh
+
 $(BUILD_DIR)/lexer_dump: tests/lexer_dump.c src/lexer.c src/lexer.h
 	@mkdir -p $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS_COMMON) $(CFLAGS_DEBUG) src/lexer.c $< -o $@
@@ -128,6 +139,7 @@ test-all:
 	$(MAKE) test-nested-yield-guard
 	$(MAKE) test-stack-overflow
 	$(MAKE) test-facet
+	$(MAKE) test-lsp
 	$(MAKE) test-lexer-diff
 	$(MAKE) test-parser-diff
 

@@ -3868,6 +3868,21 @@ future work.
   multi-type handlers. A two-type predicate brings the parser harness to 97
   cases.
 
+- `lsp/`, a v1 (diagnostics-only) Language Server Protocol implementation
+  — its own standalone binary (`build/diamond-lsp`, `lsp/*.c`, deliberately
+  not part of the `diamond` runtime or its release, the same relationship
+  `facet` has to it), speaking real `Content-Length`-framed JSON-RPC over
+  stdio. `initialize`/`textDocument/didOpen`/`didChange`/`didClose`/
+  `shutdown`/`exit`, each open document recompiled through
+  `diamond_compile` and published as a `textDocument/publishDiagnostics`
+  notification. Written in C, not Diamond — Diamond has no JSON support
+  or byte-precise stdio reads yet, both of which the wire protocol needs
+  — and not derived from any other language's LSP (Ruby's came up once as
+  a conversational reference point for a possible future syntax-highlighting
+  grammar, nothing more). Full design and scope, including what's
+  deliberately not built yet (hover, go-to-definition, completion,
+  cross-file `require` resolution, incremental sync), in `docs/lsp.md`.
+
 ## Next priorities
 
 - Self-hosting, Phase 3 sub-phase 5: exceptions, modules, and `require`.
