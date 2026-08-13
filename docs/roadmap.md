@@ -4390,6 +4390,21 @@ future work.
   both this machine's own filesystem and a fresh-clone `fedora:latest`
   podman reproduction of the CI environment.
 
+  Fixing `main.c`'s `read_file` let CI progress from ~1 minute to over 8,
+  reaching all the way to `test-parser-diff` before failing on a second,
+  *real* mismatch: `tests/parser_error_cases/require_unreadable_manifest.
+  di` (a package whose manifest path, `package.di`, is deliberately a
+  directory rather than a file) got a different error on the real runner
+  than on this machine. Same bug, different copy: `loader.c`'s own
+  `read_source` — used for both package manifests and `require`d file
+  bodies — has the identical `fopen`-succeeds/`fread`-assumed-to-fail
+  pattern, entirely independent of `main.c`'s copy. Fixed identically
+  (`fstat`+`S_ISDIR` right after `fopen`, `errno=EISDIR` set explicitly
+  before returning). Two independent instances of the same underlying
+  assumption is worth remembering as its own lesson: "let `read(2)` fail
+  distinctively" is not a safe idiom for detecting a directory anywhere
+  in this codebase, on any filesystem.
+
 ## Next priorities
 
 - The native `compiler.c` bug found above: an ordinary closure nested

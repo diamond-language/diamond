@@ -8,6 +8,7 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <string.h>
+#include <sys/stat.h>
 
 typedef struct Loader {
     DiamondSourceBundle *bundle;
@@ -40,6 +41,17 @@ static bool append(Loader *loader,const char *text,size_t length) {
 
 static char *read_source(const char *path) {
     FILE *file=fopen(path,"rb");if(file==nullptr)return nullptr;
+    /* fopen(3) succeeds on a directory on Linux; failing cleanly with
+     * EISDIR is then left to read(2), which is a filesystem-driver
+     * behavior, not a POSIX guarantee (see main.c's read_file, same
+     * fix, found via a directory-shaped manifest test failing silently
+     * in CI on whatever backs GitLab's runner's build directory --
+     * evidently not the same driver as this development machine's).
+     * Checking the file type explicitly makes this deterministic. */
+    struct stat file_status;
+    if(fstat(fileno(file),&file_status)==0&&S_ISDIR(file_status.st_mode)) {
+        errno=EISDIR;fclose(file);return nullptr;
+    }
     if(fseek(file,0,SEEK_END)!=0){fclose(file);return nullptr;}
     const long size=ftell(file);
     if(size<0||fseek(file,0,SEEK_SET)!=0){fclose(file);return nullptr;}
