@@ -4281,9 +4281,42 @@ future work.
 
 ## Next priorities
 
-- Self-hosting, Phase 3 sub-phase 5: exceptions, modules, and `require`.
-  Phase 4 bootstrap validation remains after the final parser surface is
-  ported.
+- This note used to read "Self-hosting, Phase 3 sub-phase 5: exceptions,
+  modules, and `require`" — stale by the time this run started, not
+  after it. `selfhost/parser.di` already had roughly 85 slices of
+  exception-handling coverage (`raise`/`rescue`/`ensure`/`retry`, typed
+  filters, `rescue else`, dozens of matching error-diagnostic cases) and
+  substantial module support (`compile_module`/`compile_module_function`/
+  `compile_module_include`, structural `interface`s) well before this
+  run touched anything. `require` was never a parser-level gap at all —
+  it's resolved by the native `ProgramBuilder#expand_source` bridge
+  before the self-hosted `Parser` ever sees a token, exactly mirroring
+  how `require` is a loader-level, not parser-level, concern for the
+  native compiler too. Verified all of this directly this run via a full
+  824-file differential sweep, not by trusting the old note — see the
+  slices above for what that sweep actually found instead (a
+  `ProgramBuilder#run` result-type gap dwarfing everything else, and,
+  once that stopped hiding them, three genuine self-hosted-compiler
+  correctness bugs).
+
+- The real remaining Phase 4 item: `selfhost/self_parse_check.di` only
+  checks that the self-hosted `Parser` successfully *compiles* its own
+  two source files (`parser.compile()` returning `true`) — it has never
+  gone on to actually `builder.run()` that self-compiled result and
+  confirm the resulting program behaves correctly, the real bootstrap
+  test (a compiler compiling itself, then using that self-compiled copy
+  to do real work). That step was effectively blocked by the same
+  `ProgramBuilder#run` scalar-only restriction this run just lifted —
+  worth attempting now that it's gone, though `self_parse_check.di`'s own
+  compiled program is Parser/Lexer/ProgramBuilder-object-manipulating
+  code through and through, so it may run straight into the still-open
+  `Instance`-result gap documented above rather than a clean success.
+
+- The nested-closure depth restriction (`deep_closure.di`,
+  `@function_nesting_depth >= 2`) — a genuine, understood, self-hosted-
+  parser-only register-budget limitation, not a language or VM one. Real
+  candidate for a dedicated slice, deliberately not attempted in this run
+  (see its own entry above for why).
 
 ## Later experiments
 
