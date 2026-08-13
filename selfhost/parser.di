@@ -89,6 +89,7 @@ module Opcode
   IS_TYPE = 64
   ARGUMENT_PROVIDED = 65
   TO_STRING = 66
+  YIELD = 67
   REDEFINE_METHOD = 68
   FIBER_NEW = 69
   PRINT = 70
@@ -138,6 +139,7 @@ module Type
   ARRAY = 5
   HASH = 6
   CALLABLE = 7
+  SIZED = 8
   SYMBOL = 9
   CLASS_BASE = 10
 end
@@ -720,6 +722,16 @@ class Parser
       return 0
     end
     at_top_level = @function_nesting_depth == 0
+    # A plain `def` (as opposed to a class body's own `def`, routed to
+    # compile_method instead) never legitimately names an operator --
+    # only recognized here to produce the same rejection compile_method
+    # gives inside a class, matching compiler.c's own unified
+    # compile_definition exactly rather than falling through to the
+    # generic "expected function name" message.
+    if self.operator_method_token?(@current.kind()) && @current_class_index == nil
+      self.fail("operator methods can only be defined inside a class")
+      return 0
+    end
     if @current.kind() != :identifier
       self.fail("expected function name after 'def'")
       return 0
@@ -1087,6 +1099,8 @@ class Parser
     return Type::FLOAT if name == "Float"
     return Type::STRING if name == "String"
     return Type::BOOL if name == "Bool"
+    return Type::SIZED if name == "Sized"
+    return Type::SYMBOL if name == "Symbol"
     return Type::NIL if name == "Nil"
     return Type::ARRAY if name == "Array"
     return Type::HASH if name == "Hash"
@@ -1182,7 +1196,7 @@ class Parser
       return
     end
     self.advance_token()
-    if @current.kind() != :identifier
+    if @current.kind() != :identifier && !self.operator_method_token?(@current.kind())
       self.fail("expected interface method name")
       return
     end
@@ -1518,14 +1532,14 @@ class Parser
       end
       if return_type != nil
         set_index = self.emit_type_check(body_result, return_type)
-        @builder.set_return_type(function_index, set_index)
+        @builder.set_return_type(function_index, set_index) unless @failed
       end
       self.emit_instruction1(Opcode::RETURN, body_result)
     elsif self.consume_block_start()
       body_result = self.compile_sequence()
       if return_type != nil
         set_index = self.emit_type_check(body_result, return_type)
-        @builder.set_return_type(function_index, set_index)
+        @builder.set_return_type(function_index, set_index) unless @failed
       end
       self.emit_instruction1(Opcode::RETURN, body_result)
       if @current.kind() != :end
@@ -1677,6 +1691,14 @@ class Parser
     while index < @modules.length()
       module_index = @modules[index][1] if @modules[index][0] == module_name
       index = index + 1
+    end
+    if module_index == nil && @current_module_name != nil
+      qualified_name = @current_module_name + "::" + module_name
+      index = 0
+      while index < @modules.length()
+        module_index = @modules[index][1] if @modules[index][0] == qualified_name
+        index = index + 1
+      end
     end
     if module_index == nil
       self.fail("undefined module")
@@ -1973,6 +1995,26 @@ class Parser
   # compile_definition's self_offset handling) -- the nested closure gets
   # its own independent `self`, not a captured one, so it can be handed
   # to redefine_method and later invoked normally against any receiver.
+  # Operator overloading: a method literally named "+"/"=="/etc. is
+  # already legal at the VM level (lookup_method dispatches purely by
+  # name-string + arity, no charset restriction) -- the only barrier is
+  # the parser accepting the token as a method name. Unary minus is
+  # deliberately NOT included: it's named "negate", an ordinary
+  # identifier, mirroring compiler.c's own operator_name list exactly
+  # (compile_definition's identical check).
+  def operator_method_token?(kind)
+    return true if kind == :plus
+    return true if kind == :minus
+    return true if kind == :star
+    return true if kind == :slash
+    return true if kind == :equal_equal
+    return true if kind == :less
+    return true if kind == :less_equal
+    return true if kind == :greater
+    return true if kind == :greater_equal
+    false
+  end
+
   def compile_method()
     self.advance_token()
     module_singleton = false
@@ -1985,7 +2027,12 @@ class Parser
       end
       self.advance_token()
     end
-    if @current.kind() != :identifier
+    operator_name = self.operator_method_token?(@current.kind())
+    if operator_name && (module_singleton || @current_class_index == nil)
+      self.fail("operator methods can only be defined inside a class")
+      return
+    end
+    if @current.kind() != :identifier && !operator_name
       self.fail("expected function name after 'def'")
       return
     end
@@ -1996,6 +2043,9 @@ class Parser
       self.advance_token()
     end
     self.fail("method is already defined") if self.duplicate_method_name?(name, module_singleton)
+    return if @failed
+    outer_type_variables = @current_type_variables
+    @current_type_variables = self.parse_type_variables()
     return if @failed
     if @current.kind() != :left_paren
       self.fail("expected '(' after function name")
@@ -2027,6 +2077,7 @@ class Parser
       1
     end
     function_index = @builder.declare_function(name, arity + self_offset, required_arity + self_offset)
+    @builder.set_type_variables(function_index, @current_type_variables)
     outer_method_name = @current_method_name
     @current_method_name = name
     @current_method_uses_state = false
@@ -2034,6 +2085,7 @@ class Parser
     @current_method_name = outer_method_name
     self.register_compiled_method(name, function_index, arity, required_arity, module_singleton)
     @current_method_uses_state = false
+    @current_type_variables = outer_type_variables
   end
 
   # Whether `name` is already declared in whichever of the four method
@@ -2235,8 +2287,14 @@ class Parser
       end
       field_name = self.token_text(@current)
       self.advance_token()
-      self.compile_attribute_method(field_name, false) if reader
-      self.compile_attribute_method(field_name, true) if writer && !@failed
+      type_annotation = nil
+      if @current.kind() == :colon
+        self.advance_token()
+        type_annotation = self.parse_type_annotation()
+      end
+      return if @failed
+      self.compile_attribute_method(field_name, false, type_annotation) if reader
+      self.compile_attribute_method(field_name, true, type_annotation) if writer && !@failed
       return if @failed
       self.skip_newlines() if parenthesized
       break if @current.kind() != :comma
@@ -2253,7 +2311,7 @@ class Parser
     end
   end
 
-  def compile_attribute_method(field_name, writer)
+  def compile_attribute_method(field_name, writer, type_annotation)
     method_name = if writer
       field_name + "="
     else
@@ -2306,6 +2364,11 @@ class Parser
     end
     if writer
       value = self.allocate_register()
+      if type_annotation != nil
+        set_index = self.declare_annotation(type_annotation)
+        @builder.set_parameter_type(function_index, 0, set_index) unless @failed
+        self.emit_instruction2(Opcode::CHECK_TYPE, value, set_index) unless @failed
+      end
       self.emit_instruction3(if module_only
         47
       else
@@ -2319,6 +2382,11 @@ class Parser
       else
         Opcode::GET_IVAR
       end, destination, 0, field_index)
+      if type_annotation != nil
+        set_index = self.declare_annotation(type_annotation)
+        @builder.set_return_type(function_index, set_index) unless @failed
+        self.emit_instruction2(Opcode::CHECK_TYPE, destination, set_index) unless @failed
+      end
       self.emit_instruction1(Opcode::RETURN, destination)
     end
     @builder.set_register_count(function_index, @next_register)
@@ -3371,8 +3439,27 @@ class Parser
     return self.parse_loop() if kind == :loop
     return self.compile_begin() if kind == :begin
     return self.parse_super() if kind == :super
+    return self.compile_yield() if kind == :yield
     self.fail("expected expression")
     0
+  end
+
+  def compile_yield()
+    source = if @current.kind() == :left_paren
+      self.advance_token()
+      value = self.parse_expression()
+      if @current.kind() != :right_paren
+        self.fail("expected ')' after yield value")
+        return 0
+      end
+      self.advance_token()
+      value
+    else
+      self.allocate_register()
+    end
+    destination = self.allocate_register()
+    self.emit_instruction2(Opcode::YIELD, destination, source)
+    destination
   end
 
   def parse_super()
@@ -3712,6 +3799,37 @@ class Parser
     result
   end
 
+  def find_class_by_index(class_index)
+    index = 0
+    result = nil
+    while index < @classes.length()
+      result = @classes[index] if @classes[index][1] == class_index
+      index = index + 1
+    end
+    result
+  end
+
+  # A directly-declared class singleton method (`def self.foo`) is
+  # resolved at compile time against the class's own descriptor list
+  # only -- unlike instance methods, which the VM looks up dynamically
+  # against the receiver's runtime class (walking superclass links
+  # itself at INVOKE time). `Child.answer()` for an inherited
+  # `Parent.answer` singleton needs this parser-side walk instead,
+  # mirroring compiler.c's own singleton lookup loop exactly.
+  def find_class_singleton_descriptor(class_entry, name)
+    owner = class_entry
+    while owner != nil
+      descriptor = self.find_descriptor(owner[3], name)
+      return descriptor if descriptor != nil
+      owner = if owner[2] == nil
+        nil
+      else
+        self.find_class_by_index(owner[2])
+      end
+    end
+    nil
+  end
+
   # module_entry[7] holds module_function-exported descriptors
   # ([name, function_index, arity, uses_state]); module_entry[9] holds
   # def self.foo-declared ones ([name, function_index, arity,
@@ -3770,7 +3888,7 @@ class Parser
       name = name + "="
       self.advance_token()
     end
-    descriptor = self.find_descriptor(class_entry[3], name)
+    descriptor = self.find_class_singleton_descriptor(class_entry, name)
     if descriptor == nil
       self.fail("undefined class singleton method")
       return 0
@@ -3808,9 +3926,23 @@ class Parser
       self.advance_token()
       return self.compile_redefine_method_call(class_entry[1])
     end
-    if peeked.kind() == :identifier && self.find_descriptor(class_entry[3], self.token_text(peeked)) != nil
-      self.advance_token()
-      return self.compile_class_singleton_call(class_entry)
+    if peeked.kind() == :identifier
+      # A writer singleton (`def self.name=(value)`) is registered under
+      # "name=" -- peek one token further to see whether this call site
+      # is immediately followed by '=' the same way, mirroring
+      # compiler.c's own singleton_call_name_equals exactly.
+      candidate_name = self.token_text(peeked)
+      after = lookahead.next_token()
+      writer_name = candidate_name + "="
+      found = if after.kind() == :equal
+        self.find_class_singleton_descriptor(class_entry, writer_name)
+      else
+        self.find_class_singleton_descriptor(class_entry, candidate_name)
+      end
+      if found != nil
+        self.advance_token()
+        return self.compile_class_singleton_call(class_entry)
+      end
     end
     self.compile_new_call(class_entry[1])
   end

@@ -3475,6 +3475,105 @@ future work.
   (bare reference, immediately handed to `redefine_method`, never
   called directly).
 
+- Self-hosting, Phase 3 follow-up (two-hundred-eighty-ninth slice): a
+  full differential sweep of all 820 `tests/cases/*.di` fixtures against
+  the self-hosted parser (`parser_run_with_core.di`, prepending
+  `lib/core.di` the way native always does), not just the curated
+  `parser_cases/` corpus -- a systematic search for remaining gaps
+  rather than the reactive one-at-a-time discovery every prior slice
+  used. 820 total: 469 exact matches, 307 hitting the differential
+  harness's own known `ProgramBuilder#run` scalar-only-result limitation
+  (not real gaps -- confirmed separately for a sample via
+  `parser.error_message()`, which reported "PARSED OK"), and 85 genuine
+  mismatches at the start, worked down to 44 by the fixes below. Six new
+  permanent `parser_cases/` fixtures (`operator_methods.di`,
+  `generic_methods.di`, `yield_expression.di`,
+  `attr_type_annotations.di`, `class_singleton_inheritance.di`,
+  `module_include_qualified.di`) lock in everything fixed this slice,
+  bringing the differential corpus to 223 cases.
+
+  Two small pre-existing robustness bugs, unrelated to any single
+  feature: `resolve_type_name` had no case for `Symbol` or `Sized`
+  (`Type::SIZED` wasn't even defined -- only `SYMBOL` was, from an
+  earlier slice), and `compile_function_body`'s two `return_type != nil`
+  branches called `@builder.set_return_type` unconditionally instead of
+  guarding it with `unless @failed` the way `compile_method_body`
+  already does -- so any unresolvable return-type annotation crashed
+  the native bridge (`ProgramBuilder#set_return_type arguments must be
+  (Int, Int)`) instead of failing cleanly with "unknown type
+  annotation". Both were one- or two-line fixes once traced.
+
+  The largest single gap: operator method definitions (`def +(other)`,
+  `def ==(other)`, `def <(other)`, etc.) inside a class, and the
+  matching signature form inside an `interface` body -- entirely
+  unported, accounting for the majority of the 85 initial mismatches.
+  `compiler.c`'s `compile_definition` recognizes nine operator tokens as
+  legal method names wherever an identifier is otherwise required
+  (deliberately excluding unary minus, which is named `negate`, an
+  ordinary identifier); ported as a shared `operator_method_token?`
+  helper used by `compile_method`, `compile_interface_method`, and
+  `compile_definition` itself (the last purely to produce the same
+  "operator methods can only be defined inside a class" rejection
+  native gives for a top-level `def +(a, b)`, rather than falling
+  through to the generic "expected function name" message). Fixing this
+  surfaced that `compile_method` never supported generic type variables
+  at all (`def wrap[T](value: T) -> Array[T]`) -- ported alongside it
+  since both gaps produced the same "expected '(' after function name"
+  symptom in the sweep, mirroring `compile_definition`'s own
+  `parse_type_variables`/`set_type_variables` handling exactly.
+
+  `yield` was entirely unported (`Opcode::YIELD = 67`, one `parse_prefix`
+  case): a bare `yield`, `yield(value)`, or a Fiber-suspending
+  expression whose result is used, straight to the `YIELD` opcode
+  exactly like `compiler.c`'s own `compile_yield`.
+
+  `attr_reader`/`attr_writer`/`attr_accessor` never accepted an optional
+  `: Type` annotation after the field name (`attr_accessor value: Int`)
+  -- native's `compile_attribute_named` emits a `CHECK_TYPE` on the
+  writer's incoming value (before `SET_IVAR`) or the reader's fetched
+  value (after `GET_IVAR`, before `RETURN`) when one is given, and sets
+  the underlying function's parameter/return type set for consistency
+  with type-checked ordinary methods. Ported as an extra
+  `type_annotation` parameter threaded from `compile_attribute` through
+  `compile_attribute_method`.
+
+  Two class-level lookups were missing a superclass walk / lexical
+  fallback already present elsewhere in the port: a directly-declared
+  class singleton method (`def self.foo`) is resolved at compile time
+  against the class's own descriptor list only, so `Child.answer()` for
+  a `Parent.answer` singleton failed with "undefined class singleton
+  method" -- fixed with a new `find_class_singleton_descriptor` helper
+  that walks `class_entry[2]` (superclass index) via a new
+  `find_class_by_index`, mirroring `compiler.c`'s own singleton lookup
+  loop. Separately, `compile_class_dot_call`'s one-token lookahead never
+  checked for a writer's trailing `=` before searching descriptors, so
+  `Box.value=(42)` against a `def self.value=(...)` singleton was
+  misread as `Box.new` and rejected with "expected 'new' after class
+  name" -- fixed by peeking a second token, mirroring `compiler.c`'s own
+  `singleton_call_name_equals`. And `include Greetings` inside a class
+  nested in `module Outer` failed with "undefined module" when
+  `Greetings` was itself declared inside `Outer` (stored as
+  `Outer::Greetings`) -- fixed with the same one-level
+  `@current_module_name`-prefixed fallback already used by
+  `parse_optional_superclass`/`find_class`, not native's full
+  multi-level scope walk (`find_module`), since nothing in this port's
+  existing corpus nests modules more than one level deep.
+
+  Remaining categorized gaps from the sweep, deliberately left for a
+  future slice rather than expanding this one further: explicit type
+  arguments at call sites (`Klass.method[Type](...)`, needs
+  `CALL_TYPED`/`INVOKE_TYPED` wiring at three call sites);
+  `alias_method` (needs a new native bridge to copy an already-declared
+  `DiamondMethod` under a new name, the same shape as this session's
+  `declare_class_singleton_method` addition); named `private`/`public`
+  visibility targets for classes (`private foo, bar`, retroactively
+  flipping already-declared methods -- modules already have
+  `set_module_method_visibility` for this; classes have no equivalent
+  bridge yet); and several keyword-argument compile-time diagnostics
+  (duplicate keyword, gap past a default, unknown name, positional after
+  keyword) that native rejects at compile time but the self-hosted
+  parser currently accepts and fails differently at runtime instead.
+
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
   VM's contiguous-register `ARRAY` instruction, enforces the 32-element limit,
