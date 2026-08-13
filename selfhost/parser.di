@@ -3891,8 +3891,8 @@ class Parser
 
   def parse_name_call(name, local)
     return self.compile_closure_call(local) if local != nil
-    return self.parse_print_call(true) if name == "puts"
-    return self.parse_print_call(false) if name == "print"
+    return self.parse_print_call(true) if name == "puts" && self.find_function(name) == nil
+    return self.parse_print_call(false) if name == "print" && self.find_function(name) == nil
     return self.parse_builtin_scalar_call(name) if self.is_builtin_scalar_target(name)
     return self.parse_math_unary_call(self.math_unary_id(name)) if self.is_math_unary_target(name)
     return self.parse_math_binary_call(4) if self.is_math_binary_target(name)

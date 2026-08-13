@@ -3671,14 +3671,28 @@ future work.
     `TCPSocket`/`TCPServer`, `ProgramBuilder`, `chr`/`to_f`/`to_i`/
     `to_sym`) is gated behind `find_local(...)<0 && find_function(...)<0`
     in `compiler.c` -- a user-defined top-level function can shadow any
-    of them. The self-hosted parser's equivalent dispatch chain
-    (`parse_name_call`'s `is_builtin_scalar_target`/`is_math_unary_target`/
-    `dot_construct_id`/etc.) has no such guard anywhere, so a
-    program defining its own `print`/`gets`/etc. gets the builtin
-    unconditionally instead. Confirmed with a minimal `def print(x) =
-    "shadowed"` repro; fixing it properly means threading the same
-    guard through every one of these dispatch sites, a wide, mechanical
-    change better suited to its own dedicated slice than a bolt-on here.
+    of them. Assumed at the time to need a wide, mechanical fix across
+    every dispatch site; see the next slice for what auditing each one
+    individually actually found. (Resolved.)
+
+- Self-hosting, Phase 3 follow-up (two-hundred-ninety-first slice):
+  auditing every builtin-name dispatch site the previous slice flagged
+  found the gap was narrower than assumed: `is_file_open_target`,
+  `dot_construct_id` (`Fiber`/`Regexp`/`TCPSocket`/`TCPServer`/
+  `ProgramBuilder`), `is_builtin_scalar_target` (`gets`/`chr`/`to_f`/
+  `to_i`/`to_sym`), and `is_math_unary_target`/`is_math_binary_target`
+  already checked `find_function(name) == nil` themselves -- only the
+  two literal `name == "puts"`/`name == "print"` checks at the top of
+  `parse_name_call` never consulted it at all, unconditionally treating
+  either name as the builtin regardless of a same-named top-level
+  `def`. (Local shadowing was already handled globally: `parse_name_call`
+  dispatches to `compile_closure_call` for any non-nil `local` before
+  reaching any of these checks.) Fixed with the same one-line guard the
+  other five checks already had. `tests/cases/legacy_0330.di`'s
+  `def print(x) = "shadowed"` now matches natively (confirmed via a
+  boolean-returning wrapper, sidestepping the differential harness's
+  own scalar-only `run` limitation the same way prior slices did), and
+  a new `builtin_name_shadowing.di` case joins the corpus.
 
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the
