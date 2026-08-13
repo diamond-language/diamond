@@ -17,19 +17,41 @@ source → lexer → Pratt compiler → register bytecode → VM → managed hea
 
 Implemented today:
 
-- integer, boolean, `nil`, string, array, hash, and instance values;
+- integer, boolean, `nil`, string, symbol, array, hash, and instance values;
 - locals, assignment, arithmetic, comparisons, and short-circuit logic;
 - expression-valued conditionals and loops with `break` and `next`;
-- functions, recursion, explicit returns, and isolated call frames;
-- classes, methods, constructors, fields, inheritance, `self`, and `super`;
-- reusable modules included into classes with deterministic method precedence;
+- functions, recursion, explicit returns, isolated call frames, and generics
+  with up to eight scoped type variables and inference;
+- classes, methods, constructors, fields, inheritance, `self`, `super`, and
+  operator-overload methods (`def +`, `def ==`, ...);
+- class and module singleton methods (`def self.name`), `redefine_method`, and
+  `alias_method`;
+- structural `interface`s and reusable `module`s included into classes with
+  deterministic method precedence;
+- exceptions: `raise`/`rescue`/`ensure`/`retry`, typed rescue filters, and
+  built-in exception classes;
+- fibers (cooperative coroutines) with `yield`/`resume`;
 - optional gradual parameter/return annotations and nilable types;
 - a Diamond-written core prelude with collection helpers;
+- native `File`, `TCPSocket`/`TCPServer`, and `Regexp` primitives;
 - stop-the-world mark/sweep collection with stress-GC testing;
 - source diagnostics and bytecode disassembly.
 
-The test suite currently contains 461 end-to-end assertions spanning the
-frontend, compiler, VM, object model, type guards, collections, and collector.
+Beyond the language itself:
+
+- [`facet`](docs/packages.md), a standalone package manager (`build/facet`) —
+  git-URL dependencies, no registry;
+- [`lsp/`](docs/lsp.md), a real Language Server (`build/diamond-lsp`,
+  diagnostics today);
+- [`editors/vscode/`](editors/vscode/README.md), VS Code syntax highlighting;
+- [`selfhost/`](docs/roadmap.md), an in-progress Diamond-in-Diamond port of
+  the parser, differentially tested against the native compiler on every
+  change.
+
+The test suite currently contains 866 end-to-end assertions spanning the
+frontend, compiler, VM, object model, type guards, collections, and
+collector, plus 820 lexer and 233+122 self-hosted-parser differential cases,
+21 `facet` package-manager tests, and 22 `diamond-lsp` protocol tests.
 
 ## Build and run
 
@@ -78,7 +100,7 @@ Build variants:
 make debug
 make release
 make sanitize # requires GCC sanitizer runtime libraries
-make test-all # clean, debug, release, and sanitizer suites sequentially
+make test-all # debug/release/sanitizer builds plus every suite (fibers, facet, lsp, lexer/parser differentials) sequentially
 make clean
 ```
 
@@ -443,11 +465,20 @@ runtime error: expected String | Nil, got Int
 - binding-free typed filters such as `rescue : TypeError | IndexError`
 - multiple ordered `rescue` clauses, with an optional final catch-all
   (later exact or subclass filters already covered by earlier clauses are rejected)
+- symbol literals such as `:ok`, distinct from string equality
+- operator methods (`def +(other)`, `def ==(other)`, `def <(other)`, ...) —
+  dispatch by name and arity like any other method, no separate mechanism
+- `yield`/`resume` on `Fiber.new(...)` for cooperative coroutines
 
 ## Architecture
 
 - [Design and runtime architecture](docs/design.md)
+- [Syntax overview](docs/syntax.md)
 - [Object model](docs/object-model.md)
+- [Fibers](docs/fibers.md)
+- [I/O](docs/io.md)
+- [Packages and `facet`](docs/packages.md)
+- [Language server](docs/lsp.md)
 - [Completed work and roadmap](docs/roadmap.md)
 
 The implementation is intentionally compact: the lexer, direct bytecode
