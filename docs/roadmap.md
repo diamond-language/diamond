@@ -4411,6 +4411,45 @@ future work.
   bugs neither this development machine nor local `podman` reproductions
   (including a deliberately CPU-throttled one) ever would have.
 
+- Added a REPL (`src/repl.c`, launched by running `diamond` with no
+  arguments when stdin is a terminal). The real design problem wasn't
+  syntax — it was making later evaluations see earlier ones' locals,
+  functions, and classes without replaying earlier `puts` output on every
+  later round, given that `diamond_compile`/`diamond_vm_run` have no
+  notion of a persistent scope across separate calls; each compile starts
+  a fresh program from register 0. True incremental compilation (adding
+  functions to an *existing* `DiamondProgram` and resuming a persistent
+  `DiamondVm`'s register state) would need real VM surgery beyond this
+  slice's scope, so v1 takes a different, much smaller-diff path: the
+  whole session's source accumulates verbatim, and *every* evaluation
+  recompiles and reruns the full accumulated buffer from scratch — but
+  its stdout is captured to a `tmpfile()` (never a real pty/pipe write)
+  rather than the terminal, and only the *suffix* beyond what the
+  previous round's capture already contained gets shown, since
+  `session + old input` is always a byte-identical prefix of `session +
+  old input + new input` for anything deterministic. No VM changes, no
+  new opcodes — just diffing what a full recompile-and-rerun already
+  produces. Real limitations from this choice, on purpose: genuinely
+  non-deterministic output (real-world timing, I/O interleaving) can't
+  reproduce that prefix exactly, and the code falls back to showing
+  everything rather than guessing wrong; redefining a name is rejected
+  exactly like a single program would reject it (no special-cased "REPL
+  redefinition" allowance) since there's no reliable way to identify and
+  excise a prior definition's exact source span without a real parser
+  hook this slice didn't build.
+
+  Multi-line input detection reuses the compiler's own diagnostics rather
+  than a hand-rolled block-depth scanner: if a compile fails and the
+  failing diagnostic's own line lands on-or-past the last line the
+  buffer-so-far actually has (e.g. "expected 'end' after if expression"
+  at EOF), that's treated as "needs another line," not a real error —
+  imperfect (it can't distinguish every possible trailing syntax error
+  from truly incomplete input), but it correctly handles every close-a-
+  block case tried against it and never hangs on a genuine error.
+  `DIAMOND_FORCE_REPL` (checked alongside the normal `isatty` gate) exists
+  purely so `tests/repl_test.sh` can drive the REPL over a bash `coproc`'s
+  pipes, which are never a real pty.
+
 ## Next priorities
 
 - The native `compiler.c` bug found above: an ordinary closure nested

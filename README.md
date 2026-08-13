@@ -51,7 +51,8 @@ Beyond the language itself:
 The test suite currently contains 870 end-to-end assertions spanning the
 frontend, compiler, VM, object model, type guards, collections, and
 collector, plus 824 lexer and 239+123 self-hosted-parser differential cases,
-21 `facet` package-manager tests, and 22 `diamond-lsp` protocol tests.
+21 `facet` package-manager tests, 22 `diamond-lsp` protocol tests, and 22
+REPL tests.
 
 ## Build and run
 
@@ -60,7 +61,14 @@ make
 make test
 ./build/diamond -e '20 + 22'
 ./build/diamond program.di
+./build/diamond               # REPL, if stdin is a terminal
 ```
+
+The REPL evaluates one input at a time (multi-line `def`/`class`/`if`/... blocks
+prompt with `...` until closed) and prints each result. Locals, functions, and
+classes defined in one evaluation stay visible to later ones; redefining a
+name is rejected the same way a single program would reject it. Prior output
+(`puts`, ...) is never reprinted on later evaluations.
 
 ## Multiple files
 
@@ -101,7 +109,7 @@ make debug
 make release
 make sanitize # requires GCC sanitizer runtime libraries
 make fuzz     # requires clang (see docs/fuzzing.md) -- not part of the default build
-make test-all # debug/release/sanitizer builds plus every suite (fibers, facet, lsp, fuzz smoke, lexer/parser differentials) sequentially
+make test-all # debug/release/sanitizer builds plus every suite (fibers, facet, lsp, repl, fuzz smoke, lexer/parser differentials) sequentially
 make clean
 ```
 

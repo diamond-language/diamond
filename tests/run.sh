@@ -1127,7 +1127,7 @@ if "$diamond" -e 'puts(1, 2)' >/dev/null 2>&1; then
     exit 1
 fi
 
-actual="$($diamond --dump-bytecode -e 'gets()')"
+actual="$($diamond --dump-bytecode -e 'gets()' </dev/null)"
 grep -Eq 'GETS +r[0-9]+' <<<"$actual"
 
 actual="$(printf 'hello world\n' | $diamond -e $'name = gets()\n"hi #{name}"')"

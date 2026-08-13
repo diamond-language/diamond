@@ -3,6 +3,7 @@
 #include "compiler.h"
 #include "disassemble.h"
 #include "loader.h"
+#include "repl.h"
 #include "value.h"
 #include "vm.h"
 
@@ -12,6 +13,7 @@
 #include <stdint.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <unistd.h>
 
 static constexpr char DIAMOND_VERSION[] = "0.1.0-dev";
 static constexpr unsigned char DIAMOND_CORE_SOURCE[] = {
@@ -255,7 +257,9 @@ static char *read_file(const char *path) {
 
 static void print_usage(void) {
     fputs("usage: diamond [-e CODE | FILE | --version]\n"
-          "       diamond --dump-bytecode [-e CODE | FILE]\n", stderr);
+          "       diamond --dump-bytecode [-e CODE | FILE]\n"
+          "       diamond                          (starts a REPL if stdin is a terminal)\n",
+          stderr);
 }
 
 int main(int argc, char **argv) {
@@ -281,6 +285,12 @@ int main(int argc, char **argv) {
         const int status = run_source(path, source, dump_file);
         free(source);
         return status;
+    }
+    /* DIAMOND_FORCE_REPL exists purely for tests/repl_test.sh: a bash
+     * coproc drives the REPL over pipes, not a real pty, so isatty()
+     * alone would never launch it there. */
+    if (argc == 1 && (isatty(STDIN_FILENO) || getenv("DIAMOND_FORCE_REPL") != nullptr)) {
+        return diamond_repl_run();
     }
 
     print_usage();
