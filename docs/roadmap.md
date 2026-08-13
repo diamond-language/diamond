@@ -3656,16 +3656,9 @@ future work.
   the original failing fixtures, not guessed at:
   - Runtime constraint enforcement for a generic collection's element
     type (`Array[T]`/`Hash[K, V]`) doesn't propagate through the
-    self-hosted parser's compiled output the way it does natively --
-    native tags the returned collection with its resolved type-variable
-    bindings via `CHECK_TYPE`'s constraint-attachment machinery, and a
-    later mutation (`array.push`, `hash[key] =`) checks against that
-    tag; the self-hosted parser's own generic method/function bodies
-    compile the same `CHECK_TYPE` shape, so this needs deeper VM-level
-    tracing to isolate, not a call-site fix. Reproduces even without
-    this slice's own explicit-type-argument work, using only
-    already-supported inferred generics (`def pair[K, V](key: K, value:
-    V) -> Hash[K, V]`), confirming it predates this slice entirely.
+    self-hosted parser's compiled output the way it does natively.
+    Assumed at the time to need deep VM-level tracing; see two slices
+    ahead for the actual (parser-side, not VM-side) root cause. (Resolved.)
   - Every native builtin-name recognition (`print`/`puts`/`gets`,
     `File.open`, the Math functions, `Fiber.new`, `Regexp.new`,
     `TCPSocket`/`TCPServer`, `ProgramBuilder`, `chr`/`to_f`/`to_i`/
@@ -3693,6 +3686,44 @@ future work.
   boolean-returning wrapper, sidestepping the differential harness's
   own scalar-only `run` limitation the same way prior slices did), and
   a new `builtin_name_shadowing.di` case joins the corpus.
+
+- Self-hosting, Phase 3 follow-up (two-hundred-ninety-second slice): the
+  generic-collection-constraint gap turned out to be a self-hosted
+  parser bug, not the deep VM-level mystery it looked like -- found by
+  temporarily instrumenting `run_chunk`/`value_matches_member` with
+  `DIAMOND_DEBUG_GENERICS`-gated `fprintf`s (removed afterward, `vm.c`
+  ends this slice byte-identical to how it started) and diffing native's
+  trace against the self-hosted parser's own on the same input. Both
+  correctly *inferred* `pair[K, V]`'s type-variable bindings from its
+  arguments (`[infer]` lines matched exactly); native then logged a
+  `[member] id=Hash argument_set=... second_argument_set=...` entry for
+  the `-> Hash[K, V]` return-type check that the self-hosted trace never
+  produced at all -- the CHECK_TYPE for the return value was simply
+  never being emitted.
+
+  Root cause: `emit_type_check`'s "skip the runtime check, we already
+  statically know this register's type" optimization
+  (`annotation_accepts_type?`) only ever compared *bare* type IDs -- a
+  hash literal's fact is plain `Type::HASH`, which trivially matches
+  `Hash[K, V]`'s own bare id, so the optimization fired and skipped the
+  check entirely, silently discarding the element-type constraint
+  along with it. `compiler.c`'s own `emit_type_check` guards against
+  exactly this: it forces the check whenever the matched union member
+  carries an `argument_set` (an element constraint), bare-type match or
+  not -- collection element constraints, generic or concrete alike,
+  never get to ride on the fact-based skip. Ported as one extra
+  condition in `annotation_accepts_type?` (the matched member must have
+  no `argument`/`second_argument` for the skip to apply at all), not a
+  parallel type-variable-detection pass -- confirmed sufficient since a
+  bare type-variable return (`-> K` with no wrapping collection) can
+  never coincidentally match a concrete fact in the first place (facts
+  only ever hold concrete `Type::*` ids, never a 96+ type-variable id),
+  so it already fell through to the runtime check before this fix too.
+
+  `tests/cases/legacy_0154.di` (the `Hash[K, V]` case) and the earlier
+  `Array[T]` repro from two slices back both match natively now. A new
+  `generic_collection_constraints.di` case covers both container
+  shapes.
 
 - Self-hosting, Phase 3 sub-phase 4 (twenty-second slice): array literals.
   The self-hosted parser now lowers empty and populated array literals with the

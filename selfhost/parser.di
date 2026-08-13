@@ -1355,10 +1355,24 @@ class Parser
     end
   end
 
+  # A bare type-fact match alone isn't enough to skip the runtime
+  # CHECK_TYPE: a fact only ever records the bare container kind (e.g.
+  # Type::HASH for any hash literal), never its element constraint, so
+  # "Hash" trivially matching a `-> Hash[K, V]` annotation would
+  # silently skip enforcing K/V entirely. Mirrors compiler.c's own
+  # emit_type_check, which forces the check whenever the matched set
+  # member has an argument_set, precisely to keep collection element
+  # constraints (concrete or type-variable) from ever being skipped this
+  # way -- confirmed missing by tracing why a self-hosted-compiled
+  # `pair[K, V](...) -> Hash[K, V]` never attached the runtime
+  # constraint a later `result[wrong_key] = ...` needs.
   def annotation_accepts_type?(annotation, type_id)
     index = 0
     while index < annotation.length()
-      return true if self.resolve_type_name(annotation[index][0]) == type_id
+      member = annotation[index]
+      if self.resolve_type_name(member[0]) == type_id
+        return member[1] == nil
+      end
       index = index + 1
     end
     false
