@@ -570,3 +570,7 @@ dynamic site specializes.
 - Fixed limits exist for bytecode, constants, functions, classes, fields, and
   registers.
 - Bytecode and language semantics are unstable by design.
+
+## License
+
+[MIT](LICENSE)
