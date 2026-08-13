@@ -75,6 +75,14 @@ typedef struct Compiler {
     bool module_function_mode;
     DiamondSpan current_method;
     bool in_method;
+    /* True while compiler->function is itself a class/module singleton
+     * method (`def self.name`). Tracked separately from in_method (which
+     * covers ordinary instance methods too) because it drives whether a
+     * closure nested *directly* inside this function should get the same
+     * self-register-reservation/owner_class treatment an instance method
+     * gets, even though the closure itself isn't a class member -- see
+     * compile_definition's own use, and docs/roadmap.md for why. */
+    bool in_singleton_method;
     uint8_t known_types[256];
     int16_t known_type_sets[256];
     bool in_function;
@@ -3207,9 +3215,36 @@ static uint8_t compile_definition(Compiler *compiler) {
     for(size_t index=0;index<16;index++)
         function->parameter_type_sets[index]=UINT8_MAX;
     const size_t function_index = compiler->program->function_count - 1;
-    function->owner_class=compiler->current_class>=0&&!module_singleton?
-        (uint8_t)compiler->current_class:
-        (compiler->current_module>=0&&!module_singleton?UINT8_MAX-1:UINT8_MAX);
+    /* current_class/current_module are compiler-wide "lexically inside a
+     * class/module body" flags, true for a nested closure at any depth,
+     * not just a direct member -- direct_class_member/direct_module_member
+     * narrow that to "is *this* def itself the direct member" (at_top_level
+     * true means compiler->function, before this def switches it below,
+     * was the program entry or another already-direct member's own body,
+     * never a nested closure's). A closure nested *immediately* inside a
+     * singleton method (`def self.make_patch(); def replacement(...); ...;
+     * end; replacement; end`) is a deliberate exception: redefine_method's
+     * patch-factory idiom (vm.c) relies on such a closure carrying the
+     * same owner_class/self-register treatment a genuine instance method
+     * gets, even though it's just a local closure value -- confirmed by
+     * legacy_0093.di/legacy_0094.di/legacy_0095.di, which construct
+     * exactly this shape and require it to work. A closure nested any
+     * deeper, or inside an ordinary instance method, or inside a plain
+     * top-level function, gets neither: it's an ordinary closure, no
+     * implicit self of any kind. See docs/roadmap.md for the bug this
+     * replaced (the blanket at_top_level-only gate that broke redefine_
+     * method) and how it was found. */
+    const bool direct_class_member=
+        at_top_level&&compiler->current_class>=0&&!module_singleton;
+    const bool direct_module_member=
+        at_top_level&&compiler->current_module>=0&&!module_singleton;
+    const bool nested_in_singleton_method=
+        !at_top_level&&compiler->in_singleton_method;
+    function->owner_class=
+        (direct_class_member||(nested_in_singleton_method&&compiler->current_class>=0))?
+            (uint8_t)compiler->current_class:
+        (direct_module_member||(nested_in_singleton_method&&compiler->current_module>=0))?
+            UINT8_MAX-1:UINT8_MAX;
     function->nested=!at_top_level;
     size_t copy_length=name.length;
     for (size_t index = 0; index < copy_length; index++) {
@@ -3275,6 +3310,7 @@ static uint8_t compile_definition(Compiler *compiler) {
     const uint16_t outer_next_register = compiler->next_register;
     const DiamondSpan outer_method = compiler->current_method;
     const bool outer_in_method = compiler->in_method;
+    const bool outer_in_singleton_method = compiler->in_singleton_method;
     const bool outer_in_function=compiler->in_function;
     const int outer_return_type=compiler->current_return_type;
     const DiamondSpan outer_return_type_span=compiler->current_return_type_span;
@@ -3295,6 +3331,7 @@ static uint8_t compile_definition(Compiler *compiler) {
         {outer_known_types[index]=compiler->known_types[index];
          outer_known_type_sets[index]=compiler->known_type_sets[index];}
     compiler->function = function;
+    compiler->in_singleton_method = at_top_level && module_singleton;
     compiler->current_loop=nullptr;
     compiler->current_exception=-1;
     compiler->current_retry_target=SIZE_MAX;
@@ -3313,8 +3350,7 @@ static uint8_t compile_definition(Compiler *compiler) {
                 compiler->capture_registers[i]=compiler->enclosing_locals[i].reg;
         }
     }
-    if((compiler->current_class>=0&&!module_singleton)||
-       (compiler->current_module>=0&&!module_singleton)) {
+    if(direct_class_member||direct_module_member||nested_in_singleton_method) {
         (void)allocate_register(compiler);
         function->arity = 1;
         function->required_arity=1;
@@ -3507,6 +3543,7 @@ static uint8_t compile_definition(Compiler *compiler) {
     compiler->next_register = outer_next_register;
     compiler->current_method = outer_method;
     compiler->in_method = outer_in_method;
+    compiler->in_singleton_method = outer_in_singleton_method;
     compiler->in_function=outer_in_function;
     compiler->current_return_type=outer_return_type;
     compiler->current_return_type_span=outer_return_type_span;

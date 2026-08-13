@@ -4450,16 +4450,38 @@ future work.
   purely so `tests/repl_test.sh` can drive the REPL over a bash `coproc`'s
   pipes, which are never a real pty.
 
-## Next priorities
+- Fixed the native `compiler.c` bug found above properly this time, with
+  the narrower signal the earlier attempt was missing: a new `Compiler.
+  in_singleton_method` field, tracking whether `compiler->function` (the
+  function whose body is *currently* being compiled) is itself a class/
+  module singleton method (`def self.name`) — saved and restored around
+  each nested function body exactly like `in_method`/`current_method`
+  already were, and set at the point `compiler->function` switches to a
+  new function, from *that* function's own `at_top_level && module_
+  singleton`. The self-register-reservation and `owner_class` sites both
+  now key off `direct_class_member || direct_module_member ||
+  nested_in_singleton_method` — the first two unchanged from before
+  (`at_top_level` plus being lexically inside a class/module body), the
+  third checking the *enclosing* function's `in_singleton_method` value,
+  captured before this def's own switch overwrites it. A closure nested
+  immediately inside a singleton method gets the instance-method-like
+  treatment `redefine_method`'s patch-factory idiom needs; a closure
+  nested anywhere else — an ordinary instance method, a plain top-level
+  function, or two-or-more levels deep from a singleton method — gets
+  none, matching a plain closure.
 
-- The native `compiler.c` bug found above: an ordinary closure nested
-  inside a class instance method incorrectly gets a self-register
-  reservation and `owner_class` stamp. Needs a properly-scoped condition
-  distinguishing "nested inside a singleton method" (where `redefine_
-  method`'s patch-factory idiom deliberately relies on today's behavior)
-  from "nested inside an instance method or anywhere else" (where it's a
-  genuine bug) — not the blanket `at_top_level` gate this run tried and
-  reverted.
+  Verified all four `redefine_method` failure-path assertions in `tests/
+  run.sh` (mismatched arity, unknown method name, a capturing closure,
+  and a callable from a different class) still produce their exact
+  original error text, `legacy_0093.di`/`legacy_0094.di`/`legacy_0095.di`
+  (the real patch-factory tests) still pass, and the original bug reports
+  (`add` nested in an ordinary instance method, and two levels of nesting
+  inside one) are fixed — confirmed the "different class" case in
+  particular still correctly distinguishes owner classes, not just
+  blindly stopped rejecting everything. New `tests/cases/closure_nested_
+  in_instance_method.di` locks in the fix: a single-level and a
+  two-level case, both nested inside ordinary (non-singleton) instance
+  methods.
 
 ## Later experiments
 
