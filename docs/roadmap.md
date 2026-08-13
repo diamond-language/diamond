@@ -3883,6 +3883,26 @@ future work.
   deliberately not built yet (hover, go-to-definition, completion,
   cross-file `require` resolution, incremental sync), in `docs/lsp.md`.
 
+- `editors/vscode/`, a minimal syntax-highlighting-only VS Code extension
+  (`package.json` + `language-configuration.json` +
+  `syntaxes/diamond.tmLanguage.json`, no compiled code, no build step). The
+  TextMate grammar is built directly from `src/lexer.h`/`src/lexer.c`'s own
+  token list — not derived from or dependent on any other language's
+  grammar — including the same colon disambiguation the real lexer uses to
+  tell a Symbol literal (`:name`) apart from a type-annotation or
+  hash-literal colon glued onto a preceding identifier/`)`/`]`/`}`/`"`.
+  Every regex verified against real method/class signatures pulled from
+  this repo's own fixtures (operator-overload defs, `def self.name`,
+  generic `def wrap[T]`, writer defs, string interpolation including a
+  nested string inside `#{...}`), not just eyeballed. No `node`/`npm`
+  available in this environment to run a real `vscode-textmate` tokenizer
+  end-to-end, so verification stopped at regex-level correctness (Python's
+  `re`, close enough to Oniguruma for the patterns used here — no
+  possessive quantifiers or atomic groups) rather than a full tokenization
+  trace; see `editors/vscode/README.md` for how to load it into a real VS
+  Code window to check by eye. Diagnostics are `lsp/`'s job (see above),
+  not this extension's — no semantic highlighting here, regex-only.
+
 ## Next priorities
 
 - Self-hosting, Phase 3 sub-phase 5: exceptions, modules, and `require`.

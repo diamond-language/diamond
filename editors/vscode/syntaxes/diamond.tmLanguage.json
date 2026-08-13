@@ -1,0 +1,181 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Diamond",
+  "scopeName": "source.diamond",
+  "fileTypes": ["di"],
+  "patterns": [
+    { "include": "#comments" },
+    { "include": "#definitions" },
+    { "include": "#keywords" },
+    { "include": "#constants" },
+    { "include": "#instance-variables" },
+    { "include": "#symbols" },
+    { "include": "#numbers" },
+    { "include": "#strings" },
+    { "include": "#operators" },
+    { "include": "#punctuation" }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        {
+          "name": "comment.line.number-sign.diamond",
+          "match": "#.*$"
+        }
+      ]
+    },
+    "definitions": {
+      "patterns": [
+        {
+          "comment": "class/module/interface Name, including a qualified Outer::Name and an optional < Superclass",
+          "match": "\\b(class|module|interface)\\b(\\s+)([A-Za-z_][A-Za-z0-9_]*(?:::[A-Za-z_][A-Za-z0-9_]*)*)(?:(\\s*<\\s*)([A-Za-z_][A-Za-z0-9_]*(?:::[A-Za-z_][A-Za-z0-9_]*)*))?",
+          "captures": {
+            "1": { "name": "storage.type.diamond" },
+            "3": { "name": "entity.name.type.class.diamond" },
+            "4": { "name": "keyword.operator.diamond" },
+            "5": { "name": "entity.name.type.class.diamond" }
+          }
+        },
+        {
+          "comment": "def name, def self.name, or an operator-overload def (def +, def ==, ...); [T] generics and a trailing writer '=' are left to the generic identifier match that follows",
+          "match": "\\b(def)\\b(\\s+)(self)?(\\.)?([A-Za-z_][A-Za-z0-9_]*[?!]?|\\+|-|\\*|/|==|<=?|>=?)",
+          "captures": {
+            "1": { "name": "storage.type.function.diamond" },
+            "3": { "name": "variable.language.self.diamond" },
+            "4": { "name": "punctuation.accessor.diamond" },
+            "5": { "name": "entity.name.function.diamond" }
+          }
+        }
+      ]
+    },
+    "keywords": {
+      "patterns": [
+        {
+          "name": "keyword.control.diamond",
+          "match": "\\b(if|unless|then|else|elsif|end|while|until|do|loop|begin|rescue|ensure|retry|raise|yield|return|break|next|redo)\\b"
+        },
+        {
+          "name": "keyword.operator.word.diamond",
+          "match": "\\b(and|or|not|is)\\b"
+        },
+        {
+          "name": "storage.type.diamond",
+          "match": "\\b(def|class|module|interface)\\b"
+        },
+        {
+          "name": "storage.modifier.diamond",
+          "match": "\\b(private|public|include|attr_reader|attr_writer|attr_accessor|attr_predicate|attr|module_function|alias_method)\\b"
+        },
+        {
+          "name": "variable.language.diamond",
+          "match": "\\b(self|super)\\b"
+        }
+      ]
+    },
+    "constants": {
+      "patterns": [
+        {
+          "name": "constant.language.boolean.diamond",
+          "match": "\\b(true|false)\\b"
+        },
+        {
+          "name": "constant.language.nil.diamond",
+          "match": "\\bnil\\b"
+        },
+        {
+          "comment": "Int/Float/String/Bool/Nil/Array/Hash/Callable/Sized/Symbol builtins and any capitalized type name in an annotation position (: Type, -> Type)",
+          "name": "support.type.diamond",
+          "match": "\\b(Int|Float|String|Bool|Nil|Array|Hash|Callable|Sized|Symbol)\\b"
+        }
+      ]
+    },
+    "instance-variables": {
+      "patterns": [
+        {
+          "name": "variable.other.readwrite.instance.diamond",
+          "match": "@[A-Za-z_][A-Za-z0-9_]*"
+        }
+      ]
+    },
+    "symbols": {
+      "patterns": [
+        {
+          "comment": "A colon starts a Symbol literal only when it isn't glued onto a preceding identifier/)/]/}/\" -- matching src/lexer.c's own disambiguation against type annotations (x: Int) and hash-literal separators ({a: b})",
+          "name": "constant.other.symbol.diamond",
+          "match": "(?<![A-Za-z0-9_)\\]}\"]):[A-Za-z_][A-Za-z0-9_]*[?!]?"
+        }
+      ]
+    },
+    "numbers": {
+      "patterns": [
+        {
+          "name": "constant.numeric.diamond",
+          "match": "\\b[0-9][0-9_]*(\\.[0-9][0-9_]*)?\\b"
+        }
+      ]
+    },
+    "strings": {
+      "patterns": [
+        {
+          "name": "string.quoted.double.diamond",
+          "begin": "\"",
+          "end": "\"",
+          "patterns": [
+            {
+              "name": "constant.character.escape.diamond",
+              "match": "\\\\."
+            },
+            {
+              "name": "meta.embedded.line.diamond",
+              "begin": "#\\{",
+              "end": "\\}",
+              "beginCaptures": {
+                "0": { "name": "punctuation.section.embedded.begin.diamond" }
+              },
+              "endCaptures": {
+                "0": { "name": "punctuation.section.embedded.end.diamond" }
+              },
+              "patterns": [{ "include": "$self" }]
+            }
+          ]
+        }
+      ]
+    },
+    "operators": {
+      "patterns": [
+        {
+          "name": "keyword.operator.diamond",
+          "match": "->|::|&&|\\|\\||==|!=|<=|>=|[+\\-*/<>!=]"
+        }
+      ]
+    },
+    "punctuation": {
+      "patterns": [
+        {
+          "name": "punctuation.separator.comma.diamond",
+          "match": ","
+        },
+        {
+          "name": "punctuation.accessor.diamond",
+          "match": "\\."
+        },
+        {
+          "name": "punctuation.separator.colon.diamond",
+          "match": ":"
+        },
+        {
+          "name": "punctuation.section.parens.diamond",
+          "match": "[()]"
+        },
+        {
+          "name": "punctuation.section.brackets.diamond",
+          "match": "[\\[\\]]"
+        },
+        {
+          "name": "punctuation.section.braces.diamond",
+          "match": "[{}]"
+        }
+      ]
+    }
+  }
+}
