@@ -1,11 +1,11 @@
 require "parser"
 
-# Phase 4 bootstrap check: can the self-hosted Parser (running as
-# native-compiled bytecode) successfully compile its own two source
-# files, lib/core.di prepended the way parse_and_run_with_core does for
-# any real target program? Doesn't yet run the result -- see
-# docs/roadmap.md's self-hosting Phase 3 follow-up entries for how far
-# that is from here.
+# Phase 4 bootstrap check, compile-only half: can the self-hosted Parser
+# (running as native-compiled bytecode) successfully compile its own two
+# source files, lib/core.di prepended the way parse_and_run_with_core
+# does for any real target program? See self_run_check.di for the other
+# half -- actually running the compiled result, and using it to compile
+# and run a third, independent program.
 def check_self_parse(path)
   core_source = File.open("lib/core.di", "r").read()
   source = File.open(path, "r").read()

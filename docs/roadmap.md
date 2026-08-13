@@ -4279,8 +4279,6 @@ future work.
     fixed; this one stays open, on purpose, as the honest remaining edge
     of `ProgramBuilder#run`'s result support.
 
-## Next priorities
-
 - This note used to read "Self-hosting, Phase 3 sub-phase 5: exceptions,
   modules, and `require`" — stale by the time this run started, not
   after it. `selfhost/parser.di` already had roughly 85 slices of
@@ -4299,18 +4297,31 @@ future work.
   once that stopped hiding them, three genuine self-hosted-compiler
   correctness bugs).
 
-- The real remaining Phase 4 item: `selfhost/self_parse_check.di` only
-  checks that the self-hosted `Parser` successfully *compiles* its own
-  two source files (`parser.compile()` returning `true`) — it has never
-  gone on to actually `builder.run()` that self-compiled result and
-  confirm the resulting program behaves correctly, the real bootstrap
-  test (a compiler compiling itself, then using that self-compiled copy
-  to do real work). That step was effectively blocked by the same
-  `ProgramBuilder#run` scalar-only restriction this run just lifted —
-  worth attempting now that it's gone, though `self_parse_check.di`'s own
-  compiled program is Parser/Lexer/ProgramBuilder-object-manipulating
-  code through and through, so it may run straight into the still-open
-  `Instance`-result gap documented above rather than a clean success.
+- The real Phase 4 bootstrap, attempted and working: `selfhost/
+  self_parse_check.di` only ever checked that the self-hosted `Parser`
+  successfully *compiles* its own two source files (`parser.compile()`
+  returning `true`) — it never went on to actually run the compiled
+  result. New `selfhost/self_run_check.di` does: it appends a small
+  driver (`target_path = gets(); puts(parse_and_run_with_core(target_
+  path))`) to the bundled `parser.di`+`lexer.di`+`core.di` source before
+  compiling, so running the self-compiled result performs the exact same
+  "compile and run an arbitrary program" operation `parse_and_run_with_
+  core` does natively — except every step of it now executes as bytecode
+  the self-hosted compiler itself produced, one `DiamondVm` level deeper
+  (native VM → self-compiled parser/lexer running in a child VM → *that*
+  code's own `ProgramBuilder`/`Parser` compiling and running a third,
+  independent target program in a grandchild VM). Tested against a real
+  multi-feature program (`tests/parser_cases/generic_collection_
+  constraints.di` — generics, exceptions, rescue) with byte-for-byte
+  correct output, and against a known-`Instance`-result program
+  (`legacy_0109.di`) to confirm the documented gap propagates as a clean,
+  correctly-attributed `TypeError` with a full four-frame stack trace
+  across all three VM levels, not a crash. Wired into `tests/
+  parser_diff.sh` as a permanent "self-hosted parser self-run bootstrap
+  check" right after the existing compile-only one, so this doesn't
+  silently regress.
+
+## Next priorities
 
 - The nested-closure depth restriction (`deep_closure.di`,
   `@function_nesting_depth >= 2`) — a genuine, understood, self-hosted-
@@ -4321,11 +4332,16 @@ future work.
 ## Later experiments
 
 - Self-hosting the compiler and core libraries in Diamond (in progress —
-  see `Completed foundation` for Phase 0-2, Phase 3 sub-phases 2-3 (both
-  fully landed), and sub-phase 4's first slice (scalar gradual typing),
-  and `Next priorities` for the rest of sub-phase 4; the rest of the
-  compiler port and bootstrap validation remain multi-session future
-  work beyond that).
+  see `Completed foundation` for Phase 0-2, Phase 3 sub-phases 2-5 (all
+  landed, sub-phase 5 far deeper than its own name suggests — see its
+  many dozens of slices), and the real Phase 4 bootstrap demonstration
+  just above: the self-compiled parser successfully compiling and running
+  a third, independent program. What remains multi-session future work:
+  the nested-closure depth restriction (`Next priorities`), any narrower
+  compiler.c feature-parity gaps a future differential sweep might still
+  turn up, and `Instance` results crossing a `ProgramBuilder#run`
+  boundary, the one documented gap this run's own bootstrap test hit
+  directly).
 - Native-code generation or a tracing/method JIT — nothing in the
   `jit-experimentation` work above generates native code; it's all
   interpreter-loop leaning (register zero-init, opcode dispatch,
