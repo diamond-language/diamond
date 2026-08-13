@@ -456,7 +456,21 @@ class Parser
       if type_name != nil
         @declared_types.push([register, type_name])
         set_index = self.emit_type_check(register, type_name)
-        @builder.set_parameter_type(function_index, index + index_offset, set_index) unless @failed
+        # Unlike ARGUMENT_PROVIDED above (a call-time argument index,
+        # which does include the receiver), DiamondFunction.
+        # parameter_type_sets is indexed purely by declared-parameter
+        # position -- compiler.c's own equivalent loop never gives self
+        # a slot there at all, self or no self, so index_offset must NOT
+        # apply here. Adding it shifted every method parameter's type
+        # into the next slot over, leaving slot 0 permanently UINT8_MAX
+        # ("untyped") for any single-parameter method -- and an untyped
+        # actual parameter is deliberately compatible with *any* required
+        # interface type (see the interface-satisfies check in vm.c), so
+        # this silently accepted parameter types that should have been
+        # rejected. Found via legacy_0121.di/legacy_0122.di once
+        # ProgramBuilder#run could return their Array results to expose
+        # the wrong Bool values at all.
+        @builder.set_parameter_type(function_index, index, set_index) unless @failed
       end
       index = index + 1
     end

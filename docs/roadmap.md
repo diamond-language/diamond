@@ -4165,6 +4165,28 @@ future work.
   before this function even runs) — the exact shape of function this bug
   needed and the existing corpus never had.
 
+- Fixed the second: `legacy_0121.di`/`legacy_0122.di`'s over-permissive
+  interface `is` checks. `bind_parameters` was calling `@builder.
+  set_parameter_type(function_index, index + index_offset, set_index)`
+  for every typed parameter — correct for `ARGUMENT_PROVIDED`'s own
+  index earlier in the same function (a call-time argument position,
+  which genuinely does include the receiver), wrong here: `DiamondFunction
+  .parameter_type_sets` is indexed purely by declared-parameter position,
+  with no slot for `self` at all, self or no self — confirmed
+  independently by `attr_writer`'s own generated setter a few thousand
+  lines later in this same file, which already calls `set_parameter_type
+  (function_index, 0, ...)` with no offset. The `+index_offset` shifted
+  every method parameter's real type into the next slot over, leaving
+  slot 0 permanently `UINT8_MAX` ("untyped") for any single-parameter
+  method — and an untyped actual parameter is deliberately compatible
+  with *any* required interface type (see `vm.c`'s interface-satisfies
+  check), so a method whose real parameter type was actually incompatible
+  read as untyped instead, and untyped trivially passes. New
+  `tests/parser_cases/interface_parameter_contravariance.di` locks in
+  both directions this bug got wrong: a genuinely-narrower parameter type
+  correctly rejected, and a genuinely-untyped parameter correctly
+  accepted regardless of the interface's own declared type.
+
 ## Next priorities
 
 - Self-hosting, Phase 3 sub-phase 5: exceptions, modules, and `require`.
