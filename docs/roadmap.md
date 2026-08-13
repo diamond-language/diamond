@@ -4114,6 +4114,33 @@ future work.
   the former for a real lifetime reason (see above), the rest because
   they were never portable data to begin with.
 
+- Three new `tests/parser_cases/` fixtures (`program_result_string`,
+  `program_result_array`, `program_result_hash`) return a `String`/
+  `Array`/`Hash` directly as the program's own top-level result, with no
+  workaround needed — every *existing* fixture in this 233-file curated
+  corpus ends with an explicit trailing `puts(...)`-then-`nil` specifically
+  to keep its own top-level result scalar, evidently working around the
+  very restriction the last three slices lifted. Verified with a full
+  `tests/cases/*.di` (824 files) differential sweep through the
+  self-hosted parser, well beyond the curated corpus: mismatches dropped
+  from 276 (pre-copy) to 28. Of those 28, most are `Instance` results
+  (the one deliberately-still-unsupported kind, expected) or already-known
+  gaps; a handful are genuine, previously-invisible correctness bugs the
+  old scalar-only restriction had been hiding completely, since a
+  self-hosted-compiled program returning any of them could never
+  previously be run at all to expose the bug:
+  - `legacy_0132`: a later default parameter (`b = a + 2`) isn't
+    re-evaluated when skipped, but an explicit argument supplied for it
+    is silently dropped in favor of `nil` instead of being used.
+  - `legacy_0121`/`legacy_0122`: interface `is` checks accept a method
+    whose parameter type violates contravariance (e.g. a narrower
+    `String` parameter where the interface declares `Animal`), when they
+    should reject it.
+  - `legacy_0156`: a generic `Array[T]` returned from a generic method
+    doesn't enforce its element-type contract on a later `.push`, letting
+    a wrong-typed push through instead of raising `TypeError`.
+  Each becomes its own slice next.
+
 ## Next priorities
 
 - Self-hosting, Phase 3 sub-phase 5: exceptions, modules, and `require`.
