@@ -4405,6 +4405,12 @@ future work.
   distinctively" is not a safe idiom for detecting a directory anywhere
   in this codebase, on any filesystem.
 
+  `make test-all` now passes cleanly on GitLab's own runner (5m29s,
+  https://gitlab.com/dmn9180/diamond/-/pipelines) — CI genuinely runs the
+  full suite end to end, not just a subset, and found two real portability
+  bugs neither this development machine nor local `podman` reproductions
+  (including a deliberately CPU-throttled one) ever would have.
+
 ## Next priorities
 
 - The native `compiler.c` bug found above: an ordinary closure nested
