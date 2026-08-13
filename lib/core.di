@@ -384,6 +384,117 @@ def enumerable_reduce(values, initial, callback: Callable[2])
   accumulator
 end
 
+def array_sum(values: Array)
+  total = 0
+  index = 0
+  while index < values.length()
+    total = total + values[index]
+    index = index + 1
+  end
+  total
+end
+
+def array_reject(values: Array, callback: Callable[1]) -> Array
+  result = []
+  index = 0
+  while index < values.length()
+    item = values[index]
+    if callback(item) == false
+      result.push(item)
+    end
+    index = index + 1
+  end
+  result
+end
+
+def array_find(values: Array, callback: Callable[1])
+  index = 0
+  while index < values.length()
+    item = values[index]
+    if callback(item)
+      return item
+    end
+    index = index + 1
+  end
+  nil
+end
+
+def array_each_with_index(values: Array, callback: Callable[2]) -> Array
+  index = 0
+  while index < values.length()
+    callback(values[index], index)
+    index = index + 1
+  end
+  values
+end
+
+def enumerable_sort(values: Array) -> Array
+  result = []
+  index = 0
+  while index < values.length()
+    result.push(values[index])
+    index = index + 1
+  end
+  i = 1
+  while i < result.length()
+    key = result[i]
+    j = i - 1
+    while j >= 0 && result[j] > key
+      result[j + 1] = result[j]
+      j = j - 1
+    end
+    result[j + 1] = key
+    i = i + 1
+  end
+  result
+end
+
+def enumerable_sort_by(values: Array, callback: Callable[1]) -> Array
+  result = []
+  index = 0
+  while index < values.length()
+    result.push(values[index])
+    index = index + 1
+  end
+  i = 1
+  while i < result.length()
+    key = result[i]
+    key_value = callback(key)
+    j = i - 1
+    while j >= 0 && callback(result[j]) > key_value
+      result[j + 1] = result[j]
+      j = j - 1
+    end
+    result[j + 1] = key
+    i = i + 1
+  end
+  result
+end
+
+def enumerable_min(values: Array)
+  result = values[0]
+  index = 1
+  while index < values.length()
+    if values[index] < result
+      result = values[index]
+    end
+    index = index + 1
+  end
+  result
+end
+
+def enumerable_max(values: Array)
+  result = values[0]
+  index = 1
+  while index < values.length()
+    if values[index] > result
+      result = values[index]
+    end
+    index = index + 1
+  end
+  result
+end
+
 module Enumerable
   def select(callback: Callable[1]) -> Array = enumerable_select(self, callback)
   def count(callback: Callable[1]) -> Int = enumerable_count(self, callback)

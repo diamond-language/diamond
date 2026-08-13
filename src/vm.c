@@ -5005,6 +5005,38 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                         else if(method_name->length==3&&
                                 memcmp(method_name->chars,"map",3)==0)
                             target_name="enumerable_map";
+                        else if(receiver_kind==DIAMOND_OBJECT_ARRAY&&
+                                method_name->length==3&&
+                                memcmp(method_name->chars,"sum",3)==0)
+                            target_name="array_sum";
+                        else if(receiver_kind==DIAMOND_OBJECT_ARRAY&&
+                                method_name->length==6&&
+                                memcmp(method_name->chars,"reject",6)==0)
+                            target_name="array_reject";
+                        else if(receiver_kind==DIAMOND_OBJECT_ARRAY&&
+                                method_name->length==4&&
+                                memcmp(method_name->chars,"find",4)==0)
+                            target_name="array_find";
+                        else if(receiver_kind==DIAMOND_OBJECT_ARRAY&&
+                                method_name->length==15&&
+                                memcmp(method_name->chars,"each_with_index",15)==0)
+                            target_name="array_each_with_index";
+                        else if(receiver_kind==DIAMOND_OBJECT_ARRAY&&
+                                method_name->length==4&&
+                                memcmp(method_name->chars,"sort",4)==0)
+                            target_name="enumerable_sort";
+                        else if(receiver_kind==DIAMOND_OBJECT_ARRAY&&
+                                method_name->length==7&&
+                                memcmp(method_name->chars,"sort_by",7)==0)
+                            target_name="enumerable_sort_by";
+                        else if(receiver_kind==DIAMOND_OBJECT_ARRAY&&
+                                method_name->length==3&&
+                                memcmp(method_name->chars,"min",3)==0)
+                            target_name="enumerable_min";
+                        else if(receiver_kind==DIAMOND_OBJECT_ARRAY&&
+                                method_name->length==3&&
+                                memcmp(method_name->chars,"max",3)==0)
+                            target_name="enumerable_max";
                         if(target_name!=nullptr) {
                             const DiamondFunction *target=
                                 find_top_level_function(chunk,target_name,strlen(target_name));

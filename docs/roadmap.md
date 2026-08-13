@@ -3970,6 +3970,53 @@ future work.
   found nothing — expected, given the extensive existing differential
   test suite, not evidence fuzzing has nothing left to find.
 
+- Stdlib round 3: Enumerable completeness. Eight new dot-call methods —
+  `sum`, `sort`, `sort_by`, `reject`, `find`, `each_with_index`, `min`,
+  `max` — on top of round 1's `array_sort`. `sort`/`sort_by`/`min`/`max`
+  reuse native `<`/`>` (an insertion sort, matching `array_sort`'s own
+  algorithm choice) rather than the old Int-only restriction, so they
+  automatically work on any user class with `<`/`>` overloaded (see this
+  file's operator-overloading entry) with zero extra VM code — verified
+  against a `Box` class defining only `<`/`>`. `array_sort` itself stays
+  Int-only and untouched: `tests/run.sh` has a standing assertion that
+  `array_sort([1, "bad", 2])` rejects a mixed array, so widening its
+  signature would have been a breaking change, not just an addition; the
+  new methods are separate functions instead.
+
+  Scoped narrower than first planned, for two different reasons. First,
+  correctness: `sum`/`sort`/`sort_by`/`reject`/`find`/`each_with_index`/
+  `min`/`max` are Array-only, unlike `select`/`count`/`any?`/`all?`/`map`/
+  `reduce`, which all operate through `.each()` and so work on Hash values
+  too. Second, and the harder constraint: `DIAMOND_MAX_FUNCTIONS` (256) is
+  not a resizable soft limit — function indices are stored as a single
+  byte throughout the bytecode format (`CONSTANT`/`CALL` operands,
+  `DiamondMethod`/`DiamondClosure.function_index`), so raising the
+  constant would silently wrap indices past 256 rather than actually
+  expand capacity (see the constant's own comment in `src/vm.h`). The
+  self-hosted parser's own bootstrap self-compile (`lib/core.di` +
+  `selfhost/lexer.di` + `selfhost/parser.di`, the largest real program
+  this codebase compiles) was already at 243 of 256 before this round.
+  The first version of this slice — Hash support via `.each()` + nested
+  closures for `sum`/`reject`/`find`, mirroring `enumerable_select`'s
+  existing idiom, plus all eight methods also exposed through `module
+  Enumerable` for arbitrary-class `include` — pushed that to 259 and
+  broke the bootstrap check outright. Fixed by rewriting `sum`/`reject`/
+  `find` as direct Array `while`-loops (no `.each()`, no nested closures,
+  matching `array_compact`'s style) instead of the Hash/Array-dispatching
+  pattern, and by dropping all eight from `module Enumerable`: the
+  Array/Hash dot-call path never goes through module method lookup at all
+  (`DIAMOND_OP_INVOKE`'s hardcoded dispatch calls the top-level function
+  directly), so those eight module entries only mattered for a class
+  `include`-ing `Enumerable` — and since all eight are written against
+  `values[index]`/`.length()`, not `.each()`, they wouldn't have worked
+  for a generic each-based class anyway, unlike the original six. Cutting
+  them cost nothing real and brought the bootstrap total to 251, five
+  slots of headroom rather than negative three. Caught by actually running
+  `make test-all` (not just `make test`) before considering this done —
+  the failure only showed up in the self-hosted parser's own bootstrap
+  compile, not in the ordinary test suite, which doesn't stress the
+  function-count budget anywhere near this hard.
+
 ## Next priorities
 
 - Self-hosting, Phase 3 sub-phase 5: exceptions, modules, and `require`.
