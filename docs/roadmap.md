@@ -4241,6 +4241,44 @@ future work.
   enough to want more room to test a similar change properly rather than
   rush it.
 
+- Final re-audit of this whole run: the same full `tests/cases/*.di`
+  differential sweep from the start (824 files, well beyond the curated
+  `parser_cases`/`parser_error_cases` corpora `make test-all` actually
+  runs) now shows 24 mismatches, down from 276 at the start — every one
+  of them now individually accounted for, not just counted:
+  - **1 confirmed deliberate scope cut**: `deep_closure.di` (the nesting-
+    depth restriction from the slice above).
+  - **11 confirmed non-bugs**: the format-mismatch artifact from the
+    slice above (`enumerable_sort_hash_unsupported.di`,
+    `enumerable_sum_hash_unsupported.di`, `raise_stack.di`,
+    `stack_trace.di`, `operator_def_outside_class_rejected.di`, the 6
+    `keyword_args_error_*` cases) — self-hosted already produces the
+    identical error text in every case, just presented differently by
+    this run's own ad-hoc diff script than by the corpora that actually
+    check it correctly.
+  - **5 confirmed test-harness noise**: `legacy_0321.di`–`legacy_0325.di`
+    (Fiber tests) differ only in ASan's own startup banner, which embeds
+    the current process's PID — two different invocations of the sanitize
+    binary necessarily print two different numbers there; nothing to do
+    with Diamond at all.
+  - **7 confirmed instances of the one remaining real, deliberate scope
+    cut**: `legacy_0109.di`, `legacy_0181.di`, `legacy_0190.di`,
+    `legacy_0193.di`, `legacy_0194.di`, `legacy_0289.di`,
+    `nilable_types.di` — all return a plain `Instance` as their top-level
+    result, the one heap-object kind `copy_value_into_vm` still declines
+    (see the very first slice of this run): an `Instance`'s `->class`
+    pointer aims into the *source* `DiamondProgram`'s own `classes[]`
+    array, which has no lifetime guarantee once the caller lets go of the
+    `ProgramBuilder` that owns it. Copying the `DiamondValue` itself
+    wouldn't make that dangling reference safe — this would need either
+    copying the referenced class definition too (a much bigger, separate
+    project: classes can reference other classes, interfaces, and their
+    own methods' bytecode) or some other way to keep the source program
+    alive for as long as the copy lives, neither of which this run
+    attempts. Every other heap-object kind this run set out to fix is
+    fixed; this one stays open, on purpose, as the honest remaining edge
+    of `ProgramBuilder#run`'s result support.
+
 ## Next priorities
 
 - Self-hosting, Phase 3 sub-phase 5: exceptions, modules, and `require`.
