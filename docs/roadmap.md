@@ -4101,6 +4101,19 @@ future work.
   Instance's `->class` above, so a copied array comes back a plain,
   unconstrained one.
 
+- `copy_value_into_vm` now handles `Hash` too, same shape as `Array`:
+  recurses into both key and value for every entry via `hash_set`
+  (forward-declared, since its own definition sits much later in
+  `vm.c` than this function), fails the whole hash if any entry's key
+  or value doesn't copy, and drops constraint metadata for the same
+  reason arrays do. This closes out the object-kind side of the
+  `ProgramBuilder#run` gap found two slices back — `String`/`Symbol`/
+  `Bignum`/`Array`/`Hash`, recursively nested any which way, now round-trip
+  through a self-hosted-compiled-and-run program correctly; only
+  `Instance` and the VM/OS-resource-wrapping kinds remain out of reach,
+  the former for a real lifetime reason (see above), the rest because
+  they were never portable data to begin with.
+
 ## Next priorities
 
 - Self-hosting, Phase 3 sub-phase 5: exceptions, modules, and `require`.

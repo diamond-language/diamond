@@ -68,6 +68,8 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk, DiamondVm *vm,
                                  size_t argument_count, size_t depth,
                                  const DiamondClosure *closure,
                                  DiamondValue *result);
+static bool hash_set(DiamondVm *vm,DiamondHash *hash,DiamondValue key,
+                     DiamondValue value);
 
 static void mark_object(DiamondObject *object) {
     if (object == nullptr || object->marked) return;
@@ -842,6 +844,20 @@ static bool copy_value_into_vm(DiamondVm *dest_vm, DiamondValue value,
             DiamondArray *copy=allocate_array(dest_vm,elements,source->count);
             free(elements);
             if(copy==nullptr)return false;
+            *out=DIAMOND_OBJECT(copy);return true;
+        }
+        case DIAMOND_OBJECT_HASH: {
+            const DiamondHash *source=(const DiamondHash *)value.as.object;
+            DiamondHash *copy=allocate_hash(dest_vm);
+            if(copy==nullptr)return false;
+            for(size_t index=0;index<source->count;index++) {
+                DiamondValue key=DIAMOND_NIL,copied_value=DIAMOND_NIL;
+                if(!copy_value_into_vm(dest_vm,source->entries[index].key,&key)||
+                   !copy_value_into_vm(dest_vm,source->entries[index].value,
+                                       &copied_value))
+                    return false;
+                if(!hash_set(dest_vm,copy,key,copied_value))return false;
+            }
             *out=DIAMOND_OBJECT(copy);return true;
         }
         case DIAMOND_OBJECT_BIGNUM: {
