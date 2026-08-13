@@ -4187,6 +4187,27 @@ future work.
   correctly rejected, and a genuinely-untyped parameter correctly
   accepted regardless of the interface's own declared type.
 
+- The third audit finding, `legacy_0156.di` (a generic `Array[T]` method
+  return not enforcing its element-type contract on a later `.push`),
+  turned out to already be fixed — not by anything in this run, but as a
+  side effect of the previous slice's `set_parameter_type` correction:
+  `wrap[T](value: T)`'s own `value` parameter is typed, so the wrong-slot
+  bug there was corrupting this case too, incidentally, alongside the
+  interface checks it was actually found through. `annotation_accepts_
+  type?` (`emit_type_check`'s compile-time fast path, skipping the
+  runtime `CHECK_TYPE` when a cheaper static fact already covers an
+  annotation) already had its own dedicated fix and regression test from
+  earlier self-hosting work — `tests/parser_cases/
+  generic_collection_constraints.di` — but only for a top-level function
+  called with an *explicit* type argument (`empty[String]()`). A method
+  whose generic binding comes from ordinary argument *inference*
+  (`Box.new().wrap("diamond")`, no explicit `[String]`) was a genuinely
+  different, untested combination that happened to also route through the
+  now-fixed code path. New `tests/parser_cases/
+  generic_method_inferred_array_constraint.di` closes that specific gap
+  so it stays fixed regardless of what future changes touch either code
+  path.
+
 ## Next priorities
 
 - Self-hosting, Phase 3 sub-phase 5: exceptions, modules, and `require`.
