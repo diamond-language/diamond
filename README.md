@@ -48,9 +48,9 @@ Beyond the language itself:
   the parser, differentially tested against the native compiler on every
   change.
 
-The test suite currently contains 866 end-to-end assertions spanning the
+The test suite currently contains 870 end-to-end assertions spanning the
 frontend, compiler, VM, object model, type guards, collections, and
-collector, plus 820 lexer and 233+122 self-hosted-parser differential cases,
+collector, plus 824 lexer and 233+122 self-hosted-parser differential cases,
 21 `facet` package-manager tests, and 22 `diamond-lsp` protocol tests.
 
 ## Build and run

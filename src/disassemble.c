@@ -302,40 +302,45 @@ static bool disassemble_chunk(FILE *stream, const char *name,
                 offset+=4;
                 break;
             }
-            case DIAMOND_OP_CALL:
-                if (!require_bytes(stream, chunk, offset, 5)) {
+            case DIAMOND_OP_CALL: {
+                if (!require_bytes(stream, chunk, offset, 6)) {
                     valid = false;
                     offset = chunk->code_count;
                     break;
                 }
-                fprintf(stream, "%-18s r%u, f%u, r%u, %u args\n", "CALL",
-                        chunk->code[offset + 1], chunk->code[offset + 2],
-                        chunk->code[offset + 3], chunk->code[offset + 4]);
-                if ((size_t)chunk->code[offset + 2] >= chunk->function_count) {
+                const size_t function_index=
+                    ((size_t)chunk->code[offset+2]<<8)|chunk->code[offset+3];
+                fprintf(stream, "%-18s r%u, f%zu, r%u, %u args\n", "CALL",
+                        chunk->code[offset + 1], function_index,
+                        chunk->code[offset + 4], chunk->code[offset + 5]);
+                if (function_index >= chunk->function_count) {
                     valid = false;
                 }
-                offset += 5;
+                offset += 6;
                 break;
+            }
             case DIAMOND_OP_CALL_TYPED: {
-                if(!require_bytes(stream,chunk,offset,6)) {
+                if(!require_bytes(stream,chunk,offset,7)) {
                     valid=false;offset=chunk->code_count;break;
                 }
-                const uint8_t count=chunk->code[offset+5];
-                if(!require_bytes(stream,chunk,offset,(size_t)6+count)) {
+                const uint8_t count=chunk->code[offset+6];
+                if(!require_bytes(stream,chunk,offset,(size_t)7+count)) {
                     valid=false;offset=chunk->code_count;break;
                 }
-                fprintf(stream,"%-18s r%u, f%u, r%u, %u args, [",
-                    "CALL_TYPED",chunk->code[offset+1],chunk->code[offset+2],
-                    chunk->code[offset+3],chunk->code[offset+4]);
+                const size_t function_index=
+                    ((size_t)chunk->code[offset+2]<<8)|chunk->code[offset+3];
+                fprintf(stream,"%-18s r%u, f%zu, r%u, %u args, [",
+                    "CALL_TYPED",chunk->code[offset+1],function_index,
+                    chunk->code[offset+4],chunk->code[offset+5]);
                 for(size_t index=0;index<count;index++) {
                     if(index>0)fputs(", ",stream);
-                    const uint8_t set=chunk->code[offset+6+index];
+                    const uint8_t set=chunk->code[offset+7+index];
                     valid=print_type_set(stream,chunk,set)&&valid;
                 }
                 fputs("]\n",stream);
-                if((size_t)chunk->code[offset+2]>=chunk->function_count)
+                if(function_index>=chunk->function_count)
                     valid=false;
-                offset+=(size_t)6+count;
+                offset+=(size_t)7+count;
                 break;
             }
             case DIAMOND_OP_CALL_CLOSURE:
@@ -362,12 +367,14 @@ static bool disassemble_chunk(FILE *stream, const char *name,
             case DIAMOND_OP_SET_CELL:
                 offset=two_registers(stream,chunk,"SET_CELL",offset);break;
             case DIAMOND_OP_CLOSURE: {
-                if(!require_bytes(stream,chunk,offset,4)){valid=false;offset=chunk->code_count;break;}
-                const size_t count=chunk->code[offset+3];
-                if(!require_bytes(stream,chunk,offset,4+count)){valid=false;offset=chunk->code_count;break;}
-                fprintf(stream,"%-18s r%u, f%u, %zu captures\n","CLOSURE",
-                    chunk->code[offset+1],chunk->code[offset+2],count);
-                offset+=4+count;break;
+                if(!require_bytes(stream,chunk,offset,5)){valid=false;offset=chunk->code_count;break;}
+                const size_t count=chunk->code[offset+4];
+                if(!require_bytes(stream,chunk,offset,5+count)){valid=false;offset=chunk->code_count;break;}
+                const size_t function_index=
+                    ((size_t)chunk->code[offset+2]<<8)|chunk->code[offset+3];
+                fprintf(stream,"%-18s r%u, f%zu, %zu captures\n","CLOSURE",
+                    chunk->code[offset+1],function_index,count);
+                offset+=5+count;break;
             }
             case DIAMOND_OP_NEW:
                 if(!require_bytes(stream,chunk,offset,5)){valid=false;offset=chunk->code_count;break;}

@@ -150,6 +150,15 @@ static bool emit_instruction(Compiler *compiler, DiamondOpCode opcode,
     return true;
 }
 
+/* Big-endian, matching patch_jump/emit_absolute_jump's existing 16-bit
+ * operand convention -- function indices are a CALL/CALL_TYPED/CLOSURE
+ * operand wide enough to exceed one byte now that DIAMOND_MAX_FUNCTIONS
+ * is 512 (see its own comment in src/vm.h). */
+static bool emit_function_index(Compiler *compiler, size_t function_index) {
+    return emit_byte(compiler, (uint8_t)(function_index >> 8)) &&
+           emit_byte(compiler, (uint8_t)(function_index & UINT8_MAX));
+}
+
 static uint8_t allocate_register(Compiler *compiler) {
     if (compiler->next_register > UINT8_MAX) {
         fail(compiler, compiler->previous.span, "program needs too many registers");
@@ -1274,7 +1283,7 @@ static uint8_t parse_call(Compiler *compiler, DiamondSpan name) {
     emit_opcode(compiler,type_argument_count==0?
         DIAMOND_OP_CALL:DIAMOND_OP_CALL_TYPED);
     emit_byte(compiler, destination);
-    emit_byte(compiler, (uint8_t)function_index);
+    emit_function_index(compiler, (size_t)function_index);
     emit_byte(compiler, argument_base);
     emit_byte(compiler, (uint8_t)argument_count);
     if(type_argument_count>0) {
@@ -1359,7 +1368,8 @@ static uint8_t parse_singleton_call(Compiler *compiler,
     const uint8_t destination=allocate_register(compiler);
     emit_opcode(compiler,type_argument_count==0?DIAMOND_OP_CALL:
                 DIAMOND_OP_CALL_TYPED);
-    emit_byte(compiler,destination);emit_byte(compiler,method->function_index);
+    emit_byte(compiler,destination);
+    emit_function_index(compiler,method->function_index);
     emit_byte(compiler,base);emit_byte(compiler,(uint8_t)call_count);
     if(type_argument_count>0) {
         emit_byte(compiler,(uint8_t)type_argument_count);
@@ -3526,7 +3536,7 @@ static uint8_t compile_definition(Compiler *compiler) {
             DiamondMethod *method = &class->methods[class->method_count++];
             for (size_t i=0;i<copy_length;i++) method->name[i]=function->name[i];
             method->name[copy_length]='\0';
-            method->function_index=(uint8_t)function_index;
+            method->function_index=(uint16_t)function_index;
             method->arity=(uint8_t)(function->arity-1);
             method->required_arity=(uint8_t)(function->required_arity-1);
             method->included=false;
@@ -3546,7 +3556,7 @@ static uint8_t compile_definition(Compiler *compiler) {
             DiamondMethod *method=
                 &class->singleton_methods[class->singleton_method_count++];
             for(size_t i=0;i<copy_length;i++)method->name[i]=function->name[i];
-            method->name[copy_length]='\0';method->function_index=(uint8_t)function_index;
+            method->name[copy_length]='\0';method->function_index=(uint16_t)function_index;
             method->arity=function->arity;method->required_arity=function->required_arity;
         }
     } else if(compiler->current_module>=0&&!module_singleton&&
@@ -3565,7 +3575,7 @@ static uint8_t compile_definition(Compiler *compiler) {
                 DiamondMethod *method=&module->methods[module->method_count++];
                 for(size_t i=0;i<copy_length;i++)method->name[i]=function->name[i];
                 method->name[copy_length]='\0';
-                method->function_index=(uint8_t)function_index;
+                method->function_index=(uint16_t)function_index;
                 method->arity=(uint8_t)(function->arity-1);
                 method->required_arity=(uint8_t)(function->required_arity-1);
                 method->included=false;
@@ -3601,7 +3611,7 @@ static uint8_t compile_definition(Compiler *compiler) {
                 &module->singleton_methods[module->singleton_method_count++];
             for(size_t i=0;i<copy_length;i++)method->name[i]=function->name[i];
             method->name[copy_length]='\0';
-            method->function_index=(uint8_t)function_index;
+            method->function_index=(uint16_t)function_index;
             method->arity=function->arity;
             method->required_arity=function->required_arity;
         }
@@ -3640,7 +3650,7 @@ static uint8_t compile_definition(Compiler *compiler) {
             }
         }
         emit_opcode(compiler,DIAMOND_OP_CLOSURE);emit_byte(compiler,result);
-        emit_byte(compiler,(uint8_t)function_index);emit_byte(compiler,(uint8_t)capture_count);
+        emit_function_index(compiler,function_index);emit_byte(compiler,(uint8_t)capture_count);
         for(size_t i=0;i<capture_count;i++)emit_byte(compiler,captures[i]);
         compiler->locals[compiler->local_count++]=(Local){.name=name,.reg=result};
     }
@@ -3719,7 +3729,7 @@ static void compile_attribute_named(Compiler *compiler,bool writer,bool predicat
     }
     DiamondFunction *function=
         &compiler->program->functions[compiler->program->function_count];
-    const uint8_t function_index=(uint8_t)compiler->program->function_count++;
+    const uint16_t function_index=(uint16_t)compiler->program->function_count++;
     (void)snprintf(function->name,sizeof function->name,"%s",method_name);
     function->owner_class=compiler->current_class>=0?
         (uint8_t)compiler->current_class:UINT8_MAX-1;

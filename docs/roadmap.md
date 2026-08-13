@@ -4017,6 +4017,57 @@ future work.
   compile, not in the ordinary test suite, which doesn't stress the
   function-count budget anywhere near this hard.
 
+- Widened function indices from a single byte to 16 bits, raising
+  `DIAMOND_MAX_FUNCTIONS` from 256 to 512. The prior 256 cap was a real
+  architectural ceiling, not a struct-sizing choice (see its own comment
+  in `src/vm.h`): `CALL`/`CALL_TYPED`/`CLOSURE`'s function-index operand
+  and `DiamondMethod`/`DiamondClosure.function_index` were all
+  `uint8_t`, so raising the constant alone would have silently wrapped
+  indices past 256 rather than actually expanding capacity. Immediately
+  relevant, not preemptive: the self-hosted parser's own bootstrap
+  self-compile was already at 251/256 after the Enumerable-completeness
+  round just above, and the next self-hosting phase (exceptions,
+  modules, `require`) was always going to need more than five slots of
+  headroom.
+
+  Three call sites carry the operand in the actual bytecode format
+  (`CALL`/`CALL_TYPED`/`CLOSURE`); everywhere else `function_index` is a
+  plain struct field set from C code, not a bytecode read, so only those
+  three needed a real format change. Widened to big-endian 16-bit,
+  matching the existing `JUMP`/`JUMP_IF_TRUE`/`JUMP_IF_FALSE` operand
+  convention exactly (`patch_jump`'s high-byte/low-byte split) rather
+  than inventing a new encoding — `compiler.c` gained one
+  `emit_function_index` helper used at all three emission sites,
+  `vm.c`'s interpreter loop gained a matching `READ_SHORT` macro
+  alongside the existing `READ_BYTE`, and `disassemble.c`'s
+  `CALL`/`CALL_TYPED`/`CLOSURE` cases grew their `require_bytes` operand
+  counts by one and read/print the combined value instead of a single
+  byte. 512 is deliberately not the full `uint16_t` range: `DiamondFunction`
+  is roughly 152KB (its own fixed-size code/constant/string/type-set
+  arrays), so `DIAMOND_MAX_FUNCTIONS` dominates every heap-allocated
+  `DiamondProgram`'s size almost linearly; 512 keeps the whole struct
+  in the "tens of MB" range this codebase already accepts (`sizeof
+  (DiamondProgram)` went from 45MB to roughly 83MB) while giving the
+  self-hosted bootstrap real headroom again.
+
+  The self-hosted parser (`selfhost/parser.di`) needed the identical
+  format change on its own emission side, independent of the native
+  compiler: it hand-assembles its own `CALL`/`CALL_TYPED`/`CLOSURE`
+  bytes through the `ProgramBuilder` bridge, so it has its own
+  `emit_function_index` (mirroring `patch_jump`'s existing `/256`,
+  `mod(_, 256)` split, already used there for jump targets) at its three
+  call sites — missing this would have made the self-hosted compiler
+  keep emitting the old one-byte layout, silently misaligning every
+  instruction after the first multi-function program's first call.
+  Caught one further real regression the same way as the Enumerable
+  round above: `tests/cases/program_builder_call_declared_function.di`
+  hand-assembles a raw `CALL` instruction byte-by-byte via
+  `ProgramBuilder#emit_byte` to test that bridge API directly, and it
+  still encoded the old one-byte function-index layout — fixed by
+  inserting the new high-byte operand. The two sibling
+  `program_builder_run_*` fixtures were unaffected; they don't exercise
+  `CALL` at all.
+
 ## Next priorities
 
 - Self-hosting, Phase 3 sub-phase 5: exceptions, modules, and `require`.

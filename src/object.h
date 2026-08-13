@@ -143,7 +143,7 @@ typedef struct DiamondHash {
 
 typedef struct DiamondClosure {
     DiamondObject object;
-    uint8_t function_index;
+    uint16_t function_index;
     uint8_t capture_count;
     DiamondValue captures[16];
 } DiamondClosure;

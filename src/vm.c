@@ -605,7 +605,7 @@ static DiamondHash *allocate_hash(DiamondVm *vm) {
     vm->objects=&hash->object;vm->bytes_allocated+=sizeof(DiamondHash);return hash;
 }
 
-static DiamondClosure *allocate_closure(DiamondVm *vm,uint8_t function_index,
+static DiamondClosure *allocate_closure(DiamondVm *vm,uint16_t function_index,
                                         const DiamondValue *captures,size_t count) {
     if(vm->stress_gc||vm->bytes_allocated>=vm->next_gc)diamond_vm_collect(vm);
     DiamondClosure *closure=malloc(sizeof(DiamondClosure));if(closure==nullptr)return nullptr;
@@ -1419,7 +1419,7 @@ static DiamondVmStatus program_builder_invoke_helper(DiamondVm *vm,
         *method=(DiamondMethod){};
         memcpy(method->name,mname->chars,mname->length);
         method->name[mname->length]='\0';
-        method->function_index=(uint8_t)target_function;
+        method->function_index=(uint16_t)target_function;
         method->arity=(uint8_t)arity_value;
         method->required_arity=(uint8_t)required_value;
         method->is_private=registers[(size_t)base+5].as.boolean;
@@ -1473,7 +1473,7 @@ static DiamondVmStatus program_builder_invoke_helper(DiamondVm *vm,
         *method=(DiamondMethod){};
         memcpy(method->name,name->chars,name->length);
         method->name[name->length]='\0';
-        method->function_index=(uint8_t)function_index;
+        method->function_index=(uint16_t)function_index;
         method->arity=(uint8_t)arity;
         method->required_arity=(uint8_t)required;
         method->is_private=registers[(size_t)base+5].as.boolean;
@@ -1538,7 +1538,7 @@ static DiamondVmStatus program_builder_invoke_helper(DiamondVm *vm,
         *method=(DiamondMethod){};
         memcpy(method->name,mname->chars,mname->length);
         method->name[mname->length]='\0';
-        method->function_index=(uint8_t)target_function;
+        method->function_index=(uint16_t)target_function;
         method->arity=(uint8_t)arity_value;
         method->required_arity=(uint8_t)required_value;
         *result=DIAMOND_NIL;return DIAMOND_VM_OK;
@@ -1590,7 +1590,7 @@ static DiamondVmStatus program_builder_invoke_helper(DiamondVm *vm,
         *method=(DiamondMethod){};
         memcpy(method->name,mname->chars,mname->length);
         method->name[mname->length]='\0';
-        method->function_index=(uint8_t)target_function;
+        method->function_index=(uint16_t)target_function;
         method->arity=(uint8_t)arity_value;
         method->required_arity=(uint8_t)required_value;
         *result=DIAMOND_NIL;return DIAMOND_VM_OK;
@@ -3966,6 +3966,17 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
         (target_) = chunk->code[ip++];       \
     } while (false)
 
+    /* Big-endian, matching the existing JUMP-target 16-bit operand
+     * convention -- function indices (CALL/CALL_TYPED/CLOSURE) are wide
+     * enough to exceed one byte now that DIAMOND_MAX_FUNCTIONS is 512. */
+#define READ_SHORT(target_)                  \
+    do {                                     \
+        uint8_t high_ = 0, low_ = 0;         \
+        READ_BYTE(high_);                    \
+        READ_BYTE(low_);                     \
+        (target_) = (uint16_t)(((unsigned)high_ << 8) | low_); \
+    } while (false)
+
     while (ip < chunk->code_count) {
         instruction_offset = ip;
         uint8_t instruction = 0;
@@ -4722,11 +4733,11 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
             }
             case DIAMOND_OP_CALL: {
                 uint8_t destination = 0;
-                uint8_t function_index = 0;
+                uint16_t function_index = 0;
                 uint8_t argument_base = 0;
                 uint8_t call_argument_count = 0;
                 READ_BYTE(destination);
-                READ_BYTE(function_index);
+                READ_SHORT(function_index);
                 READ_BYTE(argument_base);
                 READ_BYTE(call_argument_count);
                 if ((size_t)function_index >= chunk->function_count ||
@@ -4772,9 +4783,10 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 break;
             }
             case DIAMOND_OP_CALL_TYPED: {
-                uint8_t destination=0,function_index=0,argument_base=0;
+                uint8_t destination=0,argument_base=0;
+                uint16_t function_index=0;
                 uint8_t call_argument_count=0,type_argument_count=0;
-                READ_BYTE(destination);READ_BYTE(function_index);
+                READ_BYTE(destination);READ_SHORT(function_index);
                 READ_BYTE(argument_base);READ_BYTE(call_argument_count);
                 READ_BYTE(type_argument_count);
                 if((size_t)function_index>=chunk->function_count||
@@ -4821,7 +4833,8 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 break;
             }
             case DIAMOND_OP_CLOSURE: {
-                uint8_t dest=0,index=0,count=0;READ_BYTE(dest);READ_BYTE(index);READ_BYTE(count);
+                uint8_t dest=0,count=0;uint16_t index=0;
+                READ_BYTE(dest);READ_SHORT(index);READ_BYTE(count);
                 if(index>=chunk->function_count||count>16)VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
                 DiamondValue captures[16];
                 for(size_t i=0;i<count;i++){uint8_t reg=0;READ_BYTE(reg);captures[i]=registers[reg];}

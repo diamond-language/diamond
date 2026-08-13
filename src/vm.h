@@ -10,14 +10,26 @@
 
 enum {
     DIAMOND_MAX_CODE = 4096,
-    /* Capped at 256, not raised further like the other DIAMOND_MAX_*
-     * limits: constant/function indices are single bytes throughout the
-     * bytecode format and structs (CONSTANT/CALL opcode operands,
-     * DiamondMethod/DiamondClosure.function_index) -- (uint8_t)index
-     * silently wraps past 256, so this is a hard architectural ceiling,
-     * not just a struct-sizing choice. See docs/roadmap.md. */
+    /* Capped at 256, not raised further like DIAMOND_MAX_FUNCTIONS below:
+     * constant/string/type-set/method indices are single bytes throughout
+     * the bytecode format and structs (CONSTANT opcode operands,
+     * DiamondClass.methods indices, etc.) -- (uint8_t)index silently wraps
+     * past 256, so this is a hard architectural ceiling, not just a
+     * struct-sizing choice. See docs/roadmap.md. */
     DIAMOND_MAX_CONSTANTS = 256,
-    DIAMOND_MAX_FUNCTIONS = 256,
+    /* Unlike the constant above, function indices are a 16-bit bytecode
+     * operand (CALL/CALL_TYPED/CLOSURE, DiamondMethod/DiamondClosure.
+     * function_index) -- see the "Stdlib round 3" / function-index-widening
+     * roadmap entries for why this needed raising and why it's a real
+     * uint16_t field, not just a bigger single-byte cap. 512 is deliberately
+     * not the full uint16_t range: DiamondFunction is ~152KB (fixed-size
+     * code/constant/string/type-set arrays sized for self-hosting-scale
+     * functions), so the functions[] array alone costs roughly
+     * DIAMOND_MAX_FUNCTIONS * 152KB of every heap-allocated DiamondProgram;
+     * 512 keeps that in the "tens of MB" range this codebase already
+     * accepts (see diamond_compile's own comment) while roughly doubling
+     * the self-hosted parser's prior 251/256 bootstrap usage of headroom. */
+    DIAMOND_MAX_FUNCTIONS = 512,
     DIAMOND_MAX_FUNCTION_NAME = 64,
     DIAMOND_MAX_STRING_CONSTANTS = 256,
     DIAMOND_MAX_STRING_LENGTH = 255,
@@ -184,7 +196,7 @@ typedef struct DiamondTypeSet {
 
 typedef struct DiamondMethod {
     char name[DIAMOND_MAX_FUNCTION_NAME];
-    uint8_t function_index;
+    uint16_t function_index;
     uint8_t arity;
     uint8_t required_arity;
     bool included;

@@ -356,6 +356,15 @@ class Parser
     self.emit_byte(c)
   end
 
+  # CALL/CALL_TYPED/CLOSURE's function-index operand is 16-bit, big-endian
+  # (same split as patch_jump's jump target below), mirroring compiler.c's
+  # own emit_function_index -- DIAMOND_MAX_FUNCTIONS is 512, past what a
+  # single byte holds.
+  def emit_function_index(function_index)
+    self.emit_byte(function_index / 256)
+    self.emit_byte(mod(function_index, 256))
+  end
+
   def allocate_register()
     register = @next_register
     @next_register = @next_register + 1
@@ -1616,7 +1625,7 @@ class Parser
     result = self.allocate_register()
     self.emit_byte(Opcode::CLOSURE)
     self.emit_byte(result)
-    self.emit_byte(function_index)
+    self.emit_function_index(function_index)
     self.emit_byte(capture_registers.length())
     index = 0
     while index < capture_registers.length()
@@ -2695,7 +2704,7 @@ class Parser
       self.emit_byte(Opcode::CALL_TYPED)
     end
     self.emit_byte(destination)
-    self.emit_byte(function_entry[1])
+    self.emit_function_index(function_entry[1])
     self.emit_byte(argument_base)
     self.emit_byte(argument_count)
     if type_arguments.length() > 0
@@ -4021,7 +4030,7 @@ class Parser
       self.emit_byte(Opcode::CALL_TYPED)
     end
     self.emit_byte(destination)
-    self.emit_byte(function_index)
+    self.emit_function_index(function_index)
     self.emit_byte(base)
     self.emit_byte(parsed[1] + offset)
     if type_arguments.length() > 0
