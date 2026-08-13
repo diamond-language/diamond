@@ -793,6 +793,52 @@ static DiamondVmStatus regexp_match_helper(DiamondVm *vm, const DiamondRegexp *r
     return DIAMOND_VM_OK;
 }
 
+/* Deep-copies a DiamondValue rooted in some other VM's heap (typically
+ * program_builder_run_helper's temporary run_vm, about to be freed) into
+ * dest_vm's own heap, so the result stays valid once the source VM is
+ * gone. Object kinds that wrap live VM/OS state rather than plain data
+ * (Closure, Fiber, File, Listener, Regexp, ProgramBuilder) aren't safe to
+ * hand across this boundary at all; Instance is excluded for a subtler
+ * reason -- its ->class pointer aims into the *source* DiamondProgram's
+ * own classes[] array, which has no guaranteed lifetime relative to the
+ * copy once dest_vm's caller lets go of the ProgramBuilder that owns it,
+ * so copying the DiamondValue wouldn't make the reference itself safe.
+ * All of those return false; the caller reports a TypeError. */
+static bool copy_value_into_vm(DiamondVm *dest_vm, DiamondValue value,
+                               DiamondValue *out) {
+    if(value.kind!=DIAMOND_VALUE_OBJECT) {*out=value;return true;}
+    switch(value.as.object->kind) {
+        case DIAMOND_OBJECT_STRING: {
+            const DiamondString *source=(const DiamondString *)value.as.object;
+            DiamondString *copy=allocate_string(dest_vm,source->chars,source->length);
+            if(copy==nullptr)return false;
+            *out=DIAMOND_OBJECT(copy);return true;
+        }
+        case DIAMOND_OBJECT_SYMBOL: {
+            const DiamondSymbol *source=(const DiamondSymbol *)value.as.object;
+            DiamondSymbol *copy=allocate_symbol(dest_vm,source->chars,source->length);
+            if(copy==nullptr)return false;
+            *out=DIAMOND_OBJECT(copy);return true;
+        }
+        case DIAMOND_OBJECT_BIGNUM: {
+            const DiamondBignum *source=(const DiamondBignum *)value.as.object;
+            if(dest_vm->stress_gc||dest_vm->bytes_allocated>=dest_vm->next_gc)
+                diamond_vm_collect(dest_vm);
+            const size_t size=
+                sizeof(DiamondBignum)+source->limb_count*sizeof(uint32_t);
+            DiamondBignum *copy=malloc(size);
+            if(copy==nullptr)return false;
+            copy->object=(DiamondObject){.next=dest_vm->objects,
+                .kind=DIAMOND_OBJECT_BIGNUM};
+            copy->negative=source->negative;copy->limb_count=source->limb_count;
+            memcpy(copy->limbs,source->limbs,source->limb_count*sizeof(uint32_t));
+            dest_vm->objects=&copy->object;dest_vm->bytes_allocated+=size;
+            *out=DIAMOND_OBJECT(copy);return true;
+        }
+        default: return false;
+    }
+}
+
 /* ProgramBuilder#run's real body, factored out of run_chunk's own opcode
  * switch for the same stack-frame-isolation reason as regexp_new_helper
  * above -- but far more load-bearing here: a bare local DiamondVm is
@@ -807,9 +853,11 @@ static DiamondVmStatus regexp_match_helper(DiamondVm *vm, const DiamondRegexp *r
  * that guard could trip, a worse version of the exact bug the Regexp
  * round already found and fixed this way (see docs/roadmap.md). Returns
  * DIAMOND_VM_PROGRAM_ERROR (not the constructed program's own status) for
- * a nonzero exit, and DIAMOND_VM_TYPE_ERROR for a non-scalar result --
- * see docs/roadmap.md's self-hosting Phase 1 entry for why both are
- * deliberate v1 scope cuts rather than gaps. */
+ * a nonzero exit. A heap-object result is deep-copied into the caller's
+ * own vm via copy_value_into_vm before run_vm is freed; kinds that
+ * function can't safely copy (see its own comment) still report
+ * DIAMOND_VM_TYPE_ERROR, a narrower version of this helper's original
+ * scalar-only restriction. */
 static DiamondVmStatus program_builder_run_helper(DiamondVm *vm,
         DiamondProgram *built, DiamondValue *result) {
     const DiamondChunk built_chunk=diamond_program_chunk(built);
@@ -822,14 +870,15 @@ static DiamondVmStatus program_builder_run_helper(DiamondVm *vm,
         diamond_vm_free(&run_vm);
         return DIAMOND_VM_PROGRAM_ERROR;
     }
-    if(run_result.kind==DIAMOND_VALUE_OBJECT) {
+    DiamondValue copied_result=DIAMOND_NIL;
+    if(!copy_value_into_vm(vm,run_result,&copied_result)) {
         diamond_vm_free(&run_vm);
         snprintf(vm->error,sizeof vm->error,"ProgramBuilder#%s",
-            "run only supports a scalar (Int, Float, Bool, or Nil) result");
+            "run does not support this result type");
         return DIAMOND_VM_TYPE_ERROR;
     }
     diamond_vm_free(&run_vm);
-    *result=run_result;
+    *result=copied_result;
     return DIAMOND_VM_OK;
 }
 

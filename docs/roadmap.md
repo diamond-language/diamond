@@ -4068,6 +4068,27 @@ future work.
   `program_builder_run_*` fixtures were unaffected; they don't exercise
   `CALL` at all.
 
+- `ProgramBuilder#run` can now return `String`/`Symbol`/`Bignum` results,
+  not just `Int`/`Float`/`Bool`/`Nil`. Root-caused via a full differential
+  sweep of `tests/cases/*.di` (824 files) through `selfhost/parser.di` +
+  `ProgramBuilder#run`, well beyond the curated 233-file `parser_cases`
+  corpus `tests/parser_diff.sh` normally checks: 264 of 276 real mismatches
+  traced to this single restriction, dwarfing every other gap combined.
+  The restriction was never an arbitrary scope cut — `run`'s bytecode
+  executes in a *separate* temporary `DiamondVm` (`run_vm`, stack-frame-
+  isolated per this function's own existing comment) that gets
+  `diamond_vm_free`'d before returning, and that unconditionally frees
+  every object it allocated, so handing back a heap-object result without
+  copying it first would dangle immediately. Fixed with a new
+  `copy_value_into_vm` helper that deep-copies a value out of `run_vm`'s
+  heap into the caller's own heap before the free. `program_builder_
+  run_rejects_object_result.di` — a hand-assembled-bytecode unit test
+  whose entire point was locking in the old blanket rejection — now
+  constructs a `Closure` result instead of the `String` it used before,
+  since closures wrap live function/capture state that can never be
+  copied this way, unlike the plain-data kinds landing here and in the
+  slices immediately following.
+
 ## Next priorities
 
 - Self-hosting, Phase 3 sub-phase 5: exceptions, modules, and `require`.

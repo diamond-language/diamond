@@ -1,9 +1,15 @@
 begin
   b = ProgramBuilder.new()
-  s = b.add_string(-1, "hello")
-  b.emit_byte(-1, 1)
+  fn = b.declare_function("inner", 0, 0)
+  b.emit_byte(fn, 57)
+  b.emit_byte(fn, 0)
+  b.set_register_count(fn, 1)
+
+  b.emit_byte(-1, 31)
   b.emit_byte(-1, 0)
-  b.emit_byte(-1, s)
+  b.emit_byte(-1, 0)
+  b.emit_byte(-1, fn)
+  b.emit_byte(-1, 0)
   b.emit_byte(-1, 57)
   b.emit_byte(-1, 0)
   b.set_register_count(-1, 1)
