@@ -18,7 +18,11 @@ def run_tests()
   end
 
   def test_raises_caught()
-    Minitest.assert_raises(raises_runtime_error)
+    Minitest.assert_raises[RuntimeError](raises_runtime_error)
+  end
+
+  def test_raises_wrong_type()
+    Minitest.assert_raises[ArgumentError](raises_runtime_error)
   end
 
   def does_not_raise()
@@ -26,7 +30,7 @@ def run_tests()
   end
 
   def test_raises_not_caught()
-    Minitest.assert_raises(does_not_raise)
+    Minitest.assert_raises[RuntimeError](does_not_raise)
   end
 
   suite = Minitest.new()
@@ -34,6 +38,7 @@ def run_tests()
   suite.test("wrong value", test_wrong_value)
   suite.test("division by zero", test_division_by_zero)
   suite.test("raises caught", test_raises_caught)
+  suite.test("raises wrong type", test_raises_wrong_type)
   suite.test("raises not caught", test_raises_not_caught)
   suite.run()
 end

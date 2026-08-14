@@ -3,7 +3,9 @@ FAIL: wrong value
 ERROR: division by zero
   division by zero
   at test_division_by_zero:12:9
+ERROR: raises wrong type
+  boom
 FAIL: raises not caught
   expected an exception to be raised
-5 tests, 2 passed, 2 failed, 1 errors
+6 tests, 2 passed, 2 failed, 2 errors
 false

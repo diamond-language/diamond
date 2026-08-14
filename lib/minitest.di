@@ -28,6 +28,13 @@
 # `Callable`-typed helper in lib/core.di and tests/cases/ already lives
 # with.
 #
+# assert_raises *can* check for a specific exception type, via an
+# explicit generic type argument -- `assert_raises[SomeError](action)`
+# -- even though Diamond has no first-class Class values: `rescue`
+# clauses can filter on a bound generic type parameter (E in
+# `def self.assert_raises[E](...)`), resolved against the type argument
+# given at the call site.
+#
 # Assertions raise AssertionError on failure and return true on
 # success, exactly like real minitest's assertions -- `run` is what
 # catches AssertionError (recorded as a failure) separately from any
@@ -88,18 +95,22 @@ class Minitest
     Minitest.assert(value == nil, "#{prefix}expected nil, got #{JSON.stringify(value)}")
   end
 
-  # Runs `action` and asserts it raised some StandardError. Can't check
-  # for a *specific* exception type dynamically -- Diamond's `rescue`
-  # clauses only accept compile-time type literals, and generic type
-  # variables are explicitly rejected as rescue filters -- so this only
-  # confirms "something was raised", not which class.
-  def self.assert_raises(action: Callable[0], message: String = "expected an exception to be raised") -> Bool
+  # Runs `action` and asserts it raised an exception matching E (or a
+  # subclass of it). E must be given explicitly at the call site, e.g.
+  # `Minitest.assert_raises[SomeError](action)` -- there's no argument
+  # E could be inferred from, and no default type argument. Use
+  # `assert_raises[StandardError](action)` for "just confirm something
+  # was raised, any kind". An action that raises some *other*,
+  # unrelated exception type isn't caught here at all -- it propagates
+  # past assert_raises the same way an unmatched `rescue error: E`
+  # always does, surfacing as an error rather than a clean failure.
+  def self.assert_raises[E](action: Callable[0], message: String = "expected an exception to be raised") -> Bool
     raised = begin
       action()
       false
     rescue error: AssertionError
       raise
-    rescue error: StandardError
+    rescue error: E
       true
     end
     if raised

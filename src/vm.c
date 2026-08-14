@@ -3580,8 +3580,14 @@ static const char *type_name(const DiamondChunk *chunk,uint8_t type) {
     else if(type==DIAMOND_TYPE_HASH) name="Hash";
     else if(type==DIAMOND_TYPE_CALLABLE) name="Callable";
     else if(type==DIAMOND_TYPE_SIZED) name="Sized";
-    else if(type>=DIAMOND_TYPE_VARIABLE_BASE&&type<DIAMOND_TYPE_INTERFACE_BASE)
-        name="TypeVariable";
+    else if(type>=DIAMOND_TYPE_VARIABLE_BASE&&type<DIAMOND_TYPE_INTERFACE_BASE) {
+        const size_t variable=(size_t)(type-DIAMOND_TYPE_VARIABLE_BASE);
+        const DiamondTypeBinding *binding=chunk->type_variable_bindings;
+        if(binding!=nullptr&&variable<chunk->type_variable_count&&
+           binding[variable].node_count>0&&binding[variable].nodes[0].count>0)
+            name=type_name(chunk,binding[variable].nodes[0].members[0].id);
+        else name="TypeVariable";
+    }
     else if(type>=DIAMOND_TYPE_INTERFACE_BASE&&
             (size_t)(type-DIAMOND_TYPE_INTERFACE_BASE)<chunk->interface_count)
         name=chunk->interfaces[type-DIAMOND_TYPE_INTERFACE_BASE].name;

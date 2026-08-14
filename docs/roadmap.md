@@ -5049,6 +5049,35 @@ future work.
   `tests/cases/minitest_run_bang_nonzero_exit.di`) nest every test
   function inside one wrapping `def run_tests()` for exactly this
   reason.
+- One of those two gaps turned out to be smaller than it looked: the
+  compile-time rejection of generic type variables in `rescue` clauses
+  (`"generic type variables cannot filter rescue"`,
+  `src/compiler.c`) was never a missing *capability* -- just an
+  unimplemented case. The VM already resolves a generic type variable
+  against its call-site binding at runtime (`chunk->type_variable_
+  bindings`, populated by `DIAMOND_OP_CALL_TYPED`/`INVOKE_TYPED` and
+  read back in `value_matches_type`, `src/vm.c`), used elsewhere for
+  ordinary generic parameter type checks (`def foo[T](value: T)`).
+  Confirmed by temporarily deleting the four-line rejection and testing
+  directly: `rescue error: E` inside a generic function correctly
+  catches only a raised value matching whatever `E` was bound to at the
+  call site, and doesn't catch anything else -- the mechanism doing the
+  matching was already fully general, it just hadn't been wired up for
+  this one syntax position. Landed for real, plus a related cosmetic
+  fix caught along the way: runtime type-mismatch messages named an
+  unbound variable `TypeVariable` instead of resolving it to whatever
+  it was actually bound to (`type_name`, `src/vm.c`) -- e.g. "expected
+  TypeVariable, got Buzz" now reads "expected Fizz, got Buzz".
+  `Minitest.assert_raises` is now `assert_raises[E]`, checking a
+  specific caller-given exception type (or subclass) instead of "any
+  StandardError" -- `Minitest.assert_raises[SomeError](action)`, no
+  type inferred or defaulted, matching how every other explicit-type-
+  argument call in the language already reads
+  (`try_catch[Fizz](action)`-shaped). Doesn't change the deeper "no
+  first-class Class values" gap (still no `x.is_a?(some_runtime_class)`
+  or `error.class`) -- this only helps the specific case where the type
+  being checked against is already known at the call site as a
+  compile-time literal, generic-bound or not.
 
 ## Explicitly deferred
 

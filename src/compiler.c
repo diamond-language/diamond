@@ -3023,11 +3023,6 @@ static uint8_t compile_begin(Compiler *compiler) {
                             fail(compiler,compiler->current.span,
                                  "rescue type is covered by an earlier clause");
                     }
-                if(rescue_type>=DIAMOND_TYPE_VARIABLE_BASE&&
-                   rescue_type<DIAMOND_TYPE_INTERFACE_BASE) {
-                    fail(compiler,compiler->current.span,
-                         "generic type variables cannot filter rescue");break;
-                }
                 rescue_types[type_count++]=rescue_type;
                 seen_rescue_types[seen_rescue_type_count++]=rescue_type;
                 advance_token(compiler);
