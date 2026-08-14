@@ -4501,11 +4501,8 @@ future work.
   guard `gsub` needs in Ruby to avoid looping forever on a pattern that
   can match empty.
 
-  Deliberate v1 scope cut: the replacement argument is always a literal
-  `String` — no `\1`-style backreference substitution. Revisit only if
-  something actually needs it; it's a bigger parsing job (backreference
-  syntax inside the replacement string) for a feature nothing in this
-  codebase currently exercises.
+  v1 shipped without `\1`-style backreference substitution in the
+  replacement string (see below for when that landed).
 
   Verified directly against representative inputs (captureless and
   capturing patterns, a zero-length-matching pattern confirmed not to
@@ -4659,6 +4656,33 @@ future work.
   array literal), `string_tr_empty_from`, and
   `string_tr_argument_not_string`. `make test` (908 assertions, up from
   905) passes clean.
+
+- Added `\1`-style backreference substitution to `String#gsub`/`#sub`
+  replacement strings (`src/vm.c`), closing the v1 scope cut noted
+  above. New helper `regexp_append_replacement` expands the replacement
+  byte-by-byte instead of copying it verbatim: `\0`/`\&` is the whole
+  match, `\1`-`\9` is that numbered capture group (empty string if the
+  group didn't participate, e.g. an unmatched `(x)?`, or if the pattern
+  doesn't have that many groups — no error either way, matching Ruby's
+  own quiet-empty-string behavior rather than raising), `\\` is a
+  literal backslash, and a stray backslash before anything else just
+  drops the backslash and keeps going. `regexp_replace_helper` now
+  keeps each `reginold_match` (captures included) alive through the
+  replacement-expansion call instead of freeing it right after reading
+  `overall`. Named backreferences (`\k<name>`) are a further scope cut
+  — reginold's own capture API is index-only, nothing here has a
+  reachable named-group source to test against anyway.
+
+  Verified directly (multi-group reordering on a date pattern,
+  whole-match doubling via `\0`, an unmatched optional group producing
+  an empty splice, a literal `\\` followed by a plain `n` producing a
+  two-byte `\n` rather than a newline, and a `\9` past the pattern's
+  actual group count producing nothing) before writing four permanent
+  cases: `tests/cases/string_gsub_backreferences`,
+  `string_gsub_whole_match_backreference`,
+  `string_gsub_unmatched_group_backreference`,
+  `string_gsub_literal_backslash_and_out_of_range_group`. `make test`
+  (912 assertions, up from 908) passes clean.
 
 ## Later experiments
 

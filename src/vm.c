@@ -823,10 +823,49 @@ static bool byte_buffer_append(ByteBuffer *buffer,const char *bytes,size_t count
     return true;
 }
 
+/* Expands a String#sub/String#gsub replacement into `out`, honoring Ruby's
+ * backslash escapes: `\0`/`\&` is the whole match, `\1`-`\9` is that capture
+ * group (empty if the group didn't participate, e.g. an unmatched `(x)?`),
+ * `\\` is a literal backslash, and a backslash before anything else (or a
+ * group number past the pattern's actual capture count) is dropped and the
+ * following byte copied as-is -- no named (`\k<name>`) backreferences,
+ * a scope cut nothing here exercises. */
+static bool regexp_append_replacement(ByteBuffer *out,const DiamondString *subject,
+        const DiamondString *replacement,const reginold_match *match) {
+    size_t index=0;
+    bool ok=true;
+    while(ok&&index<replacement->length) {
+        const char ch=replacement->chars[index];
+        if(ch=='\\'&&index+1<replacement->length) {
+            const char next=replacement->chars[index+1];
+            if(next=='\\') {
+                ok=byte_buffer_append(out,"\\",1);index+=2;continue;
+            }
+            if(next=='&'||next=='0') {
+                const size_t begin=(size_t)match->overall.beg;
+                const size_t end=(size_t)match->overall.end;
+                ok=byte_buffer_append(out,subject->chars+begin,end-begin);
+                index+=2;continue;
+            }
+            if(next>='1'&&next<='9') {
+                const size_t group=(size_t)(next-'0');
+                if(group<=match->capture_count) {
+                    const reginold_span span=match->captures[group-1];
+                    if(span.beg>=0&&span.end>=0)
+                        ok=byte_buffer_append(out,subject->chars+span.beg,
+                            (size_t)(span.end-span.beg));
+                }
+                index+=2;continue;
+            }
+            index++;continue;
+        }
+        ok=byte_buffer_append(out,&ch,1);index++;
+    }
+    return ok;
+}
+
 /* String#sub/String#gsub's shared body (replace_all toggles first-only vs
- * every match). Replacement is always a literal String -- no `\1`-style
- * backreference substitution in this round, a deliberate scope cut (see
- * docs/roadmap.md). Zero-length matches (a pattern that can match an empty
+ * every match). Zero-length matches (a pattern that can match an empty
  * string, e.g. an empty pattern or "x zero-or-more-times") copy one
  * source byte forward after
  * inserting the replacement, the same way Ruby's own gsub avoids looping
@@ -850,9 +889,9 @@ static DiamondVmStatus regexp_replace_helper(DiamondVm *vm,const DiamondRegexp *
         if(search_status==REGINOLD_MISMATCH)break;
         const size_t match_begin=(size_t)match_result.overall.beg;
         const size_t match_end=(size_t)match_result.overall.end;
-        reginold_match_free(&match_result);
         ok=byte_buffer_append(&output,subject->chars+cursor,match_begin-cursor)&&
-           byte_buffer_append(&output,replacement->chars,replacement->length);
+           regexp_append_replacement(&output,subject,replacement,&match_result);
+        reginold_match_free(&match_result);
         if(match_end==match_begin) {
             if(match_end<subject->length)
                 ok=ok&&byte_buffer_append(&output,subject->chars+match_end,1);
