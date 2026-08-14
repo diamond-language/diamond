@@ -4955,6 +4955,45 @@ future work.
   is the likely fix, but changes what "run one `.di` file and diff its
   output" (`tests/run.sh`'s entire current model) means, so it's a real
   design task, not a quick patch.
+- Fixed the test-suite slowness documented just above. Two changes, both
+  needed to get the real win. First, a new `tests/run_cases.c` batch
+  runner: every `tests/cases/*.di` file with an `.expected`/
+  `.expected_error`/`.expected_contains`/`.expected_lastline` sibling
+  (831 of 866) now compiles and runs in one process via a new shared
+  `src/run_source.c`/`.h` module (`diamond_run_source_with_program`,
+  factored out of `main.c`'s own `run_source`) instead of
+  `tests/run.sh` spawning a fresh `./build/diamond` per file, capturing
+  each case's output through real `dup`/`dup2` fd redirection into
+  per-case `.stdout`/`.combined`/`.exitcode` files under
+  `build/case_output/`. `tests/run.sh` keeps every actual comparison
+  (exact match, substring, BRE `grep -q`, last-line) completely
+  unchanged — it just reads those files back with bash's own `$(<file)`
+  builtin instead of spawning a process, deliberately not reimplementing
+  any matching logic in C, to avoid any risk of diverging from real
+  grep/bash semantics. Second, and the one measurement actually caught:
+  the first working version of `run_cases` only got to ~38.7s wall
+  (from the original ~60s) — eliminating process spawns alone didn't
+  come close to what the `10s user`/`46s sys` split above implied it
+  would. Measured why directly rather than guessing further:
+  `sizeof(DiamondProgram)` is 87,180,472 bytes (~83MB), large enough
+  that glibc routes its `malloc`/`free` through `mmap`/`munmap` — real
+  kernel work, not bookkeeping — and `diamond_run_source`'s per-call
+  malloc+free of a fresh one was still happening 831 times. Split
+  `run_source.c` into `diamond_run_source` (single-shot, mallocs+frees
+  internally, what `main.c` uses) and
+  `diamond_run_source_with_program` (caller-owned, reusable
+  `DiamondProgram*`); `run_cases.c` now mallocs exactly one, `static`,
+  reused across all 831 cases in the process — safe because
+  `diamond_compile` always calls `diamond_program_init` to reset it from
+  scratch before compiling. That alone took `run_cases`'s own wall time
+  from 38.7s to 8.5s (`sys` time 31.4s → 1.0s). Net result: a full
+  `make test` (912 assertions, unchanged) went from ~60s to ~28s; the
+  file-based-case portion specifically (what `run_cases` replaced) went
+  from ~46s to ~8.5s. The remaining ~19s of the full run is
+  `tests/run.sh`'s older inline `-e`-assertion convention (predates
+  `tests/cases/*.expected`, still spawns `./build/diamond` once per
+  assertion) — untouched here, deliberately out of scope, and a
+  candidate for the same treatment later if it's ever worth it.
 - Diamond itself has no testing framework — nothing self-hosted for
   someone writing Diamond *programs* (as opposed to this repo's own
   bash-driven `tests/cases/*.di` + `.expected` convention, which tests

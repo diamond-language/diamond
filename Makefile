@@ -30,14 +30,14 @@ DEPS := $(OBJECTS:.o=.d)
 all: debug
 
 debug: CFLAGS := $(CFLAGS_COMMON) $(CFLAGS_DEBUG)
-debug: $(TARGET)
+debug: $(TARGET) $(BUILD_DIR)/run_cases
 
 sanitize: CFLAGS := $(CFLAGS_COMMON) $(CFLAGS_SANITIZE)
 sanitize: LDFLAGS := $(LDFLAGS_SANITIZE)
-sanitize: clean $(TARGET)
+sanitize: clean $(TARGET) $(BUILD_DIR)/run_cases
 
 release: CFLAGS := $(CFLAGS_COMMON) $(CFLAGS_RELEASE)
-release: clean $(TARGET)
+release: clean $(TARGET) $(BUILD_DIR)/run_cases
 
 $(TARGET): $(OBJECTS)
 	$(CC) $(OBJECTS) $(LDFLAGS) $(LDLIBS) -o $@
@@ -45,6 +45,16 @@ $(TARGET): $(OBJECTS)
 $(BUILD_DIR)/%.o: src/%.c
 	@mkdir -p $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c $< -o $@
+
+# Built with whichever variant (debug/sanitize/release) is currently
+# active, same as $(TARGET) itself -- tests/run.sh's own file-based case
+# loop runs whatever `make test`/`test-release`/`test-sanitize` just
+# built, and needs run_cases to match (see docs/roadmap.md for why this
+# exists: running every tests/cases/*.di case in this one process
+# instead of tests/run.sh spawning a fresh `diamond` per case).
+$(BUILD_DIR)/run_cases: tests/run_cases.c $(SOURCES)
+	@mkdir -p $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(API_SOURCES) $< $(LDFLAGS) $(LDLIBS) -o $@
 
 test: debug
 	bash tests/run.sh

@@ -3,6 +3,7 @@ set -euo pipefail
 
 diamond=./build/diamond
 diamond_abs="$(realpath "$diamond")"
+run_cases_abs="$(realpath ./build/run_cases)"
 
 actual="$($diamond --version)"
 [[ "$actual" == "diamond 0.1.0-dev" ]] || {
@@ -1731,20 +1732,29 @@ puts_actual="$(DIAMOND_STRESS_GC=1 $diamond -e $'x = 9223372036854775807 + 1\npu
 # This is the newer convention going forward, growing this directory
 # instead of this file; the inline -e assertions above are the older
 # convention, most of them predating tests/cases/*.expected existing.
+#
+# All cases run up front in one batch via build/run_cases (tests/run_cases.c),
+# which runs every case in a single process instead of this loop spawning a
+# fresh `diamond` per file (see docs/roadmap.md) -- .env/.flags handling
+# happens inside run_cases now, and this loop just reads back the .stdout/
+# .combined/.exitcode files it wrote per case with bash's own $(<file), which
+# strips a trailing newline the same way $(cat ...) used to.
+case_output_dir="build/case_output"
+"$run_cases_abs" tests/cases "$case_output_dir"
+
 case_count=0
 for case_file in tests/cases/*.di; do
     case_name="${case_file%.di}"
-    case_env=()
-    if [[ -f "$case_name.env" ]]; then
-        mapfile -t case_env < "$case_name.env"
-    fi
-    case_flags=()
-    if [[ -f "$case_name.flags" ]]; then
-        mapfile -t case_flags < "$case_name.flags"
-    fi
+    case_base="$(basename "$case_name")"
     if [[ -f "$case_name.expected" ]]; then
-        actual="$(env "${case_env[@]}" "$diamond_abs" "${case_flags[@]}" "$case_file")"
+        actual="$(<"$case_output_dir/$case_base.stdout")"
+        exit_code="$(<"$case_output_dir/$case_base.exitcode")"
         expected="$(cat "$case_name.expected")"
+        if [[ "$exit_code" != "0" ]]; then
+            echo "FAIL: $case_file" >&2
+            echo "  expected exit code 0, got: $exit_code" >&2
+            exit 1
+        fi
         if [[ "$actual" != "$expected" ]]; then
             echo "FAIL: $case_file" >&2
             echo "  expected: $expected" >&2
@@ -1753,7 +1763,7 @@ for case_file in tests/cases/*.di; do
         fi
         case_count=$((case_count + 1))
     elif [[ -f "$case_name.expected_error" ]]; then
-        actual="$(env "${case_env[@]}" "$diamond_abs" "${case_flags[@]}" "$case_file" 2>&1 || true)"
+        actual="$(<"$case_output_dir/$case_base.combined")"
         pattern="$(cat "$case_name.expected_error")"
         if [[ "$actual" != *"$pattern"* ]]; then
             echo "FAIL: $case_file" >&2
@@ -1763,7 +1773,7 @@ for case_file in tests/cases/*.di; do
         fi
         case_count=$((case_count + 1))
     elif [[ -f "$case_name.expected_contains" || -f "$case_name.expected_lastline" ]]; then
-        actual="$(env "${case_env[@]}" "$diamond_abs" "${case_flags[@]}" "$case_file" 2>&1 || true)"
+        actual="$(<"$case_output_dir/$case_base.combined")"
         if [[ -f "$case_name.expected_contains" ]]; then
             while IFS= read -r pattern; do
                 [[ -z "$pattern" ]] && continue
