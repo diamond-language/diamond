@@ -17,36 +17,58 @@ the rest of this repository already uses.
 
 ## What it does today
 
-Diagnostics, plus a narrow slice of hover:
+Diagnostics, plus hover/go-to-definition/document-symbols over a narrow,
+declaration-only symbol table:
 
-- `initialize` — advertises `textDocumentSync: Full` (1) and
-  `hoverProvider: true`. No `definitionProvider`, `completionProvider`,
-  etc., since those aren't implemented; a compliant client won't ask for
-  them.
+- `initialize` — advertises `textDocumentSync: Full` (1),
+  `hoverProvider: true`, `definitionProvider: true`, and
+  `documentSymbolProvider: true`. No `completionProvider`, since that
+  isn't implemented; a compliant client won't ask for it.
 - `textDocument/didOpen` / `didChange` / `didClose` — each recompiles the
   document's current full text (full sync only; there's no incremental
   edit application) and publishes a `textDocument/publishDiagnostics`
   notification. Diamond's compiler stops at its first error, so there is
   never more than one diagnostic per publish — an empty array means the
   document currently compiles cleanly.
-- `textDocument/hover` (`lsp/hover.c`) — resolves the identifier under
-  the cursor against exactly two things, deliberately not a real symbol
-  table: a top-level function name (`def foo`, shown as its full
-  reconstructed signature — parameter types, return type, which
-  parameters are optional) or a class name (shown as `class Name` or
-  `class Name < Superclass`). Both are globally unambiguous by
-  construction in this language — a bare call always resolves to
-  exactly one top-level function by that name at compile time (no
-  overloading, no scoping to worry about), and a class name always
-  names exactly one class — which is what makes this tractable without
-  the scope-resolution machinery a general "hover any identifier"
-  feature would need. Method names reached through
-  `receiver.method(...)` are deliberately not resolved: which class's
-  method is meant depends on `receiver`'s runtime type, and there's no
-  type inference here to answer that. Requires the *document* to
-  currently compile cleanly — if it doesn't, hover returns `null`
-  rather than a stale or partial signature; the document's own
-  diagnostics already say why.
+- `textDocument/hover` (`lsp/hover.c`), `textDocument/definition`
+  (`lsp/definition.c`), and `textDocument/documentSymbol`
+  (`lsp/document_symbol.c`) all resolve the same two identifier kinds,
+  deliberately not a real general-purpose symbol table: a top-level
+  function name (`def foo`, unambiguous since a bare call always
+  resolves to exactly one top-level function by that name at compile
+  time — no overloading, no scoping to worry about) or a class name
+  (always names exactly one class, single inheritance). `src/compiler.c`
+  now records each one's declaration-site position (1-based line/column
+  of its own name token, plus the matching byte offset in the compiled
+  buffer — `declaration_line`/`declaration_column`/`declaration_start`
+  on `DiamondFunction`/`DiamondClass`, `src/vm.h`) purely for these three
+  handlers to read; nothing else in the VM uses them.
+  - Hover shows the reconstructed signature (parameter types, return
+    type, which parameters are optional) or `class Name`/`class Name <
+    Superclass`, reusing `disassemble.c`'s own type-set formatting
+    (`diamond_print_type_set`).
+  - Go-to-definition returns a `Location`. A match can legitimately live
+    in a *different* file (something pulled in via `require`) — resolved
+    to the right file and line through `diamond_resolve_diagnostic_
+    location`'s segment table (`src/compiler.h`), the same machinery a
+    compile error's own position already goes through, since a
+    declaration's raw in-buffer line is only ever correct for the first
+    thing after the most recent `#line 1` reset (`diamond_load_program`
+    inserts one before *every* contiguous chunk it copies into the
+    bundle, not just before required-file content) and needs the same
+    segment-relative remap anywhere else.
+  - Document symbols lists every top-level function/class declared *in
+    that document itself* — not lib/core.di's prelude, and not anything
+    pulled in through `require` (each of those has its own outline, a
+    didOpen away). `range`/`selectionRange` are identical for each
+    entry (just the name token — nothing tracks a declaration's full
+    extent).
+  - All three deliberately don't resolve a method name reached through
+    `receiver.method(...)`: which class's method is meant depends on
+    `receiver`'s runtime type, which nothing here infers. All three also
+    require the *document* to currently compile cleanly — otherwise they
+    return `null`/empty rather than a stale result; the document's own
+    diagnostics already say why.
 - `shutdown` / `exit` — the ordinary LSP lifecycle; `exit`'s process exit
   code is 0 if `shutdown` was requested first, 1 otherwise, per spec.
 - Any other request gets a JSON-RPC `MethodNotFound` (-32601) error;
@@ -91,28 +113,32 @@ new file type/extension (`.di`).
 over its real stdio transport via a bash `coproc` — the same
 no-Python/no-Node convention every other test script in this repo
 follows — through the full `initialize` → `didOpen` → `didChange` →
-`didClose` → `shutdown` → `exit` lifecycle, hover at a declaration and
-at a call site, hover returning `null` for a local variable and for a
-document that doesn't currently compile, plus the unknown-method and
+`didClose` → `shutdown` → `exit` lifecycle, hover/definition/
+documentSymbol at a declaration, at a call site, and across a `require`,
+all three correctly returning nothing for a local variable or a document
+that doesn't currently compile, document symbols excluding the prelude
+and anything pulled in via `require`, plus the unknown-method and
 exit-without-shutdown edge cases.
 
-`editors/vscode/extension.js` wires this up client-side too, via
-`vscode.languages.registerHoverProvider` — see its own file and
+`editors/vscode/extension.js` wires all three up client-side too, via
+`vscode.languages.registerHoverProvider`/`registerDefinitionProvider`/
+`registerDocumentSymbolProvider` — see its own file and
 `editors/vscode/README.md`.
 
 ## What's deliberately out of scope so far
 
-- **Go-to-definition, completion, symbol search** — all need a real
-  symbol table (name → declaration site, with scope resolution), which
-  nothing in `lsp/` builds yet. Hover gets by without one (see above)
-  by resolving only two globally-unambiguous identifier kinds; these
-  three would need the real thing — jumping to *a* declaration or
-  completing *a* name means actually resolving scope, not sidestepping
-  it the way hover's narrow two-kind lookup does.
-- **Hover on a method name reached through `receiver.method(...)`** —
-  needs type inference on `receiver` to know which class's method is
-  meant (possibly several classes define a same-named method); see
-  above.
+- **Completion, workspace-wide symbol search** — need a real, general
+  symbol table (name → declaration site, with actual scope resolution),
+  which nothing in `lsp/` builds. Hover/definition/documentSymbol get by
+  without one by resolving only two globally-unambiguous identifier
+  kinds (see above); completion in particular can't take that shortcut
+  at all — "what names are valid here" is a different question than
+  "where is this one declared" and needs real scope resolution to
+  answer honestly.
+- **Hover/definition/documentSymbol on a method name reached through
+  `receiver.method(...)`** — needs type inference on `receiver` to know
+  which class's method is meant (possibly several classes define a
+  same-named method); see above.
 - **Diagnostics for a broken dependency, published against its own
   file** — `require` itself resolves (see above), but if the error is
   inside the required file rather than the open document, nothing gets

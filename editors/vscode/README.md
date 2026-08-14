@@ -13,7 +13,7 @@ from-scratch, zero-external-dependency convention, and meaning there's
 nothing to `npm install` on either side: VS Code's extension host already
 bundles Node.
 
-## Diagnostics and hover setup
+## Diagnostics, hover, go-to-definition, and outline setup
 
 1. Build the language server: `make lsp` (from the repo root). This
    produces `build/diamond-lsp`.
@@ -24,11 +24,14 @@ bundles Node.
 3. Open a `.di` file. The extension activates on the `diamond` language,
    spawns the server, and diagnostics appear as you type (Diamond's
    compiler stops at the first error, so at most one diagnostic per file
-   at a time). Hovering a top-level function name or a class name — at
-   its own declaration or anywhere it's used — shows its signature (only
-   those two identifier kinds resolve; see `docs/lsp.md` for exactly
-   what is and isn't covered yet, e.g. no go-to-definition/completion,
-   and no hover on a method reached through `receiver.method(...)`).
+   at a time). A top-level function name or a class name — at its own
+   declaration or anywhere it's used, including across a `require` —
+   supports hover (shows its signature), go-to-definition (jumps to the
+   declaration, in whichever file it's actually in), and shows up in the
+   file's Outline/breadcrumbs view. Only those two identifier kinds
+   resolve — see `docs/lsp.md` for exactly what is and isn't covered
+   yet, e.g. no completion, and none of the three on a method reached
+   through `receiver.method(...)`.
 
 If the server fails to start (wrong path, not built yet), VS Code shows an
 error notification with the attempted path; server stderr and lifecycle
@@ -48,6 +51,12 @@ ln -s "$(pwd)/editors/vscode" ~/.vscode/extensions/diamond-language
 
 then reload the VS Code window (`Developer: Reload Window` from the command
 palette). Opening any `.di` file should now be highlighted.
+
+If VS Code is a **Flatpak** install (`flatpak list | grep visualstudio`),
+it's sandboxed and never reads `~/.vscode/extensions` at all — symlink into
+`~/.var/app/com.visualstudio.code/data/vscode/extensions/diamond-language`
+instead, then fully quit and reopen the app (not just reload the window,
+since it needs to rescan its extensions directory).
 
 Alternatively, without touching your real extensions directory:
 

@@ -49,6 +49,32 @@ char *diagnostics_uri_to_path(const char *uri) {
     return path;
 }
 
+char *diagnostics_path_to_uri(const char *path) {
+    static constexpr char prefix[]="file://";
+    static constexpr size_t prefix_length=sizeof(prefix)-1;
+    static constexpr char hex_digits[]="0123456789ABCDEF";
+    const size_t path_length=strlen(path);
+    char *uri=malloc(prefix_length+path_length*3+1);
+    if(uri==nullptr)return nullptr;
+    memcpy(uri,prefix,prefix_length);
+    size_t out=prefix_length;
+    for(size_t index=0;index<path_length;index++) {
+        const unsigned char byte=(unsigned char)path[index];
+        const bool unreserved=(byte>='A'&&byte<='Z')||(byte>='a'&&byte<='z')||
+            (byte>='0'&&byte<='9')||byte=='-'||byte=='_'||byte=='.'||byte=='~'||
+            byte=='/';
+        if(unreserved) {
+            uri[out++]=(char)byte;
+        } else {
+            uri[out++]='%';
+            uri[out++]=hex_digits[byte>>4];
+            uri[out++]=hex_digits[byte&0xF];
+        }
+    }
+    uri[out]='\0';
+    return uri;
+}
+
 static JsonValue *build_diagnostic(size_t line,size_t column,size_t highlight_length,
                                    const char *message) {
     JsonValue *entry=json_object();

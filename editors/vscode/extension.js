@@ -192,6 +192,54 @@ async function provideHover(document, position) {
     return new vscode.Hover(raw.contents.value);
 }
 
+/* vscode.DefinitionProvider#provideDefinition. The server's Location
+ * may name a *different* file than the one being edited (a symbol
+ * pulled in through `require`) -- vscode.Uri.parse handles that uri
+ * exactly the same way regardless of which file it names, no special
+ * casing needed here. */
+async function provideDefinition(document, position) {
+    if (!child) return undefined;
+    let raw;
+    try {
+        raw = await sendRequest('textDocument/definition', {
+            textDocument: { uri: document.uri.toString() },
+            position: { line: position.line, character: position.character },
+        });
+    } catch (err) {
+        return undefined;
+    }
+    if (!raw || !raw.uri || !raw.range) return undefined;
+    return new vscode.Location(vscode.Uri.parse(raw.uri), toRange(raw.range));
+}
+
+function toRange(raw) {
+    return new vscode.Range(
+        raw.start.line, raw.start.character,
+        raw.end.line, raw.end.character,
+    );
+}
+
+/* vscode.DocumentSymbolProvider#provideDocumentSymbols. vscode.SymbolKind
+ * is 0-indexed (File=0) while the LSP wire protocol's SymbolKind is
+ * 1-indexed (File=1, matching the spec) -- every entry.kind sent over
+ * the wire needs that -1 applied, not just the two kinds this server
+ * happens to emit today (Function=12, Class=5). */
+async function provideDocumentSymbols(document) {
+    if (!child) return undefined;
+    let raw;
+    try {
+        raw = await sendRequest('textDocument/documentSymbol', {
+            textDocument: { uri: document.uri.toString() },
+        });
+    } catch (err) {
+        return undefined;
+    }
+    if (!Array.isArray(raw)) return undefined;
+    return raw.map((entry) => new vscode.DocumentSymbol(
+        entry.name, '', entry.kind - 1, toRange(entry.range), toRange(entry.selectionRange),
+    ));
+}
+
 function startServer() {
     const serverPath = vscode.workspace.getConfiguration('diamond').get('languageServerPath', 'diamond-lsp');
     let spawned;
@@ -283,6 +331,8 @@ function activate(context) {
     context.subscriptions.push(vscode.workspace.onDidChangeTextDocument((event) => didChange(event.document)));
     context.subscriptions.push(vscode.workspace.onDidCloseTextDocument(didClose));
     context.subscriptions.push(vscode.languages.registerHoverProvider('diamond', { provideHover }));
+    context.subscriptions.push(vscode.languages.registerDefinitionProvider('diamond', { provideDefinition }));
+    context.subscriptions.push(vscode.languages.registerDocumentSymbolProvider('diamond', { provideDocumentSymbols }));
     context.subscriptions.push(vscode.commands.registerCommand('diamond.restartLanguageServer', async () => {
         await stopServer();
         startServer();

@@ -3251,6 +3251,9 @@ static uint8_t compile_definition(Compiler *compiler) {
         function->name[index] = compiler->source[name.start + index];
     }
     function->name[copy_length] = '\0';
+    function->declaration_line=(uint32_t)name.line;
+    function->declaration_column=(uint32_t)name.column;
+    function->declaration_start=name.start;
     advance_token(compiler);
     if(compiler->current.kind==DIAMOND_TOKEN_EQUAL) {
         DiamondLexer lookahead=compiler->lexer;
@@ -4081,6 +4084,9 @@ static uint8_t compile_class(Compiler *compiler) {
     const int index=(int)compiler->program->class_count++;
     DiamondClass *class=&compiler->program->classes[(size_t)index];
     class->superclass=UINT8_MAX;
+    class->declaration_line=(uint32_t)name.line;
+    class->declaration_column=(uint32_t)name.column;
+    class->declaration_start=name.start;
     (void)snprintf(class->name,sizeof class->name,"%s",stored_name);
     advance_token(compiler);
     if(compiler->current.kind==DIAMOND_TOKEN_LESS) {

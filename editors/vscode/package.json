@@ -1,8 +1,8 @@
 {
   "name": "diamond-language",
   "displayName": "Diamond",
-  "description": "Syntax highlighting and language server diagnostics/hover for the Diamond programming language",
-  "version": "0.3.0",
+  "description": "Syntax highlighting and language server diagnostics/hover/go-to-definition/outline for the Diamond programming language",
+  "version": "0.4.0",
   "engines": {
     "vscode": "^1.75.0"
   },

@@ -48,7 +48,7 @@ read_message() {
 
 coproc LSP { "$diamond_lsp"; }
 
-# --- initialize advertises full-document sync and hover ---
+# --- initialize advertises full-document sync, hover, and go-to-definition ---
 
 send '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}'
 response="$(read_message)"
@@ -57,6 +57,10 @@ count=$((count + 1))
 [[ "$response" == *'"textDocumentSync":1'* ]]
 count=$((count + 1))
 [[ "$response" == *'"hoverProvider":true'* ]]
+count=$((count + 1))
+[[ "$response" == *'"definitionProvider":true'* ]]
+count=$((count + 1))
+[[ "$response" == *'"documentSymbolProvider":true'* ]]
 count=$((count + 1))
 
 send '{"jsonrpc":"2.0","method":"initialized","params":{}}'
@@ -159,7 +163,93 @@ count=$((count + 1))
 [[ "$response" == *'"result":null'* ]]
 count=$((count + 1))
 
+# --- go-to-definition resolves the same two identifier kinds, to a
+# Location inside the same document (declaration is a self-round-trip:
+# resolving "Derived" at its own name lands right back on itself) ---
+
+send '{"jsonrpc":"2.0","id":9,"method":"textDocument/definition","params":{"textDocument":{"uri":"'"$hover_uri"'"},"position":{"line":10,"character":1}}}'
+response="$(read_message)"
+[[ "$response" == *'"id":9'* ]]
+count=$((count + 1))
+[[ "$response" == *"\"uri\":\"$hover_uri\""* ]]
+count=$((count + 1))
+[[ "$response" == *'"range":{"start":{"line":0,"character":4},"end":{"line":0,"character":7}}'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","id":10,"method":"textDocument/definition","params":{"textDocument":{"uri":"'"$hover_uri"'"},"position":{"line":7,"character":8}}}'
+response="$(read_message)"
+[[ "$response" == *'"range":{"start":{"line":7,"character":6},"end":{"line":7,"character":13}}'* ]]
+count=$((count + 1))
+
+# --- go-to-definition on a local variable returns null too ---
+
+send '{"jsonrpc":"2.0","id":11,"method":"textDocument/definition","params":{"textDocument":{"uri":"'"$hover_uri"'"},"position":{"line":1,"character":2}}}'
+response="$(read_message)"
+[[ "$response" == *'"id":11'* ]]
+count=$((count + 1))
+[[ "$response" == *'"result":null'* ]]
+count=$((count + 1))
+
 send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$hover_uri"'"}}}'
+read_message >/dev/null
+
+# --- go-to-definition on a symbol pulled in through require resolves to
+# a Location in *that* file, not the requesting document ---
+
+definition_main_uri="file://$work/definition_main.di"
+send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$definition_main_uri"'","text":"require \"helper\"\nputs(greet(\"world\"))"}}}'
+read_message >/dev/null
+
+send '{"jsonrpc":"2.0","id":12,"method":"textDocument/definition","params":{"textDocument":{"uri":"'"$definition_main_uri"'"},"position":{"line":1,"character":6}}}'
+response="$(read_message)"
+[[ "$response" == *"\"uri\":\"file://$work/helper.di\""* ]]
+count=$((count + 1))
+[[ "$response" == *'"range":{"start":{"line":0,"character":4},"end":{"line":0,"character":9}}'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$definition_main_uri"'"}}}'
+read_message >/dev/null
+
+# --- documentSymbol lists only this document's own top-level functions
+# and classes: not lib/core.di's prelude, not anything pulled in via
+# require, and -- the actual bug this caught during development --
+# correctly positioned even for a declaration *after* a require line,
+# whose raw in-buffer line number is thrown off by the required file's
+# own inlined content sitting earlier in the compiled buffer ---
+
+symbol_uri="file://$work/symbols.di"
+send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$symbol_uri"'","text":"require \"helper\"\ndef mine()\n  1\nend\n\nclass Thing\nend\n\nmine()"}}}'
+read_message >/dev/null
+
+send '{"jsonrpc":"2.0","id":13,"method":"textDocument/documentSymbol","params":{"textDocument":{"uri":"'"$symbol_uri"'"}}}'
+response="$(read_message)"
+[[ "$response" == *'"id":13'* ]]
+count=$((count + 1))
+[[ "$response" == *'"name":"mine","kind":12,"range":{"start":{"line":1,"character":4},"end":{"line":1,"character":8}}'* ]]
+count=$((count + 1))
+[[ "$response" == *'"name":"Thing","kind":5,"range":{"start":{"line":5,"character":6},"end":{"line":5,"character":11}}'* ]]
+count=$((count + 1))
+[[ "$response" != *'"name":"greet"'* ]]
+count=$((count + 1))
+[[ "$response" != *'"name":"abs"'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$symbol_uri"'"}}}'
+read_message >/dev/null
+
+# --- documentSymbol on a document with no functions/classes of its own
+# is an empty array, distinct from null (which means "doesn't compile") ---
+
+empty_symbol_uri="file:///empty_symbols.di"
+send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$empty_symbol_uri"'","text":"puts(1 + 2)"}}}'
+read_message >/dev/null
+
+send '{"jsonrpc":"2.0","id":14,"method":"textDocument/documentSymbol","params":{"textDocument":{"uri":"'"$empty_symbol_uri"'"}}}'
+response="$(read_message)"
+[[ "$response" == *'"result":[]'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$empty_symbol_uri"'"}}}'
 read_message >/dev/null
 
 # --- hover on a document that doesn't currently compile returns null,
@@ -179,7 +269,7 @@ read_message >/dev/null
 
 # --- an unrecognized method gets a JSON-RPC MethodNotFound error ---
 
-send '{"jsonrpc":"2.0","id":2,"method":"textDocument/definition","params":{}}'
+send '{"jsonrpc":"2.0","id":2,"method":"textDocument/completion","params":{}}'
 response="$(read_message)"
 [[ "$response" == *'"id":2'* ]]
 count=$((count + 1))

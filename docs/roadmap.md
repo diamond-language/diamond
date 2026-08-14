@@ -4795,6 +4795,86 @@ future work.
   same reasoning as before). `make test`/`make test-lsp` (912 / 30
   assertions, up from 912 / 22) pass clean.
 
+- Added `textDocument/definition` and `textDocument/documentSymbol` to
+  `diamond-lsp` (`lsp/definition.c`, `lsp/document_symbol.c`, both new),
+  wired into the VS Code client alongside hover. Same two identifier
+  kinds hover resolves (top-level function, class — both globally
+  unambiguous by construction, see hover's own entry above), just two
+  more things to do with a match instead of a signature string: jump to
+  it, or list every one of them.
+
+  This needed a real declaration-site position, which nothing persisted
+  past compilation before now — `src/compiler.c`'s `compile_definition`/
+  `compile_class` had the real `DiamondSpan` (with line/column *and* the
+  byte offset the lexer was tracking) sitting right there at the point
+  of declaration, used for `fail()` diagnostics and then discarded. Now
+  copied into three new fields each on `DiamondFunction`/`DiamondClass`
+  (`declaration_line`, `declaration_column`, `declaration_start` —
+  `src/vm.h`) for every function and class, top-level or not (cheap to
+  populate uniformly even though only top-level ones are ever looked up
+  by `lsp/` today).
+
+  The interesting part turned out to be position *resolution*, not
+  position *storage*. A first instinct — "a declaration actually in the
+  open document's own text needs no translation, only a `require`d
+  file's does" — is wrong: `diamond_load_program` (`src/loader.c`)
+  inserts a `#line 1` reset before *every* contiguous chunk it copies
+  into the compiled buffer, including the requesting document's own
+  content around a `require` line, not just before an inlined
+  dependency's. Since the lexer's `#line 1` handling (`src/lexer.c`) is
+  a hardcoded reset-to-exactly-1, not a general `#line N` parser, a raw
+  `declaration_line` is only ever correct for the first thing after the
+  *most recent* reset — anything declared later in the same file, after
+  a `require`, needs the identical segment-relative remap
+  (`mapped_original_line` + counting newlines since the segment start) a
+  `require`d file's own declaration needs. `definition.c` got this right
+  from the start by running every match through
+  `diamond_resolve_diagnostic_location` (`src/compiler.h`) unconditionally
+  — the same function a compile error's own position already goes
+  through — and comparing its resolved `.path` against the requesting
+  document's own to decide whether to reuse the request's `uri` verbatim
+  or synthesize one for a different file (new `diagnostics_path_to_uri`,
+  the encode-side inverse of the existing `diagnostics_uri_to_path`,
+  `lsp/diagnostics.c`).
+
+  `document_symbol.c`'s first draft didn't reuse that function — it
+  reimplemented "is this declaration in a `require`d file" as "does its
+  offset fall inside any of `bundle`'s segments," which is simply wrong:
+  segments cover *every* chunk the loader copies in, including the
+  requesting document's own (each one still carries a real `path`, just
+  the same path as the document itself) — so the first version excluded
+  every declaration in the file, always, full stop (caught immediately
+  by manual testing, not left for the test suite to find). Fixing that
+  down to "compare the segment's path" surfaced the deeper raw-line bug
+  above on the very next test (a document with a `require` followed by
+  its own `def`, whose reported line was off by exactly the required
+  file's own line count) — rewritten to call
+  `diamond_resolve_diagnostic_location` per symbol, same as
+  `definition.c`, which fixed both at once. `definition.c` itself never
+  had either bug, confirmed by adding the same "declare something after
+  a `require`, in the same file" case to its own tests once the pattern
+  was known to be worth checking.
+
+  Document symbols deliberately list only what's declared *in the open
+  document itself* — not lib/core.di's prelude (excluded the same way
+  `definition.c` excludes it, `declaration_start>=user_offset`) and not
+  anything pulled in via `require` (its own file has its own outline, a
+  `didOpen` away) — an outline showing symbols that aren't actually in
+  the file would be more confusing than useful.
+
+  Verified directly (declaration and call-site go-to-definition,
+  self-round-trip on a class declaration, cross-file resolution into a
+  required file, local variables and non-compiling documents correctly
+  returning nothing for all three, document symbols on a document with
+  a `require` *and* its own trailing declarations, an empty-outline
+  document distinguished from a non-compiling one) before extending
+  `tests/lsp_test.sh` and the Node-driven `extension.js` end-to-end
+  check from the entries above (new `Location`/`DocumentSymbol` stubs on
+  the fake `vscode` module; same "not wired into `make test-all`"
+  reasoning). `make test-lsp` (46 assertions, up from 30) passes clean;
+  `make test` stays at 912 (nothing here is observable from Diamond
+  source itself).
+
 ## Later experiments
 
 - Self-hosting the compiler and core libraries in Diamond (in progress —

@@ -6,60 +6,15 @@
 
 #include "hover.h"
 
+#include "compile_buffer.h"
 #include "compiler.h"
 #include "diagnostics.h"
 #include "disassemble.h"
 #include "lexer.h"
-#include "loader.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-
-/* Mirrors diagnostics_compute's own prelude+require-bundling recipe
- * (lsp/diagnostics.c) rather than sharing it, to avoid restructuring an
- * already-tested function just to grow a second caller -- revisit if a
- * third one ever needs this same buffer. Unlike diagnostics_compute, a
- * require-resolution failure here just means "no hover info": the open
- * document's own diagnostics already report that problem, and hover has
- * nowhere to put a second copy of the same prose message. */
-static constexpr unsigned char DIAMOND_CORE_SOURCE[] = {
-#embed "../lib/core.di" suffix(,)
-    0
-};
-static constexpr char DIAMOND_USER_LINE_RESET[] = "\n#line 1\n";
-
-static char *build_buffer(const char *path,const char *text,size_t length) {
-    const size_t core_length=sizeof(DIAMOND_CORE_SOURCE)-1;
-    const size_t reset_length=sizeof(DIAMOND_USER_LINE_RESET)-1;
-    if(path==nullptr) {
-        char *combined=malloc(core_length+reset_length+length+1);
-        if(combined==nullptr)return nullptr;
-        memcpy(combined,DIAMOND_CORE_SOURCE,core_length);
-        memcpy(combined+core_length,DIAMOND_USER_LINE_RESET,reset_length);
-        memcpy(combined+core_length+reset_length,text,length);
-        combined[core_length+reset_length+length]='\0';
-        return combined;
-    }
-    char *text_copy=malloc(length+1);
-    if(text_copy==nullptr)return nullptr;
-    memcpy(text_copy,text,length);
-    text_copy[length]='\0';
-    DiamondSourceBundle bundle;
-    char load_error[768];
-    const bool loaded=diamond_load_program(path,text_copy,&bundle,load_error,sizeof load_error);
-    free(text_copy);
-    if(!loaded)return nullptr;
-    const size_t bundle_length=strlen(bundle.source);
-    char *combined=malloc(core_length+reset_length+bundle_length+1);
-    if(combined!=nullptr) {
-        memcpy(combined,DIAMOND_CORE_SOURCE,core_length);
-        memcpy(combined+core_length,DIAMOND_USER_LINE_RESET,reset_length);
-        memcpy(combined+core_length+reset_length,bundle.source,bundle_length+1);
-    }
-    diamond_source_bundle_free(&bundle);
-    return combined;
-}
 
 /* The identifier token covering 1-based `target_line`/`target_column`
  * (matching DiamondSpan's own convention -- the caller converts from
@@ -175,7 +130,7 @@ JsonValue *hover_compute(const char *uri,const char *text,size_t length,
     free(source_copy);
 
     char *path=diagnostics_uri_to_path(uri);
-    char *combined=build_buffer(path,text,length);
+    char *combined=diamond_lsp_build_compile_buffer(path,text,length,nullptr,nullptr);
     free(path);
     if(combined==nullptr)return json_null();
 

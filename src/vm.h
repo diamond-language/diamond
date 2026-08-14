@@ -237,6 +237,18 @@ typedef struct DiamondShape {
 
 struct DiamondClass {
     char name[DIAMOND_MAX_FUNCTION_NAME];
+    /* 1-based source position of the class's own name token in `class
+     * Name` -- lsp/definition.c and lsp/document_symbol.c's only reason
+     * for existing. Nothing in the VM itself reads these.
+     * declaration_start is the matching byte offset into the *compiled*
+     * source buffer (core prelude + require-bundled user source), which
+     * lsp/definition.c needs to resolve a symbol pulled in from a
+     * required file back to that file's own path via
+     * diamond_resolve_diagnostic_location's segment table -- the same
+     * byte-offset-to-file mapping a compile error already gets. */
+    uint32_t declaration_line;
+    uint32_t declaration_column;
+    size_t declaration_start;
     uint8_t superclass;
     DiamondMethod methods[DIAMOND_MAX_METHODS];
     size_t method_count;
@@ -249,6 +261,16 @@ struct DiamondClass {
 
 typedef struct DiamondFunction {
     char name[DIAMOND_MAX_FUNCTION_NAME];
+    /* 1-based source position of the function/method's own name token
+     * in its declaring `def` -- lsp/definition.c and lsp/document_
+     * symbol.c's only reason for existing. Not to be confused with
+     * lines[]/columns[] below, which are per-bytecode-offset arrays for
+     * runtime stack traces, a completely different thing despite the
+     * similar names. declaration_start is the matching byte offset,
+     * see DiamondClass's own copy of this comment for why. */
+    uint32_t declaration_line;
+    uint32_t declaration_column;
+    size_t declaration_start;
     uint8_t code[DIAMOND_MAX_CODE];
     uint32_t lines[DIAMOND_MAX_CODE];
     uint32_t columns[DIAMOND_MAX_CODE];

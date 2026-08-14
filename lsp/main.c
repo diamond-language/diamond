@@ -1,5 +1,7 @@
+#include "definition.h"
 #include "diagnostics.h"
 #include "document.h"
+#include "document_symbol.h"
 #include "hover.h"
 #include "json.h"
 #include "rpc.h"
@@ -89,31 +91,88 @@ static void handle_initialize(const JsonValue *id) {
      * for a diagnostics-only server; see docs/lsp.md. */
     json_object_set(capabilities,"textDocumentSync",json_number(1));
     json_object_set(capabilities,"hoverProvider",json_bool(true));
+    json_object_set(capabilities,"definitionProvider",json_bool(true));
+    json_object_set(capabilities,"documentSymbolProvider",json_bool(true));
     json_object_set(result,"capabilities",capabilities);
     send_response(id,result);
 }
 
-static void handle_hover(DocumentTable *documents,const JsonValue *id,
-        const JsonValue *params) {
+/* Shared by handle_hover/handle_definition: extracts and validates
+ * `textDocument.uri`/`position.line`/`position.character` from a
+ * request's params, null-terminates the uri (json_as_string only ever
+ * hands back a borrowed, non-null-terminated view into the parsed
+ * message, same as `document_get_text` does for its own storage), and
+ * looks the document up. Returns false (having already sent a `null`
+ * response for a request id, if one was given) on any failure --
+ * malformed params, uri too long, or the document isn't open -- so
+ * callers can just `if(!extract...)return;`. */
+static bool extract_document_position(DocumentTable *documents,const JsonValue *id,
+        const JsonValue *params,char *uri_copy,size_t uri_copy_capacity,
+        const char **text,size_t *text_length,size_t *line,size_t *character) {
     const JsonValue *text_document=json_object_get(params,"textDocument");
     const JsonValue *position=json_object_get(params,"position");
     const char *uri=nullptr;
     size_t uri_length=0;
-    double line=0,character=0;
+    double line_value=0,character_value=0;
     if(!json_as_string(json_object_get(text_document,"uri"),&uri,&uri_length)||
-       !json_as_number(json_object_get(position,"line"),&line)||
-       !json_as_number(json_object_get(position,"character"),&character)) {
+       !json_as_number(json_object_get(position,"line"),&line_value)||
+       !json_as_number(json_object_get(position,"character"),&character_value)||
+       uri_length>=uri_copy_capacity) {
+        send_response(id,json_null());
+        return false;
+    }
+    memcpy(uri_copy,uri,uri_length);
+    uri_copy[uri_length]='\0';
+    *text=document_get_text(documents,uri_copy,text_length);
+    if(*text==nullptr) {
+        send_response(id,json_null());
+        return false;
+    }
+    *line=(size_t)line_value;
+    *character=(size_t)character_value;
+    return true;
+}
+
+static void handle_hover(DocumentTable *documents,const JsonValue *id,
+        const JsonValue *params) {
+    char uri_copy[1024];
+    const char *text=nullptr;
+    size_t text_length=0,line=0,character=0;
+    if(!extract_document_position(documents,id,params,uri_copy,sizeof uri_copy,
+            &text,&text_length,&line,&character))
+        return;
+    JsonValue *result=hover_compute(uri_copy,text,text_length,line,character);
+    if(result==nullptr) {
         send_response(id,json_null());
         return;
     }
-    /* document_get_text hands back a borrowed, non-null-terminated
-     * pointer into the DocumentTable's own storage -- uri needs a
-     * null-terminated copy of its own before use since it came straight
-     * out of a JsonValue string view (json_as_string doesn't
-     * null-terminate either), matching how every other handler here
-     * already treats these views. */
+    send_response(id,result);
+}
+
+static void handle_definition(DocumentTable *documents,const JsonValue *id,
+        const JsonValue *params) {
     char uri_copy[1024];
-    if(uri_length>=sizeof uri_copy) {
+    const char *text=nullptr;
+    size_t text_length=0,line=0,character=0;
+    if(!extract_document_position(documents,id,params,uri_copy,sizeof uri_copy,
+            &text,&text_length,&line,&character))
+        return;
+    JsonValue *result=definition_compute(uri_copy,text,text_length,line,character);
+    if(result==nullptr) {
+        send_response(id,json_null());
+        return;
+    }
+    send_response(id,result);
+}
+
+static void handle_document_symbol(DocumentTable *documents,const JsonValue *id,
+        const JsonValue *params) {
+    const JsonValue *text_document=json_object_get(params,"textDocument");
+    const char *uri=nullptr;
+    size_t uri_length=0;
+    char uri_copy[1024];
+    if(!json_as_string(json_object_get(text_document,"uri"),&uri,&uri_length)||
+       uri_length>=sizeof uri_copy) {
         send_response(id,json_null());
         return;
     }
@@ -125,8 +184,7 @@ static void handle_hover(DocumentTable *documents,const JsonValue *id,
         send_response(id,json_null());
         return;
     }
-    JsonValue *result=hover_compute(uri_copy,text,text_length,
-        (size_t)line,(size_t)character);
+    JsonValue *result=document_symbol_compute(uri_copy,text,text_length);
     if(result==nullptr) {
         send_response(id,json_null());
         return;
@@ -223,6 +281,10 @@ int main(void) {
             handle_did_close(documents,params);
         } else if(strcmp(method,"textDocument/hover")==0) {
             handle_hover(documents,id,params);
+        } else if(strcmp(method,"textDocument/definition")==0) {
+            handle_definition(documents,id,params);
+        } else if(strcmp(method,"textDocument/documentSymbol")==0) {
+            handle_document_symbol(documents,id,params);
         } else if(id!=nullptr) {
             send_error(id,-32601,"method not found");
         }
