@@ -50,7 +50,7 @@ coproc LSP { "$diamond_lsp"; }
 
 # --- initialize advertises full-document sync, hover, and go-to-definition ---
 
-send '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}'
+send '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"workspaceFolders":[{"uri":"file://'"$work"'","name":"work"}]}}'
 response="$(read_message)"
 [[ "$response" == *'"id":1'* ]]
 count=$((count + 1))
@@ -61,6 +61,10 @@ count=$((count + 1))
 [[ "$response" == *'"definitionProvider":true'* ]]
 count=$((count + 1))
 [[ "$response" == *'"documentSymbolProvider":true'* ]]
+count=$((count + 1))
+[[ "$response" == *'"completionProvider":{}'* ]]
+count=$((count + 1))
+[[ "$response" == *'"workspaceSymbolProvider":true'* ]]
 count=$((count + 1))
 
 send '{"jsonrpc":"2.0","method":"initialized","params":{}}'
@@ -321,6 +325,77 @@ count=$((count + 1))
 send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$empty_symbol_uri"'"}}}'
 read_message >/dev/null
 
+# --- completion suggests locals actually in scope at the cursor (real
+# lexical scoping, not name-matching): a rescue-bound name only shows
+# up inside its own clause, a name declared after the cursor doesn't
+# show up at all, and an outer function's own locals stay visible
+# inside a nested closure declared within it (the same capture
+# visibility the compiler's own enclosing_locals mechanism grants) ---
+
+completion_uri="file:///completion.di"
+completion_source='def outer(a, b)\n  x = a + b\n  begin\n    raise \"boom\"\n  rescue err: String\n    y = err\n  end\n  x\nend\ntop = 42\n'
+send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$completion_uri"'","text":"'"$completion_source"'"}}}'
+read_message >/dev/null
+
+# inside outer's body, right after the a/b parameters and before x is
+# assigned: a and b are in scope, x is not yet (declared on this same
+# line), nothing rescue-scoped is
+send '{"jsonrpc":"2.0","id":15,"method":"textDocument/completion","params":{"textDocument":{"uri":"'"$completion_uri"'"},"position":{"line":1,"character":2}}}'
+response="$(read_message)"
+[[ "$response" == *'"label":"a","kind":6'* ]]
+count=$((count + 1))
+[[ "$response" == *'"label":"b","kind":6'* ]]
+count=$((count + 1))
+[[ "$response" == *'"label":"outer","kind":3'* ]]
+count=$((count + 1))
+[[ "$response" != *'"label":"err"'* ]]
+count=$((count + 1))
+[[ "$response" != *'"label":"top"'* ]]
+count=$((count + 1))
+
+# inside the rescue clause: err (rescue-bound) is in scope, plus a/b/x
+# from the enclosing function (closure capture visibility)
+send '{"jsonrpc":"2.0","id":16,"method":"textDocument/completion","params":{"textDocument":{"uri":"'"$completion_uri"'"},"position":{"line":5,"character":4}}}'
+response="$(read_message)"
+[[ "$response" == *'"label":"err","kind":6'* ]]
+count=$((count + 1))
+[[ "$response" == *'"label":"a","kind":6'* ]]
+count=$((count + 1))
+[[ "$response" == *'"label":"x","kind":6'* ]]
+count=$((count + 1))
+
+# at top level, after outer's own `end`: err/y/a/b/x are all correctly
+# out of scope (none of them leak past the function that declared
+# them), only outer and top (both top-level) are visible
+send '{"jsonrpc":"2.0","id":17,"method":"textDocument/completion","params":{"textDocument":{"uri":"'"$completion_uri"'"},"position":{"line":9,"character":0}}}'
+response="$(read_message)"
+[[ "$response" == *'"label":"top","kind":6'* ]]
+count=$((count + 1))
+[[ "$response" != *'"label":"err"'* ]]
+count=$((count + 1))
+[[ "$response" != *'"label":"y"'* ]]
+count=$((count + 1))
+[[ "$response" != *'"label":"x"'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$completion_uri"'"}}}'
+read_message >/dev/null
+
+# --- completion on a document that doesn't currently compile returns
+# null, matching hover/definition/documentSymbol's own rule ---
+
+broken_completion_uri="file:///completion_broken.di"
+send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$broken_completion_uri"'","text":"def f(\n"}}}'
+read_message >/dev/null
+
+send '{"jsonrpc":"2.0","id":18,"method":"textDocument/completion","params":{"textDocument":{"uri":"'"$broken_completion_uri"'"},"position":{"line":0,"character":4}}}'
+response="$(read_message)"
+[[ "$response" == *'"result":null'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$broken_completion_uri"'"}}}'
+read_message >/dev/null
+
 # --- hover on a document that doesn't currently compile returns null,
 # not a stale/partial signature ---
 
@@ -336,9 +411,71 @@ count=$((count + 1))
 send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$broken_hover_uri"'"}}}'
 read_message >/dev/null
 
+# --- workspace/symbol recursively walks the workspace root (given via
+# initialize's own workspaceFolders, above), skips dotdirs, and
+# case-insensitively substring-matches the query against every
+# top-level function/class name it finds, across every *.di file, not
+# just open documents ---
+
+mkdir -p "$work/ws_sub" "$work/.ws_hidden"
+cat > "$work/ws_alpha.di" <<'EOF'
+def alpha_fn()
+  1
+end
+EOF
+cat > "$work/ws_sub/ws_beta.di" <<'EOF'
+def beta_fn()
+  2
+end
+class BetaClass
+end
+EOF
+cat > "$work/.ws_hidden/ws_hidden.di" <<'EOF'
+def hidden_fn()
+  3
+end
+EOF
+
+send '{"jsonrpc":"2.0","id":19,"method":"workspace/symbol","params":{"query":""}}'
+response="$(read_message)"
+[[ "$response" == *'"name":"alpha_fn"'* ]]
+count=$((count + 1))
+[[ "$response" == *'"name":"beta_fn"'* ]]
+count=$((count + 1))
+[[ "$response" == *'"name":"BetaClass","kind":5'* ]]
+count=$((count + 1))
+[[ "$response" != *'"name":"hidden_fn"'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","id":20,"method":"workspace/symbol","params":{"query":"ALPHA"}}'
+response="$(read_message)"
+[[ "$response" == *'"name":"alpha_fn","kind":12'* ]]
+count=$((count + 1))
+[[ "$response" == *"\"uri\":\"file://$work/ws_alpha.di\""* ]]
+count=$((count + 1))
+[[ "$response" != *'"name":"beta_fn"'* ]]
+count=$((count + 1))
+
+# an open document's own live (possibly unsaved) buffer is what gets
+# scanned, not stale on-disk content -- same "live over stale" rule
+# every other lsp/ feature that resolves source text already follows
+ws_alpha_uri="file://$work/ws_alpha.di"
+send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$ws_alpha_uri"'","text":"def alpha_fn()\n  1\nend\ndef alpha_fn_live()\n  2\nend"}}}'
+read_message >/dev/null
+
+send '{"jsonrpc":"2.0","id":21,"method":"workspace/symbol","params":{"query":"alpha_fn_live"}}'
+response="$(read_message)"
+[[ "$response" == *'"name":"alpha_fn_live"'* ]]
+count=$((count + 1))
+[[ "$(cat "$work/ws_alpha.di")" != *"alpha_fn_live"* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$ws_alpha_uri"'"}}}'
+read_message >/dev/null
+
 # --- an unrecognized method gets a JSON-RPC MethodNotFound error ---
 
-send '{"jsonrpc":"2.0","id":2,"method":"textDocument/completion","params":{}}'
+send '{"jsonrpc":"2.0","id":2,"method":"textDocument/bogusMethod","params":{}}'
 response="$(read_message)"
 [[ "$response" == *'"id":2'* ]]
 count=$((count + 1))

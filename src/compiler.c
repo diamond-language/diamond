@@ -2948,6 +2948,37 @@ static uint8_t compile_raise(Compiler *compiler) {
     return value;
 }
 
+/* Snapshots every Local in compiler->locals[start_index, end_index) --
+ * a scope that's about to close, whether a whole function body
+ * (compile_definition) or just one `rescue` clause (compile_begin) --
+ * into compiler->function->scope_locals (DiamondScopeLocal, src/vm.h).
+ * A local's own valid_start is just its name token's own byte offset
+ * (already exactly right: the moment its declaring `Local` was pushed
+ * is the moment it became valid), so the only new information this
+ * needs from the caller is `valid_end`, the closing scope's own byte
+ * offset. Silently stops recording past DIAMOND_MAX_SCOPE_LOCALS
+ * (see that constant's own comment) rather than failing compilation --
+ * this is an LSP-only convenience feature (docs/lsp.md), losing some
+ * completions for a pathological function isn't worth a hard error
+ * over. */
+static void record_scope_locals(Compiler *compiler,size_t start_index,
+        size_t end_index,size_t valid_end) {
+    DiamondFunction *function=compiler->function;
+    for(size_t index=start_index;index<end_index;index++) {
+        if(function->scope_local_count==DIAMOND_MAX_SCOPE_LOCALS)return;
+        const Local *local=&compiler->locals[index];
+        DiamondScopeLocal *recorded=
+            &function->scope_locals[function->scope_local_count++];
+        size_t length=local->name.length;
+        if(length>=DIAMOND_MAX_FUNCTION_NAME)length=DIAMOND_MAX_FUNCTION_NAME-1;
+        for(size_t char_index=0;char_index<length;char_index++)
+            recorded->name[char_index]=compiler->source[local->name.start+char_index];
+        recorded->name[length]='\0';
+        recorded->valid_start=local->name.start;
+        recorded->valid_end=valid_end;
+    }
+}
+
 static uint8_t compile_begin(Compiler *compiler) {
     if(!consume_block_start(compiler))return 0;
     const size_t ensure_operand=compiler->function->code_count+1;
@@ -3049,6 +3080,9 @@ static uint8_t compile_begin(Compiler *compiler) {
         compiler->current_exception=outer_exception;
         compiler->current_retry_target=outer_retry_target;
         emit_instruction(compiler,DIAMOND_OP_MOVE,destination,rescued,0,2);
+        if(!compiler->failed)
+            record_scope_locals(compiler,rescue_local_count,compiler->local_count,
+                compiler->previous.span.start+compiler->previous.span.length);
         compiler->local_count=rescue_local_count;
         rescue_end_jumps[rescue_count++]=emit_jump(compiler,DIAMOND_OP_JUMP,0);
         if(mismatch_jump!=SIZE_MAX)
@@ -3533,6 +3567,9 @@ static uint8_t compile_definition(Compiler *compiler) {
     uint8_t captures[16];
     for(size_t i=0;i<compiler->capture_count;i++)captures[i]=compiler->capture_registers[i];
     const size_t capture_count=compiler->capture_count;
+    if(!compiler->failed)
+        record_scope_locals(compiler,0,compiler->local_count,
+            compiler->previous.span.start+compiler->previous.span.length);
     compiler->function = outer_function;
     compiler->local_count = outer_local_count;
     for (size_t index = 0; index < outer_local_count; index++) {
@@ -4726,6 +4763,30 @@ DiamondResolvedLocation diamond_resolve_diagnostic_location(
         .column=diagnostic.span.column,.line_start=line_start,.line_end=line_end};
 }
 
+size_t diamond_resolve_source_position(const char *path,const char *combined,
+        const DiamondSourceBundle *bundle,size_t user_offset,
+        size_t line,size_t column) {
+    for(size_t index=0;index<bundle->segment_count;index++) {
+        const DiamondSourceSegment *segment=&bundle->segments[index];
+        if(strcmp(segment->path,path)!=0)continue;
+        const size_t segment_start=user_offset+segment->start;
+        const size_t segment_end=user_offset+segment->end;
+        size_t segment_line=segment->original_line;
+        size_t offset=segment_start;
+        while(offset<segment_end&&segment_line<line) {
+            if(combined[offset]=='\n')segment_line++;
+            offset++;
+        }
+        if(segment_line!=line)continue;
+        size_t result=offset;
+        for(size_t moved=1;moved<column&&result<segment_end&&
+                combined[result]!='\n';moved++)
+            result++;
+        return result;
+    }
+    return SIZE_MAX;
+}
+
 bool diamond_compile(const char *source, DiamondProgram *program,
                      DiamondDiagnostic *diagnostic) {
     diamond_program_init(program);
@@ -4752,6 +4813,7 @@ bool diamond_compile(const char *source, DiamondProgram *program,
     }
     program->entry.register_count = compiler.next_register;
     if (!compiler.failed) {
+        record_scope_locals(&compiler,0,compiler.local_count,strlen(source));
         emit_instruction(&compiler, DIAMOND_OP_RETURN, result, 0, 0, 1);
         for(size_t class_index=0;class_index<program->class_count;class_index++) {
             DiamondClass *class=&program->classes[class_index];

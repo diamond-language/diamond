@@ -13,7 +13,8 @@ from-scratch, zero-external-dependency convention, and meaning there's
 nothing to `npm install` on either side: VS Code's extension host already
 bundles Node.
 
-## Diagnostics, hover, go-to-definition, and outline setup
+## Diagnostics, hover, go-to-definition, outline, completion, and
+## workspace symbol search
 
 1. Build the language server: `make lsp` (from the repo root). This
    produces `build/diamond-lsp`.
@@ -29,9 +30,16 @@ bundles Node.
    supports hover (shows its signature), go-to-definition (jumps to the
    declaration, in whichever file it's actually in), and shows up in the
    file's Outline/breadcrumbs view. Only those two identifier kinds
-   resolve — see `docs/lsp.md` for exactly what is and isn't covered
-   yet, e.g. no completion, and none of the three on a method reached
+   resolve for hover/definition/outline — see `docs/lsp.md` for exactly
+   what is and isn't covered, e.g. none of the three on a method reached
    through `receiver.method(...)`.
+4. Completion suggests every top-level function/class in the compiled
+   program plus every local variable/parameter actually in scope at the
+   cursor (real lexical scoping — a `rescue`-bound name only appears
+   inside its own clause, and an outer function's own locals stay
+   visible inside a nested closure). Ctrl+T/Cmd+T (Go to Symbol in
+   Workspace) searches every top-level function/class across every
+   `.di` file under the open folder, not just open documents.
 
 If the server fails to start (wrong path, not built yet), VS Code shows an
 error notification with the attempted path; server stderr and lifecycle

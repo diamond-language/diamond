@@ -42,6 +42,17 @@ enum {
     DIAMOND_MAX_FIELDS = 64,
     DIAMOND_MAX_NAMESPACE_CONSTANTS = 128,
     DIAMOND_REGISTER_COUNT = 256,
+    /* Per DiamondFunction, not per scope -- a function's own top-level
+     * locals/parameters *and* every `rescue`-bound name across every
+     * rescue clause nested in it all accumulate into the same flat
+     * list (DiamondFunction.scope_locals below), so this needs
+     * headroom beyond the ordinary 64-local-at-a-time compile-time cap
+     * (DIAMOND_MAX_LOCALS, src/compiler.c) for a function with several
+     * rescue clauses. Kept deliberately smaller than that cap would
+     * suggest: DiamondFunction is already ~152KB and there can be up
+     * to DIAMOND_MAX_FUNCTIONS of them (see that constant's own
+     * comment) -- every byte added here multiplies by both. */
+    DIAMOND_MAX_SCOPE_LOCALS = 32,
 };
 
 typedef enum DiamondOpCode : uint8_t {
@@ -259,6 +270,20 @@ struct DiamondClass {
     DiamondShape shapes[DIAMOND_MAX_FIELDS + 1];
 };
 
+/* One local variable or parameter's name and the byte range (in the
+ * *compiled* buffer -- core prelude + require-bundled user source,
+ * same coordinate system declaration_start above already uses) it's
+ * actually in scope for. Ordinarily that's the rest of its declaring
+ * function's body (valid_end == the function's own closing position),
+ * narrower for a name bound by a `rescue` clause (valid_end == that
+ * clause's own end). lsp/'s only reason for existing (completion,
+ * docs/lsp.md) -- nothing else in the VM reads this. */
+typedef struct DiamondScopeLocal {
+    char name[DIAMOND_MAX_FUNCTION_NAME];
+    size_t valid_start;
+    size_t valid_end;
+} DiamondScopeLocal;
+
 typedef struct DiamondFunction {
     char name[DIAMOND_MAX_FUNCTION_NAME];
     /* 1-based source position of the function/method's own name token
@@ -301,6 +326,14 @@ typedef struct DiamondFunction {
      * Safe as an exact zero-init/GC-scan bound only because register
      * allocation is monotonic per function body (never recycled). */
     uint16_t register_count;
+    /* Every local/parameter declared directly in this function's own
+     * body (not a nested `def`'s -- that gets its own DiamondFunction
+     * and its own scope_locals), see DiamondScopeLocal above. Also
+     * covers the top-level program's own locals: top-level code
+     * compiles into program->entry, a DiamondFunction like any other
+     * (compile_definition's own at_top_level check, src/compiler.c). */
+    DiamondScopeLocal scope_locals[DIAMOND_MAX_SCOPE_LOCALS];
+    size_t scope_local_count;
 } DiamondFunction;
 
 typedef struct DiamondChunk {

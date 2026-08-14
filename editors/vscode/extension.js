@@ -12,14 +12,18 @@
  * Protocol surface this client relies on, all confirmed against
  * `lsp/main.c`/`lsp/rpc.c` directly rather than assumed from the LSP
  * spec in general: `Content-Length: N\r\n\r\n<json>` framing with no
- * other headers; `initialize` ignores its params entirely and always
- * replies with `{capabilities: {textDocumentSync: 1}}` (Full sync, so
- * every didChange below sends the whole document, never a range edit);
- * `shutdown` replies with a null result; `exit` gets no reply and ends
- * the process; unknown methods get a JSON-RPC MethodNotFound error only
- * if they were a request (had an id) -- notifications are silently
- * dropped, so sending `initialized` is harmless even though the server
- * never reads it. */
+ * other headers; `initialize`'s own params only ever matter for
+ * `rootUri` (read once, to resolve workspace/symbol's search root --
+ * see docs/lsp.md), always replies with `{capabilities: {...}}`
+ * advertising Full sync (so every didChange below sends the whole
+ * document, never a range edit) plus whichever of hover/definition/
+ * documentSymbol/completion/workspaceSymbol `lsp/main.c`'s own
+ * `handle_initialize` currently supports; `shutdown` replies with a
+ * null result; `exit` gets no reply and ends the process; unknown
+ * methods get a JSON-RPC MethodNotFound error only if they were a
+ * request (had an id) -- notifications are silently dropped, so
+ * sending `initialized` is harmless even though the server never reads
+ * it. */
 
 const vscode = require('vscode');
 const cp = require('child_process');
@@ -240,6 +244,53 @@ async function provideDocumentSymbols(document) {
     ));
 }
 
+/* vscode.CompletionItemProvider#provideCompletionItems. vscode.
+ * CompletionItemKind is 0-indexed (Text=0) while the LSP wire
+ * protocol's CompletionItemKind is 1-indexed (Text=1, matching the
+ * spec) -- same -1 shift provideDocumentSymbols/provideWorkspaceSymbols
+ * already need for their own (differently-numbered) SymbolKind. The
+ * server returns the same full candidate list regardless of what's
+ * already typed (see lsp/completion.h) and relies on vscode's own
+ * built-in prefix narrowing to filter it live -- no triggerCharacters
+ * needed, matching the empty CompletionOptions the server's own
+ * capabilities advertise. */
+async function provideCompletionItems(document, position) {
+    if (!child) return undefined;
+    let raw;
+    try {
+        raw = await sendRequest('textDocument/completion', {
+            textDocument: { uri: document.uri.toString() },
+            position: { line: position.line, character: position.character },
+        });
+    } catch (err) {
+        return undefined;
+    }
+    if (!Array.isArray(raw)) return undefined;
+    return raw.map((entry) => new vscode.CompletionItem(entry.name || entry.label, entry.kind - 1));
+}
+
+/* vscode.WorkspaceSymbolProvider#provideWorkspaceSymbols. Unlike every
+ * other provider here, the server resolves the workspace root itself
+ * from `initialize`'s own rootUri (sent once, below) rather than this
+ * request's params -- there's no per-request "which folder" to pass
+ * along the way there is for VS Code's own multi-root workspaces, so a
+ * multi-root workspace only ever searches its first folder; a real gap
+ * if that ever matters, not one this project has hit yet. */
+async function provideWorkspaceSymbols(query) {
+    if (!child) return undefined;
+    let raw;
+    try {
+        raw = await sendRequest('workspace/symbol', { query });
+    } catch (err) {
+        return undefined;
+    }
+    if (!Array.isArray(raw)) return undefined;
+    return raw.map((entry) => new vscode.SymbolInformation(
+        entry.name, entry.kind - 1, '',
+        new vscode.Location(vscode.Uri.parse(entry.location.uri), toRange(entry.location.range)),
+    ));
+}
+
 function startServer() {
     const serverPath = vscode.workspace.getConfiguration('diamond').get('languageServerPath', 'diamond-lsp');
     let spawned;
@@ -333,6 +384,8 @@ function activate(context) {
     context.subscriptions.push(vscode.languages.registerHoverProvider('diamond', { provideHover }));
     context.subscriptions.push(vscode.languages.registerDefinitionProvider('diamond', { provideDefinition }));
     context.subscriptions.push(vscode.languages.registerDocumentSymbolProvider('diamond', { provideDocumentSymbols }));
+    context.subscriptions.push(vscode.languages.registerCompletionItemProvider('diamond', { provideCompletionItems }));
+    context.subscriptions.push(vscode.languages.registerWorkspaceSymbolProvider({ provideWorkspaceSymbols }));
     context.subscriptions.push(vscode.commands.registerCommand('diamond.restartLanguageServer', async () => {
         await stopServer();
         startServer();

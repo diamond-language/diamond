@@ -17,13 +17,18 @@ the rest of this repository already uses.
 
 ## What it does today
 
-Diagnostics, plus hover/go-to-definition/document-symbols over a narrow,
-declaration-only symbol table:
+Diagnostics, hover/go-to-definition/document-symbols over a narrow,
+declaration-only symbol table, plus completion and workspace-wide symbol
+search over a real (if scoped) lexical symbol table:
 
 - `initialize` — advertises `textDocumentSync: Full` (1),
-  `hoverProvider: true`, `definitionProvider: true`, and
-  `documentSymbolProvider: true`. No `completionProvider`, since that
-  isn't implemented; a compliant client won't ask for it.
+  `hoverProvider: true`, `definitionProvider: true`,
+  `documentSymbolProvider: true`, `completionProvider: {}` (no
+  `triggerCharacters` — see completion below for why none are needed),
+  and `workspaceSymbolProvider: true`. Also reads `workspaceFolders[0]`/
+  `rootUri` from the request's own params (the one place this server
+  reads anything from `initialize`'s params at all) to know what
+  directory `workspace/symbol` should search.
 - `textDocument/didOpen` / `didChange` / `didClose` — each recompiles the
   document's current full text (full sync only; there's no incremental
   edit application) and publishes a `textDocument/publishDiagnostics`
@@ -77,6 +82,45 @@ declaration-only symbol table:
     require the *document* to currently compile cleanly — otherwise they
     return `null`/empty rather than a stale result; the document's own
     diagnostics already say why.
+- `textDocument/completion` (`lsp/completion.c`) suggests every
+  top-level function/class in the whole compiled program (not just this
+  document's own — `lib/core.di`'s prelude and anything pulled in via
+  `require` are all valid to type) plus every local variable/parameter
+  actually *in scope at the cursor* — real lexical scoping, backed by a
+  genuine (if narrow) per-function symbol table `src/compiler.c` now
+  builds as a side effect of compiling: `DiamondFunction.scope_locals`
+  (`src/vm.h`) records every local's own name and the exact byte range
+  (in the compiled buffer) it's valid for, taken directly from the
+  compiler's own `Local` bookkeeping at the two points a scope actually
+  closes (a function body finishing in `compile_definition`, a `rescue`
+  clause finishing in `compile_begin` — Diamond's `if`/`while`/`unless`/
+  `until` deliberately *don't* open their own scope, matching Ruby, so
+  those needed no extra handling). Mapping the cursor's own line/column
+  into that same compiled-buffer coordinate system needed a new inverse
+  of `diamond_resolve_diagnostic_location`: `diamond_resolve_source_
+  position` (`src/compiler.h`) walks the same segment table the other
+  direction. A name's valid range is checked directly against the
+  cursor's own offset — no lexical-nesting bookkeeping needed for a
+  nested `def` to see its enclosing function's own locals (real closure
+  capture visibility), since the outer function's own recorded range
+  already spans everything nested inside it, nested `def`s included.
+  Doesn't filter by whatever's already typed (every mainstream client
+  already does that client-side against the full list this returns) or
+  suggest language keywords; requires a clean compile, same rule as
+  hover/definition/documentSymbol.
+- `workspace/symbol` (`lsp/workspace_symbol.c`) recursively walks the
+  workspace root given via `initialize` (skipping dotfiles/dotdirs —
+  `.git` and friends), compiles every `*.di` file it finds the same way
+  an open document is (an open file's own live, possibly-unsaved buffer
+  is preferred over disk, same as everywhere else `require` resolves),
+  and returns every top-level function/class actually declared *in that
+  file itself* whose name contains the query as a case-insensitive
+  substring. No caching across separate requests — real editors only
+  send this on an explicit "go to symbol in workspace" action, not on
+  every keystroke, so re-walking and re-compiling the whole workspace
+  each time is an accepted v1 tradeoff, not an oversight. One file that
+  fails to compile doesn't hide every other file's symbols — it's
+  silently skipped.
 - `shutdown` / `exit` — the ordinary LSP lifecycle; `exit`'s process exit
   code is 0 if `shutdown` was requested first, 1 otherwise, per spec.
 - Any other request gets a JSON-RPC `MethodNotFound` (-32601) error;
@@ -155,14 +199,10 @@ exit-without-shutdown edge cases.
 
 ## What's deliberately out of scope so far
 
-- **Completion, workspace-wide symbol search** — need a real, general
-  symbol table (name → declaration site, with actual scope resolution),
-  which nothing in `lsp/` builds. Hover/definition/documentSymbol get by
-  without one by resolving only two globally-unambiguous identifier
-  kinds (see above); completion in particular can't take that shortcut
-  at all — "what names are valid here" is a different question than
-  "where is this one declared" and needs real scope resolution to
-  answer honestly.
+- **Completion/workspace symbol results for a method name reached
+  through `receiver.method(...)`, or for anything needing scope
+  resolution beyond a single compiled program's own function/class/
+  local tables** — same underlying gap as the next bullet.
 - **Hover/definition/documentSymbol on a method name reached through
   `receiver.method(...)`** — needs type inference on `receiver` to know
   which class's method is meant (possibly several classes define a

@@ -1,3 +1,4 @@
+#include "completion.h"
 #include "definition.h"
 #include "dependencies.h"
 #include "diagnostics.h"
@@ -6,6 +7,7 @@
 #include "hover.h"
 #include "json.h"
 #include "rpc.h"
+#include "workspace_symbol.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -133,7 +135,36 @@ static void publish_diagnostics(DocumentTable *documents,DependencyTable *depend
     free(dependents);
 }
 
-static void handle_initialize(const JsonValue *id) {
+/* Extracts the workspace root directory from `initialize`'s own params
+ * -- `workspaceFolders[0].uri` (current spec) if present, else the
+ * older `rootUri`, decoded via diagnostics_uri_to_path the same way
+ * every other lsp/ feature turns a client-given uri into an on-disk
+ * path. Leaves `out_root` untouched (caller should zero-init it
+ * first) if neither is present/decodable -- workspace_symbol_compute
+ * treats an empty root as "nothing to search" rather than failing. */
+static void extract_workspace_root(const JsonValue *params,char *out_root,
+        size_t out_root_capacity) {
+    const JsonValue *folders=json_object_get(params,"workspaceFolders");
+    const char *uri=nullptr;size_t uri_length=0;
+    if(folders!=nullptr&&folders->kind==JSON_ARRAY&&folders->as.array.count>0) {
+        const JsonValue *first=folders->as.array.items[0];
+        json_as_string(json_object_get(first,"uri"),&uri,&uri_length);
+    }
+    if(uri==nullptr)
+        json_as_string(json_object_get(params,"rootUri"),&uri,&uri_length);
+    if(uri==nullptr||uri_length>=1024)return;
+    char uri_copy[1024];
+    memcpy(uri_copy,uri,uri_length);
+    uri_copy[uri_length]='\0';
+    char *path=diagnostics_uri_to_path(uri_copy);
+    if(path==nullptr)return;
+    (void)snprintf(out_root,out_root_capacity,"%s",path);
+    free(path);
+}
+
+static void handle_initialize(const JsonValue *id,const JsonValue *params,
+        char *workspace_root,size_t workspace_root_capacity) {
+    extract_workspace_root(params,workspace_root,workspace_root_capacity);
     JsonValue *capabilities=json_object();
     JsonValue *result=json_object();
     if(capabilities==nullptr||result==nullptr) {
@@ -148,6 +179,14 @@ static void handle_initialize(const JsonValue *id) {
     json_object_set(capabilities,"hoverProvider",json_bool(true));
     json_object_set(capabilities,"definitionProvider",json_bool(true));
     json_object_set(capabilities,"documentSymbolProvider",json_bool(true));
+    /* CompletionOptions -- an empty object (no triggerCharacters) is a
+     * valid, complete value per the spec: this server doesn't need a
+     * trigger character, since it returns the same full candidate
+     * list regardless of what's already typed (see completion.h). */
+    JsonValue *completion_options=json_object();
+    if(completion_options!=nullptr)
+        json_object_set(capabilities,"completionProvider",completion_options);
+    json_object_set(capabilities,"workspaceSymbolProvider",json_bool(true));
     json_object_set(result,"capabilities",capabilities);
     send_response(id,result);
 }
@@ -247,6 +286,37 @@ static void handle_document_symbol(DocumentTable *documents,const JsonValue *id,
     send_response(id,result);
 }
 
+static void handle_completion(DocumentTable *documents,const JsonValue *id,
+        const JsonValue *params) {
+    char uri_copy[1024];
+    const char *text=nullptr;
+    size_t text_length=0,line=0,character=0;
+    if(!extract_document_position(documents,id,params,uri_copy,sizeof uri_copy,
+            &text,&text_length,&line,&character))
+        return;
+    JsonValue *result=completion_compute(documents,uri_copy,text,text_length,line,character);
+    if(result==nullptr) {
+        send_response(id,json_null());
+        return;
+    }
+    send_response(id,result);
+}
+
+static void handle_workspace_symbol(DocumentTable *documents,const char *workspace_root,
+        const JsonValue *id,const JsonValue *params) {
+    const char *query_chars=nullptr;size_t query_length=0;
+    json_as_string(json_object_get(params,"query"),&query_chars,&query_length);
+    char query[256]={0};
+    if(query_length>0&&query_length<sizeof query)
+        memcpy(query,query_chars,query_length);
+    JsonValue *result=workspace_symbol_compute(documents,workspace_root,query);
+    if(result==nullptr) {
+        send_response(id,json_null());
+        return;
+    }
+    send_response(id,result);
+}
+
 static void handle_did_open(DocumentTable *documents,DependencyTable *dependencies,
         const JsonValue *params) {
     const JsonValue *text_document=json_object_get(params,"textDocument");
@@ -310,6 +380,7 @@ int main(void) {
         return 1;
     }
     bool shutdown_requested=false;
+    char workspace_root[1024]={0};
     while(true) {
         const char *read_error=nullptr;
         JsonValue *message=rpc_read_message(stdin,&read_error);
@@ -327,7 +398,7 @@ int main(void) {
             memcpy(method,method_chars,method_length);
 
         if(strcmp(method,"initialize")==0) {
-            handle_initialize(id);
+            handle_initialize(id,params,workspace_root,sizeof workspace_root);
         } else if(strcmp(method,"initialized")==0) {
             /* no-op notification */
         } else if(strcmp(method,"shutdown")==0) {
@@ -350,6 +421,10 @@ int main(void) {
             handle_definition(documents,id,params);
         } else if(strcmp(method,"textDocument/documentSymbol")==0) {
             handle_document_symbol(documents,id,params);
+        } else if(strcmp(method,"textDocument/completion")==0) {
+            handle_completion(documents,id,params);
+        } else if(strcmp(method,"workspace/symbol")==0) {
+            handle_workspace_symbol(documents,workspace_root,id,params);
         } else if(id!=nullptr) {
             send_error(id,-32601,"method not found");
         }

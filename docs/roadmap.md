@@ -4988,6 +4988,103 @@ future work.
   `document_resolve_source`). `make test-lsp` (59 assertions, up from
   50) and `make test` (915 assertions, unaffected) both pass clean.
 
+- Added `textDocument/completion` and `workspace/symbol` — the "need a
+  real, general symbol table" gap the previous LSP round of entries
+  left explicitly open. Went with the more invasive of the two options
+  on the table: rather than a second, LSP-only approximation of
+  Diamond's scoping rules (real drift risk over time), `src/compiler.c`
+  itself now records a persistent scope table as a side effect of
+  compiling, `DiamondFunction.scope_locals` (`DiamondScopeLocal`,
+  `src/vm.h`) — every local/parameter's own name and the exact byte
+  range (in the compiled buffer) it's actually valid for. This turned
+  out smaller than it sounded once actually read: `Local` (compiler.c)
+  is already compile-time scratch state that gets pushed/popped at
+  exactly two points — a function body finishing
+  (`compile_definition`'s own `outer_local_count` restore) and a
+  `rescue` clause finishing (`compile_begin`'s own `rescue_local_count`
+  restore) — since `if`/`while`/`unless`/`until` deliberately don't
+  open their own scope in this language (matching Ruby), there was no
+  third case to handle. A local's own valid *start* is just its name
+  token's own byte offset, already sitting right there in `Local.name`;
+  the only new information needed at each of those two closing points
+  is the valid *end*, snapshotted into a new `record_scope_locals`
+  helper. Top-level code needed no special-casing either — it compiles
+  into `program->entry`, a `DiamondFunction` like any other
+  (`compile_definition`'s own `at_top_level` check already relies on
+  this). Kept deliberately small (`DIAMOND_MAX_SCOPE_LOCALS = 32`, a
+  new field on every `DiamondFunction`) given `DiamondFunction` is
+  already ~152KB and there can be up to `DIAMOND_MAX_FUNCTIONS` of them
+  — every byte added here multiplies by both (see that constant's own
+  comment).
+
+  Completion needed one more piece nothing in the codebase had before:
+  mapping an LSP cursor position (always expressed in the open
+  document's own, unbundled text) into the *compiled* buffer's
+  coordinate system `scope_locals` is expressed in. The inverse
+  direction already existed (`diamond_resolve_diagnostic_location`,
+  compiled offset → original file/line/column); the new
+  `diamond_resolve_source_position` (`src/compiler.c`) walks the same
+  segment table the other way — find the segment belonging to the
+  target file whose original-line range contains the target line,
+  count forward. Verified directly before trusting it: a scratch
+  harness compiling a real multi-`require` file and confirming known
+  line/column positions (some *after* a `require` line, to exercise the
+  segment-hunting, not just the trivial single-segment case) resolve to
+  exactly the right compiled-buffer byte.
+
+  With real per-position scope data available, `lsp/completion.c`
+  turned out simpler than expected: union two candidate sets (every
+  top-level function/class in the compiled program, plus every
+  `scope_locals` entry whose range contains the cursor) with no
+  filtering by whatever's already typed (every mainstream client
+  already narrows a full list client-side). Verified end-to-end with a
+  small Python-driven smoke script before writing it into
+  `tests/lsp_test.sh` proper: confirmed a name goes out of scope
+  exactly at the boundary the compiler itself enforces (not visible
+  before its own declaration, not visible past its function's `end`),
+  a `rescue`-bound name only shows up inside its own clause, and —
+  unplanned but correct by construction, not something this needed to
+  special-case — a nested `def` correctly still sees its enclosing
+  function's own locals, since the outer function's own recorded range
+  already spans everything nested inside it (matching the compiler's
+  own `enclosing_locals`/capture-cell mechanism, not fighting it).
+
+  `workspace/symbol` (`lsp/workspace_symbol.c`, new) reused document_
+  symbol.c's own "only symbols actually declared in this file, not
+  something it merely requires" resolution logic (duplicated rather
+  than shared, same "a few lines, no clean shared home" call
+  `definition.c`/`hover.c` already made for their own token-finding
+  helper) across every `*.di` file found by a recursive directory walk
+  from `initialize`'s own `rootUri`/`workspaceFolders` — skipping
+  dotfiles/dotdirs, matching a `find` a developer would actually run.
+  Reused the exact one-`DiamondProgram`-per-batch trick from the
+  test-runner speedup earlier this session (`docs/roadmap.md`'s own
+  entry on it) for the same reason: a workspace can easily have
+  hundreds of files, and malloc/free-ing an ~83MB `DiamondProgram` per
+  file would repeat that same, already-diagnosed mistake.
+
+  Extended `editors/vscode/extension.js` with both new providers
+  (`registerCompletionItemProvider`/`registerWorkspaceSymbolProvider`)
+  — the client already sent `rootUri` in its own `initialize` call from
+  the very first LSP slice, unused until now. Also caught and fixed a
+  stale top-of-file comment claiming `initialize` "ignores its params
+  entirely," true when originally written but not since `rootUri`
+  started being read.
+
+  Verified directly (a rescue-scoped name, an outer function's locals
+  visible from a nested closure, a name correctly out of scope both
+  before its own declaration and past the top level, dotdir exclusion,
+  a workspace symbol found via an open document's live unsaved buffer
+  with an explicit check that the on-disk file was untouched — same
+  "prove it's really live, not an accidental save" discipline the
+  dependency-cascade test above already established) plus a manual
+  AddressSanitizer/UBSan pass on both the compiler-side scope-recording
+  change and the new `lsp/` allocation paths (recursive directory
+  walking, the two new independently-owned copy-out functions).
+  `make test-lsp` (83 assertions, up from 59) and `make test` (915
+  assertions, unaffected — nothing here is observable from Diamond
+  source itself) both pass clean.
+
 ## Later experiments
 
 - Self-hosting the compiler and core libraries in Diamond (in progress —

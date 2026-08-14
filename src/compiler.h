@@ -80,4 +80,24 @@ DiamondResolvedLocation diamond_resolve_diagnostic_location(
     const char *name, const char *source, DiamondDiagnostic diagnostic,
     const DiamondSourceBundle *bundle, size_t user_offset);
 
+/* The inverse of diamond_resolve_diagnostic_location: given a 1-based
+ * `line`/`column` in `path`'s own original source text, finds the
+ * matching byte offset within `combined` (the fully expanded buffer
+ * diamond_compile actually saw) -- i.e. where that exact position
+ * ended up after prelude-prepending and require-bundling. Only ever
+ * considers segments whose own path equals `path` (a document can
+ * appear as more than one segment, interleaved with whatever it
+ * `require`s between them, if it has more than one `require` line);
+ * `user_offset` means the same thing it does above. Returns SIZE_MAX
+ * if `line` doesn't fall inside any segment belonging to `path` --
+ * shouldn't happen for a real position within a document that's part
+ * of a bundle that compiled successfully, but a defensive result
+ * either way, not a crash. lsp/completion.c's only reason for
+ * existing: mapping an LSP cursor position (always expressed in the
+ * open document's own, unbundled text) into the compiled-buffer byte
+ * offsets DiamondFunction.scope_locals (src/vm.h) is expressed in. */
+size_t diamond_resolve_source_position(const char *path, const char *combined,
+    const DiamondSourceBundle *bundle, size_t user_offset,
+    size_t line, size_t column);
+
 #endif
