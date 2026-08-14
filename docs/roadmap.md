@@ -4517,6 +4517,40 @@ future work.
   string`, `string_scan_pattern_not_regexp`, `string_gsub_wrong_arity`.
   `make test` (880 assertions, up from 871) passes clean.
 
+- Added nine more `String` methods, closing the remaining gaps between
+  what Diamond's core prelude offered and what everyday string handling
+  needs: `start_with?`, `end_with?`, `include?`, `capitalize`, `chars`,
+  `bytes`, `chomp`, `ljust`, `rjust`. All follow the existing dispatch
+  table's established shape (fixed arity, explicit type checks on each
+  argument, `ArgumentError`/`TypeError` on misuse) — no new machinery,
+  just filling in the table. `chars`/`bytes` stay byte-oriented, matching
+  every other String primitive in this VM (`ord`, `slice`, `split` with
+  an empty separator, `reverse`) — none of them are Unicode-codepoint-
+  aware, so giving `chars` codepoint awareness while everything else
+  stays byte-oriented would be a worse inconsistency than the byte-level
+  behavior itself. `ljust`/`rjust` require the padding string as an
+  explicit second argument (no Ruby-style default `" "`) since native
+  dispatch here has no optional-argument convention to hook into; an
+  empty padding string is rejected as `ArgumentError` (matching Ruby)
+  rather than silently no-op'd, to avoid a padding string that can't
+  actually pad becoming a silent truncation-to-original-length bug.
+
+  Deliberate scope cut, left for a future round if something needs it:
+  `String#tr` (character-set translation with range/negation syntax like
+  `"a-z"` or `"^abc"`) — a bigger parsing job than the other eight
+  combined, and nothing in this codebase currently exercises it.
+
+  Verified directly (prefix/suffix/substring matching including the
+  empty-needle edge case, capitalize on empty/all-caps input, chomp's
+  `\r\n`/`\n`/`\r`-alone cases, ljust/rjust with both single- and multi-
+  character padding, negative width and empty-padding error paths) before
+  writing eleven permanent cases: `tests/cases/string_start_with`,
+  `string_end_with`, `string_include`, `string_capitalize`,
+  `string_chars`, `string_bytes`, `string_chomp`, `string_ljust_rjust`,
+  `string_start_with_argument_not_string`, `string_ljust_empty_padding`,
+  `string_ljust_negative_width`. `make test` (891 assertions, up from
+  880) passes clean.
+
 ## Later experiments
 
 - Self-hosting the compiler and core libraries in Diamond (in progress —

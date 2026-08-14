@@ -1,0 +1,4 @@
+[
+  "hELLO wORLD".capitalize(),
+  "".capitalize(),
+]
