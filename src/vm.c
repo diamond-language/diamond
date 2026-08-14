@@ -5196,9 +5196,35 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                         READ_BYTE(type_arguments[index]);
                 }
                 if(argc>16) VM_RETURN(DIAMOND_VM_ARITY_ERROR);
-                if(registers[recv].kind!=DIAMOND_VALUE_OBJECT||
-                   (size_t)name>=chunk->string_count) VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                if((size_t)name>=chunk->string_count) VM_RETURN(DIAMOND_VM_TYPE_ERROR);
                 const DiamondStringConstant *method_name=&chunk->strings[name];
+                if(registers[recv].kind==DIAMOND_VALUE_INT) {
+                    /* Int's only native method: chr, the inverse of String#ord.
+                     * A single byte (0-255), matching every other String
+                     * primitive in this VM staying byte- rather than
+                     * codepoint-oriented. */
+                    const bool chr_method=method_name->length==3&&
+                        memcmp(method_name->chars,"chr",3)==0;
+                    if(!chr_method) {
+                        snprintf(vm->error,sizeof vm->error,
+                            "undefined method '%.*s' for %s",
+                            (int)method_name->length,method_name->chars,"Int");
+                        VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                    }
+                    if(argc!=0)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                    const int64_t code=registers[recv].as.integer;
+                    if(code<0||code>255) {
+                        snprintf(vm->error,sizeof vm->error,
+                            "Int#chr argument must be between 0 and 255");
+                        VM_RETURN(DIAMOND_VM_INTEGER_OVERFLOW);
+                    }
+                    const char byte=(char)(unsigned char)code;
+                    DiamondString *chr_string=allocate_string(vm,&byte,1);
+                    if(chr_string==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                    registers[dest]=DIAMOND_OBJECT(chr_string);break;
+                }
+                if(registers[recv].kind!=DIAMOND_VALUE_OBJECT)
+                    VM_RETURN(DIAMOND_VM_TYPE_ERROR);
                 const DiamondObjectKind receiver_kind=registers[recv].as.object->kind;
                 if(receiver_kind==DIAMOND_OBJECT_ARRAY||
                    receiver_kind==DIAMOND_OBJECT_HASH||

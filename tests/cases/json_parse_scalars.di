@@ -1,0 +1,10 @@
+[
+  JSON.parse("null"),
+  JSON.parse("true"),
+  JSON.parse("false"),
+  JSON.parse("42"),
+  JSON.parse("-17"),
+  JSON.parse("3.5"),
+  JSON.parse("-2.5e2"),
+  JSON.parse("\"hi\""),
+]

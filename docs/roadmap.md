@@ -4551,6 +4551,86 @@ future work.
   `string_ljust_negative_width`. `make test` (891 assertions, up from
   880) passes clean.
 
+- Added `Int#chr` (`src/vm.c`) — the inverse of `String#ord`, a single
+  byte (0-255, `RangeError` outside that) as a one-character `String`.
+  Structurally it needed its own small carve-out: `INVOKE`'s dispatch
+  gate rejected every non-`DIAMOND_VALUE_OBJECT` receiver outright, since
+  Int/Float/Bool have no method-call support of any kind in this VM (only
+  free functions like `abs`/`min`/`max` in `lib/core.di`) — extending
+  that gate for one narrowly-scoped method (an early branch, checked
+  before the existing object-only gate, not a rewrite of it) was less
+  invasive than the alternative of inventing a whole new native-global-
+  function mechanism to match `puts`. Byte-level by design, matching
+  every other String/Int primitive already in this VM.
+
+- Added a `JSON` module (`lib/core.di`) — `JSON.stringify`/`JSON.parse`
+  — closing the gap `docs/lsp.md`'s own LSP had already run into and
+  hand-rolled around in C (`lsp/*.c` has its own JSON reader/writer
+  specifically because "Diamond has no JSON support," a line that was
+  sitting in this file's own LSP entry above). Implemented as ordinary
+  self-hosted Diamond, not a VM primitive — a JSON codec is pure logic
+  over values the language can already build (`Hash`, `Array`, `String`,
+  `Int`, `Float`, `Bool`, `Nil`), same reasoning as the Enumerable
+  methods earlier in this file.
+
+  The real design obstacle wasn't JSON grammar, it was the host
+  language: a recursive-descent parser is inherently mutually recursive
+  (`parse_value` calls `parse_array`/`parse_object`, which call
+  `parse_value` back), and this compiler resolves a bare no-receiver
+  call (`foo(x)`) against locals and already-declared top-level
+  functions *at compile time, in file order* — confirmed by testing two
+  plain top-level functions calling each other and, more surprisingly,
+  two methods of the same class calling each other by bare name from
+  inside method bodies (`is_odd(n - 1)` from within `is_even`) — both
+  fail with "undefined function" the same way, meaning it's not merely a
+  top-level-vs-method distinction. What does work, confirmed by the same
+  test with one change: qualifying the sibling call as `self.is_odd(...)`.
+  That path goes through `INVOKE`, resolved by name against the callee's
+  actual class *at call time*, not by direct reference at compile time —
+  so declaration order stops mattering. `JSONCodec` bundles every parse/
+  stringify step as a method of one class for exactly this reason, and
+  every internal call between them is `self.`-qualified; `JSON.parse`/
+  `JSON.stringify` are thin `module_function` wrappers that each spin up
+  a `JSONCodec.new()` and delegate. (This ordering rule is a real,
+  reproducible compiler behavior, not a bug filed here — self-recursion
+  already worked without this trick, since a top-level function's own
+  name is registered before its body compiles; only *sibling* forward
+  references needed the `self.` workaround. Worth remembering next time
+  anything mutually recursive gets written in Diamond itself.)
+
+  `\uXXXX` escapes decode BMP codepoints (0x0000-0xFFFF, the full range
+  four hex digits can express) and get properly UTF-8-encoded via plain
+  integer division/modulo (this VM has no bitwise operators) into 1-3
+  raw bytes — consistent with every other String primitive here staying
+  byte-oriented rather than codepoint-aware. Surrogate pairs (astral
+  characters split across two `\uXXXX` escapes) are a deliberate scope
+  cut: `JSONError` is raised on a lone surrogate rather than silently
+  emitting invalid UTF-8. `Int#chr` (added alongside this, see above)
+  is what makes the byte-level encoding possible at all — without it
+  there was no way to build a String from an arbitrary control-range or
+  non-ASCII byte value from inside Diamond source. Hash keys that aren't
+  already Strings get stringified through the same `"#{key}"` conversion
+  `array_join` already relies on, matching how Ruby's own `JSON.generate`
+  handles non-String Hash keys.
+
+  Verified directly (nested objects/arrays, all six escape sequences
+  Ruby also special-cases plus `\uXXXX` including a 2-byte UTF-8 case,
+  Bignum values via existing auto-promoting `to_i`, malformed input at
+  each grammar production, whitespace tolerance, trailing-content
+  rejection) before writing fourteen permanent cases (encode, decode,
+  round-trip, and error paths): `tests/cases/json_stringify_scalars`,
+  `json_stringify_collections`, `json_stringify_escapes`,
+  `json_stringify_control_char`, `json_parse_scalars`,
+  `json_parse_collections`, `json_parse_escapes`, `json_round_trip`,
+  `json_parse_malformed_object`, `json_parse_unterminated_array`,
+  `json_parse_trailing_content`, `int_chr`, `int_chr_out_of_range`,
+  `int_undefined_method`. Note: `Hash`/`Array` equality (`==`) in this
+  VM is identity-based, not structural (a pre-existing, unrelated VM
+  characteristic, not something this work changed) — `json_round_trip`
+  compares individual decoded leaf values rather than the whole
+  structure for that reason. `make test` (905 assertions, up from 891)
+  passes clean.
+
 ## Later experiments
 
 - Self-hosting the compiler and core libraries in Diamond (in progress —

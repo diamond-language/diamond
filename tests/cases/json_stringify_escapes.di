@@ -1,0 +1,1 @@
+JSON.stringify("line1\nline2\ttab\"quote\\backslash")

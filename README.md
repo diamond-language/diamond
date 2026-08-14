@@ -32,7 +32,8 @@ Implemented today:
   built-in exception classes;
 - fibers (cooperative coroutines) with `yield`/`resume`;
 - optional gradual parameter/return annotations and nilable types;
-- a Diamond-written core prelude with collection helpers;
+- a Diamond-written core prelude with collection helpers and a `JSON`
+  module (`JSON.stringify`/`JSON.parse`);
 - native `File`, `TCPSocket`/`TCPServer`, and `Regexp` primitives;
 - stop-the-world mark/sweep collection with stress-GC testing;
 - source diagnostics and bytecode disassembly.
@@ -48,7 +49,7 @@ Beyond the language itself:
   the parser, differentially tested against the native compiler on every
   change.
 
-The test suite currently contains 891 end-to-end assertions spanning the
+The test suite currently contains 905 end-to-end assertions spanning the
 frontend, compiler, VM, object model, type guards, collections, and
 collector, plus 824 lexer and 239+123 self-hosted-parser differential cases,
 21 `facet` package-manager tests, 22 `diamond-lsp` protocol tests, and 22
