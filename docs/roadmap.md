@@ -4759,6 +4759,43 @@ future work.
   interpreter-loop leaning (register zero-init, opcode dispatch,
   struct-copy elimination). Actual JIT compilation remains a distinct,
   larger, not-yet-attempted piece of work.
+- Test suite is getting slow to run locally, and it's a real cost, not a
+  hypothetical one: `tests/run.sh` spawns a brand-new `./build/diamond`
+  process per case (866 `.di` files under `tests/cases/`, 912 assertions
+  total as of `String#tr`/gsub-backreferences), and every single one of
+  those processes recompiles all 940 lines of `lib/core.di`'s prelude
+  from scratch before it ever reaches the case's own few lines — there's
+  no persistent process, no cached/precompiled prelude, nothing shared
+  across cases at all. Measured directly: a full `make test` run takes
+  ~60s wall clock, and the time split (`10s user` / `46s sys`) says most
+  of that is fork/exec/process-startup overhead, not actual compiler or
+  VM CPU work — which matters for *what* fix would help: micro-
+  optimizing `diamond_compile` wouldn't touch this, since the cost is in
+  spinning up ~900 fresh OS processes each redoing the same prelude
+  compile, not in any one of those compiles being slow. A test runner
+  that reuses one process (or at least one pre-compiled prelude) across
+  many cases — `lsp/`'s own `diagnostics_compute` already demonstrates
+  the shape of this: a lazily-allocated, reused-across-calls
+  `DiamondProgram` scratch buffer instead of a fresh one per compile —
+  is the likely fix, but changes what "run one `.di` file and diff its
+  output" (`tests/run.sh`'s entire current model) means, so it's a real
+  design task, not a quick patch.
+- Diamond itself has no testing framework — nothing self-hosted for
+  someone writing Diamond *programs* (as opposed to this repo's own
+  bash-driven `tests/cases/*.di` + `.expected` convention, which tests
+  the language from the outside and was never meant to be something
+  Diamond code written *in* Diamond could use) to assert against, group
+  into suites, or run selectively. A minitest/RSpec-style library —
+  `assert_equal`, test classes or blocks, pass/fail/error counts, a
+  runnable entry point — is real, user-facing language-completeness
+  work, not just internal tooling, and self-hosting it in Diamond itself
+  (once the language can comfortably express it) would double as
+  another differential-testing surface the way `selfhost/` already is.
+  Worth sequencing against the test-runner slowness above: a fast
+  in-process runner and a Diamond-native assertion library solve
+  adjacent but different problems (this repo's own test speed vs. what
+  Diamond programs can use to test themselves) and shouldn't be
+  conflated into one piece of work.
 
 ## Explicitly deferred
 
