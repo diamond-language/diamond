@@ -5010,6 +5010,45 @@ future work.
   adjacent but different problems (this repo's own test speed vs. what
   Diamond programs can use to test themselves) and shouldn't be
   conflated into one piece of work.
+- Added that minitest/RSpec-style library: `lib/minitest.di`, opt-in via
+  `require "../lib/minitest"` (not part of the `lib/core.di` prelude, so
+  it costs nothing for programs — including all 834 `tests/cases/*.di`
+  files — that don't use it). `Minitest.assert`/`assert_equal`/
+  `refute`/`refute_equal`/`assert_nil`/`assert_raises` raise a new
+  `AssertionError < StandardError` on failure; a `Minitest` instance
+  collects named tests (`.test(name, callback)`) and `.run`/`.run!`
+  executes them, catching `AssertionError` as a failure and any other
+  `StandardError` as an error (each recorded with its message, distinct
+  buckets), printing a summary line. `run!` re-raises if anything didn't
+  pass, so a test file's own process exit code (via the CLI's normal
+  uncaught-exception handling, exit 70) reflects pass/fail -- useful for
+  CI, without needing anything Diamond-side that can inspect an exit
+  code itself.
+  The design had to route around two real language gaps hit directly
+  while building it, both consequences of the same root cause: Diamond
+  has no runtime reflection (no dynamic dispatch by string name, no
+  first-class `Class` values -- confirmed by reading `src/compiler.c`:
+  method names are compile-time-resolved string-constant indices baked
+  into bytecode, `DiamondClass` is never a value a Diamond program can
+  hold, and `rescue` type filters are explicitly compile-time-only,
+  rejecting even a generic type variable). First, no auto-discovery: a
+  real minitest scans for `test_`-prefixed methods at runtime; here,
+  every test has to be registered explicitly by passing its function as
+  a `Callable[0]` value. Second, and the one that actually took a false
+  start to find: passing a *top-level* `def` by bare name as a value
+  doesn't work at all -- `parse_identifier` (`src/compiler.c:710`) only
+  resolves locals and captured-closure locals, never the top-level
+  function table, so a top-level function is only ever callable
+  (`foo()`), never a value. Every existing `Callable`-typed test case in
+  `tests/cases/` already routes around this the same way (nesting the
+  passed function inside an enclosing `def`, which *does* compile to a
+  real closure value) -- `lib/minitest.di`'s own usage comment leads
+  with this, and all three of its own dogfooding regression cases
+  (`tests/cases/minitest_all_pass.di`,
+  `tests/cases/minitest_failures_and_errors.di`,
+  `tests/cases/minitest_run_bang_nonzero_exit.di`) nest every test
+  function inside one wrapping `def run_tests()` for exactly this
+  reason.
 
 ## Explicitly deferred
 

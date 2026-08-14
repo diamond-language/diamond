@@ -1,0 +1,9 @@
+FAIL: wrong value
+  expected 5, got 4
+ERROR: division by zero
+  division by zero
+  at test_division_by_zero:12:9
+FAIL: raises not caught
+  expected an exception to be raised
+5 tests, 2 passed, 2 failed, 1 errors
+false
