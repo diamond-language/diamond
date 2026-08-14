@@ -4483,6 +4483,40 @@ future work.
   two-level case, both nested inside ordinary (non-singleton) instance
   methods.
 
+- Added `String#gsub`, `String#sub`, and `String#scan`, closing the gap
+  between `Regexp` (which only had `.match`/`.match?`) and `String` —
+  there was previously no way to use a regex to transform or extract
+  from a string at all. `gsub`/`sub` share one helper,
+  `regexp_replace_helper` (a `replace_all` bool is the only difference
+  between "replace every match" and "replace the first match only"),
+  built on a small growable `ByteBuffer` that interleaves unmatched
+  source spans with the replacement as `reginold_search` walks forward
+  from an advancing cursor. `scan` (`regexp_scan_helper`) walks the same
+  way but collects an `Array` instead of building a string: a `String`
+  per match when the pattern has no capture groups, or an `Array` of
+  per-group `String`/`Nil` (unmatched optional group) when it does —
+  matching Ruby's own `#scan` split exactly. Both helpers advance the
+  cursor by one byte past a zero-length match (e.g. `x*` against text
+  with no `x`) instead of re-searching from the same offset, the same
+  guard `gsub` needs in Ruby to avoid looping forever on a pattern that
+  can match empty.
+
+  Deliberate v1 scope cut: the replacement argument is always a literal
+  `String` — no `\1`-style backreference substitution. Revisit only if
+  something actually needs it; it's a bigger parsing job (backreference
+  syntax inside the replacement string) for a feature nothing in this
+  codebase currently exercises.
+
+  Verified directly against representative inputs (captureless and
+  capturing patterns, a zero-length-matching pattern confirmed not to
+  hang, wrong-type pattern/replacement arguments, wrong arity) before
+  writing them down as permanent cases: `tests/cases/string_gsub_
+  replaces_all`, `string_sub_replaces_first_only`, `string_gsub_zero_
+  length_match`, `string_scan_no_groups`, `string_scan_with_groups`,
+  `string_gsub_pattern_not_regexp`, `string_gsub_replacement_not_
+  string`, `string_scan_pattern_not_regexp`, `string_gsub_wrong_arity`.
+  `make test` (880 assertions, up from 871) passes clean.
+
 ## Later experiments
 
 - Self-hosting the compiler and core libraries in Diamond (in progress —
