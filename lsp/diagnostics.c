@@ -19,13 +19,7 @@ static constexpr unsigned char DIAMOND_CORE_SOURCE[] = {
 };
 static constexpr char DIAMOND_USER_LINE_RESET[] = "\n#line 1\n";
 
-/* LSP URIs are `file:///absolute/path`, percent-encoded (a real editor
- * encodes at least spaces and non-ASCII bytes). Only the `file` scheme
- * is understood -- anything else (an in-memory/untitled buffer with a
- * different scheme) has no on-disk location `require` could resolve
- * against anyway. Returns a freshly malloc'd, null-terminated path, or
- * nullptr if `uri` isn't a `file://` URI or on allocation failure. */
-static char *uri_to_path(const char *uri) {
+char *diagnostics_uri_to_path(const char *uri) {
     static constexpr char prefix[]="file://";
     static constexpr size_t prefix_length=sizeof(prefix)-1;
     if(strncmp(uri,prefix,prefix_length)!=0)return nullptr;
@@ -119,7 +113,7 @@ JsonValue *diagnostics_compute(const char *uri,const char *text,size_t length) {
      * no cross-file resolution either" tradeoff every path through this
      * function makes for a *different* file's own errors -- see
      * docs/lsp.md. */
-    char *path=uri_to_path(uri);
+    char *path=diagnostics_uri_to_path(uri);
     if(path==nullptr) {
         char *combined=malloc(sizeof(DIAMOND_CORE_SOURCE)-1+sizeof(DIAMOND_USER_LINE_RESET)-1+length+1);
         if(combined==nullptr) {

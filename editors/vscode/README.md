@@ -13,7 +13,7 @@ from-scratch, zero-external-dependency convention, and meaning there's
 nothing to `npm install` on either side: VS Code's extension host already
 bundles Node.
 
-## Diagnostics setup
+## Diagnostics and hover setup
 
 1. Build the language server: `make lsp` (from the repo root). This
    produces `build/diamond-lsp`.
@@ -24,8 +24,11 @@ bundles Node.
 3. Open a `.di` file. The extension activates on the `diamond` language,
    spawns the server, and diagnostics appear as you type (Diamond's
    compiler stops at the first error, so at most one diagnostic per file
-   at a time — see `docs/lsp.md` for exactly what is and isn't covered
-   yet, e.g. no hover/go-to-definition/completion).
+   at a time). Hovering a top-level function name or a class name — at
+   its own declaration or anywhere it's used — shows its signature (only
+   those two identifier kinds resolve; see `docs/lsp.md` for exactly
+   what is and isn't covered yet, e.g. no go-to-definition/completion,
+   and no hover on a method reached through `receiver.method(...)`).
 
 If the server fails to start (wrong path, not built yet), VS Code shows an
 error notification with the attempted path; server stderr and lifecycle

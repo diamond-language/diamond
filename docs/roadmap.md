@@ -4741,6 +4741,60 @@ future work.
   The verification above was real and thorough, just not wired into
   `make test-all`.
 
+- Added `textDocument/hover` to `diamond-lsp` (`lsp/hover.c`, new) and
+  wired it into the VS Code client (`editors/vscode/extension.js`) —
+  the first `lsp/` capability beyond diagnostics, and the first real
+  test of `docs/lsp.md`'s own claim that hover/go-to-definition/
+  completion "all need a real symbol table." They do, in general — but
+  hover specifically doesn't have to wait for one: this language
+  resolves a bare call to exactly one top-level function *at compile
+  time* (no overloading), and a class name always names exactly one
+  class, so both are already unambiguous without any scope resolution
+  at all. Scoped to exactly those two identifier kinds for exactly that
+  reason; a method reached through `receiver.method(...)` is the case
+  that still needs real type inference (which class's method depends on
+  `receiver`'s runtime type) and stays out of scope.
+
+  Mechanically: tokenizes the *raw* open-document text directly (via
+  `src/lexer.c`, independent of compilation) to find the identifier
+  under the cursor, then does a plain name lookup against the
+  *compiled* program's function/class tables (built the same prelude+
+  require-bundling way `diagnostics_compute` already does, deliberately
+  re-derived rather than shared — see the comment in `hover.c` for why
+  not sharing was the safer call given `diagnostics_compute` is already
+  tested and this was a second, independent consumer). No position
+  translation between the two is needed at all, unlike diagnostics:
+  hover never has to map a position in the bundled compile buffer back
+  to the editor's own document, since the cursor position is resolved
+  against the raw text *before* compiling, and the compiled program is
+  only ever consulted by name afterward. Real signature reconstruction
+  reuses `disassemble.c`'s own type-set formatting (`print_type_set`,
+  now also exposed as `diamond_print_type_set`) rather than duplicating
+  it — which is also how a real, non-obvious bug surfaced and got fixed
+  before shipping: a function's `parameter_type_sets`/`return_type_set`
+  index into *that function's own* `type_sets[]` array, not the
+  chunk-wide one `diamond_program_chunk` returns (which is actually just
+  the entry/top-level function's table) — `diamond_disassemble` already
+  knew this (it builds a per-function `DiamondChunk` with only
+  `type_sets` swapped in before formatting), and `hover.c`'s first draft
+  didn't, silently printing the *entry* function's unrelated types
+  instead (caught immediately by the Node-driven end-to-end check below,
+  not by inspection).
+
+  Verified two ways: `tests/lsp_test.sh` gained real hover cases (a
+  function's own declaration, a bare call site, a class with and
+  without a superclass, a local variable correctly returning nothing, a
+  document that doesn't currently compile correctly returning nothing)
+  — and its pre-existing "unrecognized method" case, which had been
+  using `textDocument/hover` as a conveniently-realistic-but-then-
+  unimplemented example, switched to `textDocument/definition` (still
+  genuinely unimplemented). Also re-ran the Node-driven `extension.js`
+  check from the entry above, extended with a stub
+  `registerHoverProvider`/`Hover` on the fake `vscode` module, confirmed
+  against the real server end-to-end (not wired into `make test-all`,
+  same reasoning as before). `make test`/`make test-lsp` (912 / 30
+  assertions, up from 912 / 22) pass clean.
+
 ## Later experiments
 
 - Self-hosting the compiler and core libraries in Diamond (in progress —

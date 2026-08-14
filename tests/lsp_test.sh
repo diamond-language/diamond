@@ -48,13 +48,15 @@ read_message() {
 
 coproc LSP { "$diamond_lsp"; }
 
-# --- initialize advertises full-document sync ---
+# --- initialize advertises full-document sync and hover ---
 
 send '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}'
 response="$(read_message)"
 [[ "$response" == *'"id":1'* ]]
 count=$((count + 1))
-[[ "$response" == *'"capabilities":{"textDocumentSync":1}'* ]]
+[[ "$response" == *'"textDocumentSync":1'* ]]
+count=$((count + 1))
+[[ "$response" == *'"hoverProvider":true'* ]]
 count=$((count + 1))
 
 send '{"jsonrpc":"2.0","method":"initialized","params":{}}'
@@ -123,9 +125,61 @@ count=$((count + 1))
 send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$main_uri"'"}}}'
 read_message >/dev/null
 
+# --- hover resolves a top-level function name, at its own declaration
+# and at a bare call site, and a class name including its superclass ---
+
+hover_uri="file://$work/hover.di"
+send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$hover_uri"'","text":"def add(a: Int, b: Int) -> Int\n  a + b\nend\n\nclass Base\nend\n\nclass Derived < Base\nend\n\nadd(1, 2)"}}}'
+read_message >/dev/null
+
+send '{"jsonrpc":"2.0","id":4,"method":"textDocument/hover","params":{"textDocument":{"uri":"'"$hover_uri"'"},"position":{"line":10,"character":1}}}'
+response="$(read_message)"
+[[ "$response" == *'"id":4'* ]]
+count=$((count + 1))
+[[ "$response" == *'"value":"def add(a: Int, b: Int) -> Int"'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","id":5,"method":"textDocument/hover","params":{"textDocument":{"uri":"'"$hover_uri"'"},"position":{"line":7,"character":8}}}'
+response="$(read_message)"
+[[ "$response" == *'"value":"class Derived < Base"'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","id":6,"method":"textDocument/hover","params":{"textDocument":{"uri":"'"$hover_uri"'"},"position":{"line":7,"character":17}}}'
+response="$(read_message)"
+[[ "$response" == *'"value":"class Base"'* ]]
+count=$((count + 1))
+
+# --- hover on a local variable returns null: no symbol table for those,
+# only top-level functions and classes (see docs/lsp.md) ---
+
+send '{"jsonrpc":"2.0","id":7,"method":"textDocument/hover","params":{"textDocument":{"uri":"'"$hover_uri"'"},"position":{"line":1,"character":2}}}'
+response="$(read_message)"
+[[ "$response" == *'"id":7'* ]]
+count=$((count + 1))
+[[ "$response" == *'"result":null'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$hover_uri"'"}}}'
+read_message >/dev/null
+
+# --- hover on a document that doesn't currently compile returns null,
+# not a stale/partial signature ---
+
+broken_hover_uri="file:///hover_broken.di"
+send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$broken_hover_uri"'","text":"def f(\n"}}}'
+read_message >/dev/null
+
+send '{"jsonrpc":"2.0","id":8,"method":"textDocument/hover","params":{"textDocument":{"uri":"'"$broken_hover_uri"'"},"position":{"line":0,"character":4}}}'
+response="$(read_message)"
+[[ "$response" == *'"result":null'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$broken_hover_uri"'"}}}'
+read_message >/dev/null
+
 # --- an unrecognized method gets a JSON-RPC MethodNotFound error ---
 
-send '{"jsonrpc":"2.0","id":2,"method":"textDocument/hover","params":{}}'
+send '{"jsonrpc":"2.0","id":2,"method":"textDocument/definition","params":{}}'
 response="$(read_message)"
 [[ "$response" == *'"id":2'* ]]
 count=$((count + 1))

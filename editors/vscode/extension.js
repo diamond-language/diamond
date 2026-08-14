@@ -173,6 +173,25 @@ function didClose(document) {
     });
 }
 
+/* vscode.HoverProvider#provideHover. Every open .di document already
+ * has a live server-side copy from didOpen/didChange, so this only ever
+ * needs to ask about it -- no separate "send the text along with the
+ * hover request" step the way an unopened document might need. */
+async function provideHover(document, position) {
+    if (!child) return undefined;
+    let raw;
+    try {
+        raw = await sendRequest('textDocument/hover', {
+            textDocument: { uri: document.uri.toString() },
+            position: { line: position.line, character: position.character },
+        });
+    } catch (err) {
+        return undefined;
+    }
+    if (!raw || !raw.contents || typeof raw.contents.value !== 'string') return undefined;
+    return new vscode.Hover(raw.contents.value);
+}
+
 function startServer() {
     const serverPath = vscode.workspace.getConfiguration('diamond').get('languageServerPath', 'diamond-lsp');
     let spawned;
@@ -263,6 +282,7 @@ function activate(context) {
     context.subscriptions.push(vscode.workspace.onDidOpenTextDocument(didOpen));
     context.subscriptions.push(vscode.workspace.onDidChangeTextDocument((event) => didChange(event.document)));
     context.subscriptions.push(vscode.workspace.onDidCloseTextDocument(didClose));
+    context.subscriptions.push(vscode.languages.registerHoverProvider('diamond', { provideHover }));
     context.subscriptions.push(vscode.commands.registerCommand('diamond.restartLanguageServer', async () => {
         await stopServer();
         startServer();

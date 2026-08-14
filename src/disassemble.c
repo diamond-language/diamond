@@ -102,6 +102,10 @@ static bool print_type_set(FILE *stream,const DiamondChunk *chunk,
     return valid;
 }
 
+bool diamond_print_type_set(FILE *stream, const DiamondChunk *chunk, uint8_t set_index) {
+    return print_type_set(stream, chunk, set_index);
+}
+
 static bool disassemble_chunk(FILE *stream, const char *name,
                               const DiamondChunk *chunk) {
     fprintf(stream, "== %s ==\n", name);

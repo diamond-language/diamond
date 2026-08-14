@@ -1,5 +1,6 @@
 #include "diagnostics.h"
 #include "document.h"
+#include "hover.h"
 #include "json.h"
 #include "rpc.h"
 
@@ -87,7 +88,49 @@ static void handle_initialize(const JsonValue *id) {
      * document, not an incremental range edit. Simpler and sufficient
      * for a diagnostics-only server; see docs/lsp.md. */
     json_object_set(capabilities,"textDocumentSync",json_number(1));
+    json_object_set(capabilities,"hoverProvider",json_bool(true));
     json_object_set(result,"capabilities",capabilities);
+    send_response(id,result);
+}
+
+static void handle_hover(DocumentTable *documents,const JsonValue *id,
+        const JsonValue *params) {
+    const JsonValue *text_document=json_object_get(params,"textDocument");
+    const JsonValue *position=json_object_get(params,"position");
+    const char *uri=nullptr;
+    size_t uri_length=0;
+    double line=0,character=0;
+    if(!json_as_string(json_object_get(text_document,"uri"),&uri,&uri_length)||
+       !json_as_number(json_object_get(position,"line"),&line)||
+       !json_as_number(json_object_get(position,"character"),&character)) {
+        send_response(id,json_null());
+        return;
+    }
+    /* document_get_text hands back a borrowed, non-null-terminated
+     * pointer into the DocumentTable's own storage -- uri needs a
+     * null-terminated copy of its own before use since it came straight
+     * out of a JsonValue string view (json_as_string doesn't
+     * null-terminate either), matching how every other handler here
+     * already treats these views. */
+    char uri_copy[1024];
+    if(uri_length>=sizeof uri_copy) {
+        send_response(id,json_null());
+        return;
+    }
+    memcpy(uri_copy,uri,uri_length);
+    uri_copy[uri_length]='\0';
+    size_t text_length=0;
+    const char *text=document_get_text(documents,uri_copy,&text_length);
+    if(text==nullptr) {
+        send_response(id,json_null());
+        return;
+    }
+    JsonValue *result=hover_compute(uri_copy,text,text_length,
+        (size_t)line,(size_t)character);
+    if(result==nullptr) {
+        send_response(id,json_null());
+        return;
+    }
     send_response(id,result);
 }
 
@@ -178,6 +221,8 @@ int main(void) {
             handle_did_change(documents,params);
         } else if(strcmp(method,"textDocument/didClose")==0) {
             handle_did_close(documents,params);
+        } else if(strcmp(method,"textDocument/hover")==0) {
+            handle_hover(documents,id,params);
         } else if(id!=nullptr) {
             send_error(id,-32601,"method not found");
         }

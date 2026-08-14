@@ -17,18 +17,36 @@ the rest of this repository already uses.
 
 ## What it does today
 
-Diagnostics only:
+Diagnostics, plus a narrow slice of hover:
 
-- `initialize` — advertises `textDocumentSync: Full` (1) and nothing
-  else. No `hoverProvider`, `definitionProvider`, `completionProvider`,
-  etc. are declared, since none are implemented; a compliant client
-  won't ask for them.
+- `initialize` — advertises `textDocumentSync: Full` (1) and
+  `hoverProvider: true`. No `definitionProvider`, `completionProvider`,
+  etc., since those aren't implemented; a compliant client won't ask for
+  them.
 - `textDocument/didOpen` / `didChange` / `didClose` — each recompiles the
   document's current full text (full sync only; there's no incremental
   edit application) and publishes a `textDocument/publishDiagnostics`
   notification. Diamond's compiler stops at its first error, so there is
   never more than one diagnostic per publish — an empty array means the
   document currently compiles cleanly.
+- `textDocument/hover` (`lsp/hover.c`) — resolves the identifier under
+  the cursor against exactly two things, deliberately not a real symbol
+  table: a top-level function name (`def foo`, shown as its full
+  reconstructed signature — parameter types, return type, which
+  parameters are optional) or a class name (shown as `class Name` or
+  `class Name < Superclass`). Both are globally unambiguous by
+  construction in this language — a bare call always resolves to
+  exactly one top-level function by that name at compile time (no
+  overloading, no scoping to worry about), and a class name always
+  names exactly one class — which is what makes this tractable without
+  the scope-resolution machinery a general "hover any identifier"
+  feature would need. Method names reached through
+  `receiver.method(...)` are deliberately not resolved: which class's
+  method is meant depends on `receiver`'s runtime type, and there's no
+  type inference here to answer that. Requires the *document* to
+  currently compile cleanly — if it doesn't, hover returns `null`
+  rather than a stale or partial signature; the document's own
+  diagnostics already say why.
 - `shutdown` / `exit` — the ordinary LSP lifecycle; `exit`'s process exit
   code is 0 if `shutdown` was requested first, 1 otherwise, per spec.
 - Any other request gets a JSON-RPC `MethodNotFound` (-32601) error;
@@ -73,16 +91,28 @@ new file type/extension (`.di`).
 over its real stdio transport via a bash `coproc` — the same
 no-Python/no-Node convention every other test script in this repo
 follows — through the full `initialize` → `didOpen` → `didChange` →
-`didClose` → `shutdown` → `exit` lifecycle, plus the unknown-method and
+`didClose` → `shutdown` → `exit` lifecycle, hover at a declaration and
+at a call site, hover returning `null` for a local variable and for a
+document that doesn't currently compile, plus the unknown-method and
 exit-without-shutdown edge cases.
+
+`editors/vscode/extension.js` wires this up client-side too, via
+`vscode.languages.registerHoverProvider` — see its own file and
+`editors/vscode/README.md`.
 
 ## What's deliberately out of scope so far
 
-- **Hover, go-to-definition, completion, symbol search** — all need a
-  real symbol table (name → declaration site, with scope resolution),
-  which nothing in `lsp/` builds yet. Diagnostics don't need one:
-  `diamond_compile` already does all the work and hands back exactly the
-  one thing needed.
+- **Go-to-definition, completion, symbol search** — all need a real
+  symbol table (name → declaration site, with scope resolution), which
+  nothing in `lsp/` builds yet. Hover gets by without one (see above)
+  by resolving only two globally-unambiguous identifier kinds; these
+  three would need the real thing — jumping to *a* declaration or
+  completing *a* name means actually resolving scope, not sidestepping
+  it the way hover's narrow two-kind lookup does.
+- **Hover on a method name reached through `receiver.method(...)`** —
+  needs type inference on `receiver` to know which class's method is
+  meant (possibly several classes define a same-named method); see
+  above.
 - **Diagnostics for a broken dependency, published against its own
   file** — `require` itself resolves (see above), but if the error is
   inside the required file rather than the open document, nothing gets

@@ -5,6 +5,15 @@
 
 #include <stddef.h>
 
+/* LSP URIs are `file:///absolute/path`, percent-encoded. Only the
+ * `file` scheme is understood -- anything else (an in-memory/untitled
+ * buffer with a different scheme) has no on-disk location to resolve
+ * against anyway. Returns a freshly malloc'd, null-terminated path, or
+ * nullptr if `uri` isn't a `file://` URI or on allocation failure.
+ * Shared with hover.c, which needs the same file/no-file distinction to
+ * decide whether `require` bundling applies before compiling. */
+char *diagnostics_uri_to_path(const char *uri);
+
 /* Compiles `text` (a document's current contents, identified by its LSP
  * `uri` so `require` resolves relative to the right on-disk directory)
  * the same way src/main.c's own run_source does -- lib/core.di prepended
