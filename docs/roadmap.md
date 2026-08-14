@@ -4684,6 +4684,63 @@ future work.
   `string_gsub_literal_backslash_and_out_of_range_group`. `make test`
   (912 assertions, up from 908) passes clean.
 
+- Gave `editors/vscode/` a real LSP client (`extension.js`), closing the
+  gap between "the language server exists" and "VS Code actually shows
+  its diagnostics": the extension previously did syntax highlighting
+  only, with no code that ever spawned `diamond-lsp` at all. Hand-rolled
+  rather than built on `vscode-languageclient`, the same "from scratch,
+  zero external dependencies" choice `lsp/` itself already made (see
+  `docs/lsp.md`) — `diamond-lsp` only speaks a small, fixed protocol
+  subset (`initialize`, `initialized`, `didOpen`/`didChange`/`didClose`,
+  `shutdown`/`exit`, one diagnostic per publish), so a full client
+  library's generality buys nothing here. Plain CommonJS requiring only
+  `vscode` and `child_process` — no `node_modules`, no npm install, no
+  build step, on either side: VS Code's own extension host already
+  bundles Node. New `diamond.languageServerPath` setting (default
+  `diamond-lsp`, i.e. PATH lookup) and a `Diamond: Restart Language
+  Server` command for after rebuilding the binary.
+
+  Verification used `node` (available in this environment via `mise`,
+  not previously known to be — see the syntax-highlighting entry above,
+  written when it looked absent) to drive the real `extension.js`
+  against the real `build/diamond-lsp` binary, with a small hand-written
+  stub `vscode` module (`Range`/`Diagnostic`/`Uri`/`workspace`/
+  `languages`/`commands`, just enough surface for this client) standing
+  in for the actual VS Code API — not a mock of the extension's own
+  logic, the real file, spawning the real server process over real
+  stdio pipes. This caught two genuine bugs no amount of reading would
+  have: (1) the client's own `didClose` handler called
+  `diagnosticCollection.delete()` immediately, but the server *also*
+  publishes an empty `publishDiagnostics` for that uri on close (its own
+  documented way to clear a closed file, per `lsp/main.c`) — that publish
+  arrives asynchronously and lands after the delete, silently re-adding
+  an (empty, but present) entry; fixed by dropping the redundant
+  client-side delete and letting the server's own publish be the only
+  source of truth. (2) A launch failure (bad/missing
+  `languageServerPath`) only ever emits Node's `'error'` event on at
+  least this platform, never a following `'exit'` — confirmed directly
+  against plain `child_process.spawn` with a nonexistent path, not
+  assumed from the docs — so `child` was only ever cleared in the
+  `'exit'` handler, meaning every subsequent `stopServer()` (on
+  deactivate or restart) still saw a "live" child, sent it a `shutdown`
+  request nothing would ever answer, and hung forever awaiting a
+  response that could never arrive; fixed by clearing `child` in the
+  `'error'` handler too, plus a 1-second timeout race around the
+  `shutdown` request itself as a second line of defense against any
+  other way a request could go unanswered. The full open→diagnose→
+  fix→clear→close→shutdown lifecycle now passes end-to-end against the
+  real binary.
+
+  This Node-driven check isn't a committed regression test: GitLab CI's
+  `fedora:latest` image has no `node` (confirmed against
+  `.gitlab-ci.yml`), and every other test script in this repo is
+  deliberately Python/Node-free (see `tests/lsp_test.sh`'s own header
+  comment) so as not to need a second toolchain in CI. Adding one just
+  for this would either bit-rot unrun or require changing what CI
+  installs — a bigger, separate call this slice didn't make unilaterally.
+  The verification above was real and thorough, just not wired into
+  `make test-all`.
+
 ## Later experiments
 
 - Self-hosting the compiler and core libraries in Diamond (in progress —

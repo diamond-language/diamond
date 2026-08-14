@@ -1,12 +1,14 @@
 {
   "name": "diamond-language",
   "displayName": "Diamond",
-  "description": "Syntax highlighting for the Diamond programming language",
-  "version": "0.1.0",
+  "description": "Syntax highlighting and language server diagnostics for the Diamond programming language",
+  "version": "0.2.0",
   "engines": {
     "vscode": "^1.75.0"
   },
   "categories": ["Programming Languages"],
+  "main": "./extension.js",
+  "activationEvents": ["onLanguage:diamond"],
   "contributes": {
     "languages": [
       {
@@ -21,6 +23,22 @@
         "language": "diamond",
         "scopeName": "source.diamond",
         "path": "./syntaxes/diamond.tmLanguage.json"
+      }
+    ],
+    "configuration": {
+      "title": "Diamond",
+      "properties": {
+        "diamond.languageServerPath": {
+          "type": "string",
+          "default": "diamond-lsp",
+          "description": "Path to the diamond-lsp binary (built via `make lsp`). Defaults to looking it up on PATH."
+        }
+      }
+    },
+    "commands": [
+      {
+        "command": "diamond.restartLanguageServer",
+        "title": "Diamond: Restart Language Server"
       }
     ]
   }

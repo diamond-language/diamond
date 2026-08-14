@@ -2,13 +2,36 @@
 
 Syntax highlighting for `.di` files — a TextMate grammar (`syntaxes/diamond.tmLanguage.json`)
 built directly from `src/lexer.h`/`src/lexer.c`'s own token list, not derived
-from or dependent on any other language's grammar. No compiled code, no
+from or dependent on any other language's grammar — plus live diagnostics
+from `diamond-lsp` (`lsp/`, `docs/lsp.md`). No compiled code, no
 `node_modules`, no build step: `package.json` + `language-configuration.json`
-+ the grammar file are the entire extension.
++ the grammar file + `extension.js` are the entire extension. `extension.js`
+is a small hand-rolled LSP client (spawns `diamond-lsp`, frames
+`Content-Length` JSON-RPC over its stdio, republishes diagnostics) rather
+than a dependency on `vscode-languageclient` — matching `lsp/`'s own
+from-scratch, zero-external-dependency convention, and meaning there's
+nothing to `npm install` on either side: VS Code's extension host already
+bundles Node.
 
-This covers syntax highlighting only. For diagnostics, see `lsp/`
-(`docs/lsp.md`) — a separate, real Language Server your editor's LSP client
-can be pointed at independently of this extension.
+## Diagnostics setup
+
+1. Build the language server: `make lsp` (from the repo root). This
+   produces `build/diamond-lsp`.
+2. Either put that binary on your `PATH` under the name `diamond-lsp`, or
+   point the extension at it directly: open VS Code settings and set
+   `diamond.languageServerPath` to the built binary's absolute path (e.g.
+   `/path/to/diamond/build/diamond-lsp`).
+3. Open a `.di` file. The extension activates on the `diamond` language,
+   spawns the server, and diagnostics appear as you type (Diamond's
+   compiler stops at the first error, so at most one diagnostic per file
+   at a time — see `docs/lsp.md` for exactly what is and isn't covered
+   yet, e.g. no hover/go-to-definition/completion).
+
+If the server fails to start (wrong path, not built yet), VS Code shows an
+error notification with the attempted path; server stderr and lifecycle
+events are logged to the "Diamond Language Server" output channel. The
+`Diamond: Restart Language Server` command restarts it without reloading
+the whole window — useful after rebuilding `diamond-lsp`.
 
 ## Trying it locally
 
