@@ -117,6 +117,29 @@ count=$((count + 1))
 [[ "$response" == *'"start":{"line":1,'* ]]
 count=$((count + 1))
 
+# --- a real error *inside* a required file publishes a second
+# notification against that file's own uri, not the requesting
+# document's -- the requesting document's own publish (already read
+# above, for the previous case) stays correctly empty, since its own
+# text has no error ---
+
+cat > "$work/broken_dependency.di" <<'EOF'
+def broken(
+  1
+end
+EOF
+send '{"jsonrpc":"2.0","method":"textDocument/didChange","params":{"textDocument":{"uri":"'"$main_uri"'"},"contentChanges":[{"text":"require \"broken_dependency\"\nputs(1)"}]}}'
+response="$(read_message)"
+[[ "$response" == *"\"uri\":\"$main_uri\""* ]]
+count=$((count + 1))
+[[ "$response" == *'"diagnostics":[]'* ]]
+count=$((count + 1))
+response="$(read_message)"
+[[ "$response" == *"\"uri\":\"file://$work/broken_dependency.di\""* ]]
+count=$((count + 1))
+[[ "$response" == *'"message":"expected parameter name"'* ]]
+count=$((count + 1))
+
 # --- an unresolvable require reports diamond_load_program's own error ---
 
 send '{"jsonrpc":"2.0","method":"textDocument/didChange","params":{"textDocument":{"uri":"'"$main_uri"'"},"contentChanges":[{"text":"require \"nonexistent\""}]}}'

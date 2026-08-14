@@ -29,7 +29,15 @@ declaration-only symbol table:
   edit application) and publishes a `textDocument/publishDiagnostics`
   notification. Diamond's compiler stops at its first error, so there is
   never more than one diagnostic per publish — an empty array means the
-  document currently compiles cleanly.
+  document currently compiles cleanly. If the one error is actually
+  inside a `require`d file rather than the open document itself, a
+  *second* `publishDiagnostics` notification also goes out, against
+  that file's own uri (resolved the same
+  `diamond_resolve_diagnostic_location` way go-to-definition resolves a
+  cross-file `Location` — see below) — this document's own publish
+  still correctly reports itself clean, since its own text has no
+  error. Only ever triggered by *this* document's own didOpen/didChange,
+  not by editing the dependency directly; see below.
 - `textDocument/hover` (`lsp/hover.c`), `textDocument/definition`
   (`lsp/definition.c`), and `textDocument/documentSymbol`
   (`lsp/document_symbol.c`) all resolve the same two identifier kinds,
@@ -139,13 +147,14 @@ exit-without-shutdown edge cases.
   `receiver.method(...)`** — needs type inference on `receiver` to know
   which class's method is meant (possibly several classes define a
   same-named method); see above.
-- **Diagnostics for a broken dependency, published against its own
-  file** — `require` itself resolves (see above), but if the error is
-  inside the required file rather than the open document, nothing gets
-  published for it at all yet. Doing this properly means tracking which
-  open documents depend on which files (so editing a dependency
-  re-diagnoses everything that requires it, not just itself) — real,
-  separable work.
+- **Editing a dependency directly re-diagnosing everything that
+  requires it** — a broken dependency's own error *does* now publish
+  against its own file's uri (see above), but only ever as a side
+  effect of the *requesting* document's own didOpen/didChange. Editing
+  the dependency itself, even if it's also open in the same editor,
+  doesn't re-trigger that publish. Doing that properly means tracking
+  which open documents depend on which files — real, separable work
+  building on top of what's here now, not a prerequisite for it.
 - **Incremental sync** — `textDocumentSync` only ever advertises `Full`.
   Diamond has no incremental-recompile story at all yet (every compile is
   a fresh `diamond_compile` call over the whole combined buffer), so

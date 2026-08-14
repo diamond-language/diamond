@@ -112,7 +112,34 @@ static JsonValue *build_diagnostic(size_t line,size_t column,size_t highlight_le
     return entry;
 }
 
-JsonValue *diagnostics_compute(const char *uri,const char *text,size_t length) {
+/* Builds the `{"uri","diagnostics":[one entry]}` params object
+ * out_dependency_publish documents -- naming `resolved`'s own file,
+ * not the requesting document. Returns nullptr on allocation failure
+ * (the caller already has a real diagnostics array to return either
+ * way, so this failing just means no dependency publish this round,
+ * not a hard error). */
+static JsonValue *build_dependency_publish(const DiamondResolvedLocation *resolved,
+        size_t highlight_length,const char *message) {
+    char *dependency_uri=diagnostics_path_to_uri(resolved->path);
+    if(dependency_uri==nullptr)return nullptr;
+    JsonValue *entry=build_diagnostic(resolved->line,resolved->column,
+        highlight_length,message);
+    JsonValue *dependency_diagnostics=json_array();
+    JsonValue *params=json_object();
+    if(entry==nullptr||dependency_diagnostics==nullptr||params==nullptr||
+       !json_array_push(dependency_diagnostics,entry)) {
+        free(dependency_uri);
+        json_free(entry);json_free(dependency_diagnostics);json_free(params);
+        return nullptr;
+    }
+    json_object_set(params,"uri",json_string_z(dependency_uri));
+    json_object_set(params,"diagnostics",dependency_diagnostics);
+    free(dependency_uri);
+    return params;
+}
+
+JsonValue *diagnostics_compute(const char *uri,const char *text,size_t length,
+        JsonValue **out_dependency_publish) {
     /* DiamondProgram is tens of MB (fixed-size arrays sized for
      * self-hosting-scale programs, per src/compiler.h's own comment on
      * the struct) -- heap-allocated here for the same reason main.c
@@ -220,12 +247,15 @@ JsonValue *diagnostics_compute(const char *uri,const char *text,size_t length) {
     if(!ok) {
         const DiamondResolvedLocation resolved=diamond_resolve_diagnostic_location(
             path,combined,diagnostic,&bundle,core_length+reset_length);
-        /* Only report a diagnostic that actually lands in *this*
-         * document -- one resolved to a different (required) file's own
-         * source is a real error, but publishing it against this
-         * document's uri would point an editor at the wrong file. See
-         * docs/lsp.md for why that's left for a later slice rather than
-         * also publishing against the dependency's own uri here. */
+        /* A diagnostic resolved to a different (required) file's own
+         * source is a real error, but publishing it against *this*
+         * document's uri would point an editor at the wrong file --
+         * out_dependency_publish, if the caller wants it, gets a
+         * second, independently-addressed publish for that file
+         * instead (see diagnostics.h). Failing to build that second
+         * publish (OOM) isn't treated as this call's own failure: this
+         * document's own diagnostics (correctly empty, since its own
+         * error is elsewhere) are still real and worth returning. */
         if(strcmp(resolved.path,path)==0) {
             JsonValue *entry=build_diagnostic(resolved.line,resolved.column,
                 diagnostic.span.length,diagnostic.message);
@@ -237,6 +267,9 @@ JsonValue *diagnostics_compute(const char *uri,const char *text,size_t length) {
                 json_free(diagnostics);
                 return nullptr;
             }
+        } else if(out_dependency_publish!=nullptr) {
+            *out_dependency_publish=build_dependency_publish(&resolved,
+                diagnostic.span.length,diagnostic.message);
         }
     }
     free(combined);

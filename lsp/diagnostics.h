@@ -34,11 +34,27 @@ char *diagnostics_path_to_uri(const char *path);
  * files resolved and bundled in via diamond_load_program (read from
  * disk -- only the document identified by `uri` itself reflects
  * possibly-unsaved editor content). Returns an LSP `Diagnostic[]` JSON
- * array: empty on success or when the one error diamond_compile/
- * diamond_load_program can report doesn't land in this document itself
- * (a broken `require`d file reports nothing here yet -- see
- * docs/lsp.md), one entry otherwise. Returns nullptr only on allocation
- * failure. */
-JsonValue *diagnostics_compute(const char *uri,const char *text,size_t length);
+ * array for `uri` itself: empty on success, or when the one error
+ * diamond_compile/diamond_load_program can report doesn't land in this
+ * document (see `out_dependency_publish` below for that case), one
+ * entry otherwise. Returns nullptr only on allocation failure.
+ *
+ * `out_dependency_publish` (optional -- pass nullptr if unneeded, as
+ * hover.c/definition.c/document_symbol.c do, none of which call this at
+ * all): when the document doesn't currently compile and the error's
+ * real location is inside a `require`d file rather than `uri` itself,
+ * `*out_dependency_publish` receives a second, fully-formed
+ * `{"uri","diagnostics"}` params object naming that file, resolved via
+ * diamond_resolve_diagnostic_location's segment table the same way
+ * lsp/definition.c resolves a cross-file Location -- publish it as a
+ * second `textDocument/publishDiagnostics` notification. Left
+ * unchanged (so a caller should initialize it to nullptr first) when
+ * there's nothing extra to publish. This only fires from *this*
+ * document's own didOpen/didChange -- editing the dependency directly,
+ * if it's also open, doesn't re-trigger it; that reverse direction is
+ * real, separable work tracking which open documents depend on which
+ * files (see docs/lsp.md). */
+JsonValue *diagnostics_compute(const char *uri,const char *text,size_t length,
+    JsonValue **out_dependency_publish);
 
 #endif

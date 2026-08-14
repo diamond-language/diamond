@@ -4875,6 +4875,47 @@ future work.
   `make test` stays at 912 (nothing here is observable from Diamond
   source itself).
 
+- Diagnostics for a broken `require`d file now publish against that
+  file's own uri instead of nowhere at all — the gap `docs/lsp.md`
+  called out since diagnostics first shipped. `diagnostics_compute`
+  (`lsp/diagnostics.h`/`.c`) grew an optional out-parameter,
+  `out_dependency_publish`: when the requesting document's own compile
+  fails and `diamond_resolve_diagnostic_location` (already computed,
+  already used to decide "does this land in the open document or not")
+  says it landed somewhere else, that out-parameter gets a second,
+  fully-formed `{"uri","diagnostics"}` params object for *that* file,
+  built with the new `diagnostics_path_to_uri` (`definition.c`'s own
+  encode-side inverse of `diagnostics_uri_to_path`, already existed).
+  `lsp/main.c`'s `publish_diagnostics` sends it as a second
+  `textDocument/publishDiagnostics` notification right after the
+  requesting document's own (correctly still empty — its own text has
+  no error). `lsp/main.c` is `diagnostics_compute`'s only caller; a
+  future one that doesn't need this can just pass `nullptr` and get the
+  original single-publish behavior unchanged.
+
+  Zero client-side changes needed: `extension.js`'s existing
+  `handlePublishDiagnostics` already parses whatever uri a given
+  `publishDiagnostics` notification names and sets diagnostics against
+  it generically (`vscode.languages.createDiagnosticCollection` isn't
+  scoped to open documents) — it has no idea, and doesn't need to know,
+  that a second notification for a different file just arrived as a
+  side effect of editing this one.
+
+  Deliberately still narrow: this only ever fires from the *requesting*
+  document's own didOpen/didChange. Editing the broken dependency
+  directly, even if it's also open in the same editor session, doesn't
+  re-trigger a fresh publish for it — that needs tracking which open
+  documents depend on which files, real, separable work building on top
+  of this rather than blocking it (`docs/lsp.md`).
+
+  Verified directly (a required file with a real syntax error, confirmed
+  the requesting document's own publish stays empty and a second
+  publish lands against the dependency's own uri with the right
+  message/position) plus a manual AddressSanitizer/UBSan pass on the
+  new allocation path (`build_dependency_publish`'s several early-return
+  cleanup branches) before writing it into `tests/lsp_test.sh`.
+  `make test-lsp` (50 assertions, up from 46) passes clean.
+
 ## Later experiments
 
 - Self-hosting the compiler and core libraries in Diamond (in progress —

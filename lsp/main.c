@@ -66,16 +66,27 @@ static void send_notification(const char *method,JsonValue *params) {
 }
 
 static void publish_diagnostics(const char *uri,const char *text,size_t length) {
-    JsonValue *diagnostics=diagnostics_compute(uri,text,length);
-    if(diagnostics==nullptr)return;
+    JsonValue *dependency_publish=nullptr;
+    JsonValue *diagnostics=diagnostics_compute(uri,text,length,&dependency_publish);
+    if(diagnostics==nullptr) {
+        json_free(dependency_publish);
+        return;
+    }
     JsonValue *params=json_object();
     if(params==nullptr) {
         json_free(diagnostics);
+        json_free(dependency_publish);
         return;
     }
     json_object_set(params,"uri",json_string_z(uri));
     json_object_set(params,"diagnostics",diagnostics);
     send_notification("textDocument/publishDiagnostics",params);
+    /* A didOpen/didChange for the *requesting* document can surface a
+     * problem in a file it require's -- see diagnostics_compute's own
+     * comment (lsp/diagnostics.h) for exactly when this fires and what
+     * it deliberately doesn't (yet) handle. */
+    if(dependency_publish!=nullptr)
+        send_notification("textDocument/publishDiagnostics",dependency_publish);
 }
 
 static void handle_initialize(const JsonValue *id) {
