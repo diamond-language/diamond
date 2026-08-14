@@ -4631,6 +4631,35 @@ future work.
   structure for that reason. `make test` (905 assertions, up from 891)
   passes clean.
 
+- Added `String#tr` (`src/vm.c`) — the scope cut left over from the
+  String batch above, picked back up now that it's the only String
+  method still missing. Ruby's `tr(from, to)`: expand both spec strings
+  (backslash-escaping the next byte, `c1-c2` ranges, and a leading `^`
+  on the from-spec only, meaning "match everything *not* in this set")
+  into flat byte lists with a new helper, `tr_expand_spec`; build a
+  256-entry replacement table from the from/to byte lists (`to`
+  positionally, padded by repeating its last byte once it runs out; an
+  empty `to` means delete rather than replace); then walk the source
+  string applying it. Byte-oriented like every other String primitive
+  here — `a-z` is a *byte* range, not a Unicode one, consistent with
+  `ord`/`chr`/`chars`/`bytes` already being byte-level. An empty
+  from-string is rejected as `ArgumentError` (mirrors Ruby, and the
+  `ljust`/`rjust` empty-padding precedent above) since it can't express
+  any substitution rule at all.
+
+  The one open design call was what a negated from-spec (`^`) should
+  map *to*, since there's no positional correspondence between "every
+  byte not in a handful of listed bytes" and `to`'s byte list the way
+  there is for the plain case — resolved the same way Ruby does: every
+  non-member byte maps to `to`'s single last byte (or gets deleted, if
+  `to` is empty). Confirmed against Ruby's own documented `tr` examples
+  directly (`"hello".tr("el", "ip")` → `"hippo"`, `"hello".tr("^aeiou",
+  "*")` → `"*e**o"`) before writing `tests/cases/string_tr` (the
+  substitution/negation/deletion/range/escape cases above, all in one
+  array literal), `string_tr_empty_from`, and
+  `string_tr_argument_not_string`. `make test` (908 assertions, up from
+  905) passes clean.
+
 ## Later experiments
 
 - Self-hosting the compiler and core libraries in Diamond (in progress —

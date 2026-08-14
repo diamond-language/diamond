@@ -927,6 +927,63 @@ static DiamondVmStatus regexp_scan_helper(DiamondVm *vm,const DiamondRegexp *reg
     return DIAMOND_VM_OK;
 }
 
+/* String#tr's from/to specs: c1-c2 ranges and, for the from-spec only, a
+ * leading ^ that negates the set. A backslash escapes the very next byte
+ * (so \\, \^, and \- can appear as literal data instead of triggering
+ * their special meaning) -- the same convention the caller already uses
+ * to build both specs from ordinary Diamond string literals. `negate` is
+ * only ever set true when interpret_negation is true and the spec is at
+ * least two bytes starting with an unescaped '^'; the to-spec call passes
+ * interpret_negation=false so a leading '^' there is just a literal byte,
+ * matching Ruby's own tr. */
+static DiamondVmStatus tr_expand_spec(const DiamondString *spec,
+        bool interpret_negation,bool *negate,ByteBuffer *out) {
+    size_t start=0;
+    *negate=false;
+    if(interpret_negation&&spec->length>1&&spec->chars[0]=='^') {
+        *negate=true;start=1;
+    }
+    const size_t remaining=spec->length-start;
+    char *literal=remaining>0?malloc(remaining):nullptr;
+    bool *escaped=remaining>0?malloc(remaining):nullptr;
+    if(remaining>0&&(literal==nullptr||escaped==nullptr)) {
+        free(literal);free(escaped);return DIAMOND_VM_OUT_OF_MEMORY;
+    }
+    size_t count=0;
+    for(size_t index=start;index<spec->length;index++) {
+        char ch=spec->chars[index];
+        bool is_escaped=false;
+        if(ch=='\\'&&index+1<spec->length) {
+            index++;ch=spec->chars[index];is_escaped=true;
+        }
+        literal[count]=ch;escaped[count]=is_escaped;count++;
+    }
+    bool ok=true;
+    size_t index=0;
+    while(index<count&&ok) {
+        if(!escaped[index]&&index+2<count&&
+           !escaped[index+1]&&literal[index+1]=='-') {
+            const unsigned char low=(unsigned char)literal[index];
+            const unsigned char high=(unsigned char)literal[index+2];
+            if(low<=high) {
+                for(unsigned int code=low;code<=high&&ok;code++) {
+                    const char byte=(char)(unsigned char)code;
+                    ok=byte_buffer_append(out,&byte,1);
+                }
+                index+=3;continue;
+            }
+        }
+        ok=byte_buffer_append(out,&literal[index],1);
+        index++;
+    }
+    free(literal);free(escaped);
+    if(!ok) {
+        free(out->data);out->data=nullptr;out->length=0;out->capacity=0;
+        return DIAMOND_VM_OUT_OF_MEMORY;
+    }
+    return DIAMOND_VM_OK;
+}
+
 /* Deep-copies a DiamondValue rooted in some other VM's heap (typically
  * program_builder_run_helper's temporary run_vm, about to be freed) into
  * dest_vm's own heap, so the result stays valid once the source VM is
@@ -5405,6 +5462,8 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                             memcmp(method_name->chars,"ljust",5)==0;
                         const bool rjust_method=method_name->length==5&&
                             memcmp(method_name->chars,"rjust",5)==0;
+                        const bool tr_method=method_name->length==2&&
+                            memcmp(method_name->chars,"tr",2)==0;
                         const DiamondString *source=
                             (const DiamondString *)registers[recv].as.object;
                         if(gsub_method||sub_method) {
@@ -5839,6 +5898,83 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                             free(buffer);
                             if(justified==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
                             registers[dest]=DIAMOND_OBJECT(justified);break;
+                        }
+                        if(tr_method) {
+                            if(argc!=2)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                            if(registers[base].kind!=DIAMOND_VALUE_OBJECT||
+                               registers[base].as.object->kind!=DIAMOND_OBJECT_STRING||
+                               registers[(size_t)base+1].kind!=DIAMOND_VALUE_OBJECT||
+                               registers[(size_t)base+1].as.object->kind!=
+                                   DIAMOND_OBJECT_STRING) {
+                                snprintf(vm->error,sizeof vm->error,
+                                    "String#tr arguments must be Strings");
+                                VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                            }
+                            const DiamondString *from_spec=(const DiamondString *)
+                                registers[base].as.object;
+                            const DiamondString *to_spec=(const DiamondString *)
+                                registers[(size_t)base+1].as.object;
+                            if(from_spec->length==0) {
+                                snprintf(vm->error,sizeof vm->error,
+                                    "String#tr from-string must not be empty");
+                                VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                            }
+                            bool from_negate=false;
+                            ByteBuffer from_buffer={0};
+                            DiamondVmStatus tr_status=
+                                tr_expand_spec(from_spec,true,&from_negate,&from_buffer);
+                            VM_PROPAGATE(tr_status);
+                            bool to_negate_ignored=false;
+                            ByteBuffer to_buffer={0};
+                            tr_status=
+                                tr_expand_spec(to_spec,false,&to_negate_ignored,&to_buffer);
+                            if(tr_status!=DIAMOND_VM_OK) {
+                                free(from_buffer.data);
+                                VM_RETURN(tr_status);
+                            }
+                            bool member[256]={false};
+                            for(size_t index=0;index<from_buffer.length;index++)
+                                member[(unsigned char)from_buffer.data[index]]=true;
+                            int map[256];
+                            for(int code=0;code<256;code++)map[code]=-1;
+                            if(!from_negate) {
+                                for(size_t index=0;index<from_buffer.length;index++) {
+                                    const unsigned char key=
+                                        (unsigned char)from_buffer.data[index];
+                                    const size_t to_index=index<to_buffer.length?
+                                        index:to_buffer.length-1;
+                                    map[key]=to_buffer.length==0?-2:
+                                        (int)(unsigned char)to_buffer.data[to_index];
+                                }
+                            }
+                            const int negate_replacement=to_buffer.length==0?-2:
+                                (int)(unsigned char)to_buffer.data[to_buffer.length-1];
+                            ByteBuffer result_buffer={0};
+                            bool ok=true;
+                            for(size_t index=0;index<source->length&&ok;index++) {
+                                const unsigned char byte=
+                                    (unsigned char)source->chars[index];
+                                const int replacement=from_negate?
+                                    (member[byte]?-1:negate_replacement):map[byte];
+                                if(replacement==-1)
+                                    ok=byte_buffer_append(&result_buffer,
+                                        &source->chars[index],1);
+                                else if(replacement!=-2) {
+                                    const char byte_out=(char)(unsigned char)replacement;
+                                    ok=byte_buffer_append(&result_buffer,&byte_out,1);
+                                }
+                            }
+                            free(from_buffer.data);free(to_buffer.data);
+                            if(!ok) {
+                                free(result_buffer.data);
+                                VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                            }
+                            DiamondString *translated=allocate_string(vm,
+                                result_buffer.data!=nullptr?result_buffer.data:"",
+                                result_buffer.length);
+                            free(result_buffer.data);
+                            if(translated==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                            registers[dest]=DIAMOND_OBJECT(translated);break;
                         }
                         snprintf(vm->error,sizeof vm->error,"undefined method '%.*s' for %s",
                             (int)method_name->length,method_name->chars,"String");
