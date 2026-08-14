@@ -6,9 +6,10 @@ dispatch. This document is a tour of the surface syntax; see `docs/design.md`
 for how it compiles and executes, `docs/object-model.md` for the object
 model in more depth, `docs/fibers.md` for fibers, and `docs/io.md` for I/O.
 Diamond's runtime intentionally has no HTTP support built in — see
-`docs/packages.md` for `facet`, the package manager, and
-`diamond-http` (a separate repo, installable via `facet`) for a minimal
-HTTP server built entirely on top of the I/O primitives below.
+`docs/packages.md` for `facet`, the package manager, and `packages/http`
+(a real package, structured to be `facet`-installable rather than
+bundled into every program) for a minimal HTTP server and client built
+entirely on top of the I/O primitives below.
 
 ## Basics
 

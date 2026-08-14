@@ -156,9 +156,9 @@ an `Int`, or `nil` if not found), `slice(start, length)` (a substring,
 bounds-checking `start` but clamping `length` to what's available), and
 `to_i()` (lenient leading-digit decimal parsing, using checked arithmetic
 and raising `RangeError` on overflow). These were added as prerequisites
-for an HTTP library (originally bundled as `lib/http.di`, later extracted
-into the standalone `diamond-http` package — see `docs/packages.md`) but
-are general-purpose.
+for an HTTP library (originally bundled as `lib/http.di`, later pulled
+out into `packages/http` — see `docs/packages.md`) but are
+general-purpose.
 
 Arrays use a growable separately allocated value buffer whose capacity is part
 of GC accounting. Native `push` grows that buffer and enforces every persistent

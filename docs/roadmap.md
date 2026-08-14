@@ -5084,6 +5084,38 @@ future work.
   `make test-lsp` (83 assertions, up from 59) and `make test` (915
   assertions, unaffected — nothing here is observable from Diamond
   source itself) both pass clean.
+- Added an HTTP client (`http_get`/`http_post`/`http_request`) to the
+  HTTP package, then moved the package back into this repo as
+  `packages/http` — it had briefly lived as its own standalone sibling
+  repo (`diamond-http`, see the extraction entry above); a separate git
+  history bought nothing once nothing outside this repo depended on it,
+  so it moved back in, still structured as a real package (own
+  `package.di`/`README.md`/`test.sh`, not something `require` finds
+  automatically) rather than folded back into `lib/`. Wired its
+  `test.sh` into the main `Makefile` as `test-http-package` (`DIAMOND_BIN`
+  pointed at `$(CURDIR)/$(BUILD_DIR)/diamond` — a plain `$(BUILD_DIR)`
+  relative path breaks once `test.sh`'s own `cd "$(dirname "$0")"` runs)
+  and into `test-all`.
+
+  The client reaches any host `TCPSocket.connect` can, not just
+  loopback — `http_serve` stays deliberately localhost-agnostic too,
+  but is the one actually exercised over loopback in tests. Plain
+  `http://` only; an `https://` URL raises `ArgumentError` rather than
+  silently connecting in the clear on port 443. A response is a `Hash`
+  (`{"status", "headers", "body"}`), deliberately not the server
+  handler's positional `Array`, since a response is read/inspected
+  rather than built.
+
+  Found and fixed a real crash surfaced while writing the client's own
+  test: `http_serve`'s accept loop is single-threaded and blocking, and
+  a connection that closes before sending a request line — a port
+  scanner, a load balancer health check, or (as the test discovered
+  directly) the test script's own `wait_for_port` helper leaving a
+  stray probe connection open — fed `conn.gets()`'s `nil` straight into
+  `.index_of`, an uncaught error that killed the *entire* server
+  process, not just that one connection. `http_parse_request` now
+  returns `nil` for an empty request and `http_serve` closes and skips
+  it instead of calling the handler.
 
 ## Later experiments
 

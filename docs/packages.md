@@ -170,17 +170,34 @@ No `facet init` or `facet add <dep>` — `package.di` stays a plain,
 hand-edited Diamond `Hash` literal; only the fetch/install/lock steps
 are automated.
 
-### A real example: `diamond-http`
+### A real example: `packages/http`
 
 Diamond's runtime has no HTTP support built in on purpose — `lib/http.di`
-used to be bundled with the language and was deliberately pulled back
-out into its own repo once `facet` made "install it as a dependency"
-a real option. It's a genuine, unmodified `facet`-installable package,
-not a toy example:
+used to be bundled with the language and was pulled back out once
+`facet` made "install it as a dependency" a real option. It briefly
+lived as its own standalone sibling repo; it now lives at
+`packages/http` in this same repo instead, kept there (rather than
+folded back into `lib/`) for the same reason it was pulled out of
+`lib/` in the first place: it's a real, ordinary package — its own
+`package.di`, its own `README.md`, its own `test.sh` — not something
+`require` finds automatically the way `lib/core.di`'s prelude is. It
+just happens to be developed alongside the runtime instead of in a
+separate git history, which buys nothing on its own once a package has
+no actual dependents outside this repo to keep in sync with.
+
+To use it from another project the same way any `facet` dependency
+works, either copy `packages/http/` into that project's
+`diamond_packages/http/` directly, or give it its own git remote and
+point a `dependencies` entry at that:
 
 ```ruby
-{"name": "myapp", "dependencies": {"http": {"git": "https://gitlab.com/dmn9180/diamond-http", "tag": "v0.1.0"}}}
+{"name": "myapp", "dependencies": {"http": {"git": "<url-of-a-remote-for-packages/http>", "tag": "v0.1.0"}}}
 ```
+
+`facet` has no notion of "a subdirectory of a larger repo is the
+package root" — a `git` dependency's whole repo becomes the installed
+package, so the above only works against a remote whose root actually
+is `packages/http`'s own contents, not this repo's.
 
 ## Precedence
 
