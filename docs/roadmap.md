@@ -4916,6 +4916,78 @@ future work.
   cleanup branches) before writing it into `tests/lsp_test.sh`.
   `make test-lsp` (50 assertions, up from 46) passes clean.
 
+- Closed the "editing a dependency directly doesn't re-trigger a
+  publish" gap the previous entry left open, but not the way originally
+  scoped: the recommended path (add dependency tracking, refresh on
+  `didChange`) turned out to be a no-op as designed, since required
+  files are always read from disk (`diamond_load_program`'s
+  `read_source`), and a `didChange` fires on every keystroke, well
+  before any save. Republishing a dependent would just re-read the
+  *same* stale on-disk bytes. Went with the bigger fix instead: live
+  in-memory require resolution.
+
+  `src/loader.h`/`.c` grew an optional override hook —
+  `DiamondSourceOverride`, a callback `diamond_load_program_with_
+  override` tries before falling back to `read_source` for each
+  required file's own canonicalized path. `diamond_load_program` itself
+  is now a thin wrapper passing no override (unchanged disk-only
+  behavior for every existing caller: the CLI, the REPL,
+  `ProgramBuilder`'s native bridge, every test) — the exact
+  `diamond_run_source`/`diamond_run_source_with_program` shape from the
+  test-runner speedup earlier this session, reused because it's the
+  same problem: add a capability without disturbing any caller that
+  doesn't ask for it.
+
+  `lsp/document.c` grew `document_resolve_source`, matching that
+  callback signature: look the path up as an open document (via
+  `diagnostics_path_to_uri`, already existed) and hand back a copy of
+  its live buffer if found, or `nullptr` (falls back to disk) if not.
+  Every `lsp/` entry point that resolves `require` — `diagnostics.c`,
+  and `compile_buffer.c` (shared by `hover.c`/`definition.c`/
+  `document_symbol.c`) — now threads a `const DocumentTable *` through
+  and passes this callback, so a `require` landing on another open
+  document sees its current, possibly-unsaved text immediately, no save
+  needed, uniformly across every feature that compiles a document, not
+  just diagnostics.
+
+  With requires resolving live, the original "who else needs
+  republishing" idea became worth building for real: new
+  `lsp/dependencies.h`/`.c`, a `DependencyTable` reverse index (open
+  document → the on-disk paths its last compiled bundle actually
+  pulled in, both direct and transitive — `diagnostics_compute` grew a
+  second optional out-parameter, `out_dependency_paths`, built from the
+  bundle's own segment table it already had on hand). Transitive chains
+  need no special handling: if X requires A requires B, X's own
+  recorded set already includes B directly, since a bundle's segments
+  are already fully flattened by `diamond_load_program` — so
+  `lsp/main.c`'s `publish_diagnostics` doing one non-recursive lookup
+  ("who currently depends on the file that just changed") and
+  republishing each of them (via a `publish_diagnostics_single` that
+  itself doesn't cascade further) correctly reaches every depth without
+  needing actual recursion, verified by reasoning through the X/A/B
+  case explicitly before writing it, not just by the tests passing.
+
+  Verified with a deliberately adversarial check on the test itself,
+  not just that it passed: temporarily short-circuited the new
+  dependents-lookup code out of `publish_diagnostics`, which made
+  `tests/lsp_test.sh`'s new case *hang* (blocked on a second
+  `publishDiagnostics` that the broken build correctly never sends) —
+  confirming the test really exercises the fix rather than passing
+  vacuously — reverted immediately after confirming. The real test:
+  open a dependency and a document requiring a not-yet-existing
+  function from it (a genuine "undefined function" diagnostic), edit
+  the dependency's *live* buffer to add that function without ever
+  writing it to disk, and confirm the requiring document's diagnostics
+  clear on their own — plus an explicit check that the on-disk
+  dependency file was never touched, ruling out an accidental save
+  path making the test pass for the wrong reason. Also ran the built
+  `diamond-lsp` itself through a manual AddressSanitizer/UBSan pass
+  (not part of `make test-sanitize`, which doesn't build `lsp/` at all)
+  since this touched several new allocation-heavy paths
+  (`dependency_table_dependents`'s independently-owned copy-out,
+  `document_resolve_source`). `make test-lsp` (59 assertions, up from
+  50) and `make test` (915 assertions, unaffected) both pass clean.
+
 ## Later experiments
 
 - Self-hosting the compiler and core libraries in Diamond (in progress —

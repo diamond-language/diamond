@@ -21,6 +21,8 @@ typedef struct Loader {
     size_t active_count;
     char *error;
     size_t error_capacity;
+    DiamondSourceOverride override;
+    void *override_data;
 } Loader;
 
 static bool append(Loader *loader,const char *text,size_t length) {
@@ -339,7 +341,9 @@ static bool expand(Loader *loader,const char *path,const char *source,
                                               path,line))
                     return false;
             }
-            char *dependency=read_source(canonical);
+            char *dependency=loader->override!=nullptr?
+                loader->override(canonical,loader->override_data):nullptr;
+            if(dependency==nullptr)dependency=read_source(canonical);
             if(dependency==nullptr) {
                 (void)snprintf(loader->error,loader->error_capacity,
                     "%s:%zu: cannot read required file '%s': %s",
@@ -369,11 +373,13 @@ static bool expand(Loader *loader,const char *path,const char *source,
     loader->active_count--;return true;
 }
 
-bool diamond_load_program(const char *name,const char *source,
+bool diamond_load_program_with_override(const char *name,const char *source,
+                          DiamondSourceOverride override,void *user_data,
                           DiamondSourceBundle *bundle,char *error,
                           size_t error_capacity) {
     *bundle=(DiamondSourceBundle){};Loader loader={.bundle=bundle,.error=error,
-        .error_capacity=error_capacity};error[0]='\0';
+        .error_capacity=error_capacity,.override=override,.override_data=user_data};
+    error[0]='\0';
     char path[DIAMOND_MAX_SOURCE_PATH];
     if(realpath(name,path)==nullptr) {
         const int written=snprintf(path,sizeof path,"%s",name);
@@ -388,6 +394,13 @@ bool diamond_load_program(const char *name,const char *source,
         free(loader.buffer);return false;
     }
     bundle->source=loader.buffer;return true;
+}
+
+bool diamond_load_program(const char *name,const char *source,
+                          DiamondSourceBundle *bundle,char *error,
+                          size_t error_capacity) {
+    return diamond_load_program_with_override(name,source,nullptr,nullptr,
+        bundle,error,error_capacity);
 }
 
 void diamond_source_bundle_free(DiamondSourceBundle *bundle) {

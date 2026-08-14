@@ -12,6 +12,7 @@ static constexpr unsigned char DIAMOND_CORE_SOURCE[] = {
 static constexpr char DIAMOND_USER_LINE_RESET[] = "\n#line 1\n";
 
 char *diamond_lsp_build_compile_buffer(const char *path,const char *text,size_t length,
+        DiamondSourceOverride override,void *override_data,
         DiamondSourceBundle *out_bundle,size_t *out_user_offset) {
     const size_t core_length=sizeof(DIAMOND_CORE_SOURCE)-1;
     const size_t reset_length=sizeof(DIAMOND_USER_LINE_RESET)-1;
@@ -32,7 +33,8 @@ char *diamond_lsp_build_compile_buffer(const char *path,const char *text,size_t 
     text_copy[length]='\0';
     DiamondSourceBundle bundle;
     char load_error[768];
-    const bool loaded=diamond_load_program(path,text_copy,&bundle,load_error,sizeof load_error);
+    const bool loaded=diamond_load_program_with_override(path,text_copy,
+        override,override_data,&bundle,load_error,sizeof load_error);
     free(text_copy);
     if(!loaded)return nullptr;
     const size_t bundle_length=strlen(bundle.source);

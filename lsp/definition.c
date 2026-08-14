@@ -48,8 +48,8 @@ static JsonValue *location_result(const char *uri,size_t line,size_t column,size
     return result;
 }
 
-JsonValue *definition_compute(const char *uri,const char *text,size_t length,
-        size_t line,size_t character) {
+JsonValue *definition_compute(const DocumentTable *documents,const char *uri,
+        const char *text,size_t length,size_t line,size_t character) {
     char *source_copy=malloc(length+1);
     if(source_copy==nullptr)return nullptr;
     memcpy(source_copy,text,length);
@@ -69,7 +69,8 @@ JsonValue *definition_compute(const char *uri,const char *text,size_t length,
     char *path=diagnostics_uri_to_path(uri);
     DiamondSourceBundle bundle;
     size_t user_offset=0;
-    char *combined=diamond_lsp_build_compile_buffer(path,text,length,&bundle,&user_offset);
+    char *combined=diamond_lsp_build_compile_buffer(path,text,length,
+        document_resolve_source,(void *)documents,&bundle,&user_offset);
     if(combined==nullptr) {free(path);return json_null();}
 
     /* A third independent lazily-allocated scratch DiamondProgram --

@@ -1,6 +1,7 @@
 #ifndef DIAMOND_LSP_HOVER_H
 #define DIAMOND_LSP_HOVER_H
 
+#include "document.h"
 #include "json.h"
 
 #include <stddef.h>
@@ -21,8 +22,13 @@
  * JsonValue on a hit, `json_null()` when the position doesn't land on
  * a hoverable identifier or the document doesn't currently compile
  * cleanly (diagnostics already cover that case; hover just declines),
- * or nullptr only on allocation failure. */
-JsonValue *hover_compute(const char *uri,const char *text,size_t length,
-    size_t line,size_t character);
+ * or nullptr only on allocation failure.
+ *
+ * `documents` (the server's open-document table) lets a `require`
+ * resolving to another open document see its live buffer instead of
+ * stale on-disk content, via document_resolve_source (lsp/document.h)
+ * -- see docs/lsp.md. */
+JsonValue *hover_compute(const DocumentTable *documents,const char *uri,
+    const char *text,size_t length,size_t line,size_t character);
 
 #endif

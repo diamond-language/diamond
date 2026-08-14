@@ -1,5 +1,7 @@
 #include "document.h"
 
+#include "diagnostics.h"
+
 #include <stdlib.h>
 #include <string.h>
 
@@ -104,4 +106,15 @@ const char *document_get_text(const DocumentTable *table,const char *uri,size_t 
         }
     }
     return nullptr;
+}
+
+char *document_resolve_source(const char *path,void *user_data) {
+    const DocumentTable *table=(const DocumentTable *)user_data;
+    char *uri=diagnostics_path_to_uri(path);
+    if(uri==nullptr)return nullptr;
+    size_t length=0;
+    const char *text=document_get_text(table,uri,&length);
+    free(uri);
+    if(text==nullptr)return nullptr;
+    return copy_bytes(text,length);
 }

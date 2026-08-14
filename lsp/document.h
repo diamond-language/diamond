@@ -31,4 +31,18 @@ void document_close(DocumentTable *table,const char *uri);
  * matching how rpc.c hands bodies around), or nullptr if not open. */
 const char *document_get_text(const DocumentTable *table,const char *uri,size_t *length);
 
+/* Matches loader.h's DiamondSourceOverride signature: looks `path` (an
+ * already-canonicalized on-disk path, as diamond_load_program_with_
+ * override hands a required file's own path to its override callback)
+ * up as an open document -- via the same file://-uri encoding
+ * diagnostics_path_to_uri/diagnostics_uri_to_path already use
+ * elsewhere -- and returns a malloc'd copy of its live buffer if open,
+ * or nullptr (falls back to disk) if not. `user_data` must be the
+ * `DocumentTable *` to search, cast from void*. Passed directly as the
+ * override callback by every lsp/ entry point that resolves `require`
+ * (diagnostics.c, compile_buffer.c), so a require resolving to a file
+ * that's also open in the editor sees its current, possibly-unsaved
+ * buffer instead of stale on-disk content -- see docs/lsp.md. */
+char *document_resolve_source(const char *path,void *user_data);
+
 #endif

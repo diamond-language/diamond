@@ -111,8 +111,8 @@ static char *format_class_signature(const DiamondChunk *chunk,const DiamondClass
     return buffer;
 }
 
-JsonValue *hover_compute(const char *uri,const char *text,size_t length,
-        size_t line,size_t character) {
+JsonValue *hover_compute(const DocumentTable *documents,const char *uri,
+        const char *text,size_t length,size_t line,size_t character) {
     char *source_copy=malloc(length+1);
     if(source_copy==nullptr)return nullptr;
     memcpy(source_copy,text,length);
@@ -130,7 +130,8 @@ JsonValue *hover_compute(const char *uri,const char *text,size_t length,
     free(source_copy);
 
     char *path=diagnostics_uri_to_path(uri);
-    char *combined=diamond_lsp_build_compile_buffer(path,text,length,nullptr,nullptr);
+    char *combined=diamond_lsp_build_compile_buffer(path,text,length,
+        document_resolve_source,(void *)documents,nullptr,nullptr);
     free(path);
     if(combined==nullptr)return json_null();
 

@@ -1,6 +1,7 @@
 #ifndef DIAMOND_LSP_DEFINITION_H
 #define DIAMOND_LSP_DEFINITION_H
 
+#include "document.h"
 #include "json.h"
 
 #include <stddef.h>
@@ -29,8 +30,13 @@
  * identifier, the identifier doesn't resolve to a function/class
  * declared in the user's own source (as opposed to the prelude), or the
  * document doesn't currently compile cleanly, or nullptr only on
- * allocation failure. */
-JsonValue *definition_compute(const char *uri,const char *text,size_t length,
-    size_t line,size_t character);
+ * allocation failure.
+ *
+ * `documents` (the server's open-document table) lets a `require`
+ * resolving to another open document see its live buffer instead of
+ * stale on-disk content, via document_resolve_source (lsp/document.h)
+ * -- see docs/lsp.md. */
+JsonValue *definition_compute(const DocumentTable *documents,const char *uri,
+    const char *text,size_t length,size_t line,size_t character);
 
 #endif

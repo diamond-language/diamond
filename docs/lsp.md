@@ -84,10 +84,7 @@ declaration-only symbol table:
 
 A document's text is compiled exactly the way `src/main.c`'s own
 `run_source` compiles a file natively: `require`d files resolved and
-bundled in via `diamond_load_program` (read from disk — so a `require`
-only resolves correctly once the document has a real `file://` uri
-*and* its dependencies exist on disk at their expected relative
-locations; an unsaved dependency's in-editor-only edits aren't seen),
+bundled in via `diamond_load_program_with_override` (`src/loader.h`),
 then `lib/core.di` prepended and a `#line 1` reset so the prelude's own
 line numbers never leak into a reported diagnostic's position —
 confirmed against `src/lexer.c`'s handling of that exact comment, not
@@ -96,13 +93,36 @@ assumed. A diagnostic's line/column are re-resolved back through
 (`diamond_resolve_diagnostic_location`, shared with `src/main.c`'s CLI
 diagnostic printing — not a separate reimplementation) so they land on
 the right line even when a `require`d file's inlined content shifts
-everything after it. One consequence worth knowing: if the *actual*
-error is inside a `require`d file rather than the open document itself,
-this document currently reports nothing at all (not the dependency's
-error misattributed to the wrong file, but not the dependency's own
-diagnostic either) — publishing a second `publishDiagnostics`
-notification against the dependency's own uri is real, separable work
-for later.
+everything after it.
+
+A `require` resolving to a file that's *also* currently open sees that
+document's live buffer, not stale on-disk content — even before it's
+saved. `diamond_load_program_with_override`'s optional override
+callback (`DiamondSourceOverride`, `src/loader.h`) is called with every
+required file's own canonicalized path before falling back to disk;
+`lsp/`'s every entry point that resolves `require` (diagnostics,
+hover, go-to-definition, document symbols) passes
+`document_resolve_source` (`lsp/document.h`), which looks that path up
+against the open-document table and hands back a copy of its current
+buffer if found. `diamond_load_program` itself (used by the CLI, the
+REPL, `ProgramBuilder`'s native bridge) is an unchanged thin wrapper
+passing no override — this is opt-in, `lsp/`-only behavior, not a
+change to how requires resolve natively.
+
+Editing an open dependency also correctly re-diagnoses whatever else
+requires it, live. `lsp/dependencies.h`'s `DependencyTable` is a
+reverse index — for every open document, which on-disk paths its last
+compiled bundle actually pulled in (`diagnostics_compute`'s own
+`out_dependency_paths`, built from the bundle's segment table, so
+chains resolve in one lookup: if X requires A requires B, X's own
+recorded dependency set already includes B directly, since
+`diamond_load_program`'s bundle segments are fully transitive).
+`lsp/main.c`'s `publish_diagnostics` looks up who currently depends on
+a document right after publishing its own diagnostics, and republishes
+theirs too — each of those requires now resolving through the
+just-changed document's live buffer via the override above, so a
+dependent's diagnostics genuinely reflect the edit, not a stale
+snapshot from before it.
 
 ## Building and connecting an editor
 
@@ -147,14 +167,6 @@ exit-without-shutdown edge cases.
   `receiver.method(...)`** — needs type inference on `receiver` to know
   which class's method is meant (possibly several classes define a
   same-named method); see above.
-- **Editing a dependency directly re-diagnosing everything that
-  requires it** — a broken dependency's own error *does* now publish
-  against its own file's uri (see above), but only ever as a side
-  effect of the *requesting* document's own didOpen/didChange. Editing
-  the dependency itself, even if it's also open in the same editor,
-  doesn't re-trigger that publish. Doing that properly means tracking
-  which open documents depend on which files — real, separable work
-  building on top of what's here now, not a prerequisite for it.
 - **Incremental sync** — `textDocumentSync` only ever advertises `Full`.
   Diamond has no incremental-recompile story at all yet (every compile is
   a fresh `diamond_compile` call over the whole combined buffer), so

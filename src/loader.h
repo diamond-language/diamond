@@ -27,6 +27,32 @@ typedef struct DiamondSourceBundle {
 bool diamond_load_program(const char *name,const char *source,
                           DiamondSourceBundle *bundle,char *error,
                           size_t error_capacity);
+
+/* Called (if non-null) with a required file's own already-canonicalized
+ * (realpath'd) path before diamond_load_program_with_override falls
+ * back to reading it from disk. Returns a malloc'd, null-terminated
+ * buffer the loader takes ownership of (freed exactly like a disk
+ * read) if the caller has a more current version of that file's
+ * content to use instead (lsp/'s open-document table, letting a
+ * require resolve against a live, possibly-unsaved editor buffer
+ * instead of stale on-disk content -- see docs/lsp.md), or nullptr to
+ * fall back to reading `path` from disk as normal. `user_data` is
+ * passed through unchanged from the diamond_load_program_with_override
+ * call that started this expansion. */
+typedef char *(*DiamondSourceOverride)(const char *path,void *user_data);
+
+/* Same as diamond_load_program, except a required file's content is
+ * resolved through `override` first (see DiamondSourceOverride above)
+ * before falling back to disk -- `source` (the root document's own
+ * text) is unaffected, since callers already supply that directly.
+ * diamond_load_program itself is a thin wrapper passing override=
+ * nullptr, unchanged disk-only behavior for every existing caller
+ * (main.c, run_source.c, tests, ProgramBuilder's native bridge). */
+bool diamond_load_program_with_override(const char *name,const char *source,
+                          DiamondSourceOverride override,void *user_data,
+                          DiamondSourceBundle *bundle,char *error,
+                          size_t error_capacity);
+
 void diamond_source_bundle_free(DiamondSourceBundle *bundle);
 
 #endif

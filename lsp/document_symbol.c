@@ -89,11 +89,13 @@ static bool resolve_own_declaration(const char *combined,const DiamondSourceBund
     return true;
 }
 
-JsonValue *document_symbol_compute(const char *uri,const char *text,size_t length) {
+JsonValue *document_symbol_compute(const DocumentTable *documents,const char *uri,
+        const char *text,size_t length) {
     char *path=diagnostics_uri_to_path(uri);
     DiamondSourceBundle bundle;
     size_t user_offset=0;
-    char *combined=diamond_lsp_build_compile_buffer(path,text,length,&bundle,&user_offset);
+    char *combined=diamond_lsp_build_compile_buffer(path,text,length,
+        document_resolve_source,(void *)documents,&bundle,&user_offset);
     if(combined==nullptr) {free(path);return json_null();}
 
     /* A fourth independent lazily-allocated scratch DiamondProgram --

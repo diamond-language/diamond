@@ -33,8 +33,16 @@
  * symbol pulled in from a required file into a Location naming *that*
  * file, via diamond_resolve_diagnostic_location's own segment-mapping
  * (src/compiler.h), the same machinery a compile error's own location
- * already goes through. */
+ * already goes through.
+ *
+ * `override`/`override_data` (both optional, pass nullptr for both if
+ * unneeded) are forwarded to diamond_load_program_with_override
+ * (loader.h) unchanged -- callers pass document_resolve_source
+ * (lsp/document.h) and their DocumentTable* so a require resolving to
+ * another open document sees its live buffer instead of stale on-disk
+ * content. */
 char *diamond_lsp_build_compile_buffer(const char *path,const char *text,size_t length,
+    DiamondSourceOverride override,void *override_data,
     DiamondSourceBundle *out_bundle,size_t *out_user_offset);
 
 #endif

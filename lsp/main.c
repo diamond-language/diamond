@@ -1,4 +1,5 @@
 #include "definition.h"
+#include "dependencies.h"
 #include "diagnostics.h"
 #include "document.h"
 #include "document_symbol.h"
@@ -7,6 +8,7 @@
 #include "rpc.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 /* A request id is always a JSON number or string per the LSP spec (never
@@ -65,17 +67,29 @@ static void send_notification(const char *method,JsonValue *params) {
     json_free(message);
 }
 
-static void publish_diagnostics(const char *uri,const char *text,size_t length) {
+/* Computes and publishes diagnostics for exactly `uri`, and refreshes
+ * `dependencies`' own record of what `uri` currently requires. Doesn't
+ * look at who *depends on* `uri` -- see publish_diagnostics below for
+ * that; this is the non-cascading building block it (and the cascade's
+ * own per-dependent republish, which must not itself cascade further --
+ * see dependency_table_dependents' own comment on why one lookup
+ * already covers arbitrarily deep chains) both call. */
+static void publish_diagnostics_single(DependencyTable *dependencies,
+        const DocumentTable *documents,const char *uri,const char *text,size_t length) {
     JsonValue *dependency_publish=nullptr;
-    JsonValue *diagnostics=diagnostics_compute(uri,text,length,&dependency_publish);
+    JsonValue *dependency_paths=nullptr;
+    JsonValue *diagnostics=diagnostics_compute(documents,uri,text,length,
+        &dependency_publish,&dependency_paths);
     if(diagnostics==nullptr) {
         json_free(dependency_publish);
+        json_free(dependency_paths);
         return;
     }
     JsonValue *params=json_object();
     if(params==nullptr) {
         json_free(diagnostics);
         json_free(dependency_publish);
+        json_free(dependency_paths);
         return;
     }
     json_object_set(params,"uri",json_string_z(uri));
@@ -83,10 +97,40 @@ static void publish_diagnostics(const char *uri,const char *text,size_t length) 
     send_notification("textDocument/publishDiagnostics",params);
     /* A didOpen/didChange for the *requesting* document can surface a
      * problem in a file it require's -- see diagnostics_compute's own
-     * comment (lsp/diagnostics.h) for exactly when this fires and what
-     * it deliberately doesn't (yet) handle. */
+     * comment (lsp/diagnostics.h) for exactly when this fires. */
     if(dependency_publish!=nullptr)
         send_notification("textDocument/publishDiagnostics",dependency_publish);
+    dependency_table_update(dependencies,uri,dependency_paths);
+    json_free(dependency_paths);
+}
+
+/* Publishes `uri`'s own diagnostics, then -- since `uri` might itself
+ * be a `require`d dependency of some *other* open document -- looks up
+ * who currently depends on it (dependency_table_dependents) and
+ * refreshes each of theirs too, now that document_resolve_source
+ * (lsp/document.h) will see `uri`'s just-updated live buffer instead
+ * of stale on-disk content the next time their own require resolves.
+ * This is what makes editing an open dependency actually propagate --
+ * see docs/lsp.md's former "editing the dependency directly... doesn't
+ * re-trigger" gap. */
+static void publish_diagnostics(DocumentTable *documents,DependencyTable *dependencies,
+        const char *uri,const char *text,size_t length) {
+    publish_diagnostics_single(dependencies,documents,uri,text,length);
+    char *path=diagnostics_uri_to_path(uri);
+    if(path==nullptr)return;
+    size_t dependent_count=0;
+    char **dependents=dependency_table_dependents(dependencies,path,&dependent_count);
+    free(path);
+    for(size_t index=0;index<dependent_count;index++) {
+        size_t dependent_length=0;
+        const char *dependent_text=document_get_text(documents,dependents[index],
+            &dependent_length);
+        if(dependent_text!=nullptr)
+            publish_diagnostics_single(dependencies,documents,dependents[index],
+                dependent_text,dependent_length);
+        free(dependents[index]);
+    }
+    free(dependents);
 }
 
 static void handle_initialize(const JsonValue *id) {
@@ -152,7 +196,7 @@ static void handle_hover(DocumentTable *documents,const JsonValue *id,
     if(!extract_document_position(documents,id,params,uri_copy,sizeof uri_copy,
             &text,&text_length,&line,&character))
         return;
-    JsonValue *result=hover_compute(uri_copy,text,text_length,line,character);
+    JsonValue *result=hover_compute(documents,uri_copy,text,text_length,line,character);
     if(result==nullptr) {
         send_response(id,json_null());
         return;
@@ -168,7 +212,7 @@ static void handle_definition(DocumentTable *documents,const JsonValue *id,
     if(!extract_document_position(documents,id,params,uri_copy,sizeof uri_copy,
             &text,&text_length,&line,&character))
         return;
-    JsonValue *result=definition_compute(uri_copy,text,text_length,line,character);
+    JsonValue *result=definition_compute(documents,uri_copy,text,text_length,line,character);
     if(result==nullptr) {
         send_response(id,json_null());
         return;
@@ -195,7 +239,7 @@ static void handle_document_symbol(DocumentTable *documents,const JsonValue *id,
         send_response(id,json_null());
         return;
     }
-    JsonValue *result=document_symbol_compute(uri_copy,text,text_length);
+    JsonValue *result=document_symbol_compute(documents,uri_copy,text,text_length);
     if(result==nullptr) {
         send_response(id,json_null());
         return;
@@ -203,17 +247,19 @@ static void handle_document_symbol(DocumentTable *documents,const JsonValue *id,
     send_response(id,result);
 }
 
-static void handle_did_open(DocumentTable *documents,const JsonValue *params) {
+static void handle_did_open(DocumentTable *documents,DependencyTable *dependencies,
+        const JsonValue *params) {
     const JsonValue *text_document=json_object_get(params,"textDocument");
     const char *uri=nullptr,*text=nullptr;
     size_t uri_length=0,text_length=0;
     if(!json_as_string(json_object_get(text_document,"uri"),&uri,&uri_length))return;
     if(!json_as_string(json_object_get(text_document,"text"),&text,&text_length))return;
     if(!document_open(documents,uri,text,text_length))return;
-    publish_diagnostics(uri,text,text_length);
+    publish_diagnostics(documents,dependencies,uri,text,text_length);
 }
 
-static void handle_did_change(DocumentTable *documents,const JsonValue *params) {
+static void handle_did_change(DocumentTable *documents,DependencyTable *dependencies,
+        const JsonValue *params) {
     const JsonValue *text_document=json_object_get(params,"textDocument");
     const char *uri=nullptr;
     size_t uri_length=0;
@@ -229,15 +275,17 @@ static void handle_did_change(DocumentTable *documents,const JsonValue *params) 
     size_t text_length=0;
     if(!json_as_string(json_object_get(last_change,"text"),&text,&text_length))return;
     if(!document_update(documents,uri,text,text_length))return;
-    publish_diagnostics(uri,text,text_length);
+    publish_diagnostics(documents,dependencies,uri,text,text_length);
 }
 
-static void handle_did_close(DocumentTable *documents,const JsonValue *params) {
+static void handle_did_close(DocumentTable *documents,DependencyTable *dependencies,
+        const JsonValue *params) {
     const JsonValue *text_document=json_object_get(params,"textDocument");
     const char *uri=nullptr;
     size_t uri_length=0;
     if(!json_as_string(json_object_get(text_document,"uri"),&uri,&uri_length))return;
     document_close(documents,uri);
+    dependency_table_remove_document(dependencies,uri);
     /* Publishing an empty diagnostics array is the spec's documented way
      * to clear whatever an editor was still showing for a file that's no
      * longer open. */
@@ -255,7 +303,12 @@ static void handle_did_close(DocumentTable *documents,const JsonValue *params) {
 
 int main(void) {
     DocumentTable *documents=document_table_create();
-    if(documents==nullptr)return 1;
+    DependencyTable *dependencies=dependency_table_create();
+    if(documents==nullptr||dependencies==nullptr) {
+        document_table_free(documents);
+        dependency_table_free(dependencies);
+        return 1;
+    }
     bool shutdown_requested=false;
     while(true) {
         const char *read_error=nullptr;
@@ -283,13 +336,14 @@ int main(void) {
         } else if(strcmp(method,"exit")==0) {
             json_free(message);
             document_table_free(documents);
+            dependency_table_free(dependencies);
             return shutdown_requested?0:1;
         } else if(strcmp(method,"textDocument/didOpen")==0) {
-            handle_did_open(documents,params);
+            handle_did_open(documents,dependencies,params);
         } else if(strcmp(method,"textDocument/didChange")==0) {
-            handle_did_change(documents,params);
+            handle_did_change(documents,dependencies,params);
         } else if(strcmp(method,"textDocument/didClose")==0) {
-            handle_did_close(documents,params);
+            handle_did_close(documents,dependencies,params);
         } else if(strcmp(method,"textDocument/hover")==0) {
             handle_hover(documents,id,params);
         } else if(strcmp(method,"textDocument/definition")==0) {
@@ -302,5 +356,6 @@ int main(void) {
         json_free(message);
     }
     document_table_free(documents);
+    dependency_table_free(dependencies);
     return 0;
 }

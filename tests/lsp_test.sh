@@ -149,6 +149,52 @@ count=$((count + 1))
 [[ "$response" == *"nonexistent"* ]]
 count=$((count + 1))
 
+# --- editing an open dependency's live buffer, unsaved, is seen
+# immediately by a document that requires it, and re-publishes that
+# document's diagnostics too -- not just once helper.di is saved to
+# disk. Proves both live in-memory require resolution
+# (document_resolve_source, lsp/document.h) and the dependency-cascade
+# republish (lsp/dependencies.h) in one scenario: greet_loudly doesn't
+# exist in helper.di on disk, so main.di referencing it starts out with
+# a real "undefined function" error; adding greet_loudly to helper.di's
+# *live* buffer (never written to disk) makes that error disappear from
+# main.di's republished diagnostics without any didSave. ---
+
+helper_uri="file://$work/helper.di"
+send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$helper_uri"'","text":"def greet(name)\n  \"hello, \" + name\nend"}}}'
+response="$(read_message)"
+[[ "$response" == *"\"uri\":\"$helper_uri\""* ]]
+count=$((count + 1))
+[[ "$response" == *'"diagnostics":[]'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","method":"textDocument/didChange","params":{"textDocument":{"uri":"'"$main_uri"'"},"contentChanges":[{"text":"require \"helper\"\nputs(greet_loudly(\"world\"))"}]}}'
+response="$(read_message)"
+[[ "$response" == *"\"uri\":\"$main_uri\""* ]]
+count=$((count + 1))
+[[ "$response" == *'"message":"undefined function"'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","method":"textDocument/didChange","params":{"textDocument":{"uri":"'"$helper_uri"'"},"contentChanges":[{"text":"def greet(name)\n  \"hello, \" + name\nend\ndef greet_loudly(name)\n  greet(name) + \"!\"\nend"}]}}'
+response="$(read_message)"
+[[ "$response" == *"\"uri\":\"$helper_uri\""* ]]
+count=$((count + 1))
+[[ "$response" == *'"diagnostics":[]'* ]]
+count=$((count + 1))
+response="$(read_message)"
+[[ "$response" == *"\"uri\":\"$main_uri\""* ]]
+count=$((count + 1))
+[[ "$response" == *'"diagnostics":[]'* ]]
+count=$((count + 1))
+
+# on-disk helper.di was never touched -- confirms this really came from
+# the live buffer, not a save
+[[ "$(cat "$work/helper.di")" != *"greet_loudly"* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$helper_uri"'"}}}'
+read_message >/dev/null
+
 send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$main_uri"'"}}}'
 read_message >/dev/null
 

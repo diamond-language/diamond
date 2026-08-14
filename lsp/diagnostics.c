@@ -138,8 +138,40 @@ static JsonValue *build_dependency_publish(const DiamondResolvedLocation *resolv
     return params;
 }
 
-JsonValue *diagnostics_compute(const char *uri,const char *text,size_t length,
-        JsonValue **out_dependency_publish) {
+/* Builds *out_dependency_paths per diagnostics.h's own comment: every
+ * unique path in `bundle`'s segments other than `own_path`. `bundle`
+ * always has at least one segment (the document's own, even with zero
+ * requires -- expand() in src/loader.c always records one for whatever
+ * it copies in), so this only ever adds *other* files' paths. Leaves
+ * *out_dependency_paths untouched on allocation failure -- the
+ * caller's own diagnostics array is still real and worth returning
+ * either way, same tradeoff build_dependency_publish's own caller
+ * already makes. */
+static void build_dependency_paths(const DiamondSourceBundle *bundle,
+        const char *own_path,JsonValue **out_dependency_paths) {
+    JsonValue *paths=json_array();
+    if(paths==nullptr)return;
+    for(size_t index=0;index<bundle->segment_count;index++) {
+        const char *segment_path=bundle->segments[index].path;
+        if(strcmp(segment_path,own_path)==0)continue;
+        bool seen=false;
+        for(size_t existing=0;existing<paths->as.array.count&&!seen;existing++)
+            seen=strcmp(paths->as.array.items[existing]->as.string.chars,
+                segment_path)==0;
+        if(seen)continue;
+        JsonValue *entry=json_string_z(segment_path);
+        if(entry==nullptr||!json_array_push(paths,entry)) {
+            json_free(entry);
+            json_free(paths);
+            return;
+        }
+    }
+    *out_dependency_paths=paths;
+}
+
+JsonValue *diagnostics_compute(const DocumentTable *documents,const char *uri,
+        const char *text,size_t length,
+        JsonValue **out_dependency_publish,JsonValue **out_dependency_paths) {
     /* DiamondProgram is tens of MB (fixed-size arrays sized for
      * self-hosting-scale programs, per src/compiler.h's own comment on
      * the struct) -- heap-allocated here for the same reason main.c
@@ -210,7 +242,8 @@ JsonValue *diagnostics_compute(const char *uri,const char *text,size_t length,
 
     DiamondSourceBundle bundle;
     char load_error[768];
-    const bool loaded=diamond_load_program(path,text_copy,&bundle,load_error,sizeof load_error);
+    const bool loaded=diamond_load_program_with_override(path,text_copy,
+        document_resolve_source,(void *)documents,&bundle,load_error,sizeof load_error);
     free(text_copy);
     if(!loaded) {
         free(path);
@@ -272,6 +305,8 @@ JsonValue *diagnostics_compute(const char *uri,const char *text,size_t length,
                 diagnostic.span.length,diagnostic.message);
         }
     }
+    if(out_dependency_paths!=nullptr)
+        build_dependency_paths(&bundle,path,out_dependency_paths);
     free(combined);
     free(path);
     diamond_source_bundle_free(&bundle);
