@@ -251,6 +251,21 @@ deliberately out of scope. `Fiber.new(...).resume(...)` alone, exactly how
 Ruby's own `Fiber` class works with no scheduler required, is a complete,
 independently useful unit.
 
+That gap didn't end up blocking a genuine multi-fiber concurrent use
+case, though: `packages/gremlin` (a fiber-per-connection HTTP server —
+see its own README and `docs/io.md`'s non-blocking-socket section) builds
+its *own* scheduler entirely in Diamond source, with no C-level
+`DiamondFiberQueue` involved at all. Its driver loop is ordinary: track
+each connection's own `Fiber` in a plain Array, call `IO.poll` to find
+out which connections' underlying sockets are actually ready, and
+`.resume()` exactly those. What makes this work at all is `yield`
+executing correctly *at any call depth* (see above) — a connection's
+fiber body calls `packages/http`'s `http_parse_request`, which calls
+`NonblockingConnection#gets`, which calls `#fill_more`, which is where
+`yield` actually executes, several call frames below the fiber's own
+entry point — with zero special-casing needed anywhere in that chain for
+the fact that a suspend is about to happen.
+
 `mark_object`'s `DIAMOND_OBJECT_FIBER` branch marks a fiber's own parked
 frame chain (`native_frames`), its `result` and `resume_value`, and — load
 bearing for `Fiber.new(callable)` — its `entry_closure`: once that call

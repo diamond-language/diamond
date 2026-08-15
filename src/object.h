@@ -19,6 +19,7 @@ typedef enum DiamondObjectKind : uint8_t {
     DIAMOND_OBJECT_FIBER,
     DIAMOND_OBJECT_FILE,
     DIAMOND_OBJECT_LISTENER,
+    DIAMOND_OBJECT_SOCKET,
     DIAMOND_OBJECT_BIGNUM,
     DIAMOND_OBJECT_SYMBOL,
     DIAMOND_OBJECT_REGEXP,
@@ -168,7 +169,27 @@ typedef struct DiamondFileHandle {
 typedef struct DiamondListenerHandle {
     DiamondObject object;
     int fd;
+    /* Set only by TCPServer.listen_nonblocking -- an ordinary
+     * TCPServer.listen listener is unaffected (false), and .accept()
+     * branches on this to decide whether "no pending connection" is an
+     * IOError (blocking listener: can't happen, accept() itself blocks
+     * until one exists) or a plain nil return (nonblocking listener: the
+     * normal "nothing to accept right now" case a poll-driven caller
+     * expects to see routinely). */
+    bool nonblocking;
 } DiamondListenerHandle;
+
+/* A non-blocking TCP connection, returned only by .accept() on a
+ * TCPServer.listen_nonblocking listener -- deliberately not
+ * DiamondFileHandle's buffered FILE*, since libc stdio buffering and
+ * EAGAIN don't mix cleanly (a short buffered read can silently swallow
+ * the "nothing available yet" signal a poll-driven caller needs to see
+ * on every call, not just the first). .read(n)/.write(value) are raw
+ * read(2)/write(2) against `fd` directly; see docs/io.md. */
+typedef struct DiamondSocketHandle {
+    DiamondObject object;
+    int fd;
+} DiamondSocketHandle;
 
 /* A compiled reginold pattern. Unlike DiamondFileHandle/DiamondListenerHandle,
  * this owns no OS resource (fd/socket) -- just heap memory reginold itself

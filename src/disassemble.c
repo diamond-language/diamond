@@ -413,6 +413,14 @@ static bool disassemble_chunk(FILE *stream, const char *name,
                 offset+=4;break;
             case DIAMOND_OP_TCP_LISTEN:
                 offset=two_registers(stream,chunk,"TCP_LISTEN",offset);break;
+            case DIAMOND_OP_TCP_LISTEN_NONBLOCK:
+                offset=two_registers(stream,chunk,"TCP_LISTEN_NONBLOCK",offset);break;
+            case DIAMOND_OP_IO_POLL:
+                if(!require_bytes(stream,chunk,offset,5)){valid=false;offset=chunk->code_count;break;}
+                fprintf(stream,"%-18s r%u, r%u, r%u, r%u\n","IO_POLL",
+                    chunk->code[offset+1],chunk->code[offset+2],
+                    chunk->code[offset+3],chunk->code[offset+4]);
+                offset+=5;break;
             case DIAMOND_OP_CHR:
                 offset=two_registers(stream,chunk,"CHR",offset);break;
             case DIAMOND_OP_TO_FLOAT:

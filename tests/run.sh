@@ -1361,7 +1361,7 @@ if "$diamond" -e 'TCPServer.watch(80)' >/dev/null 2>"$error_file"; then
     echo "malformed TCPServer.watch unexpectedly compiled" >&2
     exit 1
 fi
-grep -q "expected 'listen' after 'TCPServer'" "$error_file"
+grep -q "expected 'listen' or 'listen_nonblocking' after 'TCPServer'" "$error_file"
 rm -f "$error_file"
 
 error_file="$(mktemp)"

@@ -7,13 +7,16 @@
 
 #include <ctype.h>
 #include <errno.h>
+#include <limits.h>
 #include <math.h>
 #include <stdckdint.h>
 #include <inttypes.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <fcntl.h>
 #include <netdb.h>
+#include <poll.h>
 #include <sys/mman.h>
 #include <sys/socket.h>
 #include <unistd.h>
@@ -179,6 +182,10 @@ void diamond_vm_collect(DiamondVm *vm) {
             size=sizeof(DiamondListenerHandle);
             const int fd=((DiamondListenerHandle *)unreached)->fd;
             if(fd>=0)close(fd);
+        } else if(unreached->kind==DIAMOND_OBJECT_SOCKET) {
+            size=sizeof(DiamondSocketHandle);
+            const int fd=((DiamondSocketHandle *)unreached)->fd;
+            if(fd>=0)close(fd);
         } else if(unreached->kind==DIAMOND_OBJECT_BIGNUM) {
             const DiamondBignum *bignum=(const DiamondBignum *)unreached;
             size=sizeof(DiamondBignum)+bignum->limb_count*sizeof(uint32_t);
@@ -238,6 +245,9 @@ void diamond_vm_free(DiamondVm *vm) {
             if(stream!=nullptr)fclose(stream);
         } else if(object->kind==DIAMOND_OBJECT_LISTENER) {
             const int fd=((DiamondListenerHandle *)object)->fd;
+            if(fd>=0)close(fd);
+        } else if(object->kind==DIAMOND_OBJECT_SOCKET) {
+            const int fd=((DiamondSocketHandle *)object)->fd;
             if(fd>=0)close(fd);
         } else if(object->kind==DIAMOND_OBJECT_REGEXP) {
             reginold_regex_free(((DiamondRegexp *)object)->handle);
@@ -639,12 +649,136 @@ static DiamondFileHandle *allocate_file_handle(DiamondVm *vm,FILE *stream) {
     vm->objects=&handle->object;vm->bytes_allocated+=sizeof(DiamondFileHandle);return handle;
 }
 
-static DiamondListenerHandle *allocate_listener_handle(DiamondVm *vm,int fd) {
+static DiamondListenerHandle *allocate_listener_handle(DiamondVm *vm,int fd,
+        bool nonblocking) {
     if(vm->stress_gc||vm->bytes_allocated>=vm->next_gc)diamond_vm_collect(vm);
     DiamondListenerHandle *handle=malloc(sizeof(DiamondListenerHandle));
     if(handle==nullptr)return nullptr;
-    *handle=(DiamondListenerHandle){.object={.next=vm->objects,.kind=DIAMOND_OBJECT_LISTENER},.fd=fd};
+    *handle=(DiamondListenerHandle){.object={.next=vm->objects,.kind=DIAMOND_OBJECT_LISTENER},
+        .fd=fd,.nonblocking=nonblocking};
     vm->objects=&handle->object;vm->bytes_allocated+=sizeof(DiamondListenerHandle);return handle;
+}
+
+static DiamondSocketHandle *allocate_socket_handle(DiamondVm *vm,int fd) {
+    if(vm->stress_gc||vm->bytes_allocated>=vm->next_gc)diamond_vm_collect(vm);
+    DiamondSocketHandle *handle=malloc(sizeof(DiamondSocketHandle));
+    if(handle==nullptr)return nullptr;
+    *handle=(DiamondSocketHandle){.object={.next=vm->objects,.kind=DIAMOND_OBJECT_SOCKET},.fd=fd};
+    vm->objects=&handle->object;vm->bytes_allocated+=sizeof(DiamondSocketHandle);return handle;
+}
+
+/* Shared getaddrinfo/socket/bind/listen dance behind TCPServer.listen and
+ * TCPServer.listen_nonblocking -- identical except for whether the
+ * resulting fd is set O_NONBLOCK and which flavor of DiamondListenerHandle
+ * comes out the other end. Follows the established helper-returns-status
+ * convention (see stringify_value/regexp_new_helper) since VM_RETURN/
+ * VM_PROPAGATE are only usable inside run_chunk's own dispatch loop. */
+static DiamondVmStatus tcp_listen_helper(DiamondVm *vm,int64_t port,
+        bool nonblocking,DiamondListenerHandle **out_handle) {
+    char port_text[32];
+    (void)snprintf(port_text,sizeof port_text,"%" PRId64,port);
+    struct addrinfo hints={.ai_family=AF_UNSPEC,.ai_socktype=SOCK_STREAM,
+        .ai_flags=AI_PASSIVE};
+    struct addrinfo *results=nullptr;
+    const int resolve_status=getaddrinfo(nullptr,port_text,&hints,&results);
+    if(resolve_status!=0) {
+        snprintf(vm->error,sizeof vm->error,"cannot listen on port %s: %s",
+                 port_text,gai_strerror(resolve_status));
+        return DIAMOND_VM_IO_ERROR;
+    }
+    int listening_fd=-1;
+    int last_errno=0;
+    for(struct addrinfo *candidate=results;candidate!=nullptr;
+        candidate=candidate->ai_next) {
+        const int fd=socket(candidate->ai_family,candidate->ai_socktype,
+                             candidate->ai_protocol);
+        if(fd<0) {last_errno=errno;continue;}
+        const int yes=1;
+        (void)setsockopt(fd,SOL_SOCKET,SO_REUSEADDR,&yes,sizeof yes);
+        if(bind(fd,candidate->ai_addr,candidate->ai_addrlen)==0) {
+            listening_fd=fd;break;
+        }
+        last_errno=errno;close(fd);
+    }
+    freeaddrinfo(results);
+    if(listening_fd<0) {
+        snprintf(vm->error,sizeof vm->error,"cannot listen on port %s: %s",
+                 port_text,strerror(last_errno));
+        return DIAMOND_VM_IO_ERROR;
+    }
+    if(listen(listening_fd,16)!=0) {
+        snprintf(vm->error,sizeof vm->error,"cannot listen on port %s: %s",
+                 port_text,strerror(errno));
+        close(listening_fd);
+        return DIAMOND_VM_IO_ERROR;
+    }
+    if(nonblocking) {
+        const int flags=fcntl(listening_fd,F_GETFL,0);
+        if(flags<0||fcntl(listening_fd,F_SETFL,flags|O_NONBLOCK)<0) {
+            snprintf(vm->error,sizeof vm->error,
+                     "cannot listen on port %s: %s",port_text,strerror(errno));
+            close(listening_fd);
+            return DIAMOND_VM_IO_ERROR;
+        }
+    }
+    DiamondListenerHandle *listener_handle=
+        allocate_listener_handle(vm,listening_fd,nonblocking);
+    if(listener_handle==nullptr) {
+        close(listening_fd);
+        return DIAMOND_VM_OUT_OF_MEMORY;
+    }
+    *out_handle=listener_handle;
+    return DIAMOND_VM_OK;
+}
+
+/* IO.poll accepts only the two object kinds that actually own a pollable
+ * fd -- a TCPServer.listen_nonblocking listener (interesting for
+ * readability: a pending connection) or one of its accepted Sockets
+ * (interesting for either). A blocking TCPServer.listen listener/
+ * TCPSocket.connect File is deliberately not accepted: poll()ing a
+ * blocking-mode fd is meaningless here, since nothing in this VM ever
+ * puts one in non-blocking mode, so it would always appear either always-
+ * ready or never-ready depending on kernel buffering, never the genuine
+ * signal IO.poll's caller needs. */
+static DiamondVmStatus pollable_fd(DiamondVm *vm,DiamondValue value,int *out_fd) {
+    if(value.kind!=DIAMOND_VALUE_OBJECT||
+       (value.as.object->kind!=DIAMOND_OBJECT_LISTENER&&
+        value.as.object->kind!=DIAMOND_OBJECT_SOCKET)) {
+        snprintf(vm->error,sizeof vm->error,
+            "IO.poll arguments must be nonblocking TCPServer listeners or their accepted Sockets");
+        return DIAMOND_VM_TYPE_ERROR;
+    }
+    const int fd=value.as.object->kind==DIAMOND_OBJECT_LISTENER?
+        ((DiamondListenerHandle *)value.as.object)->fd:
+        ((DiamondSocketHandle *)value.as.object)->fd;
+    if(fd<0) {
+        snprintf(vm->error,sizeof vm->error,"cannot poll a closed listener/socket");
+        return DIAMOND_VM_IO_ERROR;
+    }
+    *out_fd=fd;
+    return DIAMOND_VM_OK;
+}
+
+/* Diamond's readables/writables are separate Arrays (see DIAMOND_OP_IO_POLL
+ * below for why -- avoids needing Array#include?/object-identity checks on
+ * the Diamond side), but the same fd can legitimately appear in both --
+ * poll(2) itself keys purely by fd, so registering it twice would just
+ * overwrite events instead of OR-ing them together. Returns false only
+ * when max_fds is exhausted by a genuinely new fd. */
+static bool poll_register_fd(struct pollfd *fds,nfds_t *fd_count,size_t max_fds,
+        int fd,short want_events,size_t *out_slot) {
+    for(size_t existing=0;existing<*fd_count;existing++) {
+        if(fds[existing].fd==fd) {
+            fds[existing].events=(short)(fds[existing].events|want_events);
+            *out_slot=existing;
+            return true;
+        }
+    }
+    if(*fd_count>=max_fds)return false;
+    fds[*fd_count]=(struct pollfd){.fd=fd,.events=want_events,.revents=0};
+    *out_slot=*fd_count;
+    (*fd_count)++;
+    return true;
 }
 
 static DiamondRegexp *allocate_regexp_handle(DiamondVm *vm,reginold_regex *compiled) {
@@ -3543,6 +3677,7 @@ static uint8_t exception_class_for_status(DiamondVmStatus status) {
         case DIAMOND_VM_YIELD_WITHOUT_FIBER: return DIAMOND_CLASS_FIBER_ERROR;
         case DIAMOND_VM_IO_ERROR: return DIAMOND_CLASS_IO_ERROR;
         case DIAMOND_VM_REGEXP_ERROR: return DIAMOND_CLASS_REGEXP_ERROR;
+        case DIAMOND_VM_WOULD_BLOCK: return DIAMOND_CLASS_WOULD_BLOCK_ERROR;
         case DIAMOND_VM_PROGRAM_ERROR: return DIAMOND_CLASS_RUNTIME_ERROR;
         default: return UINT8_MAX;
     }
@@ -6221,8 +6356,34 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     errno=0;
                     const int client_fd=accept(listener->fd,nullptr,nullptr);
                     if(client_fd<0) {
+                        if(listener->nonblocking&&(errno==EAGAIN||errno==EWOULDBLOCK)) {
+                            registers[dest]=DIAMOND_NIL;break;
+                        }
                         snprintf(vm->error,sizeof vm->error,"accept failed: %s",strerror(errno));
                         VM_RETURN(DIAMOND_VM_IO_ERROR);
+                    }
+                    if(listener->nonblocking) {
+                        /* Unlike some other platforms, Linux's accept() never
+                         * inherits O_NONBLOCK from the listening socket -- the
+                         * accepted connection comes back blocking by default
+                         * and must be set non-blocking explicitly, same as the
+                         * listener itself was in tcp_listen_helper. */
+                        const int flags=fcntl(client_fd,F_GETFL,0);
+                        if(flags<0||fcntl(client_fd,F_SETFL,flags|O_NONBLOCK)<0) {
+                            snprintf(vm->error,sizeof vm->error,
+                                "accept failed: %s",strerror(errno));
+                            close(client_fd);
+                            VM_RETURN(DIAMOND_VM_IO_ERROR);
+                        }
+                        DiamondSocketHandle *client_socket=
+                            allocate_socket_handle(vm,client_fd);
+                        if(client_socket==nullptr) {
+                            close(client_fd);
+                            VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                        }
+                        registers[dest]=(DiamondValue){.kind=DIAMOND_VALUE_OBJECT,
+                            .as.object=(DiamondObject *)client_socket};
+                        break;
                     }
                     FILE *client_stream=fdopen(client_fd,"r+");
                     if(client_stream==nullptr) {
@@ -6237,6 +6398,101 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     registers[dest]=(DiamondValue){.kind=DIAMOND_VALUE_OBJECT,
                         .as.object=(DiamondObject *)client_handle};
                     break;
+                }
+                if(receiver_kind==DIAMOND_OBJECT_SOCKET) {
+                    if(type_argument_count!=0)VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                    DiamondSocketHandle *socket_handle=
+                        (DiamondSocketHandle *)registers[recv].as.object;
+                    const bool read_method=method_name->length==4&&
+                        memcmp(method_name->chars,"read",4)==0;
+                    const bool write_method=method_name->length==5&&
+                        memcmp(method_name->chars,"write",5)==0;
+                    const bool close_method=method_name->length==5&&
+                        memcmp(method_name->chars,"close",5)==0;
+                    if(!read_method&&!write_method&&!close_method) {
+                        snprintf(vm->error,sizeof vm->error,"undefined method '%.*s' for %s",
+                            (int)method_name->length,method_name->chars,"Socket");
+                        VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                    }
+                    if(close_method) {
+                        if(argc!=0)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                        if(socket_handle->fd>=0) {
+                            close(socket_handle->fd);
+                            socket_handle->fd=-1;
+                        }
+                        registers[dest]=DIAMOND_NIL;break;
+                    }
+                    if(socket_handle->fd<0) {
+                        snprintf(vm->error,sizeof vm->error,"socket is closed");
+                        VM_RETURN(DIAMOND_VM_IO_ERROR);
+                    }
+                    if(read_method) {
+                        if(argc!=1)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                        if(registers[base].kind!=DIAMOND_VALUE_INT||
+                           registers[base].as.integer<0) {
+                            snprintf(vm->error,sizeof vm->error,
+                                "Socket#read argument must be a non-negative Int");
+                            VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                        }
+                        const size_t want=(size_t)registers[base].as.integer;
+                        if(want==0) {
+                            DiamondString *empty=allocate_string(vm,"",0);
+                            if(empty==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                            registers[dest]=DIAMOND_OBJECT(empty);break;
+                        }
+                        char *buffer=malloc(want);
+                        if(buffer==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                        errno=0;
+                        const ssize_t read_count=read(socket_handle->fd,buffer,want);
+                        if(read_count<0) {
+                            const int saved_errno=errno;
+                            free(buffer);
+                            if(saved_errno==EAGAIN||saved_errno==EWOULDBLOCK) {
+                                snprintf(vm->error,sizeof vm->error,"read would block");
+                                VM_RETURN(DIAMOND_VM_WOULD_BLOCK);
+                            }
+                            snprintf(vm->error,sizeof vm->error,"read error: %s",
+                                strerror(saved_errno));
+                            VM_RETURN(DIAMOND_VM_IO_ERROR);
+                        }
+                        if(read_count==0) {
+                            /* Peer closed -- the same EOF-as-nil convention
+                             * File#read already uses, distinct from
+                             * WouldBlockError (nothing available *yet* vs.
+                             * nothing ever coming again). */
+                            free(buffer);
+                            registers[dest]=DIAMOND_NIL;break;
+                        }
+                        DiamondString *string=allocate_string(vm,buffer,(size_t)read_count);
+                        free(buffer);
+                        if(string==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                        registers[dest]=DIAMOND_OBJECT(string);break;
+                    }
+                    if(argc!=1)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                    DiamondValue converted=DIAMOND_NIL;
+                    DiamondVmStatus stringify_status=stringify_value(vm,chunk,depth,
+                        registers[base],&converted);
+                    VM_PROPAGATE(stringify_status);
+                    const DiamondString *text=(const DiamondString *)converted.as.object;
+                    errno=0;
+                    const ssize_t written=write(socket_handle->fd,text->chars,text->length);
+                    if(written<0) {
+                        const int saved_errno=errno;
+                        if(saved_errno==EAGAIN||saved_errno==EWOULDBLOCK) {
+                            snprintf(vm->error,sizeof vm->error,"write would block");
+                            VM_RETURN(DIAMOND_VM_WOULD_BLOCK);
+                        }
+                        snprintf(vm->error,sizeof vm->error,"write error: %s",
+                            strerror(saved_errno));
+                        VM_RETURN(DIAMOND_VM_IO_ERROR);
+                    }
+                    /* A partial write is a normal, expected outcome on a
+                     * non-blocking socket (the send buffer filled up
+                     * mid-write) -- unlike File#write, which either writes
+                     * everything or raises, this returns the actual byte
+                     * count written so the caller (packages/gremlin's
+                     * NonblockingConnection#write) can retry the remainder. */
+                    registers[dest]=DIAMOND_INT((int64_t)written);break;
                 }
                 if(receiver_kind==DIAMOND_OBJECT_REGEXP) {
                     if(type_argument_count!=0)VM_RETURN(DIAMOND_VM_TYPE_ERROR);
@@ -6928,7 +7184,8 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     .as.object=(DiamondObject *)handle};
                 break;
             }
-            case DIAMOND_OP_TCP_LISTEN: {
+            case DIAMOND_OP_TCP_LISTEN:
+            case DIAMOND_OP_TCP_LISTEN_NONBLOCK: {
                 uint8_t dest=0,port_reg=0;
                 READ_BYTE(dest);READ_BYTE(port_reg);
                 if(registers[port_reg].kind!=DIAMOND_VALUE_INT) {
@@ -6936,52 +7193,138 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                              "TCPServer.listen argument must be an Int port");
                     VM_RETURN(DIAMOND_VM_TYPE_ERROR);
                 }
-                char port_text[32];
-                (void)snprintf(port_text,sizeof port_text,"%" PRId64,
-                               registers[port_reg].as.integer);
-                struct addrinfo hints={.ai_family=AF_UNSPEC,.ai_socktype=SOCK_STREAM,
-                    .ai_flags=AI_PASSIVE};
-                struct addrinfo *results=nullptr;
-                const int resolve_status=getaddrinfo(nullptr,port_text,&hints,&results);
-                if(resolve_status!=0) {
-                    snprintf(vm->error,sizeof vm->error,"cannot listen on port %s: %s",
-                             port_text,gai_strerror(resolve_status));
-                    VM_RETURN(DIAMOND_VM_IO_ERROR);
-                }
-                int listening_fd=-1;
-                int last_errno=0;
-                for(struct addrinfo *candidate=results;candidate!=nullptr;
-                    candidate=candidate->ai_next) {
-                    const int fd=socket(candidate->ai_family,candidate->ai_socktype,
-                                         candidate->ai_protocol);
-                    if(fd<0) {last_errno=errno;continue;}
-                    const int yes=1;
-                    (void)setsockopt(fd,SOL_SOCKET,SO_REUSEADDR,&yes,sizeof yes);
-                    if(bind(fd,candidate->ai_addr,candidate->ai_addrlen)==0) {
-                        listening_fd=fd;break;
-                    }
-                    last_errno=errno;close(fd);
-                }
-                freeaddrinfo(results);
-                if(listening_fd<0) {
-                    snprintf(vm->error,sizeof vm->error,"cannot listen on port %s: %s",
-                             port_text,strerror(last_errno));
-                    VM_RETURN(DIAMOND_VM_IO_ERROR);
-                }
-                if(listen(listening_fd,16)!=0) {
-                    snprintf(vm->error,sizeof vm->error,"cannot listen on port %s: %s",
-                             port_text,strerror(errno));
-                    close(listening_fd);
-                    VM_RETURN(DIAMOND_VM_IO_ERROR);
-                }
-                DiamondListenerHandle *listener_handle=
-                    allocate_listener_handle(vm,listening_fd);
-                if(listener_handle==nullptr) {
-                    close(listening_fd);
-                    VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
-                }
+                DiamondListenerHandle *listener_handle=nullptr;
+                const DiamondVmStatus listen_status=tcp_listen_helper(vm,
+                    registers[port_reg].as.integer,
+                    instruction==DIAMOND_OP_TCP_LISTEN_NONBLOCK,&listener_handle);
+                VM_PROPAGATE(listen_status);
                 registers[dest]=(DiamondValue){.kind=DIAMOND_VALUE_OBJECT,
                     .as.object=(DiamondObject *)listener_handle};
+                break;
+            }
+            case DIAMOND_OP_IO_POLL: {
+                uint8_t dest=0,readable_reg=0,writable_reg=0,timeout_reg=0;
+                READ_BYTE(dest);READ_BYTE(readable_reg);READ_BYTE(writable_reg);
+                READ_BYTE(timeout_reg);
+                if(registers[readable_reg].kind!=DIAMOND_VALUE_OBJECT||
+                   registers[readable_reg].as.object->kind!=DIAMOND_OBJECT_ARRAY||
+                   registers[writable_reg].kind!=DIAMOND_VALUE_OBJECT||
+                   registers[writable_reg].as.object->kind!=DIAMOND_OBJECT_ARRAY||
+                   registers[timeout_reg].kind!=DIAMOND_VALUE_INT) {
+                    snprintf(vm->error,sizeof vm->error,"IO.poll arguments must be an "
+                        "Array of readables, an Array of writables, and an Int timeout");
+                    VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                }
+                const DiamondArray *readable_array=
+                    (const DiamondArray *)registers[readable_reg].as.object;
+                const DiamondArray *writable_array=
+                    (const DiamondArray *)registers[writable_reg].as.object;
+                enum { DIAMOND_MAX_POLL_FDS = 256 };
+                if(readable_array->count>DIAMOND_MAX_POLL_FDS||
+                   writable_array->count>DIAMOND_MAX_POLL_FDS) {
+                    snprintf(vm->error,sizeof vm->error,
+                        "IO.poll supports at most %d fds per list",DIAMOND_MAX_POLL_FDS);
+                    VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                }
+                struct pollfd fds[DIAMOND_MAX_POLL_FDS];
+                nfds_t fd_count=0;
+                size_t read_slot[DIAMOND_MAX_POLL_FDS];
+                size_t write_slot[DIAMOND_MAX_POLL_FDS];
+                for(size_t index=0;index<readable_array->count;index++) {
+                    int fd=-1;
+                    const DiamondVmStatus fd_status=
+                        pollable_fd(vm,readable_array->values[index],&fd);
+                    VM_PROPAGATE(fd_status);
+                    if(!poll_register_fd(fds,&fd_count,DIAMOND_MAX_POLL_FDS,fd,
+                            POLLIN,&read_slot[index])) {
+                        snprintf(vm->error,sizeof vm->error,
+                            "IO.poll supports at most %d distinct fds",DIAMOND_MAX_POLL_FDS);
+                        VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                    }
+                }
+                for(size_t index=0;index<writable_array->count;index++) {
+                    int fd=-1;
+                    const DiamondVmStatus fd_status=
+                        pollable_fd(vm,writable_array->values[index],&fd);
+                    VM_PROPAGATE(fd_status);
+                    if(!poll_register_fd(fds,&fd_count,DIAMOND_MAX_POLL_FDS,fd,
+                            POLLOUT,&write_slot[index])) {
+                        snprintf(vm->error,sizeof vm->error,
+                            "IO.poll supports at most %d distinct fds",DIAMOND_MAX_POLL_FDS);
+                        VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                    }
+                }
+                const int64_t timeout_value=registers[timeout_reg].as.integer;
+                const int timeout_ms=timeout_value<0?-1:
+                    (timeout_value>INT_MAX?INT_MAX:(int)timeout_value);
+                int poll_result=0;
+                errno=0;
+                do {
+                    poll_result=poll(fds,fd_count,timeout_ms);
+                } while(poll_result<0&&errno==EINTR);
+                if(poll_result<0) {
+                    snprintf(vm->error,sizeof vm->error,"poll failed: %s",strerror(errno));
+                    VM_RETURN(DIAMOND_VM_IO_ERROR);
+                }
+                /* POLLHUP/POLLERR/POLLNVAL count toward *both* readiness
+                 * directions: a peer that closed its end, or a socket that
+                 * hit a genuine error, is exactly the condition a caller's
+                 * next .read()/.write() needs to be woken up to observe
+                 * (EOF as nil, or the error surfacing as IOError) rather
+                 * than sitting forever waiting for a POLLIN/POLLOUT that a
+                 * dead connection will never produce. */
+                DiamondValue readable_results[DIAMOND_MAX_POLL_FDS];
+                for(size_t index=0;index<readable_array->count;index++) {
+                    const short revents=fds[read_slot[index]].revents;
+                    readable_results[index]=
+                        DIAMOND_BOOL((revents&(POLLIN|POLLHUP|POLLERR|POLLNVAL))!=0);
+                }
+                DiamondValue writable_results[DIAMOND_MAX_POLL_FDS];
+                for(size_t index=0;index<writable_array->count;index++) {
+                    const short revents=fds[write_slot[index]].revents;
+                    writable_results[index]=
+                        DIAMOND_BOOL((revents&(POLLOUT|POLLHUP|POLLERR|POLLNVAL))!=0);
+                }
+                /* Every allocate_* call below can trigger a collection, and
+                 * this VM's GC only marks from rooted locations (registers,
+                 * the exception slot, frame chains) -- a value sitting in a
+                 * plain C local between two allocate_* calls is invisible to
+                 * it and would be swept out from under this function
+                 * (confirmed the hard way: a heap-use-after-free in
+                 * hash_find, caught by `make test-sanitize` under
+                 * DIAMOND_STRESS_GC=1, from an earlier version of this code
+                 * that allocated all four pieces before touching
+                 * registers[dest] at all). So: root the hash in
+                 * registers[dest] immediately, then for each entry, root its
+                 * key first with a DIAMOND_NIL placeholder value -- nil
+                 * needs no GC protection, so this is always safe -- before
+                 * allocating the real value and overwriting the placeholder
+                 * (hash_set already updates an existing key in place).
+                 * Nothing is ever more than one allocation away from being
+                 * reachable through registers[dest]. */
+                DiamondHash *poll_result_hash=allocate_hash(vm);
+                if(poll_result_hash==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                registers[dest]=DIAMOND_OBJECT(poll_result_hash);
+                DiamondString *readable_key=allocate_string(vm,"readable",8);
+                if(readable_key==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                if(!hash_set(vm,poll_result_hash,DIAMOND_OBJECT(readable_key),DIAMOND_NIL))
+                    VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                DiamondArray *readable_result_array=
+                    allocate_array(vm,readable_results,readable_array->count);
+                if(readable_result_array==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                if(!hash_set(vm,poll_result_hash,DIAMOND_OBJECT(readable_key),
+                        DIAMOND_OBJECT(readable_result_array)))
+                    VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                DiamondString *writable_key=allocate_string(vm,"writable",8);
+                if(writable_key==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                if(!hash_set(vm,poll_result_hash,DIAMOND_OBJECT(writable_key),DIAMOND_NIL))
+                    VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                DiamondArray *writable_result_array=
+                    allocate_array(vm,writable_results,writable_array->count);
+                if(writable_result_array==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                if(!hash_set(vm,poll_result_hash,DIAMOND_OBJECT(writable_key),
+                        DIAMOND_OBJECT(writable_result_array)))
+                    VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
                 break;
             }
             case DIAMOND_OP_CHR: {
@@ -7169,6 +7512,8 @@ const char *diamond_vm_status_name(DiamondVmStatus status) {
             return "I/O error";
         case DIAMOND_VM_REGEXP_ERROR:
             return "regexp error";
+        case DIAMOND_VM_WOULD_BLOCK:
+            return "would block";
         case DIAMOND_VM_PROGRAM_ERROR:
             return "constructed program failed";
     }

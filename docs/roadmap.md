@@ -5116,6 +5116,74 @@ future work.
   process, not just that one connection. `http_parse_request` now
   returns `nil` for an empty request and `http_serve` closes and skips
   it instead of calling the handler.
+- Added non-blocking sockets (`TCPServer.listen_nonblocking`, a new
+  `Socket` object, `IO.poll`) to the VM, then built `packages/gremlin` on
+  top: a fiber-per-connection, Puma-like concurrent HTTP server. The
+  motivating realization: fibers alone don't give a program concurrent
+  I/O. `yield` only suspends where Diamond code explicitly says so — a
+  blocking `.read()` inside a fiber blocks the *entire process*, not one
+  logical connection, so a naive `Fiber`-per-connection design over the
+  existing blocking `TCPServer`/`TCPSocket`/`File` primitives would get
+  no real concurrency at all, just `http_serve` with extra steps. Real
+  concurrency needs the fiber's own I/O to yield back to a scheduler when
+  it would block, and something to notice when it's ready again — hence
+  the two new VM primitives (full design in `docs/io.md`).
+
+  Deliberately did *not* expose the VM's own internal `DiamondFiberQueue`
+  scheduler to Diamond source to make this work (that gap is still
+  intentionally open — see `docs/fibers.md`). `packages/gremlin` builds
+  its own scheduler entirely in Diamond: a plain Array of
+  `{connection, fiber}` pairs, `IO.poll` to ask which connections are
+  actually ready, `.resume()` on exactly those. `NonblockingConnection`
+  (`packages/gremlin/gremlin.di`) wraps a `Socket` with `#gets`/`#read`/
+  `#write` that catch `WouldBlockError` and call `yield` instead of
+  propagating it — and critically, needed zero changes to
+  `packages/http`'s own `http_parse_request`/`http_write_response`,
+  since `yield` executing correctly at any call depth (an existing,
+  already-verified guarantee) means a fiber body calling
+  `http_parse_request`, calling `NonblockingConnection#gets`, calling
+  `#fill_more`, is exactly where suspension needs to happen, several
+  frames below the fiber's own entry point, with nothing in that chain
+  aware a suspend is even possible.
+
+  Two real bugs found and fixed along the way, both the hard way rather
+  than by inspection:
+  - A newly-accepted connection pushed directly into the shared
+    `connections` Array *during* the same event-loop iteration whose
+    `IO.poll` result was already sized and ordered for the *old*
+    (smaller) list — the very next resume pass indexed past the end of
+    `ready["writable"]` for that new entry, an `IndexError` at a timing-
+    dependent point depending on accept timing. Fixed by collecting newly
+    spawned connections into a separate Array and only folding them into
+    `connections` after the resume pass for the current iteration
+    finishes, so `ready`'s own arrays are never read against a
+    `connections` list that outgrew them.
+  - A genuine heap-use-after-free in `DIAMOND_OP_IO_POLL`'s own result
+    construction, caught by `make test-sanitize` under
+    `DIAMOND_STRESS_GC=1` (not by inspection) — see `docs/io.md`'s own
+    non-blocking-sockets section for the fix (root the `Hash` immediately,
+    then root each key with a `nil` placeholder before allocating its
+    real value).
+
+  Verification: `make test-http-package`'s existing GET/POST assertions
+  plus a new `make test-gremlin-package` (4 assertions) — including the
+  actual point of the package, not just a smoke test: a connection that
+  opens and sends nothing at all does not block a second connection
+  opened afterward from getting its response promptly, proven directly
+  with two real overlapping `/dev/tcp` connections, one deliberately left
+  idle. `make test` (915 assertions) and the full non-blocking-socket
+  path under `make test-sanitize` with `DIAMOND_STRESS_GC=1` both pass
+  clean. One caveat, noted rather than hidden: a single `AddressSanitizer:
+  stack-use-after-return` inside `mark_frame_chain` appeared once during
+  manual fiber+ASan testing (not under `make test-sanitize`, which never
+  reproduced it) and did not reproduce again across several repeated
+  identical runs, nor in a minimal repro built specifically to trigger it
+  using only pre-existing fiber machinery this change never touched.
+  Combined with ASan's own explicit disclaimer for `swapcontext`-based
+  code (the fiber implementation doesn't call ASan's fiber-switch
+  annotations), this looks like the well-known ASan/coroutine false-
+  positive class rather than a real bug — but it's flagged here as
+  inconclusive rather than claimed as fully verified.
 
 ## Later experiments
 

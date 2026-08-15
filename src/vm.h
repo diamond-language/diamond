@@ -131,6 +131,8 @@ typedef enum DiamondOpCode : uint8_t {
     DIAMOND_OP_FILE_OPEN,
     DIAMOND_OP_TCP_CONNECT,
     DIAMOND_OP_TCP_LISTEN,
+    DIAMOND_OP_TCP_LISTEN_NONBLOCK,
+    DIAMOND_OP_IO_POLL,
     DIAMOND_OP_REGEXP_NEW,
     DIAMOND_OP_CHR,
     DIAMOND_OP_TO_FLOAT,
@@ -182,6 +184,7 @@ typedef enum DiamondBuiltinClass : uint8_t {
     DIAMOND_CLASS_FIBER_ERROR,
     DIAMOND_CLASS_IO_ERROR,
     DIAMOND_CLASS_REGEXP_ERROR,
+    DIAMOND_CLASS_WOULD_BLOCK_ERROR,
     DIAMOND_BUILTIN_CLASS_COUNT,
 } DiamondBuiltinClass;
 
@@ -377,6 +380,13 @@ typedef enum DiamondVmStatus : uint8_t {
     DIAMOND_VM_FIBER_NOT_RESUMABLE,
     DIAMOND_VM_IO_ERROR,
     DIAMOND_VM_REGEXP_ERROR,
+    /* Raised by .read(n)/.write(value) on a non-blocking Socket (returned
+     * from a TCPServer.listen_nonblocking listener's .accept()) when the
+     * underlying read(2)/write(2) would otherwise block -- EAGAIN/
+     * EWOULDBLOCK, not a real error. Rescuable as WouldBlockError so a
+     * poll-driven caller can catch it and yield rather than treating it
+     * like any other IOError. See docs/io.md. */
+    DIAMOND_VM_WOULD_BLOCK,
     /* Raised when a ProgramBuilder-constructed DiamondProgram fails while
      * executing under .run() -- a distinct status from DIAMOND_VM_TYPE_ERROR
      * (which covers builder API misuse: bad argument types, out-of-range

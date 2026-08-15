@@ -1610,12 +1610,15 @@ static uint8_t parse_tcp_connect_call(Compiler *compiler) {
 
 static uint8_t parse_tcp_listen_call(Compiler *compiler) {
     advance_token(compiler); /* consume '.' */
+    const bool nonblocking=compiler->current.kind==DIAMOND_TOKEN_IDENTIFIER&&
+        name_equals(compiler,"listen_nonblocking",compiler->current.span,false);
     if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER||
-       !name_equals(compiler,"listen",compiler->current.span,false)) {
-        fail(compiler,compiler->current.span,"expected 'listen' after 'TCPServer'");
+       !(nonblocking||name_equals(compiler,"listen",compiler->current.span,false))) {
+        fail(compiler,compiler->current.span,
+             "expected 'listen' or 'listen_nonblocking' after 'TCPServer'");
         return 0;
     }
-    advance_token(compiler); /* consume 'listen' */
+    advance_token(compiler); /* consume 'listen'/'listen_nonblocking' */
     if(compiler->current.kind!=DIAMOND_TOKEN_LEFT_PAREN) {
         fail(compiler,compiler->current.span,"expected '(' after 'TCPServer.listen'");
         return 0;
@@ -1630,9 +1633,55 @@ static uint8_t parse_tcp_listen_call(Compiler *compiler) {
     }
     advance_token(compiler);
     const uint8_t dest=allocate_register(compiler);
-    emit_opcode(compiler,DIAMOND_OP_TCP_LISTEN);
+    emit_opcode(compiler,nonblocking?DIAMOND_OP_TCP_LISTEN_NONBLOCK:DIAMOND_OP_TCP_LISTEN);
     emit_byte(compiler,dest);
     emit_byte(compiler,port_register);
+    return dest;
+}
+
+static uint8_t parse_io_poll_call(Compiler *compiler) {
+    advance_token(compiler); /* consume '.' */
+    if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER||
+       !name_equals(compiler,"poll",compiler->current.span,false)) {
+        fail(compiler,compiler->current.span,"expected 'poll' after 'IO'");
+        return 0;
+    }
+    advance_token(compiler); /* consume 'poll' */
+    if(compiler->current.kind!=DIAMOND_TOKEN_LEFT_PAREN) {
+        fail(compiler,compiler->current.span,"expected '(' after 'IO.poll'");
+        return 0;
+    }
+    advance_token(compiler);
+    skip_newlines(compiler);
+    const uint8_t readable_register=parse_expression(compiler);
+    skip_newlines(compiler);
+    if(compiler->current.kind!=DIAMOND_TOKEN_COMMA) {
+        fail(compiler,compiler->current.span,"expected ',' after IO.poll readables");
+        return 0;
+    }
+    advance_token(compiler);
+    skip_newlines(compiler);
+    const uint8_t writable_register=parse_expression(compiler);
+    skip_newlines(compiler);
+    if(compiler->current.kind!=DIAMOND_TOKEN_COMMA) {
+        fail(compiler,compiler->current.span,"expected ',' after IO.poll writables");
+        return 0;
+    }
+    advance_token(compiler);
+    skip_newlines(compiler);
+    const uint8_t timeout_register=parse_expression(compiler);
+    skip_newlines(compiler);
+    if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
+        fail(compiler,compiler->current.span,"expected ')' after IO.poll arguments");
+        return 0;
+    }
+    advance_token(compiler);
+    const uint8_t dest=allocate_register(compiler);
+    emit_opcode(compiler,DIAMOND_OP_IO_POLL);
+    emit_byte(compiler,dest);
+    emit_byte(compiler,readable_register);
+    emit_byte(compiler,writable_register);
+    emit_byte(compiler,timeout_register);
     return dest;
 }
 
@@ -1870,6 +1919,10 @@ static uint8_t parse_name(Compiler *compiler) {
        compiler->current.kind==DIAMOND_TOKEN_DOT&&
        name_equals(compiler,"TCPServer",name,false))
         return parse_tcp_listen_call(compiler);
+    if(class_index<0&&find_local(compiler,name)<0&&find_function(compiler,name)<0&&
+       compiler->current.kind==DIAMOND_TOKEN_DOT&&
+       name_equals(compiler,"IO",name,false))
+        return parse_io_poll_call(compiler);
     if(find_local(compiler,name)<0&&find_function(compiler,name)<0&&
        compiler->current.kind==DIAMOND_TOKEN_LEFT_PAREN&&
        (name_equals(compiler,"print",name,false)||
@@ -4697,6 +4750,7 @@ void diamond_program_init(DiamondProgram *program) {
         [DIAMOND_CLASS_FIBER_ERROR]={"FiberError",DIAMOND_CLASS_STANDARD_ERROR},
         [DIAMOND_CLASS_IO_ERROR]={"IOError",DIAMOND_CLASS_STANDARD_ERROR},
         [DIAMOND_CLASS_REGEXP_ERROR]={"RegexpError",DIAMOND_CLASS_STANDARD_ERROR},
+        [DIAMOND_CLASS_WOULD_BLOCK_ERROR]={"WouldBlockError",DIAMOND_CLASS_STANDARD_ERROR},
     };
     program->class_count=DIAMOND_BUILTIN_CLASS_COUNT;
     for(size_t index=0;index<DIAMOND_BUILTIN_CLASS_COUNT;index++) {

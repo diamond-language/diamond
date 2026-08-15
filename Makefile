@@ -25,7 +25,7 @@ SOURCES := $(wildcard src/*.c)
 OBJECTS := $(SOURCES:src/%.c=$(BUILD_DIR)/%.o)
 DEPS := $(OBJECTS:.o=.d)
 
-.PHONY: all debug sanitize release test test-release test-sanitize test-api test-fibers test-fiber-run test-fiber-context test-vm-context test-yield test-continuation test-multi-yield test-scheduler test-scheduler-run-all test-fiber-gc-roots test-fiber-guards test-nested-yield-guard test-stack-overflow test-all test-facet facet test-http-package test-lexer-diff test-parser-diff lsp test-lsp test-repl fuzz test-fuzz clean
+.PHONY: all debug sanitize release test test-release test-sanitize test-api test-fibers test-fiber-run test-fiber-context test-vm-context test-yield test-continuation test-multi-yield test-scheduler test-scheduler-run-all test-fiber-gc-roots test-fiber-guards test-nested-yield-guard test-stack-overflow test-all test-facet facet test-http-package test-gremlin-package test-lexer-diff test-parser-diff lsp test-lsp test-repl fuzz test-fuzz clean
 
 all: debug
 
@@ -122,6 +122,9 @@ test-facet: $(BUILD_DIR)/facet
 test-http-package: $(TARGET)
 	DIAMOND_BIN=$(CURDIR)/$(BUILD_DIR)/diamond bash packages/http/test.sh
 
+test-gremlin-package: $(TARGET)
+	DIAMOND_BIN=$(CURDIR)/$(BUILD_DIR)/diamond bash packages/gremlin/test.sh
+
 LSP_SOURCES := $(wildcard lsp/*.c)
 
 $(BUILD_DIR)/diamond-lsp: $(LSP_SOURCES) $(API_SOURCES)
@@ -174,6 +177,7 @@ test-all:
 	$(MAKE) test-stack-overflow
 	$(MAKE) test-facet
 	$(MAKE) test-http-package
+	$(MAKE) test-gremlin-package
 	$(MAKE) test-lsp
 	$(MAKE) test-repl
 	$(MAKE) test-fuzz

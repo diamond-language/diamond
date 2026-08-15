@@ -158,9 +158,108 @@ read/write logic exists for sockets at all. Only connection
 `TCPSocket.connect`/`TCPServer.listen` are recognized in the compiler the
 same way `File.open`/`Fiber.new` are.
 
+## Non-blocking sockets: `TCPServer.listen_nonblocking`, `Socket`, `IO.poll`
+
+```ruby
+listener = TCPServer.listen_nonblocking(8080)
+conn = listener.accept()   # nil immediately if nothing's pending -- never blocks
+if conn != nil
+  begin
+    data = conn.read(4096)   # nil at EOF, or the bytes actually available right now
+  rescue error: WouldBlockError
+    # nothing to read yet -- not an error, just not ready
+  end
+  conn.write("hi")           # returns the byte count actually written (may be partial)
+  conn.close()
+end
+
+ready = IO.poll([listener], [], -1)   # -1 blocks until something's ready, 0 polls once
+ready["readable"][0]   # true/false, one entry per readables input, same order
+```
+
+Exists specifically to make genuine fiber-driven concurrency possible
+(see `packages/gremlin`, `docs/fibers.md`) — a blocking `.accept()`/
+`.read()`/`.write()` on the ordinary `TCPServer`/`TCPSocket`/`File`
+primitives above blocks the *entire process*, not just one logical
+connection, so a `Fiber`-per-connection design gets no real concurrency
+out of them no matter how many fibers exist. These are the primitives
+that let a fiber's own I/O yield back to a scheduler instead:
+
+- **`TCPServer.listen_nonblocking(port)`** — identical to
+  `TCPServer.listen(port)` (same `getaddrinfo`/`socket`/`bind`/`listen`
+  dance, factored into one shared `tcp_listen_helper` in `src/vm.c`) but
+  the resulting fd is also set `O_NONBLOCK` via `fcntl`, and the
+  `DiamondListenerHandle` returned is flagged accordingly. `.accept()` on
+  such a listener returns `nil` instead of blocking when nothing is
+  pending (an ordinary `TCPServer.listen` listener's `.accept()` is
+  unaffected either way — still blocks, same as always).
+- **`Socket`** — a new object kind (`DIAMOND_OBJECT_SOCKET`,
+  `DiamondSocketHandle`), returned only by `.accept()` on a
+  `TCPServer.listen_nonblocking` listener. Deliberately *not* the
+  buffered `FILE*` `File`/blocking-socket path reuses — libc stdio
+  buffering and `EAGAIN` don't mix cleanly, since a short buffered read
+  can silently swallow the "nothing available yet" signal a poll-driven
+  caller needs to see on every call, not just the first. `.read(n)`/
+  `.write(value)` are raw `read(2)`/`write(2)` against the fd directly:
+  `.read(n)` returns a `String` of however many bytes were actually
+  available (up to `n`), `nil` at true EOF (the peer closed), or raises
+  `WouldBlockError` (a new `StandardError` subclass) when nothing's
+  ready right now — a real, meaningful distinction `File#read` never
+  needed, since a blocking read can't tell "not yet" from "never." Also
+  accepted on Linux fd never inherits `O_NONBLOCK` from the listener it
+  came from, so `.accept()` sets it explicitly on each accepted fd too.
+  `.write(value)` returns the actual byte count written rather than
+  either succeeding fully or raising — a partial write is a normal,
+  expected outcome on a non-blocking socket whose send buffer filled up
+  mid-write, and the caller (`packages/gremlin`'s
+  `NonblockingConnection#write`) is expected to retry the remainder.
+- **`IO.poll(readables, writables, timeout_ms)`** — a `poll(2)` wrapper
+  accepting two Arrays (of `TCPServer.listen_nonblocking`
+  listeners/`Socket`s — an ordinary blocking listener/File is rejected,
+  since polling a blocking-mode fd is meaningless: nothing in this VM
+  ever puts one in non-blocking mode, so it would always appear either
+  always-ready or never-ready depending on kernel buffering, never the
+  genuine signal a caller needs) and a millisecond timeout (`-1` blocks
+  indefinitely, `0` returns immediately). Returns a `Hash`:
+  `{"readable": [...], "writable": [...]}`, each an Array of `Bool`s the
+  same length and order as the corresponding input — `readable[i]`
+  answers "is `readables[i]` ready," not "which are ready" — deliberately
+  avoiding a design needing `Array#include?`/object-identity comparison
+  on the Diamond side, neither of which exists. The same fd can appear in
+  both lists (or twice within one, from two different Diamond objects
+  wrapping the same underlying connection) — internally deduplicated by
+  fd and OR'd together into one `pollfd` entry, since `poll(2)` itself
+  keys purely by fd. `POLLHUP`/`POLLERR`/`POLLNVAL` count toward *both*
+  readiness directions: a peer that closed its connection is exactly the
+  condition a caller's next `.read()`/`.write()` needs to be woken up to
+  observe, not a state that would otherwise never produce a `POLLIN`/
+  `POLLOUT` again.
+
+Building this Hash result safely took real care: every `allocate_*` call
+in `src/vm.c` can trigger a GC collection, and this VM's collector only
+marks reachable values from *rooted* locations (registers, the exception
+slot, fiber frame chains) — a freshly allocated object sitting in a
+plain C local between two further `allocate_*` calls is invisible to it.
+An earlier version of `DIAMOND_OP_IO_POLL`'s result-construction code
+allocated all four pieces (two result Arrays, two `String` keys) before
+ever touching `registers[dest]`, and a real heap-use-after-free in
+`hash_set`/`hash_find` — caught by `make test-sanitize` under
+`DIAMOND_STRESS_GC=1`, not by inspection — was the result. The fix: root
+the `Hash` in `registers[dest]` immediately after allocating it, then for
+each entry, root its key first with a `DIAMOND_NIL` placeholder value
+(nil needs no protection, so this step is always safe) before allocating
+the real value and overwriting the placeholder — `hash_set` already
+updates an existing key's value in place. Nothing is ever more than one
+allocation away from reachability through `registers[dest]`.
+
+`TCPServer.listen_nonblocking`/`IO.poll` are recognized in the compiler
+the same way `TCPServer.listen`/`TCPSocket.connect` are (`IO.poll`
+mirroring `TCPSocket.connect`'s 3-argument shape, since neither is a
+class with real dispatch — see above).
+
 ## What's deliberately out of scope so far
 
-- **Non-blocking I/O, UDP, and TLS**: sockets are blocking TCP only.
+- **UDP and TLS**: sockets are TCP only, and plain-text TCP at that.
 - **Multiple `print`/`puts` arguments**: `puts(a, b)` (Ruby-style, one
   line per argument) is not supported — exactly one argument, matching
   the narrowest useful slice.
