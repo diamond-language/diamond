@@ -141,6 +141,12 @@ future work.
 - Fixed newline-handling gaps in every bracket-delimited list (array/hash
   literals, call-argument lists, generic type lists, `interface Base <`
   lists) that previously failed to parse across a line break.
+- Fixed a general binary-expression newline gap: any expression split across
+  lines right after a binary operator (`x = 1 +\n  2`, `if a &&\n  b`,
+  comparisons, `is`, ...) previously failed to parse — newline-skipping had
+  only ever existed at bracket-list boundaries, never inside `parse_precedence`
+  itself. A newline appearing *before* an operator still correctly starts a
+  new statement.
 - Fixed `x = if ... end` (an `if`-expression as an assignment's right-hand
   side on the `=` line) being misread as a misplaced postfix modifier.
 - Compile-time multi-file `require`: CRLF-safe scanning, nested-import source
@@ -359,14 +365,6 @@ future work.
 - Parallel execution.
 
 ## Confirmed still open
-
-- **No multi-line `&&`/`||` boolean expressions.** A boolean expression
-  split across lines at a trailing `&&`/`||` fails to parse
-  (`expected expression`); newline-skipping only exists at bracket-list
-  boundaries, never inside a general binary-operator expression. Matters
-  because it silently limits how readable conditionals can be formatted, and
-  it isn't documented anywhere as an intentional restriction. Look at
-  `parse_precedence`/`token_precedence` in `src/compiler.c`.
 
 - **`Instance` results can't cross a `ProgramBuilder#run` boundary.**
   `copy_value_into_vm` in `src/vm.c` has no case for

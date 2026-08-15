@@ -2815,6 +2815,17 @@ static uint8_t parse_precedence(Compiler *compiler, Precedence precedence) {
         const DiamondTokenKind operator = compiler->current.kind;
         const Precedence operator_precedence = token_precedence(operator);
         advance_token(compiler);
+        /* A newline right after a binary operator can only mean "the
+         * right operand continues on the next line" -- the while
+         * condition above already confirmed `operator` is a genuine
+         * infix operator at or above the caller's minimum precedence,
+         * and no such operator can legally end a statement, so there's
+         * no ambiguity to preserve by leaving this newline for the
+         * statement-separator logic elsewhere to see. Fixes `x = 1 +\n
+         * 2` and `if a &&\n b` (previously "expected expression"):
+         * newline-skipping had only ever existed at bracket-delimited
+         * list boundaries, never inside a general binary expression. */
+        skip_newlines(compiler);
         if(operator==DIAMOND_TOKEN_IS) {
             if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER) {
                 fail(compiler,compiler->current.span,"expected type after 'is'");
