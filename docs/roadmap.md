@@ -289,8 +289,7 @@ future work.
   256 → 512) to give the self-hosted bootstrap compile headroom.
 - Widened `ProgramBuilder#run` to return `String`/`Symbol`/`Bignum`/`Array`/
   `Hash` results (deep-copied across the isolated builder VM boundary), not
-  just scalars; `Instance` results remain unsupported (see "Confirmed still
-  open").
+  just scalars.
 - Running real, previously-unrunnable self-hosted-compiled programs for the
   first time surfaced and fixed a handful of genuine native-compiler bugs
   (a defaulted-parameter register-allocation bug and an over-permissive
@@ -309,6 +308,27 @@ future work.
   were allowed to filter `rescue`, which the differential test suite had
   never actually re-verified since (masked by the opcode bug above
   aborting the run before reaching it).
+- `Instance` results can now cross a `ProgramBuilder#run` boundary. The
+  real blocker turned out deeper than a missing `copy_value_into_vm` case:
+  a `DiamondMethod.function_index`/superclass index is only meaningful
+  against *its own* program's tables, and every dispatch site resolves
+  those against whichever chunk is running the call, not anything
+  per-instance — so a naive copy would call through the wrong function
+  table entirely. Fixed by giving `DiamondInstance` an `owner` field
+  (nullptr for an ordinary instance, meaning "resolve against whatever
+  chunk is ambient," true everywhere already); `copy_value_into_vm`
+  now handles `DIAMOND_OBJECT_INSTANCE` by adopting the *whole* source
+  program into the receiving `DiamondVm` (`DiamondVm.adopted_programs`,
+  kept alive for the rest of that vm's lifetime, lazily and only once per
+  result that actually contains an instance) rather than trying to copy
+  or relink the class and its methods' bytecode — and pointing the copied
+  instance's `owner` at the adopted program's own stable chunk. Dispatch
+  sites (`INVOKE`/operator overloads/`to_s`) read a receiver's `owner`
+  instead of trusting the ambient chunk to make this work. Deliberately
+  doesn't attempt `is_a?`/`case`/duck-typing checks against a *local*
+  class for a crossed-over instance (memory-safe but not meaningful, since
+  the foreign class is a genuinely distinct type from anything locally
+  defined) — only calling the instance's own methods was in scope.
 
 ### Language server (LSP)
 
@@ -409,16 +429,9 @@ future work.
 
 ## Confirmed still open
 
-- **`Instance` results can't cross a `ProgramBuilder#run` boundary.**
-  `copy_value_into_vm` in `src/vm.c` has no case for
-  `DIAMOND_OBJECT_INSTANCE` and falls through to `default: return false`, so
-  a self-hosted-compiled program that returns an instance as its top-level
-  result can't be run via `ProgramBuilder#run`. Matters because it's the one
-  remaining, self-identified gap in the self-hosting bootstrap path (an
-  instance's `->class` pointer aims into the builder's own, separately
-  freed program, so a real fix needs either copying the referenced class
-  definition or keeping the source program alive). Look at
-  `copy_value_into_vm` in `src/vm.c`.
+Nothing currently open — the last entry here (`Instance` results crossing
+a `ProgramBuilder#run` boundary) was fixed; see "Self-hosting
+(Diamond-in-Diamond)" above.
 
 ## Inconclusive
 

@@ -77,6 +77,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk, DiamondVm *vm,
 static bool hash_set(DiamondVm *vm,DiamondHash *hash,DiamondValue key,
                      DiamondValue value);
 static bool array_push(DiamondVm *vm,DiamondArray *array,DiamondValue value);
+static void free_adopted_programs(void *list);
 
 static void mark_object(DiamondObject *object) {
     if (object == nullptr || object->marked) return;
@@ -308,6 +309,7 @@ void diamond_vm_free(DiamondVm *vm) {
         free(object);
         object = next;
     }
+    free_adopted_programs(vm->adopted_programs);
     *vm = (DiamondVm){};
 }
 
@@ -632,12 +634,13 @@ static DiamondSymbol *allocate_symbol(DiamondVm *vm, const char *chars,
     return symbol;
 }
 
-static DiamondInstance *allocate_instance(DiamondVm *vm,const DiamondClass *class) {
+static DiamondInstance *allocate_instance(DiamondVm *vm,const DiamondClass *class,
+                                          const DiamondChunk *chunk) {
     if(vm->stress_gc||vm->bytes_allocated>=vm->next_gc) diamond_vm_collect(vm);
     const size_t size=sizeof(DiamondInstance)+class->field_count*sizeof(DiamondValue);
     DiamondInstance *instance=malloc(size); if(instance==nullptr)return nullptr;
     instance->object=(DiamondObject){.next=vm->objects,.kind=DIAMOND_OBJECT_INSTANCE};
-    instance->class=class; instance->shape=&class->shapes[0];
+    instance->class=class; instance->shape=&class->shapes[0]; instance->owner=chunk;
     instance->field_count=class->field_count;
     for(size_t i=0;i<instance->field_count;i++) instance->fields[i]=DIAMOND_NIL;
     vm->objects=&instance->object; vm->bytes_allocated+=size; return instance;
@@ -1111,6 +1114,46 @@ static DiamondRegexp *allocate_regexp_handle(DiamondVm *vm,reginold_regex *compi
     vm->objects=&regexp->object;vm->bytes_allocated+=sizeof(DiamondRegexp);return regexp;
 }
 
+/* Private backing type for DiamondVm.adopted_programs (see its own
+ * comment, src/vm.h) -- a program a ProgramBuilder-returned Instance
+ * still needs, kept alive for the rest of this vm's lifetime instead of
+ * being freed with the temporary run_vm that built it. `chunk` is
+ * computed once at adoption time and never moves again (the node itself
+ * is heap-allocated and never relocated), so it's safe for any number of
+ * DiamondInstance.owner fields to keep pointing at &node->chunk
+ * indefinitely. */
+typedef struct DiamondAdoptedProgram {
+    DiamondProgram *program;
+    DiamondChunk chunk;
+    struct DiamondAdoptedProgram *next;
+} DiamondAdoptedProgram;
+
+/* Transfers ownership of `program` (previously a ProgramBuilder's own
+ * `program`, about to otherwise be freed alongside it) to `vm`, and
+ * returns a pointer to the persistent DiamondChunk view a copied
+ * instance's `owner` field can safely reference forever. Returns nullptr
+ * (leaving `program` unadopted, caller still responsible for it) only on
+ * allocation failure. */
+static const DiamondChunk *adopt_program(DiamondVm *vm,DiamondProgram *program) {
+    DiamondAdoptedProgram *node=malloc(sizeof *node);
+    if(node==nullptr)return nullptr;
+    node->program=program;
+    node->chunk=diamond_program_chunk(program);
+    node->next=(DiamondAdoptedProgram *)vm->adopted_programs;
+    vm->adopted_programs=node;
+    return &node->chunk;
+}
+
+static void free_adopted_programs(void *list) {
+    DiamondAdoptedProgram *node=(DiamondAdoptedProgram *)list;
+    while(node!=nullptr) {
+        DiamondAdoptedProgram *next=node->next;
+        free(node->program);
+        free(node);
+        node=next;
+    }
+}
+
 /* Unlike every other allocate_* helper here, the payload
  * (sizeof(DiamondProgram), tens of MB -- see docs/roadmap.md) dwarfs the
  * handle itself, so bytes_allocated counts it too (mirroring
@@ -1483,19 +1526,37 @@ static DiamondVmStatus tr_expand_spec(const DiamondString *spec,
  * dest_vm's own heap, so the result stays valid once the source VM is
  * gone. Object kinds that wrap live VM/OS state rather than plain data
  * (Closure, Fiber, File, Listener, Regexp, ProgramBuilder) aren't safe to
- * hand across this boundary at all; Instance is excluded for a subtler
- * reason -- its ->class pointer aims into the *source* DiamondProgram's
- * own classes[] array, which has no guaranteed lifetime relative to the
- * copy once dest_vm's caller lets go of the ProgramBuilder that owns it,
- * so copying the DiamondValue wouldn't make the reference itself safe.
- * All of those return false; the caller reports a TypeError. Composite
- * kinds (Array, Hash, ...) recurse into this same function per element,
- * and deliberately drop the source's own generic constraint metadata --
- * `constraints[]` holds pointers into the *source* type-set/class tables
- * with the same lifetime problem as Instance's ->class above, so a copy
- * comes back a plain, unconstrained collection rather than trying to
- * carry that metadata across intact. */
+ * hand across this boundary at all -- those return false and the caller
+ * reports a TypeError. Composite kinds (Array, Hash, ...) recurse into
+ * this same function per element, and deliberately drop the source's own
+ * generic constraint metadata -- `constraints[]` holds pointers into the
+ * *source* type-set/class tables, whose lifetime isn't tracked across
+ * this boundary, so a copy comes back a plain, unconstrained collection
+ * rather than trying to carry that metadata across intact.
+ *
+ * Instance is the one kind that isn't a plain value copy: its ->class
+ * points into `source_program`'s own classes[] (superclass chain and
+ * method function_index are indices into that *same* program, not
+ * portable numbers), so the class itself can't simply be copied without
+ * also copying every function/class it can reach -- effectively
+ * relinking a whole program. Instead, on the first Instance actually
+ * encountered during this copy, `source_program` is adopted into dest_vm
+ * (see DiamondVm.adopted_programs, src/vm.h) so it survives for the rest
+ * of dest_vm's lifetime, and every copied instance's `owner` field
+ * (DiamondInstance, src/object.h) points at the adopted program's own
+ * chunk -- dispatch sites read a receiver's own `owner` instead of
+ * trusting the ambient chunk specifically so this works (see
+ * invoke_operator_method/stringify_value/DIAMOND_OP_INVOKE above).
+ * `*adopted_owner` caches that adoption across the whole recursive copy
+ * (and across sibling instances in the same Array/Hash) so a single
+ * result containing several instances only adopts `source_program` once,
+ * not once per instance. Left nullptr (no adoption) for a result that
+ * turns out not to contain any Instance at all -- adopting unconditionally
+ * would leak sizeof(DiamondProgram) (tens of MB, see docs/roadmap.md) on
+ * every ProgramBuilder#run call regardless of what it actually returned. */
 static bool copy_value_into_vm(DiamondVm *dest_vm, DiamondValue value,
+                               DiamondProgram *source_program,
+                               const DiamondChunk **adopted_owner,
                                DiamondValue *out) {
     if(value.kind!=DIAMOND_VALUE_OBJECT) {*out=value;return true;}
     switch(value.as.object->kind) {
@@ -1519,6 +1580,7 @@ static bool copy_value_into_vm(DiamondVm *dest_vm, DiamondValue value,
                 if(elements==nullptr)return false;
                 for(size_t index=0;index<source->count;index++) {
                     if(!copy_value_into_vm(dest_vm,source->values[index],
+                                           source_program,adopted_owner,
                                            &elements[index])) {
                         free(elements);return false;
                     }
@@ -1535,11 +1597,30 @@ static bool copy_value_into_vm(DiamondVm *dest_vm, DiamondValue value,
             if(copy==nullptr)return false;
             for(size_t index=0;index<source->count;index++) {
                 DiamondValue key=DIAMOND_NIL,copied_value=DIAMOND_NIL;
-                if(!copy_value_into_vm(dest_vm,source->entries[index].key,&key)||
+                if(!copy_value_into_vm(dest_vm,source->entries[index].key,
+                                       source_program,adopted_owner,&key)||
                    !copy_value_into_vm(dest_vm,source->entries[index].value,
+                                       source_program,adopted_owner,
                                        &copied_value))
                     return false;
                 if(!hash_set(dest_vm,copy,key,copied_value))return false;
+            }
+            *out=DIAMOND_OBJECT(copy);return true;
+        }
+        case DIAMOND_OBJECT_INSTANCE: {
+            const DiamondInstance *source=(const DiamondInstance *)value.as.object;
+            if(*adopted_owner==nullptr) {
+                *adopted_owner=adopt_program(dest_vm,source_program);
+                if(*adopted_owner==nullptr)return false;
+            }
+            DiamondInstance *copy=
+                allocate_instance(dest_vm,source->class,*adopted_owner);
+            if(copy==nullptr)return false;
+            for(size_t index=0;index<source->field_count;index++) {
+                if(!copy_value_into_vm(dest_vm,source->fields[index],
+                                       source_program,adopted_owner,
+                                       &copy->fields[index]))
+                    return false;
             }
             *out=DIAMOND_OBJECT(copy);return true;
         }
@@ -1580,9 +1661,16 @@ static bool copy_value_into_vm(DiamondVm *dest_vm, DiamondValue value,
  * own vm via copy_value_into_vm before run_vm is freed; kinds that
  * function can't safely copy (see its own comment) still report
  * DIAMOND_VM_TYPE_ERROR, a narrower version of this helper's original
- * scalar-only restriction. */
+ * scalar-only restriction. Takes `builder` itself (not just its
+ * ->program) so that if the result actually contains an Instance,
+ * ownership of `built` can be transferred into vm's adopted_programs
+ * list (copy_value_into_vm's own adopt_program call) -- builder->program
+ * is set to nullptr in that case so DIAMOND_OBJECT_PROGRAM_BUILDER's own
+ * GC destructor (see diamond_vm_free) no longer frees it out from under
+ * the copied instance still using it. */
 static DiamondVmStatus program_builder_run_helper(DiamondVm *vm,
-        DiamondProgram *built, DiamondValue *result) {
+        DiamondProgramBuilder *builder, DiamondValue *result) {
+    DiamondProgram *built=builder->program;
     const DiamondChunk built_chunk=diamond_program_chunk(built);
     DiamondVm run_vm;diamond_vm_init(&run_vm);
     DiamondValue run_result=DIAMOND_NIL;
@@ -1594,12 +1682,14 @@ static DiamondVmStatus program_builder_run_helper(DiamondVm *vm,
         return DIAMOND_VM_PROGRAM_ERROR;
     }
     DiamondValue copied_result=DIAMOND_NIL;
-    if(!copy_value_into_vm(vm,run_result,&copied_result)) {
+    const DiamondChunk *adopted_owner=nullptr;
+    if(!copy_value_into_vm(vm,run_result,built,&adopted_owner,&copied_result)) {
         diamond_vm_free(&run_vm);
         snprintf(vm->error,sizeof vm->error,"ProgramBuilder#%s",
             "run does not support this result type");
         return DIAMOND_VM_TYPE_ERROR;
     }
+    if(adopted_owner!=nullptr)builder->program=nullptr;
     diamond_vm_free(&run_vm);
     *result=copied_result;
     return DIAMOND_VM_OK;
@@ -3021,7 +3111,7 @@ static DiamondVmStatus program_builder_invoke_helper(DiamondVm *vm,
         snprintf(vm->error,sizeof vm->error,"ProgramBuilder#run nested too deeply");
         return DIAMOND_VM_STACK_OVERFLOW;
     }
-    return program_builder_run_helper(vm,built,result);
+    return program_builder_run_helper(vm,builder,result);
 }
 
 static bool value_is_bignum(DiamondValue value) {
@@ -3319,11 +3409,13 @@ static const DiamondMethod *lookup_method_cached(
  * method->is_private: `a + b` is operator syntax, not an explicit-receiver
  * method call the way `a.plus(b)` would be -- matches how the to_s
  * dispatch in stringify_value below also ignores privacy. */
-static DiamondVmStatus invoke_operator_method(DiamondVm *vm, const DiamondChunk *chunk,
+static DiamondVmStatus invoke_operator_method(DiamondVm *vm,
+        const DiamondChunk *chunk,
         size_t depth, const uint8_t *site, const DiamondInstance *receiver,
         const char *name, size_t name_length, const DiamondValue *argument,
         DiamondValue *result, bool *found) {
-    const DiamondMethod *method=lookup_method_cached(vm,chunk,site,
+    const DiamondChunk *owner=receiver->owner!=nullptr?receiver->owner:chunk;
+    const DiamondMethod *method=lookup_method_cached(vm,owner,site,
         receiver->class,name,name_length);
     if(method==nullptr) {*found=false;return DIAMOND_VM_OK;}
     *found=true;
@@ -3339,15 +3431,15 @@ static DiamondVmStatus invoke_operator_method(DiamondVm *vm, const DiamondChunk 
     const size_t argument_count=argument==nullptr?1:2;
     DiamondValue args[2]={DIAMOND_OBJECT((DiamondObject *)receiver)};
     if(argument!=nullptr)args[1]=*argument;
-    const DiamondFunction *fn=&chunk->functions[method->function_index];
+    const DiamondFunction *fn=&owner->functions[method->function_index];
     const DiamondChunk child={.name=fn->name,.code=fn->code,
       .lines=fn->lines,.columns=fn->columns,.code_count=fn->code_count,
       .constants=fn->constants,.constant_count=fn->constant_count,
       .strings=fn->strings,.string_count=fn->string_count,
       .type_sets=fn->type_sets,.type_set_count=fn->type_set_count,
-      .functions=chunk->functions,.function_count=chunk->function_count,
-      .classes=chunk->classes,.class_count=chunk->class_count,
-      .interfaces=chunk->interfaces,.interface_count=chunk->interface_count,
+      .functions=owner->functions,.function_count=owner->function_count,
+      .classes=owner->classes,.class_count=owner->class_count,
+      .interfaces=owner->interfaces,.interface_count=owner->interface_count,
       .parameter_type_sets=fn->parameter_type_sets,
       .type_variable_count=fn->type_variable_count,
       .parameter_offset=fn->owner_class==UINT8_MAX?0:1,
@@ -4086,7 +4178,7 @@ static bool catch_runtime_error(DiamondVm *vm,const DiamondChunk *chunk,
     char message[sizeof vm->error];
     (void)snprintf(message,sizeof message,"%s",vm->error[0]!='\0'?vm->error:
                    diamond_vm_status_name(status));
-    DiamondInstance *exception=allocate_instance(vm,&chunk->classes[class_index]);
+    DiamondInstance *exception=allocate_instance(vm,&chunk->classes[class_index],nullptr);
     if(exception==nullptr)return false;
     vm->exception=DIAMOND_OBJECT(exception);vm->has_exception=true;
     DiamondString *text=allocate_string(vm,message,strlen(message));
@@ -4477,19 +4569,20 @@ static DiamondVmStatus stringify_value(DiamondVm *vm,const DiamondChunk *chunk,
     if(value.kind==DIAMOND_VALUE_OBJECT&&
        value.as.object->kind==DIAMOND_OBJECT_INSTANCE) {
         const DiamondInstance *instance=(const DiamondInstance *)value.as.object;
-        const DiamondMethod *method=lookup_method(chunk,instance->class,
+        const DiamondChunk *owner=instance->owner!=nullptr?instance->owner:chunk;
+        const DiamondMethod *method=lookup_method(owner,instance->class,
             "to_s",sizeof("to_s")-1);
         if(method!=nullptr) {
             if(method->required_arity>0)return DIAMOND_VM_ARITY_ERROR;
-            const DiamondFunction *fn=&chunk->functions[method->function_index];
+            const DiamondFunction *fn=&owner->functions[method->function_index];
             const DiamondChunk child={.name=fn->name,.code=fn->code,
               .lines=fn->lines,.columns=fn->columns,.code_count=fn->code_count,
               .constants=fn->constants,.constant_count=fn->constant_count,
               .strings=fn->strings,.string_count=fn->string_count,
               .type_sets=fn->type_sets,.type_set_count=fn->type_set_count,
-              .functions=chunk->functions,.function_count=chunk->function_count,
-              .classes=chunk->classes,.class_count=chunk->class_count,
-              .interfaces=chunk->interfaces,.interface_count=chunk->interface_count,
+              .functions=owner->functions,.function_count=owner->function_count,
+              .classes=owner->classes,.class_count=owner->class_count,
+              .interfaces=owner->interfaces,.interface_count=owner->interface_count,
               .parameter_type_sets=fn->parameter_type_sets,
               .type_variable_count=fn->type_variable_count,
               .parameter_offset=fn->owner_class==UINT8_MAX?0:1,
@@ -5806,7 +5899,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 if(argc>16) VM_RETURN(DIAMOND_VM_ARITY_ERROR);
                 if((size_t)ci>=chunk->class_count) VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
                 const DiamondClass *class=&chunk->classes[ci];
-                DiamondInstance *instance=allocate_instance(vm,class);
+                DiamondInstance *instance=allocate_instance(vm,class,nullptr);
                 if(instance==nullptr) VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
                 registers[dest]=DIAMOND_OBJECT(instance);
                 const DiamondMethod *init=lookup_method(
@@ -7300,14 +7393,15 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 if(receiver_kind!=DIAMOND_OBJECT_INSTANCE)
                     VM_RETURN(DIAMOND_VM_TYPE_ERROR);
                 DiamondInstance *instance=(DiamondInstance *)registers[recv].as.object;
+                const DiamondChunk *owner=instance->owner!=nullptr?instance->owner:chunk;
                 bool exception_instance=false;
                 const DiamondClass *ancestor=instance->class;
                 while(ancestor!=nullptr) {
-                    if(ancestor==&chunk->classes[DIAMOND_CLASS_EXCEPTION]) {
+                    if(ancestor==&owner->classes[DIAMOND_CLASS_EXCEPTION]) {
                         exception_instance=true;break;
                     }
                     ancestor=ancestor->superclass==UINT8_MAX?nullptr:
-                        &chunk->classes[ancestor->superclass];
+                        &owner->classes[ancestor->superclass];
                 }
                 if(exception_instance&&method_name->length==7&&
                    memcmp(method_name->chars,"message",7)==0) {
@@ -7337,7 +7431,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                         uint8_t *code=(uint8_t *)(void *)chunk->code;
                         code[instruction_offset]=(uint8_t)DIAMOND_OP_INVOKE;
                     }
-                    method=lookup_method_cached(vm,chunk,site,instance->class,
+                    method=lookup_method_cached(vm,owner,site,instance->class,
                         method_name->chars,method_name->length);
                     if ((DiamondOpCode)instruction==DIAMOND_OP_INVOKE &&
                         cache->entry_count==1 &&
@@ -7359,7 +7453,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     VM_RETURN(DIAMOND_VM_ARITY_ERROR);
                 DiamondValue args[17];args[0]=registers[recv];
                 for(size_t i=0;i<argc;i++)args[i+1]=registers[(size_t)base+i];
-                const DiamondFunction *fn=&chunk->functions[method->function_index];
+                const DiamondFunction *fn=&owner->functions[method->function_index];
                 if((DiamondOpCode)instruction==DIAMOND_OP_INVOKE_TYPED&&
                    type_argument_count!=fn->type_variable_count)
                     VM_RETURN(DIAMOND_VM_TYPE_ERROR);
@@ -7376,9 +7470,9 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                   .constants=fn->constants,.constant_count=fn->constant_count,
                   .strings=fn->strings,.string_count=fn->string_count,
                   .type_sets=fn->type_sets,.type_set_count=fn->type_set_count,
-                  .functions=chunk->functions,.function_count=chunk->function_count,
-                  .classes=chunk->classes,.class_count=chunk->class_count,
-                  .interfaces=chunk->interfaces,.interface_count=chunk->interface_count,
+                  .functions=owner->functions,.function_count=owner->function_count,
+                  .classes=owner->classes,.class_count=owner->class_count,
+                  .interfaces=owner->interfaces,.interface_count=owner->interface_count,
                   .parameter_type_sets=fn->parameter_type_sets,
                   .type_variable_count=fn->type_variable_count,
                   .parameter_offset=fn->owner_class==UINT8_MAX?0:1,

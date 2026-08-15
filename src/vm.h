@@ -517,6 +517,21 @@ struct DiamondVm {
      * arrives" fits any existing local variable's lifetime) would be
      * collected the moment nothing else referenced it. */
     DiamondValue trapped_signal_handlers[DIAMOND_SIGNAL_COUNT];
+    /* Singly linked list of DiamondAdoptedProgram nodes (private type,
+     * src/vm.c), same opaque-pointer-in-the-public-header pattern as
+     * `frames` above. Populated only when an Instance result crosses a
+     * ProgramBuilder#run boundary into this vm (copy_value_into_vm):
+     * rather than deep-copying the source DiamondProgram's classes and
+     * their bytecode (which would need every function/class index
+     * embedded in that bytecode remapped), the whole source program is
+     * kept alive here instead, and the copied instance's own `owner`
+     * field (DiamondInstance, src/object.h) points at the adopted
+     * program's chunk. Freed alongside every adopted program in
+     * diamond_vm_free -- never reclaimed earlier, since a value holding
+     * a reference into an adopted program can outlive the call that
+     * created it by an arbitrary amount, and nothing here reference-
+     * counts across the two heaps to know when the last one is gone. */
+    void *adopted_programs;
 };
 
 void diamond_vm_init(DiamondVm *vm);

@@ -82,6 +82,7 @@ typedef struct DiamondClass DiamondClass;
 typedef struct DiamondShape DiamondShape;
 typedef struct DiamondTypeSet DiamondTypeSet;
 typedef struct DiamondInterface DiamondInterface;
+typedef struct DiamondChunk DiamondChunk;
 
 enum { DIAMOND_BOUND_TYPE_NODES=16,DIAMOND_BOUND_TYPE_MEMBERS=8 };
 typedef struct DiamondBoundTypeMember {
@@ -102,6 +103,22 @@ typedef struct DiamondInstance {
     DiamondObject object;
     const DiamondClass *class;
     const DiamondShape *shape;
+    /* nullptr (the ordinary case) means `class` (and its own superclass
+     * chain / method function indices) resolve against whatever chunk is
+     * ambient at each dispatch site, same as before this field existed --
+     * safe because every DiamondChunk anywhere in a single program's own
+     * call tree, however transient the *struct* wrapping them is (many
+     * are stack-local to one run_chunk call), always carries the same
+     * underlying functions/classes table pointers. Only ever non-null for
+     * an instance that crossed a ProgramBuilder#run boundary
+     * (copy_value_into_vm, src/vm.c): its class lives in a separately
+     * adopted foreign DiamondProgram, so dispatch needs a *stable*
+     * pointer to that program's own chunk (DiamondVm.adopted_programs,
+     * src/vm.h) instead of the ambient one, which by then belongs to a
+     * different program entirely. Every dispatch site that reads this
+     * must fall back to its own ambient chunk when it's nullptr -- never
+     * assume non-null. */
+    const DiamondChunk *owner;
     size_t field_count;
     DiamondValue fields[];
 } DiamondInstance;
