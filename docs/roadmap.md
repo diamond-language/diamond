@@ -269,6 +269,17 @@ future work.
   capture bug noted under "Modules, metaprogramming, and dispatch").
 - Lifted the self-hosted parser's own one-level nested-closure-depth
   restriction; it was stale, not load-bearing.
+- Fixed a real desync bug: `selfhost/parser.di`'s own `Opcode` module
+  hand-mirrors `src/vm.h`'s opcode enum with literal numbers, and every
+  entry from `REGEXP_NEW` onward had silently drifted 7 values stale after
+  UDP/Signal/TLS opcodes were inserted earlier in the native enum without a
+  matching update here — miscompiling, among other things, every
+  self-hosted-compiled program's own `ProgramBuilder.new()` calls into the
+  wrong opcode. Also removed a stale parser-error-case fixture
+  (`rescue_generic_type`) left over from before generic type variables
+  were allowed to filter `rescue`, which the differential test suite had
+  never actually re-verified since (masked by the opcode bug above
+  aborting the run before reaching it).
 
 ### Language server (LSP)
 

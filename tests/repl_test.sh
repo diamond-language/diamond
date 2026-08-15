@@ -103,10 +103,28 @@ response="$(read_until_prompt)"
 [[ "$response" == $'42\n>>> ' ]]
 count=$((count + 1))
 
-# --- a genuine syntax error is reported and doesn't hang waiting for
-# more input; the session recovers cleanly afterward ---
+# --- a trailing binary operator prompts for more input rather than
+# erroring, and completing it on a later line evaluates the whole
+# expression -- the compiler itself accepts a binary expression split
+# across a line break (see docs/roadmap.md), and the REPL's own
+# incomplete-vs-error heuristic (try_compile's *out_incomplete) correctly
+# recognizes this as "needs more input", not a genuine error ---
 
 printf '1 +\n' >&"${REPL[1]}"
+response="$(read_until_prompt)"
+[[ "$response" == "... " ]]
+count=$((count + 1))
+
+printf '2\n' >&"${REPL[1]}"
+response="$(read_until_prompt)"
+[[ "$response" == $'3\n>>> ' ]]
+count=$((count + 1))
+
+# --- a genuine syntax error (not just an expression that might continue
+# on the next line) is reported and doesn't hang waiting for more input;
+# the session recovers cleanly afterward ---
+
+printf '1 + )\n' >&"${REPL[1]}"
 response="$(read_until_prompt)"
 [[ "$response" == *"error:"* ]]
 count=$((count + 1))

@@ -98,14 +98,24 @@ module Opcode
   FILE_OPEN = 72
   TCP_CONNECT = 73
   TCP_LISTEN = 74
-  REGEXP_NEW = 75
-  CHR = 76
-  TO_FLOAT = 77
-  TO_INT = 78
-  TO_SYMBOL = 79
-  MATH_UNARY = 80
-  MATH_BINARY = 81
-  PROGRAM_BUILDER_NEW = 82
+  # 75-81 are UDP_BIND, UDP_OPEN, SIGNAL_TRAP, TLS_CONNECT, and TLS_LISTEN
+  # in src/vm.h's DiamondOpCode enum -- none of them are constructs this
+  # self-hosted parser emits (UDPSocket/Signal/TLSSocket/TLSServer aren't
+  # part of its supported grammar), so they have no entry of their own
+  # here, but every opcode number below had to shift by 7 to match once
+  # those 7 were inserted before REGEXP_NEW in the real enum. This is
+  # exactly the class of bug the "Widened function indices" self-hosting
+  # slice already flagged (docs/roadmap.md) -- any native opcode insertion
+  # ahead of an entry here silently desyncs it, and nothing catches that
+  # except actually running a program through the self-hosted path.
+  REGEXP_NEW = 82
+  CHR = 83
+  TO_FLOAT = 84
+  TO_INT = 85
+  TO_SYMBOL = 86
+  MATH_UNARY = 87
+  MATH_BINARY = 88
+  PROGRAM_BUILDER_NEW = 89
 end
 
 module Precedence
