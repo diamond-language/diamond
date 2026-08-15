@@ -33,6 +33,27 @@ a single `DIAMOND_OP_PRINT dest, source, newline` instruction; `newline`
 is a compile-time-constant byte (`0` for `print`, `1` for `puts`), not a
 runtime value.
 
+`puts` (`newline=1`) flushes stdout after writing; `print` (`newline=0`)
+does not. stdout is fully buffered, not line-buffered, once it isn't a
+terminal — redirected to a file, a pipe, whatever a test harness or
+`> log` capture uses — so without this, a `puts("ready")` written right
+before a program blocks in a native call (`.accept()`, `IO.poll`, a
+`UDPSocket#receive` loop) could sit in the buffer indefinitely: nothing
+forces a flush until the buffer fills or the process exits, and a
+process blocked waiting for someone to *see* its own "ready" line is
+exactly the case that never reaches either. Found this the hard way
+while building the signals test below (see its own section) — a
+"server prints ready, test harness polls the captured output for that
+line" pattern already used throughout `tests/run.sh` and the
+`packages/*` test scripts, which happened to keep working anyway
+wherever the thing being waited on (`bind`, mostly) completes fast
+enough that the *lack* of an early flush didn't matter, until it did.
+`print` stays fully buffered — matching ordinary line-buffered-on-a-
+terminal behavior unconditionally (rather than only when `isatty()`)
+only for the newline-terminated case, so building up a line
+incrementally via repeated `print` calls doesn't pay a flush cost per
+fragment.
+
 ## stdin: `gets()`
 
 ```ruby
@@ -330,6 +351,83 @@ next line.
 `UDPSocket.bind`/`UDPSocket.open` are recognized in the compiler the same
 way, one parser handling both forms (`bind` takes the 1-argument port,
 `open` takes none) and erroring on anything else.
+
+## Signals: `Signal.trap`
+
+```ruby
+def run()
+  def handler()
+    puts("shutting down")
+  end
+  Signal.trap("INT", handler)
+  # ... normal program, including blocking calls ...
+end
+run()
+```
+
+`Signal.trap(name, handler)` registers a `Callable[0]` to run when the
+named signal arrives — deliberately a small, fixed set of names rather
+than every signal POSIX knows about: `"INT"` (Ctrl+C), `"TERM"` (`kill`),
+`"HUP"` (terminal/controlling-process hangup). These three cover "someone
+asked this process to stop," the motivating use case (a server closing
+its listening socket and finishing in-flight work before exiting, rather
+than just dying mid-request). `SIGKILL`/`SIGSTOP` can't be caught at the
+OS level regardless; everything else (`SIGSEGV`, `SIGCHLD`, real-time
+signals, ...) is out of scope for this first slice. `name` must be a
+`String`, `handler` a `Callable` (a nested `def`, per the usual
+top-level-`def`-isn't-a-value rule), or a rescuable `TypeError`; an
+unrecognized name is also a `TypeError` rather than silently doing
+nothing.
+
+**Why a genuinely blocked native call needs separate handling from
+CPU-bound code.** The actual OS signal handler installed by `Signal.trap`
+only does what POSIX guarantees is async-signal-safe: set a
+`volatile sig_atomic_t` and return (`diamond_signal_handler`, `src/vm.c`)
+— resolving which Diamond closure to call and actually calling it happens
+later, synchronously. For CPU-bound Diamond code, "later" means the very
+next bytecode instruction: `run_chunk`'s own dispatch loop checks a
+single cheap flag once per instruction (almost always false, negligible
+steady-state cost) and, if set, invokes the pending handler(s) via the
+same nested-`run_chunk` mechanism `DIAMOND_OP_CALL_CLOSURE` itself uses.
+But a program genuinely blocked in a native call — `TCPServer#accept`,
+`IO.poll`, `UDPSocket#receive` — might not reach "the next instruction"
+for an arbitrarily long time (an idle server with nothing connecting,
+by design, waits forever). So `Signal.trap`'s own `sigaction` call
+deliberately omits `SA_RESTART`: the signal actually interrupts the
+blocking syscall (`EINTR`) instead of the kernel silently resuming it as
+if nothing happened, and each of those three call sites has its own
+small retry loop that dispatches any pending signal(s) — running the
+Diamond handler — before transparently retrying the syscall. From the
+caller's own perspective, `.accept()` still either blocks until a real
+connection or raises a real error; it's just no longer *unresponsive*
+while doing so. `TCPSocket.connect` and buffered `File`/stdin reads are
+not hardened this way — a real, documented scope cut for this first
+slice, not an oversight; a signal arriving while blocked in one of those
+won't be handled until the call completes on its own.
+
+A trapped handler that raises an uncaught exception propagates exactly
+like any other mid-dispatch failure (through the same `catch_exception`/
+`VM_RETURN` machinery every other opcode uses) — rescuable at whatever
+enclosing `rescue` was active when the interrupted instruction was about
+to run, same as an ordinary exception from that point in the program
+would be.
+
+One non-obvious testing gotcha, worth recording since it cost real time
+to track down: a non-interactive shell (`bash script.sh`, exactly what
+every `tests/run.sh`/`packages/*/test.sh` invocation is) sets `SIGINT`
+and `SIGQUIT` to be *ignored* for an asynchronous (backgrounded, `&`)
+command — well-known bash/POSIX behavior, meant to keep a background job
+alive when the terminal's own Ctrl+C targets the whole foreground
+process group. Since `SIG_IGN` survives `exec(2)`, a `diamond` process
+started as a plain `... &` from inside a script inherits `SIGINT`
+already ignored, and a `kill -INT` sent to it visibly does nothing —
+confirmed by identical code working every time run as a direct ad hoc
+command and reliably failing every time run from inside a script file,
+before the actual cause was traced to bash's own job-control behavior,
+not a bug in `Signal.trap` itself. The fix, now used in
+`tests/run.sh`'s own signal test: wrap the backgrounded command in a
+subshell that does `trap - INT` (reset to default) before `exec`-ing the
+real command, so the child never sees `SIG_IGN` in the first place.
 
 ## What's deliberately out of scope so far
 

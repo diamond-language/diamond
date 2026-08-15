@@ -1722,6 +1722,43 @@ static uint8_t parse_udp_socket_call(Compiler *compiler) {
     return dest;
 }
 
+static uint8_t parse_signal_trap_call(Compiler *compiler) {
+    advance_token(compiler); /* consume '.' */
+    if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER||
+       !name_equals(compiler,"trap",compiler->current.span,false)) {
+        fail(compiler,compiler->current.span,"expected 'trap' after 'Signal'");
+        return 0;
+    }
+    advance_token(compiler); /* consume 'trap' */
+    if(compiler->current.kind!=DIAMOND_TOKEN_LEFT_PAREN) {
+        fail(compiler,compiler->current.span,"expected '(' after 'Signal.trap'");
+        return 0;
+    }
+    advance_token(compiler);
+    skip_newlines(compiler);
+    const uint8_t name_register=parse_expression(compiler);
+    skip_newlines(compiler);
+    if(compiler->current.kind!=DIAMOND_TOKEN_COMMA) {
+        fail(compiler,compiler->current.span,"expected ',' after Signal.trap name");
+        return 0;
+    }
+    advance_token(compiler);
+    skip_newlines(compiler);
+    const uint8_t handler_register=parse_expression(compiler);
+    skip_newlines(compiler);
+    if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
+        fail(compiler,compiler->current.span,"expected ')' after Signal.trap arguments");
+        return 0;
+    }
+    advance_token(compiler);
+    const uint8_t dest=allocate_register(compiler);
+    emit_opcode(compiler,DIAMOND_OP_SIGNAL_TRAP);
+    emit_byte(compiler,dest);
+    emit_byte(compiler,name_register);
+    emit_byte(compiler,handler_register);
+    return dest;
+}
+
 static uint8_t parse_chr_call(Compiler *compiler) {
     advance_token(compiler); /* consume '(' */
     skip_newlines(compiler);
@@ -1964,6 +2001,10 @@ static uint8_t parse_name(Compiler *compiler) {
        compiler->current.kind==DIAMOND_TOKEN_DOT&&
        name_equals(compiler,"UDPSocket",name,false))
         return parse_udp_socket_call(compiler);
+    if(class_index<0&&find_local(compiler,name)<0&&find_function(compiler,name)<0&&
+       compiler->current.kind==DIAMOND_TOKEN_DOT&&
+       name_equals(compiler,"Signal",name,false))
+        return parse_signal_trap_call(compiler);
     if(find_local(compiler,name)<0&&find_function(compiler,name)<0&&
        compiler->current.kind==DIAMOND_TOKEN_LEFT_PAREN&&
        (name_equals(compiler,"print",name,false)||

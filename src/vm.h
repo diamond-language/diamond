@@ -135,6 +135,7 @@ typedef enum DiamondOpCode : uint8_t {
     DIAMOND_OP_IO_POLL,
     DIAMOND_OP_UDP_BIND,
     DIAMOND_OP_UDP_OPEN,
+    DIAMOND_OP_SIGNAL_TRAP,
     DIAMOND_OP_REGEXP_NEW,
     DIAMOND_OP_CHR,
     DIAMOND_OP_TO_FLOAT,
@@ -172,6 +173,10 @@ typedef enum DiamondTypeId : uint8_t {
 
 enum { DIAMOND_INLINE_CACHE_COUNT = 64 };
 enum { DIAMOND_INLINE_CACHE_WIDTH = 4 };
+/* INT, TERM, HUP -- see docs/io.md's signals section for why this
+ * specific small, fixed set rather than every signal name POSIX knows
+ * about. */
+enum { DIAMOND_SIGNAL_COUNT = 3 };
 
 typedef enum DiamondBuiltinClass : uint8_t {
     DIAMOND_CLASS_EXCEPTION,
@@ -498,6 +503,18 @@ struct DiamondVm {
     char error[1024];
     const DiamondFiberQueue *root_queue;
     DiamondFiber *running_fiber;
+    /* Signal.trap(name, handler) stores handler here, indexed the same
+     * way as the file-scope diamond_signal_numbers/diamond_signal_names
+     * tables in vm.c. Zero-initialized to DIAMOND_NIL (kind 0) by
+     * diamond_vm_init's own compound-literal init, same as every other
+     * DiamondValue field here -- no explicit "unset" flag needed, a
+     * closure check at dispatch time is enough. Marked as a GC root in
+     * diamond_vm_collect alongside exception/namespace_constants; without
+     * that, a handler with no other live reference (the common case --
+     * nothing about "keep this Callable around forever in case a signal
+     * arrives" fits any existing local variable's lifetime) would be
+     * collected the moment nothing else referenced it. */
+    DiamondValue trapped_signal_handlers[DIAMOND_SIGNAL_COUNT];
 };
 
 void diamond_vm_init(DiamondVm *vm);

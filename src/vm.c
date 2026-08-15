@@ -17,6 +17,7 @@
 #include <fcntl.h>
 #include <netdb.h>
 #include <poll.h>
+#include <signal.h>
 #include <sys/mman.h>
 #include <sys/socket.h>
 #include <unistd.h>
@@ -132,6 +133,8 @@ void diamond_vm_collect(DiamondVm *vm) {
     for(size_t index=0;index<DIAMOND_MAX_NAMESPACE_CONSTANTS;index++)
         if(vm->namespace_constant_initialized[index])
             mark_value(vm->namespace_constants[index]);
+    for(size_t index=0;index<DIAMOND_SIGNAL_COUNT;index++)
+        mark_value(vm->trapped_signal_handlers[index]);
     mark_frame_chain(vm->frames);
     for (DiamondFiber *ancestor = vm->running_fiber; ancestor != nullptr;
          ancestor = ancestor->resumer_fiber)
@@ -741,6 +744,97 @@ static DiamondVmStatus udp_socket_helper(DiamondVm *vm,bool bind_socket,
         return DIAMOND_VM_OUT_OF_MEMORY;
     }
     *out_handle=handle;
+    return DIAMOND_VM_OK;
+}
+
+/* Signal.trap(name, handler) support. Deliberately a small, fixed set of
+ * names rather than every signal POSIX knows about -- these three cover
+ * "someone asked this process to stop" (INT: Ctrl+C, TERM: kill,
+ * HUP: terminal/controlling-process hangup), the case a Diamond program
+ * actually wants to react to (graceful server shutdown -- close
+ * listening sockets, finish in-flight requests -- being the motivating
+ * use case). SIGKILL/SIGSTOP can't be caught at the OS level regardless;
+ * everything else (SIGSEGV, SIGCHLD, real-time signals, ...) is out of
+ * scope for this first slice.
+ *
+ * File-scope (not DiamondVm fields) because signal delivery is a process-
+ * wide OS concept, not a per-VM-instance one -- sigaction installs one
+ * handler for the whole process regardless of which DiamondVm happens to
+ * be running when it fires. The C handler itself only does what POSIX
+ * guarantees is async-signal-safe: set a volatile sig_atomic_t and
+ * return. Everything else -- resolving which Diamond closure to call,
+ * actually calling it -- happens later, synchronously, from ordinary
+ * (non-signal-handler) code that checks these flags at safe points: once
+ * per bytecode instruction in run_chunk's own dispatch loop (see below),
+ * and after EINTR from the handful of genuinely-blocking native calls
+ * where waiting for the *next* bytecode instruction to run this check
+ * could mean waiting arbitrarily long (TCPServer#accept, IO.poll,
+ * UDPSocket#receive -- see their own opcode handlers). */
+static const int diamond_signal_numbers[DIAMOND_SIGNAL_COUNT]={SIGINT,SIGTERM,SIGHUP};
+static const char *const diamond_signal_names[DIAMOND_SIGNAL_COUNT]={"INT","TERM","HUP"};
+static volatile sig_atomic_t diamond_signal_pending[DIAMOND_SIGNAL_COUNT]={0};
+static volatile sig_atomic_t diamond_any_signal_pending=0;
+
+static void diamond_signal_handler(int signal_number) {
+    for(size_t index=0;index<DIAMOND_SIGNAL_COUNT;index++) {
+        if(diamond_signal_numbers[index]==signal_number) {
+            diamond_signal_pending[index]=1;
+            diamond_any_signal_pending=1;
+            return;
+        }
+    }
+}
+
+/* Invokes every currently-pending trapped signal's Diamond handler, in
+ * signal-index order, synchronously -- via the same nested-run_chunk
+ * mechanism DIAMOND_OP_CALL_CLOSURE itself uses, since a trapped handler
+ * is an ordinary 0-arity Callable, not anything signal-specific at the
+ * bytecode level. Clears each signal's own pending flag (and the
+ * combined any-pending flag) before invoking its handler, not after --
+ * a second delivery of the same signal *during* handler execution should
+ * queue another invocation next time this runs, not be silently dropped
+ * because the flag was still "pending" from the call already in
+ * progress. Returns as soon as one handler's own status is non-OK
+ * (an uncaught exception or worse from inside the handler itself) so the
+ * caller can propagate it exactly like any other mid-dispatch failure;
+ * remaining still-pending signals are simply handled on the next check
+ * rather than lost. *any_invoked is purely informational for callers
+ * that want to know whether anything actually happened (none of the
+ * current call sites need it, but see docs/io.md before assuming it's
+ * safe to drop -- future EINTR-retry call sites may want to distinguish
+ * "a handler ran, retry" from "spurious EINTR, still retry" more
+ * carefully than accept/poll/receive currently need to). */
+static DiamondVmStatus dispatch_pending_signals(DiamondVm *vm,const DiamondChunk *chunk,
+        size_t depth,bool *any_invoked) {
+    *any_invoked=false;
+    if(!diamond_any_signal_pending)return DIAMOND_VM_OK;
+    diamond_any_signal_pending=0;
+    for(size_t index=0;index<DIAMOND_SIGNAL_COUNT;index++) {
+        if(!diamond_signal_pending[index])continue;
+        diamond_signal_pending[index]=0;
+        if(vm->trapped_signal_handlers[index].kind!=DIAMOND_VALUE_OBJECT||
+           vm->trapped_signal_handlers[index].as.object->kind!=DIAMOND_OBJECT_CLOSURE)
+            continue;
+        *any_invoked=true;
+        const DiamondClosure *handler=
+            (const DiamondClosure *)vm->trapped_signal_handlers[index].as.object;
+        if(handler->function_index>=chunk->function_count)continue;
+        const DiamondFunction *fn=&chunk->functions[handler->function_index];
+        DiamondChunk child={.name=fn->name,.code=fn->code,.lines=fn->lines,
+          .columns=fn->columns,.code_count=fn->code_count,.constants=fn->constants,
+          .constant_count=fn->constant_count,.strings=fn->strings,.string_count=fn->string_count,
+          .type_sets=fn->type_sets,.type_set_count=fn->type_set_count,
+          .functions=chunk->functions,.function_count=chunk->function_count,
+          .classes=chunk->classes,.class_count=chunk->class_count,
+          .interfaces=chunk->interfaces,.interface_count=chunk->interface_count,
+          .parameter_type_sets=fn->parameter_type_sets,
+          .type_variable_count=fn->type_variable_count,
+          .parameter_offset=fn->owner_class==UINT8_MAX?0:1,
+          .register_count=fn->register_count};
+        DiamondValue ignored=DIAMOND_NIL;
+        const DiamondVmStatus status=run_chunk(&child,vm,nullptr,0,depth+1,handler,&ignored);
+        if(status!=DIAMOND_VM_OK)return status;
+    }
     return DIAMOND_VM_OK;
 }
 
@@ -4493,6 +4587,27 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
         VM_RETURN(status_);                                         \
     }
 
+/* Identical to VM_PROPAGATE except for `goto dispatch_continue` where
+ * VM_PROPAGATE uses `break` -- needed anywhere this dispatch_pending_
+ * signals result is checked from *inside* a retry loop nested within a
+ * case block (TCPServer#accept, IO.poll, UDPSocket#receive all wrap
+ * their own blocking syscall in a `while`/`for` to survive EINTR), where
+ * a bare `break` would exit that inner loop rather than the switch,
+ * leaving execution to fall through into code that assumes the syscall
+ * actually completed. `goto` doesn't have that ambiguity -- it always
+ * reaches the real dispatch_continue label regardless of how many loops
+ * currently enclose the call site, which is also exactly why it's safe
+ * to use for the main dispatch loop's own top-of-loop check (see below),
+ * a point that isn't inside the switch at all yet. */
+#define VM_PROPAGATE_SIGNAL(status_)                                \
+    if ((status_) != DIAMOND_VM_OK) {                              \
+        if ((status_) == DIAMOND_VM_EXCEPTION &&                  \
+            catch_exception(vm,chunk,handlers,&handler_count,&pending,registers,&ip)) {\
+            goto dispatch_continue;                                \
+        }                                                           \
+        VM_RETURN(status_);                                         \
+    }
+
 #define READ_BYTE(target_)                   \
     do {                                     \
         if (ip >= chunk->code_count) {       \
@@ -4513,6 +4628,17 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
     } while (false)
 
     while (ip < chunk->code_count) {
+        /* Cheap steady-state cost (one volatile read, almost always
+         * false) for prompt signal handling in CPU-bound Diamond code
+         * that never calls a blocking native function at all -- the
+         * EINTR-based checks in accept/IO.poll/UDPSocket#receive below
+         * cover the case where it's blocked in one of those instead. */
+        if(diamond_any_signal_pending) {
+            bool signal_invoked=false;
+            const DiamondVmStatus signal_status=
+                dispatch_pending_signals(vm,chunk,depth,&signal_invoked);
+            VM_PROPAGATE_SIGNAL(signal_status);
+        }
         instruction_offset = ip;
         uint8_t instruction = 0;
         READ_BYTE(instruction);
@@ -4601,7 +4727,28 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 VM_PROPAGATE(status);
                 const DiamondString *text=(const DiamondString *)converted.as.object;
                 fwrite(text->chars,1,text->length,stdout);
-                if(newline!=0)fputc('\n',stdout);
+                if(newline!=0) {
+                    fputc('\n',stdout);
+                    /* stdout is fully buffered (not line-buffered) once
+                     * it isn't a terminal -- redirected to a file, a
+                     * pipe, whatever a test harness or `> log` capture
+                     * uses. Without an explicit flush, puts("ready")
+                     * right before blocking in a native call (accept(),
+                     * IO.poll, a receive loop -- exactly the shape every
+                     * readiness-signaling test in tests/run.sh and the
+                     * packages test scripts uses) could sit in the
+                     * buffer indefinitely: nothing forces a flush until
+                     * the buffer fills or the process exits, and a
+                     * process blocked waiting for someone to *see* its
+                     * own "ready" line is exactly the case that never
+                     * reaches either. plain print() (no trailing
+                     * newline, used to build up a line incrementally)
+                     * stays fully buffered -- this only fires for the
+                     * puts-style, newline-terminated case, matching
+                     * ordinary line-buffered-on-a-terminal behavior
+                     * unconditionally rather than only when isatty(). */
+                    fflush(stdout);
+                }
                 registers[destination]=DIAMOND_NIL;break;
             }
             case DIAMOND_OP_GETS: {
@@ -6431,7 +6578,26 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                         VM_RETURN(DIAMOND_VM_IO_ERROR);
                     }
                     errno=0;
-                    const int client_fd=accept(listener->fd,nullptr,nullptr);
+                    int client_fd=accept(listener->fd,nullptr,nullptr);
+                    /* A blocking accept() can sit here indefinitely with
+                     * nothing connecting -- exactly when a trapped signal
+                     * needs to actually interrupt it (see
+                     * diamond_signal_handler's own comment: no
+                     * SA_RESTART, specifically so this EINTR happens)
+                     * rather than waiting for a connection that may never
+                     * arrive before the handler ever gets to run. Handles
+                     * the pending signal(s), then transparently retries --
+                     * a blocking listener's own .accept() semantics
+                     * (blocks until a real connection or a real error)
+                     * are unchanged from the caller's perspective. */
+                    while(client_fd<0&&errno==EINTR) {
+                        bool signal_invoked=false;
+                        const DiamondVmStatus signal_status=
+                            dispatch_pending_signals(vm,chunk,depth,&signal_invoked);
+                        VM_PROPAGATE_SIGNAL(signal_status);
+                        errno=0;
+                        client_fd=accept(listener->fd,nullptr,nullptr);
+                    }
                     if(client_fd<0) {
                         if(listener->nonblocking&&(errno==EAGAIN||errno==EWOULDBLOCK)) {
                             registers[dest]=DIAMOND_NIL;break;
@@ -6666,8 +6832,29 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     struct sockaddr_storage source_addr={0};
                     socklen_t source_addr_len=sizeof source_addr;
                     errno=0;
-                    const ssize_t received=recvfrom(udp_handle->fd,buffer,want,0,
+                    ssize_t received=recvfrom(udp_handle->fd,buffer,want,0,
                         (struct sockaddr *)&source_addr,&source_addr_len);
+                    /* Same reasoning as blocking accept()/IO.poll above:
+                     * a UDP server loop's own .receive() can block
+                     * indefinitely with nothing arriving, exactly when a
+                     * trapped signal needs to interrupt it promptly. */
+                    while(received<0&&errno==EINTR) {
+                        bool signal_invoked=false;
+                        const DiamondVmStatus signal_status=
+                            dispatch_pending_signals(vm,chunk,depth,&signal_invoked);
+                        if(signal_status!=DIAMOND_VM_OK) {
+                            free(buffer);
+                            if(signal_status==DIAMOND_VM_EXCEPTION&&
+                               catch_exception(vm,chunk,handlers,&handler_count,&pending,
+                                   registers,&ip))
+                                goto dispatch_continue;
+                            VM_RETURN(signal_status);
+                        }
+                        source_addr_len=sizeof source_addr;
+                        errno=0;
+                        received=recvfrom(udp_handle->fd,buffer,want,0,
+                            (struct sockaddr *)&source_addr,&source_addr_len);
+                    }
                     if(received<0) {
                         const int saved_errno=errno;
                         free(buffer);
@@ -7465,6 +7652,59 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     .as.object=(DiamondObject *)udp_handle};
                 break;
             }
+            case DIAMOND_OP_SIGNAL_TRAP: {
+                uint8_t dest=0,name_reg=0,handler_reg=0;
+                READ_BYTE(dest);READ_BYTE(name_reg);READ_BYTE(handler_reg);
+                if(registers[name_reg].kind!=DIAMOND_VALUE_OBJECT||
+                   registers[name_reg].as.object->kind!=DIAMOND_OBJECT_STRING) {
+                    snprintf(vm->error,sizeof vm->error,"Signal.trap name must be a String");
+                    VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                }
+                if(registers[handler_reg].kind!=DIAMOND_VALUE_OBJECT||
+                   registers[handler_reg].as.object->kind!=DIAMOND_OBJECT_CLOSURE) {
+                    snprintf(vm->error,sizeof vm->error,"Signal.trap handler must be a Callable");
+                    VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                }
+                const DiamondString *signal_name=
+                    (const DiamondString *)registers[name_reg].as.object;
+                size_t signal_index=DIAMOND_SIGNAL_COUNT;
+                for(size_t candidate=0;candidate<DIAMOND_SIGNAL_COUNT;candidate++) {
+                    const size_t candidate_length=strlen(diamond_signal_names[candidate]);
+                    if(signal_name->length==candidate_length&&
+                       memcmp(signal_name->chars,diamond_signal_names[candidate],
+                              candidate_length)==0) {
+                        signal_index=candidate;break;
+                    }
+                }
+                if(signal_index==DIAMOND_SIGNAL_COUNT) {
+                    snprintf(vm->error,sizeof vm->error,"Signal.trap: unrecognized signal "
+                        "name '%.*s' (supported: INT, TERM, HUP)",
+                        (int)signal_name->length,signal_name->chars);
+                    VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                }
+                struct sigaction action={0};
+                action.sa_handler=diamond_signal_handler;
+                sigemptyset(&action.sa_mask);
+                /* Deliberately no SA_RESTART: a trapped signal arriving
+                 * while blocked in accept()/poll()/recvfrom() needs that
+                 * call to actually return EINTR so the handler can run
+                 * promptly (see the accept/IO.poll/UDPSocket#receive
+                 * opcode handlers) rather than the kernel silently
+                 * resuming the blocking call as if nothing happened,
+                 * which is what SA_RESTART would do -- and is exactly
+                 * wrong for the motivating use case (a signal arriving
+                 * while a server sits idle in accept()/poll() with
+                 * nothing connecting). */
+                action.sa_flags=0;
+                if(sigaction(diamond_signal_numbers[signal_index],&action,nullptr)!=0) {
+                    snprintf(vm->error,sizeof vm->error,"cannot trap signal: %s",
+                        strerror(errno));
+                    VM_RETURN(DIAMOND_VM_IO_ERROR);
+                }
+                vm->trapped_signal_handlers[signal_index]=registers[handler_reg];
+                registers[dest]=DIAMOND_NIL;
+                break;
+            }
             case DIAMOND_OP_IO_POLL: {
                 uint8_t dest=0,readable_reg=0,writable_reg=0,timeout_reg=0;
                 READ_BYTE(dest);READ_BYTE(readable_reg);READ_BYTE(writable_reg);
@@ -7522,9 +7762,25 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     (timeout_value>INT_MAX?INT_MAX:(int)timeout_value);
                 int poll_result=0;
                 errno=0;
-                do {
+                poll_result=poll(fds,fd_count,timeout_ms);
+                /* Unlike the plain EINTR-retries-unconditionally loop
+                 * this replaced, a signal actually gets handled here
+                 * before retrying -- gremlin_serve's own event loop calls
+                 * IO.poll with timeout_ms=-1 (block until something's
+                 * ready), so blindly retrying on every EINTR would mean a
+                 * trapped signal arriving while a gremlin server sits
+                 * idle would never actually run its handler until some
+                 * connection activity happened to wake the poll() up
+                 * first -- exactly backwards for "let me shut this server
+                 * down gracefully on Ctrl+C." */
+                while(poll_result<0&&errno==EINTR) {
+                    bool signal_invoked=false;
+                    const DiamondVmStatus signal_status=
+                        dispatch_pending_signals(vm,chunk,depth,&signal_invoked);
+                    VM_PROPAGATE_SIGNAL(signal_status);
+                    errno=0;
                     poll_result=poll(fds,fd_count,timeout_ms);
-                } while(poll_result<0&&errno==EINTR);
+                }
                 if(poll_result<0) {
                     snprintf(vm->error,sizeof vm->error,"poll failed: %s",strerror(errno));
                     VM_RETURN(DIAMOND_VM_IO_ERROR);
@@ -7710,6 +7966,7 @@ dispatch_continue:
 #undef READ_BYTE
 #undef VM_RETURN
 #undef VM_PROPAGATE
+#undef VM_PROPAGATE_SIGNAL
 #undef RECORD_ERROR
 
     if(depth==0&&vm->running_fiber!=nullptr&&ip>=chunk->code_count) {

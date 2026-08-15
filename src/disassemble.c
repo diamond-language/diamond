@@ -425,6 +425,8 @@ static bool disassemble_chunk(FILE *stream, const char *name,
                 offset=two_registers(stream,chunk,"UDP_BIND",offset);break;
             case DIAMOND_OP_UDP_OPEN:
                 offset=one_register(stream,chunk,"UDP_OPEN",offset);break;
+            case DIAMOND_OP_SIGNAL_TRAP:
+                offset=three_registers(stream,chunk,"SIGNAL_TRAP",offset);break;
             case DIAMOND_OP_CHR:
                 offset=two_registers(stream,chunk,"CHR",offset);break;
             case DIAMOND_OP_TO_FLOAT:

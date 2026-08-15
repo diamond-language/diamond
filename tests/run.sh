@@ -1635,6 +1635,140 @@ wait "$udp_stress_server_pid"
 [[ "$(cat "$udp_stress_client_out")" == "echo: hello|127.0.0.1" ]]
 rm -f "$udp_stress_server_out" "$udp_stress_client_out"
 
+actual="$($diamond --dump-bytecode -e 'def r()
+ def h()
+  1
+ end
+ Signal.trap("INT", h)
+end
+r()' 2>/dev/null || true)"
+grep -q 'SIGNAL_TRAP' <<<"$actual"
+
+actual="$($diamond --dump-bytecode -e 'Signal = 5
+Signal.trap("INT", 5)' 2>/dev/null || true)"
+if grep -q 'SIGNAL_TRAP' <<<"$actual"; then
+    echo "Signal.trap on a shadowing local unexpectedly compiled to SIGNAL_TRAP" >&2
+    exit 1
+fi
+
+error_file="$(mktemp)"
+if "$diamond" -e 'Signal.trap(5, 5)' >/dev/null 2>"$error_file"; then
+    echo "Signal.trap with a non-String name unexpectedly succeeded" >&2
+    exit 1
+fi
+grep -q "Signal.trap name must be a String" "$error_file"
+rm -f "$error_file"
+
+error_file="$(mktemp)"
+if "$diamond" -e 'Signal.trap("INT", 5)' >/dev/null 2>"$error_file"; then
+    echo "Signal.trap with a non-Callable handler unexpectedly succeeded" >&2
+    exit 1
+fi
+grep -q "Signal.trap handler must be a Callable" "$error_file"
+rm -f "$error_file"
+
+error_file="$(mktemp)"
+if "$diamond" -e 'def r()
+ def h()
+  1
+ end
+ Signal.trap("KILL", h)
+end
+r()' >/dev/null 2>"$error_file"; then
+    echo "Signal.trap with an unrecognized signal name unexpectedly succeeded" >&2
+    exit 1
+fi
+grep -q "unrecognized signal name 'KILL'" "$error_file"
+rm -f "$error_file"
+
+error_file="$(mktemp)"
+if "$diamond" -e 'Signal.watch("INT", 5)' >/dev/null 2>"$error_file"; then
+    echo "malformed Signal.watch unexpectedly compiled" >&2
+    exit 1
+fi
+grep -q "expected 'trap' after 'Signal'" "$error_file"
+rm -f "$error_file"
+
+# The real point of this feature: a signal arriving while genuinely
+# blocked in a native call (not just between bytecode instructions) has
+# to actually interrupt it -- otherwise a trapped signal would never run
+# its handler until whatever the process was blocked on happens to
+# complete on its own, which for "graceful shutdown of an idle server"
+# could be never. Exercises the accept()-specific EINTR-retry path
+# (src/vm.c) directly, not just the once-per-instruction dispatch-loop
+# check that CPU-bound code alone would already satisfy.
+#
+# This server does exactly one accept() call (not a loop), so unlike
+# http/gremlin's own tests, even a bash /dev/tcp probe-and-close
+# readiness check (this repo's usual wait_for_port trick) isn't safe
+# here -- that probe connection would itself *be* the one accept() call
+# consumes, exactly the stray-connection bug already found and fixed in
+# packages/http's own test.sh. So: print "ready" right after
+# TCPServer.listen succeeds and poll the captured output for that line
+# instead, the same readiness signal the UDP tests above already use for
+# the same underlying reason (no safe zero-side-effect probe available).
+signal_port=18749
+signal_out="$(mktemp)"
+# A non-interactive shell (this script, `bash tests/run.sh`) sets SIGINT
+# and SIGQUIT to be *ignored* for an asynchronous (backgrounded, `&`)
+# command -- well-known bash/POSIX behavior, meant to keep a background
+# job alive when the terminal sends SIGINT to the whole foreground
+# process group. Since SIG_IGN survives exec(2), the diamond process
+# below would inherit SIGINT already ignored at the OS level, and its own
+# later Signal.trap (a plain sigaction() call) doesn't get a chance to
+# run before that disposition is already in place for anything delivered
+# in the gap -- confirmed the hard way: kill -INT reliably did nothing at
+# all when this was a plain `... &` background, in this script, despite
+# every one of the earlier manual `command &` tests (not run from inside
+# a script file) working every time. The fix is the standard one: an
+# explicit `trap - INT` (reset to default) inside a subshell, before
+# exec-ing the real command, so the child never sees SIG_IGN in the
+# first place.
+( trap - INT
+  exec timeout 10 "$diamond" -e "$(printf 'def run()
+  def handler()
+    puts("caught INT")
+  end
+  Signal.trap("INT", handler)
+  server = TCPServer.listen(%d)
+  puts("ready")
+  conn = server.accept()
+  puts("accepted")
+  conn.close()
+  server.close()
+end
+run()' "$signal_port")" >"$signal_out" 2>&1 ) &
+signal_pid=$!
+for _ in $(seq 1 200); do
+    grep -q '^ready$' "$signal_out" && break
+    sleep 0.05
+done
+kill -INT "$signal_pid"
+sleep 0.3
+exec 3<>"/dev/tcp/127.0.0.1/$signal_port"
+{ exec 3<&- 3>&-; } 2>/dev/null || true
+wait "$signal_pid"
+actual="$(cat "$signal_out")"
+[[ "$actual" == $'ready\ncaught INT\naccepted\nnil' ]]
+rm -f "$signal_out"
+
+# An untrapped signal still gets the OS default disposition (kills the
+# process) -- Signal.trap is opt-in per signal name, not a blanket
+# "Diamond now handles all signals" switch.
+"$diamond" -e 'i = 0
+while i < 2000000000
+  i = i + 1
+end' >/dev/null 2>&1 &
+untrapped_pid=$!
+sleep 0.3
+kill -TERM "$untrapped_pid"
+sleep 0.3
+if kill -0 "$untrapped_pid" 2>/dev/null; then
+    echo "process with no Signal.trap unexpectedly survived SIGTERM" >&2
+    kill -9 "$untrapped_pid" 2>/dev/null || true
+    exit 1
+fi
+
 error_file="$(mktemp)"
 if "$diamond" -e '5.abs()' >/dev/null 2>"$error_file"; then
     echo "Int literal .abs() unexpectedly succeeded (Int has no method dispatch)" >&2

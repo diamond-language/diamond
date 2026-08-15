@@ -5225,6 +5225,71 @@ future work.
   test polls for that line in the captured output instead. `make test`
   (919 assertions, up from 915) and a full `make test-sanitize` pass both
   clean.
+- Added `Signal.trap(name, handler)` -- `"INT"`/`"TERM"`/`"HUP"` only
+  (full rationale for the small fixed set, and everything below, in
+  `docs/io.md`'s own signals section), the motivating case being a
+  server closing its listening socket and finishing in-flight work
+  before exiting rather than dying mid-request.
+
+  The design question that actually mattered: a signal handled only
+  "at the next bytecode instruction" (a single cheap flag check added to
+  `run_chunk`'s own dispatch loop, invoking any pending handler via the
+  same nested-`run_chunk` mechanism `DIAMOND_OP_CALL_CLOSURE` already
+  uses) is fine for CPU-bound code, but useless for a program genuinely
+  blocked in `TCPServer#accept`/`IO.poll`/`UDPSocket#receive` -- an idle
+  server with nothing connecting, by design, might not reach "the next
+  instruction" for an arbitrarily long time. Fixed by deliberately
+  omitting `SA_RESTART` from the installed `sigaction` (so a blocking
+  syscall actually returns `EINTR` instead of the kernel silently
+  resuming it) and giving those three specific call sites their own
+  small retry loop: dispatch any pending signal, then transparently
+  retry. `TCPSocket.connect` and buffered `File`/stdin reads are a real,
+  documented scope cut, not an oversight -- a signal arriving while
+  blocked in one of those isn't handled until the call completes on its
+  own.
+
+  Building and testing this surfaced two bugs unrelated to signals
+  themselves, both fixed as part of this round because the signals test
+  couldn't pass without them:
+  - `puts` never flushed stdout. Harmless when stdout is a terminal
+    (glibc line-buffers automatically), but once redirected to a file or
+    pipe -- exactly what every `tests/run.sh`/`packages/*/test.sh`
+    invocation does -- stdout is fully buffered, so a `puts("ready")`
+    right before blocking in a native call could sit unflushed
+    indefinitely. The "server prints ready, harness polls the captured
+    output" pattern already used throughout this repo's own tests had
+    been silently relying on lucky timing (whatever was being waited on,
+    typically a fast `bind()`, happening to complete before the poll
+    loop's own fixed timeout expired) rather than genuine readiness
+    detection the whole time -- confirmed by timing one of the UDP tests
+    added earlier this round and finding it took the full 10-second
+    timeout on every run rather than returning as soon as the server was
+    actually ready. Fixed by flushing after every `puts` (not `print`,
+    which stays fully buffered for building up a line incrementally) --
+    see `docs/io.md`'s stdout section for the full reasoning.
+  - A genuinely bash-specific gotcha, not a Diamond bug at all but one
+    that made the signals test itself unreliable until root-caused: a
+    non-interactive shell sets `SIGINT`/`SIGQUIT` to be ignored for a
+    backgrounded (`&`) command, and since `SIG_IGN` survives `exec(2)`,
+    a `diamond` process started as `... &` from inside a script file
+    inherited `SIGINT` already ignored -- identical code worked every
+    time as a direct ad hoc command and failed every time from inside a
+    script, before the real cause (bash's own job-control behavior, not
+    `Signal.trap`) was found. Fixed in `tests/run.sh` with the standard
+    workaround: `( trap - INT; exec ... ) &` instead of a plain
+    backgrounded command.
+
+  Verification: bytecode-dump/shadowing/error-message tests mirroring
+  the established pattern, plus a real `kill -INT` sent to a process
+  genuinely blocked in `TCPServer#accept`, confirming both that the
+  handler actually runs and that `.accept()` transparently resumes
+  blocking afterward rather than returning early -- and a companion test
+  confirming an *untrapped* signal still gets the OS default disposition
+  (kills the process), since `Signal.trap` is opt-in per signal name, not
+  a blanket switch. `make test` (920 assertions, up from 919) and a full
+  `make test-sanitize` pass (including `DIAMOND_STRESS_GC=1` specifically
+  around the signal-handler-invocation path, since it recurses into
+  `run_chunk` the same way any nested call does) both clean.
 
 ## Later experiments
 
