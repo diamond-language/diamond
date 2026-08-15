@@ -123,6 +123,16 @@ future work.
 - Fixed a native closure-capture bug: a closure nested directly inside an
   ordinary instance method (not a singleton method) mis-reserved a `self`
   register it shouldn't have, corrupting argument placement.
+- Top-level `def`s are now first-class values: a bare top-level function
+  name, used without calling it (`f = add`, `apply(add, 1, 2)`), compiles
+  to a zero-capture closure value instead of failing with "undefined local
+  variable" — the same closure representation a nested `def` already got,
+  just for a function that needs no captures. Two pre-existing tests
+  (`Fiber`/`File` shadowed by a same-named top-level function) needed
+  updating: the shadowing itself still works, but the failure now happens
+  a step later and at runtime (`Fiber`/`File` resolve fine as values;
+  `.new(...)`/`.open(...)` on a Closure is the actual type error) rather
+  than at compile time.
 
 ### Control flow, exceptions, and the module loader
 
@@ -390,15 +400,6 @@ future work.
   freed program, so a real fix needs either copying the referenced class
   definition or keeping the source program alive). Look at
   `copy_value_into_vm` in `src/vm.c`.
-
-- **Top-level `def`s aren't first-class values.** `f = add` (referencing a
-  top-level function by bare name without calling it) fails with
-  `undefined local variable`; `parse_identifier` only resolves locals and
-  captured-closure locals, never the top-level function table. Matters
-  because passing a plain top-level function as a callback currently
-  requires wrapping it in a nested closure first — a real ergonomic gap for
-  a language with first-class `Callable` values otherwise. Look at
-  `parse_identifier` in `src/compiler.c`.
 
 - **`@field()` call syntax doesn't parse.** Calling a `Callable` value
   stored directly in an instance variable (`@cb()`) fails with

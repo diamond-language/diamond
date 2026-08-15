@@ -104,6 +104,7 @@ static uint8_t compile_sequence(Compiler *compiler);
 static uint8_t compile_begin(Compiler *compiler);
 static uint8_t compile_yield(Compiler *compiler);
 static uint8_t compile_interface(Compiler *compiler);
+static int find_function(const Compiler *compiler, DiamondSpan name);
 
 static void fail(Compiler *compiler, DiamondSpan span, const char *message) {
     if (!compiler->failed) {
@@ -723,6 +724,30 @@ static uint8_t parse_identifier(Compiler *compiler) {
             }
             const uint8_t destination=allocate_register(compiler);
             emit_instruction(compiler,DIAMOND_OP_GET_CAPTURE,destination,(uint8_t)capture,0,2);
+            return destination;
+        }
+        /* A top-level `def`'s bare name, used as a value rather than
+         * called outright (parse_name already routed the call-with-
+         * parens case to parse_call, never reaching here) -- previously
+         * always "undefined local variable", since a top-level function
+         * is otherwise never registered as anything parse_identifier's
+         * local/capture lookups above can find. A nested `def` already
+         * works this way (compile_definition registers it as an
+         * ordinary local holding a zero-or-more-capture DIAMOND_OP_
+         * CLOSURE value); this is the same closure value with zero
+         * captures, for a function that needs none since it isn't
+         * nested inside anything with locals to close over. find_function
+         * already applies the same owner_class==UINT8_MAX && !nested
+         * filter find_top_level_function (src/vm.c) uses at runtime, so
+         * this can never resolve a class/module method or another
+         * function's own nested def by bare name. */
+        const int function_index = find_function(compiler, compiler->previous.span);
+        if (function_index >= 0) {
+            const uint8_t destination = allocate_register(compiler);
+            emit_opcode(compiler, DIAMOND_OP_CLOSURE);
+            emit_byte(compiler, destination);
+            emit_function_index(compiler, (size_t)function_index);
+            emit_byte(compiler, 0);
             return destination;
         }
         fail(compiler, compiler->previous.span, "undefined local variable"); return 0;
