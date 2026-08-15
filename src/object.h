@@ -35,6 +35,7 @@ typedef enum DiamondObjectKind : uint8_t {
     DIAMOND_OBJECT_SYMBOL,
     DIAMOND_OBJECT_REGEXP,
     DIAMOND_OBJECT_PROGRAM_BUILDER,
+    DIAMOND_OBJECT_THREAD,
 } DiamondObjectKind;
 
 typedef struct DiamondObject {
@@ -188,6 +189,19 @@ typedef struct DiamondFiberHandle {
     DiamondObject object;
     DiamondFiber *fiber;
 } DiamondFiberHandle;
+
+/* Split the same way DiamondFiberHandle/DiamondFiber are: a thin GC handle
+ * wrapping a heavier native struct (real OS thread handle, its own fully
+ * isolated DiamondVm + cloned DiamondProgram, pthread synchronization) --
+ * see docs/threads.md. DiamondThread itself is defined in src/vm.c, where
+ * pthread.h is already reachable and the rest of its native-resource
+ * cousins (DiamondFiber, DiamondRegexp's handle) already live. */
+typedef struct DiamondThread DiamondThread;
+
+typedef struct DiamondThreadHandle {
+    DiamondObject object;
+    DiamondThread *thread;
+} DiamondThreadHandle;
 
 typedef struct DiamondFileHandle {
     DiamondObject object;

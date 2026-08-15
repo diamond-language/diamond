@@ -19,7 +19,9 @@
 #include <openssl/err.h>
 #include <openssl/ssl.h>
 #include <poll.h>
+#include <pthread.h>
 #include <signal.h>
+#include <stdatomic.h>
 #include <sys/mman.h>
 #include <sys/socket.h>
 #include <unistd.h>
@@ -67,6 +69,53 @@ typedef struct DiamondFrame {
     size_t register_count;
 } DiamondFrame;
 
+/* Native backing struct for DiamondThreadHandle (object.h) -- see
+ * docs/threads.md. `child_vm`/`child_program` are this thread's own,
+ * fully independent heap/GC and a byte-for-byte memcpy clone of whatever
+ * DiamondProgram was ambient at Thread.new time (see thread_new_helper),
+ * never shared with the spawning thread's own program or any other
+ * thread's clone. `function_index`/`args`/`arg_count` are captured at
+ * spawn time so the OS-thread entry point (thread_entry_trampoline) has
+ * everything it needs with no further reference back into the spawning
+ * VM's own state. `result`/`raised` are only meaningful once `finished`
+ * is true; `finished` is the only field the spawning thread may read
+ * without holding `join_lock` (a plain atomic flag, set exactly once,
+ * read-only afterward -- .alive?() polls it without blocking).
+ * `join_lock` guards the joined/not-yet-joined transition so .join() is
+ * safely callable more than once (pthread_join itself is not). */
+typedef struct DiamondThread {
+    pthread_t handle;
+    /* True only once pthread_create actually succeeded for `handle` --
+     * distinguishes "there's a real OS thread that must be pthread_join'd"
+     * from the synchronous-stub path (Thread.new runs the callable inline,
+     * no OS thread ever created) and from a failed pthread_create (also no
+     * real thread to join). free_thread only calls pthread_join when this
+     * is true. */
+    bool spawned;
+    DiamondVm *child_vm;
+    DiamondProgram *child_program;
+    uint16_t function_index;
+    DiamondValue args[17];
+    uint8_t arg_count;
+    /* Three, mutually exclusive outcomes once `finished` is true:
+     * (1) plain return -- `raised`/`internal_failure` both false, `result`
+     *     is the returned value; (2) the target raised, uncaught -- only
+     *     `raised` true, `result` is the actual Diamond exception instance
+     *     to re-raise (still living in child_vm's own heap; .join() deep-
+     *     copies it back, same as an ordinary return value); (3) the
+     *     child hit an internal VM failure that was never a clean Diamond-
+     *     level raise (stack overflow, invalid bytecode, ...) -- only
+     *     `internal_failure` true, `result` unused, .join() reads
+     *     child_vm->error directly (still alive at that point) to build a
+     *     fresh ThreadError. */
+    DiamondValue result;
+    bool raised;
+    bool internal_failure;
+    atomic_bool finished;
+    bool joined;
+    pthread_mutex_t join_lock;
+} DiamondThread;
+
 static void mark_value(DiamondValue value);
 static void mark_frame_chain(void *frames);
 static DiamondVmStatus run_chunk(const DiamondChunk *chunk, DiamondVm *vm,
@@ -78,6 +127,7 @@ static bool hash_set(DiamondVm *vm,DiamondHash *hash,DiamondValue key,
                      DiamondValue value);
 static bool array_push(DiamondVm *vm,DiamondArray *array,DiamondValue value);
 static void free_adopted_programs(void *list);
+static void free_thread(DiamondThread *thread);
 
 static void mark_object(DiamondObject *object) {
     if (object == nullptr || object->marked) return;
@@ -108,6 +158,17 @@ static void mark_object(DiamondObject *object) {
             if(fiber->entry_closure!=nullptr)
                 mark_object((DiamondObject *)fiber->entry_closure);
         }
+    } else if(object->kind==DIAMOND_OBJECT_THREAD) {
+        DiamondThread *thread=((DiamondThreadHandle *)object)->thread;
+        /* Only once .join() has actually copied `result` into *this*
+         * vm's own heap (thread->joined) does it need marking here --
+         * before that it lives entirely in child_vm's own, separate heap
+         * (this vm's GC has no business scanning another vm's memory),
+         * and internal_failure means there's no result value at all (a
+         * fresh ThreadError gets built and raised directly at join time
+         * instead). See docs/threads.md. */
+        if(thread!=nullptr&&thread->joined&&!thread->internal_failure)
+            mark_value(thread->result);
     }
 }
 
@@ -222,6 +283,9 @@ void diamond_vm_collect(DiamondVm *vm) {
                 free(builder->source_bundle);
             }
             free(builder->program);
+        } else if(unreached->kind==DIAMOND_OBJECT_THREAD) {
+            size=sizeof(DiamondThreadHandle);
+            free_thread(((DiamondThreadHandle *)unreached)->thread);
         } else {
             size=sizeof(DiamondCell);
         }
@@ -305,6 +369,8 @@ void diamond_vm_free(DiamondVm *vm) {
                 free(builder->source_bundle);
             }
             free(builder->program);
+        } else if(object->kind==DIAMOND_OBJECT_THREAD) {
+            free_thread(((DiamondThreadHandle *)object)->thread);
         }
         free(object);
         object = next;
@@ -346,7 +412,15 @@ static void free_fiber_stack(DiamondFiber *fiber) {
     }
 }
 
-static DiamondFiber *diamond_fiber_entering;
+/* thread_local (not a plain file-scope static): this is how diamond_fiber_run
+ * smuggles the entering fiber's identity across swapcontext into
+ * diamond_fiber_trampoline, which takes no arguments of its own -- one
+ * process-wide pointer here would let two OS threads each running their own
+ * fibers race writer/reader against each other the moment more than one
+ * thread exists (see Thread, docs/threads.md). Each thread gets its own
+ * slot, matching how every other piece of per-run state (DiamondVm itself)
+ * is already scoped per-thread by construction. */
+static thread_local DiamondFiber *diamond_fiber_entering;
 
 static void diamond_fiber_trampoline(void) {
     DiamondFiber *self = diamond_fiber_entering;
@@ -689,6 +763,86 @@ static DiamondFiberHandle *allocate_fiber_handle(DiamondVm *vm,DiamondFiber *fib
     DiamondFiberHandle *handle=malloc(sizeof(DiamondFiberHandle));if(handle==nullptr)return nullptr;
     *handle=(DiamondFiberHandle){.object={.next=vm->objects,.kind=DIAMOND_OBJECT_FIBER},.fiber=fiber};
     vm->objects=&handle->object;vm->bytes_allocated+=sizeof(DiamondFiberHandle);return handle;
+}
+
+/* A raw OS-thread limit, not a language-level tuning knob: real pthreads
+ * are a genuinely limited, comparatively expensive OS resource (unlike
+ * Fibers, cheap userspace stacks) and each one commits a full cloned
+ * DiamondProgram (~83MB, see clone_program_from_chunk below and
+ * docs/roadmap.md's DIAMOND_MAX_FUNCTIONS sizing note) -- 64 bounds worst-
+ * case memory at that count to roughly 5GB while still comfortably
+ * covering the "a handful of coarse-grained parallel workers" use case
+ * this primitive targets, and turns a runaway recursive Thread.new bug
+ * into a prompt ThreadError instead of exhausting the host. Process-wide
+ * (not per-DiamondVm) since threads spawned from unrelated VMs still
+ * compete for the same real OS/memory resources. */
+enum { DIAMOND_MAX_THREADS = 64 };
+static atomic_size_t diamond_active_thread_count = 0;
+
+/* Builds a fresh, independently-owned DiamondProgram whose
+ * functions[]/classes[]/interfaces[] tables are a byte-for-byte copy of
+ * whatever program `chunk` is a view into -- see docs/threads.md. Used by
+ * Thread.new so the spawned thread runs against its own program, never
+ * the ambient one (sidesteps REDEFINE_METHOD racing another thread's own
+ * dispatch entirely, rather than trying to synchronize it).
+ * diamond_program_init handles every field DiamondChunk doesn't expose
+ * (modules[]/namespace_constants[]/entry/entry_path) -- all purely
+ * compile-time bookkeeping never read by run_chunk (confirmed by their
+ * total absence from DiamondChunk itself), so leaving them at
+ * diamond_program_init's own defaults is correct, not a gap. The three
+ * table arrays are then overwritten with `chunk`'s own live data via
+ * whole-fixed-array memcpy, safe for the same reason a plain
+ * DiamondProgram memcpy would be: DiamondFunction/DiamondClass/
+ * DiamondInterface are themselves pointer-free. Returns nullptr only on
+ * allocation failure. */
+static DiamondProgram *clone_program_from_chunk(const DiamondChunk *chunk) {
+    DiamondProgram *clone=malloc(sizeof *clone);
+    if(clone==nullptr)return nullptr;
+    diamond_program_init(clone);
+    memcpy(clone->functions,chunk->functions,sizeof clone->functions);
+    clone->function_count=chunk->function_count;
+    memcpy(clone->classes,chunk->classes,sizeof clone->classes);
+    clone->class_count=chunk->class_count;
+    memcpy(clone->interfaces,chunk->interfaces,sizeof clone->interfaces);
+    clone->interface_count=chunk->interface_count;
+    return clone;
+}
+
+static DiamondThreadHandle *allocate_thread_handle(DiamondVm *vm,DiamondThread *thread) {
+    if(vm->stress_gc||vm->bytes_allocated>=vm->next_gc)diamond_vm_collect(vm);
+    DiamondThreadHandle *handle=malloc(sizeof(DiamondThreadHandle));if(handle==nullptr)return nullptr;
+    *handle=(DiamondThreadHandle){.object={.next=vm->objects,.kind=DIAMOND_OBJECT_THREAD},.thread=thread};
+    vm->objects=&handle->object;vm->bytes_allocated+=sizeof(DiamondThreadHandle);return handle;
+}
+
+/* Shared teardown for a DiamondThread, called from both diamond_vm_collect's
+ * cycle-based sweep and diamond_vm_free's whole-VM teardown loop (mirroring
+ * diamond_fiber_free's own role for DIAMOND_OBJECT_FIBER) -- guarantees no
+ * real OS thread ever outlives its DiamondThreadHandle's GC lifetime: if a
+ * spawned-but-never-.join()'d thread's handle becomes unreachable (or the
+ * whole VM is shutting down), this blocks on pthread_join right here before
+ * reclaiming the thread's own fully independent child_vm/child_program.
+ * `thread` itself may be nullptr (mirrors diamond_fiber_free's own
+ * nullptr-tolerance) so callers don't need their own guard. The sole
+ * decrement matching DIAMOND_OP_THREAD_NEW's own increment of
+ * diamond_active_thread_count also lives here -- this is the one place
+ * every DiamondThread's lifecycle is guaranteed to pass through exactly
+ * once, whether reaped after a normal .join() or cleaned up from a
+ * spawn-time failure partway through construction. */
+static void free_thread(DiamondThread *thread) {
+    if(thread==nullptr)return;
+    if(thread->spawned&&!thread->joined) {
+        pthread_join(thread->handle,nullptr);
+        thread->joined=true;
+    }
+    if(thread->child_vm!=nullptr) {
+        diamond_vm_free(thread->child_vm);
+        free(thread->child_vm);
+    }
+    free(thread->child_program);
+    pthread_mutex_destroy(&thread->join_lock);
+    free(thread);
+    atomic_fetch_sub(&diamond_active_thread_count,1);
 }
 
 static DiamondFileHandle *allocate_file_handle(DiamondVm *vm,FILE *stream) {
@@ -1553,9 +1707,33 @@ static DiamondVmStatus tr_expand_spec(const DiamondString *spec,
  * not once per instance. Left nullptr (no adoption) for a result that
  * turns out not to contain any Instance at all -- adopting unconditionally
  * would leak sizeof(DiamondProgram) (tens of MB, see docs/roadmap.md) on
- * every ProgramBuilder#run call regardless of what it actually returned. */
+ * every ProgramBuilder#run call regardless of what it actually returned.
+ *
+ * `rebase_source_classes`/`rebase_dest_classes` are the alternative to
+ * adoption, used by Thread (see docs/threads.md) instead of ProgramBuilder:
+ * Thread.new clones the classes/functions/interfaces tables of whatever
+ * program is ambient at spawn time (safe -- those tables are themselves
+ * pointer-free) for the new thread to run against, rather than adopting a
+ * genuinely foreign program. Because the clone's classes[] table has
+ * byte-identical layout to the source table, an Instance's `->class`
+ * pointer can simply be *rebased* by array-offset arithmetic --
+ * `&rebase_dest_classes[source->class-rebase_source_classes]` -- with no
+ * adoption and no DiamondVm.adopted_programs involvement; `copy->owner`
+ * stays nullptr (the destination's own ambient chunk is already built from
+ * the same cloned tables, so the ordinary owner-is-nullptr dispatch
+ * fallback already resolves correctly). Both sides are plain `const
+ * DiamondClass *` base pointers -- deliberately not `DiamondProgram *`,
+ * since at both Thread.new (copying args into a freshly cloned program)
+ * and .join() (copying the result back out) exactly one side of the copy
+ * is a real, owned DiamondProgram and the other is only ever reachable as
+ * a DiamondChunk view's own `.classes` pointer, never as a whole owned
+ * program. Rebase mode is active whenever `rebase_dest_classes!=nullptr`;
+ * passing it alongside a meaningfully-used `*adopted_owner` is not a
+ * supported combination -- exactly one caller mode applies per call. */
 static bool copy_value_into_vm(DiamondVm *dest_vm, DiamondValue value,
                                DiamondProgram *source_program,
+                               const DiamondClass *rebase_source_classes,
+                               const DiamondClass *rebase_dest_classes,
                                const DiamondChunk **adopted_owner,
                                DiamondValue *out) {
     if(value.kind!=DIAMOND_VALUE_OBJECT) {*out=value;return true;}
@@ -1580,8 +1758,8 @@ static bool copy_value_into_vm(DiamondVm *dest_vm, DiamondValue value,
                 if(elements==nullptr)return false;
                 for(size_t index=0;index<source->count;index++) {
                     if(!copy_value_into_vm(dest_vm,source->values[index],
-                                           source_program,adopted_owner,
-                                           &elements[index])) {
+                                           source_program,rebase_source_classes,rebase_dest_classes,
+                                           adopted_owner,&elements[index])) {
                         free(elements);return false;
                     }
                 }
@@ -1598,10 +1776,11 @@ static bool copy_value_into_vm(DiamondVm *dest_vm, DiamondValue value,
             for(size_t index=0;index<source->count;index++) {
                 DiamondValue key=DIAMOND_NIL,copied_value=DIAMOND_NIL;
                 if(!copy_value_into_vm(dest_vm,source->entries[index].key,
-                                       source_program,adopted_owner,&key)||
+                                       source_program,rebase_source_classes,rebase_dest_classes,
+                                       adopted_owner,&key)||
                    !copy_value_into_vm(dest_vm,source->entries[index].value,
-                                       source_program,adopted_owner,
-                                       &copied_value))
+                                       source_program,rebase_source_classes,rebase_dest_classes,
+                                       adopted_owner,&copied_value))
                     return false;
                 if(!hash_set(dest_vm,copy,key,copied_value))return false;
             }
@@ -1609,19 +1788,45 @@ static bool copy_value_into_vm(DiamondVm *dest_vm, DiamondValue value,
         }
         case DIAMOND_OBJECT_INSTANCE: {
             const DiamondInstance *source=(const DiamondInstance *)value.as.object;
-            if(*adopted_owner==nullptr) {
-                *adopted_owner=adopt_program(dest_vm,source_program);
-                if(*adopted_owner==nullptr)return false;
+            DiamondInstance *copy;
+            if(rebase_dest_classes!=nullptr) {
+                const size_t offset=
+                    (size_t)(source->class-rebase_source_classes);
+                copy=allocate_instance(dest_vm,
+                    &rebase_dest_classes[offset],nullptr);
+            } else {
+                if(*adopted_owner==nullptr) {
+                    *adopted_owner=adopt_program(dest_vm,source_program);
+                    if(*adopted_owner==nullptr)return false;
+                }
+                copy=allocate_instance(dest_vm,source->class,*adopted_owner);
             }
-            DiamondInstance *copy=
-                allocate_instance(dest_vm,source->class,*adopted_owner);
             if(copy==nullptr)return false;
             for(size_t index=0;index<source->field_count;index++) {
                 if(!copy_value_into_vm(dest_vm,source->fields[index],
-                                       source_program,adopted_owner,
-                                       &copy->fields[index]))
+                                       source_program,rebase_source_classes,rebase_dest_classes,
+                                       adopted_owner,&copy->fields[index]))
                     return false;
             }
+            /* allocate_instance always starts a fresh instance at
+             * class->shapes[0] (nothing "materialized" yet, in the
+             * gradual-field-initialization sense GET_IVAR's own inline
+             * cache relies on -- see lookup_field_cached/DIAMOND_OP_
+             * GET_IVAR) since it has no way to know how many fields this
+             * particular caller is about to fill in. Writing `fields[]`
+             * directly above (never going through the real SET_IVAR
+             * opcode, which is what normally advances an instance's shape
+             * one field at a time) leaves that shape stuck at 0 -- every
+             * field would read back as a cache-materialized nil despite
+             * genuinely holding a copied value, exactly the same class of
+             * bug this session's DiamondInstance.owner fix targeted, just
+             * one field over. Fixed by rebasing `source`'s own shape the
+             * same way its class was rebased/adopted just above: shapes[]
+             * is a fixed-size array *inside* DiamondClass (not separately
+             * allocated), so the shape index within it is portable the
+             * same way a class index is. */
+            copy->shape=&copy->class->shapes[
+                (size_t)(source->shape-source->class->shapes)];
             *out=DIAMOND_OBJECT(copy);return true;
         }
         case DIAMOND_OBJECT_BIGNUM: {
@@ -1683,7 +1888,7 @@ static DiamondVmStatus program_builder_run_helper(DiamondVm *vm,
     }
     DiamondValue copied_result=DIAMOND_NIL;
     const DiamondChunk *adopted_owner=nullptr;
-    if(!copy_value_into_vm(vm,run_result,built,&adopted_owner,&copied_result)) {
+    if(!copy_value_into_vm(vm,run_result,built,nullptr,nullptr,&adopted_owner,&copied_result)) {
         diamond_vm_free(&run_vm);
         snprintf(vm->error,sizeof vm->error,"ProgramBuilder#%s",
             "run does not support this result type");
@@ -4165,6 +4370,7 @@ static uint8_t exception_class_for_status(DiamondVmStatus status) {
         case DIAMOND_VM_REGEXP_ERROR: return DIAMOND_CLASS_REGEXP_ERROR;
         case DIAMOND_VM_WOULD_BLOCK: return DIAMOND_CLASS_WOULD_BLOCK_ERROR;
         case DIAMOND_VM_PROGRAM_ERROR: return DIAMOND_CLASS_RUNTIME_ERROR;
+        case DIAMOND_VM_THREAD_ERROR: return DIAMOND_CLASS_THREAD_ERROR;
         default: return UINT8_MAX;
     }
 }
@@ -6753,6 +6959,96 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                         VM_PROPAGATE(target_fiber->status);
                     registers[dest]=target_fiber->result;break;
                 }
+                if(receiver_kind==DIAMOND_OBJECT_THREAD) {
+                    if(type_argument_count!=0)VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                    DiamondThread *target_thread=
+                        ((DiamondThreadHandle *)registers[recv].as.object)->thread;
+                    const bool join_method=method_name->length==4&&
+                        memcmp(method_name->chars,"join",4)==0;
+                    const bool alive_method=method_name->length==6&&
+                        memcmp(method_name->chars,"alive?",6)==0;
+                    if(alive_method) {
+                        if(argc!=0)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                        registers[dest]=
+                            DIAMOND_BOOL(!atomic_load(&target_thread->finished));
+                        break;
+                    }
+                    if(!join_method) {
+                        snprintf(vm->error,sizeof vm->error,"undefined method '%.*s' for %s",
+                            (int)method_name->length,method_name->chars,"Thread");
+                        VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                    }
+                    if(argc!=0)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                    /* Idempotent: pthread_join (once real threading lands)
+                     * can only safely run once per thread, so the copy-
+                     * back-and-cache work below only happens the first
+                     * time -- a second .join() just re-reads the already-
+                     * copied-into-*this*-vm's-heap result/re-raises the
+                     * same cached exception, both now ordinary GC-rooted
+                     * values (see mark_object's DIAMOND_OBJECT_THREAD
+                     * branch above, gated on target_thread->joined for
+                     * exactly this reason). */
+                    pthread_mutex_lock(&target_thread->join_lock);
+                    if(!target_thread->joined) {
+                        if(target_thread->spawned)
+                            pthread_join(target_thread->handle,nullptr);
+                        if(!target_thread->internal_failure) {
+                            DiamondValue copied=DIAMOND_NIL;
+                            const bool copy_ok=copy_value_into_vm(vm,
+                                target_thread->result,nullptr,
+                                target_thread->child_program->classes,
+                                chunk->classes,nullptr,&copied);
+                            if(!copy_ok) {
+                                pthread_mutex_unlock(&target_thread->join_lock);
+                                snprintf(vm->error,sizeof vm->error,
+                                    "Thread result does not support this type");
+                                VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                            }
+                            target_thread->result=copied;
+                        }
+                        target_thread->joined=true;
+                    }
+                    pthread_mutex_unlock(&target_thread->join_lock);
+                    if(target_thread->internal_failure) {
+                        if((size_t)DIAMOND_CLASS_THREAD_ERROR>=chunk->class_count)
+                            VM_RETURN(DIAMOND_VM_THREAD_ERROR);
+                        DiamondInstance *thread_error=allocate_instance(vm,
+                            &chunk->classes[DIAMOND_CLASS_THREAD_ERROR],nullptr);
+                        if(thread_error==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                        const char *message=
+                            target_thread->child_vm->error[0]!='\0'?
+                                target_thread->child_vm->error:"thread failed";
+                        DiamondString *message_string=
+                            allocate_string(vm,message,strlen(message));
+                        if(message_string==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                        if(thread_error->field_count>0)
+                            thread_error->fields[0]=DIAMOND_OBJECT(message_string);
+                        vm->exception=DIAMOND_OBJECT(thread_error);
+                        vm->has_exception=true;
+                        if(catch_exception(vm,chunk,handlers,&handler_count,
+                                           &pending,registers,&ip))break;
+                        snprintf(vm->error,sizeof vm->error,
+                            "uncaught exception: %s",thread_error->class->name);
+                        VM_RETURN(DIAMOND_VM_EXCEPTION);
+                    }
+                    if(target_thread->raised) {
+                        vm->exception=target_thread->result;
+                        vm->has_exception=true;
+                        if(catch_exception(vm,chunk,handlers,&handler_count,
+                                           &pending,registers,&ip))break;
+                        if(vm->exception.kind==DIAMOND_VALUE_OBJECT&&
+                           vm->exception.as.object->kind==DIAMOND_OBJECT_INSTANCE) {
+                            const DiamondInstance *raised_instance=
+                                (const DiamondInstance *)vm->exception.as.object;
+                            snprintf(vm->error,sizeof vm->error,
+                                "uncaught exception: %s",raised_instance->class->name);
+                        } else {
+                            snprintf(vm->error,sizeof vm->error,"uncaught exception");
+                        }
+                        VM_RETURN(DIAMOND_VM_EXCEPTION);
+                    }
+                    registers[dest]=target_thread->result;break;
+                }
                 if(receiver_kind==DIAMOND_OBJECT_FILE) {
                     if(type_argument_count!=0)VM_RETURN(DIAMOND_VM_TYPE_ERROR);
                     DiamondFileHandle *target_file=
@@ -7990,6 +8286,121 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     .as.object=(DiamondObject *)handle};
                 break;
             }
+            case DIAMOND_OP_THREAD_NEW: {
+                uint8_t dest=0,callable_reg=0,base=0,argc=0;
+                READ_BYTE(dest);READ_BYTE(callable_reg);READ_BYTE(base);READ_BYTE(argc);
+                if(registers[callable_reg].kind!=DIAMOND_VALUE_OBJECT||
+                   registers[callable_reg].as.object->kind!=DIAMOND_OBJECT_CLOSURE) {
+                    snprintf(vm->error,sizeof vm->error,
+                        "Thread.new's first argument must be a Callable value");
+                    VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                }
+                const DiamondClosure *callable=
+                    (const DiamondClosure *)registers[callable_reg].as.object;
+                if(callable->capture_count!=0) {
+                    snprintf(vm->error,sizeof vm->error,
+                        "Thread.new's callable must not capture any local state");
+                    VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                }
+                if((size_t)callable->function_index>=chunk->function_count)
+                    VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
+                const DiamondFunction *target_fn=&chunk->functions[callable->function_index];
+                if(argc<target_fn->required_arity||argc>target_fn->arity)
+                    VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                if(atomic_load(&diamond_active_thread_count)>=DIAMOND_MAX_THREADS) {
+                    snprintf(vm->error,sizeof vm->error,
+                        "too many concurrently active threads");
+                    VM_RETURN(DIAMOND_VM_THREAD_ERROR);
+                }
+                DiamondProgram *child_program=clone_program_from_chunk(chunk);
+                if(child_program==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                DiamondVm *child_vm=malloc(sizeof *child_vm);
+                if(child_vm==nullptr) {
+                    free(child_program);VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                }
+                diamond_vm_init(child_vm);
+                DiamondThread *new_thread=malloc(sizeof *new_thread);
+                if(new_thread==nullptr) {
+                    diamond_vm_free(child_vm);free(child_vm);free(child_program);
+                    VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                }
+                *new_thread=(DiamondThread){.child_vm=child_vm,
+                    .child_program=child_program,
+                    .function_index=callable->function_index,.arg_count=argc};
+                pthread_mutex_init(&new_thread->join_lock,nullptr);
+                /* From here on, `new_thread` is a fully valid DiamondThread
+                 * (free_thread works correctly on it regardless of whether
+                 * the arg copy below actually finishes), so every
+                 * remaining failure path in this case reuses free_thread
+                 * as its single cleanup rather than hand-rolling another
+                 * teardown sequence -- also where diamond_active_thread_
+                 * count's matching increment belongs: exactly the window
+                 * where a future free_thread call is guaranteed to
+                 * decrement it back out again. */
+                atomic_fetch_add(&diamond_active_thread_count,1);
+                bool copy_failed=false;
+                for(size_t index=0;index<argc;index++) {
+                    if(!copy_value_into_vm(child_vm,registers[(size_t)base+index],
+                            nullptr,chunk->classes,child_program->classes,
+                            nullptr,&new_thread->args[index])) {
+                        copy_failed=true;break;
+                    }
+                }
+                if(copy_failed) {
+                    free_thread(new_thread);
+                    snprintf(vm->error,sizeof vm->error,
+                        "Thread.new argument does not support this type");
+                    VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                }
+                /* Synchronous stub: runs the target function inline right
+                 * here rather than via a real OS thread, so the whole
+                 * value-crossing/GC-lifecycle design above can be verified
+                 * against the existing single-threaded test suite before
+                 * real concurrency enters the picture (see docs/threads.md's
+                 * own phasing note). A later change swaps this block for
+                 * pthread_create + a trampoline entry point; .join()/
+                 * .alive?() below are already written against the
+                 * finished/joined/result contract that swap needs. */
+                const DiamondChunk child_chunk={
+                    .name=target_fn->name,.code=target_fn->code,
+                    .lines=target_fn->lines,.columns=target_fn->columns,
+                    .code_count=target_fn->code_count,
+                    .constants=target_fn->constants,
+                    .constant_count=target_fn->constant_count,
+                    .strings=target_fn->strings,.string_count=target_fn->string_count,
+                    .type_sets=target_fn->type_sets,
+                    .type_set_count=target_fn->type_set_count,
+                    .functions=child_program->functions,
+                    .function_count=child_program->function_count,
+                    .classes=child_program->classes,
+                    .class_count=child_program->class_count,
+                    .interfaces=child_program->interfaces,
+                    .interface_count=child_program->interface_count,
+                    .parameter_type_sets=target_fn->parameter_type_sets,
+                    .type_variable_count=target_fn->type_variable_count,
+                    .parameter_offset=target_fn->owner_class==UINT8_MAX?0:1,
+                    .register_count=target_fn->register_count};
+                DiamondValue run_result=DIAMOND_NIL;
+                const DiamondVmStatus run_status=run_chunk(&child_chunk,child_vm,
+                    new_thread->args,new_thread->arg_count,0,nullptr,&run_result);
+                if(run_status==DIAMOND_VM_EXCEPTION) {
+                    new_thread->result=child_vm->exception;new_thread->raised=true;
+                } else if(run_status!=DIAMOND_VM_OK) {
+                    new_thread->internal_failure=true;
+                } else {
+                    new_thread->result=run_result;
+                }
+                atomic_store(&new_thread->finished,true);
+                DiamondThreadHandle *thread_handle=
+                    allocate_thread_handle(vm,new_thread);
+                if(thread_handle==nullptr) {
+                    free_thread(new_thread);
+                    VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                }
+                registers[dest]=(DiamondValue){.kind=DIAMOND_VALUE_OBJECT,
+                    .as.object=(DiamondObject *)thread_handle};
+                break;
+            }
             case DIAMOND_OP_TCP_CONNECT: {
                 uint8_t dest=0,host_reg=0,port_reg=0;
                 READ_BYTE(dest);READ_BYTE(host_reg);READ_BYTE(port_reg);
@@ -8557,6 +8968,8 @@ const char *diamond_vm_status_name(DiamondVmStatus status) {
             return "would block";
         case DIAMOND_VM_PROGRAM_ERROR:
             return "constructed program failed";
+        case DIAMOND_VM_THREAD_ERROR:
+            return "thread error";
     }
     return "unknown VM status";
 }

@@ -1509,6 +1509,57 @@ static uint8_t parse_fiber_new_call(Compiler *compiler) {
     return dest;
 }
 
+/* `Thread.new(callable, *args)` -- unlike Fiber.new (exactly one zero-arg
+ * closure, no other arguments: a suspended fiber gets later inputs via
+ * .resume(value) instead), a spawned OS thread has no interactive resume
+ * dialogue, so every input must be handed over here at construction. The
+ * argument-list parsing/register-packing below mirrors
+ * parse_closure_call_arguments's own shape (base register + consecutive
+ * MOVEs) since the runtime call convention is the same; only the trailing
+ * opcode differs (THREAD_NEW, not CALL_CLOSURE). See docs/threads.md. */
+static uint8_t parse_thread_new_call(Compiler *compiler) {
+    advance_token(compiler); /* consume '.' */
+    if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER||
+       !name_equals(compiler,"new",compiler->current.span,false)) {
+        fail(compiler,compiler->current.span,"expected 'new' after 'Thread'");
+        return 0;
+    }
+    advance_token(compiler); /* consume 'new' */
+    if(compiler->current.kind!=DIAMOND_TOKEN_LEFT_PAREN) {
+        fail(compiler,compiler->current.span,"expected '(' after 'Thread.new'");
+        return 0;
+    }
+    advance_token(compiler);
+    skip_newlines(compiler);
+    const uint8_t callable_register=parse_expression(compiler);
+    skip_newlines(compiler);
+    uint8_t arguments[16]; size_t argument_count=0;
+    while(compiler->current.kind==DIAMOND_TOKEN_COMMA) {
+        advance_token(compiler);
+        skip_newlines(compiler);
+        if(argument_count==16) {
+            fail(compiler,compiler->current.span,"too many Thread.new arguments");
+            return 0;
+        }
+        arguments[argument_count++]=parse_expression(compiler);
+        skip_newlines(compiler);
+    }
+    if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
+        fail(compiler,compiler->current.span,"expected ')' after Thread.new arguments");
+        return 0;
+    }
+    advance_token(compiler);
+    const uint8_t base=allocate_register(compiler);
+    for(size_t i=1;i<argument_count;i++)(void)allocate_register(compiler);
+    for(size_t i=0;i<argument_count;i++)
+        emit_instruction(compiler,DIAMOND_OP_MOVE,(uint8_t)(base+i),arguments[i],0,2);
+    const uint8_t dest=allocate_register(compiler);
+    emit_opcode(compiler,DIAMOND_OP_THREAD_NEW);
+    emit_byte(compiler,dest);emit_byte(compiler,callable_register);
+    emit_byte(compiler,base);emit_byte(compiler,(uint8_t)argument_count);
+    return dest;
+}
+
 static uint8_t parse_file_open_call(Compiler *compiler) {
     advance_token(compiler); /* consume '.' */
     if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER||
@@ -2120,6 +2171,10 @@ static uint8_t parse_name(Compiler *compiler) {
        compiler->current.kind==DIAMOND_TOKEN_DOT&&
        name_equals(compiler,"ProgramBuilder",name,false))
         return parse_program_builder_new_call(compiler);
+    if(class_index<0&&find_local(compiler,name)<0&&find_function(compiler,name)<0&&
+       compiler->current.kind==DIAMOND_TOKEN_DOT&&
+       name_equals(compiler,"Thread",name,false))
+        return parse_thread_new_call(compiler);
     if(class_index<0&&find_local(compiler,name)<0&&find_function(compiler,name)<0&&
        compiler->current.kind==DIAMOND_TOKEN_DOT&&
        name_equals(compiler,"TCPSocket",name,false))
@@ -4996,6 +5051,7 @@ void diamond_program_init(DiamondProgram *program) {
         [DIAMOND_CLASS_IO_ERROR]={"IOError",DIAMOND_CLASS_STANDARD_ERROR},
         [DIAMOND_CLASS_REGEXP_ERROR]={"RegexpError",DIAMOND_CLASS_STANDARD_ERROR},
         [DIAMOND_CLASS_WOULD_BLOCK_ERROR]={"WouldBlockError",DIAMOND_CLASS_STANDARD_ERROR},
+        [DIAMOND_CLASS_THREAD_ERROR]={"ThreadError",DIAMOND_CLASS_STANDARD_ERROR},
     };
     program->class_count=DIAMOND_BUILTIN_CLASS_COUNT;
     for(size_t index=0;index<DIAMOND_BUILTIN_CLASS_COUNT;index++) {

@@ -146,6 +146,7 @@ typedef enum DiamondOpCode : uint8_t {
     DIAMOND_OP_MATH_UNARY,
     DIAMOND_OP_MATH_BINARY,
     DIAMOND_OP_PROGRAM_BUILDER_NEW,
+    DIAMOND_OP_THREAD_NEW,
     DIAMOND_OP_COUNT,
 } DiamondOpCode;
 
@@ -194,6 +195,7 @@ typedef enum DiamondBuiltinClass : uint8_t {
     DIAMOND_CLASS_IO_ERROR,
     DIAMOND_CLASS_REGEXP_ERROR,
     DIAMOND_CLASS_WOULD_BLOCK_ERROR,
+    DIAMOND_CLASS_THREAD_ERROR,
     DIAMOND_BUILTIN_CLASS_COUNT,
 } DiamondBuiltinClass;
 
@@ -403,6 +405,13 @@ typedef enum DiamondVmStatus : uint8_t {
      * "you called the builder wrong" vs. "the program you built didn't
      * work." See docs/roadmap.md. */
     DIAMOND_VM_PROGRAM_ERROR,
+    /* Thread.new/.join failures that aren't the spawned thread's own
+     * Diamond-level exception re-raised (see run_chunk's THREAD_NEW case
+     * and .join()'s dispatch, src/vm.c): pthread_create failure, the
+     * DIAMOND_MAX_THREADS cap, or a child thread that hit an internal VM
+     * failure rather than a clean, re-raisable exception. See
+     * docs/threads.md. */
+    DIAMOND_VM_THREAD_ERROR,
 } DiamondVmStatus;
 
 typedef struct DiamondMethodCacheEntry {
