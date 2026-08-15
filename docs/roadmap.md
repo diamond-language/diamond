@@ -169,6 +169,14 @@ future work.
   especially under AddressSanitizer; added regression coverage for integer
   overflow, dynamic-dispatch arity checking, and a mixed-class dispatch
   benchmark that were previously untested.
+- Unified `ADD_INT`'s deopt path with `ADD`'s own fallback logic behind one
+  shared helper, fixing a real bug the duplication had hidden: a `+` site
+  quickened to `ADD_INT` from prior Int+Int calls raised a spurious
+  TypeError on a later Int+Float call instead of promoting, since the
+  duplicated deopt copy had never had the mixed-Int/Float case. Also fixed
+  three existing `operator_deopt_gap_*` regression tests that were silently
+  not exercising the deopt path they were named for (missing the `.env`
+  file needed to opt into quickening at all).
 
 ### Fibers and concurrency
 
@@ -351,15 +359,6 @@ future work.
 - Parallel execution.
 
 ## Confirmed still open
-
-- **Duplicated operator-overload check in `ADD_INT`'s deopt path.**
-  `run_chunk`'s `ADD_INT` deoptimization branch handles the deopted
-  instruction inline instead of falling through to `ADD`'s own case block,
-  so the `"+"` operator-overload lookup is hand-duplicated in two places in
-  `src/vm.c` instead of living in one. Matters because any future change to
-  operator-overload dispatch has to be made twice or the two copies silently
-  diverge. Look at `invoke_operator_method`'s two call sites inside the
-  `DIAMOND_OP_ADD` and `DIAMOND_OP_ADD_INT` case blocks in `src/vm.c`.
 
 - **No multi-line `&&`/`||` boolean expressions.** A boolean expression
   split across lines at a trailing `&&`/`||` fails to parse

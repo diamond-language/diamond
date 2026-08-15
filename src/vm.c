@@ -3355,6 +3355,79 @@ static DiamondVmStatus invoke_operator_method(DiamondVm *vm, const DiamondChunk 
     return run_chunk(&child,vm,args,argument_count,depth+1,nullptr,result);
 }
 
+/* Shared fallback for `+` once the fast Int/Int path doesn't apply:
+ * bignum promotion, mixed Int/Float promotion, String concatenation, and
+ * an Instance's own `+` operator-overload method, in that exact order --
+ * used by DIAMOND_OP_ADD's own case block (after its Int/Int fast path
+ * finds the operands aren't both plain Int) and by ADD_INT's deopt
+ * branch (which retargets the opcode back to ADD but, unlike a real
+ * fresh dispatch of the now-generic instruction, has to run this same
+ * fallback logic on the very instruction that just deopted, rather than
+ * relying on ADD's own case block to run next). Previously hand-
+ * duplicated at the second call site, and that copy was missing the
+ * mixed-Int/Float branch entirely -- a real, previously-undiscovered
+ * bug: once a `+` call site had been quickened to ADD_INT from earlier
+ * Int+Int calls, a later Int+Float call at the same site raised a
+ * spurious TypeError instead of promoting to Float, because only ADD's
+ * own block had ever had the Float check. Confirmed with
+ * DIAMOND_QUICKEN=1 DIAMOND_QUICKEN_THRESHOLD=1 before this fix. */
+static DiamondVmStatus add_fallback(DiamondVm *vm,const DiamondChunk *chunk,size_t depth,
+        size_t instruction_offset,DiamondValue left_value,DiamondValue right_value,
+        DiamondValue *out_result) {
+    if (is_int_value(left_value) && is_int_value(right_value) &&
+        (value_is_bignum(left_value) || value_is_bignum(right_value))) {
+        DiamondIntView left_view, right_view;
+        diamond_int_view(left_value,&left_view);
+        diamond_int_view(right_value,&right_view);
+        const DiamondValue bignum_result=diamond_bignum_add(vm,left_view,right_view);
+        if(bignum_result.kind==DIAMOND_VALUE_NIL)return DIAMOND_VM_OUT_OF_MEMORY;
+        *out_result=bignum_result;
+        return DIAMOND_VM_OK;
+    }
+    if ((left_value.kind==DIAMOND_VALUE_FLOAT||left_value.kind==DIAMOND_VALUE_INT) &&
+        (right_value.kind==DIAMOND_VALUE_FLOAT||right_value.kind==DIAMOND_VALUE_INT) &&
+        (left_value.kind==DIAMOND_VALUE_FLOAT||right_value.kind==DIAMOND_VALUE_FLOAT)) {
+        /* Mixed Int/Float auto-promotes: the Int side widens to double
+         * before the operation (user-confirmed design). */
+        const double left_double=left_value.kind==DIAMOND_VALUE_FLOAT?
+            left_value.as.real:(double)left_value.as.integer;
+        const double right_double=right_value.kind==DIAMOND_VALUE_FLOAT?
+            right_value.as.real:(double)right_value.as.integer;
+        *out_result=DIAMOND_FLOAT(left_double+right_double);
+        return DIAMOND_VM_OK;
+    }
+    if (left_value.kind==DIAMOND_VALUE_OBJECT && right_value.kind==DIAMOND_VALUE_OBJECT &&
+        left_value.as.object->kind==DIAMOND_OBJECT_STRING &&
+        right_value.as.object->kind==DIAMOND_OBJECT_STRING) {
+        const DiamondString *left_string=(const DiamondString *)left_value.as.object;
+        const DiamondString *right_string=(const DiamondString *)right_value.as.object;
+        const size_t length=left_string->length+right_string->length;
+        char *chars=malloc(length+1);
+        if(chars==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+        memcpy(chars,left_string->chars,left_string->length);
+        memcpy(chars+left_string->length,right_string->chars,right_string->length);
+        DiamondString *string=allocate_string(vm,chars,length);
+        free(chars);
+        if(string==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+        *out_result=DIAMOND_OBJECT(string);
+        return DIAMOND_VM_OK;
+    }
+    if (left_value.kind==DIAMOND_VALUE_OBJECT &&
+        left_value.as.object->kind==DIAMOND_OBJECT_INSTANCE) {
+        bool found=false;DiamondValue op_result=DIAMOND_NIL;
+        const uint8_t *site=chunk->code+instruction_offset;
+        const DiamondVmStatus status=invoke_operator_method(vm,chunk,depth,site,
+            (const DiamondInstance *)left_value.as.object,"+",1,&right_value,
+            &op_result,&found);
+        if(found) {
+            if(status!=DIAMOND_VM_OK)return status;
+            *out_result=op_result;
+            return DIAMOND_VM_OK;
+        }
+    }
+    return DIAMOND_VM_TYPE_ERROR;
+}
+
 /* Mirrors find_function's two filters (compiler.c) exactly, operating on
  * the runtime DiamondChunk instead of the compile-time DiamondProgram:
  * excludes class/module methods (owner_class!=UINT8_MAX) and nested
@@ -5045,68 +5118,11 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     registers[destination] = DIAMOND_INT(sum);
                     break;
                 }
-                if (is_int_value(registers[left]) && is_int_value(registers[right]) &&
-                    (value_is_bignum(registers[left]) ||
-                     value_is_bignum(registers[right]))) {
-                    DiamondIntView left_view, right_view;
-                    diamond_int_view(registers[left],&left_view);
-                    diamond_int_view(registers[right],&right_view);
-                    const DiamondValue bignum_result=
-                        diamond_bignum_add(vm,left_view,right_view);
-                    if(bignum_result.kind==DIAMOND_VALUE_NIL)
-                        VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
-                    registers[destination]=bignum_result;
-                    break;
-                }
-                if ((registers[left].kind==DIAMOND_VALUE_FLOAT||
-                     registers[left].kind==DIAMOND_VALUE_INT) &&
-                    (registers[right].kind==DIAMOND_VALUE_FLOAT||
-                     registers[right].kind==DIAMOND_VALUE_INT) &&
-                    (registers[left].kind==DIAMOND_VALUE_FLOAT||
-                     registers[right].kind==DIAMOND_VALUE_FLOAT)) {
-                    /* Mixed Int/Float auto-promotes: the Int side widens to
-                     * double before the operation (user-confirmed design). */
-                    const double left_value=registers[left].kind==DIAMOND_VALUE_FLOAT?
-                        registers[left].as.real:(double)registers[left].as.integer;
-                    const double right_value=registers[right].kind==DIAMOND_VALUE_FLOAT?
-                        registers[right].as.real:(double)registers[right].as.integer;
-                    registers[destination]=DIAMOND_FLOAT(left_value+right_value);
-                    break;
-                }
-                if (registers[left].kind == DIAMOND_VALUE_OBJECT &&
-                    registers[right].kind == DIAMOND_VALUE_OBJECT &&
-                    registers[left].as.object->kind == DIAMOND_OBJECT_STRING &&
-                    registers[right].as.object->kind == DIAMOND_OBJECT_STRING) {
-                    const DiamondString *left_string =
-                        (const DiamondString *)registers[left].as.object;
-                    const DiamondString *right_string =
-                        (const DiamondString *)registers[right].as.object;
-                    const size_t length = left_string->length + right_string->length;
-                    char *chars = malloc(length + 1);
-                    if (chars == nullptr) VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
-                    memcpy(chars, left_string->chars, left_string->length);
-                    memcpy(chars + left_string->length, right_string->chars,
-                           right_string->length);
-                    DiamondString *string = allocate_string(vm, chars, length);
-                    free(chars);
-                    if (string == nullptr) VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
-                    registers[destination] = DIAMOND_OBJECT(string);
-                    break;
-                }
-                if (registers[left].kind==DIAMOND_VALUE_OBJECT &&
-                    registers[left].as.object->kind==DIAMOND_OBJECT_INSTANCE) {
-                    bool found=false;DiamondValue op_result=DIAMOND_NIL;
-                    const uint8_t *site=chunk->code+instruction_offset;
-                    const DiamondVmStatus status=invoke_operator_method(vm,chunk,depth,
-                        site,(const DiamondInstance *)registers[left].as.object,
-                        "+",1,&registers[right],&op_result,&found);
-                    if(found) {
-                        VM_PROPAGATE(status);
-                        registers[destination]=op_result;
-                        break;
-                    }
-                }
-                VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                DiamondValue add_result=DIAMOND_NIL;
+                const DiamondVmStatus add_status=add_fallback(vm,chunk,depth,
+                    instruction_offset,registers[left],registers[right],&add_result);
+                VM_PROPAGATE(add_status);
+                registers[destination]=add_result;
                 break;
             }
             case DIAMOND_OP_SUBTRACT:
@@ -5145,67 +5161,19 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     uint8_t *code=(uint8_t *)(void *)chunk->code;
                     code[instruction_offset]=(uint8_t)DIAMOND_OP_ADD;
                     vm->deoptimized_sites++;
-                    if (registers[left].kind == DIAMOND_VALUE_OBJECT &&
-                        registers[right].kind == DIAMOND_VALUE_OBJECT &&
-                        registers[left].as.object->kind == DIAMOND_OBJECT_STRING &&
-                        registers[right].as.object->kind == DIAMOND_OBJECT_STRING) {
-                        const DiamondString *left_string=(const DiamondString *)
-                            registers[left].as.object;
-                        const DiamondString *right_string=(const DiamondString *)
-                            registers[right].as.object;
-                        const size_t length=left_string->length+right_string->length;
-                        char *chars=malloc(length+1);
-                        if(chars==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
-                        memcpy(chars,left_string->chars,left_string->length);
-                        memcpy(chars+left_string->length,right_string->chars,
-                               right_string->length);
-                        DiamondString *string=allocate_string(vm,chars,length);
-                        free(chars);
-                        if(string==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
-                        registers[destination]=DIAMOND_OBJECT(string);break;
-                    }
-                    /* A directly-compiled ADD_INT (both operands statically
-                     * known Int, not one that arrived here via runtime
-                     * quickening -- that path is DIAMOND_OP_ADD's own case
-                     * block, which already has this same check) needs its
-                     * own bignum check here too: this block retargets the
-                     * opcode and handles the deopted instruction inline
-                     * rather than truly falling through to a fresh dispatch
-                     * of the now-generic ADD, so ADD's own bignum handling
-                     * never gets a chance to run for *this* instruction
-                     * otherwise. */
-                    if (is_int_value(registers[left])&&is_int_value(registers[right])&&
-                        (value_is_bignum(registers[left])||
-                         value_is_bignum(registers[right]))) {
-                        DiamondIntView left_view, right_view;
-                        diamond_int_view(registers[left],&left_view);
-                        diamond_int_view(registers[right],&right_view);
-                        const DiamondValue bignum_result=
-                            diamond_bignum_add(vm,left_view,right_view);
-                        if(bignum_result.kind==DIAMOND_VALUE_NIL)
-                            VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
-                        registers[destination]=bignum_result;
-                        break;
-                    }
-                    /* Same reasoning as the bignum check just above: this
-                     * deopt handles the instruction inline rather than
-                     * falling through to ADD's own case block, so an
-                     * operator-overload check is needed here too, not just
-                     * in ADD's own already-checked TYPE_ERROR fallback. */
-                    if (registers[left].kind==DIAMOND_VALUE_OBJECT &&
-                        registers[left].as.object->kind==DIAMOND_OBJECT_INSTANCE) {
-                        bool found=false;DiamondValue op_result=DIAMOND_NIL;
-                        const uint8_t *site=chunk->code+instruction_offset;
-                        const DiamondVmStatus status=invoke_operator_method(vm,chunk,
-                            depth,site,(const DiamondInstance *)registers[left].as.object,
-                            "+",1,&registers[right],&op_result,&found);
-                        if(found) {
-                            VM_PROPAGATE(status);
-                            registers[destination]=op_result;
-                            break;
-                        }
-                    }
-                    VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                    /* Retargets the opcode but, unlike a real fresh
+                     * dispatch of the now-generic ADD, has to run ADD's
+                     * own fallback logic on this instruction directly --
+                     * see add_fallback's own comment for why this is a
+                     * shared helper rather than duplicated here (it used
+                     * to be, and the duplicate silently lacked the mixed-
+                     * Int/Float case). */
+                    DiamondValue add_result=DIAMOND_NIL;
+                    const DiamondVmStatus add_status=add_fallback(vm,chunk,depth,
+                        instruction_offset,registers[left],registers[right],&add_result);
+                    VM_PROPAGATE(add_status);
+                    registers[destination]=add_result;
+                    break;
                 }
                 /* SUBTRACT_INT/MULTIPLY_INT/DIVIDE_INT never had a deopt
                  * branch at all before bignums existed: the only way an
