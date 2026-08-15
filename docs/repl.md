@@ -40,6 +40,13 @@ kernel's line discipline via `getline`:
 - **Ctrl-D** exits the REPL, but only on an empty line — on a non-empty
   line it's a no-op, matching common shell convention (not a forced
   submit, not a deletion).
+- **`exit`/`quit`**, typed as a whole line by itself, also exit the REPL —
+  not a language builtin (Diamond has none), recognized only here, only
+  when it's the first line of a fresh statement (so it can't misfire
+  partway through a multi-line block, where it's just an ordinary,
+  undefined identifier like any other word). Case-sensitive, matching the
+  exact spelling every other REPL with this convention (irb, pry, the
+  Python REPL, ...) actually recognizes.
 
 Redrawing is whole-line-from-scratch on every edit (`\r\x1b[K` + prompt +
 buffer + a cursor-repositioning escape), not a diff against the

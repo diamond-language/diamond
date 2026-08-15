@@ -331,6 +331,9 @@ future work.
 - Interactive line editing: in-place cursor movement, Backspace/Delete,
   Up/Down history (persisted to `~/.diamond_history`), and Ctrl-C that
   aborts only the current input.
+- A bare `exit`/`quit` typed at the prompt exits too, not just Ctrl-D —
+  recognized only as the first line of a fresh statement, so it can't
+  misfire mid-continuation.
 
 ### Testing library
 

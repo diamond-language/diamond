@@ -363,6 +363,27 @@ static ReplLineResult read_line_interactive(FILE *out, ReplHistory *history,
     return result;
 }
 
+/* True if `line` (a single physical line, trailing '\n' and all) is
+ * nothing but "exit" or "quit", modulo surrounding whitespace -- the two
+ * names every reasonably popular REPL treats as "leave now" regardless
+ * of what the host language actually calls its own exit builtin (Diamond
+ * has none at all). Case-sensitive, matching the exact spelling every
+ * such REPL actually recognizes; a program that happens to have a local
+ * variable or function named exactly `exit`/`quit` is vanishingly
+ * unlikely and, if it ever happens, is only shadowed at the REPL prompt
+ * itself, not in the language. */
+static bool is_bare_exit_command(const char *line) {
+    size_t start = 0;
+    while (line[start] == ' ' || line[start] == '\t') start++;
+    size_t end = strlen(line);
+    while (end > start && (line[end - 1] == ' ' || line[end - 1] == '\t' ||
+                            line[end - 1] == '\r' || line[end - 1] == '\n'))
+        end--;
+    const size_t length = end - start;
+    return (length == 4 && memcmp(line + start, "exit", 4) == 0) ||
+           (length == 4 && memcmp(line + start, "quit", 4) == 0);
+}
+
 /* Attempts to compile `source` (the whole REPL session so far, plus the
  * newest pending input) exactly the way -e/file execution do: core.di
  * prepended, then a #line 1 reset so the diagnostic's own line/column
@@ -441,7 +462,7 @@ static bool run_candidate(DiamondProgram *program, DiamondValue *out_result,
 }
 
 int diamond_repl_run(void) {
-    printf("diamond REPL -- Ctrl-D to exit\n");
+    printf("diamond REPL -- Ctrl-D, exit, or quit to leave\n");
 
     FILE *capture = tmpfile();
     if (capture == nullptr) {
@@ -527,6 +548,21 @@ int diamond_repl_run(void) {
             }
             if (line_result == REPL_LINE_INTERRUPTED) {
                 buffer_free(&line_buffer);
+                break;
+            }
+            /* `exit`/`quit`, bare, as the first line of a fresh
+             * statement (pending is still empty) -- irb/pry/python-REPL
+             * convention for "leave the REPL", distinct from Ctrl-D and
+             * worth having since not every user reaches for Ctrl-D by
+             * instinct. Deliberately only recognized here, not as a
+             * real language builtin: neither name means anything to
+             * ordinary Diamond code, and gating on "still the first
+             * line of pending" avoids misfiring mid-continuation (e.g.
+             * a string literal or comment that happens to contain the
+             * word on its own line). */
+            if (pending.length == 0 && is_bare_exit_command(line_buffer.data)) {
+                buffer_free(&line_buffer);
+                eof = true;
                 break;
             }
 

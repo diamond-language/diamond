@@ -141,4 +141,61 @@ count=$((count + 1))
 exec {REPL[1]}>&-
 wait "$REPL_PID" 2>/dev/null || true
 
+# --- a bare `exit`/`quit` (irb/pry/python-REPL convention) exits too,
+# not just Ctrl-D -- each gets its own fresh coproc, since exiting ends
+# the process the rest of this file's tests would otherwise keep reusing.
+# Waited for with a real timeout (not just kill -0 once) so a regression
+# that hangs instead of exiting fails the test rather than racing it. ---
+
+assert_exit_word_exits() {
+    local word="$1"
+    coproc EXIT_REPL { DIAMOND_FORCE_REPL=1 "$diamond"; }
+    local repl_pid="$EXIT_REPL_PID"
+    local chunk buffer=
+    while IFS= read -r -u "${EXIT_REPL[0]}" -N 1 -t 10 chunk; do
+        buffer+="$chunk"
+        [[ "$buffer" == *$'\n>>> ' || "$buffer" == ">>> " ]] && break
+    done
+    printf '%s\n' "$word" >&"${EXIT_REPL[1]}"
+    exec {EXIT_REPL[1]}>&-
+    local waited=0
+    while kill -0 "$repl_pid" 2>/dev/null; do
+        sleep 0.1
+        waited=$((waited + 1))
+        if [[ "$waited" -ge 50 ]]; then
+            echo "process did not exit after '$word'" >&2
+            kill -9 "$repl_pid" 2>/dev/null || true
+            exit 1
+        fi
+    done
+    wait "$repl_pid" 2>/dev/null || true
+}
+assert_exit_word_exits "exit"
+count=$((count + 1))
+assert_exit_word_exits "quit"
+count=$((count + 1))
+
+# `exit` appearing inside an in-progress multi-line block (not as the
+# first line of a fresh statement) must not trigger early exit -- it's
+# just the token `exit`, an undefined local, same as any other name.
+coproc EXIT_REPL { DIAMOND_FORCE_REPL=1 "$diamond"; }
+repl_pid="$EXIT_REPL_PID"
+buffer=
+while IFS= read -r -u "${EXIT_REPL[0]}" -N 1 -t 10 chunk; do
+    buffer+="$chunk"
+    [[ "$buffer" == *$'\n>>> ' || "$buffer" == ">>> " ]] && break
+done
+printf '1 +\n' >&"${EXIT_REPL[1]}"
+buffer=
+while IFS= read -r -u "${EXIT_REPL[0]}" -N 1 -t 10 chunk; do
+    buffer+="$chunk"
+    [[ "$buffer" == *$'\n... ' || "$buffer" == "... " ]] && break
+done
+printf 'exit\n' >&"${EXIT_REPL[1]}"
+sleep 0.3
+kill -0 "$repl_pid" 2>/dev/null
+count=$((count + 1))
+kill -9 "$repl_pid" 2>/dev/null || true
+wait "$repl_pid" 2>/dev/null || true
+
 echo "$count repl tests passed"
