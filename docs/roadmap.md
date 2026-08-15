@@ -224,6 +224,15 @@ future work.
 - Diamond-language fiber syntax: `Fiber.new(callable)`, `yield`/`yield(value)`
   as an ordinary expression, `.resume(value)`/`.status()`/`.alive?()`, and a
   rescuable `FiberError` for resuming a completed/failed fiber.
+- `Thread`: real OS-level parallel execution via `pthread_create`, each
+  thread running against a fully independent heap (its own `DiamondVm` and a
+  byte-for-byte cloned `DiamondProgram`) rather than making the existing
+  single-threaded GC/dispatch/inline-cache machinery thread-safe.
+  `Thread.new(callable, *args)`/`.join()`/`.alive?()`, cross-heap argument/
+  result copying via a generalized `copy_value_into_vm` (shared with
+  `ProgramBuilder#run`'s own cross-heap `Instance` handling), a GC block-join
+  guarantee so no OS thread outlives its handle, and a `make test-tsan`
+  ThreadSanitizer build variant. See `docs/threads.md`.
 
 ### Strings, numbers, and structured data
 
@@ -425,7 +434,6 @@ future work.
 - Ruby compatibility (not a goal; only familiar syntax and object conventions).
 - Stable bytecode and embedding APIs.
 - Multi-platform support.
-- Parallel execution.
 
 ## Confirmed still open
 

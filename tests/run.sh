@@ -2204,6 +2204,55 @@ actual="$($diamond -e $'x = 9223372036854775807 + 1\nx')"
 puts_actual="$(DIAMOND_STRESS_GC=1 $diamond -e $'x = 9223372036854775807 + 1\nputs(x)')"
 [[ "$actual" == "9223372036854775808" && "$puts_actual" == $'9223372036854775808\nnil' ]]
 
+# Real-parallelism proof for Thread: two threads each doing genuine
+# CPU-bound work (not sleep -- sleep would pass even under the old
+# single-native-thread Fiber cooperative scheduler if it yielded during
+# the sleep, so this has to be work an isolated pthread actually executes
+# concurrently to prove anything) should finish in wall-clock time much
+# closer to *one* of them than to their sum. Diamond has no Time/clock
+# builtin, so this times the whole `diamond` subprocess from bash itself
+# (via $EPOCHREALTIME) rather than measuring inside the language -- the
+# same reason the Signal.trap tests above are subprocess/bash-timed
+# instead of assertions inside the .di source. A generous tolerance band
+# (< 1.6x one spin()'s own solo time, not a tight bound) keeps this from
+# flaking under CI/sandbox scheduling noise while still failing hard if
+# Thread.new secretly ran things serially (which would show up as
+# parallel time roughly 2x the serial unit instead).
+spin_program='def spin()
+  i = 0
+  while i < 200000000
+    i = i + 1
+  end
+  i
+end'
+start="$EPOCHREALTIME"
+serial_out="$("$diamond" -e "$spin_program
+puts(spin())")"
+end="$EPOCHREALTIME"
+serial_time="$(echo "$end - $start" | bc)"
+
+start="$EPOCHREALTIME"
+parallel_out="$("$diamond" -e "$spin_program
+t1 = Thread.new(spin)
+t2 = Thread.new(spin)
+puts(t1.join())
+puts(t2.join())")"
+end="$EPOCHREALTIME"
+parallel_time="$(echo "$end - $start" | bc)"
+
+if [[ "$serial_out" != $'200000000\nnil' || "$parallel_out" != $'200000000\n200000000\nnil' ]]; then
+    echo "FAIL: Thread real-parallelism proof (unexpected output)" >&2
+    echo "  serial:   $serial_out" >&2
+    echo "  parallel: $parallel_out" >&2
+    exit 1
+fi
+if ! (( $(echo "$parallel_time < $serial_time * 1.6" | bc -l) )); then
+    echo "FAIL: Thread real-parallelism proof (not actually parallel)" >&2
+    echo "  serial time (1 spin):    ${serial_time}s" >&2
+    echo "  parallel time (2 spins): ${parallel_time}s" >&2
+    exit 1
+fi
+
 # File-based test cases: tests/cases/<name>.di paired with:
 #   <name>.expected          -- exact stdout match (trailing newline
 #                                stripped the same way $() strips it on

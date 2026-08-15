@@ -1,0 +1,1 @@
+Thread.new's callable must not capture any local state

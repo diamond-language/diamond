@@ -31,6 +31,8 @@ Implemented today:
 - exceptions: `raise`/`rescue`/`ensure`/`retry`, typed rescue filters, and
   built-in exception classes;
 - fibers (cooperative coroutines) with `yield`/`resume`;
+- `Thread` for real OS-level parallel execution (`Thread.new`/`.join`/
+  `.alive?`), each thread running against its own independent heap;
 - optional gradual parameter/return annotations and nilable types;
 - a Diamond-written core prelude with collection helpers and a `JSON`
   module (`JSON.stringify`/`JSON.parse`);
@@ -486,6 +488,8 @@ runtime error: expected String | Nil, got Int
 - operator methods (`def +(other)`, `def ==(other)`, `def <(other)`, ...) —
   dispatch by name and arity like any other method, no separate mechanism
 - `yield`/`resume` on `Fiber.new(...)` for cooperative coroutines
+- `Thread.new(callable, *args)`/`.join()`/`.alive?()` for real OS-level
+  parallel execution, each thread running against an independent heap
 
 ## Architecture
 
@@ -493,6 +497,7 @@ runtime error: expected String | Nil, got Int
 - [Syntax overview](docs/syntax.md)
 - [Object model](docs/object-model.md)
 - [Fibers](docs/fibers.md)
+- [Threads](docs/threads.md)
 - [I/O](docs/io.md)
 - [REPL](docs/repl.md)
 - [Packages and `facet`](docs/packages.md)

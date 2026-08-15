@@ -8,6 +8,11 @@ CFLAGS_RELEASE := -O3 -DNDEBUG -march=native
 CFLAGS_SANITIZE := $(CFLAGS_DEBUG) -fsanitize=address,undefined \
 	-fno-omit-frame-pointer
 LDFLAGS_SANITIZE := -fsanitize=address,undefined
+# ThreadSanitizer can't combine with ASan+UBSan above (mutually exclusive
+# instrumentation), so this is its own build variant rather than an
+# addition to CFLAGS_SANITIZE -- see docs/threads.md and tests/tsan_test.sh.
+CFLAGS_TSAN := $(CFLAGS_DEBUG) -fsanitize=thread
+LDFLAGS_TSAN := -fsanitize=thread
 LDLIBS := -lm $(REGINOLD_DIR)/libreginold.a -ldl -lpthread -lssl -lcrypto
 
 # libFuzzer is a Clang/LLVM feature (-fsanitize=fuzzer isn't recognized by
@@ -25,7 +30,7 @@ SOURCES := $(wildcard src/*.c)
 OBJECTS := $(SOURCES:src/%.c=$(BUILD_DIR)/%.o)
 DEPS := $(OBJECTS:.o=.d)
 
-.PHONY: all debug sanitize release test test-release test-sanitize test-api test-fibers test-fiber-run test-fiber-context test-vm-context test-yield test-continuation test-multi-yield test-scheduler test-scheduler-run-all test-fiber-gc-roots test-fiber-guards test-nested-yield-guard test-stack-overflow test-all test-facet facet test-http-package test-gremlin-package test-lexer-diff test-parser-diff lsp test-lsp test-repl fuzz test-fuzz clean
+.PHONY: all debug sanitize tsan release test test-release test-sanitize test-tsan test-api test-fibers test-fiber-run test-fiber-context test-vm-context test-yield test-continuation test-multi-yield test-scheduler test-scheduler-run-all test-fiber-gc-roots test-fiber-guards test-nested-yield-guard test-stack-overflow test-all test-facet facet test-http-package test-gremlin-package test-lexer-diff test-parser-diff lsp test-lsp test-repl fuzz test-fuzz clean
 
 all: debug
 
@@ -35,6 +40,10 @@ debug: $(TARGET) $(BUILD_DIR)/run_cases
 sanitize: CFLAGS := $(CFLAGS_COMMON) $(CFLAGS_SANITIZE)
 sanitize: LDFLAGS := $(LDFLAGS_SANITIZE)
 sanitize: clean $(TARGET) $(BUILD_DIR)/run_cases
+
+tsan: CFLAGS := $(CFLAGS_COMMON) $(CFLAGS_TSAN)
+tsan: LDFLAGS := $(LDFLAGS_TSAN)
+tsan: clean $(TARGET) $(BUILD_DIR)/run_cases
 
 release: CFLAGS := $(CFLAGS_COMMON) $(CFLAGS_RELEASE)
 release: clean $(TARGET) $(BUILD_DIR)/run_cases
@@ -64,6 +73,9 @@ test-release: release
 
 test-sanitize: sanitize
 	ASAN_OPTIONS=detect_leaks=1 UBSAN_OPTIONS=print_stacktrace=1 bash tests/run.sh
+
+test-tsan: tsan
+	bash tests/tsan_test.sh
 
 API_SOURCES := $(filter-out src/main.c,$(SOURCES))
 
@@ -165,6 +177,8 @@ test-all:
 	$(MAKE) test-release
 	$(MAKE) clean
 	$(MAKE) test-sanitize
+	$(MAKE) clean
+	$(MAKE) test-tsan
 	$(MAKE) test-api
 	$(MAKE) test-fibers
 	$(MAKE) test-fiber-guards

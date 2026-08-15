@@ -808,6 +808,53 @@ static DiamondProgram *clone_program_from_chunk(const DiamondChunk *chunk) {
     return clone;
 }
 
+/* pthread_create's entry point for a spawned Thread -- runs entirely
+ * against `thread`'s own child_vm/child_program (see docs/threads.md),
+ * never touching anything owned by the spawning thread, so this needs no
+ * reference back into whatever chunk was ambient at Thread.new time (the
+ * function to run is looked up in the *clone's* own functions[] table, by
+ * the same function_index DIAMOND_OP_THREAD_NEW captured from the
+ * closure). Populates the same finished/result/raised/internal_failure
+ * contract DIAMOND_OP_THREAD_NEW's own synchronous stub previously did
+ * inline -- .join() (run_chunk's INVOKE case) doesn't know or care
+ * whether that contract was filled in synchronously or by a real OS
+ * thread. Sets `finished` last and unconditionally, exactly once, since
+ * that's the only field .alive?() reads without holding join_lock. */
+static void *thread_entry_trampoline(void *argument) {
+    DiamondThread *thread=(DiamondThread *)argument;
+    const DiamondFunction *target_fn=
+        &thread->child_program->functions[thread->function_index];
+    const DiamondChunk child_chunk={
+        .name=target_fn->name,.code=target_fn->code,
+        .lines=target_fn->lines,.columns=target_fn->columns,
+        .code_count=target_fn->code_count,
+        .constants=target_fn->constants,.constant_count=target_fn->constant_count,
+        .strings=target_fn->strings,.string_count=target_fn->string_count,
+        .type_sets=target_fn->type_sets,.type_set_count=target_fn->type_set_count,
+        .functions=thread->child_program->functions,
+        .function_count=thread->child_program->function_count,
+        .classes=thread->child_program->classes,
+        .class_count=thread->child_program->class_count,
+        .interfaces=thread->child_program->interfaces,
+        .interface_count=thread->child_program->interface_count,
+        .parameter_type_sets=target_fn->parameter_type_sets,
+        .type_variable_count=target_fn->type_variable_count,
+        .parameter_offset=target_fn->owner_class==UINT8_MAX?0:1,
+        .register_count=target_fn->register_count};
+    DiamondValue run_result=DIAMOND_NIL;
+    const DiamondVmStatus run_status=run_chunk(&child_chunk,thread->child_vm,
+        thread->args,thread->arg_count,0,nullptr,&run_result);
+    if(run_status==DIAMOND_VM_EXCEPTION) {
+        thread->result=thread->child_vm->exception;thread->raised=true;
+    } else if(run_status!=DIAMOND_VM_OK) {
+        thread->internal_failure=true;
+    } else {
+        thread->result=run_result;
+    }
+    atomic_store(&thread->finished,true);
+    return nullptr;
+}
+
 static DiamondThreadHandle *allocate_thread_handle(DiamondVm *vm,DiamondThread *thread) {
     if(vm->stress_gc||vm->bytes_allocated>=vm->next_gc)diamond_vm_collect(vm);
     DiamondThreadHandle *handle=malloc(sizeof(DiamondThreadHandle));if(handle==nullptr)return nullptr;
@@ -8352,45 +8399,13 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                         "Thread.new argument does not support this type");
                     VM_RETURN(DIAMOND_VM_TYPE_ERROR);
                 }
-                /* Synchronous stub: runs the target function inline right
-                 * here rather than via a real OS thread, so the whole
-                 * value-crossing/GC-lifecycle design above can be verified
-                 * against the existing single-threaded test suite before
-                 * real concurrency enters the picture (see docs/threads.md's
-                 * own phasing note). A later change swaps this block for
-                 * pthread_create + a trampoline entry point; .join()/
-                 * .alive?() below are already written against the
-                 * finished/joined/result contract that swap needs. */
-                const DiamondChunk child_chunk={
-                    .name=target_fn->name,.code=target_fn->code,
-                    .lines=target_fn->lines,.columns=target_fn->columns,
-                    .code_count=target_fn->code_count,
-                    .constants=target_fn->constants,
-                    .constant_count=target_fn->constant_count,
-                    .strings=target_fn->strings,.string_count=target_fn->string_count,
-                    .type_sets=target_fn->type_sets,
-                    .type_set_count=target_fn->type_set_count,
-                    .functions=child_program->functions,
-                    .function_count=child_program->function_count,
-                    .classes=child_program->classes,
-                    .class_count=child_program->class_count,
-                    .interfaces=child_program->interfaces,
-                    .interface_count=child_program->interface_count,
-                    .parameter_type_sets=target_fn->parameter_type_sets,
-                    .type_variable_count=target_fn->type_variable_count,
-                    .parameter_offset=target_fn->owner_class==UINT8_MAX?0:1,
-                    .register_count=target_fn->register_count};
-                DiamondValue run_result=DIAMOND_NIL;
-                const DiamondVmStatus run_status=run_chunk(&child_chunk,child_vm,
-                    new_thread->args,new_thread->arg_count,0,nullptr,&run_result);
-                if(run_status==DIAMOND_VM_EXCEPTION) {
-                    new_thread->result=child_vm->exception;new_thread->raised=true;
-                } else if(run_status!=DIAMOND_VM_OK) {
-                    new_thread->internal_failure=true;
-                } else {
-                    new_thread->result=run_result;
+                new_thread->spawned=pthread_create(&new_thread->handle,nullptr,
+                    thread_entry_trampoline,new_thread)==0;
+                if(!new_thread->spawned) {
+                    free_thread(new_thread);
+                    snprintf(vm->error,sizeof vm->error,"failed to create thread");
+                    VM_RETURN(DIAMOND_VM_THREAD_ERROR);
                 }
-                atomic_store(&new_thread->finished,true);
                 DiamondThreadHandle *thread_handle=
                     allocate_thread_handle(vm,new_thread);
                 if(thread_handle==nullptr) {

@@ -580,5 +580,8 @@ flows into the false branch. Compound boolean conditions remain conservative.
 - No singleton methods or visibility controls.
 - No native-code generator or JIT.
 - No stable bytecode, embedding API, or package format.
-- No parallel execution.
+- `Thread` gives real parallel execution, but each thread runs against a
+  fully independent, cloned heap rather than sharing GC/dispatch state with
+  the spawning thread — trading per-thread memory for not having to make
+  the rest of the interpreter thread-safe. See `docs/threads.md`.
 - No portability target beyond the current development machine.
