@@ -1,0 +1,14 @@
+FAIL: refute_nil fail
+  expected a non-nil value
+FAIL: assert_includes fail
+  expected [1,2,3] to include 9
+FAIL: refute_includes fail
+  expected [1,2,3] not to include 2
+FAIL: assert_empty fail
+  expected [1] to be empty
+FAIL: refute_empty fail
+  expected [] not to be empty
+FAIL: assert_in_delta fail
+  expected 2.0 to be within 0.001 of 1.0
+6 tests, 0 passed, 6 failed, 0 errors, 0 skipped
+false

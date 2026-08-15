@@ -5407,6 +5407,59 @@ future work.
   `make fuzz` (which needed its own hardcoded `-lssl -lcrypto`, since it
   doesn't route through the shared `$(LDLIBS)` Makefile variable the
   other build variants do) both still link.
+- Rounded out `lib/minitest.di` with the assertions/features a real
+  minitest-style library gets reached for constantly and this one didn't
+  have yet: `refute_nil`, `assert_includes`/`refute_includes` (Array
+  membership via `==`, deliberately not extended to Hash — "does it have
+  this key?" and "does it have this value?" don't share one obvious
+  meaning the way Array's single membership question does),
+  `assert_empty`/`refute_empty` (works across Array/Hash/String alike,
+  all three already share `.length()`), `assert_in_delta` (Float
+  closeness, `0.001` default matching real minitest's own), and
+  `Minitest.skip(reason)` plus per-suite `setup`/`teardown` hooks (each a
+  zero-argument `Callable`, run immediately before/after every registered
+  test — teardown via `ensure` so it still runs after a failure, error,
+  or skip). None of this needed touching the VM or compiler — the whole
+  thing is `lib/minitest.di` and new `tests/cases/minitest_*.di`
+  regression cases, unlike TLS/UDP/Signal earlier this round.
+
+  Two real Diamond-syntax gaps hit while writing it, both fixed by
+  routing around rather than needing a language change:
+  - `def self.skip(...) -> Bool` failed to compile
+    ("expression cannot satisfy type annotation") — a method whose body
+    only ever raises (never actually returns a value) has nothing that
+    type-checks against an explicit return-type annotation, since
+    `raise` isn't itself a `Bool`-typed expression. Fixed by dropping the
+    annotation entirely (`def self.skip(reason: String = "skipped")`,
+    untyped) rather than trying to give it one — there was no return
+    value to describe in the first place.
+  - `@setup_hook()` (calling a `Callable` stored directly in an instance
+    variable) doesn't parse ("expected newline after expression") — only
+    a local variable can be called this way, not a bare `@field`
+    reference; matches the exact same restriction top-level `def`s have
+    (see the two gaps recorded when `lib/minitest.di` was first added,
+    above) even though this one is about instance variables rather than
+    top-level functions. Fixed the same way those work around their own
+    version: bind `setup_hook = @setup_hook` to a local first, then call
+    `setup_hook()`.
+
+  Verification: three new regression cases mirroring the existing
+  `minitest_all_pass`/`minitest_failures_and_errors` pair —
+  `minitest_new_assertions` (every new assertion's success path, one
+  file), `minitest_new_assertions_fail` (every new assertion's failure
+  message, one file, since a wrong or misleading failure message is as
+  much a bug here as a wrong pass/fail verdict would be), and
+  `minitest_skip_and_hooks` (a shared `log` Array threaded through both
+  hooks and one test, proving `setup`/`teardown` actually run around
+  every test — including a skipped one and a failed one, not just a
+  passing one — by asserting the exact call count and ordering, not just
+  that the suite didn't crash). The two pre-existing minitest regression
+  cases' own `.expected` files needed a one-line update each, since
+  `report()`'s summary line now always includes a skip count (`, 0
+  skipped`) — a deliberate "always show every bucket" choice matching
+  real minitest's own summary line, not an accidental format change.
+  `make test` (927 assertions, up from 924) and a full `make
+  test-sanitize` pass both clean.
 
 ## Later experiments
 

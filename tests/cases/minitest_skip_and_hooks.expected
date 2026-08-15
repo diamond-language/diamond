@@ -1,0 +1,6 @@
+SKIP: skipped
+  not ready yet
+FAIL: fails
+  expected 1, got 2
+3 tests, 1 passed, 1 failed, 0 errors, 1 skipped
+7|1|1|0|1

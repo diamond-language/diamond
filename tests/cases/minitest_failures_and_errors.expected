@@ -7,5 +7,5 @@ ERROR: raises wrong type
   boom
 FAIL: raises not caught
   expected an exception to be raised
-6 tests, 2 passed, 2 failed, 2 errors
+6 tests, 2 passed, 2 failed, 2 errors, 0 skipped
 false
