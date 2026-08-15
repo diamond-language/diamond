@@ -133,6 +133,14 @@ future work.
   a step later and at runtime (`Fiber`/`File` resolve fine as values;
   `.new(...)`/`.open(...)` on a Closure is the actual type error) rather
   than at compile time.
+- `@field(...)` now calls a `Callable` value stored directly in an
+  instance variable — previously only a local variable holding one could
+  be called this way (`@cb()` failed to parse at all, "expected newline
+  after expression"), forcing an extra `cb = @cb; cb()` binding step for
+  an otherwise ordinary stored-callback-field pattern. The argument-
+  parsing-and-`CALL_CLOSURE`-emission logic is now a shared helper used
+  by both the local-variable call site and this new one, rather than a
+  second hand-copy.
 
 ### Control flow, exceptions, and the module loader
 
@@ -400,14 +408,6 @@ future work.
   freed program, so a real fix needs either copying the referenced class
   definition or keeping the source program alive). Look at
   `copy_value_into_vm` in `src/vm.c`.
-
-- **`@field()` call syntax doesn't parse.** Calling a `Callable` value
-  stored directly in an instance variable (`@cb()`) fails with
-  `expected newline after expression`; only a local variable can be called
-  this way. Matters because it forces an extra local-binding step
-  (`cb = @cb; cb()`) for a common pattern (a stored callback field).
-  Reproduce directly against `build/diamond`; the call-parsing logic lives
-  in `src/compiler.c`'s primary-expression/postfix handling.
 
 - **A `raise`-only method body can't carry an explicit return-type
   annotation.** `def self.skip(...) -> Bool; raise reason; end` fails with

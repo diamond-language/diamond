@@ -1156,6 +1156,38 @@ static uint8_t module_field_name(Compiler *compiler,DiamondSpan name) {
     return add_string_range(compiler,name.start+1,length,name);
 }
 
+/* Parses `(arg, arg, ...)` (the `(` itself still current) and emits a
+ * DIAMOND_OP_CALL_CLOSURE against `callable` -- shared between a local
+ * variable holding a Callable followed by `(...)` (parse_call's own
+ * shape, below) and an instance variable holding one, followed by
+ * `(...)` (`@field(...)`, parse_prefix's DIAMOND_TOKEN_INSTANCE_VARIABLE
+ * case) -- previously only the local-variable shape was supported at
+ * all; `@cb()` failed to parse outright ("expected newline after
+ * expression"), forcing an extra `cb = @cb; cb()` local-binding step for
+ * a stored-callback-field pattern that's otherwise completely ordinary. */
+static uint8_t parse_closure_call_arguments(Compiler *compiler, uint8_t callable) {
+    advance_token(compiler);
+    skip_newlines(compiler);
+    uint8_t arguments[16]; size_t argument_count=0;
+    while(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN && !compiler->failed) {
+        if(argument_count==16){fail(compiler,compiler->current.span,"too many call arguments");return 0;}
+        arguments[argument_count++]=parse_expression(compiler);
+        skip_newlines(compiler);
+        if(compiler->current.kind!=DIAMOND_TOKEN_COMMA)break;
+        advance_token(compiler);
+        skip_newlines(compiler);
+    }
+    if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN){fail(compiler,compiler->current.span,"expected ')' after arguments");return 0;}
+    advance_token(compiler);
+    const uint8_t base=allocate_register(compiler);
+    for(size_t i=1;i<argument_count;i++)(void)allocate_register(compiler);
+    for(size_t i=0;i<argument_count;i++)emit_instruction(compiler,DIAMOND_OP_MOVE,(uint8_t)(base+i),arguments[i],0,2);
+    const uint8_t destination=allocate_register(compiler);
+    emit_opcode(compiler,DIAMOND_OP_CALL_CLOSURE);emit_byte(compiler,destination);
+    emit_byte(compiler,callable);emit_byte(compiler,base);emit_byte(compiler,(uint8_t)argument_count);
+    return destination;
+}
+
 static uint8_t parse_call(Compiler *compiler, DiamondSpan name) {
     const int callable_local=find_local(compiler,name);
     if(callable_local>=0&&compiler->current.kind==DIAMOND_TOKEN_LEFT_PAREN) {
@@ -1165,26 +1197,7 @@ static uint8_t parse_call(Compiler *compiler, DiamondSpan name) {
             emit_instruction(compiler,DIAMOND_OP_GET_CELL,loaded,callable,0,2);
             callable=loaded;
         }
-        advance_token(compiler);
-        skip_newlines(compiler);
-        uint8_t arguments[16]; size_t argument_count=0;
-        while(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN && !compiler->failed) {
-            if(argument_count==16){fail(compiler,compiler->current.span,"too many call arguments");return 0;}
-            arguments[argument_count++]=parse_expression(compiler);
-            skip_newlines(compiler);
-            if(compiler->current.kind!=DIAMOND_TOKEN_COMMA)break;
-            advance_token(compiler);
-            skip_newlines(compiler);
-        }
-        if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN){fail(compiler,compiler->current.span,"expected ')' after arguments");return 0;}
-        advance_token(compiler);
-        const uint8_t base=allocate_register(compiler);
-        for(size_t i=1;i<argument_count;i++)(void)allocate_register(compiler);
-        for(size_t i=0;i<argument_count;i++)emit_instruction(compiler,DIAMOND_OP_MOVE,(uint8_t)(base+i),arguments[i],0,2);
-        const uint8_t destination=allocate_register(compiler);
-        emit_opcode(compiler,DIAMOND_OP_CALL_CLOSURE);emit_byte(compiler,destination);
-        emit_byte(compiler,callable);emit_byte(compiler,base);emit_byte(compiler,(uint8_t)argument_count);
-        return destination;
+        return parse_closure_call_arguments(compiler, callable);
     }
     const int function_index = find_function(compiler, name);
     if (function_index < 0) {
@@ -2756,6 +2769,8 @@ static uint8_t parse_prefix(Compiler *compiler) {
                 emit_instruction(compiler,DIAMOND_OP_GET_IVAR,destination,0,
                                  (uint8_t)field,3);
             }
+            if(compiler->current.kind==DIAMOND_TOKEN_LEFT_PAREN)
+                return parse_closure_call_arguments(compiler,destination);
             return destination;
         }
         case DIAMOND_TOKEN_SELF:
