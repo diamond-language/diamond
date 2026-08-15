@@ -9,6 +9,15 @@
 
 #include "value.h"
 
+/* Forward-declared, not included: only vm.c ever calls an actual OpenSSL
+ * function, so keeping <openssl/ssl.h> out of this header (included by
+ * nearly every other .c file in the project) avoids dragging OpenSSL's
+ * own transitive includes into everything. `ssl_st`/`ssl_ctx_st` are
+ * OpenSSL's own opaque struct tags (see <openssl/types.h>), matched here
+ * exactly so this typedef and OpenSSL's are the same type. */
+typedef struct ssl_st SSL;
+typedef struct ssl_ctx_st SSL_CTX;
+
 typedef enum DiamondObjectKind : uint8_t {
     DIAMOND_OBJECT_STRING,
     DIAMOND_OBJECT_INSTANCE,
@@ -21,6 +30,7 @@ typedef enum DiamondObjectKind : uint8_t {
     DIAMOND_OBJECT_LISTENER,
     DIAMOND_OBJECT_SOCKET,
     DIAMOND_OBJECT_UDP_SOCKET,
+    DIAMOND_OBJECT_TLS_SOCKET,
     DIAMOND_OBJECT_BIGNUM,
     DIAMOND_OBJECT_SYMBOL,
     DIAMOND_OBJECT_REGEXP,
@@ -178,6 +188,15 @@ typedef struct DiamondListenerHandle {
      * normal "nothing to accept right now" case a poll-driven caller
      * expects to see routinely). */
     bool nonblocking;
+    /* Non-null only for a TLSServer.listen listener (nullptr for an
+     * ordinary TCPServer.listen/listen_nonblocking one) -- holds the
+     * server certificate/key TLSServer.listen loaded, reused for every
+     * .accept()'s own SSL_new so the potentially-expensive cert/key
+     * parsing happens once per listener, not once per connection. Freed
+     * on .close() and at GC/VM-teardown sweep; safe to free while
+     * already-accepted TLS sockets are still alive, since SSL_new gives
+     * each of them their own reference-counted hold on it. */
+    SSL_CTX *tls_context;
 } DiamondListenerHandle;
 
 /* A non-blocking TCP connection, returned only by .accept() on a
@@ -202,6 +221,25 @@ typedef struct DiamondUdpSocketHandle {
     DiamondObject object;
     int fd;
 } DiamondUdpSocketHandle;
+
+/* A TLS connection -- both the client side (TLSSocket.connect) and each
+ * server-side accepted connection (TLSServer.listen's .accept()) use
+ * this same handle. Like DiamondSocketHandle, a raw fd rather than a
+ * FILE*: SSL_read/SSL_write need to own the fd's I/O directly, so mixing
+ * in libc stdio buffering underneath them would be actively wrong, not
+ * just redundant. `ssl` is the per-connection OpenSSL session object;
+ * .close() and GC sweep all call SSL_shutdown(ssl) (best-effort, one
+ * call, result ignored -- this only sends this side's own close_notify
+ * alert; waiting for the peer's own close_notify back would mean
+ * blocking on a peer that may never send one) then SSL_free(ssl) then
+ * close(fd) -- SSL_free alone sends nothing on its own, and SSL_set_fd
+ * wraps `fd` in a BIO_NOCLOSE socket BIO, so SSL_free never closes it
+ * either; both steps are genuinely required, not defensive redundancy. */
+typedef struct DiamondTlsSocketHandle {
+    DiamondObject object;
+    SSL *ssl;
+    int fd;
+} DiamondTlsSocketHandle;
 
 /* A compiled reginold pattern. Unlike DiamondFileHandle/DiamondListenerHandle,
  * this owns no OS resource (fd/socket) -- just heap memory reginold itself

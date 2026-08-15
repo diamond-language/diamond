@@ -1,7 +1,7 @@
 # I/O
 
 This document covers Diamond's I/O surface (stdout, stdin, files, and
-TCP/UDP sockets) and will grow as later slices land (see
+TCP/UDP/TLS sockets) and will grow as later slices land (see
 `docs/roadmap.md`).
 
 ## stdout: `print`/`puts`
@@ -429,9 +429,100 @@ not a bug in `Signal.trap` itself. The fix, now used in
 subshell that does `trap - INT` (reset to default) before `exec`-ing the
 real command, so the child never sees `SIG_IGN` in the first place.
 
+## TLS: `TLSSocket.connect`/`TLSServer.listen`/`.accept`
+
+```ruby
+listener = TLSServer.listen(8443, "cert.pem", "key.pem")
+conn = listener.accept()
+puts(conn.gets())
+conn.write("hello over TLS\n")
+conn.close()
+listener.close()
+```
+
+```ruby
+conn = TLSSocket.connect("example.com", 443)
+conn.write("GET / HTTP/1.1\r\nHost: example.com\r\nConnection: close\r\n\r\n")
+puts(conn.read())
+conn.close()
+```
+
+Built on OpenSSL (the project's one non-vendored external dependency —
+see the README's build prerequisites) rather than hand-rolled, unlike
+most of the rest of this codebase: TLS is exactly the kind of thing where
+"implemented from scratch" is a real security liability, not just extra
+work, so this is a deliberate exception to the project's usual
+zero-external-dependencies stance.
+
+- **`TLSSocket.connect(host, port)`** — resolves and connects like
+  `TCPSocket.connect` (reuses the same `getaddrinfo`/try-each-candidate
+  helper), then performs a client-side TLS handshake. **Certificate
+  verification is on unconditionally** — the peer's certificate must
+  chain to a CA in the system trust store (`SSL_CTX_set_default_
+  verify_paths`, which also honors `$SSL_CERT_FILE`/`$SSL_CERT_DIR` —
+  how `tests/run.sh`'s own TLS tests point this at a hermetic test CA
+  instead of the real system store) *and* be valid for `host`
+  (`SSL_set1_host`, SNI via `SSL_set_tlsext_host_name`). There is no
+  `verify: false`-style escape hatch in this API — a connection to an
+  untrusted or misnamed certificate raises a rescuable `IOError` rather
+  than silently succeeding. A custom/pinned trust store (rather than the
+  system default) is a real, deliberate scope cut, not an oversight —
+  see "out of scope" below.
+- **`TLSServer.listen(port, cert_path, key_path)`** — binds and listens
+  like `TCPServer.listen`, then loads a certificate chain and private key
+  (both PEM files) into one `SSL_CTX` reused across every `.accept()` on
+  this listener, so a broken cert/key pair fails loudly at `.listen()`
+  time rather than on whichever connection happens to arrive first, and
+  the (potentially expensive) cert/key parsing happens once, not per
+  connection.
+- **`.accept()`** on a `TLSServer.listen` listener does the same blocking
+  `accept()` a plain `TCPServer.listen` listener does (including the
+  signal-interruptible retry loop from the Signals section above — a
+  server genuinely idle with nothing connecting still responds promptly
+  to a trapped signal), then a server-side TLS handshake. No
+  `TLSServer.listen_nonblocking` — non-blocking sockets and TLS are not
+  combined in this first slice.
+- Both return the same new object kind, `DIAMOND_OBJECT_TLS_SOCKET` —
+  `.read(n)`/`.read()`/`.gets()`/`.write(value)`/`.close()`, the exact
+  same method surface and semantics as `File` (bounded/unbounded read,
+  line read, EOF-as-nil), not `Socket`'s raw-fd/non-blocking shape — a
+  TLS connection here is always blocking, so `packages/http`'s own
+  `conn.gets()`/`conn.read()`/`conn.write()` calls work unchanged against
+  either kind of connection. Internally a raw fd plus an OpenSSL `SSL *`
+  rather than a buffered `FILE *`: `SSL_read`/`SSL_write` need to own the
+  fd's I/O directly, not share it with libc stdio buffering underneath.
+  `.close()` calls `SSL_shutdown` (best-effort, one call, sends this
+  side's own `close_notify` without blocking on the peer's) then
+  `SSL_free` then `close(fd)` — both steps are required; `SSL_free` alone
+  neither sends a `close_notify` nor closes the fd on its own.
+- A write to a connection whose peer has already reset it (not just
+  cleanly closed) raises `SIGPIPE` by default, which would otherwise kill
+  the whole process outright — this is what actually surfaced needing a
+  fix here, not something specific to TLS: OpenSSL servers send a
+  post-handshake `NewSessionTicket` message automatically for TLS 1.3,
+  and a peer that disconnects without ever reading it (any short-lived
+  connection that errors out or drops right after the handshake — the
+  first realistic case in this codebase's own tests, from a TLS error
+  test that deliberately raises immediately post-handshake) leaves that
+  message unread in the kernel receive buffer at close time, which is
+  Linux's own trigger for sending `RST` instead of a plain `FIN`.
+  `diamond_vm_init` now ignores `SIGPIPE` process-wide (once, idempotent)
+  so a write like this returns a plain `EPIPE`/`IOError` instead — every
+  write-capable I/O path already turns a failed write into a catchable
+  error via `errno`/`SSL_get_error`, so this was a straightforward latent
+  bug fix, not a new behavior choice; it applies to the plain TCP/UDP
+  write paths too, which had the same exposure but no test that happened
+  to trigger it before now.
+
+`TLSSocket`/`TLSServer` are recognized in the compiler the same way
+`TCPSocket`/`TCPServer`/`UDPSocket` already are (gated on the identifier
+not already being a local/function, so a variable or function actually
+named `TLSSocket` shadows the builtin entirely). `TLSSocket.connect`
+compiles to `DIAMOND_OP_TLS_CONNECT`; `TLSServer.listen` to
+`DIAMOND_OP_TLS_LISTEN`.
+
 ## What's deliberately out of scope so far
 
-- **TLS**: every socket above is plain text, TCP or UDP.
 - **Multiple `print`/`puts` arguments**: `puts(a, b)` (Ruby-style, one
   line per argument) is not supported — exactly one argument, matching
   the narrowest useful slice.
@@ -439,7 +530,21 @@ real command, so the child never sees `SIG_IGN` in the first place.
   to stdout (e.g. a broken pipe) is not currently surfaced as a
   rescuable exception, unlike `File#write`'s own `ferror` check; this
   mirrors most languages' baseline `print`, but is a known
-  simplification, not a deliberate design stance.
+  simplification, not a deliberate design stance. It no longer *kills
+  the process* via `SIGPIPE` (see the TLS section's note on
+  `diamond_vm_init` ignoring it process-wide) — a broken stdout pipe now
+  fails each write silently and the program continues, rather than
+  either dying outright or raising.
+- **A custom/pinned TLS trust store**: `TLSSocket.connect` always
+  verifies against the system trust store; there's no way from Diamond
+  code itself to trust an additional/different CA (only the
+  `$SSL_CERT_FILE`/`$SSL_CERT_DIR` environment-variable override
+  OpenSSL's own default-paths lookup already respects). No call site in
+  this codebase needed one yet.
+- **TLS session resumption, client certificates, ALPN**: none of
+  OpenSSL's more advanced connection-negotiation features are exposed —
+  every connection is a fresh, full handshake with no protocol
+  negotiated beyond default TLS.
 - **File mode validation**: `File.open` passes `mode` straight through
   to `fopen` with no Diamond-level checking.
 

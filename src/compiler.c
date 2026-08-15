@@ -1639,6 +1639,90 @@ static uint8_t parse_tcp_listen_call(Compiler *compiler) {
     return dest;
 }
 
+static uint8_t parse_tls_connect_call(Compiler *compiler) {
+    advance_token(compiler); /* consume '.' */
+    if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER||
+       !name_equals(compiler,"connect",compiler->current.span,false)) {
+        fail(compiler,compiler->current.span,"expected 'connect' after 'TLSSocket'");
+        return 0;
+    }
+    advance_token(compiler); /* consume 'connect' */
+    if(compiler->current.kind!=DIAMOND_TOKEN_LEFT_PAREN) {
+        fail(compiler,compiler->current.span,"expected '(' after 'TLSSocket.connect'");
+        return 0;
+    }
+    advance_token(compiler);
+    skip_newlines(compiler);
+    const uint8_t host_register=parse_expression(compiler);
+    skip_newlines(compiler);
+    if(compiler->current.kind!=DIAMOND_TOKEN_COMMA) {
+        fail(compiler,compiler->current.span,"expected ',' after TLSSocket.connect host");
+        return 0;
+    }
+    advance_token(compiler);
+    skip_newlines(compiler);
+    const uint8_t port_register=parse_expression(compiler);
+    skip_newlines(compiler);
+    if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
+        fail(compiler,compiler->current.span,"expected ')' after TLSSocket.connect arguments");
+        return 0;
+    }
+    advance_token(compiler);
+    const uint8_t dest=allocate_register(compiler);
+    emit_opcode(compiler,DIAMOND_OP_TLS_CONNECT);
+    emit_byte(compiler,dest);
+    emit_byte(compiler,host_register);
+    emit_byte(compiler,port_register);
+    return dest;
+}
+
+static uint8_t parse_tls_listen_call(Compiler *compiler) {
+    advance_token(compiler); /* consume '.' */
+    if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER||
+       !name_equals(compiler,"listen",compiler->current.span,false)) {
+        fail(compiler,compiler->current.span,"expected 'listen' after 'TLSServer'");
+        return 0;
+    }
+    advance_token(compiler); /* consume 'listen' */
+    if(compiler->current.kind!=DIAMOND_TOKEN_LEFT_PAREN) {
+        fail(compiler,compiler->current.span,"expected '(' after 'TLSServer.listen'");
+        return 0;
+    }
+    advance_token(compiler);
+    skip_newlines(compiler);
+    const uint8_t port_register=parse_expression(compiler);
+    skip_newlines(compiler);
+    if(compiler->current.kind!=DIAMOND_TOKEN_COMMA) {
+        fail(compiler,compiler->current.span,"expected ',' after TLSServer.listen port");
+        return 0;
+    }
+    advance_token(compiler);
+    skip_newlines(compiler);
+    const uint8_t cert_register=parse_expression(compiler);
+    skip_newlines(compiler);
+    if(compiler->current.kind!=DIAMOND_TOKEN_COMMA) {
+        fail(compiler,compiler->current.span,
+             "expected ',' after TLSServer.listen certificate path");
+        return 0;
+    }
+    advance_token(compiler);
+    skip_newlines(compiler);
+    const uint8_t key_register=parse_expression(compiler);
+    skip_newlines(compiler);
+    if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
+        fail(compiler,compiler->current.span,"expected ')' after TLSServer.listen arguments");
+        return 0;
+    }
+    advance_token(compiler);
+    const uint8_t dest=allocate_register(compiler);
+    emit_opcode(compiler,DIAMOND_OP_TLS_LISTEN);
+    emit_byte(compiler,dest);
+    emit_byte(compiler,port_register);
+    emit_byte(compiler,cert_register);
+    emit_byte(compiler,key_register);
+    return dest;
+}
+
 static uint8_t parse_io_poll_call(Compiler *compiler) {
     advance_token(compiler); /* consume '.' */
     if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER||
@@ -2005,6 +2089,14 @@ static uint8_t parse_name(Compiler *compiler) {
        compiler->current.kind==DIAMOND_TOKEN_DOT&&
        name_equals(compiler,"Signal",name,false))
         return parse_signal_trap_call(compiler);
+    if(class_index<0&&find_local(compiler,name)<0&&find_function(compiler,name)<0&&
+       compiler->current.kind==DIAMOND_TOKEN_DOT&&
+       name_equals(compiler,"TLSSocket",name,false))
+        return parse_tls_connect_call(compiler);
+    if(class_index<0&&find_local(compiler,name)<0&&find_function(compiler,name)<0&&
+       compiler->current.kind==DIAMOND_TOKEN_DOT&&
+       name_equals(compiler,"TLSServer",name,false))
+        return parse_tls_listen_call(compiler);
     if(find_local(compiler,name)<0&&find_function(compiler,name)<0&&
        compiler->current.kind==DIAMOND_TOKEN_LEFT_PAREN&&
        (name_equals(compiler,"print",name,false)||

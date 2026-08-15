@@ -427,6 +427,14 @@ static bool disassemble_chunk(FILE *stream, const char *name,
                 offset=one_register(stream,chunk,"UDP_OPEN",offset);break;
             case DIAMOND_OP_SIGNAL_TRAP:
                 offset=three_registers(stream,chunk,"SIGNAL_TRAP",offset);break;
+            case DIAMOND_OP_TLS_CONNECT:
+                offset=three_registers(stream,chunk,"TLS_CONNECT",offset);break;
+            case DIAMOND_OP_TLS_LISTEN:
+                if(!require_bytes(stream,chunk,offset,5)){valid=false;offset=chunk->code_count;break;}
+                fprintf(stream,"%-18s r%u, r%u, r%u, r%u\n","TLS_LISTEN",
+                    chunk->code[offset+1],chunk->code[offset+2],
+                    chunk->code[offset+3],chunk->code[offset+4]);
+                offset+=5;break;
             case DIAMOND_OP_CHR:
                 offset=two_registers(stream,chunk,"CHR",offset);break;
             case DIAMOND_OP_TO_FLOAT:

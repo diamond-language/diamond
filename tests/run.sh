@@ -1769,6 +1769,258 @@ if kill -0 "$untrapped_pid" 2>/dev/null; then
     exit 1
 fi
 
+actual="$($diamond --dump-bytecode -e 'TLSSocket.connect("localhost", 443)' 2>/dev/null || true)"
+grep -q 'TLS_CONNECT' <<<"$actual"
+
+actual="$($diamond --dump-bytecode -e 'TLSServer.listen(0, "cert.pem", "key.pem")' 2>/dev/null || true)"
+grep -q 'TLS_LISTEN' <<<"$actual"
+
+actual="$($diamond --dump-bytecode -e 'TLSSocket = 5
+TLSSocket.connect("localhost", 443)' 2>/dev/null || true)"
+if grep -q 'TLS_CONNECT' <<<"$actual"; then
+    echo "TLSSocket.connect on a shadowing local unexpectedly compiled to TLS_CONNECT" >&2
+    exit 1
+fi
+
+actual="$($diamond --dump-bytecode -e 'TLSServer = 5
+TLSServer.listen(0, "cert.pem", "key.pem")' 2>/dev/null || true)"
+if grep -q 'TLS_LISTEN' <<<"$actual"; then
+    echo "TLSServer.listen on a shadowing local unexpectedly compiled to TLS_LISTEN" >&2
+    exit 1
+fi
+
+error_file="$(mktemp)"
+if "$diamond" -e 'TLSSocket.connect(5, 443)' >/dev/null 2>"$error_file"; then
+    echo "TLSSocket.connect with a non-String host unexpectedly succeeded" >&2
+    exit 1
+fi
+grep -q "TLSSocket.connect arguments must be a String host and an Int port" "$error_file"
+rm -f "$error_file"
+
+error_file="$(mktemp)"
+if "$diamond" -e 'TLSSocket.dial("localhost", 443)' >/dev/null 2>"$error_file"; then
+    echo "malformed TLSSocket.dial unexpectedly compiled" >&2
+    exit 1
+fi
+grep -q "expected 'connect' after 'TLSSocket'" "$error_file"
+rm -f "$error_file"
+
+error_file="$(mktemp)"
+if "$diamond" -e 'TLSServer.host(0, "cert.pem", "key.pem")' >/dev/null 2>"$error_file"; then
+    echo "malformed TLSServer.host unexpectedly compiled" >&2
+    exit 1
+fi
+grep -q "expected 'listen' after 'TLSServer'" "$error_file"
+rm -f "$error_file"
+
+error_file="$(mktemp)"
+if "$diamond" -e 'TLSServer.listen("80", "cert.pem", "key.pem")' >/dev/null 2>"$error_file"; then
+    echo "TLSServer.listen with a non-Int port unexpectedly succeeded" >&2
+    exit 1
+fi
+grep -q "TLSServer.listen arguments must be an Int port and String certificate/key file paths" \
+    "$error_file"
+rm -f "$error_file"
+
+error_file="$(mktemp)"
+if "$diamond" -e 'TLSServer.listen(0, "does-not-exist.pem", "does-not-exist.pem")' \
+    >/dev/null 2>"$error_file"; then
+    echo "TLSServer.listen with a missing certificate file unexpectedly succeeded" >&2
+    exit 1
+fi
+grep -q "cannot load TLS certificate 'does-not-exist.pem'" "$error_file"
+rm -f "$error_file"
+
+# A real client/server TLS round trip that also exercises the "undefined
+# method"/"closed socket" error paths against an actual TLSSocket
+# instance, the same way the UDP/Socket coverage above does -- both need
+# a live handshake to have happened first, so a fresh accepted connection
+# is the simplest way to get one. The server accepts twice (once per
+# client test below), so it can't be the single-accept()-call shape the
+# Signal test above uses -- a small counted loop instead.
+tls_errors_dir="$(mktemp -d)"
+openssl req -x509 -newkey rsa:2048 -nodes -keyout "$tls_errors_dir/key.pem" \
+    -out "$tls_errors_dir/cert.pem" -days 1 -subj "/CN=localhost" \
+    -addext "subjectAltName=DNS:localhost" >/dev/null 2>&1
+tls_errors_port=18750
+tls_errors_server_out="$(mktemp)"
+"$diamond" -e "$(printf 'listener = TLSServer.listen(%d, "%s", "%s")
+puts("ready")
+i = 0
+while i < 2
+  conn = listener.accept()
+  conn.close()
+  i = i + 1
+end
+listener.close()
+0' "$tls_errors_port" "$tls_errors_dir/cert.pem" "$tls_errors_dir/key.pem")" \
+    >"$tls_errors_server_out" 2>&1 &
+tls_errors_server_pid=$!
+for _ in $(seq 1 200); do
+    grep -q '^ready$' "$tls_errors_server_out" && break
+    sleep 0.05
+done
+error_file="$(mktemp)"
+if SSL_CERT_FILE="$tls_errors_dir/cert.pem" timeout 10 "$diamond" -e "$(printf 'c = TLSSocket.connect("localhost", %d)
+c.nope()' "$tls_errors_port")" >/dev/null 2>"$error_file"; then
+    echo "an unrecognized method on a TLSSocket receiver unexpectedly succeeded" >&2
+    exit 1
+fi
+grep -q "undefined method 'nope' for TLSSocket" "$error_file"
+rm -f "$error_file"
+error_file="$(mktemp)"
+if SSL_CERT_FILE="$tls_errors_dir/cert.pem" timeout 10 "$diamond" -e "$(printf 'c = TLSSocket.connect("localhost", %d)
+c.close()
+c.write("x")' "$tls_errors_port")" >/dev/null 2>"$error_file"; then
+    echo "writing to a closed TLSSocket unexpectedly succeeded" >&2
+    exit 1
+fi
+grep -q "TLS socket is closed" "$error_file"
+rm -f "$error_file"
+wait "$tls_errors_server_pid"
+rm -f "$tls_errors_server_out"
+rm -rf "$tls_errors_dir"
+
+# A real client/server TLS round trip, plus the two failure modes that
+# actually matter for a "secure by default" client: an untrusted
+# certificate is rejected, and a certificate valid for the wrong hostname
+# is rejected even when its issuer is trusted. Uses a fresh self-signed
+# CA-of-one generated on the fly (openssl req) rather than a checked-in
+# fixture, so nothing here depends on a certificate's expiry date years
+# from now. $SSL_CERT_FILE overrides OpenSSL's own default trust store
+# lookup (X509_get_default_cert_file, well-documented, widely used by
+# other projects' own test suites the same way) -- pointing it at this
+# self-signed cert makes the *client* process trust exactly this one
+# certificate as if it were a real CA, without touching the system trust
+# store or needing a --insecure-style escape hatch in TLSSocket.connect's
+# own API (see docs/io.md: no such escape hatch is exposed, on purpose).
+tls_dir="$(mktemp -d)"
+openssl req -x509 -newkey rsa:2048 -nodes -keyout "$tls_dir/key.pem" -out "$tls_dir/cert.pem" \
+    -days 1 -subj "/CN=localhost" -addext "subjectAltName=DNS:localhost" >/dev/null 2>&1
+
+tls_port=18751
+tls_server_out="$(mktemp)"
+"$diamond" -e "$(printf 'listener = TLSServer.listen(%d, "%s", "%s")
+puts("ready")
+conn = listener.accept()
+msg = conn.gets()
+conn.write("echo: #{msg}\\n")
+conn.close()
+listener.close()
+0' "$tls_port" "$tls_dir/cert.pem" "$tls_dir/key.pem")" >"$tls_server_out" 2>&1 &
+tls_server_pid=$!
+for _ in $(seq 1 200); do
+    grep -q '^ready$' "$tls_server_out" && break
+    sleep 0.05
+done
+tls_client_out="$(mktemp)"
+SSL_CERT_FILE="$tls_dir/cert.pem" timeout 10 "$diamond" -e "$(printf 'c = TLSSocket.connect("localhost", %d)
+c.write("hello\\n")
+r = c.gets()
+c.close()
+r' "$tls_port")" >"$tls_client_out" 2>&1
+wait "$tls_server_pid"
+[[ "$(tail -n1 "$tls_server_out")" == "0" ]]
+[[ "$(cat "$tls_client_out")" == "echo: hello" ]]
+rm -f "$tls_server_out" "$tls_client_out"
+
+# Same round trip again under DIAMOND_STRESS_GC=1 -- exercises TLS session
+# setup/handshake/read/write while every single allocation triggers a
+# collection, the same treatment every other native I/O feature this round
+# got.
+tls_stress_port=18752
+tls_stress_server_out="$(mktemp)"
+env DIAMOND_STRESS_GC=1 "$diamond" -e "$(printf 'listener = TLSServer.listen(%d, "%s", "%s")
+puts("ready")
+conn = listener.accept()
+msg = conn.gets()
+conn.write("echo: #{msg}\\n")
+conn.close()
+listener.close()
+0' "$tls_stress_port" "$tls_dir/cert.pem" "$tls_dir/key.pem")" >"$tls_stress_server_out" 2>&1 &
+tls_stress_server_pid=$!
+for _ in $(seq 1 200); do
+    grep -q '^ready$' "$tls_stress_server_out" && break
+    sleep 0.05
+done
+tls_stress_client_out="$(mktemp)"
+SSL_CERT_FILE="$tls_dir/cert.pem" timeout 10 env DIAMOND_STRESS_GC=1 "$diamond" -e "$(printf 'c = TLSSocket.connect("localhost", %d)
+c.write("hello\\n")
+r = c.gets()
+c.close()
+r' "$tls_stress_port")" >"$tls_stress_client_out" 2>&1
+wait "$tls_stress_server_pid"
+[[ "$(tail -n1 "$tls_stress_server_out")" == "0" ]]
+[[ "$(cat "$tls_stress_client_out")" == "echo: hello" ]]
+rm -f "$tls_stress_server_out" "$tls_stress_client_out"
+
+# Untrusted certificate: no $SSL_CERT_FILE override, so this self-signed
+# cert isn't trusted by anything -- TLSSocket.connect must refuse the
+# connection rather than silently accepting it (there is no verify=false
+# escape hatch to accidentally reach for instead).
+tls_untrusted_port=18753
+tls_untrusted_server_out="$(mktemp)"
+"$diamond" -e "$(printf 'listener = TLSServer.listen(%d, "%s", "%s")
+puts("ready")
+conn = listener.accept()
+conn.close()
+listener.close()
+0' "$tls_untrusted_port" "$tls_dir/cert.pem" "$tls_dir/key.pem")" >"$tls_untrusted_server_out" 2>&1 &
+tls_untrusted_server_pid=$!
+for _ in $(seq 1 200); do
+    grep -q '^ready$' "$tls_untrusted_server_out" && break
+    sleep 0.05
+done
+error_file="$(mktemp)"
+if timeout 10 "$diamond" -e "$(printf 'TLSSocket.connect("localhost", %d)' "$tls_untrusted_port")" \
+    >/dev/null 2>"$error_file"; then
+    echo "TLSSocket.connect to an untrusted self-signed certificate unexpectedly succeeded" >&2
+    exit 1
+fi
+grep -q "certificate verify failed" "$error_file"
+rm -f "$error_file"
+# The server's own SSL_accept() legitimately fails too here (the client
+# aborts the handshake with a fatal alert once its own verification
+# fails, same as any TLS client would), so listener.accept() raises and
+# the server script exits non-zero -- not a bug, just not this test's own
+# assertion, so the exit status itself is intentionally not checked.
+wait "$tls_untrusted_server_pid" || true
+rm -f "$tls_untrusted_server_out"
+
+# Trusted issuer, wrong hostname: the certificate is for "localhost" only
+# (its one subjectAltName above) -- connecting to the same server via
+# "127.0.0.1" instead must still fail, proving SSL_set1_host is actually
+# enforcing the hostname match rather than verification stopping at "is
+# the issuer trusted?".
+tls_mismatch_port=18754
+tls_mismatch_server_out="$(mktemp)"
+"$diamond" -e "$(printf 'listener = TLSServer.listen(%d, "%s", "%s")
+puts("ready")
+conn = listener.accept()
+conn.close()
+listener.close()
+0' "$tls_mismatch_port" "$tls_dir/cert.pem" "$tls_dir/key.pem")" >"$tls_mismatch_server_out" 2>&1 &
+tls_mismatch_server_pid=$!
+for _ in $(seq 1 200); do
+    grep -q '^ready$' "$tls_mismatch_server_out" && break
+    sleep 0.05
+done
+error_file="$(mktemp)"
+if SSL_CERT_FILE="$tls_dir/cert.pem" timeout 10 "$diamond" -e \
+    "$(printf 'TLSSocket.connect("127.0.0.1", %d)' "$tls_mismatch_port")" \
+    >/dev/null 2>"$error_file"; then
+    echo "TLSSocket.connect with a hostname the certificate doesn't cover unexpectedly succeeded" >&2
+    exit 1
+fi
+grep -q "certificate verify failed" "$error_file"
+rm -f "$error_file"
+# Same reasoning as the untrusted-certificate test above: the server's own
+# SSL_accept() fails too once the client aborts the handshake, so its
+# exit status is intentionally not checked here.
+wait "$tls_mismatch_server_pid" || true
+rm -f "$tls_mismatch_server_out"
+rm -rf "$tls_dir"
+
 error_file="$(mktemp)"
 if "$diamond" -e '5.abs()' >/dev/null 2>"$error_file"; then
     echo "Int literal .abs() unexpectedly succeeded (Int has no method dispatch)" >&2

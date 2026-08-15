@@ -8,7 +8,7 @@ CFLAGS_RELEASE := -O3 -DNDEBUG -march=native
 CFLAGS_SANITIZE := $(CFLAGS_DEBUG) -fsanitize=address,undefined \
 	-fno-omit-frame-pointer
 LDFLAGS_SANITIZE := -fsanitize=address,undefined
-LDLIBS := -lm $(REGINOLD_DIR)/libreginold.a -ldl -lpthread
+LDLIBS := -lm $(REGINOLD_DIR)/libreginold.a -ldl -lpthread -lssl -lcrypto
 
 # libFuzzer is a Clang/LLVM feature (-fsanitize=fuzzer isn't recognized by
 # GCC at all) -- the fuzz binary is the one build variant in this Makefile
@@ -141,7 +141,7 @@ test-repl: debug
 
 $(BUILD_DIR)/compile_fuzzer: fuzz/compile_fuzzer.c $(API_SOURCES)
 	@mkdir -p $(BUILD_DIR)
-	$(CC_FUZZ) $(CPPFLAGS) $(CFLAGS_FUZZ) $(API_SOURCES) $< -lm $(REGINOLD_DIR)/libreginold.a -ldl -lpthread -o $@
+	$(CC_FUZZ) $(CPPFLAGS) $(CFLAGS_FUZZ) $(API_SOURCES) $< -lm $(REGINOLD_DIR)/libreginold.a -ldl -lpthread -lssl -lcrypto -o $@
 
 fuzz: $(BUILD_DIR)/compile_fuzzer
 

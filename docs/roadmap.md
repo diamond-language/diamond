@@ -5332,6 +5332,81 @@ future work.
   sanitized test suite runs everything over pipes and so never touches
   the new termios/history code paths at all — clean exit, no sanitizer
   reports, across the same pty-driven scenarios above.
+- Added TLS: `TLSSocket.connect(host, port)` (client) and
+  `TLSServer.listen(port, cert_path, key_path)`/`.accept()` (server), both
+  returning a new object kind (`DIAMOND_OBJECT_TLS_SOCKET`) with the exact
+  same `.read`/`.gets`/`.write`/`.close` surface `File` already has (full
+  design in `docs/io.md`). Closes the last item of the original "Non-
+  blocking I/O, UDP, and TLS" gap — non-blocking I/O and UDP both closed
+  earlier this round (see above).
+
+  The one deliberate exception to this project's otherwise zero-external-
+  dependencies, hand-rolled-everything stance (the LSP's own JSON-RPC
+  parser, the REPL's own line editor above, ...): built on OpenSSL rather
+  than implemented from scratch, since TLS specifically is a domain where
+  "hand-rolled" is a real security liability, not just extra effort.
+  `TLSSocket.connect` verifies unconditionally — system trust store via
+  `SSL_CTX_set_default_verify_paths`, hostname match via `SSL_set1_host`
+  — with no `verify: false` escape hatch anywhere in the API; a
+  connection to an untrusted or misnamed certificate raises a rescuable
+  `IOError` rather than an option a caller could reach for and regret
+  later. `TLSServer.listen` loads its certificate chain/key into one
+  `SSL_CTX` reused across every `.accept()`, so a broken cert/key pair
+  fails loudly at `.listen()` time, not on whichever connection happens
+  to arrive first.
+
+  Two bugs found and fixed along the way, both surfaced by TLS but real
+  for the plain TCP/UDP write paths too:
+  - A latent, pre-existing `SIGPIPE` footgun: writing to a TCP connection
+    the peer has reset (not just cleanly closed) raises `SIGPIPE`, whose
+    default disposition kills the whole process outright — every write-
+    capable path in this codebase already turns a failed write into a
+    catchable `IOError` via errno/`SSL_get_error`, so this was pure
+    behavior loss, never a want. TLS is what actually triggered it:
+    OpenSSL servers automatically send a post-handshake
+    `NewSessionTicket` for TLS 1.3, and this round's own "undefined
+    method on a TLSSocket" error test — a client that connects then
+    immediately errors out without reading anything — leaves that
+    message unread in the kernel receive buffer at close time, which is
+    Linux's own trigger for sending `RST` instead of a plain `FIN`; the
+    resulting write-after-RST on the *server* side (mid-`SSL_free`) was
+    enough to kill the whole `tests/run.sh` process outright, well past
+    the specific assertion actually being tested. Fixed with a single
+    `signal(SIGPIPE, SIG_IGN)` in `diamond_vm_init` — idempotent, so
+    every VM (nested or top-level) gets it, once — after which the
+    write returns a plain, already-handled `EPIPE`. The plain TCP/UDP
+    write paths had the exact same exposure the whole time; nothing in
+    the existing test suite ever happened to trigger it, purely because
+    every existing test fully reads a response before closing.
+  - `SSL_free` alone does not send a TLS `close_notify` alert, despite an
+    initial comment here claiming otherwise while writing the code —
+    caught rereading OpenSSL's own docs rather than in testing.
+    `SSL_shutdown` (one best-effort call, result ignored — waiting for
+    the peer's own `close_notify` back would mean blocking on a peer
+    that may never send one) has to run first. Both `.close()` and GC/VM-
+    teardown sweep were fixed to call `SSL_shutdown` before `SSL_free`.
+
+  Verification: bytecode-dump/shadowing/error-message tests mirroring the
+  established pattern, plus a real client/server round trip against a
+  fresh self-signed certificate generated on the fly (`openssl req`, a
+  new `CN=localhost` cert with a matching SAN, regenerated every run
+  rather than a checked-in fixture with its own expiry date to track) —
+  run twice, once plain and once under `DIAMOND_STRESS_GC=1`. Two
+  security-relevant failure paths get their own tests, not just the happy
+  path: connecting without trusting the self-signed cert's issuer fails
+  (`$SSL_CERT_FILE` is how the *successful* round-trip test above tells
+  the client to trust this one cert without touching the system store or
+  needing an insecure-by-default fallback in the API itself — a well-
+  documented OpenSSL override, not a Diamond-specific mechanism), and
+  connecting to the right trusted issuer but the wrong hostname
+  (`127.0.0.1` against a cert whose only SAN is `DNS:localhost`) also
+  fails — proving `SSL_set1_host` is actually enforced, not just present
+  in the code. `make test` (924 assertions, up from 920) and a full
+  `make test-sanitize` pass (including `DIAMOND_STRESS_GC=1` around
+  session setup/handshake/read/write) both clean; `make release` and
+  `make fuzz` (which needed its own hardcoded `-lssl -lcrypto`, since it
+  doesn't route through the shared `$(LDLIBS)` Makefile variable the
+  other build variants do) both still link.
 
 ## Later experiments
 

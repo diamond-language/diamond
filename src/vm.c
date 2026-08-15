@@ -16,6 +16,8 @@
 #include <string.h>
 #include <fcntl.h>
 #include <netdb.h>
+#include <openssl/err.h>
+#include <openssl/ssl.h>
 #include <poll.h>
 #include <signal.h>
 #include <sys/mman.h>
@@ -183,8 +185,9 @@ void diamond_vm_collect(DiamondVm *vm) {
             if(stream!=nullptr)fclose(stream);
         } else if(unreached->kind==DIAMOND_OBJECT_LISTENER) {
             size=sizeof(DiamondListenerHandle);
-            const int fd=((DiamondListenerHandle *)unreached)->fd;
-            if(fd>=0)close(fd);
+            DiamondListenerHandle *listener=(DiamondListenerHandle *)unreached;
+            if(listener->fd>=0)close(listener->fd);
+            if(listener->tls_context!=nullptr)SSL_CTX_free(listener->tls_context);
         } else if(unreached->kind==DIAMOND_OBJECT_SOCKET) {
             size=sizeof(DiamondSocketHandle);
             const int fd=((DiamondSocketHandle *)unreached)->fd;
@@ -193,6 +196,14 @@ void diamond_vm_collect(DiamondVm *vm) {
             size=sizeof(DiamondUdpSocketHandle);
             const int fd=((DiamondUdpSocketHandle *)unreached)->fd;
             if(fd>=0)close(fd);
+        } else if(unreached->kind==DIAMOND_OBJECT_TLS_SOCKET) {
+            size=sizeof(DiamondTlsSocketHandle);
+            DiamondTlsSocketHandle *tls_handle=(DiamondTlsSocketHandle *)unreached;
+            if(tls_handle->ssl!=nullptr) {
+                SSL_shutdown(tls_handle->ssl);
+                SSL_free(tls_handle->ssl);
+            }
+            if(tls_handle->fd>=0)close(tls_handle->fd);
         } else if(unreached->kind==DIAMOND_OBJECT_BIGNUM) {
             const DiamondBignum *bignum=(const DiamondBignum *)unreached;
             size=sizeof(DiamondBignum)+bignum->limb_count*sizeof(uint32_t);
@@ -224,6 +235,23 @@ void diamond_vm_init(DiamondVm *vm) {
     *vm = (DiamondVm){.next_gc = 2048};
     vm->quickening_threshold = 1;
     vm->monomorphic_threshold = 1;
+    /* A write(2)/SSL_write to a TCP connection the peer has already reset
+     * (not just cleanly closed) raises SIGPIPE, whose default disposition
+     * is to kill the whole process outright -- surfaced by TLS in
+     * particular: OpenSSL servers send a post-handshake NewSessionTicket
+     * message automatically for TLS 1.3, and a peer that closes its own
+     * socket without ever reading it (the common case for any short-
+     * lived connection that errors out or disconnects right after the
+     * handshake) leaves that data unread in the kernel receive buffer at
+     * close time -- Linux's own trigger for sending RST instead of a
+     * plain FIN. Every write-capable I/O path in this file already turns
+     * a failed write into a catchable IOError via errno/SSL_get_error,
+     * exactly the EPIPE this produces once the fatal signal is out of the
+     * way -- so ignoring SIGPIPE here (once per VM, idempotent, matches
+     * the universal practice for any long-running networked process) is
+     * strictly a bug fix, not a behavior tradeoff: nothing in this VM
+     * ever wanted "silently die" as its response to a broken connection. */
+    signal(SIGPIPE, SIG_IGN);
 }
 
 void diamond_vm_bind_fiber_queue(DiamondVm *vm, const DiamondFiberQueue *queue) {
@@ -251,14 +279,22 @@ void diamond_vm_free(DiamondVm *vm) {
             FILE *stream=((DiamondFileHandle *)object)->stream;
             if(stream!=nullptr)fclose(stream);
         } else if(object->kind==DIAMOND_OBJECT_LISTENER) {
-            const int fd=((DiamondListenerHandle *)object)->fd;
-            if(fd>=0)close(fd);
+            DiamondListenerHandle *listener=(DiamondListenerHandle *)object;
+            if(listener->fd>=0)close(listener->fd);
+            if(listener->tls_context!=nullptr)SSL_CTX_free(listener->tls_context);
         } else if(object->kind==DIAMOND_OBJECT_SOCKET) {
             const int fd=((DiamondSocketHandle *)object)->fd;
             if(fd>=0)close(fd);
         } else if(object->kind==DIAMOND_OBJECT_UDP_SOCKET) {
             const int fd=((DiamondUdpSocketHandle *)object)->fd;
             if(fd>=0)close(fd);
+        } else if(object->kind==DIAMOND_OBJECT_TLS_SOCKET) {
+            DiamondTlsSocketHandle *tls_handle=(DiamondTlsSocketHandle *)object;
+            if(tls_handle->ssl!=nullptr) {
+                SSL_shutdown(tls_handle->ssl);
+                SSL_free(tls_handle->ssl);
+            }
+            if(tls_handle->fd>=0)close(tls_handle->fd);
         } else if(object->kind==DIAMOND_OBJECT_REGEXP) {
             reginold_regex_free(((DiamondRegexp *)object)->handle);
         } else if(object->kind==DIAMOND_OBJECT_PROGRAM_BUILDER) {
@@ -686,6 +722,30 @@ static DiamondUdpSocketHandle *allocate_udp_socket_handle(DiamondVm *vm,int fd) 
     vm->objects=&handle->object;vm->bytes_allocated+=sizeof(DiamondUdpSocketHandle);return handle;
 }
 
+static DiamondTlsSocketHandle *allocate_tls_socket_handle(DiamondVm *vm,SSL *ssl,int fd) {
+    if(vm->stress_gc||vm->bytes_allocated>=vm->next_gc)diamond_vm_collect(vm);
+    DiamondTlsSocketHandle *handle=malloc(sizeof(DiamondTlsSocketHandle));
+    if(handle==nullptr)return nullptr;
+    *handle=(DiamondTlsSocketHandle){
+        .object={.next=vm->objects,.kind=DIAMOND_OBJECT_TLS_SOCKET},.ssl=ssl,.fd=fd};
+    vm->objects=&handle->object;vm->bytes_allocated+=sizeof(DiamondTlsSocketHandle);return handle;
+}
+
+/* Formats the current head of OpenSSL's thread-local error queue (and
+ * drains it -- ERR_error_string_n reads then implicitly leaves the queue
+ * alone, so a real ERR_get_error() pop is needed first, or a stale error
+ * from an earlier, unrelated failed call could be reported here instead
+ * of the one that actually just happened). Used for every TLS failure
+ * that isn't itself a plain errno/getaddrinfo-style failure. */
+static void tls_format_error(char *buffer,size_t buffer_size) {
+    const unsigned long code=ERR_get_error();
+    if(code==0) {
+        (void)snprintf(buffer,buffer_size,"unknown TLS error");
+        return;
+    }
+    ERR_error_string_n(code,buffer,buffer_size);
+}
+
 /* Shared behind UDPSocket.bind(port)/UDPSocket.open(). bind_socket==true
  * (UDPSocket.bind) resolves and binds to a specific local port, same
  * getaddrinfo/AI_PASSIVE/try-each-candidate dance as tcp_listen_helper
@@ -838,6 +898,48 @@ static DiamondVmStatus dispatch_pending_signals(DiamondVm *vm,const DiamondChunk
     return DIAMOND_VM_OK;
 }
 
+/* Shared getaddrinfo/socket/connect dance behind TCPSocket.connect and
+ * TLSSocket.connect -- both need a connected fd before doing anything
+ * TLS-specific, so this is exactly the code TCP_CONNECT's own handler
+ * used to have inline, unchanged, just callable from a second opcode
+ * handler now too. No SA_RESTART-style signal-retry here, matching the
+ * existing TCPSocket.connect scope cut documented in docs/io.md: a
+ * signal arriving mid-connect makes the attempt fail rather than
+ * transparently resuming, same as it always has. */
+static DiamondVmStatus tcp_connect_helper(DiamondVm *vm,const DiamondString *host,
+        int64_t port,int *out_fd) {
+    char port_text[32];
+    (void)snprintf(port_text,sizeof port_text,"%" PRId64,port);
+    struct addrinfo hints={.ai_family=AF_UNSPEC,.ai_socktype=SOCK_STREAM};
+    struct addrinfo *results=nullptr;
+    const int resolve_status=getaddrinfo(host->chars,port_text,&hints,&results);
+    if(resolve_status!=0) {
+        snprintf(vm->error,sizeof vm->error,"cannot connect to '%.*s:%s': %s",
+                 (int)host->length,host->chars,port_text,gai_strerror(resolve_status));
+        return DIAMOND_VM_IO_ERROR;
+    }
+    int connected_fd=-1;
+    int last_errno=0;
+    for(struct addrinfo *candidate=results;candidate!=nullptr;
+        candidate=candidate->ai_next) {
+        const int fd=socket(candidate->ai_family,candidate->ai_socktype,
+                             candidate->ai_protocol);
+        if(fd<0) {last_errno=errno;continue;}
+        if(connect(fd,candidate->ai_addr,candidate->ai_addrlen)==0) {
+            connected_fd=fd;break;
+        }
+        last_errno=errno;close(fd);
+    }
+    freeaddrinfo(results);
+    if(connected_fd<0) {
+        snprintf(vm->error,sizeof vm->error,"cannot connect to '%.*s:%s': %s",
+                 (int)host->length,host->chars,port_text,strerror(last_errno));
+        return DIAMOND_VM_IO_ERROR;
+    }
+    *out_fd=connected_fd;
+    return DIAMOND_VM_OK;
+}
+
 /* Shared getaddrinfo/socket/bind/listen dance behind TCPServer.listen and
  * TCPServer.listen_nonblocking -- identical except for whether the
  * resulting fd is set O_NONBLOCK and which flavor of DiamondListenerHandle
@@ -898,6 +1000,54 @@ static DiamondVmStatus tcp_listen_helper(DiamondVm *vm,int64_t port,
         close(listening_fd);
         return DIAMOND_VM_OUT_OF_MEMORY;
     }
+    *out_handle=listener_handle;
+    return DIAMOND_VM_OK;
+}
+
+/* Shared behind TLSServer.listen(port, cert_path, key_path): the same
+ * plain-TCP listen tcp_listen_helper already does (a TLS listener is a
+ * regular listening socket underneath -- the TLS part only starts once a
+ * connection is actually accepted), plus loading the server's
+ * certificate chain and private key into one SSL_CTX that every future
+ * .accept() on this listener reuses (see DiamondListenerHandle's own
+ * tls_context field comment for the lifetime story). Loaded once here
+ * rather than per-connection specifically so a listener with a broken
+ * cert/key pair fails loudly at TLSServer.listen time, not silently on
+ * whichever connection happens to be first. */
+static DiamondVmStatus tls_listen_helper(DiamondVm *vm,int64_t port,
+        const char *cert_path,const char *key_path,DiamondListenerHandle **out_handle) {
+    DiamondListenerHandle *listener_handle=nullptr;
+    const DiamondVmStatus listen_status=tcp_listen_helper(vm,port,false,&listener_handle);
+    if(listen_status!=DIAMOND_VM_OK)return listen_status;
+    SSL_CTX *context=SSL_CTX_new(TLS_server_method());
+    if(context==nullptr) {
+        close(listener_handle->fd);listener_handle->fd=-1;
+        char detail[256];tls_format_error(detail,sizeof detail);
+        snprintf(vm->error,sizeof vm->error,"cannot create TLS context: %s",detail);
+        return DIAMOND_VM_IO_ERROR;
+    }
+    if(SSL_CTX_use_certificate_chain_file(context,cert_path)!=1) {
+        char detail[256];tls_format_error(detail,sizeof detail);
+        snprintf(vm->error,sizeof vm->error,
+            "cannot load TLS certificate '%s': %s",cert_path,detail);
+        SSL_CTX_free(context);close(listener_handle->fd);listener_handle->fd=-1;
+        return DIAMOND_VM_IO_ERROR;
+    }
+    if(SSL_CTX_use_PrivateKey_file(context,key_path,SSL_FILETYPE_PEM)!=1) {
+        char detail[256];tls_format_error(detail,sizeof detail);
+        snprintf(vm->error,sizeof vm->error,
+            "cannot load TLS private key '%s': %s",key_path,detail);
+        SSL_CTX_free(context);close(listener_handle->fd);listener_handle->fd=-1;
+        return DIAMOND_VM_IO_ERROR;
+    }
+    if(SSL_CTX_check_private_key(context)!=1) {
+        char detail[256];tls_format_error(detail,sizeof detail);
+        snprintf(vm->error,sizeof vm->error,
+            "TLS certificate and private key do not match: %s",detail);
+        SSL_CTX_free(context);close(listener_handle->fd);listener_handle->fd=-1;
+        return DIAMOND_VM_IO_ERROR;
+    }
+    listener_handle->tls_context=context;
     *out_handle=listener_handle;
     return DIAMOND_VM_OK;
 }
@@ -4045,6 +4195,93 @@ static DiamondVmStatus read_line(DiamondVm *vm,FILE *stream,StringBuilder *build
     return DIAMOND_VM_OK;
 }
 
+/* SSL_read into a caller-supplied buffer, translating OpenSSL's own
+ * error taxonomy into this VM's existing read-error/EOF conventions:
+ * *out_eof true (with *out_read left 0) is the same "peer is done,
+ * nothing more is ever coming" signal DIAMOND_OBJECT_SOCKET#read/
+ * File#read already give a caller via a bare 0-byte-read/nil -- both a
+ * clean TLS close_notify (SSL_ERROR_ZERO_RETURN) and the underlying TCP
+ * connection just dropping without sending one (some peers do this) are
+ * treated as EOF rather than an error, matching those two. No EINTR
+ * retry here, same scope cut TCPSocket.connect and buffered File/stdin
+ * reads already have (see docs/io.md's signals section) -- a signal
+ * arriving mid-read makes the read fail rather than transparently
+ * resuming. */
+static DiamondVmStatus tls_read_chunk(DiamondVm *vm,SSL *ssl,void *buffer,size_t want,
+        size_t *out_read,bool *out_eof) {
+    *out_read=0;*out_eof=false;
+    if(want==0)return DIAMOND_VM_OK;
+    const int capped=want>(size_t)INT_MAX?INT_MAX:(int)want;
+    ERR_clear_error();
+    const int got=SSL_read(ssl,buffer,capped);
+    if(got>0) {*out_read=(size_t)got;return DIAMOND_VM_OK;}
+    const int ssl_error=SSL_get_error(ssl,got);
+    if(ssl_error==SSL_ERROR_ZERO_RETURN||(ssl_error==SSL_ERROR_SYSCALL&&got==0)) {
+        *out_eof=true;return DIAMOND_VM_OK;
+    }
+    char detail[256];
+    if(ssl_error==SSL_ERROR_SYSCALL&&ERR_peek_error()==0)
+        (void)snprintf(detail,sizeof detail,"%s",strerror(errno));
+    else
+        tls_format_error(detail,sizeof detail);
+    snprintf(vm->error,sizeof vm->error,"TLS read error: %s",detail);
+    return DIAMOND_VM_IO_ERROR;
+}
+
+/* Writes all of `length` bytes, looping over SSL_write as needed --
+ * unlike DIAMOND_OBJECT_SOCKET#write (a non-blocking fd, where a partial
+ * write is a normal outcome the caller retries), this fd is always
+ * blocking, so a short SSL_write is only possible via a genuine error,
+ * never "the buffer's full, try again later". */
+static DiamondVmStatus tls_write_all(DiamondVm *vm,SSL *ssl,const char *data,size_t length) {
+    size_t written=0;
+    while(written<length) {
+        const size_t remaining=length-written;
+        const int want=remaining>(size_t)INT_MAX?INT_MAX:(int)remaining;
+        ERR_clear_error();
+        const int got=SSL_write(ssl,data+written,want);
+        if(got<=0) {
+            const int ssl_error=SSL_get_error(ssl,got);
+            char detail[256];
+            if(ssl_error==SSL_ERROR_SYSCALL&&ERR_peek_error()==0)
+                (void)snprintf(detail,sizeof detail,"%s",strerror(errno));
+            else
+                tls_format_error(detail,sizeof detail);
+            snprintf(vm->error,sizeof vm->error,"TLS write error: %s",detail);
+            return DIAMOND_VM_IO_ERROR;
+        }
+        written+=(size_t)got;
+    }
+    return DIAMOND_VM_OK;
+}
+
+/* TLS analogue of read_line -- byte-at-a-time via tls_read_chunk rather
+ * than fgets, since a raw SSL/fd has no libc stdio buffering underneath
+ * it to lean on. Not as wasteful as it looks: SSL_read decrypts and
+ * buffers a whole TLS record (up to 16KB) on the first call that needs
+ * one, so a run of single-byte reads against an already-buffered record
+ * costs one function call each, not one recv(2) each. Same trailing
+ * \n/\r-stripping and *saw_any contract as read_line. */
+static DiamondVmStatus tls_read_line(DiamondVm *vm,SSL *ssl,StringBuilder *builder,
+                                     bool *saw_any) {
+    *saw_any=false;
+    for(;;) {
+        char byte=0;size_t got=0;bool eof=false;
+        const DiamondVmStatus status=tls_read_chunk(vm,ssl,&byte,1,&got,&eof);
+        if(status!=DIAMOND_VM_OK)return status;
+        if(eof||got==0)break;
+        *saw_any=true;
+        if(!builder_append(builder,&byte,1))return DIAMOND_VM_OUT_OF_MEMORY;
+        if(byte=='\n')break;
+    }
+    if(builder->length>0&&builder->chars[builder->length-1]=='\n') {
+        builder->length--;
+        if(builder->length>0&&builder->chars[builder->length-1]=='\r')builder->length--;
+        builder->chars[builder->length]='\0';
+    }
+    return DIAMOND_VM_OK;
+}
+
 static bool builder_format_value(StringBuilder *builder,DiamondValue value) {
     char scalar[96];int length=0;
     if(value.kind==DIAMOND_VALUE_NIL)return builder_append(builder,"nil",3);
@@ -6571,6 +6808,10 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                             close(listener->fd);
                             listener->fd=-1;
                         }
+                        if(listener->tls_context!=nullptr) {
+                            SSL_CTX_free(listener->tls_context);
+                            listener->tls_context=nullptr;
+                        }
                         registers[dest]=DIAMOND_NIL;break;
                     }
                     if(listener->fd<0) {
@@ -6626,6 +6867,43 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                         }
                         registers[dest]=(DiamondValue){.kind=DIAMOND_VALUE_OBJECT,
                             .as.object=(DiamondObject *)client_socket};
+                        break;
+                    }
+                    if(listener->tls_context!=nullptr) {
+                        /* No EINTR-retry around SSL_accept itself, unlike
+                         * the accept() above it -- the "server sits idle
+                         * with nothing connecting" indefinite-wait case is
+                         * accept()'s alone; once a connection exists, the
+                         * handshake that follows is bounded (a couple of
+                         * network round trips), the same category
+                         * TCPSocket.connect's own connect() call is in, and
+                         * gets the same documented scope cut (see
+                         * tcp_connect_helper). */
+                        SSL *ssl=SSL_new(listener->tls_context);
+                        if(ssl==nullptr) {
+                            close(client_fd);
+                            char detail[256];tls_format_error(detail,sizeof detail);
+                            snprintf(vm->error,sizeof vm->error,
+                                "cannot create TLS session: %s",detail);
+                            VM_RETURN(DIAMOND_VM_IO_ERROR);
+                        }
+                        SSL_set_fd(ssl,client_fd);
+                        ERR_clear_error();
+                        if(SSL_accept(ssl)!=1) {
+                            char detail[256];tls_format_error(detail,sizeof detail);
+                            snprintf(vm->error,sizeof vm->error,
+                                "TLS handshake failed: %s",detail);
+                            SSL_free(ssl);close(client_fd);
+                            VM_RETURN(DIAMOND_VM_IO_ERROR);
+                        }
+                        DiamondTlsSocketHandle *client_tls=
+                            allocate_tls_socket_handle(vm,ssl,client_fd);
+                        if(client_tls==nullptr) {
+                            SSL_free(ssl);close(client_fd);
+                            VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                        }
+                        registers[dest]=(DiamondValue){.kind=DIAMOND_VALUE_OBJECT,
+                            .as.object=(DiamondObject *)client_tls};
                         break;
                     }
                     FILE *client_stream=fdopen(client_fd,"r+");
@@ -6917,6 +7195,102 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                             DIAMOND_INT(source_port)))
                         VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
                     break;
+                }
+                if(receiver_kind==DIAMOND_OBJECT_TLS_SOCKET) {
+                    if(type_argument_count!=0)VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                    DiamondTlsSocketHandle *tls_handle=
+                        (DiamondTlsSocketHandle *)registers[recv].as.object;
+                    const bool read_method=method_name->length==4&&
+                        memcmp(method_name->chars,"read",4)==0;
+                    const bool gets_method=method_name->length==4&&
+                        memcmp(method_name->chars,"gets",4)==0;
+                    const bool write_method=method_name->length==5&&
+                        memcmp(method_name->chars,"write",5)==0;
+                    const bool close_method=method_name->length==5&&
+                        memcmp(method_name->chars,"close",5)==0;
+                    if(!read_method&&!gets_method&&!write_method&&!close_method) {
+                        snprintf(vm->error,sizeof vm->error,"undefined method '%.*s' for %s",
+                            (int)method_name->length,method_name->chars,"TLSSocket");
+                        VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                    }
+                    if(close_method) {
+                        if(argc!=0)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                        if(tls_handle->ssl!=nullptr) {
+                            SSL_shutdown(tls_handle->ssl);
+                            SSL_free(tls_handle->ssl);
+                            tls_handle->ssl=nullptr;
+                            if(tls_handle->fd>=0)close(tls_handle->fd);
+                            tls_handle->fd=-1;
+                        }
+                        registers[dest]=DIAMOND_NIL;break;
+                    }
+                    if(tls_handle->ssl==nullptr) {
+                        snprintf(vm->error,sizeof vm->error,"TLS socket is closed");
+                        VM_RETURN(DIAMOND_VM_IO_ERROR);
+                    }
+                    if(read_method) {
+                        if(argc>1)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                        bool bounded=false;size_t limit=0;
+                        if(argc==1) {
+                            if(registers[base].kind!=DIAMOND_VALUE_INT||
+                               registers[base].as.integer<0) {
+                                snprintf(vm->error,sizeof vm->error,
+                                    "TLSSocket#read argument must be a non-negative Int");
+                                VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                            }
+                            bounded=true;limit=(size_t)registers[base].as.integer;
+                        }
+                        StringBuilder builder={};
+                        char chunk_buffer[4096];
+                        for(;;) {
+                            if(bounded&&builder.length>=limit)break;
+                            const size_t remaining=bounded?limit-builder.length:sizeof chunk_buffer;
+                            const size_t want=remaining<sizeof chunk_buffer?
+                                remaining:sizeof chunk_buffer;
+                            size_t got=0;bool eof=false;
+                            const DiamondVmStatus read_status=
+                                tls_read_chunk(vm,tls_handle->ssl,chunk_buffer,want,&got,&eof);
+                            if(read_status!=DIAMOND_VM_OK) {
+                                free(builder.chars);VM_RETURN(read_status);
+                            }
+                            if(eof||got==0)break;
+                            if(!builder_append(&builder,chunk_buffer,got)) {
+                                free(builder.chars);VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                            }
+                        }
+                        DiamondString *string=allocate_string(vm,builder.chars,builder.length);
+                        free(builder.chars);
+                        if(string==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                        registers[dest]=DIAMOND_OBJECT(string);break;
+                    }
+                    if(gets_method) {
+                        if(argc!=0)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                        StringBuilder builder={};
+                        bool saw_any=false;
+                        const DiamondVmStatus read_status=
+                            tls_read_line(vm,tls_handle->ssl,&builder,&saw_any);
+                        if(read_status!=DIAMOND_VM_OK) {
+                            free(builder.chars);VM_RETURN(read_status);
+                        }
+                        if(!saw_any) {
+                            free(builder.chars);
+                            registers[dest]=DIAMOND_NIL;break;
+                        }
+                        DiamondString *string=allocate_string(vm,builder.chars,builder.length);
+                        free(builder.chars);
+                        if(string==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                        registers[dest]=DIAMOND_OBJECT(string);break;
+                    }
+                    if(argc!=1)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                    DiamondValue converted=DIAMOND_NIL;
+                    DiamondVmStatus stringify_status=stringify_value(vm,chunk,depth,
+                        registers[base],&converted);
+                    VM_PROPAGATE(stringify_status);
+                    const DiamondString *text=(const DiamondString *)converted.as.object;
+                    const DiamondVmStatus write_status=
+                        tls_write_all(vm,tls_handle->ssl,text->chars,text->length);
+                    VM_PROPAGATE(write_status);
+                    registers[dest]=DIAMOND_NIL;break;
                 }
                 if(receiver_kind==DIAMOND_OBJECT_REGEXP) {
                     if(type_argument_count!=0)VM_RETURN(DIAMOND_VM_TYPE_ERROR);
@@ -7565,35 +7939,10 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     VM_RETURN(DIAMOND_VM_TYPE_ERROR);
                 }
                 const DiamondString *host=(const DiamondString *)registers[host_reg].as.object;
-                char port_text[32];
-                (void)snprintf(port_text,sizeof port_text,"%" PRId64,
-                               registers[port_reg].as.integer);
-                struct addrinfo hints={.ai_family=AF_UNSPEC,.ai_socktype=SOCK_STREAM};
-                struct addrinfo *results=nullptr;
-                const int resolve_status=getaddrinfo(host->chars,port_text,&hints,&results);
-                if(resolve_status!=0) {
-                    snprintf(vm->error,sizeof vm->error,"cannot connect to '%.*s:%s': %s",
-                             (int)host->length,host->chars,port_text,gai_strerror(resolve_status));
-                    VM_RETURN(DIAMOND_VM_IO_ERROR);
-                }
                 int connected_fd=-1;
-                int last_errno=0;
-                for(struct addrinfo *candidate=results;candidate!=nullptr;
-                    candidate=candidate->ai_next) {
-                    const int fd=socket(candidate->ai_family,candidate->ai_socktype,
-                                         candidate->ai_protocol);
-                    if(fd<0) {last_errno=errno;continue;}
-                    if(connect(fd,candidate->ai_addr,candidate->ai_addrlen)==0) {
-                        connected_fd=fd;break;
-                    }
-                    last_errno=errno;close(fd);
-                }
-                freeaddrinfo(results);
-                if(connected_fd<0) {
-                    snprintf(vm->error,sizeof vm->error,"cannot connect to '%.*s:%s': %s",
-                             (int)host->length,host->chars,port_text,strerror(last_errno));
-                    VM_RETURN(DIAMOND_VM_IO_ERROR);
-                }
+                const DiamondVmStatus connect_status=tcp_connect_helper(vm,host,
+                    registers[port_reg].as.integer,&connected_fd);
+                VM_PROPAGATE(connect_status);
                 FILE *stream=fdopen(connected_fd,"r+");
                 if(stream==nullptr) {
                     close(connected_fd);
@@ -7703,6 +8052,116 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 }
                 vm->trapped_signal_handlers[signal_index]=registers[handler_reg];
                 registers[dest]=DIAMOND_NIL;
+                break;
+            }
+            case DIAMOND_OP_TLS_CONNECT: {
+                uint8_t dest=0,host_reg=0,port_reg=0;
+                READ_BYTE(dest);READ_BYTE(host_reg);READ_BYTE(port_reg);
+                if(registers[host_reg].kind!=DIAMOND_VALUE_OBJECT||
+                   registers[host_reg].as.object->kind!=DIAMOND_OBJECT_STRING||
+                   registers[port_reg].kind!=DIAMOND_VALUE_INT) {
+                    snprintf(vm->error,sizeof vm->error,
+                             "TLSSocket.connect arguments must be a String host and an Int port");
+                    VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                }
+                const DiamondString *host=(const DiamondString *)registers[host_reg].as.object;
+                int connected_fd=-1;
+                const DiamondVmStatus connect_status=tcp_connect_helper(vm,host,
+                    registers[port_reg].as.integer,&connected_fd);
+                VM_PROPAGATE(connect_status);
+                SSL_CTX *context=SSL_CTX_new(TLS_client_method());
+                if(context==nullptr) {
+                    close(connected_fd);
+                    char detail[256];tls_format_error(detail,sizeof detail);
+                    snprintf(vm->error,sizeof vm->error,"cannot create TLS context: %s",detail);
+                    VM_RETURN(DIAMOND_VM_IO_ERROR);
+                }
+                /* Secure by default, no opt-out exposed: every
+                 * TLSSocket.connect verifies the peer's certificate
+                 * against the system trust store (SSL_CTX_set_default_
+                 * verify_paths -- honors $SSL_CERT_FILE/$SSL_CERT_DIR,
+                 * which is how tests/run.sh points this at a hermetic
+                 * test CA rather than the real system store) and that the
+                 * certificate is actually for `host` (SSL_set1_host
+                 * below). A custom/pinned trust store is a real,
+                 * documented scope cut (see docs/io.md), not an
+                 * oversight -- there was no call site in this codebase
+                 * yet that needed one. */
+                SSL_CTX_set_verify(context,SSL_VERIFY_PEER,nullptr);
+                if(SSL_CTX_set_default_verify_paths(context)!=1) {
+                    char detail[256];tls_format_error(detail,sizeof detail);
+                    snprintf(vm->error,sizeof vm->error,
+                        "cannot load system TLS trust store: %s",detail);
+                    SSL_CTX_free(context);close(connected_fd);
+                    VM_RETURN(DIAMOND_VM_IO_ERROR);
+                }
+                SSL *ssl=SSL_new(context);
+                SSL_CTX_free(context); /* ssl already holds its own reference */
+                if(ssl==nullptr) {
+                    close(connected_fd);
+                    VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                }
+                SSL_set_fd(ssl,connected_fd);
+                /* SNI (which certificate a multi-tenant server presents)
+                 * and the hostname check SSL_get_verify_result below
+                 * relies on both need a null-terminated hostname --
+                 * host->chars always is (see allocate_string). */
+                SSL_set_tlsext_host_name(ssl,host->chars);
+                if(SSL_set1_host(ssl,host->chars)!=1) {
+                    SSL_free(ssl);close(connected_fd);
+                    VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                }
+                ERR_clear_error();
+                if(SSL_connect(ssl)!=1) {
+                    char detail[256];tls_format_error(detail,sizeof detail);
+                    snprintf(vm->error,sizeof vm->error,
+                        "cannot connect to '%.*s' over TLS: %s",
+                        (int)host->length,host->chars,detail);
+                    SSL_free(ssl);close(connected_fd);
+                    VM_RETURN(DIAMOND_VM_IO_ERROR);
+                }
+                const long verify_result=SSL_get_verify_result(ssl);
+                if(verify_result!=X509_V_OK) {
+                    snprintf(vm->error,sizeof vm->error,
+                        "TLS certificate verification failed for '%.*s': %s",
+                        (int)host->length,host->chars,
+                        X509_verify_cert_error_string(verify_result));
+                    SSL_free(ssl);close(connected_fd);
+                    VM_RETURN(DIAMOND_VM_IO_ERROR);
+                }
+                DiamondTlsSocketHandle *handle=
+                    allocate_tls_socket_handle(vm,ssl,connected_fd);
+                if(handle==nullptr) {
+                    SSL_free(ssl);close(connected_fd);
+                    VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                }
+                registers[dest]=(DiamondValue){.kind=DIAMOND_VALUE_OBJECT,
+                    .as.object=(DiamondObject *)handle};
+                break;
+            }
+            case DIAMOND_OP_TLS_LISTEN: {
+                uint8_t dest=0,port_reg=0,cert_reg=0,key_reg=0;
+                READ_BYTE(dest);READ_BYTE(port_reg);READ_BYTE(cert_reg);READ_BYTE(key_reg);
+                if(registers[port_reg].kind!=DIAMOND_VALUE_INT||
+                   registers[cert_reg].kind!=DIAMOND_VALUE_OBJECT||
+                   registers[cert_reg].as.object->kind!=DIAMOND_OBJECT_STRING||
+                   registers[key_reg].kind!=DIAMOND_VALUE_OBJECT||
+                   registers[key_reg].as.object->kind!=DIAMOND_OBJECT_STRING) {
+                    snprintf(vm->error,sizeof vm->error,"TLSServer.listen arguments must be "
+                        "an Int port and String certificate/key file paths");
+                    VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                }
+                const DiamondString *cert_path=
+                    (const DiamondString *)registers[cert_reg].as.object;
+                const DiamondString *key_path=
+                    (const DiamondString *)registers[key_reg].as.object;
+                DiamondListenerHandle *listener_handle=nullptr;
+                const DiamondVmStatus listen_status=tls_listen_helper(vm,
+                    registers[port_reg].as.integer,cert_path->chars,key_path->chars,
+                    &listener_handle);
+                VM_PROPAGATE(listen_status);
+                registers[dest]=(DiamondValue){.kind=DIAMOND_VALUE_OBJECT,
+                    .as.object=(DiamondObject *)listener_handle};
                 break;
             }
             case DIAMOND_OP_IO_POLL: {
