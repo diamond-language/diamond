@@ -6,9 +6,11 @@
 #include "value.h"
 #include "vm.h"
 
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <termios.h>
 #include <unistd.h>
 
 static constexpr unsigned char DIAMOND_CORE_SOURCE[] = {
@@ -69,6 +71,296 @@ static size_t count_lines(const char *text) {
     for (const char *cursor = text; *cursor != '\0'; cursor++)
         if (*cursor == '\n') lines++;
     return lines;
+}
+
+/* Persisted across sessions at $HOME/.diamond_history (one entry per
+ * line, matching bash_history's own plain-text convention -- each entry
+ * here is already guaranteed newline-free, since it's exactly one
+ * physical line submitted at the prompt). `file` stays open for the
+ * whole interactive session and every new entry is written+flushed
+ * immediately (not just buffered and written at exit), so history
+ * survives a `kill -9` or crash, not only a clean Ctrl-D exit. Unbounded
+ * growth (no HISTSIZE-style cap) is a known simplification, not a
+ * deliberate stance -- see docs/repl.md. */
+typedef struct ReplHistory {
+    char **entries;
+    size_t count;
+    size_t capacity;
+    FILE *file;
+} ReplHistory;
+
+static char *history_file_path(void) {
+    const char *home = getenv("HOME");
+    if (home == nullptr || home[0] == '\0') return nullptr;
+    static constexpr char suffix[] = "/.diamond_history";
+    const size_t home_length = strlen(home);
+    char *path = malloc(home_length + sizeof suffix);
+    if (path == nullptr) return nullptr;
+    memcpy(path, home, home_length);
+    memcpy(path + home_length, suffix, sizeof suffix);
+    return path;
+}
+
+/* Loads existing entries (if any) and opens the file for append so new
+ * entries in this session join them. A missing/unreadable/unwritable
+ * history file is not fatal -- `history->file` just stays nullptr and
+ * every history_add below silently skips persistence, in-memory
+ * navigation still works for the rest of the session. */
+static void history_init(ReplHistory *history) {
+    *history = (ReplHistory){};
+    char *path = history_file_path();
+    if (path == nullptr) return;
+    FILE *existing = fopen(path, "r");
+    if (existing != nullptr) {
+        char *line = nullptr;
+        size_t line_capacity = 0;
+        ssize_t got;
+        while ((got = getline(&line, &line_capacity, existing)) >= 0) {
+            while (got > 0 && (line[got - 1] == '\n' || line[got - 1] == '\r')) got--;
+            if (got == 0) continue;
+            if (history->count == history->capacity) {
+                const size_t capacity = history->capacity == 0 ? 64 : history->capacity * 2;
+                char **grown = realloc(history->entries, capacity * sizeof *grown);
+                if (grown == nullptr) break;
+                history->entries = grown;
+                history->capacity = capacity;
+            }
+            char *entry = malloc((size_t)got + 1);
+            if (entry == nullptr) break;
+            memcpy(entry, line, (size_t)got);
+            entry[got] = '\0';
+            history->entries[history->count++] = entry;
+        }
+        free(line);
+        fclose(existing);
+    }
+    history->file = fopen(path, "a");
+    free(path);
+}
+
+/* Skips an empty/whitespace-only line (nothing worth navigating back to)
+ * and an exact repeat of the immediately preceding entry (matching
+ * bash's own default `ignoredups`-like behavior -- pressing Up repeatedly
+ * after re-running the same command shouldn't require stepping through
+ * every identical copy). */
+static void history_add(ReplHistory *history, const char *line) {
+    bool blank = true;
+    for (const char *cursor = line; *cursor != '\0'; cursor++)
+        if (*cursor != ' ' && *cursor != '\t') { blank = false; break; }
+    if (blank) return;
+    if (history->count > 0 && strcmp(history->entries[history->count - 1], line) == 0) return;
+    if (history->count == history->capacity) {
+        const size_t capacity = history->capacity == 0 ? 64 : history->capacity * 2;
+        char **grown = realloc(history->entries, capacity * sizeof *grown);
+        if (grown == nullptr) return;
+        history->entries = grown;
+        history->capacity = capacity;
+    }
+    char *entry = malloc(strlen(line) + 1);
+    if (entry == nullptr) return;
+    strcpy(entry, line);
+    history->entries[history->count++] = entry;
+    if (history->file != nullptr) {
+        fprintf(history->file, "%s\n", line);
+        fflush(history->file);
+    }
+}
+
+static void history_free(ReplHistory *history) {
+    for (size_t index = 0; index < history->count; index++) free(history->entries[index]);
+    free(history->entries);
+    if (history->file != nullptr) fclose(history->file);
+    *history = (ReplHistory){};
+}
+
+typedef enum ReplLineResult {
+    REPL_LINE_OK,
+    REPL_LINE_EOF,
+    REPL_LINE_INTERRUPTED,
+} ReplLineResult;
+
+/* Redraws the entire current line from scratch: return to column 0,
+ * clear to end of line, print prompt+buffer, then reposition the cursor.
+ * Simplest correct approach for a from-scratch line editor (as opposed
+ * to diffing against the previously drawn state and emitting minimal
+ * updates) -- some extra bytes written per keystroke, never a wrong
+ * on-screen result. Doesn't account for the buffer wrapping past the
+ * terminal's own width (the cursor-repositioning escape below moves
+ * within the current terminal row only): a known, acceptable limitation
+ * for a REPL where the common "long input" case is already handled by
+ * separate physical lines via multi-line continuation, not one very long
+ * single line. */
+static void redraw_line(FILE *out, const char *prompt, const char *buffer, size_t cursor) {
+    fputs("\r\x1b[K", out);
+    fputs(prompt, out);
+    fputs(buffer, out);
+    const size_t length = strlen(buffer);
+    if (cursor < length) fprintf(out, "\x1b[%zuD", length - cursor);
+    fflush(out);
+}
+
+static bool read_raw_byte(unsigned char *out) {
+    for (;;) {
+        const ssize_t got = read(STDIN_FILENO, out, 1);
+        if (got == 1) return true;
+        if (got < 0 && errno == EINTR) continue;
+        return false;
+    }
+}
+
+/* Reads one line with basic in-place editing: printable character
+ * insertion at the cursor, Backspace, Left/Right/Home/End/Delete, and
+ * Up/Down for history navigation -- while composing a fresh line, the
+ * first Up stashes whatever was already typed so Down can restore it
+ * after navigating back past the newest history entry, matching
+ * bash/readline's own convention. Ctrl-C discards the in-progress line
+ * (REPL_LINE_INTERRUPTED; the caller decides what "discard" means for
+ * anything accumulated across earlier lines of a multi-line block).
+ * Ctrl-D exits only on an empty line (REPL_LINE_EOF), matching common
+ * shell convention -- on a non-empty line it's a no-op, not a forced
+ * submit or a deletion. A raw standalone Escape keypress (no following
+ * CSI bytes) blocks waiting for the next byte rather than resolving
+ * immediately, a known limitation of not implementing read-with-timeout
+ * disambiguation here -- see docs/repl.md. */
+static ReplLineResult read_line_interactive(FILE *out, ReplHistory *history,
+        const char *prompt, ReplBuffer *out_line) {
+    char *buffer = malloc(1);
+    if (buffer == nullptr) return REPL_LINE_EOF;
+    buffer[0] = '\0';
+    size_t length = 0;
+    size_t capacity = 1;
+    size_t cursor = 0;
+    size_t history_position = history->count;
+    char *stashed_live = nullptr;
+
+    fputs(prompt, out);
+    fflush(out);
+
+    ReplLineResult result = REPL_LINE_OK;
+    for (;;) {
+        unsigned char byte = 0;
+        if (!read_raw_byte(&byte)) { result = REPL_LINE_EOF; break; }
+
+        if (byte == '\r' || byte == '\n') {
+            fputs("\r\n", out);
+            fflush(out);
+            break;
+        }
+        if (byte == 0x03) { /* Ctrl-C */
+            fputs("^C\r\n", out);
+            fflush(out);
+            result = REPL_LINE_INTERRUPTED;
+            break;
+        }
+        if (byte == 0x04) { /* Ctrl-D */
+            if (length == 0) { result = REPL_LINE_EOF; break; }
+            continue;
+        }
+        if (byte == 0x7f || byte == 0x08) { /* Backspace */
+            if (cursor > 0) {
+                memmove(buffer + cursor - 1, buffer + cursor, length - cursor);
+                cursor--; length--;
+                buffer[length] = '\0';
+                redraw_line(out, prompt, buffer, cursor);
+            }
+            continue;
+        }
+        if (byte == 0x1b) { /* ESC -- CSI sequence expected */
+            unsigned char next = 0;
+            if (!read_raw_byte(&next)) { result = REPL_LINE_EOF; break; }
+            if (next != '[') continue;
+            unsigned char params[16];
+            size_t param_count = 0;
+            unsigned char final_byte = 0;
+            for (;;) {
+                if (!read_raw_byte(&next)) { final_byte = 0; break; }
+                if (next >= 0x40 && next <= 0x7e) { final_byte = next; break; }
+                if (param_count < sizeof params) params[param_count++] = next;
+            }
+            if (final_byte == 'A' || final_byte == 'B') { /* Up / Down */
+                if (final_byte == 'A' && history_position > 0) {
+                    if (history_position == history->count) {
+                        free(stashed_live);
+                        stashed_live = malloc(length + 1);
+                        if (stashed_live != nullptr) memcpy(stashed_live, buffer, length + 1);
+                    }
+                    history_position--;
+                } else if (final_byte == 'B' && history_position < history->count) {
+                    history_position++;
+                } else {
+                    continue;
+                }
+                const char *replacement = history_position == history->count
+                    ? (stashed_live != nullptr ? stashed_live : "")
+                    : history->entries[history_position];
+                const size_t replacement_length = strlen(replacement);
+                if (replacement_length + 1 > capacity) {
+                    char *grown = realloc(buffer, replacement_length + 1);
+                    if (grown == nullptr) continue;
+                    buffer = grown;
+                    capacity = replacement_length + 1;
+                }
+                memcpy(buffer, replacement, replacement_length + 1);
+                length = replacement_length;
+                cursor = length;
+                redraw_line(out, prompt, buffer, cursor);
+                continue;
+            }
+            if (final_byte == 'C' && cursor < length) { /* Right */
+                cursor++;
+                redraw_line(out, prompt, buffer, cursor);
+                continue;
+            }
+            if (final_byte == 'D' && cursor > 0) { /* Left */
+                cursor--;
+                redraw_line(out, prompt, buffer, cursor);
+                continue;
+            }
+            if (final_byte == 'H' || (final_byte == '~' && param_count == 1 && params[0] == '1')) {
+                cursor = 0; /* Home */
+                redraw_line(out, prompt, buffer, cursor);
+                continue;
+            }
+            if (final_byte == 'F' || (final_byte == '~' && param_count == 1 && params[0] == '4')) {
+                cursor = length; /* End */
+                redraw_line(out, prompt, buffer, cursor);
+                continue;
+            }
+            if (final_byte == '~' && param_count == 1 && params[0] == '3') { /* Delete */
+                if (cursor < length) {
+                    memmove(buffer + cursor, buffer + cursor + 1, length - cursor - 1);
+                    length--;
+                    buffer[length] = '\0';
+                    redraw_line(out, prompt, buffer, cursor);
+                }
+                continue;
+            }
+            continue; /* recognized-CSI-shape but unhandled: already swallowed above */
+        }
+        if (byte < 0x20) continue; /* any other control byte: ignore */
+
+        if (length + 2 > capacity) {
+            const size_t grown_capacity = capacity < 64 ? 64 : capacity * 2;
+            char *grown = realloc(buffer, grown_capacity);
+            if (grown == nullptr) continue;
+            buffer = grown;
+            capacity = grown_capacity;
+        }
+        memmove(buffer + cursor + 1, buffer + cursor, length - cursor);
+        buffer[cursor] = (char)byte;
+        cursor++; length++;
+        buffer[length] = '\0';
+        redraw_line(out, prompt, buffer, cursor);
+    }
+
+    if (result == REPL_LINE_OK) {
+        history_add(history, buffer);
+        buffer_append(out_line, buffer, length);
+        buffer_append(out_line, "\n", 1);
+    }
+    free(buffer);
+    free(stashed_live);
+    return result;
 }
 
 /* Attempts to compile `source` (the whole REPL session so far, plus the
@@ -180,21 +472,67 @@ int diamond_repl_run(void) {
     size_t line_capacity = 0;
     char error_message[512];
 
+    /* Raw-mode line editing (history navigation, in-place cursor
+     * movement/backspace, Ctrl-C aborting the current input instead of
+     * killing the process) only makes sense against a real terminal --
+     * tests/repl_test.sh deliberately drives this over a bash coproc
+     * (a pipe, not a pty) via DIAMOND_FORCE_REPL, so falling back to the
+     * exact prior getline()-based behavior whenever stdin isn't a tty
+     * keeps that suite passing unchanged, not just working around it. */
+    const bool interactive = isatty(STDIN_FILENO) != 0;
+    struct termios original_termios;
+    ReplHistory history = {};
+    if (interactive) {
+        history_init(&history);
+        if (tcgetattr(STDIN_FILENO, &original_termios) == 0) {
+            struct termios raw = original_termios;
+            raw.c_lflag &= (unsigned)~(ECHO | ICANON | ISIG);
+            raw.c_cc[VMIN] = 1;
+            raw.c_cc[VTIME] = 0;
+            tcsetattr(STDIN_FILENO, TCSANOW, &raw);
+        }
+    }
+
     bool eof = false;
     while (!eof) {
-        fputs(">>> ", real_stdout);
-        fflush(real_stdout);
         buffer_reset(&pending);
         bool have_candidate = false;
         DiamondProgram *program = nullptr;
+        const char *prompt = ">>> ";
 
         for (;;) {
-            const ssize_t got = getline(&line, &line_capacity, stdin);
-            if (got < 0) {
+            ReplLineResult line_result;
+            ReplBuffer line_buffer;
+            buffer_init(&line_buffer);
+            if (interactive) {
+                line_result = read_line_interactive(real_stdout, &history, prompt, &line_buffer);
+            } else {
+                fputs(prompt, real_stdout);
+                fflush(real_stdout);
+                const ssize_t got = getline(&line, &line_capacity, stdin);
+                if (got < 0) {
+                    line_result = REPL_LINE_EOF;
+                } else {
+                    line_result = REPL_LINE_OK;
+                    if (!buffer_append(&line_buffer, line, (size_t)got)) {
+                        fprintf(stderr, "diamond: out of memory reading input\n");
+                        line_result = REPL_LINE_EOF;
+                    }
+                }
+            }
+            if (line_result == REPL_LINE_EOF) {
+                buffer_free(&line_buffer);
                 eof = true;
                 break;
             }
-            if (!buffer_append(&pending, line, (size_t)got)) {
+            if (line_result == REPL_LINE_INTERRUPTED) {
+                buffer_free(&line_buffer);
+                break;
+            }
+
+            const bool appended = buffer_append(&pending, line_buffer.data, line_buffer.length);
+            buffer_free(&line_buffer);
+            if (!appended) {
                 fprintf(stderr, "diamond: out of memory reading input\n");
                 eof = true;
                 break;
@@ -228,8 +566,7 @@ int diamond_repl_run(void) {
             if (incomplete) {
                 free(program);
                 program = nullptr;
-                fputs("... ", real_stdout);
-                fflush(real_stdout);
+                prompt = "... ";
                 continue;
             }
             fprintf(real_stdout, "%s\n", error_message);
@@ -298,6 +635,10 @@ int diamond_repl_run(void) {
     }
 
     fputc('\n', real_stdout);
+    if (interactive) {
+        tcsetattr(STDIN_FILENO, TCSANOW, &original_termios);
+        history_free(&history);
+    }
     free(line);
     buffer_free(&session);
     buffer_free(&pending);

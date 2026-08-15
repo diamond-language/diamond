@@ -5290,6 +5290,48 @@ future work.
   `make test-sanitize` pass (including `DIAMOND_STRESS_GC=1` specifically
   around the signal-handler-invocation path, since it recurses into
   `run_chunk` the same way any nested call does) both clean.
+- Added interactive REPL line editing: in-place cursor movement,
+  Backspace/Delete, Up/Down history navigation, and Ctrl-C that aborts
+  the current input instead of killing the process (full design in the
+  new `docs/repl.md`). Closes the standing complaint that arrow keys
+  inserted raw escape sequences into the input rather than doing
+  anything, and that Ctrl-C's only behavior was an unconditional hard
+  quit (irb-style input-only interruption was the explicit target,
+  confirmed via `AskUserQuestion` rather than assumed).
+
+  The REPL puts the terminal into raw mode (`ECHO`/`ICANON`/`ISIG` all
+  cleared) and reads/edits one line at a time itself instead of
+  deferring to the kernel's line discipline via `getline` — `ISIG` is
+  cleared specifically so Ctrl-C arrives as an ordinary byte rather than
+  a real `SIGINT`, keeping it entirely separate from the `Signal.trap`
+  language feature added earlier this round. This only activates when
+  stdin is genuinely a terminal (`isatty(STDIN_FILENO)`); `tests/
+  repl_test.sh` drives the REPL over a bash coproc (a pipe, not a pty)
+  via `DIAMOND_FORCE_REPL=1`, so the exact prior `getline()`-based
+  behavior had to be preserved unchanged for that case, not just made to
+  still pass by coincidence. History persists to `$HOME/.diamond_history`
+  with an immediate `fflush` on every new entry (survives `kill -9`, not
+  only clean exit), skipping blank lines and exact-repeat-of-previous
+  entries the same way bash's own `ignoredups` default does.
+
+  Verification: the existing `tests/repl_test.sh` (22 assertions, pipe-
+  driven, unaffected by any of this) and the full `make test` (920
+  assertions) both still pass unchanged. The interactive path itself has
+  no pipe-based test coverage by design (raw-mode editing against
+  something that isn't a real terminal has no coherent meaning), so it
+  was smoke-tested directly against a real pty: history persisting
+  across separate REPL sessions and being recalled with Up, Ctrl-C
+  aborting input and returning a fresh prompt without exiting, Backspace
+  and mid-line Left-arrow-then-insert editing producing the intended
+  buffer contents, and duplicate/blank history suppression — each
+  confirmed by driving `build/diamond` through a real `pty.fork()`
+  (a plain pipe doesn't trigger `isatty`, so it can't exercise this path
+  at all) and checking both the on-screen redraw sequences and the
+  resulting `.diamond_history` file contents. Also re-run against the
+  `make test-sanitize` (ASan/UBSan) build specifically, since the normal
+  sanitized test suite runs everything over pipes and so never touches
+  the new termios/history code paths at all — clean exit, no sanitizer
+  reports, across the same pty-driven scenarios above.
 
 ## Later experiments
 

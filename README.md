@@ -487,6 +487,7 @@ runtime error: expected String | Nil, got Int
 - [Object model](docs/object-model.md)
 - [Fibers](docs/fibers.md)
 - [I/O](docs/io.md)
+- [REPL](docs/repl.md)
 - [Packages and `facet`](docs/packages.md)
 - [Language server](docs/lsp.md)
 - [Fuzzing](docs/fuzzing.md)
