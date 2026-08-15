@@ -1,7 +1,8 @@
 # I/O
 
 This document covers Diamond's I/O surface (stdout, stdin, files, and
-TCP sockets) and will grow as later slices land (see `docs/roadmap.md`).
+TCP/UDP sockets) and will grow as later slices land (see
+`docs/roadmap.md`).
 
 ## stdout: `print`/`puts`
 
@@ -257,9 +258,82 @@ the same way `TCPServer.listen`/`TCPSocket.connect` are (`IO.poll`
 mirroring `TCPSocket.connect`'s 3-argument shape, since neither is a
 class with real dispatch — see above).
 
+## UDP sockets: `UDPSocket.bind`/`UDPSocket.open`, `.send`/`.receive`
+
+```ruby
+server = UDPSocket.bind(9999)
+result = server.receive(1024)   # blocks until a datagram arrives
+puts(result["data"])            # the bytes, as a String
+puts(result["host"])            # sender's address, e.g. "127.0.0.1"
+server.send("ack", result["host"], result["port"])
+server.close()
+
+client = UDPSocket.open()
+client.send("hello", "example.com", 9999)
+reply = client.receive(1024)
+client.close()
+```
+
+UDP is connectionless — one socket sends and receives datagrams to/from
+whatever address each individual call names, with no handshake and no
+ordering/delivery guarantee, so the API shape is necessarily different
+from the stream-oriented `TCPSocket`/`TCPServer` above:
+
+- **`UDPSocket.bind(port)`** — resolves and binds to a specific local
+  port (the same `getaddrinfo`/`AI_PASSIVE`/try-each-candidate dance
+  `TCPServer.listen` uses, `SOCK_DGRAM` instead of `SOCK_STREAM`, no
+  `listen(2)` call — UDP has no equivalent, there's nothing to listen
+  *for*, just a socket ready to send and receive immediately). The
+  "server" side: binds to a port callers already know to reach it at.
+- **`UDPSocket.open()`** — opens a socket with no local address, letting
+  the OS assign an ephemeral port on first use. The "client" side: don't
+  care what port this sends from, just need to reach someone else's. A
+  real scope cut, not an oversight: `open()` creates a plain `AF_INET`
+  socket rather than resolving anything (there's no destination yet to
+  resolve `AF_UNSPEC`/`getaddrinfo` against), so it can only reach IPv4
+  destinations later — `UDPSocket.bind` has no such limit, since
+  `AI_PASSIVE` resolution naturally produces whichever families the local
+  machine actually supports.
+- Both return the same new object kind, `DIAMOND_OBJECT_UDP_SOCKET`
+  (`DiamondUdpSocketHandle`) — a raw fd, like the non-blocking `Socket`
+  above, not `File`'s buffered `FILE*`: `sendto(2)`/`recvfrom(2)` need
+  the peer address on every call, which buffered stdio read/write has no
+  way to carry.
+- **`.send(data, host, port)`** — resolves `host`/`port` via
+  `getaddrinfo` (`AF_UNSPEC`, so both IPv4 and IPv6 destinations resolve)
+  and tries `sendto` against each candidate in turn on this *same*
+  existing socket until one succeeds — the send-time equivalent of
+  `TCPSocket.connect`'s own multi-candidate resilience, needed here
+  specifically because a socket opened via `UDPSocket.open()` might not
+  share a family with whatever `host` resolves to first. Returns the
+  `Int` byte count actually sent.
+- **`.receive(n)`** — blocks until a datagram arrives, then returns a
+  `Hash`: `{"data": ..., "host": ..., "port": ...}` — the payload (up to
+  `n` bytes; a UDP datagram larger than the buffer is silently truncated
+  by the kernel, standard `recvfrom` behavior, not something Diamond adds
+  handling for) plus the sender's own address, extracted via
+  `getnameinfo(..., NI_NUMERICHOST|NI_NUMERICSERV)` so `host` is always a
+  plain address string, never a reverse-DNS lookup that could block or
+  fail independently of the receive itself.
+- **`.close()`** — idempotent, same as every other native handle here.
+
+Building `.receive`'s three-key `Hash` result needed the exact same care
+`IO.poll`'s own result did (see above): the `Hash` is rooted in
+`registers[dest]` immediately after allocating it, and each `String`-
+valued entry (`data`, `host`) roots its key with a `DIAMOND_NIL`
+placeholder before allocating the real value — `port` is a scalar `Int`
+with no allocation of its own, so its key and value go in with one
+`hash_set` call, no placeholder needed, since nothing can trigger a
+collection between allocating the key and calling `hash_set` on the very
+next line.
+
+`UDPSocket.bind`/`UDPSocket.open` are recognized in the compiler the same
+way, one parser handling both forms (`bind` takes the 1-argument port,
+`open` takes none) and erroring on anything else.
+
 ## What's deliberately out of scope so far
 
-- **UDP and TLS**: sockets are TCP only, and plain-text TCP at that.
+- **TLS**: every socket above is plain text, TCP or UDP.
 - **Multiple `print`/`puts` arguments**: `puts(a, b)` (Ruby-style, one
   line per argument) is not supported — exactly one argument, matching
   the narrowest useful slice.

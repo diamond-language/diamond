@@ -186,6 +186,10 @@ void diamond_vm_collect(DiamondVm *vm) {
             size=sizeof(DiamondSocketHandle);
             const int fd=((DiamondSocketHandle *)unreached)->fd;
             if(fd>=0)close(fd);
+        } else if(unreached->kind==DIAMOND_OBJECT_UDP_SOCKET) {
+            size=sizeof(DiamondUdpSocketHandle);
+            const int fd=((DiamondUdpSocketHandle *)unreached)->fd;
+            if(fd>=0)close(fd);
         } else if(unreached->kind==DIAMOND_OBJECT_BIGNUM) {
             const DiamondBignum *bignum=(const DiamondBignum *)unreached;
             size=sizeof(DiamondBignum)+bignum->limb_count*sizeof(uint32_t);
@@ -248,6 +252,9 @@ void diamond_vm_free(DiamondVm *vm) {
             if(fd>=0)close(fd);
         } else if(object->kind==DIAMOND_OBJECT_SOCKET) {
             const int fd=((DiamondSocketHandle *)object)->fd;
+            if(fd>=0)close(fd);
+        } else if(object->kind==DIAMOND_OBJECT_UDP_SOCKET) {
+            const int fd=((DiamondUdpSocketHandle *)object)->fd;
             if(fd>=0)close(fd);
         } else if(object->kind==DIAMOND_OBJECT_REGEXP) {
             reginold_regex_free(((DiamondRegexp *)object)->handle);
@@ -665,6 +672,76 @@ static DiamondSocketHandle *allocate_socket_handle(DiamondVm *vm,int fd) {
     if(handle==nullptr)return nullptr;
     *handle=(DiamondSocketHandle){.object={.next=vm->objects,.kind=DIAMOND_OBJECT_SOCKET},.fd=fd};
     vm->objects=&handle->object;vm->bytes_allocated+=sizeof(DiamondSocketHandle);return handle;
+}
+
+static DiamondUdpSocketHandle *allocate_udp_socket_handle(DiamondVm *vm,int fd) {
+    if(vm->stress_gc||vm->bytes_allocated>=vm->next_gc)diamond_vm_collect(vm);
+    DiamondUdpSocketHandle *handle=malloc(sizeof(DiamondUdpSocketHandle));
+    if(handle==nullptr)return nullptr;
+    *handle=(DiamondUdpSocketHandle){
+        .object={.next=vm->objects,.kind=DIAMOND_OBJECT_UDP_SOCKET},.fd=fd};
+    vm->objects=&handle->object;vm->bytes_allocated+=sizeof(DiamondUdpSocketHandle);return handle;
+}
+
+/* Shared behind UDPSocket.bind(port)/UDPSocket.open(). bind_socket==true
+ * (UDPSocket.bind) resolves and binds to a specific local port, same
+ * getaddrinfo/AI_PASSIVE/try-each-candidate dance as tcp_listen_helper
+ * below, minus the listen(2) call UDP has no equivalent of -- one socket
+ * both sends and receives, so once bound there's nothing more to set up.
+ * bind_socket==false (UDPSocket.open) just opens a plain AF_INET socket
+ * with no local address, letting the OS assign an ephemeral port on
+ * first use -- the common "client that doesn't care what port it sends
+ * from" case. Deliberately AF_INET only (not AF_UNSPEC/getaddrinfo, which
+ * needs a destination to resolve against and open() has none yet): an
+ * unbound socket created this way can only reach IPv4 destinations from
+ * a later .send(data, host, port) -- a real, documented scope cut, not
+ * an oversight (see docs/io.md). */
+static DiamondVmStatus udp_socket_helper(DiamondVm *vm,bool bind_socket,
+        int64_t port,DiamondUdpSocketHandle **out_handle) {
+    int fd=-1;
+    if(bind_socket) {
+        char port_text[32];
+        (void)snprintf(port_text,sizeof port_text,"%" PRId64,port);
+        struct addrinfo hints={.ai_family=AF_UNSPEC,.ai_socktype=SOCK_DGRAM,
+            .ai_flags=AI_PASSIVE};
+        struct addrinfo *results=nullptr;
+        const int resolve_status=getaddrinfo(nullptr,port_text,&hints,&results);
+        if(resolve_status!=0) {
+            snprintf(vm->error,sizeof vm->error,"cannot bind UDP port %s: %s",
+                     port_text,gai_strerror(resolve_status));
+            return DIAMOND_VM_IO_ERROR;
+        }
+        int last_errno=0;
+        for(struct addrinfo *candidate=results;candidate!=nullptr;
+            candidate=candidate->ai_next) {
+            const int candidate_fd=socket(candidate->ai_family,candidate->ai_socktype,
+                                 candidate->ai_protocol);
+            if(candidate_fd<0) {last_errno=errno;continue;}
+            if(bind(candidate_fd,candidate->ai_addr,candidate->ai_addrlen)==0) {
+                fd=candidate_fd;break;
+            }
+            last_errno=errno;close(candidate_fd);
+        }
+        freeaddrinfo(results);
+        if(fd<0) {
+            snprintf(vm->error,sizeof vm->error,"cannot bind UDP port %s: %s",
+                     port_text,strerror(last_errno));
+            return DIAMOND_VM_IO_ERROR;
+        }
+    } else {
+        fd=socket(AF_INET,SOCK_DGRAM,0);
+        if(fd<0) {
+            snprintf(vm->error,sizeof vm->error,"cannot open UDP socket: %s",strerror(errno));
+            return DIAMOND_VM_IO_ERROR;
+        }
+    }
+    DiamondUdpSocketHandle *handle=allocate_udp_socket_handle(vm,fd);
+    if(handle==nullptr) {
+        close(fd);
+        return DIAMOND_VM_OUT_OF_MEMORY;
+    }
+    *out_handle=handle;
+    return DIAMOND_VM_OK;
 }
 
 /* Shared getaddrinfo/socket/bind/listen dance behind TCPServer.listen and
@@ -6494,6 +6571,166 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                      * NonblockingConnection#write) can retry the remainder. */
                     registers[dest]=DIAMOND_INT((int64_t)written);break;
                 }
+                if(receiver_kind==DIAMOND_OBJECT_UDP_SOCKET) {
+                    if(type_argument_count!=0)VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                    DiamondUdpSocketHandle *udp_handle=
+                        (DiamondUdpSocketHandle *)registers[recv].as.object;
+                    const bool send_method=method_name->length==4&&
+                        memcmp(method_name->chars,"send",4)==0;
+                    const bool receive_method=method_name->length==7&&
+                        memcmp(method_name->chars,"receive",7)==0;
+                    const bool close_method=method_name->length==5&&
+                        memcmp(method_name->chars,"close",5)==0;
+                    if(!send_method&&!receive_method&&!close_method) {
+                        snprintf(vm->error,sizeof vm->error,"undefined method '%.*s' for %s",
+                            (int)method_name->length,method_name->chars,"UDPSocket");
+                        VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                    }
+                    if(close_method) {
+                        if(argc!=0)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                        if(udp_handle->fd>=0) {
+                            close(udp_handle->fd);
+                            udp_handle->fd=-1;
+                        }
+                        registers[dest]=DIAMOND_NIL;break;
+                    }
+                    if(udp_handle->fd<0) {
+                        snprintf(vm->error,sizeof vm->error,"UDP socket is closed");
+                        VM_RETURN(DIAMOND_VM_IO_ERROR);
+                    }
+                    if(send_method) {
+                        if(argc!=3)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                        DiamondValue converted=DIAMOND_NIL;
+                        DiamondVmStatus stringify_status=stringify_value(vm,chunk,depth,
+                            registers[base],&converted);
+                        VM_PROPAGATE(stringify_status);
+                        const DiamondString *text=(const DiamondString *)converted.as.object;
+                        if(registers[(size_t)base+1].kind!=DIAMOND_VALUE_OBJECT||
+                           registers[(size_t)base+1].as.object->kind!=DIAMOND_OBJECT_STRING||
+                           registers[(size_t)base+2].kind!=DIAMOND_VALUE_INT) {
+                            snprintf(vm->error,sizeof vm->error,
+                                "UDPSocket#send arguments must be (data, String host, Int port)");
+                            VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                        }
+                        const DiamondString *host=
+                            (const DiamondString *)registers[(size_t)base+1].as.object;
+                        char port_text[32];
+                        (void)snprintf(port_text,sizeof port_text,"%" PRId64,
+                                       registers[(size_t)base+2].as.integer);
+                        struct addrinfo hints={.ai_family=AF_UNSPEC,.ai_socktype=SOCK_DGRAM};
+                        struct addrinfo *results=nullptr;
+                        const int resolve_status=
+                            getaddrinfo(host->chars,port_text,&hints,&results);
+                        if(resolve_status!=0) {
+                            snprintf(vm->error,sizeof vm->error,"cannot resolve '%.*s:%s': %s",
+                                     (int)host->length,host->chars,port_text,
+                                     gai_strerror(resolve_status));
+                            VM_RETURN(DIAMOND_VM_IO_ERROR);
+                        }
+                        /* Tries each resolved candidate against this same
+                         * existing socket until one succeeds -- host may
+                         * resolve to both IPv4 and IPv6 addresses, and
+                         * sendto fails outright on a family mismatch with
+                         * whichever family this socket happened to be
+                         * created with (see udp_socket_helper), so this is
+                         * the sendto-time equivalent of TCPSocket.connect's
+                         * own try-each-candidate resilience. */
+                        ssize_t sent=-1;
+                        int last_errno=0;
+                        for(struct addrinfo *candidate=results;candidate!=nullptr;
+                            candidate=candidate->ai_next) {
+                            errno=0;
+                            sent=sendto(udp_handle->fd,text->chars,text->length,0,
+                                        candidate->ai_addr,candidate->ai_addrlen);
+                            if(sent>=0)break;
+                            last_errno=errno;
+                        }
+                        freeaddrinfo(results);
+                        if(sent<0) {
+                            snprintf(vm->error,sizeof vm->error,"send error: %s",
+                                strerror(last_errno));
+                            VM_RETURN(DIAMOND_VM_IO_ERROR);
+                        }
+                        registers[dest]=DIAMOND_INT((int64_t)sent);break;
+                    }
+                    if(argc!=1)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                    if(registers[base].kind!=DIAMOND_VALUE_INT||
+                       registers[base].as.integer<=0) {
+                        snprintf(vm->error,sizeof vm->error,
+                            "UDPSocket#receive argument must be a positive Int");
+                        VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                    }
+                    const size_t want=(size_t)registers[base].as.integer;
+                    char *buffer=malloc(want);
+                    if(buffer==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                    struct sockaddr_storage source_addr={0};
+                    socklen_t source_addr_len=sizeof source_addr;
+                    errno=0;
+                    const ssize_t received=recvfrom(udp_handle->fd,buffer,want,0,
+                        (struct sockaddr *)&source_addr,&source_addr_len);
+                    if(received<0) {
+                        const int saved_errno=errno;
+                        free(buffer);
+                        snprintf(vm->error,sizeof vm->error,"receive error: %s",
+                            strerror(saved_errno));
+                        VM_RETURN(DIAMOND_VM_IO_ERROR);
+                    }
+                    char host_buffer[NI_MAXHOST];
+                    char port_buffer[NI_MAXSERV];
+                    const int name_status=getnameinfo((struct sockaddr *)&source_addr,
+                        source_addr_len,host_buffer,sizeof host_buffer,
+                        port_buffer,sizeof port_buffer,NI_NUMERICHOST|NI_NUMERICSERV);
+                    if(name_status!=0) {
+                        free(buffer);
+                        snprintf(vm->error,sizeof vm->error,
+                            "cannot resolve sender address: %s",gai_strerror(name_status));
+                        VM_RETURN(DIAMOND_VM_IO_ERROR);
+                    }
+                    const int64_t source_port=strtoll(port_buffer,nullptr,10);
+                    /* Same GC-safety pattern as DIAMOND_OP_IO_POLL's own
+                     * Hash result (see docs/io.md): root the Hash in
+                     * registers[dest] immediately, then for any entry whose
+                     * value needs its own further allocation, root the key
+                     * first with a nil placeholder -- nil needs no
+                     * protection -- before allocating the real value and
+                     * overwriting it. "port" is a scalar Int with no
+                     * allocation of its own, so its key+value can go in
+                     * with one hash_set, no placeholder needed. */
+                    DiamondHash *receive_result=allocate_hash(vm);
+                    if(receive_result==nullptr) {
+                        free(buffer);VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                    }
+                    registers[dest]=DIAMOND_OBJECT(receive_result);
+                    DiamondString *data_key=allocate_string(vm,"data",4);
+                    if(data_key==nullptr) {
+                        free(buffer);VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                    }
+                    if(!hash_set(vm,receive_result,DIAMOND_OBJECT(data_key),DIAMOND_NIL)) {
+                        free(buffer);VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                    }
+                    DiamondString *data_string=allocate_string(vm,buffer,(size_t)received);
+                    free(buffer);
+                    if(data_string==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                    if(!hash_set(vm,receive_result,DIAMOND_OBJECT(data_key),
+                            DIAMOND_OBJECT(data_string)))
+                        VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                    DiamondString *host_key=allocate_string(vm,"host",4);
+                    if(host_key==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                    if(!hash_set(vm,receive_result,DIAMOND_OBJECT(host_key),DIAMOND_NIL))
+                        VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                    DiamondString *host_string=
+                        allocate_string(vm,host_buffer,strlen(host_buffer));
+                    if(host_string==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                    if(!hash_set(vm,receive_result,DIAMOND_OBJECT(host_key),
+                            DIAMOND_OBJECT(host_string)))
+                        VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                    DiamondString *port_key=allocate_string(vm,"port",4);
+                    if(port_key==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                    if(!hash_set(vm,receive_result,DIAMOND_OBJECT(port_key),
+                            DIAMOND_INT(source_port)))
+                        VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                    break;
+                }
                 if(receiver_kind==DIAMOND_OBJECT_REGEXP) {
                     if(type_argument_count!=0)VM_RETURN(DIAMOND_VM_TYPE_ERROR);
                     const bool match_method=method_name->length==5&&
@@ -7200,6 +7437,32 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 VM_PROPAGATE(listen_status);
                 registers[dest]=(DiamondValue){.kind=DIAMOND_VALUE_OBJECT,
                     .as.object=(DiamondObject *)listener_handle};
+                break;
+            }
+            case DIAMOND_OP_UDP_BIND: {
+                uint8_t dest=0,port_reg=0;
+                READ_BYTE(dest);READ_BYTE(port_reg);
+                if(registers[port_reg].kind!=DIAMOND_VALUE_INT) {
+                    snprintf(vm->error,sizeof vm->error,
+                             "UDPSocket.bind argument must be an Int port");
+                    VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                }
+                DiamondUdpSocketHandle *udp_handle=nullptr;
+                const DiamondVmStatus udp_status=udp_socket_helper(vm,true,
+                    registers[port_reg].as.integer,&udp_handle);
+                VM_PROPAGATE(udp_status);
+                registers[dest]=(DiamondValue){.kind=DIAMOND_VALUE_OBJECT,
+                    .as.object=(DiamondObject *)udp_handle};
+                break;
+            }
+            case DIAMOND_OP_UDP_OPEN: {
+                uint8_t dest=0;
+                READ_BYTE(dest);
+                DiamondUdpSocketHandle *udp_handle=nullptr;
+                const DiamondVmStatus udp_status=udp_socket_helper(vm,false,0,&udp_handle);
+                VM_PROPAGATE(udp_status);
+                registers[dest]=(DiamondValue){.kind=DIAMOND_VALUE_OBJECT,
+                    .as.object=(DiamondObject *)udp_handle};
                 break;
             }
             case DIAMOND_OP_IO_POLL: {

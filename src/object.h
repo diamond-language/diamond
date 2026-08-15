@@ -20,6 +20,7 @@ typedef enum DiamondObjectKind : uint8_t {
     DIAMOND_OBJECT_FILE,
     DIAMOND_OBJECT_LISTENER,
     DIAMOND_OBJECT_SOCKET,
+    DIAMOND_OBJECT_UDP_SOCKET,
     DIAMOND_OBJECT_BIGNUM,
     DIAMOND_OBJECT_SYMBOL,
     DIAMOND_OBJECT_REGEXP,
@@ -190,6 +191,17 @@ typedef struct DiamondSocketHandle {
     DiamondObject object;
     int fd;
 } DiamondSocketHandle;
+
+/* UDP is connectionless -- one socket both sends and receives, to/from
+ * whatever address each individual call names, so unlike DiamondSocketHandle
+ * this isn't paired with a listener/is never produced by anything but its
+ * own two constructors (UDPSocket.bind/UDPSocket.open, see docs/io.md).
+ * Also a raw fd, not a FILE*: sendto(2)/recvfrom(2) need the peer address
+ * on every call, which buffered stdio read/write has no way to carry. */
+typedef struct DiamondUdpSocketHandle {
+    DiamondObject object;
+    int fd;
+} DiamondUdpSocketHandle;
 
 /* A compiled reginold pattern. Unlike DiamondFileHandle/DiamondListenerHandle,
  * this owns no OS resource (fd/socket) -- just heap memory reginold itself

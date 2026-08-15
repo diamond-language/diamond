@@ -421,6 +421,10 @@ static bool disassemble_chunk(FILE *stream, const char *name,
                     chunk->code[offset+1],chunk->code[offset+2],
                     chunk->code[offset+3],chunk->code[offset+4]);
                 offset+=5;break;
+            case DIAMOND_OP_UDP_BIND:
+                offset=two_registers(stream,chunk,"UDP_BIND",offset);break;
+            case DIAMOND_OP_UDP_OPEN:
+                offset=one_register(stream,chunk,"UDP_OPEN",offset);break;
             case DIAMOND_OP_CHR:
                 offset=two_registers(stream,chunk,"CHR",offset);break;
             case DIAMOND_OP_TO_FLOAT:

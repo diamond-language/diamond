@@ -1522,6 +1522,119 @@ wait "$stress_server_pid"
 [[ "$(cat "$stress_client_out")" == "echo: hello" ]]
 rm -f "$stress_server_out" "$stress_client_out"
 
+actual="$($diamond --dump-bytecode -e 'UDPSocket.bind(0)' 2>/dev/null || true)"
+grep -q 'UDP_BIND' <<<"$actual"
+
+actual="$($diamond --dump-bytecode -e 'UDPSocket.open()' 2>/dev/null || true)"
+grep -q 'UDP_OPEN' <<<"$actual"
+
+actual="$($diamond --dump-bytecode -e 'UDPSocket = 5
+UDPSocket.bind(0)' 2>/dev/null || true)"
+if grep -q 'UDP_BIND' <<<"$actual"; then
+    echo "UDPSocket.bind on a shadowing local unexpectedly compiled to UDP_BIND" >&2
+    exit 1
+fi
+
+actual="$($diamond --dump-bytecode -e 'UDPSocket = 5
+UDPSocket.open()' 2>/dev/null || true)"
+if grep -q 'UDP_OPEN' <<<"$actual"; then
+    echo "UDPSocket.open on a shadowing local unexpectedly compiled to UDP_OPEN" >&2
+    exit 1
+fi
+
+error_file="$(mktemp)"
+if "$diamond" -e 'UDPSocket.bind("80")' >/dev/null 2>"$error_file"; then
+    echo "UDPSocket.bind with a non-Int port unexpectedly succeeded" >&2
+    exit 1
+fi
+grep -q "UDPSocket.bind argument must be an Int port" "$error_file"
+rm -f "$error_file"
+
+error_file="$(mktemp)"
+if "$diamond" -e 'UDPSocket.dial(0)' >/dev/null 2>"$error_file"; then
+    echo "malformed UDPSocket.dial unexpectedly compiled" >&2
+    exit 1
+fi
+grep -q "expected 'bind' or 'open' after 'UDPSocket'" "$error_file"
+rm -f "$error_file"
+
+error_file="$(mktemp)"
+if "$diamond" -e 's = UDPSocket.open()
+s.send("x", 5, 80)' >/dev/null 2>"$error_file"; then
+    echo "UDPSocket#send with a non-String host unexpectedly succeeded" >&2
+    exit 1
+fi
+grep -q "UDPSocket#send arguments must be (data, String host, Int port)" "$error_file"
+rm -f "$error_file"
+
+error_file="$(mktemp)"
+if "$diamond" -e 's = UDPSocket.open()
+s.nope()' >/dev/null 2>"$error_file"; then
+    echo "an unrecognized method on a UDPSocket receiver unexpectedly succeeded" >&2
+    exit 1
+fi
+grep -q "undefined method 'nope' for UDPSocket" "$error_file"
+rm -f "$error_file"
+
+# A real client/server round trip. UDP has no TCPSocket.connect-style
+# "keep retrying until the port's actually listening" signal (there's no
+# handshake to fail cleanly), so the server prints "ready" right after
+# UDPSocket.bind succeeds and the client side polls for that line in the
+# captured output instead.
+udp_port=18747
+udp_server_out="$(mktemp)"
+"$diamond" -e "$(printf 'socket = UDPSocket.bind(%d)
+puts("ready")
+result = socket.receive(1024)
+socket.send("echo: #{result["data"]}", result["host"], result["port"])
+socket.close()
+0' "$udp_port")" >"$udp_server_out" 2>&1 &
+udp_server_pid=$!
+for _ in $(seq 1 200); do
+    grep -q '^ready$' "$udp_server_out" && break
+    sleep 0.05
+done
+udp_client_src="$(printf 'client = UDPSocket.open()
+client.send("hello", "127.0.0.1", %d)
+result = client.receive(1024)
+client.close()
+"#{result["data"]}|#{result["host"]}"' "$udp_port")"
+udp_client_out="$(mktemp)"
+timeout 10 "$diamond" -e "$udp_client_src" >"$udp_client_out" 2>&1
+wait "$udp_server_pid"
+[[ "$(tail -n1 "$udp_server_out")" == "0" ]]
+[[ "$(cat "$udp_client_out")" == "echo: hello|127.0.0.1" ]]
+rm -f "$udp_server_out" "$udp_client_out"
+
+# Same round trip again under DIAMOND_STRESS_GC=1 -- exercises
+# UDPSocket#receive's own multi-key Hash construction (data/host/port)
+# under a collection on every single allocation, the same class of hazard
+# IO.poll's own Hash result had (see docs/io.md).
+udp_stress_port=18748
+udp_stress_server_out="$(mktemp)"
+env DIAMOND_STRESS_GC=1 "$diamond" -e "$(printf 'socket = UDPSocket.bind(%d)
+puts("ready")
+result = socket.receive(1024)
+socket.send("echo: #{result["data"]}", result["host"], result["port"])
+socket.close()
+0' "$udp_stress_port")" >"$udp_stress_server_out" 2>&1 &
+udp_stress_server_pid=$!
+for _ in $(seq 1 200); do
+    grep -q '^ready$' "$udp_stress_server_out" && break
+    sleep 0.05
+done
+udp_stress_client_src="$(printf 'client = UDPSocket.open()
+client.send("hello", "127.0.0.1", %d)
+result = client.receive(1024)
+client.close()
+"#{result["data"]}|#{result["host"]}"' "$udp_stress_port")"
+udp_stress_client_out="$(mktemp)"
+timeout 10 env DIAMOND_STRESS_GC=1 "$diamond" -e "$udp_stress_client_src" >"$udp_stress_client_out" 2>&1
+wait "$udp_stress_server_pid"
+[[ "$(tail -n1 "$udp_stress_server_out")" == "0" ]]
+[[ "$(cat "$udp_stress_client_out")" == "echo: hello|127.0.0.1" ]]
+rm -f "$udp_stress_server_out" "$udp_stress_client_out"
+
 error_file="$(mktemp)"
 if "$diamond" -e '5.abs()' >/dev/null 2>"$error_file"; then
     echo "Int literal .abs() unexpectedly succeeded (Int has no method dispatch)" >&2

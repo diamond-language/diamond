@@ -5184,6 +5184,47 @@ future work.
   annotations), this looks like the well-known ASan/coroutine false-
   positive class rather than a real bug — but it's flagged here as
   inconclusive rather than claimed as fully verified.
+- Added UDP sockets: `UDPSocket.bind(port)` (a server-style socket bound
+  to a known port), `UDPSocket.open()` (a client-style socket with an
+  OS-assigned ephemeral port), and `.send(data, host, port)`/
+  `.receive(n)`/`.close()` on the resulting `DIAMOND_OBJECT_UDP_SOCKET`
+  (full design in `docs/io.md`). Closes the "UDP" half of the "Non-
+  blocking I/O, UDP, and TLS" bullet that stood since the original TCP
+  socket work landed — non-blocking I/O closed earlier this round (see
+  above), TLS remains genuinely out of scope.
+
+  A raw fd like the non-blocking `Socket` object, not `File`'s buffered
+  `FILE*` the blocking `TCPSocket`/`TCPServer` path reuses: `sendto(2)`/
+  `recvfrom(2)` need the peer address on every call, which buffered
+  stdio's `fread`/`fwrite` has no way to carry, and UDP being
+  connectionless means there's no single "the" peer to remember the way
+  a connected TCP socket has one. `.send` resolves its `host`/`port`
+  arguments via `getaddrinfo` (`AF_UNSPEC`) and tries each candidate
+  against the existing socket in turn until `sendto` succeeds — needed
+  specifically because `UDPSocket.open()` creates a plain `AF_INET`
+  socket (nothing to resolve `AF_UNSPEC` against yet at `open()` time),
+  so a `.send()` to a `host` that resolves IPv6-first would otherwise
+  fail outright on the first, wrong-family candidate. `.receive(n)`
+  returns a `Hash` (`{"data", "host", "port"}`) built with the exact same
+  root-immediately/key-placeholder-before-value discipline `IO.poll`'s
+  own result needed (see above) — `make test-sanitize` under
+  `DIAMOND_STRESS_GC=1` confirmed clean on the first attempt this time,
+  the lesson from `IO.poll`'s own bug already applied going in rather
+  than found the hard way twice.
+
+  Verification: new bytecode-dump/shadowing/error-message tests mirroring
+  the existing `TCPSocket`/`TCPServer` coverage exactly, plus a real
+  two-process client/server round trip (`UDPSocket.bind` server,
+  `UDPSocket.open` client, verifying data and the server's own captured
+  sender address/port both directions) run twice — once plain, once
+  under `DIAMOND_STRESS_GC=1` — the same pattern the TCP socket tests
+  already established. No `wait_for_port`-style readiness signal exists
+  for UDP (no handshake to fail cleanly on, unlike `TCPSocket.connect`'s
+  own retry-until-`ECONNREFUSED`-stops loop), so the server prints
+  `"ready"` right after `UDPSocket.bind` succeeds and the client-side
+  test polls for that line in the captured output instead. `make test`
+  (919 assertions, up from 915) and a full `make test-sanitize` pass both
+  clean.
 
 ## Later experiments
 

@@ -1685,6 +1685,43 @@ static uint8_t parse_io_poll_call(Compiler *compiler) {
     return dest;
 }
 
+static uint8_t parse_udp_socket_call(Compiler *compiler) {
+    advance_token(compiler); /* consume '.' */
+    const bool is_bind=compiler->current.kind==DIAMOND_TOKEN_IDENTIFIER&&
+        name_equals(compiler,"bind",compiler->current.span,false);
+    const bool is_open=compiler->current.kind==DIAMOND_TOKEN_IDENTIFIER&&
+        name_equals(compiler,"open",compiler->current.span,false);
+    if(!is_bind&&!is_open) {
+        fail(compiler,compiler->current.span,"expected 'bind' or 'open' after 'UDPSocket'");
+        return 0;
+    }
+    advance_token(compiler); /* consume 'bind'/'open' */
+    if(compiler->current.kind!=DIAMOND_TOKEN_LEFT_PAREN) {
+        fail(compiler,compiler->current.span,
+             is_bind?"expected '(' after 'UDPSocket.bind'":"expected '(' after 'UDPSocket.open'");
+        return 0;
+    }
+    advance_token(compiler);
+    skip_newlines(compiler);
+    uint8_t port_register=0;
+    if(is_bind) {
+        port_register=parse_expression(compiler);
+        skip_newlines(compiler);
+    }
+    if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
+        fail(compiler,compiler->current.span,
+             is_bind?"expected ')' after UDPSocket.bind argument":
+                     "expected ')' after UDPSocket.open arguments");
+        return 0;
+    }
+    advance_token(compiler);
+    const uint8_t dest=allocate_register(compiler);
+    emit_opcode(compiler,is_bind?DIAMOND_OP_UDP_BIND:DIAMOND_OP_UDP_OPEN);
+    emit_byte(compiler,dest);
+    if(is_bind)emit_byte(compiler,port_register);
+    return dest;
+}
+
 static uint8_t parse_chr_call(Compiler *compiler) {
     advance_token(compiler); /* consume '(' */
     skip_newlines(compiler);
@@ -1923,6 +1960,10 @@ static uint8_t parse_name(Compiler *compiler) {
        compiler->current.kind==DIAMOND_TOKEN_DOT&&
        name_equals(compiler,"IO",name,false))
         return parse_io_poll_call(compiler);
+    if(class_index<0&&find_local(compiler,name)<0&&find_function(compiler,name)<0&&
+       compiler->current.kind==DIAMOND_TOKEN_DOT&&
+       name_equals(compiler,"UDPSocket",name,false))
+        return parse_udp_socket_call(compiler);
     if(find_local(compiler,name)<0&&find_function(compiler,name)<0&&
        compiler->current.kind==DIAMOND_TOKEN_LEFT_PAREN&&
        (name_equals(compiler,"print",name,false)||
