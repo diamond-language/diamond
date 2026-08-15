@@ -172,6 +172,17 @@ future work.
   runtime stack traces across required files.
 - Sequential debug/release/sanitizer build validation wired into the test
   suite.
+- Fixed a `raise`-only method/function body failing its own declared
+  return-type annotation (`def self.skip(...) -> Bool; raise reason; end`
+  used to error with `expression cannot satisfy type annotation`, since
+  `compile_raise`'s result register never actually needs to match a
+  declared return type — it never returns normally). `compile_sequence`
+  now tracks whether its own last top-level statement was an
+  unconditional `raise` (`Compiler.sequence_diverges`), and the
+  function/method body's final return-type check is skipped when it was.
+  A postfix-conditional `raise ... if cond` is deliberately excluded from
+  this (the check still applies, since that path might not actually
+  raise).
 
 ### Performance: quickening and dispatch caching
 
@@ -408,15 +419,6 @@ future work.
   freed program, so a real fix needs either copying the referenced class
   definition or keeping the source program alive). Look at
   `copy_value_into_vm` in `src/vm.c`.
-
-- **A `raise`-only method body can't carry an explicit return-type
-  annotation.** `def self.skip(...) -> Bool; raise reason; end` fails with
-  `expression cannot satisfy type annotation`, since there's no "never
-  returns" type and a body that only raises has nothing that type-checks
-  against a declared return type. Matters because it forces dropping the
-  return-type annotation entirely on any method whose only job is to raise.
-  Look at return-path type-checking in `src/compiler.c` (`emit_type_check`
-  and its callers).
 
 ## Inconclusive
 

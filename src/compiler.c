@@ -97,6 +97,19 @@ typedef struct Compiler {
     uint8_t capture_registers[16];
     size_t capture_count;
     Narrowing narrowing;
+    /* Set by compile_sequence right before it returns, true only when the
+     * sequence's own last top-level statement was a bare `raise` -- that
+     * statement's "result" register (compile_raise returns the raised
+     * value itself, e.g. an exception instance) never actually reaches a
+     * caller normally, since raise always unwinds instead of completing.
+     * Read immediately after a compile_sequence call by whichever of
+     * compile_function_body/compile_method_body's endless-form branch
+     * needs it, to skip a doomed-to-fail return-type check against a
+     * value that was never meant to satisfy the return type in the first
+     * place -- there's no "never returns" type this could otherwise be
+     * checked against. Not itself return-type-check logic, just a signal
+     * of whether that check applies at all this time. */
+    bool sequence_diverges;
 } Compiler;
 
 static uint8_t parse_expression(Compiler *compiler);
@@ -3792,6 +3805,7 @@ static uint8_t compile_definition(Compiler *compiler) {
     const bool endless=!compiler->failed&&
         compiler->current.kind==DIAMOND_TOKEN_EQUAL;
     uint8_t body_result=0;
+    bool body_diverges=false;
     if(endless) {
         advance_token(compiler);
         const DiamondTokenKind postfix=postfix_modifier_ahead(compiler);
@@ -3826,9 +3840,10 @@ static uint8_t compile_definition(Compiler *compiler) {
     } else {
         if(!compiler->failed)(void)consume_block_start(compiler);
         body_result=compiler->failed?0:compile_sequence(compiler);
+        body_diverges=!compiler->failed&&compiler->sequence_diverges;
     }
     if (!compiler->failed) {
-        if (return_type >= 0) {
+        if (return_type >= 0 && !body_diverges) {
             emit_type_check(compiler,body_result,(uint8_t)return_type,
                             return_type_span);
         }
@@ -4864,8 +4879,10 @@ static uint8_t compile_sequence(Compiler *compiler) {
      * the first statement's own result register whenever the block is
      * non-empty -- the highest-frequency NIL-elision site, since this
      * fires once per compiled block. */
+    bool last_statement_diverges = false;
 
     while (!compiler->failed && !at_block_end(compiler)) {
+        bool statement_is_raise = false;
         const DiamondTokenKind postfix = postfix_modifier_ahead(compiler);
         const bool has_postfix = postfix == DIAMOND_TOKEN_IF ||
                                  postfix == DIAMOND_TOKEN_UNLESS;
@@ -4894,6 +4911,7 @@ static uint8_t compile_sequence(Compiler *compiler) {
             result=compile_return(compiler);
         } else if (compiler->current.kind == DIAMOND_TOKEN_RAISE) {
             result=compile_raise(compiler);
+            statement_is_raise = true;
         } else if (compiler->current.kind == DIAMOND_TOKEN_RETRY) {
             result=compile_retry(compiler);
         } else if (compiler->current.kind == DIAMOND_TOKEN_BEGIN) {
@@ -4936,6 +4954,7 @@ static uint8_t compile_sequence(Compiler *compiler) {
             patch_jump(compiler, body_jump, body_start);
             result = postfix_result;
         }
+        last_statement_diverges = statement_is_raise && !has_postfix;
         if (!has_postfix && declaration_statement &&
             (compiler->current.kind == DIAMOND_TOKEN_IF ||
              compiler->current.kind == DIAMOND_TOKEN_UNLESS)) {
@@ -4947,6 +4966,7 @@ static uint8_t compile_sequence(Compiler *compiler) {
             fail(compiler, compiler->current.span, "expected newline after expression");
         }
     }
+    compiler->sequence_diverges = last_statement_diverges;
     return result;
 }
 
