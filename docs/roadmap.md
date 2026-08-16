@@ -465,7 +465,11 @@ future work.
 ## Explicitly deferred
 
 - Ruby compatibility (not a goal; only familiar syntax and object conventions).
-- Stable bytecode and embedding APIs.
+- Stable bytecode and embedding APIs -- `ProgramBuilder` (the concrete
+  instance of this the pre-release audit flagged as undecided) stays an
+  internal mechanism the self-hosted compiler bootstrap needs, not a
+  supported embedding surface; see `src/object.h`'s `DiamondProgramBuilder`
+  comment for the full reasoning.
 - Multi-platform support.
 
 ## Confirmed still open

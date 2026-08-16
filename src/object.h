@@ -290,7 +290,22 @@ typedef struct DiamondRegexp {
  * DiamondListenerHandle, no mark_object branch is needed -- the wrapped
  * DiamondProgram's own constants are restricted to scalar DiamondValues
  * (see ProgramBuilder#add_constant in vm.c), so nothing inside one ever
- * references another Diamond value. */
+ * references another Diamond value.
+ *
+ * Trust model (settled after the pre-release audit that added
+ * diamond_verify_bytecode's register-bounds/jump-alignment checks,
+ * program_builder_run_helper in vm.c): ProgramBuilder is an internal
+ * mechanism the self-hosted compiler bootstrap needs, not a supported
+ * embedding API -- it's exactly what docs/roadmap.md's "Explicitly
+ * deferred" section means by deferring stable bytecode/embedding APIs.
+ * It's still callable from any Diamond script (there's no way to hide a
+ * builtin class from `require`d code), so the bounds/alignment
+ * validation stays as real defense-in-depth against memory-unsafety --
+ * but there's deliberately no resource-limit enforcement (max code
+ * size, register count, construction time) and no API stability
+ * promise. A future decision to expose this as a real embedding surface
+ * should treat that as a new feature with its own hardening pass, not
+ * an incremental extension of what's here today. */
 typedef struct DiamondProgram DiamondProgram;
 typedef struct DiamondSourceBundle DiamondSourceBundle;
 typedef struct DiamondProgramBuilder {
