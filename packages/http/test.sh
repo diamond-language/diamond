@@ -161,4 +161,87 @@ end
 ')"
 [[ "$error_response" == $'unsupported URL scheme \'https\' (only http is supported)\nnil' ]]
 
-echo "5 http package tests passed"
+# Server: a request declaring a Content-Length far past
+# http_max_body_size (packages/http/http.di) is dropped -- connection
+# closed, no attempt to read that many bytes -- rather than crashing
+# the whole accept loop or trying to accumulate gigabytes of memory.
+# The server must stay alive afterward: a second, ordinary connection
+# right after proves the accept loop itself survived.
+http_port=18747
+http_out="$(mktemp)"
+http_src="$(cat <<'HTTPEOF'
+require "http"
+def run()
+  def handler(request)
+    [200, {"Content-Type": "text/plain"}, "still alive"]
+  end
+  http_serve(HTTP_PORT, handler)
+end
+run()
+HTTPEOF
+)"
+http_src="${http_src/HTTP_PORT/$http_port}"
+timeout 10 "$diamond" -e "$http_src" >"$http_out" 2>&1 &
+http_pid=$!
+wait_for_port "$http_port"
+{ exec 3<&- 3>&-; } 2>/dev/null || true
+exec 3<>"/dev/tcp/127.0.0.1/$http_port"
+printf 'POST / HTTP/1.1\r\nHost: localhost\r\nContent-Length: 99999999999\r\n\r\n' >&3
+oversized_response="$(timeout 5 cat <&3)"
+{ exec 3<&- 3>&-; } 2>/dev/null || true
+[[ -z "$oversized_response" ]]
+exec 4<>"/dev/tcp/127.0.0.1/$http_port"
+printf 'GET / HTTP/1.1\r\nHost: localhost\r\n\r\n' >&4
+recovery_response="$(timeout 5 cat <&4)"
+{ exec 4<&- 4>&-; } 2>/dev/null || true
+kill "$http_pid" 2>/dev/null || true
+wait "$http_pid" 2>/dev/null || true
+[[ "$recovery_response" == $'HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 11\r\n\r\nstill alive' ]]
+rm -f "$http_out"
+
+# Client: a response declaring a Content-Length far past
+# http_max_body_size raises rather than accumulating gigabytes of
+# memory reading a malicious/misbehaving server's reply. The "server"
+# here is a plain TCPServer (not http_serve), just enough to hand back
+# one deliberately-malicious response.
+oversized_body_port=18748
+fake_server_out="$(mktemp)"
+fake_server_src="$(cat <<'FAKEEOF'
+server = TCPServer.listen(FAKE_PORT)
+conn = server.accept()
+conn.gets()
+loop do
+  line = conn.gets()
+  if line == nil || line == ""
+    break
+  end
+end
+conn.write("HTTP/1.1 200 OK\r\nContent-Length: 99999999999\r\n\r\n")
+conn.write("only a little data")
+conn.close()
+FAKEEOF
+)"
+fake_server_src="${fake_server_src/FAKE_PORT/$oversized_body_port}"
+timeout 10 "$diamond" -e "$fake_server_src" >"$fake_server_out" 2>&1 &
+fake_server_pid=$!
+# Not wait_for_port: its probe opens a real connection that this
+# script's own single accept() would consume (it handles exactly one
+# connection and exits, unlike http_serve's loop above, which is why
+# the other blocks in this file can use wait_for_port safely) --
+# leaving no accept() left for the real client below. Listen+bind on
+# the same binary that's already running is fast enough that a short
+# fixed wait is reliable here.
+sleep 0.3
+oversized_body_response="$(timeout 10 "$diamond" -e "
+require \"http\"
+begin
+  http_get(\"http://127.0.0.1:$oversized_body_port/\")
+rescue error: IOError
+  puts(error.message())
+end
+")"
+wait "$fake_server_pid" 2>/dev/null || true
+rm -f "$fake_server_out"
+[[ "$oversized_body_response" == $'response Content-Length 99999999999 exceeds maximum of 10485760\nnil' ]]
+
+echo "7 http package tests passed"

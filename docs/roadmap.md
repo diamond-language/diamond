@@ -410,6 +410,13 @@ future work.
 - A basic Rack-style HTTP server library (`http_serve`) and the String
   primitives it needed (`index_of`/`slice`/`to_i`/`downcase`), plus an HTTP
   client (`http_get`/`http_post`/`http_request`).
+- Capped how much of a peer's claimed `Content-Length` `http.di` will
+  actually read (`http_max_body_size`, 10 MiB) -- the pre-release audit
+  flagged the previously-unbounded read as a memory-exhaustion DoS. The
+  server drops an oversized request (same "connection closed early"
+  path `http_serve`'s accept loop already handles, so one bad request
+  can't crash the whole server); the client raises `IOError`, since a
+  single outbound call has no next connection to move on to.
 - Non-blocking sockets (`TCPServer.listen_nonblocking`, `Socket`, `IO.poll`)
   and a fiber-per-connection concurrent HTTP server (`packages/gremlin`)
   built on top, giving fibers real concurrent I/O.

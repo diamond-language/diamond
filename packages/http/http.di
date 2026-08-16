@@ -48,6 +48,20 @@ def http_status_text(status)
   end
 end
 
+# A peer's Content-Length header is just a claim -- reading exactly
+# that many bytes with no upper bound lets a malicious/misbehaving
+# peer declare a multi-gigabyte body and force this "deliberately
+# basic" server/client to accumulate that much memory (a request never
+# even has to finish; the accumulation itself is the resource cost).
+# 10 MiB is generous for the plain-text/JSON request and response
+# bodies this package is meant for, comfortably below what would
+# actually pressure memory even under several concurrent connections
+# (http_serve is single-threaded/blocking, so this bounds one
+# connection at a time, not a fleet of them).
+def http_max_body_size()
+  10485760
+end
+
 def http_parse_request(conn)
   request_line = conn.gets()
   if request_line == nil
@@ -79,7 +93,17 @@ def http_parse_request(conn)
   body = ""
   content_length = headers["content-length"]
   if content_length != nil
-    body = conn.read(content_length.to_i())
+    length = content_length.to_i()
+    # Treated like the "connection closed before sending a request
+    # line" case above (return nil, connection closed, server moves on
+    # to the next accept()) rather than raised -- http_serve's own
+    # accept loop has no rescue around this call, so raising here would
+    # crash the whole server on a single oversized request instead of
+    # just refusing this one connection.
+    if length > http_max_body_size()
+      return nil
+    end
+    body = conn.read(length)
   end
 
   {"method": method, "path": path, "headers": headers, "body": body}
@@ -194,7 +218,18 @@ def http_request(method, url, headers = {}, body = "")
   response_body = ""
   content_length = response_headers["content-length"]
   if content_length != nil
-    response_body = conn.read(content_length.to_i())
+    length = content_length.to_i()
+    # Unlike the server side (http_parse_request), raising here is the
+    # right behavior: this is a single outbound call, there's no next
+    # connection to move on to, and an oversized response is exactly
+    # the kind of malformed-response condition this package's own
+    # policy (see the file-level comment above) already propagates as
+    # an error rather than silently working around.
+    if length > http_max_body_size()
+      conn.close()
+      raise IOError.new("response Content-Length #{length} exceeds maximum of #{http_max_body_size()}")
+    end
+    response_body = conn.read(length)
   else
     response_body = conn.read()
   end
