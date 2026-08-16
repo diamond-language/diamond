@@ -212,7 +212,24 @@ static void mark_object(DiamondObject *object) {
     } else if(object->kind==DIAMOND_OBJECT_FIBER) {
         DiamondFiber *fiber=((DiamondFiberHandle *)object)->fiber;
         if(fiber!=nullptr) {
-            mark_frame_chain(fiber->native_frames);
+            /* fiber->native_frames is only refreshed when this fiber
+             * actually suspends or completes (see diamond_fiber_run) --
+             * while it's DIAMOND_FIBER_RUNNING, that field is a stale
+             * snapshot from its *previous* suspend, and may by now point at
+             * C stack frames that have genuinely already returned (real
+             * recursive run_chunk calls unwinding past where they were when
+             * that snapshot was taken). A running fiber's actual live
+             * frames are already covered elsewhere: diamond_vm_collect's
+             * own mark_frame_chain(vm->frames) if it's the innermost
+             * running fiber, or an ancestor's own resumer_frames snapshot
+             * (also walked there) if it's a fiber blocked resuming a nested
+             * child. Every *other* state's native_frames is a safe,
+             * up-to-date-enough snapshot -- notably RUNNABLE too, which a
+             * fiber scheduler (diamond_fiber_make_runnable) uses for a
+             * fiber that just yielded and is waiting for its next turn, not
+             * just DIAMOND_FIBER_SUSPENDED. */
+            if(fiber->state!=DIAMOND_FIBER_RUNNING)
+                mark_frame_chain(fiber->native_frames);
             mark_value(fiber->result);
             mark_value(fiber->resume_value);
             if(fiber->entry_closure!=nullptr)
@@ -249,7 +266,11 @@ static void mark_frame_chain(void *frames) {
 
 static void mark_fiber(const DiamondFiber *fiber) {
     if (fiber == nullptr) return;
-    mark_frame_chain(fiber->native_frames);
+    /* Same staleness hazard as mark_object's DIAMOND_OBJECT_FIBER case
+     * above: native_frames is only untrustworthy while this exact fiber is
+     * the one currently RUNNING. */
+    if (fiber->state != DIAMOND_FIBER_RUNNING)
+        mark_frame_chain(fiber->native_frames);
 }
 
 void diamond_vm_collect(DiamondVm *vm) {
