@@ -350,7 +350,12 @@ config = {
 }
 ```
 
-`.push`, `.pop`, and `.length()` are native on both.
+`.push`, `.pop`, and `.length()` are native on both. Array additionally
+has `.join(separator = "")`, native and O(n) total (a `StringBuilder`-
+backed accumulator internally, not repeated string concatenation) —
+stringifies each element (the same formatting string interpolation
+uses, including calling a user-defined `to_s` override) and joins them
+with `separator` between (not trailing).
 Strings support `.length()`, `.index_of(needle)` (position or `nil`),
 `.slice(start, length)`, `.to_i()`/`.to_f()` (lenient decimal parsing —
 `.to_f()` additionally accepts exponent notation like `"1e3"` even
@@ -410,9 +415,9 @@ elements appended; `array_compact(values)` returns a new array with any
 only the first occurrence of each distinct (`==`) element, order
 preserved; `array_flatten(values)` returns a new array with nested
 arrays fully flattened (recursively, matching Ruby's default);
-`array_join(values, separator = "")` stringifies each element (the same
-formatting string interpolation uses) and joins them with `separator`
-between (not trailing); `array_delete_at(values, index)` mutates
+`array_join(values, separator = "")` is a thin wrapper around the
+native `.join()` above, kept for existing callers that prefer the
+free-function spelling; `array_delete_at(values, index)` mutates
 `values` in place (like the native `.push`/`.pop`), removing and
 returning the element at `index`, or `nil` without mutating if `index`
 is out of bounds; `hash_merge(a, b)` returns a new `Hash` with `a`'s
@@ -448,6 +453,27 @@ same philosophy `Float` arithmetic already uses throughout.
 untouched); `Int` is the only type with a native ordering comparison,
 so this is Int-only, checked up front (`expected Array[Int], got
 Array` on a non-Int element) rather than failing confusingly mid-sort.
+
+`StringBuilder` (defined in the prelude, `lib/core.di`) is the named
+escape hatch from `result = result + piece` in a loop — quadratic,
+since it reallocates and copies the whole accumulated string on every
+iteration:
+
+```ruby
+sb = StringBuilder.new()
+sb.append("hello")
+sb.append(", world")
+sb.to_s()        # => "hello, world"
+"#{sb}"           # same, via to_s
+sb.length()       # => 12
+```
+
+`#append` returns `self`, so calls chain: `sb.append("a").append("b")`.
+It's a plain Diamond class, not a native object — `#append` pushes
+`"#{piece}"` onto an internal `Array` (already O(1) amortized) and
+`#to_s` calls the native `.join("")` above once, so the total cost of
+building a string this way is O(n), the same complexity `Array#join`
+already has for a pre-collected array of pieces.
 
 ## Fibers
 

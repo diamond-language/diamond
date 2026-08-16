@@ -5045,6 +5045,45 @@ static DiamondVmStatus stringify_value(DiamondVm *vm,const DiamondChunk *chunk,
     *out=DIAMOND_OBJECT(string);return DIAMOND_VM_OK;
 }
 
+/* Array#join's real body, factored out of run_chunk's own INVOKE case
+ * for the same stack-frame-isolation reason as program_builder_run_
+ * helper above -- StringBuilder's own `active[32]` pointer array alone
+ * is real stack weight, and run_chunk is a single, deeply (self-)
+ * recursive function whose safe recursion depth is a measured
+ * constraint (see DIAMOND_MAX_CALL_DEPTH's own comment); a local this
+ * size declared directly inside its switch gets baked into every
+ * run_chunk call's stack frame, not just calls that actually reach
+ * #join. stringify_value (not builder_format_value) matches
+ * interpolation's own `"#{value}"` semantics exactly, including
+ * calling a user-defined to_s override on an Instance -- the behavior
+ * array_join's old Diamond-level `lib/core.di` loop had via its own
+ * `"#{}"` interpolation, before it became this native, O(n) method
+ * (see docs/roadmap.md's "Collections and Enumerable" entry). */
+static DiamondVmStatus array_join_helper(DiamondVm *vm,const DiamondChunk *chunk,
+        size_t depth,const DiamondArray *array,const char *separator_chars,
+        size_t separator_length,DiamondValue *out) {
+    StringBuilder builder={};
+    DiamondVmStatus status=DIAMOND_VM_OK;
+    for(size_t index=0;index<array->count;index++) {
+        if(index>0&&!builder_append(&builder,separator_chars,separator_length)) {
+            status=DIAMOND_VM_OUT_OF_MEMORY;break;
+        }
+        DiamondValue piece=DIAMOND_NIL;
+        status=stringify_value(vm,chunk,depth,array->values[index],&piece);
+        if(status!=DIAMOND_VM_OK)break;
+        const DiamondString *piece_string=(const DiamondString *)piece.as.object;
+        if(!builder_append(&builder,piece_string->chars,piece_string->length)) {
+            status=DIAMOND_VM_OUT_OF_MEMORY;break;
+        }
+    }
+    if(status!=DIAMOND_VM_OK) {free(builder.chars);return status;}
+    DiamondString *joined=allocate_string(vm,builder.chars?builder.chars:"",builder.length);
+    free(builder.chars);
+    if(joined==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+    *out=DIAMOND_OBJECT(joined);
+    return DIAMOND_VM_OK;
+}
+
 static uint8_t runtime_value_type(const DiamondChunk *chunk,DiamondValue value) {
     if(value.kind==DIAMOND_VALUE_NIL)return DIAMOND_TYPE_NIL;
     if(value.kind==DIAMOND_VALUE_BOOL)return DIAMOND_TYPE_BOOL;
@@ -6458,6 +6497,40 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                             length=((DiamondHash *)registers[recv].as.object)->count;
                         else length=((DiamondString *)registers[recv].as.object)->length;
                         registers[dest]=DIAMOND_INT((int64_t)length);break;
+                    }
+                    /* array_join_helper below does the real work -- kept out
+                     * of this switch (like program_builder_run_helper is
+                     * kept out of run_chunk's own INVOKE case) because its
+                     * local StringBuilder alone (a 32-entry pointer array
+                     * inside the struct) is real stack weight that would
+                     * otherwise be baked into every run_chunk call's own
+                     * frame, not just calls that actually reach #join --
+                     * confirmed by an ASan stack-overflow regression this
+                     * exact addition caused in legacy_0092.di's deep-
+                     * recursion SystemStackError test before this was
+                     * factored out. */
+                    if(receiver_kind==DIAMOND_OBJECT_ARRAY) {
+                        const bool join_method=method_name->length==4&&
+                            memcmp(method_name->chars,"join",4)==0;
+                        if(join_method) {
+                            if(argc>1)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                            const char *separator_chars="";size_t separator_length=0;
+                            if(argc==1) {
+                                if(registers[base].kind!=DIAMOND_VALUE_OBJECT||
+                                   registers[base].as.object->kind!=DIAMOND_OBJECT_STRING)
+                                    VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                                const DiamondString *separator=
+                                    (const DiamondString *)registers[base].as.object;
+                                separator_chars=separator->chars;
+                                separator_length=separator->length;
+                            }
+                            DiamondValue joined=DIAMOND_NIL;
+                            const DiamondVmStatus join_status=array_join_helper(vm,chunk,depth,
+                                (const DiamondArray *)registers[recv].as.object,
+                                separator_chars,separator_length,&joined);
+                            VM_PROPAGATE(join_status);
+                            registers[dest]=joined;break;
+                        }
                     }
                     if(receiver_kind==DIAMOND_OBJECT_ARRAY||receiver_kind==DIAMOND_OBJECT_HASH) {
                         const char *target_name=nullptr;

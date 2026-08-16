@@ -162,17 +162,13 @@ def array_flatten(values: Array) -> Array
   result
 end
 
+# Kept as a free function for existing callers, but the loop that used
+# to live here (`result = result + "#{piece}"`, once per element) was
+# exactly the O(n^2) concatenation-in-a-loop pattern the pre-release
+# audit flagged -- #join is now a genuine native, StringBuilder-backed
+# method (src/vm.c's INVOKE handler), O(n) total.
 def array_join(values: Array, separator: String = "") -> String
-  result = ""
-  index = 0
-  while index < values.length()
-    if index > 0
-      result = result + separator
-    end
-    result = result + "#{values[index]}"
-    index = index + 1
-  end
-  result
+  values.join(separator)
 end
 
 def array_delete_at(values: Array, index: Int)
@@ -937,4 +933,36 @@ module JSON
 
   def stringify(value) -> String = JSONCodec.new().stringify(value)
   def parse(source: String) = JSONCodec.new().parse(source)
+end
+
+# A named escape hatch from `result = result + piece` in a loop -- the
+# O(n^2) concatenation pattern the pre-release audit flagged, and the
+# same reason #join above is a genuine native, O(n) method rather than
+# a Diamond-level loop. StringBuilder itself stays a thin Array
+# wrapper rather than its own native object: #push is already O(1)
+# amortized (realloc-doubling) and #join is now O(n) total, so
+# accumulating pieces in an Array and joining once at the end already
+# has the right complexity -- this class just gives that pattern an
+# obvious name. Diamond has no `<<` operator (see docs/syntax.md's
+# operator-overloading list), so #append is a plain method, not `<<`.
+class StringBuilder
+  def initialize()
+    @parts = []
+    @total_length = 0
+  end
+
+  def append(piece)
+    text = "#{piece}"
+    @parts.push(text)
+    @total_length = @total_length + text.length()
+    self
+  end
+
+  def length() -> Int
+    @total_length
+  end
+
+  def to_s() -> String
+    @parts.join("")
+  end
 end

@@ -296,6 +296,12 @@ future work.
 - Enumerable completeness: `sum`/`sort`/`sort_by`/`reject`/`find`/
   `each_with_index`/`min`/`max`, with `sort`/`sort_by`/`min`/`max` working on
   any class with `<`/`>` overloaded.
+- `Array#join` became a genuine native, `StringBuilder`-backed O(n) method
+  (it was a Diamond-level `result = result + piece` loop in `lib/core.di`
+  before -- exactly the O(n^2) concatenation pattern the pre-release audit
+  flagged) and `StringBuilder` (`lib/core.di`) is now a named, discoverable
+  escape hatch from that pattern for arbitrary incremental string building,
+  not just pre-collected arrays.
 
 ### Self-hosting (Diamond-in-Diamond)
 
