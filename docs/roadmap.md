@@ -513,3 +513,41 @@ concurrency" above.
   explicitly declined to treat it as a bug ("a real, reproducible compiler
   behavior, not a bug filed here"), so it may be an accepted consequence of
   single-pass compilation rather than something intended to be fixed.
+
+- **Generational or incremental GC.** `diamond_vm_collect` (`src/vm.c:299`)
+  is a plain stop-the-world mark-and-sweep: every object (String, Array,
+  Hash, Instance, Closure, Cell) is individually `malloc`'d onto one
+  intrusive linked list, collected with a doubling threshold, no nursery
+  for short-lived allocations, and every collection re-walks the entire
+  live heap regardless of how much of it is actually garbage. Flagged by
+  the pre-release audit as fine for scripts/short-lived processes but a
+  real ceiling for anything long-running with a large live set --
+  `packages/gremlin`'s fiber-per-connection HTTP server is exactly that
+  shape. Deliberately not started: the audit's own framing is "only worth
+  it once a long-running workload is a real target rather than a
+  hypothetical," and nothing in this codebase is that target yet.
+  Whoever picks this up should establish an actual long-running benchmark
+  (a `gremlin` server under sustained load is the obvious candidate)
+  *before* redesigning anything, so the fix has a real workload to
+  validate against rather than a guess at what generational GC would
+  even buy here.
+
+- **A polymorphic inline-cache tier.** Method dispatch and field access
+  are both already genuinely cached -- `lookup_method_cached`
+  (`src/vm.c:3792`, backing a monomorphic `INVOKE_MONO` rewrite past a
+  hit threshold) and `lookup_field_cached` (`src/vm.c:3981`, a
+  shape-keyed/hidden-class-style cache for field reads and writes), both
+  more sophisticated than most projects this size bother with. There's no
+  2-4-shape polymorphic tier between the monomorphic cache and the slow
+  fallback lookup, so a call site that legitimately alternates among a
+  small, stable set of classes (not unbounded polymorphism, just more
+  than one shape) falls back to the slow path on every call instead of
+  getting a small dispatch table. The audit flagged this as "not
+  confirmed as a real-workload bottleneck -- an architectural gap worth
+  knowing about before it shows up in a profile," which is exactly why
+  it's listed here rather than started: this is real engineering risk to
+  a hot dispatch path with no measured evidence yet that it's worth
+  taking on. Whoever picks this up should profile a real polymorphic
+  workload first (not a synthetic monomorphic-vs-megamorphic
+  microbenchmark) to confirm the gap actually costs something before
+  touching `run_chunk`'s dispatch loop.
