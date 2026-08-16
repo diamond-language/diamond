@@ -2217,10 +2217,22 @@ puts_actual="$(DIAMOND_STRESS_GC=1 $diamond -e $'x = 9223372036854775807 + 1\npu
 # (< 1.6x one spin()'s own solo time, not a tight bound) keeps this from
 # flaking under CI/sandbox scheduling noise while still failing hard if
 # Thread.new secretly ran things serially (which would show up as
-# parallel time roughly 2x the serial unit instead).
+# parallel time roughly 2x the serial unit instead). 20,000,000
+# iterations is deliberately picked to keep the *fastest* build variant
+# (release, -O3) comfortably above a second of serial work --
+# thread-spawn/join overhead and OS scheduling jitter are both roughly
+# constant regardless of loop size, so a too-short serial run makes the
+# ratio flaky (a 2,000,000 first draft measured serial ~0.14s/parallel
+# ~0.23s on release here, a 1.7x ratio that tripped the 1.6x tolerance
+# purely from thread overhead, not a real seriality regression).
+# 20,000,000 keeps release at ~1s and the slowest build variant here
+# (unoptimized debug plus ASan/UBSan or TSan instrumentation) at
+# ~15-20s -- this used to be 200,000,000, which took minutes per build
+# variant under a sanitizer and made test-all painfully slow for no
+# extra coverage.
 spin_program='def spin()
   i = 0
-  while i < 200000000
+  while i < 20000000
     i = i + 1
   end
   i
@@ -2240,7 +2252,7 @@ puts(t2.join())")"
 end="$EPOCHREALTIME"
 parallel_time="$(echo "$end - $start" | bc)"
 
-if [[ "$serial_out" != $'200000000\nnil' || "$parallel_out" != $'200000000\n200000000\nnil' ]]; then
+if [[ "$serial_out" != $'20000000\nnil' || "$parallel_out" != $'20000000\n20000000\nnil' ]]; then
     echo "FAIL: Thread real-parallelism proof (unexpected output)" >&2
     echo "  serial:   $serial_out" >&2
     echo "  parallel: $parallel_out" >&2
