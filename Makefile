@@ -155,9 +155,13 @@ $(BUILD_DIR)/compile_fuzzer: fuzz/compile_fuzzer.c $(API_SOURCES)
 	@mkdir -p $(BUILD_DIR)
 	$(CC_FUZZ) $(CPPFLAGS) $(CFLAGS_FUZZ) $(API_SOURCES) $< -lm $(REGINOLD_DIR)/libreginold.a -ldl -lpthread -lssl -lcrypto -o $@
 
-fuzz: $(BUILD_DIR)/compile_fuzzer
+$(BUILD_DIR)/execute_fuzzer: fuzz/execute_fuzzer.c $(API_SOURCES)
+	@mkdir -p $(BUILD_DIR)
+	$(CC_FUZZ) $(CPPFLAGS) $(CFLAGS_FUZZ) $(API_SOURCES) $< -lm $(REGINOLD_DIR)/libreginold.a -ldl -lpthread -lssl -lcrypto -o $@
 
-test-fuzz: $(BUILD_DIR)/compile_fuzzer
+fuzz: $(BUILD_DIR)/compile_fuzzer $(BUILD_DIR)/execute_fuzzer
+
+test-fuzz: $(BUILD_DIR)/compile_fuzzer $(BUILD_DIR)/execute_fuzzer
 	bash tests/fuzz_smoke.sh
 
 $(BUILD_DIR)/lexer_dump: tests/lexer_dump.c src/lexer.c src/lexer.h
