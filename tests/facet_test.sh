@@ -194,6 +194,49 @@ rm -f "$error_file"
 # none of the above malformed-manifest cases should ever have cloned anything
 [[ ! -e project5/diamond_packages/.facet-tmp ]] || [[ -z "$(ls -A project5/diamond_packages/.facet-tmp 2>/dev/null)" ]]
 
+# --- a manifest's git/ref fields reach git's own argv as plain positional
+# strings, never shell-interpreted or parsed as git options -- a
+# dependency declaring a "git" or ref value that starts with '-' must
+# fail as an invalid repository/revision, not get silently parsed as a
+# git flag (the well-known git argument-injection class: e.g. an
+# "--upload-pack=..." value can otherwise reach arbitrary command
+# execution through git's own hook/pack mechanisms). ---
+
+mkdir project7
+cat > project7/package.di <<'EOF'
+{"name": "myapp", "dependencies": {"x": {"git": "--upload-pack=touch /tmp/facet_injection_probe", "tag": "main"}}}
+EOF
+rm -f /tmp/facet_injection_probe
+error_file="$(mktemp)"
+if (cd project7 && "$facet" install) >/dev/null 2>"$error_file"; then
+    echo "facet install unexpectedly accepted an option-like 'git' value" >&2
+    rm -f "$error_file"
+    exit 1
+fi
+[[ ! -e /tmp/facet_injection_probe ]] || {
+    echo "facet install executed an injected git option's command" >&2
+    rm -f /tmp/facet_injection_probe "$error_file"
+    exit 1
+}
+rm -f "$error_file"
+
+mkdir project8
+cat > project8/package.di <<EOF
+{"name": "myapp", "dependencies": {"greeter": {"git": "$work/greeter_repo", "tag": "--upload-pack=touch /tmp/facet_injection_probe"}}}
+EOF
+error_file="$(mktemp)"
+if (cd project8 && "$facet" install) >/dev/null 2>"$error_file"; then
+    echo "facet install unexpectedly accepted an option-like ref value" >&2
+    rm -f "$error_file"
+    exit 1
+fi
+[[ ! -e /tmp/facet_injection_probe ]] || {
+    echo "facet install executed an injected git option's command" >&2
+    rm -f /tmp/facet_injection_probe "$error_file"
+    exit 1
+}
+rm -f "$error_file"
+
 # --- no package.di at all ---
 
 mkdir project6
@@ -215,4 +258,4 @@ fi
 grep -q "usage: facet" "$error_file"
 rm -f "$error_file"
 
-echo "21 facet tests passed"
+echo "23 facet tests passed"

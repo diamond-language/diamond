@@ -219,17 +219,33 @@ static bool run_git_capture(char *const argv[], const char *context, char *out,
  * that isn't on that branch would otherwise fail unpredictably. Costs
  * a bit more clone bandwidth in exchange for tag/branch/commit all
  * working uniformly through the same two commands. */
+/* `url`/`ref` come straight from a dependency's manifest/lockfile --
+ * untrusted input crossing exactly the boundary a package manager exists
+ * to cross safely. execvp (never a shell) already rules out shell
+ * metacharacter injection (see the comment above run_git), but git
+ * itself parses any argument starting with `-` as an option regardless
+ * of position, so a manifest url/ref like "--upload-pack=..." would
+ * otherwise be parsed as a git flag rather than a literal repository/
+ * revision string -- a well-known argument-injection class that reaches
+ * arbitrary command execution through git's own hook/pack mechanisms.
+ * `clone`'s positional args (url, destination) come after an ordinary
+ * `--`; `checkout`'s single positional <ref> needs `--end-of-options`
+ * instead (git >= 2.24) -- checkout's own `--` means "no more revisions,
+ * everything after is a pathspec", which would silently reinterpret a
+ * plain branch/tag/commit ref as a file path to restore rather than
+ * something to check out. */
 static bool git_clone(const char *url, const char *ref, const char *destination,
                       char *error, size_t error_size) {
     (void)remove_directory_recursive(destination);
     char *const clone_argv[] = {(char *)"git", (char *)"clone", (char *)"--quiet",
-        (char *)"--no-single-branch", (char *)url, (char *)destination, nullptr};
+        (char *)"--no-single-branch", (char *)"--", (char *)url,
+        (char *)destination, nullptr};
     char context[FACET_MAX_PATH];
     (void)snprintf(context, sizeof context, "cloning '%s'", url);
     if (!run_git(clone_argv, context, error, error_size)) return false;
     char *const checkout_argv[] = {(char *)"git", (char *)"-C",
         (char *)destination, (char *)"checkout", (char *)"--quiet",
-        (char *)ref, nullptr};
+        (char *)"--end-of-options", (char *)ref, nullptr};
     (void)snprintf(context, sizeof context, "checking out '%s' in '%s'", ref, url);
     return run_git(checkout_argv, context, error, error_size);
 }
