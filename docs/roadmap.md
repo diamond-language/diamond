@@ -530,7 +530,10 @@ concurrency" above.
   (a `gremlin` server under sustained load is the obvious candidate)
   *before* redesigning anything, so the fix has a real workload to
   validate against rather than a guess at what generational GC would
-  even buy here.
+  even buy here. `docs/gc-generational-design.md` maps out a design
+  (non-moving, list-splice promotion, old→young write barrier) so that
+  work doesn't have to be re-derived once the benchmark exists — nothing
+  in it is implemented yet.
 
 - **A polymorphic inline-cache tier.** Method dispatch and field access
   are both already genuinely cached -- `lookup_method_cached`
