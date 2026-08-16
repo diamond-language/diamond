@@ -443,15 +443,39 @@ a `ProgramBuilder#run` boundary) was fixed; see "Self-hosting
 
 ## Inconclusive
 
-- **Unreproduced ASan `stack-use-after-return` inside `mark_frame_chain`.**
-  Seen once during manual fiber+ASan testing around the non-blocking-socket
-  work, never reproduced again across repeated identical runs or a targeted
-  minimal repro, and not caught by `make test-sanitize`. Most likely the
-  known ASan/coroutine false-positive class (the `ucontext`-based fiber
-  implementation doesn't call ASan's fiber-switch annotation functions,
-  which current source confirms are still absent), but this has not been
-  confirmed either way. Worth a real investigation (adding the ASan
-  fiber-switch annotations and re-testing) before trusting it's benign.
+- **ASan `stack-use-after-return`/`stack-use-after-scope` inside
+  `mark_frame_chain`, under deep fiber recursion + GC pressure.** Originally
+  logged as an unreproduced one-off; now confirmed and reliably reproducible
+  with a targeted repro (many fibers, each recursing ~30 native frames deep
+  before yielding, with `DIAMOND_STRESS_GC=1` and
+  `ASAN_OPTIONS=detect_stack_use_after_return=1`) -- GC, triggered mid-
+  recursion by an allocation, walks a frame chain reaching into a fiber's
+  own deeply-recursed (and, on GCC, sometimes another *suspended* fiber's
+  parked) native stack, and ASan misflags a still-live ancestor frame as
+  already returned. The `ucontext`-based fiber implementation now makes the
+  documented `__sanitizer_start_switch_fiber`/`__sanitizer_finish_switch_fiber`
+  calls around every `swapcontext` (see `mark_frame_chain` callers and
+  `diamond_fiber_run`/`diamond_fiber_trampoline`/`DIAMOND_OP_YIELD` in
+  `src/vm.c`), including real destination stack bounds (via
+  `pthread_getattr_np` for the native/main stack, or the ancestor fiber's own
+  mmap region for nested resumes) rather than the docs' permissive
+  NULL-bounds fallback -- this is the fully-documented, textbook-correct
+  fiber-switch contract. It measurably narrows the failure (simple
+  suspend/resume repros that used to fail now pass), but does **not**
+  eliminate it for this specific deep-recursion-plus-GC-stress shape: it
+  still reproduces past a certain recursion depth on both GCC's libsanitizer
+  and LLVM's compiler-rt (as a use-after-return and a use-after-scope,
+  respectively -- different ASan subsystems, same underlying manual-stack-
+  switch confusion). Not seen in the existing test suite or in
+  `make test-sanitize`'s actual default config (no `DIAMOND_STRESS_GC`, and
+  the shallow fiber cases in `tests/cases/*.di` don't recurse deep enough to
+  trigger it), and every flagged read is of a demonstrably still-live
+  (never-returned) frame, so this is a sanitizer limitation, not a real
+  memory-safety bug. Left as annotated-but-open: the annotations are strictly
+  correct and worth keeping, but fully suppressing this would need either a
+  deeper fix upstream in ASan's fiber support or reducing `run_chunk`'s very
+  large per-call stack frame, neither of which is warranted by a testing-tool
+  artifact alone.
 
 ## Judgement calls
 

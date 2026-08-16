@@ -1,4 +1,8 @@
 #define _DEFAULT_SOURCE
+/* _GNU_SOURCE (a superset of _DEFAULT_SOURCE): only for pthread_getattr_np,
+ * used to learn a thread's own native stack bounds for the ASan
+ * fiber-switch annotations below. */
+#define _GNU_SOURCE
 
 #include "vm.h"
 #include "bignum.h"
@@ -25,6 +29,62 @@
 #include <sys/mman.h>
 #include <sys/socket.h>
 #include <unistd.h>
+
+/* Fibers hand-switch the C stack via swapcontext (see DIAMOND_FIBER_STACK_SIZE
+ * and friends below), which ASan's stack-use-after-return instrumentation
+ * doesn't know about on its own -- it associates each real stack address
+ * range with at most one live "fake stack" region, and a manual switch to a
+ * different memory region (a fiber's own mmapped stack) without telling it
+ * looks the same as the previous occupant having returned. The official
+ * fix is these paired annotation calls around every swapcontext, which are
+ * a no-op unless built with ASan. See docs/threads.md. */
+#if defined(__SANITIZE_ADDRESS__) || \
+    (defined(__has_feature) && __has_feature(address_sanitizer))
+#define DIAMOND_ASAN_FIBERS 1
+#include <sanitizer/common_interface_defs.h>
+
+/* A switch back out of a fiber (yield, or the final completing swap) needs
+ * real bounds for whatever it's switching *to*, same as switching into a
+ * fiber does -- an unknown/null destination isn't the harmless "just skip
+ * detection there" the API docs suggest: real testing here (a deeply
+ * recursive fiber resumed a second time, allocating under GC stress) showed
+ * it still misattributes the *resuming* fiber's own still-live ancestor
+ * frames as returned. Each OS thread's own native stack bounds are queried
+ * once, lazily, and cached; a resume_target that belongs to another fiber
+ * (nested Fiber.resume from within a fiber) instead uses that fiber's own
+ * known mmap region. */
+static thread_local void *diamond_native_stack_bottom;
+static thread_local size_t diamond_native_stack_size;
+static thread_local bool diamond_native_stack_known;
+
+static void diamond_ensure_native_stack_bounds(void) {
+    if (diamond_native_stack_known) return;
+    diamond_native_stack_known = true;
+    pthread_attr_t attr;
+    if (pthread_getattr_np(pthread_self(), &attr) != 0) return;
+    void *addr = nullptr; size_t size = 0;
+    if (pthread_attr_getstack(&attr, &addr, &size) == 0) {
+        diamond_native_stack_bottom = addr;
+        diamond_native_stack_size = size;
+    }
+    pthread_attr_destroy(&attr);
+}
+
+/* Bounds of whatever fiber->resumer_fiber (if any) is resuming into, for
+ * the "switching back out" annotation calls: another fiber's own known
+ * mmap region when nested, otherwise this thread's own native stack. */
+static void diamond_resume_target_bounds(const DiamondFiber *fiber,
+        const void **bottom, size_t *size) {
+    if (fiber->resumer_fiber != nullptr) {
+        *bottom = fiber->resumer_fiber->context.uc_stack.ss_sp;
+        *size = fiber->resumer_fiber->context.uc_stack.ss_size;
+        return;
+    }
+    diamond_ensure_native_stack_bounds();
+    *bottom = diamond_native_stack_bottom;
+    *size = diamond_native_stack_size;
+}
+#endif
 
 /* Each run_chunk activation unconditionally allocates DiamondValue
  * registers[256] (4KB), DiamondTypeBinding bindings[8] (~3.2KB), and
@@ -423,6 +483,13 @@ static void free_fiber_stack(DiamondFiber *fiber) {
 static thread_local DiamondFiber *diamond_fiber_entering;
 
 static void diamond_fiber_trampoline(void) {
+#ifdef DIAMOND_ASAN_FIBERS
+    /* First activation of a fresh fiber stack (via makecontext) never
+     * "returns" from a swapcontext call the way a resumed one does, so the
+     * matching finish lives here instead, with no saved fake stack to
+     * restore -- there's no prior history on a stack that's never run. */
+    __sanitizer_finish_switch_fiber(nullptr, nullptr, nullptr);
+#endif
     DiamondFiber *self = diamond_fiber_entering;
     if (self->entry_closure != nullptr) {
         const DiamondFunction *fn=
@@ -443,6 +510,17 @@ static void diamond_fiber_trampoline(void) {
         self->status = run_chunk(self->chunk, self->vm, nullptr, 0, 0, nullptr,
                                  &self->result);
     }
+#ifdef DIAMOND_ASAN_FIBERS
+    /* This fiber is done for good (completed or failed) and will never be
+     * resumed, so its own fake stack should be destroyed rather than saved
+     * -- passing nullptr as the first argument is what tells ASan that, per
+     * its documented fiber-switch contract -- but the destination we're
+     * switching back to still needs real bounds (see
+     * diamond_resume_target_bounds). */
+    const void *exit_dest_bottom=nullptr;size_t exit_dest_size=0;
+    diamond_resume_target_bounds(self,&exit_dest_bottom,&exit_dest_size);
+    __sanitizer_start_switch_fiber(nullptr,exit_dest_bottom,exit_dest_size);
+#endif
     swapcontext(&self->context, self->resume_target);
 }
 
@@ -518,7 +596,21 @@ DiamondFiberStatus diamond_fiber_run(DiamondFiber *fiber) {
     diamond_fiber_entering=fiber;
     ucontext_t caller_context;
     fiber->resume_target=&caller_context;
+#ifdef DIAMOND_ASAN_FIBERS
+    /* Entering the fiber's own stack (fresh via makecontext, or resuming one
+     * parked at a prior yield) -- its bounds are always exactly known since
+     * this VM owns the mmap. caller_fake_stack is a plain local: it's
+     * produced right before this swapcontext and consumed right after it
+     * returns, both in this same call, since re-entering this fiber always
+     * comes back through here. */
+    void *caller_fake_stack=nullptr;
+    __sanitizer_start_switch_fiber(&caller_fake_stack,
+        fiber->context.uc_stack.ss_sp,fiber->context.uc_stack.ss_size);
+#endif
     swapcontext(&caller_context,&fiber->context);
+#ifdef DIAMOND_ASAN_FIBERS
+    __sanitizer_finish_switch_fiber(caller_fake_stack,nullptr,nullptr);
+#endif
     fiber->native_frames=vm->frames;
     vm->frames=saved_frames;
     vm->running_fiber=saved_running;
@@ -8224,7 +8316,24 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 if(vm->running_fiber==nullptr) VM_RETURN(DIAMOND_VM_YIELD_WITHOUT_FIBER);
                 vm->running_fiber->status=DIAMOND_VM_YIELDED;
                 vm->running_fiber->result=registers[source];
+#ifdef DIAMOND_ASAN_FIBERS
+                /* Suspending, not leaving for good: this fiber's own stack
+                 * (the one this frame lives on) must be preserved rather
+                 * than destroyed. yield_fake_stack is a plain local: this
+                 * swapcontext call is where a later resume physically
+                 * continues, since this whole C frame lives on the fiber's
+                 * own parked stack memory in the meantime. */
+                void *yield_fake_stack=nullptr;
+                const void *yield_dest_bottom=nullptr;size_t yield_dest_size=0;
+                diamond_resume_target_bounds(vm->running_fiber,
+                    &yield_dest_bottom,&yield_dest_size);
+                __sanitizer_start_switch_fiber(&yield_fake_stack,
+                    yield_dest_bottom,yield_dest_size);
+#endif
                 swapcontext(&vm->running_fiber->context,vm->running_fiber->resume_target);
+#ifdef DIAMOND_ASAN_FIBERS
+                __sanitizer_finish_switch_fiber(yield_fake_stack,nullptr,nullptr);
+#endif
                 registers[dest]=vm->running_fiber->resume_value;
                 break;
             }
