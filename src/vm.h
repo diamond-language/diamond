@@ -41,7 +41,15 @@ enum {
     DIAMOND_MAX_METHODS = 256,
     DIAMOND_MAX_FIELDS = 64,
     DIAMOND_MAX_NAMESPACE_CONSTANTS = 128,
-    DIAMOND_REGISTER_COUNT = 256,
+    /* Compile-time ceiling and READ_SHORT-encoded bytecode operand range
+     * (big-endian 16-bit, matching the JUMP-target/function-index
+     * convention) -- not a fixed per-call runtime array size. run_chunk
+     * (src/vm.c) sizes its actual `registers` array as a VLA to each
+     * function's own live_register_count instead, so a typical small
+     * function's call frame stays cheap regardless of how high this cap
+     * is; only a function that actually needs this many registers pays
+     * for it, in that one call. See docs/roadmap.md. */
+    DIAMOND_REGISTER_COUNT = 4096,
     /* Per DiamondFunction, not per scope -- a function's own top-level
      * locals/parameters *and* every `rescue`-bound name across every
      * rescue clause nested in it all accumulate into the same flat

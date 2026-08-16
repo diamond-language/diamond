@@ -348,22 +348,36 @@ class Parser
     @code_count = @code_count + 1
   end
 
+  # Every operand emitted here is 16-bit, big-endian -- same split as
+  # emit_function_index/patch_jump below -- mirroring compiler.c's own
+  # emit_instruction, which widens *every* operand it takes uniformly
+  # (register or not: a constant/string/type-set index, a bool flag) rather
+  # than classifying each call site by hand. See that function's own
+  # comment in compiler.c for why. Opcodes with a genuinely narrow operand
+  # (a function id, an argument count, ...) that must stay one byte don't
+  # route through here -- they hand-roll their emission with emit_byte
+  # directly, same as compiler.c's own hand-rolled opcodes.
+  def emit_register(register)
+    self.emit_byte(register / 256)
+    self.emit_byte(mod(register, 256))
+  end
+
   def emit_instruction1(opcode, a)
     self.emit_byte(opcode)
-    self.emit_byte(a)
+    self.emit_register(a)
   end
 
   def emit_instruction2(opcode, a, b)
     self.emit_byte(opcode)
-    self.emit_byte(a)
-    self.emit_byte(b)
+    self.emit_register(a)
+    self.emit_register(b)
   end
 
   def emit_instruction3(opcode, a, b, c)
     self.emit_byte(opcode)
-    self.emit_byte(a)
-    self.emit_byte(b)
-    self.emit_byte(c)
+    self.emit_register(a)
+    self.emit_register(b)
+    self.emit_register(c)
   end
 
   # CALL/CALL_TYPED/CLOSURE's function-index operand is 16-bit, big-endian
@@ -375,7 +389,17 @@ class Parser
     self.emit_byte(mod(function_index, 256))
   end
 
+  # 4096, mirroring compiler.c's own DIAMOND_REGISTER_COUNT ceiling check
+  # (Compiler.next_register >= DIAMOND_REGISTER_COUNT, "program needs too
+  # many registers") -- not a wire-format limit (registers are 16-bit
+  # operands now, see emit_register above) but a deliberate cap on the
+  # native VM's per-call register array (a VLA sized to each function's
+  # own register count, see run_chunk in vm.c).
   def allocate_register()
+    if @next_register >= 4096
+      self.fail("program needs too many registers")
+      return @next_register
+    end
     register = @next_register
     @next_register = @next_register + 1
     register
@@ -390,20 +414,20 @@ class Parser
   end
 
   # JUMP: [opcode][hi][lo]. JUMP_IF_FALSE/JUMP_IF_TRUE:
-  # [opcode][condition][hi][lo]. `operand` is the offset of the first
-  # placeholder byte, recorded before the target is known so patch_jump
-  # can overwrite it later -- exactly compiler.c's own emit_jump/patch_jump
-  # split, now via ProgramBuilder#patch_byte instead of a direct C array
-  # write.
+  # [opcode][condition hi][condition lo][hi][lo]. `operand` is the offset
+  # of the first placeholder byte, recorded before the target is known so
+  # patch_jump can overwrite it later -- exactly compiler.c's own
+  # emit_jump/patch_jump split, now via ProgramBuilder#patch_byte instead
+  # of a direct C array write.
   def emit_jump(opcode, condition)
     conditional = opcode == Opcode::JUMP_IF_FALSE || opcode == Opcode::JUMP_IF_TRUE
     operand = @code_count + (if conditional
-      2
+      3
     else
       1
     end)
     self.emit_byte(opcode)
-    self.emit_byte(condition) if conditional
+    self.emit_register(condition) if conditional
     self.emit_byte(0)
     self.emit_byte(0)
     operand
@@ -507,7 +531,7 @@ class Parser
 
   def emit_rescue_handler(exception)
     self.emit_byte(Opcode::PUSH_RESCUE)
-    self.emit_byte(exception)
+    self.emit_register(exception)
     self.emit_byte(128)
     index = 0
     while index < 8
@@ -1663,12 +1687,12 @@ class Parser
     end
     result = self.allocate_register()
     self.emit_byte(Opcode::CLOSURE)
-    self.emit_byte(result)
+    self.emit_register(result)
     self.emit_function_index(function_index)
     self.emit_byte(capture_registers.length())
     index = 0
     while index < capture_registers.length()
-      self.emit_byte(capture_registers[index])
+      self.emit_register(capture_registers[index])
       index = index + 1
     end
     @locals.push([name, result, false])
@@ -2742,9 +2766,9 @@ class Parser
     else
       self.emit_byte(Opcode::CALL_TYPED)
     end
-    self.emit_byte(destination)
+    self.emit_register(destination)
     self.emit_function_index(function_entry[1])
-    self.emit_byte(argument_base)
+    self.emit_register(argument_base)
     self.emit_byte(argument_count)
     if type_arguments.length() > 0
       self.emit_byte(type_arguments.length())
@@ -2897,9 +2921,9 @@ class Parser
     return 0 if parsed == nil
     destination = self.allocate_register()
     self.emit_byte(Opcode::CALL_CLOSURE)
-    self.emit_byte(destination)
-    self.emit_byte(callable)
-    self.emit_byte(parsed[0])
+    self.emit_register(destination)
+    self.emit_register(callable)
+    self.emit_register(parsed[0])
     self.emit_byte(parsed[1])
     destination
   end
@@ -2914,8 +2938,8 @@ class Parser
     self.advance_token()
     destination = self.allocate_register()
     self.emit_byte(Opcode::PRINT)
-    self.emit_byte(destination)
-    self.emit_byte(source)
+    self.emit_register(destination)
+    self.emit_register(source)
     self.emit_byte(if newline
       1
     else
@@ -3115,10 +3139,10 @@ class Parser
     else
       self.emit_byte(Opcode::INVOKE_TYPED)
     end
-    self.emit_byte(destination)
-    self.emit_byte(receiver)
+    self.emit_register(destination)
+    self.emit_register(receiver)
     self.emit_byte(method_name_index)
-    self.emit_byte(parsed[0])
+    self.emit_register(parsed[0])
     self.emit_byte(parsed[1])
     if type_arguments.length() > 0
       self.emit_byte(type_arguments.length())
@@ -3763,10 +3787,10 @@ class Parser
     destination = self.allocate_register()
     method_name_index = self.add_string(@current_method_name)
     self.emit_byte(Opcode::SUPER)
-    self.emit_byte(destination)
+    self.emit_register(destination)
     self.emit_byte(@current_class_index)
     self.emit_byte(method_name_index)
-    self.emit_byte(parsed[0])
+    self.emit_register(parsed[0])
     self.emit_byte(parsed[1])
     destination
   end
@@ -4068,9 +4092,9 @@ class Parser
     else
       self.emit_byte(Opcode::CALL_TYPED)
     end
-    self.emit_byte(destination)
+    self.emit_register(destination)
     self.emit_function_index(function_index)
-    self.emit_byte(base)
+    self.emit_register(base)
     self.emit_byte(parsed[1] + offset)
     if type_arguments.length() > 0
       self.emit_byte(type_arguments.length())
@@ -4270,10 +4294,10 @@ class Parser
     self.advance_token()
     destination = self.allocate_register()
     self.emit_byte(Opcode::REDEFINE_METHOD)
-    self.emit_byte(destination)
+    self.emit_register(destination)
     self.emit_byte(class_index)
-    self.emit_byte(name_register)
-    self.emit_byte(callable_register)
+    self.emit_register(name_register)
+    self.emit_register(callable_register)
     self.set_type_fact(destination, Type::NIL)
     destination
   end
@@ -4294,9 +4318,9 @@ class Parser
     return 0 if parsed == nil
     destination = self.allocate_register()
     self.emit_byte(Opcode::NEW)
-    self.emit_byte(destination)
+    self.emit_register(destination)
     self.emit_byte(class_index)
-    self.emit_byte(parsed[0])
+    self.emit_register(parsed[0])
     self.emit_byte(parsed[1])
     self.set_type_fact(destination, Type::CLASS_BASE + class_index)
     destination
@@ -4394,7 +4418,10 @@ class Parser
     end
     self.advance_token()
     destination = self.allocate_register()
-    self.emit_instruction3(Opcode::MATH_UNARY, destination, source, id)
+    self.emit_byte(Opcode::MATH_UNARY)
+    self.emit_register(destination)
+    self.emit_register(source)
+    self.emit_byte(id)
     self.set_type_fact(destination, Type::FLOAT)
     destination
   end
@@ -4419,9 +4446,9 @@ class Parser
     self.advance_token()
     destination = self.allocate_register()
     self.emit_byte(Opcode::MATH_BINARY)
-    self.emit_byte(destination)
-    self.emit_byte(left)
-    self.emit_byte(right)
+    self.emit_register(destination)
+    self.emit_register(left)
+    self.emit_register(right)
     self.emit_byte(id)
     self.set_type_fact(destination, Type::FLOAT)
     destination

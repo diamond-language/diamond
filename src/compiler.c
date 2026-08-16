@@ -22,7 +22,7 @@ typedef enum Precedence {
 
 typedef struct Local {
     DiamondSpan name;
-    uint8_t reg;
+    uint16_t reg;
     bool captured;
 } Local;
 
@@ -30,7 +30,7 @@ typedef struct LoopContext {
     struct LoopContext *previous;
     size_t continue_target;
     size_t redo_target;
-    uint8_t result_register;
+    uint16_t result_register;
     size_t breaks[64];
     size_t break_count;
 } LoopContext;
@@ -38,7 +38,7 @@ typedef struct LoopContext {
 enum { DIAMOND_MAX_NARROWING_FACTS = 8 };
 
 typedef struct NarrowingFact {
-    uint8_t reg;
+    uint16_t reg;
     int16_t type_set;
 } NarrowingFact;
 
@@ -51,7 +51,7 @@ typedef struct NarrowingFact {
  * parse_precedence) rather than needing a separate mechanism. */
 typedef struct Narrowing {
     bool valid;
-    uint8_t condition;
+    uint16_t condition;
     NarrowingFact when_true[DIAMOND_MAX_NARROWING_FACTS];
     size_t when_true_count;
     NarrowingFact when_false[DIAMOND_MAX_NARROWING_FACTS];
@@ -83,8 +83,8 @@ typedef struct Compiler {
      * gets, even though the closure itself isn't a class member -- see
      * compile_definition's own use, and docs/roadmap.md for why. */
     bool in_singleton_method;
-    uint8_t known_types[256];
-    int16_t known_type_sets[256];
+    uint8_t known_types[DIAMOND_REGISTER_COUNT];
+    int16_t known_type_sets[DIAMOND_REGISTER_COUNT];
     bool in_function;
     int current_return_type;
     DiamondSpan current_return_type_span;
@@ -94,7 +94,7 @@ typedef struct Compiler {
     bool failed;
     Local enclosing_locals[DIAMOND_MAX_LOCALS];
     size_t enclosing_local_count;
-    uint8_t capture_registers[16];
+    uint16_t capture_registers[16];
     size_t capture_count;
     Narrowing narrowing;
     /* Set by compile_sequence right before it returns, true only when the
@@ -112,11 +112,11 @@ typedef struct Compiler {
     bool sequence_diverges;
 } Compiler;
 
-static uint8_t parse_expression(Compiler *compiler);
-static uint8_t compile_sequence(Compiler *compiler);
-static uint8_t compile_begin(Compiler *compiler);
-static uint8_t compile_yield(Compiler *compiler);
-static uint8_t compile_interface(Compiler *compiler);
+static uint16_t parse_expression(Compiler *compiler);
+static uint16_t compile_sequence(Compiler *compiler);
+static uint16_t compile_begin(Compiler *compiler);
+static uint16_t compile_yield(Compiler *compiler);
+static uint16_t compile_interface(Compiler *compiler);
 static int find_function(const Compiler *compiler, DiamondSpan name);
 
 static void fail(Compiler *compiler, DiamondSpan span, const char *message) {
@@ -158,20 +158,6 @@ static bool emit_opcode(Compiler *compiler, DiamondOpCode opcode) {
     return true;
 }
 
-static bool emit_instruction(Compiler *compiler, DiamondOpCode opcode,
-                             uint8_t a, uint8_t b, uint8_t c, size_t operands) {
-    if (!emit_opcode(compiler, opcode)) {
-        return false;
-    }
-    const uint8_t values[] = {a, b, c};
-    for (size_t index = 0; index < operands; index++) {
-        if (!emit_byte(compiler, values[index])) {
-            return false;
-        }
-    }
-    return true;
-}
-
 /* Big-endian, matching patch_jump/emit_absolute_jump's existing 16-bit
  * operand convention -- function indices are a CALL/CALL_TYPED/CLOSURE
  * operand wide enough to exceed one byte now that DIAMOND_MAX_FUNCTIONS
@@ -181,12 +167,45 @@ static bool emit_function_index(Compiler *compiler, size_t function_index) {
            emit_byte(compiler, (uint8_t)(function_index & UINT8_MAX));
 }
 
-static uint8_t allocate_register(Compiler *compiler) {
-    if (compiler->next_register > UINT8_MAX) {
+/* Same big-endian 16-bit convention as emit_function_index, for a register
+ * operand -- registers are wide enough to exceed one byte now that
+ * DIAMOND_REGISTER_COUNT is 4096 (see its own comment in src/vm.h). */
+static bool emit_register(Compiler *compiler, uint16_t reg) {
+    return emit_byte(compiler, (uint8_t)(reg >> 8)) &&
+           emit_byte(compiler, (uint8_t)(reg & UINT8_MAX));
+}
+
+/* Every emit_instruction operand is emitted 2 bytes wide via
+ * emit_register, even the (more common) ones that are logically a
+ * register -- and even the few that are actually a narrower index
+ * (a type-set/constant/field/capture index, each with its own separate,
+ * much smaller cap; see e.g. DIAMOND_MAX_TYPE_SETS/DIAMOND_MAX_FIELDS in
+ * src/vm.h). This opcode operand slot mix varies per opcode, not
+ * uniformly by position, so emit_instruction deliberately doesn't try to
+ * track which -- uniformly widening every slot keeps this one shared
+ * helper (and run_chunk's matching per-opcode reads, see READ_SHORT)
+ * simple and consistent, at the cost of a couple of harmless extra bytes
+ * per instruction for the operands that didn't strictly need them. */
+static bool emit_instruction(Compiler *compiler, DiamondOpCode opcode,
+                             uint16_t a, uint16_t b, uint16_t c, size_t operands) {
+    if (!emit_opcode(compiler, opcode)) {
+        return false;
+    }
+    const uint16_t values[] = {a, b, c};
+    for (size_t index = 0; index < operands; index++) {
+        if (!emit_register(compiler, values[index])) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static uint16_t allocate_register(Compiler *compiler) {
+    if (compiler->next_register >= DIAMOND_REGISTER_COUNT) {
         fail(compiler, compiler->previous.span, "program needs too many registers");
         return 0;
     }
-    const uint8_t reg=(uint8_t)compiler->next_register++;
+    const uint16_t reg=(uint16_t)compiler->next_register++;
     compiler->known_types[reg]=TYPE_UNKNOWN;
     compiler->known_type_sets[reg]=-1;
     return reg;
@@ -414,7 +433,7 @@ static bool type_set_contains_variable(const Compiler *compiler,uint8_t set_inde
     return false;
 }
 
-static void emit_type_check(Compiler *compiler, uint8_t reg, uint8_t set_index,
+static void emit_type_check(Compiler *compiler, uint16_t reg, uint8_t set_index,
                             DiamondSpan span) {
     if(type_set_contains_variable(compiler,set_index)) {
         emit_instruction(compiler,DIAMOND_OP_CHECK_TYPE,reg,set_index,0,2);
@@ -505,14 +524,21 @@ static uint8_t add_name_string(Compiler *compiler, DiamondSpan span) {
     return (uint8_t)compiler->function->string_count++;
 }
 
+/* Hand-rolled rather than routed through emit_instruction: the jump-target
+ * placeholder deliberately stays exactly 2 raw bytes (matching
+ * patch_jump's own direct code[]-array writes below), independent of
+ * emit_instruction's own operand width -- these two placeholder bytes are
+ * never "an operand" from emit_instruction's point of view, just reserved
+ * space patched in later once the jump's real destination is known. */
 static size_t emit_jump(Compiler *compiler, DiamondOpCode opcode,
-                        uint8_t condition) {
+                        uint16_t condition) {
     const bool conditional=opcode==DIAMOND_OP_JUMP_IF_FALSE ||
                            opcode==DIAMOND_OP_JUMP_IF_TRUE;
-    const size_t operand = compiler->function->code_count +
-        (conditional ? 2 : 1);
-    emit_instruction(compiler, opcode, condition, 0, 0,
-                     conditional ? 3 : 2);
+    emit_opcode(compiler, opcode);
+    if (conditional) emit_register(compiler, condition);
+    const size_t operand = compiler->function->code_count;
+    emit_byte(compiler, 0);
+    emit_byte(compiler, 0);
     return operand;
 }
 
@@ -530,8 +556,9 @@ static void emit_absolute_jump(Compiler *compiler, size_t target) {
         fail(compiler, compiler->previous.span, "jump target is too distant");
         return;
     }
-    emit_instruction(compiler, DIAMOND_OP_JUMP, (uint8_t)(target >> 8),
-                     (uint8_t)(target & UINT8_MAX), 0, 2);
+    emit_opcode(compiler, DIAMOND_OP_JUMP);
+    emit_byte(compiler, (uint8_t)(target >> 8));
+    emit_byte(compiler, (uint8_t)(target & UINT8_MAX));
 }
 
 static bool spans_equal(const Compiler *compiler, DiamondSpan left,
@@ -557,12 +584,12 @@ static int find_local(const Compiler *compiler, DiamondSpan name) {
     return -1;
 }
 
-static uint8_t define_local(Compiler *compiler, DiamondSpan name) {
+static uint16_t define_local(Compiler *compiler, DiamondSpan name) {
     if (compiler->local_count == DIAMOND_MAX_LOCALS) {
         fail(compiler, name, "too many local variables");
         return 0;
     }
-    const uint8_t reg = allocate_register(compiler);
+    const uint16_t reg = allocate_register(compiler);
     compiler->locals[compiler->local_count++] = (Local){.name = name, .reg = reg};
     return reg;
 }
@@ -595,9 +622,9 @@ static Precedence token_precedence(DiamondTokenKind kind) {
     }
 }
 
-static uint8_t parse_precedence(Compiler *compiler, Precedence precedence);
+static uint16_t parse_precedence(Compiler *compiler, Precedence precedence);
 
-static uint8_t parse_integer(Compiler *compiler) {
+static uint16_t parse_integer(Compiler *compiler) {
     const DiamondSpan span = compiler->previous.span;
     int64_t value = 0;
     for (size_t index = 0; index < span.length; index++) {
@@ -609,14 +636,14 @@ static uint8_t parse_integer(Compiler *compiler) {
         }
         value = value * 10 + digit;
     }
-    const uint8_t destination = allocate_register(compiler);
+    const uint16_t destination = allocate_register(compiler);
     const uint8_t constant = add_constant(compiler, DIAMOND_INT(value));
     emit_instruction(compiler, DIAMOND_OP_CONSTANT, destination, constant, 0, 2);
     compiler->known_types[destination]=DIAMOND_TYPE_INT;
     return destination;
 }
 
-static uint8_t parse_float(Compiler *compiler) {
+static uint16_t parse_float(Compiler *compiler) {
     const DiamondSpan span = compiler->previous.span;
     char buffer[80];
     size_t length = 0;
@@ -638,17 +665,17 @@ static uint8_t parse_float(Compiler *compiler) {
         fail(compiler, span, "float literal is too large");
         return 0;
     }
-    const uint8_t destination = allocate_register(compiler);
+    const uint16_t destination = allocate_register(compiler);
     const uint8_t constant = add_constant(compiler, DIAMOND_FLOAT(value));
     emit_instruction(compiler, DIAMOND_OP_CONSTANT, destination, constant, 0, 2);
     compiler->known_types[destination]=DIAMOND_TYPE_FLOAT;
     return destination;
 }
 
-static uint8_t parse_string(Compiler *compiler) {
+static uint16_t parse_string(Compiler *compiler) {
     const DiamondSpan span=compiler->previous.span;
     const size_t end=span.start+span.length-1;
-    size_t piece=span.start+1;uint8_t result=UINT8_MAX;
+    size_t piece=span.start+1;uint16_t result=UINT8_MAX;
     while(piece<end&&!compiler->failed) {
         size_t index=piece;
         while(index+1<end) {
@@ -657,12 +684,12 @@ static uint8_t parse_string(Compiler *compiler) {
             index++;
         }
         if(index+1>=end)index=end;
-        const uint8_t literal_register=allocate_register(compiler);
+        const uint16_t literal_register=allocate_register(compiler);
         const uint8_t literal=add_string_range(compiler,piece,index-piece,span);
         emit_instruction(compiler,DIAMOND_OP_STRING,literal_register,literal,0,2);
         if(result==UINT8_MAX)result=literal_register;
         else {
-            const uint8_t joined=allocate_register(compiler);
+            const uint16_t joined=allocate_register(compiler);
             emit_instruction(compiler,DIAMOND_OP_ADD,joined,result,literal_register,3);
             result=joined;
         }
@@ -675,15 +702,15 @@ static uint8_t parse_string(Compiler *compiler) {
             .token_line=span.line,.token_column=span.column+(index-span.start)+2};
         compiler->lexer=embedded;
         compiler->current=diamond_lexer_next(&compiler->lexer);
-        const uint8_t value=parse_expression(compiler);
+        const uint16_t value=parse_expression(compiler);
         if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_BRACE)
             fail(compiler,compiler->current.span,"expected '}' after interpolation");
         const size_t close=compiler->current.span.start;
         compiler->lexer=outer_lexer;compiler->current=outer_current;
         compiler->previous=outer_previous;
-        const uint8_t converted=allocate_register(compiler);
+        const uint16_t converted=allocate_register(compiler);
         emit_instruction(compiler,DIAMOND_OP_TO_STRING,converted,value,0,2);
-        const uint8_t joined=allocate_register(compiler);
+        const uint16_t joined=allocate_register(compiler);
         emit_instruction(compiler,DIAMOND_OP_ADD,joined,result,converted,3);
         result=joined;piece=close+1;
     }
@@ -695,19 +722,19 @@ static uint8_t parse_string(Compiler *compiler) {
     compiler->known_types[result]=DIAMOND_TYPE_STRING;return result;
 }
 
-static uint8_t parse_symbol(Compiler *compiler) {
+static uint16_t parse_symbol(Compiler *compiler) {
     const DiamondSpan span=compiler->previous.span;
     const DiamondSpan name_span={.start=span.start+1,.length=span.length-1,
         .line=span.line,.column=span.column+1};
-    const uint8_t destination=allocate_register(compiler);
+    const uint16_t destination=allocate_register(compiler);
     const uint8_t name=add_name_string(compiler,name_span);
     emit_instruction(compiler,DIAMOND_OP_SYMBOL,destination,name,0,2);
     compiler->known_types[destination]=DIAMOND_TYPE_SYMBOL;
     return destination;
 }
 
-static uint8_t parse_literal(Compiler *compiler) {
-    const uint8_t destination = allocate_register(compiler);
+static uint16_t parse_literal(Compiler *compiler) {
+    const uint16_t destination = allocate_register(compiler);
     if (compiler->previous.kind == DIAMOND_TOKEN_NIL) {
         /* No NIL opcode needed: run_chunk already zero-inits every
          * register in [0, register_count), and this destination is a
@@ -721,7 +748,7 @@ static uint8_t parse_literal(Compiler *compiler) {
     return destination;
 }
 
-static uint8_t parse_identifier(Compiler *compiler) {
+static uint16_t parse_identifier(Compiler *compiler) {
     const int local = find_local(compiler, compiler->previous.span);
     if (local < 0) {
         for(size_t i=compiler->enclosing_local_count;i>0;i--) {
@@ -735,7 +762,7 @@ static uint8_t parse_identifier(Compiler *compiler) {
                 if(capture==16){fail(compiler,compiler->previous.span,"too many captured variables");return 0;}
                 compiler->capture_registers[compiler->capture_count++]=compiler->enclosing_locals[i-1].reg;
             }
-            const uint8_t destination=allocate_register(compiler);
+            const uint16_t destination=allocate_register(compiler);
             emit_instruction(compiler,DIAMOND_OP_GET_CAPTURE,destination,(uint8_t)capture,0,2);
             return destination;
         }
@@ -756,9 +783,9 @@ static uint8_t parse_identifier(Compiler *compiler) {
          * function's own nested def by bare name. */
         const int function_index = find_function(compiler, compiler->previous.span);
         if (function_index >= 0) {
-            const uint8_t destination = allocate_register(compiler);
+            const uint16_t destination = allocate_register(compiler);
             emit_opcode(compiler, DIAMOND_OP_CLOSURE);
-            emit_byte(compiler, destination);
+            emit_register(compiler,destination);
             emit_function_index(compiler, (size_t)function_index);
             emit_byte(compiler, 0);
             return destination;
@@ -767,7 +794,7 @@ static uint8_t parse_identifier(Compiler *compiler) {
     }
     if(!compiler->locals[(size_t)local].captured)
         return compiler->locals[(size_t)local].reg;
-    const uint8_t destination=allocate_register(compiler);
+    const uint16_t destination=allocate_register(compiler);
     emit_instruction(compiler,DIAMOND_OP_GET_CELL,destination,
                      compiler->locals[(size_t)local].reg,0,2);
     return destination;
@@ -1178,10 +1205,10 @@ static uint8_t module_field_name(Compiler *compiler,DiamondSpan name) {
  * all; `@cb()` failed to parse outright ("expected newline after
  * expression"), forcing an extra `cb = @cb; cb()` local-binding step for
  * a stored-callback-field pattern that's otherwise completely ordinary. */
-static uint8_t parse_closure_call_arguments(Compiler *compiler, uint8_t callable) {
+static uint16_t parse_closure_call_arguments(Compiler *compiler, uint16_t callable) {
     advance_token(compiler);
     skip_newlines(compiler);
-    uint8_t arguments[16]; size_t argument_count=0;
+    uint16_t arguments[16]; size_t argument_count=0;
     while(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN && !compiler->failed) {
         if(argument_count==16){fail(compiler,compiler->current.span,"too many call arguments");return 0;}
         arguments[argument_count++]=parse_expression(compiler);
@@ -1192,21 +1219,21 @@ static uint8_t parse_closure_call_arguments(Compiler *compiler, uint8_t callable
     }
     if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN){fail(compiler,compiler->current.span,"expected ')' after arguments");return 0;}
     advance_token(compiler);
-    const uint8_t base=allocate_register(compiler);
+    const uint16_t base=allocate_register(compiler);
     for(size_t i=1;i<argument_count;i++)(void)allocate_register(compiler);
-    for(size_t i=0;i<argument_count;i++)emit_instruction(compiler,DIAMOND_OP_MOVE,(uint8_t)(base+i),arguments[i],0,2);
-    const uint8_t destination=allocate_register(compiler);
-    emit_opcode(compiler,DIAMOND_OP_CALL_CLOSURE);emit_byte(compiler,destination);
-    emit_byte(compiler,callable);emit_byte(compiler,base);emit_byte(compiler,(uint8_t)argument_count);
+    for(size_t i=0;i<argument_count;i++)emit_instruction(compiler,DIAMOND_OP_MOVE,(uint16_t)(base+i),arguments[i],0,2);
+    const uint16_t destination=allocate_register(compiler);
+    emit_opcode(compiler,DIAMOND_OP_CALL_CLOSURE);emit_register(compiler,destination);
+    emit_register(compiler,callable);emit_register(compiler,base);emit_byte(compiler,(uint8_t)argument_count);
     return destination;
 }
 
-static uint8_t parse_call(Compiler *compiler, DiamondSpan name) {
+static uint16_t parse_call(Compiler *compiler, DiamondSpan name) {
     const int callable_local=find_local(compiler,name);
     if(callable_local>=0&&compiler->current.kind==DIAMOND_TOKEN_LEFT_PAREN) {
-        uint8_t callable=compiler->locals[(size_t)callable_local].reg;
+        uint16_t callable=compiler->locals[(size_t)callable_local].reg;
         if(compiler->locals[(size_t)callable_local].captured) {
-            const uint8_t loaded=allocate_register(compiler);
+            const uint16_t loaded=allocate_register(compiler);
             emit_instruction(compiler,DIAMOND_OP_GET_CELL,loaded,callable,0,2);
             callable=loaded;
         }
@@ -1257,7 +1284,7 @@ static uint8_t parse_call(Compiler *compiler, DiamondSpan name) {
      * appended, so a keyword can fill any parameter regardless of the order
      * it's written at the call site. Positional arguments still fill slots
      * left-to-right in declaration order. */
-    uint8_t slot_registers[16];
+    uint16_t slot_registers[16];
     bool slot_filled[16]={};
     size_t next_positional_slot=0;
     bool seen_keyword=false;
@@ -1330,20 +1357,20 @@ static uint8_t parse_call(Compiler *compiler, DiamondSpan name) {
         return 0;
     }
 
-    const uint8_t argument_base = allocate_register(compiler);
+    const uint16_t argument_base = allocate_register(compiler);
     for (size_t index = 1; index < argument_count; index++) {
         (void)allocate_register(compiler);
     }
     for (size_t index = 0; index < argument_count; index++) {
         emit_instruction(compiler, DIAMOND_OP_MOVE,
-                         (uint8_t)(argument_base + index), slot_registers[index], 0, 2);
+                         (uint16_t)(argument_base + index), slot_registers[index], 0, 2);
     }
-    const uint8_t destination = allocate_register(compiler);
+    const uint16_t destination = allocate_register(compiler);
     emit_opcode(compiler,type_argument_count==0?
         DIAMOND_OP_CALL:DIAMOND_OP_CALL_TYPED);
-    emit_byte(compiler, destination);
+    emit_register(compiler,destination);
     emit_function_index(compiler, (size_t)function_index);
-    emit_byte(compiler, argument_base);
+    emit_register(compiler,argument_base);
     emit_byte(compiler, (uint8_t)argument_count);
     if(type_argument_count>0) {
         emit_byte(compiler,(uint8_t)type_argument_count);
@@ -1353,7 +1380,7 @@ static uint8_t parse_call(Compiler *compiler, DiamondSpan name) {
     return destination;
 }
 
-static uint8_t parse_singleton_call(Compiler *compiler,
+static uint16_t parse_singleton_call(Compiler *compiler,
                                     const DiamondMethod *method,
                                     DiamondSpan namespace_name) {
     if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER) {
@@ -1397,7 +1424,7 @@ static uint8_t parse_singleton_call(Compiler *compiler,
     }
     advance_token(compiler);
     skip_newlines(compiler);
-    uint8_t arguments[16];size_t argument_count=0;
+    uint16_t arguments[16];size_t argument_count=0;
     while(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN&&!compiler->failed) {
         if(argument_count==16) {
             fail(compiler,compiler->current.span,"too many call arguments");return 0;
@@ -1416,20 +1443,20 @@ static uint8_t parse_singleton_call(Compiler *compiler,
         fail(compiler,name,"wrong number of arguments");return 0;
     }
     const size_t call_count=argument_count+(method->needs_receiver?1:0);
-    const uint8_t base=allocate_register(compiler);
+    const uint16_t base=allocate_register(compiler);
     for(size_t index=1;index<call_count;index++)(void)allocate_register(compiler);
     /* No NIL for `base` when needs_receiver: sole writer, already
      * zero-inited by run_chunk's [0, register_count) init. */
     for(size_t index=0;index<argument_count;index++)
         emit_instruction(compiler,DIAMOND_OP_MOVE,
-                         (uint8_t)(base+index+(method->needs_receiver?1:0)),
+                         (uint16_t)(base+index+(method->needs_receiver?1:0)),
                          arguments[index],0,2);
-    const uint8_t destination=allocate_register(compiler);
+    const uint16_t destination=allocate_register(compiler);
     emit_opcode(compiler,type_argument_count==0?DIAMOND_OP_CALL:
                 DIAMOND_OP_CALL_TYPED);
-    emit_byte(compiler,destination);
+    emit_register(compiler,destination);
     emit_function_index(compiler,method->function_index);
-    emit_byte(compiler,base);emit_byte(compiler,(uint8_t)call_count);
+    emit_register(compiler,base);emit_byte(compiler,(uint8_t)call_count);
     if(type_argument_count>0) {
         emit_byte(compiler,(uint8_t)type_argument_count);
         for(size_t index=0;index<type_argument_count;index++)
@@ -1448,7 +1475,7 @@ static bool singleton_call_name_equals(const Compiler *compiler,
     return memcmp(candidate,compiler->source+name.start,name.length)==0;
 }
 
-static uint8_t parse_redefine_method_call(Compiler *compiler, int class_index) {
+static uint16_t parse_redefine_method_call(Compiler *compiler, int class_index) {
     advance_token(compiler); /* consume 'redefine_method' */
     if (compiler->current.kind != DIAMOND_TOKEN_LEFT_PAREN) {
         fail(compiler, compiler->current.span, "expected '(' after 'redefine_method'");
@@ -1456,7 +1483,7 @@ static uint8_t parse_redefine_method_call(Compiler *compiler, int class_index) {
     }
     advance_token(compiler);
     skip_newlines(compiler);
-    const uint8_t name_register = parse_expression(compiler);
+    const uint16_t name_register = parse_expression(compiler);
     skip_newlines(compiler);
     if (compiler->current.kind != DIAMOND_TOKEN_COMMA) {
         fail(compiler, compiler->current.span, "expected ',' after redefine_method name");
@@ -1464,24 +1491,24 @@ static uint8_t parse_redefine_method_call(Compiler *compiler, int class_index) {
     }
     advance_token(compiler);
     skip_newlines(compiler);
-    const uint8_t callable_register = parse_expression(compiler);
+    const uint16_t callable_register = parse_expression(compiler);
     skip_newlines(compiler);
     if (compiler->current.kind != DIAMOND_TOKEN_RIGHT_PAREN) {
         fail(compiler, compiler->current.span, "expected ')' after redefine_method arguments");
         return 0;
     }
     advance_token(compiler);
-    const uint8_t dest = allocate_register(compiler);
+    const uint16_t dest = allocate_register(compiler);
     emit_opcode(compiler, DIAMOND_OP_REDEFINE_METHOD);
-    emit_byte(compiler, dest);
+    emit_register(compiler,dest);
     emit_byte(compiler, (uint8_t)class_index);
-    emit_byte(compiler, name_register);
-    emit_byte(compiler, callable_register);
+    emit_register(compiler,name_register);
+    emit_register(compiler,callable_register);
     compiler->known_types[dest] = DIAMOND_TYPE_NIL;
     return dest;
 }
 
-static uint8_t parse_fiber_new_call(Compiler *compiler) {
+static uint16_t parse_fiber_new_call(Compiler *compiler) {
     advance_token(compiler); /* consume '.' */
     if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER||
        !name_equals(compiler,"new",compiler->current.span,false)) {
@@ -1495,17 +1522,17 @@ static uint8_t parse_fiber_new_call(Compiler *compiler) {
     }
     advance_token(compiler);
     skip_newlines(compiler);
-    const uint8_t callable_register=parse_expression(compiler);
+    const uint16_t callable_register=parse_expression(compiler);
     skip_newlines(compiler);
     if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
         fail(compiler,compiler->current.span,"expected ')' after Fiber.new argument");
         return 0;
     }
     advance_token(compiler);
-    const uint8_t dest=allocate_register(compiler);
+    const uint16_t dest=allocate_register(compiler);
     emit_opcode(compiler,DIAMOND_OP_FIBER_NEW);
-    emit_byte(compiler,dest);
-    emit_byte(compiler,callable_register);
+    emit_register(compiler,dest);
+    emit_register(compiler,callable_register);
     return dest;
 }
 
@@ -1517,7 +1544,7 @@ static uint8_t parse_fiber_new_call(Compiler *compiler) {
  * parse_closure_call_arguments's own shape (base register + consecutive
  * MOVEs) since the runtime call convention is the same; only the trailing
  * opcode differs (THREAD_NEW, not CALL_CLOSURE). See docs/threads.md. */
-static uint8_t parse_thread_new_call(Compiler *compiler) {
+static uint16_t parse_thread_new_call(Compiler *compiler) {
     advance_token(compiler); /* consume '.' */
     if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER||
        !name_equals(compiler,"new",compiler->current.span,false)) {
@@ -1531,9 +1558,9 @@ static uint8_t parse_thread_new_call(Compiler *compiler) {
     }
     advance_token(compiler);
     skip_newlines(compiler);
-    const uint8_t callable_register=parse_expression(compiler);
+    const uint16_t callable_register=parse_expression(compiler);
     skip_newlines(compiler);
-    uint8_t arguments[16]; size_t argument_count=0;
+    uint16_t arguments[16]; size_t argument_count=0;
     while(compiler->current.kind==DIAMOND_TOKEN_COMMA) {
         advance_token(compiler);
         skip_newlines(compiler);
@@ -1549,18 +1576,18 @@ static uint8_t parse_thread_new_call(Compiler *compiler) {
         return 0;
     }
     advance_token(compiler);
-    const uint8_t base=allocate_register(compiler);
+    const uint16_t base=allocate_register(compiler);
     for(size_t i=1;i<argument_count;i++)(void)allocate_register(compiler);
     for(size_t i=0;i<argument_count;i++)
-        emit_instruction(compiler,DIAMOND_OP_MOVE,(uint8_t)(base+i),arguments[i],0,2);
-    const uint8_t dest=allocate_register(compiler);
+        emit_instruction(compiler,DIAMOND_OP_MOVE,(uint16_t)(base+i),arguments[i],0,2);
+    const uint16_t dest=allocate_register(compiler);
     emit_opcode(compiler,DIAMOND_OP_THREAD_NEW);
-    emit_byte(compiler,dest);emit_byte(compiler,callable_register);
-    emit_byte(compiler,base);emit_byte(compiler,(uint8_t)argument_count);
+    emit_register(compiler,dest);emit_register(compiler,callable_register);
+    emit_register(compiler,base);emit_byte(compiler,(uint8_t)argument_count);
     return dest;
 }
 
-static uint8_t parse_file_open_call(Compiler *compiler) {
+static uint16_t parse_file_open_call(Compiler *compiler) {
     advance_token(compiler); /* consume '.' */
     if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER||
        !name_equals(compiler,"open",compiler->current.span,false)) {
@@ -1574,7 +1601,7 @@ static uint8_t parse_file_open_call(Compiler *compiler) {
     }
     advance_token(compiler);
     skip_newlines(compiler);
-    const uint8_t path_register=parse_expression(compiler);
+    const uint16_t path_register=parse_expression(compiler);
     skip_newlines(compiler);
     if(compiler->current.kind!=DIAMOND_TOKEN_COMMA) {
         fail(compiler,compiler->current.span,"expected ',' after File.open path");
@@ -1582,22 +1609,22 @@ static uint8_t parse_file_open_call(Compiler *compiler) {
     }
     advance_token(compiler);
     skip_newlines(compiler);
-    const uint8_t mode_register=parse_expression(compiler);
+    const uint16_t mode_register=parse_expression(compiler);
     skip_newlines(compiler);
     if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
         fail(compiler,compiler->current.span,"expected ')' after File.open arguments");
         return 0;
     }
     advance_token(compiler);
-    const uint8_t dest=allocate_register(compiler);
+    const uint16_t dest=allocate_register(compiler);
     emit_opcode(compiler,DIAMOND_OP_FILE_OPEN);
-    emit_byte(compiler,dest);
-    emit_byte(compiler,path_register);
-    emit_byte(compiler,mode_register);
+    emit_register(compiler,dest);
+    emit_register(compiler,path_register);
+    emit_register(compiler,mode_register);
     return dest;
 }
 
-static uint8_t parse_regexp_new_call(Compiler *compiler) {
+static uint16_t parse_regexp_new_call(Compiler *compiler) {
     advance_token(compiler); /* consume '.' */
     if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER||
        !name_equals(compiler,"new",compiler->current.span,false)) {
@@ -1611,13 +1638,13 @@ static uint8_t parse_regexp_new_call(Compiler *compiler) {
     }
     advance_token(compiler);
     skip_newlines(compiler);
-    const uint8_t pattern_register=parse_expression(compiler);
+    const uint16_t pattern_register=parse_expression(compiler);
     skip_newlines(compiler);
     /* options is optional -- Regexp.new(pattern) is the common case,
      * defaulting to a compile-time 0 constant (REGINOLD_OPTION_NONE)
      * rather than requiring every call site to spell it out, unlike
      * File.open's two always-required arguments. */
-    uint8_t options_register;
+    uint16_t options_register;
     if(compiler->current.kind==DIAMOND_TOKEN_COMMA) {
         advance_token(compiler);
         skip_newlines(compiler);
@@ -1633,11 +1660,11 @@ static uint8_t parse_regexp_new_call(Compiler *compiler) {
         return 0;
     }
     advance_token(compiler);
-    const uint8_t dest=allocate_register(compiler);
+    const uint16_t dest=allocate_register(compiler);
     emit_opcode(compiler,DIAMOND_OP_REGEXP_NEW);
-    emit_byte(compiler,dest);
-    emit_byte(compiler,pattern_register);
-    emit_byte(compiler,options_register);
+    emit_register(compiler,dest);
+    emit_register(compiler,pattern_register);
+    emit_register(compiler,options_register);
     return dest;
 }
 
@@ -1648,7 +1675,7 @@ static uint8_t parse_regexp_new_call(Compiler *compiler) {
  * like any other native-kind receiver (Fiber/File/Regexp), needing no
  * compiler changes at all. See docs/roadmap.md's self-hosting Phase 1
  * entry. */
-static uint8_t parse_program_builder_new_call(Compiler *compiler) {
+static uint16_t parse_program_builder_new_call(Compiler *compiler) {
     advance_token(compiler); /* consume '.' */
     if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER||
        !name_equals(compiler,"new",compiler->current.span,false)) {
@@ -1667,13 +1694,13 @@ static uint8_t parse_program_builder_new_call(Compiler *compiler) {
         return 0;
     }
     advance_token(compiler);
-    const uint8_t dest=allocate_register(compiler);
+    const uint16_t dest=allocate_register(compiler);
     emit_opcode(compiler,DIAMOND_OP_PROGRAM_BUILDER_NEW);
-    emit_byte(compiler,dest);
+    emit_register(compiler,dest);
     return dest;
 }
 
-static uint8_t parse_tcp_connect_call(Compiler *compiler) {
+static uint16_t parse_tcp_connect_call(Compiler *compiler) {
     advance_token(compiler); /* consume '.' */
     if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER||
        !name_equals(compiler,"connect",compiler->current.span,false)) {
@@ -1687,7 +1714,7 @@ static uint8_t parse_tcp_connect_call(Compiler *compiler) {
     }
     advance_token(compiler);
     skip_newlines(compiler);
-    const uint8_t host_register=parse_expression(compiler);
+    const uint16_t host_register=parse_expression(compiler);
     skip_newlines(compiler);
     if(compiler->current.kind!=DIAMOND_TOKEN_COMMA) {
         fail(compiler,compiler->current.span,"expected ',' after TCPSocket.connect host");
@@ -1695,18 +1722,18 @@ static uint8_t parse_tcp_connect_call(Compiler *compiler) {
     }
     advance_token(compiler);
     skip_newlines(compiler);
-    const uint8_t port_register=parse_expression(compiler);
+    const uint16_t port_register=parse_expression(compiler);
     skip_newlines(compiler);
     if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
         fail(compiler,compiler->current.span,"expected ')' after TCPSocket.connect arguments");
         return 0;
     }
     advance_token(compiler);
-    const uint8_t dest=allocate_register(compiler);
+    const uint16_t dest=allocate_register(compiler);
     emit_opcode(compiler,DIAMOND_OP_TCP_CONNECT);
-    emit_byte(compiler,dest);
-    emit_byte(compiler,host_register);
-    emit_byte(compiler,port_register);
+    emit_register(compiler,dest);
+    emit_register(compiler,host_register);
+    emit_register(compiler,port_register);
     return dest;
 }
 
@@ -1721,7 +1748,7 @@ static uint8_t parse_tcp_connect_call(Compiler *compiler) {
  * user code) keeps today's exclusive-port-ownership behavior unless it
  * explicitly opts in. See docs/io.md and packages/gremlin's own
  * gremlin_worker for why a caller would want this. */
-static uint8_t parse_tcp_listen_call(Compiler *compiler) {
+static uint16_t parse_tcp_listen_call(Compiler *compiler) {
     advance_token(compiler); /* consume '.' */
     const bool nonblocking=compiler->current.kind==DIAMOND_TOKEN_IDENTIFIER&&
         name_equals(compiler,"listen_nonblocking",compiler->current.span,false);
@@ -1738,9 +1765,9 @@ static uint8_t parse_tcp_listen_call(Compiler *compiler) {
     }
     advance_token(compiler);
     skip_newlines(compiler);
-    const uint8_t port_register=parse_expression(compiler);
+    const uint16_t port_register=parse_expression(compiler);
     skip_newlines(compiler);
-    uint8_t reuse_port_register;
+    uint16_t reuse_port_register;
     if(compiler->current.kind==DIAMOND_TOKEN_COMMA) {
         advance_token(compiler);
         skip_newlines(compiler);
@@ -1768,15 +1795,15 @@ static uint8_t parse_tcp_listen_call(Compiler *compiler) {
         return 0;
     }
     advance_token(compiler);
-    const uint8_t dest=allocate_register(compiler);
+    const uint16_t dest=allocate_register(compiler);
     emit_opcode(compiler,nonblocking?DIAMOND_OP_TCP_LISTEN_NONBLOCK:DIAMOND_OP_TCP_LISTEN);
-    emit_byte(compiler,dest);
-    emit_byte(compiler,port_register);
-    emit_byte(compiler,reuse_port_register);
+    emit_register(compiler,dest);
+    emit_register(compiler,port_register);
+    emit_register(compiler,reuse_port_register);
     return dest;
 }
 
-static uint8_t parse_tls_connect_call(Compiler *compiler) {
+static uint16_t parse_tls_connect_call(Compiler *compiler) {
     advance_token(compiler); /* consume '.' */
     if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER||
        !name_equals(compiler,"connect",compiler->current.span,false)) {
@@ -1790,7 +1817,7 @@ static uint8_t parse_tls_connect_call(Compiler *compiler) {
     }
     advance_token(compiler);
     skip_newlines(compiler);
-    const uint8_t host_register=parse_expression(compiler);
+    const uint16_t host_register=parse_expression(compiler);
     skip_newlines(compiler);
     if(compiler->current.kind!=DIAMOND_TOKEN_COMMA) {
         fail(compiler,compiler->current.span,"expected ',' after TLSSocket.connect host");
@@ -1798,22 +1825,22 @@ static uint8_t parse_tls_connect_call(Compiler *compiler) {
     }
     advance_token(compiler);
     skip_newlines(compiler);
-    const uint8_t port_register=parse_expression(compiler);
+    const uint16_t port_register=parse_expression(compiler);
     skip_newlines(compiler);
     if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
         fail(compiler,compiler->current.span,"expected ')' after TLSSocket.connect arguments");
         return 0;
     }
     advance_token(compiler);
-    const uint8_t dest=allocate_register(compiler);
+    const uint16_t dest=allocate_register(compiler);
     emit_opcode(compiler,DIAMOND_OP_TLS_CONNECT);
-    emit_byte(compiler,dest);
-    emit_byte(compiler,host_register);
-    emit_byte(compiler,port_register);
+    emit_register(compiler,dest);
+    emit_register(compiler,host_register);
+    emit_register(compiler,port_register);
     return dest;
 }
 
-static uint8_t parse_tls_listen_call(Compiler *compiler) {
+static uint16_t parse_tls_listen_call(Compiler *compiler) {
     advance_token(compiler); /* consume '.' */
     if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER||
        !name_equals(compiler,"listen",compiler->current.span,false)) {
@@ -1827,7 +1854,7 @@ static uint8_t parse_tls_listen_call(Compiler *compiler) {
     }
     advance_token(compiler);
     skip_newlines(compiler);
-    const uint8_t port_register=parse_expression(compiler);
+    const uint16_t port_register=parse_expression(compiler);
     skip_newlines(compiler);
     if(compiler->current.kind!=DIAMOND_TOKEN_COMMA) {
         fail(compiler,compiler->current.span,"expected ',' after TLSServer.listen port");
@@ -1835,7 +1862,7 @@ static uint8_t parse_tls_listen_call(Compiler *compiler) {
     }
     advance_token(compiler);
     skip_newlines(compiler);
-    const uint8_t cert_register=parse_expression(compiler);
+    const uint16_t cert_register=parse_expression(compiler);
     skip_newlines(compiler);
     if(compiler->current.kind!=DIAMOND_TOKEN_COMMA) {
         fail(compiler,compiler->current.span,
@@ -1844,23 +1871,23 @@ static uint8_t parse_tls_listen_call(Compiler *compiler) {
     }
     advance_token(compiler);
     skip_newlines(compiler);
-    const uint8_t key_register=parse_expression(compiler);
+    const uint16_t key_register=parse_expression(compiler);
     skip_newlines(compiler);
     if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
         fail(compiler,compiler->current.span,"expected ')' after TLSServer.listen arguments");
         return 0;
     }
     advance_token(compiler);
-    const uint8_t dest=allocate_register(compiler);
+    const uint16_t dest=allocate_register(compiler);
     emit_opcode(compiler,DIAMOND_OP_TLS_LISTEN);
-    emit_byte(compiler,dest);
-    emit_byte(compiler,port_register);
-    emit_byte(compiler,cert_register);
-    emit_byte(compiler,key_register);
+    emit_register(compiler,dest);
+    emit_register(compiler,port_register);
+    emit_register(compiler,cert_register);
+    emit_register(compiler,key_register);
     return dest;
 }
 
-static uint8_t parse_io_poll_call(Compiler *compiler) {
+static uint16_t parse_io_poll_call(Compiler *compiler) {
     advance_token(compiler); /* consume '.' */
     if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER||
        !name_equals(compiler,"poll",compiler->current.span,false)) {
@@ -1874,7 +1901,7 @@ static uint8_t parse_io_poll_call(Compiler *compiler) {
     }
     advance_token(compiler);
     skip_newlines(compiler);
-    const uint8_t readable_register=parse_expression(compiler);
+    const uint16_t readable_register=parse_expression(compiler);
     skip_newlines(compiler);
     if(compiler->current.kind!=DIAMOND_TOKEN_COMMA) {
         fail(compiler,compiler->current.span,"expected ',' after IO.poll readables");
@@ -1882,7 +1909,7 @@ static uint8_t parse_io_poll_call(Compiler *compiler) {
     }
     advance_token(compiler);
     skip_newlines(compiler);
-    const uint8_t writable_register=parse_expression(compiler);
+    const uint16_t writable_register=parse_expression(compiler);
     skip_newlines(compiler);
     if(compiler->current.kind!=DIAMOND_TOKEN_COMMA) {
         fail(compiler,compiler->current.span,"expected ',' after IO.poll writables");
@@ -1890,23 +1917,23 @@ static uint8_t parse_io_poll_call(Compiler *compiler) {
     }
     advance_token(compiler);
     skip_newlines(compiler);
-    const uint8_t timeout_register=parse_expression(compiler);
+    const uint16_t timeout_register=parse_expression(compiler);
     skip_newlines(compiler);
     if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
         fail(compiler,compiler->current.span,"expected ')' after IO.poll arguments");
         return 0;
     }
     advance_token(compiler);
-    const uint8_t dest=allocate_register(compiler);
+    const uint16_t dest=allocate_register(compiler);
     emit_opcode(compiler,DIAMOND_OP_IO_POLL);
-    emit_byte(compiler,dest);
-    emit_byte(compiler,readable_register);
-    emit_byte(compiler,writable_register);
-    emit_byte(compiler,timeout_register);
+    emit_register(compiler,dest);
+    emit_register(compiler,readable_register);
+    emit_register(compiler,writable_register);
+    emit_register(compiler,timeout_register);
     return dest;
 }
 
-static uint8_t parse_udp_socket_call(Compiler *compiler) {
+static uint16_t parse_udp_socket_call(Compiler *compiler) {
     advance_token(compiler); /* consume '.' */
     const bool is_bind=compiler->current.kind==DIAMOND_TOKEN_IDENTIFIER&&
         name_equals(compiler,"bind",compiler->current.span,false);
@@ -1924,7 +1951,7 @@ static uint8_t parse_udp_socket_call(Compiler *compiler) {
     }
     advance_token(compiler);
     skip_newlines(compiler);
-    uint8_t port_register=0;
+    uint16_t port_register=0;
     if(is_bind) {
         port_register=parse_expression(compiler);
         skip_newlines(compiler);
@@ -1936,14 +1963,14 @@ static uint8_t parse_udp_socket_call(Compiler *compiler) {
         return 0;
     }
     advance_token(compiler);
-    const uint8_t dest=allocate_register(compiler);
+    const uint16_t dest=allocate_register(compiler);
     emit_opcode(compiler,is_bind?DIAMOND_OP_UDP_BIND:DIAMOND_OP_UDP_OPEN);
-    emit_byte(compiler,dest);
-    if(is_bind)emit_byte(compiler,port_register);
+    emit_register(compiler,dest);
+    if(is_bind)emit_register(compiler,port_register);
     return dest;
 }
 
-static uint8_t parse_signal_trap_call(Compiler *compiler) {
+static uint16_t parse_signal_trap_call(Compiler *compiler) {
     advance_token(compiler); /* consume '.' */
     if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER||
        !name_equals(compiler,"trap",compiler->current.span,false)) {
@@ -1957,7 +1984,7 @@ static uint8_t parse_signal_trap_call(Compiler *compiler) {
     }
     advance_token(compiler);
     skip_newlines(compiler);
-    const uint8_t name_register=parse_expression(compiler);
+    const uint16_t name_register=parse_expression(compiler);
     skip_newlines(compiler);
     if(compiler->current.kind!=DIAMOND_TOKEN_COMMA) {
         fail(compiler,compiler->current.span,"expected ',' after Signal.trap name");
@@ -1965,116 +1992,116 @@ static uint8_t parse_signal_trap_call(Compiler *compiler) {
     }
     advance_token(compiler);
     skip_newlines(compiler);
-    const uint8_t handler_register=parse_expression(compiler);
+    const uint16_t handler_register=parse_expression(compiler);
     skip_newlines(compiler);
     if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
         fail(compiler,compiler->current.span,"expected ')' after Signal.trap arguments");
         return 0;
     }
     advance_token(compiler);
-    const uint8_t dest=allocate_register(compiler);
+    const uint16_t dest=allocate_register(compiler);
     emit_opcode(compiler,DIAMOND_OP_SIGNAL_TRAP);
-    emit_byte(compiler,dest);
-    emit_byte(compiler,name_register);
-    emit_byte(compiler,handler_register);
+    emit_register(compiler,dest);
+    emit_register(compiler,name_register);
+    emit_register(compiler,handler_register);
     return dest;
 }
 
-static uint8_t parse_chr_call(Compiler *compiler) {
+static uint16_t parse_chr_call(Compiler *compiler) {
     advance_token(compiler); /* consume '(' */
     skip_newlines(compiler);
-    const uint8_t source=parse_expression(compiler);
+    const uint16_t source=parse_expression(compiler);
     skip_newlines(compiler);
     if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
         fail(compiler,compiler->current.span,"expected ')' after arguments");
         return 0;
     }
     advance_token(compiler);
-    const uint8_t dest=allocate_register(compiler);
+    const uint16_t dest=allocate_register(compiler);
     emit_opcode(compiler,DIAMOND_OP_CHR);
-    emit_byte(compiler,dest);
-    emit_byte(compiler,source);
+    emit_register(compiler,dest);
+    emit_register(compiler,source);
     compiler->known_types[dest]=DIAMOND_TYPE_STRING;
     return dest;
 }
 
-static uint8_t parse_to_float_call(Compiler *compiler) {
+static uint16_t parse_to_float_call(Compiler *compiler) {
     advance_token(compiler); /* consume '(' */
     skip_newlines(compiler);
-    const uint8_t source = parse_expression(compiler);
+    const uint16_t source = parse_expression(compiler);
     skip_newlines(compiler);
     if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
         fail(compiler,compiler->current.span,"expected ')' after arguments");
         return 0;
     }
     advance_token(compiler);
-    const uint8_t dest=allocate_register(compiler);
+    const uint16_t dest=allocate_register(compiler);
     emit_opcode(compiler,DIAMOND_OP_TO_FLOAT);
-    emit_byte(compiler,dest);
-    emit_byte(compiler,source);
+    emit_register(compiler,dest);
+    emit_register(compiler,source);
     compiler->known_types[dest]=DIAMOND_TYPE_FLOAT;
     return dest;
 }
 
-static uint8_t parse_to_int_call(Compiler *compiler) {
+static uint16_t parse_to_int_call(Compiler *compiler) {
     advance_token(compiler); /* consume '(' */
     skip_newlines(compiler);
-    const uint8_t source = parse_expression(compiler);
+    const uint16_t source = parse_expression(compiler);
     skip_newlines(compiler);
     if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
         fail(compiler,compiler->current.span,"expected ')' after arguments");
         return 0;
     }
     advance_token(compiler);
-    const uint8_t dest=allocate_register(compiler);
+    const uint16_t dest=allocate_register(compiler);
     emit_opcode(compiler,DIAMOND_OP_TO_INT);
-    emit_byte(compiler,dest);
-    emit_byte(compiler,source);
+    emit_register(compiler,dest);
+    emit_register(compiler,source);
     compiler->known_types[dest]=DIAMOND_TYPE_INT;
     return dest;
 }
 
-static uint8_t parse_to_sym_call(Compiler *compiler) {
+static uint16_t parse_to_sym_call(Compiler *compiler) {
     advance_token(compiler); /* consume '(' */
     skip_newlines(compiler);
-    const uint8_t source = parse_expression(compiler);
+    const uint16_t source = parse_expression(compiler);
     skip_newlines(compiler);
     if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
         fail(compiler,compiler->current.span,"expected ')' after arguments");
         return 0;
     }
     advance_token(compiler);
-    const uint8_t dest=allocate_register(compiler);
+    const uint16_t dest=allocate_register(compiler);
     emit_opcode(compiler,DIAMOND_OP_TO_SYMBOL);
-    emit_byte(compiler,dest);
-    emit_byte(compiler,source);
+    emit_register(compiler,dest);
+    emit_register(compiler,source);
     compiler->known_types[dest]=DIAMOND_TYPE_SYMBOL;
     return dest;
 }
 
-static uint8_t parse_math_unary_call(Compiler *compiler, DiamondMathFunction id) {
+static uint16_t parse_math_unary_call(Compiler *compiler, DiamondMathFunction id) {
     advance_token(compiler); /* consume '(' */
     skip_newlines(compiler);
-    const uint8_t source = parse_expression(compiler);
+    const uint16_t source = parse_expression(compiler);
     skip_newlines(compiler);
     if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
         fail(compiler,compiler->current.span,"expected ')' after arguments");
         return 0;
     }
     advance_token(compiler);
-    const uint8_t dest=allocate_register(compiler);
+    const uint16_t dest=allocate_register(compiler);
     emit_opcode(compiler,DIAMOND_OP_MATH_UNARY);
-    emit_byte(compiler,dest);
-    emit_byte(compiler,source);
+    emit_register(compiler,dest);
+    emit_register(compiler,source);
     emit_byte(compiler,(uint8_t)id);
     compiler->known_types[dest]=DIAMOND_TYPE_FLOAT;
     return dest;
 }
 
-static uint8_t parse_math_binary_call(Compiler *compiler, DiamondMathFunction id) {
+static uint16_t parse_math_binary_call(Compiler *compiler, DiamondMathFunction id) {
     advance_token(compiler); /* consume '(' */
     skip_newlines(compiler);
-    const uint8_t left = parse_expression(compiler);
+    const uint16_t left = parse_expression(compiler);
     skip_newlines(compiler);
     if(compiler->current.kind!=DIAMOND_TOKEN_COMMA) {
         fail(compiler,compiler->current.span,"expected ',' between arguments");
@@ -2082,54 +2109,54 @@ static uint8_t parse_math_binary_call(Compiler *compiler, DiamondMathFunction id
     }
     advance_token(compiler);
     skip_newlines(compiler);
-    const uint8_t right = parse_expression(compiler);
+    const uint16_t right = parse_expression(compiler);
     skip_newlines(compiler);
     if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
         fail(compiler,compiler->current.span,"expected ')' after arguments");
         return 0;
     }
     advance_token(compiler);
-    const uint8_t dest=allocate_register(compiler);
+    const uint16_t dest=allocate_register(compiler);
     emit_opcode(compiler,DIAMOND_OP_MATH_BINARY);
-    emit_byte(compiler,dest);
-    emit_byte(compiler,left);
-    emit_byte(compiler,right);
+    emit_register(compiler,dest);
+    emit_register(compiler,left);
+    emit_register(compiler,right);
     emit_byte(compiler,(uint8_t)id);
     compiler->known_types[dest]=DIAMOND_TYPE_FLOAT;
     return dest;
 }
 
-static uint8_t parse_print_call(Compiler *compiler, bool newline) {
+static uint16_t parse_print_call(Compiler *compiler, bool newline) {
     advance_token(compiler); /* consume '(' */
-    const uint8_t source=parse_expression(compiler);
+    const uint16_t source=parse_expression(compiler);
     if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
         fail(compiler,compiler->current.span,"expected ')' after arguments");
         return 0;
     }
     advance_token(compiler);
-    const uint8_t dest=allocate_register(compiler);
+    const uint16_t dest=allocate_register(compiler);
     emit_opcode(compiler,DIAMOND_OP_PRINT);
-    emit_byte(compiler,dest);
-    emit_byte(compiler,source);
+    emit_register(compiler,dest);
+    emit_register(compiler,source);
     emit_byte(compiler,newline?1:0);
     compiler->known_types[dest]=DIAMOND_TYPE_NIL;
     return dest;
 }
 
-static uint8_t parse_gets_call(Compiler *compiler) {
+static uint16_t parse_gets_call(Compiler *compiler) {
     advance_token(compiler); /* consume '(' */
     if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
         fail(compiler,compiler->current.span,"expected ')' after arguments");
         return 0;
     }
     advance_token(compiler);
-    const uint8_t dest=allocate_register(compiler);
+    const uint16_t dest=allocate_register(compiler);
     emit_opcode(compiler,DIAMOND_OP_GETS);
-    emit_byte(compiler,dest);
+    emit_register(compiler,dest);
     return dest;
 }
 
-static uint8_t parse_name(Compiler *compiler) {
+static uint16_t parse_name(Compiler *compiler) {
     const DiamondSpan name = compiler->previous.span;
     int class_index=find_class(compiler,name);
     int module_index=find_module(compiler,name);
@@ -2157,7 +2184,7 @@ static uint8_t parse_name(Compiler *compiler) {
         module_index=find_module_name(compiler,qualified);
         const int constant=find_namespace_constant_name(compiler,qualified);
         if(constant>=0) {
-            const uint8_t destination=allocate_register(compiler);
+            const uint16_t destination=allocate_register(compiler);
             emit_instruction(compiler,DIAMOND_OP_GET_NAMESPACE_CONSTANT,
                 destination,(uint8_t)constant,0,2);
             return destination;
@@ -2185,7 +2212,7 @@ static uint8_t parse_name(Compiler *compiler) {
     }
     const int constant=find_namespace_constant(compiler,name);
     if(constant>=0&&find_local(compiler,name)<0) {
-        const uint8_t destination=allocate_register(compiler);
+        const uint16_t destination=allocate_register(compiler);
         emit_instruction(compiler,DIAMOND_OP_GET_NAMESPACE_CONSTANT,destination,
                          (uint8_t)constant,0,2);
         return destination;
@@ -2317,7 +2344,7 @@ static uint8_t parse_name(Compiler *compiler) {
         }
         advance_token(compiler);
         skip_newlines(compiler);
-        uint8_t args[16]; size_t count = 0;
+        uint16_t args[16]; size_t count = 0;
         while (compiler->current.kind != DIAMOND_TOKEN_RIGHT_PAREN && !compiler->failed) {
             if (count == 16) { fail(compiler, compiler->current.span, "too many arguments"); break; }
             args[count++] = parse_expression(compiler);
@@ -2331,13 +2358,13 @@ static uint8_t parse_name(Compiler *compiler) {
             fail(compiler, compiler->current.span, "expected ')' after arguments"); return 0;
         }
         advance_token(compiler);
-        const uint8_t base = allocate_register(compiler);
+        const uint16_t base = allocate_register(compiler);
         for (size_t i = 1; i < count; i++) (void)allocate_register(compiler);
         for (size_t i = 0; i < count; i++)
-            emit_instruction(compiler, DIAMOND_OP_MOVE, (uint8_t)(base+i), args[i], 0, 2);
-        const uint8_t dest = allocate_register(compiler);
-        emit_opcode(compiler, DIAMOND_OP_NEW); emit_byte(compiler, dest);
-        emit_byte(compiler, (uint8_t)class_index); emit_byte(compiler, base);
+            emit_instruction(compiler, DIAMOND_OP_MOVE, (uint16_t)(base+i), args[i], 0, 2);
+        const uint16_t dest = allocate_register(compiler);
+        emit_opcode(compiler, DIAMOND_OP_NEW); emit_register(compiler,dest);
+        emit_byte(compiler, (uint8_t)class_index); emit_register(compiler,base);
         emit_byte(compiler, (uint8_t)count);
         compiler->known_types[dest]=(uint8_t)(DIAMOND_TYPE_CLASS_BASE+class_index);
         return dest;
@@ -2350,7 +2377,7 @@ static uint8_t parse_name(Compiler *compiler) {
     return parse_identifier(compiler);
 }
 
-static uint8_t parse_invoke(Compiler *compiler, uint8_t receiver) {
+static uint16_t parse_invoke(Compiler *compiler, uint16_t receiver) {
     advance_token(compiler);
     if (compiler->current.kind != DIAMOND_TOKEN_IDENTIFIER) {
         fail(compiler, compiler->current.span, "expected method name after '.'"); return 0;
@@ -2389,7 +2416,7 @@ static uint8_t parse_invoke(Compiler *compiler, uint8_t receiver) {
     }
     advance_token(compiler);
     skip_newlines(compiler);
-    uint8_t args[16]; size_t count = 0;
+    uint16_t args[16]; size_t count = 0;
     while (compiler->current.kind != DIAMOND_TOKEN_RIGHT_PAREN && !compiler->failed) {
         if (count == 16) { fail(compiler, compiler->current.span, "too many arguments"); break; }
         args[count++] = parse_expression(compiler);
@@ -2403,11 +2430,11 @@ static uint8_t parse_invoke(Compiler *compiler, uint8_t receiver) {
         fail(compiler, compiler->current.span, "expected ')' after arguments"); return 0;
     }
     advance_token(compiler);
-    const uint8_t base = allocate_register(compiler);
+    const uint16_t base = allocate_register(compiler);
     for (size_t i=1;i<count;i++) (void)allocate_register(compiler);
     for (size_t i=0;i<count;i++) emit_instruction(compiler, DIAMOND_OP_MOVE,
-        (uint8_t)(base+i), args[i], 0, 2);
-    const uint8_t dest=allocate_register(compiler);
+        (uint16_t)(base+i), args[i], 0, 2);
+    const uint16_t dest=allocate_register(compiler);
     const uint8_t method=add_name_string(compiler,name);
     if(writer_name&&!compiler->failed) {
         DiamondStringConstant *string=&compiler->function->strings[method];
@@ -2419,8 +2446,8 @@ static uint8_t parse_invoke(Compiler *compiler, uint8_t receiver) {
         }
     }
     emit_opcode(compiler,type_argument_count==0?
-        DIAMOND_OP_INVOKE:DIAMOND_OP_INVOKE_TYPED);emit_byte(compiler,dest);
-    emit_byte(compiler,receiver); emit_byte(compiler,method); emit_byte(compiler,base);
+        DIAMOND_OP_INVOKE:DIAMOND_OP_INVOKE_TYPED);emit_register(compiler,dest);
+    emit_register(compiler,receiver); emit_byte(compiler,method); emit_register(compiler,base);
     emit_byte(compiler,(uint8_t)count);
     if(type_argument_count>0) {
         emit_byte(compiler,(uint8_t)type_argument_count);
@@ -2430,7 +2457,7 @@ static uint8_t parse_invoke(Compiler *compiler, uint8_t receiver) {
     return dest;
 }
 
-static uint8_t parse_super(Compiler *compiler) {
+static uint16_t parse_super(Compiler *compiler) {
     const DiamondSpan keyword = compiler->previous.span;
     if (!compiler->in_method || compiler->current_class < 0) {
         fail(compiler, keyword, "'super' used outside a method");
@@ -2448,7 +2475,7 @@ static uint8_t parse_super(Compiler *compiler) {
     }
     advance_token(compiler);
     skip_newlines(compiler);
-    uint8_t arguments[16];
+    uint16_t arguments[16];
     size_t count = 0;
     while (compiler->current.kind != DIAMOND_TOKEN_RIGHT_PAREN && !compiler->failed) {
         if (count == 16) {
@@ -2467,25 +2494,25 @@ static uint8_t parse_super(Compiler *compiler) {
         return 0;
     }
     advance_token(compiler);
-    const uint8_t base = allocate_register(compiler);
+    const uint16_t base = allocate_register(compiler);
     for (size_t index = 1; index < count; index++) (void)allocate_register(compiler);
     for (size_t index = 0; index < count; index++) {
-        emit_instruction(compiler, DIAMOND_OP_MOVE, (uint8_t)(base + index),
+        emit_instruction(compiler, DIAMOND_OP_MOVE, (uint16_t)(base + index),
                          arguments[index], 0, 2);
     }
-    const uint8_t destination = allocate_register(compiler);
+    const uint16_t destination = allocate_register(compiler);
     const uint8_t method = add_name_string(compiler, compiler->current_method);
     emit_opcode(compiler, DIAMOND_OP_SUPER);
-    emit_byte(compiler, destination);
+    emit_register(compiler,destination);
     emit_byte(compiler, (uint8_t)compiler->current_class);
     emit_byte(compiler, method);
-    emit_byte(compiler, base);
+    emit_register(compiler,base);
     emit_byte(compiler, (uint8_t)count);
     return destination;
 }
 
-static uint8_t parse_grouping(Compiler *compiler) {
-    const uint8_t result = parse_expression(compiler);
+static uint16_t parse_grouping(Compiler *compiler) {
+    const uint16_t result = parse_expression(compiler);
     if (compiler->current.kind != DIAMOND_TOKEN_RIGHT_PAREN) {
         fail(compiler, compiler->current.span, "expected ')' after expression");
         return result;
@@ -2494,8 +2521,8 @@ static uint8_t parse_grouping(Compiler *compiler) {
     return result;
 }
 
-static uint8_t parse_array(Compiler *compiler) {
-    uint8_t elements[32];
+static uint16_t parse_array(Compiler *compiler) {
+    uint16_t elements[32];
     size_t count=0;
     skip_newlines(compiler);
     if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_BRACKET) {
@@ -2517,18 +2544,18 @@ static uint8_t parse_array(Compiler *compiler) {
         return 0;
     }
     advance_token(compiler);
-    const uint8_t base=allocate_register(compiler);
+    const uint16_t base=allocate_register(compiler);
     for(size_t i=1;i<count;i++) (void)allocate_register(compiler);
     for(size_t i=0;i<count;i++) emit_instruction(compiler,DIAMOND_OP_MOVE,
-        (uint8_t)(base+i),elements[i],0,2);
-    const uint8_t destination=allocate_register(compiler);
+        (uint16_t)(base+i),elements[i],0,2);
+    const uint16_t destination=allocate_register(compiler);
     emit_instruction(compiler,DIAMOND_OP_ARRAY,destination,base,(uint8_t)count,3);
     compiler->known_types[destination]=DIAMOND_TYPE_ARRAY;
     return destination;
 }
 
-static uint8_t parse_hash(Compiler *compiler) {
-    uint8_t keys[16],values[16];
+static uint16_t parse_hash(Compiler *compiler) {
+    uint16_t keys[16],values[16];
     size_t count=0;
     skip_newlines(compiler);
     if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_BRACE) {
@@ -2557,13 +2584,13 @@ static uint8_t parse_hash(Compiler *compiler) {
         return 0;
     }
     advance_token(compiler);
-    const uint8_t base=allocate_register(compiler);
+    const uint16_t base=allocate_register(compiler);
     for(size_t i=1;i<count*2;i++) (void)allocate_register(compiler);
     for(size_t i=0;i<count;i++) {
-        emit_instruction(compiler,DIAMOND_OP_MOVE,(uint8_t)(base+i*2),keys[i],0,2);
-        emit_instruction(compiler,DIAMOND_OP_MOVE,(uint8_t)(base+i*2+1),values[i],0,2);
+        emit_instruction(compiler,DIAMOND_OP_MOVE,(uint16_t)(base+i*2),keys[i],0,2);
+        emit_instruction(compiler,DIAMOND_OP_MOVE,(uint16_t)(base+i*2+1),values[i],0,2);
     }
-    const uint8_t destination=allocate_register(compiler);
+    const uint16_t destination=allocate_register(compiler);
     emit_instruction(compiler,DIAMOND_OP_HASH,destination,base,(uint8_t)count,3);
     compiler->known_types[destination]=DIAMOND_TYPE_HASH;
     return destination;
@@ -2626,7 +2653,7 @@ static bool split_type_set(Compiler *compiler,uint8_t source_index,
     return true;
 }
 
-static void apply_type_set_fact(Compiler *compiler,uint8_t reg,int16_t set_index) {
+static void apply_type_set_fact(Compiler *compiler,uint16_t reg,int16_t set_index) {
     compiler->known_type_sets[reg]=set_index;
     const DiamondTypeSet *set=&compiler->function->type_sets[(size_t)set_index];
     compiler->known_types[reg]=set->count==1?set->members[0].id:TYPE_UNKNOWN;
@@ -2645,14 +2672,14 @@ static void append_narrowing_facts(NarrowingFact *destination,size_t *destinatio
         destination[(*destination_count)++]=source[index];
 }
 
-static uint8_t parse_index(Compiler *compiler,uint8_t receiver) {
+static uint16_t parse_index(Compiler *compiler,uint16_t receiver) {
     advance_token(compiler);
-    const uint8_t index=parse_expression(compiler);
+    const uint16_t index=parse_expression(compiler);
     if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_BRACKET) {
         fail(compiler,compiler->current.span,"expected ']' after index"); return 0;
     }
     advance_token(compiler);
-    const uint8_t destination=allocate_register(compiler);
+    const uint16_t destination=allocate_register(compiler);
     emit_instruction(compiler,DIAMOND_OP_INDEX_GET,destination,receiver,index,3);
     const int16_t receiver_set=compiler->known_type_sets[receiver];
     if(receiver_set>=0) {
@@ -2695,22 +2722,22 @@ static bool consume_loop_start(Compiler *compiler) {
     return true;
 }
 
-static uint8_t parse_if(Compiler *compiler,bool inverted) {
+static uint16_t parse_if(Compiler *compiler,bool inverted) {
     compiler->narrowing=(Narrowing){};
-    const uint8_t condition = parse_expression(compiler);
+    const uint16_t condition = parse_expression(compiler);
     const Narrowing narrowing=compiler->narrowing.condition==condition
         ? compiler->narrowing:(Narrowing){};
     compiler->narrowing=(Narrowing){};
     if (!consume_conditional_start(compiler)) return 0;
 
-    uint8_t branch_condition=condition;
+    uint16_t branch_condition=condition;
     if(inverted) {
         branch_condition=allocate_register(compiler);
         emit_instruction(compiler,DIAMOND_OP_NOT,branch_condition,condition,0,2);
     }
     const size_t false_jump = emit_jump(
         compiler, DIAMOND_OP_JUMP_IF_FALSE, branch_condition);
-    const uint8_t destination = allocate_register(compiler);
+    const uint16_t destination = allocate_register(compiler);
     const size_t flow_reg_count=compiler->next_register;
     uint8_t before_types[256];int16_t before_sets[256];
     for(size_t index=0;index<flow_reg_count;index++) {
@@ -2721,7 +2748,7 @@ static uint8_t parse_if(Compiler *compiler,bool inverted) {
         apply_narrowing_facts(compiler,
             inverted?narrowing.when_false:narrowing.when_true,
             inverted?narrowing.when_false_count:narrowing.when_true_count);
-    const uint8_t then_result = compile_sequence(compiler);
+    const uint16_t then_result = compile_sequence(compiler);
     const uint8_t then_type=compiler->known_types[then_result];
     const int16_t then_set=compiler->known_type_sets[then_result];
     uint8_t then_types[256];int16_t then_sets[256];
@@ -2747,7 +2774,7 @@ static uint8_t parse_if(Compiler *compiler,bool inverted) {
     if (compiler->current.kind == DIAMOND_TOKEN_ELSE) {
         advance_token(compiler);
         if(compiler->current.kind==DIAMOND_TOKEN_NEWLINE)skip_newlines(compiler);
-        const uint8_t else_result = compile_sequence(compiler);
+        const uint16_t else_result = compile_sequence(compiler);
         const uint8_t else_type=compiler->known_types[else_result];
         const int16_t else_set=compiler->known_type_sets[else_result];
         emit_instruction(compiler, DIAMOND_OP_MOVE, destination, else_result, 0, 2);
@@ -2755,7 +2782,7 @@ static uint8_t parse_if(Compiler *compiler,bool inverted) {
         if(then_set==else_set)result_set=then_set;
     } else if(compiler->current.kind==DIAMOND_TOKEN_ELSIF) {
         advance_token(compiler);
-        const uint8_t else_result=parse_if(compiler,false);
+        const uint16_t else_result=parse_if(compiler,false);
         const uint8_t else_type=compiler->known_types[else_result];
         const int16_t else_set=compiler->known_type_sets[else_result];
         emit_instruction(compiler,DIAMOND_OP_MOVE,destination,else_result,0,2);
@@ -2787,13 +2814,13 @@ static uint8_t parse_if(Compiler *compiler,bool inverted) {
     return destination;
 }
 
-static uint8_t parse_while(Compiler *compiler,bool inverted) {
-    const uint8_t destination=allocate_register(compiler);
+static uint16_t parse_while(Compiler *compiler,bool inverted) {
+    const uint16_t destination=allocate_register(compiler);
     emit_instruction(compiler,DIAMOND_OP_NIL,destination,0,0,1);
     const size_t loop_start = compiler->function->code_count;
-    const uint8_t condition = parse_expression(compiler);
+    const uint16_t condition = parse_expression(compiler);
     if (!consume_loop_start(compiler)) return 0;
-    uint8_t branch_condition=condition;
+    uint16_t branch_condition=condition;
     if(inverted) {
         branch_condition=allocate_register(compiler);
         emit_instruction(compiler,DIAMOND_OP_NOT,branch_condition,condition,0,2);
@@ -2822,8 +2849,8 @@ static uint8_t parse_while(Compiler *compiler,bool inverted) {
     return destination;
 }
 
-static uint8_t parse_loop(Compiler *compiler) {
-    const uint8_t destination=allocate_register(compiler);
+static uint16_t parse_loop(Compiler *compiler) {
+    const uint16_t destination=allocate_register(compiler);
     emit_instruction(compiler,DIAMOND_OP_NIL,destination,0,0,1);
     if(!consume_loop_start(compiler))return destination;
     const size_t body_start=compiler->function->code_count;
@@ -2843,7 +2870,7 @@ static uint8_t parse_loop(Compiler *compiler) {
     advance_token(compiler);return destination;
 }
 
-static uint8_t parse_prefix(Compiler *compiler) {
+static uint16_t parse_prefix(Compiler *compiler) {
     advance_token(compiler);
     switch (compiler->previous.kind) {
         case DIAMOND_TOKEN_INTEGER:
@@ -2861,7 +2888,7 @@ static uint8_t parse_prefix(Compiler *compiler) {
         case DIAMOND_TOKEN_IDENTIFIER:
             return parse_name(compiler);
         case DIAMOND_TOKEN_INSTANCE_VARIABLE: {
-            const uint8_t destination = allocate_register(compiler);
+            const uint16_t destination = allocate_register(compiler);
             if(compiler->current_module>=0&&compiler->current_class<0) {
                 const uint8_t field=module_field_name(
                     compiler,compiler->previous.span);
@@ -2891,8 +2918,8 @@ static uint8_t parse_prefix(Compiler *compiler) {
         case DIAMOND_TOKEN_LEFT_BRACE:
             return parse_hash(compiler);
         case DIAMOND_TOKEN_MINUS: {
-            const uint8_t operand = parse_precedence(compiler, PREC_PREFIX);
-            const uint8_t destination = allocate_register(compiler);
+            const uint16_t operand = parse_precedence(compiler, PREC_PREFIX);
+            const uint16_t destination = allocate_register(compiler);
             emit_instruction(compiler, DIAMOND_OP_NEGATE, destination,
                              operand, 0, 2);
             if(compiler->known_types[operand]==DIAMOND_TYPE_INT)
@@ -2903,8 +2930,8 @@ static uint8_t parse_prefix(Compiler *compiler) {
         }
         case DIAMOND_TOKEN_BANG:
         case DIAMOND_TOKEN_NOT: {
-            const uint8_t operand=parse_precedence(compiler,PREC_PREFIX);
-            const uint8_t destination=allocate_register(compiler);
+            const uint16_t operand=parse_precedence(compiler,PREC_PREFIX);
+            const uint16_t destination=allocate_register(compiler);
             emit_instruction(compiler,DIAMOND_OP_NOT,destination,operand,0,2);
             compiler->known_types[destination]=DIAMOND_TYPE_BOOL;
             return destination;
@@ -2945,8 +2972,8 @@ static DiamondOpCode binary_opcode(DiamondTokenKind operator) {
     }
 }
 
-static uint8_t parse_precedence(Compiler *compiler, Precedence precedence) {
-    uint8_t left = parse_prefix(compiler);
+static uint16_t parse_precedence(Compiler *compiler, Precedence precedence) {
+    uint16_t left = parse_prefix(compiler);
     while (!compiler->failed &&
            (compiler->current.kind == DIAMOND_TOKEN_DOT ||
             compiler->current.kind == DIAMOND_TOKEN_LEFT_BRACKET)) {
@@ -2981,7 +3008,7 @@ static uint8_t parse_precedence(Compiler *compiler, Precedence precedence) {
                 fail(compiler,compiler->current.span,
                      "generic type variables cannot be used with 'is' before binding");
             advance_token(compiler);
-            const uint8_t destination=allocate_register(compiler);
+            const uint16_t destination=allocate_register(compiler);
             emit_instruction(compiler,DIAMOND_OP_IS_TYPE,destination,left,
                              tested_type,3);
             compiler->known_types[destination]=DIAMOND_TYPE_BOOL;
@@ -3005,11 +3032,11 @@ static uint8_t parse_precedence(Compiler *compiler, Precedence precedence) {
                 operator==DIAMOND_TOKEN_AND;
             const Narrowing left_narrowing=compiler->narrowing.condition==left
                 ?compiler->narrowing:(Narrowing){};
-            const uint8_t destination=allocate_register(compiler);
+            const uint16_t destination=allocate_register(compiler);
             emit_instruction(compiler,DIAMOND_OP_MOVE,destination,left,0,2);
             const size_t end_jump=emit_jump(compiler,
                 is_and?DIAMOND_OP_JUMP_IF_FALSE:DIAMOND_OP_JUMP_IF_TRUE,left);
-            const uint8_t right=parse_precedence(
+            const uint16_t right=parse_precedence(
                 compiler,(Precedence)(operator_precedence+1));
             const Narrowing right_narrowing=compiler->narrowing.condition==right
                 ?compiler->narrowing:(Narrowing){};
@@ -3045,9 +3072,9 @@ static uint8_t parse_precedence(Compiler *compiler, Precedence precedence) {
             left=destination;
             continue;
         }
-        const uint8_t right = parse_precedence(
+        const uint16_t right = parse_precedence(
             compiler, (Precedence)(operator_precedence + 1));
-        const uint8_t destination = allocate_register(compiler);
+        const uint16_t destination = allocate_register(compiler);
         DiamondOpCode opcode=binary_opcode(operator);
         if(operator==DIAMOND_TOKEN_PLUS&&
            compiler->known_types[left]==DIAMOND_TYPE_INT&&
@@ -3096,7 +3123,7 @@ static uint8_t parse_precedence(Compiler *compiler, Precedence precedence) {
            operator==DIAMOND_TOKEN_GREATER || operator==DIAMOND_TOKEN_GREATER_EQUAL) {
             compiler->known_types[destination]=DIAMOND_TYPE_BOOL;
             if(operator==DIAMOND_TOKEN_EQUAL_EQUAL||operator==DIAMOND_TOKEN_BANG_EQUAL) {
-                uint8_t narrowed=left,nil_value=right;
+                uint16_t narrowed=left,nil_value=right;
                 if(compiler->known_types[left]==DIAMOND_TYPE_NIL) {
                     narrowed=right;nil_value=left;
                 }
@@ -3140,7 +3167,7 @@ static uint8_t parse_precedence(Compiler *compiler, Precedence precedence) {
     return left;
 }
 
-static uint8_t parse_expression(Compiler *compiler) {
+static uint16_t parse_expression(Compiler *compiler) {
     return parse_precedence(compiler, PREC_OR);
 }
 
@@ -3233,19 +3260,19 @@ static DiamondTokenKind postfix_modifier_ahead(const Compiler *compiler) {
     }
 }
 
-static uint8_t compile_index_assignment(Compiler *compiler) {
+static uint16_t compile_index_assignment(Compiler *compiler) {
     const DiamondSpan name=compiler->current.span;
     const int local=find_local(compiler,name);
     if(local<0) { fail(compiler,name,"undefined local variable"); return 0; }
-    uint8_t receiver=compiler->locals[(size_t)local].reg;
+    uint16_t receiver=compiler->locals[(size_t)local].reg;
     if(compiler->locals[(size_t)local].captured) {
-        const uint8_t loaded=allocate_register(compiler);
+        const uint16_t loaded=allocate_register(compiler);
         emit_instruction(compiler,DIAMOND_OP_GET_CELL,loaded,receiver,0,2);
         receiver=loaded;
     }
     advance_token(compiler);
     advance_token(compiler);
-    const uint8_t index=parse_expression(compiler);
+    const uint16_t index=parse_expression(compiler);
     if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_BRACKET) {
         fail(compiler,compiler->current.span,"expected ']' after assignment index");
         return 0;
@@ -3256,19 +3283,19 @@ static uint8_t compile_index_assignment(Compiler *compiler) {
         return 0;
     }
     advance_token(compiler);
-    const uint8_t value=parse_expression(compiler);
+    const uint16_t value=parse_expression(compiler);
     emit_instruction(compiler,DIAMOND_OP_INDEX_SET,receiver,index,value,3);
     return value;
 }
 
-static uint8_t compile_return(Compiler *compiler) {
+static uint16_t compile_return(Compiler *compiler) {
     const DiamondSpan keyword=compiler->current.span;
     if(!compiler->in_function) {
         fail(compiler,keyword,"'return' used outside a function");
         return 0;
     }
     advance_token(compiler);
-    uint8_t value=0;
+    uint16_t value=0;
     if(compiler->current.kind==DIAMOND_TOKEN_NEWLINE ||
        compiler->current.kind==DIAMOND_TOKEN_END ||
        compiler->current.kind==DIAMOND_TOKEN_ELSE ||
@@ -3288,8 +3315,8 @@ static uint8_t compile_return(Compiler *compiler) {
     return value;
 }
 
-static uint8_t compile_yield(Compiler *compiler) {
-    uint8_t source;
+static uint16_t compile_yield(Compiler *compiler) {
+    uint16_t source;
     if (compiler->current.kind == DIAMOND_TOKEN_LEFT_PAREN) {
         advance_token(compiler);
         source = parse_expression(compiler);
@@ -3302,12 +3329,12 @@ static uint8_t compile_yield(Compiler *compiler) {
         source = allocate_register(compiler);
         /* Sole writer; run_chunk's zero-init already covers this. */
     }
-    const uint8_t dest = allocate_register(compiler);
+    const uint16_t dest = allocate_register(compiler);
     emit_instruction(compiler, DIAMOND_OP_YIELD, dest, source, 0, 2);
     return dest;
 }
 
-static uint8_t compile_raise(Compiler *compiler) {
+static uint16_t compile_raise(Compiler *compiler) {
     const DiamondSpan keyword=compiler->current.span;
     advance_token(compiler);
     if(compiler->current.kind==DIAMOND_TOKEN_NEWLINE ||
@@ -3324,7 +3351,7 @@ static uint8_t compile_raise(Compiler *compiler) {
                          (uint8_t)compiler->current_exception,0,0,1);
         return (uint8_t)compiler->current_exception;
     }
-    const uint8_t value=parse_expression(compiler);
+    const uint16_t value=parse_expression(compiler);
     emit_instruction(compiler,DIAMOND_OP_RAISE,value,0,0,1);
     return value;
 }
@@ -3360,21 +3387,26 @@ static void record_scope_locals(Compiler *compiler,size_t start_index,
     }
 }
 
-static uint8_t compile_begin(Compiler *compiler) {
+static uint16_t compile_begin(Compiler *compiler) {
     if(!consume_block_start(compiler))return 0;
     const size_t ensure_operand=compiler->function->code_count+1;
     emit_opcode(compiler,DIAMOND_OP_PUSH_ENSURE);
     emit_byte(compiler,0);emit_byte(compiler,0);
-    const uint8_t exception=allocate_register(compiler);
+    const uint16_t exception=allocate_register(compiler);
     const size_t retry_target=compiler->function->code_count;
-    const size_t handler_type_operand=compiler->function->code_count+2;
-    const size_t handler_operand=compiler->function->code_count+11;
+    /* Byte layout after PUSH_RESCUE's opcode: exception (2-byte register,
+     * emit_register below), then this 1-byte catch-all flag, then 8
+     * 1-byte rescue-type-id slots, then a 2-byte jump-target placeholder
+     * -- opcode(+0) + exception(+1,+2) puts the flag at +3 and the jump
+     * placeholder at +3+1+8=+12. */
+    const size_t handler_type_operand=compiler->function->code_count+3;
+    const size_t handler_operand=compiler->function->code_count+12;
     emit_opcode(compiler,DIAMOND_OP_PUSH_RESCUE);
-    emit_byte(compiler,exception);emit_byte(compiler,0x80);
+    emit_register(compiler,exception);emit_byte(compiler,0x80);
     for(size_t i=0;i<8;i++)emit_byte(compiler,0);
     emit_byte(compiler,0);emit_byte(compiler,0);
-    const uint8_t body=compile_sequence(compiler);
-    const uint8_t destination=allocate_register(compiler);
+    const uint16_t body=compile_sequence(compiler);
+    const uint16_t destination=allocate_register(compiler);
     emit_instruction(compiler,DIAMOND_OP_MOVE,destination,body,0,2);
     emit_instruction(compiler,DIAMOND_OP_POP_RESCUE,0,0,0,0);
     const size_t end_jump=emit_jump(compiler,DIAMOND_OP_JUMP,0);
@@ -3444,7 +3476,7 @@ static uint8_t compile_begin(Compiler *compiler) {
         }
         size_t match_jumps[8];size_t mismatch_jump=SIZE_MAX;
         for(size_t index=0;index<type_count;index++) {
-            const uint8_t matched=allocate_register(compiler);
+            const uint16_t matched=allocate_register(compiler);
             emit_instruction(compiler,DIAMOND_OP_IS_TYPE,matched,exception,
                              rescue_types[index],3);
             match_jumps[index]=emit_jump(compiler,DIAMOND_OP_JUMP_IF_TRUE,matched);
@@ -3457,7 +3489,7 @@ static uint8_t compile_begin(Compiler *compiler) {
         const size_t outer_retry_target=compiler->current_retry_target;
         compiler->current_exception=exception;
         compiler->current_retry_target=retry_target;
-        const uint8_t rescued=compile_sequence(compiler);
+        const uint16_t rescued=compile_sequence(compiler);
         compiler->current_exception=outer_exception;
         compiler->current_retry_target=outer_retry_target;
         emit_instruction(compiler,DIAMOND_OP_MOVE,destination,rescued,0,2);
@@ -3480,7 +3512,7 @@ static uint8_t compile_begin(Compiler *compiler) {
     if(compiler->current.kind==DIAMOND_TOKEN_ELSE) {
         advance_token(compiler);
         if(!consume_block_start(compiler))return destination;
-        const uint8_t normal=compile_sequence(compiler);
+        const uint16_t normal=compile_sequence(compiler);
         emit_instruction(compiler,DIAMOND_OP_MOVE,destination,normal,0,2);
     }
     for(size_t index=0;index<rescue_count;index++)
@@ -3504,14 +3536,14 @@ static uint8_t compile_begin(Compiler *compiler) {
     return destination;
 }
 
-static uint8_t compile_retry(Compiler *compiler) {
+static uint16_t compile_retry(Compiler *compiler) {
     const DiamondSpan keyword=compiler->current.span;
     advance_token(compiler);
     if(compiler->current_retry_target==SIZE_MAX) {
         fail(compiler,keyword,"'retry' used outside rescue");return 0;
     }
     emit_absolute_jump(compiler,compiler->current_retry_target);
-    const uint8_t result=allocate_register(compiler);
+    const uint16_t result=allocate_register(compiler);
     /* Dead code: the unconditional jump above means this NIL would
      * never execute at runtime, on top of being a sole-writer register
      * run_chunk's zero-init already covers. */
@@ -3519,7 +3551,7 @@ static uint8_t compile_retry(Compiler *compiler) {
     return result;
 }
 
-static uint8_t compile_loop_control(Compiler *compiler) {
+static uint16_t compile_loop_control(Compiler *compiler) {
     const DiamondTokenKind kind=compiler->current.kind;
     const DiamondSpan keyword=compiler->current.span;
     if(compiler->current_loop==nullptr) {
@@ -3547,7 +3579,7 @@ static uint8_t compile_loop_control(Compiler *compiler) {
             return 0;
         }
         if(actual_value) {
-            const uint8_t value=parse_expression(compiler);
+            const uint16_t value=parse_expression(compiler);
             emit_instruction(compiler,DIAMOND_OP_MOVE,
                              compiler->current_loop->result_register,value,0,2);
         }
@@ -3558,7 +3590,7 @@ static uint8_t compile_loop_control(Compiler *compiler) {
     } else {
         emit_absolute_jump(compiler,compiler->current_loop->redo_target);
     }
-    const uint8_t result=allocate_register(compiler);
+    const uint16_t result=allocate_register(compiler);
     /* Dead code: break/next/redo all jump unconditionally above, so
      * this NIL never executes -- also a sole-writer register run_chunk's
      * zero-init already covers even if it somehow did. */
@@ -3566,7 +3598,7 @@ static uint8_t compile_loop_control(Compiler *compiler) {
     return result;
 }
 
-static uint8_t compile_definition(Compiler *compiler) {
+static uint16_t compile_definition(Compiler *compiler) {
     const bool at_top_level = compiler->function == &compiler->program->entry;
     advance_token(compiler);
     bool module_singleton=false;
@@ -3734,7 +3766,7 @@ static uint8_t compile_definition(Compiler *compiler) {
     const size_t outer_enclosing_local_count=compiler->enclosing_local_count;
     for(size_t i=0;i<outer_enclosing_local_count;i++)
         outer_enclosing_locals[i]=compiler->enclosing_locals[i];
-    uint8_t outer_capture_registers[16];
+    uint16_t outer_capture_registers[16];
     const size_t outer_capture_count=compiler->capture_count;
     for(size_t i=0;i<outer_capture_count;i++)
         outer_capture_registers[i]=compiler->capture_registers[i];
@@ -3793,7 +3825,7 @@ static uint8_t compile_definition(Compiler *compiler) {
         fail(compiler,name,"functions cannot declare more than 16 parameters");
         parameter_count=16;
     }
-    const uint8_t parameter_base=(uint8_t)compiler->next_register;
+    const uint16_t parameter_base=compiler->next_register;
     for(size_t index=0;index<parameter_count;index++)(void)allocate_register(compiler);
     size_t declared_parameter_count=0;bool saw_default=false;
     skip_newlines(compiler);
@@ -3810,7 +3842,7 @@ static uint8_t compile_definition(Compiler *compiler) {
             if(compiler->local_count==DIAMOND_MAX_LOCALS) {
                 fail(compiler,compiler->current.span,"too many local variables");break;
             }
-            const uint8_t parameter=(uint8_t)(parameter_base+declared_parameter_count);
+            const uint16_t parameter=(uint16_t)(parameter_base+declared_parameter_count);
             compiler->locals[compiler->local_count++]=(Local){
                 .name=compiler->current.span,.reg=parameter};
             if(declared_parameter_count<16) {
@@ -3837,11 +3869,11 @@ static uint8_t compile_definition(Compiler *compiler) {
             }
             if(compiler->current.kind==DIAMOND_TOKEN_EQUAL) {
                 saw_default=true;advance_token(compiler);
-                const uint8_t provided=allocate_register(compiler);
+                const uint16_t provided=allocate_register(compiler);
                 emit_instruction(compiler,DIAMOND_OP_ARGUMENT_PROVIDED,provided,
                                  (uint8_t)(function->arity-1),0,2);
                 const size_t skip=emit_jump(compiler,DIAMOND_OP_JUMP_IF_TRUE,provided);
-                const uint8_t fallback=parse_expression(compiler);
+                const uint16_t fallback=parse_expression(compiler);
                 emit_instruction(compiler,DIAMOND_OP_MOVE,parameter,fallback,0,2);
                 patch_jump(compiler,skip,compiler->function->code_count);
             } else if(saw_default) {
@@ -3874,7 +3906,7 @@ static uint8_t compile_definition(Compiler *compiler) {
             if(compiler->local_count==DIAMOND_MAX_LOCALS) {
                 fail(compiler,compiler->enclosing_locals[i].name,"too many lexical bindings");break;
             }
-            const uint8_t cell=allocate_register(compiler);
+            const uint16_t cell=allocate_register(compiler);
             emit_instruction(compiler,DIAMOND_OP_GET_CAPTURE_CELL,cell,(uint8_t)i,0,2);
             compiler->locals[compiler->local_count++]=(Local){
                 .name=compiler->enclosing_locals[i].name,.reg=cell,.captured=true};
@@ -3894,14 +3926,14 @@ static uint8_t compile_definition(Compiler *compiler) {
     compiler->current_return_type_span=return_type_span;
     const bool endless=!compiler->failed&&
         compiler->current.kind==DIAMOND_TOKEN_EQUAL;
-    uint8_t body_result=0;
+    uint16_t body_result=0;
     bool body_diverges=false;
     if(endless) {
         advance_token(compiler);
         const DiamondTokenKind postfix=postfix_modifier_ahead(compiler);
         const bool has_postfix=postfix==DIAMOND_TOKEN_IF||
                                postfix==DIAMOND_TOKEN_UNLESS;
-        const uint8_t postfix_result=has_postfix?allocate_register(compiler):0;
+        const uint16_t postfix_result=has_postfix?allocate_register(compiler):0;
         const size_t condition_jump=has_postfix
             ? emit_jump(compiler,DIAMOND_OP_JUMP,0):SIZE_MAX;
         const size_t body_start=compiler->function->code_count;
@@ -3915,7 +3947,7 @@ static uint8_t compile_definition(Compiler *compiler) {
                                  body_result,0,2);
                 const size_t body_exit=emit_jump(compiler,DIAMOND_OP_JUMP,0);
                 const size_t condition_start=compiler->function->code_count;
-                const uint8_t condition=parse_expression(compiler);
+                const uint16_t condition=parse_expression(compiler);
                 const size_t body_jump=emit_jump(
                     compiler,postfix==DIAMOND_TOKEN_IF
                         ? DIAMOND_OP_JUMP_IF_TRUE:DIAMOND_OP_JUMP_IF_FALSE,
@@ -3947,7 +3979,7 @@ static uint8_t compile_definition(Compiler *compiler) {
 
     function->capture_count=(uint8_t)compiler->capture_count;
     function->register_count=compiler->next_register;
-    uint8_t captures[16];
+    uint16_t captures[16];
     for(size_t i=0;i<compiler->capture_count;i++)captures[i]=compiler->capture_registers[i];
     const size_t capture_count=compiler->capture_count;
     if(!compiler->failed)
@@ -4081,12 +4113,13 @@ static uint8_t compile_definition(Compiler *compiler) {
      * Register allocation is monotonic and never recycled within a
      * function body (see docs/roadmap.md's self-hosting register-budget
      * notes), so for a large class this reservation is pure, cumulative
-     * waste against the entry function's own 256-register ceiling --
+     * waste against the entry function's own register ceiling --
      * confirmed the hard way while porting the self-hosted parser
-     * (docs/roadmap.md's Phase 3 follow-up File.open entry). */
+     * (docs/roadmap.md's Phase 3 follow-up File.open entry), which is
+     * also why that ceiling was later widened (256 -> 4096). */
     const bool member_result_discarded =
         at_top_level && (compiler->current_class>=0||compiler->current_module>=0);
-    const uint8_t result =
+    const uint16_t result =
         member_result_discarded ? 0 : allocate_register(compiler);
     if(!at_top_level) {
         /* Always emit BOX_LOCAL here, even if this local was already boxed
@@ -4104,9 +4137,9 @@ static uint8_t compile_definition(Compiler *compiler) {
                 break;
             }
         }
-        emit_opcode(compiler,DIAMOND_OP_CLOSURE);emit_byte(compiler,result);
+        emit_opcode(compiler,DIAMOND_OP_CLOSURE);emit_register(compiler,result);
         emit_function_index(compiler,function_index);emit_byte(compiler,(uint8_t)capture_count);
-        for(size_t i=0;i<capture_count;i++)emit_byte(compiler,captures[i]);
+        for(size_t i=0;i<capture_count;i++)emit_register(compiler,captures[i]);
         compiler->locals[compiler->local_count++]=(Local){.name=name,.reg=result};
     }
     /* else: top-level def -- no NIL needed. A genuine top-level def's
@@ -4198,11 +4231,20 @@ static void compile_attribute_named(Compiler *compiler,bool writer,bool predicat
         if(writer)function->parameter_type_sets[0]=(uint8_t)type_set;
         else function->return_type_set=(uint8_t)type_set;
     }
+    /* GET_IVAR/SET_IVAR/GET_IVAR_NAME/SET_IVAR_NAME/CHECK_TYPE/RETURN are
+     * all emitted elsewhere via emit_instruction, which widens *every*
+     * operand slot to 2 bytes uniformly (see its own comment) -- this
+     * hand-rolled synthetic method body bypasses emit_instruction
+     * entirely (writing straight into function->code[]), so it has to
+     * match that same 2-bytes-per-operand layout by hand. Every literal
+     * operand here (a register number or the attribute's own field/type-
+     * set index) is always well under 256, so each pair is just an
+     * explicit 0 high byte followed by the real value. */
     size_t code=0;
     if(writer&&type_set>=0) {
         function->code[code++]=DIAMOND_OP_CHECK_TYPE;
-        function->code[code++]=1;
-        function->code[code++]=(uint8_t)type_set;
+        function->code[code++]=0;function->code[code++]=1;
+        function->code[code++]=0;function->code[code++]=(uint8_t)type_set;
     }
     if(compiler->current_module>=0&&compiler->current_class<0) {
         function->uses_instance_state=true;
@@ -4211,21 +4253,23 @@ static void compile_attribute_named(Compiler *compiler,bool writer,bool predicat
         string->length=strlen(field_name);function->string_count=1;
         function->code[code++]=(uint8_t)(writer?DIAMOND_OP_SET_IVAR_NAME:
                                           DIAMOND_OP_GET_IVAR_NAME);
-        function->code[code++]=writer?0:1;function->code[code++]=0;
-        function->code[code++]=writer?1:0;
+        function->code[code++]=0;function->code[code++]=writer?0:1;
+        function->code[code++]=0;function->code[code++]=0;
+        function->code[code++]=0;function->code[code++]=writer?1:0;
     } else {
         function->code[code++]=(uint8_t)(writer?DIAMOND_OP_SET_IVAR:
                                           DIAMOND_OP_GET_IVAR);
-        function->code[code++]=writer?0:1;
-        function->code[code++]=writer?field:0;
-        function->code[code++]=writer?1:field;
+        function->code[code++]=0;function->code[code++]=writer?0:1;
+        function->code[code++]=0;function->code[code++]=writer?field:0;
+        function->code[code++]=0;function->code[code++]=writer?1:field;
     }
     if(!writer&&type_set>=0) {
         function->code[code++]=DIAMOND_OP_CHECK_TYPE;
-        function->code[code++]=1;
-        function->code[code++]=(uint8_t)type_set;
+        function->code[code++]=0;function->code[code++]=1;
+        function->code[code++]=0;function->code[code++]=(uint8_t)type_set;
     }
-    function->code[code++]=DIAMOND_OP_RETURN;function->code[code++]=1;
+    function->code[code++]=DIAMOND_OP_RETURN;
+    function->code[code++]=0;function->code[code++]=1;
     function->code_count=code;
     (void)snprintf(method->name,sizeof method->name,"%s",method_name);
     method->function_index=function_index;method->arity=writer?1:0;
@@ -4480,7 +4524,7 @@ static void compile_alias_method(Compiler *compiler) {
     }
 }
 
-static uint8_t compile_class(Compiler *compiler) {
+static uint16_t compile_class(Compiler *compiler) {
     advance_token(compiler);
     if (compiler->current.kind != DIAMOND_TOKEN_IDENTIFIER ||
         compiler->program->class_count == DIAMOND_MAX_CLASSES) {
@@ -4599,12 +4643,12 @@ static uint8_t compile_class(Compiler *compiler) {
     compiler->current_class=outer;
     compiler->methods_private=outer_private;
     if(compiler->current.kind==DIAMOND_TOKEN_END) advance_token(compiler);
-    const uint8_t result=allocate_register(compiler);
+    const uint16_t result=allocate_register(compiler);
     /* Sole writer; run_chunk's zero-init already covers this. */
     return result;
 }
 
-static uint8_t compile_module(Compiler *compiler) {
+static uint16_t compile_module(Compiler *compiler) {
     if(compiler->function!=&compiler->program->entry) {
         fail(compiler,compiler->current.span,
              "modules must be declared at top level");return 0;
@@ -4683,7 +4727,7 @@ static uint8_t compile_module(Compiler *compiler) {
             (void)snprintf(compiler->program->namespace_constants[constant],
                 DIAMOND_MAX_FUNCTION_NAME,"%s",qualified);
             advance_token(compiler);advance_token(compiler);
-            const uint8_t value=parse_expression(compiler);
+            const uint16_t value=parse_expression(compiler);
             emit_instruction(compiler,DIAMOND_OP_SET_NAMESPACE_CONSTANT,
                              constant,value,0,2);
         } else if(compiler->current.kind==DIAMOND_TOKEN_INCLUDE) {
@@ -4750,12 +4794,12 @@ static uint8_t compile_module(Compiler *compiler) {
     compiler->methods_private=outer_private;
     compiler->module_function_mode=outer_module_function;
     if(compiler->current.kind==DIAMOND_TOKEN_END)advance_token(compiler);
-    const uint8_t result=allocate_register(compiler);
+    const uint16_t result=allocate_register(compiler);
     /* Sole writer; run_chunk's zero-init already covers this. */
     return result;
 }
 
-static uint8_t compile_interface(Compiler *compiler) {
+static uint16_t compile_interface(Compiler *compiler) {
     if(compiler->function!=&compiler->program->entry) {
         fail(compiler,compiler->current.span,
              "interfaces must be declared at top level");return 0;
@@ -4900,18 +4944,18 @@ static uint8_t compile_interface(Compiler *compiler) {
         skip_newlines(compiler);
     }
     if(compiler->current.kind==DIAMOND_TOKEN_END)advance_token(compiler);
-    const uint8_t result=allocate_register(compiler);
+    const uint16_t result=allocate_register(compiler);
     /* Sole writer; run_chunk's zero-init already covers this. */
     return result;
 }
 
-static uint8_t compile_assignment(Compiler *compiler) {
+static uint16_t compile_assignment(Compiler *compiler) {
     const DiamondSpan name = compiler->current.span;
     const bool instance_variable =
         compiler->current.kind == DIAMOND_TOKEN_INSTANCE_VARIABLE;
     advance_token(compiler);
     advance_token(compiler);
-    const uint8_t value = parse_expression(compiler);
+    const uint16_t value = parse_expression(compiler);
     if (instance_variable) {
         if(compiler->current_module>=0&&compiler->current_class<0) {
             const uint8_t field=module_field_name(compiler,name);
@@ -4943,7 +4987,7 @@ static uint8_t compile_assignment(Compiler *compiler) {
             return value;
         }
     }
-    const uint8_t destination = local < 0
+    const uint16_t destination = local < 0
         ? define_local(compiler, name)
         : compiler->locals[(size_t)local].reg;
     emit_instruction(compiler, DIAMOND_OP_MOVE, destination, value, 0, 2);
@@ -4961,9 +5005,9 @@ static bool at_block_end(const Compiler *compiler) {
            compiler->current.kind == DIAMOND_TOKEN_END;
 }
 
-static uint8_t compile_sequence(Compiler *compiler) {
+static uint16_t compile_sequence(Compiler *compiler) {
     skip_newlines(compiler);
-    uint8_t result = allocate_register(compiler);
+    uint16_t result = allocate_register(compiler);
     /* No NIL here: `result` is a sole writer for an empty block (still
      * correctly nil via run_chunk's zero-init), and is superseded by
      * the first statement's own result register whenever the block is
@@ -4976,8 +5020,8 @@ static uint8_t compile_sequence(Compiler *compiler) {
         const DiamondTokenKind postfix = postfix_modifier_ahead(compiler);
         const bool has_postfix = postfix == DIAMOND_TOKEN_IF ||
                                  postfix == DIAMOND_TOKEN_UNLESS;
-        const uint8_t body_result_slot = result;
-        const uint8_t postfix_result = has_postfix
+        const uint16_t body_result_slot = result;
+        const uint16_t postfix_result = has_postfix
             ? allocate_register(compiler)
             : body_result_slot;
         const size_t condition_jump = has_postfix
@@ -5030,7 +5074,7 @@ static uint8_t compile_sequence(Compiler *compiler) {
                              result, 0, 2);
             const size_t body_exit = emit_jump(compiler, DIAMOND_OP_JUMP, 0);
             const size_t condition_start = compiler->function->code_count;
-            const uint8_t condition = parse_expression(compiler);
+            const uint16_t condition = parse_expression(compiler);
             const size_t body_jump = emit_jump(
                 compiler,
                 postfix == DIAMOND_TOKEN_IF
@@ -5197,7 +5241,7 @@ bool diamond_compile(const char *source, DiamondProgram *program,
     if(compiler.current.kind==DIAMOND_TOKEN_ERROR)
         fail(&compiler,compiler.current.span,"unexpected character");
 
-    const uint8_t result = compile_sequence(&compiler);
+    const uint16_t result = compile_sequence(&compiler);
     if (!compiler.failed && compiler.current.kind != DIAMOND_TOKEN_EOF) {
         fail(&compiler, compiler.current.span, "unexpected block terminator");
     }

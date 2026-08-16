@@ -1,4 +1,5 @@
 #include "disassemble.h"
+#include <stdlib.h>
 
 static bool require_bytes(FILE *stream, const DiamondChunk *chunk,
                           size_t offset, size_t count) {
@@ -20,28 +21,89 @@ static const char *math_function_name(uint8_t id) {
     }
 }
 
-static size_t one_register(FILE *stream, const DiamondChunk *chunk,
-                           const char *name, size_t offset) {
-    if (!require_bytes(stream, chunk, offset, 2)) return chunk->code_count;
-    fprintf(stream, "%-18s r%u\n", name, chunk->code[offset + 1]);
-    return offset + 2;
+/* Every operand read here is 2 bytes, big-endian, matching emit_register/
+ * emit_instruction's own uniform widening (src/compiler.c) -- including
+ * operands that are logically a narrower index (a constant/string/type-set/
+ * capture index, an enum id, a boolean flag, ...) rather than a register,
+ * since emit_instruction doesn't distinguish between them either. See its
+ * own comment for why. */
+static uint16_t read_operand(const DiamondChunk *chunk, size_t offset) {
+    return (uint16_t)(((unsigned)chunk->code[offset] << 8) | chunk->code[offset + 1]);
 }
 
-static size_t two_registers(FILE *stream, const DiamondChunk *chunk,
-                            const char *name, size_t offset) {
+/* Ordinary compiler-emitted bytecode can never reference a register past
+ * its own function's high-water mark (allocate_register guarantees it by
+ * construction) -- but ProgramBuilder-emitted bytecode bypasses the
+ * compiler entirely (emit_byte just appends a raw byte with no idea what
+ * instruction it's part of), so a register-bearing operand here is the
+ * one thing this walk can't just trust. chunk->register_count==0 mirrors
+ * run_chunk's own fallback for a hand-authored DiamondChunk that predates
+ * the field: treat it as the full DIAMOND_REGISTER_COUNT width rather
+ * than rejecting every register outright. */
+static bool register_in_range(const DiamondChunk *chunk, uint16_t value) {
+    const size_t effective = chunk->register_count == 0
+        ? DIAMOND_REGISTER_COUNT : chunk->register_count;
+    return (size_t)value < effective;
+}
+
+static uint16_t checked_register(const DiamondChunk *chunk, FILE *stream,
+                                 uint16_t value, bool *valid) {
+    if (!register_in_range(chunk, value)) {
+        fprintf(stream, "<register r%u out of range> ", value);
+        *valid = false;
+    }
+    return value;
+}
+
+/* CALL/CALL_TYPED/CALL_CLOSURE/NEW/INVOKE (any variant)/SUPER/THREAD_NEW all pass a
+ * contiguous run of `count` registers starting at `base` to the callee
+ * (run_chunk gets &registers[base] and reads `count` values forward from
+ * there) -- checking `base` alone the way checked_register does isn't
+ * enough, since base itself can be well in range while base+count still
+ * walks off the end of a small function's register array. */
+static uint16_t checked_register_range(const DiamondChunk *chunk, FILE *stream,
+                                       uint16_t base, size_t count, bool *valid) {
+    const size_t effective = chunk->register_count == 0
+        ? DIAMOND_REGISTER_COUNT : chunk->register_count;
+    if ((size_t)base + count > effective) {
+        fprintf(stream, "<register range r%u..%zu out of range> ",
+                base, (size_t)base + count);
+        *valid = false;
+    }
+    return base;
+}
+
+static size_t one_register(FILE *stream, const DiamondChunk *chunk,
+                           const char *name, size_t offset, bool *valid) {
     if (!require_bytes(stream, chunk, offset, 3)) return chunk->code_count;
-    fprintf(stream, "%-18s r%u, r%u\n", name, chunk->code[offset + 1],
-            chunk->code[offset + 2]);
+    const uint16_t reg = checked_register(chunk, stream,
+        read_operand(chunk, offset + 1), valid);
+    fprintf(stream, "%-18s r%u\n", name, reg);
     return offset + 3;
 }
 
+static size_t two_registers(FILE *stream, const DiamondChunk *chunk,
+                            const char *name, size_t offset, bool *valid) {
+    if (!require_bytes(stream, chunk, offset, 5)) return chunk->code_count;
+    const uint16_t first = checked_register(chunk, stream,
+        read_operand(chunk, offset + 1), valid);
+    const uint16_t second = checked_register(chunk, stream,
+        read_operand(chunk, offset + 3), valid);
+    fprintf(stream, "%-18s r%u, r%u\n", name, first, second);
+    return offset + 5;
+}
+
 static size_t three_registers(FILE *stream, const DiamondChunk *chunk,
-                              const char *name, size_t offset) {
-    if (!require_bytes(stream, chunk, offset, 4)) return chunk->code_count;
-    fprintf(stream, "%-18s r%u, r%u, r%u\n", name,
-            chunk->code[offset + 1], chunk->code[offset + 2],
-            chunk->code[offset + 3]);
-    return offset + 4;
+                              const char *name, size_t offset, bool *valid) {
+    if (!require_bytes(stream, chunk, offset, 7)) return chunk->code_count;
+    const uint16_t first = checked_register(chunk, stream,
+        read_operand(chunk, offset + 1), valid);
+    const uint16_t second = checked_register(chunk, stream,
+        read_operand(chunk, offset + 3), valid);
+    const uint16_t third = checked_register(chunk, stream,
+        read_operand(chunk, offset + 5), valid);
+    fprintf(stream, "%-18s r%u, r%u, r%u\n", name, first, second, third);
+    return offset + 7;
 }
 
 static bool print_type_set(FILE *stream,const DiamondChunk *chunk,
@@ -112,7 +174,23 @@ static bool disassemble_chunk(FILE *stream, const char *name,
     size_t offset = 0;
     bool valid = true;
 
+    /* Every offset this walk visits as the start of an instruction gets
+     * marked here, so every jump-like target (recorded below, checked
+     * once the walk finishes and this is fully populated) can be
+     * confirmed to land on a real instruction rather than into the
+     * middle of one -- landing mid-instruction would make the *runtime*
+     * interpret a completely different byte as the next opcode than
+     * anything this walk ever validated, register-bounds checks
+     * included, since ProgramBuilder-emitted bytecode can construct a
+     * jump to any offset in [0, code_count]. Sized to DIAMOND_MAX_CODE
+     * (this function's own code[] bound), not chunk->code_count, so
+     * `offset < chunk->code_count` below never risks writing past it. */
+    bool starts[DIAMOND_MAX_CODE] = {};
+    size_t pending_targets[DIAMOND_MAX_CODE];
+    size_t pending_count = 0;
+
     while (offset < chunk->code_count) {
+        starts[offset] = true;
         if (chunk->lines != nullptr && chunk->lines[offset] != 0) {
             fprintf(stream, "%04zu %4u:%-3u ", offset, chunk->lines[offset],
                     chunk->columns[offset]);
@@ -122,13 +200,14 @@ static bool disassemble_chunk(FILE *stream, const char *name,
         const DiamondOpCode opcode = (DiamondOpCode)chunk->code[offset];
         switch (opcode) {
             case DIAMOND_OP_CONSTANT: {
-                if (!require_bytes(stream, chunk, offset, 3)) {
+                if (!require_bytes(stream, chunk, offset, 5)) {
                     valid = false;
                     offset = chunk->code_count;
                     break;
                 }
-                const uint8_t destination = chunk->code[offset + 1];
-                const uint8_t constant = chunk->code[offset + 2];
+                const uint16_t destination =
+                    checked_register(chunk, stream, read_operand(chunk, offset + 1), &valid);
+                const uint16_t constant = read_operand(chunk, offset + 3);
                 fprintf(stream, "%-18s r%u, k%u", "CONSTANT", destination,
                         constant);
                 if ((size_t)constant < chunk->constant_count) {
@@ -140,17 +219,18 @@ static bool disassemble_chunk(FILE *stream, const char *name,
                     valid = false;
                 }
                 fputc('\n', stream);
-                offset += 3;
+                offset += 5;
                 break;
             }
             case DIAMOND_OP_STRING: {
-                if (!require_bytes(stream, chunk, offset, 3)) {
+                if (!require_bytes(stream, chunk, offset, 5)) {
                     valid = false;
                     offset = chunk->code_count;
                     break;
                 }
-                const uint8_t destination = chunk->code[offset + 1];
-                const uint8_t string = chunk->code[offset + 2];
+                const uint16_t destination =
+                    checked_register(chunk, stream, read_operand(chunk, offset + 1), &valid);
+                const uint16_t string = read_operand(chunk, offset + 3);
                 fprintf(stream, "%-18s r%u, s%u", "STRING", destination, string);
                 if ((size_t)string < chunk->string_count) {
                     const DiamondStringConstant *constant = &chunk->strings[string];
@@ -161,17 +241,18 @@ static bool disassemble_chunk(FILE *stream, const char *name,
                     valid = false;
                 }
                 fputc('\n', stream);
-                offset += 3;
+                offset += 5;
                 break;
             }
             case DIAMOND_OP_SYMBOL: {
-                if (!require_bytes(stream, chunk, offset, 3)) {
+                if (!require_bytes(stream, chunk, offset, 5)) {
                     valid = false;
                     offset = chunk->code_count;
                     break;
                 }
-                const uint8_t destination = chunk->code[offset + 1];
-                const uint8_t string = chunk->code[offset + 2];
+                const uint16_t destination =
+                    checked_register(chunk, stream, read_operand(chunk, offset + 1), &valid);
+                const uint16_t string = read_operand(chunk, offset + 3);
                 fprintf(stream, "%-18s r%u, s%u", "SYMBOL", destination, string);
                 if ((size_t)string < chunk->string_count) {
                     const DiamondStringConstant *constant = &chunk->strings[string];
@@ -182,93 +263,103 @@ static bool disassemble_chunk(FILE *stream, const char *name,
                     valid = false;
                 }
                 fputc('\n', stream);
-                offset += 3;
+                offset += 5;
                 break;
             }
             case DIAMOND_OP_NIL:
-                offset = one_register(stream, chunk, "NIL", offset);
+                offset = one_register(stream, chunk, "NIL", offset, &valid);
                 break;
             case DIAMOND_OP_BOOL:
-                if (!require_bytes(stream, chunk, offset, 3)) {
+                if (!require_bytes(stream, chunk, offset, 5)) {
                     valid = false;
                     offset = chunk->code_count;
                     break;
                 }
                 fprintf(stream, "%-18s r%u, %s\n", "BOOL",
-                        chunk->code[offset + 1],
-                        chunk->code[offset + 2] ? "true" : "false");
-                offset += 3;
+                        checked_register(chunk, stream, read_operand(chunk, offset + 1), &valid),
+                        read_operand(chunk, offset + 3) ? "true" : "false");
+                offset += 5;
                 break;
             case DIAMOND_OP_ARGUMENT_PROVIDED:
-                offset=two_registers(stream,chunk,"ARGUMENT_PROVIDED",offset);
+                /* Second operand is a parameter position (checked against
+                 * argument_count at runtime, DIAMOND_OP_ARGUMENT_PROVIDED
+                 * in vm.c), not a register -- despite sharing two_
+                 * registers' 2-byte-per-operand shape (both are uniform-
+                 * width per emit_instruction, see read_operand's own
+                 * comment), it isn't bounded by register_count. */
+                if(!require_bytes(stream,chunk,offset,5)){valid=false;offset=chunk->code_count;break;}
+                fprintf(stream,"%-18s r%u, %u\n","ARGUMENT_PROVIDED",
+                    checked_register(chunk,stream,read_operand(chunk,offset+1),&valid),
+                    read_operand(chunk,offset+3));
+                offset+=5;
                 break;
             case DIAMOND_OP_TO_STRING:
-                offset=two_registers(stream,chunk,"TO_STRING",offset);break;
+                offset=two_registers(stream,chunk,"TO_STRING",offset, &valid);break;
             case DIAMOND_OP_MOVE:
-                offset = two_registers(stream, chunk, "MOVE", offset);
+                offset = two_registers(stream, chunk, "MOVE", offset, &valid);
                 break;
             case DIAMOND_OP_ADD:
-                offset = three_registers(stream, chunk, "ADD", offset);
+                offset = three_registers(stream, chunk, "ADD", offset, &valid);
                 break;
             case DIAMOND_OP_ADD_INT:
-                offset = three_registers(stream, chunk, "ADD_INT", offset);
+                offset = three_registers(stream, chunk, "ADD_INT", offset, &valid);
                 break;
             case DIAMOND_OP_SUBTRACT:
-                offset = three_registers(stream, chunk, "SUBTRACT", offset);
+                offset = three_registers(stream, chunk, "SUBTRACT", offset, &valid);
                 break;
             case DIAMOND_OP_MULTIPLY:
-                offset = three_registers(stream, chunk, "MULTIPLY", offset);
+                offset = three_registers(stream, chunk, "MULTIPLY", offset, &valid);
                 break;
             case DIAMOND_OP_DIVIDE:
-                offset = three_registers(stream, chunk, "DIVIDE", offset);
+                offset = three_registers(stream, chunk, "DIVIDE", offset, &valid);
                 break;
             case DIAMOND_OP_SUBTRACT_INT:
-                offset = three_registers(stream, chunk, "SUBTRACT_INT", offset);
+                offset = three_registers(stream, chunk, "SUBTRACT_INT", offset, &valid);
                 break;
             case DIAMOND_OP_MULTIPLY_INT:
-                offset = three_registers(stream, chunk, "MULTIPLY_INT", offset);
+                offset = three_registers(stream, chunk, "MULTIPLY_INT", offset, &valid);
                 break;
             case DIAMOND_OP_DIVIDE_INT:
-                offset = three_registers(stream, chunk, "DIVIDE_INT", offset);
+                offset = three_registers(stream, chunk, "DIVIDE_INT", offset, &valid);
                 break;
             case DIAMOND_OP_LESS:
-                offset = three_registers(stream, chunk, "LESS", offset);
+                offset = three_registers(stream, chunk, "LESS", offset, &valid);
                 break;
             case DIAMOND_OP_LESS_EQUAL:
-                offset = three_registers(stream, chunk, "LESS_EQUAL", offset);
+                offset = three_registers(stream, chunk, "LESS_EQUAL", offset, &valid);
                 break;
             case DIAMOND_OP_GREATER:
-                offset = three_registers(stream, chunk, "GREATER", offset);
+                offset = three_registers(stream, chunk, "GREATER", offset, &valid);
                 break;
             case DIAMOND_OP_GREATER_EQUAL:
-                offset = three_registers(stream, chunk, "GREATER_EQUAL", offset);
+                offset = three_registers(stream, chunk, "GREATER_EQUAL", offset, &valid);
                 break;
             case DIAMOND_OP_NEGATE:
-                offset = two_registers(stream, chunk, "NEGATE", offset);
+                offset = two_registers(stream, chunk, "NEGATE", offset, &valid);
                 break;
             case DIAMOND_OP_EQUAL:
-                offset = three_registers(stream, chunk, "EQUAL", offset);
+                offset = three_registers(stream, chunk, "EQUAL", offset, &valid);
                 break;
             case DIAMOND_OP_NOT_EQUAL:
-                offset = three_registers(stream, chunk, "NOT_EQUAL", offset);
+                offset = three_registers(stream, chunk, "NOT_EQUAL", offset, &valid);
                 break;
             case DIAMOND_OP_EQUAL_INT:
-                offset = three_registers(stream, chunk, "EQUAL_INT", offset);
+                offset = three_registers(stream, chunk, "EQUAL_INT", offset, &valid);
                 break;
             case DIAMOND_OP_NOT_EQUAL_INT:
-                offset = three_registers(stream, chunk, "NOT_EQUAL_INT", offset);
+                offset = three_registers(stream, chunk, "NOT_EQUAL_INT", offset, &valid);
                 break;
             case DIAMOND_OP_LESS_INT:
-                offset = three_registers(stream, chunk, "LESS_INT", offset);
+                offset = three_registers(stream, chunk, "LESS_INT", offset, &valid);
                 break;
             case DIAMOND_OP_LESS_EQUAL_INT:
-                offset = three_registers(stream, chunk, "LESS_EQUAL_INT", offset);
+                offset = three_registers(stream, chunk, "LESS_EQUAL_INT", offset, &valid);
                 break;
             case DIAMOND_OP_GREATER_INT:
-                offset = three_registers(stream, chunk, "GREATER_INT", offset);
+                offset = three_registers(stream, chunk, "GREATER_INT", offset, &valid);
                 break;
             case DIAMOND_OP_GREATER_EQUAL_INT:
-                offset = three_registers(stream, chunk, "GREATER_EQUAL_INT", offset);
+                offset = three_registers(stream, chunk, "GREATER_EQUAL_INT", offset, &valid);
                 break;
             case DIAMOND_OP_JUMP: {
                 if (!require_bytes(stream, chunk, offset, 3)) {
@@ -280,245 +371,348 @@ static bool disassemble_chunk(FILE *stream, const char *name,
                                       chunk->code[offset + 2];
                 fprintf(stream, "%-18s -> %04zu\n", "JUMP", target);
                 if (target > chunk->code_count) valid = false;
+                else pending_targets[pending_count++] = target;
                 offset += 3;
                 break;
             }
             case DIAMOND_OP_JUMP_IF_FALSE: {
-                if (!require_bytes(stream, chunk, offset, 4)) {
+                if (!require_bytes(stream, chunk, offset, 5)) {
                     valid = false;
                     offset = chunk->code_count;
                     break;
                 }
-                const size_t target = ((size_t)chunk->code[offset + 2] << 8) |
-                                      chunk->code[offset + 3];
+                const size_t target = ((size_t)chunk->code[offset + 3] << 8) |
+                                      chunk->code[offset + 4];
                 fprintf(stream, "%-18s r%u -> %04zu\n", "JUMP_IF_FALSE",
-                        chunk->code[offset + 1], target);
+                        checked_register(chunk, stream, read_operand(chunk, offset + 1), &valid),
+                        target);
                 if (target > chunk->code_count) valid = false;
-                offset += 4;
+                else pending_targets[pending_count++] = target;
+                offset += 5;
                 break;
             }
             case DIAMOND_OP_JUMP_IF_TRUE: {
-                if(!require_bytes(stream,chunk,offset,4)){valid=false;offset=chunk->code_count;break;}
-                const size_t target=((size_t)chunk->code[offset+2]<<8)|chunk->code[offset+3];
+                if(!require_bytes(stream,chunk,offset,5)){valid=false;offset=chunk->code_count;break;}
+                const size_t target=((size_t)chunk->code[offset+3]<<8)|chunk->code[offset+4];
                 fprintf(stream,"%-18s r%u -> %04zu\n","JUMP_IF_TRUE",
-                    chunk->code[offset+1],target);
+                    checked_register(chunk, stream, read_operand(chunk, offset+1), &valid),target);
                 if(target>chunk->code_count) valid=false;
-                offset+=4;
+                else pending_targets[pending_count++] = target;
+                offset+=5;
                 break;
             }
             case DIAMOND_OP_CALL: {
-                if (!require_bytes(stream, chunk, offset, 6)) {
+                if (!require_bytes(stream, chunk, offset, 8)) {
                     valid = false;
                     offset = chunk->code_count;
                     break;
                 }
                 const size_t function_index=
-                    ((size_t)chunk->code[offset+2]<<8)|chunk->code[offset+3];
+                    ((size_t)chunk->code[offset+3]<<8)|chunk->code[offset+4];
                 fprintf(stream, "%-18s r%u, f%zu, r%u, %u args\n", "CALL",
-                        chunk->code[offset + 1], function_index,
-                        chunk->code[offset + 4], chunk->code[offset + 5]);
+                        checked_register(chunk, stream, read_operand(chunk, offset + 1), &valid),
+                        function_index,
+                        checked_register_range(chunk, stream, read_operand(chunk, offset + 5),
+                            chunk->code[offset + 7], &valid),
+                        chunk->code[offset + 7]);
                 if (function_index >= chunk->function_count) {
                     valid = false;
                 }
-                offset += 6;
+                offset += 8;
                 break;
             }
             case DIAMOND_OP_CALL_TYPED: {
-                if(!require_bytes(stream,chunk,offset,7)) {
+                if(!require_bytes(stream,chunk,offset,9)) {
                     valid=false;offset=chunk->code_count;break;
                 }
-                const uint8_t count=chunk->code[offset+6];
-                if(!require_bytes(stream,chunk,offset,(size_t)7+count)) {
+                const uint8_t count=chunk->code[offset+8];
+                if(!require_bytes(stream,chunk,offset,(size_t)9+count)) {
                     valid=false;offset=chunk->code_count;break;
                 }
                 const size_t function_index=
-                    ((size_t)chunk->code[offset+2]<<8)|chunk->code[offset+3];
+                    ((size_t)chunk->code[offset+3]<<8)|chunk->code[offset+4];
                 fprintf(stream,"%-18s r%u, f%zu, r%u, %u args, [",
-                    "CALL_TYPED",chunk->code[offset+1],function_index,
-                    chunk->code[offset+4],chunk->code[offset+5]);
+                    "CALL_TYPED",
+                    checked_register(chunk,stream,read_operand(chunk,offset+1),&valid),
+                    function_index,
+                    checked_register_range(chunk,stream,read_operand(chunk,offset+5),
+                        chunk->code[offset+7],&valid),
+                    chunk->code[offset+7]);
                 for(size_t index=0;index<count;index++) {
                     if(index>0)fputs(", ",stream);
-                    const uint8_t set=chunk->code[offset+7+index];
+                    const uint8_t set=chunk->code[offset+9+index];
                     valid=print_type_set(stream,chunk,set)&&valid;
                 }
                 fputs("]\n",stream);
                 if(function_index>=chunk->function_count)
                     valid=false;
-                offset+=(size_t)7+count;
+                offset+=(size_t)9+count;
                 break;
             }
             case DIAMOND_OP_CALL_CLOSURE:
-                if(!require_bytes(stream,chunk,offset,5)){valid=false;offset=chunk->code_count;break;}
+                if(!require_bytes(stream,chunk,offset,8)){valid=false;offset=chunk->code_count;break;}
                 fprintf(stream,"%-18s r%u, r%u, r%u, %u args\n","CALL_CLOSURE",
-                    chunk->code[offset+1],chunk->code[offset+2],chunk->code[offset+3],chunk->code[offset+4]);
-                offset+=5;break;
+                    checked_register(chunk,stream,read_operand(chunk,offset+1),&valid),
+                    checked_register(chunk,stream,read_operand(chunk,offset+3),&valid),
+                    checked_register_range(chunk,stream,read_operand(chunk,offset+5),
+                        chunk->code[offset+7],&valid),
+                    chunk->code[offset+7]);
+                offset+=8;break;
+            /* GET_CAPTURE/GET_CAPTURE_CELL's second operand and SET_
+             * CAPTURE's first are a capture-slot index (checked against
+             * closure->capture_count at runtime), not a register -- same
+             * uniform-width-but-not-a-register situation as ARGUMENT_
+             * PROVIDED above. */
             case DIAMOND_OP_GET_CAPTURE:
-                if(!require_bytes(stream,chunk,offset,3)){valid=false;offset=chunk->code_count;break;}
-                fprintf(stream,"%-18s r%u, c%u\n","GET_CAPTURE",chunk->code[offset+1],chunk->code[offset+2]);
-                offset+=3;break;
             case DIAMOND_OP_GET_CAPTURE_CELL:
-                if(!require_bytes(stream,chunk,offset,3)){valid=false;offset=chunk->code_count;break;}
-                fprintf(stream,"%-18s r%u, c%u\n","GET_CAPTURE_CELL",chunk->code[offset+1],chunk->code[offset+2]);
-                offset+=3;break;
-            case DIAMOND_OP_SET_CAPTURE:
-                if(!require_bytes(stream,chunk,offset,3)){valid=false;offset=chunk->code_count;break;}
-                fprintf(stream,"%-18s c%u, r%u\n","SET_CAPTURE",chunk->code[offset+1],chunk->code[offset+2]);
-                offset+=3;break;
-            case DIAMOND_OP_BOX_LOCAL:
-                offset=one_register(stream,chunk,"BOX_LOCAL",offset);break;
-            case DIAMOND_OP_GET_CELL:
-                offset=two_registers(stream,chunk,"GET_CELL",offset);break;
-            case DIAMOND_OP_SET_CELL:
-                offset=two_registers(stream,chunk,"SET_CELL",offset);break;
-            case DIAMOND_OP_CLOSURE: {
                 if(!require_bytes(stream,chunk,offset,5)){valid=false;offset=chunk->code_count;break;}
-                const size_t count=chunk->code[offset+4];
-                if(!require_bytes(stream,chunk,offset,5+count)){valid=false;offset=chunk->code_count;break;}
+                fprintf(stream,"%-18s r%u, c%u\n",
+                    chunk->code[offset]==DIAMOND_OP_GET_CAPTURE
+                        ? "GET_CAPTURE" : "GET_CAPTURE_CELL",
+                    checked_register(chunk,stream,read_operand(chunk,offset+1),&valid),
+                    read_operand(chunk,offset+3));
+                offset+=5;break;
+            case DIAMOND_OP_SET_CAPTURE:
+                if(!require_bytes(stream,chunk,offset,5)){valid=false;offset=chunk->code_count;break;}
+                fprintf(stream,"%-18s c%u, r%u\n","SET_CAPTURE",
+                    read_operand(chunk,offset+1),
+                    checked_register(chunk,stream,read_operand(chunk,offset+3),&valid));
+                offset+=5;break;
+            case DIAMOND_OP_BOX_LOCAL:
+                offset=one_register(stream,chunk,"BOX_LOCAL",offset, &valid);break;
+            case DIAMOND_OP_GET_CELL:
+                offset=two_registers(stream,chunk,"GET_CELL",offset, &valid);break;
+            case DIAMOND_OP_SET_CELL:
+                offset=two_registers(stream,chunk,"SET_CELL",offset, &valid);break;
+            case DIAMOND_OP_CLOSURE: {
+                if(!require_bytes(stream,chunk,offset,6)){valid=false;offset=chunk->code_count;break;}
+                const size_t count=chunk->code[offset+5];
+                if(!require_bytes(stream,chunk,offset,6+count*2)){valid=false;offset=chunk->code_count;break;}
                 const size_t function_index=
-                    ((size_t)chunk->code[offset+2]<<8)|chunk->code[offset+3];
+                    ((size_t)chunk->code[offset+3]<<8)|chunk->code[offset+4];
                 fprintf(stream,"%-18s r%u, f%zu, %zu captures\n","CLOSURE",
-                    chunk->code[offset+1],function_index,count);
-                offset+=5+count;break;
+                    checked_register(chunk,stream,read_operand(chunk,offset+1),&valid),
+                    function_index,count);
+                for(size_t index=0;index<count;index++)
+                    checked_register(chunk,stream,read_operand(chunk,offset+6+index*2),&valid);
+                offset+=6+count*2;break;
             }
             case DIAMOND_OP_NEW:
-                if(!require_bytes(stream,chunk,offset,5)){valid=false;offset=chunk->code_count;break;}
+                if(!require_bytes(stream,chunk,offset,7)){valid=false;offset=chunk->code_count;break;}
                 fprintf(stream,"%-18s r%u, class%u, r%u, %u args\n","NEW",
-                    chunk->code[offset+1],chunk->code[offset+2],chunk->code[offset+3],chunk->code[offset+4]);
-                offset+=5;break;
+                    checked_register(chunk,stream,read_operand(chunk,offset+1),&valid),
+                    chunk->code[offset+3],
+                    checked_register_range(chunk,stream,read_operand(chunk,offset+4),
+                        chunk->code[offset+6],&valid),
+                    chunk->code[offset+6]);
+                offset+=7;break;
             case DIAMOND_OP_REDEFINE_METHOD:
-                if(!require_bytes(stream,chunk,offset,5)){valid=false;offset=chunk->code_count;break;}
+                if(!require_bytes(stream,chunk,offset,8)){valid=false;offset=chunk->code_count;break;}
                 fprintf(stream,"%-18s r%u, class%u, r%u, r%u\n","REDEFINE_METHOD",
-                    chunk->code[offset+1],chunk->code[offset+2],chunk->code[offset+3],chunk->code[offset+4]);
-                offset+=5;break;
+                    checked_register(chunk,stream,read_operand(chunk,offset+1),&valid),
+                    chunk->code[offset+3],
+                    checked_register(chunk,stream,read_operand(chunk,offset+4),&valid),
+                    checked_register(chunk,stream,read_operand(chunk,offset+6),&valid));
+                offset+=8;break;
             case DIAMOND_OP_YIELD:
-                offset=two_registers(stream,chunk,"YIELD",offset);break;
+                offset=two_registers(stream,chunk,"YIELD",offset, &valid);break;
             case DIAMOND_OP_FIBER_NEW:
-                offset=two_registers(stream,chunk,"FIBER_NEW",offset);break;
+                offset=two_registers(stream,chunk,"FIBER_NEW",offset, &valid);break;
             case DIAMOND_OP_THREAD_NEW:
-                if(!require_bytes(stream,chunk,offset,5)){valid=false;offset=chunk->code_count;break;}
+                if(!require_bytes(stream,chunk,offset,8)){valid=false;offset=chunk->code_count;break;}
                 fprintf(stream,"%-18s r%u, r%u, r%u, %u args\n","THREAD_NEW",
-                    chunk->code[offset+1],chunk->code[offset+2],chunk->code[offset+3],chunk->code[offset+4]);
-                offset+=5;break;
+                    checked_register(chunk,stream,read_operand(chunk,offset+1),&valid),
+                    checked_register(chunk,stream,read_operand(chunk,offset+3),&valid),
+                    checked_register_range(chunk,stream,read_operand(chunk,offset+5),
+                        chunk->code[offset+7],&valid),
+                    chunk->code[offset+7]);
+                offset+=8;break;
             case DIAMOND_OP_PRINT:
-                if(!require_bytes(stream,chunk,offset,4)){valid=false;offset=chunk->code_count;break;}
+                if(!require_bytes(stream,chunk,offset,6)){valid=false;offset=chunk->code_count;break;}
                 fprintf(stream,"%-18s r%u, r%u, newline=%u\n","PRINT",
-                    chunk->code[offset+1],chunk->code[offset+2],chunk->code[offset+3]);
-                offset+=4;break;
+                    checked_register(chunk,stream,read_operand(chunk,offset+1),&valid),
+                    checked_register(chunk,stream,read_operand(chunk,offset+3),&valid),
+                    chunk->code[offset+5]);
+                offset+=6;break;
             case DIAMOND_OP_GETS:
-                offset=one_register(stream,chunk,"GETS",offset);break;
+                offset=one_register(stream,chunk,"GETS",offset, &valid);break;
             case DIAMOND_OP_FILE_OPEN:
-                if(!require_bytes(stream,chunk,offset,4)){valid=false;offset=chunk->code_count;break;}
-                fprintf(stream,"%-18s r%u, r%u, r%u\n","FILE_OPEN",
-                    chunk->code[offset+1],chunk->code[offset+2],chunk->code[offset+3]);
-                offset+=4;break;
+                offset=three_registers(stream,chunk,"FILE_OPEN",offset, &valid);break;
             case DIAMOND_OP_TCP_CONNECT:
-                if(!require_bytes(stream,chunk,offset,4)){valid=false;offset=chunk->code_count;break;}
-                fprintf(stream,"%-18s r%u, r%u, r%u\n","TCP_CONNECT",
-                    chunk->code[offset+1],chunk->code[offset+2],chunk->code[offset+3]);
-                offset+=4;break;
+                offset=three_registers(stream,chunk,"TCP_CONNECT",offset, &valid);break;
             case DIAMOND_OP_TCP_LISTEN:
-                offset=three_registers(stream,chunk,"TCP_LISTEN",offset);break;
+                offset=three_registers(stream,chunk,"TCP_LISTEN",offset, &valid);break;
             case DIAMOND_OP_TCP_LISTEN_NONBLOCK:
-                offset=three_registers(stream,chunk,"TCP_LISTEN_NONBLOCK",offset);break;
+                offset=three_registers(stream,chunk,"TCP_LISTEN_NONBLOCK",offset, &valid);break;
             case DIAMOND_OP_IO_POLL:
-                if(!require_bytes(stream,chunk,offset,5)){valid=false;offset=chunk->code_count;break;}
+                if(!require_bytes(stream,chunk,offset,9)){valid=false;offset=chunk->code_count;break;}
                 fprintf(stream,"%-18s r%u, r%u, r%u, r%u\n","IO_POLL",
-                    chunk->code[offset+1],chunk->code[offset+2],
-                    chunk->code[offset+3],chunk->code[offset+4]);
-                offset+=5;break;
+                    checked_register(chunk,stream,read_operand(chunk,offset+1),&valid),
+                    checked_register(chunk,stream,read_operand(chunk,offset+3),&valid),
+                    checked_register(chunk,stream,read_operand(chunk,offset+5),&valid),
+                    checked_register(chunk,stream,read_operand(chunk,offset+7),&valid));
+                offset+=9;break;
             case DIAMOND_OP_UDP_BIND:
-                offset=two_registers(stream,chunk,"UDP_BIND",offset);break;
+                offset=two_registers(stream,chunk,"UDP_BIND",offset, &valid);break;
             case DIAMOND_OP_UDP_OPEN:
-                offset=one_register(stream,chunk,"UDP_OPEN",offset);break;
+                offset=one_register(stream,chunk,"UDP_OPEN",offset, &valid);break;
             case DIAMOND_OP_SIGNAL_TRAP:
-                offset=three_registers(stream,chunk,"SIGNAL_TRAP",offset);break;
+                offset=three_registers(stream,chunk,"SIGNAL_TRAP",offset, &valid);break;
             case DIAMOND_OP_TLS_CONNECT:
-                offset=three_registers(stream,chunk,"TLS_CONNECT",offset);break;
+                offset=three_registers(stream,chunk,"TLS_CONNECT",offset, &valid);break;
             case DIAMOND_OP_TLS_LISTEN:
-                if(!require_bytes(stream,chunk,offset,5)){valid=false;offset=chunk->code_count;break;}
+                if(!require_bytes(stream,chunk,offset,9)){valid=false;offset=chunk->code_count;break;}
                 fprintf(stream,"%-18s r%u, r%u, r%u, r%u\n","TLS_LISTEN",
-                    chunk->code[offset+1],chunk->code[offset+2],
-                    chunk->code[offset+3],chunk->code[offset+4]);
-                offset+=5;break;
+                    checked_register(chunk,stream,read_operand(chunk,offset+1),&valid),
+                    checked_register(chunk,stream,read_operand(chunk,offset+3),&valid),
+                    checked_register(chunk,stream,read_operand(chunk,offset+5),&valid),
+                    checked_register(chunk,stream,read_operand(chunk,offset+7),&valid));
+                offset+=9;break;
             case DIAMOND_OP_CHR:
-                offset=two_registers(stream,chunk,"CHR",offset);break;
+                offset=two_registers(stream,chunk,"CHR",offset, &valid);break;
             case DIAMOND_OP_TO_FLOAT:
-                offset=two_registers(stream,chunk,"TO_FLOAT",offset);break;
+                offset=two_registers(stream,chunk,"TO_FLOAT",offset, &valid);break;
             case DIAMOND_OP_TO_INT:
-                offset=two_registers(stream,chunk,"TO_INT",offset);break;
+                offset=two_registers(stream,chunk,"TO_INT",offset, &valid);break;
             case DIAMOND_OP_TO_SYMBOL:
-                offset=two_registers(stream,chunk,"TO_SYMBOL",offset);break;
+                offset=two_registers(stream,chunk,"TO_SYMBOL",offset, &valid);break;
             case DIAMOND_OP_MATH_UNARY: {
-                if(!require_bytes(stream,chunk,offset,4)){valid=false;offset=chunk->code_count;break;}
+                if(!require_bytes(stream,chunk,offset,6)){valid=false;offset=chunk->code_count;break;}
                 fprintf(stream,"%-18s r%u, r%u, %s\n","MATH_UNARY",
-                    chunk->code[offset+1],chunk->code[offset+2],
-                    math_function_name(chunk->code[offset+3]));
-                offset+=4;break;
+                    checked_register(chunk,stream,read_operand(chunk,offset+1),&valid),
+                    checked_register(chunk,stream,read_operand(chunk,offset+3),&valid),
+                    math_function_name((uint8_t)chunk->code[offset+5]));
+                offset+=6;break;
             }
             case DIAMOND_OP_MATH_BINARY: {
-                if(!require_bytes(stream,chunk,offset,5)){valid=false;offset=chunk->code_count;break;}
+                if(!require_bytes(stream,chunk,offset,8)){valid=false;offset=chunk->code_count;break;}
                 fprintf(stream,"%-18s r%u, r%u, r%u, %s\n","MATH_BINARY",
-                    chunk->code[offset+1],chunk->code[offset+2],chunk->code[offset+3],
-                    math_function_name(chunk->code[offset+4]));
-                offset+=5;break;
+                    checked_register(chunk,stream,read_operand(chunk,offset+1),&valid),
+                    checked_register(chunk,stream,read_operand(chunk,offset+3),&valid),
+                    checked_register(chunk,stream,read_operand(chunk,offset+5),&valid),
+                    math_function_name((uint8_t)chunk->code[offset+7]));
+                offset+=8;break;
             }
+            case DIAMOND_OP_REGEXP_NEW:
+                offset=three_registers(stream,chunk,"REGEXP_NEW",offset, &valid);break;
+            case DIAMOND_OP_PROGRAM_BUILDER_NEW:
+                offset=one_register(stream,chunk,"PROGRAM_BUILDER_NEW",offset, &valid);break;
             case DIAMOND_OP_INVOKE:
-                if(!require_bytes(stream,chunk,offset,6)){valid=false;offset=chunk->code_count;break;}
+                if(!require_bytes(stream,chunk,offset,9)){valid=false;offset=chunk->code_count;break;}
                 fprintf(stream,"%-18s r%u, r%u, s%u, r%u, %u args\n","INVOKE",
-                    chunk->code[offset+1],chunk->code[offset+2],chunk->code[offset+3],
-                    chunk->code[offset+4],chunk->code[offset+5]);offset+=6;break;
+                    checked_register(chunk,stream,read_operand(chunk,offset+1),&valid),
+                    checked_register(chunk,stream,read_operand(chunk,offset+3),&valid),
+                    chunk->code[offset+5],
+                    checked_register_range(chunk,stream,read_operand(chunk,offset+6),
+                        chunk->code[offset+8],&valid),
+                    chunk->code[offset+8]);offset+=9;break;
             case DIAMOND_OP_INVOKE_MONO:
-                if(!require_bytes(stream,chunk,offset,6)){valid=false;offset=chunk->code_count;break;}
+                if(!require_bytes(stream,chunk,offset,9)){valid=false;offset=chunk->code_count;break;}
                 fprintf(stream,"%-18s r%u, r%u, s%u, r%u, %u args\n","INVOKE_MONO",
-                    chunk->code[offset+1],chunk->code[offset+2],chunk->code[offset+3],
-                    chunk->code[offset+4],chunk->code[offset+5]);offset+=6;break;
+                    checked_register(chunk,stream,read_operand(chunk,offset+1),&valid),
+                    checked_register(chunk,stream,read_operand(chunk,offset+3),&valid),
+                    chunk->code[offset+5],
+                    checked_register_range(chunk,stream,read_operand(chunk,offset+6),
+                        chunk->code[offset+8],&valid),
+                    chunk->code[offset+8]);offset+=9;break;
             case DIAMOND_OP_INVOKE_TYPED: {
-                if(!require_bytes(stream,chunk,offset,7)) {
+                if(!require_bytes(stream,chunk,offset,10)) {
                     valid=false;offset=chunk->code_count;break;
                 }
-                const uint8_t count=chunk->code[offset+6];
-                if(!require_bytes(stream,chunk,offset,(size_t)7+count)) {
+                const uint8_t count=chunk->code[offset+9];
+                if(!require_bytes(stream,chunk,offset,(size_t)10+count)) {
                     valid=false;offset=chunk->code_count;break;
                 }
                 fprintf(stream,"%-18s r%u, r%u, s%u, r%u, %u args, [",
-                    "INVOKE_TYPED",chunk->code[offset+1],chunk->code[offset+2],
-                    chunk->code[offset+3],chunk->code[offset+4],
-                    chunk->code[offset+5]);
+                    "INVOKE_TYPED",
+                    checked_register(chunk,stream,read_operand(chunk,offset+1),&valid),
+                    checked_register(chunk,stream,read_operand(chunk,offset+3),&valid),
+                    chunk->code[offset+5],
+                    checked_register_range(chunk,stream,read_operand(chunk,offset+6),
+                        chunk->code[offset+8],&valid),
+                    chunk->code[offset+8]);
                 for(size_t index=0;index<count;index++) {
                     if(index>0)fputs(", ",stream);
                     valid=print_type_set(stream,chunk,
-                        chunk->code[offset+7+index])&&valid;
+                        chunk->code[offset+10+index])&&valid;
                 }
-                fputs("]\n",stream);offset+=(size_t)7+count;break;
+                fputs("]\n",stream);offset+=(size_t)10+count;break;
             }
             case DIAMOND_OP_SUPER:
-                if(!require_bytes(stream,chunk,offset,6)){valid=false;offset=chunk->code_count;break;}
+                if(!require_bytes(stream,chunk,offset,8)){valid=false;offset=chunk->code_count;break;}
                 fprintf(stream,"%-18s r%u, class%u, s%u, r%u, %u args\n","SUPER",
-                    chunk->code[offset+1],chunk->code[offset+2],chunk->code[offset+3],
-                    chunk->code[offset+4],chunk->code[offset+5]);offset+=6;break;
+                    checked_register(chunk,stream,read_operand(chunk,offset+1),&valid),
+                    chunk->code[offset+3],chunk->code[offset+4],
+                    checked_register_range(chunk,stream,read_operand(chunk,offset+5),
+                        chunk->code[offset+7],&valid),
+                    chunk->code[offset+7]);offset+=8;break;
+            /* GET_IVAR/SET_IVAR's third operand is a field index, checked
+             * against the receiver's own instance->field_count at runtime
+             * (a per-instance/per-class bound, not something this purely
+             * bytecode-level walk can know statically anyway) -- not a
+             * register despite the uniform 2-byte width. */
             case DIAMOND_OP_GET_IVAR:
-                offset=three_registers(stream,chunk,"GET_IVAR",offset);break;
+                if(!require_bytes(stream,chunk,offset,7)){valid=false;offset=chunk->code_count;break;}
+                fprintf(stream,"%-18s r%u, r%u, field%u\n","GET_IVAR",
+                    checked_register(chunk,stream,read_operand(chunk,offset+1),&valid),
+                    checked_register(chunk,stream,read_operand(chunk,offset+3),&valid),
+                    read_operand(chunk,offset+5));
+                offset+=7;break;
             case DIAMOND_OP_SET_IVAR:
-                offset=three_registers(stream,chunk,"SET_IVAR",offset);break;
+                if(!require_bytes(stream,chunk,offset,7)){valid=false;offset=chunk->code_count;break;}
+                fprintf(stream,"%-18s r%u, field%u, r%u\n","SET_IVAR",
+                    checked_register(chunk,stream,read_operand(chunk,offset+1),&valid),
+                    read_operand(chunk,offset+3),
+                    checked_register(chunk,stream,read_operand(chunk,offset+5),&valid));
+                offset+=7;break;
+            /* GET_IVAR_NAME's third operand and SET_IVAR_NAME's second are
+             * a string-pool index (the field's name, resolved to an
+             * index at runtime and checked against chunk->string_count),
+             * not a register -- see DIAMOND_OP_GET_IVAR_NAME/SET_IVAR_
+             * NAME's shared handler in vm.c for the write-dependent
+             * operand-role split this mirrors. */
             case DIAMOND_OP_GET_IVAR_NAME:
-                offset=three_registers(stream,chunk,"GET_IVAR_NAME",offset);break;
+                if(!require_bytes(stream,chunk,offset,7)){valid=false;offset=chunk->code_count;break;}
+                fprintf(stream,"%-18s r%u, r%u, s%u\n","GET_IVAR_NAME",
+                    checked_register(chunk,stream,read_operand(chunk,offset+1),&valid),
+                    checked_register(chunk,stream,read_operand(chunk,offset+3),&valid),
+                    read_operand(chunk,offset+5));
+                offset+=7;break;
             case DIAMOND_OP_SET_IVAR_NAME:
-                offset=three_registers(stream,chunk,"SET_IVAR_NAME",offset);break;
+                if(!require_bytes(stream,chunk,offset,7)){valid=false;offset=chunk->code_count;break;}
+                fprintf(stream,"%-18s r%u, s%u, r%u\n","SET_IVAR_NAME",
+                    checked_register(chunk,stream,read_operand(chunk,offset+1),&valid),
+                    read_operand(chunk,offset+3),
+                    checked_register(chunk,stream,read_operand(chunk,offset+5),&valid));
+                offset+=7;break;
+            /* GET_NAMESPACE_CONSTANT/SET_NAMESPACE_CONSTANT's index operand
+             * is checked against DIAMOND_MAX_NAMESPACE_CONSTANTS at
+             * runtime, not a register. */
             case DIAMOND_OP_GET_NAMESPACE_CONSTANT:
-                offset=two_registers(stream,chunk,"GET_NAMESPACE_CONST",offset);break;
+                if(!require_bytes(stream,chunk,offset,5)){valid=false;offset=chunk->code_count;break;}
+                fprintf(stream,"%-18s r%u, ns%u\n","GET_NAMESPACE_CONST",
+                    checked_register(chunk,stream,read_operand(chunk,offset+1),&valid),
+                    read_operand(chunk,offset+3));
+                offset+=5;break;
             case DIAMOND_OP_SET_NAMESPACE_CONSTANT:
-                offset=two_registers(stream,chunk,"SET_NAMESPACE_CONST",offset);break;
+                if(!require_bytes(stream,chunk,offset,5)){valid=false;offset=chunk->code_count;break;}
+                fprintf(stream,"%-18s ns%u, r%u\n","SET_NAMESPACE_CONST",
+                    read_operand(chunk,offset+1),
+                    checked_register(chunk,stream,read_operand(chunk,offset+3),&valid));
+                offset+=5;break;
             case DIAMOND_OP_CHECK_TYPE:
-                if(!require_bytes(stream,chunk,offset,3)){valid=false;offset=chunk->code_count;break;}
-                fprintf(stream,"%-18s r%u, ","CHECK_TYPE",chunk->code[offset+1]);
-                const uint8_t set_index=chunk->code[offset+2];
+                if(!require_bytes(stream,chunk,offset,5)){valid=false;offset=chunk->code_count;break;}
+                fprintf(stream,"%-18s r%u, ","CHECK_TYPE",
+                    checked_register(chunk,stream,read_operand(chunk,offset+1),&valid));
+                const uint8_t set_index=(uint8_t)read_operand(chunk,offset+3);
                 valid=print_type_set(stream,chunk,set_index)&&valid;
-                fputc('\n',stream);offset+=3;break;
+                fputc('\n',stream);offset+=5;break;
             case DIAMOND_OP_IS_TYPE: {
-                if(!require_bytes(stream,chunk,offset,4)){valid=false;offset=chunk->code_count;break;}
+                if(!require_bytes(stream,chunk,offset,7)){valid=false;offset=chunk->code_count;break;}
                 fprintf(stream,"%-18s r%u, r%u, ","IS_TYPE",
-                        chunk->code[offset+1],chunk->code[offset+2]);
-                const uint8_t type=chunk->code[offset+3];
+                        checked_register(chunk,stream,read_operand(chunk,offset+1),&valid),
+                        checked_register(chunk,stream,read_operand(chunk,offset+3),&valid));
+                const uint8_t type=(uint8_t)read_operand(chunk,offset+5);
                 if(type==DIAMOND_TYPE_INT) fputs("Int",stream);
                 else if(type==DIAMOND_TYPE_FLOAT) fputs("Float",stream);
                 else if(type==DIAMOND_TYPE_STRING) fputs("String",stream);
@@ -538,36 +732,48 @@ static bool disassemble_chunk(FILE *stream, const char *name,
                 else if((size_t)(type-DIAMOND_TYPE_CLASS_BASE)<chunk->class_count)
                     fputs(chunk->classes[type-DIAMOND_TYPE_CLASS_BASE].name,stream);
                 else {fputs("<invalid type>",stream);valid=false;}
-                fputc('\n',stream);offset+=4;break;
+                fputc('\n',stream);offset+=7;break;
             }
-            case DIAMOND_OP_ARRAY:
-                if(!require_bytes(stream,chunk,offset,4)){valid=false;offset=chunk->code_count;break;}
+            case DIAMOND_OP_ARRAY: {
+                if(!require_bytes(stream,chunk,offset,7)){valid=false;offset=chunk->code_count;break;}
+                const uint16_t items=read_operand(chunk,offset+5);
                 fprintf(stream,"%-18s r%u, r%u, %u items\n","ARRAY",
-                    chunk->code[offset+1],chunk->code[offset+2],chunk->code[offset+3]);
-                offset+=4;break;
+                    checked_register(chunk,stream,read_operand(chunk,offset+1),&valid),
+                    checked_register_range(chunk,stream,read_operand(chunk,offset+3),items,&valid),
+                    items);
+                offset+=7;break;
+            }
             case DIAMOND_OP_INDEX_GET:
-                offset=three_registers(stream,chunk,"INDEX_GET",offset);break;
+                offset=three_registers(stream,chunk,"INDEX_GET",offset, &valid);break;
             case DIAMOND_OP_INDEX_SET:
-                offset=three_registers(stream,chunk,"INDEX_SET",offset);break;
-            case DIAMOND_OP_HASH:
-                if(!require_bytes(stream,chunk,offset,4)){valid=false;offset=chunk->code_count;break;}
+                offset=three_registers(stream,chunk,"INDEX_SET",offset, &valid);break;
+            case DIAMOND_OP_HASH: {
+                if(!require_bytes(stream,chunk,offset,7)){valid=false;offset=chunk->code_count;break;}
+                const uint16_t pairs=read_operand(chunk,offset+5);
                 fprintf(stream,"%-18s r%u, r%u, %u pairs\n","HASH",
-                    chunk->code[offset+1],chunk->code[offset+2],chunk->code[offset+3]);
-                offset+=4;break;
+                    checked_register(chunk,stream,read_operand(chunk,offset+1),&valid),
+                    checked_register_range(chunk,stream,read_operand(chunk,offset+3),
+                        (size_t)pairs*2,&valid),
+                    pairs);
+                offset+=7;break;
+            }
             case DIAMOND_OP_NOT:
-                offset=two_registers(stream,chunk,"NOT",offset);break;
+                offset=two_registers(stream,chunk,"NOT",offset, &valid);break;
             case DIAMOND_OP_RETURN:
-                offset = one_register(stream, chunk, "RETURN", offset);
+                offset = one_register(stream, chunk, "RETURN", offset, &valid);
                 break;
             case DIAMOND_OP_RAISE:
-                offset = one_register(stream, chunk, "RAISE", offset);
+                offset = one_register(stream, chunk, "RAISE", offset, &valid);
                 break;
             case DIAMOND_OP_PUSH_RESCUE: {
-                if(!require_bytes(stream,chunk,offset,13)){valid=false;offset=chunk->code_count;break;}
-                const size_t target=((size_t)chunk->code[offset+11]<<8)|chunk->code[offset+12];
+                if(!require_bytes(stream,chunk,offset,14)){valid=false;offset=chunk->code_count;break;}
+                const size_t target=((size_t)chunk->code[offset+12]<<8)|chunk->code[offset+13];
                 fprintf(stream,"%-18s r%u, %u types -> %04zu\n","PUSH_RESCUE",
-                        chunk->code[offset+1],chunk->code[offset+2],target);
-                offset+=13;break;
+                        checked_register(chunk,stream,read_operand(chunk,offset+1),&valid),
+                        chunk->code[offset+3],target);
+                if(target>chunk->code_count) valid=false;
+                else pending_targets[pending_count++]=target;
+                offset+=14;break;
             }
             case DIAMOND_OP_POP_RESCUE:
                 fprintf(stream,"%-18s\n","POP_RESCUE");offset++;break;
@@ -575,6 +781,8 @@ static bool disassemble_chunk(FILE *stream, const char *name,
             case DIAMOND_OP_RUN_ENSURE: {
                 if(!require_bytes(stream,chunk,offset,3)){valid=false;offset=chunk->code_count;break;}
                 const size_t target=((size_t)chunk->code[offset+1]<<8)|chunk->code[offset+2];
+                if(target>chunk->code_count) valid=false;
+                else pending_targets[pending_count++]=target;
                 fprintf(stream,"%-18s -> %04zu\n",
                     chunk->code[offset]==DIAMOND_OP_PUSH_ENSURE
                         ? "PUSH_ENSURE" : "RUN_ENSURE",target);
@@ -587,6 +795,21 @@ static bool disassemble_chunk(FILE *stream, const char *name,
                 valid = false;
                 offset++;
                 break;
+        }
+    }
+
+    /* Every jump-like target recorded above gets checked here, now that
+     * `starts` is fully populated -- a target within [0, code_count] that
+     * doesn't land on an instruction boundary (target==code_count, falling
+     * off the end, is the one exception: already handled the same way a
+     * normal fall-through completion is) would make the interpreter read
+     * a byte this walk never validated as an opcode, bypassing every
+     * register-bounds check above for whatever it decides to do next. */
+    for (size_t index = 0; index < pending_count; index++) {
+        const size_t target = pending_targets[index];
+        if (target != chunk->code_count && !starts[target]) {
+            fprintf(stream, "<jump target %04zu is not an instruction boundary>\n", target);
+            valid = false;
         }
     }
     return valid;
@@ -615,10 +838,19 @@ bool diamond_disassemble(FILE *stream, const char *name,
             .class_count = chunk->class_count,
             .interfaces=chunk->interfaces,
             .interface_count=chunk->interface_count,
+            .register_count=function->register_count,
         };
         if (!disassemble_chunk(stream, function->name, &function_chunk)) {
             valid = false;
         }
     }
+    return valid;
+}
+
+bool diamond_verify_bytecode(const DiamondChunk *chunk) {
+    FILE *sink = getenv("DIAMOND_DEBUG_VERIFY") ? stderr : fopen("/dev/null", "w");
+    if (sink == nullptr) return false;
+    const bool valid = diamond_disassemble(sink, chunk->name, chunk);
+    if (sink != stderr) fclose(sink);
     return valid;
 }

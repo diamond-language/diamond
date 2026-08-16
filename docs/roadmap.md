@@ -322,6 +322,13 @@ future work.
   parser can itself compile and run a third, independent program.
 - Widened function indices from 8 to 16 bits (`DIAMOND_MAX_FUNCTIONS`
   256 → 512) to give the self-hosted bootstrap compile headroom.
+- Widened register operands from 8 to 16 bits (the per-function register
+  ceiling, 256 → 4096) for the same reason, hit repeatedly during
+  self-hosting. `run_chunk`'s register array became a VLA sized to each
+  function's own high-water mark instead of a fixed
+  `DIAMOND_REGISTER_COUNT`-wide array, so ordinary small functions use
+  *less* stack than before and only a function that actually needs
+  hundreds/thousands of registers pays for the wider frame.
 - Widened `ProgramBuilder#run` to return `String`/`Symbol`/`Bignum`/`Array`/
   `Hash` results (deep-copied across the isolated builder VM boundary), not
   just scalars.
@@ -476,18 +483,6 @@ rather than a sanitizer artifact, and was fixed; see "Fibers and
 concurrency" above.
 
 ## Judgement calls
-
-- **The 256-register-per-function ceiling.** Register operands are a single
-  byte throughout the bytecode format and the allocator is monotonic
-  (never recycled within a function body), so any sufficiently large
-  function or method fails to compile with "program needs too many
-  registers" and has to be manually split. This was hit repeatedly across
-  self-hosting and worked around every time by splitting methods, never by
-  changing the format — unlike function/constant indices, which were
-  deliberately widened from one byte to two when they became a real
-  constraint. It's unclear whether this is a genuine gap worth the same
-  treatment or an accepted architectural constant; nothing in the project's
-  own history frames it as something to fix.
 
 - **Bare-name forward/mutual recursion between top-level functions (or
   sibling methods calling each other by bare name) fails to compile.**
