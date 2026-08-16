@@ -1149,9 +1149,17 @@ static DiamondVmStatus tcp_connect_helper(DiamondVm *vm,const DiamondString *hos
  * resulting fd is set O_NONBLOCK and which flavor of DiamondListenerHandle
  * comes out the other end. Follows the established helper-returns-status
  * convention (see stringify_value/regexp_new_helper) since VM_RETURN/
- * VM_PROPAGATE are only usable inside run_chunk's own dispatch loop. */
+ * VM_PROPAGATE are only usable inside run_chunk's own dispatch loop.
+ * `reuse_port` sets SO_REUSEPORT (opt-in, off by default -- unlike
+ * SO_REUSEADDR below, which is unconditional and only affects rebinding
+ * after close): lets more than one independent listening socket bind the
+ * *same* port, with the kernel load-balancing new connections across them.
+ * Exists for a multi-threaded server where each OS thread runs its own
+ * independent accept loop against its own listener rather than sharing one
+ * across a Thread boundary (Listener values can never cross one -- see
+ * docs/threads.md) -- see packages/gremlin's own gremlin_worker. */
 static DiamondVmStatus tcp_listen_helper(DiamondVm *vm,int64_t port,
-        bool nonblocking,DiamondListenerHandle **out_handle) {
+        bool nonblocking,bool reuse_port,DiamondListenerHandle **out_handle) {
     char port_text[32];
     (void)snprintf(port_text,sizeof port_text,"%" PRId64,port);
     struct addrinfo hints={.ai_family=AF_UNSPEC,.ai_socktype=SOCK_STREAM,
@@ -1172,6 +1180,7 @@ static DiamondVmStatus tcp_listen_helper(DiamondVm *vm,int64_t port,
         if(fd<0) {last_errno=errno;continue;}
         const int yes=1;
         (void)setsockopt(fd,SOL_SOCKET,SO_REUSEADDR,&yes,sizeof yes);
+        if(reuse_port)(void)setsockopt(fd,SOL_SOCKET,SO_REUSEPORT,&yes,sizeof yes);
         if(bind(fd,candidate->ai_addr,candidate->ai_addrlen)==0) {
             listening_fd=fd;break;
         }
@@ -1221,7 +1230,7 @@ static DiamondVmStatus tcp_listen_helper(DiamondVm *vm,int64_t port,
 static DiamondVmStatus tls_listen_helper(DiamondVm *vm,int64_t port,
         const char *cert_path,const char *key_path,DiamondListenerHandle **out_handle) {
     DiamondListenerHandle *listener_handle=nullptr;
-    const DiamondVmStatus listen_status=tcp_listen_helper(vm,port,false,&listener_handle);
+    const DiamondVmStatus listen_status=tcp_listen_helper(vm,port,false,false,&listener_handle);
     if(listen_status!=DIAMOND_VM_OK)return listen_status;
     SSL_CTX *context=SSL_CTX_new(TLS_server_method());
     if(context==nullptr) {
@@ -1889,6 +1898,27 @@ static bool copy_value_into_vm(DiamondVm *dest_vm, DiamondValue value,
             copy->negative=source->negative;copy->limb_count=source->limb_count;
             memcpy(copy->limbs,source->limbs,source->limb_count*sizeof(uint32_t));
             dest_vm->objects=&copy->object;dest_vm->bytes_allocated+=size;
+            *out=DIAMOND_OBJECT(copy);return true;
+        }
+        case DIAMOND_OBJECT_CLOSURE: {
+            /* Only a *zero-capture* closure, and only in Thread's rebase
+             * mode (rebase_dest_classes!=nullptr) -- a capturing closure
+             * still holds live Cell/GC state tied to one specific heap,
+             * categorically forbidden here exactly as Thread.new's own
+             * primary-callable check already requires. In adopt mode
+             * (ProgramBuilder#run) the source and destination programs are
+             * genuinely different, so a bare function_index wouldn't mean
+             * the same function in both -- unlike Thread, whose
+             * child_program is a byte-for-byte clone of the whole
+             * functions[] table (see clone_program_from_chunk), so a valid
+             * index in one is the same function in the other with no
+             * offset arithmetic needed at all (unlike the Instance case
+             * just above, which rebases a pointer). See docs/threads.md. */
+            const DiamondClosure *source=(const DiamondClosure *)value.as.object;
+            if(source->capture_count!=0||rebase_dest_classes==nullptr)return false;
+            DiamondClosure *copy=
+                allocate_closure(dest_vm,source->function_index,nullptr,0);
+            if(copy==nullptr)return false;
             *out=DIAMOND_OBJECT(copy);return true;
         }
         default: return false;
@@ -8447,17 +8477,23 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
             }
             case DIAMOND_OP_TCP_LISTEN:
             case DIAMOND_OP_TCP_LISTEN_NONBLOCK: {
-                uint8_t dest=0,port_reg=0;
-                READ_BYTE(dest);READ_BYTE(port_reg);
+                uint8_t dest=0,port_reg=0,reuse_port_reg=0;
+                READ_BYTE(dest);READ_BYTE(port_reg);READ_BYTE(reuse_port_reg);
                 if(registers[port_reg].kind!=DIAMOND_VALUE_INT) {
                     snprintf(vm->error,sizeof vm->error,
                              "TCPServer.listen argument must be an Int port");
                     VM_RETURN(DIAMOND_VM_TYPE_ERROR);
                 }
+                if(registers[reuse_port_reg].kind!=DIAMOND_VALUE_BOOL) {
+                    snprintf(vm->error,sizeof vm->error,
+                             "TCPServer.listen's reuse_port option must be a Bool");
+                    VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                }
                 DiamondListenerHandle *listener_handle=nullptr;
                 const DiamondVmStatus listen_status=tcp_listen_helper(vm,
                     registers[port_reg].as.integer,
-                    instruction==DIAMOND_OP_TCP_LISTEN_NONBLOCK,&listener_handle);
+                    instruction==DIAMOND_OP_TCP_LISTEN_NONBLOCK,
+                    registers[reuse_port_reg].as.boolean,&listener_handle);
                 VM_PROPAGATE(listen_status);
                 registers[dest]=(DiamondValue){.kind=DIAMOND_VALUE_OBJECT,
                     .as.object=(DiamondObject *)listener_handle};

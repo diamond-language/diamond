@@ -4580,13 +4580,35 @@ class Parser
     self.skip_newlines()
     port = self.parse_expression()
     self.skip_newlines()
+    reuse_port = if @current.kind() == :comma
+      self.advance_token()
+      self.skip_newlines()
+      if @current.kind() != :identifier || self.token_text(@current) != "reuse_port"
+        self.fail("expected 'reuse_port' after ',' in TCPServer.listen arguments")
+        return 0
+      end
+      self.advance_token()
+      if @current.kind() != :colon
+        self.fail("expected ':' after 'reuse_port'")
+        return 0
+      end
+      self.advance_token()
+      self.skip_newlines()
+      result = self.parse_expression()
+      self.skip_newlines()
+      result
+    else
+      destination = self.allocate_register()
+      self.emit_instruction2(Opcode::BOOL, destination, 0)
+      destination
+    end
     if @current.kind() != :right_paren
-      self.fail("expected ')' after TCPServer.listen argument")
+      self.fail("expected ')' after TCPServer.listen arguments")
       return 0
     end
     self.advance_token()
     destination = self.allocate_register()
-    self.emit_instruction2(Opcode::TCP_LISTEN, destination, port)
+    self.emit_instruction3(Opcode::TCP_LISTEN, destination, port, reuse_port)
     destination
   end
 

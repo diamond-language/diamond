@@ -1710,6 +1710,17 @@ static uint8_t parse_tcp_connect_call(Compiler *compiler) {
     return dest;
 }
 
+/* `TCPServer.listen(port)`/`listen_nonblocking(port)`, optionally followed
+ * by `, reuse_port: <expr>` -- a compiler special form like Thread.new's
+ * own trailing-argument parsing, so this hand-rolls the keyword rather than
+ * reusing the generic call-argument path (which only exists for ordinary
+ * Diamond-defined functions). Omitting the keyword compiles to a literal
+ * `false` (see parse_literal's own DIAMOND_OP_BOOL emission), so the
+ * opcode always receives exactly 3 operands and reuse_port stays off by
+ * default -- every existing single-listener caller (http_serve, arbitrary
+ * user code) keeps today's exclusive-port-ownership behavior unless it
+ * explicitly opts in. See docs/io.md and packages/gremlin's own
+ * gremlin_worker for why a caller would want this. */
 static uint8_t parse_tcp_listen_call(Compiler *compiler) {
     advance_token(compiler); /* consume '.' */
     const bool nonblocking=compiler->current.kind==DIAMOND_TOKEN_IDENTIFIER&&
@@ -1729,8 +1740,31 @@ static uint8_t parse_tcp_listen_call(Compiler *compiler) {
     skip_newlines(compiler);
     const uint8_t port_register=parse_expression(compiler);
     skip_newlines(compiler);
+    uint8_t reuse_port_register;
+    if(compiler->current.kind==DIAMOND_TOKEN_COMMA) {
+        advance_token(compiler);
+        skip_newlines(compiler);
+        if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER||
+           !name_equals(compiler,"reuse_port",compiler->current.span,false)) {
+            fail(compiler,compiler->current.span,
+                 "expected 'reuse_port' after ',' in TCPServer.listen arguments");
+            return 0;
+        }
+        advance_token(compiler); /* consume 'reuse_port' */
+        if(compiler->current.kind!=DIAMOND_TOKEN_COLON) {
+            fail(compiler,compiler->current.span,"expected ':' after 'reuse_port'");
+            return 0;
+        }
+        advance_token(compiler); /* consume ':' */
+        skip_newlines(compiler);
+        reuse_port_register=parse_expression(compiler);
+        skip_newlines(compiler);
+    } else {
+        reuse_port_register=allocate_register(compiler);
+        emit_instruction(compiler,DIAMOND_OP_BOOL,reuse_port_register,false,0,2);
+    }
     if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
-        fail(compiler,compiler->current.span,"expected ')' after TCPServer.listen argument");
+        fail(compiler,compiler->current.span,"expected ')' after TCPServer.listen arguments");
         return 0;
     }
     advance_token(compiler);
@@ -1738,6 +1772,7 @@ static uint8_t parse_tcp_listen_call(Compiler *compiler) {
     emit_opcode(compiler,nonblocking?DIAMOND_OP_TCP_LISTEN_NONBLOCK:DIAMOND_OP_TCP_LISTEN);
     emit_byte(compiler,dest);
     emit_byte(compiler,port_register);
+    emit_byte(compiler,reuse_port_register);
     return dest;
 }
 

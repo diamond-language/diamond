@@ -180,6 +180,19 @@ read/write logic exists for sockets at all. Only connection
 `TCPSocket.connect`/`TCPServer.listen` are recognized in the compiler the
 same way `File.open`/`Fiber.new` are.
 
+Both `TCPServer.listen`/`listen_nonblocking` also accept an optional
+trailing `reuse_port: <expr>` keyword, defaulting to `false` — sets
+`SO_REUSEPORT` on the listening socket, letting more than one independent
+listener bind the *same* port (the kernel load-balances new connections
+across them), instead of the default exclusive-ownership behavior where a
+second `listen` on an already-bound port fails with `IOError`. Off by
+default so every existing single-listener server keeps today's stricter
+behavior unless it explicitly opts in — see `docs/threads.md`'s
+"Crossing the heap boundary" section and `packages/gremlin`'s
+`gremlin_worker` for why a caller would want this: each thread in a
+multi-threaded server opens its own listener (a `Listener` can never cross
+a `Thread` boundary), all bound to the same port via this flag.
+
 ## Non-blocking sockets: `TCPServer.listen_nonblocking`, `Socket`, `IO.poll`
 
 ```ruby

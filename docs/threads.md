@@ -120,10 +120,28 @@ every copied field silently read back as a cached `nil` despite genuinely
 holding a value.
 
 The same restricted-kind rejection both callers already relied on still
-applies: Closure, Fiber, File, Listener, Socket, UDP socket, TLS socket,
-Regexp, ProgramBuilder, and Thread values can't cross a heap boundary at
-all (rescuable `TypeError`) — each holds either live GC state tied to one
-specific heap, or a native OS resource that doesn't make sense to duplicate.
+applies: Fiber, File, Listener, Socket, UDP socket, TLS socket, Regexp,
+ProgramBuilder, and Thread values can't cross a heap boundary at all
+(rescuable `TypeError`) — each holds either live GC state tied to one
+specific heap, or a native OS resource that doesn't make sense to
+duplicate.
+
+**One exception: a zero-capture Closure may cross, in rebase mode only.**
+A *capturing* closure is still categorically forbidden — it holds a live
+`DiamondCell`/GC state belonging to the source heap, exactly the same
+hazard `Thread.new`'s own primary-callable check already rejects. But a
+zero-capture closure is just a `function_index` into the shared
+`functions[]` table, and in rebase mode the destination program is a
+byte-for-byte clone of that same table (see "Isolated-heap design" above)
+— so the index means the same function in both, with no arithmetic needed
+at all (unlike the `Instance`/class-pointer case, which rebases a pointer).
+This lets a `Callable` argument — such as a request handler — reach a
+spawned thread like any other value. Adopt mode (`ProgramBuilder#run`)
+still rejects every Closure unconditionally: its source and destination
+programs are genuinely different, so a bare `function_index` wouldn't mean
+the same function in both. `packages/gremlin`'s multi-threaded mode
+(`gremlin_serve(port, handler, threads: N)`) is the motivating use case —
+see its own source comments.
 
 ## `.join()`'s three outcomes
 

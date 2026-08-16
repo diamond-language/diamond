@@ -20,6 +20,11 @@ wait_for_port() {
 
 server_src() {
     local port="$1"
+    local threads="${2:-}"
+    local serve_call="gremlin_serve($port, handler)"
+    if [[ -n "$threads" ]]; then
+        serve_call="gremlin_serve($port, handler, threads: $threads)"
+    fi
     cat <<SRCEOF
 require "$(pwd)/gremlin"
 def run()
@@ -30,7 +35,7 @@ def run()
       [201, {"Content-Type": "text/plain"}, "posted: #{request["body"]}"]
     end
   end
-  gremlin_serve($port, handler)
+  $serve_call
 end
 run()
 SRCEOF
@@ -100,4 +105,33 @@ kill "$pid" 2>/dev/null || true
 wait "$pid" 2>/dev/null || true
 rm -f "$out"
 
-echo "4 gremlin tests passed"
+# threads: 3 -- each worker opens its own listener on the same port via
+# reuse_port: true (see gremlin_worker); if that ever silently fell back
+# to a single worker (or SO_REUSEPORT wasn't actually reaching the
+# socket), the server would still pass every test above unchanged, so
+# this specifically proves multi-listener startup on one port actually
+# works end to end. Several sequential requests can't deterministically
+# prove which thread handled which (kernel-hashed), but a wrong or
+# crashed additional listener would make *some* of these time out or
+# fail outright.
+port=19412
+out="$(mktemp)"
+timeout 10 "$diamond" -e "$(server_src "$port" 3)" >"$out" 2>&1 &
+pid=$!
+wait_for_port "$port"
+{ exec 3<&- 3>&-; } 2>/dev/null || true
+
+for i in 1 2 3 4 5; do
+    exec 3<>"/dev/tcp/127.0.0.1/$port"
+    printf 'GET /mt%d HTTP/1.1\r\nHost: localhost\r\n\r\n' "$i" >&3
+    response="$(timeout 3 cat <&3)"
+    { exec 3<&- 3>&-; } 2>/dev/null || true
+    expected_length=$(( 10 + ${#i} ))
+    [[ "$response" == $'HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: '"$expected_length"$'\r\n\r\nhello, /mt'"$i" ]]
+done
+
+kill "$pid" 2>/dev/null || true
+wait "$pid" 2>/dev/null || true
+rm -f "$out"
+
+echo "9 gremlin tests passed"

@@ -14,22 +14,30 @@ require "../http/http"
 # a Callable[1] taking a request Hash and returning [status, headers,
 # body] -- but unlike http_serve's single blocking accept loop,
 # gremlin_serve handles every connection concurrently: one Fiber per
-# connection, driven by a single top-level accept/poll/resume loop, so a
-# slow client reading its response one byte at a time never blocks any
-# other connection's own progress.
+# connection, driven by a top-level accept/poll/resume loop, so a slow
+# client reading its response one byte at a time never blocks any other
+# connection's own progress.
 #
-# This is possible without threads or a runtime scheduler because the
-# actual blocking I/O never happens inside a fiber. Every connection's
-# socket is non-blocking (TCPServer.listen_nonblocking); reading or
-# writing when nothing is ready raises WouldBlockError, which
+# The actual blocking I/O never happens inside a fiber. Every
+# connection's socket is non-blocking (TCPServer.listen_nonblocking);
+# reading or writing when nothing is ready raises WouldBlockError, which
 # NonblockingConnection below catches and turns into a plain `yield` --
 # suspending that connection's own fiber, in place, at whatever call
 # depth it happened to be at (inside http_parse_request, inside
 # http_write_response, wherever), exactly as docs/fibers.md describes.
-# gremlin_serve's own loop is the only thing that ever calls IO.poll or
-# .resume -- it decides which suspended connections have become ready
+# `gremlin_worker`'s own loop is the only thing that ever calls IO.poll
+# or .resume -- it decides which suspended connections have become ready
 # again and wakes exactly those, in an ordinary single-threaded event
 # loop shape.
+#
+# `gremlin_serve(port, handler, threads: N)` runs N independent copies of
+# that same event loop, each on its own OS thread (see docs/threads.md)
+# with its own fully independent heap and its own listener bound to the
+# same port via SO_REUSEPORT -- the default, threads: 1, is exactly the
+# single-thread design above with no Thread involved at all. Concurrency
+# *within* one worker is still fibers, same as ever; `threads` is a
+# separate, orthogonal axis of concurrency *across* workers, for actually
+# using more than one core.
 #
 # Deliberately basic: no keep-alive (matching http_serve's own scope
 # cut), no request pipelining, no per-connection timeout (a client that
@@ -126,8 +134,8 @@ class NonblockingConnection
   end
 end
 
-def gremlin_serve(port, handler: Callable[1])
-  listener = TCPServer.listen_nonblocking(port)
+def gremlin_worker(port, handler)
+  listener = TCPServer.listen_nonblocking(port, reuse_port: true)
   connections = []
 
   def spawn_connection(client_socket)
@@ -206,4 +214,27 @@ def gremlin_serve(port, handler: Callable[1])
     connections.each_with_index(resume_if_ready)
     connections = array_concat(still_active, newly_spawned)
   end
+end
+
+# `threads = 1` (the default) is exactly today's behavior: no Thread.new
+# calls, gremlin_worker runs inline on the calling thread. `threads > 1`
+# spawns `threads - 1` additional OS threads, each running its own fully
+# independent copy of gremlin_worker's own accept/poll/resume loop -- no
+# shared state between them at all (Thread's whole design), including no
+# shared Listener: every worker opens its own, all bound to the same port
+# via reuse_port: true above, so the kernel load-balances new connections
+# across them. `gremlin_worker` is itself a top-level def, and `handler`
+# must be a zero-capture Callable, satisfying Thread.new's requirement for
+# both its primary callable and (as of the reuse_port work) a crossable
+# argument -- see docs/threads.md.
+def gremlin_serve(port, handler: Callable[1], threads = 1)
+  if threads < 1
+    raise ArgumentError.new("gremlin_serve threads must be at least 1")
+  end
+  i = 1
+  while i < threads
+    Thread.new(gremlin_worker, port, handler)
+    i = i + 1
+  end
+  gremlin_worker(port, handler)
 end
