@@ -96,6 +96,15 @@ class Lexer
       end
       return self.make_token(self.identifier_kind())
     end
+    if code == "@".ord() && self.code_at(@current) == "@".ord()
+      if self.identifier_start?(self.code_at(@current + 1))
+        self.advance()
+        while self.identifier_part?(self.code_at(@current))
+          self.advance()
+        end
+        return self.make_token(:class_variable)
+      end
+    end
     if code == "@".ord() && self.identifier_start?(self.code_at(@current))
       while self.identifier_part?(self.code_at(@current))
         self.advance()

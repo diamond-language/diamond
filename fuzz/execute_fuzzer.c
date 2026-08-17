@@ -6,10 +6,13 @@
 #include "disassemble.h"
 #include "vm.h"
 
+#include <setjmp.h>
+#include <signal.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 /* Fuzzes run_chunk (via diamond_vm_run) directly against a synthetic,
  * minimal DiamondChunk built straight from raw fuzzer bytes -- the exact
@@ -45,6 +48,42 @@
  * can explore both dimensions of what made the original bug reachable:
  * a small declared register_count together with an operand that
  * overruns it. */
+
+/* Per-input execution watchdog.
+ *
+ * run_chunk has no execution-step budget on purpose -- real Diamond
+ * programs legitimately run unbounded loops. But this harness feeds it
+ * raw, adversarial bytecode with no source behind it, and libFuzzer's
+ * own per-unit -timeout (1200s default) treats a genuine hang the same
+ * as a crash. Caught for real once, via the simplest possible input: a
+ * single JUMP whose target is its own offset.
+ *
+ * Fix: wrap each diamond_vm_run call in a short sigsetjmp/siglongjmp
+ * cutoff, using a dedicated POSIX timer (timer_create) and SIGUSR1 --
+ * not alarm()/SIGALRM, which libFuzzer's own AlarmCallback watchdog
+ * already uses internally. Sharing that signal would risk a stray
+ * SIGALRM firing outside this file's own protected window and
+ * longjmp-ing into a dead jmp_buf; a private timer/signal pair can't
+ * collide with it.
+ *
+ * sigsetjmp/siglongjmp on the ordinary native stack (no ucontext/fiber
+ * switching involved) is a standard, ASan-safe idiom -- no annotations
+ * needed, unlike Diamond's own Fiber implementation.
+ *
+ * A timed-out run abandons whatever run_chunk was doing mid-
+ * instruction, but `vm` is still an ordinary stack struct the jump
+ * doesn't touch, so diamond_vm_free below still walks and frees
+ * everything already linked into vm->objects. The one residual risk is
+ * a handler-local scratch buffer (e.g. a StringBuilder mid-append) that
+ * hasn't reached its own GC-object allocation yet -- bounded by this
+ * harness's small inputs (register_count 1..64, code capped at
+ * DIAMOND_MAX_CODE) and by only firing on the rare input that hangs. */
+static sigjmp_buf execution_timeout;
+
+static void handle_execution_timeout(int signal_number) {
+    (void)signal_number;
+    siglongjmp(execution_timeout, 1);
+}
 
 static bool references_unsafe_opcode(const DiamondChunk *chunk) {
     char *text = nullptr;
@@ -95,10 +134,41 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     if (!diamond_verify_bytecode(&chunk)) return 0;
     if (references_unsafe_opcode(&chunk)) return 0;
 
+    static bool watchdog_ready = false;
+    static timer_t watchdog;
+    if (!watchdog_ready) {
+        struct sigaction action = {0};
+        action.sa_handler = handle_execution_timeout;
+        sigemptyset(&action.sa_mask);
+        sigaction(SIGUSR1, &action, nullptr);
+
+        struct sigevent event = {0};
+        event.sigev_notify = SIGEV_SIGNAL;
+        event.sigev_signo = SIGUSR1;
+        /* Best-effort: if the OS timer facility isn't available for
+         * some reason, fall through with no watchdog rather than fail
+         * the whole harness over it. */
+        watchdog_ready = timer_create(CLOCK_MONOTONIC, &event, &watchdog) == 0;
+    }
+
     DiamondVm vm;
     diamond_vm_init(&vm);
-    DiamondValue result = DIAMOND_NIL;
-    (void)diamond_vm_run(&vm, &chunk, &result);
+    if (sigsetjmp(execution_timeout, 1) == 0) {
+        if (watchdog_ready) {
+            /* 2s -- generous for any legitimate bounded computation
+             * this harness's tiny (<=DIAMOND_MAX_CODE, no I/O) inputs
+             * could construct, small relative to fuzz_smoke.sh's own
+             * 20s total budget. */
+            const struct itimerspec arm = {.it_value = {.tv_sec = 2}};
+            timer_settime(watchdog, 0, &arm, nullptr);
+        }
+        DiamondValue result = DIAMOND_NIL;
+        (void)diamond_vm_run(&vm, &chunk, &result);
+        if (watchdog_ready) {
+            const struct itimerspec disarm = {0};
+            timer_settime(watchdog, 0, &disarm, nullptr);
+        }
+    }
     diamond_vm_free(&vm);
     return 0;
 }

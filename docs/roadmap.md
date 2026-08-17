@@ -377,6 +377,18 @@ future work.
   class for a crossed-over instance (memory-safe but not meaningful, since
   the foreign class is a genuinely distinct type from anything locally
   defined) — only calling the instance's own methods was in scope.
+- Fixed a feature-parity gap `make test-lexer-diff` caught: `selfhost/
+  lexer.di` never learned about `@@name` class variables, so it split
+  `@@x` into an `error` token plus an `instance_variable` token instead
+  of one `class_variable` token the way the native lexer already did.
+  `tests/lexer_dump.c`'s own `kind_name()` table had the same gap
+  (printed `<unknown>`). Also surfaced a second, unrelated self-hosted
+  gap along the way: `selfhost/parser.di` doesn't support an expression
+  split across a line right after `&&` (the native compiler's own fix
+  for this, see "Control flow, exceptions, and the module loader" above,
+  was apparently never ported) — the class-variable fix itself is
+  written to avoid that shape rather than fixing the parser gap, which
+  stays open.
 
 ### Language server (LSP)
 
@@ -462,6 +474,19 @@ future work.
 - Test-suite speed: a batch runner that reuses one process and one compiled
   prelude across the whole `tests/cases/*.di` corpus instead of spawning a
   fresh process per case, roughly halving full test-suite time.
+- A per-input execution watchdog for `fuzz/execute_fuzzer.c`: it feeds
+  raw bytecode straight into `run_chunk`, which enforces no execution-
+  step budget by design (real Diamond programs legitimately run
+  unbounded loops), so a trivial self-jump (`DIAMOND_OP_JUMP` to its own
+  offset) hung for libFuzzer's full default 1200s timeout and was
+  reported as a "crash." Fixed with a `sigsetjmp`/`siglongjmp` cutoff
+  around each `diamond_vm_run` call, timed by a dedicated POSIX timer on
+  `SIGUSR1` rather than `alarm()`/`SIGALRM` — sharing that signal with
+  libFuzzer's own internal `-timeout` watchdog risked a stray signal
+  firing outside this harness's protected window and jumping into a
+  dead `jmp_buf`. Verified stable across a real, sustained fuzzing run
+  (8500+ executions) with the self-jump case seeded directly into the
+  corpus.
 
 ## Later experiments
 
@@ -484,40 +509,6 @@ future work.
   supported embedding surface; see `src/object.h`'s `DiamondProgramBuilder`
   comment for the full reasoning.
 - Multi-platform support.
-
-## Confirmed still open
-
-- **`make test-lexer-diff` fails on `tests/cases/class_variable_callable_call.di`.**
-  `@@name` (class variables, see "Classes" / "Class variables" in
-  `docs/syntax.md`) tokenizes correctly in the real lexer, but two
-  pieces of differential-testing tooling were never updated when that
-  feature landed: `tests/lexer_dump.c`'s `kind_name()` switch has no
-  case for `DIAMOND_TOKEN_CLASS_VARIABLE` (prints `<unknown>` instead
-  of the real kind), and whatever `tests/lexer_diff.sh` compares
-  against also doesn't recognize `@@` as one token, splitting it into
-  an `error` token plus an `instance_variable` token instead. Found
-  running `make test-all` for unrelated work (the SQLite3 driver); not
-  investigated or fixed as part of that task since it's a pre-existing
-  gap in test tooling from the class-variables feature, not anything
-  touched by it. `make test-parser-diff` (a separate differential
-  suite, including the self-hosted parser bootstrap check) is
-  unaffected and passes clean.
-- **`make test-fuzz` times out.** `fuzz/execute_fuzzer.c` (added for
-  `run_chunk`-level coverage the compile-only fuzzer structurally can't
-  reach) feeds raw, unvalidated bytecode bytes straight into `run_chunk`
-  with no execution-step budget. It found a trivial 4-byte program
-  (`DIAMOND_OP_JUMP` to offset 0 -- an unconditional jump to itself) and
-  spun for the full ~30-minute libFuzzer timeout before `make test-all`
-  reported it as a failure. This is an inherent property of fuzzing a
-  Turing-complete interpreter with no step budget, not a memory-safety
-  bug -- confirmed by the failing opcode (27, `JUMP`) having nothing to
-  do with whatever feature happens to be under development at the time
-  it's hit. Whoever picks this up should decide between adding an
-  execution-step cap to the *harness* (not `run_chunk` itself, which
-  has no business enforcing one for real programs) or seeding a
-  corpus/dictionary entry that steers the fuzzer away from trivial
-  self-jumps so coverage-guided mutation finds more interesting inputs
-  before hitting one.
 
 ## Inconclusive
 

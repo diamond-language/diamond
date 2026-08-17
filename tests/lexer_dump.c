@@ -20,6 +20,7 @@ static const char *kind_name(DiamondTokenKind kind) {
         case DIAMOND_TOKEN_SYMBOL: return "symbol";
         case DIAMOND_TOKEN_IDENTIFIER: return "identifier";
         case DIAMOND_TOKEN_INSTANCE_VARIABLE: return "instance_variable";
+        case DIAMOND_TOKEN_CLASS_VARIABLE: return "class_variable";
         case DIAMOND_TOKEN_NEWLINE: return "newline";
         case DIAMOND_TOKEN_LEFT_PAREN: return "left_paren";
         case DIAMOND_TOKEN_RIGHT_PAREN: return "right_paren";
