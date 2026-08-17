@@ -1669,6 +1669,34 @@ static uint16_t parse_file_open_call(Compiler *compiler) {
     return dest;
 }
 
+static uint16_t parse_sqlite3_open_call(Compiler *compiler) {
+    advance_token(compiler); /* consume '.' */
+    if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER||
+       !name_equals(compiler,"open",compiler->current.span,false)) {
+        fail(compiler,compiler->current.span,"expected 'open' after 'SQLite3'");
+        return 0;
+    }
+    advance_token(compiler); /* consume 'open' */
+    if(compiler->current.kind!=DIAMOND_TOKEN_LEFT_PAREN) {
+        fail(compiler,compiler->current.span,"expected '(' after 'SQLite3.open'");
+        return 0;
+    }
+    advance_token(compiler);
+    skip_newlines(compiler);
+    const uint16_t path_register=parse_expression(compiler);
+    skip_newlines(compiler);
+    if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
+        fail(compiler,compiler->current.span,"expected ')' after SQLite3.open arguments");
+        return 0;
+    }
+    advance_token(compiler);
+    const uint16_t dest=allocate_register(compiler);
+    emit_opcode(compiler,DIAMOND_OP_SQLITE3_OPEN);
+    emit_register(compiler,dest);
+    emit_register(compiler,path_register);
+    return dest;
+}
+
 static uint16_t parse_regexp_new_call(Compiler *compiler) {
     advance_token(compiler); /* consume '.' */
     if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER||
@@ -2274,6 +2302,10 @@ static uint16_t parse_name(Compiler *compiler) {
        compiler->current.kind==DIAMOND_TOKEN_DOT&&
        name_equals(compiler,"Regexp",name,false))
         return parse_regexp_new_call(compiler);
+    if(class_index<0&&find_local(compiler,name)<0&&find_function(compiler,name)<0&&
+       compiler->current.kind==DIAMOND_TOKEN_DOT&&
+       name_equals(compiler,"SQLite3",name,false))
+        return parse_sqlite3_open_call(compiler);
     if(class_index<0&&find_local(compiler,name)<0&&find_function(compiler,name)<0&&
        compiler->current.kind==DIAMOND_TOKEN_DOT&&
        name_equals(compiler,"ProgramBuilder",name,false))
@@ -5194,6 +5226,7 @@ void diamond_program_init(DiamondProgram *program) {
         [DIAMOND_CLASS_REGEXP_ERROR]={"RegexpError",DIAMOND_CLASS_STANDARD_ERROR},
         [DIAMOND_CLASS_WOULD_BLOCK_ERROR]={"WouldBlockError",DIAMOND_CLASS_STANDARD_ERROR},
         [DIAMOND_CLASS_THREAD_ERROR]={"ThreadError",DIAMOND_CLASS_STANDARD_ERROR},
+        [DIAMOND_CLASS_SQLITE3_ERROR]={"SQLite3Error",DIAMOND_CLASS_STANDARD_ERROR},
     };
     program->class_count=DIAMOND_BUILTIN_CLASS_COUNT;
     for(size_t index=0;index<DIAMOND_BUILTIN_CLASS_COUNT;index++) {

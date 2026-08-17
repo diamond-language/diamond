@@ -18,6 +18,11 @@
 typedef struct ssl_st SSL;
 typedef struct ssl_ctx_st SSL_CTX;
 
+/* Forward-declared for the same reason SSL/SSL_CTX are above: only vm.c
+ * calls real sqlite3 functions, so <sqlite3.h> stays out of this header.
+ * Matches sqlite3.h's own `typedef struct sqlite3 sqlite3;` exactly. */
+typedef struct sqlite3 sqlite3;
+
 typedef enum DiamondObjectKind : uint8_t {
     DIAMOND_OBJECT_STRING,
     DIAMOND_OBJECT_INSTANCE,
@@ -36,6 +41,7 @@ typedef enum DiamondObjectKind : uint8_t {
     DIAMOND_OBJECT_REGEXP,
     DIAMOND_OBJECT_PROGRAM_BUILDER,
     DIAMOND_OBJECT_THREAD,
+    DIAMOND_OBJECT_SQLITE3,
 } DiamondObjectKind;
 
 typedef struct DiamondObject {
@@ -280,6 +286,17 @@ typedef struct DiamondRegexp {
     DiamondObject object;
     reginold_regex *handle;
 } DiamondRegexp;
+
+/* Unlike DiamondRegexp, this *does* own a real OS resource (an open
+ * database file, via sqlite3_open) -- closer in shape to
+ * DiamondFileHandle than to DiamondRegexp. `db` is nulled by an explicit
+ * #close() the same way DiamondFileHandle's `stream` is; both GC sweep
+ * and VM teardown check for that sentinel before calling sqlite3_close,
+ * making repeated/GC-time close idempotent. */
+typedef struct DiamondSqlite3Handle {
+    DiamondObject object;
+    sqlite3 *db;
+} DiamondSqlite3Handle;
 
 /* Forward-declared, not included: DiamondProgram is defined in compiler.h,
  * which itself includes vm.h (and so, transitively, this file) -- a

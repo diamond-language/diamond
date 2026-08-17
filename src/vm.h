@@ -165,6 +165,7 @@ typedef enum DiamondOpCode : uint8_t {
      * codebase, not just an implementation detail. */
     DIAMOND_OP_GET_CVAR,
     DIAMOND_OP_SET_CVAR,
+    DIAMOND_OP_SQLITE3_OPEN,
     DIAMOND_OP_COUNT,
 } DiamondOpCode;
 
@@ -214,6 +215,7 @@ typedef enum DiamondBuiltinClass : uint8_t {
     DIAMOND_CLASS_REGEXP_ERROR,
     DIAMOND_CLASS_WOULD_BLOCK_ERROR,
     DIAMOND_CLASS_THREAD_ERROR,
+    DIAMOND_CLASS_SQLITE3_ERROR,
     DIAMOND_BUILTIN_CLASS_COUNT,
 } DiamondBuiltinClass;
 
@@ -443,6 +445,13 @@ typedef enum DiamondVmStatus : uint8_t {
      * failure rather than a clean, re-raisable exception. See
      * docs/threads.md. */
     DIAMOND_VM_THREAD_ERROR,
+    /* SQLite3.open/#execute/#query/#close failures: a bad path, a
+     * malformed statement, a bind/step error, or more than one
+     * semicolon-separated statement passed to a single call. Message is
+     * always sqlite3_errmsg(db) (or a locally-detected condition like
+     * the multi-statement guard), surfaced as SQLite3Error -- see
+     * exception_class_for_status. */
+    DIAMOND_VM_SQLITE3_ERROR,
 } DiamondVmStatus;
 
 typedef struct DiamondMethodCacheEntry {

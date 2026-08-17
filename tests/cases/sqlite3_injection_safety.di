@@ -1,0 +1,5 @@
+db = SQLite3.open(":memory:")
+db.execute("CREATE TABLE people (id INTEGER PRIMARY KEY, name TEXT)")
+db.execute("INSERT INTO people (name) VALUES (?)", ["Robert'); DROP TABLE people; --"])
+db.execute("INSERT INTO people (name) VALUES (?)", ["Ada"])
+db.query("SELECT name FROM people ORDER BY id")
