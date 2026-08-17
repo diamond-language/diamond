@@ -5421,6 +5421,67 @@ static DiamondVmStatus set_cvar_helper(DiamondVm *vm,const DiamondChunk *chunk,
     return DIAMOND_VM_OK;
 }
 
+/* DIAMOND_OP_CALL_CLOSURE's own version of DIAMOND_OP_NEW/INVOKE's
+ * self-goes-in-arguments[0] convention. A function compiled with
+ * owner_class set reserves register 0 for self and folds an implicit
+ * +1 into its own arity/required_arity (compile_definition's
+ * nested_in_singleton_method handling, src/compiler.c) -- deliberate,
+ * for redefine_method's patch-factory idiom (a closure meant to become
+ * a real instance method later needs the same register/arity shape one
+ * already has). But that flag also fires for *any* closure nested
+ * directly inside a `def self.x` method, not just ones destined for
+ * redefine_method, and an ordinary closure call (`doubler(v)`, no
+ * receiver at all) has no self value to supply the way NEW/INVOKE
+ * always do -- confirmed the hard way: calling such a closure directly
+ * raised a spurious "wrong number of arguments" for every arity,
+ * because nothing was compensating for that +1 on this call path.
+ * Synthesizing an unread nil placeholder at argument position 0 exactly
+ * matches the calling convention the function body was compiled to
+ * expect (its own register 0 is never actually read in this case --
+ * self access for a plain closure like this goes through a captured
+ * cell instead, not the register-0 convention a real method gets from
+ * INVOKE -- so what's in register 0 doesn't matter, only that
+ * something occupies it so the real parameters land where the compiled
+ * body expects them).
+ *
+ * Kept out of run_chunk's own switch, not inlined the way this call
+ * used to be, for the same reason get_cvar_helper/set_cvar_helper are
+ * (see their own comment): the 17-DiamondValue buffer this needs would
+ * cost real margin against DIAMOND_MAX_CALL_DEPTH's stack-depth guard
+ * if it lived directly in a run_chunk case, and CALL_CLOSURE is itself
+ * on run_chunk's own recursive call path. */
+static DiamondVmStatus call_closure_helper(DiamondVm *vm,const DiamondChunk *chunk,
+        const DiamondFunction *fn,const DiamondClosure *called,
+        const DiamondValue *registers,uint16_t base,uint8_t argc,size_t depth,
+        DiamondValue *result) {
+    const bool needs_self_slot=fn->owner_class!=UINT8_MAX;
+    DiamondValue call_arguments[17];
+    const DiamondValue *arguments=&registers[base];
+    size_t argument_count=argc;
+    if(needs_self_slot) {
+        if(argc>16) return DIAMOND_VM_ARITY_ERROR;
+        call_arguments[0]=DIAMOND_NIL;
+        for(size_t index=0;index<argc;index++)
+            call_arguments[index+1]=registers[(size_t)base+index];
+        arguments=call_arguments;
+        argument_count=(size_t)argc+1;
+    }
+    if(argument_count<fn->required_arity||argument_count>fn->arity)
+        return DIAMOND_VM_ARITY_ERROR;
+    const DiamondChunk child={.name=fn->name,.code=fn->code,.lines=fn->lines,
+      .columns=fn->columns,.code_count=fn->code_count,.constants=fn->constants,
+      .constant_count=fn->constant_count,.strings=fn->strings,.string_count=fn->string_count,
+      .type_sets=fn->type_sets,.type_set_count=fn->type_set_count,
+      .functions=chunk->functions,.function_count=chunk->function_count,
+      .classes=chunk->classes,.class_count=chunk->class_count,
+      .interfaces=chunk->interfaces,.interface_count=chunk->interface_count,
+      .parameter_type_sets=fn->parameter_type_sets,
+      .type_variable_count=fn->type_variable_count,
+      .parameter_offset=fn->owner_class==UINT8_MAX?0:1,
+      .register_count=fn->register_count};
+    return run_chunk(&child,vm,arguments,argument_count,depth+1,called,result);
+}
+
 static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                                  DiamondVm *vm,
                                  const DiamondValue *arguments,
@@ -6432,21 +6493,9 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 DiamondClosure *called=(DiamondClosure *)registers[callable].as.object;
                 if(called->function_index>=chunk->function_count)VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
                 const DiamondFunction *fn=&chunk->functions[called->function_index];
-                if(argc<fn->required_arity||argc>fn->arity)
-                    VM_RETURN(DIAMOND_VM_ARITY_ERROR);
-                DiamondChunk child={.name=fn->name,.code=fn->code,.lines=fn->lines,
-                  .columns=fn->columns,.code_count=fn->code_count,.constants=fn->constants,
-                  .constant_count=fn->constant_count,.strings=fn->strings,.string_count=fn->string_count,
-                  .type_sets=fn->type_sets,.type_set_count=fn->type_set_count,
-                  .functions=chunk->functions,.function_count=chunk->function_count,
-                  .classes=chunk->classes,.class_count=chunk->class_count,
-                  .interfaces=chunk->interfaces,.interface_count=chunk->interface_count,
-                  .parameter_type_sets=fn->parameter_type_sets,
-                  .type_variable_count=fn->type_variable_count,
-                  .parameter_offset=fn->owner_class==UINT8_MAX?0:1,
-                  .register_count=fn->register_count};
                 DiamondValue call_result=DIAMOND_NIL;
-                DiamondVmStatus status=run_chunk(&child,vm,&registers[base],argc,depth+1,called,&call_result);
+                const DiamondVmStatus status=call_closure_helper(vm,chunk,fn,called,
+                    registers,base,argc,depth,&call_result);
                 VM_PROPAGATE(status);
                 registers[dest]=call_result;break;
             }
