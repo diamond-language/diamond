@@ -485,6 +485,40 @@ future work.
   comment for the full reasoning.
 - Multi-platform support.
 
+## Confirmed still open
+
+- **`make test-lexer-diff` fails on `tests/cases/class_variable_callable_call.di`.**
+  `@@name` (class variables, see "Classes" / "Class variables" in
+  `docs/syntax.md`) tokenizes correctly in the real lexer, but two
+  pieces of differential-testing tooling were never updated when that
+  feature landed: `tests/lexer_dump.c`'s `kind_name()` switch has no
+  case for `DIAMOND_TOKEN_CLASS_VARIABLE` (prints `<unknown>` instead
+  of the real kind), and whatever `tests/lexer_diff.sh` compares
+  against also doesn't recognize `@@` as one token, splitting it into
+  an `error` token plus an `instance_variable` token instead. Found
+  running `make test-all` for unrelated work (the SQLite3 driver); not
+  investigated or fixed as part of that task since it's a pre-existing
+  gap in test tooling from the class-variables feature, not anything
+  touched by it. `make test-parser-diff` (a separate differential
+  suite, including the self-hosted parser bootstrap check) is
+  unaffected and passes clean.
+- **`make test-fuzz` times out.** `fuzz/execute_fuzzer.c` (added for
+  `run_chunk`-level coverage the compile-only fuzzer structurally can't
+  reach) feeds raw, unvalidated bytecode bytes straight into `run_chunk`
+  with no execution-step budget. It found a trivial 4-byte program
+  (`DIAMOND_OP_JUMP` to offset 0 -- an unconditional jump to itself) and
+  spun for the full ~30-minute libFuzzer timeout before `make test-all`
+  reported it as a failure. This is an inherent property of fuzzing a
+  Turing-complete interpreter with no step budget, not a memory-safety
+  bug -- confirmed by the failing opcode (27, `JUMP`) having nothing to
+  do with whatever feature happens to be under development at the time
+  it's hit. Whoever picks this up should decide between adding an
+  execution-step cap to the *harness* (not `run_chunk` itself, which
+  has no business enforcing one for real programs) or seeding a
+  corpus/dictionary entry that steers the fuzzer away from trivial
+  self-jumps so coverage-guided mutation finds more interesting inputs
+  before hitting one.
+
 ## Inconclusive
 
 Nothing currently open — the last entry here (an ASan `stack-use-after-
