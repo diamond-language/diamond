@@ -270,6 +270,12 @@ DiamondToken diamond_lexer_next(DiamondLexer *lexer) {
            lexer->source[lexer->current]=='!')advance(lexer);
         return token(lexer, identifier_kind(lexer));
     }
+    if (character == '@' && lexer->source[lexer->current] == '@' &&
+        identifier_start(lexer->source[lexer->current + 1])) {
+        advance(lexer);
+        while (identifier_part(lexer->source[lexer->current])) advance(lexer);
+        return token(lexer, DIAMOND_TOKEN_CLASS_VARIABLE);
+    }
     if (character == '@' && identifier_start(lexer->source[lexer->current])) {
         while (identifier_part(lexer->source[lexer->current])) advance(lexer);
         return token(lexer, DIAMOND_TOKEN_INSTANCE_VARIABLE);

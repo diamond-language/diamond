@@ -301,6 +301,17 @@ void diamond_vm_collect(DiamondVm *vm) {
     for(size_t index=0;index<DIAMOND_MAX_NAMESPACE_CONSTANTS;index++)
         if(vm->namespace_constant_initialized[index])
             mark_value(vm->namespace_constants[index]);
+    /* Never allocated (see class_variables' own comment in vm.h) until
+     * the first SET_CVAR -- nothing to mark if no class variable has
+     * ever been written on this VM. Once allocated, no initialized
+     * bitmap to gate individual slots on either: every never-assigned
+     * slot is just DIAMOND_NIL (calloc's own zero-fill), and mark_value
+     * on a nil is already a same-cost no-op check, so marking the full
+     * flat array unconditionally costs nothing extra over tracking real
+     * per-class counts here would. */
+    if(vm->class_variables!=nullptr)
+        for(size_t index=0;index<(size_t)DIAMOND_MAX_CLASSES*DIAMOND_MAX_FIELDS;index++)
+            mark_value(vm->class_variables[index]);
     for(size_t index=0;index<DIAMOND_SIGNAL_COUNT;index++)
         mark_value(vm->trapped_signal_handlers[index]);
     mark_frame_chain(vm->frames);
@@ -480,6 +491,7 @@ void diamond_vm_free(DiamondVm *vm) {
         object = next;
     }
     free_adopted_programs(vm->adopted_programs);
+    free(vm->class_variables);
     *vm = (DiamondVm){};
 }
 
@@ -5361,6 +5373,54 @@ static void infer_from_value(const DiamondChunk *chunk,DiamondValue value,
     }
 }
 
+/* Split out of run_chunk's own switch (unlike GET_IVAR/GET_NAMESPACE_
+ * CONSTANT and friends, which stay inline) specifically to keep run_chunk's
+ * own per-call C stack frame from growing: run_chunk recurses in C for
+ * every ordinary Diamond function call (DIAMOND_OP_CALL below), and
+ * DIAMOND_MAX_CALL_DEPTH's whole guarantee -- catching runaway Diamond-
+ * level recursion with a clean error before the real C stack does --
+ * depends on that per-frame size times DIAMOND_MAX_CALL_DEPTH staying
+ * safely under the OS stack limit. Confirmed empirically while adding
+ * this: even a few bytes of extra locals declared directly in run_chunk's
+ * own switch shifted a stack-depth regression test (tests/cases/
+ * program_builder_call_declared_function.di's sibling deep-recursion
+ * case) from a clean "call stack overflow" to a real ASan-caught
+ * stack-overflow segfault -- that margin is thinner than it looks.
+ * Locals declared inside a called helper live on the *helper's* frame,
+ * popped the moment it returns, so they never accumulate across
+ * DIAMOND_MAX_CALL_DEPTH levels of recursion the way a case-local do. */
+static DiamondVmStatus get_cvar_helper(DiamondVm *vm,
+        const DiamondChunk *chunk, uint16_t class_index, uint16_t slot,
+        DiamondValue *out) {
+    if(class_index>=chunk->class_count||
+       slot>=chunk->classes[class_index].class_variable_count)
+        return DIAMOND_VM_INVALID_BYTECODE;
+    /* A read before any write anywhere in this VM: no slot has ever been
+     * allocated, so the value is definitionally the class variable
+     * default (nil) -- allocating here just to immediately read back nil
+     * would be pure waste, so skip it and return the default directly. */
+    if(vm->class_variables==nullptr) {
+        *out=DIAMOND_NIL;
+        return DIAMOND_VM_OK;
+    }
+    *out=vm->class_variables[(size_t)class_index*DIAMOND_MAX_FIELDS+slot];
+    return DIAMOND_VM_OK;
+}
+
+static DiamondVmStatus set_cvar_helper(DiamondVm *vm,const DiamondChunk *chunk,
+        uint16_t class_index,uint16_t slot,DiamondValue value) {
+    if(class_index>=chunk->class_count||
+       slot>=chunk->classes[class_index].class_variable_count)
+        return DIAMOND_VM_INVALID_BYTECODE;
+    if(vm->class_variables==nullptr) {
+        vm->class_variables=calloc((size_t)DIAMOND_MAX_CLASSES*DIAMOND_MAX_FIELDS,
+            sizeof(DiamondValue));
+        if(vm->class_variables==nullptr) return DIAMOND_VM_OUT_OF_MEMORY;
+    }
+    vm->class_variables[(size_t)class_index*DIAMOND_MAX_FIELDS+slot]=value;
+    return DIAMOND_VM_OK;
+}
+
 static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                                  DiamondVm *vm,
                                  const DiamondValue *arguments,
@@ -8222,6 +8282,29 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
                 vm->namespace_constants[index]=registers[source];
                 vm->namespace_constant_initialized[index]=true;break;
+            }
+            /* Ordinary mutable storage, unlike namespace constants above --
+             * no initialized bitmap, defaults to nil (DiamondVm's own
+             * zero-init, DIAMOND_VALUE_NIL == 0) until first assigned,
+             * exactly like an Instance's own fields. class_index/slot are
+             * both compile-time constants (class_variable_index resolves
+             * them once per name, see compiler.c), so the only reason
+             * either could ever be out of range here is malformed
+             * bytecode -- same defensive bounds-check convention
+             * DIAMOND_OP_NEW's own class index uses. */
+            case DIAMOND_OP_GET_CVAR: {
+                uint16_t destination=0,class_index=0,slot=0;
+                READ_SHORT(destination);READ_SHORT(class_index);READ_SHORT(slot);
+                const DiamondVmStatus status=
+                    get_cvar_helper(vm,chunk,class_index,slot,&registers[destination]);
+                VM_PROPAGATE(status);break;
+            }
+            case DIAMOND_OP_SET_CVAR: {
+                uint16_t class_index=0,slot=0,source=0;
+                READ_SHORT(class_index);READ_SHORT(slot);READ_SHORT(source);
+                const DiamondVmStatus status=
+                    set_cvar_helper(vm,chunk,class_index,slot,registers[source]);
+                VM_PROPAGATE(status);break;
             }
             case DIAMOND_OP_CHECK_TYPE: {
                 uint16_t source=0,set_index=0; READ_SHORT(source); READ_SHORT(set_index);

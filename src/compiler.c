@@ -1176,6 +1176,51 @@ static int field_index(Compiler *compiler, DiamondSpan name, bool create) {
     return (int)class->field_count++;
 }
 
+/* Same shape as field_index just above (compile-time name -> slot
+ * resolution, scoped to the current class), but for `@@name` class
+ * variables rather than `@name` instance fields -- kept as its own
+ * function rather than generalizing field_index/name_equals to a
+ * variable skip count, since `@@` is the only two-char sigil in the
+ * language and threading a skip-count parameter through name_equals'
+ * 70-odd other call sites (all of which pass a plain bool today) isn't
+ * worth it for one caller. */
+static bool class_variable_name_equals(const Compiler *compiler,
+        const char *candidate, DiamondSpan name) {
+    size_t length = 0;
+    while (candidate[length] != '\0') length++;
+    if (name.length - 2 != length) return false;
+    for (size_t index = 0; index < length; index++) {
+        if (candidate[index] != compiler->source[name.start + 2 + index]) return false;
+    }
+    return true;
+}
+
+static int class_variable_index(Compiler *compiler, DiamondSpan name, bool create) {
+    if (compiler->current_class < 0) {
+        fail(compiler, name, "class variable used outside a class");
+        return -1;
+    }
+    DiamondClass *class = &compiler->program->classes[(size_t)compiler->current_class];
+    for (size_t index = 0; index < class->class_variable_count; index++) {
+        if (class_variable_name_equals(compiler, class->class_variables[index], name))
+            return (int)index;
+    }
+    if (!create) return -1;
+    if (class->class_variable_count == DIAMOND_MAX_FIELDS) {
+        fail(compiler, name, "too many class variables");
+        return -1;
+    }
+    char *variable = class->class_variables[class->class_variable_count];
+    const size_t length = name.length - 2;
+    if (length >= DIAMOND_MAX_FUNCTION_NAME) {
+        fail(compiler, name, "class variable name is too long");
+        return -1;
+    }
+    for (size_t i = 0; i < length; i++) variable[i] = compiler->source[name.start + 2 + i];
+    variable[length] = '\0';
+    return (int)class->class_variable_count++;
+}
+
 static uint8_t module_field_name(Compiler *compiler,DiamondSpan name) {
     compiler->function->uses_instance_state=true;
     DiamondModule *module=
@@ -2903,6 +2948,15 @@ static uint16_t parse_prefix(Compiler *compiler) {
                 return parse_closure_call_arguments(compiler,destination);
             return destination;
         }
+        case DIAMOND_TOKEN_CLASS_VARIABLE: {
+            const uint16_t destination = allocate_register(compiler);
+            const int slot = class_variable_index(compiler,compiler->previous.span,true);
+            emit_instruction(compiler,DIAMOND_OP_GET_CVAR,destination,
+                             (uint8_t)compiler->current_class,(uint8_t)slot,3);
+            if(compiler->current.kind==DIAMOND_TOKEN_LEFT_PAREN)
+                return parse_closure_call_arguments(compiler,destination);
+            return destination;
+        }
         case DIAMOND_TOKEN_SELF:
             if (!compiler->in_method) {
                 fail(compiler, compiler->previous.span, "'self' used outside a method");
@@ -3173,7 +3227,8 @@ static uint16_t parse_expression(Compiler *compiler) {
 
 static bool assignment_ahead(const Compiler *compiler) {
     if (compiler->current.kind != DIAMOND_TOKEN_IDENTIFIER &&
-        compiler->current.kind != DIAMOND_TOKEN_INSTANCE_VARIABLE) {
+        compiler->current.kind != DIAMOND_TOKEN_INSTANCE_VARIABLE &&
+        compiler->current.kind != DIAMOND_TOKEN_CLASS_VARIABLE) {
         return false;
     }
     DiamondLexer lookahead = compiler->lexer;
@@ -4953,6 +5008,8 @@ static uint16_t compile_assignment(Compiler *compiler) {
     const DiamondSpan name = compiler->current.span;
     const bool instance_variable =
         compiler->current.kind == DIAMOND_TOKEN_INSTANCE_VARIABLE;
+    const bool class_variable =
+        compiler->current.kind == DIAMOND_TOKEN_CLASS_VARIABLE;
     advance_token(compiler);
     advance_token(compiler);
     const uint16_t value = parse_expression(compiler);
@@ -4965,6 +5022,12 @@ static uint16_t compile_assignment(Compiler *compiler) {
             emit_instruction(compiler,DIAMOND_OP_SET_IVAR,0,(uint8_t)field,
                              value,3);
         }
+        return value;
+    }
+    if (class_variable) {
+        const int slot = class_variable_index(compiler,name,true);
+        emit_instruction(compiler,DIAMOND_OP_SET_CVAR,
+                         (uint8_t)compiler->current_class,(uint8_t)slot,value,3);
         return value;
     }
     int local = find_local(compiler, name);

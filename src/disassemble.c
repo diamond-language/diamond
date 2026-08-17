@@ -700,6 +700,24 @@ static bool disassemble_chunk(FILE *stream, const char *name,
                     read_operand(chunk,offset+1),
                     checked_register(chunk,stream,read_operand(chunk,offset+3),&valid));
                 offset+=5;break;
+            /* GET_CVAR/SET_CVAR's class/slot operands are both compile-time
+             * constants (class_variable_index resolves them once per
+             * `@@name`, see compiler.c), not registers -- same convention
+             * as GET_IVAR's own field operand just above. */
+            case DIAMOND_OP_GET_CVAR:
+                if(!require_bytes(stream,chunk,offset,7)){valid=false;offset=chunk->code_count;break;}
+                fprintf(stream,"%-18s r%u, c%u, cv%u\n","GET_CVAR",
+                    checked_register(chunk,stream,read_operand(chunk,offset+1),&valid),
+                    read_operand(chunk,offset+3),
+                    read_operand(chunk,offset+5));
+                offset+=7;break;
+            case DIAMOND_OP_SET_CVAR:
+                if(!require_bytes(stream,chunk,offset,7)){valid=false;offset=chunk->code_count;break;}
+                fprintf(stream,"%-18s c%u, cv%u, r%u\n","SET_CVAR",
+                    read_operand(chunk,offset+1),
+                    read_operand(chunk,offset+3),
+                    checked_register(chunk,stream,read_operand(chunk,offset+5),&valid));
+                offset+=7;break;
             case DIAMOND_OP_CHECK_TYPE:
                 if(!require_bytes(stream,chunk,offset,5)){valid=false;offset=chunk->code_count;break;}
                 fprintf(stream,"%-18s r%u, ","CHECK_TYPE",

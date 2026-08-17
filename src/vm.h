@@ -155,6 +155,16 @@ typedef enum DiamondOpCode : uint8_t {
     DIAMOND_OP_MATH_BINARY,
     DIAMOND_OP_PROGRAM_BUILDER_NEW,
     DIAMOND_OP_THREAD_NEW,
+    /* Appended at the end, not grouped next to GET/SET_NAMESPACE_CONSTANT
+     * above despite the similar shape, specifically to avoid shifting
+     * every opcode declared after an insertion point -- ProgramBuilder-
+     * based tests (see tests/cases/program_builder_call_declared_
+     * function.di) and the self-hosted compiler bootstrap both encode
+     * raw numeric opcode values, not symbolic names, so DiamondOpCode's
+     * existing numbering is effectively a stable ABI within this
+     * codebase, not just an implementation detail. */
+    DIAMOND_OP_GET_CVAR,
+    DIAMOND_OP_SET_CVAR,
     DIAMOND_OP_COUNT,
 } DiamondOpCode;
 
@@ -290,6 +300,19 @@ struct DiamondClass {
     char fields[DIAMOND_MAX_FIELDS][DIAMOND_MAX_FUNCTION_NAME];
     size_t field_count;
     DiamondShape shapes[DIAMOND_MAX_FIELDS + 1];
+    /* Class variable *names* only -- compile-time, pointer-free metadata
+     * exactly like `fields` above, so it costs nothing extra in
+     * Thread.new's whole-DiamondProgram memcpy clone (see docs/threads.md).
+     * The actual per-variable *values* are runtime, per-VM state and live
+     * on DiamondVm instead (see its own class_variables field below) --
+     * same split `namespace_constants` already uses between this
+     * class's own name table and DiamondVm's namespace_constants[]
+     * value array, and for the same reason: a DiamondValue can hold a
+     * GC object pointer, and DiamondProgram's tables are raw-memcpy'd
+     * across a Thread boundary into a completely separate heap, so no
+     * DiamondValue can ever live in them. */
+    char class_variables[DIAMOND_MAX_FIELDS][DIAMOND_MAX_FUNCTION_NAME];
+    size_t class_variable_count;
 };
 
 /* One local variable or parameter's name and the byte range (in the
@@ -517,6 +540,33 @@ struct DiamondVm {
     size_t deoptimized_sites;
     DiamondValue namespace_constants[DIAMOND_MAX_NAMESPACE_CONSTANTS];
     bool namespace_constant_initialized[DIAMOND_MAX_NAMESPACE_CONSTANTS];
+    /* Class variable values, indexed as class_variables[class_index *
+     * DIAMOND_MAX_FIELDS + slot], slot assigned exactly as DiamondClass's
+     * own class_variables[]/class_variable_count name table does at
+     * compile time -- see that field's own comment. Per-VM, not
+     * per-DiamondProgram: every spawned Thread's fresh diamond_vm_init
+     * gets its own nullptr copy, so `threads: N` gives each worker its
+     * own independent class variables, consistent with every other piece
+     * of state a spawned Thread never shares (see docs/threads.md).
+     * A pointer, allocated lazily (get_cvar_helper/set_cvar_helper,
+     * src/vm.c) on first actual GET_CVAR/SET_CVAR rather than embedded
+     * inline here, deliberately: DIAMOND_MAX_CLASSES * DIAMOND_MAX_FIELDS
+     * DiamondValues is 128KB, and DiamondVm is stack-allocated at the top
+     * of every entry point (run_source.c, repl.c) underneath run_chunk's
+     * entire recursive call chain -- confirmed the hard way that even
+     * this struct's own *one-time* size growth (not anything per
+     * recursive frame) was enough to turn DIAMOND_MAX_CALL_DEPTH's clean
+     * "call stack overflow" guard into a real ASan-caught stack overflow,
+     * because that 128KB comes out of the same stack budget the
+     * recursion depth guard's whole margin depends on. Lazy allocation
+     * means a program that never touches a class variable -- the common
+     * case -- pays nothing at all, and one that does pays a single
+     * ordinary heap allocation, checked for failure exactly like
+     * allocate_hash/allocate_array already are, not a stack cost. Unlike
+     * namespace_constants, ordinary mutable storage -- no write-once
+     * guard, defaults to nil (DIAMOND_VALUE_NIL == 0, so calloc already
+     * gives every slot the right default) until first assigned. */
+    DiamondValue *class_variables;
     DiamondValue exception;
     bool has_exception;
     char error[1024];

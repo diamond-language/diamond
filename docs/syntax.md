@@ -193,6 +193,49 @@ first-class heap values, with one narrow exception:
 `ClassName.redefine_method(name, callable)` repoints an existing method's
 compiled body at runtime.
 
+### Class variables
+
+```ruby
+class Counter
+  def self.reset()
+    @@count = 0
+  end
+  def initialize()
+    @@count = @@count + 1
+  end
+  def self.count()
+    @@count
+  end
+end
+
+Counter.reset()
+Counter.new()
+Counter.new()
+Counter.count()  # => 2
+```
+
+`@@cvar` is ordinary mutable storage shared by every instance method,
+`def self.` method, and `initialize` call in a class — a plain per-class
+slot, not a per-instance field. Reading one that's never been assigned
+gives `nil`, the same default an instance field gets; there's no
+separate declaration step. Two different classes' own `@@x` never
+collide, even with the same name — each class gets its own slot. Unlike
+instance fields, `@@cvar[index] = value` (indexed assignment into the
+variable itself) isn't supported yet — read the value out, mutate the
+local, and assign the whole thing back, the same workaround `@ivar`
+needs today for the same reason.
+
+`@@cvar` used anywhere outside a class body (a bare top-level `def`, a
+`module`) is a compile error — there's no implicit global scope it could
+fall back to. That's also why a `threads: N` server (see
+`packages/gremlin/README.md`) can't use a class variable to share state
+across `Thread.new`-spawned workers: each spawned thread gets its own
+completely independent copy of every class variable, the same way it
+gets its own heap and its own everything else (see `docs/threads.md`) —
+consistent, not a special case, but worth knowing going in if the goal
+is one counter shared across all workers rather than one counter per
+worker.
+
 ## Operator overloading
 
 ```ruby
