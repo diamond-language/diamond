@@ -231,9 +231,25 @@ def gremlin_serve(port, handler: Callable[1], threads = 1)
   if threads < 1
     raise ArgumentError.new("gremlin_serve threads must be at least 1")
   end
+  # Every spawned worker's Thread handle must stay referenced for as long
+  # as the server runs -- Thread.new's return value is otherwise a plain
+  # GC-reachable object like any other (see docs/threads.md's "GC and
+  # lifecycle"), and `free_thread` (src/vm.c) block-joins an unreferenced
+  # Thread's real OS thread the moment it's collected, to guarantee no OS
+  # thread ever outlives its handle. gremlin_worker's own loop is
+  # deliberately infinite (a real server, never returns), so a GC on this
+  # thread that reaped a discarded worker handle would block forever
+  # waiting for a thread that's never going to exit -- reproduced as a
+  # near-guaranteed hang on `gremlin_worker(port, handler)` below's own
+  # first allocation, since `next_gc` starts at a tiny 2048-byte
+  # threshold. `spawned` only needs to keep each handle reachable, never
+  # read again -- this stack frame itself never returns (this function's
+  # own last line runs gremlin_worker inline, forever), so `spawned`
+  # stays a live GC root for the server's entire lifetime.
+  spawned = []
   i = 1
   while i < threads
-    Thread.new(gremlin_worker, port, handler)
+    spawned.push(Thread.new(gremlin_worker, port, handler))
     i = i + 1
   end
   gremlin_worker(port, handler)
