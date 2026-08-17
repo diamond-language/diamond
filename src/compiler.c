@@ -794,6 +794,14 @@ static uint16_t parse_identifier(Compiler *compiler) {
     }
     if(!compiler->locals[(size_t)local].captured)
         return compiler->locals[(size_t)local].reg;
+    /* `captured` may have been set by a nested def in a sibling if/else
+     * branch that doesn't dominate this read, so the register may not
+     * actually be boxed yet on this runtime path. BOX_LOCAL is idempotent
+     * (a no-op once the register already holds a Cell), so re-emitting it
+     * here guarantees GET_CELL is always safe, regardless of which branch
+     * ran. */
+    emit_instruction(compiler,DIAMOND_OP_BOX_LOCAL,
+                     compiler->locals[(size_t)local].reg,0,0,1);
     const uint16_t destination=allocate_register(compiler);
     emit_instruction(compiler,DIAMOND_OP_GET_CELL,destination,
                      compiler->locals[(size_t)local].reg,0,2);
@@ -1278,6 +1286,10 @@ static uint16_t parse_call(Compiler *compiler, DiamondSpan name) {
     if(callable_local>=0&&compiler->current.kind==DIAMOND_TOKEN_LEFT_PAREN) {
         uint16_t callable=compiler->locals[(size_t)callable_local].reg;
         if(compiler->locals[(size_t)callable_local].captured) {
+            /* See parse_identifier's own BOX_LOCAL re-emission for why this
+             * defensive re-box is needed: `captured` doesn't imply this
+             * control-flow path actually ran the boxing site. */
+            emit_instruction(compiler,DIAMOND_OP_BOX_LOCAL,callable,0,0,1);
             const uint16_t loaded=allocate_register(compiler);
             emit_instruction(compiler,DIAMOND_OP_GET_CELL,loaded,callable,0,2);
             callable=loaded;
@@ -3376,6 +3388,10 @@ static uint16_t compile_index_assignment(Compiler *compiler) {
     if(local<0) { fail(compiler,name,"undefined local variable"); return 0; }
     uint16_t receiver=compiler->locals[(size_t)local].reg;
     if(compiler->locals[(size_t)local].captured) {
+        /* See parse_identifier's own BOX_LOCAL re-emission for why this
+         * defensive re-box is needed: `captured` doesn't imply this
+         * control-flow path actually ran the boxing site. */
+        emit_instruction(compiler,DIAMOND_OP_BOX_LOCAL,receiver,0,0,1);
         const uint16_t loaded=allocate_register(compiler);
         emit_instruction(compiler,DIAMOND_OP_GET_CELL,loaded,receiver,0,2);
         receiver=loaded;
@@ -5085,6 +5101,11 @@ static uint16_t compile_assignment_store(Compiler *compiler, DiamondSpan name,
     }
     int local = find_local(compiler, name);
     if(local>=0 && compiler->locals[(size_t)local].captured) {
+        /* See parse_identifier's own BOX_LOCAL re-emission for why this
+         * defensive re-box is needed: `captured` doesn't imply this
+         * control-flow path actually ran the boxing site. */
+        emit_instruction(compiler,DIAMOND_OP_BOX_LOCAL,
+                         compiler->locals[(size_t)local].reg,0,0,1);
         emit_instruction(compiler,DIAMOND_OP_SET_CELL,
                          compiler->locals[(size_t)local].reg,value,0,2);
         return value;

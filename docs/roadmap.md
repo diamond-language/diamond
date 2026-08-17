@@ -128,6 +128,24 @@ future work.
 - Fixed a native closure-capture bug: a closure nested directly inside an
   ordinary instance method (not a singleton method) mis-reserved a `self`
   register it shouldn't have, corrupting argument placement.
+- Fixed a second native closure-capture bug: a nested `def` lexically
+  inside one branch of an `if`/`else` marks the outer local(s) it captures
+  as `captured` for the rest of the enclosing function's compilation --
+  correct for the closure-creation site itself (which re-emits
+  `BOX_LOCAL` defensively), but every *other* compile-time read/write/call
+  of that local (a plain reference, a call through it, an indexed-assignment
+  receiver) trusted the flag outright and jumped straight to `GET_CELL`/
+  `SET_CELL`, with no guarantee the boxing instruction had actually run on
+  whatever control-flow path reached them -- reading it via a sibling
+  branch that never took the `if` corrupted the register into
+  `DIAMOND_VM_INVALID_BYTECODE` at runtime. Found while writing
+  `packages/arel/arel.di`'s `where` method. Fixed by giving the other
+  four sites that read or write a captured local (`parse_identifier`,
+  `parse_call`'s closure-call path, `compile_index_assignment`'s
+  receiver, and `compile_assignment_store`'s captured-local write) the
+  same defensive `BOX_LOCAL` re-emission the
+  closure-creation site already had -- safe on every path since
+  `BOX_LOCAL` is a runtime no-op once the register already holds a Cell.
 - Top-level `def`s are now first-class values: a bare top-level function
   name, used without calling it (`f = add`, `apply(add, 1, 2)`), compiles
   to a zero-capture closure value instead of failing with "undefined local
@@ -525,19 +543,6 @@ concurrency" above.
 
 ## Judgement calls
 
-- **A nested `def` lexically inside one branch of an `if`/`else`, combined
-  with a read of an outer-scope local (including a parameter) in a
-  sibling branch, corrupts register allocation.** Confirmed via a
-  minimal-repro sweep (`packages/arel/arel.di`'s original `where` method
-  triggered it first) to be a genuine compiler bug, not specific to
-  destructuring, default parameters, or what the nested `def` itself
-  captures -- an empty nested `def` with no captures still triggers it.
-  Root cause not yet diagnosed (likely how nested-`def` compilation
-  promotes enclosing locals for capture without the promotion being
-  visible consistently across sibling branches). Workaround: hoist the
-  nested `def` so it sits before the `if`/`else` rather than inside one
-  branch of it -- confirmed to avoid the bug in every repro tried, and
-  used in `arel.di`'s `where`/`to_sql`.
 - **Bare-name forward/mutual recursion between top-level functions (or
   sibling methods calling each other by bare name) fails to compile.**
   Two functions or methods that call each other by bare name, where one is
