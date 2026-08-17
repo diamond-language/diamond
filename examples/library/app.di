@@ -117,8 +117,19 @@ def logging_middleware(request, context, forward)
   response
 end
 
+# Outermost in the chain (see app() below) so its timing covers every
+# other middleware's own work too, not just route()'s.
+def timing_middleware(request, context, forward)
+  start = Time.monotonic()
+  response = forward(request, context)
+  elapsed_ms = (Time.monotonic() - start) * 1000
+  rounded_ms = to_f(to_i(elapsed_ms * 100)) / 100.0
+  puts("#{request["method"]} #{request["path"]} took #{rounded_ms}ms")
+  response
+end
+
 def app(request, context)
-  chain = rack_compose([logging_middleware], route)
+  chain = rack_compose([timing_middleware, logging_middleware], route)
   rack_run_chain(chain, 0, request, context)
 end
 
