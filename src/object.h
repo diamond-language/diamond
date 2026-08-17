@@ -42,6 +42,7 @@ typedef enum DiamondObjectKind : uint8_t {
     DIAMOND_OBJECT_PROGRAM_BUILDER,
     DIAMOND_OBJECT_THREAD,
     DIAMOND_OBJECT_SQLITE3,
+    DIAMOND_OBJECT_TIME,
 } DiamondObjectKind;
 
 typedef struct DiamondObject {
@@ -297,6 +298,20 @@ typedef struct DiamondSqlite3Handle {
     DiamondObject object;
     sqlite3 *db;
 } DiamondSqlite3Handle;
+
+/* Simpler still than DiamondRegexp: owns no OS resource and no second
+ * allocation either -- just two scalars. Freeing one is `free(pointer)`,
+ * nothing else, and there's no mark case since neither field is a
+ * DiamondValue. `epoch` (seconds since the Unix epoch, fractional) is
+ * the single source of truth; `utc` only chooses gmtime_r vs localtime_r
+ * for component accessors/strftime -- it never affects equality,
+ * ordering, or arithmetic (see values_equal/hash_value and the ADD/
+ * SUBTRACT/comparison opcode handlers in vm.c). */
+typedef struct DiamondTime {
+    DiamondObject object;
+    double epoch;
+    bool utc;
+} DiamondTime;
 
 /* Forward-declared, not included: DiamondProgram is defined in compiler.h,
  * which itself includes vm.h (and so, transitively, this file) -- a

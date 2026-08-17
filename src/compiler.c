@@ -2241,29 +2241,82 @@ static uint16_t parse_gets_call(Compiler *compiler) {
     return dest;
 }
 
-static uint16_t parse_time_monotonic_call(Compiler *compiler) {
-    advance_token(compiler); /* consume '.' */
-    if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER||
-       !name_equals(compiler,"monotonic",compiler->current.span,false)) {
-        fail(compiler,compiler->current.span,"expected 'monotonic' after 'Time'");
-        return 0;
-    }
-    advance_token(compiler); /* consume 'monotonic' */
+/* Time.monotonic()/Time.now()/Time.utc_now() -- each zero-argument,
+ * distinguished only by which opcode (and, for TIME_NOW, which utc
+ * flag byte) they emit. */
+static uint16_t parse_time_zero_argument_call(Compiler *compiler,
+        DiamondOpCode opcode, uint8_t utc_flag,
+        bool has_utc_flag, bool result_is_float) {
     if(compiler->current.kind!=DIAMOND_TOKEN_LEFT_PAREN) {
-        fail(compiler,compiler->current.span,"expected '(' after 'Time.monotonic'");
+        fail(compiler,compiler->current.span,"expected '(' after Time method name");
         return 0;
     }
     advance_token(compiler);
     if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
-        fail(compiler,compiler->current.span,"expected ')' after Time.monotonic arguments");
+        fail(compiler,compiler->current.span,"expected ')' after Time method arguments");
         return 0;
     }
     advance_token(compiler);
     const uint16_t dest=allocate_register(compiler);
-    emit_opcode(compiler,DIAMOND_OP_TIME_MONOTONIC);
+    emit_opcode(compiler,opcode);
     emit_register(compiler,dest);
-    compiler->known_types[dest]=DIAMOND_TYPE_FLOAT;
+    if(has_utc_flag)emit_byte(compiler,utc_flag);
+    if(result_is_float)compiler->known_types[dest]=DIAMOND_TYPE_FLOAT;
     return dest;
+}
+
+/* Time.at(epoch) -- the one Time constructor taking an argument;
+ * mirrors parse_sqlite3_open_call's own one-argument-constructor shape. */
+static uint16_t parse_time_at_call(Compiler *compiler) {
+    if(compiler->current.kind!=DIAMOND_TOKEN_LEFT_PAREN) {
+        fail(compiler,compiler->current.span,"expected '(' after 'Time.at'");
+        return 0;
+    }
+    advance_token(compiler);
+    skip_newlines(compiler);
+    const uint16_t epoch_register=parse_expression(compiler);
+    skip_newlines(compiler);
+    if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
+        fail(compiler,compiler->current.span,"expected ')' after Time.at arguments");
+        return 0;
+    }
+    advance_token(compiler);
+    const uint16_t dest=allocate_register(compiler);
+    emit_opcode(compiler,DIAMOND_OP_TIME_AT);
+    emit_register(compiler,dest);
+    emit_register(compiler,epoch_register);
+    return dest;
+}
+
+static uint16_t parse_time_call(Compiler *compiler) {
+    advance_token(compiler); /* consume '.' */
+    if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER) {
+        fail(compiler,compiler->current.span,
+             "expected 'monotonic', 'now', 'utc_now', or 'at' after 'Time'");
+        return 0;
+    }
+    const DiamondSpan method=compiler->current.span;
+    if(name_equals(compiler,"monotonic",method,false)) {
+        advance_token(compiler);
+        return parse_time_zero_argument_call(compiler,
+            DIAMOND_OP_TIME_MONOTONIC,0,false,true);
+    }
+    if(name_equals(compiler,"now",method,false)) {
+        advance_token(compiler);
+        return parse_time_zero_argument_call(compiler,
+            DIAMOND_OP_TIME_NOW,0,true,false);
+    }
+    if(name_equals(compiler,"utc_now",method,false)) {
+        advance_token(compiler);
+        return parse_time_zero_argument_call(compiler,
+            DIAMOND_OP_TIME_NOW,1,true,false);
+    }
+    if(name_equals(compiler,"at",method,false)) {
+        advance_token(compiler);
+        return parse_time_at_call(compiler);
+    }
+    fail(compiler,method,"expected 'monotonic', 'now', 'utc_now', or 'at' after 'Time'");
+    return 0;
 }
 
 static uint16_t parse_name(Compiler *compiler) {
@@ -2346,7 +2399,7 @@ static uint16_t parse_name(Compiler *compiler) {
     if(class_index<0&&find_local(compiler,name)<0&&find_function(compiler,name)<0&&
        compiler->current.kind==DIAMOND_TOKEN_DOT&&
        name_equals(compiler,"Time",name,false))
-        return parse_time_monotonic_call(compiler);
+        return parse_time_call(compiler);
     if(class_index<0&&find_local(compiler,name)<0&&find_function(compiler,name)<0&&
        compiler->current.kind==DIAMOND_TOKEN_DOT&&
        name_equals(compiler,"ProgramBuilder",name,false))

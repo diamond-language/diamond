@@ -317,6 +317,16 @@ classes that opt in.
 comparisons, Ruby's `Comparable` convenience) aren't overloadable — define
 `<`/`<=`/`>`/`>=` individually if a class needs ordering.
 
+This mechanism (a user-defined class's own instance methods) is the
+only way *user code* opts into operator support. `Time`
+(`docs/io.md`) is the one **native**, non-`Instance` type with real
+`+`/`-`/comparison support — implemented directly in the VM's own
+arithmetic/comparison opcodes, not through this dispatch, since a
+native type has no instance methods for it to reach. No other native
+type (`Array`, `Hash`, `File`, `SQLite3`, ...) gets operators this
+way; each would need its own dedicated VM-level support, same as
+`Time` did.
+
 ## Modules
 
 `module Name ... end` declares a module; `include Name` copies its method

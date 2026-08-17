@@ -227,6 +227,17 @@ future work.
   especially under AddressSanitizer; added regression coverage for integer
   overflow, dynamic-dispatch arity checking, and a mixed-class dispatch
   benchmark that were previously untested.
+- Recalibrated `DIAMOND_MAX_CALL_DEPTH` again (100 → 95) when adding
+  native `Time` support: only ~240 bytes of measured `run_chunk`
+  frame growth from the new opcodes and arithmetic/comparison fallback
+  branches was enough to flip `depth(5000)` (`tests/run.sh`) from a
+  clean guard trip into a real ASan stack-overflow — the same redzone-
+  per-named-local amplification the original recalibration's own
+  comment (`src/vm.c`) already documents, not a raw-byte-count story.
+  95 was chosen empirically (every value from 91 through 99 passed
+  cleanly; only 100 didn't) to sit in the middle of that window, with
+  margin both above `legacy_0091.di`'s `depth(90)` (a hard floor) and
+  below wherever the next addition's own growth lands.
 - Unified `ADD_INT`'s deopt path with `ADD`'s own fallback logic behind one
   shared helper, fixing a real bug the duplication had hidden: a `+` site
   quickened to `ADD_INT` from prior Int+Int calls raised a spurious
@@ -296,9 +307,15 @@ future work.
   (`abs`/`min`/`max`/`mod`) covering `Int`/`Float`.
 - `Time.monotonic()`: a duration-only clock (`CLOCK_MONOTONIC` seconds
   as a `Float`) for timing an elapsed interval (`elapsed =
-  Time.monotonic() - start`) — not a step toward a wall-clock/calendar
-  `Time` type, which Diamond still doesn't have. Added for
-  `examples/library`'s rack timing middleware.
+  Time.monotonic() - start`). Added for `examples/library`'s rack
+  timing middleware.
+- A real calendar `Time` type (`Time.now`/`.utc_now`/`.at`, component
+  accessors, `.strftime`, UTC/local conversion via `gmtime_r`/
+  `localtime_r`) with genuine Ruby-style operators (`t + n`, `t1 - t2`,
+  full comparisons) — the one native, non-`Instance` type with operator
+  support, implemented directly in the VM's arithmetic/comparison
+  opcodes rather than through the class-method operator-overload
+  mechanism. See `docs/io.md`'s "Time" section.
 - `Regexp.new(pattern, options)`/`.match`/`.match?`, backed by a separate
   regex-engine project (`reginold`).
 - String primitives: `upcase`/`downcase`/`reverse`/`strip`/`split`/`slice`/

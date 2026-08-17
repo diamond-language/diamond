@@ -604,6 +604,76 @@ call does its own prepare→bind→step→finalize; there is no persistent
 prepared-`Statement` object to explicitly reuse across calls (see "out
 of scope" below).
 
+## Time: `Time.now`/`.utc_now`/`.at`/`.strftime`/`+`/`-`/comparisons
+
+```ruby
+t = Time.at(0).utc()
+t.year()            # => 1970
+t.strftime("%Y-%m-%d %H:%M:%S")  # => "1970-01-01 00:00:00"
+
+start = Time.now()
+elapsed = Time.now() - start     # => Float seconds
+deadline = Time.now() + 30       # => Time, 30s from now
+Time.now() < deadline            # => true
+```
+
+A real GC-managed heap object (`DIAMOND_OBJECT_TIME`), wrapping a
+fractional Unix-epoch `Float` plus a `utc`/local flag that only
+controls which of `gmtime_r`/`localtime_r` component accessors and
+`.strftime` use — both are real, DST-aware, system-tzdata-backed libc
+calls, so "supporting timezones" here is just calling the right one,
+not hand-rolled timezone logic.
+
+Three constructors, compiling to dedicated opcodes the same way
+`File.open`/`SQLite3.open` do:
+
+- `Time.now()` — current wall-clock time, local.
+- `Time.utc_now()` — current wall-clock time, UTC.
+- `Time.at(epoch)` — from a given `Int`/`Float` epoch, local.
+
+(`Time.monotonic()`, documented in `docs/syntax.md`'s "Numbers"
+section, is unrelated — a bare duration-only `Float`, not a `Time`.
+Mixing the two would be actively misleading, since one is a calendar
+instant and the other means nothing outside "difference between two
+readings.")
+
+Instance methods, all ordinary `.method()` calls through the same
+generic dispatch every other native type uses:
+
+- `.year()`/`.month()`/`.day()`/`.hour()`/`.min()`/`.sec()` → `Int`
+- `.wday()` → `Int`, `0`=Sunday..`6`=Saturday; `.yday()` → `Int`,
+  `1`-`366`
+- `.to_i()` → `Int` (truncated epoch); `.to_f()` → `Float` (full
+  epoch)
+- `.strftime(format)` → `String`, a thin wrapper over libc `strftime`
+  — the format string passes straight through, so supported directives
+  are whatever the system's `strftime(3)` supports, not a
+  Diamond-specific subset
+- `.to_s()` → `String`, a fixed default format (matches what
+  `puts`/string interpolation print for a `Time` too — one formatting
+  implementation, not two)
+- `.utc()` / `.localtime()` → a new `Time`, same epoch, `utc` flag
+  flipped (immutable — the receiver is never modified)
+- `.utc?()` → `Bool`
+
+`+`, `-`, and comparisons (`<`/`<=`/`>`/`>=`/`==`/`!=`) work directly,
+matching Ruby — `Time` is the **one** native (non-`Instance`) type
+with real operator support; see `docs/syntax.md`'s "Operator
+overloading" section for why every other native type doesn't get this
+for free:
+
+- `t + n` (`Int`/`Float` seconds) → `Time`, offset forward, same `utc`
+  flag as `t`. `t + t2` is a `TypeError` (Ruby doesn't support adding
+  two `Time`s either).
+- `t - n` → `Time`, offset backward. `t1 - t2` → `Float` seconds
+  between them (Ruby's own dual-purpose `-`).
+- `t1 < t2` / `<=` / `>` / `>=` — `Time` vs `Time` only, no
+  `Time`-vs-numeric ordering.
+- `t1 == t2` / `!=` — compares the underlying epoch, **not** identity
+  and **not** the `utc`/local flag: two separately constructed `Time`s
+  at the same instant are `==` regardless of which one is `.utc`,
+  exactly like Ruby.
+
 ## What's deliberately out of scope so far
 
 - **Multiple `print`/`puts` arguments**: `puts(a, b)` (Ruby-style, one
@@ -641,6 +711,10 @@ of scope" below).
   `SQLite3.open` takes only a path (sqlite3's own create-if-missing
   default, no read-only/flags argument); `params` binds positionally
   (`?`) only.
+- **`Time.parse`, named timezones, a separate `Date`-only type**: no
+  parsing a `Time` from a `String`, no picking a timezone other than
+  the process's own local zone or UTC (Ruby itself needs the `tzinfo`
+  gem for that), no date-without-time type distinct from `Time`.
 
 Each of these is a plausible next slice, sized independently rather than
 attempted together.
