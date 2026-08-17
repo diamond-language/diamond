@@ -313,7 +313,7 @@ static void mark_fiber(const DiamondFiber *fiber) {
         mark_frame_chain(fiber->native_frames);
 }
 
-void diamond_vm_collect(DiamondVm *vm) {
+static void diamond_vm_collect_impl(DiamondVm *vm) {
     if(vm->has_exception)mark_value(vm->exception);
     for(size_t index=0;index<DIAMOND_MAX_NAMESPACE_CONSTANTS;index++)
         if(vm->namespace_constant_initialized[index])
@@ -435,6 +435,25 @@ void diamond_vm_collect(DiamondVm *vm) {
     }
     vm->next_gc = vm->bytes_allocated < 1024
         ? 2048 : vm->bytes_allocated * 2;
+}
+
+/* Timing wrapper around diamond_vm_collect_impl -- see vm.h's own
+ * comment on gc_collection_count/gc_total_seconds for why this exists
+ * (DIAMOND_TRACE_GC, src/run_source.c). CLOCK_MONOTONIC, matching every
+ * other wall-time measurement in this file (Time.monotonic(), the
+ * TCP/TLS/UDP retry-loop deadline checks) -- immune to wall-clock
+ * adjustments, which a long-running collection-heavy process is
+ * exactly the kind of thing that could otherwise run across. */
+void diamond_vm_collect(DiamondVm *vm) {
+    struct timespec start={};
+    clock_gettime(CLOCK_MONOTONIC,&start);
+    diamond_vm_collect_impl(vm);
+    struct timespec end={};
+    clock_gettime(CLOCK_MONOTONIC,&end);
+    vm->gc_collection_count++;
+    vm->gc_total_seconds+=
+        (double)(end.tv_sec-start.tv_sec)+
+        (double)(end.tv_nsec-start.tv_nsec)/1e9;
 }
 
 void diamond_vm_init(DiamondVm *vm) {

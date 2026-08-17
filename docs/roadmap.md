@@ -652,10 +652,37 @@ concurrency" above.
   hard, pre-computed-from-`free`-headroom cap is crossed, aborting with
   a clear message rather than continuing past the cap. Both the
   confirmation runs above ended via that watchdog firing as designed,
-  not via approaching any real danger. Whoever picks this up next
-  should use `run_hard.sh` (not the original `run.sh`, which has no
-  watchdog) for any further push, choose its cap from actual `free -h`
-  headroom at launch time -- not a guess -- and run considerably longer
-  than a few minutes at a fixed, safe live-set size before touching
-  live-set size again, specifically to answer the bounded-noise-vs-slow-
-  climb question above.
+  not via approaching any real danger.
+
+  Three consecutive watchdog-protected runs at this same config each
+  crossed a progressively higher cap progressively faster (5.5GB in
+  under a minute, twice, then 6GB in under 20 seconds), which is a
+  strange enough pattern to distrust rather than chase with a fourth,
+  still-higher-cap attempt -- checked for the obvious mundane
+  explanation (CPU thermal throttling skewing successive runs) via
+  `/sys/class/thermal` and `/proc/loadavg` and ruled it out (temps
+  under 45C, load average 1.4, nothing throttled). Left unresolved
+  between "genuinely high run-to-run variance from GC/thread-scheduling
+  nondeterminism under concurrent load" and "something about this
+  session's cumulative machine state" -- distinguishing needs cleaner
+  evidence than more live runs can give.
+
+  `vm->gc_collection_count`/`gc_total_seconds` (`src/vm.h`, timed in
+  `diamond_vm_collect`, `src/vm.c`) now exist for exactly that: direct
+  GC-cost evidence (`DIAMOND_TRACE_GC=1`, printed the same way every
+  other `DIAMOND_TRACE_*` counter is, `src/run_source.c`) instead of
+  inferring collector behavior from external RSS sampling under live
+  `ab` load, which conflates request-handling timing, OS scheduling,
+  and page-cache behavior with the collector's own cost. Not yet wired
+  up to anything a long-running, signal-killed `gremlin_serve` process
+  can surface, though -- an ordinary Diamond program reaches the normal
+  print-at-exit path these counters use, but `bench/burn_in`'s server
+  never exits cleanly (it's always `kill`ed). Giving the live burn-in
+  case a way to read these mid-run (a periodic print, a signal handler,
+  or exposing them to Diamond code some other way) is a separate,
+  not-yet-designed follow-up. Whoever picks this up next should use
+  `run_hard.sh` (not the original `run.sh`, which has no watchdog) for
+  any further live-server push, choose its cap from actual `free -h`
+  headroom at launch time -- not a guess -- but consider reaching for
+  `DIAMOND_TRACE_GC` on a shorter, non-networked, non-daemon reproducer
+  first, since it sidesteps this whole class of confound.

@@ -532,6 +532,24 @@ struct DiamondVm {
     size_t next_gc;
     void *frames;
     bool stress_gc;
+    /* Direct GC-cost evidence (DIAMOND_TRACE_GC, src/run_source.c) --
+     * collection count and total wall time spent inside
+     * diamond_vm_collect, timed via CLOCK_MONOTONIC. Added so a future
+     * investigation of docs/roadmap.md's "Generational or incremental
+     * GC" item can measure real-walk cost directly instead of inferring
+     * it from external RSS sampling under live network load, which
+     * conflates request-handling timing, OS scheduling, and page-cache
+     * behavior with the collector's own cost (see bench/burn_in's
+     * "A follow-up push" section for the investigation this was built
+     * for). Only observable today via the normal print-at-process-exit
+     * path an ordinary (non-daemon) Diamond program takes -- a long-
+     * running server killed by signal (gremlin_serve, as bench/burn_in
+     * runs it) never reaches that path, so these counters aren't yet
+     * wired up to anything a live burn-in run can read; that's a
+     * separate, not-yet-designed follow-up, not something this addition
+     * attempts. */
+    size_t gc_collection_count;
+    double gc_total_seconds;
     DiamondMethodCache method_caches[DIAMOND_INLINE_CACHE_COUNT];
     DiamondFieldCache field_caches[DIAMOND_INLINE_CACHE_COUNT];
     size_t inline_cache_hits;

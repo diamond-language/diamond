@@ -160,6 +160,9 @@ int diamond_run_source_with_program(const char *name, const char *source,
     if (getenv("DIAMOND_TRACE_QUICKEN") != nullptr)
         fprintf(stderr,"quickened sites: %zu, deoptimized sites: %zu\n",
                 vm.quickened_sites,vm.deoptimized_sites);
+    if (getenv("DIAMOND_TRACE_GC") != nullptr)
+        fprintf(stderr,"GC: %zu collections, %.6fs total\n",
+                vm.gc_collection_count,vm.gc_total_seconds);
     diamond_vm_free(&vm);
     free(combined);
     diamond_source_bundle_free(&bundle);
