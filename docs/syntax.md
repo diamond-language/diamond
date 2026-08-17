@@ -523,6 +523,15 @@ though both arguments are `Int`. No extra validation: results follow
 IEEE-754 directly, so `sqrt(-1.0)` is `NaN` rather than an error, the
 same philosophy `Float` arithmetic already uses throughout.
 
+`Time.monotonic()` returns a `Float` number of seconds from
+`CLOCK_MONOTONIC` — a duration-only clock: the value itself means
+nothing (not a calendar timestamp, not comparable across processes),
+only the difference between two readings does, e.g. `elapsed =
+Time.monotonic() - start` for timing a request in a rack middleware.
+Diamond has no wall-clock/calendar `Time` type yet — no `.year`/
+`.to_s`/parsing — this is deliberately just enough to measure an
+elapsed duration, not a step toward one.
+
 `array_sort(values: Array[Int])` returns a new sorted array (input
 untouched); `Int` is the only type with a native ordering comparison,
 so this is Int-only, checked up front (`expected Array[Int], got

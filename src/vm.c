@@ -30,6 +30,7 @@
 #include <sqlite3.h>
 #include <sys/mman.h>
 #include <sys/socket.h>
+#include <time.h>
 #include <unistd.h>
 
 /* Fibers hand-switch the C stack via swapcontext (see DIAMOND_FIBER_STACK_SIZE
@@ -8719,6 +8720,23 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                         (unsigned)expected,array->count);
                     VM_RETURN(DIAMOND_VM_ARITY_ERROR);
                 }
+                break;
+            }
+            /* A duration-only clock: seconds since some unspecified,
+             * process-local reference point (CLOCK_MONOTONIC), never
+             * meaningful as a calendar timestamp or across processes --
+             * only the difference between two readings means anything.
+             * Diamond has no wall-clock/calendar Time type at all yet
+             * (see docs/threads.md); this is deliberately just enough to
+             * measure an elapsed duration (e.g. a request-timing rack
+             * middleware), not a step toward one. */
+            case DIAMOND_OP_TIME_MONOTONIC: {
+                uint16_t destination=0;
+                READ_SHORT(destination);
+                struct timespec now={};
+                clock_gettime(CLOCK_MONOTONIC,&now);
+                registers[destination]=
+                    DIAMOND_FLOAT((double)now.tv_sec+(double)now.tv_nsec/1e9);
                 break;
             }
             case DIAMOND_OP_IS_TYPE: {

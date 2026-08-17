@@ -294,6 +294,11 @@ future work.
 - Symbols (`:name`), content-compared and content-hashed, with `to_sym`.
 - A `Math` library (`sqrt`/`sin`/`cos`/`tan`/`pow`) and numeric helpers
   (`abs`/`min`/`max`/`mod`) covering `Int`/`Float`.
+- `Time.monotonic()`: a duration-only clock (`CLOCK_MONOTONIC` seconds
+  as a `Float`) for timing an elapsed interval (`elapsed =
+  Time.monotonic() - start`) — not a step toward a wall-clock/calendar
+  `Time` type, which Diamond still doesn't have. Added for
+  `examples/library`'s rack timing middleware.
 - `Regexp.new(pattern, options)`/`.match`/`.match?`, backed by a separate
   regex-engine project (`reginold`).
 - String primitives: `upcase`/`downcase`/`reverse`/`strip`/`split`/`slice`/

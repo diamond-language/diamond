@@ -2241,6 +2241,31 @@ static uint16_t parse_gets_call(Compiler *compiler) {
     return dest;
 }
 
+static uint16_t parse_time_monotonic_call(Compiler *compiler) {
+    advance_token(compiler); /* consume '.' */
+    if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER||
+       !name_equals(compiler,"monotonic",compiler->current.span,false)) {
+        fail(compiler,compiler->current.span,"expected 'monotonic' after 'Time'");
+        return 0;
+    }
+    advance_token(compiler); /* consume 'monotonic' */
+    if(compiler->current.kind!=DIAMOND_TOKEN_LEFT_PAREN) {
+        fail(compiler,compiler->current.span,"expected '(' after 'Time.monotonic'");
+        return 0;
+    }
+    advance_token(compiler);
+    if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
+        fail(compiler,compiler->current.span,"expected ')' after Time.monotonic arguments");
+        return 0;
+    }
+    advance_token(compiler);
+    const uint16_t dest=allocate_register(compiler);
+    emit_opcode(compiler,DIAMOND_OP_TIME_MONOTONIC);
+    emit_register(compiler,dest);
+    compiler->known_types[dest]=DIAMOND_TYPE_FLOAT;
+    return dest;
+}
+
 static uint16_t parse_name(Compiler *compiler) {
     const DiamondSpan name = compiler->previous.span;
     int class_index=find_class(compiler,name);
@@ -2318,6 +2343,10 @@ static uint16_t parse_name(Compiler *compiler) {
        compiler->current.kind==DIAMOND_TOKEN_DOT&&
        name_equals(compiler,"SQLite3",name,false))
         return parse_sqlite3_open_call(compiler);
+    if(class_index<0&&find_local(compiler,name)<0&&find_function(compiler,name)<0&&
+       compiler->current.kind==DIAMOND_TOKEN_DOT&&
+       name_equals(compiler,"Time",name,false))
+        return parse_time_monotonic_call(compiler);
     if(class_index<0&&find_local(compiler,name)<0&&find_function(compiler,name)<0&&
        compiler->current.kind==DIAMOND_TOKEN_DOT&&
        name_equals(compiler,"ProgramBuilder",name,false))

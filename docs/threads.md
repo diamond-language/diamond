@@ -243,8 +243,10 @@ correctly reaped at process exit via the GC block-join guarantee.
 genuine CPU-bound work (not `sleep`, which could pass even under a
 cooperative scheduler that yields during the sleep) finish in wall-clock
 time well under twice one thread's own solo time — timed from bash around
-the whole `diamond` subprocess, since Diamond itself has no `Time`/clock
-builtin.
+the whole `diamond` subprocess, predating `Time.monotonic()` (see
+`docs/syntax.md`) and not worth rewriting to use it: bash's own timing
+is already the simpler, more obviously-correct way to time a whole
+subprocess from outside.
 
 `make test-tsan` runs the Thread-specific cases (plus a couple of
 representative Fiber cases, since the `thread_local` fix above touches

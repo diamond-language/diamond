@@ -726,6 +726,8 @@ static bool disassemble_chunk(FILE *stream, const char *name,
                     checked_register(chunk,stream,read_operand(chunk,offset+1),&valid),
                     read_operand(chunk,offset+3));
                 offset+=5;break;
+            case DIAMOND_OP_TIME_MONOTONIC:
+                offset=one_register(stream,chunk,"TIME_MONOTONIC",offset, &valid);break;
             case DIAMOND_OP_CHECK_TYPE:
                 if(!require_bytes(stream,chunk,offset,5)){valid=false;offset=chunk->code_count;break;}
                 fprintf(stream,"%-18s r%u, ","CHECK_TYPE",
