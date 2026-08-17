@@ -525,6 +525,19 @@ concurrency" above.
 
 ## Judgement calls
 
+- **A nested `def` lexically inside one branch of an `if`/`else`, combined
+  with a read of an outer-scope local (including a parameter) in a
+  sibling branch, corrupts register allocation.** Confirmed via a
+  minimal-repro sweep (`packages/arel/arel.di`'s original `where` method
+  triggered it first) to be a genuine compiler bug, not specific to
+  destructuring, default parameters, or what the nested `def` itself
+  captures -- an empty nested `def` with no captures still triggers it.
+  Root cause not yet diagnosed (likely how nested-`def` compilation
+  promotes enclosing locals for capture without the promotion being
+  visible consistently across sibling branches). Workaround: hoist the
+  nested `def` so it sits before the `if`/`else` rather than inside one
+  branch of it -- confirmed to avoid the bug in every repro tried, and
+  used in `arel.di`'s `where`/`to_sql`.
 - **Bare-name forward/mutual recursion between top-level functions (or
   sibling methods calling each other by bare name) fails to compile.**
   Two functions or methods that call each other by bare name, where one is
