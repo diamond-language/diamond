@@ -9,10 +9,13 @@ require "../http/http"
 # whatever project uses gremlin, not packages/http/ two directories up
 # in this repo; the relative path always resolves correctly regardless).
 # `require "gremlin"` (once installed as a package the same way) then
-# brings in gremlin_serve. Same Rack-style handler contract as
-# http_serve --
-# a Callable[1] taking a request Hash and returning [status, headers,
-# body] -- but unlike http_serve's single blocking accept loop,
+# brings in gremlin_serve. Same Rack-style status/headers/body contract
+# as http_serve, plus one addition http_serve has no equivalent for: a
+# Callable[2] taking a request Hash *and* this worker's own persistent
+# context Hash (empty on first use, otherwise whatever a previous
+# request on this same worker left in it -- see "Per-worker context"
+# below), returning [status, headers, body] -- but unlike http_serve's
+# single blocking accept loop,
 # gremlin_serve handles every connection concurrently: one Fiber per
 # connection, driven by a top-level accept/poll/resume loop, so a slow
 # client reading its response one byte at a time never blocks any other
@@ -46,6 +49,30 @@ require "../http/http"
 # still goes through packages/http's own http_parse_request/
 # http_write_response entirely unmodified -- the only new code here is
 # the non-blocking connection wrapper and the event loop around it.
+#
+# ## Per-worker context
+#
+# `context` (gremlin_worker's own local, created once per worker before
+# its accept loop starts) exists because `handler` can't just close over
+# a Hash the ordinary way once threads > 1: Thread.new hard-rejects any
+# Callable that captures local state ("Thread.new's callable must not
+# capture any local state" -- it has no way to deep-copy arbitrary
+# captured values across the heap boundary the way it copies `handler`
+# itself, a plain zero-capture top-level function reference, see
+# docs/threads.md). Diamond also has no class-variable or other
+# static-storage mechanism a zero-capture function could reach by name
+# instead (`@@x` doesn't parse; `def self.x` methods have no per-class
+# field storage) -- so without this, a gremlin handler running under
+# threads > 1 would have no way to keep any state across requests at
+# all. `context` sidesteps the restriction by never crossing the Thread
+# boundary in the first place: it's created by gremlin_worker itself,
+# after Thread.new has already handed control to that worker's own
+# thread, so it's an ordinary local captured by spawn_connection/
+# handle_connection exactly like `conn` already is -- no Thread.new
+# argument-crossing involved. Each worker's context is therefore its
+# own: threads: N gives a handler N independent Hashes, one per worker,
+# never shared or synchronized -- consistent with every other piece of
+# per-worker state here (own heap, own listener, own connections list).
 
 class NonblockingConnection
   def initialize(socket)
@@ -137,13 +164,14 @@ end
 def gremlin_worker(port, handler)
   listener = TCPServer.listen_nonblocking(port, reuse_port: true)
   connections = []
+  context = {}
 
   def spawn_connection(client_socket)
     conn = NonblockingConnection.new(client_socket)
     def handle_connection()
       request = http_parse_request(conn)
       if request != nil
-        response = handler(request)
+        response = handler(request, context)
         http_write_response(conn, response)
       end
       conn.close()
@@ -227,7 +255,7 @@ end
 # must be a zero-capture Callable, satisfying Thread.new's requirement for
 # both its primary callable and (as of the reuse_port work) a crossable
 # argument -- see docs/threads.md.
-def gremlin_serve(port, handler: Callable[1], threads = 1)
+def gremlin_serve(port, handler: Callable[2], threads = 1)
   if threads < 1
     raise ArgumentError.new("gremlin_serve threads must be at least 1")
   end

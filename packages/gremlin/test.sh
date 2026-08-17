@@ -28,7 +28,7 @@ server_src() {
     cat <<SRCEOF
 require "$(pwd)/gremlin"
 def run()
-  def handler(request)
+  def handler(request, context)
     if request["method"] == "GET"
       [200, {"Content-Type": "text/plain"}, "hello, #{request["path"]}"]
     else

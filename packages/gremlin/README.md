@@ -24,7 +24,7 @@ depend on them via `facet` (see
 require "/path/to/gremlin"
 
 def run()
-  def handler(request)
+  def handler(request, context)
     path = request["path"]
     [200, {"Content-Type": "text/plain"}, "hello, #{path}"]
   end
@@ -33,9 +33,12 @@ end
 run()
 ```
 
-Identical to `http_serve`'s own usage -- same handler shape, same request
-`Hash`, same response convention. The only difference is what happens
-under load: `gremlin_serve` keeps accepting and progressing every other
+Almost identical to `http_serve`'s own usage -- same request `Hash`, same
+`[status, headers, body]` response convention -- plus one addition:
+`handler` takes a second argument, `context`, a plain `Hash` that starts
+empty and is this *worker's* own to keep mutating across requests (see
+"Per-worker context" below). The other difference is what happens under
+load: `gremlin_serve` keeps accepting and progressing every other
 connection while any one of them is slow.
 
 Pass `threads: N` to actually use more than one core:
@@ -56,7 +59,35 @@ sites are unaffected.
 `handler` must be a zero-capture `Callable` (an ordinary top-level `def`,
 like the example above, or a closure literal that captures nothing) when
 `threads` is more than 1 -- the same restriction `Thread.new` itself
-imposes on any value crossing into a spawned thread.
+imposes on any value crossing into a spawned thread. `context` is how a
+handler keeps state across requests despite that restriction -- see
+below.
+
+### Per-worker context
+
+`handler`'s second argument is a `Hash`, created empty once per worker
+(not once per server -- see below) before that worker's own accept loop
+starts, and handed back on every subsequent request that same worker
+happens to handle. It exists because closing over a mutable local the
+ordinary way doesn't survive `threads > 1`: `Thread.new` hard-rejects any
+`Callable` that captures local state, and Diamond has no class-variable
+or other static-storage mechanism a zero-capture function could reach by
+name instead. Without `context`, a handler running under `threads > 1`
+would have no way to keep anything across requests at all -- no
+session cache, no counter, nothing.
+
+`context` is **per worker, not shared or synchronized across workers**:
+`threads: N` gives a handler N independent Hashes, one per worker, each
+only ever touched by that one worker's own single OS thread (fibers
+within a worker are cooperative, never preemptive, so ordinary
+non-atomic reads/writes on `context` are safe there too -- no locking
+needed within a worker either). A counter incremented in `context` is a
+per-worker counter, not a global one; a cache built up in `context` is
+warm only for requests that happen to land on that same worker. That's
+the same tradeoff every other piece of per-worker state here already
+makes (own heap, own listener, own connections list) -- `context` isn't
+special, it's just the one piece of that state `handler` actually gets
+to see.
 
 ## How it works
 
