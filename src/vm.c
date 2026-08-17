@@ -8698,6 +8698,29 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 }
                 break;
             }
+            /* Multi-value destructuring assignment (`a, b = expr`,
+             * src/compiler.c's compile_multi_assignment) always emits a
+             * DIAMOND_OP_CHECK_TYPE against an Array-only type set
+             * immediately before this opcode, so registers[array_reg] is
+             * already guaranteed to be a genuine Array here -- the same
+             * trusted-caller invariant ProgramBuilder-constructed bytecode
+             * relies on elsewhere (see src/object.h's DiamondProgramBuilder
+             * comment). Reuses the existing ArityError/DIAMOND_VM_ARITY_
+             * ERROR status (the same one the SQLite3 driver's own bound-
+             * parameter-count check reuses) rather than a new exception
+             * class, for the same "wrong count of things" shape. */
+            case DIAMOND_OP_CHECK_DESTRUCTURE_COUNT: {
+                uint16_t array_reg=0,expected=0;
+                READ_SHORT(array_reg); READ_SHORT(expected);
+                const DiamondArray *array=(const DiamondArray *)registers[array_reg].as.object;
+                if(array->count!=expected) {
+                    snprintf(vm->error,sizeof vm->error,
+                        "destructuring assignment expected %u element(s), got %zu",
+                        (unsigned)expected,array->count);
+                    VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                }
+                break;
+            }
             case DIAMOND_OP_IS_TYPE: {
                 uint16_t destination=0,source=0,type=0;
                 READ_SHORT(destination);READ_SHORT(source);READ_SHORT(type);

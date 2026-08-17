@@ -18,6 +18,11 @@ future work.
 - Integers with checked arithmetic, IEEE-754 floats, booleans, `nil`, and
   strings.
 - Locals, assignment, comparisons, expression-valued `if` and `while`.
+- Multi-value destructuring assignment (`a, b = expr`): unpacks a single
+  `Array`-valued expression across local/`@ivar`/`@@cvar` targets, with
+  strict Array-type and exact-length checks (`ArgumentError`/`TypeError`
+  on mismatch) rather than Ruby's own lenient nil-pad/truncate behavior.
+  See `docs/syntax.md`'s "Multiple assignment".
 - Ruby-style truthiness and value-preserving `!`, `&&`, and `||`.
 - Explicit `return`, `break`, and `next` with nested control-flow targeting.
 - Named functions, positional parameters, recursion, arity checks, and isolated

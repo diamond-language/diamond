@@ -166,6 +166,7 @@ typedef enum DiamondOpCode : uint8_t {
     DIAMOND_OP_GET_CVAR,
     DIAMOND_OP_SET_CVAR,
     DIAMOND_OP_SQLITE3_OPEN,
+    DIAMOND_OP_CHECK_DESTRUCTURE_COUNT,
     DIAMOND_OP_COUNT,
 } DiamondOpCode;
 

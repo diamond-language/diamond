@@ -3283,6 +3283,29 @@ static bool index_assignment_ahead(const Compiler *compiler) {
     return diamond_lexer_next(&lookahead).kind==DIAMOND_TOKEN_EQUAL;
 }
 
+static bool destructuring_target_kind(DiamondTokenKind kind) {
+    return kind==DIAMOND_TOKEN_IDENTIFIER||kind==DIAMOND_TOKEN_INSTANCE_VARIABLE||
+           kind==DIAMOND_TOKEN_CLASS_VARIABLE;
+}
+
+/* Same clone-the-lexer-and-scan-forward technique as assignment_ahead/
+ * index_assignment_ahead above. Requires at least one comma (a bare
+ * `x = expr` must keep resolving through assignment_ahead unchanged) --
+ * scans `target (COMMA target)+ EQUAL`, where a target is anything
+ * assignment_ahead itself already accepts (plain local/@ivar/@@cvar). */
+static bool multi_assignment_ahead(const Compiler *compiler) {
+    if(!destructuring_target_kind(compiler->current.kind)) return false;
+    DiamondLexer lookahead = compiler->lexer;
+    size_t comma_count = 0;
+    for(;;) {
+        const DiamondToken token = diamond_lexer_next(&lookahead);
+        if(token.kind != DIAMOND_TOKEN_COMMA)
+            return comma_count > 0 && token.kind == DIAMOND_TOKEN_EQUAL;
+        comma_count++;
+        if(!destructuring_target_kind(diamond_lexer_next(&lookahead).kind)) return false;
+    }
+}
+
 static DiamondTokenKind postfix_modifier_ahead(const Compiler *compiler) {
     if (compiler->current.kind == DIAMOND_TOKEN_DEF ||
         compiler->current.kind == DIAMOND_TOKEN_CLASS ||
@@ -5036,15 +5059,13 @@ static uint16_t compile_interface(Compiler *compiler) {
     return result;
 }
 
-static uint16_t compile_assignment(Compiler *compiler) {
-    const DiamondSpan name = compiler->current.span;
-    const bool instance_variable =
-        compiler->current.kind == DIAMOND_TOKEN_INSTANCE_VARIABLE;
-    const bool class_variable =
-        compiler->current.kind == DIAMOND_TOKEN_CLASS_VARIABLE;
-    advance_token(compiler);
-    advance_token(compiler);
-    const uint16_t value = parse_expression(compiler);
+/* The "store into a target" half of an assignment, shared between the
+ * ordinary single-target path (compile_assignment) and multi-value
+ * destructuring (compile_multi_assignment) -- everything here is
+ * unchanged behavior lifted verbatim out of what used to be
+ * compile_assignment's own body. */
+static uint16_t compile_assignment_store(Compiler *compiler, DiamondSpan name,
+        bool instance_variable, bool class_variable, uint16_t value) {
     if (instance_variable) {
         if(compiler->current_module>=0&&compiler->current_class<0) {
             const uint8_t field=module_field_name(compiler,name);
@@ -5089,6 +5110,96 @@ static uint16_t compile_assignment(Compiler *compiler) {
     compiler->known_types[destination]=compiler->known_types[value];
     compiler->known_type_sets[destination]=compiler->known_type_sets[value];
     return destination;
+}
+
+static uint16_t compile_assignment(Compiler *compiler) {
+    const DiamondSpan name = compiler->current.span;
+    const bool instance_variable =
+        compiler->current.kind == DIAMOND_TOKEN_INSTANCE_VARIABLE;
+    const bool class_variable =
+        compiler->current.kind == DIAMOND_TOKEN_CLASS_VARIABLE;
+    advance_token(compiler);
+    advance_token(compiler);
+    const uint16_t value = parse_expression(compiler);
+    return compile_assignment_store(compiler, name, instance_variable, class_variable, value);
+}
+
+/* Finds (or, the first time in this function, registers) a one-member
+ * type set matching plain `Array` (no element-type argument) -- the
+ * same DiamondTypeSet shape parse_type_annotation builds when it reads
+ * a literal `Array` annotation from source, just constructed directly
+ * here since there's no source text driving it. Reused across every
+ * destructuring statement in the same function rather than burning a
+ * fresh type-set slot per statement. */
+static uint8_t array_type_set_index(Compiler *compiler) {
+    for(size_t index=0;index<compiler->function->type_set_count;index++) {
+        const DiamondTypeSet *set=&compiler->function->type_sets[index];
+        if(set->count==1&&set->members[0].id==DIAMOND_TYPE_ARRAY&&
+           set->members[0].argument_set==UINT8_MAX)
+            return (uint8_t)index;
+    }
+    if(compiler->function->type_set_count==DIAMOND_MAX_TYPE_SETS) {
+        fail(compiler,compiler->previous.span,"function has too many type annotations");
+        return 0;
+    }
+    const size_t set_index=compiler->function->type_set_count++;
+    DiamondTypeSet *set=&compiler->function->type_sets[set_index];
+    set->count=1;
+    set->members[0]=(DiamondTypeMember){.id=DIAMOND_TYPE_ARRAY,
+        .argument_set=UINT8_MAX,.second_argument_set=UINT8_MAX,
+        .callable_arity=UINT8_MAX,.callable_return_set=UINT8_MAX,
+        .callable_parameters_typed=false};
+    for(size_t member_index=0;member_index<16;member_index++)
+        set->members[0].callable_parameter_sets[member_index]=UINT8_MAX;
+    return (uint8_t)set_index;
+}
+
+/* `t1, t2, ... = expr` -- targets already confirmed present by
+ * multi_assignment_ahead. Evaluates expr once, requires it to be a
+ * genuine Array of exactly the right length (a Hash would otherwise
+ * "work" through INDEX_GET's own key-lookup semantics and silently do
+ * the wrong thing -- see DIAMOND_OP_CHECK_DESTRUCTURE_COUNT's own
+ * comment in vm.c), then stores each element into its target through
+ * the same per-kind logic (local/@ivar/@@cvar) ordinary single-target
+ * assignment already uses. */
+static uint16_t compile_multi_assignment(Compiler *compiler) {
+    enum { MAX_TARGETS = 16 };
+    DiamondSpan names[MAX_TARGETS];
+    bool instance_variable[MAX_TARGETS];
+    bool class_variable[MAX_TARGETS];
+    size_t target_count=0;
+    for(;;) {
+        if(target_count==MAX_TARGETS) {
+            fail(compiler,compiler->current.span,"too many destructuring targets");
+            return 0;
+        }
+        names[target_count]=compiler->current.span;
+        instance_variable[target_count]=
+            compiler->current.kind==DIAMOND_TOKEN_INSTANCE_VARIABLE;
+        class_variable[target_count]=
+            compiler->current.kind==DIAMOND_TOKEN_CLASS_VARIABLE;
+        target_count++;
+        advance_token(compiler);
+        if(compiler->current.kind!=DIAMOND_TOKEN_COMMA) break;
+        advance_token(compiler); /* consume ',' */
+    }
+    advance_token(compiler); /* consume '=' */
+    const uint16_t value = parse_expression(compiler);
+    const uint8_t array_set = array_type_set_index(compiler);
+    emit_instruction(compiler,DIAMOND_OP_CHECK_TYPE,value,array_set,0,2);
+    emit_instruction(compiler,DIAMOND_OP_CHECK_DESTRUCTURE_COUNT,value,
+        (uint16_t)target_count,0,2);
+    uint16_t last=value;
+    for(size_t index=0;index<target_count;index++) {
+        const uint8_t index_constant=add_constant(compiler,DIAMOND_INT((int64_t)index));
+        const uint16_t index_register=allocate_register(compiler);
+        emit_instruction(compiler,DIAMOND_OP_CONSTANT,index_register,index_constant,0,2);
+        const uint16_t element=allocate_register(compiler);
+        emit_instruction(compiler,DIAMOND_OP_INDEX_GET,element,value,index_register,3);
+        last=compile_assignment_store(compiler,names[index],instance_variable[index],
+            class_variable[index],element);
+    }
+    return last;
 }
 
 static bool at_block_end(const Compiler *compiler) {
@@ -5153,6 +5264,8 @@ static uint16_t compile_sequence(Compiler *compiler) {
         } else {
             if(index_assignment_ahead(compiler))
                 result=compile_index_assignment(compiler);
+            else if(multi_assignment_ahead(compiler))
+                result=compile_multi_assignment(compiler);
             else
                 result = assignment_ahead(compiler)
                     ? compile_assignment(compiler)

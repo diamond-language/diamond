@@ -28,6 +28,37 @@ end
 block is its value. Blocks are `end`-delimited throughout; there are no
 braces. `next`/`break` work inside loops.
 
+## Multiple assignment
+
+```ruby
+def min_max(values)
+  [values.min(), values.max()]
+end
+
+lowest, highest = min_max([3, 1, 4, 1, 5])
+```
+
+`t1, t2, ... = expr` unpacks a single `Array`-valued expression across
+several targets in one statement — a natural fit for this codebase's own
+convention of returning `[a, b, ...]` from a function that logically has
+more than one result. Targets can be plain locals, `@ivar`s, or `@@cvar`s
+(freely mixed), and behave exactly like their single-target counterparts
+otherwise — a target that already exists is reassigned, not redeclared;
+a new local is defined; a captured local is written through its cell.
+
+The right-hand side must actually be an `Array` (a `Hash`, for instance,
+raises `TypeError` rather than being silently — and almost certainly
+wrongly — read by integer key) and its length must exactly match the
+number of targets, or it raises `ArgumentError`. This is stricter than
+Ruby's own lenient multiple assignment (which pads missing targets with
+`nil` and silently drops extra values) — deliberately, to match this
+language's existing preference for a clear, immediate error over quietly
+doing something the call site probably didn't intend.
+
+Not supported (yet): indexed (`arr[i]`) or chained (`obj.field`) targets,
+a comma-separated *literal* right-hand side (`a, b = 1, 2` — write `a, b
+= [1, 2]` instead), and nested destructuring.
+
 ## Numbers
 
 ```ruby
