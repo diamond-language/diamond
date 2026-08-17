@@ -117,6 +117,12 @@ See `gremlin.di`'s own top-of-file comment and
 [`docs/io.md`](https://gitlab.com/dmn9180/diamond/-/blob/main/docs/io.md)/[`docs/fibers.md`](https://gitlab.com/dmn9180/diamond/-/blob/main/docs/fibers.md)
 for the full design.
 
+## Related
+
+[`packages/rack`](../rack/README.md) layers composable middleware
+(logging, auth, etc.) on top of `handler` here -- including a documented
+pattern for `threads > 1` specifically.
+
 ## What's deliberately out of scope
 
 - **Keep-alive, request pipelining**: same scope cut `http_serve` already

@@ -59,13 +59,20 @@ require "../http/http"
 # capture any local state" -- it has no way to deep-copy arbitrary
 # captured values across the heap boundary the way it copies `handler`
 # itself, a plain zero-capture top-level function reference, see
-# docs/threads.md). Diamond also has no class-variable or other
-# static-storage mechanism a zero-capture function could reach by name
-# instead (`@@x` doesn't parse; `def self.x` methods have no per-class
-# field storage) -- so without this, a gremlin handler running under
-# threads > 1 would have no way to keep any state across requests at
-# all. `context` sidesteps the restriction by never crossing the Thread
-# boundary in the first place: it's created by gremlin_worker itself,
+# docs/threads.md). Diamond does now have class variables (`@@cvar`,
+# per-VM storage -- see docs/object-model.md's "Class variables"), which
+# could in principle serve the same per-worker-storage role (each
+# Thread-spawned worker already has its own independent VM, hence its
+# own independent `@@` slots) -- but `context` stays the simpler default
+# here: it's an ordinary Hash any handler already receives with no setup,
+# rather than requiring a handler to be wrapped in a class and given its
+# own `@@` slot just to keep state. (`packages/rack`'s `RackChain` does
+# use the `@@cvar` route, for a different reason: it's memoizing one
+# specific computed value -- a composed middleware chain -- keyed by
+# class, not threading arbitrary ad hoc state through every request the
+# way `context` does.) `context` sidesteps the restriction by never
+# crossing the Thread boundary in the first place: it's created by
+# gremlin_worker itself,
 # after Thread.new has already handed control to that worker's own
 # thread, so it's an ordinary local captured by spawn_connection/
 # handle_connection exactly like `conn` already is -- no Thread.new

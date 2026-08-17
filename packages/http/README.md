@@ -134,3 +134,8 @@ its own, plain Diamond throughout.
 
 Each of these is a plausible next slice, sized independently rather than
 attempted together.
+
+## Related
+
+[`packages/rack`](../rack/README.md) layers composable middleware
+(logging, auth, etc.) on top of `handler` here.
