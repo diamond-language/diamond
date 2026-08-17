@@ -487,9 +487,31 @@ future work.
 
 ## Confirmed still open
 
-Nothing currently open — the last entry here (`Instance` results crossing
-a `ProgramBuilder#run` boundary) was fixed; see "Self-hosting
-(Diamond-in-Diamond)" above.
+- **A closure defined inside a `def self.x` singleton method raises
+  "wrong number of arguments" when called, regardless of arity.**
+  Minimal repro:
+  ```ruby
+  class C
+    def self.run(v)
+      def doubler(x)
+        x * 2
+      end
+      doubler(v)
+    end
+  end
+  C.run(21)  # raises wrong number of arguments, not 42
+  ```
+  The identical pattern works fine as an ordinary instance method
+  (`def initialize` in place of `def self.run` above) — found while
+  building class variables (see "Classes" / "Class variables" in
+  `docs/syntax.md`) and testing the `@@cvar(...)` call shorthand against
+  a closure built inside a class method; unrelated to class variables
+  themselves; a plain local closure reproduces it with no `@@` involved.
+  Not investigated further — `def self.x` methods have no bound `self`
+  in this VM at all (see `docs/object-model.md`'s "Methods and calls"),
+  so the likely culprit is arity/capture metadata a nested `def`
+  compiled without a real receiver in scope gets wrong, but that's a
+  guess, not a diagnosis.
 
 ## Inconclusive
 

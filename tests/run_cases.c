@@ -32,6 +32,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/resource.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -302,6 +303,42 @@ static bool has_expectation(const char *cases_dir, const char *name) {
 }
 
 int main(int argc, char **argv) {
+    /* DIAMOND_MAX_CALL_DEPTH (src/vm.c) is tuned against an ordinary
+     * 8MB main-thread stack -- deep Diamond-level recursion (see
+     * legacy_0092.di's own SystemStackError regression case) is expected
+     * to hit that guard well before run_chunk's own C recursion could
+     * exhaust it. This tool runs every case *in this one process* rather
+     * than spawning a fresh `diamond` per case (see this file's own
+     * top-of-file comment) specifically for speed -- but that means
+     * run_one_case's own locals (four PATH_BUFFER_SIZE-sized path
+     * buffers per case, on top of everything else) sit underneath
+     * run_chunk's entire recursive call chain for every case, a
+     * fixed cost `diamond`'s own plain CLI entry point (src/main.c)
+     * never pays. Confirmed empirically that this margin is real: an
+     * unoptimized+ASan build of this tool can overflow the actual C
+     * stack while a standalone `diamond -e` running the exact same
+     * recursive program still hits DIAMOND_MAX_CALL_DEPTH's clean guard
+     * first, for the sole reason that this process's baseline stack
+     * usage before recursion even starts is larger. Rather than shrink
+     * DIAMOND_MAX_CALL_DEPTH itself (a real behavior change for every
+     * build, including release, to compensate for a debug-build-only
+     * test-harness margin) or force every future opcode addition to
+     * fight for bytes in an already-thin margin, raise this process's
+     * own stack ceiling once, up front -- Linux grows the main thread's
+     * stack lazily on page fault against the *current* rlimit, so this
+     * takes effect immediately with no re-exec needed. Best-effort: if
+     * the platform or its limits.conf refuses the raise, fall through
+     * and run at the default 8MB exactly as before. */
+    struct rlimit stack_limit;
+    if(getrlimit(RLIMIT_STACK,&stack_limit)==0) {
+        constexpr rlim_t desired=64u*1024*1024;
+        if(stack_limit.rlim_cur<desired&&
+           (stack_limit.rlim_max==RLIM_INFINITY||stack_limit.rlim_max>=desired)) {
+            stack_limit.rlim_cur=desired;
+            (void)setrlimit(RLIMIT_STACK,&stack_limit);
+        }
+    }
+
     const char *cases_dir = argc > 1 ? argv[1] : "tests/cases";
     const char *output_dir = argc > 2 ? argv[2] : "build/case_output";
 
