@@ -246,6 +246,28 @@ future work.
   three existing `operator_deopt_gap_*` regression tests that were silently
   not exercising the deopt path they were named for (missing the `.env`
   file needed to opt into quickening at all).
+- Investigated and closed the "polymorphic inline-cache tier" item this
+  file used to list under "Judgement calls" as unimplemented. It isn't:
+  `DiamondMethodCache` (`src/vm.h`) is already 4 entries wide
+  (`DIAMOND_INLINE_CACHE_WIDTH`), and `lookup_method_cached` already
+  linear-probes all of them before falling back to a real `lookup_method`
+  walk — a genuine small polymorphic cache, not just a monomorphic one.
+  Measured directly (`bench/dispatch_reassign_control.di` vs
+  `bench/dispatch_polymorphic_no_index.di`, isolating dispatch cost from
+  both the original `dispatch_polymorphic.di`'s `Array#[]` confound and
+  the receiver-selection control flow itself): a 4-class call site lands
+  1,999,996/2,000,000 real cache hits after a 4-call warmup and costs
+  ~1ns/call more than a forced-monomorphic control with identical
+  control flow — noise-level, despite never getting the `INVOKE_MONO`
+  bytecode rewrite. The genuine "slow path every call" only appears past
+  the cache's own width: `bench/dispatch_megamorphic.di` (6 classes)
+  shows 0 hits, 2,000,000 misses. So there's no 2-4-shape gap to fix —
+  the existing cache already handles exactly that case. What's actually
+  unmeasured (and would be the real next question, lower priority, not
+  started) is miss cost on a realistic class hierarchy with superclass
+  chains once a site exceeds width 4 — this round's megamorphic
+  benchmark uses flat classes, so `lookup_method`'s fallback walk was
+  cheap in a way a deep hierarchy might not replicate.
 
 ### Fibers and concurrency
 
@@ -601,37 +623,39 @@ concurrency" above.
   that directory's README for the full numbers) showed RSS holding
   steady in a 4.2-5.1GB band with no growth trend, and flat ~6500-7000
   req/s throughput with 2-3ms p99 latency, for the full 10+ minutes.
-  So: at *this* live-set size and request rate, the current collector
-  shows no measurable strain -- the ceiling this entry describes is real
-  architecturally (every collection's cost scales with live-set size
-  regardless of how little of it is garbage), but this first real
-  workload didn't hit it. Building `bench/burn_in` surfaced two
-  unrelated real bugs along the way (a `gremlin_serve(threads: N)` hang
-  from a GC/Thread interaction, and an `ab` flag gotcha in the harness
-  itself, both fixed -- see that directory's README), which was worth it
-  independent of what it did or didn't show about GC. Whoever picks this
-  up next should push the benchmark harder (larger live set, higher
-  request rate, or a workload shape closer to a real production
-  service) before redesigning anything -- this first run is evidence the
-  ceiling hasn't been hit yet at this scale, not evidence it doesn't
-  exist.
+  Building `bench/burn_in` surfaced two unrelated real bugs along the
+  way (a `gremlin_serve(threads: N)` hang from a GC/Thread interaction,
+  and an `ab` flag gotcha in the harness itself, both fixed -- see that
+  directory's README), which was worth it independent of what it did or
+  didn't show about GC.
 
-- **A polymorphic inline-cache tier.** Method dispatch and field access
-  are both already genuinely cached -- `lookup_method_cached`
-  (`src/vm.c:3792`, backing a monomorphic `INVOKE_MONO` rewrite past a
-  hit threshold) and `lookup_field_cached` (`src/vm.c:3981`, a
-  shape-keyed/hidden-class-style cache for field reads and writes), both
-  more sophisticated than most projects this size bother with. There's no
-  2-4-shape polymorphic tier between the monomorphic cache and the slow
-  fallback lookup, so a call site that legitimately alternates among a
-  small, stable set of classes (not unbounded polymorphism, just more
-  than one shape) falls back to the slow path on every call instead of
-  getting a small dispatch table. The audit flagged this as "not
-  confirmed as a real-workload bottleneck -- an architectural gap worth
-  knowing about before it shows up in a profile," which is exactly why
-  it's listed here rather than started: this is real engineering risk to
-  a hot dispatch path with no measured evidence yet that it's worth
-  taking on. Whoever picks this up should profile a real polymorphic
-  workload first (not a synthetic monomorphic-vs-megamorphic
-  microbenchmark) to confirm the gap actually costs something before
-  touching `run_chunk`'s dispatch loop.
+  A follow-up push at this same 20000/worker config -- re-run on both
+  current `main` and, via a `git worktree`, the exact commit the 600s
+  numbers above were recorded at -- found that single "representative"
+  run was not, in fact, representative: RSS on *both* commits swings
+  more than that 4.2-5.1GB band suggests and crossed 5.5GB within the
+  first minute on more than one short re-run, ruling out a regression
+  in the commits between (the behavior reproduces identically on old
+  code) but also ruling out "flat and stable" as an accurate one-line
+  summary of this workload's real memory behavior. What's still
+  genuinely unknown: whether that swing is bounded noise around a
+  higher-than-documented steady state, or a slow climb the original
+  600s run's own lucky trajectory happened to mask -- distinguishing
+  those needs a longer run than got attempted, which didn't happen this
+  round for a specific reason: an earlier, unsupervised attempt at
+  literally the same question, run at 3x the live-set size with no hard
+  memory ceiling, consumed all RAM and swap on the single machine this
+  project runs on and crashed it. `bench/burn_in/run_hard.sh` now
+  exists specifically to make a repeat of that impossible -- an active
+  watchdog polls the server's RSS every second (independent of the load
+  generator's own batch boundaries) and `kill -9`s it the instant a
+  hard, pre-computed-from-`free`-headroom cap is crossed, aborting with
+  a clear message rather than continuing past the cap. Both the
+  confirmation runs above ended via that watchdog firing as designed,
+  not via approaching any real danger. Whoever picks this up next
+  should use `run_hard.sh` (not the original `run.sh`, which has no
+  watchdog) for any further push, choose its cap from actual `free -h`
+  headroom at launch time -- not a guess -- and run considerably longer
+  than a few minutes at a fixed, safe live-set size before touching
+  live-set size again, specifically to answer the bounded-noise-vs-slow-
+  climb question above.

@@ -15,6 +15,28 @@ make release
 bash bench/burn_in/run.sh [duration_seconds] [concurrency]
 ```
 
+For anything beyond `server.di`'s documented 20000-session-per-worker
+config -- a bigger live set, specifically -- use `run_hard.sh` instead,
+never `run.sh` directly:
+
+```
+bash bench/burn_in/run_hard.sh [duration_seconds] [concurrency] [server_script]
+# BURN_IN_PORT and BURN_IN_RSS_CAP_KB env vars override the defaults
+```
+
+`run_hard.sh` carries an active watchdog -- polling the server's RSS
+every second, independent of `ab`'s own batch boundaries, and `kill -9`-
+ing the server the instant RSS crosses `BURN_IN_RSS_CAP_KB` (default
+5,500,000, i.e. ~5.5GB) -- that `run.sh` doesn't have. This exists
+because an earlier, unsupervised attempt at pushing this benchmark's
+live-set size (3x the documented config, no hard cap, "scale back if it
+looks dangerous" as the only guidance) consumed all RAM and most of
+swap on the single machine this project runs on and crashed it. Always
+choose the cap from actual `free -h` headroom at launch time, not a
+guess -- `run_hard.sh` itself refuses to start if free memory doesn't
+leave real margin above the configured cap. See "A follow-up push"
+below for what this was built for and what it found.
+
 Defaults: 300s total, concurrency 20. `run.sh` first sends a small
 calibration batch to measure this workload's actual achievable
 throughput, then sizes every real batch's request count to target
@@ -107,6 +129,48 @@ show whether that re-walk cost is visible in throughput/latency (a flat
 line here says it currently isn't, at this live-set size and this
 request rate), but a flat memory line isn't evidence either way for that
 question.
+
+### A follow-up push (found the 4.2-5.1GB band understates real variance)
+
+The natural next step from the run above -- push the live-set size
+harder to see if a re-walk cost becomes visible -- ran into a real
+incident first: an unsupervised attempt at 60000 sessions/worker (3x
+this file's documented config), with only "scale back if it looks
+dangerous" as guidance and no active memory ceiling, consumed all RAM
+and most of swap on the single machine this project runs on and
+crashed it. `run_hard.sh` (see "Running it" above) exists because of
+that -- a real, second-by-second RSS watchdog with a hard, pre-checked-
+against-`free`-headroom kill threshold, so a repeat of that specific
+failure mode is no longer possible regardless of what live-set size or
+duration gets tried next.
+
+Two watchdog-protected confirmation runs followed, at the *original*
+20000/worker config (not yet a bigger one) to establish how repeatable
+the 600s run above actually is:
+
+1. Current `main`, 1800s requested, concurrency 20: RSS climbed
+   3.8 -> 4.4 -> 4.9 -> 5.4GB across the first four ~11s batches and
+   crossed the 5.5GB watchdog cap before batch 6, well inside the first
+   minute.
+2. The *exact commit* the 600s/4.2-5.1GB numbers above were recorded at
+   (`e9e1afb`, checked out via `git worktree` and rebuilt), same config,
+   same cap: RSS swung 4.1 -> 4.2 -> 4.4 -> 5.2 -> 4.9 -> 4.5 -> 4.7GB
+   across seven batches and also crossed 5.5GB shortly after.
+
+Both runs ended via the watchdog firing as designed -- neither came
+close to threatening the machine. But the result itself matters: **old
+code and current code show the same volatile behavior**, which rules
+out a regression in anything landed between those two points, but also
+rules out "flat 4.2-5.1GB band" as an accurate one-line summary of this
+workload's real memory behavior -- that description was one run's own
+trajectory, not evidence of a tight, reliable steady state. What's
+still genuinely open: whether this volatility is bounded noise around a
+higher-than-documented plateau, or a slow climb the original run's own
+trajectory happened not to show -- telling those apart needs a run
+meaningfully longer than a few minutes at this same, already-known-safe
+live-set size, which hasn't been attempted yet. Do that (via
+`run_hard.sh`, with its cap chosen from real headroom at launch time)
+before pushing live-set size any further.
 
 ## Bugs this found
 
