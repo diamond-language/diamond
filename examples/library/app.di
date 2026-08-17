@@ -122,4 +122,5 @@ def app(request, context)
   rack_run_chain(chain, 0, request, context)
 end
 
+puts("listening on http://127.0.0.1:18080 (Ctrl-C to stop)")
 gremlin_serve(18080, app)
