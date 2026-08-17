@@ -63,9 +63,33 @@ if ! wait_for_port "$port"; then
     exit 1
 fi
 
-echo "burn-in: pid=$server_pid port=$port duration=${duration_seconds}s concurrency=$concurrency batch=${batch_seconds}s"
-printf '%-6s %10s %14s %10s %10s %10s\n' \
-    batch rss_kb req_per_sec mean_ms p95_ms p99_ms
+# ab's own `-t` flag silently implies `-n 50000` internally (see `man
+# ab`) regardless of any larger `-n` given explicitly alongside it --
+# confirmed empirically: `-n 100000000 -t 180` still stops dead at
+# exactly 50000 requests, in ~6s, not 180s. Relying on `-t` here would
+# mean each "batch" is really a few seconds of real load followed by the
+# server sitting idle for the rest of batch_seconds while this script's
+# own elapsed counter keeps ticking -- exactly the kind of thing this
+# harness exists to catch, just aimed at itself. So: no `-t` anywhere
+# below. Instead, calibrate actual throughput with a small warmup batch,
+# size every real batch's `-n` to target roughly batch_seconds of
+# genuine load, and let each batch run to natural completion -- then
+# track total elapsed time from ab's own reported "Time taken for
+# tests", not an assumed constant.
+calibration_out="$(mktemp)"
+ab -q -l -n 2000 -c "$concurrency" "http://127.0.0.1:$port/calibrate" \
+    >"$calibration_out" 2>&1 || true
+calibrated_rps="$(awk '/Requests per second/ {print $4}' "$calibration_out")"
+rm -f "$calibration_out"
+# Integer floor via awk; 200 req/s floor keeps a batch from ballooning
+# to an absurd request count if calibration ever reads oddly low.
+requests_per_batch="$(awk -v r="${calibrated_rps:-200}" -v s="$batch_seconds" \
+    'BEGIN { n = r * s; if (n < 1000) n = 1000; printf "%d", n }')"
+
+echo "burn-in: pid=$server_pid port=$port duration=${duration_seconds}s concurrency=$concurrency"
+echo "burn-in: calibrated ~${calibrated_rps:-?} req/s -> ${requests_per_batch} requests/batch (target ~${batch_seconds}s/batch)"
+printf '%-6s %10s %14s %10s %10s %10s %8s %10s\n' \
+    batch rss_kb req_per_sec mean_ms p95_ms p99_ms failed batch_s
 
 batch=0
 elapsed=0
@@ -76,24 +100,33 @@ declare -a p99_series=()
 while (( elapsed < duration_seconds )); do
     batch=$((batch + 1))
     ab_out="$(mktemp)"
-    # -n large, -t caps by wall time -- the actual duration knob.
-    ab -q -n 100000000 -c "$concurrency" -t "$batch_seconds" \
+    # -l (ignore response-length variation) because the session-cache
+    # handler's response body legitimately grows (hits=/sessions_live=)
+    # request to request -- without it ab flags nearly every response as
+    # "failed" for a length mismatch that isn't a real error.
+    ab -q -l -n "$requests_per_batch" -c "$concurrency" \
         "http://127.0.0.1:$port/burn/$batch" >"$ab_out" 2>&1 || true
 
     req_per_sec="$(awk '/Requests per second/ {print $4}' "$ab_out")"
     mean_ms="$(awk '/Time per request/ && /mean\)$/ {print $4}' "$ab_out" | head -1)"
     p95_ms="$(awk '/ 95%/ {print $2}' "$ab_out")"
     p99_ms="$(awk '/ 99%/ {print $2}' "$ab_out")"
+    failed="$(awk '/Failed requests/ {print $3}' "$ab_out")"
+    batch_seconds_actual="$(awk '/Time taken for tests/ {print $5}' "$ab_out")"
     current_rss="$(rss_kb "$server_pid")"
     rss_series+=("$current_rss")
     p99_series+=("${p99_ms:-0}")
 
-    printf '%-6d %10s %14s %10s %10s %10s\n' \
+    printf '%-6d %10s %14s %10s %10s %10s %8s %10s\n' \
         "$batch" "$current_rss" "${req_per_sec:-?}" "${mean_ms:-?}" \
-        "${p95_ms:-?}" "${p99_ms:-?}"
+        "${p95_ms:-?}" "${p99_ms:-?}" "${failed:-?}" "${batch_seconds_actual:-?}"
 
     rm -f "$ab_out"
-    elapsed=$((elapsed + batch_seconds))
+    # Truncate to whole seconds for the loop condition -- fine-grained
+    # enough given batches are on the order of several seconds each.
+    batch_elapsed_int="$(awk -v t="${batch_seconds_actual:-$batch_seconds}" 'BEGIN { printf "%d", t }')"
+    if (( batch_elapsed_int < 1 )); then batch_elapsed_int=1; fi
+    elapsed=$((elapsed + batch_elapsed_int))
 done
 
 end_rss="$(rss_kb "$server_pid")"

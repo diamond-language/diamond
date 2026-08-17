@@ -523,17 +523,34 @@ concurrency" above.
   the pre-release audit as fine for scripts/short-lived processes but a
   real ceiling for anything long-running with a large live set --
   `packages/gremlin`'s fiber-per-connection HTTP server is exactly that
-  shape. Deliberately not started: the audit's own framing is "only worth
-  it once a long-running workload is a real target rather than a
-  hypothetical," and nothing in this codebase is that target yet.
-  Whoever picks this up should establish an actual long-running benchmark
-  (a `gremlin` server under sustained load is the obvious candidate)
-  *before* redesigning anything, so the fix has a real workload to
-  validate against rather than a guess at what generational GC would
-  even buy here. `docs/gc-generational-design.md` maps out a design
-  (non-moving, list-splice promotion, old→young write barrier) so that
-  work doesn't have to be re-derived once the benchmark exists — nothing
-  in it is implemented yet.
+  shape. `docs/gc-generational-design.md` maps out a design (non-moving,
+  list-splice promotion, old→young write barrier) so that work doesn't
+  have to be re-derived once it's picked up -- nothing in it is
+  implemented yet.
+
+  The long-running benchmark this entry used to call for as a
+  prerequisite now exists: `bench/burn_in` runs a real
+  `gremlin_serve(..., threads: 4)` server under sustained `ab` load, with
+  a per-worker session cache (`bench/burn_in/server.di`) sized to hold
+  20000 live, continuously-mutated records per worker -- a genuinely
+  large live set, not a hypothetical one. A 600s run against it (see
+  that directory's README for the full numbers) showed RSS holding
+  steady in a 4.2-5.1GB band with no growth trend, and flat ~6500-7000
+  req/s throughput with 2-3ms p99 latency, for the full 10+ minutes.
+  So: at *this* live-set size and request rate, the current collector
+  shows no measurable strain -- the ceiling this entry describes is real
+  architecturally (every collection's cost scales with live-set size
+  regardless of how little of it is garbage), but this first real
+  workload didn't hit it. Building `bench/burn_in` surfaced two
+  unrelated real bugs along the way (a `gremlin_serve(threads: N)` hang
+  from a GC/Thread interaction, and an `ab` flag gotcha in the harness
+  itself, both fixed -- see that directory's README), which was worth it
+  independent of what it did or didn't show about GC. Whoever picks this
+  up next should push the benchmark harder (larger live set, higher
+  request rate, or a workload shape closer to a real production
+  service) before redesigning anything -- this first run is evidence the
+  ceiling hasn't been hit yet at this scale, not evidence it doesn't
+  exist.
 
 - **A polymorphic inline-cache tier.** Method dispatch and field access
   are both already genuinely cached -- `lookup_method_cached`
