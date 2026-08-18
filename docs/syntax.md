@@ -322,10 +322,16 @@ only way *user code* opts into operator support. `Time`
 (`docs/io.md`) is the one **native**, non-`Instance` type with real
 `+`/`-`/comparison support — implemented directly in the VM's own
 arithmetic/comparison opcodes, not through this dispatch, since a
-native type has no instance methods for it to reach. No other native
-type (`Array`, `Hash`, `File`, `SQLite3`, ...) gets operators this
-way; each would need its own dedicated VM-level support, same as
-`Time` did.
+native type has no instance methods for it to reach. `<<` is native the
+same way, on two types: `Int << Int` is a bitwise left shift (shift
+amount must be `0..63`, else `RangeError`); `Array << value` pushes
+`value` and returns the array itself, the same as `Array#push`, letting
+pushes chain (`arr << 1 << 2 << 3`). `<<` binds tighter than comparisons
+but looser than `+`/`-` (`1 + 2 << 3` is `(1 + 2) << 3`, matching Ruby).
+Any other left operand (a `String`, an `Instance`, ...) is a `TypeError`
+— no other native type (`Hash`, `File`, `SQLite3`, ...) gets operators
+this way; each would need its own dedicated VM-level support, same as
+`Time` and `<<` did.
 
 ## Modules
 

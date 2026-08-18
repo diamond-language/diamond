@@ -6924,6 +6924,50 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 registers[destination] = DIAMOND_INT(result_value);
                 break;
             }
+            case DIAMOND_OP_SHIFT_LEFT: {
+                /* Int << Int: bitwise left shift. Array << value: push and
+                 * return the array itself (Ruby's append idiom). Not a
+                 * user-overloadable operator (see docs/syntax.md) -- no
+                 * invoke_operator_method dispatch, unlike the arithmetic
+                 * operators, since it's native-only on these two types by
+                 * design. No quickening/bignum-shift support: kept
+                 * deliberately simple, unlike ADD/SUBTRACT/MULTIPLY/DIVIDE,
+                 * since `<<` is rarely a hot-loop operator the way
+                 * arithmetic is. */
+                uint16_t destination=0,left=0,right=0;
+                READ_SHORT(destination);READ_SHORT(left);READ_SHORT(right);
+                if(registers[left].kind==DIAMOND_VALUE_INT&&
+                   registers[right].kind==DIAMOND_VALUE_INT&&
+                   !value_is_bignum(registers[left])&&
+                   !value_is_bignum(registers[right])) {
+                    const int64_t shift_amount=registers[right].as.integer;
+                    if(shift_amount<0||shift_amount>=64) {
+                        snprintf(vm->error,sizeof vm->error,
+                            "shift amount must be between 0 and 63");
+                        VM_RETURN(DIAMOND_VM_INTEGER_OVERFLOW);
+                    }
+                    const int64_t left_value=registers[left].as.integer;
+                    const int64_t result_value=(int64_t)
+                        ((uint64_t)left_value<<(unsigned)shift_amount);
+                    registers[destination]=DIAMOND_INT(result_value);
+                    break;
+                }
+                if(registers[left].kind==DIAMOND_VALUE_OBJECT&&
+                   registers[left].as.object->kind==DIAMOND_OBJECT_ARRAY) {
+                    DiamondArray *array=(DiamondArray *)registers[left].as.object;
+                    if(!array_value_satisfies_constraints(array,registers[right])) {
+                        snprintf(vm->error,sizeof vm->error,
+                                 "array element violates its type annotation");
+                        VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                    }
+                    if(!array_push(vm,array,registers[right]))
+                        VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                    registers[destination]=registers[left];break;
+                }
+                snprintf(vm->error,sizeof vm->error,
+                    "'<<' expects an Int shift amount or a value to push onto an Array");
+                VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+            }
             case DIAMOND_OP_NEGATE: {
                 uint16_t destination = 0;
                 uint16_t operand = 0;

@@ -736,6 +736,8 @@ static bool disassemble_chunk(FILE *stream, const char *name,
                 offset+=4;break;
             case DIAMOND_OP_TIME_AT:
                 offset=two_registers(stream,chunk,"TIME_AT",offset, &valid);break;
+            case DIAMOND_OP_SHIFT_LEFT:
+                offset=three_registers(stream,chunk,"SHIFT_LEFT",offset, &valid);break;
             case DIAMOND_OP_CHECK_TYPE:
                 if(!require_bytes(stream,chunk,offset,5)){valid=false;offset=chunk->code_count;break;}
                 fprintf(stream,"%-18s r%u, ","CHECK_TYPE",

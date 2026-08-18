@@ -116,6 +116,20 @@ module Opcode
   MATH_UNARY = 87
   MATH_BINARY = 88
   PROGRAM_BUILDER_NEW = 89
+  # 90-97 are THREAD_NEW, GET_CVAR, SET_CVAR, SQLITE3_OPEN,
+  # CHECK_DESTRUCTURE_COUNT, TIME_MONOTONIC, TIME_NOW, and TIME_AT in
+  # src/vm.h's DiamondOpCode enum -- none of them are constructs this
+  # self-hosted parser emits (Thread, class variables, SQLite3,
+  # ProgramBuilder-internal opcodes, and Time literals aren't part of its
+  # supported grammar), so they have no entry of their own here, but
+  # SHIFT_LEFT below had to account for that same 8-opcode gap to match
+  # the real enum value -- same class of bug the comment above
+  # (REGEXP_NEW's own gap) already flags. Confirmed against the real
+  # value with a throwaway C probe (printf("%d",
+  # (int)DIAMOND_OP_SHIFT_LEFT)) rather than counted by hand a second
+  # time, after counting by hand got it wrong once already (missed
+  # SQLITE3_OPEN, landed on 97 instead of 98).
+  SHIFT_LEFT = 98
 end
 
 module Precedence
@@ -124,9 +138,10 @@ module Precedence
   AND = 2
   EQUALITY = 3
   COMPARISON = 4
-  TERM = 5
-  FACTOR = 6
-  PREFIX = 7
+  SHIFT = 5
+  TERM = 6
+  FACTOR = 7
+  PREFIX = 8
 end
 
 # Phase 3 sub-phase 4 (gradual typing): scalar and union type annotations
@@ -3609,6 +3624,7 @@ class Parser
     return Precedence::AND if kind == :and_and || kind == :and
     return Precedence::EQUALITY if kind == :equal_equal || kind == :bang_equal || kind == :is
     return Precedence::COMPARISON if kind == :less || kind == :less_equal || kind == :greater || kind == :greater_equal
+    return Precedence::SHIFT if kind == :less_less
     return Precedence::TERM if kind == :plus || kind == :minus
     return Precedence::FACTOR if kind == :star || kind == :slash
     Precedence::NONE
@@ -3624,7 +3640,8 @@ class Parser
     return Opcode::LESS if kind == :less
     return Opcode::LESS_EQUAL if kind == :less_equal
     return Opcode::GREATER if kind == :greater
-    Opcode::GREATER_EQUAL
+    return Opcode::GREATER_EQUAL if kind == :greater_equal
+    Opcode::SHIFT_LEFT
   end
 
   def parse_expression()

@@ -373,6 +373,20 @@ future work.
   which Diamond doesn't have. See `docs/syntax.md`. One of the release-
   readiness gaps a "what do most languages have that Diamond doesn't"
   pass turned up (no format-string method at all, previously).
+- The `<<` operator: another release-readiness gap from that same pass —
+  there was previously no lexer token for it at all. `Int << Int` is a
+  bitwise left shift; `Array << value` pushes and returns the array
+  (Ruby's chainable append idiom). Native-only on those two types, not
+  user-overloadable, same as `Time`'s operators — see `docs/syntax.md`'s
+  "Operator overloading" section. New precedence tier (`PREC_SHIFT`,
+  between comparisons and `+`/`-`, matching Ruby) in both the native
+  compiler and `selfhost/parser.di`'s mirror. Landed the self-hosted side
+  first with the wrong numeric opcode value (hand-counted the gap between
+  `PROGRAM_BUILDER_NEW` and the new opcode, missed `SQLITE3_OPEN` in the
+  count) — `tests/parser_diff.sh` caught it immediately as a "constructed
+  bytecode is invalid" failure once a `tests/parser_cases/*.di` fixture
+  actually exercised the new operator; re-derived the correct value with
+  a throwaway C probe instead of counting by hand a second time.
 
 ### Collections and Enumerable
 

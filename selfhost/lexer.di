@@ -191,6 +191,7 @@ class Lexer
     end
     if code == "<".ord()
       return self.make_token(:less_equal) if self.match?("=".ord())
+      return self.make_token(:less_less) if self.match?("<".ord())
       return self.make_token(:less)
     end
     if code == ">".ord()

@@ -15,6 +15,7 @@ typedef enum Precedence {
     PREC_AND,
     PREC_EQUALITY,
     PREC_COMPARISON,
+    PREC_SHIFT,
     PREC_TERM,
     PREC_FACTOR,
     PREC_PREFIX,
@@ -611,6 +612,8 @@ static Precedence token_precedence(DiamondTokenKind kind) {
         case DIAMOND_TOKEN_GREATER_EQUAL:
         case DIAMOND_TOKEN_IS:
             return PREC_COMPARISON;
+        case DIAMOND_TOKEN_LESS_LESS:
+            return PREC_SHIFT;
         case DIAMOND_TOKEN_PLUS:
         case DIAMOND_TOKEN_MINUS:
             return PREC_TERM;
@@ -3148,6 +3151,7 @@ static DiamondOpCode binary_opcode(DiamondTokenKind operator) {
         case DIAMOND_TOKEN_LESS_EQUAL: return DIAMOND_OP_LESS_EQUAL;
         case DIAMOND_TOKEN_GREATER: return DIAMOND_OP_GREATER;
         case DIAMOND_TOKEN_GREATER_EQUAL: return DIAMOND_OP_GREATER_EQUAL;
+        case DIAMOND_TOKEN_LESS_LESS: return DIAMOND_OP_SHIFT_LEFT;
         default: return DIAMOND_OP_ADD;
     }
 }
