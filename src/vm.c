@@ -9051,17 +9051,37 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
             /* Multi-value destructuring assignment (`a, b = expr`,
              * src/compiler.c's compile_multi_assignment) always emits a
              * DIAMOND_OP_CHECK_TYPE against an Array-only type set
-             * immediately before this opcode, so registers[array_reg] is
-             * already guaranteed to be a genuine Array here -- the same
-             * trusted-caller invariant ProgramBuilder-constructed bytecode
-             * relies on elsewhere (see src/object.h's DiamondProgramBuilder
-             * comment). Reuses the existing ArityError/DIAMOND_VM_ARITY_
+             * immediately before this opcode, so ordinary compiler-emitted
+             * bytecode never reaches here with anything but a genuine
+             * Array in registers[array_reg] -- but this handler cannot
+             * itself trust that pairing: ProgramBuilder-constructed
+             * bytecode (#emit_byte/#patch_byte, src/object.h's
+             * DiamondProgramBuilder comment) can emit this opcode with no
+             * preceding CHECK_TYPE at all, and previously did dereference
+             * registers[array_reg].as.object unconditionally -- a real
+             * type-confusion crash (SEGV reading through a non-Array
+             * object, or an uninitialized union read for a non-object
+             * DiamondValue entirely) found by fuzz/execute_fuzzer.c, the
+             * exact class of bug diamond_verify_bytecode's register-bounds
+             * checking was built for but doesn't cover (a value's runtime
+             * *type* isn't something a bytecode-level walk can know
+             * statically). Checked directly here now, the same way every
+             * other opcode that assumes a specific object kind already
+             * does (NEW's class-index bound, SQLite3's handle-kind check,
+             * etc.) -- reuses the existing ArityError/DIAMOND_VM_ARITY_
              * ERROR status (the same one the SQLite3 driver's own bound-
              * parameter-count check reuses) rather than a new exception
              * class, for the same "wrong count of things" shape. */
             case DIAMOND_OP_CHECK_DESTRUCTURE_COUNT: {
                 uint16_t array_reg=0,expected=0;
                 READ_SHORT(array_reg); READ_SHORT(expected);
+                if(registers[array_reg].kind!=DIAMOND_VALUE_OBJECT||
+                   registers[array_reg].as.object->kind!=DIAMOND_OBJECT_ARRAY) {
+                    char actual[80];
+                    format_value_type(actual,sizeof actual,registers[array_reg]);
+                    snprintf(vm->error,sizeof vm->error,"expected Array, got %s",actual);
+                    VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                }
                 const DiamondArray *array=(const DiamondArray *)registers[array_reg].as.object;
                 if(array->count!=expected) {
                     snprintf(vm->error,sizeof vm->error,
