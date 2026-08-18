@@ -8009,6 +8009,87 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 if(argc>16) VM_RETURN(DIAMOND_VM_ARITY_ERROR);
                 if((size_t)name>=chunk->string_count) VM_RETURN(DIAMOND_VM_TYPE_ERROR);
                 const DiamondStringConstant *method_name=&chunk->strings[name];
+                /* tap/dup -- universal for every native receiver kind (a
+                 * primitive, String, Symbol, Array, or Hash can't ever
+                 * define its own method to shadow these, unlike an
+                 * Instance, which gets its own version of both checks
+                 * further down, gated on the class NOT already defining a
+                 * same-named method of its own -- see that comment for
+                 * why interception order matters there but not here). */
+                if(registers[recv].kind!=DIAMOND_VALUE_OBJECT||
+                   registers[recv].as.object->kind!=DIAMOND_OBJECT_INSTANCE) {
+                    if(method_name->length==3&&
+                       memcmp(method_name->chars,"tap",3)==0) {
+                        if(type_argument_count!=0)VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                        if(argc!=1)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                        if(registers[base].kind!=DIAMOND_VALUE_OBJECT||
+                           registers[base].as.object->kind!=DIAMOND_OBJECT_CLOSURE)
+                            VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                        DiamondClosure *called=(DiamondClosure *)registers[base].as.object;
+                        if(called->function_index>=chunk->function_count)
+                            VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
+                        const DiamondFunction *fn=&chunk->functions[called->function_index];
+                        DiamondValue tap_argument[1]={registers[recv]};
+                        DiamondValue tap_result=DIAMOND_NIL;
+                        const DiamondVmStatus tap_status=call_closure_helper(vm,chunk,fn,
+                            called,tap_argument,0,1,depth,&tap_result);
+                        VM_PROPAGATE(tap_status);
+                        registers[dest]=registers[recv];break;
+                    }
+                    /* dup only where a real (or trivially self-returning)
+                     * shallow copy is well-defined -- everything else
+                     * (Regexp/Time/File/Socket/...) falls through to its
+                     * own per-type block below and gets that type's own
+                     * accurate "undefined method 'dup' for X" instead of a
+                     * generic one here. */
+                    const bool dup_defined=registers[recv].kind!=DIAMOND_VALUE_OBJECT||
+                        registers[recv].as.object->kind==DIAMOND_OBJECT_STRING||
+                        registers[recv].as.object->kind==DIAMOND_OBJECT_SYMBOL||
+                        registers[recv].as.object->kind==DIAMOND_OBJECT_ARRAY||
+                        registers[recv].as.object->kind==DIAMOND_OBJECT_HASH;
+                    if(dup_defined&&method_name->length==3&&
+                       memcmp(method_name->chars,"dup",3)==0) {
+                        if(type_argument_count!=0)VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                        if(argc!=0)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                        if(registers[recv].kind!=DIAMOND_VALUE_OBJECT) {
+                            registers[dest]=registers[recv];break;
+                        }
+                        const DiamondObjectKind dup_kind=registers[recv].as.object->kind;
+                        if(dup_kind==DIAMOND_OBJECT_STRING||dup_kind==DIAMOND_OBJECT_SYMBOL) {
+                            /* Both are immutable in this VM (every String/
+                             * Symbol-producing operation returns a new
+                             * object rather than mutating in place), so a
+                             * distinct copy would be observably identical
+                             * -- returning the same object is correct, not
+                             * just an optimization. */
+                            registers[dest]=registers[recv];break;
+                        }
+                        if(dup_kind==DIAMOND_OBJECT_ARRAY) {
+                            const DiamondArray *source=
+                                (const DiamondArray *)registers[recv].as.object;
+                            DiamondArray *copy=allocate_array(vm,source->values,source->count);
+                            if(copy==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                            /* constraints[]/constraint_count deliberately NOT
+                             * copied -- allocate_array already zero-inits
+                             * constraint_count, and that array is a lazily
+                             * populated match-result cache (vm.c's own
+                             * type-check-against-annotation sites), not an
+                             * authoritative type tag; the copy just starts
+                             * with a cold cache, refilled the same way the
+                             * original's was. */
+                            registers[dest]=DIAMOND_OBJECT(copy);break;
+                        }
+                        const DiamondHash *source=
+                            (const DiamondHash *)registers[recv].as.object;
+                        DiamondHash *copy=allocate_hash(vm);
+                        if(copy==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                        for(size_t index=0;index<source->count;index++)
+                            if(!hash_set(vm,copy,source->entries[index].key,
+                                         source->entries[index].value))
+                                VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                        registers[dest]=DIAMOND_OBJECT(copy);break;
+                    }
+                }
                 if(registers[recv].kind==DIAMOND_VALUE_INT) {
                     /* chr, the inverse of String#ord -- a single byte (0-255),
                      * matching every other String primitive in this VM
@@ -9650,6 +9731,69 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     VM_RETURN(DIAMOND_VM_TYPE_ERROR);
                 DiamondInstance *instance=(DiamondInstance *)registers[recv].as.object;
                 const DiamondChunk *owner=instance->owner!=nullptr?instance->owner:chunk;
+                /* tap/dup/respond_to? -- same three universal methods the
+                 * non-Instance branch above already handles, but gated on
+                 * `lookup_method` coming back empty first: unlike a native
+                 * type, a class CAN legitimately define its own `dup` (for
+                 * real deep-copy semantics) or `tap`/`respond_to?`, and
+                 * that user definition must win -- checked the same way
+                 * Ruby's own method resolution order would put a class's
+                 * own method ahead of an inherited Kernel one. */
+                if(method_name->length==3&&memcmp(method_name->chars,"tap",3)==0&&
+                   lookup_method(owner,instance->class,"tap",3)==nullptr) {
+                    if(type_argument_count!=0)VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                    if(argc!=1)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                    if(registers[base].kind!=DIAMOND_VALUE_OBJECT||
+                       registers[base].as.object->kind!=DIAMOND_OBJECT_CLOSURE)
+                        VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                    DiamondClosure *called=(DiamondClosure *)registers[base].as.object;
+                    if(called->function_index>=chunk->function_count)
+                        VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
+                    const DiamondFunction *fn=&chunk->functions[called->function_index];
+                    DiamondValue tap_argument[1]={registers[recv]};
+                    DiamondValue tap_result=DIAMOND_NIL;
+                    const DiamondVmStatus tap_status=call_closure_helper(vm,chunk,fn,
+                        called,tap_argument,0,1,depth,&tap_result);
+                    VM_PROPAGATE(tap_status);
+                    registers[dest]=registers[recv];break;
+                }
+                if(method_name->length==3&&memcmp(method_name->chars,"dup",3)==0&&
+                   lookup_method(owner,instance->class,"dup",3)==nullptr) {
+                    if(type_argument_count!=0)VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                    if(argc!=0)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                    DiamondInstance *copy=allocate_instance(vm,instance->class,instance->owner);
+                    if(copy==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                    for(size_t index=0;index<instance->field_count;index++)
+                        copy->fields[index]=instance->fields[index];
+                    /* allocate_instance always starts a fresh instance at
+                     * shapes[0] (no fields considered materialized yet) --
+                     * GET_IVAR treats a field as nil whenever its index
+                     * isn't below shape->field_count, regardless of what's
+                     * actually sitting in fields[] (lookup_field_cached's
+                     * own `materialized` flag). Without also copying the
+                     * source's current shape, every field on the copy read
+                     * back as nil despite the values above being copied
+                     * correctly -- confirmed directly, not assumed: the
+                     * very first `.dup()` smoke test on a two-ivar class
+                     * hit exactly this. shapes[] lives on the (shared)
+                     * class, so aliasing the pointer is safe. */
+                    copy->shape=instance->shape;
+                    registers[dest]=DIAMOND_OBJECT(copy);break;
+                }
+                if(method_name->length==11&&
+                   memcmp(method_name->chars,"respond_to?",11)==0&&
+                   lookup_method(owner,instance->class,"respond_to?",11)==nullptr) {
+                    if(type_argument_count!=0)VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                    if(argc!=1)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                    if(registers[base].kind!=DIAMOND_VALUE_OBJECT||
+                       registers[base].as.object->kind!=DIAMOND_OBJECT_SYMBOL)
+                        VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                    const DiamondSymbol *probe=(const DiamondSymbol *)registers[base].as.object;
+                    const DiamondMethod *probed=lookup_method(owner,instance->class,
+                        probe->chars,probe->length);
+                    registers[dest]=DIAMOND_BOOL(probed!=nullptr&&!probed->is_private);
+                    break;
+                }
                 bool exception_instance=false;
                 const DiamondClass *ancestor=instance->class;
                 while(ancestor!=nullptr) {

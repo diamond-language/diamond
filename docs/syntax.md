@@ -476,6 +476,52 @@ consistent, not a special case, but worth knowing going in if the goal
 is one counter shared across all workers rather than one counter per
 worker.
 
+### tap / dup / respond_to?
+
+```ruby
+class Point
+  def initialize(x, y)
+    @x = x
+    @y = y
+  end
+  def x() = @x
+  def y() = @y
+end
+
+p1 = Point.new(1, 2)
+p2 = p1.dup()          # a distinct instance, same field values
+p1.respond_to?(:x)     # => true
+p1.respond_to?(:zoom)  # => false
+
+[1, 2, 3].tap() do |arr|
+  puts(arr.length())   # side effect, doesn't change the chain
+end.push(4)             # => [1, 2, 3, 4]
+```
+
+`tap` yields the receiver to a block and returns the receiver itself
+(not the block's own result) — works on any receiver, native or
+user-defined, primitives included (`5.tap() do |x| ... end` is valid).
+
+`dup` returns a shallow copy: a distinct `Array`/`Hash`/`Instance` (same
+elements/fields, independently mutable afterward), or the same value
+back unchanged for anything already immutable (`Int`, `String`, `Symbol`,
+and every other primitive). Only defined for `Array`, `Hash`, `Instance`,
+and primitives — native resource-backed types (`Regexp`, `Time`, `File`,
+`Socket`, ...) don't support it, since "shallow copy" isn't a
+well-defined operation for those. A class that defines its own `dup`
+always wins over this default.
+
+`respond_to?(name)` takes a `Symbol` and checks whether the receiver's
+class defines a method by that name — `false` for a private method, same
+as Ruby's own default (no `include_private` second argument yet). Only
+defined for `Instance` receivers; calling it on a native type
+(`Array`/`Int`/`String`/...) is currently an `undefined method` error
+rather than an approximate answer — accurately enumerating every method a
+native type actually supports isn't tracked anywhere as one real list.
+
+Like `tap`, a class's own method of the same name always takes priority
+over `dup`/`respond_to?`'s own built-in behavior, checked first.
+
 ## Operator overloading
 
 ```ruby

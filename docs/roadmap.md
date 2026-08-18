@@ -902,6 +902,78 @@ future work.
   `tests/parser_cases/integer_times_upto_downto.di` differential case,
   both self-hosted bootstrap checks passing).
 
+- **`tap`/`dup`/`respond_to?`**: sixth item off the Ruby-idiom gap list.
+  Split off from the fuller `respond_to?`/`freeze`/`tap`/`dup` bullet on
+  that list — `freeze` needs a real mutability flag threaded through
+  every mutation site in the VM (`ARRAY_PUSH`/`INDEX_SET`/`SET_IVAR`/hash
+  insert/...), a cross-cutting change with real risk of a silently missed
+  site, so it's being treated as its own later item rather than folded in
+  here. All three land in `vm.c`'s `DIAMOND_OP_INVOKE` handler, which has
+  no shared/universal method-dispatch path at all — every native type
+  (`Int`/`Array`/`Hash`/`String`/...) is its own hand-rolled
+  `memcmp`-against-the-method-name block, and an `Instance`'s own methods
+  resolve separately, through `lookup_method`/`lookup_method_cached`
+  against its class's method table.
+
+  `tap` is genuinely universal (works identically on every receiver kind,
+  including primitives — `5.tap() do |x| ... end` is valid, matching
+  Ruby's own `Object#tap`), so it's one check at the very top of the
+  opcode handler, before any receiver-kind branching, invoking the passed
+  closure via `call_closure_helper` (the same helper `CALL_CLOSURE`
+  itself uses) with the receiver as its sole argument, then returning the
+  receiver unchanged. `dup` is a real shallow copy and needed per-kind
+  logic — `allocate_array`/`hash_set`-into-a-fresh-`allocate_hash` for
+  `Array`/`Hash`, a plain self-return for already-immutable `String`/
+  `Symbol`/primitives, and left unsupported (falls through to that
+  type's own existing, accurate "undefined method" error) for
+  resource-backed native types (`Regexp`/`Time`/`File`/`Socket`/...)
+  where "shallow copy" isn't well-defined. `respond_to?(name: Symbol)` is
+  scoped to `Instance` receivers only, checking `lookup_method` directly
+  (excluding private methods) — deliberately not attempted for native
+  types at all, rather than answered approximately: the per-type method
+  lists live only as those same hand-rolled `memcmp` chains, with no
+  single enumerable source of truth to check against honestly.
+
+  A class defining its own `dup`/`tap`/`respond_to?` must take priority
+  over this default (Ruby's own method resolution puts a class's own
+  method ahead of an inherited `Kernel` one), unlike `Array`/`Hash`/
+  `String`/etc., which can't be reopened and have no such conflict to
+  worry about. So `Instance` receivers get their own copy of each check,
+  gated on `lookup_method(...)==nullptr` first — confirmed directly, not
+  assumed safe: a `Special` class defining its own `def dup` and calling
+  it via `special.dup()` correctly returns the user's own object, not the
+  built-in shallow copy.
+
+  **A real bug found via this feature's own `dup`-on-`Instance` test,
+  before it ever reached the differential suite**: a naive `fields[]`
+  copy alone read back as all-`nil` on every field, despite the values
+  being copied correctly. `DiamondInstance.shape` — not `fields[]` itself
+  — is what `GET_IVAR`'s field cache (`lookup_field_cached`) actually
+  consults to decide whether a given field index counts as
+  "materialized" yet; a freshly `allocate_instance`d copy always starts
+  at `shapes[0]` (zero fields considered set), regardless of what's
+  sitting in its `fields[]` array. Fixed by also copying `instance->shape`
+  onto the new instance — safe to alias directly, since `shapes[]` lives
+  on the (shared) class, not the instance.
+
+  Since dispatch lives entirely in the VM's shared `INVOKE` handling, the
+  self-hosted parser needed zero changes here either, confirmed the same
+  way as `times`/`upto`/`downto` just above:
+  `selfhost/parser_run_with_core.di` reproduces the native fixture's
+  output byte-for-byte.
+
+  Verified: `make debug` (clean, zero warnings), full `bash tests/run.sh`
+  (1085 passing — seven new `tests/cases/{tap,dup,respond_to}_*.di`
+  fixtures covering `tap` on a primitive and an `Array`, `Array`/`Hash`
+  `dup` independence, `Instance` `dup` — the exact case that caught the
+  `shape` bug above — a class overriding its own `dup`, primitive
+  `dup`'s no-op self-return, `respond_to?` including its private-method
+  exclusion, and `dup` on an unsupported native type falling through to
+  that type's own accurate error), `make test-lexer-diff` (1020 cases),
+  and `make test-parser-diff` (251 differential cases including a new
+  `tests/parser_cases/tap_dup_respond_to.di`, both self-hosted bootstrap
+  checks passing).
+
 ### Collections and Enumerable
 
 - Replaced `Hash`'s O(n) linear-scan lookup with a real open-addressing hash
