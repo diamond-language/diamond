@@ -3824,8 +3824,46 @@ class Parser
     Opcode::SHIFT_LEFT
   end
 
+  # Mirrors src/compiler.c's parse_ternary -- see that function's own
+  # comment for the full design rationale. No register-snapshot handling
+  # needed here for the same reason it wasn't needed natively: a
+  # ternary's branches are expressions, not statement sequences, so
+  # neither branch can reassign a local out from under the other.
+  def parse_ternary()
+    condition = self.parse_precedence(Precedence::RANGE)
+    return condition unless @current.kind() == :question
+    narrowing = @pending_nil_narrowing
+    type_narrowing = @pending_type_narrowing
+    @pending_nil_narrowing = nil
+    @pending_type_narrowing = nil
+    self.advance_token()
+    self.skip_newlines()
+    false_jump = self.emit_jump(Opcode::JUMP_IF_FALSE, condition)
+    destination = self.allocate_register()
+    self.apply_condition_fact(condition, narrowing, type_narrowing, true)
+    true_result = self.parse_expression()
+    true_fact = self.type_fact(true_result)
+    self.emit_instruction2(Opcode::MOVE, destination, true_result)
+    end_jump = self.emit_jump(Opcode::JUMP, 0)
+    self.patch_jump(false_jump, @code_count)
+    self.apply_condition_fact(condition, narrowing, type_narrowing, false)
+    self.skip_newlines()
+    if @current.kind() != :colon
+      self.fail("expected ':' in ternary expression")
+      return destination
+    end
+    self.advance_token()
+    self.skip_newlines()
+    false_result = self.parse_expression()
+    false_fact = self.type_fact(false_result)
+    self.emit_instruction2(Opcode::MOVE, destination, false_result)
+    self.patch_jump(end_jump, @code_count)
+    self.set_type_fact(destination, true_fact) if true_fact != nil && true_fact == false_fact
+    destination
+  end
+
   def parse_expression()
-    self.parse_precedence(Precedence::RANGE)
+    self.parse_ternary()
   end
 
   def parse_precedence(precedence)

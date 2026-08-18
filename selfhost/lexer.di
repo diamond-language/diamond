@@ -160,6 +160,7 @@ class Lexer
     return self.make_token(:left_brace) if code == "{".ord()
     return self.make_token(:right_brace) if code == "}".ord()
     return self.make_token(:comma) if code == ",".ord()
+    return self.make_token(:question) if code == "?".ord()
     if code == ".".ord()
       if self.match?(".".ord())
         return self.make_token(:dot_dot_dot) if self.match?(".".ord())

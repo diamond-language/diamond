@@ -3695,8 +3695,76 @@ static uint16_t parse_precedence(Compiler *compiler, Precedence precedence) {
     return left;
 }
 
+/* `cond ? a : b` -- binds looser than every binary operator (including
+ * `..`/`&&`/`||`), tighter than assignment, matching Ruby's own
+ * precedence table. Implemented as the wrapper around parse_expression's
+ * own top-level entry point (parse_precedence(PREC_RANGE) used to be
+ * that entry point directly; it's now just how a ternary's condition
+ * gets parsed) rather than folded into parse_precedence's infix loop --
+ * unlike every operator that loop handles, the "operator" here isn't a
+ * single token, and the right-hand side needs its own nested-ternary-
+ * aware entry point (a true/false branch can itself contain a `?:`,
+ * right-associating the same way `a ? b : c ? d : e` does in Ruby),
+ * which is exactly what recursing into parse_expression itself gives
+ * for free, the same way parse_if's own elsif chain recurses into
+ * itself. No new DiamondOpCode: same JUMP_IF_FALSE/MOVE/JUMP shape
+ * parse_if's then/else already uses, just without a full compile_
+ * sequence body on either side (a ternary's branches are expressions,
+ * not statement lists, so -- unlike parse_if/parse_case_branches --
+ * there's no local-variable-reassignment-inside-a-branch hazard here
+ * that would need a register-snapshot save/restore: an expression alone
+ * can't reassign a local, only compile_assignment/compile_compound_
+ * assignment can, and neither is reachable from here). */
+static uint16_t parse_ternary(Compiler *compiler) {
+    const uint16_t condition = parse_precedence(compiler, PREC_RANGE);
+    /* Only touch compiler->narrowing once this has actually turned out to
+     * be a ternary -- parse_expression (this function) is also how every
+     * non-ternary condition gets parsed (parse_if's own condition, for
+     * one), and those callers read compiler->narrowing themselves right
+     * after calling parse_expression to pick up whatever the condition's
+     * own comparison set. Resetting it here unconditionally, even on the
+     * plain "no '?' follows, just return condition" path, would silently
+     * erase that for every single caller -- confirmed as a real
+     * regression (parse_if's own then/else type-narrowing broke,
+     * de-optimizing an elidable CHECK_TYPE back on) before catching it
+     * in tests/run.sh's existing diagnostic-only-on-failure assertion. */
+    if(compiler->current.kind!=DIAMOND_TOKEN_QUESTION) return condition;
+    const Narrowing narrowing=compiler->narrowing.condition==condition
+        ? compiler->narrowing:(Narrowing){};
+    compiler->narrowing=(Narrowing){};
+    advance_token(compiler);
+    skip_newlines(compiler);
+    const size_t false_jump=
+        emit_jump(compiler,DIAMOND_OP_JUMP_IF_FALSE,condition);
+    const uint16_t destination=allocate_register(compiler);
+    if(narrowing.valid)
+        apply_narrowing_facts(compiler,narrowing.when_true,narrowing.when_true_count);
+    const uint16_t true_result=parse_expression(compiler);
+    const uint8_t true_type=compiler->known_types[true_result];
+    emit_instruction(compiler,DIAMOND_OP_MOVE,destination,true_result,0,2);
+    const size_t end_jump=emit_jump(compiler,DIAMOND_OP_JUMP,0);
+    patch_jump(compiler,false_jump,compiler->function->code_count);
+    if(narrowing.valid)
+        apply_narrowing_facts(compiler,narrowing.when_false,narrowing.when_false_count);
+    skip_newlines(compiler);
+    if(compiler->current.kind!=DIAMOND_TOKEN_COLON) {
+        fail(compiler,compiler->current.span,"expected ':' in ternary expression");
+        return destination;
+    }
+    advance_token(compiler);
+    skip_newlines(compiler);
+    const uint16_t false_result=parse_expression(compiler);
+    const uint8_t false_type=compiler->known_types[false_result];
+    emit_instruction(compiler,DIAMOND_OP_MOVE,destination,false_result,0,2);
+    patch_jump(compiler,end_jump,compiler->function->code_count);
+    compiler->known_types[destination]=
+        true_type==false_type?true_type:TYPE_UNKNOWN;
+    compiler->known_type_sets[destination]=-1;
+    return destination;
+}
+
 static uint16_t parse_expression(Compiler *compiler) {
-    return parse_precedence(compiler, PREC_RANGE);
+    return parse_ternary(compiler);
 }
 
 static bool assignment_ahead(const Compiler *compiler) {

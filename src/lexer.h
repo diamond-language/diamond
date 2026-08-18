@@ -39,6 +39,13 @@ typedef enum DiamondTokenKind {
     DIAMOND_TOKEN_DOT_DOT_DOT,
     DIAMOND_TOKEN_COLON,
     DIAMOND_TOKEN_DOUBLE_COLON,
+    /* Ternary `cond ? a : b` -- QUESTION is its own token only when not
+     * glued onto a preceding identifier (`respond_to?`, `exclusive?` stay
+     * one predicate-method IDENTIFIER token, handled already by the
+     * existing identifier scan). See compiler.c's parse_ternary for why
+     * no new DiamondOpCode is needed: pure sugar over JUMP_IF_FALSE/MOVE/
+     * JUMP, the same shape parse_if's own then/else already uses. */
+    DIAMOND_TOKEN_QUESTION,
     DIAMOND_TOKEN_PIPE,
     DIAMOND_TOKEN_BANG,
     DIAMOND_TOKEN_NOT,

@@ -64,6 +64,32 @@ expression, where each `when`'s own value is tested for truthiness
 instead of compared against a subject) — `case` always requires a
 subject in Diamond today.
 
+## Ternary
+
+```ruby
+x = 5
+x > 3 ? "big" : "small"                   # => "big"
+x == 1 ? "one" : x == 2 ? "two" : "other" # => "other", right-associative
+```
+
+`cond ? a : b` binds looser than every binary operator (including
+`..`/`&&`/`||`) but tighter than assignment, matching Ruby's own
+precedence — `x = a ? b : c` reads as `x = (a ? b : c)`, and `true ||
+false ? "t" : "f"` reads as `(true || false) ? "t" : "f"`. Nested
+ternaries in the false branch (as above) right-associate the way Ruby's
+own does. Both branches are plain expressions, not statement blocks —
+same as everywhere else Diamond takes an expression, this rules out
+`x = 5` as a branch, but not another `?:`, a method call, or a literal.
+
+Line continuation follows the same "trailing operator" convention every
+other multi-line expression in Diamond uses — put the `?`/`:` at the end
+of the line, not the start:
+```ruby
+x > 3 ?
+  "big" :
+  "small"
+```
+
 ## Compound assignment
 
 ```ruby

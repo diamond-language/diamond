@@ -705,6 +705,69 @@ future work.
   both compilers, and both self-hosted bootstrap checks), and a manual
   ASan build exercising the wide-register case/when fixture.
 
+- **Ternary `cond ? a : b`**: third item off the Ruby-idiom gap list.
+  Implemented as `parse_ternary`, the new body of `parse_expression`
+  itself — `parse_precedence(PREC_RANGE)` used to *be* that top-level
+  entry point directly; now it's just how a ternary's own condition gets
+  parsed, with `parse_ternary` wrapping it to check for a trailing `?`.
+  Every existing `parse_expression` call site (assignment RHS, `case`/
+  `when` subjects and values, `if` conditions, ...) gets ternary support
+  for free from that one choke point, same principle as Range/`case`/
+  `when`/compound assignment. Pure sugar over JUMP_IF_FALSE/MOVE/JUMP —
+  no new `DiamondOpCode`, same shape `parse_if`'s own then/else already
+  uses. Binds looser than every binary operator (`..`/`&&`/`||`
+  included), tighter than assignment, matching Ruby's real precedence
+  table. Right-associative nesting (`a ? b : c ? d : e` reading as `a ?
+  b : (c ? d : e)`) falls out for free from calling `parse_expression`
+  itself for both branches, the same way `parse_if`'s `elsif` chain
+  recurses into itself. Unlike `parse_if`/`parse_case_branches`, no
+  register-snapshot save/restore was needed at all: a ternary's branches
+  are expressions, not statement sequences, and an expression alone
+  can't reassign a local (only `compile_assignment`/`compile_compound_
+  assignment` can, neither reachable here), so there's no branch-to-
+  branch local-reassignment hazard to guard against in the first place.
+
+  **A real regression found and fixed before this ever reached a
+  differential test**: the first version of `parse_ternary` reset
+  `compiler->narrowing` unconditionally after parsing the condition,
+  before even checking whether a `?` followed. Since `parse_expression`
+  is also how a plain `if`'s own (non-ternary) condition gets parsed,
+  and `parse_if` reads `compiler->narrowing` itself right after calling
+  `parse_expression` to pick up whatever the condition's own comparison
+  produced, this silently erased that narrowing for *every* `if`, not
+  just ones that happened to sit next to a ternary. Concretely: `def
+  present(value: String | Nil) -> String; if value != nil; value; else;
+  "fallback"; end; end` stopped eliding its return-type `CHECK_TYPE` —
+  `value`'s narrowing from `String | Nil` to `String` inside the
+  `!= nil` branch no longer applied, so the then/else branches no longer
+  had matching known types for `parse_if`'s own merge to propagate.
+  Caught immediately by `tests/run.sh`'s own `[[ $(grep -c CHECK_TYPE
+  ...) == "1" ]]` assertion — a diagnostic-only-on-failure check, so it
+  surfaced the same way the two ARGV/ENV-era CI failures did (script
+  exits silently under `set -e`, no output at all) — confirming that
+  failure *shape* is a reliable tell for "a bare `[[ ]]` assertion
+  failed," not evidence of a flake, worth recognizing on sight from now
+  on. Fixed by only touching `compiler->narrowing` once a `?` is
+  actually confirmed present, leaving the non-ternary path a pure
+  passthrough exactly as `parse_expression` always was.
+
+  Self-hosted mirror (`selfhost/lexer.di`/`selfhost/parser.di`) needed
+  the equivalent fix too, for the same underlying reason (its own
+  `parse_if` reads `@pending_nil_narrowing`/`@pending_type_narrowing`
+  right after calling `self.parse_expression()`) — written correctly
+  the first time by porting the *fixed* native shape directly rather
+  than re-discovering the bug independently.
+
+  Verified: `make debug` (clean, zero warnings), full `bash tests/run.sh`
+  (1069 passing — five new `tests/cases/ternary_*.di` fixtures covering
+  basic true/false, right-associative nesting, precedence against
+  `||`/`&&`, short-circuit evaluation via a fixture that raises if the
+  untaken branch is ever reached, and Symbol branches), `make
+  test-lexer-diff` (1004 cases), and `make test-parser-diff` (248
+  differential cases, a new `tests/parser_error_cases/
+  ternary_missing_colon` diagnostic locked in on both compilers, and
+  both self-hosted bootstrap checks).
+
 ### Collections and Enumerable
 
 - Replaced `Hash`'s O(n) linear-scan lookup with a real open-addressing hash

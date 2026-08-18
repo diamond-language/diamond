@@ -326,6 +326,8 @@ DiamondToken diamond_lexer_next(DiamondLexer *lexer) {
             }
             return token(lexer, DIAMOND_TOKEN_COLON);
         }
+        case '?':
+            return token(lexer, DIAMOND_TOKEN_QUESTION);
         case '|':
             if(match(lexer,'|'))
                 return token(lexer,match(lexer,'=')?DIAMOND_TOKEN_OR_OR_EQUAL
