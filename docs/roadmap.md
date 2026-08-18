@@ -422,10 +422,17 @@ future work.
   Verified against the full `tests/cases/*.di` corpus under
   `DIAMOND_STRESS_GC=1`, not just the one failing case. A third
   occurrence of the identical pattern (`copy_value_into_vm`, used by
-  cross-VM value copying for `Thread`/`ProgramBuilder#run`) was found
-  but not yet fixed — it has no natural destination register to root
-  through since it's recursive, needing a different fix shape; flagged
-  to the user rather than expanding this round's scope further.
+  cross-VM value copying for `Thread`/`ProgramBuilder#run`) was found,
+  flagged to the user, and fixed as a follow-up: it's recursive with no
+  natural destination register to root through, so the fix instead adds
+  a small GC root stack to `DiamondVm` (`gc_protected`), marked in
+  `diamond_vm_collect_impl` alongside `argv_value`/`env_value`, for
+  exactly this "value under construction with nowhere else to live"
+  case. `Thread.new`'s own argument-copy loop had the identical pattern
+  one level further out (`new_thread->args[]` isn't GC-scanned until
+  the spawned thread's first frame takes over) and got the same fix.
+  Verified via the existing Array-of-Instance/multi-arg-Thread fixtures
+  plus a full `run_cases` pass, both under `DIAMOND_STRESS_GC=1`.
 
 ### Collections and Enumerable
 
