@@ -2204,6 +2204,28 @@ actual="$($diamond -e $'x = 9223372036854775807 + 1\nx')"
 puts_actual="$(DIAMOND_STRESS_GC=1 $diamond -e $'x = 9223372036854775807 + 1\nputs(x)')"
 [[ "$actual" == "9223372036854775808" && "$puts_actual" == $'9223372036854775808\nnil' ]]
 
+# nproc reports the *host's* CPU count, not what a cgroup-throttled CI
+# container is actually allotted -- a k8s runner can report nproc=2 while
+# its cpu.max quota caps it well under one real core, which is exactly
+# what made the parallelism assertion below flake on GitLab's shared
+# small runner (serial 5.1s / parallel 9.17s, a ~1.8x ratio indistinguishable
+# from genuine serialization). Read the cgroup quota directly (v2 first,
+# then v1) to get the real CPU budget; only enforce the strict timing
+# ratio when there's true room for two threads to run concurrently.
+cpu_budget="$(nproc)"
+if [[ -r /sys/fs/cgroup/cpu.max ]]; then
+    read -r cfs_quota cfs_period < /sys/fs/cgroup/cpu.max
+    if [[ "$cfs_quota" != "max" ]]; then
+        cpu_budget="$(echo "$cfs_quota / $cfs_period" | bc -l)"
+    fi
+elif [[ -r /sys/fs/cgroup/cpu/cpu.cfs_quota_us && -r /sys/fs/cgroup/cpu/cpu.cfs_period_us ]]; then
+    cfs_quota="$(cat /sys/fs/cgroup/cpu/cpu.cfs_quota_us)"
+    cfs_period="$(cat /sys/fs/cgroup/cpu/cpu.cfs_period_us)"
+    if [[ "$cfs_quota" -gt 0 ]]; then
+        cpu_budget="$(echo "$cfs_quota / $cfs_period" | bc -l)"
+    fi
+fi
+
 # Real-parallelism proof for Thread: two threads each doing genuine
 # CPU-bound work (not sleep -- sleep would pass even under the old
 # single-native-thread Fiber cooperative scheduler if it yielded during
@@ -2258,11 +2280,15 @@ if [[ "$serial_out" != $'20000000\nnil' || "$parallel_out" != $'20000000\n200000
     echo "  parallel: $parallel_out" >&2
     exit 1
 fi
-if ! (( $(echo "$parallel_time < $serial_time * 1.6" | bc -l) )); then
-    echo "FAIL: Thread real-parallelism proof (not actually parallel)" >&2
-    echo "  serial time (1 spin):    ${serial_time}s" >&2
-    echo "  parallel time (2 spins): ${parallel_time}s" >&2
-    exit 1
+if (( $(echo "$cpu_budget >= 2" | bc -l) )); then
+    if ! (( $(echo "$parallel_time < $serial_time * 1.6" | bc -l) )); then
+        echo "FAIL: Thread real-parallelism proof (not actually parallel)" >&2
+        echo "  serial time (1 spin):    ${serial_time}s" >&2
+        echo "  parallel time (2 spins): ${parallel_time}s" >&2
+        exit 1
+    fi
+else
+    echo "NOTE: skipping Thread real-parallelism timing assertion -- cgroup CPU budget (${cpu_budget}) is under 2 cores, so two threads have no real room to run concurrently here" >&2
 fi
 
 # File-based test cases: tests/cases/<name>.di paired with:
