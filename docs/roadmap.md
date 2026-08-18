@@ -860,3 +860,60 @@ concurrency" above.
   not implemented -- `docs/gc-generational-design.md`'s design is the
   next step whenever this is picked up, now backed by direct measurement
   instead of a plausibility argument.
+
+  **A first implementation attempt of that design was built, verified
+  correct, and reverted** -- worth recording so the next attempt doesn't
+  re-derive the same lesson the hard way. It followed
+  `docs/gc-generational-design.md` closely: object header gains `old`/
+  `remembered` bits, two intrusive lists (`young_objects`/`old_objects`),
+  a small fixed nursery threshold separate from the major collector's
+  doubling one, and a write barrier at every mutation site that can store
+  a fresh value into an already-existing container (`array_push`,
+  `hash_set`, instance field writes, `Cell#value` via `SET_CAPTURE`/
+  `SET_CELL`, and the `super()`-into-built-in-Exception-constructor path
+  -- the last two are real gaps in the design doc's own mutation-site
+  audit, found during implementation). Verification was thorough: clean
+  under `DIAMOND_STRESS_MINOR_GC`/`DIAMOND_STRESS_GC` (individually and
+  combined) across the full `run_cases` corpus, clean under
+  AddressSanitizer with both stress flags, clean under ThreadSanitizer.
+  Two real bugs surfaced and got fixed along the way, both in how a major
+  collection handled the remembered set: touching a remembered entry's
+  `->remembered` bit *after* that same object had already been swept as
+  garbage (a straightforward use-after-free, caught by ASan), and --
+  after fixing the ordering -- unconditionally clearing the remembered
+  set on every major collection at all, which turned out to be a real
+  design gap, not just an ordering bug: an old->young edge established
+  before a major collection and never written to again has no future
+  write-barrier firing to rediscover it, so clearing silently made it
+  invisible to every later minor collection. The fix (filter to entries
+  whose object is still marked, rather than clearing outright) resolved
+  it, and this class of bug is exactly what the design doc's own
+  "sharpest risk" section warned about -- silent corruption under load,
+  not a crash.
+
+  Correct, but measuring it against `bench/gc_churn`'s own
+  `session_churn.di` -- the exact workload this whole investigation was
+  built around -- showed a severe regression, not the hoped-for
+  improvement: at `live_set_size=20000, iterations=200000`, minor
+  collections alone cost **64s** combined (27,901 of them) against **2s**
+  for major collections, a large net loss versus the pre-generational
+  collector's ~2.5s total GC time for a comparable run. Root cause: the
+  write barrier remembers at container granularity, not per-entry, so a
+  minor collection has to re-walk *every* entry of a remembered container
+  every single time it runs (`mark_remembered_set` recursing through
+  `mark_object_children`) -- cheap for a small object with a handful of
+  fields (the shape the design doc was implicitly reasoning about), but
+  directly proportional to container size for a large, frequently-written
+  Hash/Array like `sessions`. Since `sessions` gets touched almost every
+  iteration, it stays in the remembered set continuously, and this
+  whole-container rescan cost -- which a single-generation collector only
+  paid occasionally, at major-collection time -- ended up repeating on
+  nearly every one of thousands of minor collections instead. This is a
+  genuine limitation of the design as scoped in
+  `docs/gc-generational-design.md` (object-granularity write barrier),
+  not an implementation mistake; it just took a real measurement against
+  the actual motivating workload to surface. A future attempt needs
+  field/card-level barrier granularity -- remembering *which entries*
+  changed, not just *that* the container changed -- to avoid this;
+  `docs/gc-generational-design.md` itself hasn't been updated with this
+  finding yet and should be before anyone picks this up again.

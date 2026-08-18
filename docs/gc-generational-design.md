@@ -3,11 +3,46 @@
 This document maps out a design for turning `diamond_vm_collect`
 (`src/vm.c:299`) into a generational collector. It is a plan for whoever
 picks this up, not a description of shipped behavior — nothing here is
-implemented. `docs/roadmap.md`'s "Generational or incremental GC" entry
-scoped this as deliberately not started until a real long-running workload
-(the roadmap suggests a `gremlin` server under sustained load) exists to
-validate against; that prerequisite still stands. This doc exists so the
-design work doesn't have to be re-derived when that benchmark lands.
+implemented (a first attempt at exactly this design was built, verified
+correct, and reverted — see "Known flaw" immediately below before
+starting another one). `docs/roadmap.md`'s "Generational or incremental
+GC" entry scoped this as deliberately not started until a real long-
+running workload exists to validate against; that prerequisite has since
+been discharged by `bench/gc_churn` (see the roadmap entry's own
+detailed writeup), which is also what surfaced the flaw below.
+
+## Known flaw: the write barrier below is the wrong granularity
+
+The design as originally written (everything from "Object header" on)
+remembers at **container granularity** — `gc_write_barrier(vm, owner)`
+takes the whole `Array`/`Hash`/`Instance`/`Cell` that changed, not the
+specific slot that changed. That's fine for a small object (an `Instance`
+with a handful of fields, the shape most of this doc implicitly reasons
+about) but actively harmful for a large, long-lived, frequently-mutated
+container — exactly `bench/burn_in`'s and `bench/gc_churn`'s own
+motivating workload (a `sessions`-style cache with thousands of entries,
+one of which changes per request). A minor collection has to re-walk
+*every* entry of a remembered container on *every* run
+(`mark_remembered_set` → `mark_object_children`), since there's no
+record of which entry actually changed — cost proportional to container
+size, paid on nearly every minor collection once the container is
+"remembered" continuously (which a frequently-written cache always is).
+Measured on `bench/gc_churn/session_churn.di` at `live_set_size=20000,
+iterations=200000`: 27,901 minor collections costing 64s combined,
+against 2s for 27 major collections — a large net loss versus the
+pre-generational collector's ~2.5s total GC time for a comparable run.
+
+**Before implementing the rest of this doc as-is, redesign the write
+barrier to remember at finer granularity** — the standard fix is card
+marking (divide each large container's backing storage into fixed-size
+"cards," and have the barrier record which card was touched rather than
+the whole object, so a minor collection only re-scans the cards that
+actually changed) or an equivalent per-entry/per-index scheme. Everything
+else in this doc (object header, two-list structure, promotion-by-splice,
+minor/major collection shape) held up fine under real measurement and
+doesn't need to change — it's specifically `gc_write_barrier`'s
+container-level granularity and `mark_remembered_set`'s whole-container
+walk that need a different design.
 
 ## Baseline: what exists today
 
@@ -91,6 +126,21 @@ remembers old→old writes, an acceptable tradeoff here.
 - Closure `captures[]`, `vm.c:886` — set exactly once at construction,
   never mutated afterward. **No barrier needed** — one fewer site to get
   wrong.
+- **Two real gaps in this list, found during the first implementation
+  attempt, not by design:** `Cell#value`, mutated post-construction by
+  `DIAMOND_OP_SET_CAPTURE` and `DIAMOND_OP_SET_CELL` — **needs barrier**,
+  keyed off the `Cell` object itself. And the `super()`-into-built-in-
+  Exception-constructor path (the fallback in the `SUPER` opcode handler
+  that assigns `self->fields[0]`/`[1]` directly when no user-defined
+  `initialize` exists up the chain) — **needs barrier**, keyed off
+  `self`; unlike `DIAMOND_OP_NEW`'s own exception-class field write
+  (truly always-fresh, no barrier needed, confirmed no allocation
+  happens between construction and that write), this one runs from deep
+  inside a possibly-long-running `initialize` call chain where the
+  receiver may well have already been promoted. Re-audit this list from
+  scratch rather than trusting it as complete — line numbers above are
+  already stale, and if this list missed two sites once, it can miss
+  others.
 
 ### Sharpest risk in the whole design
 
@@ -122,24 +172,46 @@ added later; not designed in up front since it's unmotivated without data.
 
 ## Major collection
 
-Unchanged algorithm, walking both lists, plus clearing the remembered set
-(every old object gets freshly re-scanned by a major collection, so
-existing remembered entries are redundant until the next barrier fires).
+Unchanged algorithm, walking both lists — but **do not** unconditionally
+clear the remembered set afterward. That was this doc's own original
+text here, and it's wrong: an old→young edge established before a major
+collection and never written to again has no future write-barrier firing
+to rediscover it, so clearing makes it silently invisible to every later
+minor collection (confirmed as a real bug during the first implementation
+attempt, not just a theoretical concern — see `docs/roadmap.md`'s own
+account). Filter instead: after the mark phase, keep a remembered entry
+iff its object is still `marked` (about to survive the sweep below);
+drop it otherwise. A surviving old object's own `remembered` bit needs
+no change — whatever young object it still points to was necessarily
+also marked by this same full, unrestricted recursive pass, so it
+survives too. (Also: do this filtering *before* sweeping, not after —
+touching `->remembered` on an entry that sweep already freed is a
+straightforward use-after-free, the other real bug the first attempt
+hit.)
 
 ## Testing
 
 `DIAMOND_STRESS_GC=1` already forces a (major) collection before every
 eligible allocation. This design needs a nursery-scoped counterpart
-(`DIAMOND_STRESS_MINOR_GC=1`, naming TBD) that forces minor collections
-aggressively. That's specifically to catch missing write-barrier sites —
-the bug class this change introduces that the codebase doesn't have today.
+(`DIAMOND_STRESS_MINOR_GC=1` — used under exactly that name in the first
+implementation attempt, worked well, no reason to rename) that forces
+minor collections aggressively. That's specifically to catch missing
+write-barrier sites — the bug class this change introduces that the
+codebase doesn't have today. In practice this worked as intended: it's
+what caught the two mutation-site gaps above, though the two remembered-
+set bugs (see "Major collection") needed `DIAMOND_STRESS_GC=1` combined
+with AddressSanitizer to surface, not `DIAMOND_STRESS_MINOR_GC=1` alone
+— run both stress flags together, and under ASan, not just one or the
+other.
 
-## Prerequisite (unchanged from the roadmap)
+## Prerequisite (discharged)
 
-Establish an actual long-running benchmark — a `gremlin` server under
-sustained load is still the obvious candidate — before implementing any
-of this. The whole point of generational collection is trading full-heap
-rescans for cheaper, more frequent nursery-only ones; without a workload
-with a large, mostly-stable live set and steady young-object churn, there's
-no way to confirm this design actually buys anything over the current
-collector's simplicity.
+This used to call for establishing a long-running benchmark before
+implementing any of this — done: `bench/gc_churn` (see `docs/roadmap.md`'s
+detailed writeup) is exactly that workload, short and non-networked
+rather than a live `gremlin` server, and precise enough to have caught
+the write-barrier granularity flaw above directly. Re-run it
+(`bench/gc_churn/session_churn.di`, swept across live-set size) against
+any future implementation before considering it done — it's what will
+show whether a card-marked barrier actually fixes the regression, not
+just whether the collector is correct.
