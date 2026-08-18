@@ -221,6 +221,25 @@ count), so every `Float` prints exactly and unambiguously — including
 values that need the full 17 significant digits a `double` can carry,
 which a naive fixed-precision format can silently get wrong.
 
+`Int` has three block-consuming iteration methods, dispatched natively
+straight to ordinary prelude functions rather than through any class —
+`Int` isn't a class and can't be reopened:
+
+```ruby
+5.times() do |i|
+  puts(i)          # 0, 1, 2, 3, 4
+end
+1.upto(5) do |i|
+  puts(i)          # 1, 2, 3, 4, 5
+end
+5.downto(1) do |i|
+  puts(i)          # 5, 4, 3, 2, 1
+end
+```
+
+Each returns the receiver (matching Ruby), not the block's own result or
+a collected array — the loop itself is the point.
+
 ## Ranges
 
 ```ruby

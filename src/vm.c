@@ -8010,29 +8010,78 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 if((size_t)name>=chunk->string_count) VM_RETURN(DIAMOND_VM_TYPE_ERROR);
                 const DiamondStringConstant *method_name=&chunk->strings[name];
                 if(registers[recv].kind==DIAMOND_VALUE_INT) {
-                    /* Int's only native method: chr, the inverse of String#ord.
-                     * A single byte (0-255), matching every other String
-                     * primitive in this VM staying byte- rather than
-                     * codepoint-oriented. */
+                    /* chr, the inverse of String#ord -- a single byte (0-255),
+                     * matching every other String primitive in this VM
+                     * staying byte- rather than codepoint-oriented. */
                     const bool chr_method=method_name->length==3&&
                         memcmp(method_name->chars,"chr",3)==0;
-                    if(!chr_method) {
+                    if(chr_method) {
+                        if(argc!=0)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                        const int64_t code=registers[recv].as.integer;
+                        if(code<0||code>255) {
+                            snprintf(vm->error,sizeof vm->error,
+                                "Int#chr argument must be between 0 and 255");
+                            VM_RETURN(DIAMOND_VM_INTEGER_OVERFLOW);
+                        }
+                        const char byte=(char)(unsigned char)code;
+                        DiamondString *chr_string=allocate_string(vm,&byte,1);
+                        if(chr_string==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                        registers[dest]=DIAMOND_OBJECT(chr_string);break;
+                    }
+                    /* times/upto/downto -- trivial Callable[1] consumers of
+                     * block syntax, forwarded to ordinary prelude Diamond
+                     * functions (lib/core.di) exactly like Array/Hash's own
+                     * Enumerable methods below, rather than hand-rolled
+                     * here. */
+                    const char *target_name=nullptr;
+                    if(method_name->length==5&&
+                       memcmp(method_name->chars,"times",5)==0)
+                        target_name="integer_times";
+                    else if(method_name->length==4&&
+                            memcmp(method_name->chars,"upto",4)==0)
+                        target_name="integer_upto";
+                    else if(method_name->length==6&&
+                            memcmp(method_name->chars,"downto",6)==0)
+                        target_name="integer_downto";
+                    if(target_name==nullptr) {
                         snprintf(vm->error,sizeof vm->error,
                             "undefined method '%.*s' for %s",
                             (int)method_name->length,method_name->chars,"Int");
                         VM_RETURN(DIAMOND_VM_TYPE_ERROR);
                     }
-                    if(argc!=0)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
-                    const int64_t code=registers[recv].as.integer;
-                    if(code<0||code>255) {
+                    const DiamondFunction *target=
+                        find_top_level_function(chunk,target_name,strlen(target_name));
+                    if(target==nullptr) {
                         snprintf(vm->error,sizeof vm->error,
-                            "Int#chr argument must be between 0 and 255");
-                        VM_RETURN(DIAMOND_VM_INTEGER_OVERFLOW);
+                            "internal error: missing standard library function '%s'",
+                            target_name);
+                        VM_RETURN(DIAMOND_VM_TYPE_ERROR);
                     }
-                    const char byte=(char)(unsigned char)code;
-                    DiamondString *chr_string=allocate_string(vm,&byte,1);
-                    if(chr_string==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
-                    registers[dest]=DIAMOND_OBJECT(chr_string);break;
+                    const size_t total_argc=(size_t)argc+1;
+                    if(total_argc<target->required_arity||total_argc>target->arity)
+                        VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                    DiamondValue forward_args[17];
+                    forward_args[0]=registers[recv];
+                    for(size_t i=0;i<argc;i++)
+                        forward_args[i+1]=registers[(size_t)base+i];
+                    const DiamondChunk child={.name=target->name,.code=target->code,
+                      .lines=target->lines,.columns=target->columns,
+                      .code_count=target->code_count,
+                      .constants=target->constants,.constant_count=target->constant_count,
+                      .strings=target->strings,.string_count=target->string_count,
+                      .type_sets=target->type_sets,.type_set_count=target->type_set_count,
+                      .functions=chunk->functions,.function_count=chunk->function_count,
+                      .classes=chunk->classes,.class_count=chunk->class_count,
+                      .interfaces=chunk->interfaces,.interface_count=chunk->interface_count,
+                      .parameter_type_sets=target->parameter_type_sets,
+                      .type_variable_count=target->type_variable_count,
+                      .parameter_offset=target->owner_class==UINT8_MAX?0:1,
+                      .register_count=target->register_count};
+                    DiamondValue call_result=DIAMOND_NIL;
+                    const DiamondVmStatus status=run_chunk(&child,vm,forward_args,
+                        total_argc,depth+1,nullptr,&call_result);
+                    VM_PROPAGATE(status);
+                    registers[dest]=call_result;break;
                 }
                 if(registers[recv].kind!=DIAMOND_VALUE_OBJECT)
                     VM_RETURN(DIAMOND_VM_TYPE_ERROR);

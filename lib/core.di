@@ -582,6 +582,40 @@ def mod(a: Int | Float, b: Int | Float) -> Int | Float
   end
 end
 
+# n.times() / a.upto(b) / a.downto(b) -- trivial consumers of block
+# syntax now that it exists, dispatched natively (DIAMOND_OP_INVOKE's own
+# Int branch in vm.c) straight to these ordinary prelude functions, same
+# forwarding pattern Array/Hash's own Enumerable methods already use.
+# Each returns the receiver, matching Ruby's own Integer#times/upto/
+# downto (useful for chaining; the loop itself is the point, not the
+# return value).
+def integer_times(n: Int, callback: Callable[1]) -> Int
+  i = 0
+  while i < n
+    callback(i)
+    i = i + 1
+  end
+  n
+end
+
+def integer_upto(start: Int, stop: Int, callback: Callable[1]) -> Int
+  i = start
+  while i <= stop
+    callback(i)
+    i = i + 1
+  end
+  start
+end
+
+def integer_downto(start: Int, stop: Int, callback: Callable[1]) -> Int
+  i = start
+  while i >= stop
+    callback(i)
+    i = i - 1
+  end
+  start
+end
+
 def array_sort(values: Array[Int]) -> Array[Int]
   result = []
   index = 0

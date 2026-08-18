@@ -868,6 +868,40 @@ future work.
   including two new `tests/parser_error_cases/block_*` diagnostics locked
   in on both compilers, and both self-hosted bootstrap checks).
 
+- **`Integer#times`/`upto`/`downto`**: fifth item off the Ruby-idiom gap
+  list, and the first trivial *consumer* of block syntax rather than a
+  new grammar feature in its own right — no lexer or parser changes at
+  all, on either compiler. `Int` isn't a class and can't be reopened with
+  `class Int ... end` the way `Range` wraps `Enumerable`, so these are
+  wired directly into `DIAMOND_OP_INVOKE`'s existing Int-receiver branch
+  (`vm.c`, previously handled only `chr`), forwarding `times`/`upto`/
+  `downto` by name to three new one-line-loop functions in `lib/core.di`
+  (`integer_times`/`integer_upto`/`integer_downto`, each typed
+  `Callable[1]`) — the exact same "hardcode the method name, forward to
+  an ordinary top-level function" pattern Array/Hash's own Enumerable
+  methods already use a few lines down in the same opcode handler, just
+  duplicated for Int rather than factored out (matching this file's own
+  existing precedent: that forwarding shape already appears standalone
+  at half a dozen sites in `vm.c`, never behind a shared helper). Each
+  method returns the receiver, matching Ruby, not the block's result or
+  a collected array.
+
+  Since dispatch lives entirely in the VM's `INVOKE` handling — shared by
+  both compilers, as it always has been for every other native method —
+  the self-hosted parser needed zero changes; a self-hosted-parsed
+  `.times()` call reaches the identical opcode handler a native-parsed
+  one does. Confirmed directly (not assumed): `selfhost/parser_run_with_
+  core.di` reproduces the native `.di` fixture's output byte-for-byte.
+
+  Verified: `make debug` (clean, zero warnings), full `bash tests/run.sh`
+  (1078 passing — three new `tests/cases/integer_times_*.di` fixtures
+  covering `times`/`upto`/`downto` together, the receiver-return
+  semantics, and the same `Callable[1]` structural-mismatch error a
+  zero-param block produces against any other `Callable[1]` consumer),
+  `make test-lexer-diff` (1013 cases), and `make test-parser-diff` (a new
+  `tests/parser_cases/integer_times_upto_downto.di` differential case,
+  both self-hosted bootstrap checks passing).
+
 ### Collections and Enumerable
 
 - Replaced `Hash`'s O(n) linear-scan lookup with a real open-addressing hash
