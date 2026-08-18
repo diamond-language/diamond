@@ -43,6 +43,7 @@ typedef enum DiamondObjectKind : uint8_t {
     DIAMOND_OBJECT_THREAD,
     DIAMOND_OBJECT_SQLITE3,
     DIAMOND_OBJECT_TIME,
+    DIAMOND_OBJECT_PROCESS_RESULT,
 } DiamondObjectKind;
 
 typedef struct DiamondObject {
@@ -312,6 +313,21 @@ typedef struct DiamondTime {
     double epoch;
     bool utc;
 } DiamondTime;
+
+/* Process.run(argv)'s result: captured stdout/stderr (as real DiamondValue
+ * Strings, so they're ordinary GC-managed objects mark_object already
+ * knows how to trace once DIAMOND_OBJECT_PROCESS_RESULT has its own
+ * branch there -- see vm.c) plus the child's exit code. No owned OS
+ * resource by the time this exists: the pipes are fully drained and
+ * closed and the child already reaped (waitpid) before
+ * process_run_helper ever returns one, so freeing this is just
+ * free(pointer), same as DiamondTime. */
+typedef struct DiamondProcessResult {
+    DiamondObject object;
+    DiamondValue stdout_value;
+    DiamondValue stderr_value;
+    int64_t exit_code;
+} DiamondProcessResult;
 
 /* Forward-declared, not included: DiamondProgram is defined in compiler.h,
  * which itself includes vm.h (and so, transitively, this file) -- a

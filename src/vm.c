@@ -27,11 +27,15 @@
 #include <pthread.h>
 #include <signal.h>
 #include <stdatomic.h>
+#include <spawn.h>
 #include <sqlite3.h>
 #include <sys/mman.h>
 #include <sys/socket.h>
+#include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
+
+extern char **environ;
 
 /* Fibers hand-switch the C stack via swapcontext (see DIAMOND_FIBER_STACK_SIZE
  * and friends below), which ASan's stack-use-after-return instrumentation
@@ -295,6 +299,10 @@ static void mark_object(DiamondObject *object) {
          * instead). See docs/threads.md. */
         if(thread!=nullptr&&thread->joined&&!thread->internal_failure)
             mark_value(thread->result);
+    } else if(object->kind==DIAMOND_OBJECT_PROCESS_RESULT) {
+        DiamondProcessResult *result=(DiamondProcessResult *)object;
+        mark_value(result->stdout_value);
+        mark_value(result->stderr_value);
     }
 }
 
@@ -436,6 +444,12 @@ static void diamond_vm_collect_impl(DiamondVm *vm) {
              * below is all that's needed; this branch exists only for
              * accurate bytes_allocated accounting. */
             size=sizeof(DiamondTime);
+        } else if(unreached->kind==DIAMOND_OBJECT_PROCESS_RESULT) {
+            /* Same as DIAMOND_OBJECT_TIME above: no owned OS resource by
+             * this point (process_run_helper already closed both pipes
+             * and reaped the child before ever returning), no separate
+             * allocation -- just accounting. */
+            size=sizeof(DiamondProcessResult);
         } else {
             size=sizeof(DiamondCell);
         }
@@ -1545,6 +1559,24 @@ static DiamondTime *allocate_time(DiamondVm *vm,double epoch,bool utc) {
     *time=(DiamondTime){.object={.next=vm->objects,.kind=DIAMOND_OBJECT_TIME},
         .epoch=epoch,.utc=utc};
     vm->objects=&time->object;vm->bytes_allocated+=sizeof(DiamondTime);return time;
+}
+
+/* Allocated (and rooted into the caller's dest register) before
+ * process_run_helper does any of its own work, with stdout_value/
+ * stderr_value still nil -- the same "root the container before filling
+ * it in" ordering String#split's pieces array uses, since spawning and
+ * draining a child process means several further allocations (the two
+ * captured-output Strings) that can each trigger a GC. */
+static DiamondProcessResult *allocate_process_result(DiamondVm *vm) {
+    if(vm->stress_gc||vm->bytes_allocated>=vm->next_gc)diamond_vm_collect(vm);
+    DiamondProcessResult *result=malloc(sizeof(DiamondProcessResult));
+    if(result==nullptr)return nullptr;
+    *result=(DiamondProcessResult){
+        .object={.next=vm->objects,.kind=DIAMOND_OBJECT_PROCESS_RESULT},
+        .stdout_value=DIAMOND_NIL,.stderr_value=DIAMOND_NIL,.exit_code=0};
+    vm->objects=&result->object;
+    vm->bytes_allocated+=sizeof(DiamondProcessResult);
+    return result;
 }
 
 /* Private backing type for DiamondVm.adopted_programs (see its own
@@ -6354,6 +6386,204 @@ static void raise_capture_backtrace_helper(DiamondVm *vm,const DiamondChunk *chu
     }
 }
 
+enum { DIAMOND_PROCESS_MAX_ARGV = 65536 };
+
+/* Process.run(argv): argv-array-only (never a shell string -- there is no
+ * injection surface to guard against, by construction, matching the
+ * design settled with the user before building this), blocking, full
+ * stdout/stderr capture via a pipe pair and posix_spawnp. Child's stdin
+ * is /dev/null (v1 deliberately has no way to feed it data -- see
+ * docs/syntax.md). Reads both pipes with poll() rather than reading one
+ * to EOF and then the other, specifically to avoid the classic deadlock
+ * (child fills the stdout pipe buffer while blocked writing it, parent
+ * is still blocked reading stderr, neither side ever makes progress).
+ *
+ * EINTR on poll()/read()/waitpid() just retries the syscall -- unlike
+ * IO.poll's own EINTR handling, this does NOT run pending Signal.trap
+ * handlers mid-wait (dispatch_pending_signals needs chunk/depth/ip from
+ * run_chunk's own dispatch loop, which this helper -- deliberately kept
+ * outside run_chunk's switch, per this file's stack-frame-budget
+ * convention -- doesn't have). A signal trapped while a Process.run call
+ * is blocked runs once the child exits and this call returns, not
+ * immediately. Acceptable for a "minimal blocking capture" v1; a
+ * non-blocking Process.spawn with a live handle (a real future feature,
+ * not this one) would be the natural place to fix that. */
+static DiamondVmStatus process_run_helper(DiamondVm *vm,
+        DiamondArray *argv_array,DiamondProcessResult *result) {
+    if(argv_array->count==0) {
+        snprintf(vm->error,sizeof vm->error,"Process.run: argv must not be empty");
+        return DIAMOND_VM_ARITY_ERROR;
+    }
+    if(argv_array->count>DIAMOND_PROCESS_MAX_ARGV) {
+        snprintf(vm->error,sizeof vm->error,
+            "Process.run: argv has too many elements (max %d)",
+            DIAMOND_PROCESS_MAX_ARGV);
+        return DIAMOND_VM_ARITY_ERROR;
+    }
+    for(size_t index=0;index<argv_array->count;index++) {
+        const DiamondValue element=argv_array->values[index];
+        if(element.kind!=DIAMOND_VALUE_OBJECT||
+           element.as.object->kind!=DIAMOND_OBJECT_STRING) {
+            snprintf(vm->error,sizeof vm->error,
+                "Process.run: argv must be an Array of Strings");
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        const DiamondString *piece=(const DiamondString *)element.as.object;
+        if(strlen(piece->chars)!=piece->length) {
+            snprintf(vm->error,sizeof vm->error,
+                "Process.run: argv strings must not contain a NUL byte");
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+    }
+    /* Points directly at each DiamondString's own null-terminated buffer
+     * -- no copying needed, argv_array stays reachable (still live in the
+     * caller's own register) for this whole call, and posix_spawn/execve
+     * never write through argv despite the non-const `char *const []`
+     * signature (a C89-main-signature-compatibility artifact, not a real
+     * mutation contract). */
+    char **argv=malloc((argv_array->count+1)*sizeof(char *));
+    if(argv==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+    for(size_t index=0;index<argv_array->count;index++)
+        argv[index]=((DiamondString *)argv_array->values[index].as.object)->chars;
+    argv[argv_array->count]=nullptr;
+    const char *command_name=argv[0];
+
+    int stdout_pipe[2]={-1,-1};
+    int stderr_pipe[2]={-1,-1};
+    if(pipe(stdout_pipe)!=0||pipe(stderr_pipe)!=0) {
+        const int saved_errno=errno;
+        if(stdout_pipe[0]>=0)close(stdout_pipe[0]);
+        if(stdout_pipe[1]>=0)close(stdout_pipe[1]);
+        if(stderr_pipe[0]>=0)close(stderr_pipe[0]);
+        if(stderr_pipe[1]>=0)close(stderr_pipe[1]);
+        free(argv);
+        snprintf(vm->error,sizeof vm->error,"Process.run: pipe: %s",
+            strerror(saved_errno));
+        return DIAMOND_VM_IO_ERROR;
+    }
+
+    posix_spawn_file_actions_t actions;
+    posix_spawn_file_actions_init(&actions);
+    posix_spawn_file_actions_addopen(&actions,STDIN_FILENO,"/dev/null",O_RDONLY,0);
+    posix_spawn_file_actions_adddup2(&actions,stdout_pipe[1],STDOUT_FILENO);
+    posix_spawn_file_actions_adddup2(&actions,stderr_pipe[1],STDERR_FILENO);
+    posix_spawn_file_actions_addclose(&actions,stdout_pipe[0]);
+    posix_spawn_file_actions_addclose(&actions,stdout_pipe[1]);
+    posix_spawn_file_actions_addclose(&actions,stderr_pipe[0]);
+    posix_spawn_file_actions_addclose(&actions,stderr_pipe[1]);
+
+    pid_t pid=0;
+    const int spawn_status=posix_spawnp(&pid,command_name,&actions,
+        nullptr,argv,environ);
+    posix_spawn_file_actions_destroy(&actions);
+    close(stdout_pipe[1]);
+    close(stderr_pipe[1]);
+    if(spawn_status!=0) {
+        close(stdout_pipe[0]);close(stderr_pipe[0]);
+        snprintf(vm->error,sizeof vm->error,"Process.run: %s: %s",
+            command_name,strerror(spawn_status));
+        free(argv);
+        return DIAMOND_VM_IO_ERROR;
+    }
+    free(argv);
+
+    StringBuilder stdout_builder={};
+    StringBuilder stderr_builder={};
+    bool stdout_open=true,stderr_open=true,out_of_memory=false;
+    while((stdout_open||stderr_open)&&!out_of_memory) {
+        struct pollfd fds[2];
+        nfds_t fd_count=0;
+        int stdout_slot=-1,stderr_slot=-1;
+        if(stdout_open) {
+            stdout_slot=(int)fd_count;
+            fds[fd_count++]=(struct pollfd){.fd=stdout_pipe[0],.events=POLLIN};
+        }
+        if(stderr_open) {
+            stderr_slot=(int)fd_count;
+            fds[fd_count++]=(struct pollfd){.fd=stderr_pipe[0],.events=POLLIN};
+        }
+        errno=0;
+        const int poll_result=poll(fds,fd_count,-1);
+        if(poll_result<0) {
+            if(errno==EINTR)continue;
+            break;
+        }
+        char chunk_buffer[4096];
+        if(stdout_slot>=0&&fds[stdout_slot].revents!=0) {
+            const ssize_t bytes_read=read(stdout_pipe[0],chunk_buffer,sizeof chunk_buffer);
+            if(bytes_read>0) {
+                if(!builder_append(&stdout_builder,chunk_buffer,(size_t)bytes_read))
+                    out_of_memory=true;
+            } else if(bytes_read==0||errno!=EINTR) {
+                close(stdout_pipe[0]);stdout_open=false;
+            }
+        }
+        if(stderr_slot>=0&&fds[stderr_slot].revents!=0) {
+            const ssize_t bytes_read=read(stderr_pipe[0],chunk_buffer,sizeof chunk_buffer);
+            if(bytes_read>0) {
+                if(!builder_append(&stderr_builder,chunk_buffer,(size_t)bytes_read))
+                    out_of_memory=true;
+            } else if(bytes_read==0||errno!=EINTR) {
+                close(stderr_pipe[0]);stderr_open=false;
+            }
+        }
+    }
+    if(stdout_open)close(stdout_pipe[0]);
+    if(stderr_open)close(stderr_pipe[0]);
+
+    int wait_status=0;
+    pid_t wait_result=0;
+    do { wait_result=waitpid(pid,&wait_status,0); }
+    while(wait_result<0&&errno==EINTR);
+
+    if(out_of_memory) {
+        free(stdout_builder.chars);free(stderr_builder.chars);
+        return DIAMOND_VM_OUT_OF_MEMORY;
+    }
+    int64_t exit_code=255;
+    if(wait_result==pid) {
+        if(WIFEXITED(wait_status))exit_code=WEXITSTATUS(wait_status);
+        else if(WIFSIGNALED(wait_status))exit_code=128+WTERMSIG(wait_status);
+    }
+    /* result is already rooted (assigned to the caller's dest register
+     * before this helper runs) -- see allocate_process_result's own
+     * comment -- so each field write below is safe the instant it
+     * happens, same as String#split rooting its array before pushing. */
+    DiamondString *stdout_string=allocate_string(vm,
+        stdout_builder.chars?stdout_builder.chars:"",stdout_builder.length);
+    free(stdout_builder.chars);
+    if(stdout_string==nullptr){free(stderr_builder.chars);return DIAMOND_VM_OUT_OF_MEMORY;}
+    result->stdout_value=DIAMOND_OBJECT(stdout_string);
+    DiamondString *stderr_string=allocate_string(vm,
+        stderr_builder.chars?stderr_builder.chars:"",stderr_builder.length);
+    free(stderr_builder.chars);
+    if(stderr_string==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+    result->stderr_value=DIAMOND_OBJECT(stderr_string);
+    result->exit_code=exit_code;
+    return DIAMOND_VM_OK;
+}
+
+static DiamondVmStatus process_result_dispatch_helper(DiamondVm *vm,
+        DiamondProcessResult *target,const DiamondStringConstant *method_name,
+        DiamondValue *registers,uint8_t argc,uint16_t dest) {
+    if(argc!=0)return DIAMOND_VM_ARITY_ERROR;
+    if(method_name->length==6&&memcmp(method_name->chars,"stdout",6)==0) {
+        registers[dest]=target->stdout_value;return DIAMOND_VM_OK;
+    }
+    if(method_name->length==6&&memcmp(method_name->chars,"stderr",6)==0) {
+        registers[dest]=target->stderr_value;return DIAMOND_VM_OK;
+    }
+    if(method_name->length==9&&memcmp(method_name->chars,"exit_code",9)==0) {
+        registers[dest]=DIAMOND_INT(target->exit_code);return DIAMOND_VM_OK;
+    }
+    if(method_name->length==8&&memcmp(method_name->chars,"success?",8)==0) {
+        registers[dest]=DIAMOND_BOOL(target->exit_code==0);return DIAMOND_VM_OK;
+    }
+    snprintf(vm->error,sizeof vm->error,"undefined method '%.*s' for Process::Result",
+        (int)method_name->length,method_name->chars);
+    return DIAMOND_VM_TYPE_ERROR;
+}
+
 static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                                  DiamondVm *vm,
                                  const DiamondValue *arguments,
@@ -9066,6 +9296,14 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     VM_PROPAGATE(dispatch_status);
                     break;
                 }
+                if(receiver_kind==DIAMOND_OBJECT_PROCESS_RESULT) {
+                    if(type_argument_count!=0)VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                    const DiamondVmStatus dispatch_status=process_result_dispatch_helper(vm,
+                        (DiamondProcessResult *)registers[recv].as.object,
+                        method_name,registers,argc,dest);
+                    VM_PROPAGATE(dispatch_status);
+                    break;
+                }
                 if(receiver_kind==DIAMOND_OBJECT_PROGRAM_BUILDER) {
                     if(type_argument_count!=0)VM_RETURN(DIAMOND_VM_TYPE_ERROR);
                     DiamondValue invoke_result=DIAMOND_NIL;
@@ -9442,6 +9680,26 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 const DiamondVmStatus time_status=
                     time_at_helper(vm,registers[epoch_register],&registers[destination]);
                 VM_PROPAGATE(time_status);
+                break;
+            }
+            case DIAMOND_OP_PROCESS_RUN: {
+                uint16_t destination=0,argv_register=0;
+                READ_SHORT(destination);READ_SHORT(argv_register);
+                if(registers[argv_register].kind!=DIAMOND_VALUE_OBJECT||
+                   registers[argv_register].as.object->kind!=DIAMOND_OBJECT_ARRAY) {
+                    snprintf(vm->error,sizeof vm->error,
+                        "Process.run expects an Array of Strings");
+                    VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                }
+                DiamondProcessResult *process_result=allocate_process_result(vm);
+                if(process_result==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                /* Rooted immediately, before process_run_helper's own
+                 * further allocations -- see allocate_process_result's
+                 * comment. */
+                registers[destination]=DIAMOND_OBJECT(process_result);
+                const DiamondVmStatus run_status=process_run_helper(vm,
+                    (DiamondArray *)registers[argv_register].as.object,process_result);
+                VM_PROPAGATE(run_status);
                 break;
             }
             case DIAMOND_OP_IS_TYPE: {

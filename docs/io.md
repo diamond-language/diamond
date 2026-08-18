@@ -674,6 +674,61 @@ for free:
   at the same instant are `==` regardless of which one is `.utc`,
   exactly like Ruby.
 
+## Process: `Process.run`
+
+```ruby
+result = Process.run(["ls", "-la", dir])
+puts(result.stdout())
+puts(result.exit_code())
+result.success?()          # => exit_code() == 0
+
+result = Process.run(["sh", "-c", "echo out; echo err 1>&2; exit 3"])
+result.stdout()            # => "out\n"
+result.stderr()            # => "err\n"
+result.exit_code()         # => 3
+```
+
+One constructor, one native result type (`DIAMOND_OBJECT_PROCESS_RESULT`),
+compiling to a dedicated opcode the same way `Time.at`/`SQLite3.open` do:
+
+- `Process.run(argv)` — `argv` is an `Array` of `String`s, the command
+  followed by its arguments (`argv[0]` is resolved against `PATH`, same
+  as `execvp`). Blocks until the child exits, with its full stdout and
+  stderr captured. **Argv-array-only, deliberately** — there is no shell-
+  string form (`Process.run("ls -la")`) at all, so there is no shell-
+  injection surface to guard against; a `String` element is passed to the
+  child exactly as written, never interpreted by a shell. Run a real
+  shell explicitly (`Process.run(["sh", "-c", "..."])`) if that's what's
+  needed, same as Ruby's own `Process.spawn(argv)` array form.
+
+Instance methods on the result, all ordinary `.method()` calls:
+
+- `.stdout()` / `.stderr()` → `String`, the child's captured output
+- `.exit_code()` → `Int` — the child's real exit status if it exited
+  normally, or `128 + signal number` if it was killed by a signal
+  (matching the shell's own convention)
+- `.success?()` → `Bool`, `exit_code() == 0`
+
+**v1 scope, deliberately minimal** (settled with the user before
+building this — a non-blocking `Process.spawn` with a live handle,
+`.wait()`/`.kill()`/streaming output, is a real possible future
+extension, not this one):
+
+- The child's stdin is always `/dev/null` — there is no way to feed it
+  data. A command that tries to read from stdin sees immediate EOF (e.g.
+  `Process.run(["cat"])` returns empty stdout and exit code `0`
+  immediately, rather than hanging).
+- Fully blocking/synchronous — no way to run a child in the background,
+  poll it, or kill it early. A long-running or hung child blocks the
+  calling Diamond program for as long as it runs.
+- A trapped `Signal` (see `Signal.trap` above) does not get to run while
+  a `Process.run` call is blocked waiting on the child — it runs once the
+  child exits and `Process.run` returns, not immediately. (Unlike
+  `IO.poll`, which does handle this — see that section above.)
+- Command-not-found and other spawn failures (a bad path, no exec
+  permission, ...) raise `IOError` synchronously, the same call that
+  fails, rather than exit code `127` the way a real shell reports it.
+
 ## What's deliberately out of scope so far
 
 - **Multiple `print`/`puts` arguments**: `puts(a, b)` (Ruby-style, one

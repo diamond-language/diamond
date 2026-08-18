@@ -1,0 +1,5 @@
+result = Process.run(["sh", "-c", "echo out; echo err 1>&2; exit 3"])
+puts(result.stdout())
+puts(result.stderr())
+puts(result.exit_code())
+result.success?()

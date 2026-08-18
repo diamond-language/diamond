@@ -543,6 +543,23 @@ future work.
   `receive`.
 - TLS: `TLSSocket.connect`/`TLSServer.listen`/`.accept`, built on OpenSSL,
   with mandatory certificate/hostname verification.
+- `Process.run(argv)`: a subprocess/process-spawning API, another release-
+  readiness gap the "what do most languages have that Diamond doesn't"
+  pass turned up. Deliberately minimal and blocking, a design choice
+  settled with the user up front given the larger surface (shell
+  injection, blocking vs. async, fd handling) other recent additions
+  didn't have to weigh: `argv`-array-only (no shell-string form at all,
+  so no injection surface to guard against by construction), stdin
+  always `/dev/null` (no way to feed the child data in v1), blocks until
+  exit with full stdout/stderr captured via a pipe pair drained with
+  `poll()` (not read-one-to-EOF-then-the-other, which would deadlock once
+  a child writes enough to fill the other pipe's buffer while blocked on
+  the one being drained). See `docs/io.md`'s "Process" section for the
+  full scope, including what's explicitly deferred (a non-blocking
+  `Process.spawn` with a live handle is the natural next step, not part
+  of this). Not part of `selfhost/parser.di`'s supported grammar, same
+  as `Time`/`Thread`/`SQLite3`/`ProgramBuilder`'s own native singleton-
+  call opcodes.
 
 ### REPL
 

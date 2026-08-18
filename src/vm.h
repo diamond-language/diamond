@@ -171,6 +171,7 @@ typedef enum DiamondOpCode : uint8_t {
     DIAMOND_OP_TIME_NOW,
     DIAMOND_OP_TIME_AT,
     DIAMOND_OP_SHIFT_LEFT,
+    DIAMOND_OP_PROCESS_RUN,
     DIAMOND_OP_COUNT,
 } DiamondOpCode;
 
