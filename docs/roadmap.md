@@ -819,16 +819,44 @@ concurrency" above.
   other `DIAMOND_TRACE_*` counter is, `src/run_source.c`) instead of
   inferring collector behavior from external RSS sampling under live
   `ab` load, which conflates request-handling timing, OS scheduling,
-  and page-cache behavior with the collector's own cost. Not yet wired
-  up to anything a long-running, signal-killed `gremlin_serve` process
-  can surface, though -- an ordinary Diamond program reaches the normal
-  print-at-exit path these counters use, but `bench/burn_in`'s server
-  never exits cleanly (it's always `kill`ed). Giving the live burn-in
-  case a way to read these mid-run (a periodic print, a signal handler,
-  or exposing them to Diamond code some other way) is a separate,
-  not-yet-designed follow-up. Whoever picks this up next should use
-  `run_hard.sh` (not the original `run.sh`, which has no watchdog) for
-  any further live-server push, choose its cap from actual `free -h`
-  headroom at launch time -- not a guess -- but consider reaching for
-  `DIAMOND_TRACE_GC` on a shorter, non-networked, non-daemon reproducer
-  first, since it sidesteps this whole class of confound.
+  and page-cache behavior with the collector's own cost.
+
+  Took that suggestion: `bench/gc_churn` (two short, single-threaded,
+  non-networked, non-daemon `.di` scripts, see that directory's own
+  README for the full numbers and methodology) gives the clean, direct
+  evidence the live `bench/burn_in` pushes above couldn't. Two separate
+  findings, disentangled by sweeping live-set size and churn volume
+  independently: (1) **per-collection pause cost scales with live-set
+  size, not churn** -- holding total allocation volume fixed and growing
+  a persistent, continuously-mutated session cache 40x (1,000 → 40,000
+  entries) made each individual stop-the-world collection ~7x more
+  expensive (15ms → 103ms), because every collection today re-marks and
+  re-walks the *entire* live heap regardless of how much of it actually
+  changed since the last cycle -- exactly the cost
+  `docs/gc-generational-design.md`'s nursery/write-barrier design would
+  eliminate for the old, stable part of the heap. (2) **total aggregate
+  GC CPU share does not run away with live-set size** in this data -- it
+  actually drifts slightly down (40% → 31%) as the live set grows, since
+  bigger live sets trigger collections less often. So the case for a
+  generational collector here is specifically about bounding individual
+  pause length (the metric that shows up directly in tail latency, this
+  project's own original `bench/burn_in` motivation), not runaway total-
+  CPU cost -- consistent with `bench/burn_in`'s live numbers never
+  showing catastrophic growth, just noisy, hard-to-interpret variance. A
+  `pure_churn.di` control (same per-iteration allocation shape, zero
+  persistent live set) confirms the mechanism directly: it holds a flat
+  ~12-13% GC share regardless of iteration count, an order of magnitude
+  more collections than the session-cache version but each one nearly
+  free, since there's almost nothing live to walk.
+
+  This resolves what the live `bench/burn_in` runs above left "genuinely
+  unknown" -- not by explaining that specific run-to-run RSS variance
+  (still unresolved, and may not be resolvable without cleaner evidence
+  than more live runs can give), but by establishing directly, without
+  that confound, that this project's actual generational-GC motivation
+  (long-running processes with a large, mostly-stable, continuously-
+  mutated live set) is real and measurable: individual pauses that scale
+  with live-set size, not with how much garbage churns through it. Still
+  not implemented -- `docs/gc-generational-design.md`'s design is the
+  next step whenever this is picked up, now backed by direct measurement
+  instead of a plausibility argument.
