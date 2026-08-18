@@ -463,6 +463,34 @@ returning a one-character `String`, recognized the same way `gets()`
 is (shadowable by a local or top-level function). `code` outside
 `0..255` raises a rescuable `RangeError`.
 
+`.format(values)` is a `sprintf`-style formatter — `values` is either a
+single value or an `Array` of them (matching Ruby's `String#%`, without
+needing variadic/splat call support Diamond doesn't have):
+
+```ruby
+"Name: %s, Age: %d".format(["Alice", 30])  # => "Name: Alice, Age: 30"
+"%05d".format(42)                          # => "00042"
+"%-10s|".format("hi")                      # => "hi        |"
+"%.2f".format(3.14159)                     # => "3.14"
+```
+
+Directives: `%d`/`%i` (`Int` or `Float`, truncated), `%f` (`Float` or
+`Int`, default 6 decimal places, `%.Nf` for `N`), `%x`/`%X`/`%o`/`%b`
+(`Int`, hex/octal/binary — `%b` has no C `printf` equivalent, hand-
+rolled), `%s` (any value, via the same formatting string interpolation
+uses, including a user-defined `to_s` override), and `%%` for a literal
+`%`. `-` left-justifies and `0` zero-pads within a numeric width prefix
+(`%-10s`, `%05d`); `.N` sets `%f`'s precision. Every directive's
+argument type is checked against what that directive actually needs
+(`TypeError` on a mismatch); too few arguments raises `ArgumentError`,
+extra arguments are silently ignored. Each directive is handled by
+building a small, internally-chosen conversion string from the parsed
+flags/width/precision and handing it to a real `snprintf` alongside
+exactly one correctly-typed value — never your format string forwarded
+into a C varargs call directly, which would be a real format-string
+vulnerability given a Diamond value's runtime type has no fixed
+relationship to what a positionally-matched C conversion expects.
+
 Strings also support `[]` with a single `Int` index, returning a new
 one-character `String` (bounds-checked, `IndexError` outside the
 string — the same as `.slice()`); unlike Array/Hash, `[]=` on a String

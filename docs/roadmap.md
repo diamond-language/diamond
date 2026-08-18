@@ -349,6 +349,12 @@ future work.
   backreference substitution in the replacement string.
 - A `JSON` module (`JSON.stringify`/`JSON.parse`), pure Diamond, with
   `\uXXXX` escape support.
+- `String#format`, a `sprintf`-style formatter (`%d`/`%i`/`%f`/`%x`/`%X`/
+  `%o`/`%b`/`%s`/`%%`, with `-`/`0`/width/precision) taking a single value
+  or an `Array` of them rather than needing variadic/splat call support,
+  which Diamond doesn't have. See `docs/syntax.md`. One of the release-
+  readiness gaps a "what do most languages have that Diamond doesn't"
+  pass turned up (no format-string method at all, previously).
 
 ### Collections and Enumerable
 

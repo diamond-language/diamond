@@ -6132,6 +6132,171 @@ static DiamondVmStatus time_dispatch_helper(DiamondVm *vm,DiamondTime *target,
     return DIAMOND_VM_TYPE_ERROR;
 }
 
+/* String#format's real body -- kept out of run_chunk's own INVOKE case
+ * for the same stack-frame-budget reason array_join_helper/
+ * time_dispatch_helper already are (see array_join_helper's own
+ * comment): the flag/width/precision parsing state below is real stack
+ * weight this switch doesn't need baked into every call's frame.
+ *
+ * A %-directive's flags/width/precision are parsed and bounds-checked
+ * here, then used to build a small, internally-constructed conversion
+ * string (e.g. "%-05lld") handed to a real snprintf alongside exactly
+ * one correctly-typed C argument -- never the caller's own format
+ * string forwarded into printf-family varargs directly (that would be
+ * a real format-string vulnerability, since a Diamond value's runtime
+ * type has no relationship to whatever C conversion a matching printf
+ * call site expects; every conversion here is chosen by this function
+ * from a fixed, closed set, not from caller-controlled text).
+ *
+ * `args_value` is either the single value to format, or an Array of
+ * them (`"%d-%s".format([1, "x"])`) -- matching Ruby's String#%,
+ * without needing variadic/splat call support Diamond doesn't have. */
+static DiamondVmStatus string_format_helper(DiamondVm *vm,const DiamondChunk *chunk,
+        size_t depth,const DiamondString *format,DiamondValue args_value,
+        DiamondValue *out) {
+    const DiamondValue *args=&args_value;
+    size_t arg_count=1;
+    if(args_value.kind==DIAMOND_VALUE_OBJECT&&
+       args_value.as.object->kind==DIAMOND_OBJECT_ARRAY) {
+        const DiamondArray *array=(const DiamondArray *)args_value.as.object;
+        args=array->values;arg_count=array->count;
+    }
+    StringBuilder builder={};
+    size_t arg_index=0;
+    DiamondVmStatus status=DIAMOND_VM_OK;
+    for(size_t index=0;index<format->length;index++) {
+        const char ch=format->chars[index];
+        if(ch!='%') {
+            if(!builder_append(&builder,&ch,1)){status=DIAMOND_VM_OUT_OF_MEMORY;break;}
+            continue;
+        }
+        index++;
+        if(index>=format->length) {
+            snprintf(vm->error,sizeof vm->error,
+                "String#format: trailing '%%' with no directive");
+            status=DIAMOND_VM_TYPE_ERROR;break;
+        }
+        if(format->chars[index]=='%') {
+            if(!builder_append(&builder,"%",1)){status=DIAMOND_VM_OUT_OF_MEMORY;break;}
+            continue;
+        }
+        bool left_justify=false,zero_pad=false;
+        while(index<format->length&&
+              (format->chars[index]=='-'||format->chars[index]=='0')) {
+            if(format->chars[index]=='-')left_justify=true;else zero_pad=true;
+            index++;
+        }
+        int width=0;
+        while(index<format->length&&isdigit((unsigned char)format->chars[index])) {
+            width=width*10+(format->chars[index]-'0');index++;
+        }
+        int precision=-1;
+        if(index<format->length&&format->chars[index]=='.') {
+            index++;precision=0;
+            while(index<format->length&&isdigit((unsigned char)format->chars[index])) {
+                precision=precision*10+(format->chars[index]-'0');index++;
+            }
+        }
+        if(index>=format->length) {
+            snprintf(vm->error,sizeof vm->error,
+                "String#format: incomplete directive at end of format string");
+            status=DIAMOND_VM_TYPE_ERROR;break;
+        }
+        const char conversion=format->chars[index];
+        if(arg_index>=arg_count) {
+            snprintf(vm->error,sizeof vm->error,
+                "String#format: too few arguments for format string");
+            status=DIAMOND_VM_ARITY_ERROR;break;
+        }
+        const DiamondValue arg=args[arg_index++];
+        char piece[512];
+        int piece_length=-1;
+        if(conversion=='d'||conversion=='i') {
+            if(arg.kind!=DIAMOND_VALUE_INT&&arg.kind!=DIAMOND_VALUE_FLOAT) {
+                snprintf(vm->error,sizeof vm->error,
+                    "String#format: %%%c needs an Int or Float argument",conversion);
+                status=DIAMOND_VM_TYPE_ERROR;break;
+            }
+            const int64_t value=arg.kind==DIAMOND_VALUE_FLOAT?
+                (int64_t)arg.as.real:arg.as.integer;
+            char spec[16];
+            snprintf(spec,sizeof spec,"%%%s%s%dlld",
+                left_justify?"-":"",zero_pad?"0":"",width);
+            piece_length=snprintf(piece,sizeof piece,spec,(long long)value);
+        } else if(conversion=='f') {
+            if(arg.kind!=DIAMOND_VALUE_INT&&arg.kind!=DIAMOND_VALUE_FLOAT) {
+                snprintf(vm->error,sizeof vm->error,
+                    "String#format: %%f needs an Int or Float argument");
+                status=DIAMOND_VM_TYPE_ERROR;break;
+            }
+            const double value=arg.kind==DIAMOND_VALUE_FLOAT?
+                arg.as.real:(double)arg.as.integer;
+            char spec[24];
+            snprintf(spec,sizeof spec,"%%%s%s%d.%df",
+                left_justify?"-":"",zero_pad?"0":"",width,precision<0?6:precision);
+            piece_length=snprintf(piece,sizeof piece,spec,value);
+        } else if(conversion=='x'||conversion=='X'||conversion=='o'||conversion=='b') {
+            if(arg.kind!=DIAMOND_VALUE_INT) {
+                snprintf(vm->error,sizeof vm->error,
+                    "String#format: %%%c needs an Int argument",conversion);
+                status=DIAMOND_VM_TYPE_ERROR;break;
+            }
+            if(conversion=='b') {
+                char digits[65];size_t digit_count=0;
+                uint64_t bits=(uint64_t)arg.as.integer;
+                do {digits[digit_count++]=(char)('0'+(bits&1));bits>>=1;}
+                while(bits!=0&&digit_count<sizeof digits);
+                char reversed[65];
+                for(size_t i=0;i<digit_count;i++)reversed[i]=digits[digit_count-1-i];
+                reversed[digit_count]='\0';
+                char spec[16];
+                snprintf(spec,sizeof spec,"%%%s%s%ds",
+                    left_justify?"-":"",zero_pad?"0":"",width);
+                piece_length=snprintf(piece,sizeof piece,spec,reversed);
+            } else {
+                char spec[16];
+                snprintf(spec,sizeof spec,"%%%s%s%d%c",
+                    left_justify?"-":"",zero_pad?"0":"",width,conversion);
+                piece_length=snprintf(piece,sizeof piece,spec,
+                    (unsigned long long)arg.as.integer);
+            }
+        } else if(conversion=='s') {
+            DiamondValue stringified=DIAMOND_NIL;
+            status=stringify_value(vm,chunk,depth,arg,&stringified);
+            if(status!=DIAMOND_VM_OK)break;
+            const DiamondString *piece_string=
+                (const DiamondString *)stringified.as.object;
+            const size_t pad=width>0&&(size_t)width>piece_string->length?
+                (size_t)width-piece_string->length:0;
+            bool ok=true;
+            if(pad>0&&!left_justify)
+                for(size_t i=0;i<pad&&ok;i++)ok=builder_append(&builder," ",1);
+            if(ok)ok=builder_append(&builder,piece_string->chars,piece_string->length);
+            if(pad>0&&left_justify)
+                for(size_t i=0;i<pad&&ok;i++)ok=builder_append(&builder," ",1);
+            if(!ok){status=DIAMOND_VM_OUT_OF_MEMORY;break;}
+            continue;
+        } else {
+            snprintf(vm->error,sizeof vm->error,
+                "String#format: unknown directive '%%%c'",conversion);
+            status=DIAMOND_VM_TYPE_ERROR;break;
+        }
+        if(piece_length<0||(size_t)piece_length>=sizeof piece) {
+            status=DIAMOND_VM_OUT_OF_MEMORY;break;
+        }
+        if(!builder_append(&builder,piece,(size_t)piece_length)) {
+            status=DIAMOND_VM_OUT_OF_MEMORY;break;
+        }
+    }
+    if(status!=DIAMOND_VM_OK) {free(builder.chars);return status;}
+    DiamondString *formatted=allocate_string(vm,
+        builder.chars?builder.chars:"",builder.length);
+    free(builder.chars);
+    if(formatted==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+    *out=DIAMOND_OBJECT(formatted);
+    return DIAMOND_VM_OK;
+}
+
 static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                                  DiamondVm *vm,
                                  const DiamondValue *arguments,
@@ -7467,6 +7632,8 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                             memcmp(method_name->chars,"rjust",5)==0;
                         const bool tr_method=method_name->length==2&&
                             memcmp(method_name->chars,"tr",2)==0;
+                        const bool format_method=method_name->length==6&&
+                            memcmp(method_name->chars,"format",6)==0;
                         const DiamondString *source=
                             (const DiamondString *)registers[recv].as.object;
                         if(gsub_method||sub_method) {
@@ -7978,6 +8145,14 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                             free(result_buffer.data);
                             if(translated==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
                             registers[dest]=DIAMOND_OBJECT(translated);break;
+                        }
+                        if(format_method) {
+                            if(argc!=1)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                            DiamondValue formatted=DIAMOND_NIL;
+                            const DiamondVmStatus format_status=string_format_helper(
+                                vm,chunk,depth,source,registers[base],&formatted);
+                            VM_PROPAGATE(format_status);
+                            registers[dest]=formatted;break;
                         }
                         snprintf(vm->error,sizeof vm->error,"undefined method '%.*s' for %s",
                             (int)method_name->length,method_name->chars,"String");
