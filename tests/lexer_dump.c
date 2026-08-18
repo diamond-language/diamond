@@ -30,6 +30,8 @@ static const char *kind_name(DiamondTokenKind kind) {
         case DIAMOND_TOKEN_RIGHT_BRACE: return "right_brace";
         case DIAMOND_TOKEN_COMMA: return "comma";
         case DIAMOND_TOKEN_DOT: return "dot";
+        case DIAMOND_TOKEN_DOT_DOT: return "dot_dot";
+        case DIAMOND_TOKEN_DOT_DOT_DOT: return "dot_dot_dot";
         case DIAMOND_TOKEN_COLON: return "colon";
         case DIAMOND_TOKEN_DOUBLE_COLON: return "double_colon";
         case DIAMOND_TOKEN_PIPE: return "pipe";

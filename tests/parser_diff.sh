@@ -13,7 +13,15 @@ diamond=./build/diamond
 count=0
 for case_file in tests/parser_cases/*.di; do
     expected="$("$diamond" "$case_file")"
-    actual="$(echo "$case_file" | "$diamond" selfhost/parser_run.di | sed '$d')"
+    # parser_run_with_core.di, not plain parser_run.di: the "expected"
+    # side above always has lib/core.di spliced in (src/main.c's
+    # run_source does that unconditionally), so any fixture that touches
+    # a core.di-defined class/function (Range, StringBuilder, abs, ...)
+    # needs the self-hosted side to see the same prelude, or it fails
+    # with "not defined" instead of a genuine divergence. Confirmed no
+    # existing fixture's own top-level def/class/module names collide
+    # with core.di's before making this the default for every case.
+    actual="$(echo "$case_file" | "$diamond" selfhost/parser_run_with_core.di | sed '$d')"
     if [[ "$actual" != "$expected" ]]; then
         echo "parser result mismatch for $case_file" >&2
         echo "  expected: $expected" >&2

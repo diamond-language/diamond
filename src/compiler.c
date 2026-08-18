@@ -10,6 +10,10 @@ enum { TYPE_UNKNOWN = UINT8_MAX };
 
 typedef enum Precedence {
     PREC_NONE,
+    /* Looser than every other binary operator (including ||/&&), matching
+     * Ruby's own precedence table -- `a > 0 .. b < 10` reads as
+     * `(a>0)..(b<10)`, and `1..n+1` reads as `1..(n+1)`. */
+    PREC_RANGE,
     PREC_OR,
     PREC_AND,
     PREC_EQUALITY,
@@ -596,6 +600,9 @@ static uint16_t define_local(Compiler *compiler, DiamondSpan name) {
 
 static Precedence token_precedence(DiamondTokenKind kind) {
     switch (kind) {
+        case DIAMOND_TOKEN_DOT_DOT:
+        case DIAMOND_TOKEN_DOT_DOT_DOT:
+            return PREC_RANGE;
         case DIAMOND_TOKEN_OR_OR:
         case DIAMOND_TOKEN_OR:
             return PREC_OR;
@@ -3466,6 +3473,32 @@ static uint16_t parse_precedence(Compiler *compiler, Precedence precedence) {
             left=destination;
             continue;
         }
+        if(operator==DIAMOND_TOKEN_DOT_DOT||operator==DIAMOND_TOKEN_DOT_DOT_DOT) {
+            const bool exclusive=operator==DIAMOND_TOKEN_DOT_DOT_DOT;
+            const uint16_t right=parse_precedence(
+                compiler,(Precedence)(operator_precedence+1));
+            const int class_index=find_class_name(compiler,"Range");
+            if(class_index<0) {
+                fail(compiler,compiler->previous.span,
+                     "'Range' is not defined -- is the prelude loaded?");
+                return left;
+            }
+            const uint16_t exclusive_reg=allocate_register(compiler);
+            emit_instruction(compiler,DIAMOND_OP_BOOL,exclusive_reg,exclusive,0,2);
+            const uint16_t base=allocate_register(compiler);
+            (void)allocate_register(compiler);
+            (void)allocate_register(compiler);
+            emit_instruction(compiler,DIAMOND_OP_MOVE,base,left,0,2);
+            emit_instruction(compiler,DIAMOND_OP_MOVE,(uint16_t)(base+1),right,0,2);
+            emit_instruction(compiler,DIAMOND_OP_MOVE,(uint16_t)(base+2),
+                             exclusive_reg,0,2);
+            const uint16_t dest=allocate_register(compiler);
+            emit_opcode(compiler,DIAMOND_OP_NEW); emit_register(compiler,dest);
+            emit_byte(compiler,(uint8_t)class_index); emit_register(compiler,base);
+            emit_byte(compiler,3);
+            compiler->known_types[dest]=(uint8_t)(DIAMOND_TYPE_CLASS_BASE+class_index);
+            left=dest;continue;
+        }
         const uint16_t right = parse_precedence(
             compiler, (Precedence)(operator_precedence + 1));
         left = compile_binary_op(compiler, operator, left, right);
@@ -3474,7 +3507,7 @@ static uint16_t parse_precedence(Compiler *compiler, Precedence precedence) {
 }
 
 static uint16_t parse_expression(Compiler *compiler) {
-    return parse_precedence(compiler, PREC_OR);
+    return parse_precedence(compiler, PREC_RANGE);
 }
 
 static bool assignment_ahead(const Compiler *compiler) {

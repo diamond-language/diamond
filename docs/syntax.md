@@ -159,6 +159,49 @@ count), so every `Float` prints exactly and unambiguously — including
 values that need the full 17 significant digits a `double` can carry,
 which a naive fixed-precision format can silently get wrong.
 
+## Ranges
+
+```ruby
+(1..5).first()         # => 1
+(1..5).last()          # => 5
+(1..5).include?(5)     # => true
+(1...5).include?(5)    # => false, exclusive of the end
+(1..5).length()        # => 5
+(1...5).length()       # => 4
+(5..1).length()        # => 0, reversed ranges are just empty
+
+sum = 0
+def add(x)
+  sum = sum + x
+end
+(1..5).each(add)       # sum == 15
+```
+
+`1..5` (inclusive of `5`) and `1...5` (exclusive of `5`) both desugar
+directly at parse time into `Range.new(1, 5, false)` /
+`Range.new(1, 5, true)` — `Range` is a plain class in `lib/core.di`, the
+same "not a native object" precedent `StringBuilder` already establishes,
+not a new VM value kind. No new bytecode opcode exists for it either:
+the desugaring reuses the exact same `NEW` instruction sequence
+`ClassName.new(...)` already produces.
+
+`..`/`...` bind looser than every other binary operator, including
+`&&`/`||`, matching Ruby's own precedence table: `1..n+1` reads as
+`1..(n+1)`, and `a > 0 .. b < 10` reads as `(a>0)..(b<10)`.
+
+`Range` includes `Enumerable`, so `.select`/`.count`/`.any?`/`.all?`/
+`.map`/`.reduce` all work on a range the same way they do on any other
+`Enumerable`-including class (see "Collections" below).
+
+Scope, deliberately: `Range` is `Int`-only for v1 (`start`/`end` must
+both be `Int`) — constructing one with `Float` or any other type raises
+a `TypeError`, the same cut `array_sort` already makes elsewhere.
+Range-based indexing/slicing (`arr[1..3]`, `hash[range]`) isn't
+supported yet either — indexing still expects a plain `Int`, so passing
+a `Range` there raises a `TypeError` rather than slicing; that's a
+separate, larger change to `DIAMOND_OP_INDEX_GET`'s own dispatch, not
+part of `Range` itself.
+
 ## Symbols
 
 ```ruby

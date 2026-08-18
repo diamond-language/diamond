@@ -29,6 +29,14 @@ typedef enum DiamondTokenKind {
     DIAMOND_TOKEN_RIGHT_BRACE,
     DIAMOND_TOKEN_COMMA,
     DIAMOND_TOKEN_DOT,
+    /* Range operators -- `1..5` (inclusive), `1...5` (exclusive). Lexed
+     * here, not folded into DIAMOND_TOKEN_DOT with a "how many dots"
+     * count, so the parser can dispatch on token kind the same way it
+     * already does for every other operator, rather than re-inspecting
+     * the source text. See compiler.c's range desugaring for why no new
+     * DiamondOpCode was needed for this. */
+    DIAMOND_TOKEN_DOT_DOT,
+    DIAMOND_TOKEN_DOT_DOT_DOT,
     DIAMOND_TOKEN_COLON,
     DIAMOND_TOKEN_DOUBLE_COLON,
     DIAMOND_TOKEN_PIPE,

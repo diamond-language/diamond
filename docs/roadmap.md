@@ -490,6 +490,81 @@ future work.
   Verified via the existing Array-of-Instance/multi-arg-Thread fixtures
   plus a full `run_cases` pass, both under `DIAMOND_STRESS_GC=1`.
 
+- **Ranges**: `1..5` (inclusive) / `1...5` (exclusive), first item off a
+  Ruby-idiom gap survey done directly (not delegated) after the compound-
+  assignment work above — `docs/syntax.md`/`lib/core.di`/runtime probing
+  confirmed Diamond had no Range type at all before this. Follows both of
+  compound assignment's own precedents at once: `Range` is a plain class
+  in `lib/core.di` (fields for start/end/exclusive, `first`/`last`/
+  `exclusive?`/`length`/`include?`/`each`, `include Enumerable` for free
+  `.select`/`.map`/`.reduce`/etc.), the same "not a native object"
+  precedent `StringBuilder` already establishes; and `a..b`/`a...b` are
+  pure syntactic sugar the parser desugars directly into the same
+  bytecode `Range.new(a, b, false)`/`Range.new(a, b, true)` would already
+  produce from ordinary `ClassName.new(...)` codegen — no new
+  `DiamondOpCode`, no new `DIAMOND_OBJECT_*` kind, no GC/mark-sweep
+  changes, sidestepping the opcode-numbering-must-match-between-native-
+  and-self-hosted risk class entirely, same as compound assignment did.
+
+  `..`/`...` bind looser than every other binary operator including
+  `&&`/`||` (a new `PREC_RANGE` sits between `PREC_NONE` and `PREC_OR`,
+  and `parse_expression`'s entry point moved there from `PREC_OR`),
+  matching Ruby's own precedence table — confirmed via
+  `x > 0 .. y < 20` raising `Range`'s own `Int`-only `TypeError` (proving
+  it parsed as `(x>0)..(y<20)`, two `Bool`s, not anything narrower) and
+  `1..n+3` correctly reading as `1..(n+3)`.
+
+  Scope, deliberate: `Int`-only for v1 (`start`/`end` must both be
+  `Int`), matching `array_sort`'s existing Int-only precedent — a
+  `Float`/`Bool`/anything-else range raises a `TypeError` at
+  construction rather than being silently wrong. Range-based
+  indexing/slicing (`arr[1..3]`, `hash[range]`) and `Integer#times`/
+  `upto`/`downto` are both deliberately deferred to their own later list
+  items, not part of this change — confirmed `arr[1..3]` still raises a
+  clean `TypeError` today rather than doing anything confusing.
+
+  Two real things found and fixed along the way, unrelated to Range's
+  own logic:
+  - **A latent Makefile staleness bug**: `build/run_cases`'s rule listed
+    `tests/run_cases.c $(SOURCES)` as prerequisites but not `lib/core.di`,
+    even though `src/run_source.c`/`src/repl.c` both `#embed` it — so
+    editing only `lib/core.di` (exactly what adding the `Range` class
+    did) left a stale `run_cases` binary that `make debug` reported as
+    already up to date, silently testing against the *old* prelude.
+    Caught because `bash tests/run.sh` failed the three new `range_*`
+    cases with "'Range' is not defined" even though `./build/diamond -e`
+    smoke tests (built via `$(TARGET)`'s own incremental `.o`/`.d` rules,
+    which — confirmed by grepping the generated `.d` files — *do* capture
+    `#embed`'d files automatically via `-MMD`) already worked correctly.
+    Fixed by adding `lib/core.di` as an explicit prerequisite to the
+    `run_cases` rule; this was a pre-existing gap that would have bitten
+    any future `lib/core.di`-only change, not something new to Range.
+  - **The self-hosted parser differential harness (`tests/parser_diff.sh`)
+    couldn't test anything that touched `lib/core.di`**: its main loop ran
+    the self-hosted side through `selfhost/parser_run.di` (plain
+    `parse_and_run`, no prelude spliced in) while the native "expected"
+    side always runs with `lib/core.di` included (`src/main.c`'s
+    `run_source` does that unconditionally) — a divergence invisible
+    until now because no prior `tests/parser_cases` fixture happened to
+    reference a `lib/core.di`-defined class or function.
+    `tests/parser_cases/range.di` was the first to need one (`Range`
+    itself). Fixed by switching the main loop to
+    `selfhost/parser_run_with_core.di` (already existed, previously used
+    only by the separate Phase 4 self-run bootstrap check) — confirmed
+    zero existing fixture's own top-level `def`/`class`/`module` names
+    collide with any of `lib/core.di`'s, so this is a strict superset of
+    coverage with no behavior change for any pre-existing case.
+
+  Verified: `make debug` (clean, zero warnings), full `bash tests/run.sh`
+  (1053 passing, six new `tests/cases/range_*.di` fixtures covering
+  construction/`first`/`last`/`exclusive?`, `each`-based accumulation
+  through a captured local, `include?` boundaries in both directions,
+  `length` for inclusive/exclusive/empty-reversed ranges, `Enumerable`
+  methods, and the `1..2+3` precedence case), `make test-lexer-diff`
+  (988 cases, the six new fixtures included automatically), and
+  `make test-parser-diff` (246 differential cases plus the self-hosted
+  self-parse and self-run bootstrap checks, all passing).
+
 ### Collections and Enumerable
 
 - Replaced `Hash`'s O(n) linear-scan lookup with a real open-addressing hash

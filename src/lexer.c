@@ -297,6 +297,9 @@ DiamondToken diamond_lexer_next(DiamondLexer *lexer) {
         case ',':
             return token(lexer, DIAMOND_TOKEN_COMMA);
         case '.':
+            if(match(lexer,'.'))
+                return token(lexer,match(lexer,'.')?DIAMOND_TOKEN_DOT_DOT_DOT
+                                                     :DIAMOND_TOKEN_DOT_DOT);
             return token(lexer, DIAMOND_TOKEN_DOT);
         case ':': {
             if(match(lexer,':'))return token(lexer,DIAMOND_TOKEN_DOUBLE_COLON);

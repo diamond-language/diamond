@@ -61,7 +61,7 @@ $(BUILD_DIR)/%.o: src/%.c
 # built, and needs run_cases to match (see docs/roadmap.md for why this
 # exists: running every tests/cases/*.di case in this one process
 # instead of tests/run.sh spawning a fresh `diamond` per case).
-$(BUILD_DIR)/run_cases: tests/run_cases.c $(SOURCES)
+$(BUILD_DIR)/run_cases: tests/run_cases.c $(SOURCES) lib/core.di
 	@mkdir -p $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(API_SOURCES) $< $(LDFLAGS) $(LDLIBS) -o $@
 

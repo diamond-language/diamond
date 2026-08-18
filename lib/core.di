@@ -500,6 +500,55 @@ module Enumerable
   def reduce(initial, callback: Callable[2]) = enumerable_reduce(self, initial, callback)
 end
 
+# `1..5` (inclusive) / `1...5` (exclusive) desugar directly to
+# `Range.new(1, 5, false)` / `Range.new(1, 5, true)` at parse time (see
+# compiler.c's range-desugaring branch in parse_precedence) -- Range
+# itself is a plain class here, not a native object, same precedent as
+# StringBuilder. `end` is a reserved keyword, hence `end_value`/`@end`.
+class Range
+  include Enumerable
+
+  def initialize(start: Int, end_value: Int, exclusive: Bool)
+    @start = start
+    @end = end_value
+    @exclusive = exclusive
+  end
+
+  def first() -> Int = @start
+  def last() -> Int = @end
+  def exclusive?() -> Bool = @exclusive
+
+  def length() -> Int
+    n = @end - @start
+    n = n + 1 unless @exclusive
+    n = 0 if n < 0
+    n
+  end
+
+  def include?(value: Int) -> Bool
+    within_end = if @exclusive
+      value < @end
+    else
+      value <= @end
+    end
+    value >= @start && within_end
+  end
+
+  def each(callback: Callable[1])
+    i = @start
+    stop = if @exclusive
+      @end
+    else
+      @end + 1
+    end
+    while i < stop
+      callback(i)
+      i = i + 1
+    end
+    self
+  end
+end
+
 def abs(x: Int | Float) -> Int | Float
   if x < 0
     -x

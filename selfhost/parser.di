@@ -142,14 +142,15 @@ end
 
 module Precedence
   NONE = 0
-  OR = 1
-  AND = 2
-  EQUALITY = 3
-  COMPARISON = 4
-  SHIFT = 5
-  TERM = 6
-  FACTOR = 7
-  PREFIX = 8
+  RANGE = 1
+  OR = 2
+  AND = 3
+  EQUALITY = 4
+  COMPARISON = 5
+  SHIFT = 6
+  TERM = 7
+  FACTOR = 8
+  PREFIX = 9
 end
 
 # Phase 3 sub-phase 4 (gradual typing): scalar and union type annotations
@@ -3711,6 +3712,7 @@ class Parser
   # parse_precedence/parse_prefix/token_precedence/binary_opcode) ---
 
   def token_precedence(kind)
+    return Precedence::RANGE if kind == :dot_dot || kind == :dot_dot_dot
     return Precedence::OR if kind == :or_or || kind == :or
     return Precedence::AND if kind == :and_and || kind == :and
     return Precedence::EQUALITY if kind == :equal_equal || kind == :bang_equal || kind == :is
@@ -3737,7 +3739,7 @@ class Parser
   end
 
   def parse_expression()
-    self.parse_precedence(Precedence::OR)
+    self.parse_precedence(Precedence::RANGE)
   end
 
   def parse_precedence(precedence)
@@ -3776,6 +3778,34 @@ class Parser
           if self.declared_type(left) != nil
             @pending_type_narrowing = [destination, left, type_id]
           end
+          left = destination
+        end
+      elsif operator == :dot_dot || operator == :dot_dot_dot
+        exclusive = operator == :dot_dot_dot
+        right = self.parse_precedence(operator_precedence + 1)
+        class_entry = self.find_class("Range")
+        if class_entry == nil
+          self.fail("'Range' is not defined -- is the prelude loaded?")
+        else
+          exclusive_register = self.allocate_register()
+          self.emit_instruction2(Opcode::BOOL, exclusive_register, if exclusive
+            1
+          else
+            0
+          end)
+          argument_base = self.allocate_register()
+          self.allocate_register()
+          self.allocate_register()
+          self.emit_instruction2(Opcode::MOVE, argument_base, left)
+          self.emit_instruction2(Opcode::MOVE, argument_base + 1, right)
+          self.emit_instruction2(Opcode::MOVE, argument_base + 2, exclusive_register)
+          destination = self.allocate_register()
+          self.emit_byte(Opcode::NEW)
+          self.emit_register(destination)
+          self.emit_byte(class_entry[1])
+          self.emit_register(argument_base)
+          self.emit_byte(3)
+          self.set_type_fact(destination, Type::CLASS_BASE + class_entry[1])
           left = destination
         end
       elsif operator == :and_and || operator == :and || operator == :or_or || operator == :or
