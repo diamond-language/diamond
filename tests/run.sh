@@ -2206,12 +2206,21 @@ puts_actual="$(DIAMOND_STRESS_GC=1 $diamond -e $'x = 9223372036854775807 + 1\npu
 
 # nproc reports the *host's* CPU count, not what a cgroup-throttled CI
 # container is actually allotted -- a k8s runner can report nproc=2 while
-# its cpu.max quota caps it well under one real core, which is exactly
-# what made the parallelism assertion below flake on GitLab's shared
-# small runner (serial 5.1s / parallel 9.17s, a ~1.8x ratio indistinguishable
-# from genuine serialization). Read the cgroup quota directly (v2 first,
-# then v1) to get the real CPU budget; only enforce the strict timing
-# ratio when there's true room for two threads to run concurrently.
+# its cpu.max quota caps it well under one real core. That alone turned
+# out not to explain the flake seen on GitLab's shared small runner
+# (serial 5.1s / parallel 9.17s, a ~1.8x ratio, reproduced twice
+# identically): cpu.max there reports "max" (no hard quota), so cpu_budget
+# fell back to nproc=2 and the strict check still ran and still failed.
+# A consistent ~1.8x (not ~1.0x, not random) is the signature of two
+# logical CPUs that are SMT/hyperthread siblings on a single physical
+# core -- GitLab's small runners are commonly 2 vCPU = 1 physical core
+# with hyperthreading, and a tight integer-increment loop like spin()
+# saturates the shared execution ports, so the second logical CPU buys
+# almost nothing. Count distinct physical cores directly from
+# /proc/cpuinfo (physical id + core id pairs) and prefer that over raw
+# nproc/cgroup quota when it's available, since it's the signal that
+# actually determines whether two CPU-bound threads have independent
+# execution resources to run concurrently on.
 cpu_budget="$(nproc)"
 if [[ -r /sys/fs/cgroup/cpu.max ]]; then
     read -r cfs_quota cfs_period < /sys/fs/cgroup/cpu.max
@@ -2225,6 +2234,11 @@ elif [[ -r /sys/fs/cgroup/cpu/cpu.cfs_quota_us && -r /sys/fs/cgroup/cpu/cpu.cfs_
         cpu_budget="$(echo "$cfs_quota / $cfs_period" | bc -l)"
     fi
 fi
+physical_cores="$(awk -F: '/physical id/{p=$2} /^core id/{print p","$2}' /proc/cpuinfo 2>/dev/null | sort -u | wc -l)"
+if [[ "$physical_cores" -gt 0 ]]; then
+    cpu_budget="$physical_cores"
+fi
+echo "DIAG: nproc=$(nproc) physical_cores=$physical_cores cpu_budget=$cpu_budget" >&2
 
 # Real-parallelism proof for Thread: two threads each doing genuine
 # CPU-bound work (not sleep -- sleep would pass even under the old
