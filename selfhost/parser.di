@@ -836,6 +836,146 @@ class Parser
   # documented in Phase 2. Worth remembering for the rest of this port:
   # any method this size needs to be split from the start, not after
   # hitting the limit.
+  # Anonymous `do |params| ... end` closure literal attached to a call's
+  # argument list -- pure sugar over the same nested-closure machinery
+  # compile_definition uses (declare_function, eager unconditional
+  # capture, BOX_LOCAL+CLOSURE), minus every def-specific piece that
+  # doesn't apply to a block: no name, no self_offset, no operator
+  # methods, no return type, no `= expr` endless form. Deliberately NOT
+  # built on top of compile_function_body/emit_closure: those emit
+  # "expected 'end' after function body" and push a named local for the
+  # result, and this needs "expected 'end' after block body" (to match
+  # compiler.c's own compile_block exactly, for the differential error
+  # tests) and must NOT bind a name in the outer scope (a block is only
+  # ever the call's own trailing argument, never referenced afterward).
+  # Mirrors compiler.c's compile_block exactly, including that neither
+  # side requires a newline before the body: compile_sequence already
+  # skips leading newlines itself.
+  def compile_block()
+    self.advance_token()
+    parameter_names = []
+    if @current.kind() == :pipe
+      self.advance_token()
+      self.skip_newlines()
+      if @current.kind() != :pipe
+        more = true
+        while more
+          if @current.kind() != :identifier
+            self.fail("expected block parameter name")
+            return 0
+          end
+          parameter_names.push(self.token_text(@current))
+          self.advance_token()
+          self.skip_newlines()
+          if @current.kind() == :comma
+            self.advance_token()
+            self.skip_newlines()
+            more = true
+          else
+            more = false
+          end
+        end
+      end
+      if @current.kind() != :pipe
+        self.fail("expected '|' after block parameters")
+        return 0
+      end
+      self.advance_token()
+    end
+
+    function_index = @builder.declare_function("<block>", parameter_names.length(),
+      parameter_names.length())
+    enclosing_locals = @locals
+
+    outer_locals = @locals
+    outer_loops = @loops
+    outer_next_register = @next_register
+    outer_code_count = @code_count
+    outer_function_index = @current_function_index
+    outer_enclosing_locals = @enclosing_locals
+    outer_return_type = @current_return_type
+    outer_type_facts = @type_facts
+    outer_declared_types = @declared_types
+
+    @locals = []
+    @loops = []
+    @next_register = 0
+    @code_count = 0
+    @current_function_index = function_index
+    @enclosing_locals = enclosing_locals
+    @current_return_type = nil
+    @type_facts = []
+    @declared_types = []
+    @function_nesting_depth = @function_nesting_depth + 1
+
+    index = 0
+    while index < parameter_names.length()
+      register = self.allocate_register()
+      @locals.push([parameter_names[index], register, false])
+      index = index + 1
+    end
+
+    # Eager capture: every enclosing local not shadowed by a block
+    # parameter of the same name becomes a directly-accessible local
+    # right away -- same unconditional design compile_function_body's
+    # own nested-def handling uses, not a selective "only if referenced"
+    # scheme.
+    index = 0
+    while index < enclosing_locals.length()
+      entry = enclosing_locals[index]
+      if self.find_local(entry[0]) == nil
+        cell = self.allocate_register()
+        self.emit_instruction2(Opcode::GET_CAPTURE_CELL, cell, index)
+        @locals.push([entry[0], cell, true])
+      end
+      index = index + 1
+    end
+
+    body_result = self.compile_sequence()
+    self.emit_instruction1(Opcode::RETURN, body_result)
+    if @current.kind() != :end
+      self.fail("expected 'end' after block body")
+    else
+      self.advance_token()
+    end
+    @builder.set_register_count(function_index, @next_register)
+
+    @locals = outer_locals
+    @loops = outer_loops
+    @next_register = outer_next_register
+    @code_count = outer_code_count
+    @current_function_index = outer_function_index
+    @enclosing_locals = outer_enclosing_locals
+    @current_return_type = outer_return_type
+    @type_facts = outer_type_facts
+    @declared_types = outer_declared_types
+    @function_nesting_depth = @function_nesting_depth - 1
+
+    # BOX_LOCAL + CLOSURE, emitted into the *outer* (caller's) bytecode
+    # now that @locals has been restored -- same shape emit_closure ends
+    # with, minus its final `@locals.push` (a block binds no name).
+    capture_registers = []
+    index = 0
+    while index < enclosing_locals.length()
+      entry = enclosing_locals[index]
+      self.emit_instruction1(Opcode::BOX_LOCAL, entry[1])
+      entry[2] = true
+      capture_registers.push(entry[1])
+      index = index + 1
+    end
+    result = self.allocate_register()
+    self.emit_byte(Opcode::CLOSURE)
+    self.emit_register(result)
+    self.emit_function_index(function_index)
+    self.emit_byte(capture_registers.length())
+    index = 0
+    while index < capture_registers.length()
+      self.emit_register(capture_registers[index])
+      index = index + 1
+    end
+    result
+  end
+
   def compile_definition()
     self.advance_token()
     at_top_level = @function_nesting_depth == 0
@@ -2918,6 +3058,24 @@ class Parser
       argument_count = index + 1 if slot_filled[index]
       index = index + 1
     end
+    # A trailing block fills the next unfilled slot -- the callee's own
+    # declared arity already accounts for it (a direct call takes a
+    # block by having a Callable-typed trailing parameter, same as any
+    # other argument), so this needs no register-contiguity workaround
+    # unlike compile_invoke: slot_values isn't materialized into
+    # registers until after this function returns. Mirrors compiler.c's
+    # own parse_call fix exactly (block goes into the next slot right
+    # after argument_count is computed, before the "every slot below the
+    # highest filled one must be filled" check below).
+    if @current.kind() == :do
+      if argument_count >= arity
+        self.fail("too many call arguments")
+        return nil
+      end
+      slot_values[argument_count] = self.compile_block()
+      slot_filled[argument_count] = true
+      argument_count = argument_count + 1
+    end
     index = 0
     while index < argument_count
       if !slot_filled[index]
@@ -3240,6 +3398,32 @@ class Parser
     method_name_index = self.add_string(name)
     parsed = self.parse_call_arguments()
     return 0 if parsed == nil
+    argument_base = parsed[0]
+    argument_count = parsed[1]
+    # parse_call_arguments already materialized its arguments into the
+    # contiguous range [argument_base, argument_base + argument_count)
+    # before returning -- deliberately not touched (shared with
+    # compile_new_call; see this feature's own design doc on keeping
+    # constructor blocks unsupported on both compilers). A trailing
+    # block's own result register needs to land at exactly
+    # argument_base + argument_count for INVOKE's contiguous-range
+    # convention, so reserve that slot explicitly and MOVE the block's
+    # actual result into it -- mirrors compiler.c's own parse_invoke fix
+    # in effect, via a different mechanism since this helper (unlike
+    # compiler.c's local `args[]` array) has already materialized by the
+    # time control returns here. NOT simply `self.allocate_register()`:
+    # parse_call_arguments always reserves one throwaway register even
+    # for a zero-argument call (so INVOKE always has a valid base register
+    # to encode), so when argument_count is 0 that slot already exists at
+    # @next_register - 1, not @next_register -- allocating again would
+    # leave a silent one-register gap between it and the block.
+    if @current.kind() == :do
+      block_slot = argument_base + argument_count
+      self.allocate_register() if block_slot == @next_register
+      block_result = self.compile_block()
+      self.emit_instruction2(Opcode::MOVE, block_slot, block_result)
+      argument_count = argument_count + 1
+    end
     destination = self.allocate_register()
     if type_arguments.length() == 0
       self.emit_byte(Opcode::INVOKE)
@@ -3249,8 +3433,8 @@ class Parser
     self.emit_register(destination)
     self.emit_register(receiver)
     self.emit_byte(method_name_index)
-    self.emit_register(parsed[0])
-    self.emit_byte(parsed[1])
+    self.emit_register(argument_base)
+    self.emit_byte(argument_count)
     if type_arguments.length() > 0
       self.emit_byte(type_arguments.length())
       i = 0

@@ -634,6 +634,7 @@ static Precedence token_precedence(DiamondTokenKind kind) {
 
 static uint16_t parse_precedence(Compiler *compiler, Precedence precedence);
 static uint16_t parse_case(Compiler *compiler);
+static uint16_t compile_block(Compiler *compiler);
 
 static uint16_t parse_integer(Compiler *compiler) {
     const DiamondSpan span = compiler->previous.span;
@@ -1408,6 +1409,31 @@ static uint16_t parse_call(Compiler *compiler, DiamondSpan name) {
     size_t argument_count=0;
     for(size_t index=0;index<16;index++)
         if(slot_filled[index])argument_count=index+1;
+    /* `function_name(args) do |x| ... end` -- same "block is the last
+     * positional argument" desugaring parse_invoke's own DIAMOND_TOKEN_DO
+     * check does; if a keyword argument already filled this slot too
+     * (nonsensical: a callback passed both by name and by trailing
+     * block), the ordinary arity check a few lines down catches it, no
+     * special-casing needed here. */
+    if(compiler->current.kind==DIAMOND_TOKEN_DO) {
+        if(argument_count==16) {
+            fail(compiler,compiler->current.span,"too many arguments");return 0;
+        }
+        /* Same register-aliasing hazard parse_invoke's own DIAMOND_TOKEN_DO
+         * branch guards against (see its comment): every slot filled above
+         * may still be a bare alias of a local the block below is about to
+         * eagerly capture and BOX_LOCAL. Snapshot each filled slot into a
+         * fresh (never-a-local) temp first. */
+        for(size_t index=0;index<argument_count;index++) {
+            if(!slot_filled[index])continue;
+            const uint16_t snapshot=allocate_register(compiler);
+            emit_instruction(compiler,DIAMOND_OP_MOVE,snapshot,slot_registers[index],0,2);
+            slot_registers[index]=snapshot;
+        }
+        slot_registers[argument_count]=compile_block(compiler);
+        slot_filled[argument_count]=true;
+        argument_count++;
+    }
     /* Every slot below the highest filled one must be filled too -- a
      * keyword argument can fill any slot, but a gap below the highest one
      * (an earlier default relied on while a later slot is explicitly
@@ -2719,6 +2745,37 @@ static uint16_t parse_invoke(Compiler *compiler, uint16_t receiver) {
         fail(compiler, compiler->current.span, "expected ')' after arguments"); return 0;
     }
     advance_token(compiler);
+    /* `recv.method(args) do |x| ... end` -- the block becomes one more
+     * (always last) positional argument, exactly as if it had been
+     * written as a named closure and passed explicitly. See compile_
+     * block's own comment for the full design. */
+    if(compiler->current.kind==DIAMOND_TOKEN_DO) {
+        if(count==16) {
+            fail(compiler,compiler->current.span,"too many arguments");return 0;
+        }
+        /* The receiver and every argument above were read before any of
+         * this call's locals were necessarily marked `captured` yet, so
+         * parse_identifier handed back their bare register directly
+         * (compiler.c:807-808), aliasing whatever local they came from.
+         * If the block below happens to eagerly capture that same local
+         * (unconditional -- every enclosing local, whether the block's
+         * body actually references it or not), compile_block's own
+         * BOX_LOCAL turns that register into a Cell in place *after*
+         * this point, and this call would silently read the Cell instead
+         * of the value it already resolved. Snapshot the receiver and
+         * every argument into fresh temps first: a temp is never a
+         * registered local, so BOX_LOCAL's locals-table lookup can never
+         * retarget it. */
+        const uint16_t receiver_snapshot=allocate_register(compiler);
+        emit_instruction(compiler,DIAMOND_OP_MOVE,receiver_snapshot,receiver,0,2);
+        receiver=receiver_snapshot;
+        for(size_t i=0;i<count;i++) {
+            const uint16_t snapshot=allocate_register(compiler);
+            emit_instruction(compiler,DIAMOND_OP_MOVE,snapshot,args[i],0,2);
+            args[i]=snapshot;
+        }
+        args[count++]=compile_block(compiler);
+    }
     const uint16_t base = allocate_register(compiler);
     for (size_t i=1;i<count;i++) (void)allocate_register(compiler);
     for (size_t i=0;i<count;i++) emit_instruction(compiler, DIAMOND_OP_MOVE,
@@ -4240,6 +4297,247 @@ static uint16_t compile_loop_control(Compiler *compiler) {
      * this NIL never executes -- also a sole-writer register run_chunk's
      * zero-init already covers even if it somehow did. */
     compiler->known_types[result]=DIAMOND_TYPE_NIL;
+    return result;
+}
+
+/* `do |param, param, ...| BODY end` attached right after a call's closing
+ * `)` -- see docs/roadmap.md's design writeup for the full rationale.
+ * Deliberately a separate, much smaller function rather than a refactor
+ * of compile_definition (below): that function carries a lot of ceremony
+ * that doesn't apply to an anonymous block (operator-method names,
+ * module-singleton `self.` binding, class/module member registration,
+ * return-type annotations, docstrings, default parameter values, the
+ * endless `def foo() = expr` form) and has several hard-won, comment-
+ * documented correctness fixes (e.g. the redefine_method patch-factory
+ * nested_in_singleton_method exception below) not worth risking by
+ * routing an unrelated caller through it. What *is* reused is the
+ * underlying mechanism: a block is compiled into a real new
+ * DiamondFunction slot and produces a real, capturing DIAMOND_OP_CLOSURE
+ * value -- the exact same runtime shape a nested `def` already produces
+ * -- so this function mirrors only the subset of compile_definition that
+ * builds that shape (save/restore outer compiler state, bind parameters
+ * as locals, eagerly materialize every enclosing local as a directly
+ * accessible local via GET_CAPTURE_CELL, compile the body, then BOX_LOCAL
+ * + CLOSURE). No new DiamondOpCode. Caller has already confirmed
+ * compiler->current.kind == DIAMOND_TOKEN_DO and not yet consumed it. */
+static uint16_t compile_block(Compiler *compiler) {
+    advance_token(compiler);
+    if (compiler->program->function_count == DIAMOND_MAX_FUNCTIONS) {
+        fail(compiler, compiler->current.span, "too many functions");
+        return 0;
+    }
+    DiamondFunction *function =
+        &compiler->program->functions[compiler->program->function_count++];
+    function->return_type_set=UINT8_MAX;
+    for(size_t index=0;index<16;index++)
+        function->parameter_type_sets[index]=UINT8_MAX;
+    const size_t function_index = compiler->program->function_count - 1;
+    function->owner_class=UINT8_MAX;
+    function->nested=true;
+    static const char block_name[]="<block>";
+    for(size_t index=0;index<sizeof(block_name);index++)
+        function->name[index]=block_name[index];
+    function->declaration_line=(uint32_t)compiler->previous.span.line;
+    function->declaration_column=(uint32_t)compiler->previous.span.column;
+    function->declaration_start=compiler->previous.span.start;
+
+    DiamondFunction *outer_function = compiler->function;
+    Local outer_locals[DIAMOND_MAX_LOCALS];
+    const size_t outer_local_count = compiler->local_count;
+    for (size_t index = 0; index < outer_local_count; index++) {
+        outer_locals[index] = compiler->locals[index];
+    }
+    const uint16_t outer_next_register = compiler->next_register;
+    const DiamondSpan outer_method = compiler->current_method;
+    const bool outer_in_method = compiler->in_method;
+    const bool outer_in_singleton_method = compiler->in_singleton_method;
+    const bool outer_in_function=compiler->in_function;
+    const int outer_return_type=compiler->current_return_type;
+    const DiamondSpan outer_return_type_span=compiler->current_return_type_span;
+    const int outer_exception=compiler->current_exception;
+    const size_t outer_retry_target=compiler->current_retry_target;
+    LoopContext *outer_loop=compiler->current_loop;
+    Local outer_enclosing_locals[DIAMOND_MAX_LOCALS];
+    const size_t outer_enclosing_local_count=compiler->enclosing_local_count;
+    for(size_t i=0;i<outer_enclosing_local_count;i++)
+        outer_enclosing_locals[i]=compiler->enclosing_locals[i];
+    uint16_t outer_capture_registers[16];
+    const size_t outer_capture_count=compiler->capture_count;
+    for(size_t i=0;i<outer_capture_count;i++)
+        outer_capture_registers[i]=compiler->capture_registers[i];
+    /* Same inline-then-heap fallback as parse_if/compile_definition's own
+     * (see either's comment) -- necessary here too, for the same reason:
+     * a block can appear after arbitrarily many registers have already
+     * been allocated in the enclosing function body. */
+    uint8_t inline_outer_known_types[256];int16_t inline_outer_known_type_sets[256];
+    uint8_t *outer_known_types=inline_outer_known_types;
+    int16_t *outer_known_type_sets=inline_outer_known_type_sets;
+    uint8_t *heap_outer_known_types=nullptr;int16_t *heap_outer_known_type_sets=nullptr;
+    if(outer_next_register>256) {
+        heap_outer_known_types=malloc((size_t)outer_next_register*sizeof(uint8_t));
+        heap_outer_known_type_sets=
+            malloc((size_t)outer_next_register*sizeof(int16_t));
+        if(heap_outer_known_types==nullptr||heap_outer_known_type_sets==nullptr) {
+            fail(compiler,compiler->previous.span,"out of memory compiling block");
+            free(heap_outer_known_types);free(heap_outer_known_type_sets);
+            return 0;
+        }
+        outer_known_types=heap_outer_known_types;
+        outer_known_type_sets=heap_outer_known_type_sets;
+    }
+    for(size_t index=0;index<outer_next_register;index++)
+        {outer_known_types[index]=compiler->known_types[index];
+         outer_known_type_sets[index]=compiler->known_type_sets[index];}
+
+    compiler->function = function;
+    compiler->current_loop=nullptr;
+    compiler->current_exception=-1;
+    compiler->current_retry_target=SIZE_MAX;
+    compiler->local_count = 0;
+    compiler->next_register = 0;
+    compiler->enclosing_local_count=outer_local_count;
+    for(size_t i=0;i<compiler->enclosing_local_count;i++)
+        compiler->enclosing_locals[i]=outer_locals[i];
+    compiler->capture_count=0;
+    if(compiler->enclosing_local_count>16) {
+        fail(compiler,compiler->previous.span,"block sees too many lexical bindings");
+    } else {
+        compiler->capture_count=compiler->enclosing_local_count;
+        for(size_t i=0;i<compiler->capture_count;i++)
+            compiler->capture_registers[i]=compiler->enclosing_locals[i].reg;
+    }
+
+    /* `|x, y|` -- bare identifiers only, no type annotations, no default
+     * values (deliberate v1 scope cut, see this feature's own design
+     * doc). Absent entirely (`do ... end`) means a genuine zero-arity
+     * block -- correct as-is, not a gap: calling it with an argument
+     * raises the same "wrong number of arguments" any arity mismatch
+     * already does, no Ruby-style silent leniency to replicate. */
+    if(!compiler->failed&&compiler->current.kind==DIAMOND_TOKEN_PIPE) {
+        advance_token(compiler);
+        skip_newlines(compiler);
+        if(compiler->current.kind!=DIAMOND_TOKEN_PIPE) {
+            size_t parameter_count=0;
+            do {
+                if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER) {
+                    fail(compiler,compiler->current.span,"expected block parameter name");
+                    break;
+                }
+                if(function->arity==UINT8_MAX||parameter_count==16) {
+                    fail(compiler,compiler->current.span,"too many block parameters");
+                    break;
+                }
+                if(compiler->local_count==DIAMOND_MAX_LOCALS) {
+                    fail(compiler,compiler->current.span,"too many local variables");break;
+                }
+                const uint16_t parameter=allocate_register(compiler);
+                compiler->locals[compiler->local_count++]=(Local){
+                    .name=compiler->current.span,.reg=parameter};
+                const DiamondSpan parameter_name_span=compiler->current.span;
+                size_t parameter_name_length=parameter_name_span.length;
+                if(parameter_name_length>=DIAMOND_MAX_FUNCTION_NAME)
+                    parameter_name_length=DIAMOND_MAX_FUNCTION_NAME-1;
+                for(size_t index=0;index<parameter_name_length;index++)
+                    function->parameter_names[parameter_count][index]=
+                        compiler->source[parameter_name_span.start+index];
+                function->parameter_names[parameter_count][parameter_name_length]='\0';
+                function->arity++;
+                function->required_arity++;
+                parameter_count++;
+                advance_token(compiler);
+                skip_newlines(compiler);
+                if(compiler->current.kind!=DIAMOND_TOKEN_COMMA)break;
+                advance_token(compiler);
+                skip_newlines(compiler);
+            } while(!compiler->failed);
+        }
+        if(!compiler->failed&&compiler->current.kind!=DIAMOND_TOKEN_PIPE) {
+            fail(compiler,compiler->current.span,"expected '|' after block parameters");
+        } else if(!compiler->failed) {
+            advance_token(compiler);
+        }
+    }
+
+    /* Eager capture materialization: every enclosing local not shadowed
+     * by a block parameter of the same name becomes a directly-accessible
+     * local right away, same as compile_definition's own nested-def
+     * handling below. */
+    if(!compiler->failed) {
+        for(size_t i=0;i<compiler->enclosing_local_count;i++) {
+            if(find_local(compiler,compiler->enclosing_locals[i].name)>=0)continue;
+            if(compiler->local_count==DIAMOND_MAX_LOCALS) {
+                fail(compiler,compiler->enclosing_locals[i].name,
+                     "too many lexical bindings");break;
+            }
+            const uint16_t cell=allocate_register(compiler);
+            emit_instruction(compiler,DIAMOND_OP_GET_CAPTURE_CELL,cell,(uint8_t)i,0,2);
+            compiler->locals[compiler->local_count++]=(Local){
+                .name=compiler->enclosing_locals[i].name,.reg=cell,.captured=true};
+        }
+    }
+
+    compiler->in_function=true;
+    const uint16_t body_result=compiler->failed?0:compile_sequence(compiler);
+    if(!compiler->failed) {
+        emit_instruction(compiler,DIAMOND_OP_RETURN,body_result,0,0,1);
+        if(compiler->current.kind!=DIAMOND_TOKEN_END) {
+            fail(compiler,compiler->current.span,"expected 'end' after block body");
+        } else {
+            advance_token(compiler);
+        }
+    }
+
+    function->capture_count=(uint8_t)compiler->capture_count;
+    function->register_count=compiler->next_register;
+    uint16_t captures[16];
+    for(size_t i=0;i<compiler->capture_count;i++)captures[i]=compiler->capture_registers[i];
+    const size_t capture_count=compiler->capture_count;
+    if(!compiler->failed)
+        record_scope_locals(compiler,0,compiler->local_count,
+            compiler->previous.span.start+compiler->previous.span.length);
+
+    compiler->function = outer_function;
+    compiler->local_count = outer_local_count;
+    for (size_t index = 0; index < outer_local_count; index++) {
+        compiler->locals[index] = outer_locals[index];
+    }
+    compiler->next_register = outer_next_register;
+    compiler->current_method = outer_method;
+    compiler->in_method = outer_in_method;
+    compiler->in_singleton_method = outer_in_singleton_method;
+    compiler->in_function=outer_in_function;
+    compiler->current_return_type=outer_return_type;
+    compiler->current_return_type_span=outer_return_type_span;
+    compiler->current_exception=outer_exception;
+    compiler->current_retry_target=outer_retry_target;
+    compiler->current_loop=outer_loop;
+    compiler->enclosing_local_count=outer_enclosing_local_count;
+    for(size_t i=0;i<outer_enclosing_local_count;i++)
+        compiler->enclosing_locals[i]=outer_enclosing_locals[i];
+    compiler->capture_count=outer_capture_count;
+    for(size_t i=0;i<outer_capture_count;i++)
+        compiler->capture_registers[i]=outer_capture_registers[i];
+    for(size_t index=0;index<outer_next_register;index++)
+        {compiler->known_types[index]=outer_known_types[index];
+         compiler->known_type_sets[index]=outer_known_type_sets[index];}
+    free(heap_outer_known_types);free(heap_outer_known_type_sets);
+
+    /* BOX_LOCAL + CLOSURE, emitted into the *outer* (caller's) bytecode
+     * now that compiler->function/locals have been restored -- same
+     * shape compile_definition ends with. */
+    for(size_t i=0;i<capture_count;i++) {
+        for(size_t local=0;local<compiler->local_count;local++) {
+            if(compiler->locals[local].reg!=captures[i])continue;
+            emit_instruction(compiler,DIAMOND_OP_BOX_LOCAL,captures[i],0,0,1);
+            compiler->locals[local].captured=true;
+            break;
+        }
+    }
+    const uint16_t result=allocate_register(compiler);
+    emit_opcode(compiler,DIAMOND_OP_CLOSURE);emit_register(compiler,result);
+    emit_function_index(compiler,function_index);emit_byte(compiler,(uint8_t)capture_count);
+    for(size_t i=0;i<capture_count;i++)emit_register(compiler,captures[i]);
+    compiler->known_types[result]=TYPE_UNKNOWN;
     return result;
 }
 

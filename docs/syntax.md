@@ -316,6 +316,45 @@ add_forty(2)
 a top-level `def`'s name is not itself a value. Closures are invoked
 directly as `f(x)`; there is no `.call` method.
 
+### Blocks
+
+```ruby
+total = 0
+[1, 2, 3, 4].each() do |x|
+  total = total + x
+end
+
+doubled = [1, 2, 3].map() do |x|
+  x * 2
+end
+```
+
+`recv.method(args) do |params| ... end` attaches an anonymous closure as
+the call's own last argument — the same mechanism a named nested `def`
+uses (same capture behavior, same underlying `CLOSURE` value), just
+without a name. It works the same way on a direct call to a top-level
+function: `apply(5) do |n| n * 2 end`.
+
+Delimiters are `do ... end` only — there is no `{ ... }` block form, and
+none is planned. Every other Diamond control construct (`if`, `while`,
+`def`, `class`, `case`) already uses `end`, and `{` already means a Hash
+literal, so `arr.each { |x| ... }` would collide with a bare Hash
+argument the way it does in Ruby.
+
+Block parameters are bare identifiers only — no `: Type` annotations, no
+`= default`. `do |x, y| ... end`, or `do ... end` with no parameters at
+all for a zero-arity block. A block captures every local visible at the
+point it's written, the same eager, unconditional capture nested `def`s
+use — not just the ones its body actually references.
+
+Not supported (both explicitly out of scope, not just unimplemented):
+calling a closure *value* with a trailing block
+(`some_callable(args) do ... end`) and `ClassName.new(args) do ... end`
+constructor blocks. Ruby's `Thing.new { |t| ... }` idiom usually relies
+on `initialize` yielding `self`, which Diamond has no equivalent of — a
+block passed to `.new` would just be one more constructor argument, not
+obviously useful without a declared parameter to bind it to.
+
 ### Keyword arguments
 
 ```ruby

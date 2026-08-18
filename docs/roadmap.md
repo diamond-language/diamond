@@ -768,6 +768,106 @@ future work.
   ternary_missing_colon` diagnostic locked in on both compilers, and
   both self-hosted bootstrap checks).
 
+- **Block syntax `recv.method(args) do |params| ... end`**: fourth item
+  off the Ruby-idiom gap list, and the biggest/riskiest of the four —
+  unlike Range/`case`/`when`/ternary (pure desugaring over *existing*
+  runtime concepts), this introduces a genuinely new concept: an
+  anonymous closure literal attached directly to a call's argument list.
+  Plan-moded before implementation, same as Range got. `do ... end` only
+  — no `{ ... }` form, and none planned, since `{` already means Hash
+  literal and every other Diamond control construct already uses `end`.
+  Pure sugar, zero new opcodes: a block compiles through the exact same
+  `DIAMOND_OP_CLOSURE`/eager-unconditional-capture machinery a nested
+  `def` already uses, just anonymous and appended as the call's own last
+  argument. Deliberately a *new* function, `compile_block`
+  (`src/compiler.c`), rather than a refactor of `compile_definition`
+  (~600 lines with multiple hard-won correctness fixes not worth risking
+  for block-callability) — `compile_block` mirrors only the subset that
+  applies: outer-state save/restore, eager capture, `compile_sequence`,
+  `BOX_LOCAL`+`CLOSURE` emission. Block parameters are bare identifiers
+  only (`|x, y|`), no types, no defaults, matching `Callable[n]`'s own
+  arity-only structural contract. Wired into exactly two call sites —
+  `parse_invoke` (method calls) and `parse_call`'s direct-call path —
+  deliberately *not* `parse_closure_call_arguments` (calling a closure
+  *value* with a trailing block) or `ClassName.new(...)` constructor
+  calls, both explicitly deferred: the constructor case doesn't obviously
+  fit Diamond's explicit-argument model the way it does in Ruby, since
+  Ruby's `Thing.new { |t| ... }` idiom relies on `initialize` yielding
+  `self`, which Diamond has no equivalent of.
+
+  **A real, general register-aliasing bug found and fixed before this
+  reached a differential test**: `parse_identifier` hands back a plain
+  local's bare register directly, unmodified, whenever that local isn't
+  *already* marked `captured` at the point of the read (`compiler.c:807-
+  808`) — the common case, since marking only happens once some
+  closure actually captures it. A call's receiver and every explicit
+  argument are evaluated (and their registers pinned into `receiver`/
+  `args[]`) *before* a trailing block is even parsed. Since block capture
+  is eager and unconditional — every enclosing local, whether the body
+  references it or not — a block that happened to close over the same
+  local already feeding the receiver or an earlier argument would BOX_
+  LOCAL that register *after* it was already pinned but *before* the
+  call's own MOVE-into-contiguous-registers/INVOKE actually read it,
+  silently turning a plain value into a Cell out from under the call.
+  Concretely: `values.each() do |x| ... end` where `values` (the
+  receiver) is a local visible to the block turned `values` into a Cell
+  before `INVOKE` read it as the receiver; `apply(n) do |v| n + v end`
+  did the same to the explicit argument `n`. Some manifestations
+  produced an outright `type error`/`expected Callable[1], got Callable`
+  (a Cell failing a receiver dispatch or a structural-type check);
+  others silently "worked" by luck (arithmetic on a Cell apparently
+  tolerates the wrapper) — meaning this was a real, general correctness
+  hazard, not a narrow edge case, found via a systematic capture/receiver
+  test in this feature's own test plan, not by the differential suite
+  itself. Fixed by snapshotting the receiver and every already-parsed
+  argument into fresh temp registers immediately before compiling the
+  trailing block, in both `parse_invoke` and `parse_call` — a temp
+  allocated via `allocate_register()` alone is never entered into
+  `compiler->locals[]`, so `BOX_LOCAL`'s locals-table lookup can never
+  retarget it, regardless of what the block goes on to capture.
+
+  Self-hosted mirror (`selfhost/parser.di`): a new `compile_block()`,
+  deliberately *not* built on the shared `compile_function_body`/
+  `emit_closure` helpers `compile_definition` uses — those emit "expected
+  'end' after function body" and bind the result under a name in the
+  outer scope, and a block needs "expected 'end' after block body" (to
+  match `compiler.c` exactly, for the differential error tests) and must
+  never bind a name (it's only ever the call's own trailing argument).
+  Wired into `compile_invoke`/`compile_call`, not the shared
+  `parse_call_arguments` helper (also used by `compile_new_call`),
+  preserving exact native parity on the two deferred call shapes. Two
+  distinct register-contiguity fixes were needed, one per call site,
+  because each already materializes its arguments differently:
+  `compile_invoke`'s `parse_call_arguments` fully materializes into a
+  contiguous range *before* returning, so its own trailing block's result
+  isn't guaranteed to land right after that range — fixed by reserving
+  the exact next slot (`argument_base + argument_count`) before compiling
+  the block, then `MOVE`-ing the block's actual result into it (with a
+  further wrinkle: `parse_call_arguments` always reserves one throwaway
+  register even for a *zero*-argument call, so for `argument_count == 0`
+  that slot already exists one register earlier than a naive "always
+  allocate" would assume — allocating unconditionally left a silent
+  one-register gap for exactly this case, e.g. `.each() do |x| ... end`).
+  `compile_call`'s own `parse_keyword_call_arguments` returns an
+  unmaterialized `[slot_values, argument_count]` pair instead, so its fix
+  mirrors `compiler.c`'s own direct-call path directly: the block fills
+  `slot_values[argument_count]` in place, before that function's own
+  later materialization loop runs — no reservation dance needed there.
+  The self-hosted mirror needed its own version of the native
+  register-aliasing fix too, for the same reason, at both call sites.
+
+  Verified: `make debug` (clean, zero warnings), full `bash tests/run.sh`
+  (1075 passing — six new `tests/cases/block_*.di` fixtures covering
+  `each`/`select`/`map`/`reduce` with an inline block, capture-and-
+  mutate, a block on a direct function call, a multi-param block, nested
+  blocks, and the `Callable[1]` structural-mismatch error a zero-param
+  block produces against a method that needs one), `make test-lexer-diff`
+  (1010 cases, no lexer changes expected or needed), and `make
+  test-parser-diff` (249 differential cases including a new
+  `tests/parser_cases/block.di`, 127 parser error differential cases
+  including two new `tests/parser_error_cases/block_*` diagnostics locked
+  in on both compilers, and both self-hosted bootstrap checks).
+
 ### Collections and Enumerable
 
 - Replaced `Hash`'s O(n) linear-scan lookup with a real open-addressing hash
