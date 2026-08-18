@@ -565,6 +565,81 @@ future work.
   `make test-parser-diff` (246 differential cases plus the self-hosted
   self-parse and self-run bootstrap checks, all passing).
 
+- **Two real bugs found while starting `case`/`when` (the next item on the
+  gap list after Range) and CI turning out to have been silently red for
+  five pushes**: before writing any `case`/`when` code, checked `glab ci
+  status` for the first time this session and found `test-all` had been
+  failing since the ARGV/ENV commit, unnoticed across every push since
+  (debugger/breakpoint, the generational-GC writeup, compound assignment,
+  Range).
+  - **A confirmed stack-buffer-overflow in `parse_if`** (`src/compiler.c`):
+    while reading `parse_if` as the closest existing precedent for
+    `case`/`when`'s own control-flow codegen, noticed its type-inference
+    snapshots (`before_types`/`then_types`, and a similar pair in
+    `compile_definition` for saving state around a nested `def`) were
+    fixed `[256]` arrays indexed up to `compiler->next_register` with no
+    bounds check — and `next_register` can exceed 256 in any real
+    function, since `allocate_register` never recycles a slot within one
+    function body. Confirmed under ASan with a 260-line register-churning
+    program (`x = x + x`, discarded, 260 times) followed by a plain
+    `if/else`: reliable `stack-buffer-overflow` at the write into
+    `before_types[256..320)`. `compile_definition`'s own copy had a
+    related but different shape — a fixed `index<256` bound instead of
+    `outer_next_register`-many, so it silently *under*-saved/-restored
+    past 255 instead of overflowing, leaving high registers holding
+    whatever the nested `def`'s own (unrelated) body wrote into those
+    same indices. Fixed both the same way, mirroring `run_chunk`'s own
+    existing inline-then-heap-fallback convention (`vm.c`,
+    `DIAMOND_INLINE_REGISTER_COUNT`, itself 256) rather than widening the
+    arrays to the full `DIAMOND_REGISTER_COUNT` unconditionally: inline
+    `[256]` arrays for the overwhelming majority of call sites, `malloc`
+    only once the real count exceeds that. Neither bug corrupts *runtime
+    values* — `known_types`/`known_type_sets` only steer compile-time
+    fast-path opcode selection, and every fast-path opcode (`ADD_INT`,
+    ...) already has a runtime deopt guard for a wrong static guess — so
+    the blast radius was memory corruption in the compiler process itself
+    (undefined behavior, ASan-fatal, ordinary-build-dependent whether it
+    actually crashes), not wrong program output. Two new
+    `tests/cases/wide_register_*.di` regression fixtures (an if/elsif
+    chain and a nested `def`, both past the 256-register line) lock in
+    the fix; confirmed clean under a manual ASan build both before (crash)
+    and after (clean) the fix.
+  - **A confirmed heap-use-after-free in `populate_default_argv_env`**
+    (`src/vm.c`, the ARGV/ENV commit's own code): its per-`environ`-entry
+    loop allocates `key`, then allocates `value` before storing either
+    into `env` via `hash_set` — but `allocate_string` (used for both) can
+    itself trigger a GC collection once `bytes_allocated` crosses
+    `next_gc` (2048 by default, easily crossed by a real environment's
+    worth of variables), and `key` isn't reachable from any GC root at
+    that point (not yet in `env`, not in any register) — so the
+    collection triggered while allocating `value` can free `key` out from
+     under the `hash_set` call right after. Exactly the "root the
+    container first, populate incrementally" lesson `docs/roadmap.md`
+    already documents from `regexp_scan_helper`/`copy_value_into_vm`,
+    just not yet applied to this newer site. This is what CI's
+    `test-sanitize` stage had actually been catching on every push since
+    the ARGV/ENV commit (`heap-use-after-free ... in hash_value`,
+    `hash_find`, `hash_set`, `populate_default_argv_env`) — confirmed by
+    pulling the actual job trace via `glab api`, not guessed. Whether a
+    given environment's variable count/ordering happens to cross the
+    2048-byte threshold at the vulnerable moment (right after a `key`
+    allocation, before its `hash_set`) is essentially environment-
+    dependent, which is why this reproduced reliably in CI's own
+    environment but never locally across several manual attempts
+    (including a synthetic 500-variable environment) — ASan would have
+    caught it deterministically the moment it actually triggered, so
+    "didn't reproduce locally" reflects real allocation-ordering luck,
+    not a shaky bug. Fixed with the same `gc_protect`/`gc_unprotect`
+    mechanism the other two fixes already use: protect `key` right after
+    it's allocated, unprotect right after the `hash_set` call that makes
+    it reachable through `env` for real.
+
+  Both found and fixed before writing a single line of `case`/`when`
+  itself — `case`/`when` proper is still pending. Verified: `make debug`
+  (clean, zero warnings), full `bash tests/run.sh` (1055 passing, the two
+  new wide-register fixtures included), and a manual ASan build exercising
+  both the register-overflow repro and a large-environment ARGV/ENV run.
+
 ### Collections and Enumerable
 
 - Replaced `Hash`'s O(n) linear-scan lookup with a real open-addressing hash

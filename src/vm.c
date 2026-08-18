@@ -988,9 +988,22 @@ static void populate_default_argv_env(DiamondVm *vm) {
         const size_t key_length=(size_t)(equals-*entry);
         DiamondString *key=allocate_string(vm,*entry,key_length);
         if(key==nullptr)return;
+        /* key isn't stored into env (the only thing that would make it
+         * GC-visible) until hash_set below -- the allocate_string call for
+         * value, right here, can itself trigger a collection (same
+         * bytes_allocated>=next_gc check every allocate_* helper makes),
+         * which would free key out from under hash_set's own hash_value(key)
+         * call. Confirmed via ASan as a real heap-use-after-free, not just
+         * theoretical -- same "root the container first, populate
+         * incrementally" lesson as regexp_scan_helper/copy_value_into_vm
+         * (see docs/roadmap.md), just not yet applied to this newer site. */
+        const size_t key_mark=vm->gc_protected_count;
+        if(!gc_protect(vm,DIAMOND_OBJECT(key)))return;
         DiamondString *value=allocate_string(vm,equals+1,strlen(equals+1));
-        if(value==nullptr)return;
-        if(!hash_set(vm,env,DIAMOND_OBJECT(key),DIAMOND_OBJECT(value)))return;
+        if(value==nullptr){gc_unprotect(vm,key_mark);return;}
+        const bool inserted=hash_set(vm,env,DIAMOND_OBJECT(key),DIAMOND_OBJECT(value));
+        gc_unprotect(vm,key_mark);
+        if(!inserted)return;
     }
 }
 

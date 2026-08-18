@@ -3027,7 +3027,37 @@ static uint16_t parse_if(Compiler *compiler,bool inverted) {
         compiler, DIAMOND_OP_JUMP_IF_FALSE, branch_condition);
     const uint16_t destination = allocate_register(compiler);
     const size_t flow_reg_count=compiler->next_register;
-    uint8_t before_types[256];int16_t before_sets[256];
+    /* Inline arrays cover the overwhelming majority of if/elsif sites (a
+     * function rarely has more than 256 registers live before one) at no
+     * heap cost; only a flow_reg_count beyond that -- reachable in real
+     * programs, since allocate_register never recycles a slot within one
+     * function body -- falls back to malloc. Mirrors run_chunk's own
+     * inline-then-heap register-array fallback (vm.c,
+     * DIAMOND_INLINE_REGISTER_COUNT) rather than widening these to a
+     * fixed DIAMOND_REGISTER_COUNT, which would cost every ordinary
+     * if/elsif four ~12KB stack arrays whether it needs them or not.
+     * Found via ASan: the previous fixed-256 arrays, indexed up to
+     * flow_reg_count with no bounds check at all, were a confirmed
+     * stack-buffer-overflow once a function had allocated more than 256
+     * registers before reaching an if/unless -- not just theoretical,
+     * reproduced with a 260-line register-churning program. */
+    uint8_t inline_before_types[256];int16_t inline_before_sets[256];
+    uint8_t inline_then_types[256];int16_t inline_then_sets[256];
+    uint8_t *before_types=inline_before_types,*then_types=inline_then_types;
+    int16_t *before_sets=inline_before_sets,*then_sets=inline_then_sets;
+    uint8_t *heap_types=nullptr;int16_t *heap_sets=nullptr;
+    if(flow_reg_count>256) {
+        heap_types=malloc(flow_reg_count*2*sizeof(uint8_t));
+        heap_sets=malloc(flow_reg_count*2*sizeof(int16_t));
+        if(heap_types==nullptr||heap_sets==nullptr) {
+            fail(compiler,compiler->previous.span,
+                 "out of memory compiling if expression");
+            free(heap_types);free(heap_sets);
+            return destination;
+        }
+        before_types=heap_types;then_types=heap_types+flow_reg_count;
+        before_sets=heap_sets;then_sets=heap_sets+flow_reg_count;
+    }
     for(size_t index=0;index<flow_reg_count;index++) {
         before_types[index]=compiler->known_types[index];
         before_sets[index]=compiler->known_type_sets[index];
@@ -3039,7 +3069,6 @@ static uint16_t parse_if(Compiler *compiler,bool inverted) {
     const uint16_t then_result = compile_sequence(compiler);
     const uint8_t then_type=compiler->known_types[then_result];
     const int16_t then_set=compiler->known_type_sets[then_result];
-    uint8_t then_types[256];int16_t then_sets[256];
     for(size_t index=0;index<flow_reg_count;index++) {
         then_types[index]=compiler->known_types[index];
         then_sets[index]=compiler->known_type_sets[index];
@@ -3090,6 +3119,7 @@ static uint16_t parse_if(Compiler *compiler,bool inverted) {
         compiler->known_type_sets[index]=then_sets[index]==false_set
             ?then_sets[index]:-1;
     }
+    free(heap_types);free(heap_sets);
     compiler->known_types[destination]=result_type;
     compiler->known_type_sets[destination]=result_set;
 
@@ -4159,9 +4189,32 @@ static uint16_t compile_definition(Compiler *compiler) {
     const size_t outer_capture_count=compiler->capture_count;
     for(size_t i=0;i<outer_capture_count;i++)
         outer_capture_registers[i]=compiler->capture_registers[i];
-    uint8_t outer_known_types[256];
-    int16_t outer_known_type_sets[256];
-    for(size_t index=0;index<256;index++)
+    /* Same inline-then-heap fallback as parse_if's before_types/then_types
+     * (see that function's own comment) -- this one had a different bug
+     * shape: a fixed `index<256` bound (not indexed by outer_next_register)
+     * doesn't overflow, but silently under-saves/-restores whenever the
+     * enclosing scope already has more than 256 live registers, leaving
+     * entries [256, outer_next_register) holding whatever the nested def's
+     * own (unrelated, register-index-0-based) body happened to write into
+     * those same slots after this function returns. */
+    uint8_t inline_outer_known_types[256];int16_t inline_outer_known_type_sets[256];
+    uint8_t *outer_known_types=inline_outer_known_types;
+    int16_t *outer_known_type_sets=inline_outer_known_type_sets;
+    uint8_t *heap_outer_known_types=nullptr;int16_t *heap_outer_known_type_sets=nullptr;
+    if(outer_next_register>256) {
+        heap_outer_known_types=malloc((size_t)outer_next_register*sizeof(uint8_t));
+        heap_outer_known_type_sets=
+            malloc((size_t)outer_next_register*sizeof(int16_t));
+        if(heap_outer_known_types==nullptr||heap_outer_known_type_sets==nullptr) {
+            fail(compiler,compiler->previous.span,
+                 "out of memory compiling function definition");
+            free(heap_outer_known_types);free(heap_outer_known_type_sets);
+            return 0;
+        }
+        outer_known_types=heap_outer_known_types;
+        outer_known_type_sets=heap_outer_known_type_sets;
+    }
+    for(size_t index=0;index<outer_next_register;index++)
         {outer_known_types[index]=compiler->known_types[index];
          outer_known_type_sets[index]=compiler->known_type_sets[index];}
     compiler->function = function;
@@ -4395,9 +4448,10 @@ static uint16_t compile_definition(Compiler *compiler) {
     compiler->capture_count=outer_capture_count;
     for(size_t i=0;i<outer_capture_count;i++)
         compiler->capture_registers[i]=outer_capture_registers[i];
-    for(size_t index=0;index<256;index++)
+    for(size_t index=0;index<outer_next_register;index++)
         {compiler->known_types[index]=outer_known_types[index];
          compiler->known_type_sets[index]=outer_known_type_sets[index];}
+    free(heap_outer_known_types);free(heap_outer_known_type_sets);
     if(compiler->current_class>=0&&!module_singleton&&
        !compiler->failed&&at_top_level) {
         DiamondClass *class = &compiler->program->classes[(size_t)compiler->current_class];
