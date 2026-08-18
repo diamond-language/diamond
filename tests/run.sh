@@ -1153,6 +1153,38 @@ if "$diamond" -e 'gets(1)' >/dev/null 2>&1; then
     exit 1
 fi
 
+# debugger()/breakpoint(): real blocking-stdin behavior, so -- same reason
+# gets() itself is never actually invoked from tests/cases/*.di (only
+# shadowed there, see legacy_0333.di) -- these live here instead, with
+# stdin explicitly controlled. </dev/null (EOF immediately) is the
+# well-defined "continue right away" path this is designed around, not a
+# workaround.
+actual="$($diamond --dump-bytecode -e 'debugger()' </dev/null 2>&1)"
+grep -Eq 'DEBUGGER +r[0-9]+, 0 locals' <<<"$actual"
+
+actual="$($diamond -e $'x = 5\ny = x * 2\ndebugger()\ny + 1' </dev/null)"
+grep -q -- '--- paused at -e:3:' <<<"$actual"
+grep -q '^locals:$' <<<"$actual"
+grep -q '^  x = 5$' <<<"$actual"
+grep -q '^  y = 10$' <<<"$actual"
+grep -q '(press Enter to continue)' <<<"$actual"
+[[ "$(tail -1 <<<"$actual")" == "11" ]]
+
+actual="$($diamond -e $'z = 1\nbreakpoint()\nz' </dev/null)"
+grep -q -- '--- paused at -e:2:' <<<"$actual"
+grep -q '^  z = 1$' <<<"$actual"
+[[ "$(tail -1 <<<"$actual")" == "1" ]]
+
+if "$diamond" -e 'debugger(1)' >/dev/null 2>&1; then
+    echo "debugger with an argument unexpectedly compiled" >&2
+    exit 1
+fi
+
+# A user-defined function of the same name shadows the built-in, exactly
+# like puts/gets/Time/etc. do -- never even reaches the blocking path.
+actual="$($diamond -e $'def debugger()\n  "shadowed"\nend\ndebugger()')"
+[[ "$actual" == "shadowed" ]]
+
 file_dir="$(mktemp -d)"
 data_file="$file_dir/data.txt"
 actual="$($diamond -e "$(printf 'f = File.open("%s", "w")\nf.write("hello, ")\nf.write("world")\nf.close()\ng = File.open("%s", "r")\ncontent = g.read()\ng.close()\ncontent' "$data_file" "$data_file")")"

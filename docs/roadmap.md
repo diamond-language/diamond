@@ -609,6 +609,31 @@ future work.
   dead `jmp_buf`. Verified stable across a real, sustained fuzzing run
   (8500+ executions) with the self-jump case seeded directly into the
   corpus.
+- `debugger()`/`breakpoint()`: the last of the release-readiness gaps a
+  "what do most languages have that Diamond doesn't" pass turned up.
+  Scoped down from a full live REPL (Ruby's `binding.pry`/`debug`) to
+  read-only pause-and-inspect after weighing the gap directly with the
+  user: a real interactive evaluator would need the compiler to preserve
+  a name->register map *and* a way to compile and run typed lines against
+  a frozen live register frame -- a genuinely large feature on its own,
+  bigger than `Exception#backtrace`, `<<`, and `Process.run` combined.
+  What shipped instead: prints the call site and every currently-live
+  local (name + value, parameters included), then blocks on one line of
+  stdin (EOF -- e.g. `/dev/null`, the normal case in a non-interactive
+  script or test run -- continues immediately, never hangs) before
+  resuming. `DIAMOND_MAX_LOCALS` moved from being compiler.c-local to
+  vm.h, shared for the first time: `DIAMOND_OP_DEBUGGER` bakes each
+  in-scope local's (name, register) pair into its own bytecode operand
+  data at the call site (the compiler is the only place that ever knows
+  a register's source variable name), so the opcode's fixed-size decode
+  table in `run_chunk` and the compiler's own local-tracking cap have to
+  agree on one size. A captured local's value is unwrapped from its
+  `DiamondCell` box the same way `GET_CELL` does, checked by the
+  *runtime* value kind rather than trusting the compile-time `captured`
+  flag passed through. Real blocking-stdin behavior meant its tests live
+  in `tests/run.sh` (explicit `</dev/null` control), not
+  `tests/cases/*.di` -- the same reason `gets()` itself is only ever
+  shadowed, never actually invoked, in that corpus (see `legacy_0333.di`).
 
 ## Later experiments
 

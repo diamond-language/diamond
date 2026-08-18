@@ -55,12 +55,21 @@ enum {
      * rescue clause nested in it all accumulate into the same flat
      * list (DiamondFunction.scope_locals below), so this needs
      * headroom beyond the ordinary 64-local-at-a-time compile-time cap
-     * (DIAMOND_MAX_LOCALS, src/compiler.c) for a function with several
+     * (DIAMOND_MAX_LOCALS, just below) for a function with several
      * rescue clauses. Kept deliberately smaller than that cap would
      * suggest: DiamondFunction is already ~152KB and there can be up
      * to DIAMOND_MAX_FUNCTIONS of them (see that constant's own
      * comment) -- every byte added here multiplies by both. */
     DIAMOND_MAX_SCOPE_LOCALS = 32,
+    /* How many locals (parameters plus ordinary declarations) can be in
+     * scope at once at compile time, src/compiler.c's Compiler.locals[].
+     * Lives here rather than staying compiler.c-local: DIAMOND_OP_DEBUGGER
+     * (below) bakes each in-scope local's (name, register) pair into its
+     * own bytecode operand data at debugger()/breakpoint() call sites --
+     * see parse_debugger_call in compiler.c and the DEBUGGER case in
+     * run_chunk -- so both sides need to agree on the same fixed-size
+     * table cap. */
+    DIAMOND_MAX_LOCALS = 64,
 };
 
 typedef enum DiamondOpCode : uint8_t {
@@ -172,6 +181,7 @@ typedef enum DiamondOpCode : uint8_t {
     DIAMOND_OP_TIME_AT,
     DIAMOND_OP_SHIFT_LEFT,
     DIAMOND_OP_PROCESS_RUN,
+    DIAMOND_OP_DEBUGGER,
     DIAMOND_OP_COUNT,
 } DiamondOpCode;
 

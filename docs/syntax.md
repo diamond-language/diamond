@@ -665,6 +665,42 @@ A connected socket (from `.connect` or `.accept()`) is a `File` under the
 hood, so `.read()`/`.read(n)`/`.gets()`/`.write(value)`/`.close()` work
 identically on both.
 
+## Debugging
+
+```ruby
+def compute(x)
+  y = x * 2
+  debugger()   # breakpoint() is the same thing, either name works
+  y + 1
+end
+compute(5)
+```
+
+```
+--- paused at compute:3:3 ---
+locals:
+  x = 5
+  y = 10
+(press Enter to continue)
+```
+
+`debugger()`/`breakpoint()` pauses execution, prints where it was called
+from and every currently-live local (name and value — parameters count
+as locals too), then waits for one line of input on stdin before
+resuming normally. **Read-only inspection, not a live REPL**: there is no
+way to evaluate a new expression or reassign a local from the pause — it
+prints what's already there and continues, deliberately scoped short of
+a Ruby `binding.pry`/`debug`-style interactive session. Stdin at EOF
+(closed, redirected from `/dev/null` — the ordinary case under a non-
+interactive script or test run) continues immediately rather than
+hanging, so it's always safe to leave a `debugger()` call in code that
+might run non-interactively.
+
+Like `puts`/`gets`/`Time`/every other built-in name, a local variable or
+a user-defined function named `debugger`/`breakpoint` shadows it —
+`def debugger(); ...; end` makes `debugger()` call that instead, never
+the built-in.
+
 ## Regexp
 
 ```ruby

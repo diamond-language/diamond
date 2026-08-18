@@ -6584,6 +6584,55 @@ static DiamondVmStatus process_result_dispatch_helper(DiamondVm *vm,
     return DIAMOND_VM_TYPE_ERROR;
 }
 
+/* debugger()/breakpoint()'s runtime half -- see parse_debugger_call's own
+ * comment in compiler.c for the compile-time half (name, register) pairs
+ * come from. Prints "chunk:line:column" matching the exact format
+ * RECORD_ERROR/raise_capture_backtrace_helper already use elsewhere in
+ * this file, then each local's name and stringified value (unwrapping a
+ * captured local's Cell box first -- BOX_LOCAL replaces a captured
+ * local's own register contents with a DiamondCell wrapper in place, so
+ * this checks the *runtime* value kind rather than trusting any
+ * compile-time "captured" bookkeeping passed through), then blocks on
+ * one line of stdin. Kept as its own helper (not inlined into
+ * DIAMOND_OP_DEBUGGER's own case block) both for this file's usual
+ * stack-frame-budget reasons and because it may recurse into run_chunk
+ * itself once per local, through stringify_value calling a user-defined
+ * to_s. */
+static DiamondVmStatus debugger_helper(DiamondVm *vm,const DiamondChunk *chunk,
+        size_t depth,size_t instruction_offset,DiamondValue *registers,
+        const uint8_t *name_indices,const uint16_t *local_registers,uint8_t local_count) {
+    const char *frame_name=chunk->name!=nullptr?chunk->name:"<chunk>";
+    const bool in_bounds=instruction_offset<chunk->code_count;
+    const uint32_t line=in_bounds&&chunk->lines!=nullptr?
+        chunk->lines[instruction_offset]:0;
+    const uint32_t column=in_bounds&&chunk->columns!=nullptr?
+        chunk->columns[instruction_offset]:0;
+    fprintf(stdout,"--- paused at %s:%u:%u ---\n",frame_name,line,column);
+    if(local_count>0) {
+        fprintf(stdout,"locals:\n");
+        for(size_t index=0;index<local_count;index++) {
+            if((size_t)name_indices[index]>=chunk->string_count)continue;
+            const DiamondStringConstant *name=&chunk->strings[name_indices[index]];
+            DiamondValue value=registers[local_registers[index]];
+            if(value.kind==DIAMOND_VALUE_OBJECT&&
+               value.as.object->kind==DIAMOND_OBJECT_CELL)
+                value=((DiamondCell *)value.as.object)->value;
+            DiamondValue stringified=DIAMOND_NIL;
+            const DiamondVmStatus status=
+                stringify_value(vm,chunk,depth,value,&stringified);
+            if(status!=DIAMOND_VM_OK)return status;
+            const DiamondString *text=(const DiamondString *)stringified.as.object;
+            fprintf(stdout,"  %.*s = %.*s\n",(int)name->length,name->chars,
+                (int)text->length,text->chars);
+        }
+    }
+    fprintf(stdout,"(press Enter to continue)\n");
+    fflush(stdout);
+    int character=0;
+    while((character=getchar())!=EOF&&character!='\n') {}
+    return DIAMOND_VM_OK;
+}
+
 static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                                  DiamondVm *vm,
                                  const DiamondValue *arguments,
@@ -9700,6 +9749,21 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 const DiamondVmStatus run_status=process_run_helper(vm,
                     (DiamondArray *)registers[argv_register].as.object,process_result);
                 VM_PROPAGATE(run_status);
+                break;
+            }
+            case DIAMOND_OP_DEBUGGER: {
+                uint16_t destination=0;uint8_t local_count=0;
+                READ_SHORT(destination);READ_BYTE(local_count);
+                uint8_t name_indices[DIAMOND_MAX_LOCALS];
+                uint16_t local_registers[DIAMOND_MAX_LOCALS];
+                for(size_t index=0;index<local_count;index++) {
+                    READ_BYTE(name_indices[index]);
+                    READ_SHORT(local_registers[index]);
+                }
+                const DiamondVmStatus debugger_status=debugger_helper(vm,chunk,depth,
+                    instruction_offset,registers,name_indices,local_registers,local_count);
+                VM_PROPAGATE(debugger_status);
+                registers[destination]=DIAMOND_NIL;
                 break;
             }
             case DIAMOND_OP_IS_TYPE: {

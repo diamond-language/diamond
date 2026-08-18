@@ -6,7 +6,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-enum { DIAMOND_MAX_LOCALS = 64 };
 enum { TYPE_UNKNOWN = UINT8_MAX };
 
 typedef enum Precedence {
@@ -2244,6 +2243,42 @@ static uint16_t parse_gets_call(Compiler *compiler) {
     return dest;
 }
 
+/* debugger()/breakpoint() -- pauses execution, prints the current call
+ * site and every currently-live local (name + value, read-only; no
+ * expression evaluation against them, see docs/syntax.md for the scope
+ * this was deliberately kept to), then blocks on a single line of stdin
+ * (EOF -- e.g. stdin redirected from /dev/null, the normal case under a
+ * non-interactive test/CI run -- continues immediately rather than
+ * hanging) before resuming normally.
+ *
+ * compiler->locals' (name, register) pairs *at this exact point in
+ * compilation* get baked into the opcode's own operand data, the same
+ * way a closure's captured-register list is baked in at CLOSURE-emission
+ * time -- this is the one piece of information only the compiler has;
+ * a register index doesn't carry its source variable's name once
+ * compiled, so the VM has no way to reconstruct this after the fact.
+ * compiler->local_count is always <= DIAMOND_MAX_LOCALS (enforced by
+ * allocate_local), so no separate bounds check is needed before the
+ * uint8_t cast below. */
+static uint16_t parse_debugger_call(Compiler *compiler) {
+    advance_token(compiler); /* consume '(' */
+    if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
+        fail(compiler,compiler->current.span,"expected ')' after arguments");
+        return 0;
+    }
+    advance_token(compiler);
+    const uint16_t dest=allocate_register(compiler);
+    emit_opcode(compiler,DIAMOND_OP_DEBUGGER);
+    emit_register(compiler,dest);
+    emit_byte(compiler,(uint8_t)compiler->local_count);
+    for(size_t index=0;index<compiler->local_count;index++) {
+        const uint8_t name_index=add_name_string(compiler,compiler->locals[index].name);
+        emit_byte(compiler,name_index);
+        emit_register(compiler,compiler->locals[index].reg);
+    }
+    return dest;
+}
+
 /* Time.monotonic()/Time.now()/Time.utc_now() -- each zero-argument,
  * distinguished only by which opcode (and, for TIME_NOW, which utc
  * flag byte) they emit. */
@@ -2493,6 +2528,11 @@ static uint16_t parse_name(Compiler *compiler) {
        compiler->current.kind==DIAMOND_TOKEN_LEFT_PAREN&&
        name_equals(compiler,"gets",name,false))
         return parse_gets_call(compiler);
+    if(find_local(compiler,name)<0&&find_function(compiler,name)<0&&
+       compiler->current.kind==DIAMOND_TOKEN_LEFT_PAREN&&
+       (name_equals(compiler,"debugger",name,false)||
+        name_equals(compiler,"breakpoint",name,false)))
+        return parse_debugger_call(compiler);
     if(find_local(compiler,name)<0&&find_function(compiler,name)<0&&
        compiler->current.kind==DIAMOND_TOKEN_LEFT_PAREN&&
        name_equals(compiler,"chr",name,false))

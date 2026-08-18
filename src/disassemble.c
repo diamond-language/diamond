@@ -740,6 +740,29 @@ static bool disassemble_chunk(FILE *stream, const char *name,
                 offset=three_registers(stream,chunk,"SHIFT_LEFT",offset, &valid);break;
             case DIAMOND_OP_PROCESS_RUN:
                 offset=two_registers(stream,chunk,"PROCESS_RUN",offset, &valid);break;
+            case DIAMOND_OP_DEBUGGER: {
+                if(!require_bytes(stream,chunk,offset,4)){valid=false;offset=chunk->code_count;break;}
+                const uint16_t dest=checked_register(chunk,stream,
+                    read_operand(chunk,offset+1),&valid);
+                const uint8_t local_count=chunk->code[offset+3];
+                const size_t total=4+(size_t)local_count*3;
+                if(!require_bytes(stream,chunk,offset,total)){valid=false;offset=chunk->code_count;break;}
+                fprintf(stream,"%-18s r%u, %u locals\n","DEBUGGER",dest,local_count);
+                for(size_t index=0;index<local_count;index++) {
+                    const size_t entry_offset=offset+4+index*3;
+                    const uint8_t name_index=chunk->code[entry_offset];
+                    const uint16_t local_register=checked_register(chunk,stream,
+                        read_operand(chunk,entry_offset+1),&valid);
+                    const char *local_name="?";size_t local_name_length=1;
+                    if((size_t)name_index<chunk->string_count) {
+                        local_name=chunk->strings[name_index].chars;
+                        local_name_length=chunk->strings[name_index].length;
+                    }
+                    fprintf(stream,"                     %.*s -> r%u\n",
+                        (int)local_name_length,local_name,local_register);
+                }
+                offset+=total;break;
+            }
             case DIAMOND_OP_CHECK_TYPE:
                 if(!require_bytes(stream,chunk,offset,5)){valid=false;offset=chunk->code_count;break;}
                 fprintf(stream,"%-18s r%u, ","CHECK_TYPE",
