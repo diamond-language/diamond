@@ -336,6 +336,8 @@ DiamondToken diamond_lexer_next(DiamondLexer *lexer) {
             return token(lexer, DIAMOND_TOKEN_STAR);
         case '/':
             return token(lexer, DIAMOND_TOKEN_SLASH);
+        case '%':
+            return token(lexer, DIAMOND_TOKEN_PERCENT);
         case '\n':
             return token(lexer, DIAMOND_TOKEN_NEWLINE);
         case ';':

@@ -618,6 +618,7 @@ static Precedence token_precedence(DiamondTokenKind kind) {
             return PREC_TERM;
         case DIAMOND_TOKEN_STAR:
         case DIAMOND_TOKEN_SLASH:
+        case DIAMOND_TOKEN_PERCENT:
             return PREC_FACTOR;
         default:
             return PREC_NONE;
@@ -2569,6 +2570,27 @@ static uint16_t parse_name(Compiler *compiler) {
        compiler->current.kind==DIAMOND_TOKEN_LEFT_PAREN&&
        name_equals(compiler,"pow",name,false))
         return parse_math_binary_call(compiler,DIAMOND_MATH_POW);
+    /* ARGV/ENV -- plain values, not calls, so unlike puts/gets/Time/etc.
+     * above there's no `current.kind==LEFT_PAREN` gate: `ARGV` alone is
+     * already a complete expression. Still shadowable by a local or
+     * user-defined function of the same name, same convention as every
+     * other built-in name. See docs/syntax.md. */
+    if(class_index<0&&find_local(compiler,name)<0&&find_function(compiler,name)<0&&
+       name_equals(compiler,"ARGV",name,false)) {
+        const uint16_t destination=allocate_register(compiler);
+        emit_opcode(compiler,DIAMOND_OP_ARGV);
+        emit_register(compiler,destination);
+        compiler->known_types[destination]=DIAMOND_TYPE_ARRAY;
+        return destination;
+    }
+    if(class_index<0&&find_local(compiler,name)<0&&find_function(compiler,name)<0&&
+       name_equals(compiler,"ENV",name,false)) {
+        const uint16_t destination=allocate_register(compiler);
+        emit_opcode(compiler,DIAMOND_OP_ENV);
+        emit_register(compiler,destination);
+        compiler->known_types[destination]=DIAMOND_TYPE_HASH;
+        return destination;
+    }
     if (class_index >= 0 && compiler->current.kind == DIAMOND_TOKEN_DOT) {
         advance_token(compiler);
         if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER) {
@@ -3237,6 +3259,7 @@ static DiamondOpCode binary_opcode(DiamondTokenKind operator) {
         case DIAMOND_TOKEN_GREATER: return DIAMOND_OP_GREATER;
         case DIAMOND_TOKEN_GREATER_EQUAL: return DIAMOND_OP_GREATER_EQUAL;
         case DIAMOND_TOKEN_LESS_LESS: return DIAMOND_OP_SHIFT_LEFT;
+        case DIAMOND_TOKEN_PERCENT: return DIAMOND_OP_MODULO;
         default: return DIAMOND_OP_ADD;
     }
 }
@@ -3920,6 +3943,7 @@ static uint16_t compile_definition(Compiler *compiler) {
         compiler->current.kind==DIAMOND_TOKEN_MINUS||
         compiler->current.kind==DIAMOND_TOKEN_STAR||
         compiler->current.kind==DIAMOND_TOKEN_SLASH||
+        compiler->current.kind==DIAMOND_TOKEN_PERCENT||
         compiler->current.kind==DIAMOND_TOKEN_EQUAL_EQUAL||
         compiler->current.kind==DIAMOND_TOKEN_LESS||
         compiler->current.kind==DIAMOND_TOKEN_LESS_EQUAL||
@@ -5181,6 +5205,7 @@ static uint16_t compile_interface(Compiler *compiler) {
             compiler->current.kind==DIAMOND_TOKEN_MINUS||
             compiler->current.kind==DIAMOND_TOKEN_STAR||
             compiler->current.kind==DIAMOND_TOKEN_SLASH||
+            compiler->current.kind==DIAMOND_TOKEN_PERCENT||
             compiler->current.kind==DIAMOND_TOKEN_EQUAL_EQUAL||
             compiler->current.kind==DIAMOND_TOKEN_LESS||
             compiler->current.kind==DIAMOND_TOKEN_LESS_EQUAL||

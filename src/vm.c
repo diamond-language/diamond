@@ -241,6 +241,7 @@ static bool hash_set(DiamondVm *vm,DiamondHash *hash,DiamondValue key,
 static bool array_push(DiamondVm *vm,DiamondArray *array,DiamondValue value);
 static void free_adopted_programs(void *list);
 static void free_thread(DiamondThread *thread);
+static void populate_default_argv_env(DiamondVm *vm);
 
 static void mark_object(DiamondObject *object) {
     if (object == nullptr || object->marked) return;
@@ -332,6 +333,8 @@ static void mark_fiber(const DiamondFiber *fiber) {
 
 static void diamond_vm_collect_impl(DiamondVm *vm) {
     if(vm->has_exception)mark_value(vm->exception);
+    mark_value(vm->argv_value);
+    mark_value(vm->env_value);
     for(size_t index=0;index<DIAMOND_MAX_NAMESPACE_CONSTANTS;index++)
         if(vm->namespace_constant_initialized[index])
             mark_value(vm->namespace_constants[index]);
@@ -500,6 +503,7 @@ void diamond_vm_init(DiamondVm *vm) {
      * strictly a bug fix, not a behavior tradeoff: nothing in this VM
      * ever wanted "silently die" as its response to a broken connection. */
     signal(SIGPIPE, SIG_IGN);
+    populate_default_argv_env(vm);
 }
 
 void diamond_vm_bind_fiber_queue(DiamondVm *vm, const DiamondFiberQueue *queue) {
@@ -958,6 +962,53 @@ static DiamondHash *allocate_hash(DiamondVm *vm) {
     DiamondHash *hash=malloc(sizeof(DiamondHash)); if(hash==nullptr)return nullptr;
     *hash=(DiamondHash){.object={.next=vm->objects,.kind=DIAMOND_OBJECT_HASH}};
     vm->objects=&hash->object;vm->bytes_allocated+=sizeof(DiamondHash);return hash;
+}
+
+/* diamond_vm_init's own default for argv_value/env_value -- see that
+ * field's comment in vm.h. Best-effort: an allocation failure partway
+ * through (env_value in particular, since a real environment can have
+ * dozens of entries) just stops early rather than failing VM
+ * construction outright -- diamond_vm_init has no error return, and an
+ * incomplete ENV is a far better failure mode than none at all when
+ * memory is already this tight. */
+static void populate_default_argv_env(DiamondVm *vm) {
+    DiamondArray *argv=allocate_array(vm,nullptr,0);
+    if(argv!=nullptr)vm->argv_value=DIAMOND_OBJECT(argv);
+    DiamondHash *env=allocate_hash(vm);
+    if(env==nullptr)return;
+    vm->env_value=DIAMOND_OBJECT(env);
+    for(char **entry=environ;entry!=nullptr&&*entry!=nullptr;entry++) {
+        const char *equals=strchr(*entry,'=');
+        if(equals==nullptr)continue;
+        const size_t key_length=(size_t)(equals-*entry);
+        DiamondString *key=allocate_string(vm,*entry,key_length);
+        if(key==nullptr)return;
+        DiamondString *value=allocate_string(vm,equals+1,strlen(equals+1));
+        if(value==nullptr)return;
+        if(!hash_set(vm,env,DIAMOND_OBJECT(key),DIAMOND_OBJECT(value)))return;
+    }
+}
+
+/* Replaces the default empty ARGV (see populate_default_argv_env above)
+ * with the real trailing command-line arguments a top-level script was
+ * actually invoked with -- called once, by src/run_source.c, after
+ * diamond_vm_init. Not used by a spawned Thread's child_vm or
+ * ProgramBuilder#run's internal VM, which keep the empty default (see
+ * argv_value's own comment in vm.h for why). Best-effort like
+ * populate_default_argv_env: an allocation failure here just leaves
+ * ARGV at whatever it already had (the empty default, or a partial
+ * prefix), rather than a hard failure with no sensible status to report
+ * through this void-returning function. */
+void diamond_vm_set_argv(DiamondVm *vm, int argc, char *const *argv) {
+    if(argc<=0||argv==nullptr)return;
+    DiamondArray *array=allocate_array(vm,nullptr,0);
+    if(array==nullptr)return;
+    vm->argv_value=DIAMOND_OBJECT(array);
+    for(int index=0;index<argc;index++) {
+        DiamondString *piece=allocate_string(vm,argv[index],strlen(argv[index]));
+        if(piece==nullptr)return;
+        if(!array_push(vm,array,DIAMOND_OBJECT(piece)))return;
+    }
 }
 
 static DiamondClosure *allocate_closure(DiamondVm *vm,uint16_t function_index,
@@ -1708,8 +1759,15 @@ static DiamondVmStatus regexp_new_helper(DiamondVm *vm, const DiamondString *pat
 /* Regexp#match/#match? real body -- same stack-frame-isolation reasoning
  * as regexp_new_helper above (reginold_match's own fields would otherwise
  * land directly in run_chunk's frame too). */
+/* Root through registers[dest] directly, not an out-param -- same real
+ * bug, and same fix, as regexp_scan_helper above (see that function's
+ * own comment for the full story: *result pointed into the caller's C
+ * stack, never a real GC root, and the `groups` malloc'd buffer this
+ * used to build had zero GC visibility of its own between one capture
+ * group's String allocation and the next). */
 static DiamondVmStatus regexp_match_helper(DiamondVm *vm, const DiamondRegexp *regexp,
-        const DiamondString *subject, bool test_only, DiamondValue *result) {
+        const DiamondString *subject, bool test_only,
+        DiamondValue *registers, uint16_t dest) {
     if(test_only) {
         const reginold_status search_status=reginold_search(regexp->handle,
             subject->chars,subject->length,0,nullptr);
@@ -1717,7 +1775,7 @@ static DiamondVmStatus regexp_match_helper(DiamondVm *vm, const DiamondRegexp *r
             snprintf(vm->error,sizeof vm->error,"regexp match failed");
             return DIAMOND_VM_REGEXP_ERROR;
         }
-        *result=DIAMOND_BOOL(search_status==REGINOLD_OK);
+        registers[dest]=DIAMOND_BOOL(search_status==REGINOLD_OK);
         return DIAMOND_VM_OK;
     }
     reginold_match match_result={0};
@@ -1728,34 +1786,33 @@ static DiamondVmStatus regexp_match_helper(DiamondVm *vm, const DiamondRegexp *r
         return DIAMOND_VM_REGEXP_ERROR;
     }
     if(search_status==REGINOLD_MISMATCH) {
-        *result=DIAMOND_NIL;
+        registers[dest]=DIAMOND_NIL;
         return DIAMOND_VM_OK;
     }
-    const size_t group_count=1+match_result.capture_count;
-    DiamondValue *groups=malloc(group_count*sizeof(DiamondValue));
-    if(groups==nullptr) {
+    DiamondArray *result_array=allocate_array(vm,nullptr,0);
+    if(result_array==nullptr) {
         reginold_match_free(&match_result);
         return DIAMOND_VM_OUT_OF_MEMORY;
     }
-    bool build_ok=true;
-    for(size_t index=0;index<group_count&&build_ok;index++) {
+    registers[dest]=DIAMOND_OBJECT(result_array);
+    const size_t group_count=1+match_result.capture_count;
+    for(size_t index=0;index<group_count;index++) {
         const reginold_span span=index==0?match_result.overall:
             match_result.captures[index-1];
-        if(span.beg<0||span.end<0) {
-            groups[index]=DIAMOND_NIL;
-            continue;
+        DiamondValue group_value=DIAMOND_NIL;
+        if(span.beg>=0&&span.end>=0) {
+            DiamondString *group_string=allocate_string(vm,
+                subject->chars+span.beg,(size_t)(span.end-span.beg));
+            if(group_string==nullptr) {
+                reginold_match_free(&match_result);return DIAMOND_VM_OUT_OF_MEMORY;
+            }
+            group_value=DIAMOND_OBJECT(group_string);
         }
-        DiamondString *group_string=allocate_string(vm,
-            subject->chars+span.beg,(size_t)(span.end-span.beg));
-        if(group_string==nullptr) {build_ok=false;break;}
-        groups[index]=DIAMOND_OBJECT(group_string);
+        if(!array_push(vm,result_array,group_value)) {
+            reginold_match_free(&match_result);return DIAMOND_VM_OUT_OF_MEMORY;
+        }
     }
     reginold_match_free(&match_result);
-    if(!build_ok) {free(groups);return DIAMOND_VM_OUT_OF_MEMORY;}
-    DiamondArray *result_array=allocate_array(vm,groups,group_count);
-    free(groups);
-    if(result_array==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
-    *result=DIAMOND_OBJECT(result_array);
     return DIAMOND_VM_OK;
 }
 
@@ -1881,11 +1938,29 @@ static DiamondVmStatus regexp_replace_helper(DiamondVm *vm,const DiamondRegexp *
  * Array of the capture groups (Nil for an unmatched optional group,
  * matching Regexp#match's own convention) if it does -- mirroring Ruby's
  * own #scan exactly. */
+/* Root through registers[dest] directly, not an out-param -- a real bug
+ * found while investigating an unrelated crash (a self-referential-
+ * looking array from String#scan, reproduced with DIAMOND_STRESS_GC=1
+ * even on code well before this session's own changes). The previous
+ * shape wrote the result array into *result, a plain DiamondValue
+ * sitting in the *caller's* C stack frame -- never a real GC root, so
+ * every allocation after the first (each whole-match/capture-group
+ * String, each per-match capture Array) risked a GC pass collecting the
+ * result array, or an already-built capture Array, out from under this
+ * function while it was still building it. The inner capture-group loop
+ * had the same bug twice over: `groups`, a bare malloc'd C array, held
+ * DiamondValues with zero GC visibility at all between allocating one
+ * group String and the next. Fixed by rooting `matches` immediately via
+ * the caller's own dest register (the same register the caller was
+ * always going to assign it to anyway, just done at the start instead
+ * of the end) and pushing each capture Array into it -- and each group
+ * String into that capture Array -- the instant it exists, so nothing
+ * is ever unreachable between one allocation and the next. */
 static DiamondVmStatus regexp_scan_helper(DiamondVm *vm,const DiamondRegexp *regexp,
-        const DiamondString *subject,DiamondValue *result) {
+        const DiamondString *subject,DiamondValue *registers,uint16_t dest) {
     DiamondArray *matches=allocate_array(vm,nullptr,0);
     if(matches==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
-    *result=DIAMOND_OBJECT(matches);
+    registers[dest]=DIAMOND_OBJECT(matches);
     size_t cursor=0;
     while(cursor<=subject->length) {
         reginold_match match_result={0};
@@ -1898,32 +1973,40 @@ static DiamondVmStatus regexp_scan_helper(DiamondVm *vm,const DiamondRegexp *reg
         if(search_status==REGINOLD_MISMATCH)break;
         const size_t match_begin=(size_t)match_result.overall.beg;
         const size_t match_end=(size_t)match_result.overall.end;
-        DiamondValue entry;
         if(match_result.capture_count==0) {
             DiamondString *whole=allocate_string(vm,
                 subject->chars+match_begin,match_end-match_begin);
             if(whole==nullptr) {reginold_match_free(&match_result);return DIAMOND_VM_OUT_OF_MEMORY;}
-            entry=DIAMOND_OBJECT(whole);
-        } else {
-            DiamondValue *groups=malloc(match_result.capture_count*sizeof(DiamondValue));
-            if(groups==nullptr) {reginold_match_free(&match_result);return DIAMOND_VM_OUT_OF_MEMORY;}
-            bool build_ok=true;
-            for(size_t index=0;index<match_result.capture_count&&build_ok;index++) {
-                const reginold_span span=match_result.captures[index];
-                if(span.beg<0||span.end<0) {groups[index]=DIAMOND_NIL;continue;}
-                DiamondString *group_string=allocate_string(vm,
-                    subject->chars+span.beg,(size_t)(span.end-span.beg));
-                if(group_string==nullptr) {build_ok=false;break;}
-                groups[index]=DIAMOND_OBJECT(group_string);
+            if(!array_push(vm,matches,DIAMOND_OBJECT(whole))) {
+                reginold_match_free(&match_result);return DIAMOND_VM_OUT_OF_MEMORY;
             }
-            if(!build_ok) {free(groups);reginold_match_free(&match_result);return DIAMOND_VM_OUT_OF_MEMORY;}
-            DiamondArray *group_array=allocate_array(vm,groups,match_result.capture_count);
-            free(groups);
+        } else {
+            DiamondArray *group_array=allocate_array(vm,nullptr,0);
             if(group_array==nullptr) {reginold_match_free(&match_result);return DIAMOND_VM_OUT_OF_MEMORY;}
-            entry=DIAMOND_OBJECT(group_array);
+            /* Pushed into the already-rooted `matches` before it has any
+             * elements of its own, so it (and everything pushed into it
+             * below) stays reachable transitively through matches for
+             * the rest of this match's construction. */
+            if(!array_push(vm,matches,DIAMOND_OBJECT(group_array))) {
+                reginold_match_free(&match_result);return DIAMOND_VM_OUT_OF_MEMORY;
+            }
+            for(size_t index=0;index<match_result.capture_count;index++) {
+                const reginold_span span=match_result.captures[index];
+                DiamondValue group_value=DIAMOND_NIL;
+                if(span.beg>=0&&span.end>=0) {
+                    DiamondString *group_string=allocate_string(vm,
+                        subject->chars+span.beg,(size_t)(span.end-span.beg));
+                    if(group_string==nullptr) {
+                        reginold_match_free(&match_result);return DIAMOND_VM_OUT_OF_MEMORY;
+                    }
+                    group_value=DIAMOND_OBJECT(group_string);
+                }
+                if(!array_push(vm,group_array,group_value)) {
+                    reginold_match_free(&match_result);return DIAMOND_VM_OUT_OF_MEMORY;
+                }
+            }
         }
         reginold_match_free(&match_result);
-        if(!array_push(vm,matches,entry))return DIAMOND_VM_OUT_OF_MEMORY;
         cursor=match_end==match_begin?match_end+1:match_end;
     }
     return DIAMOND_VM_OK;
@@ -7247,6 +7330,70 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     "'<<' expects an Int shift amount or a value to push onto an Array");
                 VM_RETURN(DIAMOND_VM_TYPE_ERROR);
             }
+            case DIAMOND_OP_MODULO: {
+                /* Floored modulo (result takes the divisor's sign),
+                 * matching Ruby -- not C's truncating `%` (which takes
+                 * the dividend's sign). User-overloadable like the other
+                 * arithmetic operators (unlike `<<`): an Instance left
+                 * operand tries a `%` method the same way ADD/SUBTRACT/
+                 * etc. do. No bignum support -- kept simple like `<<`,
+                 * a deliberate v1 scope cut (see docs/syntax.md); a
+                 * bignum operand falls through to the Instance/TypeError
+                 * path below like any other unsupported type would. */
+                uint16_t destination=0,left=0,right=0;
+                READ_SHORT(destination);READ_SHORT(left);READ_SHORT(right);
+                if(registers[left].kind==DIAMOND_VALUE_INT&&
+                   registers[right].kind==DIAMOND_VALUE_INT&&
+                   !value_is_bignum(registers[left])&&
+                   !value_is_bignum(registers[right])) {
+                    const int64_t left_value=registers[left].as.integer;
+                    const int64_t right_value=registers[right].as.integer;
+                    if(right_value==0)VM_RETURN(DIAMOND_VM_DIVISION_BY_ZERO);
+                    int64_t remainder=0;
+                    if(left_value==INT64_MIN&&right_value==-1) {
+                        /* INT64_MIN / -1 overflows int64_t (traps on some
+                         * platforms) -- but mathematically -1 divides
+                         * everything evenly, so the true remainder is
+                         * always 0 regardless, no division needed. */
+                        remainder=0;
+                    } else {
+                        remainder=left_value%right_value;
+                        if(remainder!=0&&((remainder<0)!=(right_value<0)))
+                            remainder+=right_value;
+                    }
+                    registers[destination]=DIAMOND_INT(remainder);
+                    break;
+                }
+                if((registers[left].kind==DIAMOND_VALUE_FLOAT||
+                    registers[left].kind==DIAMOND_VALUE_INT)&&
+                   (registers[right].kind==DIAMOND_VALUE_FLOAT||
+                    registers[right].kind==DIAMOND_VALUE_INT)&&
+                   (registers[left].kind==DIAMOND_VALUE_FLOAT||
+                    registers[right].kind==DIAMOND_VALUE_FLOAT)) {
+                    const double left_real=registers[left].kind==DIAMOND_VALUE_FLOAT?
+                        registers[left].as.real:(double)registers[left].as.integer;
+                    const double right_real=registers[right].kind==DIAMOND_VALUE_FLOAT?
+                        registers[right].as.real:(double)registers[right].as.integer;
+                    double remainder=fmod(left_real,right_real);
+                    if(remainder!=0&&((remainder<0)!=(right_real<0)))
+                        remainder+=right_real;
+                    registers[destination]=DIAMOND_FLOAT(remainder);
+                    break;
+                }
+                if(registers[left].kind==DIAMOND_VALUE_OBJECT&&
+                   registers[left].as.object->kind==DIAMOND_OBJECT_INSTANCE) {
+                    bool found=false;DiamondValue op_result=DIAMOND_NIL;
+                    const uint8_t *site=chunk->code+instruction_offset;
+                    const DiamondVmStatus status=invoke_operator_method(vm,chunk,depth,
+                        site,(const DiamondInstance *)registers[left].as.object,
+                        "%",1,&registers[right],&op_result,&found);
+                    if(found) {
+                        VM_PROPAGATE(status);
+                        registers[destination]=op_result;break;
+                    }
+                }
+                VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+            }
             case DIAMOND_OP_NEGATE: {
                 uint16_t destination = 0;
                 uint16_t operand = 0;
@@ -8050,12 +8197,11 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                                     "String#scan argument must be a Regexp");
                                 VM_RETURN(DIAMOND_VM_TYPE_ERROR);
                             }
-                            DiamondValue scan_result=DIAMOND_NIL;
                             const DiamondVmStatus scan_status=regexp_scan_helper(vm,
                                 (const DiamondRegexp *)registers[base].as.object,source,
-                                &scan_result);
+                                registers,dest);
                             VM_PROPAGATE(scan_status);
-                            registers[dest]=scan_result;break;
+                            break;
                         }
                         if(repeat_method) {
                             if(argc!=1)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
@@ -9320,13 +9466,11 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                             (int)method_name->length,method_name->chars);
                         VM_RETURN(DIAMOND_VM_TYPE_ERROR);
                     }
-                    DiamondValue match_dest=DIAMOND_NIL;
                     const DiamondVmStatus match_status=regexp_match_helper(vm,
                         (const DiamondRegexp *)registers[recv].as.object,
                         (const DiamondString *)registers[base].as.object,
-                        match_p_method,&match_dest);
+                        match_p_method,registers,dest);
                     VM_PROPAGATE(match_status);
-                    registers[dest]=match_dest;
                     break;
                 }
                 if(receiver_kind==DIAMOND_OBJECT_SQLITE3) {
@@ -9765,6 +9909,14 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 VM_PROPAGATE(debugger_status);
                 registers[destination]=DIAMOND_NIL;
                 break;
+            }
+            case DIAMOND_OP_ARGV: {
+                uint16_t destination=0;READ_SHORT(destination);
+                registers[destination]=vm->argv_value;break;
+            }
+            case DIAMOND_OP_ENV: {
+                uint16_t destination=0;READ_SHORT(destination);
+                registers[destination]=vm->env_value;break;
             }
             case DIAMOND_OP_IS_TYPE: {
                 uint16_t destination=0,source=0,type=0;

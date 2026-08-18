@@ -96,6 +96,15 @@ representable 64-bit `Int`) no longer raises — it promotes to an
 arbitrary-precision `Int` instead, transparently; `is Int` and arithmetic
 both keep working the same way on a promoted value as on any other `Int`.
 
+`%` is *floored* modulo, matching Ruby (not C's truncating `%`): the
+result always takes the divisor's sign, not the dividend's — `-7 % 3` is
+`2`, not `-1`. Works on `Int`/`Float` and any mix of the two (same
+promotion rule as the other arithmetic operators); `Int % 0` raises
+`ZeroDivisionError`, `Float % 0.0` is `NaN` like IEEE-754 division above.
+User-overloadable like `+`/`-`/`*`/`/` (see "Operator overloading"
+below) — unlike bignums, which `%` doesn't support at all yet, a
+deliberate v1 scope cut.
+
 `to_f`/`to_i` convert explicitly between the two. `to_i` rejects `NaN` and
 `Infinity` with a rescuable `RangeError` (there's no finite integer to
 convert to), but a finite `Float` outside 64-bit range now promotes to an
@@ -292,7 +301,7 @@ Vector.new(1, 2) + Vector.new(3, 4)  # => Vector(4, 6)
 -Vector.new(1, 2)                    # => Vector(-1, -2)
 ```
 
-A class can define `+`, `-`, `*`, `/`, `==`, `<`, `<=`, `>`, `>=` as
+A class can define `+`, `-`, `*`, `/`, `%`, `==`, `<`, `<=`, `>`, `>=` as
 ordinary instance methods, and Diamond's own operator syntax (`a + b`, `a ==
 b`, ...) dispatches to them — same mechanism as any other method (inherited,
 overridable, reachable through `super`, and satisfies an `interface` that
@@ -664,6 +673,18 @@ client = TCPSocket.connect("example.com", 8080)
 A connected socket (from `.connect` or `.accept()`) is a `File` under the
 hood, so `.read()`/`.read(n)`/`.gets()`/`.write(value)`/`.close()` work
 identically on both.
+
+`ARGV` and `ENV` are plain global values, not calls — `ARGV` is an
+`Array` of `String`s, the script's own trailing command-line arguments
+(`diamond script.di one two` → `ARGV == ["one", "two"]`; `[]` for `-e`/a
+file run with no trailing args, or from the REPL). `ENV` is a `Hash` of
+`String` to `String`, a snapshot of the process environment taken at
+startup — `ENV["PATH"]`, `ENV["HOME"]`, etc.; a missing key is `nil`,
+same as any other `Hash`. Mutating the `ENV` `Hash` only changes that
+in-memory snapshot, not the real environment (no `setenv` round-trip) —
+read-only in effect, even though nothing stops the write syntax itself.
+Like every other built-in name, a local variable or user-defined
+function named `ARGV`/`ENV` shadows it.
 
 ## Debugging
 

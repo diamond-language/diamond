@@ -1,0 +1,1 @@
+[ENV.length() > 0, ENV["PATH"] != nil, ENV["DIAMOND_NONEXISTENT_VAR_XYZ"]]

@@ -33,7 +33,8 @@ static void print_diagnostic(const char *name, const char *source,
 }
 
 int diamond_run_source_with_program(const char *name, const char *source,
-        bool dump_bytecode, DiamondProgram *program) {
+        bool dump_bytecode, DiamondProgram *program,
+        int script_argc, char *const *script_argv) {
     DiamondSourceBundle bundle;char load_error[768];
     if(!diamond_load_program(name,source,&bundle,load_error,sizeof load_error)) {
         fprintf(stderr,"diamond: %s\n",load_error);return 74;
@@ -71,6 +72,7 @@ int diamond_run_source_with_program(const char *name, const char *source,
     }
     DiamondVm vm;
     diamond_vm_init(&vm);
+    diamond_vm_set_argv(&vm,script_argc,script_argv);
     vm.stress_gc = getenv("DIAMOND_STRESS_GC") != nullptr;
     vm.quickening = getenv("DIAMOND_QUICKEN") != nullptr;
     const char *quickening_threshold = getenv("DIAMOND_QUICKEN_THRESHOLD");
@@ -185,13 +187,15 @@ int diamond_run_source_with_program(const char *name, const char *source,
  * real cost (an allocation this size goes through mmap/munmap, not the
  * ordinary heap, so it's genuine kernel work, not just bookkeeping)
  * hundreds of times over. */
-int diamond_run_source(const char *name, const char *source, bool dump_bytecode) {
+int diamond_run_source(const char *name, const char *source, bool dump_bytecode,
+        int script_argc, char *const *script_argv) {
     DiamondProgram *program=malloc(sizeof *program);
     if(program==nullptr) {
         fprintf(stderr,"diamond: out of memory allocating program\n");
         return 74;
     }
-    const int status=diamond_run_source_with_program(name,source,dump_bytecode,program);
+    const int status=diamond_run_source_with_program(name,source,dump_bytecode,program,
+        script_argc,script_argv);
     free(program);
     return status;
 }

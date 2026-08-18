@@ -179,6 +179,7 @@ class Lexer
     end
     return self.make_token(:star) if code == "*".ord()
     return self.make_token(:slash) if code == "/".ord()
+    return self.make_token(:percent) if code == "%".ord()
     return self.make_token(:newline) if code == "\n".ord()
     return self.make_token(:newline) if code == ";".ord()
     if code == "=".ord()

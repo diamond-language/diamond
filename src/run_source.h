@@ -11,9 +11,13 @@
  * (DIAMOND_STRESS_GC, DIAMOND_QUICKEN, DIAMOND_REPEAT, the DIAMOND_TRACE_*
  * family, ...), matching stdout/stderr output byte-for-byte. `name` is
  * the display name used in diagnostics/stack traces (a file path, or
- * "-e"); `dump_bytecode` matches `--dump-bytecode`. Returns the same
- * process exit code the CLI itself would (0 success, 65 compile error,
- * 70 runtime error, 74 I/O/OOM).
+ * "-e"); `dump_bytecode` matches `--dump-bytecode`. `script_argc`/
+ * `script_argv` are the program's own trailing command-line arguments
+ * (whatever followed the script path or -e source on the real `diamond`
+ * command line, or 0/nullptr for none) -- exposed to Diamond code as the
+ * `ARGV` Array of Strings (see docs/syntax.md). Returns the same process
+ * exit code the CLI itself would (0 success, 65 compile error, 70
+ * runtime error, 74 I/O/OOM).
  *
  * Shared by src/main.c (the CLI, a thin wrapper around this) and
  * tests/run_cases.c (the batch test runner, which calls this in a loop
@@ -21,7 +25,8 @@
  * process per case) -- both stay behaviorally identical to each other,
  * and to every already-recorded `.expected` file under tests/cases/,
  * which was originally captured by running the CLI itself. */
-int diamond_run_source(const char *name, const char *source, bool dump_bytecode);
+int diamond_run_source(const char *name, const char *source, bool dump_bytecode,
+    int script_argc, char *const *script_argv);
 
 /* Same as diamond_run_source, except the caller supplies (and owns) the
  * DiamondProgram `program` gets compiled into, instead of a fresh one
@@ -32,6 +37,7 @@ int diamond_run_source(const char *name, const char *source, bool dump_bytecode)
  * that wants to avoid malloc/free-ing this tens-of-MB struct (a real
  * mmap/munmap cost, not just bookkeeping) once per program. */
 int diamond_run_source_with_program(const char *name, const char *source,
-    bool dump_bytecode, DiamondProgram *program);
+    bool dump_bytecode, DiamondProgram *program,
+    int script_argc, char *const *script_argv);
 
 #endif

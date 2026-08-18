@@ -130,6 +130,14 @@ module Opcode
   # time, after counting by hand got it wrong once already (missed
   # SQLITE3_OPEN, landed on 97 instead of 98).
   SHIFT_LEFT = 98
+  # 99-102 are PROCESS_RUN, DEBUGGER, ARGV, and ENV in src/vm.h's
+  # DiamondOpCode enum -- same story again: none are constructs this
+  # self-hosted parser emits (Process.run, debugger()/breakpoint(), and
+  # the ARGV/ENV globals aren't part of its supported grammar), so
+  # MODULO below has to account for that 4-opcode gap on top of
+  # SHIFT_LEFT's own 8-opcode one. Confirmed with the same throwaway C
+  # probe technique as SHIFT_LEFT, not counted by hand.
+  MODULO = 103
 end
 
 module Precedence
@@ -2261,6 +2269,7 @@ class Parser
     return true if kind == :minus
     return true if kind == :star
     return true if kind == :slash
+    return true if kind == :percent
     return true if kind == :equal_equal
     return true if kind == :less
     return true if kind == :less_equal
@@ -3626,7 +3635,7 @@ class Parser
     return Precedence::COMPARISON if kind == :less || kind == :less_equal || kind == :greater || kind == :greater_equal
     return Precedence::SHIFT if kind == :less_less
     return Precedence::TERM if kind == :plus || kind == :minus
-    return Precedence::FACTOR if kind == :star || kind == :slash
+    return Precedence::FACTOR if kind == :star || kind == :slash || kind == :percent
     Precedence::NONE
   end
 
@@ -3635,6 +3644,7 @@ class Parser
     return Opcode::SUBTRACT if kind == :minus
     return Opcode::MULTIPLY if kind == :star
     return Opcode::DIVIDE if kind == :slash
+    return Opcode::MODULO if kind == :percent
     return Opcode::EQUAL if kind == :equal_equal
     return Opcode::NOT_EQUAL if kind == :bang_equal
     return Opcode::LESS if kind == :less

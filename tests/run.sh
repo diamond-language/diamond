@@ -14,6 +14,31 @@ actual="$($diamond --version)"
 [[ "$("$diamond" -e $'20-2')" == 18 ]]
 [[ "$("$diamond" -e $'20*2')" == 40 ]]
 [[ "$("$diamond" -e $'20/2')" == 10 ]]
+[[ "$("$diamond" -e $'20%3')" == 2 ]]
+
+# ARGV: real trailing command-line arguments -- needs actual argv control,
+# so (like Process.run and debugger() above/below) this lives here rather
+# than in tests/cases/*.di, where run_cases.c always passes an empty ARGV.
+actual="$("$diamond" -e $'puts(ARGV.length())\nputs(ARGV[0])\nputs(ARGV[1])' foo bar)"
+[[ "$actual" == $'2\nfoo\nbar\nnil' ]]
+
+actual="$("$diamond" -e 'ARGV')"
+[[ "$actual" == "[]" ]]
+
+file_argv="$(mktemp -d)/argv.di"
+echo 'ARGV' >"$file_argv"
+actual="$("$diamond" "$file_argv" one two three)"
+[[ "$actual" == "[one, two, three]" ]]
+
+actual="$("$diamond" --dump-bytecode -e 'puts(ARGV[0])' extra)"
+[[ "$(tail -2 <<<"$actual" | head -1)" == "extra" ]]
+
+# ENV: real environment-variable control, same reasoning as ARGV above.
+actual="$(FOO_DIAMOND_TEST_VAR=hello "$diamond" -e 'ENV["FOO_DIAMOND_TEST_VAR"]')"
+[[ "$actual" == "hello" ]]
+
+actual="$("$diamond" -e 'ENV["DIAMOND_NONEXISTENT_VAR_XYZ"] == nil')"
+[[ "$actual" == "true" ]]
 
 error_file="$(mktemp)"
 if "$diamond" -e '1 + )' 2>"$error_file"; then

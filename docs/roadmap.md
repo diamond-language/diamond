@@ -387,6 +387,45 @@ future work.
   bytecode is invalid" failure once a `tests/parser_cases/*.di` fixture
   actually exercised the new operator; re-derived the correct value with
   a throwaway C probe instead of counting by hand a second time.
+- The `%` modulo operator: another gap the same pass turned up, and the
+  one that finally prompted asking the user "what else should I add?"
+  directly rather than continuing to mine the same pass's backlog.
+  Floored modulo (result takes the divisor's sign), matching Ruby, not
+  C's truncating `%` — `-7 % 3` is `2`, not `-1`. Unlike `<<`,
+  user-overloadable like the other arithmetic operators (`+`/`-`/`*`/
+  `/`): an `Instance` left operand tries a `%` method via the same
+  `invoke_operator_method` path they use. No bignum support, a
+  deliberate v1 scope cut like `<<`'s own. Learned from `<<`'s own
+  mistake this time: derived `DIAMOND_OP_MODULO`'s numeric value for
+  `selfhost/parser.di`'s mirror with a throwaway C probe from the start,
+  not by hand-counting the opcode-enum gap.
+- **A real, pre-existing GC-safety bug found and fixed along the way**:
+  while verifying `ARGV`/`ENV` didn't regress anything, `tests/cases/
+  string_scan_with_groups.di` started segfaulting — not from the new
+  code, but because populating `ENV` at VM startup shifted the
+  allocation cadence enough to expose a bug that was already there.
+  `regexp_scan_helper`/`regexp_match_helper` (`String#scan`/`Regexp#
+  match`, both backing capture-group results) built their result value
+  in a plain `DiamondValue *result` out-parameter pointing into the
+  *caller's* C stack frame — never a real GC root — and, for a match
+  with capture groups, staged each group's String in a bare `malloc`'d
+  C array with zero GC visibility between one group's allocation and
+  the next. Confirmed as a real, reproducible bug (not just a
+  theoretical risk) by reverting to before this session's changes and
+  running under `DIAMOND_STRESS_GC=1`, which crashed the same way there
+  too. Fixed by rooting the result `Array` immediately through the
+  caller's own destination register (both helpers now take
+  `registers`/`dest` instead of an out-param) and pushing each piece —
+  capture-group Arrays into the result, capture Strings into their
+  Array — the instant each exists, the same "root the container first,
+  populate incrementally" discipline `String#split` already used.
+  Verified against the full `tests/cases/*.di` corpus under
+  `DIAMOND_STRESS_GC=1`, not just the one failing case. A third
+  occurrence of the identical pattern (`copy_value_into_vm`, used by
+  cross-VM value copying for `Thread`/`ProgramBuilder#run`) was found
+  but not yet fixed — it has no natural destination register to root
+  through since it's recursive, needing a different fix shape; flagged
+  to the user rather than expanding this round's scope further.
 
 ### Collections and Enumerable
 
@@ -560,6 +599,26 @@ future work.
   of this). Not part of `selfhost/parser.di`'s supported grammar, same
   as `Time`/`Thread`/`SQLite3`/`ProgramBuilder`'s own native singleton-
   call opcodes.
+- `ARGV`/`ENV`: the natural follow-up once `Process.run` existed --
+  scripts could spawn a subprocess but couldn't read their own trailing
+  command-line arguments or environment variables, blocking real CLI
+  tooling. `ARGV` is the script's own trailing args (`diamond script.di
+  one two` -> `["one", "two"]`); `ENV` is a `Hash` snapshot of the
+  process environment, taken once at startup (mutating it doesn't call
+  `setenv`). Both are plain bare-identifier globals, not calls -- the
+  first built-ins recognized that way (`puts`/`gets`/`Time`/etc. are all
+  gated on a following `(` or `.`; `ARGV`/`ENV` alone are already
+  complete expressions), shadowable by a local or user-defined function
+  of the same name like every other built-in name. `diamond_run_source`/
+  `diamond_run_source_with_program` (src/run_source.h) gained
+  `script_argc`/`script_argv` parameters to thread the real CLI trailing
+  arguments through from `main`; `DiamondVm` gained `argv_value`/
+  `env_value` fields, populated with real (empty-Array, populated-Hash)
+  defaults by `diamond_vm_init` itself -- so a spawned Thread's
+  `child_vm` and `ProgramBuilder#run`'s internal VM get sane values too,
+  not just the top-level script's own VM (which additionally gets real
+  `ARGV` via a new `diamond_vm_set_argv`, called once from
+  `run_source.c`). See `docs/syntax.md`'s "I/O" section.
 
 ### REPL
 

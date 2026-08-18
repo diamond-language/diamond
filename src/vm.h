@@ -182,6 +182,9 @@ typedef enum DiamondOpCode : uint8_t {
     DIAMOND_OP_SHIFT_LEFT,
     DIAMOND_OP_PROCESS_RUN,
     DIAMOND_OP_DEBUGGER,
+    DIAMOND_OP_ARGV,
+    DIAMOND_OP_ENV,
+    DIAMOND_OP_MODULO,
     DIAMOND_OP_COUNT,
 } DiamondOpCode;
 
@@ -642,6 +645,19 @@ struct DiamondVm {
      * created it by an arbitrary amount, and nothing here reference-
      * counts across the two heaps to know when the last one is gone. */
     void *adopted_programs;
+    /* ARGV/ENV (see docs/syntax.md) -- real Array/Hash values, not
+     * lazily nil like trapped_signal_handlers above, since
+     * DIAMOND_OP_ARGV/DIAMOND_OP_ENV just read these directly with no
+     * fallback check. diamond_vm_init gives every VM (including a
+     * spawned Thread's own child_vm and ProgramBuilder#run's internal
+     * VM) a real, empty ARGV and a real, populated ENV by default --
+     * environment variables are process-wide and universally useful,
+     * but a script's own trailing command-line arguments only make
+     * sense for the actual top-level script invocation, so ARGV only
+     * becomes non-empty when diamond_vm_set_argv (called from
+     * src/run_source.c) is used. */
+    DiamondValue argv_value;
+    DiamondValue env_value;
 };
 
 void diamond_vm_init(DiamondVm *vm);
@@ -649,6 +665,7 @@ void diamond_vm_free(DiamondVm *vm);
 void diamond_vm_collect(DiamondVm *vm);
 void diamond_vm_invalidate_method_caches(DiamondVm *vm);
 void diamond_vm_bind_fiber_queue(DiamondVm *vm, const DiamondFiberQueue *queue);
+void diamond_vm_set_argv(DiamondVm *vm, int argc, char *const *argv);
 DiamondFiber *diamond_fiber_new(const DiamondChunk *chunk);
 void diamond_fiber_free(DiamondFiber *fiber);
 DiamondFiberStatus diamond_fiber_prepare(DiamondFiber *fiber);

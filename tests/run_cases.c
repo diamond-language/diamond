@@ -243,7 +243,7 @@ static bool run_one_case(const char *cases_dir, const char *output_dir, const ch
         return false;
     }
 
-    const int exit_code = diamond_run_source_with_program(di_path, source, dump_bytecode, program);
+    const int exit_code = diamond_run_source_with_program(di_path, source, dump_bytecode, program, 0, nullptr);
     free(source);
 
     restore_fd(STDOUT_FILENO, saved_stdout);

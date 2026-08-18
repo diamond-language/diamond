@@ -763,6 +763,12 @@ static bool disassemble_chunk(FILE *stream, const char *name,
                 }
                 offset+=total;break;
             }
+            case DIAMOND_OP_ARGV:
+                offset=one_register(stream,chunk,"ARGV",offset, &valid);break;
+            case DIAMOND_OP_ENV:
+                offset=one_register(stream,chunk,"ENV",offset, &valid);break;
+            case DIAMOND_OP_MODULO:
+                offset=three_registers(stream,chunk,"MODULO",offset, &valid);break;
             case DIAMOND_OP_CHECK_TYPE:
                 if(!require_bytes(stream,chunk,offset,5)){valid=false;offset=chunk->code_count;break;}
                 fprintf(stream,"%-18s r%u, ","CHECK_TYPE",

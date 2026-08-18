@@ -79,9 +79,10 @@ static char *read_file(const char *path) {
 }
 
 static void print_usage(void) {
-    fputs("usage: diamond [-e CODE | FILE | --version]\n"
-          "       diamond --dump-bytecode [-e CODE | FILE]\n"
-          "       diamond                          (starts a REPL if stdin is a terminal)\n",
+    fputs("usage: diamond [-e CODE | FILE | --version] [ARGS...]\n"
+          "       diamond --dump-bytecode [-e CODE | FILE] [ARGS...]\n"
+          "       diamond                          (starts a REPL if stdin is a terminal)\n"
+          "ARGS, if given, are the script's own arguments -- see ARGV in docs/syntax.md.\n",
           stderr);
 }
 
@@ -90,22 +91,24 @@ int main(int argc, char **argv) {
         printf("diamond %s\n", DIAMOND_VERSION);
         return 0;
     }
-    if (argc == 3 && strcmp(argv[1], "-e") == 0) {
-        return diamond_run_source("-e", argv[2], false);
+    if (argc >= 3 && strcmp(argv[1], "-e") == 0) {
+        return diamond_run_source("-e", argv[2], false, argc - 3, argv + 3);
     }
-    if (argc == 4 && strcmp(argv[1], "--dump-bytecode") == 0 &&
+    if (argc >= 4 && strcmp(argv[1], "--dump-bytecode") == 0 &&
         strcmp(argv[2], "-e") == 0) {
-        return diamond_run_source("-e", argv[3], true);
+        return diamond_run_source("-e", argv[3], true, argc - 4, argv + 4);
     }
-    const bool dump_file = argc == 3 &&
+    const bool dump_file = argc >= 2 &&
         strcmp(argv[1], "--dump-bytecode") == 0;
-    if (argc == 2 || dump_file) {
+    if ((argc >= 2 && !dump_file) || (dump_file && argc >= 3)) {
         const char *path = dump_file ? argv[2] : argv[1];
         char *source = read_file(path);
         if (source == nullptr) {
             return 74;
         }
-        const int status = diamond_run_source(path, source, dump_file);
+        const int arg_start = dump_file ? 3 : 2;
+        const int status = diamond_run_source(path, source, dump_file,
+            argc - arg_start, argv + arg_start);
         free(source);
         return status;
     }
