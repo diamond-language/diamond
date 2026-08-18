@@ -5449,9 +5449,10 @@ void diamond_program_init(DiamondProgram *program) {
         DiamondClass *class=&program->classes[index];
         (void)snprintf(class->name,sizeof class->name,"%s",builtins[index].name);
         class->superclass=builtins[index].superclass;
-        class->field_count=2;
+        class->field_count=3;
         (void)snprintf(class->fields[0],DIAMOND_MAX_FUNCTION_NAME,"message");
         (void)snprintf(class->fields[1],DIAMOND_MAX_FUNCTION_NAME,"cause");
+        (void)snprintf(class->fields[2],DIAMOND_MAX_FUNCTION_NAME,"backtrace");
         /* diamond_compile only computes shapes for every class (built-in
          * and user-declared) once compilation finishes -- done here too,
          * scoped to just these built-ins, so a program that never gets

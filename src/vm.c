@@ -167,6 +167,15 @@ typedef struct DiamondFrame {
     DiamondValue *registers;
     PendingUnwind *pending;
     size_t register_count;
+    /* Backtrace support (Exception#backtrace): the owning chunk plus a
+     * pointer to run_chunk's own `instruction_offset` local, not a copied
+     * value -- a suspended ancestor frame is a real, live C stack frame
+     * blocked inside a nested call, so reading through the pointer always
+     * reflects its current instruction (the call site) with no need to
+     * sync a copy on every dispatch iteration. Valid for exactly the
+     * frame's own lifetime, same as the frame struct itself. */
+    const DiamondChunk *chunk;
+    const size_t *instruction_offset;
 } DiamondFrame;
 
 /* Native backing struct for DiamondThreadHandle (object.h) -- see
@@ -6297,6 +6306,54 @@ static DiamondVmStatus string_format_helper(DiamondVm *vm,const DiamondChunk *ch
     return DIAMOND_VM_OK;
 }
 
+/* Snapshots the live call-stack chain (vm->frames) into a backtrace Array
+ * of "chunk:line:column" Strings, attached to the raised Exception
+ * instance's own hidden `backtrace` field (its 3rd reserved field, after
+ * message/cause -- see diamond_program_init). Called unconditionally at
+ * DIAMOND_OP_RAISE, not lazily from Exception#backtrace itself: by the
+ * time a rescue clause later reads #backtrace, the deeper frames that
+ * were live at the raise site are long gone from vm->frames, so the only
+ * point that can see them is the raise itself. Best-effort -- an
+ * allocation failure here just truncates the backtrace early rather than
+ * failing the raise. */
+static void raise_capture_backtrace_helper(DiamondVm *vm,const DiamondChunk *chunk) {
+    if(vm->exception.kind!=DIAMOND_VALUE_OBJECT||
+       vm->exception.as.object->kind!=DIAMOND_OBJECT_INSTANCE)return;
+    DiamondInstance *raised=(DiamondInstance *)vm->exception.as.object;
+    const DiamondChunk *owner=raised->owner!=nullptr?raised->owner:chunk;
+    bool is_exception=false;const DiamondClass *ancestor=raised->class;
+    while(ancestor!=nullptr) {
+        if(ancestor==&owner->classes[DIAMOND_CLASS_EXCEPTION]){is_exception=true;break;}
+        ancestor=ancestor->superclass==UINT8_MAX?nullptr:
+            &owner->classes[ancestor->superclass];
+    }
+    if(!is_exception||raised->field_count<=2)return;
+    DiamondArray *backtrace=allocate_array(vm,nullptr,0);
+    if(backtrace==nullptr)return;
+    /* Root immediately: vm->exception (already set, has_exception=true by
+     * the caller) keeps `raised` alive, so assigning here makes
+     * `backtrace` itself reachable before any allocation below can
+     * trigger a GC -- same pattern String#split uses for its pieces. */
+    raised->fields[2]=DIAMOND_OBJECT(backtrace);
+    for(const DiamondFrame *frame=vm->frames;frame!=nullptr;frame=frame->previous) {
+        if(frame->chunk==nullptr||frame->instruction_offset==nullptr)continue;
+        const char *name=frame->chunk->name!=nullptr?frame->chunk->name:"<chunk>";
+        const size_t offset=*frame->instruction_offset;
+        const bool in_bounds=offset<frame->chunk->code_count;
+        const uint32_t line=in_bounds&&frame->chunk->lines!=nullptr?
+            frame->chunk->lines[offset]:0;
+        const uint32_t column=in_bounds&&frame->chunk->columns!=nullptr?
+            frame->chunk->columns[offset]:0;
+        char text[256];
+        const int written=snprintf(text,sizeof text,"%s:%u:%u",name,line,column);
+        if(written<0)continue;
+        const size_t length=(size_t)written<sizeof text?(size_t)written:sizeof text-1;
+        DiamondString *entry=allocate_string(vm,text,length);
+        if(entry==nullptr)return;
+        if(!array_push(vm,backtrace,DIAMOND_OBJECT(entry)))return;
+    }
+}
+
 static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                                  DiamondVm *vm,
                                  const DiamondValue *arguments,
@@ -6369,15 +6426,17 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
         registers[index] = arguments[index];
     }
     PendingUnwind pending={};
+    size_t ip = 0;
+    size_t instruction_offset = 0;
     DiamondFrame frame = {
         .previous = vm->frames,
         .registers = registers,
         .pending = &pending,
         .register_count = live_register_count,
+        .chunk = chunk,
+        .instruction_offset = &instruction_offset,
     };
     vm->frames = &frame;
-    size_t ip = 0;
-    size_t instruction_offset = 0;
     UnwindHandler handlers[16];
     size_t handler_count=0;
 
@@ -8997,6 +9056,12 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     registers[dest]=instance->field_count>1?
                         instance->fields[1]:DIAMOND_NIL;break;
                 }
+                if(exception_instance&&method_name->length==9&&
+                   memcmp(method_name->chars,"backtrace",9)==0) {
+                    if(argc!=0)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                    registers[dest]=instance->field_count>2?
+                        instance->fields[2]:DIAMOND_NIL;break;
+                }
                 const uint8_t *site=chunk->code+instruction_offset;
                 const size_t cache_slot=((size_t)(uintptr_t)site>>2)%
                     DIAMOND_INLINE_CACHE_COUNT;
@@ -9082,7 +9147,38 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 const DiamondMethod *method=lookup_method(chunk,
                     &chunk->classes[owner->superclass],method_name->chars,
                     method_name->length);
-                if(method==nullptr) VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                if(method==nullptr) {
+                    /* No user-defined method anywhere up the superclass
+                     * chain -- if this is super(...) from an overridden
+                     * initialize() reaching for the built-in Exception
+                     * constructor (message/cause field assignment,
+                     * otherwise synthesized inline by NEW's own
+                     * exception_class branch for a class that never
+                     * overrides initialize), apply that same behavior
+                     * here instead of treating the built-in as missing. */
+                    bool reaches_exception=false;
+                    const DiamondClass *ancestor=&chunk->classes[owner->superclass];
+                    while(ancestor!=nullptr) {
+                        if(ancestor==&chunk->classes[DIAMOND_CLASS_EXCEPTION]) {
+                            reaches_exception=true;break;
+                        }
+                        ancestor=ancestor->superclass==UINT8_MAX?nullptr:
+                            &chunk->classes[ancestor->superclass];
+                    }
+                    if(reaches_exception&&method_name->length==10&&
+                       memcmp(method_name->chars,"initialize",10)==0) {
+                        if(argc>2)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                        DiamondInstance *self=
+                            (DiamondInstance *)registers[0].as.object;
+                        if(argc>0&&self->field_count>0)
+                            self->fields[0]=registers[base];
+                        if(argc>1&&self->field_count>1)
+                            self->fields[1]=registers[(size_t)base+1];
+                        registers[dest]=DIAMOND_NIL;
+                        break;
+                    }
+                    VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                }
                 if(argc<method->required_arity||argc>method->arity)
                     VM_RETURN(DIAMOND_VM_ARITY_ERROR);
                 DiamondValue args[17]; args[0]=registers[0];
@@ -9445,6 +9541,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
             case DIAMOND_OP_RAISE: {
                 uint16_t source=0;READ_SHORT(source);
                 vm->exception=registers[source];vm->has_exception=true;
+                raise_capture_backtrace_helper(vm,chunk);
                 if(catch_exception(vm,chunk,handlers,&handler_count,&pending,
                                    registers,&ip))break;
                 if(vm->exception.kind==DIAMOND_VALUE_INT)

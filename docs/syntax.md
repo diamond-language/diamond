@@ -414,6 +414,31 @@ exceptions, and explicit `return` alike. Built-in exception classes:
 `IndexError`, `ZeroDivisionError`, `RangeError`, `SystemStackError`,
 `FiberError`, and `IOError`.
 
+`Exception.new(message, cause)` takes up to two positional arguments
+(both optional), readable back via `.message()`/`.cause()`. A subclass
+that overrides `initialize` to take its own extra arguments reaches the
+built-in constructor the normal way, with `super(message)` (or
+`super(message, cause)`):
+
+```ruby
+class ValidationError < StandardError
+  def initialize(message, field)
+    super(message)
+    @field = field
+  end
+  def field()
+    @field
+  end
+end
+```
+
+`.backtrace()` returns an Array of `"chunk:line:column"` Strings, one per
+still-live call frame, captured at the moment `raise` runs (not lazily
+when `.backtrace()` is called) — it reflects where the exception was
+raised even after the frames that were active then have long since
+returned by the time a `rescue` clause inspects it. `nil` before an
+instance is ever raised.
+
 ## Collections
 
 `[1, 2]` for arrays and `{"key": value}` for hashes, both with optional

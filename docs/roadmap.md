@@ -206,6 +206,24 @@ future work.
   A postfix-conditional `raise ... if cond` is deliberately excluded from
   this (the check still applies, since that path might not actually
   raise).
+- `Exception#backtrace`, one of the release-readiness gaps a "what do most
+  languages have that Diamond doesn't" pass turned up. Returns an Array of
+  `"chunk:line:column"` Strings for every still-live call frame, captured
+  at `raise` time (not lazily from `#backtrace` itself, since by the time
+  a `rescue` clause reads it the deeper frames that were live at the raise
+  site are long gone from the VM's frame chain). `DiamondFrame` gained a
+  `chunk`/`instruction_offset` pointer pair for this — previously frames
+  tracked only registers/pending-unwind state, with no way for an
+  ancestor frame to be inspected from below. While building this, found
+  and fixed a real bug it happened to expose: a user-defined Exception
+  subclass overriding `initialize` to take its own extra arguments could
+  never call `super(message)` to reach the built-in constructor —
+  `DIAMOND_OP_SUPER` always failed with a spurious `TypeError`, because
+  the built-in `Exception#initialize` isn't a real compiled function (it's
+  synthesized inline inside `NEW`'s own opcode handler) and `SUPER`'s
+  method lookup had no fallback for that case. Custom exception classes
+  with extra fields are a completely ordinary pattern, so this was
+  blocking real code, not just an edge case.
 
 ### Performance: quickening and dispatch caching
 
