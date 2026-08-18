@@ -776,6 +776,8 @@ class Parser
         result = self.compile_retry()
       elsif self.index_assignment_ahead?()
         result = self.compile_index_assignment()
+      elsif self.compound_assignment_ahead?()
+        result = self.compile_compound_assignment()
       elsif self.assignment_ahead?()
         result = self.compile_assignment()
       else
@@ -2978,6 +2980,25 @@ class Parser
     lookahead.next_token().kind() == :equal
   end
 
+  def compound_assignment_token?(kind)
+    kind == :plus_equal || kind == :minus_equal || kind == :star_equal ||
+      kind == :slash_equal || kind == :percent_equal ||
+      kind == :or_or_equal || kind == :and_and_equal
+  end
+
+  # Same shape as assignment_ahead? above (only identifier/@ivar targets
+  # -- indexed (arr[i] += 1) compound assignment is a deliberate v1 scope
+  # cut, matching the native compiler's own compound_assignment_ahead.
+  # @@cvar targets aren't recognized either, but *not* as a matching
+  # choice on this feature's part -- this parser has no class-variable
+  # support at all yet, in assignment_ahead? above or anywhere else, so
+  # there's nothing "@@cvar += 1" could mean here regardless).
+  def compound_assignment_ahead?()
+    return false if @current.kind() != :identifier && @current.kind() != :instance_variable
+    lookahead = @lexer.clone()
+    self.compound_assignment_token?(lookahead.next_token().kind())
+  end
+
   def index_assignment_ahead?()
     return false if @current.kind() != :identifier
     lookahead = @lexer.clone()
@@ -3018,12 +3039,7 @@ class Parser
     value
   end
 
-  def compile_assignment()
-    instance_variable = @current.kind() == :instance_variable
-    token = @current
-    self.advance_token()
-    self.advance_token()
-    value = self.parse_expression()
+  def compile_assignment_store(token, instance_variable, value)
     return self.compile_ivar_write(token, value) if instance_variable
     name = self.token_text(token)
     existing = self.find_local(name)
@@ -3044,6 +3060,72 @@ class Parser
       @declared_types.push([destination, source_declaration])
     end
     destination
+  end
+
+  def compile_assignment()
+    instance_variable = @current.kind() == :instance_variable
+    token = @current
+    self.advance_token()
+    self.advance_token()
+    value = self.parse_expression()
+    self.compile_assignment_store(token, instance_variable, value)
+  end
+
+  # `x += y`/.../`x ||= y`/`x &&= y` -- see compiler.c's compile_compound_
+  # assignment for the full rationale; this mirrors it exactly, just
+  # built from this parser's own read/write primitives (read_local/
+  # compile_ivar_read for the read side, compile_assignment_store for
+  # the write side) instead of a shared parse_prefix dispatch, since
+  # this parser doesn't have one function playing that combined role.
+  def compile_compound_assignment()
+    instance_variable = @current.kind() == :instance_variable
+    token = @current
+    name = self.token_text(token)
+    self.advance_token()
+    left = if instance_variable
+      self.compile_ivar_read(token)
+    else
+      existing = self.find_local(name)
+      if existing == nil
+        self.fail("undefined local variable")
+        0
+      else
+        self.read_local(existing)
+      end
+    end
+    op_kind = @current.kind()
+    self.advance_token()
+    if op_kind == :or_or_equal || op_kind == :and_and_equal
+      is_and = op_kind == :and_and_equal
+      destination = self.allocate_register()
+      self.emit_instruction2(Opcode::MOVE, destination, left)
+      end_jump = self.emit_jump(if is_and
+        Opcode::JUMP_IF_FALSE
+      else
+        Opcode::JUMP_IF_TRUE
+      end, left)
+      right = self.parse_expression()
+      self.emit_instruction2(Opcode::MOVE, destination, right)
+      self.patch_jump(end_jump, @code_count)
+      return self.compile_assignment_store(token, instance_variable, destination)
+    end
+    plain_kind = if op_kind == :plus_equal
+      :plus
+    elsif op_kind == :minus_equal
+      :minus
+    elsif op_kind == :star_equal
+      :star
+    elsif op_kind == :slash_equal
+      :slash
+    else
+      :percent
+    end
+    right = self.parse_expression()
+    destination = self.allocate_register()
+    self.emit_instruction3(self.binary_opcode(plain_kind), destination, left, right)
+    result_fact = self.binary_result_fact(plain_kind, left, right)
+    self.set_type_fact(destination, result_fact) if result_fact != nil
+    self.compile_assignment_store(token, instance_variable, destination)
   end
 
   def compile_ivar_write(token, value)
@@ -3671,6 +3753,14 @@ class Parser
       operator = @current.kind()
       operator_precedence = self.token_precedence(operator)
       self.advance_token()
+      # A newline right after a binary operator can only mean "the right
+      # operand continues on the next line" -- mirrors src/compiler.c's
+      # own parse_precedence fix for the exact same "expected expression"
+      # symptom (`x = 1 +\n 2`, `if a &&\n b`). This mirror never got the
+      # matching fix when that one landed -- latent until now, since
+      # nothing in this parser's own source or the parser_cases corpus
+      # happened to use trailing-operator continuation before.
+      self.skip_newlines()
       if operator == :is
         if @current.kind() != :identifier
           self.fail("expected type after 'is'")

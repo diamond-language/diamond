@@ -165,21 +165,40 @@ class Lexer
       return self.scan_colon()
     end
     if code == "|".ord()
-      return self.make_token(:or_or) if self.match?("|".ord())
+      if self.match?("|".ord())
+        return self.make_token(:or_or_equal) if self.match?("=".ord())
+        return self.make_token(:or_or)
+      end
       return self.make_token(:pipe)
     end
     if code == "&".ord()
-      return self.make_token(:and_and) if self.match?("&".ord())
+      if self.match?("&".ord())
+        return self.make_token(:and_and_equal) if self.match?("=".ord())
+        return self.make_token(:and_and)
+      end
       return self.make_token(:error)
     end
-    return self.make_token(:plus) if code == "+".ord()
+    if code == "+".ord()
+      return self.make_token(:plus_equal) if self.match?("=".ord())
+      return self.make_token(:plus)
+    end
     if code == "-".ord()
+      return self.make_token(:minus_equal) if self.match?("=".ord())
       return self.make_token(:arrow) if self.match?(">".ord())
       return self.make_token(:minus)
     end
-    return self.make_token(:star) if code == "*".ord()
-    return self.make_token(:slash) if code == "/".ord()
-    return self.make_token(:percent) if code == "%".ord()
+    if code == "*".ord()
+      return self.make_token(:star_equal) if self.match?("=".ord())
+      return self.make_token(:star)
+    end
+    if code == "/".ord()
+      return self.make_token(:slash_equal) if self.match?("=".ord())
+      return self.make_token(:slash)
+    end
+    if code == "%".ord()
+      return self.make_token(:percent_equal) if self.match?("=".ord())
+      return self.make_token(:percent)
+    end
     return self.make_token(:newline) if code == "\n".ord()
     return self.make_token(:newline) if code == ";".ord()
     if code == "=".ord()

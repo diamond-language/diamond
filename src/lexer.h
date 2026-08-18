@@ -44,6 +44,22 @@ typedef enum DiamondTokenKind {
     DIAMOND_TOKEN_STAR,
     DIAMOND_TOKEN_SLASH,
     DIAMOND_TOKEN_PERCENT,
+    /* Compound assignment (`x += 1`, ...) -- pure syntax sugar, expanded
+     * entirely at parse time into the same opcode sequence the plain
+     * `x = x + 1` spelling would already produce (see compile_compound_
+     * assignment, compiler.c), so no new DiamondOpCode is needed for
+     * these. DIAMOND_TOKEN_OR_OR_EQUAL/AND_AND_EQUAL live here too,
+     * next to their arithmetic siblings, rather than next to AND_AND/
+     * OR_OR above -- keeping every compound-assignment token together
+     * matches how compound_assignment_ahead (compiler.c) checks them
+     * as one group. */
+    DIAMOND_TOKEN_PLUS_EQUAL,
+    DIAMOND_TOKEN_MINUS_EQUAL,
+    DIAMOND_TOKEN_STAR_EQUAL,
+    DIAMOND_TOKEN_SLASH_EQUAL,
+    DIAMOND_TOKEN_PERCENT_EQUAL,
+    DIAMOND_TOKEN_OR_OR_EQUAL,
+    DIAMOND_TOKEN_AND_AND_EQUAL,
     DIAMOND_TOKEN_EQUAL,
     DIAMOND_TOKEN_EQUAL_EQUAL,
     DIAMOND_TOKEN_BANG_EQUAL,

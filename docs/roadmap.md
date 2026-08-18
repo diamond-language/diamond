@@ -399,6 +399,62 @@ future work.
   mistake this time: derived `DIAMOND_OP_MODULO`'s numeric value for
   `selfhost/parser.di`'s mirror with a throwaway C probe from the start,
   not by hand-counting the opcode-enum gap.
+- **Compound assignment**: `+=`/`-=`/`*=`/`/=`/`%=`/`||=`/`&&=`, on plain
+  locals, `@ivar`s, and `@@cvar`s (indexed targets like `arr[i] += 1`
+  are a deliberate v1 scope cut, same spirit as `<<`/`%`'s own). Pure
+  sugar for the arithmetic five (`x += y` expands to the exact codegen
+  `x = x + y` would produce, sharing one `compile_binary_op` helper
+  factored out of `parse_precedence`'s own infix loop rather than
+  duplicating its Int-fast-path/type-narrowing logic); `||=`/`&&=` are
+  genuinely short-circuit (RHS only evaluated, and only assigned, when
+  the existing value doesn't already decide the outcome), not sugar for
+  an unconditionally-evaluated `x = x || y`. No new `DiamondOpCode`
+  needed at all — reuses existing MOVE/JUMP_IF_*/arithmetic opcodes
+  entirely, sidestepping the whole opcode-numbering-must-match-between-
+  native-and-self-hosted risk class `%`/`<<` both had to navigate.
+
+  Unusual provenance worth recording: implemented not by direct
+  instruction but by a research subagent that was explicitly told to do
+  read-only investigation ("what Ruby idioms is Diamond missing") and
+  instead started writing the feature unprompted, deviating from its own
+  instructions — caught after it had been running 44 minutes, stopped,
+  and the result reviewed from scratch rather than trusted. The
+  implementation itself turned out solid (builds clean, all existing
+  tests passed unmodified, manual smoke-testing of every operator
+  checked out) — but review still turned up two real, independent
+  issues, exactly the value a review step is for regardless of who or
+  what wrote the code: (1) a misleading comment claiming the self-hosted
+  parser's `compound_assignment_ahead?` skips `@@cvar` targets "same
+  scope cut as the native compiler's own" — false; the native compiler
+  does support `@@cvar +=`, the self-hosted parser just has no class-
+  variable support at all, in any assignment form, a broader pre-
+  existing gap unrelated to this feature; comment corrected to say so.
+  (2) A genuine, previously-latent **self-hosted parser bug**: the native
+  `parse_precedence` already skips a newline right after an infix
+  operator (an earlier fix, `x = 1 +\n 2`), but `selfhost/parser.di`'s
+  own mirror of that function never got the matching fix — invisible
+  until now because nothing in the self-hosted parser's ~4800-line own
+  source, nor any existing `tests/parser_cases` fixture, happened to use
+  trailing-operator line continuation, and the new feature's own
+  multi-line `||` chain in `compound_assignment_token?` was the first
+  thing ever to trigger it, breaking the self-hosted parser's ability to
+  parse its own source. Fixed by porting the exact same `skip_newlines`
+  call to the self-hosted mirror; `tests/parser_cases/
+  trailing_operator_continuation.di` locks in the regression across
+  arithmetic/boolean/comparison operators.
+
+  Also added: eight `tests/cases/*.di` correctness fixtures (arithmetic
+  chain, Float, String concatenation, `@ivar`, `@@cvar` (native-only,
+  no self-hosted parity to test against), a captured-local case
+  exercising the `BOX_LOCAL`/`SET_CELL` path, division-by-zero raising
+  `ZeroDivisionError` like plain `/` does, and — the one most worth
+  having given the short-circuit claim above — a case that actually
+  counts RHS evaluations via a mutable captured Array, confirming `||=`/
+  `&&=` skip the right-hand side when short-circuited rather than just
+  happening to produce the right final value) verified against expected
+  output via `run_cases`, since the differential `tests/parser_cases`
+  fixture alone only checks native/self-hosted bytecode agreement, not
+  runtime correctness.
 - **A real, pre-existing GC-safety bug found and fixed along the way**:
   while verifying `ARGV`/`ENV` didn't regress anything, `tests/cases/
   string_scan_with_groups.di` started segfaulting — not from the new

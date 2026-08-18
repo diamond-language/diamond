@@ -322,22 +322,31 @@ DiamondToken diamond_lexer_next(DiamondLexer *lexer) {
             return token(lexer, DIAMOND_TOKEN_COLON);
         }
         case '|':
-            return token(lexer, match(lexer, '|') ? DIAMOND_TOKEN_OR_OR
-                                                   : DIAMOND_TOKEN_PIPE);
+            if(match(lexer,'|'))
+                return token(lexer,match(lexer,'=')?DIAMOND_TOKEN_OR_OR_EQUAL
+                                                    :DIAMOND_TOKEN_OR_OR);
+            return token(lexer, DIAMOND_TOKEN_PIPE);
         case '&':
-            return token(lexer, match(lexer, '&') ? DIAMOND_TOKEN_AND_AND
-                                                   : DIAMOND_TOKEN_ERROR);
+            if(match(lexer,'&'))
+                return token(lexer,match(lexer,'=')?DIAMOND_TOKEN_AND_AND_EQUAL
+                                                    :DIAMOND_TOKEN_AND_AND);
+            return token(lexer, DIAMOND_TOKEN_ERROR);
         case '+':
-            return token(lexer, DIAMOND_TOKEN_PLUS);
+            return token(lexer, match(lexer,'=') ? DIAMOND_TOKEN_PLUS_EQUAL
+                                                  : DIAMOND_TOKEN_PLUS);
         case '-':
+            if(match(lexer,'=')) return token(lexer, DIAMOND_TOKEN_MINUS_EQUAL);
             return token(lexer, match(lexer, '>') ? DIAMOND_TOKEN_ARROW
                                                    : DIAMOND_TOKEN_MINUS);
         case '*':
-            return token(lexer, DIAMOND_TOKEN_STAR);
+            return token(lexer, match(lexer,'=') ? DIAMOND_TOKEN_STAR_EQUAL
+                                                  : DIAMOND_TOKEN_STAR);
         case '/':
-            return token(lexer, DIAMOND_TOKEN_SLASH);
+            return token(lexer, match(lexer,'=') ? DIAMOND_TOKEN_SLASH_EQUAL
+                                                  : DIAMOND_TOKEN_SLASH);
         case '%':
-            return token(lexer, DIAMOND_TOKEN_PERCENT);
+            return token(lexer, match(lexer,'=') ? DIAMOND_TOKEN_PERCENT_EQUAL
+                                                  : DIAMOND_TOKEN_PERCENT);
         case '\n':
             return token(lexer, DIAMOND_TOKEN_NEWLINE);
         case ';':

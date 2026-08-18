@@ -28,6 +28,43 @@ end
 block is its value. Blocks are `end`-delimited throughout; there are no
 braces. `next`/`break` work inside loops.
 
+## Compound assignment
+
+```ruby
+x = 10
+x += 5    # 15
+x -= 3    # 12
+x *= 2    # 24
+x /= 4    # 6
+x %= 5    # 1
+
+count = nil
+count ||= 0    # count was nil, so this assigns: count is now 0
+count ||= 99   # count is already 0 (truthy-or-falsy check, not nil check
+               # -- see below), so this is a no-op: count stays 0
+
+flag = true
+flag &&= check_something()  # only evaluates/assigns if flag is truthy
+```
+
+`+=`/`-=`/`*=`/`/=`/`%=` are pure sugar for `x = x <op> y` — same
+semantics, same runtime errors (`x /= 0` raises `ZeroDivisionError` exactly
+like plain `/` does), same operator-overload dispatch for an `Instance`
+target. `||=`/`&&=` are genuinely short-circuit, not sugar for `x = x ||
+y`/`x = x && y` evaluated unconditionally: the right-hand side is only
+evaluated (and the assignment only happens) when the existing value
+doesn't already decide the outcome — `x ||= y` skips `y` entirely when `x`
+is already truthy, `x &&= y` skips `y` entirely when `x` is already falsy.
+Truthy/falsy here means Diamond's ordinary truthiness (only `nil` and
+`false` are falsy), not specifically "is nil" — `count ||= 99` above is a
+no-op once `count` is `0`, since `0` is truthy, the same way plain `if
+count` would treat it.
+
+The target can be a plain local, an `@ivar`, or a `@@cvar` — same three
+targets plain `=` and multiple assignment accept. Indexed targets
+(`arr[i] += 1`, `hash[k] ||= default`) aren't supported yet; write the
+indexed read and assignment out separately.
+
 ## Multiple assignment
 
 ```ruby

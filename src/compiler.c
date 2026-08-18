@@ -3264,6 +3264,108 @@ static DiamondOpCode binary_opcode(DiamondTokenKind operator) {
     }
 }
 
+/* The generic (non-short-circuit, non-`is`) binary-operator codegen --
+ * factored out of parse_precedence's own infix loop so
+ * compile_compound_assignment (below) can reuse it verbatim for `+=`/
+ * `-=`/`*=`/`/=`/`%=` instead of re-parsing the desugared `x = x + y`
+ * form or duplicating the Int-fast-path/type-narrowing logic. Takes
+ * `left`/`right` as already-evaluated registers -- this is deliberately
+ * NOT `right = parse_precedence(...)` itself, since a compound
+ * assignment's RHS is parsed as a full expression (`parse_expression`),
+ * not at `operator_precedence + 1` the way a chained infix operand is. */
+static uint16_t compile_binary_op(Compiler *compiler, DiamondTokenKind operator,
+                                   uint16_t left, uint16_t right) {
+    const uint16_t destination = allocate_register(compiler);
+    DiamondOpCode opcode=binary_opcode(operator);
+    if(operator==DIAMOND_TOKEN_PLUS&&
+       compiler->known_types[left]==DIAMOND_TYPE_INT&&
+       compiler->known_types[right]==DIAMOND_TYPE_INT)
+        opcode=DIAMOND_OP_ADD_INT;
+    if(operator==DIAMOND_TOKEN_MINUS&&
+       compiler->known_types[left]==DIAMOND_TYPE_INT&&
+       compiler->known_types[right]==DIAMOND_TYPE_INT)
+        opcode=DIAMOND_OP_SUBTRACT_INT;
+    if(operator==DIAMOND_TOKEN_STAR&&
+       compiler->known_types[left]==DIAMOND_TYPE_INT&&
+       compiler->known_types[right]==DIAMOND_TYPE_INT)
+        opcode=DIAMOND_OP_MULTIPLY_INT;
+    if(operator==DIAMOND_TOKEN_SLASH&&
+       compiler->known_types[left]==DIAMOND_TYPE_INT&&
+       compiler->known_types[right]==DIAMOND_TYPE_INT)
+        opcode=DIAMOND_OP_DIVIDE_INT;
+    if(operator==DIAMOND_TOKEN_EQUAL_EQUAL&&
+       compiler->known_types[left]==DIAMOND_TYPE_INT&&
+       compiler->known_types[right]==DIAMOND_TYPE_INT)
+        opcode=DIAMOND_OP_EQUAL_INT;
+    if(operator==DIAMOND_TOKEN_BANG_EQUAL&&
+       compiler->known_types[left]==DIAMOND_TYPE_INT&&
+       compiler->known_types[right]==DIAMOND_TYPE_INT)
+        opcode=DIAMOND_OP_NOT_EQUAL_INT;
+    if(operator==DIAMOND_TOKEN_LESS&&
+       compiler->known_types[left]==DIAMOND_TYPE_INT&&
+       compiler->known_types[right]==DIAMOND_TYPE_INT)
+        opcode=DIAMOND_OP_LESS_INT;
+    if(operator==DIAMOND_TOKEN_LESS_EQUAL&&
+       compiler->known_types[left]==DIAMOND_TYPE_INT&&
+       compiler->known_types[right]==DIAMOND_TYPE_INT)
+        opcode=DIAMOND_OP_LESS_EQUAL_INT;
+    if(operator==DIAMOND_TOKEN_GREATER&&
+       compiler->known_types[left]==DIAMOND_TYPE_INT&&
+       compiler->known_types[right]==DIAMOND_TYPE_INT)
+        opcode=DIAMOND_OP_GREATER_INT;
+    if(operator==DIAMOND_TOKEN_GREATER_EQUAL&&
+       compiler->known_types[left]==DIAMOND_TYPE_INT&&
+       compiler->known_types[right]==DIAMOND_TYPE_INT)
+        opcode=DIAMOND_OP_GREATER_EQUAL_INT;
+    emit_instruction(compiler, opcode, destination,
+                     left, right, 3);
+    if(operator==DIAMOND_TOKEN_EQUAL_EQUAL || operator==DIAMOND_TOKEN_BANG_EQUAL ||
+       operator==DIAMOND_TOKEN_LESS || operator==DIAMOND_TOKEN_LESS_EQUAL ||
+       operator==DIAMOND_TOKEN_GREATER || operator==DIAMOND_TOKEN_GREATER_EQUAL) {
+        compiler->known_types[destination]=DIAMOND_TYPE_BOOL;
+        if(operator==DIAMOND_TOKEN_EQUAL_EQUAL||operator==DIAMOND_TOKEN_BANG_EQUAL) {
+            uint16_t narrowed=left,nil_value=right;
+            if(compiler->known_types[left]==DIAMOND_TYPE_NIL) {
+                narrowed=right;nil_value=left;
+            }
+            if(compiler->known_types[nil_value]==DIAMOND_TYPE_NIL&&
+               compiler->known_type_sets[narrowed]>=0) {
+                int16_t non_nil=-1,nil_only=-1;
+                if(split_nil_type_set(compiler,
+                   (uint8_t)compiler->known_type_sets[narrowed],
+                   &non_nil,&nil_only)) {
+                    const int16_t when_true=operator==DIAMOND_TOKEN_BANG_EQUAL
+                        ?non_nil:nil_only;
+                    const int16_t when_false=operator==DIAMOND_TOKEN_BANG_EQUAL
+                        ?nil_only:non_nil;
+                    compiler->narrowing=(Narrowing){.valid=true,
+                        .condition=destination,
+                        .when_true={{.reg=narrowed,.type_set=when_true}},
+                        .when_true_count=1,
+                        .when_false={{.reg=narrowed,.type_set=when_false}},
+                        .when_false_count=1};
+                }
+            }
+        }
+    } else if(compiler->known_types[left]==DIAMOND_TYPE_INT &&
+              compiler->known_types[right]==DIAMOND_TYPE_INT) {
+        compiler->known_types[destination]=DIAMOND_TYPE_INT;
+    } else if((compiler->known_types[left]==DIAMOND_TYPE_FLOAT||
+               compiler->known_types[left]==DIAMOND_TYPE_INT) &&
+              (compiler->known_types[right]==DIAMOND_TYPE_FLOAT||
+               compiler->known_types[right]==DIAMOND_TYPE_INT) &&
+              (compiler->known_types[left]==DIAMOND_TYPE_FLOAT||
+               compiler->known_types[right]==DIAMOND_TYPE_FLOAT)) {
+        /* Mixed Int/Float statically known to auto-promote to Float. */
+        compiler->known_types[destination]=DIAMOND_TYPE_FLOAT;
+    } else if(operator==DIAMOND_TOKEN_PLUS &&
+              compiler->known_types[left]==DIAMOND_TYPE_STRING &&
+              compiler->known_types[right]==DIAMOND_TYPE_STRING) {
+        compiler->known_types[destination]=DIAMOND_TYPE_STRING;
+    }
+    return destination;
+}
+
 static uint16_t parse_precedence(Compiler *compiler, Precedence precedence) {
     uint16_t left = parse_prefix(compiler);
     while (!compiler->failed &&
@@ -3366,95 +3468,7 @@ static uint16_t parse_precedence(Compiler *compiler, Precedence precedence) {
         }
         const uint16_t right = parse_precedence(
             compiler, (Precedence)(operator_precedence + 1));
-        const uint16_t destination = allocate_register(compiler);
-        DiamondOpCode opcode=binary_opcode(operator);
-        if(operator==DIAMOND_TOKEN_PLUS&&
-           compiler->known_types[left]==DIAMOND_TYPE_INT&&
-           compiler->known_types[right]==DIAMOND_TYPE_INT)
-            opcode=DIAMOND_OP_ADD_INT;
-        if(operator==DIAMOND_TOKEN_MINUS&&
-           compiler->known_types[left]==DIAMOND_TYPE_INT&&
-           compiler->known_types[right]==DIAMOND_TYPE_INT)
-            opcode=DIAMOND_OP_SUBTRACT_INT;
-        if(operator==DIAMOND_TOKEN_STAR&&
-           compiler->known_types[left]==DIAMOND_TYPE_INT&&
-           compiler->known_types[right]==DIAMOND_TYPE_INT)
-            opcode=DIAMOND_OP_MULTIPLY_INT;
-        if(operator==DIAMOND_TOKEN_SLASH&&
-           compiler->known_types[left]==DIAMOND_TYPE_INT&&
-           compiler->known_types[right]==DIAMOND_TYPE_INT)
-            opcode=DIAMOND_OP_DIVIDE_INT;
-        if(operator==DIAMOND_TOKEN_EQUAL_EQUAL&&
-           compiler->known_types[left]==DIAMOND_TYPE_INT&&
-           compiler->known_types[right]==DIAMOND_TYPE_INT)
-            opcode=DIAMOND_OP_EQUAL_INT;
-        if(operator==DIAMOND_TOKEN_BANG_EQUAL&&
-           compiler->known_types[left]==DIAMOND_TYPE_INT&&
-           compiler->known_types[right]==DIAMOND_TYPE_INT)
-            opcode=DIAMOND_OP_NOT_EQUAL_INT;
-        if(operator==DIAMOND_TOKEN_LESS&&
-           compiler->known_types[left]==DIAMOND_TYPE_INT&&
-           compiler->known_types[right]==DIAMOND_TYPE_INT)
-            opcode=DIAMOND_OP_LESS_INT;
-        if(operator==DIAMOND_TOKEN_LESS_EQUAL&&
-           compiler->known_types[left]==DIAMOND_TYPE_INT&&
-           compiler->known_types[right]==DIAMOND_TYPE_INT)
-            opcode=DIAMOND_OP_LESS_EQUAL_INT;
-        if(operator==DIAMOND_TOKEN_GREATER&&
-           compiler->known_types[left]==DIAMOND_TYPE_INT&&
-           compiler->known_types[right]==DIAMOND_TYPE_INT)
-            opcode=DIAMOND_OP_GREATER_INT;
-        if(operator==DIAMOND_TOKEN_GREATER_EQUAL&&
-           compiler->known_types[left]==DIAMOND_TYPE_INT&&
-           compiler->known_types[right]==DIAMOND_TYPE_INT)
-            opcode=DIAMOND_OP_GREATER_EQUAL_INT;
-        emit_instruction(compiler, opcode, destination,
-                         left, right, 3);
-        if(operator==DIAMOND_TOKEN_EQUAL_EQUAL || operator==DIAMOND_TOKEN_BANG_EQUAL ||
-           operator==DIAMOND_TOKEN_LESS || operator==DIAMOND_TOKEN_LESS_EQUAL ||
-           operator==DIAMOND_TOKEN_GREATER || operator==DIAMOND_TOKEN_GREATER_EQUAL) {
-            compiler->known_types[destination]=DIAMOND_TYPE_BOOL;
-            if(operator==DIAMOND_TOKEN_EQUAL_EQUAL||operator==DIAMOND_TOKEN_BANG_EQUAL) {
-                uint16_t narrowed=left,nil_value=right;
-                if(compiler->known_types[left]==DIAMOND_TYPE_NIL) {
-                    narrowed=right;nil_value=left;
-                }
-                if(compiler->known_types[nil_value]==DIAMOND_TYPE_NIL&&
-                   compiler->known_type_sets[narrowed]>=0) {
-                    int16_t non_nil=-1,nil_only=-1;
-                    if(split_nil_type_set(compiler,
-                       (uint8_t)compiler->known_type_sets[narrowed],
-                       &non_nil,&nil_only)) {
-                        const int16_t when_true=operator==DIAMOND_TOKEN_BANG_EQUAL
-                            ?non_nil:nil_only;
-                        const int16_t when_false=operator==DIAMOND_TOKEN_BANG_EQUAL
-                            ?nil_only:non_nil;
-                        compiler->narrowing=(Narrowing){.valid=true,
-                            .condition=destination,
-                            .when_true={{.reg=narrowed,.type_set=when_true}},
-                            .when_true_count=1,
-                            .when_false={{.reg=narrowed,.type_set=when_false}},
-                            .when_false_count=1};
-                    }
-                }
-            }
-        } else if(compiler->known_types[left]==DIAMOND_TYPE_INT &&
-                  compiler->known_types[right]==DIAMOND_TYPE_INT) {
-            compiler->known_types[destination]=DIAMOND_TYPE_INT;
-        } else if((compiler->known_types[left]==DIAMOND_TYPE_FLOAT||
-                   compiler->known_types[left]==DIAMOND_TYPE_INT) &&
-                  (compiler->known_types[right]==DIAMOND_TYPE_FLOAT||
-                   compiler->known_types[right]==DIAMOND_TYPE_INT) &&
-                  (compiler->known_types[left]==DIAMOND_TYPE_FLOAT||
-                   compiler->known_types[right]==DIAMOND_TYPE_FLOAT)) {
-            /* Mixed Int/Float statically known to auto-promote to Float. */
-            compiler->known_types[destination]=DIAMOND_TYPE_FLOAT;
-        } else if(operator==DIAMOND_TOKEN_PLUS &&
-                  compiler->known_types[left]==DIAMOND_TYPE_STRING &&
-                  compiler->known_types[right]==DIAMOND_TYPE_STRING) {
-            compiler->known_types[destination]=DIAMOND_TYPE_STRING;
-        }
-        left = destination;
+        left = compile_binary_op(compiler, operator, left, right);
     }
     return left;
 }
@@ -3471,6 +3485,27 @@ static bool assignment_ahead(const Compiler *compiler) {
     }
     DiamondLexer lookahead = compiler->lexer;
     return diamond_lexer_next(&lookahead).kind == DIAMOND_TOKEN_EQUAL;
+}
+
+static bool compound_assignment_token(DiamondTokenKind kind) {
+    return kind==DIAMOND_TOKEN_PLUS_EQUAL||kind==DIAMOND_TOKEN_MINUS_EQUAL||
+           kind==DIAMOND_TOKEN_STAR_EQUAL||kind==DIAMOND_TOKEN_SLASH_EQUAL||
+           kind==DIAMOND_TOKEN_PERCENT_EQUAL||kind==DIAMOND_TOKEN_OR_OR_EQUAL||
+           kind==DIAMOND_TOKEN_AND_AND_EQUAL;
+}
+
+/* Same shape as assignment_ahead above (only a plain local/@ivar/@@cvar
+ * target -- indexed (`arr[i] += 1`) compound assignment is a deliberate
+ * v1 scope cut, same spirit as `<<`/`%`'s own cuts), but for `+=`/`-=`/
+ * `*=`/`/=`/`%=`/`||=`/`&&=` instead of plain `=`. */
+static bool compound_assignment_ahead(const Compiler *compiler) {
+    if (compiler->current.kind != DIAMOND_TOKEN_IDENTIFIER &&
+        compiler->current.kind != DIAMOND_TOKEN_INSTANCE_VARIABLE &&
+        compiler->current.kind != DIAMOND_TOKEN_CLASS_VARIABLE) {
+        return false;
+    }
+    DiamondLexer lookahead = compiler->lexer;
+    return compound_assignment_token(diamond_lexer_next(&lookahead).kind);
 }
 
 static bool index_assignment_ahead(const Compiler *compiler) {
@@ -5341,6 +5376,52 @@ static uint16_t compile_assignment(Compiler *compiler) {
     return compile_assignment_store(compiler, name, instance_variable, class_variable, value);
 }
 
+/* `x += y`/`x -= y`/.../`x ||= y`/`x &&= y` -- pure sugar, expanded here
+ * into the same shape the equivalent spelled-out form would produce:
+ * `x = x + y` for the arithmetic ones, `x = x || y`/`x = x && y`
+ * (genuinely short-circuit -- `y` is never evaluated, and never
+ * assigned, unless the short-circuit check requires it) for the other
+ * two. Reads the target's current value via parse_prefix -- the exact
+ * same prefix-dispatch parse_precedence itself uses, so a captured
+ * local/an ivar/a cvar all read correctly with no special-casing here,
+ * the same way compile_assignment_store's write side already handles
+ * all three uniformly. Only ever called once compound_assignment_ahead
+ * has confirmed the next token really is one of these -- indexed
+ * targets (`arr[i] += 1`) aren't recognized at all (see that function's
+ * own comment), so this never needs to guard against one. */
+static uint16_t compile_compound_assignment(Compiler *compiler) {
+    const DiamondSpan name = compiler->current.span;
+    const bool instance_variable =
+        compiler->current.kind == DIAMOND_TOKEN_INSTANCE_VARIABLE;
+    const bool class_variable =
+        compiler->current.kind == DIAMOND_TOKEN_CLASS_VARIABLE;
+    const uint16_t left = parse_prefix(compiler);
+    const DiamondTokenKind op_kind = compiler->current.kind;
+    advance_token(compiler);
+    if(op_kind==DIAMOND_TOKEN_OR_OR_EQUAL||op_kind==DIAMOND_TOKEN_AND_AND_EQUAL) {
+        const bool is_and = op_kind==DIAMOND_TOKEN_AND_AND_EQUAL;
+        const uint16_t destination = allocate_register(compiler);
+        emit_instruction(compiler,DIAMOND_OP_MOVE,destination,left,0,2);
+        const size_t end_jump = emit_jump(compiler,
+            is_and?DIAMOND_OP_JUMP_IF_FALSE:DIAMOND_OP_JUMP_IF_TRUE,left);
+        const uint16_t right = parse_expression(compiler);
+        emit_instruction(compiler,DIAMOND_OP_MOVE,destination,right,0,2);
+        patch_jump(compiler,end_jump,compiler->function->code_count);
+        return compile_assignment_store(compiler,name,instance_variable,
+            class_variable,destination);
+    }
+    const DiamondTokenKind plain_op =
+        op_kind==DIAMOND_TOKEN_PLUS_EQUAL?DIAMOND_TOKEN_PLUS:
+        op_kind==DIAMOND_TOKEN_MINUS_EQUAL?DIAMOND_TOKEN_MINUS:
+        op_kind==DIAMOND_TOKEN_STAR_EQUAL?DIAMOND_TOKEN_STAR:
+        op_kind==DIAMOND_TOKEN_SLASH_EQUAL?DIAMOND_TOKEN_SLASH:
+        DIAMOND_TOKEN_PERCENT;
+    const uint16_t right = parse_expression(compiler);
+    const uint16_t destination = compile_binary_op(compiler, plain_op, left, right);
+    return compile_assignment_store(compiler, name, instance_variable,
+        class_variable, destination);
+}
+
 /* Finds (or, the first time in this function, registers) a one-member
  * type set matching plain `Array` (no element-type argument) -- the
  * same DiamondTypeSet shape parse_type_annotation builds when it reads
@@ -5483,6 +5564,8 @@ static uint16_t compile_sequence(Compiler *compiler) {
                 result=compile_index_assignment(compiler);
             else if(multi_assignment_ahead(compiler))
                 result=compile_multi_assignment(compiler);
+            else if(compound_assignment_ahead(compiler))
+                result=compile_compound_assignment(compiler);
             else
                 result = assignment_ahead(compiler)
                     ? compile_assignment(compiler)

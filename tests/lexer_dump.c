@@ -45,6 +45,13 @@ static const char *kind_name(DiamondTokenKind kind) {
         case DIAMOND_TOKEN_STAR: return "star";
         case DIAMOND_TOKEN_SLASH: return "slash";
         case DIAMOND_TOKEN_PERCENT: return "percent";
+        case DIAMOND_TOKEN_PLUS_EQUAL: return "plus_equal";
+        case DIAMOND_TOKEN_MINUS_EQUAL: return "minus_equal";
+        case DIAMOND_TOKEN_STAR_EQUAL: return "star_equal";
+        case DIAMOND_TOKEN_SLASH_EQUAL: return "slash_equal";
+        case DIAMOND_TOKEN_PERCENT_EQUAL: return "percent_equal";
+        case DIAMOND_TOKEN_OR_OR_EQUAL: return "or_or_equal";
+        case DIAMOND_TOKEN_AND_AND_EQUAL: return "and_and_equal";
         case DIAMOND_TOKEN_EQUAL: return "equal";
         case DIAMOND_TOKEN_EQUAL_EQUAL: return "equal_equal";
         case DIAMOND_TOKEN_BANG_EQUAL: return "bang_equal";
