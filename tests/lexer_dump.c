@@ -67,6 +67,8 @@ static const char *kind_name(DiamondTokenKind kind) {
         case DIAMOND_TOKEN_THEN: return "then";
         case DIAMOND_TOKEN_ELSE: return "else";
         case DIAMOND_TOKEN_ELSIF: return "elsif";
+        case DIAMOND_TOKEN_CASE: return "case";
+        case DIAMOND_TOKEN_WHEN: return "when";
         case DIAMOND_TOKEN_END: return "end";
         case DIAMOND_TOKEN_WHILE: return "while";
         case DIAMOND_TOKEN_UNTIL: return "until";

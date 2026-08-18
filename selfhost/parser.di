@@ -356,7 +356,7 @@ class Parser
   end
 
   def at_block_end?()
-    @current.kind() == :eof || @current.kind() == :else || @current.kind() == :elsif || @current.kind() == :rescue || @current.kind() == :ensure || @current.kind() == :end
+    @current.kind() == :eof || @current.kind() == :else || @current.kind() == :elsif || @current.kind() == :when || @current.kind() == :rescue || @current.kind() == :ensure || @current.kind() == :end
   end
 
   def token_text(token)
@@ -3578,6 +3578,92 @@ class Parser
     end
   end
 
+  # Mirrors src/compiler.c's parse_case/parse_case_branches -- see that
+  # function's own comment for the full design rationale (deliberate v1
+  # scope cuts: plain `==` only, no subject-less boolean form, no cross-
+  # branch type-fact merging). No fixed-size array bookkeeping needed
+  # here the way the native compiler's own fix needed (see docs/
+  # roadmap.md) -- @type_facts is already a plain growable Array here,
+  # not indexed by register, so copy_type_facts()/direct reassignment is
+  # the self-hosted parser's own existing, unbounded equivalent.
+  def parse_case_branches(subject, entry_facts, destination)
+    @type_facts = self.copy_type_facts_from(entry_facts)
+    if @current.kind() == :else
+      self.advance_token()
+      self.skip_newlines() if @current.kind() == :newline
+      body_result = self.compile_sequence()
+      self.emit_instruction2(Opcode::MOVE, destination, body_result)
+      @type_facts = self.copy_type_facts_from(entry_facts)
+      if @current.kind() != :end
+        self.fail("expected 'end' after case expression")
+        return destination
+      end
+      self.advance_token()
+      return destination
+    end
+    if @current.kind() == :end
+      self.emit_instruction1(Opcode::NIL, destination)
+      self.advance_token()
+      return destination
+    end
+    if @current.kind() != :when
+      self.fail("expected 'when', 'else', or 'end' in case expression")
+      return destination
+    end
+    self.advance_token()
+    match_reg = self.allocate_register()
+    first_value = true
+    skip_jump = 0
+    more_values = true
+    while more_values
+      skip_jump = self.emit_jump(Opcode::JUMP_IF_TRUE, match_reg) unless first_value
+      value_reg = self.parse_expression()
+      eq_reg = self.allocate_register()
+      self.emit_instruction3(Opcode::EQUAL, eq_reg, subject, value_reg)
+      self.set_type_fact(eq_reg, Type::BOOL)
+      self.emit_instruction2(Opcode::MOVE, match_reg, eq_reg)
+      self.patch_jump(skip_jump, @code_count) unless first_value
+      first_value = false
+      if @current.kind() == :comma
+        self.advance_token()
+        self.skip_newlines()
+      else
+        more_values = false
+      end
+    end
+    return destination unless self.consume_block_start_or(:then)
+    false_jump = self.emit_jump(Opcode::JUMP_IF_FALSE, match_reg)
+    body_result = self.compile_sequence()
+    self.emit_instruction2(Opcode::MOVE, destination, body_result)
+    end_jump = self.emit_jump(Opcode::JUMP, 0)
+    self.patch_jump(false_jump, @code_count)
+    result = self.parse_case_branches(subject, entry_facts, destination)
+    self.patch_jump(end_jump, @code_count)
+    result
+  end
+
+  def copy_type_facts_from(facts)
+    copy = []
+    index = 0
+    while index < facts.length()
+      copy.push(facts[index])
+      index = index + 1
+    end
+    copy
+  end
+
+  def parse_case()
+    subject = self.parse_expression()
+    self.skip_newlines()
+    destination = self.allocate_register()
+    entry_facts = self.copy_type_facts()
+    if @current.kind() != :when
+      self.fail("expected 'when' after case expression")
+      return destination
+    end
+    self.parse_case_branches(subject, entry_facts, destination)
+  end
+
   def parse_if(inverted)
     condition = self.parse_expression()
     return 0 unless self.consume_block_start_or(:then)
@@ -3885,6 +3971,7 @@ class Parser
       self.set_type_fact(destination, Type::BOOL)
       return destination
     end
+    return self.parse_case() if kind == :case
     return self.parse_if(false) if kind == :if
     return self.parse_if(true) if kind == :unless
     return self.parse_while(false) if kind == :while

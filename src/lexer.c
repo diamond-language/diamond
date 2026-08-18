@@ -52,6 +52,8 @@ static DiamondTokenKind identifier_kind(const DiamondLexer *lexer) {
     if (text_equals(lexer, "then", 4)) return DIAMOND_TOKEN_THEN;
     if (text_equals(lexer, "else", 4)) return DIAMOND_TOKEN_ELSE;
     if (text_equals(lexer, "elsif", 5)) return DIAMOND_TOKEN_ELSIF;
+    if (text_equals(lexer, "case", 4)) return DIAMOND_TOKEN_CASE;
+    if (text_equals(lexer, "when", 4)) return DIAMOND_TOKEN_WHEN;
     if (text_equals(lexer, "end", 3)) return DIAMOND_TOKEN_END;
     if (text_equals(lexer, "while", 5)) return DIAMOND_TOKEN_WHILE;
     if (text_equals(lexer, "until", 5)) return DIAMOND_TOKEN_UNTIL;

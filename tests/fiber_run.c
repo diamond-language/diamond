@@ -390,6 +390,20 @@ int main(void) {
     diamond_fiber_free(fiber_overflow_fiber);diamond_vm_free(&fiber_overflow_vm);
 
     DiamondVm sweep_vm;diamond_vm_init(&sweep_vm);
+    /* diamond_vm_init no longer leaves a fresh vm's object list empty --
+     * populate_default_argv_env (added by the ARGV/ENV commit) always
+     * seeds vm->objects with the real environment's Hash/Array/String
+     * objects, all reachable via vm->env_value/argv_value roots. This
+     * test only cares whether the *fiber handle itself* -- prepended in
+     * front of that chain below, deliberately left unrooted -- gets
+     * swept; the ARGV/ENV objects are supposed to survive right along
+     * with it, so the correct post-collect assertion is "the list is
+     * back to exactly what it was before the fiber was added", not
+     * "the list is empty" (which stopped being true the moment ARGV/ENV
+     * population became unconditional, and silently broke this
+     * assertion without anyone noticing until CI actually got far
+     * enough to run this test again). */
+    DiamondObject *before_fiber=sweep_vm.objects;
     DiamondFiber *sweep_fiber=diamond_fiber_new(nullptr);
     DiamondFiberHandle *sweep_handle=malloc(sizeof *sweep_handle);
     if(sweep_fiber==nullptr||sweep_handle==nullptr)return 71;
@@ -397,7 +411,7 @@ int main(void) {
         .fiber=sweep_fiber};
     sweep_vm.objects=&sweep_handle->object;
     diamond_vm_collect(&sweep_vm);
-    if(sweep_vm.objects!=nullptr)return 72;
+    if(sweep_vm.objects!=before_fiber)return 72;
     diamond_vm_free(&sweep_vm);
 
     static const DiamondStringConstant survive_strings[]={{.chars="fiber-survives-gc",.length=18}};
@@ -439,6 +453,7 @@ int main(void) {
     static const DiamondChunk stack_probe_chunk={.name="stack-probe",
         .code=stack_probe_code,.code_count=1};
     DiamondVm stack_probe_vm;diamond_vm_init(&stack_probe_vm);
+    DiamondObject *stack_probe_before_fiber=stack_probe_vm.objects;
     DiamondFiber *stack_probe_fiber=diamond_fiber_new(&stack_probe_chunk);
     DiamondFiberHandle *stack_probe_handle=malloc(sizeof *stack_probe_handle);
     if(stack_probe_fiber==nullptr||stack_probe_handle==nullptr||
@@ -452,7 +467,8 @@ int main(void) {
         .fiber=stack_probe_fiber};
     stack_probe_vm.objects=&stack_probe_handle->object;
     diamond_vm_collect(&stack_probe_vm);
-    if(stack_probe_vm.objects!=nullptr)return 79;
+    /* Same ARGV/ENV-populated-object-list correction as sweep_vm above. */
+    if(stack_probe_vm.objects!=stack_probe_before_fiber)return 79;
     errno=0;
     if(mincore(stack_probe_addr,stack_probe_page,stack_probe_vec)!=-1||errno!=ENOMEM)return 80;
     diamond_vm_free(&stack_probe_vm);

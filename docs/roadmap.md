@@ -565,13 +565,13 @@ future work.
   `make test-parser-diff` (246 differential cases plus the self-hosted
   self-parse and self-run bootstrap checks, all passing).
 
-- **Two real bugs found while starting `case`/`when` (the next item on the
-  gap list after Range) and CI turning out to have been silently red for
-  five pushes**: before writing any `case`/`when` code, checked `glab ci
-  status` for the first time this session and found `test-all` had been
-  failing since the ARGV/ENV commit, unnoticed across every push since
-  (debugger/breakpoint, the generational-GC writeup, compound assignment,
-  Range).
+- **Three real bugs found while starting `case`/`when` (the next item on
+  the gap list after Range) and CI turning out to have been silently red
+  for five pushes**: before writing any `case`/`when` code, checked `glab
+  ci status` for the first time this session and found `test-all` had
+  been failing since the ARGV/ENV commit, unnoticed across every push
+  since (debugger/breakpoint, the generational-GC writeup, compound
+  assignment, Range).
   - **A confirmed stack-buffer-overflow in `parse_if`** (`src/compiler.c`):
     while reading `parse_if` as the closest existing precedent for
     `case`/`when`'s own control-flow codegen, noticed its type-inference
@@ -633,12 +633,77 @@ future work.
     mechanism the other two fixes already use: protect `key` right after
     it's allocated, unprotect right after the `hash_set` call that makes
     it reachable through `env` for real.
+  - **A stale test assumption in `tests/fiber_run.c`**, found by running
+    the full `make test-all` sequence locally after the two fixes above
+    rather than round-tripping through CI a third time: `test-fiber-run`
+    failed (exit 72) even on a plain, non-sanitized build, and reproduced
+    identically outside CI too — not a flake. Two spots in that file
+    build a `DiamondVm` and assert `vm.objects == nullptr` after
+    collecting an intentionally-unreachable object, on the assumption
+    that a fresh `diamond_vm_init` leaves the object list empty. That
+    stopped being true the moment `populate_default_argv_env` became
+    unconditional (the ARGV/ENV commit again): a fresh VM's object list
+    now always holds the real environment's Hash/Array/String objects,
+    all legitimately reachable via `vm->env_value`/`argv_value`. Bisected
+    against the last known-green commit (`d33534b2`) to confirm this
+    wasn't something newly introduced by Range/case-when/the two fixes
+    above — it broke at the exact same ARGV/ENV commit and simply never
+    got exercised, since CI always died at an earlier stage first.
+    Fixed by asserting the list is back to exactly what it was
+    *before* the deliberately-unreachable object was added (proving that
+    object specifically got swept, while its reachable siblings
+    correctly survived) rather than asserting the whole list is empty.
 
-  Both found and fixed before writing a single line of `case`/`when`
-  itself — `case`/`when` proper is still pending. Verified: `make debug`
-  (clean, zero warnings), full `bash tests/run.sh` (1055 passing, the two
-  new wide-register fixtures included), and a manual ASan build exercising
-  both the register-overflow repro and a large-environment ARGV/ENV run.
+  All three found and fixed before writing a single line of `case`/`when`
+  itself. Verified: `make debug` (clean, zero warnings), the *entire*
+  `test-all` sequence run locally start to finish for the first time this
+  session (`test`, `test-release`, `test-sanitize`, `test-tsan`,
+  `test-api`, the whole fiber cluster, `test-facet`, the http/gremlin/rack
+  package tests, `test-lsp`, `test-repl`, `test-fuzz`, `test-lexer-diff`,
+  `test-parser-diff` — all green) — rather than pushing again on faith
+  and finding the next hidden layer one round-trip at a time.
+- **`case`/`when`**: second item off the Ruby-idiom gap list, `case
+  SUBJECT` desugars to a chain of `subject == value` tests exactly the
+  way Range/compound-assignment already established this session's
+  pattern for syntax sugar — no new `DiamondOpCode`, reusing MOVE/
+  JUMP_IF_TRUE/JUMP_IF_FALSE/JUMP/EQUAL. `parse_case_branches`
+  (`src/compiler.c`) mirrors `parse_if`'s own elsif-recursion shape
+  (each level's "jump to end" target converges on the same address
+  because it's patched only after the recursive call has parsed all the
+  way through the final `end`) — deliberately *reuses* `parse_if`'s
+  just-fixed inline-then-heap register-snapshot fallback rather than
+  introducing a second copy of that bug class. A `when` clause's
+  comma-separated value list short-circuits left to right (a later
+  value is never evaluated once an earlier one in the same `when`
+  already matched), verified via a fixture that raises if a later value
+  expression is ever reached. Deliberate v1 scope cuts, all documented
+  in `docs/syntax.md`: plain `==` only (not Ruby's `===`, so `when
+  1..5`/`when String`/`when /regex/` compare rather than pattern-match —
+  a real follow-up once more than one type would use `===`-dispatch);
+  no subject-less boolean `case` form; no cross-branch type-fact merging
+  the way `parse_if` merges agreeing then/else types (every branch
+  compiles against, and restores, the same pre-`case` type snapshot, so
+  the whole expression's static type stays unknown — correctness only
+  cost, not a runtime one).
+
+  Self-hosted mirror (`selfhost/lexer.di`/`selfhost/parser.di`) needed no
+  equivalent of the register-snapshot fix at all: the self-hosted
+  parser's own type-fact tracking (`@type_facts`) is already a plain
+  growable Array, not indexed by register, so `copy_type_facts()`/direct
+  reassignment was always unbounded — confirming that bug class was
+  native-only, specific to the fixed-size C arrays `parse_if`/
+  `compile_definition` used.
+
+  Verified: `make debug` (clean, zero warnings), full `bash tests/run.sh`
+  (1064 passing — nine new `tests/cases/case_when_*.di`/
+  `wide_register_case_when.di` fixtures covering basic matching,
+  no-match-no-else, `then` form, short-circuit, use inside a function,
+  string equality, nesting, and local-reassignment-persists-after-the-
+  case semantics), `make test-lexer-diff` (999 cases), `make
+  test-parser-diff` (247 differential cases, two new
+  `tests/parser_error_cases/case_missing_*` diagnostics locked in on
+  both compilers, and both self-hosted bootstrap checks), and a manual
+  ASan build exercising the wide-register case/when fixture.
 
 ### Collections and Enumerable
 

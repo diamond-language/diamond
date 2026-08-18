@@ -276,6 +276,8 @@ class Lexer
     return :then if self.text_equals?("then")
     return :else if self.text_equals?("else")
     return :elsif if self.text_equals?("elsif")
+    return :case if self.text_equals?("case")
+    return :when if self.text_equals?("when")
     return :end if self.text_equals?("end")
     return :while if self.text_equals?("while")
     return :until if self.text_equals?("until")
