@@ -658,6 +658,27 @@ struct DiamondVm {
      * src/run_source.c) is used. */
     DiamondValue argv_value;
     DiamondValue env_value;
+    /* GC root stack for values under construction outside of any register
+     * -- copy_value_into_vm (src/vm.c) is the one user: it deep-copies a
+     * value across a VM boundary (ProgramBuilder#run's result, Thread
+     * arguments/join results) by recursively calling allocate_string/
+     * allocate_array/etc, and unlike ordinary bytecode execution has no
+     * destination register to root the value-in-progress through while
+     * sibling elements are still being copied. A freshly allocated object
+     * with no GC root is invisible to diamond_vm_collect_impl's mark
+     * phase, so without this, a GC triggered by copying one array element
+     * could free an already-copied sibling still sitting in a plain C
+     * local or an unscanned buffer -- exactly the bug this fixed in
+     * regexp_scan_helper/regexp_match_helper, but unreachable there since
+     * both of those had a real destination register to root through
+     * immediately (see docs/roadmap.md). Push/pop discipline only (see
+     * gc_protect/gc_unprotect) -- always unwound back to a saved mark
+     * before the pushing function returns, mirroring the strictly nested
+     * lifetime of copy_value_into_vm's own recursion, so this never grows
+     * across separate top-level calls. */
+    DiamondValue *gc_protected;
+    size_t gc_protected_count;
+    size_t gc_protected_capacity;
 };
 
 void diamond_vm_init(DiamondVm *vm);

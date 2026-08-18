@@ -231,6 +231,8 @@ typedef struct DiamondThread {
 
 static void mark_value(DiamondValue value);
 static void mark_frame_chain(void *frames);
+static bool gc_protect(DiamondVm *vm, DiamondValue value);
+static void gc_unprotect(DiamondVm *vm, size_t saved_count);
 static DiamondVmStatus run_chunk(const DiamondChunk *chunk, DiamondVm *vm,
                                  const DiamondValue *arguments,
                                  size_t argument_count, size_t depth,
@@ -335,6 +337,8 @@ static void diamond_vm_collect_impl(DiamondVm *vm) {
     if(vm->has_exception)mark_value(vm->exception);
     mark_value(vm->argv_value);
     mark_value(vm->env_value);
+    for(size_t index=0;index<vm->gc_protected_count;index++)
+        mark_value(vm->gc_protected[index]);
     for(size_t index=0;index<DIAMOND_MAX_NAMESPACE_CONSTANTS;index++)
         if(vm->namespace_constant_initialized[index])
             mark_value(vm->namespace_constants[index]);
@@ -567,6 +571,7 @@ void diamond_vm_free(DiamondVm *vm) {
     }
     free_adopted_programs(vm->adopted_programs);
     free(vm->class_variables);
+    free(vm->gc_protected);
     *vm = (DiamondVm){};
 }
 
@@ -2069,6 +2074,38 @@ static DiamondVmStatus tr_expand_spec(const DiamondString *spec,
     return DIAMOND_VM_OK;
 }
 
+/* Pushes `value` onto vm->gc_protected so diamond_vm_collect_impl's mark
+ * phase treats it as a root, for a value under construction with no real
+ * register to live in yet (see DiamondVm.gc_protected's own comment,
+ * vm.h). Returns false on allocation failure, same convention as
+ * array_push/hash_set, so callers can fold it into their own existing
+ * failure path. Grows geometrically like array_push's own backing store;
+ * this stack is expected to stay small (depth tracks the nesting depth of
+ * whatever value is being copied, not its total element count, since
+ * siblings are unprotected again before the next one is pushed -- see
+ * copy_value_into_vm's call sites). */
+static bool gc_protect(DiamondVm *vm, DiamondValue value) {
+    if(vm->gc_protected_count>=vm->gc_protected_capacity) {
+        const size_t capacity=
+            vm->gc_protected_capacity==0?8:vm->gc_protected_capacity*2;
+        DiamondValue *grown=
+            realloc(vm->gc_protected,capacity*sizeof(DiamondValue));
+        if(grown==nullptr)return false;
+        vm->gc_protected=grown;vm->gc_protected_capacity=capacity;
+    }
+    vm->gc_protected[vm->gc_protected_count++]=value;
+    return true;
+}
+
+/* Unwinds vm->gc_protected back to a mark saved from gc_protected_count
+ * before a matching run of gc_protect calls -- strict LIFO, mirroring the
+ * nested lifetime of copy_value_into_vm's own recursion. Never shrinks
+ * the backing allocation, same as array/hash never shrinking on removal;
+ * it's freed for real in diamond_vm_free. */
+static void gc_unprotect(DiamondVm *vm, size_t saved_count) {
+    vm->gc_protected_count=saved_count;
+}
+
 /* Deep-copies a DiamondValue rooted in some other VM's heap (typically
  * program_builder_run_helper's temporary run_vm, about to be freed) into
  * dest_vm's own heap, so the result stays valid once the source VM is
@@ -2144,40 +2181,72 @@ static bool copy_value_into_vm(DiamondVm *dest_vm, DiamondValue value,
             if(copy==nullptr)return false;
             *out=DIAMOND_OBJECT(copy);return true;
         }
+        /* Array/Hash: the old implementation staged copied elements in a
+         * bare malloc'd buffer (Array) or plain C locals (Hash) before
+         * they had any GC root, so a collection triggered by copying one
+         * element could free a sibling already copied moments earlier --
+         * the same bug this session already found and fixed in
+         * regexp_scan_helper/regexp_match_helper, just unreachable there
+         * (both had a real destination register to root through
+         * immediately). Fixed the same way: allocate the empty container
+         * first, protect *it* via gc_protect (there's no destination
+         * register here, unlike the regexp helpers), then populate it
+         * incrementally via array_push/hash_set so each already-copied
+         * element becomes reachable through the now-rooted container
+         * before the next one is computed. array_push/hash_set only ever
+         * grow their own backing storage via plain realloc, never trigger
+         * a GC pass themselves, so there's no unrooted window between a
+         * recursive copy_value_into_vm call returning and its result
+         * being pushed. */
         case DIAMOND_OBJECT_ARRAY: {
             const DiamondArray *source=(const DiamondArray *)value.as.object;
-            DiamondValue *elements=nullptr;
-            if(source->count>0) {
-                elements=malloc(source->count*sizeof(DiamondValue));
-                if(elements==nullptr)return false;
-                for(size_t index=0;index<source->count;index++) {
-                    if(!copy_value_into_vm(dest_vm,source->values[index],
-                                           source_program,rebase_source_classes,rebase_dest_classes,
-                                           adopted_owner,&elements[index])) {
-                        free(elements);return false;
-                    }
+            DiamondArray *copy=allocate_array(dest_vm,nullptr,0);
+            if(copy==nullptr)return false;
+            const size_t mark=dest_vm->gc_protected_count;
+            if(!gc_protect(dest_vm,DIAMOND_OBJECT(copy)))return false;
+            for(size_t index=0;index<source->count;index++) {
+                DiamondValue element=DIAMOND_NIL;
+                if(!copy_value_into_vm(dest_vm,source->values[index],
+                                       source_program,rebase_source_classes,rebase_dest_classes,
+                                       adopted_owner,&element)||
+                   !array_push(dest_vm,copy,element)) {
+                    gc_unprotect(dest_vm,mark);return false;
                 }
             }
-            DiamondArray *copy=allocate_array(dest_vm,elements,source->count);
-            free(elements);
-            if(copy==nullptr)return false;
+            gc_unprotect(dest_vm,mark);
             *out=DIAMOND_OBJECT(copy);return true;
         }
         case DIAMOND_OBJECT_HASH: {
             const DiamondHash *source=(const DiamondHash *)value.as.object;
             DiamondHash *copy=allocate_hash(dest_vm);
             if(copy==nullptr)return false;
+            const size_t mark=dest_vm->gc_protected_count;
+            if(!gc_protect(dest_vm,DIAMOND_OBJECT(copy)))return false;
             for(size_t index=0;index<source->count;index++) {
                 DiamondValue key=DIAMOND_NIL,copied_value=DIAMOND_NIL;
                 if(!copy_value_into_vm(dest_vm,source->entries[index].key,
                                        source_program,rebase_source_classes,rebase_dest_classes,
-                                       adopted_owner,&key)||
-                   !copy_value_into_vm(dest_vm,source->entries[index].value,
+                                       adopted_owner,&key)) {
+                    gc_unprotect(dest_vm,mark);return false;
+                }
+                /* `key` needs its own protection window: it's not
+                 * reachable through `copy` yet (hash_set hasn't run), and
+                 * copying the value below can itself trigger a GC. */
+                const size_t key_mark=dest_vm->gc_protected_count;
+                if(!gc_protect(dest_vm,key)) {
+                    gc_unprotect(dest_vm,mark);return false;
+                }
+                if(!copy_value_into_vm(dest_vm,source->entries[index].value,
                                        source_program,rebase_source_classes,rebase_dest_classes,
-                                       adopted_owner,&copied_value))
-                    return false;
-                if(!hash_set(dest_vm,copy,key,copied_value))return false;
+                                       adopted_owner,&copied_value)) {
+                    gc_unprotect(dest_vm,mark);return false;
+                }
+                gc_unprotect(dest_vm,key_mark);
+                if(!hash_set(dest_vm,copy,key,copied_value)) {
+                    gc_unprotect(dest_vm,mark);return false;
+                }
             }
+            gc_unprotect(dest_vm,mark);
             *out=DIAMOND_OBJECT(copy);return true;
         }
         case DIAMOND_OBJECT_INSTANCE: {
@@ -2196,11 +2265,19 @@ static bool copy_value_into_vm(DiamondVm *dest_vm, DiamondValue value,
                 copy=allocate_instance(dest_vm,source->class,*adopted_owner);
             }
             if(copy==nullptr)return false;
+            /* Same unrooted-window bug as Array/Hash above, fixed the
+             * same way -- `copy` itself is the container to protect;
+             * writing straight into copy->fields[index] already puts each
+             * field where mark_object's DIAMOND_OBJECT_INSTANCE case will
+             * find it, once `copy` is a root. */
+            const size_t mark=dest_vm->gc_protected_count;
+            if(!gc_protect(dest_vm,DIAMOND_OBJECT(copy)))return false;
             for(size_t index=0;index<source->field_count;index++) {
                 if(!copy_value_into_vm(dest_vm,source->fields[index],
                                        source_program,rebase_source_classes,rebase_dest_classes,
-                                       adopted_owner,&copy->fields[index]))
-                    return false;
+                                       adopted_owner,&copy->fields[index])) {
+                    gc_unprotect(dest_vm,mark);return false;
+                }
             }
             /* allocate_instance always starts a fresh instance at
              * class->shapes[0] (nothing "materialized" yet, in the
@@ -2221,6 +2298,7 @@ static bool copy_value_into_vm(DiamondVm *dest_vm, DiamondValue value,
              * same way a class index is. */
             copy->shape=&copy->class->shapes[
                 (size_t)(source->shape-source->class->shapes)];
+            gc_unprotect(dest_vm,mark);
             *out=DIAMOND_OBJECT(copy);return true;
         }
         case DIAMOND_OBJECT_BIGNUM: {
@@ -10392,13 +10470,28 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                  * decrement it back out again. */
                 atomic_fetch_add(&diamond_active_thread_count,1);
                 bool copy_failed=false;
+                /* new_thread->args[] is a plain struct field, not scanned
+                 * by child_vm's GC until thread_entry_trampoline's own
+                 * run_chunk call copies it into a real frame -- so an
+                 * already-copied earlier argument is just as unrooted here
+                 * as the Array/Hash/Instance cases inside
+                 * copy_value_into_vm itself were before this fix. Same
+                 * remedy: protect each arg on child_vm's own gc_protected
+                 * stack as it's produced, and only unwind once every
+                 * argument is safely copied -- nothing else allocates on
+                 * child_vm between this loop finishing and the child
+                 * thread's first run_chunk frame taking over as the real
+                 * root. */
+                const size_t args_mark=child_vm->gc_protected_count;
                 for(size_t index=0;index<argc;index++) {
                     if(!copy_value_into_vm(child_vm,registers[(size_t)base+index],
                             nullptr,chunk->classes,child_program->classes,
-                            nullptr,&new_thread->args[index])) {
+                            nullptr,&new_thread->args[index])||
+                       !gc_protect(child_vm,new_thread->args[index])) {
                         copy_failed=true;break;
                     }
                 }
+                gc_unprotect(child_vm,args_mark);
                 if(copy_failed) {
                     free_thread(new_thread);
                     snprintf(vm->error,sizeof vm->error,
