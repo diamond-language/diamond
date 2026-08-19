@@ -140,6 +140,8 @@ class ArelFunction
   def not_like(pattern: String) = ArelPredicate.new(self, "NOT LIKE", pattern)
   def in_list(values: Array) = ArelMembership.new(self, values, false)
   def not_in(values: Array) = ArelMembership.new(self, values, true)
+  def between(lower, upper) = ArelBetween.new(self, lower, upper, false)
+  def not_between(lower, upper) = ArelBetween.new(self, lower, upper, true)
 end
 
 class ArelOrdering
@@ -532,7 +534,7 @@ class ArelVisitor
       if expression.negated?()
         operator = "NOT BETWEEN"
       end
-      "#{self.render_attribute(expression.left())} #{operator} ? AND ?"
+      "#{self.render_expression(expression.left(), params)} #{operator} ? AND ?"
     elsif expression is ArelCollation
       inner = self.render_expression(expression.expression(), params)
       "#{inner} COLLATE #{self.quote_identifier(expression.name())}"
