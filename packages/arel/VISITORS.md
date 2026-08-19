@@ -4,6 +4,12 @@ A visitor turns immutable Arel statements into `[sql, bind_params]`. Callers
 normally use `statement.to_sql(visitor)` or `Arel.render(statement, visitor)`;
 omitting the visitor selects `ArelSQLiteVisitor`.
 
+`ArelVisitor` is the reusable base. It owns AST traversal, relation-scope
+validation, nested query context, statement dispatch, capability diagnostics,
+and the portable SQL baseline. A concrete dialect supplies at least
+`visitor_name()`, `supports_extension?(name)`, and `quote_identifier(name)`.
+`ArelSQLiteVisitor` supplies those policies for the default renderer.
+
 Diamond uses method-shape conventions rather than interfaces. A visitor used
 by every current statement manager provides:
 
@@ -19,6 +25,9 @@ by every current statement manager provides:
 - `visitor_name() -> String` for diagnostics;
 - `supports_extension?(name) -> Bool` and `require_extension(name)` for
   dialect-specific nodes.
+
+Query context is restored even when rendering raises, so a visitor instance
+may be reused safely after validation or unsupported-capability errors.
 
 Compound and all three write managers enter the selected visitor first. The
 SQLite visitor delegates to each statement's `render_default(visitor)` fallback
@@ -57,7 +66,8 @@ the point where it renders them.
 
 ## Conformance
 
-`tests/cases/arel_dialects.di` defines a visitor that rejects every extension.
+`tests/cases/arel_dialects.di` defines an `ArelVisitor` subclass that rejects
+every extension without inheriting SQLite capability or quoting policy.
 Its fixtures are the current portable baseline for SELECT, INSERT, UPDATE,
 DELETE, compound queries, and CTEs. SQLite-specific rendering and execution
 remain covered by the other focused Arel suites.
