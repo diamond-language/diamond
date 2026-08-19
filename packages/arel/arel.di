@@ -1627,6 +1627,15 @@ def same?(left, right) -> Bool
     right is ArelAssignmentValue && self.same?(left.expression(), right.expression())
   elsif left is ArelDefaultValues
     right is ArelDefaultValues
+  elsif left is ArelQualifiedStar
+    right is ArelQualifiedStar && self.same?(left.table(), right.table())
+  elsif left is ArelConflictAttribute
+    right is ArelConflictAttribute && left.name() == right.name()
+  elsif left is ArelExists
+    right is ArelExists && left.negated?() == right.negated?() &&
+      self.same?(left.query(), right.query())
+  elsif left is ArelScalarSubquery
+    right is ArelScalarSubquery && self.same?(left.query(), right.query())
   elsif left is ArelConflictTarget
     if !(right is ArelConflictTarget) || left.columns().length() != right.columns().length() ||
        (left.predicate() == nil) != (right.predicate() == nil)

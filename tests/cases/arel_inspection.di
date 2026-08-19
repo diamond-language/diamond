@@ -62,6 +62,13 @@ def run_tests()
     same_target = Arel.conflict_target(["email"]).where(Arel.table("people").column("active").eq(Arel.literal(true)))
     Minitest.assert_equal(true, Arel.same?(first_target, same_target))
     Minitest.assert_equal(false, Arel.same?(first_target, Arel.conflict_target(["username"])))
+    Minitest.assert_equal(true, Arel.same?(people.star(), Arel.table("people").star()))
+    Minitest.assert_equal(true, Arel.same?(first_target.column("email"), same_target.column("email")))
+    Minitest.assert_equal(true, Arel.same?(Arel.exists(subquery), Arel.exists(Arel.from(
+      Arel.table("people")).project(Arel.table("people").column("id")))))
+    Minitest.assert_equal(false, Arel.same?(Arel.exists(subquery), Arel.not_exists(subquery)))
+    Minitest.assert_equal(true, Arel.same?(Arel.scalar(subquery), Arel.scalar(Arel.from(
+      Arel.table("people")).project(Arel.table("people").column("id")))))
     Minitest.assert_equal(true, Arel.same?(people.column("role").in_list(["admin", "staff"]), Arel.table("people").column("role").in_list(["admin", "staff"])))
     Minitest.assert_equal(false, Arel.same?(people.column("role").in_list(["admin"]), people.column("role").in_list(["staff"])))
     Minitest.assert_equal(true, Arel.same?(people.column("id").in_subquery(subquery), Arel.table("people").column("id").in_subquery(Arel.from(Arel.table("people")).project(Arel.table("people").column("id")))))
