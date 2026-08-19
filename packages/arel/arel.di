@@ -866,6 +866,12 @@ class ArelCompoundQuery
   end
 end
 
+class ArelCteRelation < ArelTable
+  def initialize(name: String)
+    super(name)
+  end
+end
+
 class ArelAssignmentValue
   def initialize(expression)
     @expression = expression
@@ -1206,6 +1212,7 @@ end
 
 class Arel
   def self.table(name: String) = ArelTable.new(name)
+  def self.cte(name: String) = ArelCteRelation.new(name)
   def self.as(expression, name: String) = ArelAlias.new(expression, name)
   def self.asc(expression) = ArelOrdering.new(expression, "ASC")
   def self.desc(expression) = ArelOrdering.new(expression, "DESC")

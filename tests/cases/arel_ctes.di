@@ -79,6 +79,14 @@ def run_tests()
     db.close()
   end
 
+  def test_named_cte_relation_builds_scoped_attributes()
+    active = Arel.cte("active_people")
+    query = Arel.from(active).project(active.column("name"))
+    sql, params = query.to_sql()
+    Minitest.assert_equal("active_people", active.name())
+    Minitest.assert_equal("SELECT \"active_people\".\"name\" FROM \"active_people\"", sql)
+  end
+
   suite = Minitest.new()
   suite.test("single CTE", test_single_cte_renders_and_binds_before_main_query)
   suite.test("multiple CTEs", test_multiple_ctes_preserve_declaration_and_bind_order)
@@ -86,6 +94,7 @@ def run_tests()
   suite.test("compound CTE body", test_compound_query_can_be_a_cte_body)
   suite.test("recursive CTE", test_recursive_cte_marks_with_clause)
   suite.test("recursive CTE execution", test_recursive_cte_executes_against_sqlite)
+  suite.test("named CTE relation", test_named_cte_relation_builds_scoped_attributes)
   suite.run()
 end
 
