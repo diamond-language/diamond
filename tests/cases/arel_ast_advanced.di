@@ -35,10 +35,18 @@ def run_tests()
     Minitest.assert_empty(params)
   end
 
+  def test_group_by_accepts_expression_arrays()
+    people = Arel.table("people")
+    query = Arel.from(people).project([people.column("role"), Arel.count(people.column("id"))])
+    sql, params = query.group(people.column("role")).to_sql()
+    Minitest.assert_equal("SELECT \"people\".\"role\", COUNT(\"people\".\"id\") FROM \"people\" GROUP BY \"people\".\"role\"", sql)
+  end
+
   suite = Minitest.new()
   suite.test("BETWEEN predicates", test_between_predicates_bind_both_bounds)
   suite.test("LIKE predicates", test_like_predicates_are_bound)
   suite.test("function and aggregate projections", test_function_and_aggregate_projections)
+  suite.test("GROUP BY", test_group_by_accepts_expression_arrays)
   suite.run()
 end
 

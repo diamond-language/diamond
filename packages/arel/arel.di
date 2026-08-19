@@ -289,6 +289,15 @@ class ArelSQLiteVisitor
       sql = sql + " WHERE " + predicates.join(" AND ")
     end
 
+    groups = []
+    def render_group(group)
+      groups.push(visitor.render_expression(group, params))
+    end
+    query.groups().each(render_group)
+    if groups.length() > 0
+      sql = sql + " GROUP BY " + groups.join(", ")
+    end
+
     orderings = []
     def render_ordering(ordering)
       orderings.push(visitor.render_expression(ordering, params))
@@ -321,7 +330,7 @@ end
 class ArelQuery
   def initialize(table_name, predicates, orderings, limit_value, offset_value,
                  projections, quoted_identifiers, bind_limits, table_alias = nil,
-                 distinct_value = false)
+                 distinct_value = false, groups = [])
     @table_name = table_name
     @predicates = predicates
     @orderings = orderings
@@ -332,6 +341,7 @@ class ArelQuery
     @bind_limits = bind_limits
     @table_alias = table_alias
     @distinct_value = distinct_value
+    @groups = groups
   end
 
   def self.for_table(table: ArelTable)
@@ -349,10 +359,12 @@ class ArelQuery
   def bind_limits() = @bind_limits
   def table_alias() = @table_alias
   def distinct_value() = @distinct_value
+  def groups() = @groups
 
   def copy(predicates, orderings, limit_value, offset_value, projections)
     ArelQuery.new(@table_name, predicates, orderings, limit_value, offset_value,
-      projections, @quoted_identifiers, @bind_limits, @table_alias, @distinct_value)
+      projections, @quoted_identifiers, @bind_limits, @table_alias, @distinct_value,
+      @groups)
   end
 
   def where(condition, params = nil)
@@ -387,7 +399,12 @@ class ArelQuery
   def select(columns) = self.project(columns)
   def distinct()
     ArelQuery.new(@table_name, @predicates, @orderings, @limit_value, @offset_value,
-      @projections, @quoted_identifiers, @bind_limits, @table_alias, true)
+      @projections, @quoted_identifiers, @bind_limits, @table_alias, true, @groups)
+  end
+  def group(expressions)
+    ArelQuery.new(@table_name, @predicates, @orderings, @limit_value, @offset_value,
+      @projections, @quoted_identifiers, @bind_limits, @table_alias, @distinct_value,
+      array_concat(@groups, arel_array(expressions)))
   end
   def order(column_or_columns)
     self.copy(@predicates, array_concat(@orderings, arel_array(column_or_columns)),
