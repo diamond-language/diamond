@@ -29,6 +29,10 @@ class WriteTestArelVisitor < ArelSQLiteVisitor
     sql, params = super(statement)
     ["custom #{sql}", params]
   end
+  def render_delete(statement) -> Array
+    sql, params = super(statement)
+    ["custom #{sql}", params]
+  end
   def render_expression(expression, params: Array) -> String
     if expression is ArelExcludedAttribute
       "incoming.#{self.quote_identifier(expression.name())}"
@@ -98,7 +102,7 @@ def run_tests()
     inventory = Arel.table("inventory")
     deletion = Arel.delete_from(inventory).all().returning(Arel.excluded("id"))
     sql, params = deletion.to_sql(WriteTestArelVisitor.new())
-    Minitest.assert_equal("DELETE FROM [inventory] RETURNING incoming.[id]", sql)
+    Minitest.assert_equal("custom DELETE FROM [inventory] RETURNING incoming.[id]", sql)
   end
 
   def test_select_execution_accepts_an_explicit_visitor()
