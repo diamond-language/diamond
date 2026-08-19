@@ -1619,6 +1619,26 @@ def same_tail?(left, right) -> Bool
     right is ArelBetween && left.negated?() == right.negated?() &&
       left.lower() == right.lower() && left.upper() == right.upper() &&
       self.same?(left.left(), right.left())
+  elsif left is ArelMembership
+    if !(right is ArelMembership) || left.negated?() != right.negated?() ||
+       !self.same?(left.left(), right.left()) ||
+       (left.values() is Array) != (right.values() is Array)
+      return false
+    end
+    if !(left.values() is Array)
+      return self.same?(left.values(), right.values())
+    end
+    if left.values().length() != right.values().length()
+      return false
+    end
+    index = 0
+    while index < left.values().length()
+      if left.values()[index] != right.values()[index]
+        return false
+      end
+      index = index + 1
+    end
+    true
   elsif left is ArelOrdering
     right is ArelOrdering && left.direction() == right.direction() &&
       left.nulls() == right.nulls() && self.same?(left.expression(), right.expression())
