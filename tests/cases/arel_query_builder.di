@@ -208,6 +208,14 @@ def run_tests()
     Minitest.assert_equal(4, params.length())
     Minitest.assert_equal("admin", params[0])
     Minitest.assert_equal(9, params[3])
+    db = SQLite3.open(":memory:")
+    db.execute("CREATE TABLE people (id INTEGER, role TEXT)")
+    db.execute("INSERT INTO people VALUES (?, ?)", [1, "admin'); DROP TABLE people; --"])
+    rows = Arel.from(people).where(people.column("role").in_list([
+      "admin'); DROP TABLE people; --"])).to_a(db)
+    Minitest.assert_equal(1, rows.length())
+    Minitest.assert_equal(1, db.query("SELECT * FROM people").length())
+    db.close()
   end
 
   def test_empty_in_lists_are_valid_boolean_expressions()
