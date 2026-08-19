@@ -7739,6 +7739,67 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 registers[destination] = DIAMOND_BOOL(comparison);
                 break;
             }
+            /* `<=>` -- unlike LESS/GREATER/EQUAL above, the result is an
+             * Int (-1/0/1) or Nil, never a Bool, and an unorderable pair
+             * (no `<=>` method found, an incomparable native type, or
+             * either Float operand is NaN) is Nil rather than a raised
+             * TypeError -- matching Ruby's own `<=>` contract, which is
+             * why Comparable's own derived `<` (`(self <=> other) < 0`)
+             * still ends up raising for a genuinely incomparable pair, on
+             * the next comparison rather than a bespoke error path here.
+             * Deliberately no _INT quickening variant (see this feature's
+             * own design doc) and no String/Time support -- String
+             * doesn't support `<` either today, and Time keeps its own
+             * working comparisons untouched, both explicit scope cuts. */
+            case DIAMOND_OP_COMPARE: {
+                uint16_t destination=0,left=0,right=0;
+                READ_SHORT(destination);READ_SHORT(left);READ_SHORT(right);
+                if(is_int_value(registers[left])&&is_int_value(registers[right])) {
+                    if(value_is_bignum(registers[left])||value_is_bignum(registers[right])) {
+                        DiamondIntView left_view,right_view;
+                        diamond_int_view(registers[left],&left_view);
+                        diamond_int_view(registers[right],&right_view);
+                        const int comparison=diamond_bignum_compare(left_view,right_view);
+                        registers[destination]=
+                            DIAMOND_INT(comparison<0?-1:comparison>0?1:0);
+                        break;
+                    }
+                    const int64_t a=registers[left].as.integer;
+                    const int64_t b=registers[right].as.integer;
+                    registers[destination]=DIAMOND_INT(a<b?-1:(a>b?1:0));
+                    break;
+                }
+                if((registers[left].kind==DIAMOND_VALUE_FLOAT||
+                    registers[left].kind==DIAMOND_VALUE_INT)&&
+                   (registers[right].kind==DIAMOND_VALUE_FLOAT||
+                    registers[right].kind==DIAMOND_VALUE_INT)&&
+                   (registers[left].kind==DIAMOND_VALUE_FLOAT||
+                    registers[right].kind==DIAMOND_VALUE_FLOAT)) {
+                    const double left_real=registers[left].kind==DIAMOND_VALUE_FLOAT?
+                        registers[left].as.real:(double)registers[left].as.integer;
+                    const double right_real=registers[right].kind==DIAMOND_VALUE_FLOAT?
+                        registers[right].as.real:(double)registers[right].as.integer;
+                    if(isnan(left_real)||isnan(right_real)) {
+                        registers[destination]=DIAMOND_NIL;break;
+                    }
+                    registers[destination]=DIAMOND_INT(
+                        left_real<right_real?-1:(left_real>right_real?1:0));
+                    break;
+                }
+                if(registers[left].kind==DIAMOND_VALUE_OBJECT&&
+                   registers[left].as.object->kind==DIAMOND_OBJECT_INSTANCE) {
+                    bool found=false;DiamondValue op_result=DIAMOND_NIL;
+                    const uint8_t *site=chunk->code+instruction_offset;
+                    const DiamondVmStatus status=invoke_operator_method(vm,chunk,depth,
+                        site,(const DiamondInstance *)registers[left].as.object,
+                        "<=>",3,&registers[right],&op_result,&found);
+                    if(found) {
+                        VM_PROPAGATE(status);
+                        registers[destination]=op_result;break;
+                    }
+                }
+                registers[destination]=DIAMOND_NIL;break;
+            }
             case DIAMOND_OP_JUMP: {
                 uint8_t high = 0;
                 uint8_t low = 0;

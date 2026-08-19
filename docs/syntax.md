@@ -568,9 +568,8 @@ of a class that doesn't define `==` still compare by identity, exactly as
 before this feature existed — defining `==` only changes behavior for
 classes that opt in.
 
-`[]`/`[]=` indexing, `<<`, and `<=>` (a single method deriving all four
-comparisons, Ruby's `Comparable` convenience) aren't overloadable — define
-`<`/`<=`/`>`/`>=` individually if a class needs ordering.
+`[]`/`[]=` indexing and `<<` aren't overloadable. `<=>` **is** — see its
+own section below.
 
 This mechanism (a user-defined class's own instance methods) is the
 only way *user code* opts into operator support. `Time`
@@ -587,6 +586,39 @@ Any other left operand (a `String`, an `Instance`, ...) is a `TypeError`
 — no other native type (`Hash`, `File`, `SQLite3`, ...) gets operators
 this way; each would need its own dedicated VM-level support, same as
 `Time` and `<<` did.
+
+### `<=>` and `Comparable`
+
+```ruby
+class Box
+  include Comparable
+  def initialize(size)
+    @size = size
+  end
+  def <=>(other) = @size - other.size()
+  def size() = @size
+end
+
+Box.new(1) < Box.new(2)                    # => true
+Box.new(5).between?(Box.new(1), Box.new(10))  # => true
+Box.new(15).clamp(Box.new(1), Box.new(10)).size()  # => 10
+```
+
+`a <=> b` returns `-1`/`0`/`1` (an `Int`), or `Nil` for a pair with no
+defined ordering — never a raised error on its own, unlike every other
+comparison operator. Built in for `Int`/`Float` (including
+arbitrary-precision `Int`s and mixed `Int`/`Float` operands; `NaN` on
+either side is `Nil`, matching `Float::NAN <=> 1` in Ruby) and for any
+`Instance` whose class defines its own `<=>` method — anything else
+(`String`, `Time`, an `Instance` with no `<=>`, ...) is `Nil` too, not
+`TypeError`.
+
+`include Comparable` derives `<`, `<=`, `>`, `>=`, `==`, `between?`, and
+`clamp` from that one `<=>` method — the same "several methods derived
+from one" relationship `Enumerable` has with `each`. A genuinely
+incomparable pair still surfaces as an error eventually (`(self <=>
+other) < 0` becomes `nil < 0`), just one level removed from `<=>`
+itself.
 
 ## Modules
 

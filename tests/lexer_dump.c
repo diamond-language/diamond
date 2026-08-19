@@ -61,6 +61,7 @@ static const char *kind_name(DiamondTokenKind kind) {
         case DIAMOND_TOKEN_LESS: return "less";
         case DIAMOND_TOKEN_LESS_EQUAL: return "less_equal";
         case DIAMOND_TOKEN_LESS_LESS: return "less_less";
+        case DIAMOND_TOKEN_SPACESHIP: return "spaceship";
         case DIAMOND_TOKEN_GREATER: return "greater";
         case DIAMOND_TOKEN_GREATER_EQUAL: return "greater_equal";
         case DIAMOND_TOKEN_IF: return "if";

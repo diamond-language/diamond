@@ -138,6 +138,11 @@ module Opcode
   # SHIFT_LEFT's own 8-opcode one. Confirmed with the same throwaway C
   # probe technique as SHIFT_LEFT, not counted by hand.
   MODULO = 103
+  # Appended immediately after MODULO (the enum's own last real opcode
+  # before its DIAMOND_OP_COUNT sentinel), so no gap to account for here
+  # -- still confirmed with the same throwaway C probe technique as
+  # SHIFT_LEFT/MODULO above rather than trusting the arithmetic alone.
+  COMPARE = 104
 end
 
 module Precedence
@@ -985,8 +990,9 @@ class Parser
     # gives inside a class, matching compiler.c's own unified
     # compile_definition exactly rather than falling through to the
     # generic "expected function name" message.
-    if self.operator_method_token?(@current.kind()) && @current_class_index == nil
-      self.fail("operator methods can only be defined inside a class")
+    if self.operator_method_token?(@current.kind()) &&
+       @current_class_index == nil && @current_module_index == nil
+      self.fail("operator methods can only be defined inside a class or module")
       return 0
     end
     if @current.kind() != :identifier
@@ -1664,7 +1670,14 @@ class Parser
     return Type::INT if left_fact == Type::INT && right_fact == Type::INT
     left_numeric = left_fact == Type::INT || left_fact == Type::FLOAT
     right_numeric = right_fact == Type::INT || right_fact == Type::FLOAT
-    if left_numeric && right_numeric && (left_fact == Type::FLOAT || right_fact == Type::FLOAT)
+    # Excludes spaceship explicitly: unlike the arithmetic operators, its
+    # own result is always Int-or-Nil, never Float, regardless of operand
+    # types -- the Type::INT return just above stays correct for
+    # spaceship unmodified, since two known Ints really do always
+    # produce an Int result under this design. Mirrors compiler.c's own
+    # fix exactly (same bug shape, same reasoning -- see its comment).
+    if operator != :spaceship && left_numeric && right_numeric &&
+       (left_fact == Type::FLOAT || right_fact == Type::FLOAT)
       return Type::FLOAT
     end
     if operator == :plus && left_fact == Type::STRING && right_fact == Type::STRING
@@ -2418,6 +2431,7 @@ class Parser
     return true if kind == :less_equal
     return true if kind == :greater
     return true if kind == :greater_equal
+    return true if kind == :spaceship
     false
   end
 
@@ -2434,8 +2448,16 @@ class Parser
       self.advance_token()
     end
     operator_name = self.operator_method_token?(@current.kind())
-    if operator_name && (module_singleton || @current_class_index == nil)
-      self.fail("operator methods can only be defined inside a class")
+    # A module's own operator method is inert until some class `include`s
+    # it -- copied into the including class's own method table exactly
+    # like any other module method, at which point dispatch works the
+    # same as if the class had defined it directly. Mirrors compiler.c's
+    # own relaxation exactly (see its comment): this is what lets
+    # `module Comparable` derive `<`/`<=`/`>`/`>=` from a `<=>` an
+    # including class defines.
+    if operator_name &&
+       (module_singleton || (@current_class_index == nil && @current_module_index == nil))
+      self.fail("operator methods can only be defined inside a class or module")
       return
     end
     if @current.kind() != :identifier && !operator_name
@@ -3985,7 +4007,8 @@ class Parser
     return Precedence::RANGE if kind == :dot_dot || kind == :dot_dot_dot
     return Precedence::OR if kind == :or_or || kind == :or
     return Precedence::AND if kind == :and_and || kind == :and
-    return Precedence::EQUALITY if kind == :equal_equal || kind == :bang_equal || kind == :is
+    return Precedence::EQUALITY if kind == :equal_equal || kind == :bang_equal ||
+      kind == :is || kind == :spaceship
     return Precedence::COMPARISON if kind == :less || kind == :less_equal || kind == :greater || kind == :greater_equal
     return Precedence::SHIFT if kind == :less_less
     return Precedence::TERM if kind == :plus || kind == :minus
@@ -4005,6 +4028,7 @@ class Parser
     return Opcode::LESS_EQUAL if kind == :less_equal
     return Opcode::GREATER if kind == :greater
     return Opcode::GREATER_EQUAL if kind == :greater_equal
+    return Opcode::COMPARE if kind == :spaceship
     Opcode::SHIFT_LEFT
   end
 

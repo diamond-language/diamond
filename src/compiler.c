@@ -611,6 +611,7 @@ static Precedence token_precedence(DiamondTokenKind kind) {
             return PREC_AND;
         case DIAMOND_TOKEN_EQUAL_EQUAL:
         case DIAMOND_TOKEN_BANG_EQUAL:
+        case DIAMOND_TOKEN_SPACESHIP:
             return PREC_EQUALITY;
         case DIAMOND_TOKEN_LESS:
         case DIAMOND_TOKEN_LESS_EQUAL:
@@ -3357,6 +3358,7 @@ static DiamondOpCode binary_opcode(DiamondTokenKind operator) {
         case DIAMOND_TOKEN_GREATER_EQUAL: return DIAMOND_OP_GREATER_EQUAL;
         case DIAMOND_TOKEN_LESS_LESS: return DIAMOND_OP_SHIFT_LEFT;
         case DIAMOND_TOKEN_PERCENT: return DIAMOND_OP_MODULO;
+        case DIAMOND_TOKEN_SPACESHIP: return DIAMOND_OP_COMPARE;
         default: return DIAMOND_OP_ADD;
     }
 }
@@ -3447,13 +3449,21 @@ static uint16_t compile_binary_op(Compiler *compiler, DiamondTokenKind operator,
     } else if(compiler->known_types[left]==DIAMOND_TYPE_INT &&
               compiler->known_types[right]==DIAMOND_TYPE_INT) {
         compiler->known_types[destination]=DIAMOND_TYPE_INT;
-    } else if((compiler->known_types[left]==DIAMOND_TYPE_FLOAT||
+    } else if(operator!=DIAMOND_TOKEN_SPACESHIP &&
+              (compiler->known_types[left]==DIAMOND_TYPE_FLOAT||
                compiler->known_types[left]==DIAMOND_TYPE_INT) &&
               (compiler->known_types[right]==DIAMOND_TYPE_FLOAT||
                compiler->known_types[right]==DIAMOND_TYPE_INT) &&
               (compiler->known_types[left]==DIAMOND_TYPE_FLOAT||
                compiler->known_types[right]==DIAMOND_TYPE_FLOAT)) {
-        /* Mixed Int/Float statically known to auto-promote to Float. */
+        /* Mixed Int/Float statically known to auto-promote to Float --
+         * excludes spaceship explicitly: unlike the arithmetic operators,
+         * its own result is always Int-or-Nil, never Float, regardless of
+         * operand types (the DIAMOND_TYPE_INT branch just above stays
+         * correct for spaceship unmodified, since two known Ints really
+         * do always produce an Int result under this design). Found and
+         * fixed during this feature's own design, before any code was
+         * written -- see the Comparable design doc. */
         compiler->known_types[destination]=DIAMOND_TYPE_FLOAT;
     } else if(operator==DIAMOND_TOKEN_PLUS &&
               compiler->known_types[left]==DIAMOND_TYPE_STRING &&
@@ -4571,14 +4581,27 @@ static uint16_t compile_definition(Compiler *compiler) {
         compiler->current.kind==DIAMOND_TOKEN_LESS||
         compiler->current.kind==DIAMOND_TOKEN_LESS_EQUAL||
         compiler->current.kind==DIAMOND_TOKEN_GREATER||
-        compiler->current.kind==DIAMOND_TOKEN_GREATER_EQUAL;
+        compiler->current.kind==DIAMOND_TOKEN_GREATER_EQUAL||
+        compiler->current.kind==DIAMOND_TOKEN_SPACESHIP;
     if (compiler->current.kind != DIAMOND_TOKEN_IDENTIFIER && !operator_name) {
         fail(compiler, compiler->current.span, "expected function name after 'def'");
         return 0;
     }
-    if (operator_name && !(compiler->current_class>=0 && !module_singleton)) {
+    /* A module's own operator method is inert until some class `include`s
+     * it (a bare module isn't itself an instantiable receiver), but once
+     * included it's copied into the including class's own method table
+     * exactly like any other module method (see the `include` handling
+     * below) -- dispatch already doesn't care where a method was
+     * originally *written*, only which class ends up owning it, so
+     * there's nothing else to teach the VM here. This is what lets
+     * `module Comparable`'s own `<`/`<=`/`>`/`>=` derive from a `<=>` an
+     * including class defines, the same relationship `Enumerable`
+     * already has with `each`. */
+    if (operator_name &&
+        !((compiler->current_class>=0||compiler->current_module>=0) &&
+          !module_singleton)) {
         fail(compiler, compiler->current.span,
-             "operator methods can only be defined inside a class");
+             "operator methods can only be defined inside a class or module");
         return 0;
     }
     if (compiler->program->function_count == DIAMOND_MAX_FUNCTIONS) {

@@ -81,6 +81,12 @@ typedef enum DiamondTokenKind {
     DIAMOND_TOKEN_LESS,
     DIAMOND_TOKEN_LESS_EQUAL,
     DIAMOND_TOKEN_LESS_LESS,
+    /* `<=>` -- Ruby's Comparable "spaceship" operator, a single method
+     * deriving `<`/`<=`/`>`/`>=`/`==`. Lexed as its own token (not
+     * inferred from LESS_EQUAL followed by a separate GREATER) so the
+     * parser can dispatch on token kind the same way it already does for
+     * every other operator. */
+    DIAMOND_TOKEN_SPACESHIP,
     DIAMOND_TOKEN_GREATER,
     DIAMOND_TOKEN_GREATER_EQUAL,
     DIAMOND_TOKEN_IF,

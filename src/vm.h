@@ -185,6 +185,13 @@ typedef enum DiamondOpCode : uint8_t {
     DIAMOND_OP_ARGV,
     DIAMOND_OP_ENV,
     DIAMOND_OP_MODULO,
+    /* `<=>` -- unlike LESS/LESS_EQUAL/GREATER/GREATER_EQUAL/EQUAL, the
+     * result is an Int (-1/0/1) or Nil, never a Bool, and an unorderable
+     * pair returns Nil rather than raising -- see vm.c's own handler
+     * comment. Deliberately no _INT quickening variant (see the
+     * Comparable/`<=>` design doc): not a hot inner-loop operator the
+     * way `<`/`==` are. */
+    DIAMOND_OP_COMPARE,
     DIAMOND_OP_COUNT,
 } DiamondOpCode;
 

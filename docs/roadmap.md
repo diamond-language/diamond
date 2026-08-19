@@ -974,6 +974,83 @@ future work.
   `tests/parser_cases/tap_dup_respond_to.di`, both self-hosted bootstrap
   checks passing).
 
+- **`<=>` and `module Comparable`**: seventh item off the Ruby-idiom gap
+  list. `docs/syntax.md` already documented `<`/`<=`/`>`/`>=`/`==` as
+  overloadable but said `<=>` "aren't overloadable" — investigated
+  directly rather than assumed, and `<=>` turned out not to exist *at
+  all* (no lexer token, no grammar entry whatsoever; `self <=> other`
+  failed "expected expression"), making this item as large as block
+  syntax rather than a quick follow-on like `times`/`upto`/`downto`.
+  Plan-moded before implementation, same as Range and block syntax got.
+
+  New lexer token `DIAMOND_TOKEN_SPACESHIP` (longest-match against `<`/
+  `<=`, both compilers), new opcode `DIAMOND_OP_COMPARE` (appended right
+  before `DIAMOND_OP_COUNT`, `vm.h`), and a new `PREC_EQUALITY`-tier
+  precedence entry (`compiler.c`'s `token_precedence`/`selfhost/
+  parser.di`'s own mirror) — matching Ruby's own grouping, one level
+  looser than `<`/`<=`/`>`/`>=`, one level tighter than `&&`. `<=>`
+  mirrors the existing comparison opcodes' Int-fast-path → bignum →
+  mixed-Int/Float → `Instance`-dispatch-via-`invoke_operator_method`
+  shape, but with two deliberate differences: its result is an `Int`
+  (`-1`/`0`/`1`) or `Nil`, never a `Bool` (`NaN` on either `Float`
+  operand is explicit-checked to `Nil`, matching Ruby's own `Float::NAN
+  <=> 1`; an unorderable pair — no `<=>` method found, or an
+  incomparable native type — is also `Nil`, not a raised `TypeError`,
+  the one real behavioral difference from `<`/`<=`/`>`/`>=`); and it
+  deliberately gets no `_INT` quickening-specialized variant, a
+  proportionate scope cut since it isn't a hot inner-loop operator the
+  way `<`/`==` are. Not extended to `String` (which doesn't support `<`
+  either today) or `Time` (keeps its own separate working comparisons
+  untouched) — both explicit, tested scope cuts, not oversights.
+
+  **Groundwork landed first, separately verified**: `compile_definition`/
+  `compile_method` (both compilers) rejected operator-named methods
+  (`def <(x)`) anywhere but directly inside a class body — relaxed to
+  also allow module bodies, since a module's own operator method is
+  inert until some class `include`s it (copied into the including
+  class's method table exactly like any other module method) and
+  dispatch (`lookup_method`) never cared where a method was *written*,
+  only which class ends up *owning* it. This is what lets `module
+  Comparable` derive `<`/`<=`/`>`/`>=`/`==` from a `<=>` an including
+  class defines, the same relationship `Enumerable` already has with
+  `each` — confirmed with a direct polymorphic-dispatch test (a `Box`
+  class `include`ing a hand-written mirror of `Comparable`, checking
+  `self <=> other` resolves through `self`'s actual runtime class from
+  inside the *module's* own compiled method body) before writing the
+  real module, not just reasoned through.
+
+  **Two real bugs found while designing this, before any code was
+  written**: `compiler.c`'s existing Int/Float known-type inference
+  chain (right after `compile_binary_op`'s `emit_instruction`) has a
+  "both operands numeric, at least one `Float`" tier that marks the
+  result `DIAMOND_TYPE_FLOAT` — correct for `+`/`-`/`*`/`/`, wrong for
+  `<=>`, whose own result is always `Int`-or-`Nil`, never `Float`,
+  regardless of operand types. Fixed by excluding
+  `DIAMOND_TOKEN_SPACESHIP` from that tier's condition (the adjacent
+  "both known `Int`" tier stays correct for `<=>` unmodified — two known
+  `Int`s really do always produce an `Int` result). `selfhost/parser.di`'s
+  `binary_result_fact` had the identical bug shape for the identical
+  reason, fixed the same way.
+
+  `module Comparable` (`lib/core.di`, right after `module Enumerable`)
+  derives `<`/`<=`/`>`/`>=`/`==`/`between?`/`clamp` from `<=>` — the
+  last two weren't named on the gap list's own "Comparable/`<=>`" entry
+  but are Ruby's real `Comparable` module and cost almost nothing once
+  `<`/`<=`/`>` exist. A genuinely incomparable pair still surfaces as an
+  error eventually through these derived methods (`(self <=> other) <
+  0` becomes `nil < 0`), one level removed from `<=>` itself rather than
+  a bespoke error path.
+
+  Verified: `make debug` (clean, zero warnings), full `bash tests/run.sh`
+  (1090 passing — five new `tests/cases/{spaceship,comparable}_*.di`
+  fixtures covering Int/Float/bignum `<=>`, `NaN` and incomparable-pair
+  `Nil` results, and `Comparable`'s full derived method set including
+  `between?`/`clamp`), `make test-lexer-diff` (1025 cases, new token
+  exercised on both compilers), and `make test-parser-diff` (252
+  differential cases including a new `tests/parser_cases/comparable.di`
+  — covering the `<=>`-vs-`<` precedence grouping directly, not just
+  reasoned through — both self-hosted bootstrap checks passing).
+
 ### Collections and Enumerable
 
 - Replaced `Hash`'s O(n) linear-scan lookup with a real open-addressing hash

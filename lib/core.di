@@ -500,6 +500,27 @@ module Enumerable
   def reduce(initial, callback: Callable[2]) = enumerable_reduce(self, initial, callback)
 end
 
+# `<`/`<=`/`>`/`>=`/`==` derived from a single `<=>` an including class
+# defines -- the same "several methods derived from one" relationship
+# Enumerable has with `each`, just for ordering instead of iteration.
+# `<=>` itself returns Nil for a genuinely incomparable pair (see
+# DIAMOND_OP_COMPARE's own comment, vm.c) rather than raising, so these
+# derived comparisons still end up raising on the very next operator
+# (`nil < 0`) for that case -- no bespoke error handling needed here.
+module Comparable
+  def <(other) = (self <=> other) < 0
+  def <=(other) = (self <=> other) <= 0
+  def >(other) = (self <=> other) > 0
+  def >=(other) = (self <=> other) >= 0
+  def ==(other) = (self <=> other) == 0
+  def between?(min, max) = self >= min && self <= max
+  def clamp(min, max)
+    return min if self < min
+    return max if self > max
+    self
+  end
+end
+
 # `1..5` (inclusive) / `1...5` (exclusive) desugar directly to
 # `Range.new(1, 5, false)` / `Range.new(1, 5, true)` at parse time (see
 # compiler.c's range-desugaring branch in parse_precedence) -- Range
