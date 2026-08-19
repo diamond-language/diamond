@@ -22,18 +22,21 @@ def run_tests()
 
   def test_update_renders_and_executes()
     items = Arel.table("odd\"items")
-    update = Arel.update(items).set({"q\"ty": 4})
+    payload = "4; DROP TABLE \"odd\"\"items\"; --"
+    update = Arel.update(items).set({"q\"ty": payload})
     update = update.where(items.column("na\"me").eq("pens"))
     sql, params = update.to_sql()
     Minitest.assert_equal("UPDATE \"odd\"\"items\" SET \"q\"\"ty\" = ? WHERE \"odd\"\"items\".\"na\"\"me\" = ?", sql)
-    Minitest.assert_equal(4, params[0])
+    Minitest.assert_equal(payload, params[0])
     Minitest.assert_equal("pens", params[1])
 
     db = SQLite3.open(":memory:")
     db.execute("CREATE TABLE \"odd\"\"items\" (\"na\"\"me\" TEXT, \"q\"\"ty\" INTEGER)")
     db.execute("INSERT INTO \"odd\"\"items\" VALUES (?, ?)", ["pens", 3])
     Minitest.assert_equal(1, update.execute(db))
-    Minitest.assert_equal(4, db.query("SELECT \"q\"\"ty\" FROM \"odd\"\"items\"")[0]["q\"ty"])
+    Minitest.assert_equal(payload,
+      db.query("SELECT \"q\"\"ty\" FROM \"odd\"\"items\"")[0]["q\"ty"])
+    Minitest.assert_equal(1, db.query("SELECT * FROM \"odd\"\"items\"").length())
     db.close()
   end
 
