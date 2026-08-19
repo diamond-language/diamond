@@ -1,6 +1,16 @@
 require "../../lib/minitest"
 require "../../packages/arel/arel"
 
+class RecordingVisitor
+  def initialize()
+    @nodes = []
+  end
+  def visit(node)
+    @nodes.push(Arel.inspect(node))
+  end
+  def nodes() = @nodes
+end
+
 def run_tests()
   def test_expression_children_are_ordered()
     people = Arel.table("people")
@@ -111,6 +121,10 @@ def run_tests()
       "Attribute(people.age)"
     ]
     Minitest.assert_equal(expected.join("|"), descriptions.join("|"))
+    visitor = RecordingVisitor.new()
+    returned = Arel.walk(predicate, visitor)
+    Minitest.assert_equal(descriptions.join("|"), visitor.nodes().join("|"))
+    Minitest.assert_equal(descriptions.length(), returned.length())
   end
 
   suite = Minitest.new()

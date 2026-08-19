@@ -1468,12 +1468,15 @@ class ArelDelete
 end
 
 class ArelInspector
-def walk(node) -> Array
+def walk(node, visitor = nil) -> Array
   visited = []
   pending = [node]
   while pending.length() > 0
     current = pending.pop()
     visited.push(current)
+    if visitor != nil
+      visitor.visit(current)
+    end
     children = self.children(current)
     index = children.length()
     while index > 0
@@ -2084,7 +2087,7 @@ class Arel
   def self.inspect(node) = ArelInspector.new().inspect(node)
   def self.same?(left, right) = ArelInspector.new().same?(left, right)
   def self.children(node) = ArelInspector.new().children(node)
-  def self.walk(node) = ArelInspector.new().walk(node)
+  def self.walk(node, visitor = nil) = ArelInspector.new().walk(node, visitor)
   def self.union(left, right) = ArelCompoundQuery.new(left, "UNION", right)
   def self.union_all(left, right) = ArelCompoundQuery.new(left, "UNION ALL", right)
   def self.intersect(left, right) = ArelCompoundQuery.new(left, "INTERSECT", right)
