@@ -74,12 +74,30 @@ def run_tests()
     Minitest.assert_equal("Attribute(people.id)", Arel.inspect(children[4]))
   end
 
+  def test_update_and_delete_children_are_ordered()
+    people = Arel.table("people")
+    update = Arel.update(people).set({
+      "score": Arel.expression(people.column("score").add(1))
+    }).where(people.column("id").eq(7)).returning(people.column("score"))
+    update_children = Arel.children(update)
+    Minitest.assert_equal("Table(people)", Arel.inspect(update_children[0]))
+    Minitest.assert_equal("Assignment(Binary(+, Attribute(people.score), Bind(1)))", Arel.inspect(update_children[1]))
+    Minitest.assert_equal("Predicate(=, Attribute(people.id), Bind(7))", Arel.inspect(update_children[2]))
+    Minitest.assert_equal("Attribute(people.score)", Arel.inspect(update_children[3]))
+    delete_children = Arel.children(Arel.delete_from(people).where(
+      people.column("inactive").eq(true)).returning(people.column("id")))
+    Minitest.assert_equal("Table(people)", Arel.inspect(delete_children[0]))
+    Minitest.assert_equal("Predicate(=, Attribute(people.inactive), Bind(true))", Arel.inspect(delete_children[1]))
+    Minitest.assert_equal("Attribute(people.id)", Arel.inspect(delete_children[2]))
+  end
+
   suite = Minitest.new()
   suite.test("ordered expression children", test_expression_children_are_ordered)
   suite.test("ordered predicate children", test_predicate_children_preserve_semantic_order)
   suite.test("ordered query children", test_query_children_follow_render_order)
   suite.test("composition children", test_composition_children_are_structural)
   suite.test("ordered insert children", test_insert_children_follow_bind_structure)
+  suite.test("ordered update and delete children", test_update_and_delete_children_are_ordered)
   suite.run!()
 end
 

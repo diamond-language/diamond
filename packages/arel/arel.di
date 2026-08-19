@@ -1584,6 +1584,28 @@ def children_write(node) -> Array
       end
     end
     array_concat(children, state[2])
+  elsif node is ArelUpdate
+    state = node.structure()
+    children = array_concat([], state[5])
+    children.push(state[0])
+    if state[1] != nil
+      value_index = 0
+      while value_index < state[1].length()
+        value = state[1][state[1].key_at(value_index)]
+        if value is ArelAssignmentValue
+          children.push(value)
+        end
+        value_index = value_index + 1
+      end
+    end
+    children = array_concat(children, state[2])
+    array_concat(children, state[3])
+  elsif node is ArelDelete
+    state = node.structure()
+    children = array_concat([], state[4])
+    children.push(state[0])
+    children = array_concat(children, state[1])
+    array_concat(children, state[2])
   else
     []
   end
