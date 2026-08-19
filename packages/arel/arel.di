@@ -9,6 +9,10 @@ interface ArelInspectable
   def arel_inspect() -> String
 end
 
+interface ArelComparableNode
+  def arel_same?(other) -> Bool
+end
+
 def arel_array(value)
   if value is Array
     value
@@ -2125,31 +2129,24 @@ def same_hash?(left, right) -> Bool
   true
 end
 
-def same_values?(left: Array, right: Array) -> Bool
-  if left.length() != right.length()
-    return false
-  end
-  index = 0
-  while index < left.length()
-    if left[index] != right[index]
-      return false
-    end
-    index = index + 1
-  end
-  true
-end
-
 def same_insert?(left: ArelInsert, right: ArelInsert) -> Bool
   left_state = left.structure()
   right_state = right.structure()
   if !self.same?(left_state[0], right_state[0]) ||
      left_state[1].length() != right_state[1].length() ||
      !self.same_nodes?(left_state[2], right_state[2]) ||
-     !self.same_values?(left_state[3], right_state[3]) || left_state[6] != right_state[6] ||
+     left_state[3].length() != right_state[3].length() || left_state[6] != right_state[6] ||
      !self.same_hash?(left_state[7], right_state[7]) ||
      !self.same_nodes?(left_state[8], right_state[8]) ||
      (left_state[4] == nil) != (right_state[4] == nil)
     return false
+  end
+  index = 0
+  while index < left_state[3].length()
+    if left_state[3][index] != right_state[3][index]
+      return false
+    end
+    index = index + 1
   end
   if left_state[4] != nil && !self.same?(left_state[4], right_state[4])
     return false
@@ -2158,8 +2155,15 @@ def same_insert?(left: ArelInsert, right: ArelInsert) -> Bool
     return false
   end
   if left_state[5] is Array
-    if !self.same_values?(left_state[5], right_state[5])
+    if left_state[5].length() != right_state[5].length()
       return false
+    end
+    index = 0
+    while index < left_state[5].length()
+      if left_state[5][index] != right_state[5][index]
+        return false
+      end
+      index = index + 1
     end
   elsif !self.same?(left_state[5], right_state[5])
     return false
@@ -2277,6 +2281,8 @@ def same_tail?(left, right) -> Bool
       return false
     end
     true
+  elsif left is ArelComparableNode
+    left.arel_same?(right)
   else
     false
   end

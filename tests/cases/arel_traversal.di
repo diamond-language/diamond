@@ -18,6 +18,13 @@ class ThirdPartyPair
   end
   def arel_children() -> Array = [@left, @right]
   def arel_inspect() -> String = "ThirdPartyPair"
+  def arel_same?(other) -> Bool
+    if !(other is ThirdPartyPair)
+      return false
+    end
+    other_children = other.arel_children()
+    Arel.same?(@left, other_children[0]) && Arel.same?(@right, other_children[1])
+  end
 end
 
 def run_tests()
@@ -232,6 +239,11 @@ def run_tests()
     people = Arel.table("people")
     extension = ThirdPartyPair.new(people.column("name"), people.column("email"))
     Minitest.assert_equal("ThirdPartyPair", Arel.inspect(extension))
+    same_extension = ThirdPartyPair.new(Arel.table("people").column("name"),
+      Arel.table("people").column("email"))
+    Minitest.assert_equal(true, Arel.same?(extension, same_extension))
+    Minitest.assert_equal(false, Arel.same?(extension, ThirdPartyPair.new(
+      people.column("name"), people.column("phone"))))
     children = Arel.children(extension)
     Minitest.assert_equal("Attribute(people.name)|Attribute(people.email)",
       Arel.inspect(children[0]) + "|" + Arel.inspect(children[1]))
