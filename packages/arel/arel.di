@@ -1568,6 +1568,9 @@ def inspect_tail(node) -> String
       assignments = state[1].length()
     end
     "Update(table=#{state[0].reference_name()}, assignments=#{assignments}, predicates=#{state[2].length()}, returning=#{state[3].length()}, all=#{state[4]}, ctes=#{state[5].length()})"
+  elsif node is ArelDelete
+    state = node.structure()
+    "Delete(from=#{state[0].reference_name()}, predicates=#{state[1].length()}, returning=#{state[2].length()}, all=#{state[3]}, ctes=#{state[4].length()})"
   else
     "ArelNode(unsupported)"
   end
