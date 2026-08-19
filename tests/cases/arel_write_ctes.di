@@ -22,8 +22,28 @@ def run_tests()
     db.close()
   end
 
+  def test_delete_accepts_a_cte()
+    db = SQLite3.open(":memory:")
+    db.execute("CREATE TABLE events (id INTEGER, stale INTEGER)")
+    db.execute("INSERT INTO events VALUES (1, 1), (2, 0)")
+    events = Arel.table("events")
+    source = Arel.from(events).project(events.column("id"))
+    source = source.where(events.column("stale").eq(1))
+    expired = Arel.table("expired")
+    ids = Arel.from(expired).project(expired.column("id"))
+    deletion = Arel.delete_from(events).with("expired", source)
+    deletion = deletion.where(events.column("id").in_subquery(ids))
+    sql, params = deletion.to_sql()
+    Minitest.assert_equal("WITH \"expired\" AS (SELECT \"events\".\"id\" FROM \"events\" WHERE \"events\".\"stale\" = ?) DELETE FROM \"events\" WHERE \"events\".\"id\" IN (SELECT \"expired\".\"id\" FROM \"expired\")", sql)
+    Minitest.assert_equal(1, params[0])
+    Minitest.assert_equal(1, deletion.execute(db))
+    Minitest.assert_equal(2, db.query("SELECT id FROM events")[0]["id"])
+    db.close()
+  end
+
   suite = Minitest.new()
   suite.test("UPDATE CTE", test_update_accepts_a_cte)
+  suite.test("DELETE CTE", test_delete_accepts_a_cte)
   suite.run()
 end
 

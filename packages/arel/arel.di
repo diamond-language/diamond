@@ -1089,20 +1089,28 @@ class ArelUpdate
 end
 
 class ArelDelete
-  def initialize(table: ArelTable, predicates = [], returning = [], allow_all = false)
+  def initialize(table: ArelTable, predicates = [], returning = [], allow_all = false,
+                 ctes = [])
     @table = table
     @predicates = predicates
     @returning = returning
     @allow_all = allow_all
+    @ctes = ctes
   end
 
+  def ctes() = @ctes
   def where(predicate)
-    ArelDelete.new(@table, array_concat(@predicates, [predicate]), @returning, @allow_all)
+    ArelDelete.new(@table, array_concat(@predicates, [predicate]), @returning, @allow_all,
+      @ctes)
   end
   def returning(expressions)
-    ArelDelete.new(@table, @predicates, arel_array(expressions), @allow_all)
+    ArelDelete.new(@table, @predicates, arel_array(expressions), @allow_all, @ctes)
   end
-  def all() = ArelDelete.new(@table, @predicates, @returning, true)
+  def all() = ArelDelete.new(@table, @predicates, @returning, true, @ctes)
+  def with(name: String, query)
+    ArelDelete.new(@table, @predicates, @returning, @allow_all,
+      array_concat(@ctes, [ArelCte.new(name, query)]))
+  end
 
   def to_sql() -> Array
     if @predicates.length() == 0 && !@allow_all
@@ -1127,6 +1135,9 @@ class ArelDelete
     if rendered.length() > 0
       sql = sql + " RETURNING " + rendered.join(", ")
     end
+    cte_params = []
+    sql = visitor.render_ctes(self, cte_params) + sql
+    params = array_concat(cte_params, params)
     [sql, params]
   end
 
