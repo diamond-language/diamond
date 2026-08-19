@@ -30,13 +30,11 @@ remaining portability constraint is architectural: SELECT rendering lives in
 the visitor, while compound and write managers still assemble their own SQL
 skeletons. Move that responsibility across the existing visitor boundary:
 
-- give visitors rendering entry points for compounds and each write-manager
-  family, while retaining `render_expression` and `render_ctes` as shared
-  building blocks;
+- move compound rendering first, then give visitors entry points for each
+  write-manager family while retaining `render_expression`, `render_ctes`, and
+  visitor-owned identifier quoting as shared building blocks;
 - reduce each manager's `render_with(visitor)` method to delegation, matching
   the SELECT manager's direction;
-- centralize identifier quoting behind the visitor rather than calling the
-  SQLite quoting helper from statement managers;
 - migrate one statement family at a time with exact SQL and bind-order
   equivalence tests;
 - keep `ArelSQLiteVisitor` as the only production renderer and preserve every
