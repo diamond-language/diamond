@@ -153,14 +153,6 @@ class ArelBinaryExpression
   def subtract(value) = ArelBinaryExpression.new(self, "-", value)
   def multiply(value) = ArelBinaryExpression.new(self, "*", value)
   def divide(value) = ArelBinaryExpression.new(self, "/", value)
-  def concat(value) = ArelBinaryExpression.new(self, "||", value)
-  def modulo(value) = ArelBinaryExpression.new(self, "%", value)
-  def add_expression(expression) = ArelBinaryExpression.new(self, "+", expression, false)
-  def subtract_expression(expression) = ArelBinaryExpression.new(self, "-", expression, false)
-  def multiply_expression(expression) = ArelBinaryExpression.new(self, "*", expression, false)
-  def divide_expression(expression) = ArelBinaryExpression.new(self, "/", expression, false)
-  def concat_expression(expression) = ArelBinaryExpression.new(self, "||", expression, false)
-  def modulo_expression(expression) = ArelBinaryExpression.new(self, "%", expression, false)
 end
 
 class ArelLiteral
@@ -280,10 +272,6 @@ class ArelExcludedAttribute
   def subtract(value) = ArelBinaryExpression.new(self, "-", value)
   def multiply(value) = ArelBinaryExpression.new(self, "*", value)
   def divide(value) = ArelBinaryExpression.new(self, "/", value)
-  def add_expression(expression) = ArelBinaryExpression.new(self, "+", expression, false)
-  def subtract_expression(expression) = ArelBinaryExpression.new(self, "-", expression, false)
-  def multiply_expression(expression) = ArelBinaryExpression.new(self, "*", expression, false)
-  def divide_expression(expression) = ArelBinaryExpression.new(self, "/", expression, false)
 end
 
 class ArelConflictAttribute
@@ -1486,10 +1474,12 @@ class Arel
   def self.excluded(name: String) = ArelExcludedAttribute.new(name)
   def self.literal(value) = ArelLiteral.new(value)
   def self.cast(expression, type_name: String) = ArelCast.new(expression, type_name)
-  def self.bit_and(expression, value) = ArelBinaryExpression.new(expression, "&", value)
-  def self.bit_or(expression, value) = ArelBinaryExpression.new(expression, "|", value)
-  def self.shift_left(expression, value) = ArelBinaryExpression.new(expression, "<<", value)
-  def self.shift_right(expression, value) = ArelBinaryExpression.new(expression, ">>", value)
+  def self.integer_operator(expression, operator: String, value)
+    if operator != "&" && operator != "|" && operator != "<<" && operator != ">>"
+      raise ArgumentError.new("unsupported SQL integer operator")
+    end
+    ArelBinaryExpression.new(expression, operator, value)
+  end
   def self.conflict_target(columns) = ArelConflictTarget.new(arel_array(columns))
   def self.render(statement, visitor = nil) = statement.to_sql(visitor)
   def self.union(left, right) = ArelCompoundQuery.new(left, "UNION", right)
