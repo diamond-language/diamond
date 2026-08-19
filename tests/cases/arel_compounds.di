@@ -36,10 +36,20 @@ def run_tests()
     Minitest.assert_equal("SELECT \"left_values\".\"value\" FROM \"left_values\" INTERSECT SELECT \"right_values\".\"value\" FROM \"right_values\"", sql)
   end
 
+  def test_except_renders_structurally()
+    all_people = Arel.table("all_people")
+    blocked = Arel.table("blocked_people")
+    left = Arel.from(all_people).project(all_people.column("id"))
+    right = Arel.from(blocked).project(blocked.column("id"))
+    sql, params = Arel.except(left, right).to_sql()
+    Minitest.assert_equal("SELECT \"all_people\".\"id\" FROM \"all_people\" EXCEPT SELECT \"blocked_people\".\"id\" FROM \"blocked_people\"", sql)
+  end
+
   suite = Minitest.new()
   suite.test("UNION", test_union_combines_queries_and_binds)
   suite.test("UNION ALL", test_union_all_preserves_duplicates_in_sqlite)
   suite.test("INTERSECT", test_intersect_renders_structurally)
+  suite.test("EXCEPT", test_except_renders_structurally)
   suite.run()
 end
 
