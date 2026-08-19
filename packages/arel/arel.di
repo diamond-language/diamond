@@ -169,6 +169,9 @@ class ArelRawSql
   end
   def sql() = @sql
   def params() = @params
+  def and_also(other) = ArelLogical.new(self, "AND", other)
+  def or_else(other) = ArelLogical.new(self, "OR", other)
+  def not_() = ArelNot.new(self)
 end
 
 class ArelSQLiteVisitor
@@ -453,6 +456,13 @@ end
 
 class Arel
   def self.table(name: String) = ArelTable.new(name)
+  def self.sql(fragment: String, params = nil)
+    bound = params
+    if bound == nil
+      bound = []
+    end
+    ArelRawSql.new(fragment, bound)
+  end
   def self.count(expression) = ArelFunction.new("COUNT", [expression])
   def self.sum(expression) = ArelFunction.new("SUM", [expression])
   def self.min(expression) = ArelFunction.new("MIN", [expression])

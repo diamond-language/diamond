@@ -51,12 +51,21 @@ def run_tests()
     Minitest.assert_equal(2, params[0])
   end
 
+  def test_explicit_sql_literal_is_composable()
+    people = Arel.table("people")
+    query = Arel.from(people).project(Arel.sql("date('now') AS today"))
+    sql, params = query.where(Arel.sql("json_valid(profile) = ?", [1])).to_sql()
+    Minitest.assert_equal("SELECT date('now') AS today FROM \"people\" WHERE json_valid(profile) = ?", sql)
+    Minitest.assert_equal(1, params[0])
+  end
+
   suite = Minitest.new()
   suite.test("BETWEEN predicates", test_between_predicates_bind_both_bounds)
   suite.test("LIKE predicates", test_like_predicates_are_bound)
   suite.test("function and aggregate projections", test_function_and_aggregate_projections)
   suite.test("GROUP BY", test_group_by_accepts_expression_arrays)
   suite.test("HAVING", test_having_uses_expression_nodes_and_binds)
+  suite.test("explicit SQL literal", test_explicit_sql_literal_is_composable)
   suite.run()
 end
 
