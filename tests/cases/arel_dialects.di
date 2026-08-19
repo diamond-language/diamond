@@ -3,6 +3,7 @@ require "../../packages/arel/arel"
 
 class PortableTestVisitor < ArelVisitor
   def visitor_name() = "portable-test"
+  def quote_identifier(name: String) -> String = arel_quote_identifier(name)
   def supports_extension?(name: String) = false
 end
 
