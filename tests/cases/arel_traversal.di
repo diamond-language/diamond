@@ -318,6 +318,13 @@ def run_tests()
     Minitest.assert_equal("true|4", update_params.join("|"))
     Minitest.assert_equal("Not(Not(Predicate(=, Attribute(people.id), Bind(4))))",
       Arel.inspect(Arel.children(update)[1]))
+    empty_membership = people.column("id").in_list([])
+    empty_simple = Arel.simplify(empty_membership)
+    Minitest.assert_equal("RawSql(1 = 0, 0 binds)", Arel.inspect(empty_simple))
+    original_empty_sql, original_empty_params = Arel.from(people).where(empty_membership).to_sql()
+    simple_empty_sql, simple_empty_params = Arel.from(people).where(empty_simple).to_sql()
+    Minitest.assert_equal(original_empty_sql, simple_empty_sql)
+    Minitest.assert_equal(original_empty_params.length(), simple_empty_params.length())
   end
 
   suite = Minitest.new()

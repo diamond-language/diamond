@@ -1883,6 +1883,12 @@ def simplify(node)
   if node is ArelNot && node.expression() is ArelNot
     return node.expression().expression()
   end
+  if node is ArelMembership && node.values() is Array && node.values().length() == 0
+    if node.negated?()
+      return ArelRawSql.new("1 = 1", [])
+    end
+    return ArelRawSql.new("1 = 0", [])
+  end
   node
 end
 
