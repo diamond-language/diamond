@@ -19,8 +19,25 @@ def run_tests()
     db.close()
   end
 
+  def test_multi_row_expressions_preserve_bind_order()
+    metrics = Arel.table("metrics")
+    insert = Arel.insert_into(metrics).values_many([
+      {"name": "first", "value": Arel.expression(Arel.sql("? + ?", [1, 2]))},
+      {"name": "second", "value": Arel.expression(Arel.sql("? * ?", [3, 4]))}
+    ])
+    sql, params = insert.to_sql()
+    Minitest.assert_equal("INSERT INTO \"metrics\" (\"name\", \"value\") VALUES (?, ? + ?), (?, ? * ?)", sql)
+    Minitest.assert_equal("first", params[0])
+    Minitest.assert_equal(1, params[1])
+    Minitest.assert_equal(2, params[2])
+    Minitest.assert_equal("second", params[3])
+    Minitest.assert_equal(3, params[4])
+    Minitest.assert_equal(4, params[5])
+  end
+
   suite = Minitest.new()
   suite.test("INSERT expressions", test_insert_values_accept_explicit_expressions)
+  suite.test("multi-row INSERT expressions", test_multi_row_expressions_preserve_bind_order)
   suite.run()
 end
 
