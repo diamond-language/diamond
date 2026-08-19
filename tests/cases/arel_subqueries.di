@@ -47,11 +47,21 @@ def run_tests()
     Minitest.assert_equal(true, params[0])
   end
 
+  def test_explicit_correlation_allows_outer_attributes()
+    people = Arel.table("people")
+    memberships = Arel.table("memberships")
+    inner = Arel.from(memberships).correlate(people)
+    inner = inner.where(memberships.column("person_id").eq(people.column("id")))
+    sql, params = Arel.from(people).where(Arel.exists(inner)).to_sql()
+    Minitest.assert_equal("SELECT * FROM \"people\" WHERE EXISTS (SELECT * FROM \"memberships\" WHERE \"memberships\".\"person_id\" = \"people\".\"id\")", sql)
+  end
+
   suite = Minitest.new()
   suite.test("FROM subquery", test_subquery_can_be_used_as_from_source)
   suite.test("EXISTS predicates", test_exists_and_not_exists_are_predicates)
   suite.test("IN subquery", test_in_subquery_preserves_inner_binds)
   suite.test("scalar subquery", test_scalar_subquery_is_an_expression)
+  suite.test("explicit correlation", test_explicit_correlation_allows_outer_attributes)
   suite.run()
 end
 
