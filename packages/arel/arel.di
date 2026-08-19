@@ -1487,6 +1487,12 @@ def inspect(node) -> String
     "#{prefix}(#{self.inspect(node.query())})"
   elsif node is ArelScalarSubquery
     "Scalar(#{self.inspect(node.query())})"
+  elsif node is ArelAssignmentValue
+    "Assignment(#{self.inspect(node.expression())})"
+  elsif node is ArelConflictTarget
+    "ConflictTarget(#{node.columns().join(", ")}, predicate=#{node.predicate() != nil})"
+  elsif node is ArelDefaultValues
+    "DefaultValues"
   elsif node is ArelRawSql
     "RawSql(#{node.sql()}, #{node.params().length()} binds)"
   elsif node is ArelCollation
