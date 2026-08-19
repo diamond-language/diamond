@@ -27,13 +27,16 @@ end
 
 def arel_quote_identifier(name: String) -> String
   pieces = ["\""]
-  def append_character(character)
+  characters = name.chars()
+  index = 0
+  while index < characters.length()
+    character = characters[index]
     if character == "\""
       pieces.push("\"")
     end
     pieces.push(character)
+    index = index + 1
   end
-  name.chars().each(append_character)
   pieces.push("\"")
   pieces.join()
 end
