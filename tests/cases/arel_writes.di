@@ -252,6 +252,14 @@ def run_tests()
       message = error.message()
     end
     Minitest.assert_equal("INSERT SELECT requires explicit projections", message)
+    message = nil
+    begin
+      source = Arel.from(items).project(items.column("name"))
+      Arel.insert_into(items).from_query([""], source).to_sql()
+    rescue error: ArgumentError
+      message = error.message()
+    end
+    Minitest.assert_equal("SQL identifier cannot be empty", message)
   end
 
   def test_multi_row_insert_returns_each_inserted_row()
