@@ -47,10 +47,26 @@ def run_tests()
     Minitest.assert_equal(4, params[1])
   end
 
+  def test_default_values_can_return_generated_columns()
+    db = SQLite3.open(":memory:")
+    db.execute("CREATE TABLE jobs (id INTEGER PRIMARY KEY, state TEXT DEFAULT 'queued')")
+    jobs = Arel.table("jobs")
+    insert = Arel.insert_into(jobs).default_values()
+    insert = insert.returning([jobs.column("id"), jobs.column("state")])
+    sql, params = insert.to_sql()
+    Minitest.assert_equal("INSERT INTO \"jobs\" DEFAULT VALUES RETURNING \"jobs\".\"id\", \"jobs\".\"state\"", sql)
+    Minitest.assert_equal(0, params.length())
+    rows = insert.to_a(db)
+    Minitest.assert_equal(1, rows[0]["id"])
+    Minitest.assert_equal("queued", rows[0]["state"])
+    db.close()
+  end
+
   suite = Minitest.new()
   suite.test("INSERT expressions", test_insert_values_accept_explicit_expressions)
   suite.test("multi-row INSERT expressions", test_multi_row_expressions_preserve_bind_order)
   suite.test("excluded conflict value", test_conflict_updates_reference_excluded_values_structurally)
+  suite.test("INSERT DEFAULT VALUES", test_default_values_can_return_generated_columns)
   suite.run()
 end
 

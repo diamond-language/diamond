@@ -907,6 +907,23 @@ class ArelAssignmentValue
   def expression() = @expression
 end
 
+class ArelDefaultValues
+end
+
+def arel_render_returning_clause(expressions: Array, params: Array) -> String
+  rendered = []
+  visitor = ArelSQLiteVisitor.new()
+  def render_expression(expression)
+    rendered.push(visitor.render_expression(expression, params))
+  end
+  expressions.each(render_expression)
+  if rendered.length() == 0
+    ""
+  else
+    " RETURNING #{rendered.join(", ")}"
+  end
+end
+
 def arel_render_insert_conflict(target: Array, ignore: Bool, assignments, params: Array) -> String
   if !ignore && assignments == nil
     return ""
@@ -965,6 +982,10 @@ class ArelInsert
     ArelInsert.new(@table, rows, @returning, [], nil, @conflict_target,
       @conflict_ignore, @conflict_assignments, @ctes)
   end
+  def default_values()
+    ArelInsert.new(@table, [ArelDefaultValues.new()], @returning, [], nil,
+      @conflict_target, @conflict_ignore, @conflict_assignments, @ctes)
+  end
   def from_query(columns: Array, query)
     ArelInsert.new(@table, [], @returning, columns, query, @conflict_target,
       @conflict_ignore, @conflict_assignments, @ctes)
@@ -995,6 +1016,15 @@ class ArelInsert
   end
 
   def to_sql() -> Array
+    if @rows.length() == 1 && @rows[0] is ArelDefaultValues
+      params = []
+      sql = "INSERT INTO #{arel_quote_identifier(@table.name())} DEFAULT VALUES"
+      sql = sql + arel_render_returning_clause(@returning, params)
+      cte_params = []
+      visitor = ArelSQLiteVisitor.new()
+      sql = visitor.render_ctes(self, cte_params) + sql
+      return [sql, array_concat(cte_params, params)]
+    end
     if @source_query != nil
       if @source_columns.length() == 0
         raise ArgumentError.new("INSERT SELECT requires at least one column")
@@ -1015,15 +1045,8 @@ class ArelInsert
         "(#{columns.join(", ")}) #{source_sql}"
       sql = sql + arel_render_insert_conflict(@conflict_target, @conflict_ignore,
         @conflict_assignments, params)
-      rendered = []
       visitor = ArelSQLiteVisitor.new()
-      def render_source_returning(expression)
-        rendered.push(visitor.render_expression(expression, params))
-      end
-      @returning.each(render_source_returning)
-      if rendered.length() > 0
-        sql = sql + " RETURNING " + rendered.join(", ")
-      end
+      sql = sql + arel_render_returning_clause(@returning, params)
       cte_params = []
       sql = visitor.render_ctes(self, cte_params) + sql
       params = array_concat(cte_params, params)
@@ -1068,14 +1091,7 @@ class ArelInsert
       "(#{columns.join(", ")}) VALUES #{value_groups.join(", ")}"
     sql = sql + arel_render_insert_conflict(@conflict_target, @conflict_ignore,
       @conflict_assignments, params)
-    rendered = []
-    def render_returning(expression)
-      rendered.push(visitor.render_expression(expression, params))
-    end
-    @returning.each(render_returning)
-    if rendered.length() > 0
-      sql = sql + " RETURNING " + rendered.join(", ")
-    end
+    sql = sql + arel_render_returning_clause(@returning, params)
     cte_params = []
     sql = visitor.render_ctes(self, cte_params) + sql
     params = array_concat(cte_params, params)
