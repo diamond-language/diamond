@@ -1445,6 +1445,36 @@ class ArelDelete
   end
 end
 
+def arel_inspect_node(node) -> String
+  if node is ArelAttribute
+    "Attribute(#{node.table().reference_name()}.#{node.name()})"
+  elsif node is ArelBinaryExpression
+    right = "Bind(#{node.right()})"
+    if !node.bind_right?()
+      right = arel_inspect_node(node.right())
+    end
+    "Binary(#{node.operator()}, #{arel_inspect_node(node.left())}, #{right})"
+  elsif node is ArelLiteral
+    "Literal(#{node.value()})"
+  elsif node is ArelFunction
+    arguments = []
+    index = 0
+    while index < node.arguments().length()
+      arguments.push(arel_inspect_node(node.arguments()[index]))
+      index = index + 1
+    end
+    "Function(#{node.name()}, [#{arguments.join(", ")}])"
+  elsif node is ArelCast
+    "Cast(#{arel_inspect_node(node.expression())}, #{node.type_name()})"
+  elsif node is ArelExcludedAttribute
+    "Excluded(#{node.name()})"
+  elsif node is ArelRawSql
+    "RawSql(#{node.sql()}, #{node.params().length()} binds)"
+  else
+    "ArelNode(unsupported)"
+  end
+end
+
 class Arel
   def self.table(name: String) = ArelTable.new(name)
   def self.cte(name: String) = ArelCteRelation.new(name)
@@ -1482,6 +1512,7 @@ class Arel
   end
   def self.conflict_target(columns) = ArelConflictTarget.new(arel_array(columns))
   def self.render(statement, visitor = nil) = statement.to_sql(visitor)
+  def self.inspect(node) = arel_inspect_node(node)
   def self.union(left, right) = ArelCompoundQuery.new(left, "UNION", right)
   def self.union_all(left, right) = ArelCompoundQuery.new(left, "UNION ALL", right)
   def self.intersect(left, right) = ArelCompoundQuery.new(left, "INTERSECT", right)
