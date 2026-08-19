@@ -58,7 +58,7 @@ class ArelPredicate
 end
 
 class ArelMembership
-  def initialize(left, values: Array, negated: Bool)
+  def initialize(left, values, negated: Bool)
     @left = left
     @values = values
     @negated = negated
@@ -152,6 +152,8 @@ class ArelAttribute
   def not_like(pattern: String) = ArelPredicate.new(self, "NOT LIKE", pattern)
   def in_list(values: Array) = ArelMembership.new(self, values, false)
   def not_in(values: Array) = ArelMembership.new(self, values, true)
+  def in_subquery(query) = ArelMembership.new(self, query, false)
+  def not_in_subquery(query) = ArelMembership.new(self, query, true)
   def between(lower, upper) = ArelBetween.new(self, lower, upper, false)
   def not_between(lower, upper) = ArelBetween.new(self, lower, upper, true)
   def asc() = ArelOrdering.new(self, "ASC")
@@ -300,7 +302,18 @@ class ArelSQLiteVisitor
       right = self.render_expression(expression.right(), params)
       "(#{left} #{expression.operator()} #{right})"
     elsif expression is ArelMembership
-      if expression.values().length() == 0
+      if !(expression.values() is Array)
+        subquery_sql, subquery_params = expression.values().to_sql()
+        def append_membership_param(value)
+          params.push(value)
+        end
+        subquery_params.each(append_membership_param)
+        operator = "IN"
+        if expression.negated?()
+          operator = "NOT IN"
+        end
+        "#{self.render_attribute(expression.left())} #{operator} (#{subquery_sql})"
+      elsif expression.values().length() == 0
         if expression.negated?()
           "1 = 1"
         else

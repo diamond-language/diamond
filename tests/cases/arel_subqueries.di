@@ -25,9 +25,21 @@ def run_tests()
     Minitest.assert_equal(true, params[0])
   end
 
+  def test_in_subquery_preserves_inner_binds()
+    memberships = Arel.table("memberships")
+    inner = Arel.from(memberships).project(memberships.column("person_id"))
+    inner = inner.where(memberships.column("role").eq("admin"))
+    people = Arel.table("people")
+    query = Arel.from(people).where(people.column("id").in_subquery(inner))
+    sql, params = query.to_sql()
+    Minitest.assert_equal("SELECT * FROM \"people\" WHERE \"people\".\"id\" IN (SELECT \"memberships\".\"person_id\" FROM \"memberships\" WHERE \"memberships\".\"role\" = ?)", sql)
+    Minitest.assert_equal("admin", params[0])
+  end
+
   suite = Minitest.new()
   suite.test("FROM subquery", test_subquery_can_be_used_as_from_source)
   suite.test("EXISTS predicates", test_exists_and_not_exists_are_predicates)
+  suite.test("IN subquery", test_in_subquery_preserves_inner_binds)
   suite.run()
 end
 
