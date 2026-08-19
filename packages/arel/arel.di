@@ -1050,6 +1050,9 @@ class ArelCompoundQuery
   end
   def limit(n: Int) = self.take(n)
   def skip(n: Int)
+    if n < 0
+      raise ArgumentError.new("offset must be non-negative")
+    end
     ArelCompoundQuery.new(@left, @operator, @right, @orderings, @limit_value, n)
   end
   def offset(n: Int) = self.skip(n)

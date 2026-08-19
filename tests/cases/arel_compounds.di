@@ -104,6 +104,13 @@ def run_tests()
       message = error.message()
     end
     Minitest.assert_equal("limit must be non-negative", message)
+    message = nil
+    begin
+      Arel.union_all(left, right).offset(-1)
+    rescue error: ArgumentError
+      message = error.message()
+    end
+    Minitest.assert_equal("offset must be non-negative", message)
   end
 
   def test_compound_query_can_feed_an_insert()
