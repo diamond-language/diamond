@@ -1100,10 +1100,11 @@ def arel_render_returning_clause(expressions: Array, params: Array, visitor) -> 
     visitor.require_extension("returning clauses")
   end
   rendered = []
-  def render_expression(expression)
-    rendered.push(visitor.render_expression(expression, params))
+  index = 0
+  while index < expressions.length()
+    rendered.push(visitor.render_expression(expressions[index], params))
+    index = index + 1
   end
-  expressions.each(render_expression)
   if rendered.length() == 0
     ""
   else
