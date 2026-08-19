@@ -1468,6 +1468,29 @@ class ArelDelete
 end
 
 class ArelInspector
+def children(node) -> Array
+  if node is ArelAttribute || node is ArelLiteral || node is ArelExcludedAttribute ||
+     node is ArelRawSql || node is ArelTable || node is ArelConflictAttribute ||
+     node is ArelDefaultValues
+    []
+  elsif node is ArelBinaryExpression
+    children = [node.left()]
+    if !node.bind_right?()
+      children.push(node.right())
+    end
+    children
+  elsif node is ArelFunction
+    node.arguments()
+  elsif node is ArelCast || node is ArelCollation || node is ArelAlias ||
+        node is ArelOrdering || node is ArelAssignmentValue
+    [node.expression()]
+  elsif node is ArelQualifiedStar
+    [node.table()]
+  else
+    []
+  end
+end
+
 def inspect(node) -> String
   if node is ArelAttribute
     "Attribute(#{node.table().reference_name()}.#{node.name()})"
@@ -1924,6 +1947,7 @@ class Arel
   def self.render(statement, visitor = nil) = statement.to_sql(visitor)
   def self.inspect(node) = ArelInspector.new().inspect(node)
   def self.same?(left, right) = ArelInspector.new().same?(left, right)
+  def self.children(node) = ArelInspector.new().children(node)
   def self.union(left, right) = ArelCompoundQuery.new(left, "UNION", right)
   def self.union_all(left, right) = ArelCompoundQuery.new(left, "UNION ALL", right)
   def self.intersect(left, right) = ArelCompoundQuery.new(left, "INTERSECT", right)
