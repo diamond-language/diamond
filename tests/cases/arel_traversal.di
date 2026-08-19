@@ -29,9 +29,26 @@ def run_tests()
     Minitest.assert_equal(2, Arel.children(people.column("role_id").in_subquery(subquery)).length())
   end
 
+  def test_query_children_follow_render_order()
+    people = Arel.table("people")
+    roles = Arel.table("roles")
+    cte_body = Arel.from(roles).project(roles.column("id"))
+    query = Arel.from(people).with("role_ids", cte_body)
+    query = query.project(people.column("name")).join(roles,
+      people.column("role_id").eq(roles.column("id")))
+    query = query.where(people.column("active").eq(true)).order(people.column("name").asc())
+    children = Arel.children(query)
+    Minitest.assert_equal("Cte(role_ids, ordinary, Query(from=roles, projections=1, predicates=0, joins=0, ctes=0))", Arel.inspect(children[0]))
+    Minitest.assert_equal("Attribute(people.name)", Arel.inspect(children[1]))
+    Minitest.assert_equal("Join(INNER, Table(roles), Predicate(=, Attribute(people.role_id), Attribute(roles.id)))", Arel.inspect(children[2]))
+    Minitest.assert_equal("Predicate(=, Attribute(people.active), Bind(true))", Arel.inspect(children[3]))
+    Minitest.assert_equal("Ordering(ASC, Attribute(people.name))", Arel.inspect(children[4]))
+  end
+
   suite = Minitest.new()
   suite.test("ordered expression children", test_expression_children_are_ordered)
   suite.test("ordered predicate children", test_predicate_children_preserve_semantic_order)
+  suite.test("ordered query children", test_query_children_follow_render_order)
   suite.run()
 end
 

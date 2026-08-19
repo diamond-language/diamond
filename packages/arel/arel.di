@@ -1513,6 +1513,24 @@ def children(node) -> Array
     end
     children
   else
+    self.children_tail(node)
+  end
+end
+
+def children_tail(node) -> Array
+  if node is ArelQuery
+    children = array_concat([], node.ctes())
+    if node.source_query() != nil
+      children.push(node.source_query())
+    end
+    children = array_concat(children, node.projections())
+    children = array_concat(children, node.joins())
+    children = array_concat(children, node.predicates())
+    children = array_concat(children, node.groups())
+    children = array_concat(children, node.havings())
+    children = array_concat(children, node.orderings())
+    array_concat(children, node.correlations())
+  else
     []
   end
 end
