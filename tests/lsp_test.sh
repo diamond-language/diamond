@@ -227,7 +227,7 @@ response="$(read_message)"
 count=$((count + 1))
 
 # --- hover on a local variable returns null: no symbol table for those,
-# only top-level functions and classes (see docs/lsp.md) ---
+# only declarations, not local references (see docs/lsp.md) ---
 
 send '{"jsonrpc":"2.0","id":7,"method":"textDocument/hover","params":{"textDocument":{"uri":"'"$hover_uri"'"},"position":{"line":1,"character":2}}}'
 response="$(read_message)"
@@ -236,7 +236,7 @@ count=$((count + 1))
 [[ "$response" == *'"result":null'* ]]
 count=$((count + 1))
 
-# --- go-to-definition resolves the same two identifier kinds, to a
+# --- go-to-definition resolves the same declaration kinds, to a
 # Location inside the same document (declaration is a self-round-trip:
 # resolving "Derived" at its own name lands right back on itself) ---
 
@@ -283,8 +283,8 @@ count=$((count + 1))
 send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$definition_main_uri"'"}}}'
 read_message >/dev/null
 
-# --- documentSymbol lists only this document's own top-level functions
-# and classes: not lib/core.di's prelude, not anything pulled in via
+# --- documentSymbol lists only this document's own top-level declarations:
+# not lib/core.di's prelude, not anything pulled in via
 # require, and -- the actual bug this caught during development --
 # correctly positioned even for a declaration *after* a require line,
 # whose raw in-buffer line number is thrown off by the required file's
@@ -310,7 +310,7 @@ count=$((count + 1))
 send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$symbol_uri"'"}}}'
 read_message >/dev/null
 
-# --- documentSymbol on a document with no functions/classes of its own
+# --- documentSymbol on a document with no declarations of its own
 # is an empty array, distinct from null (which means "doesn't compile") ---
 
 empty_symbol_uri="file:///empty_symbols.di"
@@ -453,7 +453,7 @@ read_message >/dev/null
 # --- workspace/symbol recursively walks the workspace root (given via
 # initialize's own workspaceFolders, above), skips dotdirs, and
 # case-insensitively substring-matches the query against every
-# top-level function/class name it finds, across every *.di file, not
+# top-level declaration name it finds, across every *.di file, not
 # just open documents ---
 
 mkdir -p "$work/ws_sub" "$work/.ws_hidden"

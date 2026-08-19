@@ -45,20 +45,22 @@ search over a real (if scoped) lexical symbol table:
   not by editing the dependency directly; see below.
 - `textDocument/hover` (`lsp/hover.c`), `textDocument/definition`
   (`lsp/definition.c`), and `textDocument/documentSymbol`
-  (`lsp/document_symbol.c`) all resolve the same two identifier kinds,
+  (`lsp/document_symbol.c`) all resolve the same declaration kinds,
   deliberately not a real general-purpose symbol table: a top-level
   function name (`def foo`, unambiguous since a bare call always
   resolves to exactly one top-level function by that name at compile
-  time — no overloading, no scoping to worry about) or a class name
-  (always names exactly one class, single inheritance). `src/compiler.c`
-  now records each one's declaration-site position (1-based line/column
+  time — no overloading, no scoping to worry about), a class name
+  (always names exactly one class, single inheritance), a module name,
+  or an interface name. `src/compiler.c` records each one's declaration-site position (1-based line/column
   of its own name token, plus the matching byte offset in the compiled
   buffer — `declaration_line`/`declaration_column`/`declaration_start`
-  on `DiamondFunction`/`DiamondClass`, `src/vm.h`) purely for these three
+  on `DiamondFunction`/`DiamondClass`/`DiamondModule`/`DiamondInterface`,
+  `src/vm.h`) purely for these three
   handlers to read; nothing else in the VM uses them.
   - Hover shows the reconstructed signature (parameter types, return
-    type, which parameters are optional) or `class Name`/`class Name <
-    Superclass`, reusing `disassemble.c`'s own type-set formatting
+    type, which parameters are optional), `class Name`/`class Name <
+    Superclass`, `module Name`, or `interface Name`, reusing
+    `disassemble.c`'s own type-set formatting
     (`diamond_print_type_set`).
   - Go-to-definition returns a `Location`. A match can legitimately live
     in a *different* file (something pulled in via `require`) — resolved
@@ -70,7 +72,8 @@ search over a real (if scoped) lexical symbol table:
     inserts one before *every* contiguous chunk it copies into the
     bundle, not just before required-file content) and needs the same
     segment-relative remap anywhere else.
-  - Document symbols lists every top-level function/class declared *in
+  - Document symbols lists every top-level function, class, module, and
+    interface declared *in
     that document itself* — not lib/core.di's prelude, and not anything
     pulled in through `require` (each of those has its own outline, a
     didOpen away). `range`/`selectionRange` are identical for each
@@ -83,7 +86,7 @@ search over a real (if scoped) lexical symbol table:
     return `null`/empty rather than a stale result; the document's own
     diagnostics already say why.
 - `textDocument/completion` (`lsp/completion.c`) suggests every
-  top-level function/class in the whole compiled program (not just this
+  top-level function, class, module, and interface in the whole compiled program (not just this
   document's own — `lib/core.di`'s prelude and anything pulled in via
   `require` are all valid to type) plus every local variable/parameter
   actually *in scope at the cursor* — real lexical scoping, backed by a
@@ -113,7 +116,7 @@ search over a real (if scoped) lexical symbol table:
   `.git` and friends), compiles every `*.di` file it finds the same way
   an open document is (an open file's own live, possibly-unsaved buffer
   is preferred over disk, same as everywhere else `require` resolves),
-  and returns every top-level function/class actually declared *in that
+  and returns every top-level function, class, module, and interface actually declared *in that
   file itself* whose name contains the query as a case-insensitive
   substring. No caching across separate requests — real editors only
   send this on an explicit "go to symbol in workspace" action, not on
