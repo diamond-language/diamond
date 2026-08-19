@@ -53,10 +53,18 @@ def run_tests()
 
   def test_explicit_sql_literal_is_composable()
     people = Arel.table("people")
-    query = Arel.from(people).project(Arel.sql("date('now') AS today"))
-    sql, params = query.where(Arel.sql("json_valid(profile) = ?", [1])).to_sql()
-    Minitest.assert_equal("SELECT date('now') AS today FROM \"people\" WHERE json_valid(profile) = ?", sql)
-    Minitest.assert_equal(1, params[0])
+    payload = "x'); DROP TABLE people; --"
+    query = Arel.from(people).project(people.column("profile"))
+    query = query.where(Arel.sql("profile = ?", [payload]))
+    sql, params = query.to_sql()
+    Minitest.assert_equal("SELECT \"people\".\"profile\" FROM \"people\" WHERE profile = ?", sql)
+    Minitest.assert_equal(payload, params[0])
+    db = SQLite3.open(":memory:")
+    db.execute("CREATE TABLE people (profile TEXT)")
+    db.execute("INSERT INTO people VALUES (?)", [payload])
+    Minitest.assert_equal(1, query.to_a(db).length())
+    Minitest.assert_equal(1, db.query("SELECT * FROM people").length())
+    db.close()
   end
 
   def test_inner_join_is_structural_and_qualified()
