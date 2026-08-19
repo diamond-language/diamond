@@ -746,6 +746,28 @@ class ArelQuery
   end
 end
 
+class ArelCompoundQuery
+  def initialize(left, operator: String, right)
+    @left = left
+    @operator = operator
+    @right = right
+  end
+  def left() = @left
+  def operator() = @operator
+  def right() = @right
+
+  def to_sql() -> Array
+    left_sql, left_params = @left.to_sql()
+    right_sql, right_params = @right.to_sql()
+    ["#{left_sql} #{@operator} #{right_sql}", array_concat(left_params, right_params)]
+  end
+
+  def to_a(db)
+    sql, params = self.to_sql()
+    db.query(sql, params)
+  end
+end
+
 class Arel
   def self.table(name: String) = ArelTable.new(name)
   def self.as(expression, name: String) = ArelAlias.new(expression, name)
@@ -769,6 +791,7 @@ class Arel
   def self.exists(query) = ArelExists.new(query, false)
   def self.not_exists(query) = ArelExists.new(query, true)
   def self.scalar(query) = ArelScalarSubquery.new(query)
+  def self.union(left, right) = ArelCompoundQuery.new(left, "UNION", right)
   def self.from_subquery(query, name: String)
     ArelQuery.new(name, [], [], nil, nil, [ArelRawSql.new("*", [])], true, true,
       name, false, [], [], [], query)
