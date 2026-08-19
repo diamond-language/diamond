@@ -19,9 +19,10 @@ class NestedTestArelVisitor < ArelSQLiteVisitor
 end
 
 class WriteTestArelVisitor < ArelSQLiteVisitor
+  def quote_identifier(name: String) -> String = "[#{name}]"
   def render_expression(expression, params: Array) -> String
     if expression is ArelExcludedAttribute
-      "incoming.#{arel_quote_identifier(expression.name())}"
+      "incoming.#{self.quote_identifier(expression.name())}"
     else
       super(expression, params)
     end
@@ -71,7 +72,8 @@ def run_tests()
       "qty": Arel.expression(Arel.excluded("qty"))
     })
     sql, params = insert.to_sql(WriteTestArelVisitor.new())
-    Minitest.assert_equal(true, sql.include?("\"qty\" = incoming.\"qty\""))
+    Minitest.assert_equal(true, sql.include?("[qty] = incoming.[qty]"))
+    Minitest.assert_equal(true, sql.include?("INSERT INTO [inventory]"))
   end
 
   def test_update_expressions_use_the_explicit_visitor()
@@ -80,14 +82,14 @@ def run_tests()
       "qty": Arel.expression(Arel.excluded("qty"))
     }).all()
     sql, params = update.to_sql(WriteTestArelVisitor.new())
-    Minitest.assert_equal("UPDATE \"inventory\" SET \"qty\" = incoming.\"qty\"", sql)
+    Minitest.assert_equal("UPDATE [inventory] SET [qty] = incoming.[qty]", sql)
   end
 
   def test_delete_returning_uses_the_explicit_visitor()
     inventory = Arel.table("inventory")
     deletion = Arel.delete_from(inventory).all().returning(Arel.excluded("id"))
     sql, params = deletion.to_sql(WriteTestArelVisitor.new())
-    Minitest.assert_equal("DELETE FROM \"inventory\" RETURNING incoming.\"id\"", sql)
+    Minitest.assert_equal("DELETE FROM [inventory] RETURNING incoming.[id]", sql)
   end
 
   def test_select_execution_accepts_an_explicit_visitor()
