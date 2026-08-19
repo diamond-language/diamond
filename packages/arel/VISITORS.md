@@ -38,6 +38,10 @@ override it. Pagination is deliberately concrete-dialect policy because
 offset-only syntax and placeholder support differ.
 Query builders reject negative limits and offsets before rendering, so dialect
 pagination methods receive only `nil` or non-negative integer values.
+When a paginated query is nested, its visitor appends predicate and pagination
+binds while rendering that subtree. Enclosing predicates append afterward;
+dialects must not reorder the returned bind array independently of their SQL
+placeholders.
 
 Compound and all three write managers enter the selected visitor first. The
 SQLite visitor delegates to each statement's `render_default(visitor)` fallback
