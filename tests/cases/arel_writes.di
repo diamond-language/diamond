@@ -19,19 +19,19 @@ def run_tests()
   end
 
   def test_update_renders_and_executes()
-    items = Arel.table("items")
-    update = Arel.update(items).set({"qty": 4})
-    update = update.where(items.column("name").eq("pens"))
+    items = Arel.table("odd\"items")
+    update = Arel.update(items).set({"q\"ty": 4})
+    update = update.where(items.column("na\"me").eq("pens"))
     sql, params = update.to_sql()
-    Minitest.assert_equal("UPDATE \"items\" SET \"qty\" = ? WHERE \"items\".\"name\" = ?", sql)
+    Minitest.assert_equal("UPDATE \"odd\"\"items\" SET \"q\"\"ty\" = ? WHERE \"odd\"\"items\".\"na\"\"me\" = ?", sql)
     Minitest.assert_equal(4, params[0])
     Minitest.assert_equal("pens", params[1])
 
     db = SQLite3.open(":memory:")
-    db.execute("CREATE TABLE items (name TEXT, qty INTEGER)")
-    db.execute("INSERT INTO items VALUES (?, ?)", ["pens", 3])
+    db.execute("CREATE TABLE \"odd\"\"items\" (\"na\"\"me\" TEXT, \"q\"\"ty\" INTEGER)")
+    db.execute("INSERT INTO \"odd\"\"items\" VALUES (?, ?)", ["pens", 3])
     Minitest.assert_equal(1, update.execute(db))
-    Minitest.assert_equal(4, db.query("SELECT qty FROM items")[0]["qty"])
+    Minitest.assert_equal(4, db.query("SELECT \"q\"\"ty\" FROM \"odd\"\"items\"")[0]["q\"ty"])
     db.close()
   end
 
