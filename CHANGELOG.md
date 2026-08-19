@@ -1,5 +1,14 @@
 # Changelog
 
+## Arel 0.24.0
+
+- Added overridable literal and pagination grammar seams shared by SELECT and
+  compound rendering.
+- Moved pagination policy into concrete dialect visitors while retaining bind
+  collection and ordering through the visitor contract.
+- Corrected SQLite offset-only rendering to emit `LIMIT -1 OFFSET ?` for both
+  SELECT and compound queries.
+
 ## Arel 0.23.0
 
 - Introduced `ArelVisitor` as a reusable base for traversal, relation-scope
