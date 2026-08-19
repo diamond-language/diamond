@@ -382,6 +382,11 @@ def run_tests()
     unchanged, changed = Arel.simplify(policy_source, [], true)
     Minitest.assert_equal(false, changed)
     Minitest.assert_equal(true, Arel.same?(policy_source, unchanged))
+    final = people.column("final_choice").eq(true)
+    composed = Arel.simplify(policy_source,
+      [[policy_source, first], [first, second], [second, final]])
+    Minitest.assert_equal("Predicate(=, Attribute(people.final_choice), Bind(true))",
+      Arel.inspect(composed))
   end
 
   suite = Minitest.new()

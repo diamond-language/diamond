@@ -1891,15 +1891,13 @@ def simplify(node, rules = [], report = false)
     end
   end
   rule_index = 0
-  matched = false
-  while rule_index < rules.length() && !matched
+  while rule_index < rules.length()
     rule = rules[rule_index]
     if !(rule is Array) || rule.length() != 2
       raise ArgumentError.new("Arel rewrite rule must be [pattern, replacement]")
     end
     if self.same?(node, rule[0])
       node = rule[1]
-      matched = true
     end
     rule_index = rule_index + 1
   end
