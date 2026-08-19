@@ -14,6 +14,13 @@ def run_tests()
     Minitest.assert_equal("SELECT \"active_people\".\"name\" FROM (SELECT \"people\".\"name\" FROM \"people\" WHERE \"people\".\"active\" = ? ORDER BY \"people\".\"name\" ASC LIMIT ?) AS \"active_people\" WHERE \"active_people\".\"name\" = ?", sql)
     Minitest.assert_equal(true, params[0])
     Minitest.assert_equal("2|Ada", [params[1], params[2]].join("|"))
+    db = SQLite3.open(":memory:")
+    db.execute("CREATE TABLE people (name TEXT, active INTEGER)")
+    db.execute("INSERT INTO people VALUES ('Ada', 1), ('Bob', 1), ('Cid', 0)")
+    rows = outer.to_a(db)
+    Minitest.assert_equal(1, rows.length())
+    Minitest.assert_equal("Ada", rows[0]["name"])
+    db.close()
   end
 
   def test_exists_and_not_exists_are_predicates()
