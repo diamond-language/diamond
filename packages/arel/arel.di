@@ -1471,6 +1471,8 @@ def inspect(node) -> String
     "Excluded(#{node.name()})"
   elsif node is ArelRawSql
     "RawSql(#{node.sql()}, #{node.params().length()} binds)"
+  elsif node is ArelCollation
+    "Collation(#{node.name()}, #{self.inspect(node.expression())})"
   else
     self.inspect_tail(node)
   end
@@ -1511,8 +1513,8 @@ def inspect_tail(node) -> String
     "Ordering(#{node.direction()}#{nulls}, #{self.inspect(node.expression())})"
   elsif node is ArelAlias
     "Alias(#{node.name()}, #{self.inspect(node.expression())})"
-  elsif node is ArelCollation
-    "Collation(#{node.name()}, #{self.inspect(node.expression())})"
+  elsif node is ArelQuery
+    "Query(from=#{node.base_reference_name()}, projections=#{node.projections().length()}, predicates=#{node.predicates().length()}, joins=#{node.joins().length()}, ctes=#{node.ctes().length()})"
   else
     "ArelNode(unsupported)"
   end

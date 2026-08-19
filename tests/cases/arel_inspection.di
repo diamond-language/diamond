@@ -20,6 +20,9 @@ def run_tests()
     ordering = Arel.asc(people.column("name").collate("nocase")).nulls_last()
     aliased = Arel.as(ordering, "ordered_name")
     Minitest.assert_equal("Alias(ordered_name, Ordering(ASC, NULLS LAST, Collation(nocase, Attribute(people.name))))", Arel.inspect(aliased))
+    query = Arel.from(people).project([people.column("name"), people.column("age")])
+    query = query.where(people.column("active").eq(true))
+    Minitest.assert_equal("Query(from=people, projections=2, predicates=1, joins=0, ctes=0)", Arel.inspect(query))
   end
 
   suite = Minitest.new()
