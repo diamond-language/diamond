@@ -5662,6 +5662,9 @@ static uint16_t compile_module(Compiler *compiler) {
     const int index=(int)compiler->program->module_count++;
     DiamondModule *module=&compiler->program->modules[(size_t)index];
     (void)snprintf(module->name,sizeof module->name,"%s",stored_name);
+    module->declaration_line=(uint32_t)name.line;
+    module->declaration_column=(uint32_t)name.column;
+    module->declaration_start=name.start;
     advance_token(compiler);
     if(!consume_block_start(compiler))return 0;
     const int outer=compiler->current_module;compiler->current_module=index;
@@ -5814,6 +5817,9 @@ static uint16_t compile_interface(Compiler *compiler) {
         &compiler->program->interfaces[compiler->program->interface_count++];
     interface->type_sets=compiler->program->entry.type_sets;
     (void)snprintf(interface->name,sizeof interface->name,"%s",stored_name);
+    interface->declaration_line=(uint32_t)name.line;
+    interface->declaration_column=(uint32_t)name.column;
+    interface->declaration_start=name.start;
     advance_token(compiler);
     if(compiler->current.kind==DIAMOND_TOKEN_LESS) {
         advance_token(compiler);
@@ -6426,6 +6432,8 @@ DiamondChunk diamond_program_chunk(const DiamondProgram *program) {
         .class_count = program->class_count,
         .interfaces=program->interfaces,
         .interface_count=program->interface_count,
+        .modules=program->modules,
+        .module_count=program->module_count,
         .register_count=program->entry.register_count,
     };
 }

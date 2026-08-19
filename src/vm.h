@@ -284,6 +284,9 @@ typedef struct DiamondInterfaceMethod {
 
 typedef struct DiamondInterface {
     char name[DIAMOND_MAX_FUNCTION_NAME];
+    uint32_t declaration_line;
+    uint32_t declaration_column;
+    size_t declaration_start;
     DiamondInterfaceMethod methods[DIAMOND_MAX_METHODS];
     size_t method_count;
     const DiamondTypeSet *type_sets;
@@ -291,6 +294,9 @@ typedef struct DiamondInterface {
 
 typedef struct DiamondModule {
     char name[DIAMOND_MAX_FUNCTION_NAME];
+    uint32_t declaration_line;
+    uint32_t declaration_column;
+    size_t declaration_start;
     DiamondMethod methods[DIAMOND_MAX_METHODS];
     size_t method_count;
     DiamondMethod singleton_methods[DIAMOND_MAX_METHODS];
@@ -427,6 +433,8 @@ typedef struct DiamondChunk {
     size_t class_count;
     const DiamondInterface *interfaces;
     size_t interface_count;
+    const DiamondModule *modules;
+    size_t module_count;
     const uint8_t *parameter_type_sets;
     uint8_t type_variable_count;
     uint8_t parameter_offset;
