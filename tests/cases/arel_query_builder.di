@@ -43,6 +43,13 @@ def run_tests()
       message = error.message()
     end
     Minitest.assert_equal("limit must be non-negative", message)
+    message = nil
+    begin
+      Arel.from("people").offset(-1)
+    rescue error: ArgumentError
+      message = error.message()
+    end
+    Minitest.assert_equal("offset must be non-negative", message)
   end
 
   def test_order_accepts_an_array_of_columns()

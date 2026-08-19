@@ -985,7 +985,12 @@ class ArelQuery
     self.copy(@predicates, @orderings, n, @offset_value, @projections)
   end
   def limit(n: Int) = self.take(n)
-  def skip(n: Int) = self.copy(@predicates, @orderings, @limit_value, n, @projections)
+  def skip(n: Int)
+    if n < 0
+      raise ArgumentError.new("offset must be non-negative")
+    end
+    self.copy(@predicates, @orderings, @limit_value, n, @projections)
+  end
   def offset(n: Int) = self.skip(n)
   def render_with(visitor) = visitor.render(self)
   def to_sql(visitor = nil)
