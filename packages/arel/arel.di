@@ -135,6 +135,20 @@ class ArelAlias
   def name() = @name
 end
 
+class ArelBinaryExpression
+  def initialize(left, operator: String, right, bind_right = true)
+    @left = left
+    @operator = operator
+    @right = right
+    @bind_right = bind_right
+  end
+  def left() = @left
+  def operator() = @operator
+  def right() = @right
+  def bind_right?() = @bind_right
+  def add(value) = ArelBinaryExpression.new(self, "+", value)
+end
+
 class ArelAttribute
   def initialize(table, name: String)
     @table = table
@@ -160,6 +174,7 @@ class ArelAttribute
   def desc() = ArelOrdering.new(self, "DESC")
   def as(name: String) = ArelAlias.new(self, name)
   def collate(name: String) = ArelCollation.new(self, name)
+  def add(value) = ArelBinaryExpression.new(self, "+", value)
 end
 
 class ArelQualifiedStar
@@ -489,8 +504,24 @@ class ArelSQLiteVisitor
       end
       expression.params().each(append_param)
       expression.sql()
-    elsif expression is ArelExcludedAttribute
+    else
+      self.render_expression_extension(expression, params)
+    end
+  end
+
+  def render_expression_extension(expression, params: Array) -> String
+    if expression is ArelExcludedAttribute
       "excluded.#{arel_quote_identifier(expression.name())}"
+    elsif expression is ArelBinaryExpression
+      left = self.render_expression(expression.left(), params)
+      right = ""
+      if expression.bind_right?()
+        params.push(expression.right())
+        right = "?"
+      else
+        right = self.render_expression(expression.right(), params)
+      end
+      "(#{left} #{expression.operator()} #{right})"
     elsif expression is String
       expression
     else
