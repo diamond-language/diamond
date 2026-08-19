@@ -445,7 +445,7 @@ class ArelSQLiteVisitor
         params.push(bound[bound_index])
         bound_index = bound_index + 1
       end
-      entries.push("#{arel_quote_identifier(cte.name())} AS (#{sql})")
+      entries.push("#{self.quote_identifier(cte.name())} AS (#{sql})")
       index = index + 1
     end
     if entries.length() == 0
