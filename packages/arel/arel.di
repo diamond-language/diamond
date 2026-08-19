@@ -362,9 +362,7 @@ def arel_append_cte(ctes: Array, name: String, query, recursive = false) -> Arra
 end
 
 class ArelVisitor
-  def visitor_name() = "SQLite"
   def quote_identifier(name: String) -> String = arel_quote_identifier(name)
-  def supports_extension?(name: String) = true
   def require_extension(name: String)
     if !self.supports_extension?(name)
       raise ArgumentError.new("#{self.visitor_name()} visitor does not support #{name}")
@@ -739,6 +737,8 @@ class ArelVisitor
 end
 
 class ArelSQLiteVisitor < ArelVisitor
+  def visitor_name() = "SQLite"
+  def supports_extension?(name: String) = true
 end
 
 class ArelQuery
