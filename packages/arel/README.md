@@ -1,5 +1,7 @@
 # packages/arel
 
+See [ROADMAP.md](ROADMAP.md) for the forward-looking development plan.
+
 A small, immutable SQL AST and chainable query builder for
 [Diamond](https://gitlab.com/dmn9180/diamond) -- the first slice toward
 a DataMapper-style persistence layer. Builds and renders `SELECT`
