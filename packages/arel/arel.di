@@ -1773,6 +1773,16 @@ def same_tail?(left, right) -> Bool
       self.same_nodes?(left_state[2], right_state[2]) &&
       self.same_nodes?(left_state[3], right_state[3]) &&
       left_state[4] == right_state[4] && self.same_nodes?(left_state[5], right_state[5])
+  elsif left is ArelDelete
+    if !(right is ArelDelete)
+      return false
+    end
+    left_state = left.structure()
+    right_state = right.structure()
+    self.same?(left_state[0], right_state[0]) &&
+      self.same_nodes?(left_state[1], right_state[1]) &&
+      self.same_nodes?(left_state[2], right_state[2]) &&
+      left_state[3] == right_state[3] && self.same_nodes?(left_state[4], right_state[4])
   elsif left is ArelQuery
     if !(right is ArelQuery) || left.base_reference_name() != right.base_reference_name() ||
        left.distinct_value() != right.distinct_value() ||

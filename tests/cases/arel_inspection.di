@@ -150,6 +150,11 @@ def run_tests()
     Minitest.assert_equal(false, Arel.same?(update, same_update.all()))
     delete = Arel.delete_from(people).all().returning(people.column("id"))
     Minitest.assert_equal("Delete(from=people, predicates=0, returning=1, all=true, ctes=0)", Arel.inspect(delete))
+    same_delete = Arel.delete_from(Arel.table("people")).all().returning(
+      Arel.table("people").column("id"))
+    Minitest.assert_equal(true, Arel.same?(delete, same_delete))
+    Minitest.assert_equal(false, Arel.same?(delete, Arel.delete_from(people).where(
+      people.column("id").eq(1)).returning(people.column("id"))))
   end
 
   suite = Minitest.new()
