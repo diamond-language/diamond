@@ -1,5 +1,14 @@
 # Changelog
 
+## Arel 0.22.0
+
+- Added overridable visitor entry points for compound, INSERT, UPDATE, and
+  DELETE statement rendering, with SQLite-compatible default fallbacks.
+- Verified that visitors can replace or wrap complete statement rendering
+  while preserving exact bind order.
+- Recovered function-table capacity by replacing remaining internal Arel
+  callback closures with indexed loops and reusing inherited CTE setup.
+
 ## Arel 0.21.0
 
 - Added the overridable visitor `quote_identifier(name)` protocol and routed
