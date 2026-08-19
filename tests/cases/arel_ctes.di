@@ -47,6 +47,13 @@ def run_tests()
       message = error.message()
     end
     Minitest.assert_equal("duplicate CTE name", message)
+    message = nil
+    begin
+      Arel.from(Arel.table("active")).with("", source).to_sql()
+    rescue error: ArgumentError
+      message = error.message()
+    end
+    Minitest.assert_equal("SQL identifier cannot be empty", message)
   end
 
   def test_compound_query_can_be_a_cte_body()
