@@ -1383,14 +1383,14 @@ class ArelUpdate
       value = @assignments[name]
       if value is ArelAssignmentValue
         rendered = visitor.render_expression(value.expression(), params)
-        clauses.push("#{arel_quote_identifier(name)} = #{rendered}")
+        clauses.push("#{visitor.quote_identifier(name)} = #{rendered}")
       else
-        clauses.push("#{arel_quote_identifier(name)} = ?")
+        clauses.push("#{visitor.quote_identifier(name)} = ?")
         params.push(value)
       end
       assignment_index = assignment_index + 1
     end
-    sql = "UPDATE #{arel_quote_identifier(@table.name())} SET #{clauses.join(", ")}"
+    sql = "UPDATE #{visitor.quote_identifier(@table.name())} SET #{clauses.join(", ")}"
     predicates = []
     predicate_index = 0
     while predicate_index < @predicates.length()
