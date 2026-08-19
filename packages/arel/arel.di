@@ -1230,7 +1230,7 @@ class ArelInsert
     if @rows.length() == 1 && @rows[0] is ArelDefaultValues
       visitor.require_extension(@rows[0].extension_name())
       params = []
-      sql = "INSERT INTO #{arel_quote_identifier(@table.name())} DEFAULT VALUES"
+      sql = "INSERT INTO #{visitor.quote_identifier(@table.name())} DEFAULT VALUES"
       sql = sql + arel_render_returning_clause(@returning, params, visitor)
       cte_params = []
       sql = visitor.render_ctes(self, cte_params) + sql
@@ -1249,11 +1249,11 @@ class ArelInsert
       columns = []
       column_index = 0
       while column_index < @source_columns.length()
-        columns.push(arel_quote_identifier(@source_columns[column_index]))
+        columns.push(visitor.quote_identifier(@source_columns[column_index]))
         column_index = column_index + 1
       end
       source_sql, params = @source_query.render_with(visitor)
-      sql = "INSERT INTO #{arel_quote_identifier(@table.name())} " +
+      sql = "INSERT INTO #{visitor.quote_identifier(@table.name())} " +
         "(#{columns.join(", ")}) #{source_sql}"
       sql = sql + arel_render_insert_conflict(@conflict_target, @conflict_ignore,
         @conflict_assignments, params, visitor)
@@ -1271,7 +1271,7 @@ class ArelInsert
     first = @rows[0]
     column_index = 0
     while column_index < first.length()
-      columns.push(arel_quote_identifier(first.key_at(column_index)))
+      columns.push(visitor.quote_identifier(first.key_at(column_index)))
       column_index = column_index + 1
     end
     value_groups = []
@@ -1300,7 +1300,7 @@ class ArelInsert
       value_groups.push("(#{placeholders.join(", ")})")
       row_index = row_index + 1
     end
-    sql = "INSERT INTO #{arel_quote_identifier(@table.name())} " +
+    sql = "INSERT INTO #{visitor.quote_identifier(@table.name())} " +
       "(#{columns.join(", ")}) VALUES #{value_groups.join(", ")}"
     sql = sql + arel_render_insert_conflict(@conflict_target, @conflict_ignore,
       @conflict_assignments, params, visitor)
