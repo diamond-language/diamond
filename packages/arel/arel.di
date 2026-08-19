@@ -1069,6 +1069,7 @@ def arel_render_insert_conflict(target, ignore: Bool, assignments, params: Array
     target_sql = " (#{targets.join(", ")})"
   end
   if predicate != nil
+    visitor.require_extension("conflict-target predicates")
     target_sql = target_sql + " WHERE " + visitor.render_expression(predicate, params)
   end
   if ignore

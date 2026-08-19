@@ -32,9 +32,25 @@ def run_tests()
     Minitest.assert_equal("portable-test visitor does not support excluded-row attributes", message)
   end
 
+  def test_partial_conflict_targets_are_dialect_extensions()
+    items = Arel.table("items")
+    target = Arel.conflict_target(["name"])
+    target = target.where(target.column("active").eq(Arel.literal(1)))
+    insert = Arel.insert_into(items).values({"name": "pens", "active": 1})
+    insert = insert.on_conflict_do_nothing(target)
+    message = nil
+    begin
+      insert.to_sql(PortableTestVisitor.new())
+    rescue error: ArgumentError
+      message = error.message()
+    end
+    Minitest.assert_equal("portable-test visitor does not support conflict-target predicates", message)
+  end
+
   suite = Minitest.new()
   suite.test("visitor extension protocol", test_visitors_report_unsupported_extensions)
   suite.test("excluded extension", test_excluded_attributes_are_dialect_extensions)
+  suite.test("partial conflict extension", test_partial_conflict_targets_are_dialect_extensions)
   suite.run()
 end
 
