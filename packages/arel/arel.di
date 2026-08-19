@@ -103,12 +103,16 @@ class ArelFunction
 end
 
 class ArelOrdering
-  def initialize(expression, direction: String)
+  def initialize(expression, direction: String, nulls = nil)
     @expression = expression
     @direction = direction
+    @nulls = nulls
   end
   def expression() = @expression
   def direction() = @direction
+  def nulls() = @nulls
+  def nulls_first() = ArelOrdering.new(@expression, @direction, "FIRST")
+  def nulls_last() = ArelOrdering.new(@expression, @direction, "LAST")
 end
 
 class ArelAlias
@@ -291,7 +295,11 @@ class ArelSQLiteVisitor
       inner = self.render_expression(expression.expression(), params)
       "(NOT #{inner})"
     elsif expression is ArelOrdering
-      "#{self.render_attribute(expression.expression())} #{expression.direction()}"
+      sql = "#{self.render_expression(expression.expression(), params)} #{expression.direction()}"
+      if expression.nulls() != nil
+        sql = sql + " NULLS #{expression.nulls()}"
+      end
+      sql
     elsif expression is ArelAlias
       inner = self.render_expression(expression.expression(), params)
       "#{inner} AS #{arel_quote_identifier(expression.name())}"
@@ -522,6 +530,8 @@ end
 class Arel
   def self.table(name: String) = ArelTable.new(name)
   def self.as(expression, name: String) = ArelAlias.new(expression, name)
+  def self.asc(expression) = ArelOrdering.new(expression, "ASC")
+  def self.desc(expression) = ArelOrdering.new(expression, "DESC")
   def self.sql(fragment: String, params = nil)
     bound = params
     if bound == nil

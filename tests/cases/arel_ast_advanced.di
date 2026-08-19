@@ -113,6 +113,13 @@ def run_tests()
     Minitest.assert_equal("SELECT AVG(\"people\".\"age\") AS \"average_age\" FROM \"people\"", sql)
   end
 
+  def test_arbitrary_expression_ordering_and_null_placement()
+    people = Arel.table("people")
+    ordering = Arel.desc(Arel.lower(people.column("name"))).nulls_last()
+    sql, params = Arel.from(people).order(ordering).to_sql()
+    Minitest.assert_equal("SELECT * FROM \"people\" ORDER BY LOWER(\"people\".\"name\") DESC NULLS LAST", sql)
+  end
+
   suite = Minitest.new()
   suite.test("BETWEEN predicates", test_between_predicates_bind_both_bounds)
   suite.test("LIKE predicates", test_like_predicates_are_bound)
@@ -125,6 +132,7 @@ def run_tests()
   suite.test("self join aliases", test_self_join_uses_distinct_relation_aliases)
   suite.test("relation-set validation", test_attributes_outside_relation_set_are_rejected)
   suite.test("arbitrary expression aliases", test_arbitrary_expressions_can_be_aliased)
+  suite.test("expression ordering and null placement", test_arbitrary_expression_ordering_and_null_placement)
   suite.run()
 end
 
