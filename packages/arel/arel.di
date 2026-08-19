@@ -138,6 +138,8 @@ class ArelFunction
   def gteq(value) = ArelPredicate.new(self, ">=", value)
   def like(pattern: String) = ArelPredicate.new(self, "LIKE", pattern)
   def not_like(pattern: String) = ArelPredicate.new(self, "NOT LIKE", pattern)
+  def in_list(values: Array) = ArelMembership.new(self, values, false)
+  def not_in(values: Array) = ArelMembership.new(self, values, true)
 end
 
 class ArelOrdering
@@ -502,7 +504,7 @@ class ArelVisitor
         if expression.negated?()
           operator = "NOT IN"
         end
-        "#{self.render_attribute(expression.left())} #{operator} (#{subquery_sql})"
+        "#{self.render_expression(expression.left(), params)} #{operator} (#{subquery_sql})"
       elsif expression.values().length() == 0
         if expression.negated?()
           "1 = 1"
@@ -521,7 +523,7 @@ class ArelVisitor
         if expression.negated?()
           operator = "NOT IN"
         end
-        "#{self.render_attribute(expression.left())} #{operator} (#{placeholders.join(", ")})"
+        "#{self.render_expression(expression.left(), params)} #{operator} (#{placeholders.join(", ")})"
       end
     elsif expression is ArelBetween
       params.push(expression.lower())
