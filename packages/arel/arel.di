@@ -247,6 +247,20 @@ class ArelCte
   def recursive?() = @recursive
 end
 
+def arel_append_cte(ctes: Array, name: String, query, recursive = false) -> Array
+  duplicate = false
+  def check_cte(cte)
+    if cte.name() == name
+      duplicate = true
+    end
+  end
+  ctes.each(check_cte)
+  if duplicate
+    raise ArgumentError.new("duplicate CTE name")
+  end
+  array_concat(ctes, [ArelCte.new(name, query, recursive)])
+end
+
 class ArelSQLiteVisitor
   def attribute_allowed?(attribute: ArelAttribute) -> Bool
     if @query == nil
@@ -901,7 +915,7 @@ class ArelInsert
   def with(name: String, query)
     ArelInsert.new(@table, @rows, @returning, @source_columns, @source_query,
       @conflict_target, @conflict_ignore, @conflict_assignments,
-      array_concat(@ctes, [ArelCte.new(name, query)]))
+      arel_append_cte(@ctes, name, query))
   end
   def on_conflict_do_nothing(columns = [])
     ArelInsert.new(@table, @rows, @returning, @source_columns, @source_query,
@@ -1032,7 +1046,7 @@ class ArelUpdate
   def all() = ArelUpdate.new(@table, @assignments, @predicates, @returning, true, @ctes)
   def with(name: String, query)
     ArelUpdate.new(@table, @assignments, @predicates, @returning, @allow_all,
-      array_concat(@ctes, [ArelCte.new(name, query)]))
+      arel_append_cte(@ctes, name, query))
   end
 
   def to_sql() -> Array
@@ -1109,7 +1123,7 @@ class ArelDelete
   def all() = ArelDelete.new(@table, @predicates, @returning, true, @ctes)
   def with(name: String, query)
     ArelDelete.new(@table, @predicates, @returning, @allow_all,
-      array_concat(@ctes, [ArelCte.new(name, query)]))
+      arel_append_cte(@ctes, name, query))
   end
 
   def to_sql() -> Array

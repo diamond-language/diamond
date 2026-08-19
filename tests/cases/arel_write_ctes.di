@@ -41,9 +41,35 @@ def run_tests()
     db.close()
   end
 
+  def test_write_managers_reject_duplicate_cte_names()
+    items = Arel.table("items")
+    source = Arel.from(items)
+    messages = []
+    begin
+      Arel.insert_into(items).with("source", source).with("source", source)
+    rescue error: ArgumentError
+      messages.push(error.message())
+    end
+    begin
+      Arel.update(items).with("source", source).with("source", source)
+    rescue error: ArgumentError
+      messages.push(error.message())
+    end
+    begin
+      Arel.delete_from(items).with("source", source).with("source", source)
+    rescue error: ArgumentError
+      messages.push(error.message())
+    end
+    Minitest.assert_equal(3, messages.length())
+    Minitest.assert_equal("duplicate CTE name", messages[0])
+    Minitest.assert_equal("duplicate CTE name", messages[1])
+    Minitest.assert_equal("duplicate CTE name", messages[2])
+  end
+
   suite = Minitest.new()
   suite.test("UPDATE CTE", test_update_accepts_a_cte)
   suite.test("DELETE CTE", test_delete_accepts_a_cte)
+  suite.test("write CTE duplicate names", test_write_managers_reject_duplicate_cte_names)
   suite.run()
 end
 
