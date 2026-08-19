@@ -174,6 +174,12 @@ def run_tests()
     query = Arel.from(people).project(people.column("name").as("display\"name"))
     sql, params = query.to_sql()
     Minitest.assert_equal("SELECT \"p\"\"alias\".\"name\" AS \"display\"\"name\" FROM \"people\" AS \"p\"\"alias\"", sql)
+    db = SQLite3.open(":memory:")
+    db.execute("CREATE TABLE people (name TEXT)")
+    db.execute("INSERT INTO people VALUES ('Ada')")
+    rows = query.to_a(db)
+    Minitest.assert_equal("Ada", rows[0]["display\"name"])
+    db.close()
   end
 
   def test_distinct_projection()
