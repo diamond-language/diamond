@@ -1561,6 +1561,13 @@ def inspect_tail(node) -> String
     state = node.structure()
     source = state[4] != nil
     "Insert(into=#{state[0].reference_name()}, rows=#{state[1].length()}, source=#{source}, returning=#{state[2].length()}, ctes=#{state[8].length()})"
+  elsif node is ArelUpdate
+    state = node.structure()
+    assignments = 0
+    if state[1] != nil
+      assignments = state[1].length()
+    end
+    "Update(table=#{state[0].reference_name()}, assignments=#{assignments}, predicates=#{state[2].length()}, returning=#{state[3].length()}, all=#{state[4]}, ctes=#{state[5].length()})"
   else
     "ArelNode(unsupported)"
   end

@@ -131,6 +131,8 @@ def run_tests()
     people = Arel.table("people")
     insert = Arel.insert_into(people).values({"name": "Ada"}).returning(people.column("id"))
     Minitest.assert_equal("Insert(into=people, rows=1, source=false, returning=1, ctes=0)", Arel.inspect(insert))
+    update = Arel.update(people).set({"active": true}).where(people.column("id").eq(1))
+    Minitest.assert_equal("Update(table=people, assignments=1, predicates=1, returning=0, all=false, ctes=0)", Arel.inspect(update))
   end
 
   suite = Minitest.new()
