@@ -11,6 +11,10 @@ def run_tests()
     Minitest.assert_equal("Binary(+, Attribute(people.score), Literal(2))", Arel.inspect(arithmetic))
     Minitest.assert_equal("Function(LOWER, [Cast(Binary(+, Attribute(people.score), Literal(2)), TEXT)])", Arel.inspect(function))
     Minitest.assert_equal("Excluded(qty)", Arel.inspect(Arel.excluded("qty")))
+    predicate = people.column("active").eq(Arel.literal(true))
+    combined = predicate.and_also(people.column("score").gt(10)).not_()
+    Minitest.assert_equal("Predicate(=, Attribute(people.active), Literal(true))", Arel.inspect(predicate))
+    Minitest.assert_equal("Not(Logical(AND, Predicate(=, Attribute(people.active), Literal(true)), Predicate(>, Attribute(people.score), Bind(10))))", Arel.inspect(combined))
   end
 
   suite = Minitest.new()

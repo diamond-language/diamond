@@ -1445,34 +1445,52 @@ class ArelDelete
   end
 end
 
-def arel_inspect_node(node) -> String
+class ArelInspector
+def inspect(node) -> String
   if node is ArelAttribute
     "Attribute(#{node.table().reference_name()}.#{node.name()})"
   elsif node is ArelBinaryExpression
     right = "Bind(#{node.right()})"
     if !node.bind_right?()
-      right = arel_inspect_node(node.right())
+      right = self.inspect(node.right())
     end
-    "Binary(#{node.operator()}, #{arel_inspect_node(node.left())}, #{right})"
+    "Binary(#{node.operator()}, #{self.inspect(node.left())}, #{right})"
   elsif node is ArelLiteral
     "Literal(#{node.value()})"
   elsif node is ArelFunction
     arguments = []
     index = 0
     while index < node.arguments().length()
-      arguments.push(arel_inspect_node(node.arguments()[index]))
+      arguments.push(self.inspect(node.arguments()[index]))
       index = index + 1
     end
     "Function(#{node.name()}, [#{arguments.join(", ")}])"
   elsif node is ArelCast
-    "Cast(#{arel_inspect_node(node.expression())}, #{node.type_name()})"
+    "Cast(#{self.inspect(node.expression())}, #{node.type_name()})"
   elsif node is ArelExcludedAttribute
     "Excluded(#{node.name()})"
   elsif node is ArelRawSql
     "RawSql(#{node.sql()}, #{node.params().length()} binds)"
   else
+    self.inspect_tail(node)
+  end
+end
+
+def inspect_tail(node) -> String
+  if node is ArelPredicate
+    right = "Bind(#{node.right()})"
+    if node.right() is ArelAttribute || node.right() is ArelLiteral
+      right = self.inspect(node.right())
+    end
+    "Predicate(#{node.operator()}, #{self.inspect(node.left())}, #{right})"
+  elsif node is ArelLogical
+    "Logical(#{node.operator()}, #{self.inspect(node.left())}, #{self.inspect(node.right())})"
+  elsif node is ArelNot
+    "Not(#{self.inspect(node.expression())})"
+  else
     "ArelNode(unsupported)"
   end
+end
 end
 
 class Arel
@@ -1512,7 +1530,7 @@ class Arel
   end
   def self.conflict_target(columns) = ArelConflictTarget.new(arel_array(columns))
   def self.render(statement, visitor = nil) = statement.to_sql(visitor)
-  def self.inspect(node) = arel_inspect_node(node)
+  def self.inspect(node) = ArelInspector.new().inspect(node)
   def self.union(left, right) = ArelCompoundQuery.new(left, "UNION", right)
   def self.union_all(left, right) = ArelCompoundQuery.new(left, "UNION ALL", right)
   def self.intersect(left, right) = ArelCompoundQuery.new(left, "INTERSECT", right)
