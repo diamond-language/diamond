@@ -216,6 +216,18 @@ def run_tests()
     Minitest.assert_equal("INSERT SELECT columns must match query projections", message)
   end
 
+  def test_insert_select_rejects_unknown_wildcard_shape()
+    items = Arel.table("items")
+    insert = Arel.insert_into(items).from_query(["name"], Arel.from(items))
+    message = nil
+    begin
+      insert.to_sql()
+    rescue error: ArgumentError
+      message = error.message()
+    end
+    Minitest.assert_equal("INSERT SELECT requires explicit projections", message)
+  end
+
   def test_multi_row_insert_returns_each_inserted_row()
     db = SQLite3.open(":memory:")
     db.execute("CREATE TABLE notes (id INTEGER PRIMARY KEY, body TEXT)")
@@ -267,6 +279,7 @@ def run_tests()
   suite.test("INSERT conflict update", test_insert_can_update_on_conflict)
   suite.test("conflict update validation", test_conflict_update_requires_assignments)
   suite.test("INSERT SELECT validation", test_insert_select_validates_projection_count)
+  suite.test("INSERT SELECT wildcard validation", test_insert_select_rejects_unknown_wildcard_shape)
   suite.test("multi-row INSERT RETURNING", test_multi_row_insert_returns_each_inserted_row)
   suite.test("INSERT CTE", test_insert_select_accepts_ctes)
   suite.run()
