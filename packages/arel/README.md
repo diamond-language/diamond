@@ -49,6 +49,10 @@ relation-scope checks, nested query context, dispatch, and diagnostics without
 inheriting SQLite's capability or identifier-quoting policy. They provide a
 visitor name, capability predicate, and identifier quoting method; the default
 `ArelSQLiteVisitor` remains selected when no visitor is passed.
+Pagination and literal spelling are narrow grammar seams: dialects implement
+`render_pagination` and may override `render_literal` without replacing query
+traversal. SQLite binds limits and offsets, and renders an offset without an
+explicit limit as `LIMIT -1 OFFSET ?`, which is valid SQLite syntax.
 
 ## Install
 
