@@ -146,7 +146,8 @@ def run_tests()
 
   def test_recursive_body_rejects_self_referencing_anchor()
     numbers = Arel.cte("numbers")
-    anchor = Arel.from(numbers).project(numbers.column("value"))
+    alias_numbers = numbers.as("NUMBERS")
+    anchor = Arel.from(alias_numbers).project(alias_numbers.column("value"))
     step = Arel.from(numbers).project(Arel.sql("value + 1"))
     message = nil
     begin
