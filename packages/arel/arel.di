@@ -118,6 +118,19 @@ class ArelCollation
   def name() = @name
 end
 
+class ArelOrdering
+  def initialize(expression, direction: String, nulls = nil)
+    @expression = expression
+    @direction = direction
+    @nulls = nulls
+  end
+  def expression() = @expression
+  def direction() = @direction
+  def nulls() = @nulls
+  def nulls_first() = ArelOrdering.new(@expression, @direction, "FIRST")
+  def nulls_last() = ArelOrdering.new(@expression, @direction, "LAST")
+end
+
 class ArelFunction
   def initialize(name: String, arguments: Array, distinct = false)
     if !Regexp.new("\\A[A-Za-z_][A-Za-z0-9_]*\\z").match?(name)
@@ -142,19 +155,8 @@ class ArelFunction
   def not_in(values: Array) = ArelMembership.new(self, values, true)
   def between(lower, upper) = ArelBetween.new(self, lower, upper, false)
   def not_between(lower, upper) = ArelBetween.new(self, lower, upper, true)
-end
-
-class ArelOrdering
-  def initialize(expression, direction: String, nulls = nil)
-    @expression = expression
-    @direction = direction
-    @nulls = nulls
-  end
-  def expression() = @expression
-  def direction() = @direction
-  def nulls() = @nulls
-  def nulls_first() = ArelOrdering.new(@expression, @direction, "FIRST")
-  def nulls_last() = ArelOrdering.new(@expression, @direction, "LAST")
+  def asc() = ArelOrdering.new(self, "ASC")
+  def desc() = ArelOrdering.new(self, "DESC")
 end
 
 class ArelAlias
