@@ -998,10 +998,11 @@ class ArelCompoundQuery
     params = array_concat(left_params, right_params)
     sql = "#{left_sql} #{@operator} #{right_sql}"
     rendered_orderings = []
-    def render_ordering(ordering)
-      rendered_orderings.push(visitor.render_expression(ordering, params))
+    ordering_index = 0
+    while ordering_index < @orderings.length()
+      rendered_orderings.push(visitor.render_expression(@orderings[ordering_index], params))
+      ordering_index = ordering_index + 1
     end
-    @orderings.each(render_ordering)
     if rendered_orderings.length() > 0
       sql = sql + " ORDER BY " + rendered_orderings.join(", ")
     end
@@ -1214,10 +1215,11 @@ class ArelInsert
         raise ArgumentError.new("INSERT SELECT columns must match query projections")
       end
       columns = []
-      def quote_source_column(name)
-        columns.push(arel_quote_identifier(name))
+      column_index = 0
+      while column_index < @source_columns.length()
+        columns.push(arel_quote_identifier(@source_columns[column_index]))
+        column_index = column_index + 1
       end
-      @source_columns.each(quote_source_column)
       source_sql, params = @source_query.render_with(visitor)
       sql = "INSERT INTO #{arel_quote_identifier(@table.name())} " +
         "(#{columns.join(", ")}) #{source_sql}"
