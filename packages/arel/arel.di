@@ -885,7 +885,14 @@ class ArelQuery
   def limit(n: Int) = self.take(n)
   def skip(n: Int) = self.copy(@predicates, @orderings, @limit_value, n, @projections)
   def offset(n: Int) = self.skip(n)
-  def to_sql() = ArelSQLiteVisitor.new().render(self)
+  def render_with(visitor) = visitor.render(self)
+  def to_sql(visitor = nil)
+    renderer = visitor
+    if renderer == nil
+      renderer = ArelSQLiteVisitor.new()
+    end
+    self.render_with(renderer)
+  end
 
   def to_a(db)
     sql, params = self.to_sql()
