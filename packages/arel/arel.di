@@ -269,9 +269,6 @@ class ArelExcludedAttribute
   def name() = @name
   def extension_name() = "excluded-row attributes"
   def add(value) = ArelBinaryExpression.new(self, "+", value)
-  def subtract(value) = ArelBinaryExpression.new(self, "-", value)
-  def multiply(value) = ArelBinaryExpression.new(self, "*", value)
-  def divide(value) = ArelBinaryExpression.new(self, "/", value)
 end
 
 class ArelConflictAttribute
@@ -1519,6 +1516,31 @@ def inspect_tail(node) -> String
     "ArelNode(unsupported)"
   end
 end
+
+def same?(left, right) -> Bool
+  if left is ArelAttribute
+    right is ArelAttribute && left.table().reference_name() == right.table().reference_name() &&
+      left.name() == right.name()
+  elsif left is ArelBinaryExpression
+    if !(right is ArelBinaryExpression) || left.operator() != right.operator() ||
+       left.bind_right?() != right.bind_right?() || !self.same?(left.left(), right.left())
+      false
+    elsif left.bind_right?()
+      left.right() == right.right()
+    else
+      self.same?(left.right(), right.right())
+    end
+  elsif left is ArelLiteral
+    right is ArelLiteral && left.value() == right.value()
+  elsif left is ArelCast
+    right is ArelCast && left.type_name() == right.type_name() &&
+      self.same?(left.expression(), right.expression())
+  elsif left is ArelExcludedAttribute
+    right is ArelExcludedAttribute && left.name() == right.name()
+  else
+    false
+  end
+end
 end
 
 class Arel
@@ -1559,6 +1581,7 @@ class Arel
   def self.conflict_target(columns) = ArelConflictTarget.new(arel_array(columns))
   def self.render(statement, visitor = nil) = statement.to_sql(visitor)
   def self.inspect(node) = ArelInspector.new().inspect(node)
+  def self.same?(left, right) = ArelInspector.new().same?(left, right)
   def self.union(left, right) = ArelCompoundQuery.new(left, "UNION", right)
   def self.union_all(left, right) = ArelCompoundQuery.new(left, "UNION ALL", right)
   def self.intersect(left, right) = ArelCompoundQuery.new(left, "INTERSECT", right)

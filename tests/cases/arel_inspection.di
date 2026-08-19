@@ -23,6 +23,11 @@ def run_tests()
     query = Arel.from(people).project([people.column("name"), people.column("age")])
     query = query.where(people.column("active").eq(true))
     Minitest.assert_equal("Query(from=people, projections=2, predicates=1, joins=0, ctes=0)", Arel.inspect(query))
+    first = people.column("score").add_expression(Arel.literal(2))
+    second = Arel.table("people").column("score").add_expression(Arel.literal(2))
+    different = people.column("score").add_expression(Arel.literal(3))
+    Minitest.assert_equal(true, Arel.same?(first, second))
+    Minitest.assert_equal(false, Arel.same?(first, different))
   end
 
   suite = Minitest.new()
