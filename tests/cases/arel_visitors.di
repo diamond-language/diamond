@@ -25,6 +25,10 @@ class WriteTestArelVisitor < ArelSQLiteVisitor
     sql, params = super(statement)
     ["custom #{sql}", params]
   end
+  def render_update(statement) -> Array
+    sql, params = super(statement)
+    ["custom #{sql}", params]
+  end
   def render_expression(expression, params: Array) -> String
     if expression is ArelExcludedAttribute
       "incoming.#{self.quote_identifier(expression.name())}"
@@ -87,7 +91,7 @@ def run_tests()
       "qty": Arel.expression(Arel.excluded("qty"))
     }).all()
     sql, params = update.to_sql(WriteTestArelVisitor.new())
-    Minitest.assert_equal("UPDATE [inventory] SET [qty] = incoming.[qty]", sql)
+    Minitest.assert_equal("custom UPDATE [inventory] SET [qty] = incoming.[qty]", sql)
   end
 
   def test_delete_returning_uses_the_explicit_visitor()
