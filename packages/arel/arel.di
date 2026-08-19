@@ -71,6 +71,22 @@ class ArelMembership
   def not_() = ArelNot.new(self)
 end
 
+class ArelBetween
+  def initialize(left, lower, upper, negated: Bool)
+    @left = left
+    @lower = lower
+    @upper = upper
+    @negated = negated
+  end
+  def left() = @left
+  def lower() = @lower
+  def upper() = @upper
+  def negated?() = @negated
+  def and_also(other) = ArelLogical.new(self, "AND", other)
+  def or_else(other) = ArelLogical.new(self, "OR", other)
+  def not_() = ArelNot.new(self)
+end
+
 class ArelOrdering
   def initialize(expression, direction: String)
     @expression = expression
@@ -104,6 +120,8 @@ class ArelAttribute
   def gteq(value) = ArelPredicate.new(self, ">=", value)
   def in_list(values: Array) = ArelMembership.new(self, values, false)
   def not_in(values: Array) = ArelMembership.new(self, values, true)
+  def between(lower, upper) = ArelBetween.new(self, lower, upper, false)
+  def not_between(lower, upper) = ArelBetween.new(self, lower, upper, true)
   def asc() = ArelOrdering.new(self, "ASC")
   def desc() = ArelOrdering.new(self, "DESC")
   def as(name: String) = ArelAlias.new(self, name)
@@ -185,7 +203,23 @@ class ArelSQLiteVisitor
         end
         "#{self.render_attribute(expression.left())} #{operator} (#{placeholders.join(", ")})"
       end
-    elsif expression is ArelNot
+    elsif expression is ArelBetween
+      params.push(expression.lower())
+      params.push(expression.upper())
+      operator = "BETWEEN"
+      if expression.negated?()
+        operator = "NOT BETWEEN"
+      end
+      "#{self.render_attribute(expression.left())} #{operator} ? AND ?"
+    else
+      self.render_expression_tail(expression, params)
+    end
+  end
+
+  # Keep the nominal narrowing chain in each method below Diamond's
+  # eight-alternative union ceiling as the AST grows.
+  def render_expression_tail(expression, params: Array) -> String
+    if expression is ArelNot
       inner = self.render_expression(expression.expression(), params)
       "(NOT #{inner})"
     elsif expression is ArelOrdering

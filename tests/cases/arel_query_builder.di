@@ -165,6 +165,7 @@ def run_tests()
     Minitest.assert_equal("SELECT * FROM \"people\" WHERE 1 = 1", not_empty_sql)
   end
 
+
   suite = Minitest.new()
   suite.test("hash where renders equality", test_hash_where_renders_equality)
   suite.test("raw fragment where with params", test_raw_fragment_where_with_params)
