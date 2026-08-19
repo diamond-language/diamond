@@ -150,6 +150,10 @@ class ArelBinaryExpression
   def subtract(value) = ArelBinaryExpression.new(self, "-", value)
   def multiply(value) = ArelBinaryExpression.new(self, "*", value)
   def divide(value) = ArelBinaryExpression.new(self, "/", value)
+  def add_expression(expression) = ArelBinaryExpression.new(self, "+", expression, false)
+  def subtract_expression(expression) = ArelBinaryExpression.new(self, "-", expression, false)
+  def multiply_expression(expression) = ArelBinaryExpression.new(self, "*", expression, false)
+  def divide_expression(expression) = ArelBinaryExpression.new(self, "/", expression, false)
 end
 
 class ArelAttribute
@@ -181,6 +185,10 @@ class ArelAttribute
   def subtract(value) = ArelBinaryExpression.new(self, "-", value)
   def multiply(value) = ArelBinaryExpression.new(self, "*", value)
   def divide(value) = ArelBinaryExpression.new(self, "/", value)
+  def add_expression(expression) = ArelBinaryExpression.new(self, "+", expression, false)
+  def subtract_expression(expression) = ArelBinaryExpression.new(self, "-", expression, false)
+  def multiply_expression(expression) = ArelBinaryExpression.new(self, "*", expression, false)
+  def divide_expression(expression) = ArelBinaryExpression.new(self, "/", expression, false)
 end
 
 class ArelQualifiedStar
@@ -238,6 +246,10 @@ class ArelExcludedAttribute
   def subtract(value) = ArelBinaryExpression.new(self, "-", value)
   def multiply(value) = ArelBinaryExpression.new(self, "*", value)
   def divide(value) = ArelBinaryExpression.new(self, "/", value)
+  def add_expression(expression) = ArelBinaryExpression.new(self, "+", expression, false)
+  def subtract_expression(expression) = ArelBinaryExpression.new(self, "-", expression, false)
+  def multiply_expression(expression) = ArelBinaryExpression.new(self, "*", expression, false)
+  def divide_expression(expression) = ArelBinaryExpression.new(self, "/", expression, false)
 end
 
 class ArelJoin

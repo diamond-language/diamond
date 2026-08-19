@@ -60,12 +60,22 @@ def run_tests()
     Minitest.assert_equal(1, params[2])
   end
 
+  def test_arithmetic_accepts_structural_right_operands()
+    totals = Arel.table("totals")
+    expression = totals.column("subtotal").add_expression(totals.column("tax"))
+    update = Arel.update(totals).set({"grand_total": Arel.expression(expression)}).all()
+    sql, params = update.to_sql()
+    Minitest.assert_equal("UPDATE \"totals\" SET \"grand_total\" = (\"totals\".\"subtotal\" + \"totals\".\"tax\")", sql)
+    Minitest.assert_equal(0, params.length())
+  end
+
   suite = Minitest.new()
   suite.test("structural addition", test_addition_is_a_structural_update_expression)
   suite.test("structural subtraction", test_subtraction_is_structural_and_chainable)
   suite.test("structural multiplication", test_multiplication_preserves_grouping)
   suite.test("structural division", test_division_renders_as_a_bound_expression)
   suite.test("excluded arithmetic", test_excluded_attributes_support_arithmetic)
+  suite.test("structural arithmetic operands", test_arithmetic_accepts_structural_right_operands)
   suite.run()
 end
 
