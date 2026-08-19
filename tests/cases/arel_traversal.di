@@ -91,6 +91,28 @@ def run_tests()
     Minitest.assert_equal("Attribute(people.id)", Arel.inspect(delete_children[2]))
   end
 
+  def test_walk_is_depth_first_preorder()
+    people = Arel.table("people")
+    predicate = people.column("active").eq(Arel.literal(true)).and_also(
+      people.column("age").gt(18))
+    visited = Arel.walk(predicate)
+    descriptions = []
+    index = 0
+    while index < visited.length()
+      descriptions.push(Arel.inspect(visited[index]))
+      index = index + 1
+    end
+    expected = [
+      "Logical(AND, Predicate(=, Attribute(people.active), Literal(true)), Predicate(>, Attribute(people.age), Bind(18)))",
+      "Predicate(=, Attribute(people.active), Literal(true))",
+      "Attribute(people.active)",
+      "Literal(true)",
+      "Predicate(>, Attribute(people.age), Bind(18))",
+      "Attribute(people.age)"
+    ]
+    Minitest.assert_equal(expected.join("|"), descriptions.join("|"))
+  end
+
   suite = Minitest.new()
   suite.test("ordered expression children", test_expression_children_are_ordered)
   suite.test("ordered predicate children", test_predicate_children_preserve_semantic_order)
@@ -98,6 +120,7 @@ def run_tests()
   suite.test("composition children", test_composition_children_are_structural)
   suite.test("ordered insert children", test_insert_children_follow_bind_structure)
   suite.test("ordered update and delete children", test_update_and_delete_children_are_ordered)
+  suite.test("depth-first preorder walk", test_walk_is_depth_first_preorder)
   suite.run!()
 end
 
