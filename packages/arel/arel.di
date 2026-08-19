@@ -185,6 +185,12 @@ class ArelBinaryExpression
   def subtract(value) = ArelBinaryExpression.new(self, "-", value)
   def multiply(value) = ArelBinaryExpression.new(self, "*", value)
   def divide(value) = ArelBinaryExpression.new(self, "/", value)
+  def eq(value) = ArelPredicate.new(self, "=", value)
+  def not_eq(value) = ArelPredicate.new(self, "!=", value)
+  def lt(value) = ArelPredicate.new(self, "<", value)
+  def lteq(value) = ArelPredicate.new(self, "<=", value)
+  def gt(value) = ArelPredicate.new(self, ">", value)
+  def gteq(value) = ArelPredicate.new(self, ">=", value)
 end
 
 class ArelLiteral
