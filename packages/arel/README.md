@@ -118,7 +118,11 @@ preserved in the rendered SQL. Attributes also provide `asc()` and `desc()`.
 
 Queries support table/projection aliases, `DISTINCT`, grouping, `HAVING`, and
 structured inner/left-outer/cross joins. Duplicate relation aliases and
-attributes outside the query's relation set are rejected. `Arel.count`/`sum`/`min`/`max`/`avg` and
+attributes outside the query's relation set are rejected. In keeping with
+SQLite, relation, join-alias, correlation, and CTE names are resolved
+case-insensitively: names that differ only by case refer to the same scope and
+cannot be declared twice. Identifier quoting still preserves the spelling
+provided by the caller. `Arel.count`/`sum`/`min`/`max`/`avg` and
 `Arel.lower`/`upper` construct function nodes. `Arel.sql(fragment, params)` is
 the explicit escape hatch for an expression the AST cannot represent yet.
 
