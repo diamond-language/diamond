@@ -1,7 +1,7 @@
 require "../../lib/minitest"
 require "../../packages/arel/arel"
 
-class PortableTestVisitor < ArelSQLiteVisitor
+class PortableTestVisitor < ArelVisitor
   def visitor_name() = "portable-test"
   def supports_extension?(name: String) = false
 end
