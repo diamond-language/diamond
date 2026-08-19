@@ -190,6 +190,19 @@ def run_tests()
     db.close()
   end
 
+  def test_conflict_update_requires_assignments()
+    items = Arel.table("items")
+    insert = Arel.insert_into(items).values({"id": 1})
+    insert = insert.on_conflict_do_update(["id"], {})
+    message = nil
+    begin
+      insert.to_sql()
+    rescue error: ArgumentError
+      message = error.message()
+    end
+    Minitest.assert_equal("conflict update requires at least one assignment", message)
+  end
+
   suite = Minitest.new()
   suite.test("INSERT", test_insert_renders_and_executes)
   suite.test("UPDATE", test_update_renders_and_executes)
@@ -202,6 +215,7 @@ def run_tests()
   suite.test("UPDATE expressions", test_update_assignments_accept_expressions)
   suite.test("INSERT conflict ignore", test_insert_can_ignore_conflicts)
   suite.test("INSERT conflict update", test_insert_can_update_on_conflict)
+  suite.test("conflict update validation", test_conflict_update_requires_assignments)
   suite.run()
 end
 

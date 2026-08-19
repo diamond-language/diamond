@@ -852,6 +852,9 @@ def arel_render_insert_conflict(target: Array, ignore: Bool, assignments, params
   if ignore
     return " ON CONFLICT#{target_sql} DO NOTHING"
   end
+  if assignments.length() == 0
+    raise ArgumentError.new("conflict update requires at least one assignment")
+  end
   rendered_assignments = []
   visitor = ArelSQLiteVisitor.new()
   def render_assignment(name, value)
