@@ -392,10 +392,11 @@ class ArelSQLiteVisitor
   def render_source(query, params: Array) -> String
     if query.source_query() != nil
       source_sql, source_params = query.source_query().render_with(self)
-      def append_source_param(value)
-        params.push(value)
+      source_index = 0
+      while source_index < source_params.length()
+        params.push(source_params[source_index])
+        source_index = source_index + 1
       end
-      source_params.each(append_source_param)
       "(#{source_sql}) AS #{arel_quote_identifier(query.base_reference_name())}"
     else
       sql = query.table_name()
@@ -508,10 +509,11 @@ class ArelSQLiteVisitor
       "#{inner} COLLATE #{arel_quote_identifier(expression.name())}"
     elsif expression is ArelExists
       sql, bound = expression.query().render_with(self)
-      def append_exists_param(value)
-        params.push(value)
+      bound_index = 0
+      while bound_index < bound.length()
+        params.push(bound[bound_index])
+        bound_index = bound_index + 1
       end
-      bound.each(append_exists_param)
       prefix = "EXISTS"
       if expression.negated?()
         prefix = "NOT EXISTS"
@@ -519,10 +521,11 @@ class ArelSQLiteVisitor
       "#{prefix} (#{sql})"
     elsif expression is ArelScalarSubquery
       sql, bound = expression.query().render_with(self)
-      def append_scalar_param(value)
-        params.push(value)
+      bound_index = 0
+      while bound_index < bound.length()
+        params.push(bound[bound_index])
+        bound_index = bound_index + 1
       end
-      bound.each(append_scalar_param)
       "(#{sql})"
     else
       self.render_expression_tail(expression, params)
@@ -534,11 +537,11 @@ class ArelSQLiteVisitor
   def render_expression_tail(expression, params: Array) -> String
     if expression is ArelFunction
       arguments = []
-      visitor = self
-      def render_argument(argument)
-        arguments.push(visitor.render_expression(argument, params))
+      argument_index = 0
+      while argument_index < expression.arguments().length()
+        arguments.push(self.render_expression(expression.arguments()[argument_index], params))
+        argument_index = argument_index + 1
       end
-      expression.arguments().each(render_argument)
       prefix = ""
       if expression.distinct?()
         prefix = "DISTINCT "
@@ -562,10 +565,11 @@ class ArelSQLiteVisitor
       inner = self.render_expression(expression.expression(), params)
       "#{inner} AS #{arel_quote_identifier(expression.name())}"
     elsif expression is ArelRawSql
-      def append_param(value)
-        params.push(value)
+      param_index = 0
+      while param_index < expression.params().length()
+        params.push(expression.params()[param_index])
+        param_index = param_index + 1
       end
-      expression.params().each(append_param)
       expression.sql()
     else
       self.render_expression_extension(expression, params)
@@ -615,18 +619,21 @@ class ArelSQLiteVisitor
     sql = self.render_ctes(query, params)
     @query = query
     projections = []
-    def render_projection(projection)
-      projections.push(visitor.render_expression(projection, params))
+    index = 0
+    while index < query.projections().length()
+      projections.push(visitor.render_expression(query.projections()[index], params))
+      index = index + 1
     end
-    query.projections().each(render_projection)
     table_sql = self.render_source(query, params)
-    def render_join(join)
+    index = 0
+    while index < query.joins().length()
+      join = query.joins()[index]
       table_sql = table_sql + " #{join.kind()} JOIN #{visitor.render_table(join.table())}"
       if join.predicate() != nil
         table_sql = table_sql + " ON " + visitor.render_expression(join.predicate(), params)
       end
+      index = index + 1
     end
-    query.joins().each(render_join)
     sql = sql + "SELECT "
     if query.distinct_value()
       sql = sql + "DISTINCT "
@@ -634,37 +641,41 @@ class ArelSQLiteVisitor
     sql = sql + projections.join(", ") + " FROM #{table_sql}"
 
     predicates = []
-    def render_predicate(predicate)
-      predicates.push(visitor.render_expression(predicate, params))
+    index = 0
+    while index < query.predicates().length()
+      predicates.push(visitor.render_expression(query.predicates()[index], params))
+      index = index + 1
     end
-    query.predicates().each(render_predicate)
     if predicates.length() > 0
       sql = sql + " WHERE " + predicates.join(" AND ")
     end
 
     groups = []
-    def render_group(group)
-      groups.push(visitor.render_expression(group, params))
+    index = 0
+    while index < query.groups().length()
+      groups.push(visitor.render_expression(query.groups()[index], params))
+      index = index + 1
     end
-    query.groups().each(render_group)
     if groups.length() > 0
       sql = sql + " GROUP BY " + groups.join(", ")
     end
 
     havings = []
-    def render_having(having)
-      havings.push(visitor.render_expression(having, params))
+    index = 0
+    while index < query.havings().length()
+      havings.push(visitor.render_expression(query.havings()[index], params))
+      index = index + 1
     end
-    query.havings().each(render_having)
     if havings.length() > 0
       sql = sql + " HAVING " + havings.join(" AND ")
     end
 
     orderings = []
-    def render_ordering(ordering)
-      orderings.push(visitor.render_expression(ordering, params))
+    index = 0
+    while index < query.orderings().length()
+      orderings.push(visitor.render_expression(query.orderings()[index], params))
+      index = index + 1
     end
-    query.orderings().each(render_ordering)
     if orderings.length() > 0
       sql = sql + " ORDER BY " + orderings.join(", ")
     end
