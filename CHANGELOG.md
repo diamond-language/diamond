@@ -1,5 +1,12 @@
 # Changelog
 
+## Arel 0.8.0
+
+- Added named CTE relation objects, recursive-body construction, declaration by
+  relation, and early validation of anchors and self-reference.
+- Added structural INSERT expressions, bulk expression bind ordering,
+  excluded-row attributes, and INSERT DEFAULT VALUES with RETURNING.
+
 ## Arel 0.7.0
 
 - Added ordinary and recursive CTE composition to every write manager, with

@@ -22,34 +22,21 @@ Raw SQL remains an explicit escape hatch, not the representation used by new
 features. Values are bind parameters by default. Identifiers are represented
 as nodes and quoted by the active visitor.
 
-## Next milestone: finish recursive-query ergonomics
+## Next milestone: deepen write expressions
 
-Recursive CTEs now compose with every read and write manager. The remaining
-work is to make recursive intent easier to express and validate:
+Structural INSERT expressions, excluded-row attributes, and DEFAULT VALUES are
+now represented. The remaining SQLite write-expression questions are:
 
-- provide an explicit named CTE relation helper for self-reference;
-- add an anchor/recursive-branch helper built from ordinary `UNION ALL` nodes;
-- reject invalid recursive declarations before SQLite sees them;
-- cover multiple references to one recursive CTE and mixed recursive/nonrecursive
-  declarations.
+- conflict-target predicates and named constraints;
+- whether per-column DEFAULT can be offered portably despite SQLite's grammar;
+- structural arithmetic nodes so common updates do not require `Arel.sql`;
+- INSERT expression validation that distinguishes portable expressions from
+  dialect extensions.
 
-Completion means recursive queries can be constructed without manually keeping
-the CTE name, table reference, and compound body synchronized.
+Completion means common generated-value and upsert expressions can be built
+without raw SQL while preserving the explicit expression wrapper.
 
-## Following milestone: deepen write expressions
-
-Round out SQLite's data-changing expression forms:
-
-- structural values and expressions in INSERT rows;
-- conflict-target predicates if they can be represented without a
-  SQLite-specific leak into portable nodes;
-- reusable excluded-row attributes for conflict updates;
-- DEFAULT VALUES and per-column DEFAULT where SQLite permits them.
-
-Values should remain bound by default; expression insertion must require an
-explicit wrapper just as UPDATE assignments do today.
-
-## Milestone 3: visitor and adapter boundary
+## Following milestone: visitor and adapter boundary
 
 Prove that the AST is not accidentally SQLite-specific:
 
@@ -64,7 +51,7 @@ Do not design hypothetical dialect abstractions before a second adapter exists.
 SQLite behavior should stay direct and readable until a concrete difference
 needs an abstraction.
 
-## Milestone 4: ergonomics and diagnostics
+## Milestone 3: ergonomics and diagnostics
 
 Once the algebra is stable:
 

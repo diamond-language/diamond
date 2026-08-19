@@ -75,7 +75,10 @@ select `nulls_first()` or `nulls_last()`.
 
 Inner queries opt into outer references with `correlate(table)` or
 `correlate_all(tables)`, retaining relation-scope validation at every nesting
-level. `query.with(name, source_query)` and `with_recursive` add CTEs. `Arel.union`,
+level. `Arel.cte(name)` creates a named CTE relation whose columns can be used
+like table columns. Its `recursive_body(anchor, branch)` helper constructs and
+validates the usual `UNION ALL` body, while `with` and `with_recursive` accept
+either that relation or a name. `Arel.union`,
 `union_all`, `intersect`, and `except` build structural compound queries and
 reject branches with different projection counts. Compound results can be
 ordered, paginated, nested as derived sources, or used as CTE bodies.
@@ -105,6 +108,12 @@ and `on_conflict_do_update(columns, assignments)` expose SQLite's conflict
 actions. Wrap AST or raw-SQL assignment expressions with `Arel.expression`;
 ordinary assignment values remain binds. INSERT statements can also prepend a
 query CTE with `with(name, query)`.
+
+INSERT row values accept `Arel.expression(node)` when a SQL expression is
+intentional; unwrapped values remain binds, including in bulk inserts.
+`Arel.excluded(column)` structurally references SQLite's excluded row in a
+conflict update. `default_values()` emits `INSERT ... DEFAULT VALUES` and
+composes with `RETURNING`.
 
 UPDATE and DELETE require a predicate unless the caller explicitly opts into a
 whole-table operation with `all()`. SQLite `RETURNING` is available on all three
