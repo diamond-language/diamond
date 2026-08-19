@@ -1,5 +1,15 @@
 # Changelog
 
+## Arel 0.28.0
+
+- Added execution-backed injection-shaped value coverage for predicates,
+  memberships, LIKE patterns, and nested queries.
+- Verified positional binding for raw-fragment parameters, INSERT and UPDATE
+  values, DELETE predicates, and conflict assignments while preserving target
+  tables.
+- Documented that `Arel.sql` parameters remain bound while its SQL fragment is
+  an explicitly caller-controlled escape hatch.
+
 ## Arel 0.27.0
 
 - Added SQLite execution coverage for quote-containing identifiers across
