@@ -13,6 +13,10 @@ interface ArelComparableNode
   def arel_same?(other) -> Bool
 end
 
+interface ArelReplaceableNode
+  def arel_with_children(replacements: Array)
+end
+
 def arel_array(value)
   if value is Array
     value
@@ -1643,6 +1647,8 @@ def with_children_tail(node, replacements: Array)
     self.with_query_children(node, replacements)
   elsif node is ArelUpdate || node is ArelDelete || node is ArelInsert
     self.with_write_children(node, replacements)
+  elsif node is ArelReplaceableNode
+    node.arel_with_children(replacements)
   else
     raise ArgumentError.new("Arel node does not support child replacement")
   end
@@ -2264,40 +2270,39 @@ def same?(left, right) -> Bool
   end
 end
 
-def same_nodes?(left: Array, right: Array) -> Bool
-  if left.length() != right.length()
-    return false
-  end
-  index = 0
-  while index < left.length()
-    if !self.same?(left[index], right[index])
-      return false
-    end
-    index = index + 1
-  end
-  true
-end
-
-def same_hash?(left, right) -> Bool
+def same_nodes?(left, right) -> Bool
   if left == nil || right == nil
     return left == nil && right == nil
   end
   if left.length() != right.length()
     return false
   end
-  index = 0
-  while index < left.length()
-    key = left.key_at(index)
-    if !hash_include_key(right, key)
+  if left is Hash
+    if !(right is Hash)
       return false
     end
-    left_value = left[key]
-    right_value = right[key]
-    if left_value is ArelAssignmentValue
-      if !self.same?(left_value, right_value)
+    index = 0
+    while index < left.length()
+      key = left.key_at(index)
+      if !hash_include_key(right, key)
         return false
       end
-    elsif left_value != right_value
+      left_value = left[key]
+      right_value = right[key]
+      if left_value is ArelAssignmentValue
+        if !self.same?(left_value, right_value)
+          return false
+        end
+      elsif left_value != right_value
+        return false
+      end
+      index = index + 1
+    end
+    return true
+  end
+  index = 0
+  while index < left.length()
+    if !self.same?(left[index], right[index])
       return false
     end
     index = index + 1
@@ -2312,7 +2317,7 @@ def same_insert?(left: ArelInsert, right: ArelInsert) -> Bool
      left_state[1].length() != right_state[1].length() ||
      !self.same_nodes?(left_state[2], right_state[2]) ||
      left_state[3].length() != right_state[3].length() || left_state[6] != right_state[6] ||
-     !self.same_hash?(left_state[7], right_state[7]) ||
+     !self.same_nodes?(left_state[7], right_state[7]) ||
      !self.same_nodes?(left_state[8], right_state[8]) ||
      (left_state[4] == nil) != (right_state[4] == nil)
     return false
@@ -2352,7 +2357,7 @@ def same_insert?(left: ArelInsert, right: ArelInsert) -> Bool
       if !self.same?(left_row, right_row)
         return false
       end
-    elsif !self.same_hash?(left_row, right_row)
+    elsif !self.same_nodes?(left_row, right_row)
       return false
     end
     index = index + 1
@@ -2420,7 +2425,7 @@ def same_tail?(left, right) -> Bool
     left_state = left.structure()
     right_state = right.structure()
     self.same?(left_state[0], right_state[0]) &&
-      self.same_hash?(left_state[1], right_state[1]) &&
+      self.same_nodes?(left_state[1], right_state[1]) &&
       self.same_nodes?(left_state[2], right_state[2]) &&
       self.same_nodes?(left_state[3], right_state[3]) &&
       left_state[4] == right_state[4] && self.same_nodes?(left_state[5], right_state[5])
