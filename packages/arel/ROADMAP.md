@@ -22,26 +22,29 @@ Raw SQL remains an explicit escape hatch, not the representation used by new
 features. Values are bind parameters by default. Identifiers are represented
 as nodes and quoted by the active visitor.
 
-## Next milestone: explicit dialect capabilities
+## Next milestone: visitor-owned statement rendering
 
-The node model and rendering entry point are already visitor-oriented, but
-SQLite knowledge still leaks into which builders callers may safely use. Make
-the boundary explicit before implementing another database renderer:
+Named capabilities now make dialect extensions explicit and reject unsupported
+RETURNING, conflict, NULL-ordering, CTE, and integer-operator forms early. The
+remaining portability constraint is architectural: SELECT rendering lives in
+the visitor, while compound and write managers still assemble their own SQL
+skeletons. Move that responsibility across the existing visitor boundary:
 
-- define a small dialect capability contract for syntax that is not portable,
-  beginning with conflict handling, RETURNING, NULL ordering, and write CTEs;
-- let visitors reject unsupported node combinations with useful errors before
-  emitting partial SQL;
-- keep SQLite as the sole production dialect while exercising the contract
-  with focused visitor fixtures;
-- document which builders are relationally portable and which represent
-  deliberate SQLite extensions;
-- preserve the current `[sql, bind_params]` result and exact bind ordering so a
-  later dialect visitor does not change the execution boundary.
+- give visitors rendering entry points for compounds and each write-manager
+  family, while retaining `render_expression` and `render_ctes` as shared
+  building blocks;
+- reduce each manager's `render_with(visitor)` method to delegation, matching
+  the SELECT manager's direction;
+- centralize identifier quoting behind the visitor rather than calling the
+  SQLite quoting helper from statement managers;
+- migrate one statement family at a time with exact SQL and bind-order
+  equivalence tests;
+- keep `ArelSQLiteVisitor` as the only production renderer and preserve every
+  public construction and execution API.
 
-Completion means a second dialect can be added by implementing and declaring
-visitor behavior, without changing existing query nodes or teaching callers to
-inspect visitor classes.
+Completion means a future visitor can control the full statement grammar,
+rather than inheriting SQLite statement assembly and merely opting out of
+individual extensions.
 
 ## Deferred expression decisions
 
