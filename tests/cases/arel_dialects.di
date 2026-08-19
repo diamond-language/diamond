@@ -85,6 +85,15 @@ def run_tests()
       message = error.message()
     end
     Minitest.assert_equal("portable-test visitor does not support explicit NULL ordering", message)
+    source = Arel.from(items).project(items.column("id"))
+    message = nil
+    begin
+      Arel.update(items).with("selected", source).set({"qty": 2}).all().to_sql(
+        PortableTestVisitor.new())
+    rescue error: ArgumentError
+      message = error.message()
+    end
+    Minitest.assert_equal("portable-test visitor does not support write CTEs", message)
   end
 
   def test_portable_select_nodes_render_without_extensions()

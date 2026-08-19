@@ -1217,6 +1217,9 @@ class ArelInsert
   end
 
   def render_with(visitor) -> Array
+    if @ctes.length() > 0
+      visitor.require_extension("write CTEs")
+    end
     if @rows.length() == 1 && @rows[0] is ArelDefaultValues
       visitor.require_extension(@rows[0].extension_name())
       params = []
@@ -1356,6 +1359,9 @@ class ArelUpdate
   end
 
   def render_with(visitor) -> Array
+    if @ctes.length() > 0
+      visitor.require_extension("write CTEs")
+    end
     if @assignments == nil || @assignments.length() == 0
       raise ArgumentError.new("UPDATE requires at least one assignment")
     end
@@ -1455,6 +1461,9 @@ class ArelDelete
   end
 
   def render_with(visitor) -> Array
+    if @ctes.length() > 0
+      visitor.require_extension("write CTEs")
+    end
     if @predicates.length() == 0 && !@allow_all
       raise ArgumentError.new("DELETE requires where() or explicit all()")
     end
