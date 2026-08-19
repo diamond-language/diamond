@@ -170,10 +170,10 @@ def run_tests()
   end
 
   def test_table_and_projection_aliases()
-    people = Arel.table("people").as("p")
-    query = Arel.from(people).project(people.column("name").as("display_name"))
+    people = Arel.table("people").as("p\"alias")
+    query = Arel.from(people).project(people.column("name").as("display\"name"))
     sql, params = query.to_sql()
-    Minitest.assert_equal("SELECT \"p\".\"name\" AS \"display_name\" FROM \"people\" AS \"p\"", sql)
+    Minitest.assert_equal("SELECT \"p\"\"alias\".\"name\" AS \"display\"\"name\" FROM \"people\" AS \"p\"\"alias\"", sql)
   end
 
   def test_distinct_projection()
