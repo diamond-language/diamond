@@ -829,6 +829,35 @@ class ArelCompoundQuery
   end
 end
 
+class ArelInsert
+  def initialize(table: ArelTable, attributes = nil)
+    @table = table
+    @attributes = attributes
+  end
+
+  def values(attributes: Hash) = ArelInsert.new(@table, attributes)
+
+  def to_sql() -> Array
+    columns = []
+    placeholders = []
+    params = []
+    def collect_attribute(name, value)
+      columns.push(arel_quote_identifier(name))
+      placeholders.push("?")
+      params.push(value)
+    end
+    @attributes.each(collect_attribute)
+    sql = "INSERT INTO #{arel_quote_identifier(@table.name())} " +
+      "(#{columns.join(", ")}) VALUES (#{placeholders.join(", ")})"
+    [sql, params]
+  end
+
+  def execute(db)
+    sql, params = self.to_sql()
+    db.execute(sql, params)
+  end
+end
+
 class Arel
   def self.table(name: String) = ArelTable.new(name)
   def self.as(expression, name: String) = ArelAlias.new(expression, name)
@@ -856,6 +885,7 @@ class Arel
   def self.union_all(left, right) = ArelCompoundQuery.new(left, "UNION ALL", right)
   def self.intersect(left, right) = ArelCompoundQuery.new(left, "INTERSECT", right)
   def self.except(left, right) = ArelCompoundQuery.new(left, "EXCEPT", right)
+  def self.insert_into(table: ArelTable) = ArelInsert.new(table)
   def self.from_subquery(query, name: String)
     ArelQuery.new(name, [], [], nil, nil, [ArelRawSql.new("*", [])], true, true,
       name, false, [], [], [], query)
