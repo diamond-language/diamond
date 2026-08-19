@@ -120,6 +120,12 @@ def run_tests()
     Minitest.assert_equal("SELECT * FROM \"people\" ORDER BY LOWER(\"people\".\"name\") DESC NULLS LAST", sql)
   end
 
+  def test_qualified_wildcard_projection()
+    people = Arel.table("people").as("p")
+    sql, params = Arel.from(people).project(people.star()).to_sql()
+    Minitest.assert_equal("SELECT \"p\".* FROM \"people\" AS \"p\"", sql)
+  end
+
   suite = Minitest.new()
   suite.test("BETWEEN predicates", test_between_predicates_bind_both_bounds)
   suite.test("LIKE predicates", test_like_predicates_are_bound)
@@ -133,6 +139,7 @@ def run_tests()
   suite.test("relation-set validation", test_attributes_outside_relation_set_are_rejected)
   suite.test("arbitrary expression aliases", test_arbitrary_expressions_can_be_aliased)
   suite.test("expression ordering and null placement", test_arbitrary_expression_ordering_and_null_placement)
+  suite.test("qualified wildcard", test_qualified_wildcard_projection)
   suite.run()
 end
 

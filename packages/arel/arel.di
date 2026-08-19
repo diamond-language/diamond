@@ -148,6 +148,13 @@ class ArelAttribute
   def as(name: String) = ArelAlias.new(self, name)
 end
 
+class ArelQualifiedStar
+  def initialize(table)
+    @table = table
+  end
+  def table() = @table
+end
+
 class ArelTable
   def initialize(name: String, table_alias = nil)
     @name = name
@@ -164,6 +171,7 @@ class ArelTable
   end
   def as(name: String) = ArelTable.new(@name, name)
   def column(name: String) = ArelAttribute.new(self, name)
+  def star() = ArelQualifiedStar.new(self)
 end
 
 class ArelRawSql
@@ -291,6 +299,11 @@ class ArelSQLiteVisitor
       end
       expression.arguments().each(render_argument)
       "#{expression.name()}(#{arguments.join(", ")})"
+    elsif expression is ArelQualifiedStar
+      if !self.attribute_allowed?(ArelAttribute.new(expression.table(), "*"))
+        raise ArgumentError.new("wildcard belongs to a relation outside this query")
+      end
+      arel_quote_identifier(expression.table().reference_name()) + ".*"
     elsif expression is ArelNot
       inner = self.render_expression(expression.expression(), params)
       "(NOT #{inner})"
