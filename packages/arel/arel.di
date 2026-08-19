@@ -136,6 +136,8 @@ class ArelFunction
   def lteq(value) = ArelPredicate.new(self, "<=", value)
   def gt(value) = ArelPredicate.new(self, ">", value)
   def gteq(value) = ArelPredicate.new(self, ">=", value)
+  def like(pattern: String) = ArelPredicate.new(self, "LIKE", pattern)
+  def not_like(pattern: String) = ArelPredicate.new(self, "NOT LIKE", pattern)
 end
 
 class ArelOrdering
