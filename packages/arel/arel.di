@@ -156,6 +156,16 @@ class ArelBinaryExpression
   def divide_expression(expression) = ArelBinaryExpression.new(self, "/", expression, false)
 end
 
+class ArelLiteral
+  def initialize(value)
+    if !(value is Int) && !(value is Bool)
+      raise ArgumentError.new("SQL literals only support Int and Bool values")
+    end
+    @value = value
+  end
+  def value() = @value
+end
+
 class ArelAttribute
   def initialize(table, name: String)
     @table = table
@@ -415,6 +425,8 @@ class ArelSQLiteVisitor
         end
       elsif value is ArelAttribute
         "#{left} #{expression.operator()} #{self.render_attribute(value)}"
+      elsif value is ArelLiteral
+        "#{left} #{expression.operator()} #{self.render_expression(value, params)}"
       else
         params.push(value)
         "#{left} #{expression.operator()} ?"
@@ -544,6 +556,16 @@ class ArelSQLiteVisitor
         right = self.render_expression(expression.right(), params)
       end
       "(#{left} #{expression.operator()} #{right})"
+    elsif expression is ArelLiteral
+      if expression.value() is Bool
+        if expression.value()
+          "TRUE"
+        else
+          "FALSE"
+        end
+      else
+        "#{expression.value()}"
+      end
     elsif expression is String
       expression
     else
@@ -1372,6 +1394,7 @@ class Arel
   def self.scalar(query) = ArelScalarSubquery.new(query)
   def self.expression(expression) = ArelAssignmentValue.new(expression)
   def self.excluded(name: String) = ArelExcludedAttribute.new(name)
+  def self.literal(value) = ArelLiteral.new(value)
   def self.conflict_target(columns) = ArelConflictTarget.new(arel_array(columns))
   def self.union(left, right) = ArelCompoundQuery.new(left, "UNION", right)
   def self.union_all(left, right) = ArelCompoundQuery.new(left, "UNION ALL", right)

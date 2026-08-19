@@ -69,6 +69,14 @@ def run_tests()
     Minitest.assert_equal(0, params.length())
   end
 
+  def test_restricted_literals_render_without_binds()
+    flags = Arel.table("flags")
+    query = Arel.from(flags).where(flags.column("enabled").eq(Arel.literal(true)))
+    sql, params = query.to_sql()
+    Minitest.assert_equal("SELECT * FROM \"flags\" WHERE \"flags\".\"enabled\" = TRUE", sql)
+    Minitest.assert_equal(0, params.length())
+  end
+
   suite = Minitest.new()
   suite.test("structural addition", test_addition_is_a_structural_update_expression)
   suite.test("structural subtraction", test_subtraction_is_structural_and_chainable)
@@ -76,6 +84,7 @@ def run_tests()
   suite.test("structural division", test_division_renders_as_a_bound_expression)
   suite.test("excluded arithmetic", test_excluded_attributes_support_arithmetic)
   suite.test("structural arithmetic operands", test_arithmetic_accepts_structural_right_operands)
+  suite.test("restricted SQL literals", test_restricted_literals_render_without_binds)
   suite.run()
 end
 
