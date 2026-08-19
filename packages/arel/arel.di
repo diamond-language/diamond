@@ -960,6 +960,16 @@ class ArelAssignmentValue
   def expression() = @expression
 end
 
+class ArelConflictTarget
+  def initialize(columns: Array, predicate = nil)
+    @columns = columns
+    @predicate = predicate
+  end
+  def columns() = @columns
+  def predicate() = @predicate
+  def where(predicate) = ArelConflictTarget.new(@columns, predicate)
+end
+
 class ArelDefaultValues
 end
 
@@ -977,18 +987,28 @@ def arel_render_returning_clause(expressions: Array, params: Array) -> String
   end
 end
 
-def arel_render_insert_conflict(target: Array, ignore: Bool, assignments, params: Array) -> String
+def arel_render_insert_conflict(target, ignore: Bool, assignments, params: Array) -> String
   if !ignore && assignments == nil
     return ""
+  end
+  columns = target
+  predicate = nil
+  if target is ArelConflictTarget
+    columns = target.columns()
+    predicate = target.predicate()
   end
   targets = []
   def quote_target(name)
     targets.push(arel_quote_identifier(name))
   end
-  target.each(quote_target)
+  columns.each(quote_target)
   target_sql = ""
   if targets.length() > 0
     target_sql = " (#{targets.join(", ")})"
+  end
+  if predicate != nil
+    visitor = ArelSQLiteVisitor.new()
+    target_sql = target_sql + " WHERE " + visitor.render_expression(predicate, params)
   end
   if ignore
     return " ON CONFLICT#{target_sql} DO NOTHING"
@@ -1056,12 +1076,20 @@ class ArelInsert
       arel_append_cte(@ctes, name, query, true))
   end
   def on_conflict_do_nothing(columns = [])
+    target = columns
+    if !(columns is ArelConflictTarget)
+      target = arel_array(columns)
+    end
     ArelInsert.new(@table, @rows, @returning, @source_columns, @source_query,
-      arel_array(columns), true, nil, @ctes)
+      target, true, nil, @ctes)
   end
   def on_conflict_do_update(columns, assignments: Hash)
+    target = columns
+    if !(columns is ArelConflictTarget)
+      target = arel_array(columns)
+    end
     ArelInsert.new(@table, @rows, @returning, @source_columns, @source_query,
-      arel_array(columns), false, assignments, @ctes)
+      target, false, assignments, @ctes)
   end
   def returning(expressions)
     ArelInsert.new(@table, @rows, arel_array(expressions), @source_columns, @source_query,
@@ -1344,6 +1372,7 @@ class Arel
   def self.scalar(query) = ArelScalarSubquery.new(query)
   def self.expression(expression) = ArelAssignmentValue.new(expression)
   def self.excluded(name: String) = ArelExcludedAttribute.new(name)
+  def self.conflict_target(columns) = ArelConflictTarget.new(arel_array(columns))
   def self.union(left, right) = ArelCompoundQuery.new(left, "UNION", right)
   def self.union_all(left, right) = ArelCompoundQuery.new(left, "UNION ALL", right)
   def self.intersect(left, right) = ArelCompoundQuery.new(left, "INTERSECT", right)

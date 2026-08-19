@@ -62,11 +62,24 @@ def run_tests()
     db.close()
   end
 
+  def test_conflict_targets_accept_partial_index_predicates()
+    users = Arel.table("users")
+    target = Arel.conflict_target(["email"])
+    target = target.where(Arel.sql("\"active\" = 1"))
+    insert = Arel.insert_into(users).values({"email": "a@example.test", "active": 1})
+    insert = insert.on_conflict_do_nothing(target)
+    sql, params = insert.to_sql()
+    Minitest.assert_equal("INSERT INTO \"users\" (\"email\", \"active\") VALUES (?, ?) ON CONFLICT (\"email\") WHERE \"active\" = 1 DO NOTHING", sql)
+    Minitest.assert_equal("a@example.test", params[0])
+    Minitest.assert_equal(1, params[1])
+  end
+
   suite = Minitest.new()
   suite.test("INSERT expressions", test_insert_values_accept_explicit_expressions)
   suite.test("multi-row INSERT expressions", test_multi_row_expressions_preserve_bind_order)
   suite.test("excluded conflict value", test_conflict_updates_reference_excluded_values_structurally)
   suite.test("INSERT DEFAULT VALUES", test_default_values_can_return_generated_columns)
+  suite.test("partial conflict target", test_conflict_targets_accept_partial_index_predicates)
   suite.run()
 end
 
