@@ -116,6 +116,13 @@ def run_tests()
     Minitest.assert_equal(0, params.length())
   end
 
+  def test_extension_nodes_report_their_capability_names()
+    excluded = Arel.excluded("qty")
+    target = Arel.conflict_target(["name"])
+    Minitest.assert_equal("excluded-row attributes", excluded.extension_name())
+    Minitest.assert_equal("conflict-target predicates", target.extension_name())
+  end
+
   suite = Minitest.new()
   suite.test("visitor extension protocol", test_visitors_report_unsupported_extensions)
   suite.test("excluded extension", test_excluded_attributes_are_dialect_extensions)
@@ -125,6 +132,7 @@ def run_tests()
   suite.test("portable SELECT nodes", test_portable_select_nodes_render_without_extensions)
   suite.test("portable write nodes", test_portable_write_nodes_render_without_extensions)
   suite.test("portable compounds and CTEs", test_portable_compounds_and_ctes_render_without_extensions)
+  suite.test("extension node metadata", test_extension_nodes_report_their_capability_names)
   suite.run()
 end
 

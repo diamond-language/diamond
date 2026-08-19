@@ -252,6 +252,7 @@ class ArelExcludedAttribute
     @name = name
   end
   def name() = @name
+  def extension_name() = "excluded-row attributes"
   def add(value) = ArelBinaryExpression.new(self, "+", value)
   def subtract(value) = ArelBinaryExpression.new(self, "-", value)
   def multiply(value) = ArelBinaryExpression.new(self, "*", value)
@@ -565,7 +566,7 @@ class ArelSQLiteVisitor
 
   def render_expression_extension(expression, params: Array) -> String
     if expression is ArelExcludedAttribute
-      self.require_extension("excluded-row attributes")
+      self.require_extension(expression.extension_name())
       "excluded.#{arel_quote_identifier(expression.name())}"
     elsif expression is ArelConflictAttribute
       arel_quote_identifier(expression.name())
@@ -1028,11 +1029,13 @@ class ArelConflictTarget
   end
   def columns() = @columns
   def predicate() = @predicate
+  def extension_name() = "conflict-target predicates"
   def where(predicate) = ArelConflictTarget.new(@columns, predicate)
   def column(name: String) = ArelConflictAttribute.new(name)
 end
 
 class ArelDefaultValues
+  def extension_name() = "insert default values"
 end
 
 def arel_render_returning_clause(expressions: Array, params: Array, visitor) -> String
@@ -1069,7 +1072,7 @@ def arel_render_insert_conflict(target, ignore: Bool, assignments, params: Array
     target_sql = " (#{targets.join(", ")})"
   end
   if predicate != nil
-    visitor.require_extension("conflict-target predicates")
+    visitor.require_extension(target.extension_name())
     target_sql = target_sql + " WHERE " + visitor.render_expression(predicate, params)
   end
   visitor.require_extension("upsert conflict actions")
@@ -1160,7 +1163,7 @@ class ArelInsert
 
   def render_with(visitor) -> Array
     if @rows.length() == 1 && @rows[0] is ArelDefaultValues
-      visitor.require_extension("insert default values")
+      visitor.require_extension(@rows[0].extension_name())
       params = []
       sql = "INSERT INTO #{arel_quote_identifier(@table.name())} DEFAULT VALUES"
       sql = sql + arel_render_returning_clause(@returning, params, visitor)
