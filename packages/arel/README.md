@@ -97,6 +97,8 @@ aliases, CTE names, assignments, and conflict targets; execution tests include
 quote-containing and SQL-injection-shaped names. String-query compatibility
 methods and `Arel.sql` remain explicit raw-SQL escape hatches and do not parse
 or sanitize their SQL fragments.
+Empty SQLite identifier components are rejected with `ArgumentError` across
+reads, aliases, CTEs, write columns, INSERT…SELECT columns, and conflicts.
 
 Structured predicate, membership, pagination, INSERT, UPDATE, DELETE, and
 conflict-assignment values are positional binds, including when composed
