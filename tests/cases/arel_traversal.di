@@ -200,6 +200,17 @@ def run_tests()
     Minitest.assert_equal("INSERT INTO \"people\" (\"name\", \"score\") VALUES (?, (\"people\".\"score\" + ?)) ON CONFLICT (\"name\") DO UPDATE SET \"score\" = (excluded.\"score\" + ?) RETURNING \"people\".\"email\"", changed_sql)
     Minitest.assert_equal("Ada|1", original_params.join("|"))
     Minitest.assert_equal("Ada|2|1", changed_params.join("|"))
+    source = Arel.from(people).project(people.column("name")).where(
+      people.column("active").eq(true))
+    source_insert = Arel.insert_into(Arel.table("archive")).from_query(["name"], source)
+    source_children = Arel.children(source_insert)
+    replacement_source = Arel.from(people).project(people.column("email")).where(
+      people.column("active").eq(false))
+    changed_source_insert = Arel.with_children(source_insert,
+      [source_children[0], replacement_source])
+    source_sql, source_params = changed_source_insert.to_sql()
+    Minitest.assert_equal("INSERT INTO \"archive\" (\"name\") SELECT \"people\".\"email\" FROM \"people\" WHERE \"people\".\"active\" = ?", source_sql)
+    Minitest.assert_equal("false", source_params.join("|"))
   end
 
   def test_update_and_delete_children_are_ordered()
