@@ -815,6 +815,9 @@ class ArelCompoundQuery
   def to_sql() -> Array
     left_sql, left_params = @left.to_sql()
     right_sql, right_params = @right.to_sql()
+    if @right is ArelCompoundQuery
+      right_sql = "SELECT * FROM (#{right_sql})"
+    end
     params = array_concat(left_params, right_params)
     sql = "#{left_sql} #{@operator} #{right_sql}"
     rendered_orderings = []
