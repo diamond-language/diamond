@@ -748,23 +748,43 @@ class ArelQuery
 end
 
 class ArelCompoundQuery
-  def initialize(left, operator: String, right)
+  def initialize(left, operator: String, right, orderings = [], limit_value = nil,
+                 offset_value = nil)
     if left.projection_count() != right.projection_count()
       raise ArgumentError.new("compound queries require equal projection counts")
     end
     @left = left
     @operator = operator
     @right = right
+    @orderings = orderings
+    @limit_value = limit_value
+    @offset_value = offset_value
   end
   def left() = @left
   def operator() = @operator
   def right() = @right
   def projection_count() = @left.projection_count()
 
+  def order(ordering)
+    ArelCompoundQuery.new(@left, @operator, @right,
+      array_concat(@orderings, arel_array(ordering)), @limit_value, @offset_value)
+  end
+
   def to_sql() -> Array
     left_sql, left_params = @left.to_sql()
     right_sql, right_params = @right.to_sql()
-    ["#{left_sql} #{@operator} #{right_sql}", array_concat(left_params, right_params)]
+    params = array_concat(left_params, right_params)
+    sql = "#{left_sql} #{@operator} #{right_sql}"
+    rendered_orderings = []
+    visitor = ArelSQLiteVisitor.new()
+    def render_ordering(ordering)
+      rendered_orderings.push(visitor.render_expression(ordering, params))
+    end
+    @orderings.each(render_ordering)
+    if rendered_orderings.length() > 0
+      sql = sql + " ORDER BY " + rendered_orderings.join(", ")
+    end
+    [sql, params]
   end
 
   def to_a(db)

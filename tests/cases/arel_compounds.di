@@ -70,6 +70,16 @@ def run_tests()
     Minitest.assert_equal("SELECT \"combined\".\"value\" FROM (SELECT \"first_values\".\"value\" FROM \"first_values\" UNION ALL SELECT \"second_values\".\"value\" FROM \"second_values\") AS \"combined\"", sql)
   end
 
+  def test_compound_result_can_be_ordered()
+    first = Arel.table("first_values")
+    second = Arel.table("second_values")
+    left = Arel.from(first).project(first.column("name"))
+    right = Arel.from(second).project(second.column("name"))
+    ordering = Arel.asc(Arel.sql("name")).nulls_last()
+    sql, params = Arel.union_all(left, right).order(ordering).to_sql()
+    Minitest.assert_equal("SELECT \"first_values\".\"name\" FROM \"first_values\" UNION ALL SELECT \"second_values\".\"name\" FROM \"second_values\" ORDER BY name ASC NULLS LAST", sql)
+  end
+
   suite = Minitest.new()
   suite.test("UNION", test_union_combines_queries_and_binds)
   suite.test("UNION ALL", test_union_all_preserves_duplicates_in_sqlite)
@@ -77,6 +87,7 @@ def run_tests()
   suite.test("EXCEPT", test_except_renders_structurally)
   suite.test("compound projection validation", test_compound_projection_counts_must_match)
   suite.test("compound derived source", test_compound_query_can_be_a_derived_source)
+  suite.test("compound ordering", test_compound_result_can_be_ordered)
   suite.run()
 end
 
