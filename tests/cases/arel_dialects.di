@@ -9,6 +9,17 @@ class PortableTestVisitor < ArelVisitor
                         bind_values = true) -> String
     super(limit_value, offset_value, params, false)
   end
+  def render_literal(value) -> String
+    if value is Bool
+      if value
+        "1"
+      else
+        "0"
+      end
+    else
+      super(value)
+    end
+  end
 end
 
 def run_tests()
@@ -141,12 +152,13 @@ def run_tests()
   def test_portable_select_nodes_render_without_extensions()
     people = Arel.table("people")
     query = Arel.from(people).project([
-      people.column("name"), Arel.as(people.column("score").add(1), "next_score")
+      people.column("name"), Arel.as(people.column("score").add(1), "next_score"),
+      Arel.as(Arel.literal(true), "enabled")
     ])
     query = query.where(people.column("active").eq(true))
     query = query.order(people.column("name").asc()).take(5)
     sql, params = query.to_sql(PortableTestVisitor.new())
-    Minitest.assert_equal("SELECT \"people\".\"name\", (\"people\".\"score\" + ?) AS \"next_score\" FROM \"people\" WHERE \"people\".\"active\" = ? ORDER BY \"people\".\"name\" ASC LIMIT 5", sql)
+    Minitest.assert_equal("SELECT \"people\".\"name\", (\"people\".\"score\" + ?) AS \"next_score\", 1 AS \"enabled\" FROM \"people\" WHERE \"people\".\"active\" = ? ORDER BY \"people\".\"name\" ASC LIMIT 5", sql)
     Minitest.assert_equal(1, params[0])
     Minitest.assert_equal(true, params[1])
     Minitest.assert_equal(2, params.length())
