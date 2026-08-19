@@ -1,133 +1,294 @@
-# A small, chainable, adapter-agnostic SQL query builder for Diamond --
-# the first slice toward a DataMapper-style persistence layer (see
-# packages/arel/README.md for the full design rationale). Builds and
-# renders SELECT statements only; INSERT/UPDATE/DELETE belong to a
-# mapper/repository layer built on top of this, not here -- matches
-# real Arel's own historical scope in Rails.
-#
-# ArelQuery is immutable: every chain method returns a *new* ArelQuery
-# rather than mutating the receiver, so a base query can be safely
-# reused as a starting point for several different queries:
-#
-#   base = Arel.from("people").where({"active": true})
-#   adults = base.where("age >= ?", [18])
-#   minors = base.where("age < ?", [18])
-#
-# `adults`/`minors` each see only their own added where-clause, not
-# each other's -- `base` itself is never touched by either.
-#
-# Nothing here mentions SQLite3 (or any other adapter) by name --
-# #to_a/#count only ever call `db.query(sql, params)`, the exact method
-# shape the SQLite3 driver already exposes (see docs/io.md's "SQLite3"
-# section). Any future adapter exposing the same #query(sql, params)
-# contract is a drop-in target, the same way packages/rack stayed
-# server-agnostic by depending on a shared method convention rather
-# than a concrete type.
+# Immutable SQL AST and SQLite renderer. Query nodes describe intent; only
+# ArelSQLiteVisitor knows how that intent becomes SQL.
 
-class ArelQuery
-  def initialize(table, wheres, order_columns, limit_value, offset_value, select_columns)
+def arel_array(value)
+  if value is Array
+    value
+  else
+    [value]
+  end
+end
+
+def arel_quote_identifier(name: String) -> String
+  pieces = ["\""]
+  def append_character(character)
+    if character == "\""
+      pieces.push("\"")
+    end
+    pieces.push(character)
+  end
+  name.chars().each(append_character)
+  pieces.push("\"")
+  pieces.join()
+end
+
+class ArelNot
+  def initialize(expression)
+    @expression = expression
+  end
+  def expression() = @expression
+end
+
+class ArelLogical
+  def initialize(left, operator: String, right)
+    @left = left
+    @operator = operator
+    @right = right
+  end
+  def left() = @left
+  def operator() = @operator
+  def right() = @right
+  def and_also(other) = ArelLogical.new(self, "AND", other)
+  def or_else(other) = ArelLogical.new(self, "OR", other)
+  def not_() = ArelNot.new(self)
+end
+
+class ArelPredicate
+  def initialize(left, operator: String, right)
+    @left = left
+    @operator = operator
+    @right = right
+  end
+  def left() = @left
+  def operator() = @operator
+  def right() = @right
+  def and_also(other) = ArelLogical.new(self, "AND", other)
+  def or_else(other) = ArelLogical.new(self, "OR", other)
+  def not_() = ArelNot.new(self)
+end
+
+class ArelOrdering
+  def initialize(expression, direction: String)
+    @expression = expression
+    @direction = direction
+  end
+  def expression() = @expression
+  def direction() = @direction
+end
+
+class ArelAttribute
+  def initialize(table, name: String)
     @table = table
-    @wheres = wheres
-    @order_columns = order_columns
-    @limit_value = limit_value
-    @offset_value = offset_value
-    @select_columns = select_columns
+    @name = name
+  end
+  def table() = @table
+  def name() = @name
+  def eq(value) = ArelPredicate.new(self, "=", value)
+  def not_eq(value) = ArelPredicate.new(self, "!=", value)
+  def lt(value) = ArelPredicate.new(self, "<", value)
+  def lteq(value) = ArelPredicate.new(self, "<=", value)
+  def gt(value) = ArelPredicate.new(self, ">", value)
+  def gteq(value) = ArelPredicate.new(self, ">=", value)
+  def asc() = ArelOrdering.new(self, "ASC")
+  def desc() = ArelOrdering.new(self, "DESC")
+end
+
+class ArelTable
+  def initialize(name: String)
+    @name = name
+  end
+  def name() = @name
+  def column(name: String) = ArelAttribute.new(self, name)
+end
+
+class ArelRawSql
+  def initialize(sql: String, params: Array)
+    @sql = sql
+    @params = params
+  end
+  def sql() = @sql
+  def params() = @params
+end
+
+class ArelSQLiteVisitor
+  def render_attribute(attribute: ArelAttribute) -> String
+    arel_quote_identifier(attribute.table().name()) + "." + arel_quote_identifier(attribute.name())
   end
 
-  # condition: either a Hash (ANDed equality shorthand, e.g.
-  # {"active": true, "role": "admin"}) or a raw SQL fragment String
-  # (e.g. "age > ?") paired with its own `params` Array. Multiple
-  # .where() calls -- and multiple keys within one Hash call -- all AND
-  # together; there's no OR/NOT in this v1 (see the README).
-  def where(condition, params = nil)
-    new_wheres = @wheres
-    def add_equality(key, value)
-      new_wheres = array_concat(new_wheres, [["#{key} = ?", [value]]])
-    end
-    if condition is Hash
-      condition.each(add_equality)
+  def render_expression(expression, params: Array) -> String
+    if expression is ArelAttribute
+      self.render_attribute(expression)
+    elsif expression is ArelPredicate
+      left = self.render_attribute(expression.left())
+      value = expression.right()
+      if value == nil
+        if expression.operator() == "="
+          "#{left} IS NULL"
+        elsif expression.operator() == "!="
+          "#{left} IS NOT NULL"
+        else
+          raise ArgumentError.new("nil only supports eq/not_eq predicates")
+        end
+      elsif value is ArelAttribute
+        "#{left} #{expression.operator()} #{self.render_attribute(value)}"
+      else
+        params.push(value)
+        "#{left} #{expression.operator()} ?"
+      end
+    elsif expression is ArelLogical
+      left = self.render_expression(expression.left(), params)
+      right = self.render_expression(expression.right(), params)
+      "(#{left} #{expression.operator()} #{right})"
+    elsif expression is ArelNot
+      inner = self.render_expression(expression.expression(), params)
+      "(NOT #{inner})"
+    elsif expression is ArelOrdering
+      "#{self.render_attribute(expression.expression())} #{expression.direction()}"
+    elsif expression is ArelRawSql
+      def append_param(value)
+        params.push(value)
+      end
+      expression.params().each(append_param)
+      expression.sql()
+    elsif expression is String
+      expression
     else
+      raise TypeError.new("unsupported Arel expression")
+    end
+  end
+
+  def render(query) -> Array
+    visitor = self
+    params = []
+    projections = []
+    def render_projection(projection)
+      projections.push(visitor.render_expression(projection, params))
+    end
+    query.projections().each(render_projection)
+    table_sql = query.table_name()
+    if query.quoted_identifiers()
+      table_sql = arel_quote_identifier(table_sql)
+    end
+    sql = "SELECT #{projections.join(", ")} FROM #{table_sql}"
+
+    predicates = []
+    def render_predicate(predicate)
+      predicates.push(visitor.render_expression(predicate, params))
+    end
+    query.predicates().each(render_predicate)
+    if predicates.length() > 0
+      sql = sql + " WHERE " + predicates.join(" AND ")
+    end
+
+    orderings = []
+    def render_ordering(ordering)
+      orderings.push(visitor.render_expression(ordering, params))
+    end
+    query.orderings().each(render_ordering)
+    if orderings.length() > 0
+      sql = sql + " ORDER BY " + orderings.join(", ")
+    end
+
+    if query.limit_value() != nil
+      if query.bind_limits()
+        sql = sql + " LIMIT ?"
+        params.push(query.limit_value())
+      else
+        sql = sql + " LIMIT #{query.limit_value()}"
+      end
+    end
+    if query.offset_value() != nil
+      if query.bind_limits()
+        sql = sql + " OFFSET ?"
+        params.push(query.offset_value())
+      else
+        sql = sql + " OFFSET #{query.offset_value()}"
+      end
+    end
+    [sql, params]
+  end
+end
+
+class ArelQuery
+  def initialize(table_name, predicates, orderings, limit_value, offset_value,
+                 projections, quoted_identifiers, bind_limits)
+    @table_name = table_name
+    @predicates = predicates
+    @orderings = orderings
+    @limit_value = limit_value
+    @offset_value = offset_value
+    @projections = projections
+    @quoted_identifiers = quoted_identifiers
+    @bind_limits = bind_limits
+  end
+
+  def self.for_table(table: ArelTable)
+    ArelQuery.new(table.name(), [], [], nil, nil, [ArelRawSql.new("*", [])], true, true)
+  end
+
+  def table_name() = @table_name
+  def predicates() = @predicates
+  def orderings() = @orderings
+  def limit_value() = @limit_value
+  def offset_value() = @offset_value
+  def projections() = @projections
+  def quoted_identifiers() = @quoted_identifiers
+  def bind_limits() = @bind_limits
+
+  def copy(predicates, orderings, limit_value, offset_value, projections)
+    ArelQuery.new(@table_name, predicates, orderings, limit_value, offset_value,
+      projections, @quoted_identifiers, @bind_limits)
+  end
+
+  def where(condition, params = nil)
+    additions = []
+    if condition is Hash
+      table = ArelTable.new(@table_name)
+      quoted_identifiers = @quoted_identifiers
+      def add_equality(key, value)
+        if quoted_identifiers
+          additions.push(table.column(key).eq(value))
+        else
+          additions.push(ArelRawSql.new("#{key} = ?", [value]))
+        end
+      end
+      condition.each(add_equality)
+    elsif condition is String
       bound = params
       if bound == nil
         bound = []
       end
-      new_wheres = array_concat(new_wheres, [[condition, bound]])
+      additions.push(ArelRawSql.new(condition, bound))
+    else
+      additions.push(condition)
     end
-    ArelQuery.new(@table, new_wheres, @order_columns, @limit_value, @offset_value, @select_columns)
+    self.copy(array_concat(@predicates, additions), @orderings, @limit_value,
+      @offset_value, @projections)
   end
 
-  def select(columns)
-    ArelQuery.new(@table, @wheres, @order_columns, @limit_value, @offset_value, columns)
+  def project(columns)
+    self.copy(@predicates, @orderings, @limit_value, @offset_value, arel_array(columns))
   end
-
-  # column_or_columns: a single column String ("name", or "age DESC")
-  # or an Array of them -- either way, appended after whatever ordering
-  # earlier .order() calls already contributed.
+  def select(columns) = self.project(columns)
   def order(column_or_columns)
-    columns = column_or_columns
-    if !(columns is Array)
-      columns = [columns]
-    end
-    new_order_columns = array_concat(@order_columns, columns)
-    ArelQuery.new(@table, @wheres, new_order_columns, @limit_value, @offset_value, @select_columns)
+    self.copy(@predicates, array_concat(@orderings, arel_array(column_or_columns)),
+      @limit_value, @offset_value, @projections)
   end
+  def take(n: Int) = self.copy(@predicates, @orderings, n, @offset_value, @projections)
+  def limit(n: Int) = self.take(n)
+  def skip(n: Int) = self.copy(@predicates, @orderings, @limit_value, n, @projections)
+  def offset(n: Int) = self.skip(n)
+  def to_sql() = ArelSQLiteVisitor.new().render(self)
 
-  def limit(n)
-    ArelQuery.new(@table, @wheres, @order_columns, n, @offset_value, @select_columns)
-  end
-
-  def offset(n)
-    ArelQuery.new(@table, @wheres, @order_columns, @limit_value, n, @select_columns)
-  end
-
-  # [sql_string, params_array] -- the same positional-Array-return shape
-  # used elsewhere in this codebase (parsed URLs, HTTP responses, ...).
-  def to_sql()
-    sql = "SELECT #{@select_columns.join(", ")} FROM #{@table}"
-    all_params = []
-    fragments = []
-    def collect_where(entry)
-      fragments.push(entry[0])
-      all_params = array_concat(all_params, entry[1])
-    end
-    if @wheres.length() > 0
-      @wheres.each(collect_where)
-      sql = sql + " WHERE " + fragments.join(" AND ")
-    end
-    if @order_columns.length() > 0
-      sql = sql + " ORDER BY " + @order_columns.join(", ")
-    end
-    if @limit_value != nil
-      sql = sql + " LIMIT #{@limit_value}"
-    end
-    if @offset_value != nil
-      sql = sql + " OFFSET #{@offset_value}"
-    end
-    [sql, all_params]
-  end
-
-  # db: an already-open connection exposing #query(sql, params) --
-  # see the file comment above on why nothing here names SQLite3
-  # directly.
   def to_a(db)
     sql, params = self.to_sql()
     db.query(sql, params)
   end
 
-  # Wraps the *entire* rendered query (including any LIMIT/OFFSET) as a
-  # subquery, so COUNT is correct regardless of which clauses are
-  # present -- slightly more overhead than special-casing the common
-  # case, but never wrong.
   def count(db)
     sql, params = self.to_sql()
-    count_sql = "SELECT COUNT(*) AS count FROM (#{sql})"
-    rows = db.query(count_sql, params)
+    rows = db.query("SELECT COUNT(*) AS count FROM (#{sql})", params)
     rows[0]["count"]
   end
 end
 
 class Arel
+  def self.table(name: String) = ArelTable.new(name)
   def self.from(table)
-    ArelQuery.new(table, [], [], nil, nil, ["*"])
+    if table is ArelTable
+      ArelQuery.for_table(table)
+    else
+      ArelQuery.new(table, [], [], nil, nil, ["*"], false, false)
+    end
   end
 end

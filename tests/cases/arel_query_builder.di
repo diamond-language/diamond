@@ -82,6 +82,57 @@ def run_tests()
     db.close()
   end
 
+  def test_ast_query_quotes_identifiers_and_binds_values()
+    people = Arel.table("people")
+    query = Arel.from(people).project([people.column("name"), people.column("age")])
+    query = query.where(people.column("active").eq(true).and_also(people.column("age").gteq(18)))
+    query = query.order(people.column("name").asc()).take(20).skip(5)
+    sql, params = query.to_sql()
+    Minitest.assert_equal("SELECT \"people\".\"name\", \"people\".\"age\" FROM \"people\" WHERE (\"people\".\"active\" = ? AND \"people\".\"age\" >= ?) ORDER BY \"people\".\"name\" ASC LIMIT ? OFFSET ?", sql)
+    Minitest.assert_equal(4, params.length())
+    Minitest.assert_equal(true, params[0])
+    Minitest.assert_equal(18, params[1])
+    Minitest.assert_equal(20, params[2])
+    Minitest.assert_equal(5, params[3])
+  end
+
+  def test_or_not_and_null_predicates()
+    people = Arel.table("people")
+    roles = people.column("role").eq("admin").or_else(people.column("role").eq("owner")).not_()
+    predicate = people.column("deleted_at").eq(nil).and_also(roles)
+    sql, params = Arel.from(people).where(predicate).to_sql()
+    Minitest.assert_equal("SELECT * FROM \"people\" WHERE (\"people\".\"deleted_at\" IS NULL AND (NOT (\"people\".\"role\" = ? OR \"people\".\"role\" = ?)))", sql)
+    Minitest.assert_equal(2, params.length())
+    Minitest.assert_equal("admin", params[0])
+    Minitest.assert_equal("owner", params[1])
+  end
+
+  def test_not_eq_nil_uses_is_not_null()
+    people = Arel.table("people")
+    sql, params = Arel.from(people).where(people.column("name").not_eq(nil)).to_sql()
+    Minitest.assert_equal("SELECT * FROM \"people\" WHERE \"people\".\"name\" IS NOT NULL", sql)
+    Minitest.assert_empty(params)
+  end
+
+  def test_identifier_quotes_are_escaped()
+    unusual = Arel.table("user\"data")
+    sql, params = Arel.from(unusual).project(unusual.column("say\"hi")).to_sql()
+    Minitest.assert_equal("SELECT \"user\"\"data\".\"say\"\"hi\" FROM \"user\"\"data\"", sql)
+  end
+
+  def test_ast_executes_against_sqlite()
+    db = SQLite3.open(":memory:")
+    db.execute("CREATE TABLE people (name TEXT, age INTEGER, active INTEGER)")
+    db.execute("INSERT INTO people VALUES (?, ?, ?)", ["Ada", 30, 1])
+    db.execute("INSERT INTO people VALUES (?, ?, ?)", ["Bob", 15, 1])
+    people = Arel.table("people")
+    query = Arel.from(people).project(people.column("name"))
+    rows = query.where(people.column("age").gteq(18)).to_a(db)
+    Minitest.assert_equal(1, rows.length())
+    Minitest.assert_equal("Ada", rows[0]["name"])
+    db.close()
+  end
+
   suite = Minitest.new()
   suite.test("hash where renders equality", test_hash_where_renders_equality)
   suite.test("raw fragment where with params", test_raw_fragment_where_with_params)
@@ -91,6 +142,11 @@ def run_tests()
   suite.test("base query is not mutated by branches", test_base_query_is_not_mutated_by_branches)
   suite.test("to_a runs the query against a real db", test_to_a_runs_the_query_against_a_real_db)
   suite.test("count wraps the full query", test_count_wraps_the_full_query)
+  suite.test("AST query quotes identifiers and binds values", test_ast_query_quotes_identifiers_and_binds_values)
+  suite.test("OR, NOT, and NULL predicates", test_or_not_and_null_predicates)
+  suite.test("not-equal nil uses IS NOT NULL", test_not_eq_nil_uses_is_not_null)
+  suite.test("identifier quotes are escaped", test_identifier_quotes_are_escaped)
+  suite.test("AST executes against SQLite", test_ast_executes_against_sqlite)
   suite.run()
 end
 

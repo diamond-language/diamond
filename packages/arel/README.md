@@ -1,16 +1,16 @@
 # packages/arel
 
-A small, immutable, chainable SQL query builder for
+A small, immutable SQL AST and chainable query builder for
 [Diamond](https://gitlab.com/dmn9180/diamond) -- the first slice toward
 a DataMapper-style persistence layer. Builds and renders `SELECT`
-statements only; `INSERT`/`UPDATE`/`DELETE` belong to a mapper/
+statements through a SQLite visitor; `INSERT`/`UPDATE`/`DELETE` belong to a mapper/
 repository layer built on top of this, not here -- matches real
 [Arel](https://github.com/rails/rails/tree/main/activerecord)'s own
 historical scope in Rails.
 
-This package doesn't mention `SQLite3` (or any other adapter) by name.
-`#to_a`/`#count` only ever call `db.query(sql, params)`, the exact
-method shape the SQLite3 driver already exposes (see
+The initial renderer is `ArelSQLiteVisitor`, but execution remains loosely
+coupled: `#to_a`/`#count` only call `db.query(sql, params)`, the exact
+method shape the SQLite3 driver exposes (see
 [`docs/io.md`](https://gitlab.com/dmn9180/diamond/-/blob/main/docs/io.md)'s
 "SQLite3" section). Any future adapter exposing the same
 `#query(sql, params)` contract is a drop-in target, the same way
@@ -25,6 +25,39 @@ remote and depend on it via `facet` (see
 [`docs/packages.md`](https://gitlab.com/dmn9180/diamond/-/blob/main/docs/packages.md)).
 
 ## Usage
+
+The AST API quotes identifiers and binds values:
+
+```ruby
+require "/path/to/arel"
+
+people = Arel.table("people")
+query = Arel.from(people).project([
+  people.column("name"),
+  people.column("age")
+])
+active = people.column("active").eq(true)
+adult = people.column("age").gteq(18)
+query = query.where(active.and_also(adult))
+query = query.order(people.column("name").asc()).take(20).skip(5)
+
+sql, params = query.to_sql()
+# SELECT "people"."name", "people"."age" FROM "people"
+# WHERE ("people"."active" = ? AND "people"."age" >= ?)
+# ORDER BY "people"."name" ASC LIMIT ? OFFSET ?
+# params: [true, 18, 20, 5]
+```
+
+Diamond does not currently support user-defined `[]`, so attributes use
+`table.column("name")` rather than Ruby Arel's `table[:name]`. Likewise,
+`and_also`/`or_else`/`not_` avoid Diamond's reserved boolean keywords.
+
+Supported attribute predicates are `eq`, `not_eq`, `lt`, `lteq`, `gt`, and
+`gteq`. `eq(nil)` and `not_eq(nil)` render as `IS NULL` and `IS NOT NULL`.
+Predicates compose with `and_also`, `or_else`, and `not_`; explicit grouping is
+preserved in the rendered SQL. Attributes also provide `asc()` and `desc()`.
+
+The original string-oriented API remains available for compatibility:
 
 ```ruby
 require "/path/to/arel"
@@ -46,7 +79,7 @@ to reuse as a starting point for several different queries -- `adults`/
 `minors` above each see only their own added where-clause, not each
 other's, and `base` itself is never touched by either.
 
-### `where`
+### Compatibility `where`
 
 Takes either a `Hash` (ANDed equality shorthand) or a raw SQL fragment
 `String` paired with its own `params` `Array`:
@@ -59,11 +92,16 @@ Arel.from("people").where("age > ?", [21])
 # => WHERE age > ?
 ```
 
-Multiple `.where()` calls -- and multiple keys within one `Hash` call --
-all AND together. There's no `OR`/`NOT` in this v1; see "What's
-deliberately out of scope" below.
+Multiple legacy `.where()` calls -- and multiple keys within one `Hash` call --
+all AND together. Use AST predicates for explicit `OR`/`NOT` composition.
 
-### `select`, `order`, `limit`, `offset`
+### `project`, `order`, `take`, `skip`
+
+The AST names are `project`, `order`, `take`, and `skip`; `select`, `limit`,
+and `offset` remain aliases. A projection accepts one expression or an Array
+of expressions because Diamond does not have variadic arguments.
+
+The legacy API continues to accept raw Strings:
 
 ```ruby
 Arel.from("people").select(["name", "age"]).order("age DESC").limit(10).offset(20)
@@ -97,10 +135,9 @@ why nothing here names `SQLite3` directly.
 - **`INSERT`/`UPDATE`/`DELETE`.** This builds and reads `SELECT`
   statements only -- writes belong to a mapper/repository layer above
   this one.
-- **`OR`/`NOT`, joins, subqueries as first-class values, raw SQL
-  injection points beyond an explicit fragment `String`.** Everything
-  `.where()` adds ANDs together; there's no query-composition algebra
-  here, just enough to build the common case.
-- **Any adapter-specific behavior or SQL dialect differences.** This
-  renders plain ANSI-ish SQL with `?` placeholders; adapter-specific
-  quoting, dialect quirks, or connection management are out of scope.
+- **Joins, grouping, aggregates, aliases, and subqueries as first-class
+  values.** These are the next relational-algebra layers, not hidden raw SQL
+  shortcuts in the initial AST.
+- **Visitors for other adapters.** Nodes contain no SQLite rendering logic;
+  `ArelSQLiteVisitor` is deliberately separate so later dialect visitors can
+  render the same query tree.
