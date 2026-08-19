@@ -31,10 +31,21 @@ def run_tests()
     Minitest.assert_equal("42", params[0])
   end
 
+  def test_cast_types_reject_sql_fragments()
+    message = nil
+    begin
+      Arel.cast(Arel.literal(1), "INTEGER); DROP TABLE values_table; --")
+    rescue error: ArgumentError
+      message = error.message()
+    end
+    Minitest.assert_equal("SQL cast type must be an identifier", message)
+  end
+
   suite = Minitest.new()
   suite.test("generic SQL function", test_generic_functions_are_structural)
   suite.test("generic function validation", test_generic_function_names_reject_sql_fragments)
   suite.test("structural CAST", test_casts_are_structural_and_preserve_binds)
+  suite.test("CAST type validation", test_cast_types_reject_sql_fragments)
   suite.run()
 end
 
