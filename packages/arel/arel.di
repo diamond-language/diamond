@@ -899,13 +899,13 @@ class ArelQuery
     self.render_with(renderer)
   end
 
-  def to_a(db)
-    sql, params = self.to_sql()
+  def to_a(db, visitor = nil)
+    sql, params = self.to_sql(visitor)
     db.query(sql, params)
   end
 
-  def count(db)
-    sql, params = self.to_sql()
+  def count(db, visitor = nil)
+    sql, params = self.to_sql(visitor)
     rows = db.query("SELECT COUNT(*) AS count FROM (#{sql})", params)
     rows[0]["count"]
   end
