@@ -345,12 +345,13 @@ end
 
 def arel_append_cte(ctes: Array, name: String, query, recursive = false) -> Array
   duplicate = false
-  def check_cte(cte)
-    if cte.name() == name
+  index = 0
+  while index < ctes.length()
+    if ctes[index].name() == name
       duplicate = true
     end
+    index = index + 1
   end
-  ctes.each(check_cte)
   if duplicate
     raise ArgumentError.new("duplicate CTE name")
   end
