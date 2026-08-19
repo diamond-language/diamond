@@ -169,6 +169,18 @@ class ArelLiteral
   def value() = @value
 end
 
+class ArelCast
+  def initialize(expression, type_name: String)
+    if !Regexp.new("\\A[A-Za-z_][A-Za-z0-9_]*\\z").match?(type_name)
+      raise ArgumentError.new("SQL cast type must be an identifier")
+    end
+    @expression = expression
+    @type_name = type_name
+  end
+  def expression() = @expression
+  def type_name() = @type_name
+end
+
 class ArelAttribute
   def initialize(table, name: String)
     @table = table
@@ -593,6 +605,9 @@ class ArelSQLiteVisitor
       else
         "#{expression.value()}"
       end
+    elsif expression is ArelCast
+      inner = self.render_expression(expression.expression(), params)
+      "CAST(#{inner} AS #{expression.type_name()})"
     elsif expression is String
       expression
     else
@@ -1462,6 +1477,7 @@ class Arel
   def self.expression(expression) = ArelAssignmentValue.new(expression)
   def self.excluded(name: String) = ArelExcludedAttribute.new(name)
   def self.literal(value) = ArelLiteral.new(value)
+  def self.cast(expression, type_name: String) = ArelCast.new(expression, type_name)
   def self.conflict_target(columns) = ArelConflictTarget.new(arel_array(columns))
   def self.render(statement, visitor = nil) = statement.to_sql(visitor)
   def self.union(left, right) = ArelCompoundQuery.new(left, "UNION", right)

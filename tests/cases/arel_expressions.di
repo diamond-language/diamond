@@ -22,9 +22,19 @@ def run_tests()
     Minitest.assert_equal("SQL function name must be an identifier", message)
   end
 
+  def test_casts_are_structural_and_preserve_binds()
+    values = Arel.table("values_table")
+    expression = Arel.cast(Arel.sql("?", ["42"]), "INTEGER")
+    query = Arel.from(values).project(Arel.as(expression, "number"))
+    sql, params = query.to_sql()
+    Minitest.assert_equal("SELECT CAST(? AS INTEGER) AS \"number\" FROM \"values_table\"", sql)
+    Minitest.assert_equal("42", params[0])
+  end
+
   suite = Minitest.new()
   suite.test("generic SQL function", test_generic_functions_are_structural)
   suite.test("generic function validation", test_generic_function_names_reject_sql_fragments)
+  suite.test("structural CAST", test_casts_are_structural_and_preserve_binds)
   suite.run()
 end
 
