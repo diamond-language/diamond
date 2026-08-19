@@ -185,7 +185,11 @@ class ArelSQLiteVisitor
         table_sql = table_sql + " AS " + arel_quote_identifier(query.table_alias())
       end
     end
-    sql = "SELECT #{projections.join(", ")} FROM #{table_sql}"
+    select_keyword = "SELECT "
+    if query.distinct_value()
+      select_keyword = "SELECT DISTINCT "
+    end
+    sql = select_keyword + projections.join(", ") + " FROM #{table_sql}"
 
     predicates = []
     def render_predicate(predicate)
@@ -227,7 +231,8 @@ end
 
 class ArelQuery
   def initialize(table_name, predicates, orderings, limit_value, offset_value,
-                 projections, quoted_identifiers, bind_limits, table_alias = nil)
+                 projections, quoted_identifiers, bind_limits, table_alias = nil,
+                 distinct_value = false)
     @table_name = table_name
     @predicates = predicates
     @orderings = orderings
@@ -237,6 +242,7 @@ class ArelQuery
     @quoted_identifiers = quoted_identifiers
     @bind_limits = bind_limits
     @table_alias = table_alias
+    @distinct_value = distinct_value
   end
 
   def self.for_table(table: ArelTable)
@@ -253,10 +259,11 @@ class ArelQuery
   def quoted_identifiers() = @quoted_identifiers
   def bind_limits() = @bind_limits
   def table_alias() = @table_alias
+  def distinct_value() = @distinct_value
 
   def copy(predicates, orderings, limit_value, offset_value, projections)
     ArelQuery.new(@table_name, predicates, orderings, limit_value, offset_value,
-      projections, @quoted_identifiers, @bind_limits, @table_alias)
+      projections, @quoted_identifiers, @bind_limits, @table_alias, @distinct_value)
   end
 
   def where(condition, params = nil)
@@ -289,6 +296,10 @@ class ArelQuery
     self.copy(@predicates, @orderings, @limit_value, @offset_value, arel_array(columns))
   end
   def select(columns) = self.project(columns)
+  def distinct()
+    ArelQuery.new(@table_name, @predicates, @orderings, @limit_value, @offset_value,
+      @projections, @quoted_identifiers, @bind_limits, @table_alias, true)
+  end
   def order(column_or_columns)
     self.copy(@predicates, array_concat(@orderings, arel_array(column_or_columns)),
       @limit_value, @offset_value, @projections)

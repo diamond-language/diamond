@@ -140,6 +140,12 @@ def run_tests()
     Minitest.assert_equal("SELECT \"p\".\"name\" AS \"display_name\" FROM \"people\" AS \"p\"", sql)
   end
 
+  def test_distinct_projection()
+    people = Arel.table("people")
+    sql, params = Arel.from(people).project(people.column("role")).distinct().to_sql()
+    Minitest.assert_equal("SELECT DISTINCT \"people\".\"role\" FROM \"people\"", sql)
+  end
+
   suite = Minitest.new()
   suite.test("hash where renders equality", test_hash_where_renders_equality)
   suite.test("raw fragment where with params", test_raw_fragment_where_with_params)
@@ -155,6 +161,7 @@ def run_tests()
   suite.test("identifier quotes are escaped", test_identifier_quotes_are_escaped)
   suite.test("AST executes against SQLite", test_ast_executes_against_sqlite)
   suite.test("table and projection aliases", test_table_and_projection_aliases)
+  suite.test("distinct projection", test_distinct_projection)
   suite.run()
 end
 
