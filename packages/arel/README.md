@@ -55,6 +55,10 @@ traversal. SQLite binds limits and offsets, and renders an offset without an
 explicit limit as `LIMIT -1 OFFSET ?`, which is valid SQLite syntax.
 `take`/`limit` and `skip`/`offset` reject negative values with `ArgumentError`.
 They remain immutable for both SELECT and compound queries.
+Pagination composes through derived sources, CTE bodies, EXISTS, membership and
+scalar subqueries, and INSERT…SELECT sources. Inner predicate and pagination
+binds remain ahead of the enclosing query's binds in rendered placeholder
+order.
 
 ## Install
 
