@@ -510,11 +510,12 @@ class ArelSQLiteVisitor
         end
       else
         placeholders = []
-        def bind_member(value)
-          params.push(value)
+        value_index = 0
+        while value_index < expression.values().length()
+          params.push(expression.values()[value_index])
           placeholders.push("?")
+          value_index = value_index + 1
         end
-        expression.values().each(bind_member)
         operator = "IN"
         if expression.negated?()
           operator = "NOT IN"
