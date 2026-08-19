@@ -1,6 +1,9 @@
 require "../../lib/minitest"
 require "../../packages/arel/arel"
 
+class ThirdPartyArelNode
+end
+
 def run_tests()
   def test_core_expressions_have_deterministic_inspection()
     people = Arel.table("people")
@@ -22,6 +25,7 @@ def run_tests()
     Minitest.assert_equal("Assignment(Attribute(people.score))", Arel.inspect(Arel.expression(people.column("score"))))
     Minitest.assert_equal("ConflictTarget(email, tenant_id, predicate=false)", Arel.inspect(Arel.conflict_target(["email", "tenant_id"])))
     Minitest.assert_equal("DefaultValues", Arel.inspect(ArelDefaultValues.new()))
+    Minitest.assert_equal("ArelNode(unknown)", Arel.inspect(ThirdPartyArelNode.new()))
     roles = Arel.table("roles")
     join = ArelJoin.new(roles, people.column("role_id").eq(roles.column("id")), "LEFT OUTER")
     Minitest.assert_equal("Join(LEFT OUTER, Table(roles), Predicate(=, Attribute(people.role_id), Attribute(roles.id)))", Arel.inspect(join))

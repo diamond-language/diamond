@@ -1573,7 +1573,7 @@ def inspect_tail(node) -> String
     state = node.structure()
     "Delete(from=#{state[0].reference_name()}, predicates=#{state[1].length()}, returning=#{state[2].length()}, all=#{state[3]}, ctes=#{state[4].length()})"
   else
-    "ArelNode(unsupported)"
+    "ArelNode(unknown)"
   end
 end
 
