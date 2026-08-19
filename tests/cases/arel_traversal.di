@@ -354,6 +354,13 @@ def run_tests()
     policy_result = Arel.simplify(policy_source, [[policy_source, policy_replacement]])
     Minitest.assert_equal("Predicate(=, Attribute(people.verified), Bind(true))",
       Arel.inspect(policy_result))
+    policy_query = Arel.from(people).where(policy_source.and_also(
+      people.column("age").gt(18)))
+    policy_query_result = Arel.simplify(policy_query,
+      [[policy_source, policy_replacement]])
+    policy_sql, policy_params = policy_query_result.to_sql()
+    Minitest.assert_equal("SELECT * FROM \"people\" WHERE (\"people\".\"verified\" = ? AND \"people\".\"age\" > ?)", policy_sql)
+    Minitest.assert_equal("true|18", policy_params.join("|"))
   end
 
   suite = Minitest.new()
