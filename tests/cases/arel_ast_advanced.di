@@ -59,6 +59,16 @@ def run_tests()
     Minitest.assert_equal(1, params[0])
   end
 
+  def test_inner_join_is_structural_and_qualified()
+    people = Arel.table("people")
+    companies = Arel.table("companies")
+    on = people.column("company_id").eq(companies.column("id"))
+    query = Arel.from(people).join(companies, on)
+    sql, params = query.project([people.column("name"), companies.column("name")]).to_sql()
+    Minitest.assert_equal("SELECT \"people\".\"name\", \"companies\".\"name\" FROM \"people\" INNER JOIN \"companies\" ON \"people\".\"company_id\" = \"companies\".\"id\"", sql)
+    Minitest.assert_empty(params)
+  end
+
   suite = Minitest.new()
   suite.test("BETWEEN predicates", test_between_predicates_bind_both_bounds)
   suite.test("LIKE predicates", test_like_predicates_are_bound)
@@ -66,6 +76,7 @@ def run_tests()
   suite.test("GROUP BY", test_group_by_accepts_expression_arrays)
   suite.test("HAVING", test_having_uses_expression_nodes_and_binds)
   suite.test("explicit SQL literal", test_explicit_sql_literal_is_composable)
+  suite.test("inner join", test_inner_join_is_structural_and_qualified)
   suite.run()
 end
 
