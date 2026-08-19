@@ -17,6 +17,16 @@ class NestedTestArelVisitor < ArelSQLiteVisitor
   end
 end
 
+class WriteTestArelVisitor < ArelSQLiteVisitor
+  def render_expression(expression, params: Array) -> String
+    if expression is ArelExcludedAttribute
+      "incoming.#{arel_quote_identifier(expression.name())}"
+    else
+      super(expression, params)
+    end
+  end
+end
+
 def run_tests()
   def test_select_accepts_an_explicit_visitor()
     people = Arel.table("people")
@@ -53,11 +63,22 @@ def run_tests()
     Minitest.assert_equal("WITH \"named\" AS (SELECT \"people\".\"name\" FROM visited_people) SELECT * FROM visited_named", sql)
   end
 
+  def test_insert_expressions_use_the_explicit_visitor()
+    inventory = Arel.table("inventory")
+    insert = Arel.insert_into(inventory).values({"name": "pens", "qty": 4})
+    insert = insert.on_conflict_do_update(["name"], {
+      "qty": Arel.expression(Arel.excluded("qty"))
+    })
+    sql, params = insert.to_sql(WriteTestArelVisitor.new())
+    Minitest.assert_equal(true, sql.include?("\"qty\" = incoming.\"qty\""))
+  end
+
   suite = Minitest.new()
   suite.test("explicit SELECT visitor", test_select_accepts_an_explicit_visitor)
   suite.test("nested SELECT visitor", test_derived_queries_inherit_the_explicit_visitor)
   suite.test("compound visitor", test_compound_branches_inherit_the_explicit_visitor)
   suite.test("CTE visitor", test_cte_bodies_inherit_the_explicit_visitor)
+  suite.test("INSERT visitor", test_insert_expressions_use_the_explicit_visitor)
   suite.run()
 end
 

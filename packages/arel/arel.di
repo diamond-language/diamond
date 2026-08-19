@@ -1026,9 +1026,8 @@ end
 class ArelDefaultValues
 end
 
-def arel_render_returning_clause(expressions: Array, params: Array) -> String
+def arel_render_returning_clause(expressions: Array, params: Array, visitor) -> String
   rendered = []
-  visitor = ArelSQLiteVisitor.new()
   def render_expression(expression)
     rendered.push(visitor.render_expression(expression, params))
   end
@@ -1040,7 +1039,8 @@ def arel_render_returning_clause(expressions: Array, params: Array) -> String
   end
 end
 
-def arel_render_insert_conflict(target, ignore: Bool, assignments, params: Array) -> String
+def arel_render_insert_conflict(target, ignore: Bool, assignments, params: Array,
+                                visitor) -> String
   if !ignore && assignments == nil
     return ""
   end
@@ -1060,7 +1060,6 @@ def arel_render_insert_conflict(target, ignore: Bool, assignments, params: Array
     target_sql = " (#{targets.join(", ")})"
   end
   if predicate != nil
-    visitor = ArelSQLiteVisitor.new()
     target_sql = target_sql + " WHERE " + visitor.render_expression(predicate, params)
   end
   if ignore
@@ -1070,7 +1069,6 @@ def arel_render_insert_conflict(target, ignore: Bool, assignments, params: Array
     raise ArgumentError.new("conflict update requires at least one assignment")
   end
   rendered_assignments = []
-  visitor = ArelSQLiteVisitor.new()
   def render_assignment(name, value)
     if value is ArelAssignmentValue
       rendered = visitor.render_expression(value.expression(), params)
@@ -1149,13 +1147,12 @@ class ArelInsert
       @conflict_target, @conflict_ignore, @conflict_assignments, @ctes)
   end
 
-  def to_sql() -> Array
+  def render_with(visitor) -> Array
     if @rows.length() == 1 && @rows[0] is ArelDefaultValues
       params = []
       sql = "INSERT INTO #{arel_quote_identifier(@table.name())} DEFAULT VALUES"
-      sql = sql + arel_render_returning_clause(@returning, params)
+      sql = sql + arel_render_returning_clause(@returning, params, visitor)
       cte_params = []
-      visitor = ArelSQLiteVisitor.new()
       sql = visitor.render_ctes(self, cte_params) + sql
       return [sql, array_concat(cte_params, params)]
     end
@@ -1174,13 +1171,12 @@ class ArelInsert
         columns.push(arel_quote_identifier(name))
       end
       @source_columns.each(quote_source_column)
-      source_sql, params = @source_query.to_sql()
+      source_sql, params = @source_query.render_with(visitor)
       sql = "INSERT INTO #{arel_quote_identifier(@table.name())} " +
         "(#{columns.join(", ")}) #{source_sql}"
       sql = sql + arel_render_insert_conflict(@conflict_target, @conflict_ignore,
-        @conflict_assignments, params)
-      visitor = ArelSQLiteVisitor.new()
-      sql = sql + arel_render_returning_clause(@returning, params)
+        @conflict_assignments, params, visitor)
+      sql = sql + arel_render_returning_clause(@returning, params, visitor)
       cte_params = []
       sql = visitor.render_ctes(self, cte_params) + sql
       params = array_concat(cte_params, params)
@@ -1197,7 +1193,6 @@ class ArelInsert
     end
     first.each(collect_column)
     value_groups = []
-    visitor = ArelSQLiteVisitor.new()
     def collect_row(row)
       if row.length() != first.length()
         raise ArgumentError.new("INSERT rows must have identical columns")
@@ -1224,12 +1219,20 @@ class ArelInsert
     sql = "INSERT INTO #{arel_quote_identifier(@table.name())} " +
       "(#{columns.join(", ")}) VALUES #{value_groups.join(", ")}"
     sql = sql + arel_render_insert_conflict(@conflict_target, @conflict_ignore,
-      @conflict_assignments, params)
-    sql = sql + arel_render_returning_clause(@returning, params)
+      @conflict_assignments, params, visitor)
+    sql = sql + arel_render_returning_clause(@returning, params, visitor)
     cte_params = []
     sql = visitor.render_ctes(self, cte_params) + sql
     params = array_concat(cte_params, params)
     [sql, params]
+  end
+
+  def to_sql(visitor = nil) -> Array
+    renderer = visitor
+    if renderer == nil
+      renderer = ArelSQLiteVisitor.new()
+    end
+    self.render_with(renderer)
   end
 
   def execute(db)
