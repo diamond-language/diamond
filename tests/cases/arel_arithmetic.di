@@ -39,10 +39,21 @@ def run_tests()
     Minitest.assert_equal(3, params[1])
   end
 
+  def test_division_renders_as_a_bound_expression()
+    measurements = Arel.table("measurements")
+    expression = measurements.column("total").divide(2)
+    sql, params = Arel.update(measurements).set({
+      "total": Arel.expression(expression)
+    }).all().to_sql()
+    Minitest.assert_equal("UPDATE \"measurements\" SET \"total\" = (\"measurements\".\"total\" / ?)", sql)
+    Minitest.assert_equal(2, params[0])
+  end
+
   suite = Minitest.new()
   suite.test("structural addition", test_addition_is_a_structural_update_expression)
   suite.test("structural subtraction", test_subtraction_is_structural_and_chainable)
   suite.test("structural multiplication", test_multiplication_preserves_grouping)
+  suite.test("structural division", test_division_renders_as_a_bound_expression)
   suite.run()
 end
 

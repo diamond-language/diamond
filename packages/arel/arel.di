@@ -149,6 +149,7 @@ class ArelBinaryExpression
   def add(value) = ArelBinaryExpression.new(self, "+", value)
   def subtract(value) = ArelBinaryExpression.new(self, "-", value)
   def multiply(value) = ArelBinaryExpression.new(self, "*", value)
+  def divide(value) = ArelBinaryExpression.new(self, "/", value)
 end
 
 class ArelAttribute
@@ -179,6 +180,7 @@ class ArelAttribute
   def add(value) = ArelBinaryExpression.new(self, "+", value)
   def subtract(value) = ArelBinaryExpression.new(self, "-", value)
   def multiply(value) = ArelBinaryExpression.new(self, "*", value)
+  def divide(value) = ArelBinaryExpression.new(self, "/", value)
 end
 
 class ArelQualifiedStar
