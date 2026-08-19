@@ -1709,6 +1709,61 @@ def same_hash?(left, right) -> Bool
   true
 end
 
+def same_values?(left: Array, right: Array) -> Bool
+  if left.length() != right.length()
+    return false
+  end
+  index = 0
+  while index < left.length()
+    if left[index] != right[index]
+      return false
+    end
+    index = index + 1
+  end
+  true
+end
+
+def same_insert?(left: ArelInsert, right: ArelInsert) -> Bool
+  left_state = left.structure()
+  right_state = right.structure()
+  if !self.same?(left_state[0], right_state[0]) ||
+     left_state[1].length() != right_state[1].length() ||
+     !self.same_nodes?(left_state[2], right_state[2]) ||
+     !self.same_values?(left_state[3], right_state[3]) || left_state[6] != right_state[6] ||
+     !self.same_hash?(left_state[7], right_state[7]) ||
+     !self.same_nodes?(left_state[8], right_state[8]) ||
+     (left_state[4] == nil) != (right_state[4] == nil)
+    return false
+  end
+  if left_state[4] != nil && !self.same?(left_state[4], right_state[4])
+    return false
+  end
+  if (left_state[5] is Array) != (right_state[5] is Array)
+    return false
+  end
+  if left_state[5] is Array
+    if !self.same_values?(left_state[5], right_state[5])
+      return false
+    end
+  elsif !self.same?(left_state[5], right_state[5])
+    return false
+  end
+  index = 0
+  while index < left_state[1].length()
+    left_row = left_state[1][index]
+    right_row = right_state[1][index]
+    if left_row is ArelDefaultValues
+      if !self.same?(left_row, right_row)
+        return false
+      end
+    elsif !self.same_hash?(left_row, right_row)
+      return false
+    end
+    index = index + 1
+  end
+  true
+end
+
 def same_tail?(left, right) -> Bool
   if left is ArelBetween
     right is ArelBetween && left.negated?() == right.negated?() &&
@@ -1773,6 +1828,8 @@ def same_tail?(left, right) -> Bool
       self.same_nodes?(left_state[2], right_state[2]) &&
       self.same_nodes?(left_state[3], right_state[3]) &&
       left_state[4] == right_state[4] && self.same_nodes?(left_state[5], right_state[5])
+  elsif left is ArelInsert
+    right is ArelInsert && self.same_insert?(left, right)
   elsif left is ArelDelete
     if !(right is ArelDelete)
       return false

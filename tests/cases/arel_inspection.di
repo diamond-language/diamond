@@ -142,6 +142,11 @@ def run_tests()
     people = Arel.table("people")
     insert = Arel.insert_into(people).values({"name": "Ada"}).returning(people.column("id"))
     Minitest.assert_equal("Insert(into=people, rows=1, source=false, returning=1, ctes=0)", Arel.inspect(insert))
+    same_insert = Arel.insert_into(Arel.table("people")).values({"name": "Ada"}).returning(
+      Arel.table("people").column("id"))
+    Minitest.assert_equal(true, Arel.same?(insert, same_insert))
+    Minitest.assert_equal(false, Arel.same?(insert, Arel.insert_into(people).values(
+      {"name": "Grace"}).returning(people.column("id"))))
     update = Arel.update(people).set({"active": true}).where(people.column("id").eq(1))
     Minitest.assert_equal("Update(table=people, assignments=1, predicates=1, returning=0, all=false, ctes=0)", Arel.inspect(update))
     same_update = Arel.update(Arel.table("people")).set({"active": true}).where(
