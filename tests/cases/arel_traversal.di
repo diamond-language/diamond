@@ -97,6 +97,21 @@ def run_tests()
     Minitest.assert_equal("Predicate(=, Attribute(people.active), Literal(true))", Arel.inspect(Arel.children(target)[0]))
   end
 
+  def test_composition_children_can_be_replaced()
+    people = Arel.table("people")
+    roles = Arel.table("roles")
+    accounts = Arel.table("accounts")
+    join = ArelJoin.new(roles, people.column("role_id").eq(roles.column("id")), "INNER")
+    replacement_predicate = people.column("account_id").eq(accounts.column("id"))
+    changed_join = Arel.with_children(join, [accounts, replacement_predicate])
+    Minitest.assert_equal("Join(INNER, Table(accounts), Predicate(=, Attribute(people.account_id), Attribute(accounts.id)))", Arel.inspect(changed_join))
+    body = Arel.from(roles).project(roles.column("id"))
+    changed_cte = Arel.with_children(ArelCte.new("ids", body), [
+      Arel.from(accounts).project(accounts.column("id"))
+    ])
+    Minitest.assert_equal("Cte(ids, ordinary, Query(from=accounts, projections=1, predicates=0, joins=0, ctes=0))", Arel.inspect(changed_cte))
+  end
+
   def test_insert_children_follow_bind_structure()
     people = Arel.table("people")
     insert = Arel.insert_into(people).values({
@@ -177,6 +192,7 @@ def run_tests()
   suite.test("immutable predicate child replacement", test_predicate_children_can_be_replaced_immutably)
   suite.test("ordered query children", test_query_children_follow_render_order)
   suite.test("composition children", test_composition_children_are_structural)
+  suite.test("immutable composition child replacement", test_composition_children_can_be_replaced)
   suite.test("ordered insert children", test_insert_children_follow_bind_structure)
   suite.test("ordered update and delete children", test_update_and_delete_children_are_ordered)
   suite.test("depth-first preorder walk", test_walk_is_depth_first_preorder)

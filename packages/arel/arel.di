@@ -1562,6 +1562,47 @@ def with_children_tail(node, replacements: Array)
       values = replacements[1]
     end
     ArelMembership.new(replacements[0], values, node.negated?())
+  elsif node is ArelExists
+    if replacements.length() != 1
+      raise ArgumentError.new("ArelExists requires exactly one child")
+    end
+    ArelExists.new(replacements[0], node.negated?())
+  elsif node is ArelScalarSubquery
+    if replacements.length() != 1
+      raise ArgumentError.new("ArelScalarSubquery requires exactly one child")
+    end
+    ArelScalarSubquery.new(replacements[0])
+  elsif node is ArelJoin
+    expected = 1
+    if node.predicate() != nil
+      expected = 2
+    end
+    if replacements.length() != expected || !(replacements[0] is ArelTable)
+      raise ArgumentError.new("ArelJoin replacement children do not match its shape")
+    end
+    predicate = nil
+    if expected == 2
+      predicate = replacements[1]
+    end
+    ArelJoin.new(replacements[0], predicate, node.kind())
+  elsif node is ArelCte
+    if replacements.length() != 1
+      raise ArgumentError.new("ArelCte requires exactly one child")
+    end
+    ArelCte.new(node.name(), replacements[0], node.recursive?())
+  elsif node is ArelConflictTarget
+    expected = 0
+    if node.predicate() != nil
+      expected = 1
+    end
+    if replacements.length() != expected
+      raise ArgumentError.new("ArelConflictTarget replacement child count mismatch")
+    end
+    predicate = nil
+    if expected == 1
+      predicate = replacements[0]
+    end
+    ArelConflictTarget.new(node.columns(), predicate)
   else
     raise ArgumentError.new("Arel node does not support child replacement")
   end
