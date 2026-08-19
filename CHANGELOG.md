@@ -1,5 +1,13 @@
 # Changelog
 
+## Arel 0.20.0
+
+- Expanded named visitor capabilities to cover RETURNING, explicit NULL
+  ordering, write and recursive CTEs, and SQLite integer operators.
+- Added early, visitor-specific rejection across every INSERT, UPDATE, and
+  DELETE rendering path without changing SQLite SQL or bind ordering.
+- Defined and tested the portable query baseline for future dialect visitors.
+
 ## Arel 0.19.0
 
 - Added ordered declarative rewrite rules to `Arel.simplify`, with structural
