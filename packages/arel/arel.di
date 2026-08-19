@@ -237,12 +237,14 @@ class ArelScalarSubquery
 end
 
 class ArelCte
-  def initialize(name: String, query)
+  def initialize(name: String, query, recursive = false)
     @name = name
     @query = query
+    @recursive = recursive
   end
   def name() = @name
   def query() = @query
+  def recursive?() = @recursive
 end
 
 class ArelSQLiteVisitor
@@ -307,7 +309,11 @@ class ArelSQLiteVisitor
 
   def render_ctes(query, params: Array) -> String
     entries = []
+    recursive = false
     def render_cte(cte)
+      if cte.recursive?()
+        recursive = true
+      end
       sql, bound = cte.query().to_sql()
       def append_cte_param(value)
         params.push(value)
@@ -319,7 +325,11 @@ class ArelSQLiteVisitor
     if entries.length() == 0
       ""
     else
-      "WITH #{entries.join(", ")} "
+      prefix = "WITH "
+      if recursive
+        prefix = "WITH RECURSIVE "
+      end
+      "#{prefix}#{entries.join(", ")} "
     end
   end
 
@@ -710,6 +720,13 @@ class ArelQuery
     query
   end
   def with(name: String, query)
+    self.ensure_cte_name_available(name)
+    ArelQuery.new(@table_name, @predicates, @orderings, @limit_value, @offset_value,
+      @projections, @quoted_identifiers, @bind_limits, @table_alias, @distinct_value,
+      @groups, @havings, @joins, @source_query, @correlations,
+      array_concat(@ctes, [ArelCte.new(name, query)]))
+  end
+  def ensure_cte_name_available(name: String)
     duplicate = false
     def check_cte(cte)
       if cte.name() == name
@@ -720,10 +737,13 @@ class ArelQuery
     if duplicate
       raise ArgumentError.new("duplicate CTE name")
     end
+  end
+  def with_recursive(name: String, query)
+    self.ensure_cte_name_available(name)
     ArelQuery.new(@table_name, @predicates, @orderings, @limit_value, @offset_value,
       @projections, @quoted_identifiers, @bind_limits, @table_alias, @distinct_value,
       @groups, @havings, @joins, @source_query, @correlations,
-      array_concat(@ctes, [ArelCte.new(name, query)]))
+      array_concat(@ctes, [ArelCte.new(name, query, true)]))
   end
   def order(column_or_columns)
     self.copy(@predicates, array_concat(@orderings, arel_array(column_or_columns)),

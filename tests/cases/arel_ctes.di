@@ -52,11 +52,22 @@ def run_tests()
     Minitest.assert_equal("WITH \"all_items\" AS (SELECT \"current_items\".\"id\" FROM \"current_items\" UNION ALL SELECT \"archived_items\".\"id\" FROM \"archived_items\") SELECT * FROM \"all_items\"", sql)
   end
 
+  def test_recursive_cte_marks_with_clause()
+    seeds = Arel.table("seed_values")
+    numbers = Arel.table("numbers")
+    anchor = Arel.from(seeds).project(seeds.column("value"))
+    step = Arel.from(numbers).project(numbers.column("value"))
+    body = Arel.union_all(anchor, step)
+    sql, params = Arel.from(numbers).with_recursive("numbers", body).to_sql()
+    Minitest.assert_equal("WITH RECURSIVE \"numbers\" AS (SELECT \"seed_values\".\"value\" FROM \"seed_values\" UNION ALL SELECT \"numbers\".\"value\" FROM \"numbers\") SELECT * FROM \"numbers\"", sql)
+  end
+
   suite = Minitest.new()
   suite.test("single CTE", test_single_cte_renders_and_binds_before_main_query)
   suite.test("multiple CTEs", test_multiple_ctes_preserve_declaration_and_bind_order)
   suite.test("duplicate CTE names", test_duplicate_cte_names_are_rejected)
   suite.test("compound CTE body", test_compound_query_can_be_a_cte_body)
+  suite.test("recursive CTE", test_recursive_cte_marks_with_clause)
   suite.run()
 end
 
