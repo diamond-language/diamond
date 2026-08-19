@@ -94,9 +94,10 @@ def run_tests()
     inventory = Arel.table("inventory")
     update = Arel.update(inventory).set({
       "qty": Arel.expression(Arel.excluded("qty"))
-    }).all()
+    }).where(inventory.column("id").eq(7))
     sql, params = update.to_sql(WriteTestArelVisitor.new())
-    Minitest.assert_equal("custom UPDATE [inventory] SET [qty] = incoming.[qty]", sql)
+    Minitest.assert_equal("custom UPDATE [inventory] SET [qty] = incoming.[qty] WHERE [inventory].[id] = ?", sql)
+    Minitest.assert_equal("7", params.join("|"))
   end
 
   def test_delete_returning_uses_the_explicit_visitor()
