@@ -137,6 +137,19 @@ def run_tests()
     db.close()
   end
 
+  def test_left_nested_compounds_preserve_local_pagination()
+    first = Arel.table("first_values")
+    second = Arel.table("second_values")
+    third = Arel.table("third_values")
+    left = Arel.from(first).project(first.column("value"))
+    middle = Arel.from(second).project(second.column("value"))
+    right = Arel.from(third).project(third.column("value"))
+    limited = Arel.union_all(left, middle).take(2)
+    sql, params = Arel.except(limited, right).to_sql()
+    Minitest.assert_equal("SELECT * FROM (SELECT \"first_values\".\"value\" FROM \"first_values\" UNION ALL SELECT \"second_values\".\"value\" FROM \"second_values\" LIMIT ?) EXCEPT SELECT \"third_values\".\"value\" FROM \"third_values\"", sql)
+    Minitest.assert_equal(2, params[0])
+  end
+
   suite = Minitest.new()
   suite.test("UNION", test_union_combines_queries_and_binds)
   suite.test("UNION ALL", test_union_all_preserves_duplicates_in_sqlite)
@@ -148,6 +161,7 @@ def run_tests()
   suite.test("compound pagination", test_compound_result_can_be_paginated)
   suite.test("compound INSERT source", test_compound_query_can_feed_an_insert)
   suite.test("right-nested compound grouping", test_right_nested_compounds_preserve_grouping)
+  suite.test("left-nested compound grouping", test_left_nested_compounds_preserve_local_pagination)
   suite.run()
 end
 

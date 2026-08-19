@@ -815,6 +815,9 @@ class ArelCompoundQuery
   def to_sql() -> Array
     left_sql, left_params = @left.to_sql()
     right_sql, right_params = @right.to_sql()
+    if @left is ArelCompoundQuery
+      left_sql = "SELECT * FROM (#{left_sql})"
+    end
     if @right is ArelCompoundQuery
       right_sql = "SELECT * FROM (#{right_sql})"
     end
