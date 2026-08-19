@@ -183,15 +183,17 @@ def run_tests()
     db.execute("CREATE TABLE inventory (name TEXT UNIQUE, qty INTEGER)")
     db.execute("INSERT INTO inventory VALUES ('pens', 2)")
     inventory = Arel.table("inventory")
+    payload = "5; DROP TABLE inventory; --"
     insert = Arel.insert_into(inventory).values({"name": "pens", "qty": 4})
     insert = insert.on_conflict_do_update(["name"], {
-      "qty": Arel.expression(Arel.sql("excluded.\"qty\" + ?", [1]))
+      "qty": payload
     })
     sql, params = insert.to_sql()
-    Minitest.assert_equal("INSERT INTO \"inventory\" (\"name\", \"qty\") VALUES (?, ?) ON CONFLICT (\"name\") DO UPDATE SET \"qty\" = excluded.\"qty\" + ?", sql)
-    Minitest.assert_equal(1, params[2])
+    Minitest.assert_equal("INSERT INTO \"inventory\" (\"name\", \"qty\") VALUES (?, ?) ON CONFLICT (\"name\") DO UPDATE SET \"qty\" = ?", sql)
+    Minitest.assert_equal(payload, params[2])
     insert.execute(db)
-    Minitest.assert_equal(5, db.query("SELECT qty FROM inventory")[0]["qty"])
+    Minitest.assert_equal(payload, db.query("SELECT qty FROM inventory")[0]["qty"])
+    Minitest.assert_equal(1, db.query("SELECT * FROM inventory").length())
     db.close()
   end
 
