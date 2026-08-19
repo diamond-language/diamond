@@ -142,6 +142,23 @@ def run_tests()
     db.close()
   end
 
+  def test_update_assignments_accept_expressions()
+    db = SQLite3.open(":memory:")
+    db.execute("CREATE TABLE counters (id INTEGER, value INTEGER)")
+    db.execute("INSERT INTO counters VALUES (1, 4)")
+    counters = Arel.table("counters")
+    update = Arel.update(counters).set({
+      "value": Arel.expression(Arel.sql("\"value\" + ?", [3]))
+    }).where(counters.column("id").eq(1))
+    sql, params = update.to_sql()
+    Minitest.assert_equal("UPDATE \"counters\" SET \"value\" = \"value\" + ? WHERE \"counters\".\"id\" = ?", sql)
+    Minitest.assert_equal(3, params[0])
+    Minitest.assert_equal(1, params[1])
+    update.execute(db)
+    Minitest.assert_equal(7, db.query("SELECT value FROM counters")[0]["value"])
+    db.close()
+  end
+
   suite = Minitest.new()
   suite.test("INSERT", test_insert_renders_and_executes)
   suite.test("UPDATE", test_update_renders_and_executes)
@@ -151,6 +168,7 @@ def run_tests()
   suite.test("multi-row INSERT", test_multi_row_insert_preserves_row_and_bind_order)
   suite.test("multi-row INSERT shape", test_multi_row_insert_requires_identical_columns)
   suite.test("INSERT SELECT", test_insert_select_preserves_query_binds_and_executes)
+  suite.test("UPDATE expressions", test_update_assignments_accept_expressions)
   suite.run()
 end
 

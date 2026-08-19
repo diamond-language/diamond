@@ -829,6 +829,13 @@ class ArelCompoundQuery
   end
 end
 
+class ArelAssignmentValue
+  def initialize(expression)
+    @expression = expression
+  end
+  def expression() = @expression
+end
+
 class ArelInsert
   def initialize(table: ArelTable, rows = [], returning = [], source_columns = [],
                  source_query = nil)
@@ -954,14 +961,19 @@ class ArelUpdate
     end
     clauses = []
     params = []
+    visitor = ArelSQLiteVisitor.new()
     def collect_assignment(name, value)
-      clauses.push("#{arel_quote_identifier(name)} = ?")
-      params.push(value)
+      if value is ArelAssignmentValue
+        rendered = visitor.render_expression(value.expression(), params)
+        clauses.push("#{arel_quote_identifier(name)} = #{rendered}")
+      else
+        clauses.push("#{arel_quote_identifier(name)} = ?")
+        params.push(value)
+      end
     end
     @assignments.each(collect_assignment)
     sql = "UPDATE #{arel_quote_identifier(@table.name())} SET #{clauses.join(", ")}"
     predicates = []
-    visitor = ArelSQLiteVisitor.new()
     def render_predicate(predicate)
       predicates.push(visitor.render_expression(predicate, params))
     end
@@ -1065,6 +1077,7 @@ class Arel
   def self.exists(query) = ArelExists.new(query, false)
   def self.not_exists(query) = ArelExists.new(query, true)
   def self.scalar(query) = ArelScalarSubquery.new(query)
+  def self.expression(expression) = ArelAssignmentValue.new(expression)
   def self.union(left, right) = ArelCompoundQuery.new(left, "UNION", right)
   def self.union_all(left, right) = ArelCompoundQuery.new(left, "UNION ALL", right)
   def self.intersect(left, right) = ArelCompoundQuery.new(left, "INTERSECT", right)
