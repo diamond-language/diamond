@@ -1540,6 +1540,50 @@ def children_tail(node) -> Array
     else
       [node.predicate()]
     end
+  elsif node is ArelInsert || node is ArelUpdate || node is ArelDelete
+    self.children_write(node)
+  else
+    []
+  end
+end
+
+def children_write(node) -> Array
+  if node is ArelInsert
+    state = node.structure()
+    children = array_concat([], state[8])
+    children.push(state[0])
+    if state[4] != nil
+      children.push(state[4])
+    end
+    row_index = 0
+    while row_index < state[1].length()
+      row = state[1][row_index]
+      if !(row is ArelDefaultValues)
+        value_index = 0
+        while value_index < row.length()
+          value = row[row.key_at(value_index)]
+          if value is ArelAssignmentValue
+            children.push(value)
+          end
+          value_index = value_index + 1
+        end
+      end
+      row_index = row_index + 1
+    end
+    if state[5] is ArelConflictTarget
+      children.push(state[5])
+    end
+    if state[7] != nil
+      value_index = 0
+      while value_index < state[7].length()
+        value = state[7][state[7].key_at(value_index)]
+        if value is ArelAssignmentValue
+          children.push(value)
+        end
+        value_index = value_index + 1
+      end
+    end
+    array_concat(children, state[2])
   else
     []
   end

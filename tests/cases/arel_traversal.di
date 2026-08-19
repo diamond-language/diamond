@@ -58,11 +58,28 @@ def run_tests()
     Minitest.assert_equal("Predicate(=, Attribute(people.active), Literal(true))", Arel.inspect(Arel.children(target)[0]))
   end
 
+  def test_insert_children_follow_bind_structure()
+    people = Arel.table("people")
+    insert = Arel.insert_into(people).values({
+      "name": "Ada",
+      "score": Arel.expression(people.column("score").add(1))
+    }).on_conflict_do_update(Arel.conflict_target(["name"]), {
+      "score": Arel.expression(Arel.excluded("score"))
+    }).returning(people.column("id"))
+    children = Arel.children(insert)
+    Minitest.assert_equal("Table(people)", Arel.inspect(children[0]))
+    Minitest.assert_equal("Assignment(Binary(+, Attribute(people.score), Bind(1)))", Arel.inspect(children[1]))
+    Minitest.assert_equal("ConflictTarget(name, predicate=false)", Arel.inspect(children[2]))
+    Minitest.assert_equal("Assignment(Excluded(score))", Arel.inspect(children[3]))
+    Minitest.assert_equal("Attribute(people.id)", Arel.inspect(children[4]))
+  end
+
   suite = Minitest.new()
   suite.test("ordered expression children", test_expression_children_are_ordered)
   suite.test("ordered predicate children", test_predicate_children_preserve_semantic_order)
   suite.test("ordered query children", test_query_children_follow_render_order)
   suite.test("composition children", test_composition_children_are_structural)
+  suite.test("ordered insert children", test_insert_children_follow_bind_structure)
   suite.run!()
 end
 
