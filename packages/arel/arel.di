@@ -1494,7 +1494,8 @@ def inspect(node) -> String
   elsif node is ArelAssignmentValue
     "Assignment(#{self.inspect(node.expression())})"
   elsif node is ArelConflictTarget
-    "ConflictTarget(#{node.columns().join(", ")}, predicate=#{node.predicate() != nil})"
+    columns = node.columns().join(", ")
+    "ConflictTarget(#{columns}, predicate=#{node.predicate() != nil})"
   elsif node is ArelDefaultValues
     "DefaultValues"
   elsif node is ArelRawSql
@@ -1658,6 +1659,20 @@ def same?(left, right) -> Bool
   end
 end
 
+def same_nodes?(left: Array, right: Array) -> Bool
+  if left.length() != right.length()
+    return false
+  end
+  index = 0
+  while index < left.length()
+    if !self.same?(left[index], right[index])
+      return false
+    end
+    index = index + 1
+  end
+  true
+end
+
 def same_tail?(left, right) -> Bool
   if left is ArelBetween
     right is ArelBetween && left.negated?() == right.negated?() &&
@@ -1707,29 +1722,22 @@ def same_tail?(left, right) -> Bool
   elsif left is ArelCompoundQuery
     if !(right is ArelCompoundQuery) || left.operator() != right.operator() ||
        left.limit_value() != right.limit_value() || left.offset_value() != right.offset_value() ||
-       left.orderings().length() != right.orderings().length() ||
        !self.same?(left.left(), right.left()) || !self.same?(left.right(), right.right())
       return false
     end
-    index = 0
-    while index < left.orderings().length()
-      if !self.same?(left.orderings()[index], right.orderings()[index])
-        return false
-      end
-      index = index + 1
-    end
-    true
+    self.same_nodes?(left.orderings(), right.orderings())
   elsif left is ArelQuery
     if !(right is ArelQuery) || left.base_reference_name() != right.base_reference_name() ||
        left.distinct_value() != right.distinct_value() ||
        left.limit_value() != right.limit_value() || left.offset_value() != right.offset_value() ||
-       left.projections().length() != right.projections().length() ||
-       left.predicates().length() != right.predicates().length() ||
-       left.orderings().length() != right.orderings().length() ||
-       left.groups().length() != right.groups().length() ||
-       left.havings().length() != right.havings().length() ||
-       left.joins().length() != right.joins().length() ||
-       left.ctes().length() != right.ctes().length()
+       !self.same_nodes?(left.projections(), right.projections()) ||
+       !self.same_nodes?(left.predicates(), right.predicates()) ||
+       !self.same_nodes?(left.orderings(), right.orderings()) ||
+       !self.same_nodes?(left.groups(), right.groups()) ||
+       !self.same_nodes?(left.havings(), right.havings()) ||
+       !self.same_nodes?(left.correlations(), right.correlations()) ||
+       !self.same_nodes?(left.joins(), right.joins()) ||
+       !self.same_nodes?(left.ctes(), right.ctes())
       return false
     end
     if (left.source_query() == nil) != (right.source_query() == nil)
@@ -1737,55 +1745,6 @@ def same_tail?(left, right) -> Bool
     end
     if left.source_query() != nil && !self.same?(left.source_query(), right.source_query())
       return false
-    end
-    index = 0
-    while index < left.projections().length()
-      if !self.same?(left.projections()[index], right.projections()[index])
-        return false
-      end
-      index = index + 1
-    end
-    index = 0
-    while index < left.predicates().length()
-      if !self.same?(left.predicates()[index], right.predicates()[index])
-        return false
-      end
-      index = index + 1
-    end
-    index = 0
-    while index < left.orderings().length()
-      if !self.same?(left.orderings()[index], right.orderings()[index])
-        return false
-      end
-      index = index + 1
-    end
-    index = 0
-    while index < left.groups().length()
-      if !self.same?(left.groups()[index], right.groups()[index])
-        return false
-      end
-      index = index + 1
-    end
-    index = 0
-    while index < left.havings().length()
-      if !self.same?(left.havings()[index], right.havings()[index])
-        return false
-      end
-      index = index + 1
-    end
-    index = 0
-    while index < left.joins().length()
-      if !self.same?(left.joins()[index], right.joins()[index])
-        return false
-      end
-      index = index + 1
-    end
-    index = 0
-    while index < left.ctes().length()
-      if !self.same?(left.ctes()[index], right.ctes()[index])
-        return false
-      end
-      index = index + 1
     end
     true
   else

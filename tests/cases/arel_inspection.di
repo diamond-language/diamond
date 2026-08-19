@@ -125,6 +125,10 @@ def run_tests()
       Arel.table("people").column("id").asc()).take(5)
     Minitest.assert_equal(true, Arel.same?(compound, same_compound))
     Minitest.assert_equal(false, Arel.same?(compound, Arel.union_all(subquery, archived).take(5)))
+    correlated = Arel.from(people).correlate(Arel.table("companies"))
+    same_correlated = Arel.from(Arel.table("people")).correlate(Arel.table("companies"))
+    Minitest.assert_equal(true, Arel.same?(correlated, same_correlated))
+    Minitest.assert_equal(false, Arel.same?(correlated, Arel.from(people).correlate(Arel.table("accounts"))))
   end
 
   def test_write_managers_have_structural_tooling()
