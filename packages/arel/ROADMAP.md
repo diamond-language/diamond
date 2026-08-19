@@ -22,32 +22,30 @@ Raw SQL remains an explicit escape hatch, not the representation used by new
 features. Values are bind parameters by default. Identifiers are represented
 as nodes and quoted by the active visitor.
 
-## Next milestone: remaining expression decisions
+## Next milestone: ergonomics and diagnostics
 
-Visitors now expose named dialect capabilities, SQLite-only forms are checked
-before rendering, and portable conformance fixtures cover every statement
-manager. The remaining write forms need concrete semantic decisions:
+The expression model now includes validated generic functions and simple casts,
+concatenation, modulo, and the SQLite integer operators used by repository
+queries. The next work should make existing trees easier to inspect and compare:
 
-- whether per-column DEFAULT warrants a node when SQLite cannot use it in the
-  same places as other dialects;
-- named-constraint conflict targets for dialects that support them;
-- string concatenation and bitwise nodes only if repository queries need them;
-- explicit cast nodes and their portability boundary;
-- whether functions need a public generic constructor beyond `Arel.sql`.
+- concise node inspection that does not pretend to be executable SQL;
+- deterministic structural equality for core expression and relation nodes;
+- clearer unsupported-node diagnostics including the node family;
+- construction helpers only where Diamond's lack of user-defined `[]` or
+  variadic arguments causes repeated noise;
+- rewrite passes only when a concrete adapter or repository feature needs one.
 
-Completion means each accepted expression has defined bind, grouping, and
-dialect behavior rather than existing solely for API symmetry.
+Completion means tests and repository code can reason about query structure
+without rendering SQL as an observational workaround.
 
-## Following milestone: ergonomics and diagnostics
+## Deferred expression decisions
 
-Once the algebra is stable:
+These need another dialect or a real query before they justify nodes:
 
-- concise construction helpers that respect Diamond's lack of user-defined
-  `[]` and variadic arguments;
-- inspectable node output for debugging;
-- deterministic structural equality for nodes, useful in tests and rewriting;
-- optional query-rewrite passes only where they eliminate real duplication or
-  enable an adapter feature.
+- per-column DEFAULT, which SQLite does not accept wherever other dialects do;
+- named-constraint conflict targets;
+- parameterized or dialect-specific CAST type declarations;
+- additional operators beyond the measured SQLite use cases.
 
 Do not emulate unsupported SQLite syntax merely for API symmetry.
 

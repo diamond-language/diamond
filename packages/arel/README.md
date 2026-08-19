@@ -133,6 +133,16 @@ bind parameters. The corresponding `*_expression` methods accept another AST
 expression. Arithmetic is explicitly parenthesized so chaining preserves the
 constructed tree.
 
+`concat`/`concat_expression` build the SQL `||` operator, and `modulo` builds
+`%`. `Arel.integer_operator(expression, operator, value)` accepts the validated
+operators `&`, `|`, `<<`, and `>>` without multiplying convenience methods
+across every node class. All ordinary right operands remain binds.
+
+`Arel.function(name, arguments)` constructs a generic function after validating
+that its name is a single identifier. `Arel.cast(expression, type_name)` does
+the same for simple CAST type names. Parameterized or dialect-specific type
+fragments still require an explicit dialect extension or `Arel.sql`.
+
 `Arel.conflict_target(columns)` builds an immutable SQLite conflict target.
 Use `target.column(name)` with `where(predicate)` for partial unique indexes;
 `Arel.literal(value)` supplies the literal integer or boolean SQLite requires

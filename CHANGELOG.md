@@ -1,5 +1,12 @@
 # Changelog
 
+## Arel 0.12.0
+
+- Added validated generic function and simple CAST nodes with injection-safety
+  coverage, plus structural string concatenation and modulo.
+- Added bitwise AND/OR and left/right shift factories with exact bind rendering
+  and SQLite execution coverage.
+
 ## Arel 0.11.0
 
 - Added named visitor capabilities and early, visitor-specific diagnostics for
