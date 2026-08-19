@@ -98,6 +98,9 @@ end
 
 class ArelFunction
   def initialize(name: String, arguments: Array, distinct = false)
+    if !Regexp.new("\\A[A-Za-z_][A-Za-z0-9_]*\\z").match?(name)
+      raise ArgumentError.new("SQL function name must be an identifier")
+    end
     @name = name
     @arguments = arguments
     @distinct = distinct
@@ -1452,6 +1455,7 @@ class Arel
   def self.avg(expression) = ArelFunction.new("AVG", [expression])
   def self.lower(expression) = ArelFunction.new("LOWER", [expression])
   def self.upper(expression) = ArelFunction.new("UPPER", [expression])
+  def self.function(name: String, arguments: Array) = ArelFunction.new(name, arguments)
   def self.exists(query) = ArelExists.new(query, false)
   def self.not_exists(query) = ArelExists.new(query, true)
   def self.scalar(query) = ArelScalarSubquery.new(query)
