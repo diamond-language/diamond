@@ -236,6 +236,15 @@ class ArelScalarSubquery
   def gteq(value) = ArelPredicate.new(self, ">=", value)
 end
 
+class ArelCte
+  def initialize(name: String, query)
+    @name = name
+    @query = query
+  end
+  def name() = @name
+  def query() = @query
+end
+
 class ArelSQLiteVisitor
   def attribute_allowed?(attribute: ArelAttribute) -> Bool
     if @query == nil
@@ -293,6 +302,24 @@ class ArelSQLiteVisitor
         end
       end
       sql
+    end
+  end
+
+  def render_ctes(query, params: Array) -> String
+    entries = []
+    def render_cte(cte)
+      sql, bound = cte.query().to_sql()
+      def append_cte_param(value)
+        params.push(value)
+      end
+      bound.each(append_cte_param)
+      entries.push("#{arel_quote_identifier(cte.name())} AS (#{sql})")
+    end
+    query.ctes().each(render_cte)
+    if entries.length() == 0
+      ""
+    else
+      "WITH #{entries.join(", ")} "
     end
   end
 
@@ -434,6 +461,7 @@ class ArelSQLiteVisitor
     @query = query
     visitor = self
     params = []
+    sql = self.render_ctes(query, params)
     projections = []
     def render_projection(projection)
       projections.push(visitor.render_expression(projection, params))
@@ -451,7 +479,7 @@ class ArelSQLiteVisitor
     if query.distinct_value()
       select_keyword = "SELECT DISTINCT "
     end
-    sql = select_keyword + projections.join(", ") + " FROM #{table_sql}"
+    sql = sql + select_keyword + projections.join(", ") + " FROM #{table_sql}"
 
     predicates = []
     def render_predicate(predicate)
@@ -513,7 +541,7 @@ class ArelQuery
   def initialize(table_name, predicates, orderings, limit_value, offset_value,
                  projections, quoted_identifiers, bind_limits, table_alias = nil,
                  distinct_value = false, groups = [], havings = [], joins = [],
-                 source_query = nil, correlations = [])
+                 source_query = nil, correlations = [], ctes = [])
     @table_name = table_name
     @predicates = predicates
     @orderings = orderings
@@ -529,6 +557,7 @@ class ArelQuery
     @joins = joins
     @source_query = source_query
     @correlations = correlations
+    @ctes = ctes
   end
 
   def self.for_table(table: ArelTable)
@@ -558,11 +587,12 @@ class ArelQuery
   def joins() = @joins
   def source_query() = @source_query
   def correlations() = @correlations
+  def ctes() = @ctes
 
   def copy(predicates, orderings, limit_value, offset_value, projections)
     ArelQuery.new(@table_name, predicates, orderings, limit_value, offset_value,
       projections, @quoted_identifiers, @bind_limits, @table_alias, @distinct_value,
-      @groups, @havings, @joins, @source_query, @correlations)
+      @groups, @havings, @joins, @source_query, @correlations, @ctes)
   end
 
   def where(condition, params = nil)
@@ -598,19 +628,19 @@ class ArelQuery
   def distinct()
     ArelQuery.new(@table_name, @predicates, @orderings, @limit_value, @offset_value,
       @projections, @quoted_identifiers, @bind_limits, @table_alias, true, @groups,
-      @havings, @joins, @source_query, @correlations)
+      @havings, @joins, @source_query, @correlations, @ctes)
   end
   def group(expressions)
     ArelQuery.new(@table_name, @predicates, @orderings, @limit_value, @offset_value,
       @projections, @quoted_identifiers, @bind_limits, @table_alias, @distinct_value,
       array_concat(@groups, arel_array(expressions)), @havings, @joins, @source_query,
-      @correlations)
+      @correlations, @ctes)
   end
   def having(predicate)
     ArelQuery.new(@table_name, @predicates, @orderings, @limit_value, @offset_value,
       @projections, @quoted_identifiers, @bind_limits, @table_alias, @distinct_value,
       @groups, array_concat(@havings, [predicate]), @joins, @source_query,
-      @correlations)
+      @correlations, @ctes)
   end
   def ensure_join_alias_available(table: ArelTable)
     candidate = table.reference_name()
@@ -633,21 +663,21 @@ class ArelQuery
     ArelQuery.new(@table_name, @predicates, @orderings, @limit_value, @offset_value,
       @projections, @quoted_identifiers, @bind_limits, @table_alias, @distinct_value,
       @groups, @havings, array_concat(@joins, [ArelJoin.new(table, predicate, "INNER")]),
-      @source_query, @correlations)
+      @source_query, @correlations, @ctes)
   end
   def left_join(table: ArelTable, predicate)
     self.ensure_join_alias_available(table)
     ArelQuery.new(@table_name, @predicates, @orderings, @limit_value, @offset_value,
       @projections, @quoted_identifiers, @bind_limits, @table_alias, @distinct_value,
       @groups, @havings, array_concat(@joins, [ArelJoin.new(table, predicate, "LEFT OUTER")]),
-      @source_query, @correlations)
+      @source_query, @correlations, @ctes)
   end
   def cross_join(table: ArelTable)
     self.ensure_join_alias_available(table)
     ArelQuery.new(@table_name, @predicates, @orderings, @limit_value, @offset_value,
       @projections, @quoted_identifiers, @bind_limits, @table_alias, @distinct_value,
       @groups, @havings, array_concat(@joins, [ArelJoin.new(table, nil, "CROSS")]),
-      @source_query, @correlations)
+      @source_query, @correlations, @ctes)
   end
   def correlate(table: ArelTable)
     candidate = table.reference_name()
@@ -667,7 +697,7 @@ class ArelQuery
     ArelQuery.new(@table_name, @predicates, @orderings, @limit_value, @offset_value,
       @projections, @quoted_identifiers, @bind_limits, @table_alias, @distinct_value,
       @groups, @havings, @joins, @source_query,
-      array_concat(@correlations, [table]))
+      array_concat(@correlations, [table]), @ctes)
   end
   def correlate_all(tables: Array)
     query = self
@@ -677,6 +707,12 @@ class ArelQuery
       index = index + 1
     end
     query
+  end
+  def with(name: String, query)
+    ArelQuery.new(@table_name, @predicates, @orderings, @limit_value, @offset_value,
+      @projections, @quoted_identifiers, @bind_limits, @table_alias, @distinct_value,
+      @groups, @havings, @joins, @source_query, @correlations,
+      array_concat(@ctes, [ArelCte.new(name, query)]))
   end
   def order(column_or_columns)
     self.copy(@predicates, array_concat(@orderings, arel_array(column_or_columns)),
