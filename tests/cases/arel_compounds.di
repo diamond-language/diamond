@@ -97,6 +97,13 @@ def run_tests()
     sql, params = query.to_sql()
     Minitest.assert_equal("SELECT \"first_values\".\"id\" FROM \"first_values\" UNION ALL SELECT \"second_values\".\"id\" FROM \"second_values\" LIMIT -1 OFFSET ?", sql)
     Minitest.assert_equal("6", params.join("|"))
+    message = nil
+    begin
+      Arel.union_all(left, right).limit(-1)
+    rescue error: ArgumentError
+      message = error.message()
+    end
+    Minitest.assert_equal("limit must be non-negative", message)
   end
 
   def test_compound_query_can_feed_an_insert()

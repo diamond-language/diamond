@@ -1043,6 +1043,9 @@ class ArelCompoundQuery
       array_concat(@orderings, arel_array(ordering)), @limit_value, @offset_value)
   end
   def take(n: Int)
+    if n < 0
+      raise ArgumentError.new("limit must be non-negative")
+    end
     ArelCompoundQuery.new(@left, @operator, @right, @orderings, n, @offset_value)
   end
   def limit(n: Int) = self.take(n)
