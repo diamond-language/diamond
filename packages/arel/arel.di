@@ -21,16 +21,6 @@ def arel_array(value)
   end
 end
 
-def arel_array_slice(values: Array, start: Int, length: Int) -> Array
-  result = []
-  index = 0
-  while index < length
-    result.push(values[start + index])
-    index = index + 1
-  end
-  result
-end
-
 def arel_quote_identifier(name: String) -> String
   pieces = ["\""]
   def append_character(character)
@@ -1661,26 +1651,66 @@ def with_query_children(node: ArelQuery, replacements: Array)
     raise ArgumentError.new("ArelQuery replacement child count mismatch")
   end
   index = 0
-  ctes = arel_array_slice(replacements, index, node.ctes().length())
+  ctes = []
+  part = 0
+  while part < node.ctes().length()
+    ctes.push(replacements[index + part])
+    part = part + 1
+  end
   index = index + node.ctes().length()
   source_query = nil
   if node.source_query() != nil
     source_query = replacements[index]
     index = index + 1
   end
-  projections = arel_array_slice(replacements, index, node.projections().length())
+  projections = []
+  part = 0
+  while part < node.projections().length()
+    projections.push(replacements[index + part])
+    part = part + 1
+  end
   index = index + node.projections().length()
-  joins = arel_array_slice(replacements, index, node.joins().length())
+  joins = []
+  part = 0
+  while part < node.joins().length()
+    joins.push(replacements[index + part])
+    part = part + 1
+  end
   index = index + node.joins().length()
-  predicates = arel_array_slice(replacements, index, node.predicates().length())
+  predicates = []
+  part = 0
+  while part < node.predicates().length()
+    predicates.push(replacements[index + part])
+    part = part + 1
+  end
   index = index + node.predicates().length()
-  groups = arel_array_slice(replacements, index, node.groups().length())
+  groups = []
+  part = 0
+  while part < node.groups().length()
+    groups.push(replacements[index + part])
+    part = part + 1
+  end
   index = index + node.groups().length()
-  havings = arel_array_slice(replacements, index, node.havings().length())
+  havings = []
+  part = 0
+  while part < node.havings().length()
+    havings.push(replacements[index + part])
+    part = part + 1
+  end
   index = index + node.havings().length()
-  orderings = arel_array_slice(replacements, index, node.orderings().length())
+  orderings = []
+  part = 0
+  while part < node.orderings().length()
+    orderings.push(replacements[index + part])
+    part = part + 1
+  end
   index = index + node.orderings().length()
-  correlations = arel_array_slice(replacements, index, node.correlations().length())
+  correlations = []
+  part = 0
+  while part < node.correlations().length()
+    correlations.push(replacements[index + part])
+    part = part + 1
+  end
   ArelQuery.new(node.table_name(), predicates, orderings, node.limit_value(),
     node.offset_value(), projections, node.quoted_identifiers(), node.bind_limits(),
     node.table_alias(), node.distinct_value(), groups, havings, joins, source_query,
