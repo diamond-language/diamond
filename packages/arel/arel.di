@@ -1031,6 +1031,7 @@ class ArelInsert
     end
     first.each(collect_column)
     value_groups = []
+    visitor = ArelSQLiteVisitor.new()
     def collect_row(row)
       if row.length() != first.length()
         raise ArgumentError.new("INSERT rows must have identical columns")
@@ -1042,8 +1043,13 @@ class ArelInsert
         if !hash_include_key(row, key)
           raise ArgumentError.new("INSERT rows must have identical columns")
         end
-        placeholders.push("?")
-        params.push(row[key])
+        value = row[key]
+        if value is ArelAssignmentValue
+          placeholders.push(visitor.render_expression(value.expression(), params))
+        else
+          placeholders.push("?")
+          params.push(value)
+        end
         index = index + 1
       end
       value_groups.push("(#{placeholders.join(", ")})")
@@ -1054,7 +1060,6 @@ class ArelInsert
     sql = sql + arel_render_insert_conflict(@conflict_target, @conflict_ignore,
       @conflict_assignments, params)
     rendered = []
-    visitor = ArelSQLiteVisitor.new()
     def render_returning(expression)
       rendered.push(visitor.render_expression(expression, params))
     end
