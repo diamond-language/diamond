@@ -984,8 +984,8 @@ class ArelCompoundQuery
     self.render_with(renderer)
   end
 
-  def to_a(db)
-    sql, params = self.to_sql()
+  def to_a(db, visitor = nil)
+    sql, params = self.to_sql(visitor)
     db.query(sql, params)
   end
 end
