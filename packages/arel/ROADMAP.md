@@ -22,28 +22,26 @@ Raw SQL remains an explicit escape hatch, not the representation used by new
 features. Values are bind parameters by default. Identifiers are represented
 as nodes and quoted by the active visitor.
 
-## Next milestone: portable visitor foundation
+## Next milestone: dialect grammar seams
 
-Every statement family now enters the active visitor, and visitors own
-identifier quoting plus extension-capability decisions. A new visitor can
-control complete statement rendering, but currently has to inherit
-`ArelSQLiteVisitor` to reuse expression traversal, query scoping, and useful
-default diagnostics. Separate reusable protocol machinery from SQLite policy:
+`ArelVisitor` now provides shared traversal, relation-scope validation, query
+context, statement dispatch, and diagnostics without inheriting SQLite
+capability or quoting policy. Its portable SQL baseline still contains grammar
+choices that a second dialect may need to vary. Expose only measured seams:
 
-- introduce a dialect-neutral visitor base for query context, relation-scope
-  validation, capability diagnostics, and statement dispatch;
-- keep SQL spelling and supported-capability decisions in
-  `ArelSQLiteVisitor`;
-- make the portable rejecting fixture inherit the neutral base rather than
-  SQLite, proving that its baseline does not accidentally depend on SQLite
-  extension support;
-- define the minimal methods a concrete dialect must implement without adding
-  nominal interfaces to Diamond;
-- preserve every existing SQLite result and bind order during the split.
+- identify SQL spellings that differ in the first future dialect, beginning
+  with pagination, boolean literals, compound grouping, and write clauses;
+- add narrowly named visitor methods for those differences instead of copying
+  the complete expression renderer;
+- keep bind collection in the shared traversal whenever placeholder order is
+  identical across dialects;
+- require focused conformance fixtures for each overridden grammar seam;
+- avoid speculative abstraction when SQLite and the future dialect use the
+  same syntax and semantics.
 
-Completion means a future dialect starts from shared AST and validation
-machinery without inheriting SQLite's capability policy or claiming to be a
-SQLite visitor in diagnostics.
+Completion means a second renderer can inherit the portable visitor and
+override its genuine grammar differences without forking traversal or query
+validation.
 
 ## Deferred expression decisions
 
