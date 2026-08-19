@@ -870,6 +870,9 @@ class ArelCteRelation < ArelTable
   def initialize(name: String)
     super(name)
   end
+  def recursive_body(anchor, recursive_branch)
+    ArelCompoundQuery.new(anchor, "UNION ALL", recursive_branch)
+  end
 end
 
 class ArelAssignmentValue
