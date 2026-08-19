@@ -1,5 +1,13 @@
 # Changelog
 
+## Arel 0.25.0
+
+- Added SQLite execution coverage for offset-only SELECT and compound queries.
+- Rejected negative limits and offsets at construction across both query
+  families.
+- Locked down immutable pagination branches while retaining exact SQL and bind
+  ordering.
+
 ## Arel 0.24.0
 
 - Added overridable literal and pagination grammar seams shared by SELECT and
