@@ -119,6 +119,9 @@ def run_tests()
       message = error.message()
     end
     Minitest.assert_equal("attribute belongs to a relation outside this query", message)
+    sql, params = Arel.from(Arel.table("People")).project(
+      Arel.table("people").column("id")).to_sql()
+    Minitest.assert_equal("SELECT \"people\".\"id\" FROM \"People\"", sql)
   end
 
   def test_arbitrary_expressions_can_be_aliased()

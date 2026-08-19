@@ -373,21 +373,21 @@ class ArelVisitor
   def attribute_allowed?(attribute: ArelAttribute) -> Bool
     if @query == nil
       true
-    elsif attribute.table().reference_name() == @query.base_reference_name()
+    elsif attribute.table().reference_name().downcase() == @query.base_reference_name().downcase()
       true
     else
       found = false
       reference_name = attribute.table().reference_name()
       index = 0
       while index < @query.joins().length()
-        if @query.joins()[index].table().reference_name() == reference_name
+        if @query.joins()[index].table().reference_name().downcase() == reference_name.downcase()
           found = true
         end
         index = index + 1
       end
       index = 0
       while index < @query.correlations().length()
-        if @query.correlations()[index].reference_name() == reference_name
+        if @query.correlations()[index].reference_name().downcase() == reference_name.downcase()
           found = true
         end
         index = index + 1
