@@ -90,6 +90,10 @@ def run_tests()
     Minitest.assert_equal("SELECT \"first_values\".\"id\" FROM \"first_values\" UNION ALL SELECT \"second_values\".\"id\" FROM \"second_values\" LIMIT ? OFFSET ?", sql)
     Minitest.assert_equal(10, params[0])
     Minitest.assert_equal(20, params[1])
+    query = Arel.union_all(left, right).skip(6)
+    sql, params = query.to_sql()
+    Minitest.assert_equal("SELECT \"first_values\".\"id\" FROM \"first_values\" UNION ALL SELECT \"second_values\".\"id\" FROM \"second_values\" LIMIT -1 OFFSET ?", sql)
+    Minitest.assert_equal("6", params.join("|"))
   end
 
   def test_compound_query_can_feed_an_insert()
