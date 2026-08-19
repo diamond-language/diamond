@@ -838,12 +838,14 @@ end
 
 class ArelInsert
   def initialize(table: ArelTable, rows = [], returning = [], source_columns = [],
-                 source_query = nil)
+                 source_query = nil, conflict_target = [], conflict_ignore = false)
     @table = table
     @rows = rows
     @returning = returning
     @source_columns = source_columns
     @source_query = source_query
+    @conflict_target = conflict_target
+    @conflict_ignore = conflict_ignore
   end
 
   def values(attributes: Hash) = ArelInsert.new(@table, [attributes], @returning)
@@ -851,8 +853,13 @@ class ArelInsert
   def from_query(columns: Array, query)
     ArelInsert.new(@table, [], @returning, columns, query)
   end
+  def on_conflict_do_nothing(columns = [])
+    ArelInsert.new(@table, @rows, @returning, @source_columns, @source_query,
+      arel_array(columns), true)
+  end
   def returning(expressions)
-    ArelInsert.new(@table, @rows, arel_array(expressions), @source_columns, @source_query)
+    ArelInsert.new(@table, @rows, arel_array(expressions), @source_columns, @source_query,
+      @conflict_target, @conflict_ignore)
   end
 
   def to_sql() -> Array
@@ -868,6 +875,18 @@ class ArelInsert
       source_sql, params = @source_query.to_sql()
       sql = "INSERT INTO #{arel_quote_identifier(@table.name())} " +
         "(#{columns.join(", ")}) #{source_sql}"
+      if @conflict_ignore
+        targets = []
+        def quote_source_conflict_target(name)
+          targets.push(arel_quote_identifier(name))
+        end
+        @conflict_target.each(quote_source_conflict_target)
+        target_sql = ""
+        if targets.length() > 0
+          target_sql = " (#{targets.join(", ")})"
+        end
+        sql = sql + " ON CONFLICT#{target_sql} DO NOTHING"
+      end
       rendered = []
       visitor = ArelSQLiteVisitor.new()
       def render_source_returning(expression)
@@ -910,6 +929,18 @@ class ArelInsert
     @rows.each(collect_row)
     sql = "INSERT INTO #{arel_quote_identifier(@table.name())} " +
       "(#{columns.join(", ")}) VALUES #{value_groups.join(", ")}"
+    if @conflict_ignore
+      targets = []
+      def quote_conflict_target(name)
+        targets.push(arel_quote_identifier(name))
+      end
+      @conflict_target.each(quote_conflict_target)
+      target_sql = ""
+      if targets.length() > 0
+        target_sql = " (#{targets.join(", ")})"
+      end
+      sql = sql + " ON CONFLICT#{target_sql} DO NOTHING"
+    end
     rendered = []
     visitor = ArelSQLiteVisitor.new()
     def render_returning(expression)

@@ -159,6 +159,20 @@ def run_tests()
     db.close()
   end
 
+  def test_insert_can_ignore_conflicts()
+    db = SQLite3.open(":memory:")
+    db.execute("CREATE TABLE tags (name TEXT UNIQUE)")
+    tags = Arel.table("tags")
+    insert = Arel.insert_into(tags).values({"name": "ruby"})
+    insert = insert.on_conflict_do_nothing(["name"])
+    sql, params = insert.to_sql()
+    Minitest.assert_equal("INSERT INTO \"tags\" (\"name\") VALUES (?) ON CONFLICT (\"name\") DO NOTHING", sql)
+    Minitest.assert_equal(1, insert.execute(db))
+    Minitest.assert_equal(0, insert.execute(db))
+    Minitest.assert_equal(1, db.query("SELECT name FROM tags").length())
+    db.close()
+  end
+
   suite = Minitest.new()
   suite.test("INSERT", test_insert_renders_and_executes)
   suite.test("UPDATE", test_update_renders_and_executes)
@@ -169,6 +183,7 @@ def run_tests()
   suite.test("multi-row INSERT shape", test_multi_row_insert_requires_identical_columns)
   suite.test("INSERT SELECT", test_insert_select_preserves_query_binds_and_executes)
   suite.test("UPDATE expressions", test_update_assignments_accept_expressions)
+  suite.test("INSERT conflict ignore", test_insert_can_ignore_conflicts)
   suite.run()
 end
 
