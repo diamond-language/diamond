@@ -1,5 +1,12 @@
 # Changelog
 
+## Arel 0.6.0
+
+- Added multi-row INSERTs with shape validation, INSERT...SELECT, expression
+  assignments, SQLite conflict actions, and CTE-backed INSERT statements.
+- Added validation and execution coverage for projection counts, conflict
+  updates, bind order, and multi-row RETURNING.
+
 Diamond has not made a stable release. This file summarizes completed
 capability milestones on the development branch; it does not imply API,
 bytecode, or semantic stability.

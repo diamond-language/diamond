@@ -1,1 +1,1 @@
-{"name": "arel", "version": "0.5.0"}
+{"name": "arel", "version": "0.6.0"}

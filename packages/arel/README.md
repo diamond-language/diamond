@@ -86,6 +86,10 @@ Immutable write managers use the same `[sql, params]` contract:
 items = Arel.table("items")
 
 insert = Arel.insert_into(items).values({"name": "pens", "qty": 3})
+bulk_insert = Arel.insert_into(items).values_many([
+  {"name": "paper", "qty": 5},
+  {"name": "cards", "qty": 2}
+])
 update = Arel.update(items).set({"qty": 4})
 update = update.where(items.column("name").eq("pens"))
 delete = Arel.delete_from(items).where(items.column("qty").lt(1))
@@ -95,9 +99,16 @@ rows = update.returning(items.column("qty")).to_a(db)
 delete.execute(db)
 ```
 
+`from_query(columns, query)` builds `INSERT ... SELECT` and validates that the
+target-column and projection counts match. `on_conflict_do_nothing(columns)`
+and `on_conflict_do_update(columns, assignments)` expose SQLite's conflict
+actions. Wrap AST or raw-SQL assignment expressions with `Arel.expression`;
+ordinary assignment values remain binds. INSERT statements can also prepend a
+query CTE with `with(name, query)`.
+
 UPDATE and DELETE require a predicate unless the caller explicitly opts into a
 whole-table operation with `all()`. SQLite `RETURNING` is available on all three
-write managers.
+write managers, including multi-row INSERTs.
 
 The original string-oriented API remains available for compatibility:
 
@@ -174,9 +185,6 @@ why nothing here names `SQLite3` directly.
 
 ## What's deliberately out of scope
 
-- **Multi-row inserts, `INSERT ... SELECT`, expression assignments, and SQLite
-  conflict clauses.** The current write managers intentionally start with the
-  single-row/common mutation shapes.
 - **Visitors for other adapters.** Nodes contain no SQLite rendering logic;
   `ArelSQLiteVisitor` is deliberately separate so later dialect visitors can
   render the same query tree.

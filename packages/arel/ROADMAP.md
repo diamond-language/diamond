@@ -22,19 +22,19 @@ Raw SQL remains an explicit escape hatch, not the representation used by new
 features. Values are bind parameters by default. Identifiers are represented
 as nodes and quoted by the active visitor.
 
-## Next milestone: deepen data-changing statements
+## Next milestone: complete write/query integration
 
-Extend the initial immutable write managers:
+The remaining write work is about composition rather than adding statement
+kinds:
 
-- multi-row `INSERT` with consistent column-shape validation;
-- `INSERT ... SELECT` from ordinary or compound queries;
-- expression-valued UPDATE assignments rather than bind values only;
-- SQLite `ON CONFLICT` targets and update/do-nothing actions;
-- write statements composed with CTEs where SQLite permits them.
+- allow CTEs on UPDATE and DELETE as well as INSERT;
+- validate duplicate CTE names consistently across read and write managers;
+- exercise compound queries as INSERT sources and recursive CTEs feeding writes;
+- decide whether SQLite's optional conflict-target predicates warrant a
+  structural node or should remain an explicit raw-SQL extension.
 
-Completion means every feature composes with existing predicates, preserves
-bind ordering, quotes identifiers correctly, and executes against SQLite in
-the package tests.
+Completion means those combinations preserve bind ordering, quote identifiers
+correctly, and execute against SQLite in the package tests.
 
 ## Following milestone: finish recursive/compound edge cases
 
