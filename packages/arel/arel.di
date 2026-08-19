@@ -1126,6 +1126,8 @@ class ArelInsert
   end
 
   def ctes() = @ctes
+  def structure() = [@table, @rows, @returning, @source_columns, @source_query,
+    @conflict_target, @conflict_ignore, @conflict_assignments, @ctes]
   def values(attributes: Hash)
     ArelInsert.new(@table, [attributes], @returning, [], nil, @conflict_target,
       @conflict_ignore, @conflict_assignments, @ctes)
@@ -1286,6 +1288,7 @@ class ArelUpdate
   end
 
   def ctes() = @ctes
+  def structure() = [@table, @assignments, @predicates, @returning, @allow_all, @ctes]
   def set(assignments: Hash)
     ArelUpdate.new(@table, assignments, @predicates, @returning, @allow_all, @ctes)
   end
@@ -1380,6 +1383,7 @@ class ArelDelete
   end
 
   def ctes() = @ctes
+  def structure() = [@table, @predicates, @returning, @allow_all, @ctes]
   def where(predicate)
     ArelDelete.new(@table, array_concat(@predicates, [predicate]), @returning, @allow_all,
       @ctes)
