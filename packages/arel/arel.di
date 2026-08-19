@@ -1370,14 +1370,13 @@ class ArelDelete
       arel_append_cte(@ctes, name, query, true))
   end
 
-  def to_sql() -> Array
+  def render_with(visitor) -> Array
     if @predicates.length() == 0 && !@allow_all
       raise ArgumentError.new("DELETE requires where() or explicit all()")
     end
     params = []
     sql = "DELETE FROM #{arel_quote_identifier(@table.name())}"
     predicates = []
-    visitor = ArelSQLiteVisitor.new()
     def render_predicate(predicate)
       predicates.push(visitor.render_expression(predicate, params))
     end
@@ -1397,6 +1396,14 @@ class ArelDelete
     sql = visitor.render_ctes(self, cte_params) + sql
     params = array_concat(cte_params, params)
     [sql, params]
+  end
+
+  def to_sql(visitor = nil) -> Array
+    renderer = visitor
+    if renderer == nil
+      renderer = ArelSQLiteVisitor.new()
+    end
+    self.render_with(renderer)
   end
 
   def execute(db)

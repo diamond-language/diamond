@@ -82,6 +82,13 @@ def run_tests()
     Minitest.assert_equal("UPDATE \"inventory\" SET \"qty\" = incoming.\"qty\"", sql)
   end
 
+  def test_delete_returning_uses_the_explicit_visitor()
+    inventory = Arel.table("inventory")
+    deletion = Arel.delete_from(inventory).all().returning(Arel.excluded("id"))
+    sql, params = deletion.to_sql(WriteTestArelVisitor.new())
+    Minitest.assert_equal("DELETE FROM \"inventory\" RETURNING incoming.\"id\"", sql)
+  end
+
   suite = Minitest.new()
   suite.test("explicit SELECT visitor", test_select_accepts_an_explicit_visitor)
   suite.test("nested SELECT visitor", test_derived_queries_inherit_the_explicit_visitor)
@@ -89,6 +96,7 @@ def run_tests()
   suite.test("CTE visitor", test_cte_bodies_inherit_the_explicit_visitor)
   suite.test("INSERT visitor", test_insert_expressions_use_the_explicit_visitor)
   suite.test("UPDATE visitor", test_update_expressions_use_the_explicit_visitor)
+  suite.test("DELETE visitor", test_delete_returning_uses_the_explicit_visitor)
   suite.run()
 end
 
