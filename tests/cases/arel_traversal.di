@@ -361,6 +361,19 @@ def run_tests()
     policy_sql, policy_params = policy_query_result.to_sql()
     Minitest.assert_equal("SELECT * FROM \"people\" WHERE (\"people\".\"verified\" = ? AND \"people\".\"age\" > ?)", policy_sql)
     Minitest.assert_equal("true|18", policy_params.join("|"))
+    first = people.column("first_choice").eq(true)
+    second = people.column("second_choice").eq(true)
+    first_result = Arel.simplify(policy_source,
+      [[policy_source, first], [policy_source, second]])
+    Minitest.assert_equal("Predicate(=, Attribute(people.first_choice), Bind(true))",
+      Arel.inspect(first_result))
+    invalid_raised = false
+    begin
+      Arel.simplify(policy_source, [[policy_source]])
+    rescue ArgumentError
+      invalid_raised = true
+    end
+    Minitest.assert_equal(true, invalid_raised)
   end
 
   suite = Minitest.new()
