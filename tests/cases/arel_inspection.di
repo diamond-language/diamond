@@ -92,6 +92,13 @@ def run_tests()
     Minitest.assert_equal(true, Arel.same?(joined, same_joined))
     Minitest.assert_equal(false, Arel.same?(joined, Arel.from(people).left_join(roles,
       people.column("role_id").eq(roles.column("id")))))
+    derived = Arel.from_subquery(subquery, "selected_people")
+    same_derived = Arel.from_subquery(Arel.from(Arel.table("people")).project(
+      Arel.table("people").column("id")), "selected_people")
+    other_derived = Arel.from_subquery(Arel.from(Arel.table("people")).project(
+      Arel.table("people").column("name")), "selected_people")
+    Minitest.assert_equal(true, Arel.same?(derived, same_derived))
+    Minitest.assert_equal(false, Arel.same?(derived, other_derived))
   end
 
   suite = Minitest.new()

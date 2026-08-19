@@ -1670,6 +1670,12 @@ def same_tail?(left, right) -> Bool
        left.ctes().length() != 0 || right.ctes().length() != 0
       return false
     end
+    if (left.source_query() == nil) != (right.source_query() == nil)
+      return false
+    end
+    if left.source_query() != nil && !self.same?(left.source_query(), right.source_query())
+      return false
+    end
     index = 0
     while index < left.projections().length()
       if !self.same?(left.projections()[index], right.projections()[index])
