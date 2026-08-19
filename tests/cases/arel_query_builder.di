@@ -160,6 +160,13 @@ def run_tests()
     Minitest.assert_equal(0, rows.length())
     Minitest.assert_equal(0, db.query("SELECT * FROM guard").length())
     db.close()
+    message = nil
+    begin
+      Arel.from(Arel.table("")).to_sql()
+    rescue error: ArgumentError
+      message = error.message()
+    end
+    Minitest.assert_equal("SQL identifier cannot be empty", message)
   end
 
   def test_ast_executes_against_sqlite()

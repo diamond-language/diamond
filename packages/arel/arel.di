@@ -26,6 +26,9 @@ def arel_array(value)
 end
 
 def arel_quote_identifier(name: String) -> String
+  if name.length() == 0
+    raise ArgumentError.new("SQL identifier cannot be empty")
+  end
   pieces = ["\""]
   characters = name.chars()
   index = 0
