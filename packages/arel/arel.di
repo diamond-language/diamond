@@ -642,6 +642,7 @@ class ArelVisitor
 
   def render(query) -> Array
     previous_query = @query
+    begin
     visitor = self
     params = []
     sql = self.render_ctes(query, params)
@@ -724,8 +725,10 @@ class ArelVisitor
         sql = sql + " OFFSET #{query.offset_value()}"
       end
     end
-    @query = previous_query
     [sql, params]
+    ensure
+      @query = previous_query
+    end
   end
 
   def render_compound(query) -> Array = query.render_default(self)
