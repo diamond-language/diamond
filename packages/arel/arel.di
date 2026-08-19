@@ -1476,6 +1476,14 @@ def inspect(node) -> String
     "QualifiedStar(#{node.table().reference_name()})"
   elsif node is ArelConflictAttribute
     "ConflictAttribute(#{node.name()})"
+  elsif node is ArelExists
+    prefix = "Exists"
+    if node.negated?()
+      prefix = "NotExists"
+    end
+    "#{prefix}(#{self.inspect(node.query())})"
+  elsif node is ArelScalarSubquery
+    "Scalar(#{self.inspect(node.query())})"
   elsif node is ArelRawSql
     "RawSql(#{node.sql()}, #{node.params().length()} binds)"
   elsif node is ArelCollation
