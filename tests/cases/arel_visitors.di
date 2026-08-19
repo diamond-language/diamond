@@ -112,6 +112,20 @@ def run_tests()
     db.close()
   end
 
+  def test_write_execution_accepts_an_explicit_visitor()
+    db = SQLite3.open(":memory:")
+    db.execute("CREATE TABLE items (id INTEGER, qty INTEGER)")
+    items = Arel.table("items")
+    visitor = ArelSQLiteVisitor.new()
+    insert = Arel.insert_into(items).values({"id": 1, "qty": 2})
+    Minitest.assert_equal(1, insert.execute(db, visitor))
+    update = Arel.update(items).set({"qty": 3}).where(items.column("id").eq(1))
+    Minitest.assert_equal(1, update.execute(db, visitor))
+    deletion = Arel.delete_from(items).where(items.column("id").eq(1))
+    Minitest.assert_equal(1, deletion.execute(db, visitor))
+    db.close()
+  end
+
   suite = Minitest.new()
   suite.test("explicit SELECT visitor", test_select_accepts_an_explicit_visitor)
   suite.test("nested SELECT visitor", test_derived_queries_inherit_the_explicit_visitor)
@@ -122,6 +136,7 @@ def run_tests()
   suite.test("DELETE visitor", test_delete_returning_uses_the_explicit_visitor)
   suite.test("SELECT execution visitor", test_select_execution_accepts_an_explicit_visitor)
   suite.test("compound execution visitor", test_compound_execution_accepts_an_explicit_visitor)
+  suite.test("write execution visitor", test_write_execution_accepts_an_explicit_visitor)
   suite.run()
 end
 
