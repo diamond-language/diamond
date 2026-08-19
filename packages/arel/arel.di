@@ -1552,6 +1552,25 @@ def same?(left, right) -> Bool
   elsif left is ArelNot
     right is ArelNot && self.same?(left.expression(), right.expression())
   else
+    self.same_tail?(left, right)
+  end
+end
+
+def same_tail?(left, right) -> Bool
+  if left is ArelBetween
+    right is ArelBetween && left.negated?() == right.negated?() &&
+      left.lower() == right.lower() && left.upper() == right.upper() &&
+      self.same?(left.left(), right.left())
+  elsif left is ArelOrdering
+    right is ArelOrdering && left.direction() == right.direction() &&
+      left.nulls() == right.nulls() && self.same?(left.expression(), right.expression())
+  elsif left is ArelAlias
+    right is ArelAlias && left.name() == right.name() &&
+      self.same?(left.expression(), right.expression())
+  elsif left is ArelCollation
+    right is ArelCollation && left.name() == right.name() &&
+      self.same?(left.expression(), right.expression())
+  else
     false
   end
 end

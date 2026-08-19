@@ -34,6 +34,12 @@ def run_tests()
     other_predicate = people.column("active").eq(false).and_also(people.column("age").gt(18))
     Minitest.assert_equal(true, Arel.same?(first_predicate, same_predicate))
     Minitest.assert_equal(false, Arel.same?(first_predicate, other_predicate))
+    first_ordering = Arel.asc(people.column("name").collate("nocase")).nulls_last()
+    same_ordering = Arel.asc(Arel.table("people").column("name").collate("nocase"))
+    same_ordering = same_ordering.nulls_last()
+    other_ordering = Arel.desc(people.column("name").collate("nocase")).nulls_last()
+    Minitest.assert_equal(true, Arel.same?(first_ordering, same_ordering))
+    Minitest.assert_equal(false, Arel.same?(first_ordering, other_ordering))
   end
 
   suite = Minitest.new()
