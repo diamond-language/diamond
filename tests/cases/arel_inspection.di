@@ -171,7 +171,7 @@ def run_tests()
   suite.test("structural equality", test_nodes_compare_structurally)
   suite.test("query structural equality", test_queries_compare_structurally)
   suite.test("write manager structural tooling", test_write_managers_have_structural_tooling)
-  suite.run()
+  suite.run!()
 end
 
 run_tests()

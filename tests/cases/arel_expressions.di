@@ -61,7 +61,7 @@ def run_tests()
   suite.test("structural CAST", test_casts_are_structural_and_preserve_binds)
   suite.test("CAST type validation", test_cast_types_reject_sql_fragments)
   suite.test("structural concatenation", test_string_concatenation_is_structural)
-  suite.run()
+  suite.run!()
 end
 
 run_tests()

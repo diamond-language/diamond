@@ -2391,6 +2391,8 @@ fi
 #   <name>.flags               -- optional, extra CLI flags (one per line)
 #                                 inserted before the file argument, e.g.
 #                                 --dump-bytecode
+# Minitest cases instead end with `suite.run!()` and need no sidecar: the
+# uncaught failure makes their exit code nonzero, while output is informational.
 # This is the newer convention going forward, growing this directory
 # instead of this file; the inline -e assertions above are the older
 # convention, most of them predating tests/cases/*.expected existing.
@@ -2456,6 +2458,16 @@ for case_file in tests/cases/*.di; do
                 echo "  actual last line:   $last_line" >&2
                 exit 1
             fi
+        fi
+        case_count=$((case_count + 1))
+    elif grep -q 'suite\.run!()' "$case_file"; then
+        exit_code="$(<"$case_output_dir/$case_base.exitcode")"
+        if [[ "$exit_code" != "0" ]]; then
+            actual="$(<"$case_output_dir/$case_base.combined")"
+            echo "FAIL: $case_file" >&2
+            echo "  expected exit code 0, got: $exit_code" >&2
+            echo "  actual: $actual" >&2
+            exit 1
         fi
         case_count=$((case_count + 1))
     fi

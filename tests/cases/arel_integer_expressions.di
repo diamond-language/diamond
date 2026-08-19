@@ -53,7 +53,7 @@ def run_tests()
   suite.test("structural bitwise OR", test_bitwise_or_is_structural)
   suite.test("structural left shift", test_left_shift_is_structural)
   suite.test("structural right shift", test_right_shift_is_structural)
-  suite.run()
+  suite.run!()
 end
 
 run_tests()

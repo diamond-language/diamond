@@ -145,7 +145,7 @@ def run_tests()
   suite.test("compound execution visitor", test_compound_execution_accepts_an_explicit_visitor)
   suite.test("write execution visitor", test_write_execution_accepts_an_explicit_visitor)
   suite.test("common render entry point", test_arel_render_is_the_common_visitor_entry_point)
-  suite.run()
+  suite.run!()
 end
 
 run_tests()

@@ -63,7 +63,7 @@ def run_tests()
   suite.test("ordered predicate children", test_predicate_children_preserve_semantic_order)
   suite.test("ordered query children", test_query_children_follow_render_order)
   suite.test("composition children", test_composition_children_are_structural)
-  suite.run()
+  suite.run!()
 end
 
 run_tests()

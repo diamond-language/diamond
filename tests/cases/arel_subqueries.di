@@ -98,7 +98,7 @@ def run_tests()
   suite.test("explicit correlation", test_explicit_correlation_allows_outer_attributes)
   suite.test("correlation validation", test_correlation_rejects_local_and_duplicate_relations)
   suite.test("nested correlation", test_nested_correlation_can_name_each_outer_level)
-  suite.run()
+  suite.run!()
 end
 
 run_tests()

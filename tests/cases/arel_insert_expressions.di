@@ -96,7 +96,7 @@ def run_tests()
   suite.test("INSERT DEFAULT VALUES", test_default_values_can_return_generated_columns)
   suite.test("partial conflict target", test_conflict_targets_accept_partial_index_predicates)
   suite.test("partial conflict execution", test_partial_index_conflict_target_executes)
-  suite.run()
+  suite.run!()
 end
 
 run_tests()

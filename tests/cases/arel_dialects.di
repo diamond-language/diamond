@@ -133,7 +133,7 @@ def run_tests()
   suite.test("portable write nodes", test_portable_write_nodes_render_without_extensions)
   suite.test("portable compounds and CTEs", test_portable_compounds_and_ctes_render_without_extensions)
   suite.test("extension node metadata", test_extension_nodes_report_their_capability_names)
-  suite.run()
+  suite.run!()
 end
 
 run_tests()

@@ -117,7 +117,7 @@ def run_tests()
   suite.test("write CTE duplicate names", test_write_managers_reject_duplicate_cte_names)
   suite.test("recursive INSERT CTE", test_recursive_cte_can_feed_an_insert)
   suite.test("recursive UPDATE and DELETE CTEs", test_update_and_delete_accept_recursive_ctes)
-  suite.run()
+  suite.run!()
 end
 
 run_tests()

@@ -25,7 +25,7 @@ def run_tests()
 
   suite = Minitest.new()
   suite.test("SQLite integer expressions", test_integer_expressions_execute_against_sqlite)
-  suite.run()
+  suite.run!()
 end
 
 run_tests()

@@ -282,7 +282,7 @@ def run_tests()
   suite.test("INSERT SELECT wildcard validation", test_insert_select_rejects_unknown_wildcard_shape)
   suite.test("multi-row INSERT RETURNING", test_multi_row_insert_returns_each_inserted_row)
   suite.test("INSERT CTE", test_insert_select_accepts_ctes)
-  suite.run()
+  suite.run!()
 end
 
 run_tests()

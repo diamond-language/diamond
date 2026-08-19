@@ -165,7 +165,7 @@ def run_tests()
   suite.test("distinct function arguments", test_distinct_function_arguments)
   suite.test("SQLite collation", test_sqlite_collation_expression)
   suite.test("cross join", test_cross_join_has_no_on_clause)
-  suite.run()
+  suite.run!()
 end
 
 run_tests()

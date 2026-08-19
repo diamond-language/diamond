@@ -174,7 +174,7 @@ def run_tests()
   suite.test("right-nested compound grouping", test_right_nested_compounds_preserve_grouping)
   suite.test("left-nested compound grouping", test_left_nested_compounds_preserve_local_pagination)
   suite.test("compound wildcard validation", test_compounds_reject_unknown_wildcard_shapes)
-  suite.run()
+  suite.run!()
 end
 
 run_tests()

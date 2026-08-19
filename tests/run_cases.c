@@ -1,5 +1,4 @@
-/* Runs every .di file under tests/cases/ that has an .expected/.expected_error/
- * .expected_contains/.expected_lastline sibling through diamond_run_source
+/* Runs every selected .di file under tests/cases through diamond_run_source
  * (src/run_source.c) *in this one process*, instead of tests/run.sh
  * spawning a fresh `diamond` process per file -- see docs/roadmap.md for
  * why that was the dominant cost of a full `make test` run (measured:
@@ -290,7 +289,7 @@ static bool run_one_case(const char *cases_dir, const char *output_dir, const ch
  * var assertions elsewhere in tests/run.sh are driven a different way
  * entirely) is silently skipped, matching that loop's own existing
  * behavior exactly. */
-static bool has_expectation(const char *cases_dir, const char *name) {
+static bool should_run_case(const char *cases_dir, const char *name) {
     static const char *const suffixes[] = {
         ".expected", ".expected_error", ".expected_contains", ".expected_lastline",
     };
@@ -299,6 +298,13 @@ static bool has_expectation(const char *cases_dir, const char *name) {
         snprintf(path, sizeof path, "%s/%s%s", cases_dir, name, suffixes[index]);
         if (file_exists(path)) return true;
     }
+    char source_path[PATH_BUFFER_SIZE];
+    snprintf(source_path, sizeof source_path, "%s/%s.di", cases_dir, name);
+    char *source=read_whole_file(source_path,nullptr);
+    if(source==nullptr)return false;
+    const bool uses_exit_status=strstr(source,"suite.run!()")!=nullptr;
+    free(source);
+    if(uses_exit_status)return true;
     return false;
 }
 
@@ -371,13 +377,13 @@ int main(int argc, char **argv) {
         memcpy(name, base, base_length);
         name[base_length] = '\0';
 
-        if (!has_expectation(cases_dir, name)) { skipped_count++; continue; }
+        if (!should_run_case(cases_dir, name)) { skipped_count++; continue; }
         ok = run_one_case(cases_dir, output_dir, name);
         if (ok) run_count++;
     }
     globfree(&matches);
     if (!ok) return 1;
-    fprintf(stderr, "run_cases: ran %zu case(s), skipped %zu (no .expected* sibling)\n",
+    fprintf(stderr, "run_cases: ran %zu case(s), skipped %zu (no expectation or run! marker)\n",
             run_count, skipped_count);
     return 0;
 }

@@ -180,7 +180,7 @@ def run_tests()
   suite.test("recursive anchor validation", test_recursive_body_rejects_self_referencing_anchor)
   suite.test("ordinary CTE relation declaration", test_ordinary_declaration_accepts_its_relation)
   suite.test("mixed recursive CTEs", test_recursive_and_ordinary_ctes_compose)
-  suite.run()
+  suite.run!()
 end
 
 run_tests()

@@ -96,7 +96,7 @@ def run_tests()
   suite.test("structural arithmetic operands", test_arithmetic_accepts_structural_right_operands)
   suite.test("restricted SQL literals", test_restricted_literals_render_without_binds)
   suite.test("SQL literal validation", test_structural_literals_reject_strings)
-  suite.run()
+  suite.run!()
 end
 
 run_tests()

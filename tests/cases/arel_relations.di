@@ -35,7 +35,7 @@ def run_tests()
   suite = Minitest.new()
   suite.test("duplicate relation aliases", test_duplicate_relation_aliases_are_rejected)
   suite.test("multiple join and bind order", test_multiple_joins_preserve_sql_and_bind_order)
-  suite.run()
+  suite.run!()
 end
 
 run_tests()

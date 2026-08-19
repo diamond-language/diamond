@@ -184,7 +184,7 @@ def run_tests()
   suite.test("distinct projection", test_distinct_projection)
   suite.test("IN and NOT IN predicates", test_in_and_not_in_predicates)
   suite.test("empty IN lists", test_empty_in_lists_are_valid_boolean_expressions)
-  suite.run()
+  suite.run!()
 end
 
 run_tests()
