@@ -29,10 +29,20 @@ def run_tests()
     Minitest.assert_equal(2, params[0])
   end
 
+  def test_left_shift_is_structural()
+    flags = Arel.table("flags")
+    expression = Arel.shift_left(flags.column("mask"), 2)
+    query = Arel.from(flags).project(Arel.as(expression, "shifted"))
+    sql, params = query.to_sql()
+    Minitest.assert_equal("SELECT (\"flags\".\"mask\" << ?) AS \"shifted\" FROM \"flags\"", sql)
+    Minitest.assert_equal(2, params[0])
+  end
+
   suite = Minitest.new()
   suite.test("structural modulo", test_modulo_is_structural)
   suite.test("structural bitwise AND", test_bitwise_and_is_structural)
   suite.test("structural bitwise OR", test_bitwise_or_is_structural)
+  suite.test("structural left shift", test_left_shift_is_structural)
   suite.run()
 end
 
