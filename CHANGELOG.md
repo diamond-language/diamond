@@ -1,5 +1,14 @@
 # Changelog
 
+## Arel 0.26.0
+
+- Added exact pagination bind-order coverage through derived sources, CTEs,
+  EXISTS, membership, scalar subqueries, and INSERT…SELECT sources.
+- Added SQLite execution coverage for paginated derived sources, CTE bodies,
+  and INSERT…SELECT operations.
+- Verified that nested pagination limits affect returned and inserted rows
+  without changing enclosing bind order.
+
 ## Arel 0.25.0
 
 - Added SQLite execution coverage for offset-only SELECT and compound queries.
