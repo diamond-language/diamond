@@ -207,6 +207,21 @@ def run_tests()
     Minitest.assert_equal("Table(people)", Arel.inspect(delete_children[0]))
     Minitest.assert_equal("Predicate(=, Attribute(people.inactive), Bind(true))", Arel.inspect(delete_children[1]))
     Minitest.assert_equal("Attribute(people.id)", Arel.inspect(delete_children[2]))
+    update = Arel.update(people).set({
+      "score": Arel.expression(people.column("score").add(1)),
+      "active": true
+    }).where(people.column("id").eq(7)).returning(people.column("score"))
+    children = Arel.children(update)
+    replacements = [children[0], Arel.expression(people.column("score").add(2)),
+      people.column("id").eq(8), people.column("id")]
+    changed = Arel.with_children(update, replacements)
+    original_sql, original_params = update.to_sql()
+    changed_sql, changed_params = changed.to_sql()
+    Minitest.assert_equal("UPDATE \"people\" SET \"score\" = (\"people\".\"score\" + ?), \"active\" = ? WHERE \"people\".\"id\" = ? RETURNING \"people\".\"score\"", original_sql)
+    Minitest.assert_equal("UPDATE \"people\" SET \"score\" = (\"people\".\"score\" + ?), \"active\" = ? WHERE \"people\".\"id\" = ? RETURNING \"people\".\"id\"", changed_sql)
+    Minitest.assert_equal("1|true|7", original_params.join("|"))
+    Minitest.assert_equal("2|true|8", changed_params.join("|"))
+    Minitest.assert_equal("Update(table=people, assignments=2, predicates=1, returning=1, all=false, ctes=0)", Arel.inspect(update))
   end
 
   def test_walk_is_depth_first_preorder()

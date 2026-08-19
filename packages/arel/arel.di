@@ -1641,8 +1641,60 @@ def with_children_tail(node, replacements: Array)
       node.limit_value(), node.offset_value())
   elsif node is ArelQuery
     self.with_query_children(node, replacements)
+  elsif node is ArelUpdate || node is ArelDelete || node is ArelInsert
+    self.with_write_children(node, replacements)
   else
     raise ArgumentError.new("Arel node does not support child replacement")
+  end
+end
+
+def with_write_children(node, replacements: Array)
+  if replacements.length() != self.children(node).length()
+    raise ArgumentError.new("Arel write manager replacement child count mismatch")
+  end
+  if node is ArelUpdate
+    state = node.structure()
+    index = state[5].length()
+    table = replacements[index]
+    index = index + 1
+    assignments = nil
+    if state[1] != nil
+      assignments = {}
+      assignment_index = 0
+      while assignment_index < state[1].length()
+        key = state[1].key_at(assignment_index)
+        value = state[1][key]
+        if value is ArelAssignmentValue
+          value = replacements[index]
+          index = index + 1
+        end
+        assignments[key] = value
+        assignment_index = assignment_index + 1
+      end
+    end
+    predicates = []
+    predicate_index = 0
+    while predicate_index < state[2].length()
+      predicates.push(replacements[index])
+      index = index + 1
+      predicate_index = predicate_index + 1
+    end
+    returning = []
+    returning_index = 0
+    while returning_index < state[3].length()
+      returning.push(replacements[index])
+      index = index + 1
+      returning_index = returning_index + 1
+    end
+    ctes = []
+    cte_index = 0
+    while cte_index < state[5].length()
+      ctes.push(replacements[cte_index])
+      cte_index = cte_index + 1
+    end
+    ArelUpdate.new(table, assignments, predicates, returning, state[4], ctes)
+  else
+    raise ArgumentError.new("Arel write manager does not support child replacement")
   end
 end
 
