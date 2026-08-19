@@ -146,6 +146,25 @@ def run_tests()
     Minitest.assert_equal("SELECT DISTINCT \"people\".\"role\" FROM \"people\"", sql)
   end
 
+  def test_in_and_not_in_predicates()
+    people = Arel.table("people")
+    included = people.column("role").in_list(["admin", "owner"])
+    predicate = included.and_also(people.column("id").not_in([4, 9]))
+    sql, params = Arel.from(people).where(predicate).to_sql()
+    Minitest.assert_equal("SELECT * FROM \"people\" WHERE (\"people\".\"role\" IN (?, ?) AND \"people\".\"id\" NOT IN (?, ?))", sql)
+    Minitest.assert_equal(4, params.length())
+    Minitest.assert_equal("admin", params[0])
+    Minitest.assert_equal(9, params[3])
+  end
+
+  def test_empty_in_lists_are_valid_boolean_expressions()
+    people = Arel.table("people")
+    empty_sql, empty_params = Arel.from(people).where(people.column("id").in_list([])).to_sql()
+    not_empty_sql, not_empty_params = Arel.from(people).where(people.column("id").not_in([])).to_sql()
+    Minitest.assert_equal("SELECT * FROM \"people\" WHERE 1 = 0", empty_sql)
+    Minitest.assert_equal("SELECT * FROM \"people\" WHERE 1 = 1", not_empty_sql)
+  end
+
   suite = Minitest.new()
   suite.test("hash where renders equality", test_hash_where_renders_equality)
   suite.test("raw fragment where with params", test_raw_fragment_where_with_params)
@@ -162,6 +181,8 @@ def run_tests()
   suite.test("AST executes against SQLite", test_ast_executes_against_sqlite)
   suite.test("table and projection aliases", test_table_and_projection_aliases)
   suite.test("distinct projection", test_distinct_projection)
+  suite.test("IN and NOT IN predicates", test_in_and_not_in_predicates)
+  suite.test("empty IN lists", test_empty_in_lists_are_valid_boolean_expressions)
   suite.run()
 end
 

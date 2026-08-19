@@ -57,6 +57,20 @@ class ArelPredicate
   def not_() = ArelNot.new(self)
 end
 
+class ArelMembership
+  def initialize(left, values: Array, negated: Bool)
+    @left = left
+    @values = values
+    @negated = negated
+  end
+  def left() = @left
+  def values() = @values
+  def negated?() = @negated
+  def and_also(other) = ArelLogical.new(self, "AND", other)
+  def or_else(other) = ArelLogical.new(self, "OR", other)
+  def not_() = ArelNot.new(self)
+end
+
 class ArelOrdering
   def initialize(expression, direction: String)
     @expression = expression
@@ -88,6 +102,8 @@ class ArelAttribute
   def lteq(value) = ArelPredicate.new(self, "<=", value)
   def gt(value) = ArelPredicate.new(self, ">", value)
   def gteq(value) = ArelPredicate.new(self, ">=", value)
+  def in_list(values: Array) = ArelMembership.new(self, values, false)
+  def not_in(values: Array) = ArelMembership.new(self, values, true)
   def asc() = ArelOrdering.new(self, "ASC")
   def desc() = ArelOrdering.new(self, "DESC")
   def as(name: String) = ArelAlias.new(self, name)
@@ -149,6 +165,26 @@ class ArelSQLiteVisitor
       left = self.render_expression(expression.left(), params)
       right = self.render_expression(expression.right(), params)
       "(#{left} #{expression.operator()} #{right})"
+    elsif expression is ArelMembership
+      if expression.values().length() == 0
+        if expression.negated?()
+          "1 = 1"
+        else
+          "1 = 0"
+        end
+      else
+        placeholders = []
+        def bind_member(value)
+          params.push(value)
+          placeholders.push("?")
+        end
+        expression.values().each(bind_member)
+        operator = "IN"
+        if expression.negated?()
+          operator = "NOT IN"
+        end
+        "#{self.render_attribute(expression.left())} #{operator} (#{placeholders.join(", ")})"
+      end
     elsif expression is ArelNot
       inner = self.render_expression(expression.expression(), params)
       "(NOT #{inner})"
