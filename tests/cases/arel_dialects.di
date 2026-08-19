@@ -146,6 +146,14 @@ def run_tests()
     target = Arel.conflict_target(["name"])
     Minitest.assert_equal("excluded-row attributes", excluded.extension_name())
     Minitest.assert_equal("conflict-target predicates", target.extension_name())
+    message = nil
+    begin
+      Arel.from("items").project(Arel.integer_operator(
+        Arel.table("items").column("mask"), "&", 1)).to_sql(PortableTestVisitor.new())
+    rescue error: ArgumentError
+      message = error.message()
+    end
+    Minitest.assert_equal("portable-test visitor does not support SQLite integer operators", message)
   end
 
   suite = Minitest.new()

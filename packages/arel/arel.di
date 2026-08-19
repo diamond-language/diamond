@@ -602,6 +602,10 @@ class ArelSQLiteVisitor
     elsif expression is ArelConflictAttribute
       arel_quote_identifier(expression.name())
     elsif expression is ArelBinaryExpression
+      if expression.operator() == "&" || expression.operator() == "|" ||
+          expression.operator() == "<<" || expression.operator() == ">>"
+        self.require_extension("SQLite integer operators")
+      end
       left = self.render_expression(expression.left(), params)
       right = ""
       if expression.bind_right?()
