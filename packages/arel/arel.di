@@ -1557,6 +1557,10 @@ def inspect_tail(node) -> String
     "Query(from=#{node.base_reference_name()}, projections=#{node.projections().length()}, predicates=#{node.predicates().length()}, joins=#{node.joins().length()}, ctes=#{node.ctes().length()})"
   elsif node is ArelCompoundQuery
     "Compound(#{node.operator()}, #{self.inspect(node.left())}, #{self.inspect(node.right())})"
+  elsif node is ArelInsert
+    state = node.structure()
+    source = state[4] != nil
+    "Insert(into=#{state[0].reference_name()}, rows=#{state[1].length()}, source=#{source}, returning=#{state[2].length()}, ctes=#{state[8].length()})"
   else
     "ArelNode(unsupported)"
   end

@@ -127,10 +127,17 @@ def run_tests()
     Minitest.assert_equal(false, Arel.same?(compound, Arel.union_all(subquery, archived).take(5)))
   end
 
+  def test_write_managers_have_structural_tooling()
+    people = Arel.table("people")
+    insert = Arel.insert_into(people).values({"name": "Ada"}).returning(people.column("id"))
+    Minitest.assert_equal("Insert(into=people, rows=1, source=false, returning=1, ctes=0)", Arel.inspect(insert))
+  end
+
   suite = Minitest.new()
   suite.test("core expression inspection", test_core_expressions_have_deterministic_inspection)
   suite.test("structural equality", test_nodes_compare_structurally)
   suite.test("query structural equality", test_queries_compare_structurally)
+  suite.test("write manager structural tooling", test_write_managers_have_structural_tooling)
   suite.run()
 end
 
