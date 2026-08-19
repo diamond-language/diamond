@@ -131,6 +131,15 @@ class ArelOrdering
   def nulls_last() = ArelOrdering.new(@expression, @direction, "LAST")
 end
 
+class ArelAlias
+  def initialize(expression, name: String)
+    @expression = expression
+    @name = name
+  end
+  def expression() = @expression
+  def name() = @name
+end
+
 class ArelFunction
   def initialize(name: String, arguments: Array, distinct = false)
     if !Regexp.new("\\A[A-Za-z_][A-Za-z0-9_]*\\z").match?(name)
@@ -157,15 +166,7 @@ class ArelFunction
   def not_between(lower, upper) = ArelBetween.new(self, lower, upper, true)
   def asc() = ArelOrdering.new(self, "ASC")
   def desc() = ArelOrdering.new(self, "DESC")
-end
-
-class ArelAlias
-  def initialize(expression, name: String)
-    @expression = expression
-    @name = name
-  end
-  def expression() = @expression
-  def name() = @name
+  def as(name: String) = ArelAlias.new(self, name)
 end
 
 class ArelBinaryExpression
