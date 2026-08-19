@@ -36,6 +36,8 @@ may be reused safely after validation or unsupported-capability errors.
 The base literal renderer spells booleans as `TRUE`/`FALSE`; dialects may
 override it. Pagination is deliberately concrete-dialect policy because
 offset-only syntax and placeholder support differ.
+Query builders reject negative limits and offsets before rendering, so dialect
+pagination methods receive only `nil` or non-negative integer values.
 
 Compound and all three write managers enter the selected visitor first. The
 SQLite visitor delegates to each statement's `render_default(visitor)` fallback
