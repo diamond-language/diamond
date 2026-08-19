@@ -352,7 +352,7 @@ def arel_append_cte(ctes: Array, name: String, query, recursive = false) -> Arra
   duplicate = false
   index = 0
   while index < ctes.length()
-    if ctes[index].name() == name
+    if ctes[index].name().downcase() == name.downcase()
       duplicate = true
     end
     index = index + 1
@@ -960,7 +960,7 @@ class ArelQuery
     duplicate = false
     index = 0
     while index < @ctes.length()
-      if @ctes[index].name() == name
+      if @ctes[index].name().downcase() == name.downcase()
         duplicate = true
       end
       index = index + 1
