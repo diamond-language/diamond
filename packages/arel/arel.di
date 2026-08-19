@@ -1528,6 +1528,12 @@ def inspect_tail(node) -> String
     "Ordering(#{node.direction()}#{nulls}, #{self.inspect(node.expression())})"
   elsif node is ArelAlias
     "Alias(#{node.name()}, #{self.inspect(node.expression())})"
+  elsif node is ArelJoin
+    predicate = "none"
+    if node.predicate() != nil
+      predicate = self.inspect(node.predicate())
+    end
+    "Join(#{node.kind()}, #{self.inspect(node.table())}, #{predicate})"
   elsif node is ArelQuery
     "Query(from=#{node.base_reference_name()}, projections=#{node.projections().length()}, predicates=#{node.predicates().length()}, joins=#{node.joins().length()}, ctes=#{node.ctes().length()})"
   else
