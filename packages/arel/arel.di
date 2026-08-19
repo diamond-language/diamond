@@ -830,12 +830,16 @@ class ArelCompoundQuery
 end
 
 class ArelInsert
-  def initialize(table: ArelTable, attributes = nil)
+  def initialize(table: ArelTable, attributes = nil, returning = [])
     @table = table
     @attributes = attributes
+    @returning = returning
   end
 
-  def values(attributes: Hash) = ArelInsert.new(@table, attributes)
+  def values(attributes: Hash) = ArelInsert.new(@table, attributes, @returning)
+  def returning(expressions)
+    ArelInsert.new(@table, @attributes, arel_array(expressions))
+  end
 
   def to_sql() -> Array
     columns = []
@@ -849,6 +853,15 @@ class ArelInsert
     @attributes.each(collect_attribute)
     sql = "INSERT INTO #{arel_quote_identifier(@table.name())} " +
       "(#{columns.join(", ")}) VALUES (#{placeholders.join(", ")})"
+    rendered = []
+    visitor = ArelSQLiteVisitor.new()
+    def render_returning(expression)
+      rendered.push(visitor.render_expression(expression, params))
+    end
+    @returning.each(render_returning)
+    if rendered.length() > 0
+      sql = sql + " RETURNING " + rendered.join(", ")
+    end
     [sql, params]
   end
 
@@ -856,18 +869,26 @@ class ArelInsert
     sql, params = self.to_sql()
     db.execute(sql, params)
   end
+  def to_a(db)
+    sql, params = self.to_sql()
+    db.query(sql, params)
+  end
 end
 
 class ArelUpdate
-  def initialize(table: ArelTable, assignments = nil, predicates = [])
+  def initialize(table: ArelTable, assignments = nil, predicates = [], returning = [])
     @table = table
     @assignments = assignments
     @predicates = predicates
+    @returning = returning
   end
 
-  def set(assignments: Hash) = ArelUpdate.new(@table, assignments, @predicates)
+  def set(assignments: Hash) = ArelUpdate.new(@table, assignments, @predicates, @returning)
   def where(predicate)
-    ArelUpdate.new(@table, @assignments, array_concat(@predicates, [predicate]))
+    ArelUpdate.new(@table, @assignments, array_concat(@predicates, [predicate]), @returning)
+  end
+  def returning(expressions)
+    ArelUpdate.new(@table, @assignments, @predicates, arel_array(expressions))
   end
 
   def to_sql() -> Array
@@ -888,6 +909,14 @@ class ArelUpdate
     if predicates.length() > 0
       sql = sql + " WHERE " + predicates.join(" AND ")
     end
+    rendered = []
+    def render_returning(expression)
+      rendered.push(visitor.render_expression(expression, params))
+    end
+    @returning.each(render_returning)
+    if rendered.length() > 0
+      sql = sql + " RETURNING " + rendered.join(", ")
+    end
     [sql, params]
   end
 
@@ -895,16 +924,24 @@ class ArelUpdate
     sql, params = self.to_sql()
     db.execute(sql, params)
   end
+  def to_a(db)
+    sql, params = self.to_sql()
+    db.query(sql, params)
+  end
 end
 
 class ArelDelete
-  def initialize(table: ArelTable, predicates = [])
+  def initialize(table: ArelTable, predicates = [], returning = [])
     @table = table
     @predicates = predicates
+    @returning = returning
   end
 
   def where(predicate)
-    ArelDelete.new(@table, array_concat(@predicates, [predicate]))
+    ArelDelete.new(@table, array_concat(@predicates, [predicate]), @returning)
+  end
+  def returning(expressions)
+    ArelDelete.new(@table, @predicates, arel_array(expressions))
   end
 
   def to_sql() -> Array
@@ -919,12 +956,24 @@ class ArelDelete
     if predicates.length() > 0
       sql = sql + " WHERE " + predicates.join(" AND ")
     end
+    rendered = []
+    def render_returning(expression)
+      rendered.push(visitor.render_expression(expression, params))
+    end
+    @returning.each(render_returning)
+    if rendered.length() > 0
+      sql = sql + " RETURNING " + rendered.join(", ")
+    end
     [sql, params]
   end
 
   def execute(db)
     sql, params = self.to_sql()
     db.execute(sql, params)
+  end
+  def to_a(db)
+    sql, params = self.to_sql()
+    db.query(sql, params)
   end
 end
 

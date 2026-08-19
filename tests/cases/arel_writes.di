@@ -52,10 +52,30 @@ def run_tests()
     db.close()
   end
 
+  def test_returning_is_structural_and_returns_rows()
+    db = SQLite3.open(":memory:")
+    db.execute("CREATE TABLE items (id INTEGER PRIMARY KEY, name TEXT)")
+    items = Arel.table("items")
+    insert = Arel.insert_into(items).values({"name": "paper"})
+    rows = insert.returning([items.column("id"), items.column("name")]).to_a(db)
+    Minitest.assert_equal(1, rows.length())
+    Minitest.assert_equal(1, rows[0]["id"])
+    Minitest.assert_equal("paper", rows[0]["name"])
+
+    update = Arel.update(items).set({"name": "card"})
+    updated = update.returning(items.column("name")).to_a(db)
+    Minitest.assert_equal("card", updated[0]["name"])
+
+    deleted = Arel.delete_from(items).returning(items.column("id")).to_a(db)
+    Minitest.assert_equal(1, deleted[0]["id"])
+    db.close()
+  end
+
   suite = Minitest.new()
   suite.test("INSERT", test_insert_renders_and_executes)
   suite.test("UPDATE", test_update_renders_and_executes)
   suite.test("DELETE", test_delete_renders_and_executes)
+  suite.test("RETURNING", test_returning_is_structural_and_returns_rows)
   suite.run()
 end
 
