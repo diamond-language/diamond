@@ -395,18 +395,21 @@ class ArelSQLiteVisitor
   def render_ctes(query, params: Array) -> String
     entries = []
     recursive = false
-    def render_cte(cte)
+    index = 0
+    while index < query.ctes().length()
+      cte = query.ctes()[index]
       if cte.recursive?()
         recursive = true
       end
-      sql, bound = cte.query().to_sql()
-      def append_cte_param(value)
-        params.push(value)
+      sql, bound = cte.query().render_with(self)
+      bound_index = 0
+      while bound_index < bound.length()
+        params.push(bound[bound_index])
+        bound_index = bound_index + 1
       end
-      bound.each(append_cte_param)
       entries.push("#{arel_quote_identifier(cte.name())} AS (#{sql})")
+      index = index + 1
     end
-    query.ctes().each(render_cte)
     if entries.length() == 0
       ""
     else

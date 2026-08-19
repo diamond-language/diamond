@@ -44,10 +44,20 @@ def run_tests()
     Minitest.assert_equal("SELECT \"first_values\".\"value\" FROM visited_first_values UNION ALL SELECT \"second_values\".\"value\" FROM visited_second_values", sql)
   end
 
+  def test_cte_bodies_inherit_the_explicit_visitor()
+    people = Arel.table("people")
+    source = Arel.from(people).project(people.column("name"))
+    named = Arel.cte("named")
+    query = Arel.from(named).with(named, source)
+    sql, params = query.to_sql(NestedTestArelVisitor.new())
+    Minitest.assert_equal("WITH \"named\" AS (SELECT \"people\".\"name\" FROM visited_people) SELECT * FROM visited_named", sql)
+  end
+
   suite = Minitest.new()
   suite.test("explicit SELECT visitor", test_select_accepts_an_explicit_visitor)
   suite.test("nested SELECT visitor", test_derived_queries_inherit_the_explicit_visitor)
   suite.test("compound visitor", test_compound_branches_inherit_the_explicit_visitor)
+  suite.test("CTE visitor", test_cte_bodies_inherit_the_explicit_visitor)
   suite.run()
 end
 
