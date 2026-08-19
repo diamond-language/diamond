@@ -13,6 +13,13 @@ def run_tests()
     Minitest.assert_equal("WITH \"active_people\" AS (SELECT * FROM \"people\" WHERE \"people\".\"active\" = ? ORDER BY \"people\".\"age\" DESC LIMIT ?) SELECT * FROM \"active_people\" WHERE \"active_people\".\"age\" >= ?", sql)
     Minitest.assert_equal(true, params[0])
     Minitest.assert_equal("3|18", [params[1], params[2]].join("|"))
+    db = SQLite3.open(":memory:")
+    db.execute("CREATE TABLE people (age INTEGER, active INTEGER)")
+    db.execute("INSERT INTO people VALUES (30, 1), (20, 1), (10, 1), (40, 0)")
+    rows = query.to_a(db)
+    Minitest.assert_equal(2, rows.length())
+    Minitest.assert_equal(30, rows[0]["age"])
+    db.close()
   end
 
   def test_multiple_ctes_preserve_declaration_and_bind_order()
