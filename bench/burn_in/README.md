@@ -1,8 +1,7 @@
 # bench/burn_in
 
-The long-running, multi-threaded workload `docs/roadmap.md`'s
-"Generational or incremental GC" entry and `docs/gc-generational-design.md`
-both call for: a real `gremlin_serve(..., threads: 4)` HTTP server (see
+The long-running, multi-threaded workload motivated by
+`docs/gc-generational-design.md`: a real `gremlin_serve(..., threads: 4)` HTTP server (see
 `packages/gremlin`) under sustained `ab` load, standing in for the
 fiber-per-connection production shape that entry names as the actual
 motivating case for a generational collector -- not started until there

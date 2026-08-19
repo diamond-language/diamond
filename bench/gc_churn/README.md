@@ -1,7 +1,6 @@
 # GC churn: direct collector-cost evidence
 
-`bench/burn_in`'s live `gremlin_serve(threads: N)` pushes (see
-`docs/roadmap.md`'s "Generational or incremental GC" entry) gave noisy,
+`bench/burn_in`'s live `gremlin_serve(threads: N)` pushes gave noisy,
 inconclusive RSS numbers -- request timing, OS scheduling, and page-cache
 behavior all get mixed into any external measurement of a long-running,
 multi-threaded daemon. This directory sidesteps that entirely: two short,

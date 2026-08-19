@@ -1,140 +1,137 @@
 # Diamond
 
-Diamond is a personal research programming language with Ruby-like syntax and
-object semantics, gradual typing, and a custom register-bytecode VM written in
-C23.
+Diamond is a personal research programming language with Ruby-like syntax,
+gradual typing, and a custom register-bytecode virtual machine written in C23.
 
-It currently targets this development machine: Linux with GCC 16. Portability
-and compatibility are not early constraints.
+It is a coherent, executable language rather than a compatibility project:
+Ruby supplies familiar syntax and object-model ideas, but matching Ruby's edge
+cases, standard library, or ecosystem is explicitly not a goal. Diamond
+currently targets Linux on the development machine with GCC 16.
 
-## Current status
+```ruby
+class Counter
+  include Comparable
 
-Diamond executes nontrivial programs through a complete source-to-runtime path:
+  def initialize(value: Int)
+    @value = value
+  end
 
-```text
-source → lexer → Pratt compiler → register bytecode → VM → managed heap
+  def <=>(other: Counter) = @value <=> other.value()
+  def value() = @value
+end
+
+values = [Counter.new(3), Counter.new(1), Counter.new(2)]
+values.sort_by() do |counter|
+  counter.value()
+end.map() do |counter|
+  counter.value()
+end
+# => [1, 2, 3]
 ```
 
-Implemented today:
+## Status
 
-- integer, boolean, `nil`, string, symbol, array, hash, and instance values;
-- locals, assignment, arithmetic, comparisons, and short-circuit logic;
-- expression-valued conditionals and loops with `break` and `next`;
-- functions, recursion, explicit returns, isolated call frames, and generics
-  with up to eight scoped type variables and inference;
-- classes, methods, constructors, fields, inheritance, `self`, `super`, and
-  operator-overload methods (`def +`, `def ==`, ...);
-- class and module singleton methods (`def self.name`), `redefine_method`, and
-  `alias_method`;
-- structural `interface`s and reusable `module`s included into classes with
-  deterministic method precedence;
-- exceptions: `raise`/`rescue`/`ensure`/`retry`, typed rescue filters, and
-  built-in exception classes;
-- fibers (cooperative coroutines) with `yield`/`resume`;
-- `Thread` for real OS-level parallel execution (`Thread.new`/`.join`/
-  `.alive?`), each thread running against its own independent heap;
-- optional gradual parameter/return annotations and nilable types;
-- a Diamond-written core prelude with collection helpers and a `JSON`
-  module (`JSON.stringify`/`JSON.parse`);
-- native `File`, `TCPSocket`/`TCPServer`, `UDPSocket`, `TLSSocket`/
-  `TLSServer`, `Signal.trap`, and `Regexp` primitives;
-- stop-the-world mark/sweep collection with stress-GC testing;
-- source diagnostics and bytecode disassembly.
+Diamond executes complete programs through:
 
-Beyond the language itself:
+```text
+source -> require expansion -> lexer -> Pratt compiler
+       -> register bytecode -> VM -> managed heap
+```
 
-- [`facet`](docs/packages.md), a standalone package manager (`build/facet`) —
-  git-URL dependencies, no registry;
-- [`lsp/`](docs/lsp.md), a real Language Server (`build/diamond-lsp`,
-  diagnostics today);
-- [`editors/vscode/`](editors/vscode/README.md), VS Code syntax highlighting;
-- [`selfhost/`](docs/roadmap.md), an in-progress Diamond-in-Diamond port of
-  the parser, differentially tested against the native compiler on every
-  change.
+The implementation includes:
 
-The test suite currently contains 912 end-to-end assertions spanning the
-frontend, compiler, VM, object model, type guards, collections, and
-collector, plus 824 lexer and 239+123 self-hosted-parser differential cases,
-21 `facet` package-manager tests, 22 `diamond-lsp` protocol tests, and 22
-REPL tests.
+- integers with transparent arbitrary-precision overflow, floats, booleans,
+  `nil`, strings, symbols, arrays, hashes, ranges, regexps, and instances;
+- expression-valued control flow, `case`/`when`, ternaries, loops, destructuring,
+  compound assignment, postfix conditions, and short-circuit operators;
+- functions, closures, trailing `do |...| ... end` blocks, recursion, defaults,
+  keyword arguments, generics, and typed callable contracts;
+- classes, inheritance, modules, namespaces, interfaces, visibility, generated
+  attributes, singleton methods, operator methods, method aliases, and runtime
+  method replacement;
+- optional parameter and return annotations, unions, nil narrowing, generic
+  collection contracts, and structural interface checks;
+- rescuable runtime failures, typed rescue clauses, `ensure`, `else`, `retry`,
+  causal exception chains, and captured backtraces;
+- cooperative fibers and real OS threads with isolated heaps;
+- a Diamond-written core library with Enumerable, Comparable, JSON, formatting,
+  collection helpers, and a small Minitest-style test library;
+- files, blocking and nonblocking TCP, UDP, TLS, signals, SQLite3, calendar time,
+  subprocesses, and stdin/stdout primitives;
+- a stop-the-world mark/sweep collector with stress-GC modes;
+- source-mapped diagnostics, stack traces, bytecode disassembly, inline caches,
+  runtime object shapes, and opt-in opcode quickening.
+
+The repository also contains:
+
+- `facet`, a git-based package manager;
+- a Language Server with diagnostics, completion, hover, definitions, document
+  symbols, and workspace symbols;
+- a VS Code extension with syntax highlighting and an LSP client;
+- a Diamond implementation of the lexer and compiler that differentially
+  matches the native compiler and passes self-compile/self-run bootstrap checks;
+- HTTP, Rack-style middleware, Gremlin server, and Arel-style SQL-builder
+  packages;
+- compiler and bytecode-execution fuzz targets plus performance/GC benchmarks.
+
+The end-to-end corpus contains more than 1,000 Diamond programs, alongside
+native VM tests, lexer and parser differential suites, sanitizer builds,
+package tests, LSP protocol tests, REPL tests, and fuzz smoke tests.
+
+See [CHANGELOG.md](CHANGELOG.md) for completed capability milestones and
+[docs/roadmap.md](docs/roadmap.md) for future directions.
 
 ## Build and run
 
+Required system dependencies:
+
+- GCC 16 with C23 support;
+- OpenSSL development headers and libraries;
+- SQLite3 development headers and libraries;
+- POSIX threads and `ucontext`, provided by the target Linux environment.
+
+On Fedora, the non-default development packages are:
+
+```sh
+sudo dnf install openssl-devel sqlite-devel
+```
+
+Build and run:
+
 ```sh
 make
-make test
 ./build/diamond -e '20 + 22'
 ./build/diamond program.di
-./build/diamond               # REPL, if stdin is a terminal
+./build/diamond              # interactive REPL when stdin is a terminal
 ```
 
-The REPL evaluates one input at a time (multi-line `def`/`class`/`if`/... blocks
-prompt with `...` until closed) and prints each result. Locals, functions, and
-classes defined in one evaluation stay visible to later ones; redefining a
-name is rejected the same way a single program would reject it. Prior output
-(`puts`, ...) is never reprinted on later evaluations.
-
-## Multiple files
-
-`require` includes another Diamond source file into the same compilation:
-
-```ruby
-require "models/user"
-require "support/formatting.di"
-```
-
-Paths are relative to the requiring file, and `.di` is inferred when omitted.
-Canonical files load once, cycles are rejected, and all required files share
-top-level functions, classes, and interfaces. Diagnostics retain the imported
-file's path and original line. With `-e`, relative paths start at the current
-working directory. `require` is a standalone source directive; it cannot be
-used as a conditional expression. Nested imports preserve the deepest source
-file in diagnostics, including missing and unreadable dependency paths. Cycles
-also report the importing file and line that closed the cycle.
-The loader caps active require nesting and loaded files at 128 each and reports
-which limit was reached. CRLF and LF source files follow the same directive and
-line-mapping rules. Root-file open, seek, directory, and read failures retain
-the original path and operating-system detail.
-File-size and rewind failures are reported separately from ordinary read
-failures. Loader bundles fully reset after release, so callers may safely reuse
-the bundle object for another load. Source-map segments reject invalid ranges
-and preserve the complete canonical path, including diagnostics raised at an
-imported file's EOF boundary. Diagnostic excerpts omit the loader's internal
-marker lines and retain multiline line numbers. Runtime failures from imported
-code retain their function frames and root caller frame in the VM stack trace,
-including line/column locations and stress-GC execution.
-Imported CRLF files use the same compile-time and runtime line/column mapping
-as LF files.
-
-Build variants:
+Useful build and test targets:
 
 ```sh
 make debug
 make release
-make sanitize # requires GCC sanitizer runtime libraries
-make fuzz     # requires clang (see docs/fuzzing.md) -- not part of the default build
-make test-all # debug/release/sanitizer builds plus every suite (fibers, facet, lsp, repl, fuzz smoke, lexer/parser differentials) sequentially
+make sanitize
+make tsan
+make test
+make test-all
+make fuzz                    # uses clang/libFuzzer
 make clean
 ```
 
-The installed GCC supports C23 and the ASan/UBSan runtime libraries are
-available. Under ptrace, disable LeakSanitizer with
-`ASAN_OPTIONS=detect_leaks=0` when running the suite.
+`make test-all` intentionally runs the broad validation matrix sequentially:
+debug, release, sanitizers, native VM/fiber tests, packages, LSP, REPL, fuzz
+smoke tests, and native/self-hosted lexer/parser differentials. It is thorough
+and correspondingly slow; CI is the normal place to run it after a focused
+local test.
 
-OpenSSL development headers/libraries (`-lssl -lcrypto`) are required by
-every build variant above — TLS (`docs/io.md`) is the one deliberate
-exception to this project's otherwise zero-external-dependencies stance,
-since hand-rolling TLS is a real security liability rather than just
-extra work. On Fedora: `dnf install openssl-devel`.
-
-Inspect generated bytecode while still executing the program:
+Inspect bytecode while still executing a program:
 
 ```sh
 ./build/diamond --dump-bytecode -e '20 + 22'
 ./build/diamond --dump-bytecode program.di
 ```
 
-Set `DIAMOND_STRESS_GC=1` to collect before every eligible allocation:
+Collect before every eligible allocation:
 
 ```sh
 DIAMOND_STRESS_GC=1 ./build/diamond program.di
@@ -142,456 +139,254 @@ DIAMOND_STRESS_GC=1 ./build/diamond program.di
 
 ## Language tour
 
-Diamond is expression-oriented. Only `false` and `nil` are falsey.
+Only `false` and `nil` are falsey. Control-flow constructs return values:
 
 ```ruby
-value = nil || 21
-
-if value == 21
-  value * 2
+label = if score >= 90
+  "excellent"
+elsif score >= 70
+  "good"
 else
-  0
+  "retry"
 end
+
+fallback = configured ? value : "default"
 ```
 
-Functions return their final expression or can return explicitly:
+Functions return their final expression unless they return explicitly:
 
 ```ruby
 def factorial(n: Int) -> Int
-  if n <= 1
-    1
-  else
-    n * factorial(n - 1)
-  end
+  return 1 if n <= 1
+  n * factorial(n - 1)
 end
 ```
 
-Early returns use block-based control flow. Postfix `if` and `unless` modifiers
-are also available for single-line expressions:
-
-```ruby
-log("ready") if enabled
-fallback() unless configured
-```
-
-```ruby
-def classify(value: Int) -> String
-  if value < 0
-    return "negative"
-  end
-  "nonnegative"
-end
-```
-
-Classes have stable field slots, single inheritance, and dynamic method lookup:
+Classes have stable fields, inheritance, `self`, and lexically anchored
+`super` calls:
 
 ```ruby
 class Point
+  attr_reader x: Int, y: Int
+
   def initialize(x: Int, y: Int)
     @x = x
     @y = y
   end
 
-  def sum() -> Int
-    @x + @y
+  def +(other: Point) -> Point
+    Point.new(@x + other.x(), @y + other.y())
+  end
+end
+```
+
+Modules provide reusable behavior, while interfaces are structural:
+
+```ruby
+interface Named
+  def name() -> String
+end
+
+module Printable
+  def print_name()
+    puts(self.name())
   end
 end
 
-class NamedPoint < Point
-  def initialize(x, y, name)
-    super(x, y)
-    @name = name
-  end
+class User
+  include Printable
+  def name() = "Ada"
 end
-
-NamedPoint.new(20, 22, "answer").sum()
 ```
 
-Collections are mutable and recursively traced:
+Annotations are optional. Dynamic code and checked code share one object model:
 
 ```ruby
-values = [20, 0]
-values[1] = 22
-
-record = {"values": values, "active": true}
-record["values"][0] + record["values"][1]
-```
-
-Missing hash keys return `nil`. Array reads and writes are bounds checked.
-
-## Gradual typing
-
-Annotations are optional; unannotated code stays dynamic:
-
-```ruby
-def find(id: Int) -> String | Nil
+def find_name(id: Int) -> String | Nil
   if id == 42
     "diamond"
   else
     nil
   end
 end
+
+name = find_name(42)
+puts(name.upcase()) if name != nil
 ```
 
-Single-expression functions and methods may use the endless form without an
-`end`:
+Generic functions infer type variables from values and callback signatures:
 
 ```ruby
-def answer() -> Int = 42
-def greet(name = "world") = "Hello, #{name}" if name
+def first[T](values: Array[T]) -> T
+  values[0]
+end
+
+first([1, 2, 3])
 ```
 
-Endless definitions support ordinary parameters, annotations, methods, and
-nested closure captures, and enforce the same entry and return contracts as
-block-bodied definitions.
-
-Trailing parameters may have defaults, evaluated inside the callee from left
-to right. A later default may reference an earlier parameter, and explicitly
-passing `nil` counts as supplying an argument:
+Arrays, hashes, ranges, and classes implementing `each` can use Enumerable
+operations. Native collections use VM forwarding to the same Diamond-written
+functions used by `include Enumerable`:
 
 ```ruby
-def greet(name: String = "world") -> String = name
-```
+evens = (1..10).select() do |n|
+  n % 2 == 0
+end
 
-Double-quoted strings interpolate ordinary expressions with `#{...}`. Multiple
-segments are evaluated left-to-right; strings, integers, booleans, nil, and
-instances have built-in interpolation representations. Escape the marker as
-`\#{...}` to keep it literal.
-
-```ruby
-def greet(name = "world") = "Hello, #{name}"
-```
-
-Instances may customize interpolation by defining zero-argument `to_s()` that
-returns `String`; lookup honors inheritance. Without it they render as
-`#<Class>`. Arrays and hashes stringify recursively, with `[...]`/`{...}` cycle
-markers for self-reference. Returning a non-string from `to_s` raises
-`TypeError`.
-
-Available annotations are `Int`, `String`, `Bool`, `Nil`, `Array`, `Hash`, and
-declared class names. `Sized` is a structural interface requiring a zero-arity
-`length` method; strings, arrays, hashes, and matching user classes satisfy it
-without an explicit declaration. Pipe-separated unions may contain up to eight types, and
-nominal members accept subclasses. Arrays accept recursive element annotations,
-such as `Array[Int | Nil]` and `Array[Array[String]]`. Hashes accept independent
-key and value annotations, such as `Hash[String, Array[Int]]`.
-Closures satisfy `Callable`; `Callable[n]` additionally requires exactly `n`
-arguments. `Callable[n, Return]` also requires an explicit, compatible return
-annotation on the closure, including unions and covariant nominal returns.
-`Callable[[Input, ...], Return]` additionally checks parameter types.
-
-User-defined structural interfaces declare required method names and arities:
-
-```ruby
-interface Greetable
-  def greet(name)
+groups = ["ant", "bear", "cat"].group_by() do |word|
+  word.length()
 end
 ```
 
-A class satisfies the interface by defining or inheriting the required shape;
-no `implements` declaration is needed. Typed signatures use function-safe
-variance: implementation parameters are contravariant and returns are
-covariant. Omitting an interface annotation leaves that position unconstrained.
-
-Reusable behavior may be declared separately from class identity:
+Exceptions use one unwind path for explicit raises and VM failures:
 
 ```ruby
-module Greetable
-  def greet(name: String) -> String = "Hello, #{name}"
-end
-
-class Person
-  include Greetable
+begin
+  risky_operation()
+rescue error: IOError | SQLite3Error
+  puts(error.message())
+ensure
+  cleanup()
 end
 ```
 
-Included methods receive the eventual instance as `self`. Later includes win
-over earlier includes, methods written directly in the class win over included
-methods, and the resulting class method set precedes inherited lookup. Modules
-may include previously declared modules with the same precedence rules, making
-composition transitive. Modules are not instantiable and do not participate in
-nominal subtyping.
-
-Modules also form lexical namespaces for nested modules and classes. Constants
-resolve explicitly with `Outer::Name` and lexically from inside the enclosing
-module; qualified class names are valid constructor targets and type
-annotations. Separate namespaces may reuse the same local declaration name.
-
-Module methods may use instance variables. Their bytecode records symbolic
-field names, which resolve against the eventual receiver class and then use its
-ordinary fixed field storage, shapes, and inline caches. This permits one
-stateful module to serve unrelated classes; identical field names included into
-one class intentionally share a slot.
-
-Interfaces may be nested in modules and referenced as qualified types such as
-`Contracts::Named`. Modules may also declare immutable constant bindings with
-uppercase names. Constants accept arbitrary expressions, resolve lexically or
-through `Outer::NAME`, remain visible inside included methods, and are retained
-as GC roots. Immutability applies to the binding; a referenced Array or Hash
-keeps its normal mutable semantics.
-
-Modules may expose singleton functions without making them includable instance
-methods:
+`require` combines Diamond files into one compilation:
 
 ```ruby
-module Config
-  DEFAULT_PORT = 8080
-  def self.port(offset: Int = 0) -> Int = DEFAULT_PORT + offset
-end
-
-Config.port()
+require "models/user"
+require "support/formatting.di"
 ```
 
-Singleton functions support defaults, annotations, generics, explicit type
-arguments, nested namespaces, and lexical constants. `include Config` imports
-only Config's ordinary instance methods.
+Paths are relative to the requiring file, `.di` is inferred, canonical files
+load once, and cycles are rejected. Installed packages are resolved from
+`diamond_packages/` after ordinary relative resolution fails. Diagnostics and
+runtime traces retain the original imported file, line, and column.
 
-`module_function name` exports an existing module instance method through the
-module namespace and makes the includable copy private. Exported functions keep
-their defaults, annotations, generics, and constant access. They have no module
-object, so methods requiring instance fields remain meaningful only when mixed
-into a class and are rejected from `module_function` at compile time.
-Multiple targets may use `module_function(first, second)`.
-Writer methods may be exported with a target such as `module_function value=`.
-With no names, `module_function` exports all subsequent ordinary methods until
-the module ends; nested modules start with their own mode.
+## Standard and native facilities
 
-Classes likewise support `def self.name` and qualified calls. Class singleton
-methods inherit through the superclass chain and may be overridden independently
-of instance methods; constructors remain the dedicated `Class.new(...)` path.
-
-`private` in a class or module marks subsequent instance methods private. They
-remain callable through `self` from a method frame, including through inheritance
-and mixins, but explicit external receiver calls raise `TypeError` with the
-method name. `public` restores public visibility for subsequent definitions.
-Supplying names changes existing methods without altering the default, for
-example `private token, secret` or `public name`.
-Writer names may be targeted with their suffix, as in `private value=`.
-Target lists may also be parenthesized: `private(name, token)`.
-
-`attr_reader name` and `attr_writer name` generate compact field-backed methods
-in classes or modules. Writers are invoked as `object.name=(value)`; generated
-methods honor current visibility, inheritance, mixin state, and shape tracking.
-`attr_accessor name` generates both methods in one declaration.
-All three forms accept comma-separated names, such as `attr_accessor x, y`.
-Parenthesized spelling such as `attr_accessor(x, y)` is equivalent.
-An optional annotation contracts both generated methods, as in
-`attr_accessor value: Int`; writers validate before mutating the field and
-readers validate the stored result.
-`attr name` is a compact reader-only synonym for `attr_reader name`.
-`attr_predicate enabled: Bool` generates an `enabled?()` reader over the
-`@enabled` field and accepts the same visibility, module, and typing features.
-
-`alias_method new_name, existing_name` adds another instance-method descriptor
-without cloning bytecode. Aliases preserve arity, visibility, generated field
-behavior, typing, inheritance, and module inclusion.
-Writer methods retain their suffix in aliases, as in
-`alias_method assign=, value=`.
-The equivalent parenthesized form is `alias_method(result, value)`.
-Generating the same reader or writer twice is a compile-time error.
-Ordinary methods may use the same writer spelling with
-`def name=(value) ... end`, including annotations, defaults, module fields, and
-private `self.name=(value)` calls.
-Class and module singleton functions may likewise use writer names and qualified
-calls such as `Config.value=(42)`.
-Predicate method and function names may end in `?`, for example
-`def empty?() = length() == 0`.
-Mutating or emphatic names may end in `!`, such as `def reset!() ... end`;
-the suffix is naming convention rather than a separate dispatch mechanism.
-Both suffixes remain part of the name in `private`/`public`, `alias_method`, and
-`module_function` target lists.
-
-Generic function and method declarations may introduce up to eight scoped type
-variables:
+Representative APIs include:
 
 ```ruby
-def identity[T](value: T) -> T = value
-def pair[K, V](key: K, value: V) -> Hash[K, V] = {key: value}
-def empty[T]() -> Array[T] = []
-empty[Int]()
-factory.empty[String]()
+JSON.parse(JSON.stringify({"answer": 42}))
+
+db = SQLite3.open(":memory:")
+db.execute("CREATE TABLE items (name TEXT, qty INTEGER)")
+db.execute("INSERT INTO items VALUES (?, ?)", ["pens", 3])
+rows = db.query("SELECT * FROM items WHERE qty >= ?", [1])
+db.close()
+
+response = Process.run(["printf", "hello"])
+now = Time.utc_now()
 ```
 
-Calls infer variables from scalar, collection, and callable arguments. Primitive,
-nominal, and union bindings participate in callee checks and are copied into
-returned Array/Hash contracts, so mutations remain guarded after the call frame
-ends. Persistent collection contracts also act as inference evidence on later
-calls, allowing empty arrays and hashes to retain concrete or previously bound
-generic arguments. The core `array_map_typed` binds its output from the
-callback's declared return type, including for empty inputs. Bindings preserve
-recursive structures such as `Array[String]` and
-`Hash[String, Array[Int]]`.
-When inference has no evidence—or the caller wants an authoritative
-specialization—functions and methods accept explicit type arguments before the
-ordinary argument list. Their count must match the declaration, and supplied
-types remain fixed while value arguments are checked.
+See [docs/io.md](docs/io.md) for files, sockets, polling, signals, TLS, SQLite,
+Time, and Process. See [docs/syntax.md](docs/syntax.md) for the complete syntax
+and core-library surface.
 
-Callable contracts may describe only arity and return type with
-`Callable[1, String]`, or carry complete parameter types with
-`Callable[[Int], String]` and `Callable[[], String]`. Callback inputs are checked
-contravariantly, callback returns covariantly, and an untyped callback parameter
-remains compatible with a typed contract. Generic callable inputs and returns
-both participate in inference; `array_map_typed` therefore declares its callback
-as `Callable[[T], U]`.
+## Tooling
 
-The embedded core prelude is ordinary Diamond source from `lib/core.di`.
-Current helpers include `array_first`, `array_swap_first_two`, and `hash_fetch`;
-the prelude also provides fallback-aware first/last operations and empty
-predicates, membership, callback iteration, and mapping. Typed
-`array_map_int`/`array_map_string` variants require matching callback return
-signatures and return persistently contracted arrays. Their bytecode appears
-in `--dump-bytecode` output like user-defined functions. Arrays expose native
-`push`/`pop`; hashes expose insertion-ordered `key_at`/`value_at`; arrays, hashes,
-and strings expose native `length()`.
+### REPL
 
-The compiler removes provably redundant guards, rejects provable mismatches,
-retains checks for dynamic values, and propagates generic element/value facts
-through indexed reads. Hash lookup facts always include `Nil` because missing
-keys return `nil`. Direct `== nil` and `!= nil` conditions narrow unions inside
-their branches. The `is` predicate performs non-throwing primitive or nominal
-type tests and narrows direct conditional branches. Runtime failures preserve
-source-level type names:
+Running `diamond` with terminal stdin starts a session-accumulating REPL.
+Multi-line definitions prompt until their closing `end`; locals, functions, and
+classes remain available to later evaluations. See [docs/repl.md](docs/repl.md).
+
+### Packages
+
+`facet` installs dependencies pinned to git refs and writes a lockfile. Diamond
+does not currently have a hosted registry or semantic-version solver. See
+[docs/packages.md](docs/packages.md).
+
+### Language Server and VS Code
+
+Build the server with `make lsp`. It communicates over stdio using LSP/JSON-RPC
+and supports full-document synchronization, diagnostics, completion, hover,
+definitions, document symbols, and workspace symbols. Receiver-aware method
+resolution remains limited. See [docs/lsp.md](docs/lsp.md) and
+[editors/vscode/README.md](editors/vscode/README.md).
+
+### Self-hosted compiler
+
+`selfhost/lexer.di` and `selfhost/parser.di` implement the frontend in Diamond.
+Differential suites compare their tokens, diagnostics, generated bytecode, and
+runtime behavior with the native C compiler. Bootstrap checks cover compiling
+and running the compiler through itself. The native compiler remains the main
+CLI frontend. See [docs/roadmap.md](docs/roadmap.md) for remaining directions.
+
+## Runtime and performance controls
+
+The VM has polymorphic method and field caches, monomorphic call-site rewrites,
+runtime object shapes, and opt-in integer opcode quickening. These environment
+variables expose the main research controls:
 
 ```text
-runtime error: expected String | Nil, got Int
+DIAMOND_QUICKEN=1
+DIAMOND_QUICKEN_THRESHOLD=N
+DIAMOND_IC_MONO_THRESHOLD=N
+DIAMOND_TRACE_IC=1
+DIAMOND_TRACE_IC_SITES=1
+DIAMOND_TRACE_IC_REWRITES=1
+DIAMOND_TRACE_FIELDS=1
+DIAMOND_TRACE_SHAPES=1
+DIAMOND_TRACE_OPCODES=1
+DIAMOND_TRACE_GC=1
 ```
 
-## Syntax conveniences
+The benchmark directories document measured results rather than relying only
+on wall-clock microbenchmarks:
 
-- `#` line comments
-- semicolon statement separators
-- numeric separators such as `1_000_000`
-- trailing commas in arrays, calls, constructors, and parameter lists
-- `unless condition ... else ... end` as an inverted conditional expression
-- postfix `if` and `unless` modifiers for single-line expressions
-- declarations and namespace constants remain unconditional
-- `elsif` chains within `if` expressions
-- optional `then` after `if`, `unless`, and `elsif` conditions
-- optional `do` after `while` and `until` conditions
-- unary `not` as a readable synonym for `!`
-- short-circuit `and`/`or` synonyms for `&&`/`||`
-- `until condition ... end` loops, including `break` and `next`
-- `redo` to restart a loop body without reevaluating its condition
-- value-bearing loop exits such as `result = while true ... break 42 ... end`
-- `loop do ... end` for unconditional loops with the same control operators
-- `else` after `rescue`, executed only when the protected body completes normally
-- bare `raise` inside a rescue body to rethrow the current exception
-- user exception subclasses may define typed message/cause fields and constructors
-- VM-generated standard exceptions expose their runtime diagnostic through `message()`
-- all exception instances expose `cause()`, initially `nil` for VM failures
-- exceptions without a custom initializer accept `new(message, cause)`
-- `retry` inside rescue to restart the protected body
-- binding-free typed filters such as `rescue : TypeError | IndexError`
-- multiple ordered `rescue` clauses, with an optional final catch-all
-  (later exact or subclass filters already covered by earlier clauses are rejected)
-- symbol literals such as `:ok`, distinct from string equality
-- operator methods (`def +(other)`, `def ==(other)`, `def <(other)`, ...) —
-  dispatch by name and arity like any other method, no separate mechanism
-- `yield`/`resume` on `Fiber.new(...)` for cooperative coroutines
-- `Thread.new(callable, *args)`/`.join()`/`.alive?()` for real OS-level
-  parallel execution, each thread running against an independent heap
+- `bench/gremlin_http`: threaded HTTP throughput;
+- `bench/burn_in`: long-running server behavior with a guarded memory ceiling;
+- `bench/gc_churn`: collector pause cost versus live-set size and churn.
 
 ## Architecture
 
-- [Design and runtime architecture](docs/design.md)
-- [Syntax overview](docs/syntax.md)
+Diamond deliberately compiles directly to bytecode without retaining an AST.
+The implementation is organized as follows:
+
+- `src/`: loader, lexer, compiler, bytecode, VM, GC, and native primitives;
+- `lib/core.di`: embedded Diamond prelude;
+- `selfhost/`: Diamond lexer/compiler and bootstrap programs;
+- `tests/`: executable cases and native/differential harnesses;
+- `lsp/`: language server;
+- `editors/vscode/`: editor extension;
+- `packages/`: independently consumable Diamond libraries;
+- `fuzz/`: compiler and bytecode-execution fuzz targets;
+- `bench/`: performance and GC evidence.
+
+Detailed design documents:
+
+- [Design and VM architecture](docs/design.md)
+- [Syntax and standard library](docs/syntax.md)
 - [Object model](docs/object-model.md)
 - [Fibers](docs/fibers.md)
 - [Threads](docs/threads.md)
-- [I/O](docs/io.md)
-- [REPL](docs/repl.md)
-- [Packages and `facet`](docs/packages.md)
-- [Language server](docs/lsp.md)
+- [I/O and native services](docs/io.md)
+- [Packages](docs/packages.md)
+- [Language Server](docs/lsp.md)
 - [Fuzzing](docs/fuzzing.md)
-- [Completed work and roadmap](docs/roadmap.md)
 
-The implementation is intentionally compact: the lexer, direct bytecode
-compiler, disassembler, VM, value representation, and object layouts live under
-`src/`; executable language cases and the shell test harness live under
-`tests/`.
+## Current limitations
 
-Diagnostics are currently considered complete for the research baseline; the
-next performance investigation is bytecode quickening and type specialization.
-
-Set `DIAMOND_TRACE_IC=1` to print method inline-cache hit and miss counts after
-execution. Dynamic call sites use VM-owned four-entry polymorphic caches guarded
-by receiver class, including inherited-method resolution. Repeated calls on
-the same receiver classes take the cache-hit path.
-Set `DIAMOND_TRACE_IC_SITES=1` to report per-site hit/miss counts and the
-number of cached receiver classes, useful when deciding whether direct-call
-specialization is worthwhile.
-Monomorphic sites use a fast path after their first miss; set
-`DIAMOND_TRACE_IC_FAST=1` to report how often that path executes.
-Set `DIAMOND_IC_MONO_THRESHOLD=N` to require N cache hits before enabling the
-monomorphic path; the default is one.
-Set `DIAMOND_TRACE_IC_PROBES=1` to report polymorphic cache probe depth; this
-provides a deterministic baseline for future direct-call benchmarks.
-The `tests/cases/dispatch_benchmark.di` case exercises 100 calls so probe
-counts can be compared without relying on wall-clock timing.
-Stable instance call sites may rewrite to `INVOKE_MONO` after warm-up; use
-`DIAMOND_TRACE_IC_REWRITES=1` to report those rewrites. A receiver-class guard
-deoptimizes the site back to `INVOKE` if the assumption fails.
-Rewritten instruction addresses are tracked explicitly so a reused VM can
-restore only genuine rewritten sites between runs.
-Set `DIAMOND_REPEAT=N` to execute the same compiled program N times in one VM;
-this is useful for validating specialization reset behavior.
-Add `DIAMOND_TRACE_IC_EACH_RUN=1` to print cache and rewrite counters after
-each repeated execution.
-`DIAMOND_INVALIDATE_IC_EACH_RUN=1` explicitly exercises the public cache
-invalidation boundary between repeated runs.
-The dispatch benchmark uses these counters to compare immediate and delayed
-monomorphic warm-up without depending on wall-clock timing.
-Set `DIAMOND_TRACE_IC_POLICY=1` to print the active quickening and dispatch
-thresholds used for a run.
-The research defaults are one observation for both policies; this favors
-quick feedback while the benchmark remains available for later tuning.
-Embedders that mutate class or module method tables should call
-`diamond_vm_invalidate_method_caches` before the next dispatch.
-`make test-api` runs a C-level harness that mutates a method table, invalidates
-the VM caches, and verifies the replacement dispatch.
-
-Set `DIAMOND_TRACE_SHAPES=1` to print instance shape transitions. Fresh objects
-begin at their class's empty shape and advance lazily as fields are first written.
-
-Set `DIAMOND_TRACE_FIELDS=1` to print field inline-cache hit and miss counts.
-Field sites use four-entry polymorphic caches guarded by instance shape.
-
-Set `DIAMOND_TRACE_OPCODES=1` to print executed opcode counts while profiling
-programs for quickening and type-specialization experiments.
-With `DIAMOND_QUICKEN=1`, integer arithmetic and ordering sites specialize to
-`ADD_INT`, `SUBTRACT_INT`, `MULTIPLY_INT`, `DIVIDE_INT`, `LESS_INT`,
-`LESS_EQUAL_INT`, `GREATER_INT`, or `GREATER_EQUAL_INT`. A later
-non-integer observation deoptimizes addition back to generic `ADD`; the other
-operators retain their normal type errors. Equality remains a structural,
-non-specialized operation for non-integer values; integer `==` and `!=` sites
-use `EQUAL_INT` and `NOT_EQUAL_INT` with the same guarded warm-up policy.
-The default warm-up threshold is one observation; set
-`DIAMOND_QUICKEN_THRESHOLD=N` to require N integer observations before a
-dynamic site specializes.
-
-## Important limitations
-
-- Nested functions are first-class closures. Captured locals use shared mutable
-  cells, including across sibling closures and recursively nested environments.
-- Runtime errors include source-mapped Diamond stack traces; structured
-  `raise value` exceptions use the same unwind path. `begin`/`rescue` expressions
-  catch raised values across calls and optionally bind them to a local. A rescue
-  binding may carry pipe-separated primitive or nominal filters, such as
-  `rescue error: NetworkError | TimeoutError`.
-- Built-in exception classes make type, argument, index, division, range, and
-  stack failures rescuable through the same `begin`/`rescue` syntax.
-- `ensure` may follow a rescued block or stand alone. It runs on normal
-  completion, raised exceptions, runtime failures, and explicit returns;
-  cleanup-side control flow overrides the pending unwind.
-- No protected visibility.
-- Classes own immutable shape chains for lazily materialized field prefixes;
-  method calls and field access use four-entry polymorphic inline caches.
-- Generic contracts guard indexed mutation and `push`. Collection APIs currently
-  comprise indexing, native size/mutation/iteration primitives, and Diamond
-  prelude helpers.
-- Fixed limits exist for bytecode, constants, functions, classes, fields, and
-  registers.
-- Bytecode and language semantics are unstable by design.
+- The language, bytecode, and embedding APIs are intentionally unstable.
+- The native compiler is single-pass. Bare forward or mutual calls between
+  later-declared top-level functions do not resolve; receiver-based method
+  dispatch is the usual workaround for mutually recursive methods.
+- Bytecode offsets, program tables, call depth, lexical captures, and other VM
+  resources have fixed implementation limits.
+- The collector is stop-the-world mark/sweep. Direct benchmarks show that an
+  individual collection pause grows with the live set; a generational attempt
+  was reverted after its remembered-set design failed to improve the measured
+  workload.
+- Threads use isolated heaps. Values are copied across thread boundaries rather
+  than sharing mutable objects.
+- There is no protected method visibility and no runtime source evaluator for
+  defining new method bodies.
+- The LSP recompiles complete documents and cannot generally resolve a method
+  name through an arbitrary receiver type.
+- `facet` has no hosted registry, version solver, or multi-version dependency
+  model.
+- Portability beyond the current Linux/GCC target is deferred.
 
 ## License
 

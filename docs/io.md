@@ -1,8 +1,7 @@
 # I/O
 
-This document covers Diamond's I/O surface (stdout, stdin, files, and
-TCP/UDP/TLS sockets) and will grow as later slices land (see
-`docs/roadmap.md`).
+This document covers Diamond's I/O and native-service surface. Future
+directions are tracked in `docs/roadmap.md`.
 
 ## stdout: `print`/`puts`
 

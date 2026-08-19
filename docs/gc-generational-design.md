@@ -5,11 +5,10 @@ This document maps out a design for turning `diamond_vm_collect`
 picks this up, not a description of shipped behavior — nothing here is
 implemented (a first attempt at exactly this design was built, verified
 correct, and reverted — see "Known flaw" immediately below before
-starting another one). `docs/roadmap.md`'s "Generational or incremental
-GC" entry scoped this as deliberately not started until a real long-
-running workload exists to validate against; that prerequisite has since
-been discharged by `bench/gc_churn` (see the roadmap entry's own
-detailed writeup), which is also what surfaced the flaw below.
+starting another one). The prerequisite long-running workload now exists in
+`bench/gc_churn`; its direct measurements also surfaced the flaw below. See
+`CHANGELOG.md` for the concise history and `docs/roadmap.md` for possible future
+collector directions.
 
 ## Known flaw: the write barrier below is the wrong granularity
 
@@ -178,8 +177,8 @@ text here, and it's wrong: an old→young edge established before a major
 collection and never written to again has no future write-barrier firing
 to rediscover it, so clearing makes it silently invisible to every later
 minor collection (confirmed as a real bug during the first implementation
-attempt, not just a theoretical concern — see `docs/roadmap.md`'s own
-account). Filter instead: after the mark phase, keep a remembered entry
+attempt, not just a theoretical concern). Filter instead: after the mark phase,
+keep a remembered entry
 iff its object is still `marked` (about to survive the sweep below);
 drop it otherwise. A surviving old object's own `remembered` bit needs
 no change — whatever young object it still points to was necessarily
@@ -207,8 +206,8 @@ other.
 ## Prerequisite (discharged)
 
 This used to call for establishing a long-running benchmark before
-implementing any of this — done: `bench/gc_churn` (see `docs/roadmap.md`'s
-detailed writeup) is exactly that workload, short and non-networked
+implementing any of this — done: `bench/gc_churn` is exactly that workload,
+short and non-networked
 rather than a live `gremlin` server, and precise enough to have caught
 the write-barrier granularity flaw above directly. Re-run it
 (`bench/gc_churn/session_churn.di`, swept across live-set size) against

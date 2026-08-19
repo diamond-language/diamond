@@ -23,8 +23,8 @@ none of that machinery needs to become thread-safe at all.
 
 The cost is memory: `Thread.new` clones the *entire* ambient `DiamondProgram`
 via a byte-for-byte `memcpy` of its `functions[]`/`classes[]`/`interfaces[]`
-tables (~83MB per clone, see `docs/roadmap.md`'s `DIAMOND_MAX_FUNCTIONS`
-sizing note). This is safe only because `DiamondFunction`/`DiamondClass`/
+tables (~83MB per clone; see the self-hosting history in `CHANGELOG.md`). This
+is safe only because `DiamondFunction`/`DiamondClass`/
 `DiamondInterface` are themselves pointer-free — every field is a fixed-size
 inline array or scalar, constants are restricted to Int/Float/Bool/Nil at
 compile time, and string constants live in an inline array rather than as
