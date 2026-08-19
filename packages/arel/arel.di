@@ -1604,6 +1604,23 @@ def same?(left, right) -> Bool
       index = index + 1
     end
     true
+  elsif left is ArelAssignmentValue
+    right is ArelAssignmentValue && self.same?(left.expression(), right.expression())
+  elsif left is ArelDefaultValues
+    right is ArelDefaultValues
+  elsif left is ArelConflictTarget
+    if !(right is ArelConflictTarget) || left.columns().length() != right.columns().length() ||
+       (left.predicate() == nil) != (right.predicate() == nil)
+      return false
+    end
+    index = 0
+    while index < left.columns().length()
+      if left.columns()[index] != right.columns()[index]
+        return false
+      end
+      index = index + 1
+    end
+    left.predicate() == nil || self.same?(left.predicate(), right.predicate())
   elsif left is ArelPredicate
     if !(right is ArelPredicate) || left.operator() != right.operator() ||
        !self.same?(left.left(), right.left())
