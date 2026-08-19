@@ -22,20 +22,20 @@ Raw SQL remains an explicit escape hatch, not the representation used by new
 features. Values are bind parameters by default. Identifiers are represented
 as nodes and quoted by the active visitor.
 
-## Next milestone: visitor and adapter boundary
+## Next milestone: classify dialect extensions
 
-The SQLite feature set now covers structural arithmetic, excluded-row values,
-partial-index conflict targets, and DEFAULT VALUES. The next architectural work
-is to make the rendering boundary explicit:
+Managers now accept explicit visitors for rendering and execution, and nested
+queries propagate the selected visitor. The remaining boundary work is about
+making portability visible rather than adding more dispatch machinery:
 
-- define the visitor protocol expected by query and write managers;
-- allow callers to select a visitor without replacing node APIs;
-- identify SQLite-only nodes such as excluded-row and conflict-target forms;
-- build shared renderer fixtures before introducing another dialect;
-- add a second visitor only when another Diamond database adapter exists.
+- classify excluded-row, conflict-target, and other extension nodes;
+- make unsupported-node errors identify the visitor and node category;
+- build shared renderer fixtures for portable SELECT and write nodes;
+- keep SQLite-only fixtures separate from portable expectations;
+- document the minimum visitor methods relied on by managers.
 
-Completion means managers no longer construct `ArelSQLiteVisitor` internally,
-while `to_sql()` remains a convenient SQLite-default compatibility entry point.
+Completion means a future visitor can report unsupported dialect extensions
+cleanly and can reuse a portable conformance suite.
 
 ## Following milestone: remaining expression decisions
 

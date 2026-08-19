@@ -1,5 +1,13 @@
 # Changelog
 
+## Arel 0.10.0
+
+- Added explicit visitor selection to SELECT, compound, INSERT, UPDATE, and
+  DELETE rendering and execution while preserving SQLite defaults.
+- Propagated selected visitors through subqueries, derived sources, compound
+  branches, CTE bodies, write expressions, conflicts, and RETURNING, and added
+  `Arel.render` as a common entry point.
+
 ## Arel 0.9.0
 
 - Added structural, parenthesized addition, subtraction, multiplication, and

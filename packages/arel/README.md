@@ -19,6 +19,14 @@ coupled: reads call `db.query(sql, params)` and writes call
 [`packages/rack`](../rack/README.md) stayed server-agnostic by
 depending on a shared method convention rather than a concrete type.
 
+Every query and write manager accepts an optional visitor in `to_sql(visitor)`;
+`Arel.render(statement, visitor)` is the common entry point when code should not
+care which manager it has. The no-argument form continues to select
+`ArelSQLiteVisitor`. Explicit visitors propagate through derived tables,
+subqueries, compound branches, CTE bodies, expressions, conflict clauses, and
+`RETURNING`. Execution methods accept the visitor after the database argument,
+for example `query.to_a(db, visitor)` and `insert.execute(db, visitor)`.
+
 ## Install
 
 Same story as the other packages here -- copy this directory into
@@ -193,7 +201,7 @@ takes either a single column `String` or an `Array` of them.
 
 ### `to_sql`, `to_a`, `count`
 
-`to_sql()` returns `[sql, params]` -- the same positional-`Array`-return
+`to_sql()` (or `to_sql(visitor)`) returns `[sql, params]` -- the same positional-`Array`-return
 shape used elsewhere in this codebase (parsed URLs, HTTP responses) --
 and can be unpacked directly with
 [multi-value destructuring](https://gitlab.com/dmn9180/diamond/-/blob/main/docs/syntax.md#multiple-assignment):
