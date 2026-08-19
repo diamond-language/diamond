@@ -103,6 +103,19 @@ def run_tests()
     Minitest.assert_equal(1, delete_params.length())
   end
 
+  def test_portable_compounds_and_ctes_render_without_extensions()
+    current = Arel.table("current_items")
+    archived = Arel.table("archived_items")
+    left = Arel.from(current).project(current.column("id"))
+    right = Arel.from(archived).project(archived.column("id"))
+    combined = Arel.union_all(left, right)
+    all_items = Arel.cte("all_items")
+    query = Arel.from(all_items).with(all_items, combined)
+    sql, params = query.to_sql(PortableTestVisitor.new())
+    Minitest.assert_equal("WITH \"all_items\" AS (SELECT \"current_items\".\"id\" FROM \"current_items\" UNION ALL SELECT \"archived_items\".\"id\" FROM \"archived_items\") SELECT * FROM \"all_items\"", sql)
+    Minitest.assert_equal(0, params.length())
+  end
+
   suite = Minitest.new()
   suite.test("visitor extension protocol", test_visitors_report_unsupported_extensions)
   suite.test("excluded extension", test_excluded_attributes_are_dialect_extensions)
@@ -111,6 +124,7 @@ def run_tests()
   suite.test("default values extension", test_default_values_are_a_dialect_extension)
   suite.test("portable SELECT nodes", test_portable_select_nodes_render_without_extensions)
   suite.test("portable write nodes", test_portable_write_nodes_render_without_extensions)
+  suite.test("portable compounds and CTEs", test_portable_compounds_and_ctes_render_without_extensions)
   suite.run()
 end
 
