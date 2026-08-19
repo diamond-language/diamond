@@ -58,12 +58,25 @@ def run_tests()
     Minitest.assert_equal("compound queries require equal projection counts", message)
   end
 
+  def test_compound_query_can_be_a_derived_source()
+    first = Arel.table("first_values")
+    second = Arel.table("second_values")
+    left = Arel.from(first).project(first.column("value"))
+    right = Arel.from(second).project(second.column("value"))
+    combined = Arel.union_all(left, right)
+    source = Arel.table("combined")
+    outer = Arel.from_subquery(combined, "combined").project(source.column("value"))
+    sql, params = outer.to_sql()
+    Minitest.assert_equal("SELECT \"combined\".\"value\" FROM (SELECT \"first_values\".\"value\" FROM \"first_values\" UNION ALL SELECT \"second_values\".\"value\" FROM \"second_values\") AS \"combined\"", sql)
+  end
+
   suite = Minitest.new()
   suite.test("UNION", test_union_combines_queries_and_binds)
   suite.test("UNION ALL", test_union_all_preserves_duplicates_in_sqlite)
   suite.test("INTERSECT", test_intersect_renders_structurally)
   suite.test("EXCEPT", test_except_renders_structurally)
   suite.test("compound projection validation", test_compound_projection_counts_must_match)
+  suite.test("compound derived source", test_compound_query_can_be_a_derived_source)
   suite.run()
 end
 
