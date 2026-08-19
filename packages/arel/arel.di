@@ -1869,13 +1869,13 @@ def with_query_children(node: ArelQuery, replacements: Array)
     correlations, ctes)
 end
 
-def simplify(node)
+def simplify(node, rules = [])
   children = self.children(node)
   if children.length() > 0
     replacements = []
     index = 0
     while index < children.length()
-      replacements.push(self.simplify(children[index]))
+      replacements.push(self.simplify(children[index], rules))
       index = index + 1
     end
     node = self.with_children(node, replacements)
@@ -1888,6 +1888,17 @@ def simplify(node)
       return ArelRawSql.new("1 = 1", [])
     end
     return ArelRawSql.new("1 = 0", [])
+  end
+  rule_index = 0
+  while rule_index < rules.length()
+    rule = rules[rule_index]
+    if !(rule is Array) || rule.length() != 2
+      raise ArgumentError.new("Arel rewrite rule must be [pattern, replacement]")
+    end
+    if self.same?(node, rule[0])
+      return rule[1]
+    end
+    rule_index = rule_index + 1
   end
   node
 end
@@ -2517,7 +2528,7 @@ class Arel
   def self.same?(left, right) = ArelInspector.new().same?(left, right)
   def self.children(node) = ArelInspector.new().children(node)
   def self.walk(node, visitor = nil) = ArelInspector.new().walk(node, visitor)
-  def self.simplify(node) = ArelInspector.new().simplify(node)
+  def self.simplify(node, rules = []) = ArelInspector.new().simplify(node, rules)
   def self.with_children(node, replacements: Array) = ArelInspector.new().with_children(node, replacements)
   def self.union(left, right) = ArelCompoundQuery.new(left, "UNION", right)
   def self.union_all(left, right) = ArelCompoundQuery.new(left, "UNION ALL", right)

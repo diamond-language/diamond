@@ -349,6 +349,11 @@ def run_tests()
     simple_empty_sql, simple_empty_params = Arel.from(people).where(empty_simple).to_sql()
     Minitest.assert_equal(original_empty_sql, simple_empty_sql)
     Minitest.assert_equal(original_empty_params.length(), simple_empty_params.length())
+    policy_source = people.column("active").eq(true)
+    policy_replacement = people.column("verified").eq(true)
+    policy_result = Arel.simplify(policy_source, [[policy_source, policy_replacement]])
+    Minitest.assert_equal("Predicate(=, Attribute(people.verified), Bind(true))",
+      Arel.inspect(policy_result))
   end
 
   suite = Minitest.new()
