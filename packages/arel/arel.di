@@ -1124,7 +1124,7 @@ def arel_render_insert_conflict(target, ignore: Bool, assignments, params: Array
   end
   targets = []
   def quote_target(name)
-    targets.push(arel_quote_identifier(name))
+    targets.push(visitor.quote_identifier(name))
   end
   columns.each(quote_target)
   target_sql = ""
@@ -1146,9 +1146,9 @@ def arel_render_insert_conflict(target, ignore: Bool, assignments, params: Array
   def render_assignment(name, value)
     if value is ArelAssignmentValue
       rendered = visitor.render_expression(value.expression(), params)
-      rendered_assignments.push("#{arel_quote_identifier(name)} = #{rendered}")
+      rendered_assignments.push("#{visitor.quote_identifier(name)} = #{rendered}")
     else
-      rendered_assignments.push("#{arel_quote_identifier(name)} = ?")
+      rendered_assignments.push("#{visitor.quote_identifier(name)} = ?")
       params.push(value)
     end
   end
