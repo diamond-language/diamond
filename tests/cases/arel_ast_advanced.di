@@ -85,6 +85,27 @@ def run_tests()
     db.close()
   end
 
+  def test_self_join_uses_distinct_relation_aliases()
+    people = Arel.table("people")
+    managers = people.as("managers")
+    on = people.column("manager_id").eq(managers.column("id"))
+    query = Arel.from(people).left_join(managers, on)
+    sql, params = query.project([people.column("name"), managers.column("name").as("manager")]).to_sql()
+    Minitest.assert_equal("SELECT \"people\".\"name\", \"managers\".\"name\" AS \"manager\" FROM \"people\" LEFT OUTER JOIN \"people\" AS \"managers\" ON \"people\".\"manager_id\" = \"managers\".\"id\"", sql)
+  end
+
+  def test_attributes_outside_relation_set_are_rejected()
+    people = Arel.table("people")
+    accounts = Arel.table("accounts")
+    message = nil
+    begin
+      Arel.from(people).project(accounts.column("id")).to_sql()
+    rescue error: ArgumentError
+      message = error.message()
+    end
+    Minitest.assert_equal("attribute belongs to a relation outside this query", message)
+  end
+
   suite = Minitest.new()
   suite.test("BETWEEN predicates", test_between_predicates_bind_both_bounds)
   suite.test("LIKE predicates", test_like_predicates_are_bound)
@@ -94,6 +115,8 @@ def run_tests()
   suite.test("explicit SQL literal", test_explicit_sql_literal_is_composable)
   suite.test("inner join", test_inner_join_is_structural_and_qualified)
   suite.test("left outer join", test_left_outer_join_executes_against_sqlite)
+  suite.test("self join aliases", test_self_join_uses_distinct_relation_aliases)
+  suite.test("relation-set validation", test_attributes_outside_relation_set_are_rejected)
   suite.run()
 end
 

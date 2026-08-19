@@ -186,7 +186,28 @@ class ArelJoin
 end
 
 class ArelSQLiteVisitor
+  def attribute_allowed?(attribute: ArelAttribute) -> Bool
+    if @query == nil
+      true
+    elsif attribute.table().reference_name() == @query.base_reference_name()
+      true
+    else
+      found = false
+      reference_name = attribute.table().reference_name()
+      def check_join(join)
+        if join.table().reference_name() == reference_name
+          found = true
+        end
+      end
+      @query.joins().each(check_join)
+      found
+    end
+  end
+
   def render_attribute(attribute: ArelAttribute) -> String
+    if !self.attribute_allowed?(attribute)
+      raise ArgumentError.new("attribute belongs to a relation outside this query")
+    end
     arel_quote_identifier(attribute.table().reference_name()) + "." + arel_quote_identifier(attribute.name())
   end
 
@@ -288,6 +309,7 @@ class ArelSQLiteVisitor
   end
 
   def render(query) -> Array
+    @query = query
     visitor = self
     params = []
     projections = []
@@ -402,6 +424,13 @@ class ArelQuery
   def quoted_identifiers() = @quoted_identifiers
   def bind_limits() = @bind_limits
   def table_alias() = @table_alias
+  def base_reference_name()
+    if @table_alias == nil
+      @table_name
+    else
+      @table_alias
+    end
+  end
   def distinct_value() = @distinct_value
   def groups() = @groups
   def havings() = @havings
