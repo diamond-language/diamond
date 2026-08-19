@@ -529,17 +529,36 @@ class ArelQuery
       @projections, @quoted_identifiers, @bind_limits, @table_alias, @distinct_value,
       @groups, array_concat(@havings, [predicate]), @joins)
   end
+  def ensure_join_alias_available(table: ArelTable)
+    candidate = table.reference_name()
+    if candidate == self.base_reference_name()
+      raise ArgumentError.new("duplicate relation alias in query")
+    end
+    duplicate = false
+    def check_existing_join(join)
+      if join.table().reference_name() == candidate
+        duplicate = true
+      end
+    end
+    @joins.each(check_existing_join)
+    if duplicate
+      raise ArgumentError.new("duplicate relation alias in query")
+    end
+  end
   def join(table: ArelTable, predicate)
+    self.ensure_join_alias_available(table)
     ArelQuery.new(@table_name, @predicates, @orderings, @limit_value, @offset_value,
       @projections, @quoted_identifiers, @bind_limits, @table_alias, @distinct_value,
       @groups, @havings, array_concat(@joins, [ArelJoin.new(table, predicate, "INNER")]))
   end
   def left_join(table: ArelTable, predicate)
+    self.ensure_join_alias_available(table)
     ArelQuery.new(@table_name, @predicates, @orderings, @limit_value, @offset_value,
       @projections, @quoted_identifiers, @bind_limits, @table_alias, @distinct_value,
       @groups, @havings, array_concat(@joins, [ArelJoin.new(table, predicate, "LEFT OUTER")]))
   end
   def cross_join(table: ArelTable)
+    self.ensure_join_alias_available(table)
     ArelQuery.new(@table_name, @predicates, @orderings, @limit_value, @offset_value,
       @projections, @quoted_identifiers, @bind_limits, @table_alias, @distinct_value,
       @groups, @havings, array_concat(@joins, [ArelJoin.new(table, nil, "CROSS")]))
