@@ -126,6 +126,13 @@ def run_tests()
     db.close()
   end
 
+  def test_arel_render_is_the_common_visitor_entry_point()
+    people = Arel.table("people")
+    query = Arel.from(people).project(Arel.sql("value"))
+    sql, params = Arel.render(query, TestArelVisitor.new())
+    Minitest.assert_equal("SELECT value FROM test_source", sql)
+  end
+
   suite = Minitest.new()
   suite.test("explicit SELECT visitor", test_select_accepts_an_explicit_visitor)
   suite.test("nested SELECT visitor", test_derived_queries_inherit_the_explicit_visitor)
@@ -137,6 +144,7 @@ def run_tests()
   suite.test("SELECT execution visitor", test_select_execution_accepts_an_explicit_visitor)
   suite.test("compound execution visitor", test_compound_execution_accepts_an_explicit_visitor)
   suite.test("write execution visitor", test_write_execution_accepts_an_explicit_visitor)
+  suite.test("common render entry point", test_arel_render_is_the_common_visitor_entry_point)
   suite.run()
 end
 

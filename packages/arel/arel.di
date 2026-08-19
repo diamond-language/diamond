@@ -1444,6 +1444,7 @@ class Arel
   def self.excluded(name: String) = ArelExcludedAttribute.new(name)
   def self.literal(value) = ArelLiteral.new(value)
   def self.conflict_target(columns) = ArelConflictTarget.new(arel_array(columns))
+  def self.render(statement, visitor = nil) = statement.to_sql(visitor)
   def self.union(left, right) = ArelCompoundQuery.new(left, "UNION", right)
   def self.union_all(left, right) = ArelCompoundQuery.new(left, "UNION ALL", right)
   def self.intersect(left, right) = ArelCompoundQuery.new(left, "INTERSECT", right)
