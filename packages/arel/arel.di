@@ -1503,6 +1503,16 @@ def inspect_tail(node) -> String
     else
       "Membership(#{operator}, #{self.inspect(node.left())}, subquery)"
     end
+  elsif node is ArelOrdering
+    nulls = ""
+    if node.nulls() != nil
+      nulls = ", NULLS #{node.nulls()}"
+    end
+    "Ordering(#{node.direction()}#{nulls}, #{self.inspect(node.expression())})"
+  elsif node is ArelAlias
+    "Alias(#{node.name()}, #{self.inspect(node.expression())})"
+  elsif node is ArelCollation
+    "Collation(#{node.name()}, #{self.inspect(node.expression())})"
   else
     "ArelNode(unsupported)"
   end

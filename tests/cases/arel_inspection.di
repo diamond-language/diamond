@@ -17,6 +17,9 @@ def run_tests()
     Minitest.assert_equal("Not(Logical(AND, Predicate(=, Attribute(people.active), Literal(true)), Predicate(>, Attribute(people.score), Bind(10))))", Arel.inspect(combined))
     Minitest.assert_equal("Between(BETWEEN, Attribute(people.age), 18, 65)", Arel.inspect(people.column("age").between(18, 65)))
     Minitest.assert_equal("Membership(NOT IN, Attribute(people.role), 2 values)", Arel.inspect(people.column("role").not_in(["guest", "blocked"])))
+    ordering = Arel.asc(people.column("name").collate("nocase")).nulls_last()
+    aliased = Arel.as(ordering, "ordered_name")
+    Minitest.assert_equal("Alias(ordered_name, Ordering(ASC, NULLS LAST, Collation(nocase, Attribute(people.name))))", Arel.inspect(aliased))
   end
 
   suite = Minitest.new()
