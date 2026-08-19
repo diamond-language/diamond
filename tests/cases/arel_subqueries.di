@@ -75,6 +75,21 @@ def run_tests()
     Minitest.assert_equal("duplicate correlated relation", duplicate_message)
   end
 
+  def test_nested_correlation_can_name_each_outer_level()
+    companies = Arel.table("companies")
+    people = Arel.table("people")
+    memberships = Arel.table("memberships")
+    inner = Arel.from(memberships).correlate_all([people, companies])
+    person_match = memberships.column("person_id").eq(people.column("id"))
+    inner_predicate = person_match.and_also(
+      memberships.column("company_id").eq(companies.column("id")))
+    inner = inner.where(inner_predicate)
+    middle = Arel.from(people).correlate(companies).where(Arel.exists(inner))
+    outer = Arel.from(companies).where(Arel.exists(middle))
+    sql, params = outer.to_sql()
+    Minitest.assert_equal("SELECT * FROM \"companies\" WHERE EXISTS (SELECT * FROM \"people\" WHERE EXISTS (SELECT * FROM \"memberships\" WHERE (\"memberships\".\"person_id\" = \"people\".\"id\" AND \"memberships\".\"company_id\" = \"companies\".\"id\")))", sql)
+  end
+
   suite = Minitest.new()
   suite.test("FROM subquery", test_subquery_can_be_used_as_from_source)
   suite.test("EXISTS predicates", test_exists_and_not_exists_are_predicates)
@@ -82,6 +97,7 @@ def run_tests()
   suite.test("scalar subquery", test_scalar_subquery_is_an_expression)
   suite.test("explicit correlation", test_explicit_correlation_allows_outer_attributes)
   suite.test("correlation validation", test_correlation_rejects_local_and_duplicate_relations)
+  suite.test("nested correlation", test_nested_correlation_can_name_each_outer_level)
   suite.run()
 end
 

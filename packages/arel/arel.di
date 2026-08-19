@@ -669,6 +669,15 @@ class ArelQuery
       @groups, @havings, @joins, @source_query,
       array_concat(@correlations, [table]))
   end
+  def correlate_all(tables: Array)
+    query = self
+    index = 0
+    while index < tables.length()
+      query = query.correlate(tables[index])
+      index = index + 1
+    end
+    query
+  end
   def order(column_or_columns)
     self.copy(@predicates, array_concat(@orderings, arel_array(column_or_columns)),
       @limit_value, @offset_value, @projections)
