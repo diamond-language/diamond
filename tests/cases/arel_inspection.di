@@ -28,6 +28,12 @@ def run_tests()
     different = people.column("score").add_expression(Arel.literal(3))
     Minitest.assert_equal(true, Arel.same?(first, second))
     Minitest.assert_equal(false, Arel.same?(first, different))
+    first_predicate = people.column("active").eq(true).and_also(people.column("age").gt(18))
+    same_predicate = Arel.table("people").column("active").eq(true)
+    same_predicate = same_predicate.and_also(Arel.table("people").column("age").gt(18))
+    other_predicate = people.column("active").eq(false).and_also(people.column("age").gt(18))
+    Minitest.assert_equal(true, Arel.same?(first_predicate, same_predicate))
+    Minitest.assert_equal(false, Arel.same?(first_predicate, other_predicate))
   end
 
   suite = Minitest.new()
