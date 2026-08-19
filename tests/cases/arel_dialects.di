@@ -47,10 +47,24 @@ def run_tests()
     Minitest.assert_equal("portable-test visitor does not support conflict-target predicates", message)
   end
 
+  def test_upsert_actions_are_dialect_extensions()
+    items = Arel.table("items")
+    insert = Arel.insert_into(items).values({"name": "pens"})
+    insert = insert.on_conflict_do_nothing(["name"])
+    message = nil
+    begin
+      insert.to_sql(PortableTestVisitor.new())
+    rescue error: ArgumentError
+      message = error.message()
+    end
+    Minitest.assert_equal("portable-test visitor does not support upsert conflict actions", message)
+  end
+
   suite = Minitest.new()
   suite.test("visitor extension protocol", test_visitors_report_unsupported_extensions)
   suite.test("excluded extension", test_excluded_attributes_are_dialect_extensions)
   suite.test("partial conflict extension", test_partial_conflict_targets_are_dialect_extensions)
+  suite.test("upsert extension", test_upsert_actions_are_dialect_extensions)
   suite.run()
 end
 
