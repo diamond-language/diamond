@@ -1070,9 +1070,6 @@ class ArelCompoundQuery
 end
 
 class ArelCteRelation < ArelTable
-  def initialize(name: String)
-    super(name)
-  end
   def recursive_body(anchor, recursive_branch)
     if anchor.base_reference_name() == self.name()
       raise ArgumentError.new("recursive CTE anchor cannot reference itself")
