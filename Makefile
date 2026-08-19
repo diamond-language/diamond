@@ -31,7 +31,7 @@ SOURCES := $(wildcard src/*.c)
 OBJECTS := $(SOURCES:src/%.c=$(BUILD_DIR)/%.o)
 DEPS := $(OBJECTS:.o=.d)
 
-.PHONY: all debug sanitize tsan release test test-release test-sanitize test-tsan test-api test-fibers test-fiber-run test-fiber-context test-vm-context test-yield test-continuation test-multi-yield test-scheduler test-scheduler-run-all test-fiber-gc-roots test-fiber-guards test-nested-yield-guard test-stack-overflow test-all test-facet facet test-http-package test-gremlin-package test-rack-package test-lexer-diff test-parser-diff lsp test-lsp test-repl fuzz test-fuzz clean
+.PHONY: all debug sanitize tsan release test test-release test-sanitize test-tsan test-api test-fibers test-fiber-run test-fiber-context test-vm-context test-yield test-continuation test-multi-yield test-scheduler test-scheduler-run-all test-fiber-gc-roots test-fiber-guards test-nested-yield-guard test-stack-overflow test-all test-facet facet test-http-package test-gremlin-package test-rack-package test-lexer-diff test-parser-diff test-self-host test-self-host-smoke lsp test-lsp test-repl fuzz test-fuzz clean
 
 all: debug
 
@@ -181,6 +181,15 @@ test-lexer-diff: debug $(BUILD_DIR)/lexer_dump
 test-parser-diff: debug
 	bash tests/parser_diff.sh
 
+# The full self-hosted differential corpus (lexer + parser, ~1400 cases
+# plus one-off scenarios): opt-in/periodic, not part of test-all -- see
+# tests/self_host_smoke.sh's own comment for why (self-hosting is in
+# minimal-compat maintenance mode per docs/roadmap.md).
+test-self-host: test-lexer-diff test-parser-diff
+
+test-self-host-smoke: debug
+	bash tests/self_host_smoke.sh
+
 test-all:
 	$(MAKE) clean
 	$(MAKE) test
@@ -207,8 +216,7 @@ test-all:
 	$(MAKE) test-lsp
 	$(MAKE) test-repl
 	$(MAKE) test-fuzz
-	$(MAKE) test-lexer-diff
-	$(MAKE) test-parser-diff
+	$(MAKE) test-self-host-smoke
 
 clean:
 	rm -rf $(BUILD_DIR)

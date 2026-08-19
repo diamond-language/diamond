@@ -35,19 +35,6 @@ subqueries. Its own forward plan lives in
 steps are correlated subqueries, CTEs, and set operations, followed by write
 statement managers.
 
-### Close self-hosted frontend parity gaps
-
-The Diamond compiler can compile and run itself, but parity work remains
-open-ended. Known or likely targets include:
-
-- class-variable syntax and semantics still missing from parts of the
-  self-hosted parser;
-- differential sweeps for newer syntax and diagnostics;
-- eliminating hand-maintained opcode-number mirrors or generating them from one
-  source of truth;
-- making the self-hosted frontend usable as more than an internal bootstrap
-  experiment without declaring its internal `ProgramBuilder` API stable.
-
 ### Improve receiver-aware language tooling
 
 The LSP understands declarations and locals recorded by a compiled program, but
@@ -62,6 +49,44 @@ Potential independent slices:
 - dependency-aware symbol information beyond one combined compilation;
 - incremental compilation only after there is a compiler architecture that can
   benefit from incremental document synchronization.
+
+## Self-hosting: minimal-compat maintenance mode
+
+The Diamond compiler can compile and run itself (self-parse and self-run
+bootstrap, `tests/self_host_smoke.sh`), but growing full parity was premature:
+the native language itself isn't stable enough yet for keeping a second,
+hand-ported frontend in lockstep to be worth its ongoing cost. Self-hosting
+work is paused here, not abandoned -- revisit once the native surface (syntax,
+diagnostics, opcode set) has settled enough that parity effort mostly stays
+spent rather than being repeatedly re-paid.
+
+While paused:
+
+- `make test-all` runs only the two bootstrap smoke checks (self-parse,
+  self-run) -- enough to know the self-hosted frontend hasn't gone
+  completely stale, not full parity coverage;
+- the exhaustive differential corpus (`tests/lexer_diff.sh`,
+  `tests/parser_diff.sh`, together `make test-self-host`, ~1400 cases plus
+  one-off scenarios) is opt-in/periodic rather than run on every push -- it
+  used to dominate `make test-all`'s wall time (as much as ~27 of ~43
+  minutes on CI) for a reason unrelated to test-harness inefficiency: the
+  self-hosted parser's own per-case cost is dominated by re-parsing all of
+  `lib/core.di` through the interpreter every time (confirmed by profiling
+  `ProgramBuilder#run` directly -- verify+execute there is ~1ms; the cost is
+  entirely in `parser.compile()` itself), which is inherent to running an
+  interpreter-implemented parser one VM level deep, not something a batching
+  fix resolves;
+- known parity gaps (class-variable syntax and semantics still missing from
+  parts of the self-hosted parser, hand-maintained opcode-number mirrors
+  instead of one generated source of truth, newer native syntax/diagnostics
+  the self-hosted side hasn't picked up) are left as known gaps rather than
+  active work;
+- the internal `ProgramBuilder` API remains explicitly unstable, as before.
+
+Resuming this work later should start by re-measuring whether re-parsing
+`lib/core.di` per case is still the dominant cost, and whether the self-hosted
+parser can parse it once and reuse that state across cases instead of from
+scratch every time.
 
 ## Runtime research
 

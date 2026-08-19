@@ -6,57 +6,35 @@
 # positive corpus grows with the supported grammar; parser_error_cases
 # separately locks matching rejection diagnostics into both compilers.
 # See docs/roadmap.md's self-hosting Phase 3 entry.
+#
+# Part of `make test-self-host`, not `make test-all`: self-hosting is in
+# minimal-compat maintenance mode (docs/roadmap.md) while the native
+# language is still moving, so this full corpus is opt-in/periodic rather
+# than run on every push. tests/self_host_smoke.sh -- part of test-all --
+# covers the two bootstrap checks that used to live at the end of this
+# file, as a cheap "still basically works" signal.
+#
+# The two corpora are driven by selfhost/parser_positive_suite.di and
+# selfhost/parser_error_suite.di, Minitest suites that require parser.di
+# exactly once each instead of once per case -- see parser_positive_suite.di's
+# own comment for why. That only saves the native recompile, though: the
+# positive suite's own per-case cost is dominated by the self-hosted
+# Parser re-parsing all of lib/core.di through the interpreter for every
+# case (confirmed by direct profiling -- ProgramBuilder#run's own verify+
+# execute cost is ~1ms), which is inherent to what parse_and_run_with_core
+# does and not something a test-harness change fixes. The one-off
+# scenarios below (source maps, require/loaded-file limits,
+# redefine_method) each run only once already, so they stay as direct
+# per-scenario `diamond` invocations.
 set -euo pipefail
 
 diamond=./build/diamond
 
-count=0
-for case_file in tests/parser_cases/*.di; do
-    expected="$("$diamond" "$case_file")"
-    # parser_run_with_core.di, not plain parser_run.di: the "expected"
-    # side above always has lib/core.di spliced in (src/main.c's
-    # run_source does that unconditionally), so any fixture that touches
-    # a core.di-defined class/function (Range, StringBuilder, abs, ...)
-    # needs the self-hosted side to see the same prelude, or it fails
-    # with "not defined" instead of a genuine divergence. Confirmed no
-    # existing fixture's own top-level def/class/module names collide
-    # with core.di's before making this the default for every case.
-    actual="$(echo "$case_file" | "$diamond" selfhost/parser_run_with_core.di | sed '$d')"
-    if [[ "$actual" != "$expected" ]]; then
-        echo "parser result mismatch for $case_file" >&2
-        echo "  expected: $expected" >&2
-        echo "  actual:   $actual" >&2
-        exit 1
-    fi
-    count=$((count + 1))
-done
+case_files=(tests/parser_cases/*.di)
+"$diamond" selfhost/parser_positive_suite.di "${case_files[@]}"
 
-echo "$count parser differential cases passed"
-
-error_count=0
-for case_file in tests/parser_error_cases/*.di; do
-    expected_file="${case_file%.di}.err"
-    expected="$(cat "$expected_file")"
-    if "$diamond" "$case_file" >/tmp/diamond-parser-native.out 2>&1; then
-        echo "native compiler accepted parser error case $case_file" >&2
-        exit 1
-    fi
-    if ! grep -Fq "$expected" /tmp/diamond-parser-native.out; then
-        echo "native compiler error mismatch for $case_file" >&2
-        exit 1
-    fi
-    if echo "$case_file" | "$diamond" selfhost/parser_check.di >/tmp/diamond-parser-selfhost.out 2>&1; then
-        echo "self-hosted parser accepted error case $case_file" >&2
-        exit 1
-    fi
-    if ! grep -Fq "$expected" /tmp/diamond-parser-selfhost.out; then
-        echo "self-hosted parser error mismatch for $case_file" >&2
-        exit 1
-    fi
-    error_count=$((error_count + 1))
-done
-
-echo "$error_count parser error differential cases passed"
+error_case_files=(tests/parser_error_cases/*.di)
+"$diamond" selfhost/parser_error_suite.di "${error_case_files[@]}"
 
 depth_dir="$(mktemp -d)"
 trap 'rm -rf "$depth_dir"' EXIT
@@ -413,32 +391,6 @@ trap - EXIT
 
 echo "redefine_method success-path differential case passed"
 
-self_parse_result="$(echo "selfhost/parser.di" | $diamond selfhost/self_parse_check.di 2>&1)"
-if [[ "$self_parse_result" != "PARSED OK"* ]]; then
-    echo "self-hosted parser failed to parse its own source: $self_parse_result" >&2
-    exit 1
-fi
-
-echo "self-hosted parser self-parse bootstrap check passed"
-
-# The real Phase 4 bootstrap: not just compiling its own source (above),
-# but the compiled result actually running, and correctly using its own
-# compiled Parser/Lexer classes to compile-and-run a third, independent
-# target program -- a compiler compiling itself and then doing real work
-# with the result. self_run_check.di appends a driver (read a path, call
-# parse_and_run_with_core on it) to the bundled parser.di+lexer.di+
-# core.di source before compiling, so running the self-compiled result
-# performs the same "compile and run an arbitrary program" operation
-# natively-run code does, one VM level deeper.
-self_run_target="tests/parser_cases/generic_collection_constraints.di"
-self_run_expected="$("$diamond" "$self_run_target")"
-self_run_actual="$(printf 'selfhost/parser.di\n%s\n' "$self_run_target" | \
-    "$diamond" selfhost/self_run_check.di 2>&1 | sed '$d')"
-if [[ "$self_run_actual" != "$self_run_expected" ]]; then
-    echo "self-hosted parser self-run bootstrap mismatch" >&2
-    echo "  expected: $self_run_expected" >&2
-    echo "  actual:   $self_run_actual" >&2
-    exit 1
-fi
-
-echo "self-hosted parser self-run bootstrap check passed"
+# Bootstrap checks (self-parse, self-run) now live in
+# tests/self_host_smoke.sh, which runs as part of `make test-all` even
+# though this full file doesn't -- see this file's own header comment.

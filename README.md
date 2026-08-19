@@ -114,15 +114,24 @@ make sanitize
 make tsan
 make test
 make test-all
+make test-self-host          # full self-hosted lexer/parser differential corpus
 make fuzz                    # uses clang/libFuzzer
 make clean
 ```
 
 `make test-all` intentionally runs the broad validation matrix sequentially:
 debug, release, sanitizers, native VM/fiber tests, packages, LSP, REPL, fuzz
-smoke tests, and native/self-hosted lexer/parser differentials. It is thorough
-and correspondingly slow; CI is the normal place to run it after a focused
-local test.
+smoke tests, and a self-hosting bootstrap smoke check. It is thorough and
+correspondingly slow; CI is the normal place to run it after a focused local
+test.
+
+Self-hosting is in minimal-compat maintenance mode (see docs/roadmap.md):
+`test-all` only confirms the self-hosted frontend still parses and runs
+itself, not full parity. The exhaustive lexer/parser differential corpus
+(~1400 cases) is `make test-self-host`, run periodically/manually rather
+than on every push -- it's dominated by the self-hosted parser re-parsing
+`lib/core.di` through the interpreter on every case, an inherent cost of
+self-hosting rather than a test-harness inefficiency.
 
 Inspect bytecode while still executing a program:
 

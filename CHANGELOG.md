@@ -324,6 +324,9 @@ bytecode, or semantic stability.
 - Vendored the reginold regex engine into this repository (`reginold/`)
   instead of building it from a private sibling checkout cloned in CI with a
   read-only access token.
+- Batched the self-hosted lexer/parser differential harnesses into one
+  Minitest-driven process each instead of spawning and recompiling from
+  scratch per case, cutting the lexer suite from ~274s to ~23s.
 
 ### Self-hosting
 
@@ -337,6 +340,14 @@ bytecode, or semantic stability.
   changed VM frames to use per-function register high-water sizes.
 - Added cross-program copying/adoption for structured values and instances
   returned by `ProgramBuilder`.
+- Put self-hosting into minimal-compat maintenance mode: `make test-all` now
+  runs only a two-check bootstrap smoke test (self-parse, self-run) instead
+  of the full ~1400-case differential corpus, which moved to the opt-in
+  `make test-self-host`. The corpus itself is unavoidably slow regardless of
+  test-harness batching -- the self-hosted parser re-parses all of
+  `lib/core.di` through the interpreter on every case -- and the native
+  language isn't stable enough yet for continuously re-paying self-hosted
+  parity's cost to be worth it. See docs/roadmap.md.
 
 ### Diagnostics and correctness
 
