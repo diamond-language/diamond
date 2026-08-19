@@ -11,6 +11,8 @@ by every current statement manager provides:
 - `render_expression(expression, params) -> String` for projections,
   predicates, assignments, ordering, and RETURNING;
 - `render_ctes(statement, params) -> String` for read and write managers;
+- `quote_identifier(name) -> String` for every relation, column, alias, CTE,
+  collation, conflict target, and assignment identifier;
 - `visitor_name() -> String` for diagnostics;
 - `supports_extension?(name) -> Bool` and `require_extension(name)` for
   dialect-specific nodes.
@@ -19,6 +21,11 @@ Compound queries render their branches through each branch's `render_with`
 method and use `render_expression` for result ordering. INSERT, UPDATE, and
 DELETE managers render their own statement skeletons, delegating all embedded
 queries, CTE bodies, and expressions to the selected visitor.
+
+Visitors may override `quote_identifier` independently of expression
+rendering. Statement managers never call SQLite's quoting helper directly, so
+an override applies consistently to SELECT and all write families. The method
+receives a validated identifier component, not a dotted SQL fragment.
 
 ## Extension capabilities
 
