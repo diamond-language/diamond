@@ -10,6 +10,10 @@ class TestArelVisitor < ArelSQLiteVisitor
 end
 
 class NestedTestArelVisitor < ArelSQLiteVisitor
+  def render_compound(query) -> Array
+    sql, params = super(query)
+    ["custom #{sql}", params]
+  end
   def render_source(query, params: Array) -> String
     if query.source_query() != nil
       super(query, params)
@@ -63,10 +67,11 @@ def run_tests()
   def test_compound_branches_inherit_the_explicit_visitor()
     first = Arel.table("first_values")
     second = Arel.table("second_values")
-    left = Arel.from(first).project(first.column("value"))
-    right = Arel.from(second).project(second.column("value"))
+    left = Arel.from(first).project(first.column("value")).where(first.column("id").eq(1))
+    right = Arel.from(second).project(second.column("value")).where(second.column("id").eq(2))
     sql, params = Arel.union_all(left, right).to_sql(NestedTestArelVisitor.new())
-    Minitest.assert_equal("SELECT \"first_values\".\"value\" FROM visited_first_values UNION ALL SELECT \"second_values\".\"value\" FROM visited_second_values", sql)
+    Minitest.assert_equal("custom SELECT \"first_values\".\"value\" FROM visited_first_values WHERE \"first_values\".\"id\" = ? UNION ALL SELECT \"second_values\".\"value\" FROM visited_second_values WHERE \"second_values\".\"id\" = ?", sql)
+    Minitest.assert_equal("1|2", params.join("|"))
   end
 
   def test_cte_bodies_inherit_the_explicit_visitor()
