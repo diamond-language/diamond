@@ -20,9 +20,19 @@ def run_tests()
     Minitest.assert_equal(4, params[0])
   end
 
+  def test_bitwise_or_is_structural()
+    permissions = Arel.table("permissions")
+    expression = Arel.bit_or(permissions.column("mask"), 2)
+    query = Arel.from(permissions).project(Arel.as(expression, "combined"))
+    sql, params = query.to_sql()
+    Minitest.assert_equal("SELECT (\"permissions\".\"mask\" | ?) AS \"combined\" FROM \"permissions\"", sql)
+    Minitest.assert_equal(2, params[0])
+  end
+
   suite = Minitest.new()
   suite.test("structural modulo", test_modulo_is_structural)
   suite.test("structural bitwise AND", test_bitwise_and_is_structural)
+  suite.test("structural bitwise OR", test_bitwise_or_is_structural)
   suite.run()
 end
 
