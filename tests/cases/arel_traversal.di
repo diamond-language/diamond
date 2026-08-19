@@ -402,6 +402,13 @@ def run_tests()
     Minitest.assert_equal("UPDATE \"people\" SET \"score\" = ? WHERE \"people\".\"verified\" = ?",
       rewrite_sql)
     Minitest.assert_equal("7|false", rewrite_params.join("|"))
+    extension = ThirdPartyPair.new(policy_source, people.column("name"))
+    rewritten_extension = Arel.simplify(extension,
+      [[policy_source, policy_replacement]])
+    extension_children = Arel.children(rewritten_extension)
+    Minitest.assert_equal("Predicate(=, Attribute(people.verified), Bind(true))",
+      Arel.inspect(extension_children[0]))
+    Minitest.assert_equal("Attribute(people.name)", Arel.inspect(extension_children[1]))
   end
 
   suite = Minitest.new()
