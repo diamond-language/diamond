@@ -22,33 +22,32 @@ Raw SQL remains an explicit escape hatch, not the representation used by new
 features. Values are bind parameters by default. Identifiers are represented
 as nodes and quoted by the active visitor.
 
-## Next milestone: complete write/query integration
+## Next milestone: finish recursive-query ergonomics
 
-The remaining write work is about composition rather than adding statement
-kinds:
+Recursive CTEs now compose with every read and write manager. The remaining
+work is to make recursive intent easier to express and validate:
 
-- allow CTEs on UPDATE and DELETE as well as INSERT;
-- validate duplicate CTE names consistently across read and write managers;
-- exercise compound queries as INSERT sources and recursive CTEs feeding writes;
-- decide whether SQLite's optional conflict-target predicates warrant a
-  structural node or should remain an explicit raw-SQL extension.
+- provide an explicit named CTE relation helper for self-reference;
+- add an anchor/recursive-branch helper built from ordinary `UNION ALL` nodes;
+- reject invalid recursive declarations before SQLite sees them;
+- cover multiple references to one recursive CTE and mixed recursive/nonrecursive
+  declarations.
 
-Completion means those combinations preserve bind ordering, quote identifiers
-correctly, and execute against SQLite in the package tests.
+Completion means recursive queries can be constructed without manually keeping
+the CTE name, table reference, and compound body synchronized.
 
-## Following milestone: finish recursive/compound edge cases
+## Following milestone: deepen write expressions
 
-Round out the query features already represented:
+Round out SQLite's data-changing expression forms:
 
-- self-reference through an explicit CTE relation object;
-- anchor/recursive branch helpers built from ordinary `UNION ALL` nodes;
-- validation for duplicate names and invalid self-reference;
-- explicit compound grouping when mixed nested operators require parentheses;
-- diagnostics when wildcard projections make compound shape unknowable.
+- structural values and expressions in INSERT rows;
+- conflict-target predicates if they can be represented without a
+  SQLite-specific leak into portable nodes;
+- reusable excluded-row attributes for conflict updates;
+- DEFAULT VALUES and per-column DEFAULT where SQLite permits them.
 
-CTEs should remain query nodes visited by the renderer, never interpolated SQL
-strings. SQLite execution tests should cover multiple CTE references and bind
-parameters in both CTE bodies and the consuming query.
+Values should remain bound by default; expression insertion must require an
+explicit wrapper just as UPDATE assignments do today.
 
 ## Milestone 3: visitor and adapter boundary
 

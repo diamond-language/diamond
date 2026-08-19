@@ -1,5 +1,12 @@
 # Changelog
 
+## Arel 0.7.0
+
+- Added ordinary and recursive CTE composition to every write manager, with
+  consistent duplicate-name checks and CTE-first bind ordering.
+- Preserved nested compound-query grouping, supported compound INSERT sources,
+  and rejected compound or INSERT SELECT shapes hidden behind wildcards.
+
 ## Arel 0.6.0
 
 - Added multi-row INSERTs with shape validation, INSERT...SELECT, expression

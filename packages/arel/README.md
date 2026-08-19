@@ -108,7 +108,13 @@ query CTE with `with(name, query)`.
 
 UPDATE and DELETE require a predicate unless the caller explicitly opts into a
 whole-table operation with `all()`. SQLite `RETURNING` is available on all three
-write managers, including multi-row INSERTs.
+write managers, including multi-row INSERTs. Every write manager accepts
+`with(name, query)` and `with_recursive(name, query)`; duplicate CTE names are
+rejected.
+
+Compound branches require explicit projections so their shapes can be checked.
+Nested compound trees retain their grouping, including branch-local ordering
+and pagination, when rendered for SQLite.
 
 The original string-oriented API remains available for compatibility:
 
