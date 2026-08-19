@@ -361,7 +361,7 @@ def arel_append_cte(ctes: Array, name: String, query, recursive = false) -> Arra
   array_concat(ctes, [ArelCte.new(name, query, recursive)])
 end
 
-class ArelSQLiteVisitor
+class ArelVisitor
   def visitor_name() = "SQLite"
   def quote_identifier(name: String) -> String = arel_quote_identifier(name)
   def supports_extension?(name: String) = true
@@ -736,6 +736,9 @@ class ArelSQLiteVisitor
   def render_update(statement) -> Array = statement.render_default(self)
   def render_delete(statement) -> Array = statement.render_default(self)
 
+end
+
+class ArelSQLiteVisitor < ArelVisitor
 end
 
 class ArelQuery
