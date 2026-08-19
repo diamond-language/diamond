@@ -1,5 +1,12 @@
 # Changelog
 
+## Arel 0.14.0
+
+- Extended deterministic inspection to relations, qualified stars, conflict
+  attributes, subqueries, joins, CTE declarations, and compound queries.
+- Extended structural equality to functions, raw-SQL binds, memberships,
+  grouped queries, joins, derived sources, CTEs, and decorated compounds.
+
 ## Arel 0.13.0
 
 - Added deterministic non-SQL inspection for core expressions, predicate trees,

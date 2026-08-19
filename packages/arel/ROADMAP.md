@@ -24,13 +24,14 @@ as nodes and quoted by the active visitor.
 
 ## Next milestone: complete structural tooling
 
-Centralized inspection and equality now cover core expressions, predicates,
-decorators, and simple queries without adding methods to every node. Complete
-that tooling before considering rewrites:
+Centralized inspection and equality now cover expressions, predicates,
+decorators, relations, joins, derived sources, CTE declarations, grouped
+queries, and compounds. Complete the remaining manager-level tooling before
+considering rewrites:
 
-- inspect joins, CTE declarations, compounds, and write managers;
-- compare joins, groups/HAVING, derived sources, CTEs, and compounds;
-- compare membership arrays and raw-SQL bind arrays by value;
+- inspect INSERT, UPDATE, and DELETE managers;
+- compare write managers, conflict targets, assignments, and RETURNING lists;
+- compare correlation lists and the remaining standalone extension nodes;
 - distinguish unsupported inspection from an unknown third-party node;
 - keep the centralized implementation within Diamond's fixed function-table
   budget.

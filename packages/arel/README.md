@@ -144,11 +144,14 @@ the same for simple CAST type names. Parameterized or dialect-specific type
 fragments still require an explicit dialect extension or `Arel.sql`.
 
 `Arel.inspect(node)` returns a deterministic structural description rather than
-executable SQL. It covers core expressions, predicates, decorators, and a
-concise query summary. `Arel.same?(left, right)` performs structural comparison
-for those expression families and for simple queries with projections,
-predicates, ordering, distinctness, and pagination. Queries containing joins or
-CTEs currently compare as unsupported instead of producing a false positive.
+executable SQL. It covers expressions, predicates, decorators, relations,
+subqueries, joins, CTE declarations, compounds, and a concise query summary.
+`Arel.same?(left, right)` performs structural comparison for those expression
+families and for queries with grouping/HAVING, joins, derived sources, CTEs,
+and compound branches as well as projections, predicates, ordering,
+distinctness, and pagination. Membership and raw-SQL bind arrays compare by
+value rather than array identity. Write-manager structural tooling remains a
+future direction.
 
 `Arel.conflict_target(columns)` builds an immutable SQLite conflict target.
 Use `target.column(name)` with `where(predicate)` for partial unique indexes;
