@@ -1582,6 +1582,19 @@ def same?(left, right) -> Bool
       index = index + 1
     end
     true
+  elsif left is ArelRawSql
+    if !(right is ArelRawSql) || left.sql() != right.sql() ||
+       left.params().length() != right.params().length()
+      return false
+    end
+    index = 0
+    while index < left.params().length()
+      if left.params()[index] != right.params()[index]
+        return false
+      end
+      index = index + 1
+    end
+    true
   elsif left is ArelPredicate
     if !(right is ArelPredicate) || left.operator() != right.operator() ||
        !self.same?(left.left(), right.left())
