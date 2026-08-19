@@ -1280,7 +1280,7 @@ class ArelUpdate
       arel_append_cte(@ctes, name, query, true))
   end
 
-  def to_sql() -> Array
+  def render_with(visitor) -> Array
     if @assignments == nil || @assignments.length() == 0
       raise ArgumentError.new("UPDATE requires at least one assignment")
     end
@@ -1289,7 +1289,6 @@ class ArelUpdate
     end
     clauses = []
     params = []
-    visitor = ArelSQLiteVisitor.new()
     def collect_assignment(name, value)
       if value is ArelAssignmentValue
         rendered = visitor.render_expression(value.expression(), params)
@@ -1321,6 +1320,14 @@ class ArelUpdate
     sql = visitor.render_ctes(self, cte_params) + sql
     params = array_concat(cte_params, params)
     [sql, params]
+  end
+
+  def to_sql(visitor = nil) -> Array
+    renderer = visitor
+    if renderer == nil
+      renderer = ArelSQLiteVisitor.new()
+    end
+    self.render_with(renderer)
   end
 
   def execute(db)

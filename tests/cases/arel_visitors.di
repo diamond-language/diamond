@@ -73,12 +73,22 @@ def run_tests()
     Minitest.assert_equal(true, sql.include?("\"qty\" = incoming.\"qty\""))
   end
 
+  def test_update_expressions_use_the_explicit_visitor()
+    inventory = Arel.table("inventory")
+    update = Arel.update(inventory).set({
+      "qty": Arel.expression(Arel.excluded("qty"))
+    }).all()
+    sql, params = update.to_sql(WriteTestArelVisitor.new())
+    Minitest.assert_equal("UPDATE \"inventory\" SET \"qty\" = incoming.\"qty\"", sql)
+  end
+
   suite = Minitest.new()
   suite.test("explicit SELECT visitor", test_select_accepts_an_explicit_visitor)
   suite.test("nested SELECT visitor", test_derived_queries_inherit_the_explicit_visitor)
   suite.test("compound visitor", test_compound_branches_inherit_the_explicit_visitor)
   suite.test("CTE visitor", test_cte_bodies_inherit_the_explicit_visitor)
   suite.test("INSERT visitor", test_insert_expressions_use_the_explicit_visitor)
+  suite.test("UPDATE visitor", test_update_expressions_use_the_explicit_visitor)
   suite.run()
 end
 
