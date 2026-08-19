@@ -61,9 +61,17 @@ Predicates compose with `and_also`, `or_else`, and `not_`; explicit grouping is
 preserved in the rendered SQL. Attributes also provide `asc()` and `desc()`.
 
 Queries support table/projection aliases, `DISTINCT`, grouping, `HAVING`, and
-structured inner/left-outer joins. `Arel.count`/`sum`/`min`/`max`/`avg` and
+structured inner/left-outer/cross joins. Duplicate relation aliases and
+attributes outside the query's relation set are rejected. `Arel.count`/`sum`/`min`/`max`/`avg` and
 `Arel.lower`/`upper` construct function nodes. `Arel.sql(fragment, params)` is
 the explicit escape hatch for an expression the AST cannot represent yet.
+
+`Arel.from_subquery(query, "name")` uses a query as an aliased derived table.
+`Arel.exists(query)`, `attribute.in_subquery(query)`, and
+`Arel.scalar(query)` place subqueries in predicate and scalar-expression
+positions while retaining their bind parameters. `Arel.as`, `Arel.asc`, and
+`Arel.desc` apply aliases or ordering to arbitrary expressions; orderings can
+select `nulls_first()` or `nulls_last()`.
 
 The original string-oriented API remains available for compatibility:
 
@@ -143,8 +151,9 @@ why nothing here names `SQLite3` directly.
 - **`INSERT`/`UPDATE`/`DELETE`.** This builds and reads `SELECT`
   statements only -- writes belong to a mapper/repository layer above
   this one.
-- **Subqueries, CTEs, set operations, and data-changing statements.** These are
-  the next relational-algebra layers, not hidden raw SQL shortcuts.
+- **Correlated subqueries, CTEs, set operations, and data-changing
+  statements.** These are the next relational-algebra layers, not hidden raw
+  SQL shortcuts.
 - **Visitors for other adapters.** Nodes contain no SQLite rendering logic;
   `ArelSQLiteVisitor` is deliberately separate so later dialect visitors can
   render the same query tree.

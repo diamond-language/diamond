@@ -22,51 +22,47 @@ Raw SQL remains an explicit escape hatch, not the representation used by new
 features. Values are bind parameters by default. Identifiers are represented
 as nodes and quoted by the active visitor.
 
-## Next milestone: finish SELECT expression coverage
+## Next milestone: correlated subqueries
 
-Round out the expression forms that are still missing from the current SELECT
-AST:
+Allow an inner query to refer deliberately to relations owned by its enclosing
+query:
 
-- aliases and ordering methods on arbitrary expressions, not only attributes;
-- qualified wildcard projections such as `people.*`;
-- `COUNT(DISTINCT expression)` and distinct function arguments;
-- ordering with explicit null placement;
-- SQLite collation expressions;
-- reusable named-window and window-function nodes if a concrete application
-  needs them.
+- an explicit correlation API rather than disabling relation-scope checks;
+- correlated `EXISTS`, scalar, and `IN` subqueries;
+- validation that distinguishes permitted outer references from accidental
+  unrelated attributes;
+- nested correlation across more than one query level;
+- execution tests covering the same column name at inner and outer levels.
 
 Completion means every feature composes with existing predicates, preserves
 bind ordering, quotes identifiers correctly, and executes against SQLite in
 the package tests.
 
-## Following milestone: broaden relation composition
+## Following milestone: common table expressions
 
-Extend the existing inner/left-outer join model where real queries require it:
+Add named query sources shared within a statement:
 
-- multiple joins in a deterministic order;
-- bind-bearing expressions in join predicates;
-- cross joins;
-- dialect-gated right/full joins only when an adapter supports them;
-- clearer diagnostics for duplicate aliases in a relation set.
+- non-recursive `WITH` entries;
+- multiple CTEs with deterministic declaration and bind order;
+- references to CTE output through the ordinary table/attribute surface;
+- recursive CTEs after the non-recursive representation is stable;
+- clear duplicate-name and out-of-scope diagnostics.
 
-Joins should be nodes visited by the renderer, never interpolated SQL strings.
-SQLite execution tests should cover ambiguous column names, aliases, and bind
-parameters inside join conditions.
+CTEs should remain query nodes visited by the renderer, never interpolated SQL
+strings. SQLite execution tests should cover multiple CTE references and bind
+parameters in both CTE bodies and the consuming query.
 
-## Milestone 3: subqueries and set operations
+## Milestone 3: set operations
 
-Make a SELECT query usable anywhere a relation or expression is valid:
+Combine compatible SELECT queries:
 
-- subqueries in `FROM` with a required alias;
-- scalar subqueries in projections and predicates;
-- `EXISTS`/`NOT EXISTS`;
-- `IN (subquery)`;
-- common table expressions (`WITH`), including recursive CTEs if the node model
-  does not need special treatment;
-- `UNION`, `UNION ALL`, `INTERSECT`, and `EXCEPT`.
+- `UNION`, `UNION ALL`, `INTERSECT`, and `EXCEPT`;
+- explicit grouping when a compound query is nested or ordered;
+- bind ordering across every branch;
+- validation of incompatible projection counts where that information is
+  structurally available.
 
-This milestone is the point where the library becomes a relational algebra
-rather than a fluent SELECT builder.
+This milestone completes the compound-query portion of the relational algebra.
 
 ## Milestone 4: data-changing statements
 
