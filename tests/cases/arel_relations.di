@@ -5,7 +5,7 @@ def run_tests()
   def test_duplicate_relation_aliases_are_rejected()
     people = Arel.table("people")
     managers = people.as("managers")
-    reviewers = people.as("managers")
+    reviewers = people.as("MANAGERS")
     query = Arel.from(people).left_join(managers,
       people.column("manager_id").eq(managers.column("id")))
     message = nil

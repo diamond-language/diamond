@@ -882,13 +882,13 @@ class ArelQuery
   end
   def ensure_join_alias_available(table: ArelTable)
     candidate = table.reference_name()
-    if candidate == self.base_reference_name()
+    if candidate.downcase() == self.base_reference_name().downcase()
       raise ArgumentError.new("duplicate relation alias in query")
     end
     duplicate = false
     index = 0
     while index < @joins.length()
-      if @joins[index].table().reference_name() == candidate
+      if @joins[index].table().reference_name().downcase() == candidate.downcase()
         duplicate = true
       end
       index = index + 1
