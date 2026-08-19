@@ -897,6 +897,37 @@ class ArelUpdate
   end
 end
 
+class ArelDelete
+  def initialize(table: ArelTable, predicates = [])
+    @table = table
+    @predicates = predicates
+  end
+
+  def where(predicate)
+    ArelDelete.new(@table, array_concat(@predicates, [predicate]))
+  end
+
+  def to_sql() -> Array
+    params = []
+    sql = "DELETE FROM #{arel_quote_identifier(@table.name())}"
+    predicates = []
+    visitor = ArelSQLiteVisitor.new()
+    def render_predicate(predicate)
+      predicates.push(visitor.render_expression(predicate, params))
+    end
+    @predicates.each(render_predicate)
+    if predicates.length() > 0
+      sql = sql + " WHERE " + predicates.join(" AND ")
+    end
+    [sql, params]
+  end
+
+  def execute(db)
+    sql, params = self.to_sql()
+    db.execute(sql, params)
+  end
+end
+
 class Arel
   def self.table(name: String) = ArelTable.new(name)
   def self.as(expression, name: String) = ArelAlias.new(expression, name)
@@ -926,6 +957,7 @@ class Arel
   def self.except(left, right) = ArelCompoundQuery.new(left, "EXCEPT", right)
   def self.insert_into(table: ArelTable) = ArelInsert.new(table)
   def self.update(table: ArelTable) = ArelUpdate.new(table)
+  def self.delete_from(table: ArelTable) = ArelDelete.new(table)
   def self.from_subquery(query, name: String)
     ArelQuery.new(name, [], [], nil, nil, [ArelRawSql.new("*", [])], true, true,
       name, false, [], [], [], query)

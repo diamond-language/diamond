@@ -35,9 +35,27 @@ def run_tests()
     db.close()
   end
 
+  def test_delete_renders_and_executes()
+    items = Arel.table("items")
+    deletion = Arel.delete_from(items).where(items.column("qty").lt(1))
+    sql, params = deletion.to_sql()
+    Minitest.assert_equal("DELETE FROM \"items\" WHERE \"items\".\"qty\" < ?", sql)
+    Minitest.assert_equal(1, params.length())
+    Minitest.assert_equal(1, params[0])
+
+    db = SQLite3.open(":memory:")
+    db.execute("CREATE TABLE items (qty INTEGER)")
+    db.execute("INSERT INTO items VALUES (0)")
+    db.execute("INSERT INTO items VALUES (2)")
+    Minitest.assert_equal(1, deletion.execute(db))
+    Minitest.assert_equal(2, db.query("SELECT qty FROM items")[0]["qty"])
+    db.close()
+  end
+
   suite = Minitest.new()
   suite.test("INSERT", test_insert_renders_and_executes)
   suite.test("UPDATE", test_update_renders_and_executes)
+  suite.test("DELETE", test_delete_renders_and_executes)
   suite.run()
 end
 
