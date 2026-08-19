@@ -8,6 +8,9 @@ Diamond uses method-shape conventions rather than interfaces. A visitor used
 by every current statement manager provides:
 
 - `render(query) -> Array` for an `ArelQuery`;
+- `render_compound(query) -> Array` for compound statements;
+- `render_insert(statement) -> Array` and `render_update(statement) -> Array`
+  for visitor-owned write rendering;
 - `render_expression(expression, params) -> String` for projections,
   predicates, assignments, ordering, and RETURNING;
 - `render_ctes(statement, params) -> String` for read and write managers;
@@ -17,10 +20,12 @@ by every current statement manager provides:
 - `supports_extension?(name) -> Bool` and `require_extension(name)` for
   dialect-specific nodes.
 
-Compound queries render their branches through each branch's `render_with`
-method and use `render_expression` for result ordering. INSERT, UPDATE, and
-DELETE managers render their own statement skeletons, delegating all embedded
-queries, CTE bodies, and expressions to the selected visitor.
+Compound, INSERT, and UPDATE managers enter the selected visitor first. The
+SQLite visitor delegates to each statement's `render_default(visitor)` fallback
+for its current grammar; another visitor may replace the complete statement or
+wrap that fallback. DELETE still owns its statement skeleton while delegating
+embedded queries, CTE bodies, expressions, and identifier quoting to the
+selected visitor, and is the next family scheduled for the same entry point.
 
 Visitors may override `quote_identifier` independently of expression
 rendering. Statement managers never call SQLite's quoting helper directly, so
