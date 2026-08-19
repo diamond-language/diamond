@@ -361,6 +361,14 @@ def run_tests()
     policy_sql, policy_params = policy_query_result.to_sql()
     Minitest.assert_equal("SELECT * FROM \"people\" WHERE (\"people\".\"verified\" = ? AND \"people\".\"age\" > ?)", policy_sql)
     Minitest.assert_equal("true|18", policy_params.join("|"))
+    reported_query, query_changed = Arel.simplify(policy_query,
+      [[policy_source, policy_replacement]], true)
+    Minitest.assert_equal(true, query_changed)
+    Minitest.assert_equal(policy_sql, reported_query.to_sql()[0])
+    original_policy_sql, original_policy_params = policy_query.to_sql()
+    Minitest.assert_equal("SELECT * FROM \"people\" WHERE (\"people\".\"active\" = ? AND \"people\".\"age\" > ?)",
+      original_policy_sql)
+    Minitest.assert_equal("true|18", original_policy_params.join("|"))
     first = people.column("first_choice").eq(true)
     second = people.column("second_choice").eq(true)
     first_result = Arel.simplify(policy_source,
