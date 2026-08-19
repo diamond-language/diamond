@@ -232,6 +232,8 @@ bytecode, or semantic stability.
 - Added functions, recursion, closures with shared mutable captures, default and
   keyword arguments, endless definitions, first-class top-level functions, and
   trailing `do |...| ... end` blocks.
+- Expanded program function capacity from 512 to 1024 and added compilation and
+  execution coverage for programs defining 600 functions.
 - Added classes, constructors, fields, single inheritance, `self`, `super`, class
   variables, singleton methods, runtime method replacement, and method aliases.
 - Added modules, nested namespaces, constants, inclusion precedence,

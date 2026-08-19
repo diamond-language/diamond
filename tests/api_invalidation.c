@@ -3,6 +3,7 @@
 #include "vm.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 int main(void) {
@@ -75,6 +76,34 @@ int main(void) {
         result.kind!=DIAMOND_VALUE_INT || result.as.integer!=3)return 9;
     diamond_vm_free(&vm);
     diamond_vm_free(&second_vm);
+    const size_t generated_count=600;
+    const size_t generated_capacity=generated_count*32+32;
+    char *generated=malloc(generated_capacity);
+    if(generated==nullptr)return 12;
+    size_t generated_length=0;
+    for(size_t index=0;index<generated_count;index++) {
+        const int written=snprintf(generated+generated_length,
+            generated_capacity-generated_length,"def f%zu()\n %zu\nend\n",
+            index,index);
+        if(written<0||(size_t)written>=generated_capacity-generated_length) {
+            free(generated);return 13;
+        }
+        generated_length+=(size_t)written;
+    }
+    memcpy(generated+generated_length,"f599()\n",8);
+    generated_length+=7;
+    generated[generated_length]='\0';
+    if(!diamond_compile(generated,&program,&diagnostic)) {
+        fprintf(stderr,"large compile failed: %s\n",diagnostic.message);
+        free(generated);return 14;
+    }
+    free(generated);
+    if(program.function_count!=generated_count)return 15;
+    chunk=diamond_program_chunk(&program);
+    DiamondVm large_vm;diamond_vm_init(&large_vm);
+    if(diamond_vm_run(&large_vm,&chunk,&result)!=DIAMOND_VM_OK||
+       result.kind!=DIAMOND_VALUE_INT||result.as.integer!=599)return 16;
+    diamond_vm_free(&large_vm);
     puts("api invalidation passed");
     return 0;
 }

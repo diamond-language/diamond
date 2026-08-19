@@ -26,10 +26,11 @@ enum {
      * code/constant/string/type-set arrays sized for self-hosting-scale
      * functions), so the functions[] array alone costs roughly
      * DIAMOND_MAX_FUNCTIONS * 152KB of every heap-allocated DiamondProgram;
-     * 512 keeps that in the "tens of MB" range this codebase already
-     * accepts (see diamond_compile's own comment) while roughly doubling
-     * the self-hosted parser's prior 251/256 bootstrap usage of headroom. */
-    DIAMOND_MAX_FUNCTIONS = 512,
+     * 1024 is an interim storage ceiling, not a bytecode-format ceiling. It
+     * leaves practical application headroom beyond the standard library and
+     * Arel while function records are still embedded in DiamondProgram. The
+     * 16-bit index format permits a future dynamically allocated table. */
+    DIAMOND_MAX_FUNCTIONS = 1024,
     DIAMOND_MAX_FUNCTION_NAME = 64,
     DIAMOND_MAX_STRING_CONSTANTS = 256,
     DIAMOND_MAX_STRING_LENGTH = 255,
