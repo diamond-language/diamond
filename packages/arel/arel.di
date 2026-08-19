@@ -588,6 +588,7 @@ class ArelQuery
   def source_query() = @source_query
   def correlations() = @correlations
   def ctes() = @ctes
+  def projection_count() = @projections.length()
 
   def copy(predicates, orderings, limit_value, offset_value, projections)
     ArelQuery.new(@table_name, predicates, orderings, limit_value, offset_value,
@@ -748,6 +749,9 @@ end
 
 class ArelCompoundQuery
   def initialize(left, operator: String, right)
+    if left.projection_count() != right.projection_count()
+      raise ArgumentError.new("compound queries require equal projection counts")
+    end
     @left = left
     @operator = operator
     @right = right
@@ -755,6 +759,7 @@ class ArelCompoundQuery
   def left() = @left
   def operator() = @operator
   def right() = @right
+  def projection_count() = @left.projection_count()
 
   def to_sql() -> Array
     left_sql, left_params = @left.to_sql()

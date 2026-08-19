@@ -45,11 +45,25 @@ def run_tests()
     Minitest.assert_equal("SELECT \"all_people\".\"id\" FROM \"all_people\" EXCEPT SELECT \"blocked_people\".\"id\" FROM \"blocked_people\"", sql)
   end
 
+  def test_compound_projection_counts_must_match()
+    people = Arel.table("people")
+    one = Arel.from(people).project(people.column("id"))
+    two = Arel.from(people).project([people.column("id"), people.column("name")])
+    message = nil
+    begin
+      Arel.union(one, two)
+    rescue error: ArgumentError
+      message = error.message()
+    end
+    Minitest.assert_equal("compound queries require equal projection counts", message)
+  end
+
   suite = Minitest.new()
   suite.test("UNION", test_union_combines_queries_and_binds)
   suite.test("UNION ALL", test_union_all_preserves_duplicates_in_sqlite)
   suite.test("INTERSECT", test_intersect_renders_structurally)
   suite.test("EXCEPT", test_except_renders_structurally)
+  suite.test("compound projection validation", test_compound_projection_counts_must_match)
   suite.run()
 end
 
