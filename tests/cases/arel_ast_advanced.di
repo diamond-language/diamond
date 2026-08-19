@@ -140,6 +140,14 @@ def run_tests()
     Minitest.assert_equal("SELECT * FROM \"people\" ORDER BY \"people\".\"name\" COLLATE \"NOCASE\" ASC", sql)
   end
 
+  def test_cross_join_has_no_on_clause()
+    colors = Arel.table("colors")
+    sizes = Arel.table("sizes")
+    query = Arel.from(colors).cross_join(sizes)
+    sql, params = query.project([colors.column("name"), sizes.column("label")]).to_sql()
+    Minitest.assert_equal("SELECT \"colors\".\"name\", \"sizes\".\"label\" FROM \"colors\" CROSS JOIN \"sizes\"", sql)
+  end
+
   suite = Minitest.new()
   suite.test("BETWEEN predicates", test_between_predicates_bind_both_bounds)
   suite.test("LIKE predicates", test_like_predicates_are_bound)
@@ -156,6 +164,7 @@ def run_tests()
   suite.test("qualified wildcard", test_qualified_wildcard_projection)
   suite.test("distinct function arguments", test_distinct_function_arguments)
   suite.test("SQLite collation", test_sqlite_collation_expression)
+  suite.test("cross join", test_cross_join_has_no_on_clause)
   suite.run()
 end
 

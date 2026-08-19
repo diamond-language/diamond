@@ -365,8 +365,10 @@ class ArelSQLiteVisitor
       end
     end
     def render_join(join)
-      table_sql = table_sql + " #{join.kind()} JOIN #{visitor.render_table(join.table())} ON " +
-        visitor.render_expression(join.predicate(), params)
+      table_sql = table_sql + " #{join.kind()} JOIN #{visitor.render_table(join.table())}"
+      if join.predicate() != nil
+        table_sql = table_sql + " ON " + visitor.render_expression(join.predicate(), params)
+      end
     end
     query.joins().each(render_join)
     select_keyword = "SELECT "
@@ -536,6 +538,11 @@ class ArelQuery
     ArelQuery.new(@table_name, @predicates, @orderings, @limit_value, @offset_value,
       @projections, @quoted_identifiers, @bind_limits, @table_alias, @distinct_value,
       @groups, @havings, array_concat(@joins, [ArelJoin.new(table, predicate, "LEFT OUTER")]))
+  end
+  def cross_join(table: ArelTable)
+    ArelQuery.new(@table_name, @predicates, @orderings, @limit_value, @offset_value,
+      @projections, @quoted_identifiers, @bind_limits, @table_alias, @distinct_value,
+      @groups, @havings, array_concat(@joins, [ArelJoin.new(table, nil, "CROSS")]))
   end
   def order(column_or_columns)
     self.copy(@predicates, array_concat(@orderings, arel_array(column_or_columns)),
