@@ -5,6 +5,10 @@ class PortableTestVisitor < ArelVisitor
   def visitor_name() = "portable-test"
   def quote_identifier(name: String) -> String = arel_quote_identifier(name)
   def supports_extension?(name: String) = false
+  def render_pagination(limit_value, offset_value, params: Array,
+                        bind_values = true) -> String
+    super(limit_value, offset_value, params, false)
+  end
 end
 
 def run_tests()
@@ -142,10 +146,10 @@ def run_tests()
     query = query.where(people.column("active").eq(true))
     query = query.order(people.column("name").asc()).take(5)
     sql, params = query.to_sql(PortableTestVisitor.new())
-    Minitest.assert_equal("SELECT \"people\".\"name\", (\"people\".\"score\" + ?) AS \"next_score\" FROM \"people\" WHERE \"people\".\"active\" = ? ORDER BY \"people\".\"name\" ASC LIMIT ?", sql)
+    Minitest.assert_equal("SELECT \"people\".\"name\", (\"people\".\"score\" + ?) AS \"next_score\" FROM \"people\" WHERE \"people\".\"active\" = ? ORDER BY \"people\".\"name\" ASC LIMIT 5", sql)
     Minitest.assert_equal(1, params[0])
     Minitest.assert_equal(true, params[1])
-    Minitest.assert_equal(5, params[2])
+    Minitest.assert_equal(2, params.length())
     message = nil
     visitor = PortableTestVisitor.new()
     begin
