@@ -24,6 +24,9 @@ def run_tests()
     Minitest.assert_equal(2, rows.length())
     Minitest.assert_equal(1, rows[0]["value"])
     Minitest.assert_equal(1, rows[1]["value"])
+    rows = Arel.union_all(branch, branch).skip(1).to_a(db)
+    Minitest.assert_equal(1, rows.length())
+    Minitest.assert_equal(1, rows[0]["value"])
     db.close()
   end
 
