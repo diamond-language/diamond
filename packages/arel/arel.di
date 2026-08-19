@@ -286,7 +286,6 @@ class ArelExcludedAttribute
     @name = name
   end
   def name() = @name
-  def extension_name() = "excluded-row attributes"
   def add(value) = ArelBinaryExpression.new(self, "+", value)
 end
 
@@ -602,7 +601,7 @@ class ArelVisitor
 
   def render_expression_extension(expression, params: Array) -> String
     if expression is ArelExcludedAttribute
-      self.require_extension(expression.extension_name())
+      self.require_extension("excluded-row attributes")
       "excluded.#{self.quote_identifier(expression.name())}"
     elsif expression is ArelConflictAttribute
       self.quote_identifier(expression.name())
@@ -621,15 +620,7 @@ class ArelVisitor
       end
       "(#{left} #{expression.operator()} #{right})"
     elsif expression is ArelLiteral
-      if expression.value() is Bool
-        if expression.value()
-          "TRUE"
-        else
-          "FALSE"
-        end
-      else
-        "#{expression.value()}"
-      end
+      self.render_literal(expression.value())
     elsif expression is ArelCast
       inner = self.render_expression(expression.expression(), params)
       "CAST(#{inner} AS #{expression.type_name()})"
@@ -637,6 +628,18 @@ class ArelVisitor
       expression
     else
       raise TypeError.new("unsupported Arel expression")
+    end
+  end
+
+  def render_literal(value) -> String
+    if value is Bool
+      if value
+        "TRUE"
+      else
+        "FALSE"
+      end
+    else
+      "#{value}"
     end
   end
 

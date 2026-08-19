@@ -199,8 +199,6 @@ def run_tests()
   end
 
   def test_extension_nodes_report_their_capability_names()
-    excluded = Arel.excluded("qty")
-    Minitest.assert_equal("excluded-row attributes", excluded.extension_name())
     message = nil
     begin
       Arel.from("items").project(Arel.integer_operator(
