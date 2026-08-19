@@ -325,6 +325,45 @@ count=$((count + 1))
 send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$empty_symbol_uri"'"}}}'
 read_message >/dev/null
 
+# --- modules and interfaces are first-class declarations on every
+# declaration-oriented LSP surface ---
+
+type_symbol_uri="file:///type_symbols.di"
+send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$type_symbol_uri"'","text":"module Tools\nend\n\ninterface Runnable\nend\n"}}}'
+read_message >/dev/null
+
+send '{"jsonrpc":"2.0","id":22,"method":"textDocument/hover","params":{"textDocument":{"uri":"'"$type_symbol_uri"'"},"position":{"line":0,"character":8}}}'
+response="$(read_message)"
+[[ "$response" == *'"value":"module Tools"'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","id":23,"method":"textDocument/hover","params":{"textDocument":{"uri":"'"$type_symbol_uri"'"},"position":{"line":3,"character":11}}}'
+response="$(read_message)"
+[[ "$response" == *'"value":"interface Runnable"'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","id":24,"method":"textDocument/definition","params":{"textDocument":{"uri":"'"$type_symbol_uri"'"},"position":{"line":0,"character":8}}}'
+response="$(read_message)"
+[[ "$response" == *'"range":{"start":{"line":0,"character":7},"end":{"line":0,"character":12}}'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","id":25,"method":"textDocument/documentSymbol","params":{"textDocument":{"uri":"'"$type_symbol_uri"'"}}}'
+response="$(read_message)"
+[[ "$response" == *'"name":"Tools","kind":2'* ]]
+count=$((count + 1))
+[[ "$response" == *'"name":"Runnable","kind":11'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","id":26,"method":"textDocument/completion","params":{"textDocument":{"uri":"'"$type_symbol_uri"'"},"position":{"line":4,"character":3}}}'
+response="$(read_message)"
+[[ "$response" == *'"label":"Tools","kind":9'* ]]
+count=$((count + 1))
+[[ "$response" == *'"label":"Runnable","kind":8'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$type_symbol_uri"'"}}}'
+read_message >/dev/null
+
 # --- completion suggests locals actually in scope at the cursor (real
 # lexical scoping, not name-matching): a rescue-bound name only shows
 # up inside its own clause, a name declared after the cursor doesn't
@@ -429,6 +468,10 @@ def beta_fn()
 end
 class BetaClass
 end
+module BetaTools
+end
+interface BetaRunnable
+end
 EOF
 cat > "$work/.ws_hidden/ws_hidden.di" <<'EOF'
 def hidden_fn()
@@ -443,6 +486,10 @@ count=$((count + 1))
 [[ "$response" == *'"name":"beta_fn"'* ]]
 count=$((count + 1))
 [[ "$response" == *'"name":"BetaClass","kind":5'* ]]
+count=$((count + 1))
+[[ "$response" == *'"name":"BetaTools","kind":2'* ]]
+count=$((count + 1))
+[[ "$response" == *'"name":"BetaRunnable","kind":11'* ]]
 count=$((count + 1))
 [[ "$response" != *'"name":"hidden_fn"'* ]]
 count=$((count + 1))

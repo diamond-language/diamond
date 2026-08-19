@@ -202,6 +202,26 @@ static bool scan_file(const DocumentTable *documents,DiamondProgram *scratch,
                 class->declaration_column,name_length,&line,&column))
             ok=push_symbol(symbols,class->name,5,uri,line,column,name_length);
     }
+    for(size_t index=0;index<chunk.interface_count&&ok;index++) {
+        const DiamondInterface *interface=&chunk.interfaces[index];
+        if(!contains_ignore_case(interface->name,query))continue;
+        size_t line=0,column=0;
+        const size_t name_length=strlen(interface->name);
+        if(resolve_own_declaration(combined,&bundle,user_offset,path,
+                interface->declaration_start,interface->declaration_line,
+                interface->declaration_column,name_length,&line,&column))
+            ok=push_symbol(symbols,interface->name,11,uri,line,column,name_length);
+    }
+    for(size_t index=0;index<chunk.module_count&&ok;index++) {
+        const DiamondModule *module=&chunk.modules[index];
+        if(!contains_ignore_case(module->name,query))continue;
+        size_t line=0,column=0;
+        const size_t name_length=strlen(module->name);
+        if(resolve_own_declaration(combined,&bundle,user_offset,path,
+                module->declaration_start,module->declaration_line,
+                module->declaration_column,name_length,&line,&column))
+            ok=push_symbol(symbols,module->name,2,uri,line,column,name_length);
+    }
     free(uri);
     free(combined);
     diamond_source_bundle_free(&bundle);

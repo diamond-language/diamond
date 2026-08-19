@@ -13,6 +13,8 @@ enum {
     COMPLETION_KIND_FUNCTION = 3,
     COMPLETION_KIND_VARIABLE = 6,
     COMPLETION_KIND_CLASS = 7,
+    COMPLETION_KIND_INTERFACE = 8,
+    COMPLETION_KIND_MODULE = 9,
 };
 
 static bool push_item(JsonValue *items,const char *name,int kind) {
@@ -101,6 +103,10 @@ JsonValue *completion_compute(const DocumentTable *documents,const char *uri,
             okay=push_item(items,chunk.functions[index].name,COMPLETION_KIND_FUNCTION);
     for(size_t index=0;okay&&index<chunk.class_count;index++)
         okay=push_item(items,chunk.classes[index].name,COMPLETION_KIND_CLASS);
+    for(size_t index=0;okay&&index<chunk.interface_count;index++)
+        okay=push_item(items,chunk.interfaces[index].name,COMPLETION_KIND_INTERFACE);
+    for(size_t index=0;okay&&index<chunk.module_count;index++)
+        okay=push_item(items,chunk.modules[index].name,COMPLETION_KIND_MODULE);
     if(okay&&cursor_offset!=SIZE_MAX) {
         okay=push_scope_locals(items,&scratch->entry,cursor_offset);
         for(size_t index=0;okay&&index<scratch->function_count;index++)

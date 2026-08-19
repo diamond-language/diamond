@@ -176,5 +176,19 @@ JsonValue *hover_compute(const DocumentTable *documents,const char *uri,
             return result;
         }
     }
+    for(size_t index=0;index<chunk.interface_count;index++) {
+        if(strcmp(chunk.interfaces[index].name,name)==0) {
+            char signature[96];
+            (void)snprintf(signature,sizeof signature,"interface %s",name);
+            return hover_result(signature);
+        }
+    }
+    for(size_t index=0;index<chunk.module_count;index++) {
+        if(strcmp(chunk.modules[index].name,name)==0) {
+            char signature[96];
+            (void)snprintf(signature,sizeof signature,"module %s",name);
+            return hover_result(signature);
+        }
+    }
     return json_null();
 }

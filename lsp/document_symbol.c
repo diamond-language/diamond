@@ -144,6 +144,24 @@ JsonValue *document_symbol_compute(const DocumentTable *documents,const char *ur
                 class->declaration_column,name_length,&line,&column))
             ok_so_far=push_symbol(symbols,class->name,5,line,column,name_length);
     }
+    for(size_t index=0;index<chunk.interface_count&&ok_so_far;index++) {
+        const DiamondInterface *interface=&chunk.interfaces[index];
+        size_t line=0,column=0;
+        const size_t name_length=strlen(interface->name);
+        if(resolve_own_declaration(combined,&bundle,user_offset,display_name,
+                interface->declaration_start,interface->declaration_line,
+                interface->declaration_column,name_length,&line,&column))
+            ok_so_far=push_symbol(symbols,interface->name,11,line,column,name_length);
+    }
+    for(size_t index=0;index<chunk.module_count&&ok_so_far;index++) {
+        const DiamondModule *module=&chunk.modules[index];
+        size_t line=0,column=0;
+        const size_t name_length=strlen(module->name);
+        if(resolve_own_declaration(combined,&bundle,user_offset,display_name,
+                module->declaration_start,module->declaration_line,
+                module->declaration_column,name_length,&line,&column))
+            ok_so_far=push_symbol(symbols,module->name,2,line,column,name_length);
+    }
     free(combined);
     free(path);
     diamond_source_bundle_free(&bundle);

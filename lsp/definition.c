@@ -121,6 +121,26 @@ JsonValue *definition_compute(const DocumentTable *documents,const char *uri,
             found=true;
         }
     }
+    for(size_t index=0;index<chunk.interface_count&&!found;index++) {
+        const DiamondInterface *interface=&chunk.interfaces[index];
+        if(interface->declaration_start>=user_offset&&strcmp(interface->name,name)==0) {
+            declaration_line=interface->declaration_line;
+            declaration_column=interface->declaration_column;
+            declaration_start=interface->declaration_start;
+            declaration_name_length=strlen(interface->name);
+            found=true;
+        }
+    }
+    for(size_t index=0;index<chunk.module_count&&!found;index++) {
+        const DiamondModule *module=&chunk.modules[index];
+        if(module->declaration_start>=user_offset&&strcmp(module->name,name)==0) {
+            declaration_line=module->declaration_line;
+            declaration_column=module->declaration_column;
+            declaration_start=module->declaration_start;
+            declaration_name_length=strlen(module->name);
+            found=true;
+        }
+    }
     if(!found) {
         free(combined);free(path);diamond_source_bundle_free(&bundle);
         return json_null();
