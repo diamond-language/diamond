@@ -144,6 +144,10 @@ def run_tests()
     Minitest.assert_equal("Insert(into=people, rows=1, source=false, returning=1, ctes=0)", Arel.inspect(insert))
     update = Arel.update(people).set({"active": true}).where(people.column("id").eq(1))
     Minitest.assert_equal("Update(table=people, assignments=1, predicates=1, returning=0, all=false, ctes=0)", Arel.inspect(update))
+    same_update = Arel.update(Arel.table("people")).set({"active": true}).where(
+      Arel.table("people").column("id").eq(1))
+    Minitest.assert_equal(true, Arel.same?(update, same_update))
+    Minitest.assert_equal(false, Arel.same?(update, same_update.all()))
     delete = Arel.delete_from(people).all().returning(people.column("id"))
     Minitest.assert_equal("Delete(from=people, predicates=0, returning=1, all=true, ctes=0)", Arel.inspect(delete))
   end

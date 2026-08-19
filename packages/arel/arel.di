@@ -1682,6 +1682,33 @@ def same_nodes?(left: Array, right: Array) -> Bool
   true
 end
 
+def same_hash?(left, right) -> Bool
+  if left == nil || right == nil
+    return left == nil && right == nil
+  end
+  if left.length() != right.length()
+    return false
+  end
+  index = 0
+  while index < left.length()
+    key = left.key_at(index)
+    if !hash_include_key(right, key)
+      return false
+    end
+    left_value = left[key]
+    right_value = right[key]
+    if left_value is ArelAssignmentValue
+      if !self.same?(left_value, right_value)
+        return false
+      end
+    elsif left_value != right_value
+      return false
+    end
+    index = index + 1
+  end
+  true
+end
+
 def same_tail?(left, right) -> Bool
   if left is ArelBetween
     right is ArelBetween && left.negated?() == right.negated?() &&
@@ -1735,6 +1762,17 @@ def same_tail?(left, right) -> Bool
       return false
     end
     self.same_nodes?(left.orderings(), right.orderings())
+  elsif left is ArelUpdate
+    if !(right is ArelUpdate)
+      return false
+    end
+    left_state = left.structure()
+    right_state = right.structure()
+    self.same?(left_state[0], right_state[0]) &&
+      self.same_hash?(left_state[1], right_state[1]) &&
+      self.same_nodes?(left_state[2], right_state[2]) &&
+      self.same_nodes?(left_state[3], right_state[3]) &&
+      left_state[4] == right_state[4] && self.same_nodes?(left_state[5], right_state[5])
   elsif left is ArelQuery
     if !(right is ArelQuery) || left.base_reference_name() != right.base_reference_name() ||
        left.distinct_value() != right.distinct_value() ||
