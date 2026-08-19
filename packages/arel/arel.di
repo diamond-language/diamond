@@ -88,12 +88,14 @@ class ArelBetween
 end
 
 class ArelFunction
-  def initialize(name: String, arguments: Array)
+  def initialize(name: String, arguments: Array, distinct = false)
     @name = name
     @arguments = arguments
+    @distinct = distinct
   end
   def name() = @name
   def arguments() = @arguments
+  def distinct?() = @distinct
   def eq(value) = ArelPredicate.new(self, "=", value)
   def not_eq(value) = ArelPredicate.new(self, "!=", value)
   def lt(value) = ArelPredicate.new(self, "<", value)
@@ -298,7 +300,11 @@ class ArelSQLiteVisitor
         arguments.push(visitor.render_expression(argument, params))
       end
       expression.arguments().each(render_argument)
-      "#{expression.name()}(#{arguments.join(", ")})"
+      prefix = ""
+      if expression.distinct?()
+        prefix = "DISTINCT "
+      end
+      "#{expression.name()}(#{prefix}#{arguments.join(", ")})"
     elsif expression is ArelQualifiedStar
       if !self.attribute_allowed?(ArelAttribute.new(expression.table(), "*"))
         raise ArgumentError.new("wildcard belongs to a relation outside this query")
@@ -553,6 +559,7 @@ class Arel
     ArelRawSql.new(fragment, bound)
   end
   def self.count(expression) = ArelFunction.new("COUNT", [expression])
+  def self.count_distinct(expression) = ArelFunction.new("COUNT", [expression], true)
   def self.sum(expression) = ArelFunction.new("SUM", [expression])
   def self.min(expression) = ArelFunction.new("MIN", [expression])
   def self.max(expression) = ArelFunction.new("MAX", [expression])

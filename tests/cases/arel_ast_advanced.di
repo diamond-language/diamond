@@ -126,6 +126,13 @@ def run_tests()
     Minitest.assert_equal("SELECT \"p\".* FROM \"people\" AS \"p\"", sql)
   end
 
+  def test_distinct_function_arguments()
+    people = Arel.table("people")
+    count = Arel.as(Arel.count_distinct(people.column("role")), "roles")
+    sql, params = Arel.from(people).project(count).to_sql()
+    Minitest.assert_equal("SELECT COUNT(DISTINCT \"people\".\"role\") AS \"roles\" FROM \"people\"", sql)
+  end
+
   suite = Minitest.new()
   suite.test("BETWEEN predicates", test_between_predicates_bind_both_bounds)
   suite.test("LIKE predicates", test_like_predicates_are_bound)
@@ -140,6 +147,7 @@ def run_tests()
   suite.test("arbitrary expression aliases", test_arbitrary_expressions_can_be_aliased)
   suite.test("expression ordering and null placement", test_arbitrary_expression_ordering_and_null_placement)
   suite.test("qualified wildcard", test_qualified_wildcard_projection)
+  suite.test("distinct function arguments", test_distinct_function_arguments)
   suite.run()
 end
 
