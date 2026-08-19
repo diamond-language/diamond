@@ -23,9 +23,22 @@ def run_tests()
     Minitest.assert_equal("%@spam.test", params[1])
   end
 
+  def test_function_and_aggregate_projections()
+    people = Arel.table("people")
+    query = Arel.from(people).project([
+      Arel.count(people.column("id")),
+      Arel.avg(people.column("age")),
+      Arel.upper(people.column("name"))
+    ])
+    sql, params = query.to_sql()
+    Minitest.assert_equal("SELECT COUNT(\"people\".\"id\"), AVG(\"people\".\"age\"), UPPER(\"people\".\"name\") FROM \"people\"", sql)
+    Minitest.assert_empty(params)
+  end
+
   suite = Minitest.new()
   suite.test("BETWEEN predicates", test_between_predicates_bind_both_bounds)
   suite.test("LIKE predicates", test_like_predicates_are_bound)
+  suite.test("function and aggregate projections", test_function_and_aggregate_projections)
   suite.run()
 end
 

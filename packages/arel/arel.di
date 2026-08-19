@@ -87,6 +87,15 @@ class ArelBetween
   def not_() = ArelNot.new(self)
 end
 
+class ArelFunction
+  def initialize(name: String, arguments: Array)
+    @name = name
+    @arguments = arguments
+  end
+  def name() = @name
+  def arguments() = @arguments
+end
+
 class ArelOrdering
   def initialize(expression, direction: String)
     @expression = expression
@@ -221,7 +230,15 @@ class ArelSQLiteVisitor
   # Keep the nominal narrowing chain in each method below Diamond's
   # eight-alternative union ceiling as the AST grows.
   def render_expression_tail(expression, params: Array) -> String
-    if expression is ArelNot
+    if expression is ArelFunction
+      arguments = []
+      visitor = self
+      def render_argument(argument)
+        arguments.push(visitor.render_expression(argument, params))
+      end
+      expression.arguments().each(render_argument)
+      "#{expression.name()}(#{arguments.join(", ")})"
+    elsif expression is ArelNot
       inner = self.render_expression(expression.expression(), params)
       "(NOT #{inner})"
     elsif expression is ArelOrdering
@@ -396,6 +413,13 @@ end
 
 class Arel
   def self.table(name: String) = ArelTable.new(name)
+  def self.count(expression) = ArelFunction.new("COUNT", [expression])
+  def self.sum(expression) = ArelFunction.new("SUM", [expression])
+  def self.min(expression) = ArelFunction.new("MIN", [expression])
+  def self.max(expression) = ArelFunction.new("MAX", [expression])
+  def self.avg(expression) = ArelFunction.new("AVG", [expression])
+  def self.lower(expression) = ArelFunction.new("LOWER", [expression])
+  def self.upper(expression) = ArelFunction.new("UPPER", [expression])
   def self.from(table)
     if table is ArelTable
       ArelQuery.for_table(table)
