@@ -7,8 +7,10 @@ omitting the visitor selects `ArelSQLiteVisitor`.
 `ArelVisitor` is the reusable base. It owns AST traversal, relation-scope
 validation, nested query context, statement dispatch, capability diagnostics,
 and the portable SQL baseline. A concrete dialect supplies at least
-`visitor_name()`, `supports_extension?(name)`, and `quote_identifier(name)`.
-`ArelSQLiteVisitor` supplies those policies for the default renderer.
+`visitor_name()`, `supports_extension?(name)`, `quote_identifier(name)`, and
+`render_pagination(limit, offset, params, bind_values)`. The pagination method
+owns placeholder collection for limits and offsets. `ArelSQLiteVisitor`
+supplies those policies for the default renderer.
 
 Diamond uses method-shape conventions rather than interfaces. A visitor used
 by every current statement manager provides:
@@ -19,6 +21,9 @@ by every current statement manager provides:
   `render_delete(statement) -> Array` for visitor-owned write rendering;
 - `render_expression(expression, params) -> String` for projections,
   predicates, assignments, ordering, and RETURNING;
+- `render_literal(value) -> String` for dialect-specific literal spelling;
+- `render_pagination(limit, offset, params, bind_values) -> String` for SELECT
+  and compound pagination;
 - `render_ctes(statement, params) -> String` for read and write managers;
 - `quote_identifier(name) -> String` for every relation, column, alias, CTE,
   collation, conflict target, and assignment identifier;
@@ -28,6 +33,9 @@ by every current statement manager provides:
 
 Query context is restored even when rendering raises, so a visitor instance
 may be reused safely after validation or unsupported-capability errors.
+The base literal renderer spells booleans as `TRUE`/`FALSE`; dialects may
+override it. Pagination is deliberately concrete-dialect policy because
+offset-only syntax and placeholder support differ.
 
 Compound and all three write managers enter the selected visitor first. The
 SQLite visitor delegates to each statement's `render_default(visitor)` fallback
