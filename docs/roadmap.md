@@ -132,6 +132,31 @@ Areas still worth examining include:
 - a principled protocol for native collection extension instead of expanding
   VM name-forwarding tables indefinitely.
 
+### Explicit-arity method delegation
+
+Add a deliberately scoped first version of class/module delegation with the
+target and complete parameter list visible in source:
+
+```ruby
+class Account
+  delegate owner_name(), to: @owner
+  delegate charge(amount), to: @billing
+end
+```
+
+Initially restrict targets to instance variables and compile each declaration
+into an ordinary forwarding method. That preserves Diamond's existing method
+metadata, visibility, inheritance, interface checks, dispatch caches, arity
+validation, and `respond_to?` behavior instead of adding a parallel runtime
+dispatch model. The native and self-hosted parsers must remain in parity, and
+generated methods should appear in language tooling like any other method.
+
+Do not infer arity from an untyped target or add Rails-style name-only
+delegation in this slice. Arbitrary forwarding depends on variadic/splat call
+support Diamond does not currently have; `delegate_missing_to` additionally
+depends on a general missing-method protocol. Both remain separate future
+design questions.
+
 ### Native service depth
 
 The current native APIs intentionally expose useful, narrow slices. Possible
