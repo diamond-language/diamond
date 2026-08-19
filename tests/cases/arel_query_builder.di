@@ -167,6 +167,13 @@ def run_tests()
       message = error.message()
     end
     Minitest.assert_equal("SQL identifier cannot be empty", message)
+    message = nil
+    begin
+      Arel.from(Arel.table("people")).project(Arel.table("people").column("")).to_sql()
+    rescue error: ArgumentError
+      message = error.message()
+    end
+    Minitest.assert_equal("SQL identifier cannot be empty", message)
   end
 
   def test_ast_executes_against_sqlite()
