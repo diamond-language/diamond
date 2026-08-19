@@ -613,6 +613,19 @@ class ArelQuery
   def correlations() = @correlations
   def ctes() = @ctes
   def projection_count() = @projections.length()
+  def projection_count_known?() -> Bool
+    if @projections.length() != 1
+      return true
+    end
+    projection = @projections[0]
+    if projection is ArelRawSql
+      projection.sql() != "*"
+    elsif projection is String
+      projection != "*"
+    else
+      true
+    end
+  end
 
   def copy(predicates, orderings, limit_value, offset_value, projections)
     ArelQuery.new(@table_name, predicates, orderings, limit_value, offset_value,
@@ -784,6 +797,9 @@ end
 class ArelCompoundQuery
   def initialize(left, operator: String, right, orderings = [], limit_value = nil,
                  offset_value = nil)
+    if !left.projection_count_known?() || !right.projection_count_known?()
+      raise ArgumentError.new("compound queries require explicit projections")
+    end
     if left.projection_count() != right.projection_count()
       raise ArgumentError.new("compound queries require equal projection counts")
     end
@@ -798,6 +814,7 @@ class ArelCompoundQuery
   def operator() = @operator
   def right() = @right
   def projection_count() = @left.projection_count()
+  def projection_count_known?() = true
 
   def order(ordering)
     ArelCompoundQuery.new(@left, @operator, @right,

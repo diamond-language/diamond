@@ -150,6 +150,17 @@ def run_tests()
     Minitest.assert_equal(2, params[0])
   end
 
+  def test_compounds_reject_unknown_wildcard_shapes()
+    people = Arel.table("people")
+    message = nil
+    begin
+      Arel.union(Arel.from(people), Arel.from(people))
+    rescue error: ArgumentError
+      message = error.message()
+    end
+    Minitest.assert_equal("compound queries require explicit projections", message)
+  end
+
   suite = Minitest.new()
   suite.test("UNION", test_union_combines_queries_and_binds)
   suite.test("UNION ALL", test_union_all_preserves_duplicates_in_sqlite)
@@ -162,6 +173,7 @@ def run_tests()
   suite.test("compound INSERT source", test_compound_query_can_feed_an_insert)
   suite.test("right-nested compound grouping", test_right_nested_compounds_preserve_grouping)
   suite.test("left-nested compound grouping", test_left_nested_compounds_preserve_local_pagination)
+  suite.test("compound wildcard validation", test_compounds_reject_unknown_wildcard_shapes)
   suite.run()
 end
 
