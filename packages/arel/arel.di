@@ -978,7 +978,12 @@ class ArelQuery
     self.copy(@predicates, array_concat(@orderings, arel_array(column_or_columns)),
       @limit_value, @offset_value, @projections)
   end
-  def take(n: Int) = self.copy(@predicates, @orderings, n, @offset_value, @projections)
+  def take(n: Int)
+    if n < 0
+      raise ArgumentError.new("limit must be non-negative")
+    end
+    self.copy(@predicates, @orderings, n, @offset_value, @projections)
+  end
   def limit(n: Int) = self.take(n)
   def skip(n: Int) = self.copy(@predicates, @orderings, @limit_value, n, @projections)
   def offset(n: Int) = self.skip(n)
