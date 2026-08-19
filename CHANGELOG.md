@@ -1,5 +1,13 @@
 # Changelog
 
+## Arel 0.29.0
+
+- Rejected empty SQLite identifier components with a consistent
+  `ArgumentError` diagnostic.
+- Added coverage across tables, columns, relation and projection aliases, CTEs,
+  INSERT and UPDATE columns, INSERT…SELECT targets, and conflict targets.
+- Documented identifier validity as concrete dialect policy alongside quoting.
+
 ## Arel 0.28.0
 
 - Added execution-backed injection-shaped value coverage for predicates,
