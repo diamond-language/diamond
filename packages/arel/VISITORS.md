@@ -78,6 +78,13 @@ same check therefore covers relations, attributes, aliases, CTEs, write
 columns, INSERT…SELECT columns, and conflict targets. Other dialect visitors
 own their corresponding identifier validity rules.
 
+Quoting preserves the caller's identifier spelling, while SQLite-oriented
+query validation compares relation scopes case-insensitively. This applies to
+base relations, join aliases, explicit correlations, CTE declarations, and
+recursive CTE self-references. A future dialect with different name-resolution
+rules will need to make this validation policy dialect-aware as well as
+overriding `quote_identifier`.
+
 Extension nodes expose `extension_name()` where the capability belongs to a
 specific node. Statement managers check clause-level capabilities such as
 RETURNING, upsert actions, and write CTEs. The visitor checks expression-level
