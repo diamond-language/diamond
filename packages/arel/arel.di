@@ -769,6 +769,14 @@ class ArelCompoundQuery
     ArelCompoundQuery.new(@left, @operator, @right,
       array_concat(@orderings, arel_array(ordering)), @limit_value, @offset_value)
   end
+  def take(n: Int)
+    ArelCompoundQuery.new(@left, @operator, @right, @orderings, n, @offset_value)
+  end
+  def limit(n: Int) = self.take(n)
+  def skip(n: Int)
+    ArelCompoundQuery.new(@left, @operator, @right, @orderings, @limit_value, n)
+  end
+  def offset(n: Int) = self.skip(n)
 
   def to_sql() -> Array
     left_sql, left_params = @left.to_sql()
@@ -783,6 +791,14 @@ class ArelCompoundQuery
     @orderings.each(render_ordering)
     if rendered_orderings.length() > 0
       sql = sql + " ORDER BY " + rendered_orderings.join(", ")
+    end
+    if @limit_value != nil
+      sql = sql + " LIMIT ?"
+      params.push(@limit_value)
+    end
+    if @offset_value != nil
+      sql = sql + " OFFSET ?"
+      params.push(@offset_value)
     end
     [sql, params]
   end
