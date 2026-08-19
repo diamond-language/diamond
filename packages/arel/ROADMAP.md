@@ -26,11 +26,14 @@ as nodes and quoted by the active visitor.
 
 `ArelVisitor` now provides shared traversal, relation-scope validation, query
 context, statement dispatch, and diagnostics without inheriting SQLite
-capability or quoting policy. Its portable SQL baseline still contains grammar
-choices that a second dialect may need to vary. Expose only measured seams:
+capability or quoting policy. Pagination and literal spelling are independently
+overridable. The portable SQL baseline still contains grammar choices that a
+second dialect may need to vary. Expose only measured seams:
 
-- identify SQL spellings that differ in the first future dialect, beginning
-  with pagination, boolean literals, compound grouping, and write clauses;
+- choose the next production dialect and inventory its concrete differences
+  before adding another hook;
+- investigate compound grouping and write-clause spelling against that dialect
+  rather than assuming they differ;
 - add narrowly named visitor methods for those differences instead of copying
   the complete expression renderer;
 - keep bind collection in the shared traversal whenever placeholder order is
