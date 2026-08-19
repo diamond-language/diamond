@@ -27,9 +27,13 @@ care which manager it has. The no-argument form continues to select
 subqueries, compound branches, CTE bodies, expressions, conflict clauses, and
 `RETURNING`. Execution methods accept the visitor after the database argument,
 for example `query.to_a(db, visitor)` and `insert.execute(db, visitor)`.
-Visitors declare dialect support through named extension capabilities. The
-SQLite-specific excluded-row, partial conflict-target, upsert, and DEFAULT
-VALUES forms fail early with a visitor-specific diagnostic when unsupported.
+Visitors declare dialect support through named extension capabilities.
+Excluded-row attributes, partial conflict targets, upserts, DEFAULT VALUES,
+RETURNING, explicit NULL ordering, write and recursive CTEs, and SQLite integer
+operators fail early with a visitor-specific diagnostic when unsupported.
+Ordinary SELECTs, compounds, non-recursive read CTEs, and basic INSERT, UPDATE,
+and DELETE statements form the portable fixture baseline. See
+[VISITORS.md](VISITORS.md) for the complete protocol and capability names.
 
 ## Install
 
