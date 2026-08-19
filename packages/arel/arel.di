@@ -188,6 +188,14 @@ class ArelTable
   def star() = ArelQualifiedStar.new(self)
 end
 
+def arel_cte_name(value) -> String
+  if value is String
+    value
+  else
+    value.name()
+  end
+end
+
 class ArelRawSql
   def initialize(sql: String, params: Array)
     @sql = sql
@@ -765,7 +773,8 @@ class ArelQuery
       raise ArgumentError.new("duplicate CTE name")
     end
   end
-  def with_recursive(name: String, query)
+  def with_recursive(relation_or_name, query)
+    name = arel_cte_name(relation_or_name)
     self.ensure_cte_name_available(name)
     ArelQuery.new(@table_name, @predicates, @orderings, @limit_value, @offset_value,
       @projections, @quoted_identifiers, @bind_limits, @table_alias, @distinct_value,
@@ -949,7 +958,8 @@ class ArelInsert
       @conflict_target, @conflict_ignore, @conflict_assignments,
       arel_append_cte(@ctes, name, query))
   end
-  def with_recursive(name: String, query)
+  def with_recursive(relation_or_name, query)
+    name = arel_cte_name(relation_or_name)
     ArelInsert.new(@table, @rows, @returning, @source_columns, @source_query,
       @conflict_target, @conflict_ignore, @conflict_assignments,
       arel_append_cte(@ctes, name, query, true))
@@ -1088,7 +1098,8 @@ class ArelUpdate
     ArelUpdate.new(@table, @assignments, @predicates, @returning, @allow_all,
       arel_append_cte(@ctes, name, query))
   end
-  def with_recursive(name: String, query)
+  def with_recursive(relation_or_name, query)
+    name = arel_cte_name(relation_or_name)
     ArelUpdate.new(@table, @assignments, @predicates, @returning, @allow_all,
       arel_append_cte(@ctes, name, query, true))
   end
@@ -1169,7 +1180,8 @@ class ArelDelete
     ArelDelete.new(@table, @predicates, @returning, @allow_all,
       arel_append_cte(@ctes, name, query))
   end
-  def with_recursive(name: String, query)
+  def with_recursive(relation_or_name, query)
+    name = arel_cte_name(relation_or_name)
     ArelDelete.new(@table, @predicates, @returning, @allow_all,
       arel_append_cte(@ctes, name, query, true))
   end

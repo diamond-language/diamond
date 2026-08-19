@@ -97,6 +97,16 @@ def run_tests()
     Minitest.assert_equal("SELECT \"seeds\".\"value\" FROM \"seeds\" UNION ALL SELECT value + 1 FROM \"numbers\"", sql)
   end
 
+  def test_recursive_declaration_accepts_its_relation()
+    seeds = Arel.table("seeds")
+    numbers = Arel.cte("numbers")
+    anchor = Arel.from(seeds).project(seeds.column("value"))
+    step = Arel.from(numbers).project(Arel.sql("value + 1"))
+    body = numbers.recursive_body(anchor, step)
+    sql, params = Arel.from(numbers).with_recursive(numbers, body).to_sql()
+    Minitest.assert_equal("WITH RECURSIVE \"numbers\" AS (SELECT \"seeds\".\"value\" FROM \"seeds\" UNION ALL SELECT value + 1 FROM \"numbers\") SELECT * FROM \"numbers\"", sql)
+  end
+
   suite = Minitest.new()
   suite.test("single CTE", test_single_cte_renders_and_binds_before_main_query)
   suite.test("multiple CTEs", test_multiple_ctes_preserve_declaration_and_bind_order)
@@ -106,6 +116,7 @@ def run_tests()
   suite.test("recursive CTE execution", test_recursive_cte_executes_against_sqlite)
   suite.test("named CTE relation", test_named_cte_relation_builds_scoped_attributes)
   suite.test("recursive CTE body helper", test_cte_relation_builds_recursive_union_body)
+  suite.test("recursive CTE relation declaration", test_recursive_declaration_accepts_its_relation)
   suite.run()
 end
 
