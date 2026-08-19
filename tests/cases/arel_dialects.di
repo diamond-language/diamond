@@ -190,11 +190,11 @@ def run_tests()
     archived = Arel.table("archived_items")
     left = Arel.from(current).project(current.column("id"))
     right = Arel.from(archived).project(archived.column("id"))
-    combined = Arel.union_all(left, right)
+    combined = Arel.union_all(left, right).take(4).skip(1)
     all_items = Arel.cte("all_items")
     query = Arel.from(all_items).with(all_items, combined)
     sql, params = query.to_sql(PortableTestVisitor.new())
-    Minitest.assert_equal("WITH \"all_items\" AS (SELECT \"current_items\".\"id\" FROM \"current_items\" UNION ALL SELECT \"archived_items\".\"id\" FROM \"archived_items\") SELECT * FROM \"all_items\"", sql)
+    Minitest.assert_equal("WITH \"all_items\" AS (SELECT \"current_items\".\"id\" FROM \"current_items\" UNION ALL SELECT \"archived_items\".\"id\" FROM \"archived_items\" LIMIT 4 OFFSET 1) SELECT * FROM \"all_items\"", sql)
     Minitest.assert_equal(0, params.length())
   end
 
