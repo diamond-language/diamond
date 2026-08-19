@@ -133,6 +133,13 @@ def run_tests()
     Minitest.assert_equal("SELECT COUNT(DISTINCT \"people\".\"role\") AS \"roles\" FROM \"people\"", sql)
   end
 
+  def test_sqlite_collation_expression()
+    people = Arel.table("people")
+    ordering = Arel.asc(people.column("name").collate("NOCASE"))
+    sql, params = Arel.from(people).order(ordering).to_sql()
+    Minitest.assert_equal("SELECT * FROM \"people\" ORDER BY \"people\".\"name\" COLLATE \"NOCASE\" ASC", sql)
+  end
+
   suite = Minitest.new()
   suite.test("BETWEEN predicates", test_between_predicates_bind_both_bounds)
   suite.test("LIKE predicates", test_like_predicates_are_bound)
@@ -148,6 +155,7 @@ def run_tests()
   suite.test("expression ordering and null placement", test_arbitrary_expression_ordering_and_null_placement)
   suite.test("qualified wildcard", test_qualified_wildcard_projection)
   suite.test("distinct function arguments", test_distinct_function_arguments)
+  suite.test("SQLite collation", test_sqlite_collation_expression)
   suite.run()
 end
 

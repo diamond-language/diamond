@@ -87,6 +87,15 @@ class ArelBetween
   def not_() = ArelNot.new(self)
 end
 
+class ArelCollation
+  def initialize(expression, name: String)
+    @expression = expression
+    @name = name
+  end
+  def expression() = @expression
+  def name() = @name
+end
+
 class ArelFunction
   def initialize(name: String, arguments: Array, distinct = false)
     @name = name
@@ -148,6 +157,7 @@ class ArelAttribute
   def asc() = ArelOrdering.new(self, "ASC")
   def desc() = ArelOrdering.new(self, "DESC")
   def as(name: String) = ArelAlias.new(self, name)
+  def collate(name: String) = ArelCollation.new(self, name)
 end
 
 class ArelQualifiedStar
@@ -285,6 +295,9 @@ class ArelSQLiteVisitor
         operator = "NOT BETWEEN"
       end
       "#{self.render_attribute(expression.left())} #{operator} ? AND ?"
+    elsif expression is ArelCollation
+      inner = self.render_expression(expression.expression(), params)
+      "#{inner} COLLATE #{arel_quote_identifier(expression.name())}"
     else
       self.render_expression_tail(expression, params)
     end
