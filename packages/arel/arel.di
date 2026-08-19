@@ -359,6 +359,7 @@ end
 
 class ArelSQLiteVisitor
   def visitor_name() = "SQLite"
+  def quote_identifier(name: String) -> String = arel_quote_identifier(name)
   def supports_extension?(name: String) = true
   def require_extension(name: String)
     if !self.supports_extension?(name)
@@ -396,13 +397,13 @@ class ArelSQLiteVisitor
     if !self.attribute_allowed?(attribute)
       raise ArgumentError.new("attribute belongs to a relation outside this query")
     end
-    arel_quote_identifier(attribute.table().reference_name()) + "." + arel_quote_identifier(attribute.name())
+    self.quote_identifier(attribute.table().reference_name()) + "." + self.quote_identifier(attribute.name())
   end
 
   def render_table(table: ArelTable) -> String
-    sql = arel_quote_identifier(table.name())
+    sql = self.quote_identifier(table.name())
     if table.table_alias() != nil
-      sql = sql + " AS " + arel_quote_identifier(table.table_alias())
+      sql = sql + " AS " + self.quote_identifier(table.table_alias())
     end
     sql
   end
@@ -723,6 +724,7 @@ class ArelSQLiteVisitor
     @query = previous_query
     [sql, params]
   end
+
 end
 
 class ArelQuery

@@ -2,6 +2,7 @@ require "../../lib/minitest"
 require "../../packages/arel/arel"
 
 class TestArelVisitor < ArelSQLiteVisitor
+  def quote_identifier(name: String) -> String = "[#{name}]"
   def render_source(query, params: Array) -> String
     "test_source"
   end
@@ -30,9 +31,9 @@ end
 def run_tests()
   def test_select_accepts_an_explicit_visitor()
     people = Arel.table("people")
-    query = Arel.from(people).project(Arel.sql("value"))
+    query = Arel.from(people).project(people.column("value"))
     sql, params = query.to_sql(TestArelVisitor.new())
-    Minitest.assert_equal("SELECT value FROM test_source", sql)
+    Minitest.assert_equal("SELECT [people].[value] FROM test_source", sql)
     Minitest.assert_equal(0, params.length())
   end
 
@@ -128,9 +129,9 @@ def run_tests()
 
   def test_arel_render_is_the_common_visitor_entry_point()
     people = Arel.table("people")
-    query = Arel.from(people).project(Arel.sql("value"))
+    query = Arel.from(people).project(people.column("value"))
     sql, params = Arel.render(query, TestArelVisitor.new())
-    Minitest.assert_equal("SELECT value FROM test_source", sql)
+    Minitest.assert_equal("SELECT [people].[value] FROM test_source", sql)
   end
 
   suite = Minitest.new()
