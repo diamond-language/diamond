@@ -167,6 +167,7 @@ class ArelFunction
   def asc() = ArelOrdering.new(self, "ASC")
   def desc() = ArelOrdering.new(self, "DESC")
   def as(name: String) = ArelAlias.new(self, name)
+  def collate(name: String) = ArelCollation.new(self, name)
 end
 
 class ArelBinaryExpression

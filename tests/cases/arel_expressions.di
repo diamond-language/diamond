@@ -68,6 +68,14 @@ def run_tests()
     Minitest.assert_equal("SELECT LOWER(\"people\".\"name\") AS \"normalized_name\" FROM \"people\"", sql)
   end
 
+  def test_function_results_support_collation()
+    people = Arel.table("people")
+    normalized = Arel.lower(people.column("name")).collate("NOCASE")
+    query = Arel.from(people).project(people.column("name")).order(Arel.asc(normalized))
+    sql, params = query.to_sql()
+    Minitest.assert_equal("SELECT \"people\".\"name\" FROM \"people\" ORDER BY LOWER(\"people\".\"name\") COLLATE \"NOCASE\" ASC", sql)
+  end
+
   def test_casts_are_structural_and_preserve_binds()
     values = Arel.table("values_table")
     expression = Arel.cast(Arel.sql("?", ["42"]), "INTEGER")
@@ -109,6 +117,7 @@ def run_tests()
   suite.test("function range predicates", test_function_results_support_range_predicates)
   suite.test("function ordering", test_function_results_support_ordering)
   suite.test("function aliases", test_function_results_support_aliases)
+  suite.test("function collation", test_function_results_support_collation)
   suite.test("structural CAST", test_casts_are_structural_and_preserve_binds)
   suite.test("CAST type validation", test_cast_types_reject_sql_fragments)
   suite.test("structural concatenation", test_string_concatenation_is_structural)
