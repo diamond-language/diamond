@@ -1487,6 +1487,22 @@ def inspect_tail(node) -> String
     "Logical(#{node.operator()}, #{self.inspect(node.left())}, #{self.inspect(node.right())})"
   elsif node is ArelNot
     "Not(#{self.inspect(node.expression())})"
+  elsif node is ArelBetween
+    operator = "BETWEEN"
+    if node.negated?()
+      operator = "NOT BETWEEN"
+    end
+    "Between(#{operator}, #{self.inspect(node.left())}, #{node.lower()}, #{node.upper()})"
+  elsif node is ArelMembership
+    operator = "IN"
+    if node.negated?()
+      operator = "NOT IN"
+    end
+    if node.values() is Array
+      "Membership(#{operator}, #{self.inspect(node.left())}, #{node.values().length()} values)"
+    else
+      "Membership(#{operator}, #{self.inspect(node.left())}, subquery)"
+    end
   else
     "ArelNode(unsupported)"
   end

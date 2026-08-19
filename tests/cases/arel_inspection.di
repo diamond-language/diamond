@@ -15,6 +15,8 @@ def run_tests()
     combined = predicate.and_also(people.column("score").gt(10)).not_()
     Minitest.assert_equal("Predicate(=, Attribute(people.active), Literal(true))", Arel.inspect(predicate))
     Minitest.assert_equal("Not(Logical(AND, Predicate(=, Attribute(people.active), Literal(true)), Predicate(>, Attribute(people.score), Bind(10))))", Arel.inspect(combined))
+    Minitest.assert_equal("Between(BETWEEN, Attribute(people.age), 18, 65)", Arel.inspect(people.column("age").between(18, 65)))
+    Minitest.assert_equal("Membership(NOT IN, Attribute(people.role), 2 values)", Arel.inspect(people.column("role").not_in(["guest", "blocked"])))
   end
 
   suite = Minitest.new()
