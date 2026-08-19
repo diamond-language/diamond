@@ -62,12 +62,30 @@ def run_tests()
     Minitest.assert_equal("WITH RECURSIVE \"numbers\" AS (SELECT \"seed_values\".\"value\" FROM \"seed_values\" UNION ALL SELECT \"numbers\".\"value\" FROM \"numbers\") SELECT * FROM \"numbers\"", sql)
   end
 
+  def test_recursive_cte_executes_against_sqlite()
+    db = SQLite3.open(":memory:")
+    db.execute("CREATE TABLE seed_values (value INTEGER)")
+    db.execute("INSERT INTO seed_values VALUES (1)")
+    seeds = Arel.table("seed_values")
+    numbers = Arel.table("numbers")
+    anchor = Arel.from(seeds).project(seeds.column("value"))
+    step = Arel.from(numbers).project(Arel.sql("value + 1"))
+    step = step.where(numbers.column("value").lt(3))
+    body = Arel.union_all(anchor, step)
+    rows = Arel.from(numbers).with_recursive("numbers", body).to_a(db)
+    Minitest.assert_equal(3, rows.length())
+    Minitest.assert_equal(1, rows[0]["value"])
+    Minitest.assert_equal(3, rows[2]["value"])
+    db.close()
+  end
+
   suite = Minitest.new()
   suite.test("single CTE", test_single_cte_renders_and_binds_before_main_query)
   suite.test("multiple CTEs", test_multiple_ctes_preserve_declaration_and_bind_order)
   suite.test("duplicate CTE names", test_duplicate_cte_names_are_rejected)
   suite.test("compound CTE body", test_compound_query_can_be_a_cte_body)
   suite.test("recursive CTE", test_recursive_cte_marks_with_clause)
+  suite.test("recursive CTE execution", test_recursive_cte_executes_against_sqlite)
   suite.run()
 end
 
