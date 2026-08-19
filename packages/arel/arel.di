@@ -1124,10 +1124,11 @@ def arel_render_insert_conflict(target, ignore: Bool, assignments, params: Array
     predicate = target.predicate()
   end
   targets = []
-  def quote_target(name)
-    targets.push(visitor.quote_identifier(name))
+  target_index = 0
+  while target_index < columns.length()
+    targets.push(visitor.quote_identifier(columns[target_index]))
+    target_index = target_index + 1
   end
-  columns.each(quote_target)
   target_sql = ""
   if targets.length() > 0
     target_sql = " (#{targets.join(", ")})"
