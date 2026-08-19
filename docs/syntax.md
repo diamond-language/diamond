@@ -1031,9 +1031,9 @@ re.match("no digits")       # => nil, no match
 Regexp.new("foo", 1)        # 1 = case-insensitive (see options below)
 ```
 
-Backed by `reginold`, a companion regex engine — not part of this repo,
-built separately and linked in from a sibling checkout at `../reginold`
-— compiled under Ruby regex syntax. `Regexp.new(pattern, options = 0)` —
+Backed by `reginold`, a companion regex engine vendored in-repo under
+`reginold/` and built as a static archive — compiled under Ruby regex
+syntax. `Regexp.new(pattern, options = 0)` —
 the options argument is a plain `Int` bitmask: `1` = ignore case, `2` = `.`
 matches newline, `4` = extended (whitespace and `#` comments ignored in
 the pattern). Diamond has no bitwise-OR operator, so combine flags by

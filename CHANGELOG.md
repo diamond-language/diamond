@@ -321,6 +321,9 @@ bytecode, or semantic stability.
   package, LSP, REPL, fuzz-smoke, and differential suites.
 - Added a shared-process batch test runner that avoids per-case process and
   large-program allocation overhead.
+- Vendored the reginold regex engine into this repository (`reginold/`)
+  instead of building it from a private sibling checkout cloned in CI with a
+  read-only access token.
 
 ### Self-hosting
 

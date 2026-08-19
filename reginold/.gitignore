@@ -1,0 +1,5 @@
+*.o
+*.a
+test_classify
+test_engine
+test_reginold

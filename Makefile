@@ -1,5 +1,6 @@
 CC := gcc
-REGINOLD_DIR := ../reginold
+REGINOLD_DIR := reginold
+REGINOLD_LIB := $(REGINOLD_DIR)/libreginold.a
 CPPFLAGS := -Isrc -I$(REGINOLD_DIR)
 CFLAGS_COMMON := -std=c23 -Wall -Wextra -Wpedantic -Wconversion -Wshadow \
 	-Wstrict-prototypes -Werror=implicit-function-declaration
@@ -48,7 +49,10 @@ tsan: clean $(TARGET) $(BUILD_DIR)/run_cases
 release: CFLAGS := $(CFLAGS_COMMON) $(CFLAGS_RELEASE)
 release: clean $(TARGET) $(BUILD_DIR)/run_cases
 
-$(TARGET): $(OBJECTS)
+$(REGINOLD_LIB):
+	$(MAKE) -C $(REGINOLD_DIR) libreginold.a
+
+$(TARGET): $(OBJECTS) $(REGINOLD_LIB)
 	$(CC) $(OBJECTS) $(LDFLAGS) $(LDLIBS) -o $@
 
 $(BUILD_DIR)/%.o: src/%.c
@@ -61,7 +65,7 @@ $(BUILD_DIR)/%.o: src/%.c
 # built, and needs run_cases to match (see docs/roadmap.md for why this
 # exists: running every tests/cases/*.di case in this one process
 # instead of tests/run.sh spawning a fresh `diamond` per case).
-$(BUILD_DIR)/run_cases: tests/run_cases.c $(SOURCES) lib/core.di
+$(BUILD_DIR)/run_cases: tests/run_cases.c $(SOURCES) lib/core.di $(REGINOLD_LIB)
 	@mkdir -p $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(API_SOURCES) $< $(LDFLAGS) $(LDLIBS) -o $@
 
@@ -79,14 +83,14 @@ test-tsan: tsan
 
 API_SOURCES := $(filter-out src/main.c,$(SOURCES))
 
-$(BUILD_DIR)/api_invalidation: tests/api_invalidation.c $(API_SOURCES)
+$(BUILD_DIR)/api_invalidation: tests/api_invalidation.c $(API_SOURCES) $(REGINOLD_LIB)
 	@mkdir -p $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS_COMMON) $(CFLAGS_DEBUG) $(API_SOURCES) $< $(LDLIBS) -o $@
 
 test-api: $(BUILD_DIR)/api_invalidation
 	$(BUILD_DIR)/api_invalidation
 
-$(BUILD_DIR)/fiber_states: tests/fiber_states.c $(API_SOURCES)
+$(BUILD_DIR)/fiber_states: tests/fiber_states.c $(API_SOURCES) $(REGINOLD_LIB)
 	@mkdir -p $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS_COMMON) $(CFLAGS_DEBUG) $(API_SOURCES) $< $(LDLIBS) -o $@
 
@@ -97,7 +101,7 @@ test-fiber-guards: test-fibers
 
 test-fiber-context: test-fibers
 
-$(BUILD_DIR)/fiber_run: tests/fiber_run.c $(API_SOURCES)
+$(BUILD_DIR)/fiber_run: tests/fiber_run.c $(API_SOURCES) $(REGINOLD_LIB)
 	@mkdir -p $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS_COMMON) $(CFLAGS_DEBUG) $(API_SOURCES) $< $(LDLIBS) -o $@
 
@@ -122,7 +126,7 @@ test-nested-yield-guard: test-fiber-run
 
 test-stack-overflow: test-fiber-run
 
-$(BUILD_DIR)/facet: tools/facet.c $(API_SOURCES)
+$(BUILD_DIR)/facet: tools/facet.c $(API_SOURCES) $(REGINOLD_LIB)
 	@mkdir -p $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS_COMMON) $(CFLAGS_DEBUG) $(API_SOURCES) $< $(LDLIBS) -o $@
 
@@ -142,7 +146,7 @@ test-rack-package: $(TARGET)
 
 LSP_SOURCES := $(wildcard lsp/*.c)
 
-$(BUILD_DIR)/diamond-lsp: $(LSP_SOURCES) $(API_SOURCES)
+$(BUILD_DIR)/diamond-lsp: $(LSP_SOURCES) $(API_SOURCES) $(REGINOLD_LIB)
 	@mkdir -p $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) -Ilsp $(CFLAGS_COMMON) $(CFLAGS_DEBUG) $(API_SOURCES) $(LSP_SOURCES) $(LDLIBS) -o $@
 
@@ -154,11 +158,11 @@ test-lsp: $(BUILD_DIR)/diamond-lsp
 test-repl: debug
 	bash tests/repl_test.sh
 
-$(BUILD_DIR)/compile_fuzzer: fuzz/compile_fuzzer.c $(API_SOURCES)
+$(BUILD_DIR)/compile_fuzzer: fuzz/compile_fuzzer.c $(API_SOURCES) $(REGINOLD_LIB)
 	@mkdir -p $(BUILD_DIR)
 	$(CC_FUZZ) $(CPPFLAGS) $(CFLAGS_FUZZ) $(API_SOURCES) $< -lm $(REGINOLD_DIR)/libreginold.a -lsqlite3 -ldl -lpthread -lssl -lcrypto -o $@
 
-$(BUILD_DIR)/execute_fuzzer: fuzz/execute_fuzzer.c $(API_SOURCES)
+$(BUILD_DIR)/execute_fuzzer: fuzz/execute_fuzzer.c $(API_SOURCES) $(REGINOLD_LIB)
 	@mkdir -p $(BUILD_DIR)
 	$(CC_FUZZ) $(CPPFLAGS) $(CFLAGS_FUZZ) $(API_SOURCES) $< -lm $(REGINOLD_DIR)/libreginold.a -lsqlite3 -ldl -lpthread -lssl -lcrypto -o $@
 
