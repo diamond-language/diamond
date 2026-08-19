@@ -254,6 +254,19 @@ def run_tests()
     Minitest.assert_equal("DELETE FROM \"people\" WHERE \"people\".\"archived\" = ? RETURNING \"people\".\"email\"", changed_delete_sql)
     Minitest.assert_equal("true", delete_params.join("|"))
     Minitest.assert_equal("true", changed_delete_params.join("|"))
+    source = Arel.from(people).project(people.column("id")).where(
+      people.column("active").eq(true))
+    cte_update = Arel.update(people).set({"active": false}).where(
+      people.column("id").gt(10)).with("selected", source)
+    cte_children = Arel.children(cte_update)
+    replacement_source = Arel.from(people).project(people.column("id")).where(
+      people.column("active").eq(false))
+    replacement_cte = Arel.with_children(cte_children[0], [replacement_source])
+    changed_cte_update = Arel.with_children(cte_update,
+      [replacement_cte, cte_children[1], cte_children[2]])
+    cte_sql, cte_params = changed_cte_update.to_sql()
+    Minitest.assert_equal("WITH \"selected\" AS (SELECT \"people\".\"id\" FROM \"people\" WHERE \"people\".\"active\" = ?) UPDATE \"people\" SET \"active\" = ? WHERE \"people\".\"id\" > ?", cte_sql)
+    Minitest.assert_equal("false|false|10", cte_params.join("|"))
   end
 
   def test_walk_is_depth_first_preorder()
