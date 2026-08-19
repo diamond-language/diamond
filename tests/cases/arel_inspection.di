@@ -77,6 +77,13 @@ def run_tests()
     other_query = same_query.take(1)
     Minitest.assert_equal(true, Arel.same?(first_query, same_query))
     Minitest.assert_equal(false, Arel.same?(first_query, other_query))
+    grouped = Arel.from(people).project(people.column("role")).group(people.column("role"))
+    grouped = grouped.having(Arel.count(people.column("id")).gt(1))
+    same_grouped = Arel.from(Arel.table("people")).project(Arel.table("people").column("role"))
+    same_grouped = same_grouped.group(Arel.table("people").column("role"))
+    same_grouped = same_grouped.having(Arel.count(Arel.table("people").column("id")).gt(1))
+    Minitest.assert_equal(true, Arel.same?(grouped, same_grouped))
+    Minitest.assert_equal(false, Arel.same?(grouped, same_grouped.having(people.column("active").eq(true))))
   end
 
   suite = Minitest.new()

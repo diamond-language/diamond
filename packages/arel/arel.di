@@ -1655,6 +1655,8 @@ def same_tail?(left, right) -> Bool
        left.projections().length() != right.projections().length() ||
        left.predicates().length() != right.predicates().length() ||
        left.orderings().length() != right.orderings().length() ||
+       left.groups().length() != right.groups().length() ||
+       left.havings().length() != right.havings().length() ||
        left.joins().length() != 0 || right.joins().length() != 0 ||
        left.ctes().length() != 0 || right.ctes().length() != 0
       return false
@@ -1676,6 +1678,20 @@ def same_tail?(left, right) -> Bool
     index = 0
     while index < left.orderings().length()
       if !self.same?(left.orderings()[index], right.orderings()[index])
+        return false
+      end
+      index = index + 1
+    end
+    index = 0
+    while index < left.groups().length()
+      if !self.same?(left.groups()[index], right.groups()[index])
+        return false
+      end
+      index = index + 1
+    end
+    index = 0
+    while index < left.havings().length()
+      if !self.same?(left.havings()[index], right.havings()[index])
         return false
       end
       index = index + 1
