@@ -793,6 +793,7 @@ class Arel
   def self.scalar(query) = ArelScalarSubquery.new(query)
   def self.union(left, right) = ArelCompoundQuery.new(left, "UNION", right)
   def self.union_all(left, right) = ArelCompoundQuery.new(left, "UNION ALL", right)
+  def self.intersect(left, right) = ArelCompoundQuery.new(left, "INTERSECT", right)
   def self.from_subquery(query, name: String)
     ArelQuery.new(name, [], [], nil, nil, [ArelRawSql.new("*", [])], true, true,
       name, false, [], [], [], query)

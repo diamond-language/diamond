@@ -27,9 +27,19 @@ def run_tests()
     db.close()
   end
 
+  def test_intersect_renders_structurally()
+    left_table = Arel.table("left_values")
+    right_table = Arel.table("right_values")
+    left = Arel.from(left_table).project(left_table.column("value"))
+    right = Arel.from(right_table).project(right_table.column("value"))
+    sql, params = Arel.intersect(left, right).to_sql()
+    Minitest.assert_equal("SELECT \"left_values\".\"value\" FROM \"left_values\" INTERSECT SELECT \"right_values\".\"value\" FROM \"right_values\"", sql)
+  end
+
   suite = Minitest.new()
   suite.test("UNION", test_union_combines_queries_and_binds)
   suite.test("UNION ALL", test_union_all_preserves_duplicates_in_sqlite)
+  suite.test("INTERSECT", test_intersect_renders_structurally)
   suite.run()
 end
 
