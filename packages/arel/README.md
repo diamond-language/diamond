@@ -34,6 +34,10 @@ operators fail early with a visitor-specific diagnostic when unsupported.
 Ordinary SELECTs, compounds, non-recursive read CTEs, and basic INSERT, UPDATE,
 and DELETE statements form the portable fixture baseline. See
 [VISITORS.md](VISITORS.md) for the complete protocol and capability names.
+Visitors also own identifier quoting through `quote_identifier(name)`. One
+override therefore applies consistently to relations, attributes, aliases,
+CTEs, conflict targets, assignments, and RETURNING expressions across both
+read and write statements.
 
 ## Install
 
