@@ -358,18 +358,20 @@ class ArelSQLiteVisitor
     else
       found = false
       reference_name = attribute.table().reference_name()
-      def check_join(join)
-        if join.table().reference_name() == reference_name
+      index = 0
+      while index < @query.joins().length()
+        if @query.joins()[index].table().reference_name() == reference_name
           found = true
         end
+        index = index + 1
       end
-      @query.joins().each(check_join)
-      def check_correlation(table)
-        if table.reference_name() == reference_name
+      index = 0
+      while index < @query.correlations().length()
+        if @query.correlations()[index].reference_name() == reference_name
           found = true
         end
+        index = index + 1
       end
-      @query.correlations().each(check_correlation)
       found
     end
   end
