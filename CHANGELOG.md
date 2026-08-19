@@ -1,5 +1,13 @@
 # Changelog
 
+## Arel 0.30.0
+
+- Matched SQLite's case-insensitive name resolution when validating relation,
+  join-alias, correlation, and CTE scopes.
+- Rejected duplicate declarations that differ only by case while accepting
+  case-variant attribute and recursive CTE references.
+- Added SQLite execution coverage for case-variant relation references.
+
 ## Arel 0.29.0
 
 - Rejected empty SQLite identifier components with a consistent
