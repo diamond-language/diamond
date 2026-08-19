@@ -22,45 +22,34 @@ Raw SQL remains an explicit escape hatch, not the representation used by new
 features. Values are bind parameters by default. Identifiers are represented
 as nodes and quoted by the active visitor.
 
-## Next milestone: classify dialect extensions
+## Next milestone: remaining expression decisions
 
-Managers now accept explicit visitors for rendering and execution, and nested
-queries propagate the selected visitor. The remaining boundary work is about
-making portability visible rather than adding more dispatch machinery:
-
-- classify excluded-row, conflict-target, and other extension nodes;
-- make unsupported-node errors identify the visitor and node category;
-- build shared renderer fixtures for portable SELECT and write nodes;
-- keep SQLite-only fixtures separate from portable expectations;
-- document the minimum visitor methods relied on by managers.
-
-Completion means a future visitor can report unsupported dialect extensions
-cleanly and can reuse a portable conformance suite.
-
-## Following milestone: remaining expression decisions
-
-Resolve the write forms that need an actual portability decision:
+Visitors now expose named dialect capabilities, SQLite-only forms are checked
+before rendering, and portable conformance fixtures cover every statement
+manager. The remaining write forms need concrete semantic decisions:
 
 - whether per-column DEFAULT warrants a node when SQLite cannot use it in the
   same places as other dialects;
 - named-constraint conflict targets for dialects that support them;
-- explicit classification of portable versus dialect-extension expressions;
-- any additional arithmetic, concatenation, or bitwise nodes demanded by real
-  repository-layer queries.
+- string concatenation and bitwise nodes only if repository queries need them;
+- explicit cast nodes and their portability boundary;
+- whether functions need a public generic constructor beyond `Arel.sql`.
 
-Do not emulate unsupported SQLite syntax merely for API symmetry.
+Completion means each accepted expression has defined bind, grouping, and
+dialect behavior rather than existing solely for API symmetry.
 
-## Milestone 3: ergonomics and diagnostics
+## Following milestone: ergonomics and diagnostics
 
 Once the algebra is stable:
 
 - concise construction helpers that respect Diamond's lack of user-defined
   `[]` and variadic arguments;
 - inspectable node output for debugging;
-- actionable errors for unsupported nodes and invalid query shapes;
 - deterministic structural equality for nodes, useful in tests and rewriting;
 - optional query-rewrite passes only where they eliminate real duplication or
   enable an adapter feature.
+
+Do not emulate unsupported SQLite syntax merely for API symmetry.
 
 ## Quality bar
 

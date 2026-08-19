@@ -1,6 +1,7 @@
 # packages/arel
 
-See [ROADMAP.md](ROADMAP.md) for the forward-looking development plan.
+See [ROADMAP.md](ROADMAP.md) for the forward-looking development plan and
+[VISITORS.md](VISITORS.md) for the renderer protocol and extension capabilities.
 
 A small, immutable SQL AST and chainable query builder for
 [Diamond](https://gitlab.com/dmn9180/diamond) -- the first slice toward
@@ -26,6 +27,9 @@ care which manager it has. The no-argument form continues to select
 subqueries, compound branches, CTE bodies, expressions, conflict clauses, and
 `RETURNING`. Execution methods accept the visitor after the database argument,
 for example `query.to_a(db, visitor)` and `insert.execute(db, visitor)`.
+Visitors declare dialect support through named extension capabilities. The
+SQLite-specific excluded-row, partial conflict-target, upsert, and DEFAULT
+VALUES forms fail early with a visitor-specific diagnostic when unsupported.
 
 ## Install
 

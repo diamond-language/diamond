@@ -1,5 +1,12 @@
 # Changelog
 
+## Arel 0.11.0
+
+- Added named visitor capabilities and early, visitor-specific diagnostics for
+  excluded rows, partial conflict targets, upserts, and DEFAULT VALUES.
+- Added portable conformance fixtures for SELECT, writes, compounds, and CTEs,
+  extension-node metadata, and visitor protocol documentation.
+
 ## Arel 0.10.0
 
 - Added explicit visitor selection to SELECT, compound, INSERT, UPDATE, and
