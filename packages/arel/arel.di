@@ -209,6 +209,18 @@ class ArelJoin
   def kind() = @kind
 end
 
+class ArelExists
+  def initialize(query, negated: Bool)
+    @query = query
+    @negated = negated
+  end
+  def query() = @query
+  def negated?() = @negated
+  def and_also(other) = ArelLogical.new(self, "AND", other)
+  def or_else(other) = ArelLogical.new(self, "OR", other)
+  def not_() = ArelExists.new(@query, !@negated)
+end
+
 class ArelSQLiteVisitor
   def attribute_allowed?(attribute: ArelAttribute) -> Bool
     if @query == nil
@@ -318,6 +330,17 @@ class ArelSQLiteVisitor
     elsif expression is ArelCollation
       inner = self.render_expression(expression.expression(), params)
       "#{inner} COLLATE #{arel_quote_identifier(expression.name())}"
+    elsif expression is ArelExists
+      sql, bound = expression.query().to_sql()
+      def append_exists_param(value)
+        params.push(value)
+      end
+      bound.each(append_exists_param)
+      prefix = "EXISTS"
+      if expression.negated?()
+        prefix = "NOT EXISTS"
+      end
+      "#{prefix} (#{sql})"
     else
       self.render_expression_tail(expression, params)
     end
@@ -625,6 +648,8 @@ class Arel
   def self.avg(expression) = ArelFunction.new("AVG", [expression])
   def self.lower(expression) = ArelFunction.new("LOWER", [expression])
   def self.upper(expression) = ArelFunction.new("UPPER", [expression])
+  def self.exists(query) = ArelExists.new(query, false)
+  def self.not_exists(query) = ArelExists.new(query, true)
   def self.from_subquery(query, name: String)
     ArelQuery.new(name, [], [], nil, nil, [ArelRawSql.new("*", [])], true, true,
       name, false, [], [], [], query)
