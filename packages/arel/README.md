@@ -39,6 +39,11 @@ override therefore applies consistently to relations, attributes, aliases,
 CTEs, conflict targets, assignments, and RETURNING expressions across both
 read and write statements.
 
+Compound queries and each write manager enter `render_compound`,
+`render_insert`, `render_update`, or `render_delete` on the active visitor.
+Visitors can replace a complete statement or call `super(statement)` to wrap
+SQLite's default rendering while retaining its ordered bind array.
+
 ## Install
 
 Same story as the other packages here -- copy this directory into
