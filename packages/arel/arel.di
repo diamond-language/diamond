@@ -1648,6 +1648,15 @@ def same_tail?(left, right) -> Bool
   elsif left is ArelCollation
     right is ArelCollation && left.name() == right.name() &&
       self.same?(left.expression(), right.expression())
+  elsif left is ArelJoin
+    right is ArelJoin && left.kind() == right.kind() &&
+      self.same?(left.table(), right.table()) &&
+      ((left.predicate() == nil && right.predicate() == nil) ||
+       (left.predicate() != nil && right.predicate() != nil &&
+        self.same?(left.predicate(), right.predicate())))
+  elsif left is ArelTable
+    right is ArelTable && left.name() == right.name() &&
+      left.table_alias() == right.table_alias()
   elsif left is ArelQuery
     if !(right is ArelQuery) || left.base_reference_name() != right.base_reference_name() ||
        left.distinct_value() != right.distinct_value() ||
@@ -1657,7 +1666,7 @@ def same_tail?(left, right) -> Bool
        left.orderings().length() != right.orderings().length() ||
        left.groups().length() != right.groups().length() ||
        left.havings().length() != right.havings().length() ||
-       left.joins().length() != 0 || right.joins().length() != 0 ||
+       left.joins().length() != right.joins().length() ||
        left.ctes().length() != 0 || right.ctes().length() != 0
       return false
     end
@@ -1692,6 +1701,13 @@ def same_tail?(left, right) -> Bool
     index = 0
     while index < left.havings().length()
       if !self.same?(left.havings()[index], right.havings()[index])
+        return false
+      end
+      index = index + 1
+    end
+    index = 0
+    while index < left.joins().length()
+      if !self.same?(left.joins()[index], right.joins()[index])
         return false
       end
       index = index + 1

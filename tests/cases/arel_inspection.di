@@ -84,6 +84,14 @@ def run_tests()
     same_grouped = same_grouped.having(Arel.count(Arel.table("people").column("id")).gt(1))
     Minitest.assert_equal(true, Arel.same?(grouped, same_grouped))
     Minitest.assert_equal(false, Arel.same?(grouped, same_grouped.having(people.column("active").eq(true))))
+    roles = Arel.table("roles")
+    joined = Arel.from(people).join(roles, people.column("role_id").eq(roles.column("id")))
+    same_roles = Arel.table("roles")
+    same_joined = Arel.from(Arel.table("people")).join(same_roles,
+      Arel.table("people").column("role_id").eq(same_roles.column("id")))
+    Minitest.assert_equal(true, Arel.same?(joined, same_joined))
+    Minitest.assert_equal(false, Arel.same?(joined, Arel.from(people).left_join(roles,
+      people.column("role_id").eq(roles.column("id")))))
   end
 
   suite = Minitest.new()
