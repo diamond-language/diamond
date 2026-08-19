@@ -69,6 +69,14 @@ def run_tests()
       message = error.message()
     end
     Minitest.assert_equal("portable-test visitor does not support insert default values", message)
+    message = nil
+    begin
+      Arel.insert_into(items).values({"name": "pens"}).returning(
+        items.column("id")).to_sql(PortableTestVisitor.new())
+    rescue error: ArgumentError
+      message = error.message()
+    end
+    Minitest.assert_equal("portable-test visitor does not support returning clauses", message)
   end
 
   def test_portable_select_nodes_render_without_extensions()

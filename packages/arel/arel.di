@@ -1088,6 +1088,9 @@ class ArelDefaultValues
 end
 
 def arel_render_returning_clause(expressions: Array, params: Array, visitor) -> String
+  if expressions.length() > 0
+    visitor.require_extension("returning clauses")
+  end
   rendered = []
   def render_expression(expression)
     rendered.push(visitor.render_expression(expression, params))
@@ -1385,6 +1388,9 @@ class ArelUpdate
     end
     rendered = []
     returning_index = 0
+    if @returning.length() > 0
+      visitor.require_extension("returning clauses")
+    end
     while returning_index < @returning.length()
       rendered.push(visitor.render_expression(@returning[returning_index], params))
       returning_index = returning_index + 1
@@ -1464,6 +1470,9 @@ class ArelDelete
     end
     rendered = []
     returning_index = 0
+    if @returning.length() > 0
+      visitor.require_extension("returning clauses")
+    end
     while returning_index < @returning.length()
       rendered.push(visitor.render_expression(@returning[returning_index], params))
       returning_index = returning_index + 1
