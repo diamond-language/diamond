@@ -855,10 +855,16 @@ class ArelInsert
     first.each(collect_column)
     value_groups = []
     def collect_row(row)
+      if row.length() != first.length()
+        raise ArgumentError.new("INSERT rows must have identical columns")
+      end
       placeholders = []
       index = 0
       while index < first.length()
         key = first.key_at(index)
+        if !hash_include_key(row, key)
+          raise ArgumentError.new("INSERT rows must have identical columns")
+        end
         placeholders.push("?")
         params.push(row[key])
         index = index + 1
