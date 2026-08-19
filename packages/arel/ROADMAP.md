@@ -22,27 +22,28 @@ Raw SQL remains an explicit escape hatch, not the representation used by new
 features. Values are bind parameters by default. Identifiers are represented
 as nodes and quoted by the active visitor.
 
-## Next milestone: visitor-owned statement rendering
+## Next milestone: portable visitor foundation
 
-Named capabilities now make dialect extensions explicit and reject unsupported
-RETURNING, conflict, NULL-ordering, CTE, and integer-operator forms early. The
-remaining portability constraint is architectural: SELECT rendering lives in
-the visitor, while compound and write managers still assemble their own SQL
-skeletons. Move that responsibility across the existing visitor boundary:
+Every statement family now enters the active visitor, and visitors own
+identifier quoting plus extension-capability decisions. A new visitor can
+control complete statement rendering, but currently has to inherit
+`ArelSQLiteVisitor` to reuse expression traversal, query scoping, and useful
+default diagnostics. Separate reusable protocol machinery from SQLite policy:
 
-- move compound rendering first, then give visitors entry points for each
-  write-manager family while retaining `render_expression`, `render_ctes`, and
-  visitor-owned identifier quoting as shared building blocks;
-- reduce each manager's `render_with(visitor)` method to delegation, matching
-  the SELECT manager's direction;
-- migrate one statement family at a time with exact SQL and bind-order
-  equivalence tests;
-- keep `ArelSQLiteVisitor` as the only production renderer and preserve every
-  public construction and execution API.
+- introduce a dialect-neutral visitor base for query context, relation-scope
+  validation, capability diagnostics, and statement dispatch;
+- keep SQL spelling and supported-capability decisions in
+  `ArelSQLiteVisitor`;
+- make the portable rejecting fixture inherit the neutral base rather than
+  SQLite, proving that its baseline does not accidentally depend on SQLite
+  extension support;
+- define the minimal methods a concrete dialect must implement without adding
+  nominal interfaces to Diamond;
+- preserve every existing SQLite result and bind order during the split.
 
-Completion means a future visitor can control the full statement grammar,
-rather than inheriting SQLite statement assembly and merely opting out of
-individual extensions.
+Completion means a future dialect starts from shared AST and validation
+machinery without inheriting SQLite's capability policy or claiming to be a
+SQLite visitor in diagnostics.
 
 ## Deferred expression decisions
 
