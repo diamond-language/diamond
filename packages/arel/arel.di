@@ -709,6 +709,16 @@ class ArelQuery
     query
   end
   def with(name: String, query)
+    duplicate = false
+    def check_cte(cte)
+      if cte.name() == name
+        duplicate = true
+      end
+    end
+    @ctes.each(check_cte)
+    if duplicate
+      raise ArgumentError.new("duplicate CTE name")
+    end
     ArelQuery.new(@table_name, @predicates, @orderings, @limit_value, @offset_value,
       @projections, @quoted_identifiers, @bind_limits, @table_alias, @distinct_value,
       @groups, @havings, @joins, @source_query, @correlations,

@@ -29,9 +29,22 @@ def run_tests()
     Minitest.assert_equal(100, params[1])
   end
 
+  def test_duplicate_cte_names_are_rejected()
+    people = Arel.table("people")
+    source = Arel.from(people)
+    message = nil
+    begin
+      Arel.from(Arel.table("active")).with("active", source).with("active", source)
+    rescue error: ArgumentError
+      message = error.message()
+    end
+    Minitest.assert_equal("duplicate CTE name", message)
+  end
+
   suite = Minitest.new()
   suite.test("single CTE", test_single_cte_renders_and_binds_before_main_query)
   suite.test("multiple CTEs", test_multiple_ctes_preserve_declaration_and_bind_order)
+  suite.test("duplicate CTE names", test_duplicate_cte_names_are_rejected)
   suite.run()
 end
 
