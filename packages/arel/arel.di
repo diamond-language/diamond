@@ -1145,7 +1145,10 @@ def arel_render_insert_conflict(target, ignore: Bool, assignments, params: Array
     raise ArgumentError.new("conflict update requires at least one assignment")
   end
   rendered_assignments = []
-  def render_assignment(name, value)
+  assignment_index = 0
+  while assignment_index < assignments.length()
+    name = assignments.key_at(assignment_index)
+    value = assignments[name]
     if value is ArelAssignmentValue
       rendered = visitor.render_expression(value.expression(), params)
       rendered_assignments.push("#{visitor.quote_identifier(name)} = #{rendered}")
@@ -1153,8 +1156,8 @@ def arel_render_insert_conflict(target, ignore: Bool, assignments, params: Array
       rendered_assignments.push("#{visitor.quote_identifier(name)} = ?")
       params.push(value)
     end
+    assignment_index = assignment_index + 1
   end
-  assignments.each(render_assignment)
   " ON CONFLICT#{target_sql} DO UPDATE SET #{rendered_assignments.join(", ")}"
 end
 
