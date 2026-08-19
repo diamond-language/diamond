@@ -1869,7 +1869,8 @@ def with_query_children(node: ArelQuery, replacements: Array)
     correlations, ctes)
 end
 
-def simplify(node, rules = [])
+def simplify(node, rules = [], report = false)
+  original = node
   children = self.children(node)
   if children.length() > 0
     replacements = []
@@ -1881,26 +1882,32 @@ def simplify(node, rules = [])
     node = self.with_children(node, replacements)
   end
   if node is ArelNot && node.expression() is ArelNot
-    return node.expression().expression()
-  end
-  if node is ArelMembership && node.values() is Array && node.values().length() == 0
+    node = node.expression().expression()
+  elsif node is ArelMembership && node.values() is Array && node.values().length() == 0
     if node.negated?()
-      return ArelRawSql.new("1 = 1", [])
+      node = ArelRawSql.new("1 = 1", [])
+    else
+      node = ArelRawSql.new("1 = 0", [])
     end
-    return ArelRawSql.new("1 = 0", [])
   end
   rule_index = 0
-  while rule_index < rules.length()
+  matched = false
+  while rule_index < rules.length() && !matched
     rule = rules[rule_index]
     if !(rule is Array) || rule.length() != 2
       raise ArgumentError.new("Arel rewrite rule must be [pattern, replacement]")
     end
     if self.same?(node, rule[0])
-      return rule[1]
+      node = rule[1]
+      matched = true
     end
     rule_index = rule_index + 1
   end
-  node
+  if report
+    [node, !self.same?(original, node)]
+  else
+    node
+  end
 end
 
 def walk(node, visitor = nil) -> Array
@@ -2528,7 +2535,7 @@ class Arel
   def self.same?(left, right) = ArelInspector.new().same?(left, right)
   def self.children(node) = ArelInspector.new().children(node)
   def self.walk(node, visitor = nil) = ArelInspector.new().walk(node, visitor)
-  def self.simplify(node, rules = []) = ArelInspector.new().simplify(node, rules)
+  def self.simplify(node, rules = [], report = false) = ArelInspector.new().simplify(node, rules, report)
   def self.with_children(node, replacements: Array) = ArelInspector.new().with_children(node, replacements)
   def self.union(left, right) = ArelCompoundQuery.new(left, "UNION", right)
   def self.union_all(left, right) = ArelCompoundQuery.new(left, "UNION ALL", right)

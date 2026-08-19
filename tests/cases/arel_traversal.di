@@ -374,6 +374,14 @@ def run_tests()
       invalid_raised = true
     end
     Minitest.assert_equal(true, invalid_raised)
+    reported, changed = Arel.simplify(policy_source,
+      [[policy_source, policy_replacement]], true)
+    Minitest.assert_equal(true, changed)
+    Minitest.assert_equal("Predicate(=, Attribute(people.verified), Bind(true))",
+      Arel.inspect(reported))
+    unchanged, changed = Arel.simplify(policy_source, [], true)
+    Minitest.assert_equal(false, changed)
+    Minitest.assert_equal(true, Arel.same?(policy_source, unchanged))
   end
 
   suite = Minitest.new()
