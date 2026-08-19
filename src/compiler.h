@@ -18,8 +18,9 @@ typedef struct DiamondProgram {
      * has no equivalent post-compile hook, so it needs a field to persist
      * the untruncated path across expand_source and the later run. */
     char entry_path[DIAMOND_MAX_SOURCE_PATH];
-    DiamondFunction functions[DIAMOND_MAX_FUNCTIONS];
+    DiamondFunction **functions;
     size_t function_count;
+    size_t function_capacity;
     DiamondClass classes[DIAMOND_MAX_CLASSES];
     size_t class_count;
     DiamondInterface interfaces[DIAMOND_MAX_INTERFACES];
@@ -36,13 +37,19 @@ typedef struct DiamondDiagnostic {
     const char *message;
 } DiamondDiagnostic;
 
-/* Zeroes *program and populates the fixed built-in exception-class table
+/* Zeroes *program and populates the fixed built-in exception-class table.
+ * Call diamond_program_free before reinitializing an already compiled program
+ * and once more when its final compiled contents are no longer needed.
  * (Exception/StandardError/TypeError/.../RegexpError) with valid shapes,
  * so the result is immediately safe to run even before any user code is
  * compiled or emitted into it -- shared by diamond_compile and the
  * ProgramBuilder native bridge (src/vm.c), which needs the same baseline
  * without going through the parser at all. See docs/roadmap.md. */
 void diamond_program_init(DiamondProgram *program);
+void diamond_program_free(DiamondProgram *program);
+/* Appends one zeroed, independently allocated function record, growing the
+ * stable pointer table geometrically without moving existing records. */
+DiamondFunction *diamond_program_add_function(DiamondProgram *program);
 bool diamond_compile(const char *source, DiamondProgram *program,
                      DiamondDiagnostic *diagnostic);
 DiamondChunk diamond_program_chunk(const DiamondProgram *program);

@@ -57,6 +57,7 @@ int diamond_run_source_with_program(const char *name, const char *source,
     memcpy(combined+core_length,DIAMOND_USER_LINE_RESET,reset_length);
     memcpy(combined+core_length+reset_length,bundle.source,source_length+1);
     DiamondDiagnostic diagnostic;
+    diamond_program_free(program);
     if (!diamond_compile(combined, program, &diagnostic)) {
         print_diagnostic(name,combined,diagnostic,&bundle,
                          core_length+reset_length);
@@ -173,9 +174,9 @@ int diamond_run_source_with_program(const char *name, const char *source,
 
 /* The ordinary entry point (used by the CLI and everything else that
  * only ever runs one program per process): allocates a fresh
- * DiamondProgram and frees it when done. DiamondProgram is tens of MB
- * (fixed-size arrays throughout, sized for self-hosting-scale programs
- * -- see docs/roadmap.md), so this heap-allocates it rather than
+ * DiamondProgram and frees it when done. Its function records now grow on
+ * demand, but the remaining self-hosting-scale tables still make this worth
+ * heap-allocating rather than
  * putting it on the stack, mirroring loader.c's own diamond_load_
  * program (which already heap-allocates one for a required package's
  * manifest for the same reason). A caller running *many* programs in
@@ -184,18 +185,17 @@ int diamond_run_source_with_program(const char *name, const char *source,
  * DiamondProgram reused across every call -- diamond_compile always
  * re-initializes it from scratch via diamond_program_init before
  * compiling, so reuse is safe, and it avoids paying this malloc/free's
- * real cost (an allocation this size goes through mmap/munmap, not the
- * ordinary heap, so it's genuine kernel work, not just bookkeeping)
- * hundreds of times over. */
+ * allocation and initialization cost hundreds of times over. */
 int diamond_run_source(const char *name, const char *source, bool dump_bytecode,
         int script_argc, char *const *script_argv) {
-    DiamondProgram *program=malloc(sizeof *program);
+    DiamondProgram *program=calloc(1,sizeof *program);
     if(program==nullptr) {
         fprintf(stderr,"diamond: out of memory allocating program\n");
         return 74;
     }
     const int status=diamond_run_source_with_program(name,source,dump_bytecode,program,
         script_argc,script_argv);
+    diamond_program_free(program);
     free(program);
     return status;
 }

@@ -17,20 +17,10 @@ enum {
      * past 256, so this is a hard architectural ceiling, not just a
      * struct-sizing choice. See docs/roadmap.md. */
     DIAMOND_MAX_CONSTANTS = 256,
-    /* Unlike the constant above, function indices are a 16-bit bytecode
-     * operand (CALL/CALL_TYPED/CLOSURE, DiamondMethod/DiamondClosure.
-     * function_index) -- see the "Stdlib round 3" / function-index-widening
-     * roadmap entries for why this needed raising and why it's a real
-     * uint16_t field, not just a bigger single-byte cap. 512 is deliberately
-     * not the full uint16_t range: DiamondFunction is ~152KB (fixed-size
-     * code/constant/string/type-set arrays sized for self-hosting-scale
-     * functions), so the functions[] array alone costs roughly
-     * DIAMOND_MAX_FUNCTIONS * 152KB of every heap-allocated DiamondProgram;
-     * 1024 is an interim storage ceiling, not a bytecode-format ceiling. It
-     * leaves practical application headroom beyond the standard library and
-     * Arel while function records are still embedded in DiamondProgram. The
-     * 16-bit index format permits a future dynamically allocated table. */
-    DIAMOND_MAX_FUNCTIONS = 1024,
+    /* Function indices are 16-bit bytecode operands. Function records and the
+     * pointer table that indexes them grow dynamically; this constant is the
+     * wire-format boundary, not a preallocated storage size. */
+    DIAMOND_MAX_FUNCTIONS = UINT16_MAX,
     DIAMOND_MAX_FUNCTION_NAME = 64,
     DIAMOND_MAX_STRING_CONSTANTS = 256,
     DIAMOND_MAX_STRING_LENGTH = 255,
@@ -428,7 +418,7 @@ typedef struct DiamondChunk {
     size_t string_count;
     const DiamondTypeSet *type_sets;
     size_t type_set_count;
-    const DiamondFunction *functions;
+    DiamondFunction *const *functions;
     size_t function_count;
     const DiamondClass *classes;
     size_t class_count;

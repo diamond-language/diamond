@@ -890,7 +890,7 @@ bool diamond_disassemble(FILE *stream, const char *name,
                          const DiamondChunk *chunk) {
     bool valid = disassemble_chunk(stream, name, chunk);
     for (size_t index = 0; index < chunk->function_count; index++) {
-        const DiamondFunction *function = &chunk->functions[index];
+        const DiamondFunction *function = chunk->functions[index];
         const DiamondChunk function_chunk = {
             .name = function->name,
             .code = function->code,

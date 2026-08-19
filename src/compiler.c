@@ -265,7 +265,7 @@ static bool known_type_satisfies_one(const Compiler *compiler, uint8_t known,
                         const DiamondInterfaceMethod *wanted=
                             &interface->methods[required];
                         const DiamondFunction *implementation=
-                            &compiler->program->functions[class->methods[method].function_index];
+                            compiler->program->functions[class->methods[method].function_index];
                         found=true;
                         for(size_t parameter=0;parameter<wanted->arity;parameter++) {
                             const uint8_t required_set=wanted->parameter_type_sets[parameter];
@@ -823,9 +823,9 @@ static uint16_t parse_identifier(Compiler *compiler) {
 
 static int find_function(const Compiler *compiler, DiamondSpan name) {
     for (size_t index = 0; index < compiler->program->function_count; index++) {
-        const char *candidate = compiler->program->functions[index].name;
-        if (compiler->program->functions[index].owner_class != UINT8_MAX ||
-            compiler->program->functions[index].nested) continue;
+        const char *candidate = compiler->program->functions[index]->name;
+        if (compiler->program->functions[index]->owner_class != UINT8_MAX ||
+            compiler->program->functions[index]->nested) continue;
         size_t length = 0;
         while (candidate[length] != '\0') length++;
         if (length != name.length) continue;
@@ -1315,7 +1315,7 @@ static uint16_t parse_call(Compiler *compiler, DiamondSpan name) {
         return 0;
     }
     const DiamondFunction *function =
-        &compiler->program->functions[(size_t)function_index];
+        compiler->program->functions[(size_t)function_index];
     uint8_t type_arguments[8];
     size_t type_argument_count=0;
     if(compiler->current.kind==DIAMOND_TOKEN_LEFT_BRACKET) {
@@ -1484,7 +1484,7 @@ static uint16_t parse_singleton_call(Compiler *compiler,
     }
     const DiamondSpan name=compiler->current.span;
     const DiamondFunction *function=
-        &compiler->program->functions[method->function_index];
+        compiler->program->functions[method->function_index];
     advance_token(compiler);
     if(compiler->current.kind==DIAMOND_TOKEN_EQUAL)advance_token(compiler);
     uint8_t type_arguments[8];size_t type_argument_count=0;
@@ -4336,8 +4336,11 @@ static uint16_t compile_block(Compiler *compiler) {
         fail(compiler, compiler->current.span, "too many functions");
         return 0;
     }
-    DiamondFunction *function =
-        &compiler->program->functions[compiler->program->function_count++];
+    DiamondFunction *function=diamond_program_add_function(compiler->program);
+    if(function==nullptr) {
+        fail(compiler,compiler->current.span,"out of memory");
+        return 0;
+    }
     function->return_type_set=UINT8_MAX;
     for(size_t index=0;index<16;index++)
         function->parameter_type_sets[index]=UINT8_MAX;
@@ -4618,8 +4621,11 @@ static uint16_t compile_definition(Compiler *compiler) {
         fail(compiler, name, "function is already defined");
         return 0;
     }
-    DiamondFunction *function =
-        &compiler->program->functions[compiler->program->function_count++];
+    DiamondFunction *function=diamond_program_add_function(compiler->program);
+    if(function==nullptr) {
+        fail(compiler,name,"out of memory");
+        return 0;
+    }
     function->return_type_set=UINT8_MAX;
     for(size_t index=0;index<16;index++)
         function->parameter_type_sets[index]=UINT8_MAX;
@@ -5207,8 +5213,12 @@ static void compile_attribute_named(Compiler *compiler,bool writer,bool predicat
         method=&module->methods[module->method_count++];method->included=false;
     }
     DiamondFunction *function=
-        &compiler->program->functions[compiler->program->function_count];
-    const uint16_t function_index=(uint16_t)compiler->program->function_count++;
+        diamond_program_add_function(compiler->program);
+    if(function==nullptr) {
+        fail(compiler,name,"out of memory");
+        return;
+    }
+    const uint16_t function_index=(uint16_t)(compiler->program->function_count-1);
     (void)snprintf(function->name,sizeof function->name,"%s",method_name);
     function->owner_class=compiler->current_class>=0?
         (uint8_t)compiler->current_class:UINT8_MAX-1;
@@ -5402,7 +5412,7 @@ static void compile_module_function(Compiler *compiler) {
             fail(compiler,name,"module_function target is not defined here");return;
         }
         const DiamondFunction *function=
-            &compiler->program->functions[source->function_index];
+            compiler->program->functions[source->function_index];
         if(function->uses_instance_state) {
             fail(compiler,name,
                  "stateful module method cannot become a module_function");
@@ -6252,6 +6262,34 @@ static uint16_t compile_sequence(Compiler *compiler) {
     }
     compiler->sequence_diverges = last_statement_diverges;
     return result;
+}
+
+DiamondFunction *diamond_program_add_function(DiamondProgram *program) {
+    if(program->function_count>=DIAMOND_MAX_FUNCTIONS)return nullptr;
+    if(program->function_count==program->function_capacity) {
+        size_t capacity=program->function_capacity==0?64:
+            program->function_capacity*2;
+        if(capacity>DIAMOND_MAX_FUNCTIONS)capacity=DIAMOND_MAX_FUNCTIONS;
+        DiamondFunction **functions=realloc(program->functions,
+            capacity*sizeof *functions);
+        if(functions==nullptr)return nullptr;
+        program->functions=functions;
+        program->function_capacity=capacity;
+    }
+    DiamondFunction *function=calloc(1,sizeof *function);
+    if(function==nullptr)return nullptr;
+    program->functions[program->function_count++]=function;
+    return function;
+}
+
+void diamond_program_free(DiamondProgram *program) {
+    if(program==nullptr)return;
+    for(size_t index=0;index<program->function_count;index++)
+        free(program->functions[index]);
+    free(program->functions);
+    program->functions=nullptr;
+    program->function_count=0;
+    program->function_capacity=0;
 }
 
 void diamond_program_init(DiamondProgram *program) {

@@ -44,7 +44,7 @@ int main(void) {
     for(size_t index=0;index<program.class_count;index++)
         if(strcmp(program.classes[index].name,"Parent")==0)klass=&program.classes[index];
     if(klass==nullptr||klass->method_count<2)return 3;
-    const uint8_t original_value_function=klass->methods[0].function_index;
+    const uint16_t original_value_function=klass->methods[0].function_index;
     DiamondClass *child=nullptr;
     for(size_t index=0;index<program.class_count;index++)
         if(strcmp(program.classes[index].name,"Child")==0)child=&program.classes[index];
@@ -93,17 +93,21 @@ int main(void) {
     memcpy(generated+generated_length,"f599()\n",8);
     generated_length+=7;
     generated[generated_length]='\0';
+    diamond_program_free(&program);
     if(!diamond_compile(generated,&program,&diagnostic)) {
         fprintf(stderr,"large compile failed: %s\n",diagnostic.message);
         free(generated);return 14;
     }
     free(generated);
     if(program.function_count!=generated_count)return 15;
+    if(program.function_capacity<generated_count||
+       program.function_capacity>=DIAMOND_MAX_FUNCTIONS)return 17;
     chunk=diamond_program_chunk(&program);
     DiamondVm large_vm;diamond_vm_init(&large_vm);
     if(diamond_vm_run(&large_vm,&chunk,&result)!=DIAMOND_VM_OK||
        result.kind!=DIAMOND_VALUE_INT||result.as.integer!=599)return 16;
     diamond_vm_free(&large_vm);
+    diamond_program_free(&program);
     puts("api invalidation passed");
     return 0;
 }

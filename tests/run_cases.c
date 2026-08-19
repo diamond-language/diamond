@@ -210,17 +210,12 @@ static bool run_one_case(const char *cases_dir, const char *output_dir, const ch
         return false;
     }
 
-    /* One DiamondProgram, malloc'd once and reused for every case in
-     * this process (diamond_compile always re-initializes it from
-     * scratch first) -- see run_source.h's own comment on why: at
-     * ~83MB, malloc/free-ing a fresh one per case (as diamond_run_
-     * source, the ordinary single-shot entry point, does) is real
-     * mmap/munmap kernel work, and turned out to be the dominant cost
-     * left over even after collapsing 800+ process spawns into one
-     * (docs/roadmap.md). */
+    /* One zero-initialized DiamondProgram reused for every case. Compilation
+     * releases and rebuilds its dynamically sized function storage, exercising
+     * the same ownership path repeatedly without reallocating the container. */
     static DiamondProgram *program = nullptr;
     if (program == nullptr) {
-        program = malloc(sizeof *program);
+        program = calloc(1,sizeof *program);
         if (program == nullptr) {
             fprintf(stderr, "run_cases: out of memory allocating program\n");
             free(source);

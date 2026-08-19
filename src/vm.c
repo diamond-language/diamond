@@ -438,6 +438,7 @@ static void diamond_vm_collect_impl(DiamondVm *vm) {
                 diamond_source_bundle_free(builder->source_bundle);
                 free(builder->source_bundle);
             }
+            diamond_program_free(builder->program);
             free(builder->program);
         } else if(unreached->kind==DIAMOND_OBJECT_THREAD) {
             size=sizeof(DiamondThreadHandle);
@@ -559,6 +560,7 @@ void diamond_vm_free(DiamondVm *vm) {
                 diamond_source_bundle_free(builder->source_bundle);
                 free(builder->source_bundle);
             }
+            diamond_program_free(builder->program);
             free(builder->program);
         } else if(object->kind==DIAMOND_OBJECT_THREAD) {
             free_thread(((DiamondThreadHandle *)object)->thread);
@@ -629,7 +631,7 @@ static void diamond_fiber_trampoline(void) {
     DiamondFiber *self = diamond_fiber_entering;
     if (self->entry_closure != nullptr) {
         const DiamondFunction *fn=
-            &self->program_tables.functions[self->entry_closure->function_index];
+            self->program_tables.functions[self->entry_closure->function_index];
         DiamondChunk child={.name=fn->name,.code=fn->code,.lines=fn->lines,
           .columns=fn->columns,.code_count=fn->code_count,.constants=fn->constants,
           .constant_count=fn->constant_count,.strings=fn->strings,.string_count=fn->string_count,
@@ -1055,10 +1057,8 @@ static DiamondFiberHandle *allocate_fiber_handle(DiamondVm *vm,DiamondFiber *fib
 
 /* A raw OS-thread limit, not a language-level tuning knob: real pthreads
  * are a genuinely limited, comparatively expensive OS resource (unlike
- * Fibers, cheap userspace stacks) and each one commits a full cloned
- * DiamondProgram (~83MB, see clone_program_from_chunk below and
- * docs/roadmap.md's DIAMOND_MAX_FUNCTIONS sizing note) -- 64 bounds worst-
- * case memory at that count to roughly 5GB while still comfortably
+ * Fibers, cheap userspace stacks) and each one commits a cloned program --
+ * 64 bounds resource use while still comfortably
  * covering the "a handful of coarse-grained parallel workers" use case
  * this primitive targets, and turns a runaway recursive Thread.new bug
  * into a prompt ThreadError instead of exhausting the host. Process-wide
@@ -1068,7 +1068,7 @@ enum { DIAMOND_MAX_THREADS = 64 };
 static atomic_size_t diamond_active_thread_count = 0;
 
 /* Builds a fresh, independently-owned DiamondProgram whose
- * functions[]/classes[]/interfaces[] tables are a byte-for-byte copy of
+ * function records and classes[]/interfaces[] tables are a deep copy of
  * whatever program `chunk` is a view into -- see docs/threads.md. Used by
  * Thread.new so the spawned thread runs against its own program, never
  * the ambient one (sidesteps REDEFINE_METHOD racing another thread's own
@@ -1078,17 +1078,20 @@ static atomic_size_t diamond_active_thread_count = 0;
  * compile-time bookkeeping never read by run_chunk (confirmed by their
  * total absence from DiamondChunk itself), so leaving them at
  * diamond_program_init's own defaults is correct, not a gap. The three
- * table arrays are then overwritten with `chunk`'s own live data via
- * whole-fixed-array memcpy, safe for the same reason a plain
- * DiamondProgram memcpy would be: DiamondFunction/DiamondClass/
- * DiamondInterface are themselves pointer-free. Returns nullptr only on
- * allocation failure. */
+ * fixed class/interface arrays are copied directly; independently allocated
+ * function records keep thread-local method replacement isolated. Returns
+ * nullptr only on allocation failure. */
 static DiamondProgram *clone_program_from_chunk(const DiamondChunk *chunk) {
-    DiamondProgram *clone=malloc(sizeof *clone);
+    DiamondProgram *clone=calloc(1,sizeof *clone);
     if(clone==nullptr)return nullptr;
     diamond_program_init(clone);
-    memcpy(clone->functions,chunk->functions,sizeof clone->functions);
-    clone->function_count=chunk->function_count;
+    for(size_t index=0;index<chunk->function_count;index++) {
+        DiamondFunction *function=diamond_program_add_function(clone);
+        if(function==nullptr) {
+            diamond_program_free(clone);free(clone);return nullptr;
+        }
+        memcpy(function,chunk->functions[index],sizeof *function);
+    }
     memcpy(clone->classes,chunk->classes,sizeof clone->classes);
     clone->class_count=chunk->class_count;
     memcpy(clone->interfaces,chunk->interfaces,sizeof clone->interfaces);
@@ -1111,7 +1114,7 @@ static DiamondProgram *clone_program_from_chunk(const DiamondChunk *chunk) {
 static void *thread_entry_trampoline(void *argument) {
     DiamondThread *thread=(DiamondThread *)argument;
     const DiamondFunction *target_fn=
-        &thread->child_program->functions[thread->function_index];
+        thread->child_program->functions[thread->function_index];
     const DiamondChunk child_chunk={
         .name=target_fn->name,.code=target_fn->code,
         .lines=target_fn->lines,.columns=target_fn->columns,
@@ -1174,6 +1177,7 @@ static void free_thread(DiamondThread *thread) {
         diamond_vm_free(thread->child_vm);
         free(thread->child_vm);
     }
+    diamond_program_free(thread->child_program);
     free(thread->child_program);
     pthread_mutex_destroy(&thread->join_lock);
     free(thread);
@@ -1371,7 +1375,7 @@ static DiamondVmStatus dispatch_pending_signals(DiamondVm *vm,const DiamondChunk
         const DiamondClosure *handler=
             (const DiamondClosure *)vm->trapped_signal_handlers[index].as.object;
         if(handler->function_index>=chunk->function_count)continue;
-        const DiamondFunction *fn=&chunk->functions[handler->function_index];
+        const DiamondFunction *fn=chunk->functions[handler->function_index];
         DiamondChunk child={.name=fn->name,.code=fn->code,.lines=fn->lines,
           .columns=fn->columns,.code_count=fn->code_count,.constants=fn->constants,
           .constant_count=fn->constant_count,.strings=fn->strings,.string_count=fn->string_count,
@@ -1682,24 +1686,22 @@ static void free_adopted_programs(void *list) {
     DiamondAdoptedProgram *node=(DiamondAdoptedProgram *)list;
     while(node!=nullptr) {
         DiamondAdoptedProgram *next=node->next;
+        diamond_program_free(node->program);
         free(node->program);
         free(node);
         node=next;
     }
 }
 
-/* Unlike every other allocate_* helper here, the payload
- * (sizeof(DiamondProgram), tens of MB -- see docs/roadmap.md) dwarfs the
- * handle itself, so bytes_allocated counts it too (mirroring
- * allocate_array's own capacity-inclusive accounting), keeping GC
- * pressure honest about the real memory this handle commits. */
+/* Account for the program container here; dynamically added function records
+ * are accounted for by ProgramBuilder#declare_function. */
 static DiamondProgramBuilder *allocate_program_builder(DiamondVm *vm) {
     if(vm->stress_gc||vm->bytes_allocated>=vm->next_gc)diamond_vm_collect(vm);
-    DiamondProgram *built=malloc(sizeof *built);
+    DiamondProgram *built=calloc(1,sizeof *built);
     if(built==nullptr)return nullptr;
     diamond_program_init(built);
     DiamondProgramBuilder *handle=malloc(sizeof(DiamondProgramBuilder));
-    if(handle==nullptr){free(built);return nullptr;}
+    if(handle==nullptr){diamond_program_free(built);free(built);return nullptr;}
     *handle=(DiamondProgramBuilder){
         .object={.next=vm->objects,.kind=DIAMOND_OBJECT_PROGRAM_BUILDER},
         .program=built,.source_bundle=nullptr,.source_line=0,.source_column=0};
@@ -1715,7 +1717,7 @@ static DiamondFunction *program_builder_target(DiamondProgram *program,
     if(function_index==-1) return &program->entry;
     if(function_index<0||(uint64_t)function_index>=program->function_count)
         return nullptr;
-    return &program->functions[function_index];
+    return program->functions[function_index];
 }
 
 static DiamondClass *program_builder_class(DiamondProgram *program,
@@ -2150,7 +2152,7 @@ static void gc_unprotect(DiamondVm *vm, size_t saved_count) {
  * result containing several instances only adopts `source_program` once,
  * not once per instance. Left nullptr (no adoption) for a result that
  * turns out not to contain any Instance at all -- adopting unconditionally
- * would leak sizeof(DiamondProgram) (tens of MB, see docs/roadmap.md) on
+ * would leak the adopted program and all dynamically owned functions on
  * every ProgramBuilder#run call regardless of what it actually returned.
  *
  * `rebase_source_classes`/`rebase_dest_classes` are the alternative to
@@ -2661,7 +2663,12 @@ static DiamondVmStatus program_builder_invoke_helper(DiamondVm *vm,
             snprintf(vm->error,sizeof vm->error,"program has too many functions");
             return DIAMOND_VM_TYPE_ERROR;
         }
-        DiamondFunction *function=&built->functions[built->function_count];
+        DiamondFunction *function=diamond_program_add_function(built);
+        if(function==nullptr) {
+            snprintf(vm->error,sizeof vm->error,"program function allocation failed");
+            return DIAMOND_VM_OUT_OF_MEMORY;
+        }
+        vm->bytes_allocated+=sizeof *function+sizeof function;
         *function=(DiamondFunction){};
         memcpy(function->name,fname->chars,fname->length);
         function->name[fname->length]='\0';
@@ -2671,8 +2678,7 @@ static DiamondVmStatus program_builder_invoke_helper(DiamondVm *vm,
         function->return_type_set=UINT8_MAX;
         for(size_t index=0;index<16;index++)
             function->parameter_type_sets[index]=UINT8_MAX;
-        const int64_t new_index=(int64_t)built->function_count;
-        built->function_count++;
+        const int64_t new_index=(int64_t)built->function_count-1;
         *result=DIAMOND_INT(new_index);return DIAMOND_VM_OK;
     }
     if(emit_byte_method) {
@@ -3026,7 +3032,7 @@ static DiamondVmStatus program_builder_invoke_helper(DiamondVm *vm,
          * support calling a private method via `self.foo()`, not by any
          * existing scalar-argument differential case. See docs/roadmap.md's
          * self-hosting Phase 3 follow-up entry. */
-        built->functions[target_function].owner_class=(uint8_t)registers[base].as.integer;
+        built->functions[target_function]->owner_class=(uint8_t)registers[base].as.integer;
         *result=DIAMOND_NIL;return DIAMOND_VM_OK;
     }
     if(declare_module_method_method) {
@@ -3073,7 +3079,7 @@ static DiamondVmStatus program_builder_invoke_helper(DiamondVm *vm,
          * bypass's parameter_offset==1 check still fires for module
          * methods too). See docs/roadmap.md's self-hosting Phase 3
          * follow-up entry. */
-        built->functions[function_index].owner_class=UINT8_MAX-1;
+        built->functions[function_index]->owner_class=UINT8_MAX-1;
         *result=DIAMOND_NIL;return DIAMOND_VM_OK;
     }
     if(declare_class_singleton_method_method) {
@@ -3201,7 +3207,7 @@ static DiamondVmStatus program_builder_invoke_helper(DiamondVm *vm,
                 "set_function_owner_class has invalid arguments");
             return DIAMOND_VM_TYPE_ERROR;
         }
-        built->functions[function_index].owner_class=(uint8_t)owner_class;
+        built->functions[function_index]->owner_class=(uint8_t)owner_class;
         *result=DIAMOND_NIL;return DIAMOND_VM_OK;
     }
     if(include_module_method) {
@@ -4176,7 +4182,7 @@ static DiamondVmStatus invoke_operator_method(DiamondVm *vm,
     const size_t argument_count=argument==nullptr?1:2;
     DiamondValue args[2]={DIAMOND_OBJECT((DiamondObject *)receiver)};
     if(argument!=nullptr)args[1]=*argument;
-    const DiamondFunction *fn=&owner->functions[method->function_index];
+    const DiamondFunction *fn=owner->functions[method->function_index];
     const DiamondChunk child={.name=fn->name,.code=fn->code,
       .lines=fn->lines,.columns=fn->columns,.code_count=fn->code_count,
       .constants=fn->constants,.constant_count=fn->constant_count,
@@ -4384,7 +4390,7 @@ static DiamondVmStatus time_at_helper(DiamondVm *vm,DiamondValue epoch_value,
 static const DiamondFunction *find_top_level_function(
         const DiamondChunk *chunk, const char *name, size_t length) {
     for (size_t index = 0; index < chunk->function_count; index++) {
-        const DiamondFunction *candidate = &chunk->functions[index];
+        const DiamondFunction *candidate = chunk->functions[index];
         if (candidate->owner_class != UINT8_MAX || candidate->nested) continue;
         if (strlen(candidate->name) == length &&
             memcmp(candidate->name, name, length) == 0) return candidate;
@@ -4617,7 +4623,7 @@ static bool value_matches_type(const DiamondChunk *chunk, DiamondValue value,
                         const DiamondInterfaceMethod *wanted=
                             &interface->methods[required];
                         const DiamondFunction *implementation=
-                            &chunk->functions[class->methods[method].function_index];
+                            chunk->functions[class->methods[method].function_index];
                         found=true;
                         for(size_t parameter=0;parameter<wanted->arity;parameter++) {
                             const uint8_t required_set=wanted->parameter_type_sets[parameter];
@@ -4743,7 +4749,7 @@ static bool runtime_type_id_satisfies(const DiamondChunk *chunk,uint8_t known,
                        interface->methods[required].arity<=class->methods[method].arity) {
                         const DiamondInterfaceMethod *wanted=&interface->methods[required];
                         const DiamondFunction *implementation=
-                            &chunk->functions[class->methods[method].function_index];
+                            chunk->functions[class->methods[method].function_index];
                         found=true;
                         for(size_t parameter=0;parameter<wanted->arity;parameter++) {
                             const uint8_t required_set=wanted->parameter_type_sets[parameter];
@@ -4836,7 +4842,7 @@ static bool value_matches_member(const DiamondChunk *chunk,DiamondValue value,
     if(member.id==DIAMOND_TYPE_CALLABLE) {
         const DiamondClosure *closure=(const DiamondClosure *)value.as.object;
         if(closure->function_index>=chunk->function_count)return false;
-        const DiamondFunction *function=&chunk->functions[closure->function_index];
+        const DiamondFunction *function=chunk->functions[closure->function_index];
         if(member.callable_arity!=UINT8_MAX&&
            (member.callable_arity<function->required_arity||
             member.callable_arity>function->arity))return false;
@@ -5461,7 +5467,7 @@ static DiamondVmStatus stringify_value(DiamondVm *vm,const DiamondChunk *chunk,
             "to_s",sizeof("to_s")-1);
         if(method!=nullptr) {
             if(method->required_arity>0)return DIAMOND_VM_ARITY_ERROR;
-            const DiamondFunction *fn=&owner->functions[method->function_index];
+            const DiamondFunction *fn=owner->functions[method->function_index];
             const DiamondChunk child={.name=fn->name,.code=fn->code,
               .lines=fn->lines,.columns=fn->columns,.code_count=fn->code_count,
               .constants=fn->constants,.constant_count=fn->constant_count,
@@ -5794,7 +5800,7 @@ static void infer_from_value(const DiamondChunk *chunk,DiamondValue value,
         } else if(member.id==DIAMOND_TYPE_CALLABLE) {
             const DiamondClosure *closure=(const DiamondClosure *)value.as.object;
             if(closure->function_index<chunk->function_count) {
-                const DiamondFunction *function=&chunk->functions[closure->function_index];
+                const DiamondFunction *function=chunk->functions[closure->function_index];
                 if(member.callable_parameters_typed)
                     for(size_t parameter=0;parameter<member.callable_arity;parameter++) {
                         const uint8_t actual=function->parameter_type_sets[parameter];
@@ -6964,8 +6970,8 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
     } while (false)
 
     /* Big-endian, matching the existing JUMP-target 16-bit operand
-     * convention -- function indices (CALL/CALL_TYPED/CLOSURE) are wide
-     * enough to exceed one byte now that DIAMOND_MAX_FUNCTIONS is 512. */
+     * convention -- function indices (CALL/CALL_TYPED/CLOSURE) address the
+     * dynamically growing function table beyond one-byte range. */
 #define READ_SHORT(target_)                  \
     do {                                     \
         if (ip + 1 >= chunk->code_count) {   \
@@ -7851,7 +7857,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
                 }
                 const DiamondFunction *function =
-                    &chunk->functions[function_index];
+                    chunk->functions[function_index];
                 if (call_argument_count < function->required_arity||
                     call_argument_count > function->arity) {
                     VM_RETURN(DIAMOND_VM_ARITY_ERROR);
@@ -7898,7 +7904,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                    (size_t)argument_base+call_argument_count>DIAMOND_REGISTER_COUNT||
                    type_argument_count>8)
                     VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
-                const DiamondFunction *function=&chunk->functions[function_index];
+                const DiamondFunction *function=chunk->functions[function_index];
                 if(type_argument_count!=function->type_variable_count||
                    call_argument_count<function->required_arity||
                    call_argument_count>function->arity)
@@ -7999,7 +8005,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     VM_RETURN(DIAMOND_VM_TYPE_ERROR);
                 DiamondClosure *called=(DiamondClosure *)registers[callable].as.object;
                 if(called->function_index>=chunk->function_count)VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
-                const DiamondFunction *fn=&chunk->functions[called->function_index];
+                const DiamondFunction *fn=chunk->functions[called->function_index];
                 DiamondValue call_result=DIAMOND_NIL;
                 const DiamondVmStatus status=call_closure_helper(vm,chunk,fn,called,
                     registers,base,argc,depth,&call_result);
@@ -8022,7 +8028,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                         VM_RETURN(DIAMOND_VM_ARITY_ERROR);
                     DiamondValue args[17];args[0]=registers[dest];
                     for(size_t i=0;i<argc;i++)args[i+1]=registers[(size_t)base+i];
-                    const DiamondFunction *fn=&chunk->functions[init->function_index];
+                    const DiamondFunction *fn=chunk->functions[init->function_index];
                     DiamondChunk child={.name=fn->name,.code=fn->code,
                       .lines=fn->lines,.columns=fn->columns,.code_count=fn->code_count,
                       .constants=fn->constants,.constant_count=fn->constant_count,
@@ -8089,7 +8095,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                         DiamondClosure *called=(DiamondClosure *)registers[base].as.object;
                         if(called->function_index>=chunk->function_count)
                             VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
-                        const DiamondFunction *fn=&chunk->functions[called->function_index];
+                        const DiamondFunction *fn=chunk->functions[called->function_index];
                         DiamondValue tap_argument[1]={registers[recv]};
                         DiamondValue tap_result=DIAMOND_NIL;
                         const DiamondVmStatus tap_status=call_closure_helper(vm,chunk,fn,
@@ -9854,7 +9860,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     DiamondClosure *called=(DiamondClosure *)registers[base].as.object;
                     if(called->function_index>=chunk->function_count)
                         VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
-                    const DiamondFunction *fn=&chunk->functions[called->function_index];
+                    const DiamondFunction *fn=chunk->functions[called->function_index];
                     DiamondValue tap_argument[1]={registers[recv]};
                     DiamondValue tap_result=DIAMOND_NIL;
                     const DiamondVmStatus tap_status=call_closure_helper(vm,chunk,fn,
@@ -9964,7 +9970,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     VM_RETURN(DIAMOND_VM_ARITY_ERROR);
                 DiamondValue args[17];args[0]=registers[recv];
                 for(size_t i=0;i<argc;i++)args[i+1]=registers[(size_t)base+i];
-                const DiamondFunction *fn=&owner->functions[method->function_index];
+                const DiamondFunction *fn=owner->functions[method->function_index];
                 if((DiamondOpCode)instruction==DIAMOND_OP_INVOKE_TYPED&&
                    type_argument_count!=fn->type_variable_count)
                     VM_RETURN(DIAMOND_VM_TYPE_ERROR);
@@ -10047,7 +10053,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     VM_RETURN(DIAMOND_VM_ARITY_ERROR);
                 DiamondValue args[17]; args[0]=registers[0];
                 for(size_t i=0;i<argc;i++) args[i+1]=registers[(size_t)base+i];
-                const DiamondFunction *fn=&chunk->functions[method->function_index];
+                const DiamondFunction *fn=chunk->functions[method->function_index];
                 DiamondChunk child={.name=fn->name,.code=fn->code,
                   .lines=fn->lines,.columns=fn->columns,.code_count=fn->code_count,
                   .constants=fn->constants,.constant_count=fn->constant_count,
@@ -10601,7 +10607,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 }
                 if((size_t)replacement->function_index>=chunk->function_count)
                     VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
-                const DiamondFunction *new_function=&chunk->functions[replacement->function_index];
+                const DiamondFunction *new_function=chunk->functions[replacement->function_index];
                 if(new_function->owner_class!=class_operand) {
                     snprintf(vm->error,sizeof vm->error,
                              "redefine_method callable must be a method of '%s'",class->name);
@@ -10626,7 +10632,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 const DiamondClosure *callable=(const DiamondClosure *)registers[callable_reg].as.object;
                 if((size_t)callable->function_index>=chunk->function_count)
                     VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
-                const DiamondFunction *target_fn=&chunk->functions[callable->function_index];
+                const DiamondFunction *target_fn=chunk->functions[callable->function_index];
                 if(target_fn->arity!=0) {
                     snprintf(vm->error,sizeof vm->error,"Fiber.new callable must take no arguments");
                     VM_RETURN(DIAMOND_VM_ARITY_ERROR);
@@ -10746,7 +10752,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 }
                 if((size_t)callable->function_index>=chunk->function_count)
                     VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
-                const DiamondFunction *target_fn=&chunk->functions[callable->function_index];
+                const DiamondFunction *target_fn=chunk->functions[callable->function_index];
                 if(argc<target_fn->required_arity||argc>target_fn->arity)
                     VM_RETURN(DIAMOND_VM_ARITY_ERROR);
                 if(atomic_load(&diamond_active_thread_count)>=DIAMOND_MAX_THREADS) {
@@ -10758,12 +10764,14 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 if(child_program==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
                 DiamondVm *child_vm=malloc(sizeof *child_vm);
                 if(child_vm==nullptr) {
-                    free(child_program);VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                    diamond_program_free(child_program);free(child_program);
+                    VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
                 }
                 diamond_vm_init(child_vm);
                 DiamondThread *new_thread=malloc(sizeof *new_thread);
                 if(new_thread==nullptr) {
-                    diamond_vm_free(child_vm);free(child_vm);free(child_program);
+                    diamond_vm_free(child_vm);free(child_vm);
+                    diamond_program_free(child_program);free(child_program);
                     VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
                 }
                 *new_thread=(DiamondThread){.child_vm=child_vm,

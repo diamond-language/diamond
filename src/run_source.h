@@ -32,10 +32,8 @@ int diamond_run_source(const char *name, const char *source, bool dump_bytecode,
  * DiamondProgram `program` gets compiled into, instead of a fresh one
  * being malloc'd and freed internally. diamond_compile always calls
  * diamond_program_init to reset it from scratch before compiling, so
- * one DiamondProgram can safely be reused across many calls -- meant
- * for a caller running many programs in one process (tests/run_cases.c)
- * that wants to avoid malloc/free-ing this tens-of-MB struct (a real
- * mmap/munmap cost, not just bookkeeping) once per program. */
+ * one zero-initialized DiamondProgram can safely be reused across many calls;
+ * each call releases and rebuilds its dynamically sized function storage. */
 int diamond_run_source_with_program(const char *name, const char *source,
     bool dump_bytecode, DiamondProgram *program,
     int script_argc, char *const *script_argv);

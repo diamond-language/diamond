@@ -584,7 +584,7 @@ int diamond_repl_run(void) {
                 break;
             }
 
-            program = malloc(sizeof *program);
+            program = calloc(1,sizeof *program);
             if (program == nullptr) {
                 fprintf(stderr, "diamond: out of memory allocating program\n");
                 buffer_free(&candidate_source);
@@ -600,12 +600,14 @@ int diamond_repl_run(void) {
                 break;
             }
             if (incomplete) {
+                diamond_program_free(program);
                 free(program);
                 program = nullptr;
                 prompt = "... ";
                 continue;
             }
             fprintf(real_stdout, "%s\n", error_message);
+            diamond_program_free(program);
             free(program);
             program = nullptr;
             break;
@@ -667,6 +669,7 @@ int diamond_repl_run(void) {
             fprintf(real_stdout, "%s\n", run_error != nullptr ? run_error : "unknown error");
         }
         free(captured);
+        diamond_program_free(program);
         free(program);
     }
 

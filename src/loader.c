@@ -108,7 +108,7 @@ static bool validate_package_manifest(Loader *loader,const char *name,
         return false;
     }
 
-    DiamondProgram *program=malloc(sizeof *program);
+    DiamondProgram *program=calloc(1,sizeof *program);
     DiamondVm *vm=malloc(sizeof *vm);
     if(program==nullptr||vm==nullptr) {
         free(manifest_source);free(program);free(vm);
@@ -182,7 +182,7 @@ static bool validate_package_manifest(Loader *loader,const char *name,
     }
 
     if(vm_initialized)diamond_vm_free(vm);
-    free(manifest_source);free(program);free(vm);
+    free(manifest_source);diamond_program_free(program);free(program);free(vm);
     return ok;
 }
 

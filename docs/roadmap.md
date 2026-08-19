@@ -114,9 +114,6 @@ Open questions:
   current single-pass compiler's simplicity;
 - which fixed table/offset limits should be widened, removed, or kept as
   deliberate implementation boundaries;
-- replace the interim embedded 1024-entry function table with dynamically
-  allocated function storage before approaching the 16-bit bytecode index
-  boundary, without invalidating compiler or VM function references.
 
 ## Language and library directions
 

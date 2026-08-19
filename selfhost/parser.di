@@ -411,8 +411,8 @@ class Parser
 
   # CALL/CALL_TYPED/CLOSURE's function-index operand is 16-bit, big-endian
   # (same split as patch_jump's jump target below), mirroring compiler.c's
-  # own emit_function_index -- DIAMOND_MAX_FUNCTIONS is 1024, past what a
-  # single byte holds.
+  # own emit_function_index -- the dynamically sized native function table
+  # uses 16-bit indices, past what a single byte holds.
   def emit_function_index(function_index)
     self.emit_byte(function_index / 256)
     self.emit_byte(mod(function_index, 256))

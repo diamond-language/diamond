@@ -21,15 +21,12 @@ mutable state with the spawning thread or any other thread. Two threads
 never touch the same GC, the same inline cache, or the same class table, so
 none of that machinery needs to become thread-safe at all.
 
-The cost is memory: `Thread.new` clones the *entire* ambient `DiamondProgram`
-via a byte-for-byte `memcpy` of its `functions[]`/`classes[]`/`interfaces[]`
-tables (~83MB per clone; see the self-hosting history in `CHANGELOG.md`). This
-is safe only because `DiamondFunction`/`DiamondClass`/
-`DiamondInterface` are themselves pointer-free — every field is a fixed-size
-inline array or scalar, constants are restricted to Int/Float/Bool/Nil at
-compile time, and string constants live in an inline array rather than as
-heap objects — so a raw copy needs no pointer fixup. `clone_program_from_chunk`
-(`src/vm.c`) builds the clone via `diamond_program_init` (correct defaults
+The cost is memory: `Thread.new` clones every live function record plus the
+ambient program's class and interface tables. Function storage grows with the
+program rather than reserving a fixed maximum, but each live `DiamondFunction`
+still contains self-hosting-sized inline bytecode and constant arrays.
+`clone_program_from_chunk` (`src/vm.c`) builds the clone via
+`diamond_program_init` (correct defaults
 for the fields a `DiamondChunk` view never exposes — `modules[]`,
 `namespace_constants[]`, `entry`, `entry_path` — all purely compile-time
 bookkeeping `run_chunk` never reads) plus a targeted `memcpy` of just the
@@ -131,8 +128,8 @@ A *capturing* closure is still categorically forbidden — it holds a live
 `DiamondCell`/GC state belonging to the source heap, exactly the same
 hazard `Thread.new`'s own primary-callable check already rejects. But a
 zero-capture closure is just a `function_index` into the shared
-`functions[]` table, and in rebase mode the destination program is a
-byte-for-byte clone of that same table (see "Isolated-heap design" above)
+function table, and in rebase mode the destination program is a deep clone of
+that same table (see "Isolated-heap design" above)
 — so the index means the same function in both, with no arithmetic needed
 at all (unlike the `Instance`/class-pointer case, which rebases a pointer).
 This lets a `Callable` argument — such as a request handler — reach a
