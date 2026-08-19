@@ -123,6 +123,25 @@ def run_tests()
     Minitest.assert_equal("INSERT rows must have identical columns", message)
   end
 
+  def test_insert_select_preserves_query_binds_and_executes()
+    db = SQLite3.open(":memory:")
+    db.execute("CREATE TABLE source_items (name TEXT, qty INTEGER)")
+    db.execute("CREATE TABLE archived_items (name TEXT, qty INTEGER)")
+    db.execute("INSERT INTO source_items VALUES ('pens', 3), ('paper', 1)")
+    source = Arel.table("source_items")
+    query = Arel.from(source).project([
+      source.column("name"), source.column("qty")
+    ]).where(source.column("qty").gt(1))
+    target = Arel.table("archived_items")
+    insert = Arel.insert_into(target).from_query(["name", "qty"], query)
+    sql, params = insert.to_sql()
+    Minitest.assert_equal("INSERT INTO \"archived_items\" (\"name\", \"qty\") SELECT \"source_items\".\"name\", \"source_items\".\"qty\" FROM \"source_items\" WHERE \"source_items\".\"qty\" > ?", sql)
+    Minitest.assert_equal(1, params[0])
+    Minitest.assert_equal(1, insert.execute(db))
+    Minitest.assert_equal("pens", db.query("SELECT name FROM archived_items")[0]["name"])
+    db.close()
+  end
+
   suite = Minitest.new()
   suite.test("INSERT", test_insert_renders_and_executes)
   suite.test("UPDATE", test_update_renders_and_executes)
@@ -131,6 +150,7 @@ def run_tests()
   suite.test("write validation", test_write_validation_requires_values_and_explicit_scope)
   suite.test("multi-row INSERT", test_multi_row_insert_preserves_row_and_bind_order)
   suite.test("multi-row INSERT shape", test_multi_row_insert_requires_identical_columns)
+  suite.test("INSERT SELECT", test_insert_select_preserves_query_binds_and_executes)
   suite.run()
 end
 

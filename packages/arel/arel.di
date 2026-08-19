@@ -830,19 +830,48 @@ class ArelCompoundQuery
 end
 
 class ArelInsert
-  def initialize(table: ArelTable, rows = [], returning = [])
+  def initialize(table: ArelTable, rows = [], returning = [], source_columns = [],
+                 source_query = nil)
     @table = table
     @rows = rows
     @returning = returning
+    @source_columns = source_columns
+    @source_query = source_query
   end
 
   def values(attributes: Hash) = ArelInsert.new(@table, [attributes], @returning)
   def values_many(rows: Array) = ArelInsert.new(@table, rows, @returning)
+  def from_query(columns: Array, query)
+    ArelInsert.new(@table, [], @returning, columns, query)
+  end
   def returning(expressions)
-    ArelInsert.new(@table, @rows, arel_array(expressions))
+    ArelInsert.new(@table, @rows, arel_array(expressions), @source_columns, @source_query)
   end
 
   def to_sql() -> Array
+    if @source_query != nil
+      if @source_columns.length() == 0
+        raise ArgumentError.new("INSERT SELECT requires at least one column")
+      end
+      columns = []
+      def quote_source_column(name)
+        columns.push(arel_quote_identifier(name))
+      end
+      @source_columns.each(quote_source_column)
+      source_sql, params = @source_query.to_sql()
+      sql = "INSERT INTO #{arel_quote_identifier(@table.name())} " +
+        "(#{columns.join(", ")}) #{source_sql}"
+      rendered = []
+      visitor = ArelSQLiteVisitor.new()
+      def render_source_returning(expression)
+        rendered.push(visitor.render_expression(expression, params))
+      end
+      @returning.each(render_source_returning)
+      if rendered.length() > 0
+        sql = sql + " RETURNING " + rendered.join(", ")
+      end
+      return [sql, params]
+    end
     if @rows.length() == 0 || @rows[0].length() == 0
       raise ArgumentError.new("INSERT requires at least one value")
     end
