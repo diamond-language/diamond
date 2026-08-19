@@ -1008,23 +1008,32 @@ end
 
 class ArelUpdate
   def initialize(table: ArelTable, assignments = nil, predicates = [], returning = [],
-                 allow_all = false)
+                 allow_all = false, ctes = [])
     @table = table
     @assignments = assignments
     @predicates = predicates
     @returning = returning
     @allow_all = allow_all
+    @ctes = ctes
   end
 
-  def set(assignments: Hash) = ArelUpdate.new(@table, assignments, @predicates, @returning, @allow_all)
+  def ctes() = @ctes
+  def set(assignments: Hash)
+    ArelUpdate.new(@table, assignments, @predicates, @returning, @allow_all, @ctes)
+  end
   def where(predicate)
     ArelUpdate.new(@table, @assignments, array_concat(@predicates, [predicate]), @returning,
-      @allow_all)
+      @allow_all, @ctes)
   end
   def returning(expressions)
-    ArelUpdate.new(@table, @assignments, @predicates, arel_array(expressions), @allow_all)
+    ArelUpdate.new(@table, @assignments, @predicates, arel_array(expressions), @allow_all,
+      @ctes)
   end
-  def all() = ArelUpdate.new(@table, @assignments, @predicates, @returning, true)
+  def all() = ArelUpdate.new(@table, @assignments, @predicates, @returning, true, @ctes)
+  def with(name: String, query)
+    ArelUpdate.new(@table, @assignments, @predicates, @returning, @allow_all,
+      array_concat(@ctes, [ArelCte.new(name, query)]))
+  end
 
   def to_sql() -> Array
     if @assignments == nil || @assignments.length() == 0
@@ -1063,6 +1072,9 @@ class ArelUpdate
     if rendered.length() > 0
       sql = sql + " RETURNING " + rendered.join(", ")
     end
+    cte_params = []
+    sql = visitor.render_ctes(self, cte_params) + sql
+    params = array_concat(cte_params, params)
     [sql, params]
   end
 
