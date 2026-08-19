@@ -19,8 +19,19 @@ def run_tests()
     db.close()
   end
 
+  def test_subtraction_is_structural_and_chainable()
+    balances = Arel.table("balances")
+    expression = balances.column("amount").subtract(4).add(1)
+    update = Arel.update(balances).set({"amount": Arel.expression(expression)}).all()
+    sql, params = update.to_sql()
+    Minitest.assert_equal("UPDATE \"balances\" SET \"amount\" = ((\"balances\".\"amount\" - ?) + ?)", sql)
+    Minitest.assert_equal(4, params[0])
+    Minitest.assert_equal(1, params[1])
+  end
+
   suite = Minitest.new()
   suite.test("structural addition", test_addition_is_a_structural_update_expression)
+  suite.test("structural subtraction", test_subtraction_is_structural_and_chainable)
   suite.run()
 end
 

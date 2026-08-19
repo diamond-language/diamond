@@ -147,6 +147,7 @@ class ArelBinaryExpression
   def right() = @right
   def bind_right?() = @bind_right
   def add(value) = ArelBinaryExpression.new(self, "+", value)
+  def subtract(value) = ArelBinaryExpression.new(self, "-", value)
 end
 
 class ArelAttribute
@@ -175,6 +176,7 @@ class ArelAttribute
   def as(name: String) = ArelAlias.new(self, name)
   def collate(name: String) = ArelCollation.new(self, name)
   def add(value) = ArelBinaryExpression.new(self, "+", value)
+  def subtract(value) = ArelBinaryExpression.new(self, "-", value)
 end
 
 class ArelQualifiedStar
