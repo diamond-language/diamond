@@ -77,6 +77,16 @@ def run_tests()
     Minitest.assert_equal(0, params.length())
   end
 
+  def test_structural_literals_reject_strings()
+    message = nil
+    begin
+      Arel.literal("unsafe")
+    rescue error: ArgumentError
+      message = error.message()
+    end
+    Minitest.assert_equal("SQL literals only support Int and Bool values", message)
+  end
+
   suite = Minitest.new()
   suite.test("structural addition", test_addition_is_a_structural_update_expression)
   suite.test("structural subtraction", test_subtraction_is_structural_and_chainable)
@@ -85,6 +95,7 @@ def run_tests()
   suite.test("excluded arithmetic", test_excluded_attributes_support_arithmetic)
   suite.test("structural arithmetic operands", test_arithmetic_accepts_structural_right_operands)
   suite.test("restricted SQL literals", test_restricted_literals_render_without_binds)
+  suite.test("SQL literal validation", test_structural_literals_reject_strings)
   suite.run()
 end
 
