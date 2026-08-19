@@ -203,6 +203,19 @@ def run_tests()
     Minitest.assert_equal("conflict update requires at least one assignment", message)
   end
 
+  def test_insert_select_validates_projection_count()
+    items = Arel.table("items")
+    query = Arel.from(items).project([items.column("name"), items.column("qty")])
+    insert = Arel.insert_into(items).from_query(["name"], query)
+    message = nil
+    begin
+      insert.to_sql()
+    rescue error: ArgumentError
+      message = error.message()
+    end
+    Minitest.assert_equal("INSERT SELECT columns must match query projections", message)
+  end
+
   suite = Minitest.new()
   suite.test("INSERT", test_insert_renders_and_executes)
   suite.test("UPDATE", test_update_renders_and_executes)
@@ -216,6 +229,7 @@ def run_tests()
   suite.test("INSERT conflict ignore", test_insert_can_ignore_conflicts)
   suite.test("INSERT conflict update", test_insert_can_update_on_conflict)
   suite.test("conflict update validation", test_conflict_update_requires_assignments)
+  suite.test("INSERT SELECT validation", test_insert_select_validates_projection_count)
   suite.run()
 end
 

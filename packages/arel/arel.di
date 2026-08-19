@@ -907,6 +907,9 @@ class ArelInsert
       if @source_columns.length() == 0
         raise ArgumentError.new("INSERT SELECT requires at least one column")
       end
+      if @source_columns.length() != @source_query.projection_count()
+        raise ArgumentError.new("INSERT SELECT columns must match query projections")
+      end
       columns = []
       def quote_source_column(name)
         columns.push(arel_quote_identifier(name))
