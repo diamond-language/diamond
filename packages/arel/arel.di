@@ -873,7 +873,7 @@ end
 class ArelInsert
   def initialize(table: ArelTable, rows = [], returning = [], source_columns = [],
                  source_query = nil, conflict_target = [], conflict_ignore = false,
-                 conflict_assignments = nil)
+                 conflict_assignments = nil, ctes = [])
     @table = table
     @rows = rows
     @returning = returning
@@ -882,24 +882,38 @@ class ArelInsert
     @conflict_target = conflict_target
     @conflict_ignore = conflict_ignore
     @conflict_assignments = conflict_assignments
+    @ctes = ctes
   end
 
-  def values(attributes: Hash) = ArelInsert.new(@table, [attributes], @returning)
-  def values_many(rows: Array) = ArelInsert.new(@table, rows, @returning)
+  def ctes() = @ctes
+  def values(attributes: Hash)
+    ArelInsert.new(@table, [attributes], @returning, [], nil, @conflict_target,
+      @conflict_ignore, @conflict_assignments, @ctes)
+  end
+  def values_many(rows: Array)
+    ArelInsert.new(@table, rows, @returning, [], nil, @conflict_target,
+      @conflict_ignore, @conflict_assignments, @ctes)
+  end
   def from_query(columns: Array, query)
-    ArelInsert.new(@table, [], @returning, columns, query)
+    ArelInsert.new(@table, [], @returning, columns, query, @conflict_target,
+      @conflict_ignore, @conflict_assignments, @ctes)
+  end
+  def with(name: String, query)
+    ArelInsert.new(@table, @rows, @returning, @source_columns, @source_query,
+      @conflict_target, @conflict_ignore, @conflict_assignments,
+      array_concat(@ctes, [ArelCte.new(name, query)]))
   end
   def on_conflict_do_nothing(columns = [])
     ArelInsert.new(@table, @rows, @returning, @source_columns, @source_query,
-      arel_array(columns), true)
+      arel_array(columns), true, nil, @ctes)
   end
   def on_conflict_do_update(columns, assignments: Hash)
     ArelInsert.new(@table, @rows, @returning, @source_columns, @source_query,
-      arel_array(columns), false, assignments)
+      arel_array(columns), false, assignments, @ctes)
   end
   def returning(expressions)
     ArelInsert.new(@table, @rows, arel_array(expressions), @source_columns, @source_query,
-      @conflict_target, @conflict_ignore, @conflict_assignments)
+      @conflict_target, @conflict_ignore, @conflict_assignments, @ctes)
   end
 
   def to_sql() -> Array
@@ -929,6 +943,9 @@ class ArelInsert
       if rendered.length() > 0
         sql = sql + " RETURNING " + rendered.join(", ")
       end
+      cte_params = []
+      sql = visitor.render_ctes(self, cte_params) + sql
+      params = array_concat(cte_params, params)
       return [sql, params]
     end
     if @rows.length() == 0 || @rows[0].length() == 0
@@ -973,6 +990,9 @@ class ArelInsert
     if rendered.length() > 0
       sql = sql + " RETURNING " + rendered.join(", ")
     end
+    cte_params = []
+    sql = visitor.render_ctes(self, cte_params) + sql
+    params = array_concat(cte_params, params)
     [sql, params]
   end
 
