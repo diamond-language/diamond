@@ -576,6 +576,7 @@ class ArelSQLiteVisitor
     elsif expression is ArelOrdering
       sql = "#{self.render_expression(expression.expression(), params)} #{expression.direction()}"
       if expression.nulls() != nil
+        self.require_extension("explicit NULL ordering")
         sql = sql + " NULLS #{expression.nulls()}"
       end
       sql
