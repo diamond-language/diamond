@@ -70,6 +70,11 @@ def run_tests()
     Minitest.assert_equal(1, rows.length())
     Minitest.assert_equal("Ada", rows[0]["name"])
 
+    people = Arel.table("people")
+    rows = Arel.from(people).order(people.column("id").asc()).skip(1).to_a(db)
+    Minitest.assert_equal(2, rows.length())
+    Minitest.assert_equal("Bob", rows[0]["name"])
+
     db.close()
   end
 
