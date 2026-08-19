@@ -77,6 +77,11 @@ def run_tests()
     other_query = same_query.take(1)
     Minitest.assert_equal(true, Arel.same?(first_query, same_query))
     Minitest.assert_equal(false, Arel.same?(first_query, other_query))
+  end
+
+  def test_queries_compare_structurally()
+    people = Arel.table("people")
+    subquery = Arel.from(people).project(people.column("id"))
     grouped = Arel.from(people).project(people.column("role")).group(people.column("role"))
     grouped = grouped.having(Arel.count(people.column("id")).gt(1))
     same_grouped = Arel.from(Arel.table("people")).project(Arel.table("people").column("role"))
@@ -99,11 +104,17 @@ def run_tests()
       Arel.table("people").column("name")), "selected_people")
     Minitest.assert_equal(true, Arel.same?(derived, same_derived))
     Minitest.assert_equal(false, Arel.same?(derived, other_derived))
+    with_cte = Arel.from(people).with("selected", subquery)
+    same_with_cte = Arel.from(Arel.table("people")).with("selected",
+      Arel.from(Arel.table("people")).project(Arel.table("people").column("id")))
+    Minitest.assert_equal(true, Arel.same?(with_cte, same_with_cte))
+    Minitest.assert_equal(false, Arel.same?(with_cte, Arel.from(people).with_recursive("selected", subquery)))
   end
 
   suite = Minitest.new()
   suite.test("core expression inspection", test_core_expressions_have_deterministic_inspection)
   suite.test("structural equality", test_nodes_compare_structurally)
+  suite.test("query structural equality", test_queries_compare_structurally)
   suite.run()
 end
 

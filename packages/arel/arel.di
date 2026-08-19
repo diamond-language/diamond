@@ -1657,6 +1657,9 @@ def same_tail?(left, right) -> Bool
   elsif left is ArelTable
     right is ArelTable && left.name() == right.name() &&
       left.table_alias() == right.table_alias()
+  elsif left is ArelCte
+    right is ArelCte && left.name() == right.name() &&
+      left.recursive?() == right.recursive?() && self.same?(left.query(), right.query())
   elsif left is ArelQuery
     if !(right is ArelQuery) || left.base_reference_name() != right.base_reference_name() ||
        left.distinct_value() != right.distinct_value() ||
@@ -1667,7 +1670,7 @@ def same_tail?(left, right) -> Bool
        left.groups().length() != right.groups().length() ||
        left.havings().length() != right.havings().length() ||
        left.joins().length() != right.joins().length() ||
-       left.ctes().length() != 0 || right.ctes().length() != 0
+       left.ctes().length() != right.ctes().length()
       return false
     end
     if (left.source_query() == nil) != (right.source_query() == nil)
@@ -1714,6 +1717,13 @@ def same_tail?(left, right) -> Bool
     index = 0
     while index < left.joins().length()
       if !self.same?(left.joins()[index], right.joins()[index])
+        return false
+      end
+      index = index + 1
+    end
+    index = 0
+    while index < left.ctes().length()
+      if !self.same?(left.ctes()[index], right.ctes()[index])
         return false
       end
       index = index + 1
