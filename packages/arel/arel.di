@@ -463,6 +463,11 @@ class ArelQuery
       @projections, @quoted_identifiers, @bind_limits, @table_alias, @distinct_value,
       @groups, @havings, array_concat(@joins, [ArelJoin.new(table, predicate, "INNER")]))
   end
+  def left_join(table: ArelTable, predicate)
+    ArelQuery.new(@table_name, @predicates, @orderings, @limit_value, @offset_value,
+      @projections, @quoted_identifiers, @bind_limits, @table_alias, @distinct_value,
+      @groups, @havings, array_concat(@joins, [ArelJoin.new(table, predicate, "LEFT OUTER")]))
+  end
   def order(column_or_columns)
     self.copy(@predicates, array_concat(@orderings, arel_array(column_or_columns)),
       @limit_value, @offset_value, @projections)

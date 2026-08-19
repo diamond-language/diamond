@@ -69,6 +69,22 @@ def run_tests()
     Minitest.assert_empty(params)
   end
 
+  def test_left_outer_join_executes_against_sqlite()
+    db = SQLite3.open(":memory:")
+    db.execute("CREATE TABLE people (name TEXT, company_id INTEGER)")
+    db.execute("CREATE TABLE companies (id INTEGER, name TEXT)")
+    db.execute("INSERT INTO people VALUES (?, ?)", ["Ada", nil])
+    people = Arel.table("people")
+    companies = Arel.table("companies")
+    on = people.column("company_id").eq(companies.column("id"))
+    query = Arel.from(people).left_join(companies, on)
+    rows = query.project([people.column("name"), companies.column("name").as("company")]).to_a(db)
+    Minitest.assert_equal(1, rows.length())
+    Minitest.assert_equal("Ada", rows[0]["name"])
+    Minitest.assert_nil(rows[0]["company"])
+    db.close()
+  end
+
   suite = Minitest.new()
   suite.test("BETWEEN predicates", test_between_predicates_bind_both_bounds)
   suite.test("LIKE predicates", test_like_predicates_are_bound)
@@ -77,6 +93,7 @@ def run_tests()
   suite.test("HAVING", test_having_uses_expression_nodes_and_binds)
   suite.test("explicit SQL literal", test_explicit_sql_literal_is_composable)
   suite.test("inner join", test_inner_join_is_structural_and_qualified)
+  suite.test("left outer join", test_left_outer_join_executes_against_sqlite)
   suite.run()
 end
 
