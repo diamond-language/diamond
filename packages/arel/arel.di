@@ -1486,6 +1486,32 @@ def children(node) -> Array
     [node.expression()]
   elsif node is ArelQualifiedStar
     [node.table()]
+  elsif node is ArelPredicate
+    children = [node.left()]
+    if node.right() is ArelAttribute || node.right() is ArelLiteral
+      children.push(node.right())
+    end
+    children
+  elsif node is ArelLogical
+    [node.left(), node.right()]
+  elsif node is ArelNot
+    [node.expression()]
+  elsif node is ArelBetween
+    [node.left()]
+  elsif node is ArelMembership
+    children = [node.left()]
+    if !(node.values() is Array)
+      children.push(node.values())
+    end
+    children
+  elsif node is ArelExists || node is ArelScalarSubquery
+    [node.query()]
+  elsif node is ArelJoin
+    children = [node.table()]
+    if node.predicate() != nil
+      children.push(node.predicate())
+    end
+    children
   else
     []
   end
