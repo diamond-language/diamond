@@ -223,6 +223,19 @@ class ArelExists
   def not_() = ArelExists.new(@query, !@negated)
 end
 
+class ArelScalarSubquery
+  def initialize(query)
+    @query = query
+  end
+  def query() = @query
+  def eq(value) = ArelPredicate.new(self, "=", value)
+  def not_eq(value) = ArelPredicate.new(self, "!=", value)
+  def lt(value) = ArelPredicate.new(self, "<", value)
+  def lteq(value) = ArelPredicate.new(self, "<=", value)
+  def gt(value) = ArelPredicate.new(self, ">", value)
+  def gteq(value) = ArelPredicate.new(self, ">=", value)
+end
+
 class ArelSQLiteVisitor
   def attribute_allowed?(attribute: ArelAttribute) -> Bool
     if @query == nil
@@ -354,6 +367,13 @@ class ArelSQLiteVisitor
         prefix = "NOT EXISTS"
       end
       "#{prefix} (#{sql})"
+    elsif expression is ArelScalarSubquery
+      sql, bound = expression.query().to_sql()
+      def append_scalar_param(value)
+        params.push(value)
+      end
+      bound.each(append_scalar_param)
+      "(#{sql})"
     else
       self.render_expression_tail(expression, params)
     end
@@ -663,6 +683,7 @@ class Arel
   def self.upper(expression) = ArelFunction.new("UPPER", [expression])
   def self.exists(query) = ArelExists.new(query, false)
   def self.not_exists(query) = ArelExists.new(query, true)
+  def self.scalar(query) = ArelScalarSubquery.new(query)
   def self.from_subquery(query, name: String)
     ArelQuery.new(name, [], [], nil, nil, [ArelRawSql.new("*", [])], true, true,
       name, false, [], [], [], query)

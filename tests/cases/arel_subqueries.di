@@ -36,10 +36,22 @@ def run_tests()
     Minitest.assert_equal("admin", params[0])
   end
 
+  def test_scalar_subquery_is_an_expression()
+    scores = Arel.table("scores")
+    inner = Arel.from(scores).project(Arel.max(scores.column("value")))
+    inner = inner.where(scores.column("active").eq(true))
+    people = Arel.table("people")
+    maximum = Arel.as(Arel.scalar(inner), "maximum_score")
+    sql, params = Arel.from(people).project([people.column("name"), maximum]).to_sql()
+    Minitest.assert_equal("SELECT \"people\".\"name\", (SELECT MAX(\"scores\".\"value\") FROM \"scores\" WHERE \"scores\".\"active\" = ?) AS \"maximum_score\" FROM \"people\"", sql)
+    Minitest.assert_equal(true, params[0])
+  end
+
   suite = Minitest.new()
   suite.test("FROM subquery", test_subquery_can_be_used_as_from_source)
   suite.test("EXISTS predicates", test_exists_and_not_exists_are_predicates)
   suite.test("IN subquery", test_in_subquery_preserves_inner_binds)
+  suite.test("scalar subquery", test_scalar_subquery_is_an_expression)
   suite.run()
 end
 
