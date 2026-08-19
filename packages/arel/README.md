@@ -160,10 +160,30 @@ stable semantic order. `Arel.walk(node, visitor)` performs an iterative
 depth-first preorder walk, calls `visitor.visit(node)` when a visitor is
 provided, and returns the visited nodes for simple analysis without a visitor.
 Bound scalar values are not nodes and therefore do not appear in traversal.
-`Arel.simplify(node)` currently performs the deliberately conservative root
-rewrite `NOT NOT predicate -> predicate` recursively throughout supported
-expression and SELECT trees, returning immutable nodes and leaving bind order
-unchanged. `Arel.with_children(node, replacements)` rebuilds decorators,
+`Arel.simplify(node)` performs the deliberately conservative rewrites
+`NOT NOT predicate -> predicate` and empty membership normalization recursively
+throughout supported read and write trees. It returns immutable nodes and
+leaves bind order unchanged. An ordered array of `[pattern, replacement]`
+pairs adds declarative application policy; children are rewritten before their
+parents, and later rules can consume the result of earlier rules without a
+second tree walk. Passing `true` as the third argument returns
+`[rewritten_node, changed]`.
+
+```diamond
+active = people.column("active").eq(true)
+verified = people.column("verified").eq(true)
+query, changed = Arel.simplify(
+  Arel.from(people).where(active),
+  [[active, verified]],
+  true
+)
+```
+
+Rules use `Arel.same?` structural matching rather than object identity. Each
+rule must contain exactly one pattern and replacement; malformed rules raise
+`ArgumentError`. Replacements are not recursively revisited during that pass.
+
+`Arel.with_children(node, replacements)` rebuilds decorators,
 expressions, predicates, joins, CTEs, compounds, SELECT queries, and all three
 write managers according to the same order returned by `Arel.children`;
 mismatched shapes fail early. Write replacement includes expression-valued
