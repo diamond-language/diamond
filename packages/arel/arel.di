@@ -243,6 +243,26 @@ class ArelSQLiteVisitor
     sql
   end
 
+  def render_source(query, params: Array) -> String
+    if query.source_query() != nil
+      source_sql, source_params = query.source_query().to_sql()
+      def append_source_param(value)
+        params.push(value)
+      end
+      source_params.each(append_source_param)
+      "(#{source_sql}) AS #{arel_quote_identifier(query.base_reference_name())}"
+    else
+      sql = query.table_name()
+      if query.quoted_identifiers()
+        sql = arel_quote_identifier(sql)
+        if query.table_alias() != nil
+          sql = sql + " AS " + arel_quote_identifier(query.table_alias())
+        end
+      end
+      sql
+    end
+  end
+
   def render_expression(expression, params: Array) -> String
     if expression is ArelAttribute
       self.render_attribute(expression)
@@ -357,13 +377,7 @@ class ArelSQLiteVisitor
       projections.push(visitor.render_expression(projection, params))
     end
     query.projections().each(render_projection)
-    table_sql = query.table_name()
-    if query.quoted_identifiers()
-      table_sql = arel_quote_identifier(table_sql)
-      if query.table_alias() != nil
-        table_sql = table_sql + " AS " + arel_quote_identifier(query.table_alias())
-      end
-    end
+    table_sql = self.render_source(query, params)
     def render_join(join)
       table_sql = table_sql + " #{join.kind()} JOIN #{visitor.render_table(join.table())}"
       if join.predicate() != nil
@@ -436,7 +450,8 @@ end
 class ArelQuery
   def initialize(table_name, predicates, orderings, limit_value, offset_value,
                  projections, quoted_identifiers, bind_limits, table_alias = nil,
-                 distinct_value = false, groups = [], havings = [], joins = [])
+                 distinct_value = false, groups = [], havings = [], joins = [],
+                 source_query = nil)
     @table_name = table_name
     @predicates = predicates
     @orderings = orderings
@@ -450,6 +465,7 @@ class ArelQuery
     @groups = groups
     @havings = havings
     @joins = joins
+    @source_query = source_query
   end
 
   def self.for_table(table: ArelTable)
@@ -477,11 +493,12 @@ class ArelQuery
   def groups() = @groups
   def havings() = @havings
   def joins() = @joins
+  def source_query() = @source_query
 
   def copy(predicates, orderings, limit_value, offset_value, projections)
     ArelQuery.new(@table_name, predicates, orderings, limit_value, offset_value,
       projections, @quoted_identifiers, @bind_limits, @table_alias, @distinct_value,
-      @groups, @havings, @joins)
+      @groups, @havings, @joins, @source_query)
   end
 
   def where(condition, params = nil)
@@ -517,17 +534,17 @@ class ArelQuery
   def distinct()
     ArelQuery.new(@table_name, @predicates, @orderings, @limit_value, @offset_value,
       @projections, @quoted_identifiers, @bind_limits, @table_alias, true, @groups,
-      @havings, @joins)
+      @havings, @joins, @source_query)
   end
   def group(expressions)
     ArelQuery.new(@table_name, @predicates, @orderings, @limit_value, @offset_value,
       @projections, @quoted_identifiers, @bind_limits, @table_alias, @distinct_value,
-      array_concat(@groups, arel_array(expressions)), @havings, @joins)
+      array_concat(@groups, arel_array(expressions)), @havings, @joins, @source_query)
   end
   def having(predicate)
     ArelQuery.new(@table_name, @predicates, @orderings, @limit_value, @offset_value,
       @projections, @quoted_identifiers, @bind_limits, @table_alias, @distinct_value,
-      @groups, array_concat(@havings, [predicate]), @joins)
+      @groups, array_concat(@havings, [predicate]), @joins, @source_query)
   end
   def ensure_join_alias_available(table: ArelTable)
     candidate = table.reference_name()
@@ -549,19 +566,22 @@ class ArelQuery
     self.ensure_join_alias_available(table)
     ArelQuery.new(@table_name, @predicates, @orderings, @limit_value, @offset_value,
       @projections, @quoted_identifiers, @bind_limits, @table_alias, @distinct_value,
-      @groups, @havings, array_concat(@joins, [ArelJoin.new(table, predicate, "INNER")]))
+      @groups, @havings, array_concat(@joins, [ArelJoin.new(table, predicate, "INNER")]),
+      @source_query)
   end
   def left_join(table: ArelTable, predicate)
     self.ensure_join_alias_available(table)
     ArelQuery.new(@table_name, @predicates, @orderings, @limit_value, @offset_value,
       @projections, @quoted_identifiers, @bind_limits, @table_alias, @distinct_value,
-      @groups, @havings, array_concat(@joins, [ArelJoin.new(table, predicate, "LEFT OUTER")]))
+      @groups, @havings, array_concat(@joins, [ArelJoin.new(table, predicate, "LEFT OUTER")]),
+      @source_query)
   end
   def cross_join(table: ArelTable)
     self.ensure_join_alias_available(table)
     ArelQuery.new(@table_name, @predicates, @orderings, @limit_value, @offset_value,
       @projections, @quoted_identifiers, @bind_limits, @table_alias, @distinct_value,
-      @groups, @havings, array_concat(@joins, [ArelJoin.new(table, nil, "CROSS")]))
+      @groups, @havings, array_concat(@joins, [ArelJoin.new(table, nil, "CROSS")]),
+      @source_query)
   end
   def order(column_or_columns)
     self.copy(@predicates, array_concat(@orderings, arel_array(column_or_columns)),
@@ -605,6 +625,10 @@ class Arel
   def self.avg(expression) = ArelFunction.new("AVG", [expression])
   def self.lower(expression) = ArelFunction.new("LOWER", [expression])
   def self.upper(expression) = ArelFunction.new("UPPER", [expression])
+  def self.from_subquery(query, name: String)
+    ArelQuery.new(name, [], [], nil, nil, [ArelRawSql.new("*", [])], true, true,
+      name, false, [], [], [], query)
+  end
   def self.from(table)
     if table is ArelTable
       ArelQuery.for_table(table)
