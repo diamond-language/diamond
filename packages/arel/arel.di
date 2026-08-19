@@ -416,13 +416,13 @@ class ArelSQLiteVisitor
         params.push(source_params[source_index])
         source_index = source_index + 1
       end
-      "(#{source_sql}) AS #{arel_quote_identifier(query.base_reference_name())}"
+      "(#{source_sql}) AS #{self.quote_identifier(query.base_reference_name())}"
     else
       sql = query.table_name()
       if query.quoted_identifiers()
-        sql = arel_quote_identifier(sql)
+        sql = self.quote_identifier(sql)
         if query.table_alias() != nil
-          sql = sql + " AS " + arel_quote_identifier(query.table_alias())
+          sql = sql + " AS " + self.quote_identifier(query.table_alias())
         end
       end
       sql
