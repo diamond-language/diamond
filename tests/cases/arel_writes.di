@@ -173,6 +173,23 @@ def run_tests()
     db.close()
   end
 
+  def test_insert_can_update_on_conflict()
+    db = SQLite3.open(":memory:")
+    db.execute("CREATE TABLE inventory (name TEXT UNIQUE, qty INTEGER)")
+    db.execute("INSERT INTO inventory VALUES ('pens', 2)")
+    inventory = Arel.table("inventory")
+    insert = Arel.insert_into(inventory).values({"name": "pens", "qty": 4})
+    insert = insert.on_conflict_do_update(["name"], {
+      "qty": Arel.expression(Arel.sql("excluded.\"qty\" + ?", [1]))
+    })
+    sql, params = insert.to_sql()
+    Minitest.assert_equal("INSERT INTO \"inventory\" (\"name\", \"qty\") VALUES (?, ?) ON CONFLICT (\"name\") DO UPDATE SET \"qty\" = excluded.\"qty\" + ?", sql)
+    Minitest.assert_equal(1, params[2])
+    insert.execute(db)
+    Minitest.assert_equal(5, db.query("SELECT qty FROM inventory")[0]["qty"])
+    db.close()
+  end
+
   suite = Minitest.new()
   suite.test("INSERT", test_insert_renders_and_executes)
   suite.test("UPDATE", test_update_renders_and_executes)
@@ -184,6 +201,7 @@ def run_tests()
   suite.test("INSERT SELECT", test_insert_select_preserves_query_binds_and_executes)
   suite.test("UPDATE expressions", test_update_assignments_accept_expressions)
   suite.test("INSERT conflict ignore", test_insert_can_ignore_conflicts)
+  suite.test("INSERT conflict update", test_insert_can_update_on_conflict)
   suite.run()
 end
 

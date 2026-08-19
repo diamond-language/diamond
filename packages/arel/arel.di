@@ -836,9 +836,41 @@ class ArelAssignmentValue
   def expression() = @expression
 end
 
+def arel_render_insert_conflict(target: Array, ignore: Bool, assignments, params: Array) -> String
+  if !ignore && assignments == nil
+    return ""
+  end
+  targets = []
+  def quote_target(name)
+    targets.push(arel_quote_identifier(name))
+  end
+  target.each(quote_target)
+  target_sql = ""
+  if targets.length() > 0
+    target_sql = " (#{targets.join(", ")})"
+  end
+  if ignore
+    return " ON CONFLICT#{target_sql} DO NOTHING"
+  end
+  rendered_assignments = []
+  visitor = ArelSQLiteVisitor.new()
+  def render_assignment(name, value)
+    if value is ArelAssignmentValue
+      rendered = visitor.render_expression(value.expression(), params)
+      rendered_assignments.push("#{arel_quote_identifier(name)} = #{rendered}")
+    else
+      rendered_assignments.push("#{arel_quote_identifier(name)} = ?")
+      params.push(value)
+    end
+  end
+  assignments.each(render_assignment)
+  " ON CONFLICT#{target_sql} DO UPDATE SET #{rendered_assignments.join(", ")}"
+end
+
 class ArelInsert
   def initialize(table: ArelTable, rows = [], returning = [], source_columns = [],
-                 source_query = nil, conflict_target = [], conflict_ignore = false)
+                 source_query = nil, conflict_target = [], conflict_ignore = false,
+                 conflict_assignments = nil)
     @table = table
     @rows = rows
     @returning = returning
@@ -846,6 +878,7 @@ class ArelInsert
     @source_query = source_query
     @conflict_target = conflict_target
     @conflict_ignore = conflict_ignore
+    @conflict_assignments = conflict_assignments
   end
 
   def values(attributes: Hash) = ArelInsert.new(@table, [attributes], @returning)
@@ -857,9 +890,13 @@ class ArelInsert
     ArelInsert.new(@table, @rows, @returning, @source_columns, @source_query,
       arel_array(columns), true)
   end
+  def on_conflict_do_update(columns, assignments: Hash)
+    ArelInsert.new(@table, @rows, @returning, @source_columns, @source_query,
+      arel_array(columns), false, assignments)
+  end
   def returning(expressions)
     ArelInsert.new(@table, @rows, arel_array(expressions), @source_columns, @source_query,
-      @conflict_target, @conflict_ignore)
+      @conflict_target, @conflict_ignore, @conflict_assignments)
   end
 
   def to_sql() -> Array
@@ -875,18 +912,8 @@ class ArelInsert
       source_sql, params = @source_query.to_sql()
       sql = "INSERT INTO #{arel_quote_identifier(@table.name())} " +
         "(#{columns.join(", ")}) #{source_sql}"
-      if @conflict_ignore
-        targets = []
-        def quote_source_conflict_target(name)
-          targets.push(arel_quote_identifier(name))
-        end
-        @conflict_target.each(quote_source_conflict_target)
-        target_sql = ""
-        if targets.length() > 0
-          target_sql = " (#{targets.join(", ")})"
-        end
-        sql = sql + " ON CONFLICT#{target_sql} DO NOTHING"
-      end
+      sql = sql + arel_render_insert_conflict(@conflict_target, @conflict_ignore,
+        @conflict_assignments, params)
       rendered = []
       visitor = ArelSQLiteVisitor.new()
       def render_source_returning(expression)
@@ -929,18 +956,8 @@ class ArelInsert
     @rows.each(collect_row)
     sql = "INSERT INTO #{arel_quote_identifier(@table.name())} " +
       "(#{columns.join(", ")}) VALUES #{value_groups.join(", ")}"
-    if @conflict_ignore
-      targets = []
-      def quote_conflict_target(name)
-        targets.push(arel_quote_identifier(name))
-      end
-      @conflict_target.each(quote_conflict_target)
-      target_sql = ""
-      if targets.length() > 0
-        target_sql = " (#{targets.join(", ")})"
-      end
-      sql = sql + " ON CONFLICT#{target_sql} DO NOTHING"
-    end
+    sql = sql + arel_render_insert_conflict(@conflict_target, @conflict_ignore,
+      @conflict_assignments, params)
     rendered = []
     visitor = ArelSQLiteVisitor.new()
     def render_returning(expression)
