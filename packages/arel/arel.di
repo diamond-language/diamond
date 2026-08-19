@@ -643,28 +643,6 @@ class ArelVisitor
     end
   end
 
-  def render_pagination(limit_value, offset_value, params: Array,
-                        bind_values = true) -> String
-    sql = ""
-    if limit_value != nil
-      if bind_values
-        sql = sql + " LIMIT ?"
-        params.push(limit_value)
-      else
-        sql = sql + " LIMIT #{limit_value}"
-      end
-    end
-    if offset_value != nil
-      if bind_values
-        sql = sql + " OFFSET ?"
-        params.push(offset_value)
-      else
-        sql = sql + " OFFSET #{offset_value}"
-      end
-    end
-    sql
-  end
-
   def render(query) -> Array
     previous_query = @query
     begin
@@ -753,6 +731,29 @@ class ArelSQLiteVisitor < ArelVisitor
   def visitor_name() = "SQLite"
   def quote_identifier(name: String) -> String = arel_quote_identifier(name)
   def supports_extension?(name: String) = true
+  def render_pagination(limit_value, offset_value, params: Array,
+                        bind_values = true) -> String
+    sql = ""
+    if limit_value == nil && offset_value != nil
+      sql = " LIMIT -1"
+    elsif limit_value != nil
+      if bind_values
+        sql = " LIMIT ?"
+        params.push(limit_value)
+      else
+        sql = " LIMIT #{limit_value}"
+      end
+    end
+    if offset_value != nil
+      if bind_values
+        sql = sql + " OFFSET ?"
+        params.push(offset_value)
+      else
+        sql = sql + " OFFSET #{offset_value}"
+      end
+    end
+    sql
+  end
 end
 
 class ArelQuery

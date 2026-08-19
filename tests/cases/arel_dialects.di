@@ -7,7 +7,14 @@ class PortableTestVisitor < ArelVisitor
   def supports_extension?(name: String) = false
   def render_pagination(limit_value, offset_value, params: Array,
                         bind_values = true) -> String
-    super(limit_value, offset_value, params, false)
+    sql = ""
+    if limit_value != nil
+      sql = " LIMIT #{limit_value}"
+    end
+    if offset_value != nil
+      sql = sql + " OFFSET #{offset_value}"
+    end
+    sql
   end
   def render_literal(value) -> String
     if value is Bool
