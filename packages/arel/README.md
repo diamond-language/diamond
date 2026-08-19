@@ -161,8 +161,16 @@ depth-first preorder walk, calls `visitor.visit(node)` when a visitor is
 provided, and returns the visited nodes for simple analysis without a visitor.
 Bound scalar values are not nodes and therefore do not appear in traversal.
 `Arel.simplify(node)` currently performs the deliberately conservative root
-rewrite `NOT NOT predicate -> predicate`, returning existing immutable nodes
-and leaving bind order unchanged.
+rewrite `NOT NOT predicate -> predicate` recursively throughout supported
+expression and SELECT trees, returning immutable nodes and leaving bind order
+unchanged. `Arel.with_children(node, replacements)` rebuilds decorators,
+expressions, predicates, joins, CTEs, compounds, and SELECT queries according
+to the same order returned by `Arel.children`; mismatched shapes fail early.
+
+Third-party nodes can structurally opt into the tooling protocols by providing
+`arel_children()`, `arel_inspect()`, and `arel_same?(other)`. This keeps
+extension nodes outside the central built-in type chain while allowing them to
+participate in traversal, diagnostics, and equality.
 
 `Arel.conflict_target(columns)` builds an immutable SQLite conflict target.
 Use `target.column(name)` with `where(predicate)` for partial unique indexes;

@@ -1,5 +1,14 @@
 # Changelog
 
+## Arel 0.17.0
+
+- Added immutable ordered-child replacement for decorators, expressions,
+  predicates, joins, CTEs, conflict targets, compounds, and SELECT queries.
+- Made double-negation simplification recursive across supported trees while
+  preserving source nodes and bind order.
+- Added structural third-party protocols for traversal, inspection, and
+  equality, with further function-capacity consolidation for extension users.
+
 ## Arel 0.16.0
 
 - Added stable child enumeration and iterative depth-first preorder traversal

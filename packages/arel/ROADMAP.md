@@ -28,18 +28,21 @@ Centralized inspection, equality, and ordered traversal now cover every
 built-in expression and query family, including write managers and their
 conflict, assignment, RETURNING, correlation, and CTE state. `Arel.walk`
 supports visitor-driven depth-first analysis, and `Arel.simplify` establishes
-the first conservative immutable rewrite. Continue the transformation layer:
+the first conservative immutable rewrite. `Arel.with_children` rebuilds
+expressions, predicates, composition nodes, compounds, and SELECT queries from
+ordered replacement children. Continue the transformation layer:
 
-- define immutable replacement helpers for expression and query children;
-- apply conservative rewrites recursively rather than only at the supplied
-  root;
-- let third-party nodes opt into inspection, equality, and traversal without
-  modifying the central inspector;
+- extend immutable replacement to INSERT, UPDATE, and DELETE manager children;
+- let third-party nodes opt into child replacement as well as their existing
+  inspection, equality, and traversal protocols;
+- add more conservative rewrites only when their SQLite semantics and bind
+  ordering are demonstrably unchanged;
 - keep traversal and rewrite machinery within Diamond's fixed function-table
   and per-function bytecode budgets.
 
-Completion means callers can transform any built-in subtree without rendering
-SQL or rebuilding its parents by hand.
+Completion means callers can transform write-manager subtrees as readily as
+SELECT and expression trees, without rendering SQL or rebuilding parents by
+hand.
 
 ## Deferred expression decisions
 
