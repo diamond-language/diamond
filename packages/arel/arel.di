@@ -640,6 +640,28 @@ class ArelVisitor
     end
   end
 
+  def render_pagination(limit_value, offset_value, params: Array,
+                        bind_values = true) -> String
+    sql = ""
+    if limit_value != nil
+      if bind_values
+        sql = sql + " LIMIT ?"
+        params.push(limit_value)
+      else
+        sql = sql + " LIMIT #{limit_value}"
+      end
+    end
+    if offset_value != nil
+      if bind_values
+        sql = sql + " OFFSET ?"
+        params.push(offset_value)
+      else
+        sql = sql + " OFFSET #{offset_value}"
+      end
+    end
+    sql
+  end
+
   def render(query) -> Array
     previous_query = @query
     begin
@@ -709,22 +731,8 @@ class ArelVisitor
       sql = sql + " ORDER BY " + orderings.join(", ")
     end
 
-    if query.limit_value() != nil
-      if query.bind_limits()
-        sql = sql + " LIMIT ?"
-        params.push(query.limit_value())
-      else
-        sql = sql + " LIMIT #{query.limit_value()}"
-      end
-    end
-    if query.offset_value() != nil
-      if query.bind_limits()
-        sql = sql + " OFFSET ?"
-        params.push(query.offset_value())
-      else
-        sql = sql + " OFFSET #{query.offset_value()}"
-      end
-    end
+    sql = sql + self.render_pagination(query.limit_value(), query.offset_value(),
+      params, query.bind_limits())
     [sql, params]
     ensure
       @query = previous_query
@@ -1049,14 +1057,7 @@ class ArelCompoundQuery
     if rendered_orderings.length() > 0
       sql = sql + " ORDER BY " + rendered_orderings.join(", ")
     end
-    if @limit_value != nil
-      sql = sql + " LIMIT ?"
-      params.push(@limit_value)
-    end
-    if @offset_value != nil
-      sql = sql + " OFFSET ?"
-      params.push(@offset_value)
-    end
+    sql = sql + visitor.render_pagination(@limit_value, @offset_value, params)
     [sql, params]
   end
 
@@ -1102,7 +1103,6 @@ class ArelConflictTarget
   end
   def columns() = @columns
   def predicate() = @predicate
-  def extension_name() = "conflict-target predicates"
   def where(predicate) = ArelConflictTarget.new(@columns, predicate)
   def column(name: String) = ArelConflictAttribute.new(name)
 end
@@ -1149,7 +1149,7 @@ def arel_render_insert_conflict(target, ignore: Bool, assignments, params: Array
     target_sql = " (#{targets.join(", ")})"
   end
   if predicate != nil
-    visitor.require_extension(target.extension_name())
+    visitor.require_extension("conflict-target predicates")
     target_sql = target_sql + " WHERE " + visitor.render_expression(predicate, params)
   end
   visitor.require_extension("upsert conflict actions")
