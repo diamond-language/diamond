@@ -1489,6 +1489,7 @@ class Arel
   def self.bit_and(expression, value) = ArelBinaryExpression.new(expression, "&", value)
   def self.bit_or(expression, value) = ArelBinaryExpression.new(expression, "|", value)
   def self.shift_left(expression, value) = ArelBinaryExpression.new(expression, "<<", value)
+  def self.shift_right(expression, value) = ArelBinaryExpression.new(expression, ">>", value)
   def self.conflict_target(columns) = ArelConflictTarget.new(arel_array(columns))
   def self.render(statement, visitor = nil) = statement.to_sql(visitor)
   def self.union(left, right) = ArelCompoundQuery.new(left, "UNION", right)
