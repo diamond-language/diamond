@@ -119,9 +119,14 @@ def run_tests()
       message = error.message()
     end
     Minitest.assert_equal("attribute belongs to a relation outside this query", message)
-    sql, params = Arel.from(Arel.table("People")).project(
-      Arel.table("people").column("id")).to_sql()
+    query = Arel.from(Arel.table("People")).project(Arel.table("people").column("id"))
+    sql, params = query.to_sql()
     Minitest.assert_equal("SELECT \"people\".\"id\" FROM \"People\"", sql)
+    db = SQLite3.open(":memory:")
+    db.execute("CREATE TABLE \"People\" (id INTEGER)")
+    db.execute("INSERT INTO \"People\" VALUES (7)")
+    Minitest.assert_equal(7, query.to_a(db)[0]["id"])
+    db.close()
   end
 
   def test_arbitrary_expressions_can_be_aliased()
