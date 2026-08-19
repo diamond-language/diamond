@@ -110,6 +110,14 @@ def run_tests()
       message = error.message()
     end
     Minitest.assert_equal("portable-test visitor does not support write CTEs", message)
+    message = nil
+    begin
+      Arel.insert_into(items).with("selected", source).values({"qty": 2}).to_sql(
+        PortableTestVisitor.new())
+    rescue error: ArgumentError
+      message = error.message()
+    end
+    Minitest.assert_equal("portable-test visitor does not support write CTEs", message)
   end
 
   def test_portable_select_nodes_render_without_extensions()
