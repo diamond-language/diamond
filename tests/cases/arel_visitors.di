@@ -21,6 +21,10 @@ end
 
 class WriteTestArelVisitor < ArelSQLiteVisitor
   def quote_identifier(name: String) -> String = "[#{name}]"
+  def render_insert(statement) -> Array
+    sql, params = super(statement)
+    ["custom #{sql}", params]
+  end
   def render_expression(expression, params: Array) -> String
     if expression is ArelExcludedAttribute
       "incoming.#{self.quote_identifier(expression.name())}"
@@ -74,7 +78,7 @@ def run_tests()
     })
     sql, params = insert.to_sql(WriteTestArelVisitor.new())
     Minitest.assert_equal(true, sql.include?("[qty] = incoming.[qty]"))
-    Minitest.assert_equal(true, sql.include?("INSERT INTO [inventory]"))
+    Minitest.assert_equal(true, sql.include?("custom INSERT INTO [inventory]"))
   end
 
   def test_update_expressions_use_the_explicit_visitor()
