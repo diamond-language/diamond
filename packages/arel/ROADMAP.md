@@ -22,28 +22,26 @@ Raw SQL remains an explicit escape hatch, not the representation used by new
 features. Values are bind parameters by default. Identifiers are represented
 as nodes and quoted by the active visitor.
 
-## Next milestone: controlled rewrite policies
+## Next milestone: explicit dialect capabilities
 
-Centralized inspection, equality, and ordered traversal now cover every
-built-in expression and query family, including write managers and their
-conflict, assignment, RETURNING, correlation, and CTE state. `Arel.walk`
-supports visitor-driven depth-first analysis, and `Arel.simplify` establishes
-the first conservative immutable rewrite. `Arel.with_children` rebuilds every
-built-in expression, SELECT, compound, and write-manager family from ordered
-replacement children, and third-party nodes can opt into the same operation.
-Build policy on top of that complete mechanism:
+The node model and rendering entry point are already visitor-oriented, but
+SQLite knowledge still leaks into which builders callers may safely use. Make
+the boundary explicit before implementing another database renderer:
 
-- define a caller-supplied postorder rewrite protocol without conflating it
-  with read-only traversal visitors;
-- decide whether rewrite passes should report whether they changed a tree;
-- add more built-in rewrites only when their SQLite semantics and bind ordering
-  are demonstrably unchanged;
-- provide rewrite composition without repeatedly walking unchanged subtrees;
-- keep traversal and rewrite machinery within Diamond's fixed function-table
-  and per-function bytecode budgets.
+- define a small dialect capability contract for syntax that is not portable,
+  beginning with conflict handling, RETURNING, NULL ordering, and write CTEs;
+- let visitors reject unsupported node combinations with useful errors before
+  emitting partial SQL;
+- keep SQLite as the sole production dialect while exercising the contract
+  with focused visitor fixtures;
+- document which builders are relationally portable and which represent
+  deliberate SQLite extensions;
+- preserve the current `[sql, bind_params]` result and exact bind ordering so a
+  later dialect visitor does not change the execution boundary.
 
-Completion means applications can compose explicit rewrite policies while the
-library retains structural validation, immutability, and deterministic order.
+Completion means a second dialect can be added by implementing and declaring
+visitor behavior, without changing existing query nodes or teaching callers to
+inspect visitor classes.
 
 ## Deferred expression decisions
 
