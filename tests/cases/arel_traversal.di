@@ -409,6 +409,10 @@ def run_tests()
     Minitest.assert_equal("Predicate(=, Attribute(people.verified), Bind(true))",
       Arel.inspect(extension_children[0]))
     Minitest.assert_equal("Attribute(people.name)", Arel.inspect(extension_children[1]))
+    composed = Arel.simplify(ArelNot.new(ArelNot.new(policy_source)),
+      [[policy_source, policy_replacement]])
+    Minitest.assert_equal("Predicate(=, Attribute(people.verified), Bind(true))",
+      Arel.inspect(composed))
   end
 
   suite = Minitest.new()
