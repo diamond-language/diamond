@@ -3,18 +3,18 @@ require "../../packages/arel/arel"
 
 def run_tests()
   def test_insert_renders_and_executes()
-    items = Arel.table("items")
-    insert = Arel.insert_into(items).values({"name": "pens", "qty": 3})
+    items = Arel.table("odd\"items")
+    insert = Arel.insert_into(items).values({"na\"me": "pens", "q\"ty": 3})
     sql, params = insert.to_sql()
-    Minitest.assert_equal("INSERT INTO \"items\" (\"name\", \"qty\") VALUES (?, ?)", sql)
+    Minitest.assert_equal("INSERT INTO \"odd\"\"items\" (\"na\"\"me\", \"q\"\"ty\") VALUES (?, ?)", sql)
     Minitest.assert_equal("pens", params[0])
     Minitest.assert_equal(3, params[1])
 
     db = SQLite3.open(":memory:")
-    db.execute("CREATE TABLE items (name TEXT, qty INTEGER)")
+    db.execute("CREATE TABLE \"odd\"\"items\" (\"na\"\"me\" TEXT, \"q\"\"ty\" INTEGER)")
     Minitest.assert_equal(1, insert.execute(db))
-    rows = db.query("SELECT * FROM items")
-    Minitest.assert_equal("pens", rows[0]["name"])
+    rows = db.query("SELECT * FROM \"odd\"\"items\"")
+    Minitest.assert_equal("pens", rows[0]["na\"me"])
     db.close()
   end
 
