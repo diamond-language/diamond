@@ -35,9 +35,22 @@ def run_tests()
     Minitest.assert_equal(4, params[5])
   end
 
+  def test_conflict_updates_reference_excluded_values_structurally()
+    inventory = Arel.table("inventory")
+    insert = Arel.insert_into(inventory).values({"name": "pens", "qty": 4})
+    insert = insert.on_conflict_do_update(["name"], {
+      "qty": Arel.expression(Arel.excluded("qty"))
+    })
+    sql, params = insert.to_sql()
+    Minitest.assert_equal("INSERT INTO \"inventory\" (\"name\", \"qty\") VALUES (?, ?) ON CONFLICT (\"name\") DO UPDATE SET \"qty\" = excluded.\"qty\"", sql)
+    Minitest.assert_equal("pens", params[0])
+    Minitest.assert_equal(4, params[1])
+  end
+
   suite = Minitest.new()
   suite.test("INSERT expressions", test_insert_values_accept_explicit_expressions)
   suite.test("multi-row INSERT expressions", test_multi_row_expressions_preserve_bind_order)
+  suite.test("excluded conflict value", test_conflict_updates_reference_excluded_values_structurally)
   suite.run()
 end
 

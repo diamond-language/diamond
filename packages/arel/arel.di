@@ -208,6 +208,13 @@ class ArelRawSql
   def not_() = ArelNot.new(self)
 end
 
+class ArelExcludedAttribute
+  def initialize(name: String)
+    @name = name
+  end
+  def name() = @name
+end
+
 class ArelJoin
   def initialize(table: ArelTable, predicate, kind: String)
     @table = table
@@ -482,6 +489,8 @@ class ArelSQLiteVisitor
       end
       expression.params().each(append_param)
       expression.sql()
+    elsif expression is ArelExcludedAttribute
+      "excluded.#{arel_quote_identifier(expression.name())}"
     elsif expression is String
       expression
     else
@@ -1265,6 +1274,7 @@ class Arel
   def self.not_exists(query) = ArelExists.new(query, true)
   def self.scalar(query) = ArelScalarSubquery.new(query)
   def self.expression(expression) = ArelAssignmentValue.new(expression)
+  def self.excluded(name: String) = ArelExcludedAttribute.new(name)
   def self.union(left, right) = ArelCompoundQuery.new(left, "UNION", right)
   def self.union_all(left, right) = ArelCompoundQuery.new(left, "UNION ALL", right)
   def self.intersect(left, right) = ArelCompoundQuery.new(left, "INTERSECT", right)
