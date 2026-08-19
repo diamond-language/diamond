@@ -13,8 +13,19 @@ def run_tests()
     Minitest.assert_equal(10, params[3])
   end
 
+  def test_like_predicates_are_bound()
+    people = Arel.table("people")
+    starts_with_a = people.column("name").like("A%")
+    predicate = starts_with_a.and_also(people.column("email").not_like("%@spam.test"))
+    sql, params = Arel.from(people).where(predicate).to_sql()
+    Minitest.assert_equal("SELECT * FROM \"people\" WHERE (\"people\".\"name\" LIKE ? AND \"people\".\"email\" NOT LIKE ?)", sql)
+    Minitest.assert_equal("A%", params[0])
+    Minitest.assert_equal("%@spam.test", params[1])
+  end
+
   suite = Minitest.new()
   suite.test("BETWEEN predicates", test_between_predicates_bind_both_bounds)
+  suite.test("LIKE predicates", test_like_predicates_are_bound)
   suite.run()
 end
 

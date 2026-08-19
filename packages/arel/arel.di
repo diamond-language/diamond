@@ -118,6 +118,8 @@ class ArelAttribute
   def lteq(value) = ArelPredicate.new(self, "<=", value)
   def gt(value) = ArelPredicate.new(self, ">", value)
   def gteq(value) = ArelPredicate.new(self, ">=", value)
+  def like(pattern: String) = ArelPredicate.new(self, "LIKE", pattern)
+  def not_like(pattern: String) = ArelPredicate.new(self, "NOT LIKE", pattern)
   def in_list(values: Array) = ArelMembership.new(self, values, false)
   def not_in(values: Array) = ArelMembership.new(self, values, true)
   def between(lower, upper) = ArelBetween.new(self, lower, upper, false)
