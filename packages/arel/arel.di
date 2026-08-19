@@ -435,6 +435,7 @@ class ArelSQLiteVisitor
     while index < query.ctes().length()
       cte = query.ctes()[index]
       if cte.recursive?()
+        self.require_extension("recursive CTEs")
         recursive = true
       end
       sql, bound = cte.query().render_with(self)

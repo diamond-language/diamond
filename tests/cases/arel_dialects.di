@@ -154,6 +154,14 @@ def run_tests()
       message = error.message()
     end
     Minitest.assert_equal("portable-test visitor does not support SQLite integer operators", message)
+    message = nil
+    begin
+      Arel.from(Arel.cte("items")).with_recursive(
+        "items", Arel.from("source")).to_sql(PortableTestVisitor.new())
+    rescue error: ArgumentError
+      message = error.message()
+    end
+    Minitest.assert_equal("portable-test visitor does not support recursive CTEs", message)
   end
 
   suite = Minitest.new()
