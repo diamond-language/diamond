@@ -155,6 +155,15 @@ comparison include assignments, predicates, source queries, conflict state,
 RETURNING expressions, and CTEs. Unknown third-party objects are reported as
 `ArelNode(unknown)` instead of being confused with a supported built-in node.
 
+`Arel.children(node)` exposes each built-in node's immediate children in a
+stable semantic order. `Arel.walk(node, visitor)` performs an iterative
+depth-first preorder walk, calls `visitor.visit(node)` when a visitor is
+provided, and returns the visited nodes for simple analysis without a visitor.
+Bound scalar values are not nodes and therefore do not appear in traversal.
+`Arel.simplify(node)` currently performs the deliberately conservative root
+rewrite `NOT NOT predicate -> predicate`, returning existing immutable nodes
+and leaving bind order unchanged.
+
 `Arel.conflict_target(columns)` builds an immutable SQLite conflict target.
 Use `target.column(name)` with `where(predicate)` for partial unique indexes;
 `Arel.literal(value)` supplies the literal integer or boolean SQLite requires

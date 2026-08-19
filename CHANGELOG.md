@@ -1,5 +1,16 @@
 # Changelog
 
+## Arel 0.16.0
+
+- Added stable child enumeration and iterative depth-first preorder traversal
+  across expressions, predicates, queries, compounds, CTEs, and write managers.
+- Added an optional `visit(node)` traversal protocol and conservative,
+  bind-preserving double-negation simplification.
+- Switched Arel Minitest cases to `run!()` exit-status checks and removed their
+  redundant golden-output files.
+- Recovered function-table capacity by replacing additional internal callback
+  closures with loops.
+
 ## Arel 0.15.0
 
 - Added deterministic inspection and structural equality for INSERT, UPDATE,

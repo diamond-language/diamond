@@ -24,22 +24,22 @@ as nodes and quoted by the active visitor.
 
 ## Next milestone: structural transformations
 
-Centralized inspection and equality now cover every built-in expression and
-query family, including write managers and their conflict, assignment,
-RETURNING, correlation, and CTE state. The next step is to make that structure
-useful without exposing mutable internals:
+Centralized inspection, equality, and ordered traversal now cover every
+built-in expression and query family, including write managers and their
+conflict, assignment, RETURNING, correlation, and CTE state. `Arel.walk`
+supports visitor-driven depth-first analysis, and `Arel.simplify` establishes
+the first conservative immutable rewrite. Continue the transformation layer:
 
-- add a visitor-driven tree walk with explicit child ordering;
 - define immutable replacement helpers for expression and query children;
-- provide a conservative predicate rewrite example, such as eliminating a
-  double negation, without changing bind order;
+- apply conservative rewrites recursively rather than only at the supplied
+  root;
 - let third-party nodes opt into inspection, equality, and traversal without
   modifying the central inspector;
 - keep traversal and rewrite machinery within Diamond's fixed function-table
   and per-function bytecode budgets.
 
-Completion means callers can analyze and transform a built-in tree without
-rendering SQL or rebuilding an entire query by hand.
+Completion means callers can transform any built-in subtree without rendering
+SQL or rebuilding its parents by hand.
 
 ## Deferred expression decisions
 
