@@ -1569,6 +1569,19 @@ def same?(left, right) -> Bool
       self.same?(left.expression(), right.expression())
   elsif left is ArelExcludedAttribute
     right is ArelExcludedAttribute && left.name() == right.name()
+  elsif left is ArelFunction
+    if !(right is ArelFunction) || left.name() != right.name() ||
+       left.distinct?() != right.distinct?() || left.arguments().length() != right.arguments().length()
+      return false
+    end
+    index = 0
+    while index < left.arguments().length()
+      if !self.same?(left.arguments()[index], right.arguments()[index])
+        return false
+      end
+      index = index + 1
+    end
+    true
   elsif left is ArelPredicate
     if !(right is ArelPredicate) || left.operator() != right.operator() ||
        !self.same?(left.left(), right.left())
