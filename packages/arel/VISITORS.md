@@ -27,15 +27,22 @@ The current named capabilities are:
 - `excluded-row attributes`;
 - `conflict-target predicates`;
 - `upsert conflict actions`;
-- `insert default values`.
+- `insert default values`;
+- `returning clauses`;
+- `explicit NULL ordering`;
+- `write CTEs`;
+- `recursive CTEs`;
+- `SQLite integer operators`.
 
 `ArelSQLiteVisitor` supports all of them. A visitor may support any subset.
 Unsupported use raises an `ArgumentError` naming both the visitor and the
 capability before SQL is returned.
 
 Extension nodes expose `extension_name()` where the capability belongs to a
-specific node. General upsert actions are checked by the INSERT manager because
-the capability describes the clause rather than one expression node.
+specific node. Statement managers check clause-level capabilities such as
+RETURNING, upsert actions, and write CTEs. The visitor checks expression-level
+capabilities such as explicit NULL ordering and SQLite's integer operators at
+the point where it renders them.
 
 ## Conformance
 
