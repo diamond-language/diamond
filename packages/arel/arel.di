@@ -828,12 +828,13 @@ class ArelQuery
       raise ArgumentError.new("duplicate relation alias in query")
     end
     duplicate = false
-    def check_existing_join(join)
-      if join.table().reference_name() == candidate
+    index = 0
+    while index < @joins.length()
+      if @joins[index].table().reference_name() == candidate
         duplicate = true
       end
+      index = index + 1
     end
-    @joins.each(check_existing_join)
     if duplicate
       raise ArgumentError.new("duplicate relation alias in query")
     end
@@ -865,12 +866,13 @@ class ArelQuery
       raise ArgumentError.new("correlation must reference an outer relation")
     end
     duplicate = false
-    def check_correlation(table)
-      if table.reference_name() == candidate
+    index = 0
+    while index < @correlations.length()
+      if @correlations[index].reference_name() == candidate
         duplicate = true
       end
+      index = index + 1
     end
-    @correlations.each(check_correlation)
     if duplicate
       raise ArgumentError.new("duplicate correlated relation")
     end
@@ -898,12 +900,13 @@ class ArelQuery
   end
   def ensure_cte_name_available(name: String)
     duplicate = false
-    def check_cte(cte)
-      if cte.name() == name
+    index = 0
+    while index < @ctes.length()
+      if @ctes[index].name() == name
         duplicate = true
       end
+      index = index + 1
     end
-    @ctes.each(check_cte)
     if duplicate
       raise ArgumentError.new("duplicate CTE name")
     end
