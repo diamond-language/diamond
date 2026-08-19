@@ -135,6 +135,15 @@ def run_tests()
     Minitest.assert_equal("recursive CTE anchor cannot reference itself", message)
   end
 
+  def test_ordinary_declaration_accepts_its_relation()
+    people = Arel.table("people")
+    active = Arel.cte("active")
+    source = Arel.from(people).where(people.column("active").eq(true))
+    sql, params = Arel.from(active).with(active, source).to_sql()
+    Minitest.assert_equal("WITH \"active\" AS (SELECT * FROM \"people\" WHERE \"people\".\"active\" = ?) SELECT * FROM \"active\"", sql)
+    Minitest.assert_equal(true, params[0])
+  end
+
   suite = Minitest.new()
   suite.test("single CTE", test_single_cte_renders_and_binds_before_main_query)
   suite.test("multiple CTEs", test_multiple_ctes_preserve_declaration_and_bind_order)
@@ -147,6 +156,7 @@ def run_tests()
   suite.test("recursive CTE relation declaration", test_recursive_declaration_accepts_its_relation)
   suite.test("recursive self-reference validation", test_recursive_body_requires_self_reference)
   suite.test("recursive anchor validation", test_recursive_body_rejects_self_referencing_anchor)
+  suite.test("ordinary CTE relation declaration", test_ordinary_declaration_accepts_its_relation)
   suite.run()
 end
 

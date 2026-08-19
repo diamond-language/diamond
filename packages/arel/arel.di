@@ -754,7 +754,8 @@ class ArelQuery
     end
     query
   end
-  def with(name: String, query)
+  def with(relation_or_name, query)
+    name = arel_cte_name(relation_or_name)
     self.ensure_cte_name_available(name)
     ArelQuery.new(@table_name, @predicates, @orderings, @limit_value, @offset_value,
       @projections, @quoted_identifiers, @bind_limits, @table_alias, @distinct_value,
@@ -959,7 +960,8 @@ class ArelInsert
     ArelInsert.new(@table, [], @returning, columns, query, @conflict_target,
       @conflict_ignore, @conflict_assignments, @ctes)
   end
-  def with(name: String, query)
+  def with(relation_or_name, query)
+    name = arel_cte_name(relation_or_name)
     ArelInsert.new(@table, @rows, @returning, @source_columns, @source_query,
       @conflict_target, @conflict_ignore, @conflict_assignments,
       arel_append_cte(@ctes, name, query))
@@ -1100,7 +1102,8 @@ class ArelUpdate
       @ctes)
   end
   def all() = ArelUpdate.new(@table, @assignments, @predicates, @returning, true, @ctes)
-  def with(name: String, query)
+  def with(relation_or_name, query)
+    name = arel_cte_name(relation_or_name)
     ArelUpdate.new(@table, @assignments, @predicates, @returning, @allow_all,
       arel_append_cte(@ctes, name, query))
   end
@@ -1182,7 +1185,8 @@ class ArelDelete
     ArelDelete.new(@table, @predicates, arel_array(expressions), @allow_all, @ctes)
   end
   def all() = ArelDelete.new(@table, @predicates, @returning, true, @ctes)
-  def with(name: String, query)
+  def with(relation_or_name, query)
+    name = arel_cte_name(relation_or_name)
     ArelDelete.new(@table, @predicates, @returning, @allow_all,
       arel_append_cte(@ctes, name, query))
   end
