@@ -920,13 +920,13 @@ class ArelQuery
   end
   def correlate(table: ArelTable)
     candidate = table.reference_name()
-    if candidate == self.base_reference_name()
+    if candidate.downcase() == self.base_reference_name().downcase()
       raise ArgumentError.new("correlation must reference an outer relation")
     end
     duplicate = false
     index = 0
     while index < @correlations.length()
-      if @correlations[index].reference_name() == candidate
+      if @correlations[index].reference_name().downcase() == candidate.downcase()
         duplicate = true
       end
       index = index + 1

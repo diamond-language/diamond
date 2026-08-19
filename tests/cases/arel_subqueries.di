@@ -79,12 +79,12 @@ def run_tests()
     local_message = nil
     duplicate_message = nil
     begin
-      Arel.from(memberships).correlate(memberships)
+      Arel.from(memberships).correlate(memberships.as("MEMBERSHIPS"))
     rescue error: ArgumentError
       local_message = error.message()
     end
     begin
-      Arel.from(memberships).correlate(people).correlate(people)
+      Arel.from(memberships).correlate(people).correlate(people.as("PEOPLE"))
     rescue error: ArgumentError
       duplicate_message = error.message()
     end
