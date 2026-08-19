@@ -70,6 +70,12 @@ def run_tests()
     Minitest.assert_equal("SELECT * FROM people WHERE active = ?", base_sql)
     Minitest.assert_equal("SELECT * FROM people WHERE active = ? AND age >= ?", adults_sql)
     Minitest.assert_equal("SELECT * FROM people WHERE active = ? AND age < ?", minors_sql)
+    paginated = base.take(1).skip(2)
+    paginated_sql, paginated_params = paginated.to_sql()
+    base_sql, base_params = base.to_sql()
+    Minitest.assert_equal("SELECT * FROM people WHERE active = ?", base_sql)
+    Minitest.assert_equal("SELECT * FROM people WHERE active = ? LIMIT 1 OFFSET 2",
+      paginated_sql)
   end
 
   def test_to_a_runs_the_query_against_a_real_db()
