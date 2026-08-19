@@ -153,6 +153,12 @@ def run_tests()
     db.execute("INSERT INTO \"user\"\"data\" VALUES (?)", ["safe"])
     rows = query.to_a(db)
     Minitest.assert_equal("safe", rows[0]["say\"hi"])
+    db.execute("CREATE TABLE guard (value INTEGER)")
+    db.execute("CREATE TABLE \"records; DROP TABLE guard; --\" (value INTEGER)")
+    malicious = Arel.table("records; DROP TABLE guard; --")
+    rows = Arel.from(malicious).to_a(db)
+    Minitest.assert_equal(0, rows.length())
+    Minitest.assert_equal(0, db.query("SELECT * FROM guard").length())
     db.close()
   end
 
