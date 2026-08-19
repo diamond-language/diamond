@@ -32,6 +32,10 @@ def run_tests()
     sql, params = query.to_sql()
     Minitest.assert_equal("SELECT name, age FROM people ORDER BY age DESC LIMIT 2 OFFSET 1", sql)
     Minitest.assert_equal(0, params.length())
+    query = Arel.from(Arel.table("people")).skip(3)
+    sql, params = query.to_sql()
+    Minitest.assert_equal("SELECT * FROM \"people\" LIMIT -1 OFFSET ?", sql)
+    Minitest.assert_equal("3", params.join("|"))
   end
 
   def test_order_accepts_an_array_of_columns()
