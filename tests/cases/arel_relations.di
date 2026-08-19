@@ -15,6 +15,15 @@ def run_tests()
       message = error.message()
     end
     Minitest.assert_equal("duplicate relation alias in query", message)
+    message = nil
+    begin
+      duplicate_base = people.as("PEOPLE")
+      Arel.from(people).join(duplicate_base,
+        people.column("id").eq(duplicate_base.column("id")))
+    rescue error: ArgumentError
+      message = error.message()
+    end
+    Minitest.assert_equal("duplicate relation alias in query", message)
   end
 
   def test_multiple_joins_preserve_sql_and_bind_order()
