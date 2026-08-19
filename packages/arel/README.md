@@ -98,6 +98,12 @@ quote-containing and SQL-injection-shaped names. String-query compatibility
 methods and `Arel.sql` remain explicit raw-SQL escape hatches and do not parse
 or sanitize their SQL fragments.
 
+Structured predicate, membership, pagination, INSERT, UPDATE, DELETE, and
+conflict-assignment values are positional binds, including when composed
+through subqueries. `Arel.sql(fragment, params)` preserves that protection for
+its `params`, but the caller remains wholly responsible for the `fragment`
+itself. Never interpolate untrusted input into a raw fragment.
+
 Diamond does not currently support user-defined `[]`, so attributes use
 `table.column("name")` rather than Ruby Arel's `table[:name]`. Likewise,
 `and_also`/`or_else`/`not_` avoid Diamond's reserved boolean keywords.
