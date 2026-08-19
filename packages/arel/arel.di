@@ -94,6 +94,12 @@ class ArelFunction
   end
   def name() = @name
   def arguments() = @arguments
+  def eq(value) = ArelPredicate.new(self, "=", value)
+  def not_eq(value) = ArelPredicate.new(self, "!=", value)
+  def lt(value) = ArelPredicate.new(self, "<", value)
+  def lteq(value) = ArelPredicate.new(self, "<=", value)
+  def gt(value) = ArelPredicate.new(self, ">", value)
+  def gteq(value) = ArelPredicate.new(self, ">=", value)
 end
 
 class ArelOrdering
@@ -174,7 +180,7 @@ class ArelSQLiteVisitor
     if expression is ArelAttribute
       self.render_attribute(expression)
     elsif expression is ArelPredicate
-      left = self.render_attribute(expression.left())
+      left = self.render_expression(expression.left(), params)
       value = expression.right()
       if value == nil
         if expression.operator() == "="
@@ -298,6 +304,15 @@ class ArelSQLiteVisitor
       sql = sql + " GROUP BY " + groups.join(", ")
     end
 
+    havings = []
+    def render_having(having)
+      havings.push(visitor.render_expression(having, params))
+    end
+    query.havings().each(render_having)
+    if havings.length() > 0
+      sql = sql + " HAVING " + havings.join(" AND ")
+    end
+
     orderings = []
     def render_ordering(ordering)
       orderings.push(visitor.render_expression(ordering, params))
@@ -330,7 +345,7 @@ end
 class ArelQuery
   def initialize(table_name, predicates, orderings, limit_value, offset_value,
                  projections, quoted_identifiers, bind_limits, table_alias = nil,
-                 distinct_value = false, groups = [])
+                 distinct_value = false, groups = [], havings = [])
     @table_name = table_name
     @predicates = predicates
     @orderings = orderings
@@ -342,6 +357,7 @@ class ArelQuery
     @table_alias = table_alias
     @distinct_value = distinct_value
     @groups = groups
+    @havings = havings
   end
 
   def self.for_table(table: ArelTable)
@@ -360,11 +376,12 @@ class ArelQuery
   def table_alias() = @table_alias
   def distinct_value() = @distinct_value
   def groups() = @groups
+  def havings() = @havings
 
   def copy(predicates, orderings, limit_value, offset_value, projections)
     ArelQuery.new(@table_name, predicates, orderings, limit_value, offset_value,
       projections, @quoted_identifiers, @bind_limits, @table_alias, @distinct_value,
-      @groups)
+      @groups, @havings)
   end
 
   def where(condition, params = nil)
@@ -399,12 +416,18 @@ class ArelQuery
   def select(columns) = self.project(columns)
   def distinct()
     ArelQuery.new(@table_name, @predicates, @orderings, @limit_value, @offset_value,
-      @projections, @quoted_identifiers, @bind_limits, @table_alias, true, @groups)
+      @projections, @quoted_identifiers, @bind_limits, @table_alias, true, @groups,
+      @havings)
   end
   def group(expressions)
     ArelQuery.new(@table_name, @predicates, @orderings, @limit_value, @offset_value,
       @projections, @quoted_identifiers, @bind_limits, @table_alias, @distinct_value,
-      array_concat(@groups, arel_array(expressions)))
+      array_concat(@groups, arel_array(expressions)), @havings)
+  end
+  def having(predicate)
+    ArelQuery.new(@table_name, @predicates, @orderings, @limit_value, @offset_value,
+      @projections, @quoted_identifiers, @bind_limits, @table_alias, @distinct_value,
+      @groups, array_concat(@havings, [predicate]))
   end
   def order(column_or_columns)
     self.copy(@predicates, array_concat(@orderings, arel_array(column_or_columns)),

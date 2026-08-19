@@ -42,11 +42,21 @@ def run_tests()
     Minitest.assert_equal("SELECT \"people\".\"role\", COUNT(\"people\".\"id\") FROM \"people\" GROUP BY \"people\".\"role\"", sql)
   end
 
+  def test_having_uses_expression_nodes_and_binds()
+    people = Arel.table("people")
+    count = Arel.count(people.column("id"))
+    query = Arel.from(people).project([people.column("role"), count])
+    sql, params = query.group(people.column("role")).having(count.gt(2)).to_sql()
+    Minitest.assert_equal("SELECT \"people\".\"role\", COUNT(\"people\".\"id\") FROM \"people\" GROUP BY \"people\".\"role\" HAVING COUNT(\"people\".\"id\") > ?", sql)
+    Minitest.assert_equal(2, params[0])
+  end
+
   suite = Minitest.new()
   suite.test("BETWEEN predicates", test_between_predicates_bind_both_bounds)
   suite.test("LIKE predicates", test_like_predicates_are_bound)
   suite.test("function and aggregate projections", test_function_and_aggregate_projections)
   suite.test("GROUP BY", test_group_by_accepts_expression_arrays)
+  suite.test("HAVING", test_having_uses_expression_nodes_and_binds)
   suite.run()
 end
 
