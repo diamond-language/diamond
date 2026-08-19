@@ -79,6 +79,14 @@ def run_tests()
     Minitest.assert_equal("portable-test visitor does not support returning clauses", message)
     message = nil
     begin
+      Arel.update(items).set({"name": "pencils"}).all().returning(
+        items.column("id")).to_sql(PortableTestVisitor.new())
+    rescue error: ArgumentError
+      message = error.message()
+    end
+    Minitest.assert_equal("portable-test visitor does not support returning clauses", message)
+    message = nil
+    begin
       Arel.from(items).order(items.column("name").asc().nulls_last()).to_sql(
         PortableTestVisitor.new())
     rescue error: ArgumentError
