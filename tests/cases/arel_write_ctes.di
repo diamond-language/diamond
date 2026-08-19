@@ -66,10 +66,33 @@ def run_tests()
     Minitest.assert_equal("duplicate CTE name", messages[2])
   end
 
+  def test_recursive_cte_can_feed_an_insert()
+    db = SQLite3.open(":memory:")
+    db.execute("CREATE TABLE seeds (value INTEGER)")
+    db.execute("CREATE TABLE results (value INTEGER)")
+    db.execute("INSERT INTO seeds VALUES (1)")
+    seeds = Arel.table("seeds")
+    numbers = Arel.table("numbers")
+    anchor = Arel.from(seeds).project(seeds.column("value"))
+    step = Arel.from(numbers).project(Arel.sql("value + 1"))
+    step = step.where(numbers.column("value").lt(3))
+    body = Arel.union_all(anchor, step)
+    selection = Arel.from(numbers).project(numbers.column("value"))
+    results = Arel.table("results")
+    insert = Arel.insert_into(results).with_recursive("numbers", body)
+    insert = insert.from_query(["value"], selection)
+    sql, params = insert.to_sql()
+    Minitest.assert_equal("WITH RECURSIVE \"numbers\" AS (SELECT \"seeds\".\"value\" FROM \"seeds\" UNION ALL SELECT value + 1 FROM \"numbers\" WHERE \"numbers\".\"value\" < ?) INSERT INTO \"results\" (\"value\") SELECT \"numbers\".\"value\" FROM \"numbers\"", sql)
+    insert.execute(db)
+    Minitest.assert_equal(3, db.query("SELECT value FROM results").length())
+    db.close()
+  end
+
   suite = Minitest.new()
   suite.test("UPDATE CTE", test_update_accepts_a_cte)
   suite.test("DELETE CTE", test_delete_accepts_a_cte)
   suite.test("write CTE duplicate names", test_write_managers_reject_duplicate_cte_names)
+  suite.test("recursive INSERT CTE", test_recursive_cte_can_feed_an_insert)
   suite.run()
 end
 

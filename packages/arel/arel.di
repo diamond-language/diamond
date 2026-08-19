@@ -917,6 +917,11 @@ class ArelInsert
       @conflict_target, @conflict_ignore, @conflict_assignments,
       arel_append_cte(@ctes, name, query))
   end
+  def with_recursive(name: String, query)
+    ArelInsert.new(@table, @rows, @returning, @source_columns, @source_query,
+      @conflict_target, @conflict_ignore, @conflict_assignments,
+      arel_append_cte(@ctes, name, query, true))
+  end
   def on_conflict_do_nothing(columns = [])
     ArelInsert.new(@table, @rows, @returning, @source_columns, @source_query,
       arel_array(columns), true, nil, @ctes)
