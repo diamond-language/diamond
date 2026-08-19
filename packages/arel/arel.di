@@ -726,6 +726,8 @@ class ArelSQLiteVisitor
     [sql, params]
   end
 
+  def render_compound(query) -> Array = query.render_default(self)
+
 end
 
 class ArelQuery
@@ -1013,7 +1015,7 @@ class ArelCompoundQuery
   end
   def offset(n: Int) = self.skip(n)
 
-  def render_with(visitor) -> Array
+  def render_default(visitor) -> Array
     left_sql, left_params = @left.render_with(visitor)
     right_sql, right_params = @right.render_with(visitor)
     if @left is ArelCompoundQuery
@@ -1043,6 +1045,8 @@ class ArelCompoundQuery
     end
     [sql, params]
   end
+
+  def render_with(visitor) -> Array = visitor.render_compound(self)
 
   def to_sql(visitor = nil) -> Array
     renderer = visitor
