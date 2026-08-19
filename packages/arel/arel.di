@@ -880,6 +880,9 @@ class ArelCteRelation < ArelTable
     super(name)
   end
   def recursive_body(anchor, recursive_branch)
+    if recursive_branch.base_reference_name() != self.name()
+      raise ArgumentError.new("recursive branch must reference its CTE relation")
+    end
     ArelCompoundQuery.new(anchor, "UNION ALL", recursive_branch)
   end
 end

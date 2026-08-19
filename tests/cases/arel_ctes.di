@@ -107,6 +107,21 @@ def run_tests()
     Minitest.assert_equal("WITH RECURSIVE \"numbers\" AS (SELECT \"seeds\".\"value\" FROM \"seeds\" UNION ALL SELECT value + 1 FROM \"numbers\") SELECT * FROM \"numbers\"", sql)
   end
 
+  def test_recursive_body_requires_self_reference()
+    seeds = Arel.table("seeds")
+    other = Arel.table("other")
+    numbers = Arel.cte("numbers")
+    anchor = Arel.from(seeds).project(seeds.column("value"))
+    invalid_step = Arel.from(other).project(other.column("value"))
+    message = nil
+    begin
+      numbers.recursive_body(anchor, invalid_step)
+    rescue error: ArgumentError
+      message = error.message()
+    end
+    Minitest.assert_equal("recursive branch must reference its CTE relation", message)
+  end
+
   suite = Minitest.new()
   suite.test("single CTE", test_single_cte_renders_and_binds_before_main_query)
   suite.test("multiple CTEs", test_multiple_ctes_preserve_declaration_and_bind_order)
@@ -117,6 +132,7 @@ def run_tests()
   suite.test("named CTE relation", test_named_cte_relation_builds_scoped_attributes)
   suite.test("recursive CTE body helper", test_cte_relation_builds_recursive_union_body)
   suite.test("recursive CTE relation declaration", test_recursive_declaration_accepts_its_relation)
+  suite.test("recursive self-reference validation", test_recursive_body_requires_self_reference)
   suite.run()
 end
 
