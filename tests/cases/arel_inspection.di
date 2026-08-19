@@ -109,6 +109,13 @@ def run_tests()
       Arel.from(Arel.table("people")).project(Arel.table("people").column("id")))
     Minitest.assert_equal(true, Arel.same?(with_cte, same_with_cte))
     Minitest.assert_equal(false, Arel.same?(with_cte, Arel.from(people).with_recursive("selected", subquery)))
+    archived = Arel.from(Arel.table("archived_people")).project(Arel.table("archived_people").column("id"))
+    compound = Arel.union(subquery, archived).order(people.column("id").asc()).take(5)
+    same_compound = Arel.union(Arel.from(Arel.table("people")).project(
+      Arel.table("people").column("id")), archived).order(
+      Arel.table("people").column("id").asc()).take(5)
+    Minitest.assert_equal(true, Arel.same?(compound, same_compound))
+    Minitest.assert_equal(false, Arel.same?(compound, Arel.union_all(subquery, archived).take(5)))
   end
 
   suite = Minitest.new()

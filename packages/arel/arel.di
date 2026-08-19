@@ -951,6 +951,9 @@ class ArelCompoundQuery
   def left() = @left
   def operator() = @operator
   def right() = @right
+  def orderings() = @orderings
+  def limit_value() = @limit_value
+  def offset_value() = @offset_value
   def projection_count() = @left.projection_count()
   def projection_count_known?() = true
 
@@ -1660,6 +1663,21 @@ def same_tail?(left, right) -> Bool
   elsif left is ArelCte
     right is ArelCte && left.name() == right.name() &&
       left.recursive?() == right.recursive?() && self.same?(left.query(), right.query())
+  elsif left is ArelCompoundQuery
+    if !(right is ArelCompoundQuery) || left.operator() != right.operator() ||
+       left.limit_value() != right.limit_value() || left.offset_value() != right.offset_value() ||
+       left.orderings().length() != right.orderings().length() ||
+       !self.same?(left.left(), right.left()) || !self.same?(left.right(), right.right())
+      return false
+    end
+    index = 0
+    while index < left.orderings().length()
+      if !self.same?(left.orderings()[index], right.orderings()[index])
+        return false
+      end
+      index = index + 1
+    end
+    true
   elsif left is ArelQuery
     if !(right is ArelQuery) || left.base_reference_name() != right.base_reference_name() ||
        left.distinct_value() != right.distinct_value() ||
