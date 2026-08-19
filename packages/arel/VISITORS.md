@@ -72,6 +72,12 @@ The current named capabilities are:
 Unsupported use raises an `ArgumentError` naming both the visitor and the
 capability before SQL is returned.
 
+SQLite's `quote_identifier` rejects empty components with
+`SQL identifier cannot be empty` and doubles embedded quote characters. The
+same check therefore covers relations, attributes, aliases, CTEs, write
+columns, INSERT…SELECT columns, and conflict targets. Other dialect visitors
+own their corresponding identifier validity rules.
+
 Extension nodes expose `extension_name()` where the capability belongs to a
 specific node. Statement managers check clause-level capabilities such as
 RETURNING, upsert actions, and write CTEs. The visitor checks expression-level
