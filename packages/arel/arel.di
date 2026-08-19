@@ -262,6 +262,15 @@ class ArelExcludedAttribute
   def divide_expression(expression) = ArelBinaryExpression.new(self, "/", expression, false)
 end
 
+class ArelConflictAttribute
+  def initialize(name: String)
+    @name = name
+  end
+  def name() = @name
+  def eq(value) = ArelPredicate.new(self, "=", value)
+  def not_eq(value) = ArelPredicate.new(self, "!=", value)
+end
+
 class ArelJoin
   def initialize(table: ArelTable, predicate, kind: String)
     @table = table
@@ -546,6 +555,8 @@ class ArelSQLiteVisitor
   def render_expression_extension(expression, params: Array) -> String
     if expression is ArelExcludedAttribute
       "excluded.#{arel_quote_identifier(expression.name())}"
+    elsif expression is ArelConflictAttribute
+      arel_quote_identifier(expression.name())
     elsif expression is ArelBinaryExpression
       left = self.render_expression(expression.left(), params)
       right = ""
@@ -990,6 +1001,7 @@ class ArelConflictTarget
   def columns() = @columns
   def predicate() = @predicate
   def where(predicate) = ArelConflictTarget.new(@columns, predicate)
+  def column(name: String) = ArelConflictAttribute.new(name)
 end
 
 class ArelDefaultValues
