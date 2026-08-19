@@ -1092,7 +1092,6 @@ class ArelConflictTarget
 end
 
 class ArelDefaultValues
-  def extension_name() = "insert default values"
 end
 
 def arel_render_returning_clause(expressions: Array, params: Array, visitor) -> String
@@ -1228,7 +1227,7 @@ class ArelInsert
       visitor.require_extension("write CTEs")
     end
     if @rows.length() == 1 && @rows[0] is ArelDefaultValues
-      visitor.require_extension(@rows[0].extension_name())
+      visitor.require_extension("insert default values")
       params = []
       sql = "INSERT INTO #{visitor.quote_identifier(@table.name())} DEFAULT VALUES"
       sql = sql + arel_render_returning_clause(@returning, params, visitor)
