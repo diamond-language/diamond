@@ -395,6 +395,13 @@ def run_tests()
       [[policy_source, first], [first, second], [second, final]])
     Minitest.assert_equal("Predicate(=, Attribute(people.final_choice), Bind(true))",
       Arel.inspect(composed))
+    policy_update = Arel.update(people).set({"score": 7}).where(policy_source)
+    rewritten_update = Arel.simplify(policy_update,
+      [[policy_source, people.column("verified").eq(false)]])
+    rewrite_sql, rewrite_params = rewritten_update.to_sql()
+    Minitest.assert_equal("UPDATE \"people\" SET \"score\" = ? WHERE \"people\".\"verified\" = ?",
+      rewrite_sql)
+    Minitest.assert_equal("7|false", rewrite_params.join("|"))
   end
 
   suite = Minitest.new()
