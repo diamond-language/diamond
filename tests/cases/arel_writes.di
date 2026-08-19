@@ -36,19 +36,19 @@ def run_tests()
   end
 
   def test_delete_renders_and_executes()
-    items = Arel.table("items")
-    deletion = Arel.delete_from(items).where(items.column("qty").lt(1))
+    items = Arel.table("odd\"items")
+    deletion = Arel.delete_from(items).where(items.column("q\"ty").lt(1))
     sql, params = deletion.to_sql()
-    Minitest.assert_equal("DELETE FROM \"items\" WHERE \"items\".\"qty\" < ?", sql)
+    Minitest.assert_equal("DELETE FROM \"odd\"\"items\" WHERE \"odd\"\"items\".\"q\"\"ty\" < ?", sql)
     Minitest.assert_equal(1, params.length())
     Minitest.assert_equal(1, params[0])
 
     db = SQLite3.open(":memory:")
-    db.execute("CREATE TABLE items (qty INTEGER)")
-    db.execute("INSERT INTO items VALUES (0)")
-    db.execute("INSERT INTO items VALUES (2)")
+    db.execute("CREATE TABLE \"odd\"\"items\" (\"q\"\"ty\" INTEGER)")
+    db.execute("INSERT INTO \"odd\"\"items\" VALUES (0)")
+    db.execute("INSERT INTO \"odd\"\"items\" VALUES (2)")
     Minitest.assert_equal(1, deletion.execute(db))
-    Minitest.assert_equal(2, db.query("SELECT qty FROM items")[0]["qty"])
+    Minitest.assert_equal(2, db.query("SELECT \"q\"\"ty\" FROM \"odd\"\"items\"")[0]["q\"ty"])
     db.close()
   end
 
