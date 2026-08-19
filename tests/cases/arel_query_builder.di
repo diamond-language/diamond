@@ -167,11 +167,16 @@ def run_tests()
     db.execute("CREATE TABLE people (name TEXT, age INTEGER, active INTEGER)")
     db.execute("INSERT INTO people VALUES (?, ?, ?)", ["Ada", 30, 1])
     db.execute("INSERT INTO people VALUES (?, ?, ?)", ["Bob", 15, 1])
+    db.execute("INSERT INTO people VALUES (?, ?, ?)", ["Robert'); DROP TABLE people; --", 20, 1])
     people = Arel.table("people")
     query = Arel.from(people).project(people.column("name"))
     rows = query.where(people.column("age").gteq(18)).to_a(db)
-    Minitest.assert_equal(1, rows.length())
+    Minitest.assert_equal(2, rows.length())
     Minitest.assert_equal("Ada", rows[0]["name"])
+    rows = Arel.from(people).where(people.column("name").eq(
+      "Robert'); DROP TABLE people; --")).to_a(db)
+    Minitest.assert_equal(1, rows.length())
+    Minitest.assert_equal(3, db.query("SELECT * FROM people").length())
     db.close()
   end
 
