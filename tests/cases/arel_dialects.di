@@ -10,6 +10,11 @@ end
 def run_tests()
   def test_visitors_report_unsupported_extensions()
     visitor = PortableTestVisitor.new()
+    Minitest.assert_equal("portable-test", visitor.visitor_name())
+    Minitest.assert_equal(false, visitor.supports_extension?("returning clauses"))
+    Minitest.assert_equal("SQLite", ArelSQLiteVisitor.new().visitor_name())
+    Minitest.assert_equal(true,
+      ArelSQLiteVisitor.new().supports_extension?("returning clauses"))
     message = nil
     begin
       visitor.require_extension("example extension")
