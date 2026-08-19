@@ -96,7 +96,8 @@ bytecode, or semantic stability.
 - Added HTTP, Rack-style middleware, Gremlin server, and Arel-style SQL query
   builder packages.
 - Expanded Arel with quoted expression nodes, grouping/aggregates, structural
-  joins, correlated subqueries, non-recursive CTEs, and SQLite set operations.
+  joins, correlated subqueries, recursive CTEs, SQLite set operations, and
+  immutable INSERT/UPDATE/DELETE managers with `RETURNING`.
 - Added a stdio Language Server with diagnostics, live dependency buffers,
   completion, hover, definitions, document symbols, and workspace symbols.
 - Added a VS Code TextMate grammar and hand-written LSP client.

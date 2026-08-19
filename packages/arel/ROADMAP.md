@@ -22,49 +22,35 @@ Raw SQL remains an explicit escape hatch, not the representation used by new
 features. Values are bind parameters by default. Identifiers are represented
 as nodes and quoted by the active visitor.
 
-## Next milestone: compound-query composition
+## Next milestone: deepen data-changing statements
 
-Round out the structural set-operation layer:
+Extend the initial immutable write managers:
 
-- explicit grouping when nested compound branches require parentheses;
-- ordering, limits, and offsets applied to the compound result rather than an
-  individual branch;
-- compound queries as CTE bodies and derived-table sources in execution tests;
-- clearer diagnostics when wildcard projections make branch shape unknowable;
-- optional structural type compatibility checks if query expressions acquire
-  reliable result-type metadata.
+- multi-row `INSERT` with consistent column-shape validation;
+- `INSERT ... SELECT` from ordinary or compound queries;
+- expression-valued UPDATE assignments rather than bind values only;
+- SQLite `ON CONFLICT` targets and update/do-nothing actions;
+- write statements composed with CTEs where SQLite permits them.
 
 Completion means every feature composes with existing predicates, preserves
 bind ordering, quotes identifiers correctly, and executes against SQLite in
 the package tests.
 
-## Following milestone: recursive common table expressions
+## Following milestone: finish recursive/compound edge cases
 
-Extend the existing non-recursive `WITH` representation:
+Round out the query features already represented:
 
-- `WITH RECURSIVE` rendering without making every CTE recursive;
 - self-reference through an explicit CTE relation object;
 - anchor/recursive branch helpers built from ordinary `UNION ALL` nodes;
 - validation for duplicate names and invalid self-reference;
-- SQLite execution coverage for a bounded recursive sequence or tree walk.
+- explicit compound grouping when mixed nested operators require parentheses;
+- diagnostics when wildcard projections make compound shape unknowable.
 
 CTEs should remain query nodes visited by the renderer, never interpolated SQL
 strings. SQLite execution tests should cover multiple CTE references and bind
 parameters in both CTE bodies and the consuming query.
 
-## Milestone 3: data-changing statements
-
-Add separate immutable managers for:
-
-- `INSERT`, including multi-row inserts and `INSERT ... SELECT`;
-- `UPDATE` with structured assignments and predicates;
-- `DELETE` with predicates;
-- SQLite conflict handling and `RETURNING` through dialect-specific nodes.
-
-Write statements return `[sql, bind_params]` like SELECT statements. Executing
-them remains the responsibility of the caller or a higher repository layer.
-
-## Milestone 4: visitor and adapter boundary
+## Milestone 3: visitor and adapter boundary
 
 Prove that the AST is not accidentally SQLite-specific:
 
@@ -79,7 +65,7 @@ Do not design hypothetical dialect abstractions before a second adapter exists.
 SQLite behavior should stay direct and readable until a concrete difference
 needs an abstraction.
 
-## Milestone 5: ergonomics and diagnostics
+## Milestone 4: ergonomics and diagnostics
 
 Once the algebra is stable:
 

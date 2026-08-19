@@ -4,15 +4,15 @@ See [ROADMAP.md](ROADMAP.md) for the forward-looking development plan.
 
 A small, immutable SQL AST and chainable query builder for
 [Diamond](https://gitlab.com/dmn9180/diamond) -- the first slice toward
-a DataMapper-style persistence layer. Builds and renders `SELECT`
-statements through a SQLite visitor; `INSERT`/`UPDATE`/`DELETE` belong to a mapper/
-repository layer built on top of this, not here -- matches real
+a DataMapper-style persistence layer. Builds and renders SELECT and data-changing
+statements through a SQLite visitor while leaving models, row mapping, and
+change tracking to a repository layer -- similar to real
 [Arel](https://github.com/rails/rails/tree/main/activerecord)'s own
 historical scope in Rails.
 
 The initial renderer is `ArelSQLiteVisitor`, but execution remains loosely
-coupled: `#to_a`/`#count` only call `db.query(sql, params)`, the exact
-method shape the SQLite3 driver exposes (see
+coupled: reads call `db.query(sql, params)` and writes call
+`db.execute(sql, params)`, the method shapes the SQLite3 driver exposes (see
 [`docs/io.md`](https://gitlab.com/dmn9180/diamond/-/blob/main/docs/io.md)'s
 "SQLite3" section). Any future adapter exposing the same
 `#query(sql, params)` contract is a drop-in target, the same way
@@ -75,9 +75,29 @@ select `nulls_first()` or `nulls_last()`.
 
 Inner queries opt into outer references with `correlate(table)` or
 `correlate_all(tables)`, retaining relation-scope validation at every nesting
-level. `query.with(name, source_query)` adds non-recursive CTEs. `Arel.union`,
+level. `query.with(name, source_query)` and `with_recursive` add CTEs. `Arel.union`,
 `union_all`, `intersect`, and `except` build structural compound queries and
-reject branches with different projection counts.
+reject branches with different projection counts. Compound results can be
+ordered, paginated, nested as derived sources, or used as CTE bodies.
+
+Immutable write managers use the same `[sql, params]` contract:
+
+```ruby
+items = Arel.table("items")
+
+insert = Arel.insert_into(items).values({"name": "pens", "qty": 3})
+update = Arel.update(items).set({"qty": 4})
+update = update.where(items.column("name").eq("pens"))
+delete = Arel.delete_from(items).where(items.column("qty").lt(1))
+
+insert.execute(db)
+rows = update.returning(items.column("qty")).to_a(db)
+delete.execute(db)
+```
+
+UPDATE and DELETE require a predicate unless the caller explicitly opts into a
+whole-table operation with `all()`. SQLite `RETURNING` is available on all three
+write managers.
 
 The original string-oriented API remains available for compatibility:
 
@@ -154,11 +174,9 @@ why nothing here names `SQLite3` directly.
 
 ## What's deliberately out of scope
 
-- **`INSERT`/`UPDATE`/`DELETE`.** This builds and reads `SELECT`
-  statements only -- writes belong to a mapper/repository layer above
-  this one.
-- **Recursive CTEs, compound-query modifiers, and data-changing statements.**
-  These are the next relational-algebra layers, not hidden raw SQL shortcuts.
+- **Multi-row inserts, `INSERT ... SELECT`, expression assignments, and SQLite
+  conflict clauses.** The current write managers intentionally start with the
+  single-row/common mutation shapes.
 - **Visitors for other adapters.** Nodes contain no SQLite rendering logic;
   `ArelSQLiteVisitor` is deliberately separate so later dialect visitors can
   render the same query tree.
