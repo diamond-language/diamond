@@ -1,5 +1,14 @@
 # Changelog
 
+## Arel 0.23.0
+
+- Introduced `ArelVisitor` as a reusable base for traversal, relation-scope
+  validation, statement dispatch, and capability diagnostics.
+- Moved visitor identity, extension support, and identifier quoting into
+  concrete dialect policy; portable fixtures no longer inherit SQLite policy.
+- Made nested query context exception-safe so visitor instances remain reusable
+  after validation and rendering failures.
+
 ## Arel 0.22.0
 
 - Added overridable visitor entry points for compound, INSERT, UPDATE, and
