@@ -42,6 +42,32 @@ def run_tests()
     Minitest.assert_equal("Binary(+, Attribute(people.rank), Bind(1))", Arel.inspect(changed_bound))
   end
 
+  def test_replacement_rejects_shape_mismatches()
+    people = Arel.table("people")
+    raised = false
+    begin
+      Arel.with_children(people.column("name").asc(), [])
+    rescue ArgumentError
+      raised = true
+    end
+    Minitest.assert_equal(true, raised)
+    raised = false
+    begin
+      Arel.with_children(people.column("age").between(18, 65),
+        [people.column("age"), Arel.literal(18)])
+    rescue ArgumentError
+      raised = true
+    end
+    Minitest.assert_equal(true, raised)
+    raised = false
+    begin
+      Arel.with_children(people, [])
+    rescue ArgumentError
+      raised = true
+    end
+    Minitest.assert_equal(true, raised)
+  end
+
   def test_predicate_children_preserve_semantic_order()
     people = Arel.table("people")
     roles = Arel.table("roles")
@@ -218,6 +244,7 @@ def run_tests()
   suite = Minitest.new()
   suite.test("ordered expression children", test_expression_children_are_ordered)
   suite.test("immutable expression child replacement", test_expression_children_can_be_replaced_immutably)
+  suite.test("replacement shape validation", test_replacement_rejects_shape_mismatches)
   suite.test("ordered predicate children", test_predicate_children_preserve_semantic_order)
   suite.test("immutable predicate child replacement", test_predicate_children_can_be_replaced_immutably)
   suite.test("ordered query children", test_query_children_follow_render_order)
