@@ -565,6 +565,7 @@ class ArelSQLiteVisitor
 
   def render_expression_extension(expression, params: Array) -> String
     if expression is ArelExcludedAttribute
+      self.require_extension("excluded-row attributes")
       "excluded.#{arel_quote_identifier(expression.name())}"
     elsif expression is ArelConflictAttribute
       arel_quote_identifier(expression.name())
