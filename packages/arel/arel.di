@@ -733,6 +733,7 @@ class ArelSQLiteVisitor
 
   def render_compound(query) -> Array = query.render_default(self)
   def render_insert(statement) -> Array = statement.render_default(self)
+  def render_update(statement) -> Array = statement.render_default(self)
 
 end
 
@@ -1382,7 +1383,7 @@ class ArelUpdate
       arel_append_cte(@ctes, name, query, true))
   end
 
-  def render_with(visitor) -> Array
+  def render_default(visitor) -> Array
     if @ctes.length() > 0
       visitor.require_extension("write CTEs")
     end
@@ -1434,6 +1435,8 @@ class ArelUpdate
     params = array_concat(cte_params, params)
     [sql, params]
   end
+
+  def render_with(visitor) -> Array = visitor.render_update(self)
 
   def to_sql(visitor = nil) -> Array
     renderer = visitor
