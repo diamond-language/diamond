@@ -1,5 +1,16 @@
 # Changelog
 
+## Arel 0.18.0
+
+- Extended immutable child replacement to INSERT, UPDATE, and DELETE managers,
+  including source queries, expression assignments, conflicts, RETURNING, and
+  write CTEs with stable bind order.
+- Added third-party child replacement through `arel_with_children` and
+  consolidated internal comparison/reconstruction helpers to preserve function
+  capacity for extension code.
+- Added semantics-preserving empty-membership simplification across read and
+  write trees.
+
 ## Arel 0.17.0
 
 - Added immutable ordered-child replacement for decorators, expressions,

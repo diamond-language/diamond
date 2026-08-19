@@ -164,13 +164,17 @@ Bound scalar values are not nodes and therefore do not appear in traversal.
 rewrite `NOT NOT predicate -> predicate` recursively throughout supported
 expression and SELECT trees, returning immutable nodes and leaving bind order
 unchanged. `Arel.with_children(node, replacements)` rebuilds decorators,
-expressions, predicates, joins, CTEs, compounds, and SELECT queries according
-to the same order returned by `Arel.children`; mismatched shapes fail early.
+expressions, predicates, joins, CTEs, compounds, SELECT queries, and all three
+write managers according to the same order returned by `Arel.children`;
+mismatched shapes fail early. Write replacement includes expression-valued
+rows/assignments, INSERT sources and conflicts, predicates, RETURNING, and CTEs
+while ordinary bound values remain untouched.
 
 Third-party nodes can structurally opt into the tooling protocols by providing
-`arel_children()`, `arel_inspect()`, and `arel_same?(other)`. This keeps
-extension nodes outside the central built-in type chain while allowing them to
-participate in traversal, diagnostics, and equality.
+`arel_children()`, `arel_with_children(replacements)`, `arel_inspect()`, and
+`arel_same?(other)`. This keeps extension nodes outside the central built-in
+type chain while allowing them to participate in traversal, transformations,
+diagnostics, and equality.
 
 `Arel.conflict_target(columns)` builds an immutable SQLite conflict target.
 Use `target.column(name)` with `where(predicate)` for partial unique indexes;

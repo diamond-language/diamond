@@ -22,27 +22,28 @@ Raw SQL remains an explicit escape hatch, not the representation used by new
 features. Values are bind parameters by default. Identifiers are represented
 as nodes and quoted by the active visitor.
 
-## Next milestone: structural transformations
+## Next milestone: controlled rewrite policies
 
 Centralized inspection, equality, and ordered traversal now cover every
 built-in expression and query family, including write managers and their
 conflict, assignment, RETURNING, correlation, and CTE state. `Arel.walk`
 supports visitor-driven depth-first analysis, and `Arel.simplify` establishes
-the first conservative immutable rewrite. `Arel.with_children` rebuilds
-expressions, predicates, composition nodes, compounds, and SELECT queries from
-ordered replacement children. Continue the transformation layer:
+the first conservative immutable rewrite. `Arel.with_children` rebuilds every
+built-in expression, SELECT, compound, and write-manager family from ordered
+replacement children, and third-party nodes can opt into the same operation.
+Build policy on top of that complete mechanism:
 
-- extend immutable replacement to INSERT, UPDATE, and DELETE manager children;
-- let third-party nodes opt into child replacement as well as their existing
-  inspection, equality, and traversal protocols;
-- add more conservative rewrites only when their SQLite semantics and bind
-  ordering are demonstrably unchanged;
+- define a caller-supplied postorder rewrite protocol without conflating it
+  with read-only traversal visitors;
+- decide whether rewrite passes should report whether they changed a tree;
+- add more built-in rewrites only when their SQLite semantics and bind ordering
+  are demonstrably unchanged;
+- provide rewrite composition without repeatedly walking unchanged subtrees;
 - keep traversal and rewrite machinery within Diamond's fixed function-table
   and per-function bytecode budgets.
 
-Completion means callers can transform write-manager subtrees as readily as
-SELECT and expression trees, without rendering SQL or rebuilding parents by
-hand.
+Completion means applications can compose explicit rewrite policies while the
+library retains structural validation, immutability, and deterministic order.
 
 ## Deferred expression decisions
 
