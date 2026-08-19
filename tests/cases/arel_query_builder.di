@@ -145,8 +145,15 @@ def run_tests()
 
   def test_identifier_quotes_are_escaped()
     unusual = Arel.table("user\"data")
-    sql, params = Arel.from(unusual).project(unusual.column("say\"hi")).to_sql()
+    query = Arel.from(unusual).project(unusual.column("say\"hi"))
+    sql, params = query.to_sql()
     Minitest.assert_equal("SELECT \"user\"\"data\".\"say\"\"hi\" FROM \"user\"\"data\"", sql)
+    db = SQLite3.open(":memory:")
+    db.execute("CREATE TABLE \"user\"\"data\" (\"say\"\"hi\" TEXT)")
+    db.execute("INSERT INTO \"user\"\"data\" VALUES (?)", ["safe"])
+    rows = query.to_a(db)
+    Minitest.assert_equal("safe", rows[0]["say\"hi"])
+    db.close()
   end
 
   def test_ast_executes_against_sqlite()
