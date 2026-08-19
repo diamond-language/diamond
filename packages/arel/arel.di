@@ -1570,6 +1570,39 @@ def same_tail?(left, right) -> Bool
   elsif left is ArelCollation
     right is ArelCollation && left.name() == right.name() &&
       self.same?(left.expression(), right.expression())
+  elsif left is ArelQuery
+    if !(right is ArelQuery) || left.base_reference_name() != right.base_reference_name() ||
+       left.distinct_value() != right.distinct_value() ||
+       left.limit_value() != right.limit_value() || left.offset_value() != right.offset_value() ||
+       left.projections().length() != right.projections().length() ||
+       left.predicates().length() != right.predicates().length() ||
+       left.orderings().length() != right.orderings().length() ||
+       left.joins().length() != 0 || right.joins().length() != 0 ||
+       left.ctes().length() != 0 || right.ctes().length() != 0
+      return false
+    end
+    index = 0
+    while index < left.projections().length()
+      if !self.same?(left.projections()[index], right.projections()[index])
+        return false
+      end
+      index = index + 1
+    end
+    index = 0
+    while index < left.predicates().length()
+      if !self.same?(left.predicates()[index], right.predicates()[index])
+        return false
+      end
+      index = index + 1
+    end
+    index = 0
+    while index < left.orderings().length()
+      if !self.same?(left.orderings()[index], right.orderings()[index])
+        return false
+      end
+      index = index + 1
+    end
+    true
   else
     false
   end
