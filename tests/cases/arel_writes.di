@@ -63,12 +63,35 @@ def run_tests()
     Minitest.assert_equal("paper", rows[0]["name"])
 
     update = Arel.update(items).set({"name": "card"})
-    updated = update.returning(items.column("name")).to_a(db)
+    updated = update.all().returning(items.column("name")).to_a(db)
     Minitest.assert_equal("card", updated[0]["name"])
 
-    deleted = Arel.delete_from(items).returning(items.column("id")).to_a(db)
+    deleted = Arel.delete_from(items).all().returning(items.column("id")).to_a(db)
     Minitest.assert_equal(1, deleted[0]["id"])
     db.close()
+  end
+
+  def test_write_validation_requires_values_and_explicit_scope()
+    items = Arel.table("items")
+    messages = []
+    begin
+      Arel.insert_into(items).values({}).to_sql()
+    rescue error: ArgumentError
+      messages.push(error.message())
+    end
+    begin
+      Arel.update(items).set({"qty": 1}).to_sql()
+    rescue error: ArgumentError
+      messages.push(error.message())
+    end
+    begin
+      Arel.delete_from(items).to_sql()
+    rescue error: ArgumentError
+      messages.push(error.message())
+    end
+    Minitest.assert_equal("INSERT requires at least one value", messages[0])
+    Minitest.assert_equal("UPDATE requires where() or explicit all()", messages[1])
+    Minitest.assert_equal("DELETE requires where() or explicit all()", messages[2])
   end
 
   suite = Minitest.new()
@@ -76,6 +99,7 @@ def run_tests()
   suite.test("UPDATE", test_update_renders_and_executes)
   suite.test("DELETE", test_delete_renders_and_executes)
   suite.test("RETURNING", test_returning_is_structural_and_returns_rows)
+  suite.test("write validation", test_write_validation_requires_values_and_explicit_scope)
   suite.run()
 end
 

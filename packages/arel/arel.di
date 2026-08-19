@@ -842,6 +842,9 @@ class ArelInsert
   end
 
   def to_sql() -> Array
+    if @attributes == nil || @attributes.length() == 0
+      raise ArgumentError.new("INSERT requires at least one value")
+    end
     columns = []
     placeholders = []
     params = []
@@ -876,22 +879,32 @@ class ArelInsert
 end
 
 class ArelUpdate
-  def initialize(table: ArelTable, assignments = nil, predicates = [], returning = [])
+  def initialize(table: ArelTable, assignments = nil, predicates = [], returning = [],
+                 allow_all = false)
     @table = table
     @assignments = assignments
     @predicates = predicates
     @returning = returning
+    @allow_all = allow_all
   end
 
-  def set(assignments: Hash) = ArelUpdate.new(@table, assignments, @predicates, @returning)
+  def set(assignments: Hash) = ArelUpdate.new(@table, assignments, @predicates, @returning, @allow_all)
   def where(predicate)
-    ArelUpdate.new(@table, @assignments, array_concat(@predicates, [predicate]), @returning)
+    ArelUpdate.new(@table, @assignments, array_concat(@predicates, [predicate]), @returning,
+      @allow_all)
   end
   def returning(expressions)
-    ArelUpdate.new(@table, @assignments, @predicates, arel_array(expressions))
+    ArelUpdate.new(@table, @assignments, @predicates, arel_array(expressions), @allow_all)
   end
+  def all() = ArelUpdate.new(@table, @assignments, @predicates, @returning, true)
 
   def to_sql() -> Array
+    if @assignments == nil || @assignments.length() == 0
+      raise ArgumentError.new("UPDATE requires at least one assignment")
+    end
+    if @predicates.length() == 0 && !@allow_all
+      raise ArgumentError.new("UPDATE requires where() or explicit all()")
+    end
     clauses = []
     params = []
     def collect_assignment(name, value)
@@ -931,20 +944,25 @@ class ArelUpdate
 end
 
 class ArelDelete
-  def initialize(table: ArelTable, predicates = [], returning = [])
+  def initialize(table: ArelTable, predicates = [], returning = [], allow_all = false)
     @table = table
     @predicates = predicates
     @returning = returning
+    @allow_all = allow_all
   end
 
   def where(predicate)
-    ArelDelete.new(@table, array_concat(@predicates, [predicate]), @returning)
+    ArelDelete.new(@table, array_concat(@predicates, [predicate]), @returning, @allow_all)
   end
   def returning(expressions)
-    ArelDelete.new(@table, @predicates, arel_array(expressions))
+    ArelDelete.new(@table, @predicates, arel_array(expressions), @allow_all)
   end
+  def all() = ArelDelete.new(@table, @predicates, @returning, true)
 
   def to_sql() -> Array
+    if @predicates.length() == 0 && !@allow_all
+      raise ArgumentError.new("DELETE requires where() or explicit all()")
+    end
     params = []
     sql = "DELETE FROM #{arel_quote_identifier(@table.name())}"
     predicates = []
