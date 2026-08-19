@@ -1671,11 +1671,20 @@ def with_query_children(node: ArelQuery, replacements: Array)
 end
 
 def simplify(node)
-  if node is ArelNot && node.expression() is ArelNot
-    node.expression().expression()
-  else
-    node
+  children = self.children(node)
+  if children.length() > 0
+    replacements = []
+    index = 0
+    while index < children.length()
+      replacements.push(self.simplify(children[index]))
+      index = index + 1
+    end
+    node = self.with_children(node, replacements)
   end
+  if node is ArelNot && node.expression() is ArelNot
+    return node.expression().expression()
+  end
+  node
 end
 
 def walk(node, visitor = nil) -> Array
