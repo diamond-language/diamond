@@ -3,6 +3,7 @@ require "../../packages/arel/arel"
 
 class TestArelVisitor < ArelSQLiteVisitor
   def quote_identifier(name: String) -> String = "[#{name}]"
+  def render_compound(query) -> Array = ["custom compound", []]
   def render_source(query, params: Array) -> String
     "test_source"
   end
@@ -131,9 +132,11 @@ def run_tests()
 
   def test_arel_render_is_the_common_visitor_entry_point()
     people = Arel.table("people")
-    query = Arel.from(people).project(people.column("value"))
+    branch = Arel.from(people).project(people.column("value"))
+    query = Arel.union(branch, branch)
     sql, params = Arel.render(query, TestArelVisitor.new())
-    Minitest.assert_equal("SELECT [people].[value] FROM test_source", sql)
+    Minitest.assert_equal("custom compound", sql)
+    Minitest.assert_equal(0, params.length())
   end
 
   suite = Minitest.new()
