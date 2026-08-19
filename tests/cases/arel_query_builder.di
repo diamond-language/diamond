@@ -133,6 +133,13 @@ def run_tests()
     db.close()
   end
 
+  def test_table_and_projection_aliases()
+    people = Arel.table("people").as("p")
+    query = Arel.from(people).project(people.column("name").as("display_name"))
+    sql, params = query.to_sql()
+    Minitest.assert_equal("SELECT \"p\".\"name\" AS \"display_name\" FROM \"people\" AS \"p\"", sql)
+  end
+
   suite = Minitest.new()
   suite.test("hash where renders equality", test_hash_where_renders_equality)
   suite.test("raw fragment where with params", test_raw_fragment_where_with_params)
@@ -147,6 +154,7 @@ def run_tests()
   suite.test("not-equal nil uses IS NOT NULL", test_not_eq_nil_uses_is_not_null)
   suite.test("identifier quotes are escaped", test_identifier_quotes_are_escaped)
   suite.test("AST executes against SQLite", test_ast_executes_against_sqlite)
+  suite.test("table and projection aliases", test_table_and_projection_aliases)
   suite.run()
 end
 

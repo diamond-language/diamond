@@ -66,6 +66,15 @@ class ArelOrdering
   def direction() = @direction
 end
 
+class ArelAlias
+  def initialize(expression, name: String)
+    @expression = expression
+    @name = name
+  end
+  def expression() = @expression
+  def name() = @name
+end
+
 class ArelAttribute
   def initialize(table, name: String)
     @table = table
@@ -81,13 +90,24 @@ class ArelAttribute
   def gteq(value) = ArelPredicate.new(self, ">=", value)
   def asc() = ArelOrdering.new(self, "ASC")
   def desc() = ArelOrdering.new(self, "DESC")
+  def as(name: String) = ArelAlias.new(self, name)
 end
 
 class ArelTable
-  def initialize(name: String)
+  def initialize(name: String, table_alias = nil)
     @name = name
+    @table_alias = table_alias
   end
   def name() = @name
+  def table_alias() = @table_alias
+  def reference_name()
+    if @table_alias == nil
+      @name
+    else
+      @table_alias
+    end
+  end
+  def as(name: String) = ArelTable.new(@name, name)
   def column(name: String) = ArelAttribute.new(self, name)
 end
 
@@ -102,7 +122,7 @@ end
 
 class ArelSQLiteVisitor
   def render_attribute(attribute: ArelAttribute) -> String
-    arel_quote_identifier(attribute.table().name()) + "." + arel_quote_identifier(attribute.name())
+    arel_quote_identifier(attribute.table().reference_name()) + "." + arel_quote_identifier(attribute.name())
   end
 
   def render_expression(expression, params: Array) -> String
@@ -134,6 +154,9 @@ class ArelSQLiteVisitor
       "(NOT #{inner})"
     elsif expression is ArelOrdering
       "#{self.render_attribute(expression.expression())} #{expression.direction()}"
+    elsif expression is ArelAlias
+      inner = self.render_expression(expression.expression(), params)
+      "#{inner} AS #{arel_quote_identifier(expression.name())}"
     elsif expression is ArelRawSql
       def append_param(value)
         params.push(value)
@@ -158,6 +181,9 @@ class ArelSQLiteVisitor
     table_sql = query.table_name()
     if query.quoted_identifiers()
       table_sql = arel_quote_identifier(table_sql)
+      if query.table_alias() != nil
+        table_sql = table_sql + " AS " + arel_quote_identifier(query.table_alias())
+      end
     end
     sql = "SELECT #{projections.join(", ")} FROM #{table_sql}"
 
@@ -201,7 +227,7 @@ end
 
 class ArelQuery
   def initialize(table_name, predicates, orderings, limit_value, offset_value,
-                 projections, quoted_identifiers, bind_limits)
+                 projections, quoted_identifiers, bind_limits, table_alias = nil)
     @table_name = table_name
     @predicates = predicates
     @orderings = orderings
@@ -210,10 +236,12 @@ class ArelQuery
     @projections = projections
     @quoted_identifiers = quoted_identifiers
     @bind_limits = bind_limits
+    @table_alias = table_alias
   end
 
   def self.for_table(table: ArelTable)
-    ArelQuery.new(table.name(), [], [], nil, nil, [ArelRawSql.new("*", [])], true, true)
+    ArelQuery.new(table.name(), [], [], nil, nil, [ArelRawSql.new("*", [])], true, true,
+      table.table_alias())
   end
 
   def table_name() = @table_name
@@ -224,10 +252,11 @@ class ArelQuery
   def projections() = @projections
   def quoted_identifiers() = @quoted_identifiers
   def bind_limits() = @bind_limits
+  def table_alias() = @table_alias
 
   def copy(predicates, orderings, limit_value, offset_value, projections)
     ArelQuery.new(@table_name, predicates, orderings, limit_value, offset_value,
-      projections, @quoted_identifiers, @bind_limits)
+      projections, @quoted_identifiers, @bind_limits, @table_alias)
   end
 
   def where(condition, params = nil)
