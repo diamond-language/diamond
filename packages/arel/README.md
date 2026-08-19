@@ -91,6 +91,13 @@ sql, params = query.to_sql()
 # params: [true, 18, 20, 5]
 ```
 
+SQLite identifier quoting doubles embedded `"` characters and treats the
+entire name as one identifier component. This applies to tables, columns,
+aliases, CTE names, assignments, and conflict targets; execution tests include
+quote-containing and SQL-injection-shaped names. String-query compatibility
+methods and `Arel.sql` remain explicit raw-SQL escape hatches and do not parse
+or sanitize their SQL fragments.
+
 Diamond does not currently support user-defined `[]`, so attributes use
 `table.column("name")` rather than Ruby Arel's `table[:name]`. Likewise,
 `and_also`/`or_else`/`not_` avoid Diamond's reserved boolean keywords.
