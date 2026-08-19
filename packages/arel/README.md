@@ -115,6 +115,18 @@ intentional; unwrapped values remain binds, including in bulk inserts.
 conflict update. `default_values()` emits `INSERT ... DEFAULT VALUES` and
 composes with `RETURNING`.
 
+Attributes, excluded-row attributes, and arithmetic expressions provide
+`add`, `subtract`, `multiply`, and `divide`; their ordinary arguments remain
+bind parameters. The corresponding `*_expression` methods accept another AST
+expression. Arithmetic is explicitly parenthesized so chaining preserves the
+constructed tree.
+
+`Arel.conflict_target(columns)` builds an immutable SQLite conflict target.
+Use `target.column(name)` with `where(predicate)` for partial unique indexes;
+`Arel.literal(value)` supplies the literal integer or boolean SQLite requires
+when matching an index predicate. Strings are deliberately rejected as
+structural literals and remain binds everywhere else.
+
 UPDATE and DELETE require a predicate unless the caller explicitly opts into a
 whole-table operation with `all()`. SQLite `RETURNING` is available on all three
 write managers, including multi-row INSERTs. Every write manager accepts

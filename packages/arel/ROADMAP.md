@@ -22,34 +22,33 @@ Raw SQL remains an explicit escape hatch, not the representation used by new
 features. Values are bind parameters by default. Identifiers are represented
 as nodes and quoted by the active visitor.
 
-## Next milestone: deepen write expressions
+## Next milestone: visitor and adapter boundary
 
-Structural INSERT expressions, excluded-row attributes, and DEFAULT VALUES are
-now represented. The remaining SQLite write-expression questions are:
+The SQLite feature set now covers structural arithmetic, excluded-row values,
+partial-index conflict targets, and DEFAULT VALUES. The next architectural work
+is to make the rendering boundary explicit:
 
-- conflict-target predicates and named constraints;
-- whether per-column DEFAULT can be offered portably despite SQLite's grammar;
-- structural arithmetic nodes so common updates do not require `Arel.sql`;
-- INSERT expression validation that distinguishes portable expressions from
-  dialect extensions.
+- define the visitor protocol expected by query and write managers;
+- allow callers to select a visitor without replacing node APIs;
+- identify SQLite-only nodes such as excluded-row and conflict-target forms;
+- build shared renderer fixtures before introducing another dialect;
+- add a second visitor only when another Diamond database adapter exists.
 
-Completion means common generated-value and upsert expressions can be built
-without raw SQL while preserving the explicit expression wrapper.
+Completion means managers no longer construct `ArelSQLiteVisitor` internally,
+while `to_sql()` remains a convenient SQLite-default compatibility entry point.
 
-## Following milestone: visitor and adapter boundary
+## Following milestone: remaining expression decisions
 
-Prove that the AST is not accidentally SQLite-specific:
+Resolve the write forms that need an actual portability decision:
 
-- define the visitor protocol expected by query managers;
-- make visitor selection explicit rather than hard-coded by `to_sql`;
-- separate portable nodes from dialect extension nodes;
-- add a second visitor when Diamond gains another database adapter;
-- maintain shared conformance fixtures for portable SQL and dialect-specific
-  fixtures for quoting, placeholders, and extensions.
+- whether per-column DEFAULT warrants a node when SQLite cannot use it in the
+  same places as other dialects;
+- named-constraint conflict targets for dialects that support them;
+- explicit classification of portable versus dialect-extension expressions;
+- any additional arithmetic, concatenation, or bitwise nodes demanded by real
+  repository-layer queries.
 
-Do not design hypothetical dialect abstractions before a second adapter exists.
-SQLite behavior should stay direct and readable until a concrete difference
-needs an abstraction.
+Do not emulate unsupported SQLite syntax merely for API symmetry.
 
 ## Milestone 3: ergonomics and diagnostics
 

@@ -1,5 +1,12 @@
 # Changelog
 
+## Arel 0.9.0
+
+- Added structural, parenthesized addition, subtraction, multiplication, and
+  division with bound or expression operands, including excluded-row values.
+- Added immutable partial-index conflict targets, structural target columns,
+  restricted integer/boolean SQL literals, and SQLite execution coverage.
+
 ## Arel 0.8.0
 
 - Added named CTE relation objects, recursive-body construction, declaration by
