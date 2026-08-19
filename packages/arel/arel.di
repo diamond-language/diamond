@@ -1719,6 +1719,74 @@ def with_write_children(node, replacements: Array)
       cte_index = cte_index + 1
     end
     ArelDelete.new(table, predicates, returning, state[3], ctes)
+  elsif node is ArelInsert
+    state = node.structure()
+    index = state[8].length()
+    table = replacements[index]
+    index = index + 1
+    source_query = state[4]
+    if source_query != nil
+      source_query = replacements[index]
+      index = index + 1
+    end
+    rows = []
+    row_index = 0
+    while row_index < state[1].length()
+      original_row = state[1][row_index]
+      if original_row is ArelDefaultValues
+        rows.push(original_row)
+      else
+        row = {}
+        value_index = 0
+        while value_index < original_row.length()
+          key = original_row.key_at(value_index)
+          value = original_row[key]
+          if value is ArelAssignmentValue
+            value = replacements[index]
+            index = index + 1
+          end
+          row[key] = value
+          value_index = value_index + 1
+        end
+        rows.push(row)
+      end
+      row_index = row_index + 1
+    end
+    conflict_target = state[5]
+    if conflict_target is ArelConflictTarget
+      conflict_target = replacements[index]
+      index = index + 1
+    end
+    conflict_assignments = nil
+    if state[7] != nil
+      conflict_assignments = {}
+      value_index = 0
+      while value_index < state[7].length()
+        key = state[7].key_at(value_index)
+        value = state[7][key]
+        if value is ArelAssignmentValue
+          value = replacements[index]
+          index = index + 1
+        end
+        conflict_assignments[key] = value
+        value_index = value_index + 1
+      end
+    end
+    returning = []
+    returning_index = 0
+    while returning_index < state[2].length()
+      returning.push(replacements[index])
+      index = index + 1
+      returning_index = returning_index + 1
+    end
+    ctes = []
+    cte_index = 0
+    while cte_index < state[8].length()
+      ctes.push(replacements[cte_index])
+      cte_index = cte_index + 1
+    end
+    ArelInsert.new(table, rows, returning, state[3], source_query, conflict_target,
+      state[6], conflict_assignments, ctes)
   else
     raise ArgumentError.new("Arel write manager does not support child replacement")
   end

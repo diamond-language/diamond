@@ -190,6 +190,15 @@ def run_tests()
     Minitest.assert_equal("ConflictTarget(name, predicate=false)", Arel.inspect(children[2]))
     Minitest.assert_equal("Assignment(Excluded(score))", Arel.inspect(children[3]))
     Minitest.assert_equal("Attribute(people.id)", Arel.inspect(children[4]))
+    replacements = [children[0], Arel.expression(people.column("score").add(2)),
+      children[2], Arel.expression(Arel.excluded("score").add(1)), people.column("email")]
+    changed = Arel.with_children(insert, replacements)
+    original_sql, original_params = insert.to_sql()
+    changed_sql, changed_params = changed.to_sql()
+    Minitest.assert_equal("INSERT INTO \"people\" (\"name\", \"score\") VALUES (?, (\"people\".\"score\" + ?)) ON CONFLICT (\"name\") DO UPDATE SET \"score\" = excluded.\"score\" RETURNING \"people\".\"id\"", original_sql)
+    Minitest.assert_equal("INSERT INTO \"people\" (\"name\", \"score\") VALUES (?, (\"people\".\"score\" + ?)) ON CONFLICT (\"name\") DO UPDATE SET \"score\" = (excluded.\"score\" + ?) RETURNING \"people\".\"email\"", changed_sql)
+    Minitest.assert_equal("Ada|1", original_params.join("|"))
+    Minitest.assert_equal("Ada|2|1", changed_params.join("|"))
   end
 
   def test_update_and_delete_children_are_ordered()
