@@ -56,12 +56,32 @@ def run_tests()
     Minitest.assert_equal("SELECT * FROM \"people\" WHERE EXISTS (SELECT * FROM \"memberships\" WHERE \"memberships\".\"person_id\" = \"people\".\"id\")", sql)
   end
 
+  def test_correlation_rejects_local_and_duplicate_relations()
+    people = Arel.table("people")
+    memberships = Arel.table("memberships")
+    local_message = nil
+    duplicate_message = nil
+    begin
+      Arel.from(memberships).correlate(memberships)
+    rescue error: ArgumentError
+      local_message = error.message()
+    end
+    begin
+      Arel.from(memberships).correlate(people).correlate(people)
+    rescue error: ArgumentError
+      duplicate_message = error.message()
+    end
+    Minitest.assert_equal("correlation must reference an outer relation", local_message)
+    Minitest.assert_equal("duplicate correlated relation", duplicate_message)
+  end
+
   suite = Minitest.new()
   suite.test("FROM subquery", test_subquery_can_be_used_as_from_source)
   suite.test("EXISTS predicates", test_exists_and_not_exists_are_predicates)
   suite.test("IN subquery", test_in_subquery_preserves_inner_binds)
   suite.test("scalar subquery", test_scalar_subquery_is_an_expression)
   suite.test("explicit correlation", test_explicit_correlation_allows_outer_attributes)
+  suite.test("correlation validation", test_correlation_rejects_local_and_duplicate_relations)
   suite.run()
 end
 

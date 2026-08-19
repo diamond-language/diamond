@@ -650,6 +650,20 @@ class ArelQuery
       @source_query, @correlations)
   end
   def correlate(table: ArelTable)
+    candidate = table.reference_name()
+    if candidate == self.base_reference_name()
+      raise ArgumentError.new("correlation must reference an outer relation")
+    end
+    duplicate = false
+    def check_correlation(table)
+      if table.reference_name() == candidate
+        duplicate = true
+      end
+    end
+    @correlations.each(check_correlation)
+    if duplicate
+      raise ArgumentError.new("duplicate correlated relation")
+    end
     ArelQuery.new(@table_name, @predicates, @orderings, @limit_value, @offset_value,
       @projections, @quoted_identifiers, @bind_limits, @table_alias, @distinct_value,
       @groups, @havings, @joins, @source_query,
