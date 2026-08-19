@@ -88,11 +88,11 @@ def run_tests()
   end
 
   def test_named_cte_relation_builds_scoped_attributes()
-    active = Arel.cte("active_people")
+    active = Arel.cte("active\"people")
     query = Arel.from(active).project(active.column("name"))
     sql, params = query.to_sql()
-    Minitest.assert_equal("active_people", active.name())
-    Minitest.assert_equal("SELECT \"active_people\".\"name\" FROM \"active_people\"", sql)
+    Minitest.assert_equal("active\"people", active.name())
+    Minitest.assert_equal("SELECT \"active\"\"people\".\"name\" FROM \"active\"\"people\"", sql)
   end
 
   def test_cte_relation_builds_recursive_union_body()
