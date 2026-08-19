@@ -1160,6 +1160,7 @@ class ArelInsert
 
   def render_with(visitor) -> Array
     if @rows.length() == 1 && @rows[0] is ArelDefaultValues
+      visitor.require_extension("insert default values")
       params = []
       sql = "INSERT INTO #{arel_quote_identifier(@table.name())} DEFAULT VALUES"
       sql = sql + arel_render_returning_clause(@returning, params, visitor)

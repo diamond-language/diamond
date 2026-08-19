@@ -60,11 +60,23 @@ def run_tests()
     Minitest.assert_equal("portable-test visitor does not support upsert conflict actions", message)
   end
 
+  def test_default_values_are_a_dialect_extension()
+    items = Arel.table("items")
+    message = nil
+    begin
+      Arel.insert_into(items).default_values().to_sql(PortableTestVisitor.new())
+    rescue error: ArgumentError
+      message = error.message()
+    end
+    Minitest.assert_equal("portable-test visitor does not support insert default values", message)
+  end
+
   suite = Minitest.new()
   suite.test("visitor extension protocol", test_visitors_report_unsupported_extensions)
   suite.test("excluded extension", test_excluded_attributes_are_dialect_extensions)
   suite.test("partial conflict extension", test_partial_conflict_targets_are_dialect_extensions)
   suite.test("upsert extension", test_upsert_actions_are_dialect_extensions)
+  suite.test("default values extension", test_default_values_are_a_dialect_extension)
   suite.run()
 end
 
