@@ -46,17 +46,17 @@ def run_tests()
     source = Arel.from(items)
     messages = []
     begin
-      Arel.insert_into(items).with("source", source).with("source", source)
+      Arel.insert_into(items).with("source", source).with("SOURCE", source)
     rescue error: ArgumentError
       messages.push(error.message())
     end
     begin
-      Arel.update(items).with("source", source).with("source", source)
+      Arel.update(items).with("source", source).with("SOURCE", source)
     rescue error: ArgumentError
       messages.push(error.message())
     end
     begin
-      Arel.delete_from(items).with("source", source).with("source", source)
+      Arel.delete_from(items).with("source", source).with("SOURCE", source)
     rescue error: ArgumentError
       messages.push(error.message())
     end
