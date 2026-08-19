@@ -154,11 +154,13 @@ class ArelBinaryExpression
   def multiply(value) = ArelBinaryExpression.new(self, "*", value)
   def divide(value) = ArelBinaryExpression.new(self, "/", value)
   def concat(value) = ArelBinaryExpression.new(self, "||", value)
+  def modulo(value) = ArelBinaryExpression.new(self, "%", value)
   def add_expression(expression) = ArelBinaryExpression.new(self, "+", expression, false)
   def subtract_expression(expression) = ArelBinaryExpression.new(self, "-", expression, false)
   def multiply_expression(expression) = ArelBinaryExpression.new(self, "*", expression, false)
   def divide_expression(expression) = ArelBinaryExpression.new(self, "/", expression, false)
   def concat_expression(expression) = ArelBinaryExpression.new(self, "||", expression, false)
+  def modulo_expression(expression) = ArelBinaryExpression.new(self, "%", expression, false)
 end
 
 class ArelLiteral
@@ -213,11 +215,13 @@ class ArelAttribute
   def multiply(value) = ArelBinaryExpression.new(self, "*", value)
   def divide(value) = ArelBinaryExpression.new(self, "/", value)
   def concat(value) = ArelBinaryExpression.new(self, "||", value)
+  def modulo(value) = ArelBinaryExpression.new(self, "%", value)
   def add_expression(expression) = ArelBinaryExpression.new(self, "+", expression, false)
   def subtract_expression(expression) = ArelBinaryExpression.new(self, "-", expression, false)
   def multiply_expression(expression) = ArelBinaryExpression.new(self, "*", expression, false)
   def divide_expression(expression) = ArelBinaryExpression.new(self, "/", expression, false)
   def concat_expression(expression) = ArelBinaryExpression.new(self, "||", expression, false)
+  def modulo_expression(expression) = ArelBinaryExpression.new(self, "%", expression, false)
 end
 
 class ArelQualifiedStar
@@ -277,11 +281,13 @@ class ArelExcludedAttribute
   def multiply(value) = ArelBinaryExpression.new(self, "*", value)
   def divide(value) = ArelBinaryExpression.new(self, "/", value)
   def concat(value) = ArelBinaryExpression.new(self, "||", value)
+  def modulo(value) = ArelBinaryExpression.new(self, "%", value)
   def add_expression(expression) = ArelBinaryExpression.new(self, "+", expression, false)
   def subtract_expression(expression) = ArelBinaryExpression.new(self, "-", expression, false)
   def multiply_expression(expression) = ArelBinaryExpression.new(self, "*", expression, false)
   def divide_expression(expression) = ArelBinaryExpression.new(self, "/", expression, false)
   def concat_expression(expression) = ArelBinaryExpression.new(self, "||", expression, false)
+  def modulo_expression(expression) = ArelBinaryExpression.new(self, "%", expression, false)
 end
 
 class ArelConflictAttribute
