@@ -1534,6 +1534,12 @@ def inspect_tail(node) -> String
       predicate = self.inspect(node.predicate())
     end
     "Join(#{node.kind()}, #{self.inspect(node.table())}, #{predicate})"
+  elsif node is ArelCte
+    mode = "ordinary"
+    if node.recursive?()
+      mode = "recursive"
+    end
+    "Cte(#{node.name()}, #{mode}, #{self.inspect(node.query())})"
   elsif node is ArelQuery
     "Query(from=#{node.base_reference_name()}, projections=#{node.projections().length()}, predicates=#{node.predicates().length()}, joins=#{node.joins().length()}, ctes=#{node.ctes().length()})"
   else
