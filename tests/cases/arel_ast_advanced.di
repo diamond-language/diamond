@@ -15,12 +15,19 @@ def run_tests()
 
   def test_like_predicates_are_bound()
     people = Arel.table("people")
-    starts_with_a = people.column("name").like("A%")
+    payload = "x'); DROP TABLE people; --"
+    starts_with_a = people.column("name").like(payload)
     predicate = starts_with_a.and_also(people.column("email").not_like("%@spam.test"))
     sql, params = Arel.from(people).where(predicate).to_sql()
     Minitest.assert_equal("SELECT * FROM \"people\" WHERE (\"people\".\"name\" LIKE ? AND \"people\".\"email\" NOT LIKE ?)", sql)
-    Minitest.assert_equal("A%", params[0])
+    Minitest.assert_equal(payload, params[0])
     Minitest.assert_equal("%@spam.test", params[1])
+    db = SQLite3.open(":memory:")
+    db.execute("CREATE TABLE people (name TEXT, email TEXT)")
+    db.execute("INSERT INTO people VALUES (?, ?)", [payload, "safe@example.test"])
+    Minitest.assert_equal(1, Arel.from(people).where(predicate).to_a(db).length())
+    Minitest.assert_equal(1, db.query("SELECT * FROM people").length())
+    db.close()
   end
 
   def test_function_and_aggregate_projections()
