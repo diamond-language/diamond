@@ -1079,6 +1079,10 @@ class ArelUpdate
     ArelUpdate.new(@table, @assignments, @predicates, @returning, @allow_all,
       arel_append_cte(@ctes, name, query))
   end
+  def with_recursive(name: String, query)
+    ArelUpdate.new(@table, @assignments, @predicates, @returning, @allow_all,
+      arel_append_cte(@ctes, name, query, true))
+  end
 
   def to_sql() -> Array
     if @assignments == nil || @assignments.length() == 0
@@ -1155,6 +1159,10 @@ class ArelDelete
   def with(name: String, query)
     ArelDelete.new(@table, @predicates, @returning, @allow_all,
       arel_append_cte(@ctes, name, query))
+  end
+  def with_recursive(name: String, query)
+    ArelDelete.new(@table, @predicates, @returning, @allow_all,
+      arel_append_cte(@ctes, name, query, true))
   end
 
   def to_sql() -> Array
