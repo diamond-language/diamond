@@ -44,6 +44,12 @@ Compound queries and each write manager enter `render_compound`,
 Visitors can replace a complete statement or call `super(statement)` to wrap
 SQLite's default rendering while retaining its ordered bind array.
 
+Dialect visitors can inherit `ArelVisitor` for shared AST traversal,
+relation-scope checks, nested query context, dispatch, and diagnostics without
+inheriting SQLite's capability or identifier-quoting policy. They provide a
+visitor name, capability predicate, and identifier quoting method; the default
+`ArelSQLiteVisitor` remains selected when no visitor is passed.
+
 ## Install
 
 Same story as the other packages here -- copy this directory into
