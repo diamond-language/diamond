@@ -17,6 +17,7 @@ class ThirdPartyPair
     @right = right
   end
   def arel_children() -> Array = [@left, @right]
+  def arel_inspect() -> String = "ThirdPartyPair"
 end
 
 def run_tests()
@@ -230,6 +231,7 @@ def run_tests()
   def test_third_party_nodes_opt_into_traversal()
     people = Arel.table("people")
     extension = ThirdPartyPair.new(people.column("name"), people.column("email"))
+    Minitest.assert_equal("ThirdPartyPair", Arel.inspect(extension))
     children = Arel.children(extension)
     Minitest.assert_equal("Attribute(people.name)|Attribute(people.email)",
       Arel.inspect(children[0]) + "|" + Arel.inspect(children[1]))

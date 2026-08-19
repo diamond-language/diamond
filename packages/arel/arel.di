@@ -5,6 +5,10 @@ interface ArelTraversalNode
   def arel_children() -> Array
 end
 
+interface ArelInspectable
+  def arel_inspect() -> String
+end
+
 def arel_array(value)
   if value is Array
     value
@@ -1982,6 +1986,8 @@ def inspect_tail(node) -> String
   elsif node is ArelDelete
     state = node.structure()
     "Delete(from=#{state[0].reference_name()}, predicates=#{state[1].length()}, returning=#{state[2].length()}, all=#{state[3]}, ctes=#{state[4].length()})"
+  elsif node is ArelInspectable
+    node.arel_inspect()
   else
     "ArelNode(unknown)"
   end
