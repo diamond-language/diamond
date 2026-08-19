@@ -492,10 +492,11 @@ class ArelSQLiteVisitor
     elsif expression is ArelMembership
       if !(expression.values() is Array)
         subquery_sql, subquery_params = expression.values().render_with(self)
-        def append_membership_param(value)
-          params.push(value)
+        subquery_index = 0
+        while subquery_index < subquery_params.length()
+          params.push(subquery_params[subquery_index])
+          subquery_index = subquery_index + 1
         end
-        subquery_params.each(append_membership_param)
         operator = "IN"
         if expression.negated?()
           operator = "NOT IN"
