@@ -1693,6 +1693,32 @@ def with_write_children(node, replacements: Array)
       cte_index = cte_index + 1
     end
     ArelUpdate.new(table, assignments, predicates, returning, state[4], ctes)
+  elsif node is ArelDelete
+    state = node.structure()
+    index = state[4].length()
+    table = replacements[index]
+    index = index + 1
+    predicates = []
+    predicate_index = 0
+    while predicate_index < state[1].length()
+      predicates.push(replacements[index])
+      index = index + 1
+      predicate_index = predicate_index + 1
+    end
+    returning = []
+    returning_index = 0
+    while returning_index < state[2].length()
+      returning.push(replacements[index])
+      index = index + 1
+      returning_index = returning_index + 1
+    end
+    ctes = []
+    cte_index = 0
+    while cte_index < state[4].length()
+      ctes.push(replacements[cte_index])
+      cte_index = cte_index + 1
+    end
+    ArelDelete.new(table, predicates, returning, state[3], ctes)
   else
     raise ArgumentError.new("Arel write manager does not support child replacement")
   end

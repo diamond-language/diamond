@@ -222,6 +222,17 @@ def run_tests()
     Minitest.assert_equal("1|true|7", original_params.join("|"))
     Minitest.assert_equal("2|true|8", changed_params.join("|"))
     Minitest.assert_equal("Update(table=people, assignments=2, predicates=1, returning=1, all=false, ctes=0)", Arel.inspect(update))
+    delete = Arel.delete_from(people).where(people.column("inactive").eq(true)).returning(
+      people.column("id"))
+    delete_children = Arel.children(delete)
+    changed_delete = Arel.with_children(delete, [delete_children[0],
+      people.column("archived").eq(true), people.column("email")])
+    delete_sql, delete_params = delete.to_sql()
+    changed_delete_sql, changed_delete_params = changed_delete.to_sql()
+    Minitest.assert_equal("DELETE FROM \"people\" WHERE \"people\".\"inactive\" = ? RETURNING \"people\".\"id\"", delete_sql)
+    Minitest.assert_equal("DELETE FROM \"people\" WHERE \"people\".\"archived\" = ? RETURNING \"people\".\"email\"", changed_delete_sql)
+    Minitest.assert_equal("true", delete_params.join("|"))
+    Minitest.assert_equal("true", changed_delete_params.join("|"))
   end
 
   def test_walk_is_depth_first_preorder()
