@@ -1,5 +1,13 @@
 # Changelog
 
+## Arel 0.13.0
+
+- Added deterministic non-SQL inspection for core expressions, predicate trees,
+  decorators, ranges, memberships, and query summaries.
+- Added centralized structural equality for core expressions, predicates,
+  decorators, and simple immutable queries while staying within Diamond's
+  fixed function-table budget.
+
 ## Arel 0.12.0
 
 - Added validated generic function and simple CAST nodes with injection-safety

@@ -22,21 +22,21 @@ Raw SQL remains an explicit escape hatch, not the representation used by new
 features. Values are bind parameters by default. Identifiers are represented
 as nodes and quoted by the active visitor.
 
-## Next milestone: ergonomics and diagnostics
+## Next milestone: complete structural tooling
 
-The expression model now includes validated generic functions and simple casts,
-concatenation, modulo, and the SQLite integer operators used by repository
-queries. The next work should make existing trees easier to inspect and compare:
+Centralized inspection and equality now cover core expressions, predicates,
+decorators, and simple queries without adding methods to every node. Complete
+that tooling before considering rewrites:
 
-- concise node inspection that does not pretend to be executable SQL;
-- deterministic structural equality for core expression and relation nodes;
-- clearer unsupported-node diagnostics including the node family;
-- construction helpers only where Diamond's lack of user-defined `[]` or
-  variadic arguments causes repeated noise;
-- rewrite passes only when a concrete adapter or repository feature needs one.
+- inspect joins, CTE declarations, compounds, and write managers;
+- compare joins, groups/HAVING, derived sources, CTEs, and compounds;
+- compare membership arrays and raw-SQL bind arrays by value;
+- distinguish unsupported inspection from an unknown third-party node;
+- keep the centralized implementation within Diamond's fixed function-table
+  budget.
 
-Completion means tests and repository code can reason about query structure
-without rendering SQL as an observational workaround.
+Completion means every built-in node can be inspected and compared without
+rendering SQL as an observational workaround.
 
 ## Deferred expression decisions
 

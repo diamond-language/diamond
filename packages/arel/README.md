@@ -143,6 +143,13 @@ that its name is a single identifier. `Arel.cast(expression, type_name)` does
 the same for simple CAST type names. Parameterized or dialect-specific type
 fragments still require an explicit dialect extension or `Arel.sql`.
 
+`Arel.inspect(node)` returns a deterministic structural description rather than
+executable SQL. It covers core expressions, predicates, decorators, and a
+concise query summary. `Arel.same?(left, right)` performs structural comparison
+for those expression families and for simple queries with projections,
+predicates, ordering, distinctness, and pagination. Queries containing joins or
+CTEs currently compare as unsupported instead of producing a false positive.
+
 `Arel.conflict_target(columns)` builds an immutable SQLite conflict target.
 Use `target.column(name)` with `where(predicate)` for partial unique indexes;
 `Arel.literal(value)` supplies the literal integer or boolean SQLite requires
