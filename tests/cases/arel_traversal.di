@@ -34,6 +34,12 @@ def run_tests()
     ordering = Arel.asc(people.column("name")).nulls_last()
     changed = Arel.with_children(ordering, [people.column("email")])
     Minitest.assert_equal("Ordering(ASC, NULLS LAST, Attribute(people.email))", Arel.inspect(changed))
+    binary = people.column("score").add_expression(Arel.literal(1))
+    changed_binary = Arel.with_children(binary, [people.column("rank"), Arel.literal(2)])
+    Minitest.assert_equal("Binary(+, Attribute(people.rank), Literal(2))", Arel.inspect(changed_binary))
+    bound = people.column("score").add(1)
+    changed_bound = Arel.with_children(bound, [people.column("rank")])
+    Minitest.assert_equal("Binary(+, Attribute(people.rank), Bind(1))", Arel.inspect(changed_bound))
   end
 
   def test_predicate_children_preserve_semantic_order()

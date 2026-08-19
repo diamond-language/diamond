@@ -1502,7 +1502,27 @@ def with_children(node, replacements: Array)
 end
 
 def with_children_tail(node, replacements: Array)
-  raise ArgumentError.new("Arel node does not support child replacement")
+  if node is ArelBinaryExpression
+    expected = 1
+    if !node.bind_right?()
+      expected = 2
+    end
+    if replacements.length() != expected
+      raise ArgumentError.new("ArelBinaryExpression replacement child count mismatch")
+    end
+    right = node.right()
+    if !node.bind_right?()
+      right = replacements[1]
+    end
+    ArelBinaryExpression.new(replacements[0], node.operator(), right, node.bind_right?())
+  elsif node is ArelQualifiedStar
+    if replacements.length() != 1 || !(replacements[0] is ArelTable)
+      raise ArgumentError.new("ArelQualifiedStar requires exactly one table child")
+    end
+    ArelQualifiedStar.new(replacements[0])
+  else
+    raise ArgumentError.new("Arel node does not support child replacement")
+  end
 end
 
 def simplify(node)
