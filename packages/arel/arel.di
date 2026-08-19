@@ -1466,6 +1466,16 @@ def inspect(node) -> String
     "Cast(#{self.inspect(node.expression())}, #{node.type_name()})"
   elsif node is ArelExcludedAttribute
     "Excluded(#{node.name()})"
+  elsif node is ArelTable
+    if node.table_alias() == nil
+      "Table(#{node.name()})"
+    else
+      "Table(#{node.name()} AS #{node.table_alias()})"
+    end
+  elsif node is ArelQualifiedStar
+    "QualifiedStar(#{node.table().reference_name()})"
+  elsif node is ArelConflictAttribute
+    "ConflictAttribute(#{node.name()})"
   elsif node is ArelRawSql
     "RawSql(#{node.sql()}, #{node.params().length()} binds)"
   elsif node is ArelCollation
