@@ -1542,6 +1542,8 @@ def inspect_tail(node) -> String
     "Cte(#{node.name()}, #{mode}, #{self.inspect(node.query())})"
   elsif node is ArelQuery
     "Query(from=#{node.base_reference_name()}, projections=#{node.projections().length()}, predicates=#{node.predicates().length()}, joins=#{node.joins().length()}, ctes=#{node.ctes().length()})"
+  elsif node is ArelCompoundQuery
+    "Compound(#{node.operator()}, #{self.inspect(node.left())}, #{self.inspect(node.right())})"
   else
     "ArelNode(unsupported)"
   end
