@@ -45,10 +45,24 @@ def run_tests()
     Minitest.assert_equal("Ordering(ASC, Attribute(people.name))", Arel.inspect(children[4]))
   end
 
+  def test_composition_children_are_structural()
+    people = Arel.table("people")
+    archived = Arel.table("archived")
+    left = Arel.from(people).project(people.column("id"))
+    right = Arel.from(archived).project(archived.column("id"))
+    compound_children = Arel.children(Arel.union(left, right).order(people.column("id").asc()))
+    Minitest.assert_equal(3, compound_children.length())
+    Minitest.assert_equal("Query(from=people, projections=1, predicates=0, joins=0, ctes=0)", Arel.inspect(compound_children[0]))
+    Minitest.assert_equal("Query(from=archived, projections=1, predicates=0, joins=0, ctes=0)", Arel.inspect(compound_children[1]))
+    target = Arel.conflict_target(["id"]).where(people.column("active").eq(Arel.literal(true)))
+    Minitest.assert_equal("Predicate(=, Attribute(people.active), Literal(true))", Arel.inspect(Arel.children(target)[0]))
+  end
+
   suite = Minitest.new()
   suite.test("ordered expression children", test_expression_children_are_ordered)
   suite.test("ordered predicate children", test_predicate_children_preserve_semantic_order)
   suite.test("ordered query children", test_query_children_follow_render_order)
+  suite.test("composition children", test_composition_children_are_structural)
   suite.run()
 end
 

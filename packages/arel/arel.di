@@ -1530,6 +1530,16 @@ def children_tail(node) -> Array
     children = array_concat(children, node.havings())
     children = array_concat(children, node.orderings())
     array_concat(children, node.correlations())
+  elsif node is ArelCompoundQuery
+    array_concat([node.left(), node.right()], node.orderings())
+  elsif node is ArelCte
+    [node.query()]
+  elsif node is ArelConflictTarget
+    if node.predicate() == nil
+      []
+    else
+      [node.predicate()]
+    end
   else
     []
   end
