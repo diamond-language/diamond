@@ -11,6 +11,14 @@ class RecordingVisitor
   def nodes() = @nodes
 end
 
+class ThirdPartyPair
+  def initialize(left, right)
+    @left = left
+    @right = right
+  end
+  def arel_children() -> Array = [@left, @right]
+end
+
 def run_tests()
   def test_expression_children_are_ordered()
     people = Arel.table("people")
@@ -219,6 +227,15 @@ def run_tests()
     Minitest.assert_equal(descriptions.length(), returned.length())
   end
 
+  def test_third_party_nodes_opt_into_traversal()
+    people = Arel.table("people")
+    extension = ThirdPartyPair.new(people.column("name"), people.column("email"))
+    children = Arel.children(extension)
+    Minitest.assert_equal("Attribute(people.name)|Attribute(people.email)",
+      Arel.inspect(children[0]) + "|" + Arel.inspect(children[1]))
+    Minitest.assert_equal(3, Arel.walk(extension).length())
+  end
+
   def test_simplify_eliminates_double_negation_immutably()
     people = Arel.table("people")
     predicate = people.column("active").eq(true)
@@ -254,6 +271,7 @@ def run_tests()
   suite.test("ordered insert children", test_insert_children_follow_bind_structure)
   suite.test("ordered update and delete children", test_update_and_delete_children_are_ordered)
   suite.test("depth-first preorder walk", test_walk_is_depth_first_preorder)
+  suite.test("third-party traversal protocol", test_third_party_nodes_opt_into_traversal)
   suite.test("immutable double-negation simplification", test_simplify_eliminates_double_negation_immutably)
   suite.run!()
 end

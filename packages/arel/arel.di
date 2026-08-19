@@ -1,6 +1,10 @@
 # Immutable SQL AST and SQLite renderer. Query nodes describe intent; only
 # ArelSQLiteVisitor knows how that intent becomes SQL.
 
+interface ArelTraversalNode
+  def arel_children() -> Array
+end
+
 def arel_array(value)
   if value is Array
     value
@@ -789,15 +793,17 @@ class ArelQuery
     additions = []
     if condition is Hash
       table = ArelTable.new(@table_name)
-      quoted_identifiers = @quoted_identifiers
-      def add_equality(key, value)
-        if quoted_identifiers
+      index = 0
+      while index < condition.length()
+        key = condition.key_at(index)
+        value = condition[key]
+        if @quoted_identifiers
           additions.push(table.column(key).eq(value))
         else
           additions.push(ArelRawSql.new("#{key} = ?", [value]))
         end
+        index = index + 1
       end
-      condition.each(add_equality)
     elsif condition is String
       bound = params
       if bound == nil
@@ -1247,12 +1253,15 @@ class ArelInsert
     columns = []
     params = []
     first = @rows[0]
-    def collect_column(name, value)
-      columns.push(arel_quote_identifier(name))
+    column_index = 0
+    while column_index < first.length()
+      columns.push(arel_quote_identifier(first.key_at(column_index)))
+      column_index = column_index + 1
     end
-    first.each(collect_column)
     value_groups = []
-    def collect_row(row)
+    row_index = 0
+    while row_index < @rows.length()
+      row = @rows[row_index]
       if row.length() != first.length()
         raise ArgumentError.new("INSERT rows must have identical columns")
       end
@@ -1273,8 +1282,8 @@ class ArelInsert
         index = index + 1
       end
       value_groups.push("(#{placeholders.join(", ")})")
+      row_index = row_index + 1
     end
-    @rows.each(collect_row)
     sql = "INSERT INTO #{arel_quote_identifier(@table.name())} " +
       "(#{columns.join(", ")}) VALUES #{value_groups.join(", ")}"
     sql = sql + arel_render_insert_conflict(@conflict_target, @conflict_ignore,
@@ -1750,6 +1759,8 @@ def children(node) -> Array
       children.push(node.predicate())
     end
     children
+  elsif node is ArelTraversalNode
+    node.arel_children()
   else
     self.children_tail(node)
   end
