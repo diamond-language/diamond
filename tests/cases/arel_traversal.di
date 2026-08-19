@@ -56,6 +56,18 @@ def run_tests()
     Minitest.assert_equal(2, Arel.children(people.column("role_id").in_subquery(subquery)).length())
   end
 
+  def test_predicate_children_can_be_replaced_immutably()
+    people = Arel.table("people")
+    original = people.column("active").eq(true).and_also(people.column("age").gt(18))
+    replacement = people.column("verified").eq(true)
+    changed = Arel.with_children(original, [replacement, Arel.children(original)[1]])
+    Minitest.assert_equal("Logical(AND, Predicate(=, Attribute(people.active), Bind(true)), Predicate(>, Attribute(people.age), Bind(18)))", Arel.inspect(original))
+    Minitest.assert_equal("Logical(AND, Predicate(=, Attribute(people.verified), Bind(true)), Predicate(>, Attribute(people.age), Bind(18)))", Arel.inspect(changed))
+    range = people.column("age").between(18, 65)
+    Minitest.assert_equal("Between(BETWEEN, Attribute(people.score), 18, 65)",
+      Arel.inspect(Arel.with_children(range, [people.column("score")])))
+  end
+
   def test_query_children_follow_render_order()
     people = Arel.table("people")
     roles = Arel.table("roles")
@@ -162,6 +174,7 @@ def run_tests()
   suite.test("ordered expression children", test_expression_children_are_ordered)
   suite.test("immutable expression child replacement", test_expression_children_can_be_replaced_immutably)
   suite.test("ordered predicate children", test_predicate_children_preserve_semantic_order)
+  suite.test("immutable predicate child replacement", test_predicate_children_can_be_replaced_immutably)
   suite.test("ordered query children", test_query_children_follow_render_order)
   suite.test("composition children", test_composition_children_are_structural)
   suite.test("ordered insert children", test_insert_children_follow_bind_structure)

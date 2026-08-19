@@ -1520,6 +1520,48 @@ def with_children_tail(node, replacements: Array)
       raise ArgumentError.new("ArelQualifiedStar requires exactly one table child")
     end
     ArelQualifiedStar.new(replacements[0])
+  elsif node is ArelPredicate
+    expected = 1
+    structural_right = node.right() is ArelAttribute || node.right() is ArelLiteral
+    if structural_right
+      expected = 2
+    end
+    if replacements.length() != expected
+      raise ArgumentError.new("ArelPredicate replacement child count mismatch")
+    end
+    right = node.right()
+    if structural_right
+      right = replacements[1]
+    end
+    ArelPredicate.new(replacements[0], node.operator(), right)
+  elsif node is ArelLogical
+    if replacements.length() != 2
+      raise ArgumentError.new("ArelLogical requires exactly two children")
+    end
+    ArelLogical.new(replacements[0], node.operator(), replacements[1])
+  elsif node is ArelNot
+    if replacements.length() != 1
+      raise ArgumentError.new("ArelNot requires exactly one child")
+    end
+    ArelNot.new(replacements[0])
+  elsif node is ArelBetween
+    if replacements.length() != 1
+      raise ArgumentError.new("ArelBetween requires exactly one child")
+    end
+    ArelBetween.new(replacements[0], node.lower(), node.upper(), node.negated?())
+  elsif node is ArelMembership
+    expected = 1
+    if !(node.values() is Array)
+      expected = 2
+    end
+    if replacements.length() != expected
+      raise ArgumentError.new("ArelMembership replacement child count mismatch")
+    end
+    values = node.values()
+    if !(values is Array)
+      values = replacements[1]
+    end
+    ArelMembership.new(replacements[0], values, node.negated?())
   else
     raise ArgumentError.new("Arel node does not support child replacement")
   end
