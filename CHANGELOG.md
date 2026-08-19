@@ -1,5 +1,14 @@
 # Changelog
 
+## Arel 0.27.0
+
+- Added SQLite execution coverage for quote-containing identifiers across
+  reads, aliases, CTEs, INSERT, UPDATE, DELETE, and conflict targets.
+- Added an execution-backed SQL-injection-shaped table-name case proving that
+  structured identifiers remain a single quoted component.
+- Documented the safety boundary between structured AST identifiers and the
+  explicit raw-SQL compatibility APIs.
+
 ## Arel 0.26.0
 
 - Added exact pagination bind-order coverage through derived sources, CTEs,
