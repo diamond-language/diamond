@@ -102,9 +102,11 @@ def run_tests()
 
   def test_delete_returning_uses_the_explicit_visitor()
     inventory = Arel.table("inventory")
-    deletion = Arel.delete_from(inventory).all().returning(Arel.excluded("id"))
+    deletion = Arel.delete_from(inventory).where(
+      inventory.column("archived").eq(true)).returning(Arel.excluded("id"))
     sql, params = deletion.to_sql(WriteTestArelVisitor.new())
-    Minitest.assert_equal("custom DELETE FROM [inventory] RETURNING incoming.[id]", sql)
+    Minitest.assert_equal("custom DELETE FROM [inventory] WHERE [inventory].[archived] = ? RETURNING incoming.[id]", sql)
+    Minitest.assert_equal("true", params.join("|"))
   end
 
   def test_select_execution_accepts_an_explicit_visitor()
