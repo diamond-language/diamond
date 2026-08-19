@@ -14,8 +14,22 @@ def run_tests()
     Minitest.assert_equal(18, params[1])
   end
 
+  def test_union_all_preserves_duplicates_in_sqlite()
+    db = SQLite3.open(":memory:")
+    db.execute("CREATE TABLE values_table (value INTEGER)")
+    db.execute("INSERT INTO values_table VALUES (?)", [1])
+    values = Arel.table("values_table")
+    branch = Arel.from(values).project(values.column("value"))
+    rows = Arel.union_all(branch, branch).to_a(db)
+    Minitest.assert_equal(2, rows.length())
+    Minitest.assert_equal(1, rows[0]["value"])
+    Minitest.assert_equal(1, rows[1]["value"])
+    db.close()
+  end
+
   suite = Minitest.new()
   suite.test("UNION", test_union_combines_queries_and_binds)
+  suite.test("UNION ALL", test_union_all_preserves_duplicates_in_sqlite)
   suite.run()
 end
 
