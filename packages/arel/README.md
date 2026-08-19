@@ -54,10 +54,16 @@ Diamond does not currently support user-defined `[]`, so attributes use
 `table.column("name")` rather than Ruby Arel's `table[:name]`. Likewise,
 `and_also`/`or_else`/`not_` avoid Diamond's reserved boolean keywords.
 
-Supported attribute predicates are `eq`, `not_eq`, `lt`, `lteq`, `gt`, and
-`gteq`. `eq(nil)` and `not_eq(nil)` render as `IS NULL` and `IS NOT NULL`.
+Supported attribute predicates are `eq`, `not_eq`, `lt`, `lteq`, `gt`,
+`gteq`, `in_list`, `not_in`, `between`, `not_between`, `like`, and `not_like`.
+`eq(nil)` and `not_eq(nil)` render as `IS NULL` and `IS NOT NULL`.
 Predicates compose with `and_also`, `or_else`, and `not_`; explicit grouping is
 preserved in the rendered SQL. Attributes also provide `asc()` and `desc()`.
+
+Queries support table/projection aliases, `DISTINCT`, grouping, `HAVING`, and
+structured inner/left-outer joins. `Arel.count`/`sum`/`min`/`max`/`avg` and
+`Arel.lower`/`upper` construct function nodes. `Arel.sql(fragment, params)` is
+the explicit escape hatch for an expression the AST cannot represent yet.
 
 The original string-oriented API remains available for compatibility:
 
@@ -137,9 +143,8 @@ why nothing here names `SQLite3` directly.
 - **`INSERT`/`UPDATE`/`DELETE`.** This builds and reads `SELECT`
   statements only -- writes belong to a mapper/repository layer above
   this one.
-- **Joins, grouping, aggregates, aliases, and subqueries as first-class
-  values.** These are the next relational-algebra layers, not hidden raw SQL
-  shortcuts in the initial AST.
+- **Subqueries, CTEs, set operations, and data-changing statements.** These are
+  the next relational-algebra layers, not hidden raw SQL shortcuts.
 - **Visitors for other adapters.** Nodes contain no SQLite rendering logic;
   `ArelSQLiteVisitor` is deliberately separate so later dialect visitors can
   render the same query tree.

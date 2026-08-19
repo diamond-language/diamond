@@ -22,34 +22,32 @@ Raw SQL remains an explicit escape hatch, not the representation used by new
 features. Values are bind parameters by default. Identifiers are represented
 as nodes and quoted by the active visitor.
 
-## Milestone 1: complete SELECT composition
+## Next milestone: finish SELECT expression coverage
 
-Build the common single-table query surface on the existing AST:
+Round out the expression forms that are still missing from the current SELECT
+AST:
 
-- aliases for tables, attributes, and projected expressions;
-- `DISTINCT` and expression aliases;
-- `IN`/`NOT IN`, `BETWEEN`, and `LIKE` predicates;
-- ordering with explicit null placement where the dialect supports it;
-- grouping and `HAVING`;
-- aggregate and scalar function nodes, beginning with `COUNT`, `SUM`, `MIN`,
-  `MAX`, `AVG`, `LOWER`, and `UPPER`;
-- a first-class SQL literal node for deliberate fragments that cannot yet be
-  represented structurally.
+- aliases and ordering methods on arbitrary expressions, not only attributes;
+- qualified wildcard projections such as `people.*`;
+- `COUNT(DISTINCT expression)` and distinct function arguments;
+- ordering with explicit null placement;
+- SQLite collation expressions;
+- reusable named-window and window-function nodes if a concrete application
+  needs them.
 
 Completion means every feature composes with existing predicates, preserves
 bind ordering, quotes identifiers correctly, and executes against SQLite in
 the package tests.
 
-## Milestone 2: joins and query aliases
+## Following milestone: broaden relation composition
 
-Add relations involving more than one source:
+Extend the existing inner/left-outer join model where real queries require it:
 
-- inner and left outer joins;
-- structured join predicates;
 - multiple joins in a deterministic order;
-- table aliases and self-joins;
-- qualified wildcard projections;
-- clear errors for attributes used outside the query's relation set.
+- bind-bearing expressions in join predicates;
+- cross joins;
+- dialect-gated right/full joins only when an adapter supports them;
+- clearer diagnostics for duplicate aliases in a relation set.
 
 Joins should be nodes visited by the renderer, never interpolated SQL strings.
 SQLite execution tests should cover ambiguous column names, aliases, and bind
