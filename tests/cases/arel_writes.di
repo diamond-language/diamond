@@ -94,12 +94,27 @@ def run_tests()
     Minitest.assert_equal("DELETE requires where() or explicit all()", messages[2])
   end
 
+  def test_multi_row_insert_preserves_row_and_bind_order()
+    items = Arel.table("items")
+    insert = Arel.insert_into(items).values_many([
+      {"name": "pens", "qty": 3},
+      {"name": "paper", "qty": 5}
+    ])
+    sql, params = insert.to_sql()
+    Minitest.assert_equal("INSERT INTO \"items\" (\"name\", \"qty\") VALUES (?, ?), (?, ?)", sql)
+    Minitest.assert_equal("pens", params[0])
+    Minitest.assert_equal(3, params[1])
+    Minitest.assert_equal("paper", params[2])
+    Minitest.assert_equal(5, params[3])
+  end
+
   suite = Minitest.new()
   suite.test("INSERT", test_insert_renders_and_executes)
   suite.test("UPDATE", test_update_renders_and_executes)
   suite.test("DELETE", test_delete_renders_and_executes)
   suite.test("RETURNING", test_returning_is_structural_and_returns_rows)
   suite.test("write validation", test_write_validation_requires_values_and_explicit_scope)
+  suite.test("multi-row INSERT", test_multi_row_insert_preserves_row_and_bind_order)
   suite.run()
 end
 

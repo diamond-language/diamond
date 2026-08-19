@@ -830,32 +830,44 @@ class ArelCompoundQuery
 end
 
 class ArelInsert
-  def initialize(table: ArelTable, attributes = nil, returning = [])
+  def initialize(table: ArelTable, rows = [], returning = [])
     @table = table
-    @attributes = attributes
+    @rows = rows
     @returning = returning
   end
 
-  def values(attributes: Hash) = ArelInsert.new(@table, attributes, @returning)
+  def values(attributes: Hash) = ArelInsert.new(@table, [attributes], @returning)
+  def values_many(rows: Array) = ArelInsert.new(@table, rows, @returning)
   def returning(expressions)
-    ArelInsert.new(@table, @attributes, arel_array(expressions))
+    ArelInsert.new(@table, @rows, arel_array(expressions))
   end
 
   def to_sql() -> Array
-    if @attributes == nil || @attributes.length() == 0
+    if @rows.length() == 0 || @rows[0].length() == 0
       raise ArgumentError.new("INSERT requires at least one value")
     end
     columns = []
-    placeholders = []
     params = []
-    def collect_attribute(name, value)
+    first = @rows[0]
+    def collect_column(name, value)
       columns.push(arel_quote_identifier(name))
-      placeholders.push("?")
-      params.push(value)
     end
-    @attributes.each(collect_attribute)
+    first.each(collect_column)
+    value_groups = []
+    def collect_row(row)
+      placeholders = []
+      index = 0
+      while index < first.length()
+        key = first.key_at(index)
+        placeholders.push("?")
+        params.push(row[key])
+        index = index + 1
+      end
+      value_groups.push("(#{placeholders.join(", ")})")
+    end
+    @rows.each(collect_row)
     sql = "INSERT INTO #{arel_quote_identifier(@table.name())} " +
-      "(#{columns.join(", ")}) VALUES (#{placeholders.join(", ")})"
+      "(#{columns.join(", ")}) VALUES #{value_groups.join(", ")}"
     rendered = []
     visitor = ArelSQLiteVisitor.new()
     def render_returning(expression)
