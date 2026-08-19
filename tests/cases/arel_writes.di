@@ -95,9 +95,15 @@ def run_tests()
     rescue error: ArgumentError
       messages.push(error.message())
     end
+    begin
+      Arel.insert_into(items).values({"": 1}).to_sql()
+    rescue error: ArgumentError
+      messages.push(error.message())
+    end
     Minitest.assert_equal("INSERT requires at least one value", messages[0])
     Minitest.assert_equal("UPDATE requires where() or explicit all()", messages[1])
     Minitest.assert_equal("DELETE requires where() or explicit all()", messages[2])
+    Minitest.assert_equal("SQL identifier cannot be empty", messages[3])
   end
 
   def test_multi_row_insert_preserves_row_and_bind_order()
