@@ -92,6 +92,27 @@ def run_tests()
     Minitest.assert_equal(20, params[1])
   end
 
+  def test_compound_query_can_feed_an_insert()
+    db = SQLite3.open(":memory:")
+    db.execute("CREATE TABLE current_names (name TEXT)")
+    db.execute("CREATE TABLE archived_names (name TEXT)")
+    db.execute("CREATE TABLE all_names (name TEXT)")
+    db.execute("INSERT INTO current_names VALUES ('new')")
+    db.execute("INSERT INTO archived_names VALUES ('old')")
+    current = Arel.table("current_names")
+    archived = Arel.table("archived_names")
+    source = Arel.union_all(
+      Arel.from(current).project(current.column("name")),
+      Arel.from(archived).project(archived.column("name")))
+    target = Arel.table("all_names")
+    insert = Arel.insert_into(target).from_query(["name"], source)
+    sql, params = insert.to_sql()
+    Minitest.assert_equal("INSERT INTO \"all_names\" (\"name\") SELECT \"current_names\".\"name\" FROM \"current_names\" UNION ALL SELECT \"archived_names\".\"name\" FROM \"archived_names\"", sql)
+    Minitest.assert_equal(2, insert.execute(db))
+    Minitest.assert_equal(2, db.query("SELECT name FROM all_names").length())
+    db.close()
+  end
+
   suite = Minitest.new()
   suite.test("UNION", test_union_combines_queries_and_binds)
   suite.test("UNION ALL", test_union_all_preserves_duplicates_in_sqlite)
@@ -101,6 +122,7 @@ def run_tests()
   suite.test("compound derived source", test_compound_query_can_be_a_derived_source)
   suite.test("compound ordering", test_compound_result_can_be_ordered)
   suite.test("compound pagination", test_compound_result_can_be_paginated)
+  suite.test("compound INSERT source", test_compound_query_can_feed_an_insert)
   suite.run()
 end
 
