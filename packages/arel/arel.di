@@ -234,6 +234,10 @@ class ArelExcludedAttribute
     @name = name
   end
   def name() = @name
+  def add(value) = ArelBinaryExpression.new(self, "+", value)
+  def subtract(value) = ArelBinaryExpression.new(self, "-", value)
+  def multiply(value) = ArelBinaryExpression.new(self, "*", value)
+  def divide(value) = ArelBinaryExpression.new(self, "/", value)
 end
 
 class ArelJoin

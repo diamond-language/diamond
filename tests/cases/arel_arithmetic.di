@@ -49,11 +49,23 @@ def run_tests()
     Minitest.assert_equal(2, params[0])
   end
 
+  def test_excluded_attributes_support_arithmetic()
+    inventory = Arel.table("inventory")
+    insert = Arel.insert_into(inventory).values({"name": "pens", "qty": 4})
+    insert = insert.on_conflict_do_update(["name"], {
+      "qty": Arel.expression(Arel.excluded("qty").add(1))
+    })
+    sql, params = insert.to_sql()
+    Minitest.assert_equal("INSERT INTO \"inventory\" (\"name\", \"qty\") VALUES (?, ?) ON CONFLICT (\"name\") DO UPDATE SET \"qty\" = (excluded.\"qty\" + ?)", sql)
+    Minitest.assert_equal(1, params[2])
+  end
+
   suite = Minitest.new()
   suite.test("structural addition", test_addition_is_a_structural_update_expression)
   suite.test("structural subtraction", test_subtraction_is_structural_and_chainable)
   suite.test("structural multiplication", test_multiplication_preserves_grouping)
   suite.test("structural division", test_division_renders_as_a_bound_expression)
+  suite.test("excluded arithmetic", test_excluded_attributes_support_arithmetic)
   suite.run()
 end
 
