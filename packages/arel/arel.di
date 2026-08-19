@@ -1603,6 +1603,18 @@ def with_children_tail(node, replacements: Array)
       predicate = replacements[0]
     end
     ArelConflictTarget.new(node.columns(), predicate)
+  elsif node is ArelCompoundQuery
+    if replacements.length() != 2 + node.orderings().length()
+      raise ArgumentError.new("ArelCompoundQuery replacement child count mismatch")
+    end
+    orderings = []
+    index = 2
+    while index < replacements.length()
+      orderings.push(replacements[index])
+      index = index + 1
+    end
+    ArelCompoundQuery.new(replacements[0], node.operator(), replacements[1], orderings,
+      node.limit_value(), node.offset_value())
   else
     raise ArgumentError.new("Arel node does not support child replacement")
   end
