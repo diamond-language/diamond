@@ -216,6 +216,22 @@ def run_tests()
     Minitest.assert_equal("INSERT SELECT columns must match query projections", message)
   end
 
+  def test_multi_row_insert_returns_each_inserted_row()
+    db = SQLite3.open(":memory:")
+    db.execute("CREATE TABLE notes (id INTEGER PRIMARY KEY, body TEXT)")
+    notes = Arel.table("notes")
+    insert = Arel.insert_into(notes).values_many([
+      {"body": "first"}, {"body": "second"}
+    ]).returning([notes.column("id"), notes.column("body")])
+    rows = insert.to_a(db)
+    Minitest.assert_equal(2, rows.length())
+    Minitest.assert_equal(1, rows[0]["id"])
+    Minitest.assert_equal("first", rows[0]["body"])
+    Minitest.assert_equal(2, rows[1]["id"])
+    Minitest.assert_equal("second", rows[1]["body"])
+    db.close()
+  end
+
   suite = Minitest.new()
   suite.test("INSERT", test_insert_renders_and_executes)
   suite.test("UPDATE", test_update_renders_and_executes)
@@ -230,6 +246,7 @@ def run_tests()
   suite.test("INSERT conflict update", test_insert_can_update_on_conflict)
   suite.test("conflict update validation", test_conflict_update_requires_assignments)
   suite.test("INSERT SELECT validation", test_insert_select_validates_projection_count)
+  suite.test("multi-row INSERT RETURNING", test_multi_row_insert_returns_each_inserted_row)
   suite.run()
 end
 
