@@ -374,7 +374,7 @@ class ArelSQLiteVisitor
 
   def render_source(query, params: Array) -> String
     if query.source_query() != nil
-      source_sql, source_params = query.source_query().to_sql()
+      source_sql, source_params = query.source_query().render_with(self)
       def append_source_param(value)
         params.push(value)
       end
@@ -446,7 +446,7 @@ class ArelSQLiteVisitor
       "(#{left} #{expression.operator()} #{right})"
     elsif expression is ArelMembership
       if !(expression.values() is Array)
-        subquery_sql, subquery_params = expression.values().to_sql()
+        subquery_sql, subquery_params = expression.values().render_with(self)
         def append_membership_param(value)
           params.push(value)
         end
@@ -487,7 +487,7 @@ class ArelSQLiteVisitor
       inner = self.render_expression(expression.expression(), params)
       "#{inner} COLLATE #{arel_quote_identifier(expression.name())}"
     elsif expression is ArelExists
-      sql, bound = expression.query().to_sql()
+      sql, bound = expression.query().render_with(self)
       def append_exists_param(value)
         params.push(value)
       end
@@ -498,7 +498,7 @@ class ArelSQLiteVisitor
       end
       "#{prefix} (#{sql})"
     elsif expression is ArelScalarSubquery
-      sql, bound = expression.query().to_sql()
+      sql, bound = expression.query().render_with(self)
       def append_scalar_param(value)
         params.push(value)
       end
@@ -585,10 +585,11 @@ class ArelSQLiteVisitor
   end
 
   def render(query) -> Array
-    @query = query
+    previous_query = @query
     visitor = self
     params = []
     sql = self.render_ctes(query, params)
+    @query = query
     projections = []
     def render_projection(projection)
       projections.push(visitor.render_expression(projection, params))
@@ -602,11 +603,11 @@ class ArelSQLiteVisitor
       end
     end
     query.joins().each(render_join)
-    select_keyword = "SELECT "
+    sql = sql + "SELECT "
     if query.distinct_value()
-      select_keyword = "SELECT DISTINCT "
+      sql = sql + "DISTINCT "
     end
-    sql = sql + select_keyword + projections.join(", ") + " FROM #{table_sql}"
+    sql = sql + projections.join(", ") + " FROM #{table_sql}"
 
     predicates = []
     def render_predicate(predicate)
@@ -660,6 +661,7 @@ class ArelSQLiteVisitor
         sql = sql + " OFFSET #{query.offset_value()}"
       end
     end
+    @query = previous_query
     [sql, params]
   end
 end
@@ -927,6 +929,7 @@ class ArelCompoundQuery
   def right() = @right
   def projection_count() = @left.projection_count()
   def projection_count_known?() = true
+  def render_with(visitor) = self.to_sql()
 
   def order(ordering)
     ArelCompoundQuery.new(@left, @operator, @right,
