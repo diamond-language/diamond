@@ -305,6 +305,14 @@ def run_tests()
     sql, params = simple_query.to_sql()
     Minitest.assert_equal("SELECT * FROM \"people\" WHERE (\"people\".\"id\" > ? AND \"people\".\"active\" = ?)", sql)
     Minitest.assert_equal("0|true", params.join("|"))
+    update = Arel.update(people).set({"active": true}).where(
+      ArelNot.new(ArelNot.new(people.column("id").eq(4))))
+    simple_update = Arel.simplify(update)
+    update_sql, update_params = simple_update.to_sql()
+    Minitest.assert_equal("UPDATE \"people\" SET \"active\" = ? WHERE \"people\".\"id\" = ?", update_sql)
+    Minitest.assert_equal("true|4", update_params.join("|"))
+    Minitest.assert_equal("Not(Not(Predicate(=, Attribute(people.id), Bind(4))))",
+      Arel.inspect(Arel.children(update)[1]))
   end
 
   suite = Minitest.new()
