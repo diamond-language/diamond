@@ -138,8 +138,11 @@ JsonValue *hover_compute(const DocumentTable *documents,const char *uri,
     /* Same lazily-allocated, reused-across-calls scratch buffer
      * diagnostics_compute keeps (see its own comment) -- a fresh
      * multi-ten-MB DiamondProgram malloc per hover request would be
-     * wasteful for no benefit, since diamond_compile always
-     * re-initializes it from scratch anyway. A separate instance from
+     * wasteful for no benefit. The explicit diamond_program_free below,
+     * right before compiling, is still required on every reuse: the
+     * function table is independently heap-allocated, and
+     * diamond_program_init's memset alone would leak the previous
+     * request's functions instead of freeing them. A separate instance from
      * diagnostics_compute's own static, not the same one: hover and
      * diagnostics can each be mid-request independently (didChange
      * publishing diagnostics while a hover request from before the
@@ -147,17 +150,18 @@ JsonValue *hover_compute(const DocumentTable *documents,const char *uri,
      * them would let one clobber the other's in-flight compile. */
     static DiamondProgram *scratch=nullptr;
     if(scratch==nullptr) {
-        scratch=malloc(sizeof *scratch);
+        scratch=calloc(1,sizeof *scratch);
         if(scratch==nullptr) {free(combined);return nullptr;}
     }
     DiamondDiagnostic diagnostic;
+    diamond_program_free(scratch);
     const bool ok=diamond_compile(combined,scratch,&diagnostic);
     free(combined);
     if(!ok)return json_null();
 
     const DiamondChunk chunk=diamond_program_chunk(scratch);
     for(size_t index=0;index<chunk.function_count;index++) {
-        const DiamondFunction *function=&chunk.functions[index];
+        const DiamondFunction *function=chunk.functions[index];
         if(function->owner_class==UINT8_MAX&&!function->nested&&
            strcmp(function->name,name)==0) {
             char *signature=format_function_signature(&chunk,function);

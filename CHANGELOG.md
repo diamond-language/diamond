@@ -348,6 +348,12 @@ bytecode, or semantic stability.
   resumption.
 - Fixed closure boxing and register-aliasing bugs across branches, stored
   callbacks, indexed assignment receivers, and trailing block capture.
+- Fixed LSP build breakage and a `DiamondProgram` scratch-reuse memory leak
+  introduced by dynamic function storage: the LSP's chunk-function accesses
+  hadn't followed the array-of-pointers change, and every handler that
+  recompiles a reused `DiamondProgram` (all LSP request handlers, both fuzz
+  harnesses) now frees its previous function table first instead of leaking
+  it on every reuse.
 - Fixed call-depth limits that could otherwise allow the native C stack to
   overflow before Diamond raised `SystemStackError`.
 - Fixed loader edge cases for CRLF input, nested imports, EOF diagnostics,

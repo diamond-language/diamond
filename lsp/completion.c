@@ -73,13 +73,14 @@ JsonValue *completion_compute(const DocumentTable *documents,const char *uri,
      * separate one rather than sharing. */
     static DiamondProgram *scratch=nullptr;
     if(scratch==nullptr) {
-        scratch=malloc(sizeof *scratch);
+        scratch=calloc(1,sizeof *scratch);
         if(scratch==nullptr) {
             free(combined);free(path);diamond_source_bundle_free(&bundle);
             return nullptr;
         }
     }
     DiamondDiagnostic diagnostic;
+    diamond_program_free(scratch);
     const bool ok=diamond_compile(combined,scratch,&diagnostic);
     if(!ok) {
         free(combined);free(path);diamond_source_bundle_free(&bundle);
@@ -99,8 +100,8 @@ JsonValue *completion_compute(const DocumentTable *documents,const char *uri,
     bool okay=true;
     const DiamondChunk chunk=diamond_program_chunk(scratch);
     for(size_t index=0;okay&&index<chunk.function_count;index++)
-        if(chunk.functions[index].owner_class==UINT8_MAX&&!chunk.functions[index].nested)
-            okay=push_item(items,chunk.functions[index].name,COMPLETION_KIND_FUNCTION);
+        if(chunk.functions[index]->owner_class==UINT8_MAX&&!chunk.functions[index]->nested)
+            okay=push_item(items,chunk.functions[index]->name,COMPLETION_KIND_FUNCTION);
     for(size_t index=0;okay&&index<chunk.class_count;index++)
         okay=push_item(items,chunk.classes[index].name,COMPLETION_KIND_CLASS);
     for(size_t index=0;okay&&index<chunk.interface_count;index++)
@@ -110,7 +111,7 @@ JsonValue *completion_compute(const DocumentTable *documents,const char *uri,
     if(okay&&cursor_offset!=SIZE_MAX) {
         okay=push_scope_locals(items,&scratch->entry,cursor_offset);
         for(size_t index=0;okay&&index<scratch->function_count;index++)
-            okay=push_scope_locals(items,&scratch->functions[index],cursor_offset);
+            okay=push_scope_locals(items,scratch->functions[index],cursor_offset);
     }
     free(combined);free(path);diamond_source_bundle_free(&bundle);
     if(!okay) {json_free(items);return nullptr;}

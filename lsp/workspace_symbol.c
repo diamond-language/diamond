@@ -170,6 +170,7 @@ static bool scan_file(const DocumentTable *documents,DiamondProgram *scratch,
     free(text);
     if(combined==nullptr)return true;
     DiamondDiagnostic diagnostic;
+    diamond_program_free(scratch);
     if(!diamond_compile(combined,scratch,&diagnostic)) {
         free(combined);diamond_source_bundle_free(&bundle);
         return true;
@@ -182,7 +183,7 @@ static bool scan_file(const DocumentTable *documents,DiamondProgram *scratch,
     bool ok=true;
     const DiamondChunk chunk=diamond_program_chunk(scratch);
     for(size_t index=0;index<chunk.function_count&&ok;index++) {
-        const DiamondFunction *function=&chunk.functions[index];
+        const DiamondFunction *function=chunk.functions[index];
         if(function->owner_class!=UINT8_MAX||function->nested)continue;
         if(!contains_ignore_case(function->name,query))continue;
         size_t line=0,column=0;
@@ -249,11 +250,14 @@ JsonValue *workspace_symbol_compute(const DocumentTable *documents,
      * munmap kernel work, and a workspace can easily have hundreds of
      * *.di files. Lazily allocated on first use, kept for the life of
      * the process (like every other lsp/ handler's own scratch
-     * buffer) rather than per-request, since diamond_compile always
-     * re-initializes it from scratch before compiling. */
+     * buffer) rather than per-request. scan_file's explicit
+     * diamond_program_free right before each compile is still required:
+     * the function table is independently heap-allocated, and
+     * diamond_program_init's memset alone would leak the previous
+     * file's functions instead of freeing them. */
     static DiamondProgram *scratch=nullptr;
     if(scratch==nullptr) {
-        scratch=malloc(sizeof *scratch);
+        scratch=calloc(1,sizeof *scratch);
         if(scratch==nullptr) {
             for(size_t index=0;index<count;index++)free(paths[index]);
             free(paths);

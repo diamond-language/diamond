@@ -117,9 +117,10 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
      * whole run rather than malloc'd fresh on every iteration. */
     static DiamondProgram *program = nullptr;
     if (program == nullptr) {
-        program = malloc(sizeof *program);
+        program = calloc(1, sizeof *program);
         if (program == nullptr) return 0;
     }
+    diamond_program_free(program);
     diamond_program_init(program);
 
     const uint16_t register_count = (uint16_t)(1 + (data[0] % 64));

@@ -103,13 +103,14 @@ JsonValue *document_symbol_compute(const DocumentTable *documents,const char *ur
      * separate one rather than sharing. */
     static DiamondProgram *scratch=nullptr;
     if(scratch==nullptr) {
-        scratch=malloc(sizeof *scratch);
+        scratch=calloc(1,sizeof *scratch);
         if(scratch==nullptr) {
             free(combined);free(path);diamond_source_bundle_free(&bundle);
             return nullptr;
         }
     }
     DiamondDiagnostic diagnostic;
+    diamond_program_free(scratch);
     const bool ok=diamond_compile(combined,scratch,&diagnostic);
     if(!ok) {
         free(combined);free(path);diamond_source_bundle_free(&bundle);
@@ -126,7 +127,7 @@ JsonValue *document_symbol_compute(const DocumentTable *documents,const char *ur
     const DiamondChunk chunk=diamond_program_chunk(scratch);
     bool ok_so_far=true;
     for(size_t index=0;index<chunk.function_count&&ok_so_far;index++) {
-        const DiamondFunction *function=&chunk.functions[index];
+        const DiamondFunction *function=chunk.functions[index];
         if(function->owner_class!=UINT8_MAX||function->nested)continue;
         size_t line=0,column=0;
         const size_t name_length=strlen(function->name);

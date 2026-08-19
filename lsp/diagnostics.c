@@ -178,12 +178,14 @@ JsonValue *diagnostics_compute(const DocumentTable *documents,const char *uri,
      * heap-allocates it rather than putting it on the stack, and kept
      * across calls (lazily allocated once, reused for every subsequent
      * didOpen/didChange) since a fresh malloc+free of that size on every
-     * keystroke would be wasteful for no benefit: diamond_compile always
-     * re-initializes it from scratch via diamond_program_init before
-     * compiling. */
+     * keystroke would be wasteful for no benefit. Each compile below
+     * still needs an explicit diamond_program_free right before it: the
+     * function table is independently heap-allocated, and
+     * diamond_program_init's memset alone would leak the previous
+     * keystroke's functions instead of freeing them. */
     static DiamondProgram *scratch=nullptr;
     if(scratch==nullptr) {
-        scratch=malloc(sizeof *scratch);
+        scratch=calloc(1,sizeof *scratch);
         if(scratch==nullptr)return nullptr;
     }
 
@@ -212,6 +214,7 @@ JsonValue *diagnostics_compute(const DocumentTable *documents,const char *uri,
         memcpy(combined+core_length+reset_length,text,length);
         combined[core_length+reset_length+length]='\0';
         DiamondDiagnostic diagnostic;
+        diamond_program_free(scratch);
         const bool ok=diamond_compile(combined,scratch,&diagnostic);
         free(combined);
         if(!ok) {
@@ -276,6 +279,7 @@ JsonValue *diagnostics_compute(const DocumentTable *documents,const char *uri,
     memcpy(combined+core_length+reset_length,bundle.source,bundle_length+1);
 
     DiamondDiagnostic diagnostic;
+    diamond_program_free(scratch);
     const bool ok=diamond_compile(combined,scratch,&diagnostic);
     if(!ok) {
         const DiamondResolvedLocation resolved=diamond_resolve_diagnostic_location(

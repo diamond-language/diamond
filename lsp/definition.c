@@ -79,13 +79,14 @@ JsonValue *definition_compute(const DocumentTable *documents,const char *uri,
      * and a definition request can all be genuinely in flight at once. */
     static DiamondProgram *scratch=nullptr;
     if(scratch==nullptr) {
-        scratch=malloc(sizeof *scratch);
+        scratch=calloc(1,sizeof *scratch);
         if(scratch==nullptr) {
             free(combined);free(path);diamond_source_bundle_free(&bundle);
             return nullptr;
         }
     }
     DiamondDiagnostic diagnostic;
+    diamond_program_free(scratch);
     const bool ok=diamond_compile(combined,scratch,&diagnostic);
     if(!ok) {
         free(combined);free(path);diamond_source_bundle_free(&bundle);
@@ -97,7 +98,7 @@ JsonValue *definition_compute(const DocumentTable *documents,const char *uri,
     size_t declaration_start=0,declaration_name_length=0;
     bool found=false;
     for(size_t index=0;index<chunk.function_count&&!found;index++) {
-        const DiamondFunction *function=&chunk.functions[index];
+        const DiamondFunction *function=chunk.functions[index];
         /* declaration_start>=user_offset excludes lib/core.di's own
          * prelude -- see definition.h for why a prelude match returns
          * null instead of a location nobody can jump to. */

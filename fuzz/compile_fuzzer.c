@@ -23,12 +23,14 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
      * the struct) -- heap-allocated once and reused across the whole
      * fuzzing run for the same reason lsp/diagnostics.c does: a fresh
      * malloc of that size on every one of potentially millions of
-     * iterations would dominate runtime for no benefit, and
-     * diamond_compile always re-initializes it from scratch via
-     * diamond_program_init before compiling. */
+     * iterations would dominate runtime for no benefit. Reusing it needs
+     * an explicit diamond_program_free before every compile, though --
+     * unlike the fixed-size tables, the function table is independently
+     * heap-allocated and diamond_program_init's memset would otherwise
+     * leak the previous iteration's functions instead of freeing them. */
     static DiamondProgram *program=nullptr;
     if(program==nullptr) {
-        program=malloc(sizeof *program);
+        program=calloc(1,sizeof *program);
         if(program==nullptr)return 0;
     }
     char *source=malloc(size+1);
@@ -36,6 +38,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     memcpy(source,data,size);
     source[size]='\0';
     DiamondDiagnostic diagnostic;
+    diamond_program_free(program);
     (void)diamond_compile(source,program,&diagnostic);
     free(source);
     return 0;
