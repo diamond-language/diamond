@@ -147,13 +147,20 @@ def run_tests()
     Minitest.assert_equal(true, params[1])
     Minitest.assert_equal(5, params[2])
     message = nil
+    visitor = PortableTestVisitor.new()
     begin
       Arel.from(people).project(Arel.table("accounts").column("id")).to_sql(
-        PortableTestVisitor.new())
+        visitor)
     rescue error: ArgumentError
       message = error.message()
     end
     Minitest.assert_equal("attribute belongs to a relation outside this query", message)
+    accounts = Arel.table("accounts")
+    sql, params = Arel.update(accounts).set({
+      "score": Arel.expression(accounts.column("score").add(1))
+    }).all().to_sql(visitor)
+    Minitest.assert_equal("UPDATE \"accounts\" SET \"score\" = (\"accounts\".\"score\" + ?)", sql)
+    Minitest.assert_equal("1", params.join("|"))
   end
 
   def test_portable_write_nodes_render_without_extensions()
