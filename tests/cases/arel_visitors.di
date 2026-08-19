@@ -87,6 +87,7 @@ def run_tests()
     sql, params = insert.to_sql(WriteTestArelVisitor.new())
     Minitest.assert_equal(true, sql.include?("[qty] = incoming.[qty]"))
     Minitest.assert_equal(true, sql.include?("custom INSERT INTO [inventory]"))
+    Minitest.assert_equal("pens|4", params.join("|"))
   end
 
   def test_update_expressions_use_the_explicit_visitor()
