@@ -1468,6 +1468,43 @@ class ArelDelete
 end
 
 class ArelInspector
+def with_children(node, replacements: Array)
+  if node is ArelFunction
+    ArelFunction.new(node.name(), replacements, node.distinct?())
+  elsif node is ArelCast
+    if replacements.length() != 1
+      raise ArgumentError.new("ArelCast requires exactly one child")
+    end
+    ArelCast.new(replacements[0], node.type_name())
+  elsif node is ArelCollation
+    if replacements.length() != 1
+      raise ArgumentError.new("ArelCollation requires exactly one child")
+    end
+    ArelCollation.new(replacements[0], node.name())
+  elsif node is ArelAlias
+    if replacements.length() != 1
+      raise ArgumentError.new("ArelAlias requires exactly one child")
+    end
+    ArelAlias.new(replacements[0], node.name())
+  elsif node is ArelOrdering
+    if replacements.length() != 1
+      raise ArgumentError.new("ArelOrdering requires exactly one child")
+    end
+    ArelOrdering.new(replacements[0], node.direction(), node.nulls())
+  elsif node is ArelAssignmentValue
+    if replacements.length() != 1
+      raise ArgumentError.new("ArelAssignmentValue requires exactly one child")
+    end
+    ArelAssignmentValue.new(replacements[0])
+  else
+    self.with_children_tail(node, replacements)
+  end
+end
+
+def with_children_tail(node, replacements: Array)
+  raise ArgumentError.new("Arel node does not support child replacement")
+end
+
 def simplify(node)
   if node is ArelNot && node.expression() is ArelNot
     node.expression().expression()
@@ -2097,6 +2134,7 @@ class Arel
   def self.children(node) = ArelInspector.new().children(node)
   def self.walk(node, visitor = nil) = ArelInspector.new().walk(node, visitor)
   def self.simplify(node) = ArelInspector.new().simplify(node)
+  def self.with_children(node, replacements: Array) = ArelInspector.new().with_children(node, replacements)
   def self.union(left, right) = ArelCompoundQuery.new(left, "UNION", right)
   def self.union_all(left, right) = ArelCompoundQuery.new(left, "UNION ALL", right)
   def self.intersect(left, right) = ArelCompoundQuery.new(left, "INTERSECT", right)

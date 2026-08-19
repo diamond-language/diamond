@@ -25,6 +25,17 @@ def run_tests()
     Minitest.assert_equal("Literal(0)", Arel.inspect(function_children[1]))
   end
 
+  def test_expression_children_can_be_replaced_immutably()
+    people = Arel.table("people")
+    original = Arel.lower(people.column("name"))
+    replaced = Arel.with_children(original, [people.column("email")])
+    Minitest.assert_equal("Function(LOWER, [Attribute(people.name)])", Arel.inspect(original))
+    Minitest.assert_equal("Function(LOWER, [Attribute(people.email)])", Arel.inspect(replaced))
+    ordering = Arel.asc(people.column("name")).nulls_last()
+    changed = Arel.with_children(ordering, [people.column("email")])
+    Minitest.assert_equal("Ordering(ASC, NULLS LAST, Attribute(people.email))", Arel.inspect(changed))
+  end
+
   def test_predicate_children_preserve_semantic_order()
     people = Arel.table("people")
     roles = Arel.table("roles")
@@ -143,6 +154,7 @@ def run_tests()
 
   suite = Minitest.new()
   suite.test("ordered expression children", test_expression_children_are_ordered)
+  suite.test("immutable expression child replacement", test_expression_children_can_be_replaced_immutably)
   suite.test("ordered predicate children", test_predicate_children_preserve_semantic_order)
   suite.test("ordered query children", test_query_children_follow_render_order)
   suite.test("composition children", test_composition_children_are_structural)
