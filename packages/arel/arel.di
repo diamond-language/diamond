@@ -9,6 +9,16 @@ def arel_array(value)
   end
 end
 
+def arel_array_slice(values: Array, start: Int, length: Int) -> Array
+  result = []
+  index = 0
+  while index < length
+    result.push(values[start + index])
+    index = index + 1
+  end
+  result
+end
+
 def arel_quote_identifier(name: String) -> String
   pieces = ["\""]
   def append_character(character)
@@ -1339,7 +1349,10 @@ class ArelUpdate
     end
     clauses = []
     params = []
-    def collect_assignment(name, value)
+    assignment_index = 0
+    while assignment_index < @assignments.length()
+      name = @assignments.key_at(assignment_index)
+      value = @assignments[name]
       if value is ArelAssignmentValue
         rendered = visitor.render_expression(value.expression(), params)
         clauses.push("#{arel_quote_identifier(name)} = #{rendered}")
@@ -1347,22 +1360,24 @@ class ArelUpdate
         clauses.push("#{arel_quote_identifier(name)} = ?")
         params.push(value)
       end
+      assignment_index = assignment_index + 1
     end
-    @assignments.each(collect_assignment)
     sql = "UPDATE #{arel_quote_identifier(@table.name())} SET #{clauses.join(", ")}"
     predicates = []
-    def render_predicate(predicate)
-      predicates.push(visitor.render_expression(predicate, params))
+    predicate_index = 0
+    while predicate_index < @predicates.length()
+      predicates.push(visitor.render_expression(@predicates[predicate_index], params))
+      predicate_index = predicate_index + 1
     end
-    @predicates.each(render_predicate)
     if predicates.length() > 0
       sql = sql + " WHERE " + predicates.join(" AND ")
     end
     rendered = []
-    def render_returning(expression)
-      rendered.push(visitor.render_expression(expression, params))
+    returning_index = 0
+    while returning_index < @returning.length()
+      rendered.push(visitor.render_expression(@returning[returning_index], params))
+      returning_index = returning_index + 1
     end
-    @returning.each(render_returning)
     if rendered.length() > 0
       sql = sql + " RETURNING " + rendered.join(", ")
     end
@@ -1428,18 +1443,20 @@ class ArelDelete
     params = []
     sql = "DELETE FROM #{arel_quote_identifier(@table.name())}"
     predicates = []
-    def render_predicate(predicate)
-      predicates.push(visitor.render_expression(predicate, params))
+    predicate_index = 0
+    while predicate_index < @predicates.length()
+      predicates.push(visitor.render_expression(@predicates[predicate_index], params))
+      predicate_index = predicate_index + 1
     end
-    @predicates.each(render_predicate)
     if predicates.length() > 0
       sql = sql + " WHERE " + predicates.join(" AND ")
     end
     rendered = []
-    def render_returning(expression)
-      rendered.push(visitor.render_expression(expression, params))
+    returning_index = 0
+    while returning_index < @returning.length()
+      rendered.push(visitor.render_expression(@returning[returning_index], params))
+      returning_index = returning_index + 1
     end
-    @returning.each(render_returning)
     if rendered.length() > 0
       sql = sql + " RETURNING " + rendered.join(", ")
     end
@@ -1615,9 +1632,42 @@ def with_children_tail(node, replacements: Array)
     end
     ArelCompoundQuery.new(replacements[0], node.operator(), replacements[1], orderings,
       node.limit_value(), node.offset_value())
+  elsif node is ArelQuery
+    self.with_query_children(node, replacements)
   else
     raise ArgumentError.new("Arel node does not support child replacement")
   end
+end
+
+def with_query_children(node: ArelQuery, replacements: Array)
+  if replacements.length() != self.children(node).length()
+    raise ArgumentError.new("ArelQuery replacement child count mismatch")
+  end
+  index = 0
+  ctes = arel_array_slice(replacements, index, node.ctes().length())
+  index = index + node.ctes().length()
+  source_query = nil
+  if node.source_query() != nil
+    source_query = replacements[index]
+    index = index + 1
+  end
+  projections = arel_array_slice(replacements, index, node.projections().length())
+  index = index + node.projections().length()
+  joins = arel_array_slice(replacements, index, node.joins().length())
+  index = index + node.joins().length()
+  predicates = arel_array_slice(replacements, index, node.predicates().length())
+  index = index + node.predicates().length()
+  groups = arel_array_slice(replacements, index, node.groups().length())
+  index = index + node.groups().length()
+  havings = arel_array_slice(replacements, index, node.havings().length())
+  index = index + node.havings().length()
+  orderings = arel_array_slice(replacements, index, node.orderings().length())
+  index = index + node.orderings().length()
+  correlations = arel_array_slice(replacements, index, node.correlations().length())
+  ArelQuery.new(node.table_name(), predicates, orderings, node.limit_value(),
+    node.offset_value(), projections, node.quoted_identifiers(), node.bind_limits(),
+    node.table_alias(), node.distinct_value(), groups, havings, joins, source_query,
+    correlations, ctes)
 end
 
 def simplify(node)

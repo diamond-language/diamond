@@ -84,6 +84,20 @@ def run_tests()
     Minitest.assert_equal("Ordering(ASC, Attribute(people.name))", Arel.inspect(children[4]))
   end
 
+  def test_query_children_can_be_replaced_immutably()
+    people = Arel.table("people")
+    query = Arel.from(people).project(people.column("name"))
+    query = query.where(people.column("active").eq(true)).order(people.column("name").asc())
+    children = Arel.children(query)
+    replacements = [people.column("email"), children[1], people.column("email").desc()]
+    changed = Arel.with_children(query, replacements)
+    original_sql, original_params = query.to_sql()
+    changed_sql, changed_params = changed.to_sql()
+    Minitest.assert_equal("SELECT \"people\".\"name\" FROM \"people\" WHERE \"people\".\"active\" = ? ORDER BY \"people\".\"name\" ASC", original_sql)
+    Minitest.assert_equal("SELECT \"people\".\"email\" FROM \"people\" WHERE \"people\".\"active\" = ? ORDER BY \"people\".\"email\" DESC", changed_sql)
+    Minitest.assert_equal(original_params.join("|"), changed_params.join("|"))
+  end
+
   def test_composition_children_are_structural()
     people = Arel.table("people")
     archived = Arel.table("archived")
@@ -199,6 +213,7 @@ def run_tests()
   suite.test("ordered predicate children", test_predicate_children_preserve_semantic_order)
   suite.test("immutable predicate child replacement", test_predicate_children_can_be_replaced_immutably)
   suite.test("ordered query children", test_query_children_follow_render_order)
+  suite.test("immutable query child replacement", test_query_children_can_be_replaced_immutably)
   suite.test("composition children", test_composition_children_are_structural)
   suite.test("immutable composition child replacement", test_composition_children_can_be_replaced)
   suite.test("ordered insert children", test_insert_children_follow_bind_structure)
