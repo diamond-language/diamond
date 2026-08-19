@@ -1,5 +1,14 @@
 # Changelog
 
+## Arel 0.19.0
+
+- Added ordered declarative rewrite rules to `Arel.simplify`, with structural
+  matching, postorder traversal, single-pass rule composition, and validation.
+- Added optional change reporting and policy rewrites across nested SELECT and
+  write trees while preserving immutability and exact bind order.
+- Extended policy rewriting through third-party `arel_with_children` nodes and
+  defined composition with the built-in conservative simplifications.
+
 ## Arel 0.18.0
 
 - Extended immutable child replacement to INSERT, UPDATE, and DELETE managers,
