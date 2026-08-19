@@ -929,7 +929,6 @@ class ArelCompoundQuery
   def right() = @right
   def projection_count() = @left.projection_count()
   def projection_count_known?() = true
-  def render_with(visitor) = self.to_sql()
 
   def order(ordering)
     ArelCompoundQuery.new(@left, @operator, @right,
@@ -944,9 +943,9 @@ class ArelCompoundQuery
   end
   def offset(n: Int) = self.skip(n)
 
-  def to_sql() -> Array
-    left_sql, left_params = @left.to_sql()
-    right_sql, right_params = @right.to_sql()
+  def render_with(visitor) -> Array
+    left_sql, left_params = @left.render_with(visitor)
+    right_sql, right_params = @right.render_with(visitor)
     if @left is ArelCompoundQuery
       left_sql = "SELECT * FROM (#{left_sql})"
     end
@@ -956,7 +955,6 @@ class ArelCompoundQuery
     params = array_concat(left_params, right_params)
     sql = "#{left_sql} #{@operator} #{right_sql}"
     rendered_orderings = []
-    visitor = ArelSQLiteVisitor.new()
     def render_ordering(ordering)
       rendered_orderings.push(visitor.render_expression(ordering, params))
     end
@@ -973,6 +971,14 @@ class ArelCompoundQuery
       params.push(@offset_value)
     end
     [sql, params]
+  end
+
+  def to_sql(visitor = nil) -> Array
+    renderer = visitor
+    if renderer == nil
+      renderer = ArelSQLiteVisitor.new()
+    end
+    self.render_with(renderer)
   end
 
   def to_a(db)

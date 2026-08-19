@@ -35,9 +35,19 @@ def run_tests()
     Minitest.assert_equal("SELECT \"named\".\"name\" FROM (SELECT \"people\".\"name\" FROM visited_people) AS \"named\"", sql)
   end
 
+  def test_compound_branches_inherit_the_explicit_visitor()
+    first = Arel.table("first_values")
+    second = Arel.table("second_values")
+    left = Arel.from(first).project(first.column("value"))
+    right = Arel.from(second).project(second.column("value"))
+    sql, params = Arel.union_all(left, right).to_sql(NestedTestArelVisitor.new())
+    Minitest.assert_equal("SELECT \"first_values\".\"value\" FROM visited_first_values UNION ALL SELECT \"second_values\".\"value\" FROM visited_second_values", sql)
+  end
+
   suite = Minitest.new()
   suite.test("explicit SELECT visitor", test_select_accepts_an_explicit_visitor)
   suite.test("nested SELECT visitor", test_derived_queries_inherit_the_explicit_visitor)
+  suite.test("compound visitor", test_compound_branches_inherit_the_explicit_visitor)
   suite.run()
 end
 
