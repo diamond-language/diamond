@@ -150,8 +150,10 @@ subqueries, joins, CTE declarations, compounds, and a concise query summary.
 families and for queries with grouping/HAVING, joins, derived sources, CTEs,
 and compound branches as well as projections, predicates, ordering,
 distinctness, and pagination. Membership and raw-SQL bind arrays compare by
-value rather than array identity. Write-manager structural tooling remains a
-future direction.
+value rather than array identity. INSERT, UPDATE, and DELETE inspection and
+comparison include assignments, predicates, source queries, conflict state,
+RETURNING expressions, and CTEs. Unknown third-party objects are reported as
+`ArelNode(unknown)` instead of being confused with a supported built-in node.
 
 `Arel.conflict_target(columns)` builds an immutable SQLite conflict target.
 Use `target.column(name)` with `where(predicate)` for partial unique indexes;

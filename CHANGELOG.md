@@ -1,5 +1,14 @@
 # Changelog
 
+## Arel 0.15.0
+
+- Added deterministic inspection and structural equality for INSERT, UPDATE,
+  and DELETE managers, including compact, function-budget-safe state snapshots.
+- Added structural handling for assignments, conflict targets, DEFAULT VALUES,
+  correlations, qualified stars, conflict attributes, and subquery expressions.
+- Distinguished unknown third-party inspection nodes and consolidated repeated
+  comparisons to stay below Diamond's bytecode and function-table ceilings.
+
 ## Arel 0.14.0
 
 - Extended deterministic inspection to relations, qualified stars, conflict

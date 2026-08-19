@@ -22,22 +22,24 @@ Raw SQL remains an explicit escape hatch, not the representation used by new
 features. Values are bind parameters by default. Identifiers are represented
 as nodes and quoted by the active visitor.
 
-## Next milestone: complete structural tooling
+## Next milestone: structural transformations
 
-Centralized inspection and equality now cover expressions, predicates,
-decorators, relations, joins, derived sources, CTE declarations, grouped
-queries, and compounds. Complete the remaining manager-level tooling before
-considering rewrites:
+Centralized inspection and equality now cover every built-in expression and
+query family, including write managers and their conflict, assignment,
+RETURNING, correlation, and CTE state. The next step is to make that structure
+useful without exposing mutable internals:
 
-- inspect INSERT, UPDATE, and DELETE managers;
-- compare write managers, conflict targets, assignments, and RETURNING lists;
-- compare correlation lists and the remaining standalone extension nodes;
-- distinguish unsupported inspection from an unknown third-party node;
-- keep the centralized implementation within Diamond's fixed function-table
-  budget.
+- add a visitor-driven tree walk with explicit child ordering;
+- define immutable replacement helpers for expression and query children;
+- provide a conservative predicate rewrite example, such as eliminating a
+  double negation, without changing bind order;
+- let third-party nodes opt into inspection, equality, and traversal without
+  modifying the central inspector;
+- keep traversal and rewrite machinery within Diamond's fixed function-table
+  and per-function bytecode budgets.
 
-Completion means every built-in node can be inspected and compared without
-rendering SQL as an observational workaround.
+Completion means callers can analyze and transform a built-in tree without
+rendering SQL or rebuilding an entire query by hand.
 
 ## Deferred expression decisions
 
