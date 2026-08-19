@@ -1,5 +1,15 @@
 # Changelog
 
+## Arel 0.21.0
+
+- Added the overridable visitor `quote_identifier(name)` protocol and routed
+  SELECT sources, CTEs, expressions, conflicts, and every write manager through
+  it.
+- Removed direct SQLite identifier quoting from statement managers while
+  preserving existing SQLite SQL and bind ordering.
+- Added custom-quoting visitor coverage across SELECT, INSERT, UPDATE, and
+  DELETE rendering.
+
 ## Arel 0.20.0
 
 - Expanded named visitor capabilities to cover RETURNING, explicit NULL
