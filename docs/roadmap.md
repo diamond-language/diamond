@@ -1064,6 +1064,29 @@ future work.
 - Enumerable completeness: `sum`/`sort`/`sort_by`/`reject`/`find`/
   `each_with_index`/`min`/`max`, with `sort`/`sort_by`/`min`/`max` working on
   any class with `<`/`>` overloaded.
+- **Eighth item off the Ruby-idiom gap list**: `min_by`/`max_by`/`take`/
+  `drop`/`flat_map`/`partition`/`group_by`/`zip`/`each_slice`/
+  `each_cons`/`tally`, all Array-only (matching the existing `min`/`max`/
+  `sort` precedent's own narrower-than-Ruby scope, not extended to
+  `Hash`). No compiler changes at all — same shape as `Integer#times`/
+  `upto`/`downto` and `tap`/`dup`/`respond_to?` before it: eleven new
+  `lib/core.di` functions plus matching `target_name` entries in
+  `vm.c`'s existing `DIAMOND_OP_INVOKE` Array-dispatch chain, confirmed
+  via `selfhost/parser_run_with_core.di` reproducing the native
+  fixture's output byte-for-byte with zero self-hosted parser edits.
+  `each_slice`/`each_cons` collect every slice/window into an
+  `Array[Array]` up front rather than taking a block or returning an
+  Enumerator (Diamond has neither) — the more broadly useful shape
+  without one, and still trivially composable with `.each()`/`.map()`
+  afterward. `zip` pads the shorter array with `Nil` out to the
+  *receiver's* own length, matching Ruby's own asymmetric behavior
+  exactly (`[1, 2, 3].zip([4, 5])` => `[[1, 4], [2, 5], [3, nil]]`).
+  Verified: `make debug` (clean, zero warnings), full `bash tests/
+  run.sh` (1097 passing — seven new `tests/cases/enumerable_*.di`
+  fixtures, one per method group), `make test-lexer-diff` (1032 cases),
+  and `make test-parser-diff` (253 differential cases including a new
+  `tests/parser_cases/enumerable_extras.di`, both self-hosted bootstrap
+  checks passing).
 - `Array#join` became a genuine native, `StringBuilder`-backed O(n) method
   (it was a Diamond-level `result = result + piece` loop in `lib/core.di`
   before -- exactly the O(n^2) concatenation pattern the pre-release audit

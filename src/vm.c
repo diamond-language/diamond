@@ -8333,6 +8333,50 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                                 method_name->length==3&&
                                 memcmp(method_name->chars,"max",3)==0)
                             target_name="enumerable_max";
+                        else if(receiver_kind==DIAMOND_OBJECT_ARRAY&&
+                                method_name->length==6&&
+                                memcmp(method_name->chars,"min_by",6)==0)
+                            target_name="array_min_by";
+                        else if(receiver_kind==DIAMOND_OBJECT_ARRAY&&
+                                method_name->length==6&&
+                                memcmp(method_name->chars,"max_by",6)==0)
+                            target_name="array_max_by";
+                        else if(receiver_kind==DIAMOND_OBJECT_ARRAY&&
+                                method_name->length==4&&
+                                memcmp(method_name->chars,"take",4)==0)
+                            target_name="array_take";
+                        else if(receiver_kind==DIAMOND_OBJECT_ARRAY&&
+                                method_name->length==4&&
+                                memcmp(method_name->chars,"drop",4)==0)
+                            target_name="array_drop";
+                        else if(receiver_kind==DIAMOND_OBJECT_ARRAY&&
+                                method_name->length==8&&
+                                memcmp(method_name->chars,"flat_map",8)==0)
+                            target_name="array_flat_map";
+                        else if(receiver_kind==DIAMOND_OBJECT_ARRAY&&
+                                method_name->length==9&&
+                                memcmp(method_name->chars,"partition",9)==0)
+                            target_name="array_partition";
+                        else if(receiver_kind==DIAMOND_OBJECT_ARRAY&&
+                                method_name->length==8&&
+                                memcmp(method_name->chars,"group_by",8)==0)
+                            target_name="array_group_by";
+                        else if(receiver_kind==DIAMOND_OBJECT_ARRAY&&
+                                method_name->length==3&&
+                                memcmp(method_name->chars,"zip",3)==0)
+                            target_name="array_zip";
+                        else if(receiver_kind==DIAMOND_OBJECT_ARRAY&&
+                                method_name->length==10&&
+                                memcmp(method_name->chars,"each_slice",10)==0)
+                            target_name="array_each_slice";
+                        else if(receiver_kind==DIAMOND_OBJECT_ARRAY&&
+                                method_name->length==9&&
+                                memcmp(method_name->chars,"each_cons",9)==0)
+                            target_name="array_each_cons";
+                        else if(receiver_kind==DIAMOND_OBJECT_ARRAY&&
+                                method_name->length==5&&
+                                memcmp(method_name->chars,"tally",5)==0)
+                            target_name="array_tally";
                         if(target_name!=nullptr) {
                             const DiamondFunction *target=
                                 find_top_level_function(chunk,target_name,strlen(target_name));

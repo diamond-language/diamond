@@ -758,6 +758,23 @@ backed accumulator internally, not repeated string concatenation) —
 stringifies each element (the same formatting string interpolation
 uses, including calling a user-defined `to_s` override) and joins them
 with `separator` between (not trailing).
+
+Array's Enumerable-style methods: `.each`/`.select`/`.map`/`.reduce`/
+`.count`/`.any?`/`.all?` (shared with Hash, driven by `.each`),
+`.sort`/`.sort_by`/`.min`/`.max`/`.min_by`/`.max_by`/`.reject`/`.find`/
+`.each_with_index`/`.sum`, and `.take(n)`/`.drop(n)`/`.flat_map`/
+`.partition`/`.group_by`/`.zip(other)`/`.each_slice(n)`/`.each_cons(n)`/
+`.tally`. The last group returns its result directly rather than
+through a block or an Enumerator (Diamond has neither) —
+`.each_slice`/`.each_cons` collect every slice/window into an
+`Array[Array]` up front, `.partition` returns `[matching,
+non_matching]`, `.group_by` a `Hash` keyed on the block's own result,
+`.tally` a `Hash` of element to occurrence count, and `.zip` pads the
+shorter array with `Nil` out to the *receiver's* own length (`[1, 2,
+3].zip([4, 5])` => `[[1, 4], [2, 5], [3, nil]]`), matching Ruby. None of
+these are defined on `Hash` — a deliberate, narrower scope than Ruby's
+own Enumerable, matching the existing asymmetry `.min`/`.max`/`.sort`
+already have (Array-only, not Hash).
 Strings support `.length()`, `.index_of(needle)` (position or `nil`),
 `.slice(start, length)`, `.to_i()`/`.to_f()` (lenient decimal parsing —
 `.to_f()` additionally accepts exponent notation like `"1e3"` even

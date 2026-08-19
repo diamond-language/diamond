@@ -491,6 +491,189 @@ def enumerable_max(values: Array)
   result
 end
 
+def array_min_by(values: Array, callback: Callable[1])
+  result = values[0]
+  result_key = callback(result)
+  index = 1
+  while index < values.length()
+    key = callback(values[index])
+    if key < result_key
+      result = values[index]
+      result_key = key
+    end
+    index = index + 1
+  end
+  result
+end
+
+def array_max_by(values: Array, callback: Callable[1])
+  result = values[0]
+  result_key = callback(result)
+  index = 1
+  while index < values.length()
+    key = callback(values[index])
+    if key > result_key
+      result = values[index]
+      result_key = key
+    end
+    index = index + 1
+  end
+  result
+end
+
+def array_take(values: Array, n: Int) -> Array
+  result = []
+  index = 0
+  while index < n && index < values.length()
+    result.push(values[index])
+    index = index + 1
+  end
+  result
+end
+
+def array_drop(values: Array, n: Int) -> Array
+  result = []
+  index = n
+  index = 0 if index < 0
+  while index < values.length()
+    result.push(values[index])
+    index = index + 1
+  end
+  result
+end
+
+def array_flat_map(values: Array, callback: Callable[1]) -> Array
+  result = []
+  index = 0
+  while index < values.length()
+    mapped = callback(values[index])
+    if mapped is Array
+      result = array_concat(result, mapped)
+    else
+      result.push(mapped)
+    end
+    index = index + 1
+  end
+  result
+end
+
+# Ruby's own `partition` return shape: `[matching, non_matching]`, not a
+# Hash keyed on true/false -- group_by below covers the "keyed by an
+# arbitrary block result" case; partition is specifically the two-way
+# split.
+def array_partition(values: Array, callback: Callable[1]) -> Array
+  matching = []
+  non_matching = []
+  index = 0
+  while index < values.length()
+    item = values[index]
+    if callback(item)
+      matching.push(item)
+    else
+      non_matching.push(item)
+    end
+    index = index + 1
+  end
+  [matching, non_matching]
+end
+
+def array_group_by(values: Array, callback: Callable[1]) -> Hash
+  result = {}
+  index = 0
+  while index < values.length()
+    item = values[index]
+    key = callback(item)
+    group = result[key]
+    if group == nil
+      result[key] = [item]
+    else
+      group.push(item)
+    end
+    index = index + 1
+  end
+  result
+end
+
+# Pads with Nil out to the *receiver's* own length, matching Ruby's own
+# `[1, 2, 3].zip([4, 5])` => `[[1, 4], [2, 5], [3, nil]]` (the receiver's
+# length wins, the other array is truncated or padded to match, never
+# the other way around).
+def array_zip(values: Array, other: Array) -> Array
+  result = []
+  index = 0
+  while index < values.length()
+    paired = if index < other.length()
+      other[index]
+    else
+      nil
+    end
+    result.push([values[index], paired])
+    index = index + 1
+  end
+  result
+end
+
+# Non-overlapping chunks of exactly `size`, the last one short if
+# `values.length()` isn't an exact multiple -- Ruby's own `each_slice`.
+# Returns the slices directly rather than taking a block: with no
+# Enumerator to lazily drive a `.to_a` call, returning the collected
+# Array[Array] up front is the more broadly useful shape (still
+# trivially composable with `.each()`/`.map()` afterward). Assumes
+# `size` is a positive Int, same as Ruby's own ArgumentError-on-`<= 0`
+# contract -- not separately validated here.
+def array_each_slice(values: Array, size: Int) -> Array
+  result = []
+  index = 0
+  while index < values.length()
+    slice = []
+    slice_index = index
+    while slice_index < values.length() && slice_index < index + size
+      slice.push(values[slice_index])
+      slice_index = slice_index + 1
+    end
+    result.push(slice)
+    index = index + size
+  end
+  result
+end
+
+# Overlapping (sliding-window) chunks of exactly `size` -- unlike
+# each_slice, always exactly `size` long, and there are exactly
+# `values.length() - size + 1` of them (none at all if the receiver is
+# shorter than `size`). Ruby's own `each_cons`; same "no Enumerator, so
+# return the collected windows directly" reasoning as each_slice above.
+def array_each_cons(values: Array, size: Int) -> Array
+  result = []
+  index = 0
+  while index + size <= values.length()
+    window = []
+    window_index = index
+    while window_index < index + size
+      window.push(values[window_index])
+      window_index = window_index + 1
+    end
+    result.push(window)
+    index = index + 1
+  end
+  result
+end
+
+def array_tally(values: Array) -> Hash
+  result = {}
+  index = 0
+  while index < values.length()
+    item = values[index]
+    count = result[item]
+    result[item] = if count == nil
+      1
+    else
+      count + 1
+    end
+    index = index + 1
+  end
+  result
+end
+
 module Enumerable
   def select(callback: Callable[1]) -> Array = enumerable_select(self, callback)
   def count(callback: Callable[1]) -> Int = enumerable_count(self, callback)
