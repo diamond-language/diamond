@@ -1468,6 +1468,14 @@ class ArelDelete
 end
 
 class ArelInspector
+def simplify(node)
+  if node is ArelNot && node.expression() is ArelNot
+    node.expression().expression()
+  else
+    node
+  end
+end
+
 def walk(node, visitor = nil) -> Array
   visited = []
   pending = [node]
@@ -2088,6 +2096,7 @@ class Arel
   def self.same?(left, right) = ArelInspector.new().same?(left, right)
   def self.children(node) = ArelInspector.new().children(node)
   def self.walk(node, visitor = nil) = ArelInspector.new().walk(node, visitor)
+  def self.simplify(node) = ArelInspector.new().simplify(node)
   def self.union(left, right) = ArelCompoundQuery.new(left, "UNION", right)
   def self.union_all(left, right) = ArelCompoundQuery.new(left, "UNION ALL", right)
   def self.intersect(left, right) = ArelCompoundQuery.new(left, "INTERSECT", right)

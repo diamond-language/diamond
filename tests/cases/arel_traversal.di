@@ -127,6 +127,20 @@ def run_tests()
     Minitest.assert_equal(descriptions.length(), returned.length())
   end
 
+  def test_simplify_eliminates_double_negation_immutably()
+    people = Arel.table("people")
+    predicate = people.column("active").eq(true)
+    wrapped = ArelNot.new(ArelNot.new(predicate))
+    simplified = Arel.simplify(wrapped)
+    Minitest.assert_equal(true, Arel.same?(predicate, simplified))
+    Minitest.assert_equal("Not(Not(Predicate(=, Attribute(people.active), Bind(true))))", Arel.inspect(wrapped))
+    original_sql, original_params = Arel.from(people).where(wrapped).to_sql()
+    simple_sql, simple_params = Arel.from(people).where(simplified).to_sql()
+    Minitest.assert_equal("SELECT * FROM \"people\" WHERE (NOT (NOT \"people\".\"active\" = ?))", original_sql)
+    Minitest.assert_equal("SELECT * FROM \"people\" WHERE \"people\".\"active\" = ?", simple_sql)
+    Minitest.assert_equal(original_params.join("|"), simple_params.join("|"))
+  end
+
   suite = Minitest.new()
   suite.test("ordered expression children", test_expression_children_are_ordered)
   suite.test("ordered predicate children", test_predicate_children_preserve_semantic_order)
@@ -135,6 +149,7 @@ def run_tests()
   suite.test("ordered insert children", test_insert_children_follow_bind_structure)
   suite.test("ordered update and delete children", test_update_and_delete_children_are_ordered)
   suite.test("depth-first preorder walk", test_walk_is_depth_first_preorder)
+  suite.test("immutable double-negation simplification", test_simplify_eliminates_double_negation_immutably)
   suite.run!()
 end
 
