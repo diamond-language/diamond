@@ -205,6 +205,13 @@ def run_tests()
     rows = query.to_a(db)
     Minitest.assert_equal("Ada", rows[0]["display\"name"])
     db.close()
+    message = nil
+    begin
+      Arel.from(Arel.table("people").as("")).to_sql()
+    rescue error: ArgumentError
+      message = error.message()
+    end
+    Minitest.assert_equal("SQL identifier cannot be empty", message)
   end
 
   def test_distinct_projection()
