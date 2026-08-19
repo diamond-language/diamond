@@ -1475,7 +1475,7 @@ class ArelDelete
       raise ArgumentError.new("DELETE requires where() or explicit all()")
     end
     params = []
-    sql = "DELETE FROM #{arel_quote_identifier(@table.name())}"
+    sql = "DELETE FROM #{visitor.quote_identifier(@table.name())}"
     predicates = []
     predicate_index = 0
     while predicate_index < @predicates.length()
