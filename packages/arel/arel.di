@@ -858,6 +858,45 @@ class ArelInsert
   end
 end
 
+class ArelUpdate
+  def initialize(table: ArelTable, assignments = nil, predicates = [])
+    @table = table
+    @assignments = assignments
+    @predicates = predicates
+  end
+
+  def set(assignments: Hash) = ArelUpdate.new(@table, assignments, @predicates)
+  def where(predicate)
+    ArelUpdate.new(@table, @assignments, array_concat(@predicates, [predicate]))
+  end
+
+  def to_sql() -> Array
+    clauses = []
+    params = []
+    def collect_assignment(name, value)
+      clauses.push("#{arel_quote_identifier(name)} = ?")
+      params.push(value)
+    end
+    @assignments.each(collect_assignment)
+    sql = "UPDATE #{arel_quote_identifier(@table.name())} SET #{clauses.join(", ")}"
+    predicates = []
+    visitor = ArelSQLiteVisitor.new()
+    def render_predicate(predicate)
+      predicates.push(visitor.render_expression(predicate, params))
+    end
+    @predicates.each(render_predicate)
+    if predicates.length() > 0
+      sql = sql + " WHERE " + predicates.join(" AND ")
+    end
+    [sql, params]
+  end
+
+  def execute(db)
+    sql, params = self.to_sql()
+    db.execute(sql, params)
+  end
+end
+
 class Arel
   def self.table(name: String) = ArelTable.new(name)
   def self.as(expression, name: String) = ArelAlias.new(expression, name)
@@ -886,6 +925,7 @@ class Arel
   def self.intersect(left, right) = ArelCompoundQuery.new(left, "INTERSECT", right)
   def self.except(left, right) = ArelCompoundQuery.new(left, "EXCEPT", right)
   def self.insert_into(table: ArelTable) = ArelInsert.new(table)
+  def self.update(table: ArelTable) = ArelUpdate.new(table)
   def self.from_subquery(query, name: String)
     ArelQuery.new(name, [], [], nil, nil, [ArelRawSql.new("*", [])], true, true,
       name, false, [], [], [], query)
