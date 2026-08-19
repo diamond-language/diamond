@@ -333,6 +333,14 @@ def arel_append_cte(ctes: Array, name: String, query, recursive = false) -> Arra
 end
 
 class ArelSQLiteVisitor
+  def visitor_name() = "SQLite"
+  def supports_extension?(name: String) = true
+  def require_extension(name: String)
+    if !self.supports_extension?(name)
+      raise ArgumentError.new("#{self.visitor_name()} visitor does not support #{name}")
+    end
+  end
+
   def attribute_allowed?(attribute: ArelAttribute) -> Bool
     if @query == nil
       true
