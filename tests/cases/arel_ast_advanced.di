@@ -106,6 +106,13 @@ def run_tests()
     Minitest.assert_equal("attribute belongs to a relation outside this query", message)
   end
 
+  def test_arbitrary_expressions_can_be_aliased()
+    people = Arel.table("people")
+    average = Arel.as(Arel.avg(people.column("age")), "average_age")
+    sql, params = Arel.from(people).project(average).to_sql()
+    Minitest.assert_equal("SELECT AVG(\"people\".\"age\") AS \"average_age\" FROM \"people\"", sql)
+  end
+
   suite = Minitest.new()
   suite.test("BETWEEN predicates", test_between_predicates_bind_both_bounds)
   suite.test("LIKE predicates", test_like_predicates_are_bound)
@@ -117,6 +124,7 @@ def run_tests()
   suite.test("left outer join", test_left_outer_join_executes_against_sqlite)
   suite.test("self join aliases", test_self_join_uses_distinct_relation_aliases)
   suite.test("relation-set validation", test_attributes_outside_relation_set_are_rejected)
+  suite.test("arbitrary expression aliases", test_arbitrary_expressions_can_be_aliased)
   suite.run()
 end
 

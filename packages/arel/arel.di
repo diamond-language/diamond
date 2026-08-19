@@ -521,6 +521,7 @@ end
 
 class Arel
   def self.table(name: String) = ArelTable.new(name)
+  def self.as(expression, name: String) = ArelAlias.new(expression, name)
   def self.sql(fragment: String, params = nil)
     bound = params
     if bound == nil
