@@ -526,7 +526,7 @@ class ArelSQLiteVisitor
       "#{self.render_attribute(expression.left())} #{operator} ? AND ?"
     elsif expression is ArelCollation
       inner = self.render_expression(expression.expression(), params)
-      "#{inner} COLLATE #{arel_quote_identifier(expression.name())}"
+      "#{inner} COLLATE #{self.quote_identifier(expression.name())}"
     elsif expression is ArelExists
       sql, bound = expression.query().render_with(self)
       bound_index = 0
@@ -571,7 +571,7 @@ class ArelSQLiteVisitor
       if !self.attribute_allowed?(ArelAttribute.new(expression.table(), "*"))
         raise ArgumentError.new("wildcard belongs to a relation outside this query")
       end
-      arel_quote_identifier(expression.table().reference_name()) + ".*"
+      self.quote_identifier(expression.table().reference_name()) + ".*"
     elsif expression is ArelNot
       inner = self.render_expression(expression.expression(), params)
       "(NOT #{inner})"
@@ -584,7 +584,7 @@ class ArelSQLiteVisitor
       sql
     elsif expression is ArelAlias
       inner = self.render_expression(expression.expression(), params)
-      "#{inner} AS #{arel_quote_identifier(expression.name())}"
+      "#{inner} AS #{self.quote_identifier(expression.name())}"
     elsif expression is ArelRawSql
       param_index = 0
       while param_index < expression.params().length()
@@ -600,9 +600,9 @@ class ArelSQLiteVisitor
   def render_expression_extension(expression, params: Array) -> String
     if expression is ArelExcludedAttribute
       self.require_extension(expression.extension_name())
-      "excluded.#{arel_quote_identifier(expression.name())}"
+      "excluded.#{self.quote_identifier(expression.name())}"
     elsif expression is ArelConflictAttribute
-      arel_quote_identifier(expression.name())
+      self.quote_identifier(expression.name())
     elsif expression is ArelBinaryExpression
       if expression.operator() == "&" || expression.operator() == "|" ||
           expression.operator() == "<<" || expression.operator() == ">>"
