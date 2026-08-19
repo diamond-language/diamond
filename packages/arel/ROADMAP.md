@@ -22,49 +22,37 @@ Raw SQL remains an explicit escape hatch, not the representation used by new
 features. Values are bind parameters by default. Identifiers are represented
 as nodes and quoted by the active visitor.
 
-## Next milestone: correlated subqueries
+## Next milestone: compound-query composition
 
-Allow an inner query to refer deliberately to relations owned by its enclosing
-query:
+Round out the structural set-operation layer:
 
-- an explicit correlation API rather than disabling relation-scope checks;
-- correlated `EXISTS`, scalar, and `IN` subqueries;
-- validation that distinguishes permitted outer references from accidental
-  unrelated attributes;
-- nested correlation across more than one query level;
-- execution tests covering the same column name at inner and outer levels.
+- explicit grouping when nested compound branches require parentheses;
+- ordering, limits, and offsets applied to the compound result rather than an
+  individual branch;
+- compound queries as CTE bodies and derived-table sources in execution tests;
+- clearer diagnostics when wildcard projections make branch shape unknowable;
+- optional structural type compatibility checks if query expressions acquire
+  reliable result-type metadata.
 
 Completion means every feature composes with existing predicates, preserves
 bind ordering, quotes identifiers correctly, and executes against SQLite in
 the package tests.
 
-## Following milestone: common table expressions
+## Following milestone: recursive common table expressions
 
-Add named query sources shared within a statement:
+Extend the existing non-recursive `WITH` representation:
 
-- non-recursive `WITH` entries;
-- multiple CTEs with deterministic declaration and bind order;
-- references to CTE output through the ordinary table/attribute surface;
-- recursive CTEs after the non-recursive representation is stable;
-- clear duplicate-name and out-of-scope diagnostics.
+- `WITH RECURSIVE` rendering without making every CTE recursive;
+- self-reference through an explicit CTE relation object;
+- anchor/recursive branch helpers built from ordinary `UNION ALL` nodes;
+- validation for duplicate names and invalid self-reference;
+- SQLite execution coverage for a bounded recursive sequence or tree walk.
 
 CTEs should remain query nodes visited by the renderer, never interpolated SQL
 strings. SQLite execution tests should cover multiple CTE references and bind
 parameters in both CTE bodies and the consuming query.
 
-## Milestone 3: set operations
-
-Combine compatible SELECT queries:
-
-- `UNION`, `UNION ALL`, `INTERSECT`, and `EXCEPT`;
-- explicit grouping when a compound query is nested or ordered;
-- bind ordering across every branch;
-- validation of incompatible projection counts where that information is
-  structurally available.
-
-This milestone completes the compound-query portion of the relational algebra.
-
-## Milestone 4: data-changing statements
+## Milestone 3: data-changing statements
 
 Add separate immutable managers for:
 
@@ -76,7 +64,7 @@ Add separate immutable managers for:
 Write statements return `[sql, bind_params]` like SELECT statements. Executing
 them remains the responsibility of the caller or a higher repository layer.
 
-## Milestone 5: visitor and adapter boundary
+## Milestone 4: visitor and adapter boundary
 
 Prove that the AST is not accidentally SQLite-specific:
 
@@ -91,7 +79,7 @@ Do not design hypothetical dialect abstractions before a second adapter exists.
 SQLite behavior should stay direct and readable until a concrete difference
 needs an abstraction.
 
-## Milestone 6: ergonomics and diagnostics
+## Milestone 5: ergonomics and diagnostics
 
 Once the algebra is stable:
 

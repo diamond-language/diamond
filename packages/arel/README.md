@@ -73,6 +73,12 @@ positions while retaining their bind parameters. `Arel.as`, `Arel.asc`, and
 `Arel.desc` apply aliases or ordering to arbitrary expressions; orderings can
 select `nulls_first()` or `nulls_last()`.
 
+Inner queries opt into outer references with `correlate(table)` or
+`correlate_all(tables)`, retaining relation-scope validation at every nesting
+level. `query.with(name, source_query)` adds non-recursive CTEs. `Arel.union`,
+`union_all`, `intersect`, and `except` build structural compound queries and
+reject branches with different projection counts.
+
 The original string-oriented API remains available for compatibility:
 
 ```ruby
@@ -151,9 +157,8 @@ why nothing here names `SQLite3` directly.
 - **`INSERT`/`UPDATE`/`DELETE`.** This builds and reads `SELECT`
   statements only -- writes belong to a mapper/repository layer above
   this one.
-- **Correlated subqueries, CTEs, set operations, and data-changing
-  statements.** These are the next relational-algebra layers, not hidden raw
-  SQL shortcuts.
+- **Recursive CTEs, compound-query modifiers, and data-changing statements.**
+  These are the next relational-algebra layers, not hidden raw SQL shortcuts.
 - **Visitors for other adapters.** Nodes contain no SQLite rendering logic;
   `ArelSQLiteVisitor` is deliberately separate so later dialect visitors can
   render the same query tree.
