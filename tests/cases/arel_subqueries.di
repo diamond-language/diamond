@@ -73,6 +73,25 @@ def run_tests()
     Minitest.assert_equal("SELECT * FROM \"people\" WHERE EXISTS (SELECT * FROM \"memberships\" WHERE \"memberships\".\"person_id\" = \"people\".\"id\")", sql)
   end
 
+  def test_correlated_exists_executes_against_sqlite()
+    people = Arel.table("people")
+    memberships = Arel.table("memberships")
+    inner = Arel.from(memberships).correlate(people)
+    inner = inner.where(memberships.column("person_id").eq(people.column("id")))
+    query = Arel.from(people).where(Arel.exists(inner))
+
+    db = SQLite3.open(":memory:")
+    db.execute("CREATE TABLE people (id INTEGER, name TEXT)")
+    db.execute("CREATE TABLE memberships (person_id INTEGER)")
+    db.execute("INSERT INTO people VALUES (1, 'Ada'), (2, 'Bob')")
+    db.execute("INSERT INTO memberships VALUES (1)")
+
+    rows = query.to_a(db)
+    Minitest.assert_equal(1, rows.length())
+    Minitest.assert_equal("Ada", rows[0]["name"])
+    db.close()
+  end
+
   def test_correlation_rejects_local_and_duplicate_relations()
     people = Arel.table("people")
     memberships = Arel.table("memberships")
@@ -113,6 +132,7 @@ def run_tests()
   suite.test("IN subquery", test_in_subquery_preserves_inner_binds)
   suite.test("scalar subquery", test_scalar_subquery_is_an_expression)
   suite.test("explicit correlation", test_explicit_correlation_allows_outer_attributes)
+  suite.test("correlated execution", test_correlated_exists_executes_against_sqlite)
   suite.test("correlation validation", test_correlation_rejects_local_and_duplicate_relations)
   suite.test("nested correlation", test_nested_correlation_can_name_each_outer_level)
   suite.run!()

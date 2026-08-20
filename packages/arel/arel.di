@@ -470,12 +470,16 @@ class ArelVisitor
     if entries.length() == 0
       ""
     else
-      prefix = "WITH "
-      if recursive
-        prefix = "WITH RECURSIVE "
-      end
-      "#{prefix}#{entries.join(", ")} "
+      self.render_cte_prefix(entries, recursive)
     end
+  end
+
+  def render_cte_prefix(entries: Array, recursive: Bool) -> String
+    prefix = "WITH "
+    if recursive
+      prefix = "WITH RECURSIVE "
+    end
+    "#{prefix}#{entries.join(", ")} "
   end
 
   def render_expression(expression, params: Array) -> String
@@ -662,6 +666,14 @@ class ArelVisitor
     end
   end
 
+  def render_join(join: ArelJoin, params: Array) -> String
+    sql = "#{join.kind()} JOIN #{self.render_table(join.table())}"
+    if join.predicate() != nil
+      sql = sql + " ON " + self.render_expression(join.predicate(), params)
+    end
+    sql
+  end
+
   def render(query) -> Array
     previous_query = @query
     begin
@@ -679,10 +691,7 @@ class ArelVisitor
     index = 0
     while index < query.joins().length()
       join = query.joins()[index]
-      table_sql = table_sql + " #{join.kind()} JOIN #{visitor.render_table(join.table())}"
-      if join.predicate() != nil
-        table_sql = table_sql + " ON " + visitor.render_expression(join.predicate(), params)
-      end
+      table_sql = table_sql + " " + visitor.render_join(join, params)
       index = index + 1
     end
     sql = sql + "SELECT "
@@ -736,6 +745,31 @@ class ArelVisitor
     [sql, params]
     ensure
       @query = previous_query
+    end
+  end
+
+  def render_compound_branch(sql: String, grouped: Bool) -> String
+    if grouped
+      "SELECT * FROM (#{sql})"
+    else
+      sql
+    end
+  end
+
+  def render_returning(expressions: Array, params: Array) -> String
+    if expressions.length() > 0
+      self.require_extension("returning clauses")
+    end
+    rendered = []
+    index = 0
+    while index < expressions.length()
+      rendered.push(self.render_expression(expressions[index], params))
+      index = index + 1
+    end
+    if rendered.length() == 0
+      ""
+    else
+      " RETURNING #{rendered.join(", ")}"
     end
   end
 
@@ -1079,12 +1113,8 @@ class ArelCompoundQuery
   def render_default(visitor) -> Array
     left_sql, left_params = @left.render_with(visitor)
     right_sql, right_params = @right.render_with(visitor)
-    if @left is ArelCompoundQuery
-      left_sql = "SELECT * FROM (#{left_sql})"
-    end
-    if @right is ArelCompoundQuery
-      right_sql = "SELECT * FROM (#{right_sql})"
-    end
+    left_sql = visitor.render_compound_branch(left_sql, @left is ArelCompoundQuery)
+    right_sql = visitor.render_compound_branch(right_sql, @right is ArelCompoundQuery)
     params = array_concat(left_params, right_params)
     sql = "#{left_sql} #{@operator} #{right_sql}"
     rendered_orderings = []
@@ -1147,23 +1177,6 @@ class ArelConflictTarget
 end
 
 class ArelDefaultValues
-end
-
-def arel_render_returning_clause(expressions: Array, params: Array, visitor) -> String
-  if expressions.length() > 0
-    visitor.require_extension("returning clauses")
-  end
-  rendered = []
-  index = 0
-  while index < expressions.length()
-    rendered.push(visitor.render_expression(expressions[index], params))
-    index = index + 1
-  end
-  if rendered.length() == 0
-    ""
-  else
-    " RETURNING #{rendered.join(", ")}"
-  end
 end
 
 def arel_render_insert_conflict(target, ignore: Bool, assignments, params: Array,
@@ -1290,7 +1303,7 @@ class ArelInsert
       visitor.require_extension("insert default values")
       params = []
       sql = "INSERT INTO #{visitor.quote_identifier(@table.name())} DEFAULT VALUES"
-      sql = sql + arel_render_returning_clause(@returning, params, visitor)
+      sql = sql + visitor.render_returning(@returning, params)
       cte_params = []
       sql = visitor.render_ctes(self, cte_params) + sql
       return [sql, array_concat(cte_params, params)]
@@ -1316,7 +1329,7 @@ class ArelInsert
         "(#{columns.join(", ")}) #{source_sql}"
       sql = sql + arel_render_insert_conflict(@conflict_target, @conflict_ignore,
         @conflict_assignments, params, visitor)
-      sql = sql + arel_render_returning_clause(@returning, params, visitor)
+      sql = sql + visitor.render_returning(@returning, params)
       cte_params = []
       sql = visitor.render_ctes(self, cte_params) + sql
       params = array_concat(cte_params, params)
@@ -1363,7 +1376,7 @@ class ArelInsert
       "(#{columns.join(", ")}) VALUES #{value_groups.join(", ")}"
     sql = sql + arel_render_insert_conflict(@conflict_target, @conflict_ignore,
       @conflict_assignments, params, visitor)
-    sql = sql + arel_render_returning_clause(@returning, params, visitor)
+    sql = sql + visitor.render_returning(@returning, params)
     cte_params = []
     sql = visitor.render_ctes(self, cte_params) + sql
     params = array_concat(cte_params, params)
@@ -1461,17 +1474,8 @@ class ArelUpdate
     if predicates.length() > 0
       sql = sql + " WHERE " + predicates.join(" AND ")
     end
-    rendered = []
-    returning_index = 0
     if @returning.length() > 0
-      visitor.require_extension("returning clauses")
-    end
-    while returning_index < @returning.length()
-      rendered.push(visitor.render_expression(@returning[returning_index], params))
-      returning_index = returning_index + 1
-    end
-    if rendered.length() > 0
-      sql = sql + " RETURNING " + rendered.join(", ")
+      sql = sql + visitor.render_returning(@returning, params)
     end
     cte_params = []
     sql = visitor.render_ctes(self, cte_params) + sql
@@ -1548,17 +1552,8 @@ class ArelDelete
     if predicates.length() > 0
       sql = sql + " WHERE " + predicates.join(" AND ")
     end
-    rendered = []
-    returning_index = 0
     if @returning.length() > 0
-      visitor.require_extension("returning clauses")
-    end
-    while returning_index < @returning.length()
-      rendered.push(visitor.render_expression(@returning[returning_index], params))
-      returning_index = returning_index + 1
-    end
-    if rendered.length() > 0
-      sql = sql + " RETURNING " + rendered.join(", ")
+      sql = sql + visitor.render_returning(@returning, params)
     end
     cte_params = []
     sql = visitor.render_ctes(self, cte_params) + sql

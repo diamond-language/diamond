@@ -23,6 +23,45 @@ class NestedTestArelVisitor < ArelSQLiteVisitor
   end
 end
 
+class CompoundBranchTestArelVisitor < ArelSQLiteVisitor
+  def render_compound_branch(sql: String, grouped: Bool) -> String
+    if grouped
+      "BRANCH(#{sql})"
+    else
+      sql
+    end
+  end
+end
+
+class ReturningTestArelVisitor < ArelSQLiteVisitor
+  def render_returning(expressions: Array, params: Array) -> String
+    self.require_extension("returning clauses")
+    rendered = []
+    index = 0
+    while index < expressions.length()
+      rendered.push(self.render_expression(expressions[index], params))
+      index = index + 1
+    end
+    " OUTPUT #{rendered.join(", ")}"
+  end
+end
+
+class CtePrefixTestArelVisitor < ArelSQLiteVisitor
+  def render_cte_prefix(entries: Array, recursive: Bool) -> String
+    prefix = "WITH_CUSTOM "
+    if recursive
+      prefix = "WITH_CUSTOM_RECURSIVE "
+    end
+    "#{prefix}#{entries.join("; ")} "
+  end
+end
+
+class JoinTestArelVisitor < ArelSQLiteVisitor
+  def render_join(join: ArelJoin, params: Array) -> String
+    "CUSTOM_JOIN #{self.render_table(join.table())}"
+  end
+end
+
 class WriteTestArelVisitor < ArelSQLiteVisitor
   def quote_identifier(name: String) -> String = "[#{name}]"
   def render_insert(statement) -> Array
@@ -74,6 +113,20 @@ def run_tests()
     Minitest.assert_equal("1|2", params.join("|"))
   end
 
+  def test_compound_branch_grouping_is_a_visitor_seam()
+    first = Arel.table("first_values")
+    second = Arel.table("second_values")
+    third = Arel.table("third_values")
+    left = Arel.union(
+      Arel.from(first).project(first.column("value")),
+      Arel.from(second).project(second.column("value")))
+    query = Arel.union_all(left,
+      Arel.from(third).project(third.column("value")))
+    sql, params = query.to_sql(CompoundBranchTestArelVisitor.new())
+    Minitest.assert_equal("BRANCH(SELECT \"first_values\".\"value\" FROM \"first_values\" UNION SELECT \"second_values\".\"value\" FROM \"second_values\") UNION ALL SELECT \"third_values\".\"value\" FROM \"third_values\"", sql)
+    Minitest.assert_equal(0, params.length())
+  end
+
   def test_cte_bodies_inherit_the_explicit_visitor()
     people = Arel.table("people")
     source = Arel.from(people).project(people.column("name"))
@@ -81,6 +134,34 @@ def run_tests()
     query = Arel.from(named).with(named, source)
     sql, params = query.to_sql(NestedTestArelVisitor.new())
     Minitest.assert_equal("WITH \"named\" AS (SELECT \"people\".\"name\" FROM visited_people) SELECT * FROM visited_named", sql)
+  end
+
+  def test_returning_clause_is_a_visitor_seam()
+    items = Arel.table("items")
+    insert = Arel.insert_into(items).values({"name": "paper"})
+    sql, params = insert.returning(items.column("name")).to_sql(
+      ReturningTestArelVisitor.new())
+    Minitest.assert_equal("INSERT INTO \"items\" (\"name\") VALUES (?) OUTPUT \"items\".\"name\"", sql)
+    Minitest.assert_equal("paper", params.join("|"))
+  end
+
+  def test_cte_prefix_is_a_visitor_seam()
+    people = Arel.table("people")
+    source = Arel.from(people).project(people.column("name"))
+    query = Arel.from(Arel.cte("named")).with("named", source)
+    sql, params = query.to_sql(CtePrefixTestArelVisitor.new())
+    Minitest.assert_equal("WITH_CUSTOM \"named\" AS (SELECT \"people\".\"name\" FROM \"people\") SELECT * FROM \"named\"", sql)
+    Minitest.assert_equal(0, params.length())
+  end
+
+  def test_join_rendering_is_a_visitor_seam()
+    people = Arel.table("people")
+    orders = Arel.table("orders")
+    query = Arel.from(people).join(orders,
+      people.column("id").eq(orders.column("person_id")))
+    sql, params = query.to_sql(JoinTestArelVisitor.new())
+    Minitest.assert_equal("SELECT * FROM \"people\" CUSTOM_JOIN \"orders\"", sql)
+    Minitest.assert_equal(0, params.length())
   end
 
   def test_insert_expressions_use_the_explicit_visitor()
@@ -164,7 +245,11 @@ def run_tests()
   suite.test("explicit SELECT visitor", test_select_accepts_an_explicit_visitor)
   suite.test("nested SELECT visitor", test_derived_queries_inherit_the_explicit_visitor)
   suite.test("compound visitor", test_compound_branches_inherit_the_explicit_visitor)
+  suite.test("compound branch seam", test_compound_branch_grouping_is_a_visitor_seam)
   suite.test("CTE visitor", test_cte_bodies_inherit_the_explicit_visitor)
+  suite.test("RETURNING seam", test_returning_clause_is_a_visitor_seam)
+  suite.test("CTE prefix seam", test_cte_prefix_is_a_visitor_seam)
+  suite.test("join seam", test_join_rendering_is_a_visitor_seam)
   suite.test("INSERT visitor", test_insert_expressions_use_the_explicit_visitor)
   suite.test("UPDATE visitor", test_update_expressions_use_the_explicit_visitor)
   suite.test("DELETE visitor", test_delete_returning_uses_the_explicit_visitor)
