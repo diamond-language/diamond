@@ -4389,8 +4389,8 @@ static DiamondVmStatus time_at_helper(DiamondVm *vm,DiamondValue epoch_value,
  * top-level prelude function. */
 static const DiamondFunction *find_top_level_function(
         const DiamondChunk *chunk, const char *name, size_t length) {
-    for (size_t index = 0; index < chunk->function_count; index++) {
-        const DiamondFunction *candidate = chunk->functions[index];
+    for (size_t index = chunk->function_count; index > 0; index--) {
+        const DiamondFunction *candidate = chunk->functions[index - 1];
         if (candidate->owner_class != UINT8_MAX || candidate->nested) continue;
         if (strlen(candidate->name) == length &&
             memcmp(candidate->name, name, length) == 0) return candidate;

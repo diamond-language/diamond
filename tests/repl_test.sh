@@ -38,6 +38,11 @@ response="$(read_until_prompt)"
 [[ "$response" == $'3\n>>> ' ]]
 count=$((count + 1))
 
+printf '_\n' >&"${REPL[1]}"
+response="$(read_until_prompt)"
+[[ "$response" == $'3\n>>> ' ]]
+count=$((count + 1))
+
 # --- assignments persist across later evaluations ---
 
 printf 'x = 10\n' >&"${REPL[1]}"
@@ -48,6 +53,19 @@ count=$((count + 1))
 printf 'x + 5\n' >&"${REPL[1]}"
 response="$(read_until_prompt)"
 [[ "$response" == $'15\n>>> ' ]]
+count=$((count + 1))
+
+# Heap-backed results must remain printable after the candidate VM returns.
+# This used to trigger a use-after-free under ThreadSanitizer because the
+# REPL freed the VM before printing the returned Range object.
+printf '1..10\n' >&"${REPL[1]}"
+response="$(read_until_prompt)"
+[[ "$response" == $'#<Range>\n>>> ' ]]
+count=$((count + 1))
+
+printf '_\n' >&"${REPL[1]}"
+response="$(read_until_prompt)"
+[[ "$response" == $'#<Range>\n>>> ' ]]
 count=$((count + 1))
 
 # --- puts output shows once, not replayed on later rounds ---
@@ -82,6 +100,22 @@ count=$((count + 1))
 printf 'add(3, 4)\n' >&"${REPL[1]}"
 response="$(read_until_prompt)"
 [[ "$response" == $'7\n>>> ' ]]
+count=$((count + 1))
+
+# Top-level methods can be replaced interactively.
+for method_line in 'def add(a, b)' '  a - b'; do
+    printf '%s\n' "$method_line" >&"${REPL[1]}"
+    response="$(read_until_prompt)"
+    [[ "$response" == "... " ]]
+    count=$((count + 1))
+done
+printf 'end\n' >&"${REPL[1]}"
+response="$(read_until_prompt)"
+[[ "$response" == *">>> " ]]
+count=$((count + 1))
+printf 'add(7, 3)\n' >&"${REPL[1]}"
+response="$(read_until_prompt)"
+[[ "$response" == $'4\n>>> ' ]]
 count=$((count + 1))
 
 # --- a class definition persists, instances keep their own state ---

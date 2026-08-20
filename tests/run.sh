@@ -49,6 +49,15 @@ fi
 grep -q "error: expected expression" "$error_file"
 rm -f "$error_file"
 
+error_file="$(mktemp)"
+if "$diamond" -e $'range = 1..10\nrange.asdf' 2>"$error_file"; then
+    echo "member access without a call unexpectedly succeeded" >&2
+    rm -f "$error_file"
+    exit 1
+fi
+grep -q "error: member access requires a method call with '()'" "$error_file"
+rm -f "$error_file"
+
 if "$diamond" -e '1 / 0' >/dev/null 2>&1; then
     echo "division by zero unexpectedly succeeded" >&2
     exit 1

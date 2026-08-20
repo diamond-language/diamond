@@ -17,6 +17,22 @@ static constexpr unsigned char DIAMOND_CORE_SOURCE[] = {
 #embed "../lib/core.di" suffix(,)
     0
 };
+static constexpr unsigned char DIAMOND_CORE_STRING_BUILDER_SOURCE[] = {
+#embed "../lib/core/string_builder.di" suffix(,)
+    0
+};
+static constexpr unsigned char DIAMOND_CORE_NUMERIC_SOURCE[] = {
+#embed "../lib/core/numeric.di" suffix(,)
+    0
+};
+static constexpr unsigned char DIAMOND_CORE_JSON_CODEC_SOURCE[] = {
+#embed "../lib/core/json_codec.di" suffix(,)
+    0
+};
+static constexpr unsigned char DIAMOND_CORE_JSON_SOURCE[] = {
+#embed "../lib/core/json.di" suffix(,)
+    0
+};
 static constexpr char DIAMOND_USER_LINE_RESET[] = "\n#line 1\n";
 
 /* Growable byte buffer, used both for the accumulated session source and
@@ -408,23 +424,45 @@ static bool try_compile(const char *source, DiamondProgram *program,
         return false;
     }
     const size_t core_length = sizeof(DIAMOND_CORE_SOURCE) - 1;
+    const size_t string_builder_length =
+        sizeof(DIAMOND_CORE_STRING_BUILDER_SOURCE) - 1;
+    const size_t numeric_length = sizeof(DIAMOND_CORE_NUMERIC_SOURCE) - 1;
+    const size_t json_codec_length =
+        sizeof(DIAMOND_CORE_JSON_CODEC_SOURCE) - 1;
+    const size_t json_length = sizeof(DIAMOND_CORE_JSON_SOURCE) - 1;
     const size_t reset_length = sizeof(DIAMOND_USER_LINE_RESET) - 1;
     const size_t source_length = strlen(bundle.source);
-    char *combined = malloc(core_length + reset_length + source_length + 1);
+    char *combined = malloc(core_length + string_builder_length + numeric_length +
+                            json_codec_length + json_length +
+                            reset_length + source_length + 1);
     if (combined == nullptr) {
         (void)snprintf(error_buffer, error_buffer_size, "out of memory");
         diamond_source_bundle_free(&bundle);
         return false;
     }
-    memcpy(combined, DIAMOND_CORE_SOURCE, core_length);
-    memcpy(combined + core_length, DIAMOND_USER_LINE_RESET, reset_length);
-    memcpy(combined + core_length + reset_length, bundle.source, source_length + 1);
+    memcpy(combined, DIAMOND_CORE_NUMERIC_SOURCE, numeric_length);
+    memcpy(combined + numeric_length, DIAMOND_CORE_SOURCE, core_length);
+    memcpy(combined + numeric_length + core_length,
+           DIAMOND_CORE_STRING_BUILDER_SOURCE, string_builder_length);
+        memcpy(combined + numeric_length + core_length + string_builder_length,
+            DIAMOND_CORE_JSON_CODEC_SOURCE, json_codec_length);
+        memcpy(combined + numeric_length + core_length + string_builder_length +
+            json_codec_length, DIAMOND_CORE_JSON_SOURCE, json_length);
+        memcpy(combined + numeric_length + core_length + string_builder_length +
+            json_codec_length + json_length,
+            DIAMOND_USER_LINE_RESET, reset_length);
+        memcpy(combined + numeric_length + core_length + string_builder_length +
+            json_codec_length + json_length + reset_length,
+            bundle.source, source_length + 1);
 
-    DiamondDiagnostic diagnostic;
+        DiamondDiagnostic diagnostic;
     const bool ok = diamond_compile(combined, program, &diagnostic);
     if (!ok) {
         const DiamondResolvedLocation resolved = diamond_resolve_diagnostic_location(
-            "<repl>", combined, diagnostic, &bundle, core_length + reset_length);
+            "<repl>", combined, diagnostic, &bundle,
+            core_length + string_builder_length + numeric_length +
+            json_codec_length + json_length +
+            reset_length);
         (void)snprintf(error_buffer, error_buffer_size, "%zu:%zu: error: %s",
                        resolved.line, resolved.column, diagnostic.message);
         *out_incomplete = strcmp(resolved.path, "<repl>") == 0 &&
@@ -442,6 +480,7 @@ static bool try_compile(const char *source, DiamondProgram *program,
  * whether the run itself succeeded; on failure `*out_error` is set to a
  * static status/message string, not owned by the caller. */
 static bool run_candidate(DiamondProgram *program, DiamondValue *out_result,
+                          DiamondVm *out_vm,
                           const char **out_error, char *error_buffer,
                           size_t error_buffer_size) {
     DiamondChunk chunk = diamond_program_chunk(program);
@@ -457,7 +496,48 @@ static bool run_candidate(DiamondProgram *program, DiamondValue *out_result,
         diamond_vm_free(&vm);
         return false;
     }
-    diamond_vm_free(&vm);
+    /* The result may point into this VM's managed heap. Keep the VM alive
+     * until the caller has printed the result and committed the candidate. */
+    *out_vm = vm;
+    return true;
+}
+
+static bool repl_pending_is_declaration(const char *source) {
+    while (*source == ' ' || *source == '\t' || *source == '\r' || *source == '\n')
+        source++;
+    return strncmp(source, "def ", 4) == 0 || strncmp(source, "class ", 6) == 0 ||
+        strncmp(source, "module ", 7) == 0 || strncmp(source, "interface ", 10) == 0;
+}
+
+static bool append_repl_assignment(ReplBuffer *destination, const ReplBuffer *pending) {
+    const char *source = pending->data;
+    while (*source == ' ' || *source == '\t') source++;
+    const char *name = source;
+    while ((*source >= 'a' && *source <= 'z') || (*source >= 'A' && *source <= 'Z') ||
+           (*source >= '0' && *source <= '9') || *source == '_') source++;
+    if (source == name) return false;
+    const char *equals = source;
+    while (*equals == ' ' || *equals == '\t') equals++;
+    if (*equals != '=' || equals[1] == '=') return false;
+    if (!buffer_append(destination, pending->data, pending->length) ||
+        !buffer_append(destination, "_ = ", 4) ||
+        !buffer_append(destination, name, (size_t)(source - name)) ||
+        !buffer_append(destination, "\n", 1)) return false;
+    return true;
+}
+
+static bool append_repl_pending(ReplBuffer *destination, const ReplBuffer *pending) {
+    if (repl_pending_is_declaration(pending->data)) {
+        return buffer_append(destination, pending->data, pending->length);
+    }
+    if (append_repl_assignment(destination, pending)) return true;
+    size_t expression_length = pending->length;
+    while (expression_length > 0 &&
+           (pending->data[expression_length - 1] == '\n' ||
+            pending->data[expression_length - 1] == '\r')) expression_length--;
+    if (!buffer_append(destination, "_ = (", 5) ||
+        !buffer_append(destination, pending->data, expression_length) ||
+        !buffer_append(destination, ")\n", 2)) return false;
     return true;
 }
 
@@ -485,6 +565,7 @@ int diamond_repl_run(void) {
 
     ReplBuffer session;
     buffer_init(&session);
+    buffer_append(&session, "_ = nil\n", 8);
     ReplBuffer pending;
     buffer_init(&pending);
     ReplBuffer previous_output;
@@ -577,7 +658,7 @@ int diamond_repl_run(void) {
             ReplBuffer candidate_source;
             buffer_init(&candidate_source);
             if (!buffer_append(&candidate_source, session.data, session.length) ||
-                !buffer_append(&candidate_source, pending.data, pending.length)) {
+                !append_repl_pending(&candidate_source, &pending)) {
                 fprintf(stderr, "diamond: out of memory reading input\n");
                 buffer_free(&candidate_source);
                 eof = true;
@@ -591,6 +672,7 @@ int diamond_repl_run(void) {
                 eof = true;
                 break;
             }
+            program->allow_top_level_redefinition = true;
             bool incomplete = false;
             const bool ok = try_compile(candidate_source.data, program, &incomplete,
                                         error_message, sizeof error_message);
@@ -605,6 +687,53 @@ int diamond_repl_run(void) {
                 program = nullptr;
                 prompt = "... ";
                 continue;
+            }
+            if (!repl_pending_is_declaration(pending.data)) {
+                diamond_program_free(program);
+                free(program);
+                program = calloc(1, sizeof *program);
+                bool raw_incomplete = false;
+                if (program != nullptr) {
+                    ReplBuffer raw_source;
+                    buffer_init(&raw_source);
+                    const bool raw_appended =
+                        buffer_append(&raw_source, session.data, session.length) &&
+                        buffer_append(&raw_source, pending.data, pending.length);
+                    const bool raw_ok = raw_appended && try_compile(
+                        raw_source.data, program, &raw_incomplete, error_message,
+                        sizeof error_message);
+                    buffer_free(&raw_source);
+                    if (!raw_ok && raw_incomplete) {
+                        diamond_program_free(program);
+                        free(program);
+                        program = nullptr;
+                        prompt = "... ";
+                        continue;
+                    }
+                    if (raw_ok) {
+                        diamond_program_free(program);
+                    }
+                }
+                if (program == nullptr) {
+                    fprintf(stderr, "diamond: out of memory allocating program\n");
+                    eof = true;
+                    break;
+                }
+                diamond_program_free(program);
+                free(program);
+                program = calloc(1, sizeof *program);
+                if (program == nullptr) {
+                    fprintf(stderr, "diamond: out of memory allocating program\n");
+                    eof = true;
+                    break;
+                }
+                ReplBuffer wrapped_source;
+                buffer_init(&wrapped_source);
+                buffer_append(&wrapped_source, session.data, session.length);
+                append_repl_pending(&wrapped_source, &pending);
+                try_compile(wrapped_source.data, program, &incomplete,
+                            error_message, sizeof error_message);
+                buffer_free(&wrapped_source);
             }
             fprintf(real_stdout, "%s\n", error_message);
             diamond_program_free(program);
@@ -623,8 +752,10 @@ int diamond_repl_run(void) {
         stdout = capture;
 
         DiamondValue result = DIAMOND_NIL;
+        DiamondVm result_vm;
         const char *run_error = nullptr;
-        const bool ran_ok = run_candidate(program, &result, &run_error,
+        const bool ran_ok = run_candidate(program, &result, &result_vm,
+                          &run_error,
                                           error_message, sizeof error_message);
 
         fflush(capture);
@@ -662,12 +793,13 @@ int diamond_repl_run(void) {
             ReplBuffer committed;
             buffer_init(&committed);
             buffer_append(&committed, session.data, session.length);
-            buffer_append(&committed, pending.data, pending.length);
+            append_repl_pending(&committed, &pending);
             buffer_free(&session);
             session = committed;
         } else {
             fprintf(real_stdout, "%s\n", run_error != nullptr ? run_error : "unknown error");
         }
+        if (ran_ok) diamond_vm_free(&result_vm);
         free(captured);
         diamond_program_free(program);
         free(program);

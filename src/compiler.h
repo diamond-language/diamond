@@ -6,6 +6,8 @@
 #include "vm.h"
 
 typedef struct DiamondProgram {
+    /* REPL-only compatibility; ordinary source still rejects duplicates. */
+    bool allow_top_level_redefinition;
     DiamondFunction entry;
     /* Root chunk display name, kept separate from entry.name: that field
      * shares DiamondFunction's DIAMOND_MAX_FUNCTION_NAME (64-byte) buffer

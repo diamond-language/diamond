@@ -822,10 +822,11 @@ static uint16_t parse_identifier(Compiler *compiler) {
 }
 
 static int find_function(const Compiler *compiler, DiamondSpan name) {
-    for (size_t index = 0; index < compiler->program->function_count; index++) {
-        const char *candidate = compiler->program->functions[index]->name;
-        if (compiler->program->functions[index]->owner_class != UINT8_MAX ||
-            compiler->program->functions[index]->nested) continue;
+    for (size_t index = compiler->program->function_count; index > 0; index--) {
+        const size_t function_index = index - 1;
+        const char *candidate = compiler->program->functions[function_index]->name;
+        if (compiler->program->functions[function_index]->owner_class != UINT8_MAX ||
+            compiler->program->functions[function_index]->nested) continue;
         size_t length = 0;
         while (candidate[length] != '\0') length++;
         if (length != name.length) continue;
@@ -836,7 +837,7 @@ static int find_function(const Compiler *compiler, DiamondSpan name) {
                 break;
             }
         }
-        if (equal) return (int)index;
+        if (equal) return (int)function_index;
     }
     return -1;
 }
@@ -2728,7 +2729,8 @@ static uint16_t parse_invoke(Compiler *compiler, uint16_t receiver) {
         advance_token(compiler);
     }
     if (compiler->current.kind != DIAMOND_TOKEN_LEFT_PAREN) {
-        fail(compiler, compiler->current.span, "expected '(' after method name"); return 0;
+        fail(compiler, compiler->current.span,
+             "member access requires a method call with '()'"); return 0;
     }
     advance_token(compiler);
     skip_newlines(compiler);
@@ -4616,7 +4618,8 @@ static uint16_t compile_definition(Compiler *compiler) {
         fail(compiler, name, "function name is too long");
         return 0;
     }
-    if(compiler->current_class<0&&compiler->current_module<0&&
+    if(!compiler->program->allow_top_level_redefinition &&
+        compiler->current_class<0&&compiler->current_module<0&&
         find_function(compiler, name) >= 0) {
         fail(compiler, name, "function is already defined");
         return 0;
@@ -6413,7 +6416,9 @@ size_t diamond_resolve_source_position(const char *path,const char *combined,
 
 bool diamond_compile(const char *source, DiamondProgram *program,
                      DiamondDiagnostic *diagnostic) {
+    const bool allow_top_level_redefinition = program->allow_top_level_redefinition;
     diamond_program_init(program);
+    program->allow_top_level_redefinition = allow_top_level_redefinition;
     *diagnostic = (DiamondDiagnostic){};
     Compiler compiler = {
         .source = source,
