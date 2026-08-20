@@ -16,6 +16,12 @@ test runner reuses its large `DiamondProgram`, but still recompiles the complete
 prelude for every case. Recent measurements show the batch corpus is now
 CPU-bound enough for that repeated work to matter.
 
+For maintainability, the prelude is being assembled from logical source modules
+at the native embedding boundary while `lib/core.di` remains the compatibility
+entry point. `lib/core/string_builder.di` and `lib/core/json.di` are the first
+extracted modules; the CLI and REPL append them to the embedded core source in
+dependency order before compilation.
+
 Investigate in this order:
 
 1. split the prelude into coherent source modules, beginning with JSON;
@@ -29,11 +35,11 @@ A physical file split alone is not a performance improvement: ordinary
 
 ### Continue the Arel relational algebra
 
-The SQLite-first Arel package now has expression nodes, grouping, joins, and
-subqueries. Its own forward plan lives in
-[../packages/arel/ROADMAP.md](../packages/arel/ROADMAP.md). The next architectural
-steps are correlated subqueries, CTEs, and set operations, followed by write
-statement managers.
+The SQLite-first Arel package now has expression nodes, grouping, joins,
+correlated subqueries, CTEs, set operations, and write statement managers. Its
+remaining forward plan lives in
+[../packages/arel/ROADMAP.md](../packages/arel/ROADMAP.md), currently focused on
+measured dialect grammar seams and conformance coverage.
 
 ### Improve receiver-aware language tooling
 
