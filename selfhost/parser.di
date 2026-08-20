@@ -5327,18 +5327,34 @@ def parse_and_run(path)
   end
 end
 
-# Like parse_and_run, but splices lib/core.di in front the same way
-# src/main.c's run_source does natively (core source, then a "\n#line 1\n"
-# reset so line numbers stay 1-based from the target's own first line),
-# so a target program can call core.di-defined functions (mod, abs, ...)
-# the way it always can when compiled natively. expand_source is still
-# called on the target alone first, exactly as parse_and_run does --
-# its segment offsets stay relative to the unprefixed `expanded` string,
-# so the core.di+reset prefix length is threaded into the parser via
-# set_offset_correction rather than by re-deriving segments against the
-# now-shifted combined string.
+# The native prelude isn't one file: src/run_source.c concatenates
+# lib/core/numeric.di, lib/core.di, lib/core/string_builder.di,
+# lib/core/json_codec.di, and lib/core/json.di, in that order, with no
+# separators between them (see DIAMOND_CORE_*_SOURCE in run_source.c).
+# Mirrored here so every self-hosted entry point that needs "the same
+# prelude a natively-compiled program gets" (parse_and_run_with_core
+# below, plus selfhost/self_parse_check.di and self_run_check.di) reads
+# it the same way instead of each hand-rolling its own file list.
+def core_prelude_source()
+  File.open("lib/core/numeric.di", "r").read() +
+    File.open("lib/core.di", "r").read() +
+    File.open("lib/core/string_builder.di", "r").read() +
+    File.open("lib/core/json_codec.di", "r").read() +
+    File.open("lib/core/json.di", "r").read()
+end
+
+# Like parse_and_run, but splices the core prelude in front the same
+# way src/run_source.c does natively (prelude source, then a
+# "\n#line 1\n" reset so line numbers stay 1-based from the target's
+# own first line), so a target program can call prelude-defined
+# functions (mod, abs, ...) the way it always can when compiled
+# natively. expand_source is still called on the target alone first,
+# exactly as parse_and_run does -- its segment offsets stay relative to
+# the unprefixed `expanded` string, so the prelude+reset prefix length
+# is threaded into the parser via set_offset_correction rather than by
+# re-deriving segments against the now-shifted combined string.
 def parse_and_run_with_core(path)
-  core_source = File.open("lib/core.di", "r").read()
+  core_source = core_prelude_source()
   source = File.open(path, "r").read()
   builder = ProgramBuilder.new()
   expanded = builder.expand_source(path, source)

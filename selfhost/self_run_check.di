@@ -6,13 +6,13 @@ require "parser"
 # actually *runs*, and that itself correctly compiles-and-runs a third,
 # independent target program? A driver snippet -- read a path, call
 # parse_and_run_with_core on it, print the result -- is appended to the
-# bundled parser.di+lexer.di+core.di source before compiling, so running
-# the self-compiled result performs the exact same "compile and run an
-# arbitrary program" operation parse_and_run_with_core.di does natively,
-# except every step of it now executes as bytecode the self-hosted
-# compiler produced, one VM level deeper.
+# bundled parser.di+lexer.di+core-prelude source before compiling, so
+# running the self-compiled result performs the exact same "compile and
+# run an arbitrary program" operation parse_and_run_with_core does
+# natively, except every step of it now executes as bytecode the
+# self-hosted compiler produced, one VM level deeper.
 def check_self_run(path)
-  core_source = File.open("lib/core.di", "r").read()
+  core_source = core_prelude_source()
   source = File.open(path, "r").read()
   builder = ProgramBuilder.new()
   expanded = builder.expand_source(path, source)
