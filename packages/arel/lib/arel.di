@@ -38,7 +38,7 @@ def arel_quote_identifier(name: String) -> String
       pieces.push("\"")
     end
     pieces.push(character)
-    index = index + 1
+    index += 1
   end
   pieces.push("\"")
   pieces.join()
@@ -371,7 +371,7 @@ def arel_append_cte(ctes: Array, name: String, query, recursive = false) -> Arra
     if ctes[index].name().downcase() == name.downcase()
       duplicate = true
     end
-    index = index + 1
+    index += 1
   end
   if duplicate
     raise ArgumentError.new("duplicate CTE name")
@@ -399,14 +399,14 @@ class ArelVisitor
         if @query.joins()[index].table().reference_name().downcase() == reference_name.downcase()
           found = true
         end
-        index = index + 1
+        index += 1
       end
       index = 0
       while index < @query.correlations().length()
         if @query.correlations()[index].reference_name().downcase() == reference_name.downcase()
           found = true
         end
-        index = index + 1
+        index += 1
       end
       found
     end
@@ -433,7 +433,7 @@ class ArelVisitor
       source_index = 0
       while source_index < source_params.length()
         params.push(source_params[source_index])
-        source_index = source_index + 1
+        source_index += 1
       end
       "(#{source_sql}) AS #{self.quote_identifier(query.base_reference_name())}"
     else
@@ -462,10 +462,10 @@ class ArelVisitor
       bound_index = 0
       while bound_index < bound.length()
         params.push(bound[bound_index])
-        bound_index = bound_index + 1
+        bound_index += 1
       end
       entries.push("#{self.quote_identifier(cte.name())} AS (#{sql})")
-      index = index + 1
+      index += 1
     end
     if entries.length() == 0
       ""
@@ -514,7 +514,7 @@ class ArelVisitor
         subquery_index = 0
         while subquery_index < subquery_params.length()
           params.push(subquery_params[subquery_index])
-          subquery_index = subquery_index + 1
+          subquery_index += 1
         end
         operator = "IN"
         if expression.negated?()
@@ -533,7 +533,7 @@ class ArelVisitor
         while value_index < expression.values().length()
           params.push(expression.values()[value_index])
           placeholders.push("?")
-          value_index = value_index + 1
+          value_index += 1
         end
         operator = "IN"
         if expression.negated?()
@@ -557,7 +557,7 @@ class ArelVisitor
       bound_index = 0
       while bound_index < bound.length()
         params.push(bound[bound_index])
-        bound_index = bound_index + 1
+        bound_index += 1
       end
       prefix = "EXISTS"
       if expression.negated?()
@@ -569,7 +569,7 @@ class ArelVisitor
       bound_index = 0
       while bound_index < bound.length()
         params.push(bound[bound_index])
-        bound_index = bound_index + 1
+        bound_index += 1
       end
       "(#{sql})"
     else
@@ -585,7 +585,7 @@ class ArelVisitor
       argument_index = 0
       while argument_index < expression.arguments().length()
         arguments.push(self.render_expression(expression.arguments()[argument_index], params))
-        argument_index = argument_index + 1
+        argument_index += 1
       end
       prefix = ""
       if expression.distinct?()
@@ -614,7 +614,7 @@ class ArelVisitor
       param_index = 0
       while param_index < expression.params().length()
         params.push(expression.params()[param_index])
-        param_index = param_index + 1
+        param_index += 1
       end
       expression.sql()
     else
@@ -685,14 +685,14 @@ class ArelVisitor
     index = 0
     while index < query.projections().length()
       projections.push(visitor.render_expression(query.projections()[index], params))
-      index = index + 1
+      index += 1
     end
     table_sql = self.render_source(query, params)
     index = 0
     while index < query.joins().length()
       join = query.joins()[index]
-      table_sql = table_sql + " " + visitor.render_join(join, params)
-      index = index + 1
+      table_sql += " " + visitor.render_join(join, params)
+      index += 1
     end
     sql = sql + "SELECT "
     if query.distinct_value()
@@ -704,7 +704,7 @@ class ArelVisitor
     index = 0
     while index < query.predicates().length()
       predicates.push(visitor.render_expression(query.predicates()[index], params))
-      index = index + 1
+      index += 1
     end
     if predicates.length() > 0
       sql = sql + " WHERE " + predicates.join(" AND ")
@@ -714,7 +714,7 @@ class ArelVisitor
     index = 0
     while index < query.groups().length()
       groups.push(visitor.render_expression(query.groups()[index], params))
-      index = index + 1
+      index += 1
     end
     if groups.length() > 0
       sql = sql + " GROUP BY " + groups.join(", ")
@@ -724,7 +724,7 @@ class ArelVisitor
     index = 0
     while index < query.havings().length()
       havings.push(visitor.render_expression(query.havings()[index], params))
-      index = index + 1
+      index += 1
     end
     if havings.length() > 0
       sql = sql + " HAVING " + havings.join(" AND ")
@@ -734,7 +734,7 @@ class ArelVisitor
     index = 0
     while index < query.orderings().length()
       orderings.push(visitor.render_expression(query.orderings()[index], params))
-      index = index + 1
+      index += 1
     end
     if orderings.length() > 0
       sql = sql + " ORDER BY " + orderings.join(", ")
@@ -764,7 +764,7 @@ class ArelVisitor
     index = 0
     while index < expressions.length()
       rendered.push(self.render_expression(expressions[index], params))
-      index = index + 1
+      index += 1
     end
     if rendered.length() == 0
       ""
@@ -894,7 +894,7 @@ class ArelQuery
         else
           additions.push(ArelRawSql.new("#{key} = ?", [value]))
         end
-        index = index + 1
+        index += 1
       end
     elsif condition is String
       bound = params
@@ -941,7 +941,7 @@ class ArelQuery
       if @joins[index].table().reference_name().downcase() == candidate.downcase()
         duplicate = true
       end
-      index = index + 1
+      index += 1
     end
     if duplicate
       raise ArgumentError.new("duplicate relation alias in query")
@@ -979,7 +979,7 @@ class ArelQuery
       if @correlations[index].reference_name().downcase() == candidate.downcase()
         duplicate = true
       end
-      index = index + 1
+      index += 1
     end
     if duplicate
       raise ArgumentError.new("duplicate correlated relation")
@@ -994,7 +994,7 @@ class ArelQuery
     index = 0
     while index < tables.length()
       query = query.correlate(tables[index])
-      index = index + 1
+      index += 1
     end
     query
   end
@@ -1013,7 +1013,7 @@ class ArelQuery
       if @ctes[index].name().downcase() == name.downcase()
         duplicate = true
       end
-      index = index + 1
+      index += 1
     end
     if duplicate
       raise ArgumentError.new("duplicate CTE name")
@@ -1121,7 +1121,7 @@ class ArelCompoundQuery
     ordering_index = 0
     while ordering_index < @orderings.length()
       rendered_orderings.push(visitor.render_expression(@orderings[ordering_index], params))
-      ordering_index = ordering_index + 1
+      ordering_index += 1
     end
     if rendered_orderings.length() > 0
       sql = sql + " ORDER BY " + rendered_orderings.join(", ")
@@ -1194,7 +1194,7 @@ def arel_render_insert_conflict(target, ignore: Bool, assignments, params: Array
   target_index = 0
   while target_index < columns.length()
     targets.push(visitor.quote_identifier(columns[target_index]))
-    target_index = target_index + 1
+    target_index += 1
   end
   target_sql = ""
   if targets.length() > 0
@@ -1202,7 +1202,7 @@ def arel_render_insert_conflict(target, ignore: Bool, assignments, params: Array
   end
   if predicate != nil
     visitor.require_extension("conflict-target predicates")
-    target_sql = target_sql + " WHERE " + visitor.render_expression(predicate, params)
+    target_sql += " WHERE " + visitor.render_expression(predicate, params)
   end
   visitor.require_extension("upsert conflict actions")
   if ignore
@@ -1223,7 +1223,7 @@ def arel_render_insert_conflict(target, ignore: Bool, assignments, params: Array
       rendered_assignments.push("#{visitor.quote_identifier(name)} = ?")
       params.push(value)
     end
-    assignment_index = assignment_index + 1
+    assignment_index += 1
   end
   " ON CONFLICT#{target_sql} DO UPDATE SET #{rendered_assignments.join(", ")}"
 end
@@ -1322,7 +1322,7 @@ class ArelInsert
       column_index = 0
       while column_index < @source_columns.length()
         columns.push(visitor.quote_identifier(@source_columns[column_index]))
-        column_index = column_index + 1
+        column_index += 1
       end
       source_sql, params = @source_query.render_with(visitor)
       sql = "INSERT INTO #{visitor.quote_identifier(@table.name())} " +
@@ -1344,7 +1344,7 @@ class ArelInsert
     column_index = 0
     while column_index < first.length()
       columns.push(visitor.quote_identifier(first.key_at(column_index)))
-      column_index = column_index + 1
+      column_index += 1
     end
     value_groups = []
     row_index = 0
@@ -1367,10 +1367,10 @@ class ArelInsert
           placeholders.push("?")
           params.push(value)
         end
-        index = index + 1
+        index += 1
       end
       value_groups.push("(#{placeholders.join(", ")})")
-      row_index = row_index + 1
+      row_index += 1
     end
     sql = "INSERT INTO #{visitor.quote_identifier(@table.name())} " +
       "(#{columns.join(", ")}) VALUES #{value_groups.join(", ")}"
@@ -1462,14 +1462,14 @@ class ArelUpdate
         clauses.push("#{visitor.quote_identifier(name)} = ?")
         params.push(value)
       end
-      assignment_index = assignment_index + 1
+      assignment_index += 1
     end
     sql = "UPDATE #{visitor.quote_identifier(@table.name())} SET #{clauses.join(", ")}"
     predicates = []
     predicate_index = 0
     while predicate_index < @predicates.length()
       predicates.push(visitor.render_expression(@predicates[predicate_index], params))
-      predicate_index = predicate_index + 1
+      predicate_index += 1
     end
     if predicates.length() > 0
       sql = sql + " WHERE " + predicates.join(" AND ")
@@ -1547,7 +1547,7 @@ class ArelDelete
     predicate_index = 0
     while predicate_index < @predicates.length()
       predicates.push(visitor.render_expression(@predicates[predicate_index], params))
-      predicate_index = predicate_index + 1
+      predicate_index += 1
     end
     if predicates.length() > 0
       sql = sql + " WHERE " + predicates.join(" AND ")
@@ -1725,7 +1725,7 @@ def with_children_tail(node, replacements: Array)
     index = 2
     while index < replacements.length()
       orderings.push(replacements[index])
-      index = index + 1
+      index += 1
     end
     ArelCompoundQuery.new(replacements[0], node.operator(), replacements[1], orderings,
       node.limit_value(), node.offset_value())
@@ -1748,7 +1748,7 @@ def with_write_children(node, replacements: Array)
     state = node.structure()
     index = state[5].length()
     table = replacements[index]
-    index = index + 1
+    index += 1
     assignments = nil
     if state[1] != nil
       assignments = {}
@@ -1758,68 +1758,68 @@ def with_write_children(node, replacements: Array)
         value = state[1][key]
         if value is ArelAssignmentValue
           value = replacements[index]
-          index = index + 1
+          index += 1
         end
         assignments[key] = value
-        assignment_index = assignment_index + 1
+        assignment_index += 1
       end
     end
     predicates = []
     predicate_index = 0
     while predicate_index < state[2].length()
       predicates.push(replacements[index])
-      index = index + 1
-      predicate_index = predicate_index + 1
+      index += 1
+      predicate_index += 1
     end
     returning = []
     returning_index = 0
     while returning_index < state[3].length()
       returning.push(replacements[index])
-      index = index + 1
-      returning_index = returning_index + 1
+      index += 1
+      returning_index += 1
     end
     ctes = []
     cte_index = 0
     while cte_index < state[5].length()
       ctes.push(replacements[cte_index])
-      cte_index = cte_index + 1
+      cte_index += 1
     end
     ArelUpdate.new(table, assignments, predicates, returning, state[4], ctes)
   elsif node is ArelDelete
     state = node.structure()
     index = state[4].length()
     table = replacements[index]
-    index = index + 1
+    index += 1
     predicates = []
     predicate_index = 0
     while predicate_index < state[1].length()
       predicates.push(replacements[index])
-      index = index + 1
-      predicate_index = predicate_index + 1
+      index += 1
+      predicate_index += 1
     end
     returning = []
     returning_index = 0
     while returning_index < state[2].length()
       returning.push(replacements[index])
-      index = index + 1
-      returning_index = returning_index + 1
+      index += 1
+      returning_index += 1
     end
     ctes = []
     cte_index = 0
     while cte_index < state[4].length()
       ctes.push(replacements[cte_index])
-      cte_index = cte_index + 1
+      cte_index += 1
     end
     ArelDelete.new(table, predicates, returning, state[3], ctes)
   elsif node is ArelInsert
     state = node.structure()
     index = state[8].length()
     table = replacements[index]
-    index = index + 1
+    index += 1
     source_query = state[4]
     if source_query != nil
       source_query = replacements[index]
-      index = index + 1
+      index += 1
     end
     rows = []
     row_index = 0
@@ -1835,19 +1835,19 @@ def with_write_children(node, replacements: Array)
           value = original_row[key]
           if value is ArelAssignmentValue
             value = replacements[index]
-            index = index + 1
+            index += 1
           end
           row[key] = value
-          value_index = value_index + 1
+          value_index += 1
         end
         rows.push(row)
       end
-      row_index = row_index + 1
+      row_index += 1
     end
     conflict_target = state[5]
     if conflict_target is ArelConflictTarget
       conflict_target = replacements[index]
-      index = index + 1
+      index += 1
     end
     conflict_assignments = nil
     if state[7] != nil
@@ -1858,24 +1858,24 @@ def with_write_children(node, replacements: Array)
         value = state[7][key]
         if value is ArelAssignmentValue
           value = replacements[index]
-          index = index + 1
+          index += 1
         end
         conflict_assignments[key] = value
-        value_index = value_index + 1
+        value_index += 1
       end
     end
     returning = []
     returning_index = 0
     while returning_index < state[2].length()
       returning.push(replacements[index])
-      index = index + 1
-      returning_index = returning_index + 1
+      index += 1
+      returning_index += 1
     end
     ctes = []
     cte_index = 0
     while cte_index < state[8].length()
       ctes.push(replacements[cte_index])
-      cte_index = cte_index + 1
+      cte_index += 1
     end
     ArelInsert.new(table, rows, returning, state[3], source_query, conflict_target,
       state[6], conflict_assignments, ctes)
@@ -1893,61 +1893,61 @@ def with_query_children(node: ArelQuery, replacements: Array)
   part = 0
   while part < node.ctes().length()
     ctes.push(replacements[index + part])
-    part = part + 1
+    part += 1
   end
-  index = index + node.ctes().length()
+  index += node.ctes().length()
   source_query = nil
   if node.source_query() != nil
     source_query = replacements[index]
-    index = index + 1
+    index += 1
   end
   projections = []
   part = 0
   while part < node.projections().length()
     projections.push(replacements[index + part])
-    part = part + 1
+    part += 1
   end
-  index = index + node.projections().length()
+  index += node.projections().length()
   joins = []
   part = 0
   while part < node.joins().length()
     joins.push(replacements[index + part])
-    part = part + 1
+    part += 1
   end
-  index = index + node.joins().length()
+  index += node.joins().length()
   predicates = []
   part = 0
   while part < node.predicates().length()
     predicates.push(replacements[index + part])
-    part = part + 1
+    part += 1
   end
-  index = index + node.predicates().length()
+  index += node.predicates().length()
   groups = []
   part = 0
   while part < node.groups().length()
     groups.push(replacements[index + part])
-    part = part + 1
+    part += 1
   end
-  index = index + node.groups().length()
+  index += node.groups().length()
   havings = []
   part = 0
   while part < node.havings().length()
     havings.push(replacements[index + part])
-    part = part + 1
+    part += 1
   end
-  index = index + node.havings().length()
+  index += node.havings().length()
   orderings = []
   part = 0
   while part < node.orderings().length()
     orderings.push(replacements[index + part])
-    part = part + 1
+    part += 1
   end
-  index = index + node.orderings().length()
+  index += node.orderings().length()
   correlations = []
   part = 0
   while part < node.correlations().length()
     correlations.push(replacements[index + part])
-    part = part + 1
+    part += 1
   end
   ArelQuery.new(node.table_name(), predicates, orderings, node.limit_value(),
     node.offset_value(), projections, node.quoted_identifiers(), node.bind_limits(),
@@ -1963,7 +1963,7 @@ def simplify(node, rules = [], report = false)
     index = 0
     while index < children.length()
       replacements.push(self.simplify(children[index], rules))
-      index = index + 1
+      index += 1
     end
     node = self.with_children(node, replacements)
   end
@@ -1985,7 +1985,7 @@ def simplify(node, rules = [], report = false)
     if self.same?(node, rule[0])
       node = rule[1]
     end
-    rule_index = rule_index + 1
+    rule_index += 1
   end
   if report
     [node, !self.same?(original, node)]
@@ -2006,7 +2006,7 @@ def walk(node, visitor = nil) -> Array
     children = self.children(current)
     index = children.length()
     while index > 0
-      index = index - 1
+      index -= 1
       pending.push(children[index])
     end
   end
@@ -2112,10 +2112,10 @@ def children_write(node) -> Array
           if value is ArelAssignmentValue
             children.push(value)
           end
-          value_index = value_index + 1
+          value_index += 1
         end
       end
-      row_index = row_index + 1
+      row_index += 1
     end
     if state[5] is ArelConflictTarget
       children.push(state[5])
@@ -2127,7 +2127,7 @@ def children_write(node) -> Array
         if value is ArelAssignmentValue
           children.push(value)
         end
-        value_index = value_index + 1
+        value_index += 1
       end
     end
     children.concat(state[2])
@@ -2142,7 +2142,7 @@ def children_write(node) -> Array
         if value is ArelAssignmentValue
           children.push(value)
         end
-        value_index = value_index + 1
+        value_index += 1
       end
     end
     children = children.concat(state[2])
@@ -2174,7 +2174,7 @@ def inspect(node) -> String
     index = 0
     while index < node.arguments().length()
       arguments.push(self.inspect(node.arguments()[index]))
-      index = index + 1
+      index += 1
     end
     "Function(#{node.name()}, [#{arguments.join(", ")}])"
   elsif node is ArelCast
@@ -2317,7 +2317,7 @@ def same?(left, right) -> Bool
       if !self.same?(left.arguments()[index], right.arguments()[index])
         return false
       end
-      index = index + 1
+      index += 1
     end
     true
   elsif left is ArelRawSql
@@ -2330,7 +2330,7 @@ def same?(left, right) -> Bool
       if left.params()[index] != right.params()[index]
         return false
       end
-      index = index + 1
+      index += 1
     end
     true
   elsif left is ArelAssignmentValue
@@ -2356,7 +2356,7 @@ def same?(left, right) -> Bool
       if left.columns()[index] != right.columns()[index]
         return false
       end
-      index = index + 1
+      index += 1
     end
     left.predicate() == nil || self.same?(left.predicate(), right.predicate())
   elsif left is ArelPredicate
@@ -2404,7 +2404,7 @@ def same_nodes?(left, right) -> Bool
       elsif left_value != right_value
         return false
       end
-      index = index + 1
+      index += 1
     end
     return true
   end
@@ -2413,7 +2413,7 @@ def same_nodes?(left, right) -> Bool
     if !self.same?(left[index], right[index])
       return false
     end
-    index = index + 1
+    index += 1
   end
   true
 end
@@ -2435,7 +2435,7 @@ def same_insert?(left: ArelInsert, right: ArelInsert) -> Bool
     if left_state[3][index] != right_state[3][index]
       return false
     end
-    index = index + 1
+    index += 1
   end
   if left_state[4] != nil && !self.same?(left_state[4], right_state[4])
     return false
@@ -2452,7 +2452,7 @@ def same_insert?(left: ArelInsert, right: ArelInsert) -> Bool
       if left_state[5][index] != right_state[5][index]
         return false
       end
-      index = index + 1
+      index += 1
     end
   elsif !self.same?(left_state[5], right_state[5])
     return false
@@ -2468,7 +2468,7 @@ def same_insert?(left: ArelInsert, right: ArelInsert) -> Bool
     elsif !self.same_nodes?(left_row, right_row)
       return false
     end
-    index = index + 1
+    index += 1
   end
   true
 end
@@ -2495,7 +2495,7 @@ def same_tail?(left, right) -> Bool
       if left.values()[index] != right.values()[index]
         return false
       end
-      index = index + 1
+      index += 1
     end
     true
   elsif left is ArelOrdering
