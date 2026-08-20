@@ -11,6 +11,13 @@ class LibraryAuthor
   def country() = @country
 end
 
+class LibraryBook
+  def initialize(title)
+    @title = title
+  end
+  def title() = @title
+end
+
 def run_tests()
   def map_author(row)
     LibraryAuthor.new(row["id"], row["name"], row["country"])
@@ -28,6 +35,16 @@ def run_tests()
   Minitest.assert_equal("England", repository.find(db, 1).country())
   Minitest.assert_equal(1, repository.delete(db, 2))
   Minitest.assert_equal(1, repository.all(db).length())
+
+  def map_book(row)
+    LibraryBook.new(row["title"])
+  end
+  db.execute("CREATE TABLE books (id INTEGER PRIMARY KEY, title TEXT, author_id INTEGER)")
+  db.execute("INSERT INTO books (title, author_id) VALUES ('Book A', 1), ('Book B', 2)")
+  books = ActiveRecordRepository.new(Arel.table("books"), map_book)
+  author_books = ActiveRecordHasMany.new(books, "author_id")
+  Minitest.assert_equal(1, author_books.all(db, 1).length())
+  Minitest.assert_equal("Book A", author_books.all(db, 1)[0].title())
   db.close()
 end
 

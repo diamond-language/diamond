@@ -17,7 +17,15 @@ author = repository.find(db, 1)
 repository.update(db, 1, {"country": "England"})
 ```
 
-The repository supports `all`, `find`, `create`, `update`, and `delete`.
-Row-to-object mapping is supplied by the application. Associations,
-validation, dirty tracking, transactions, and query scopes remain explicit
-application code for now.
+The repository supports `all`, `find`, `where`, `create`, `update`, and
+`delete`. Row-to-object mapping is supplied by the application. Explicit
+associations use `ActiveRecordHasMany`:
+
+```diamond
+books = ActiveRecordRepository.new(Arel.table("books"), map_book)
+author_books = ActiveRecordHasMany.new(books, "author_id")
+author_books.all(db, author_id)
+```
+
+There is no schema inspection, naming convention, object introspection,
+validation, dirty tracking, transaction management, or implicit query scope.
