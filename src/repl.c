@@ -455,7 +455,8 @@ static bool try_compile(const char *source, DiamondProgram *program,
             json_codec_length + json_length + reset_length,
             bundle.source, source_length + 1);
 
-        DiamondDiagnostic diagnostic;
+    DiamondDiagnostic diagnostic;
+    program->allow_top_level_redefinition = true;
     const bool ok = diamond_compile(combined, program, &diagnostic);
     if (!ok) {
         const DiamondResolvedLocation resolved = diamond_resolve_diagnostic_location(
