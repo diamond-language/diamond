@@ -53,7 +53,7 @@ end
 # handler. Returns a plain Array -- see the file comment above for why
 # that matters.
 def rack_compose(middlewares, app)
-  array_concat(middlewares, [rack_terminal_wrap(app)])
+  middlewares.concat([rack_terminal_wrap(app)])
 end
 
 def rack_run_chain(chain, index, request, context)

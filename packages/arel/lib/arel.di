@@ -376,7 +376,7 @@ def arel_append_cte(ctes: Array, name: String, query, recursive = false) -> Arra
   if duplicate
     raise ArgumentError.new("duplicate CTE name")
   end
-  array_concat(ctes, [ArelCte.new(name, query, recursive)])
+  ctes.concat([ArelCte.new(name, query, recursive)])
 end
 
 class ArelVisitor
@@ -905,7 +905,7 @@ class ArelQuery
     else
       additions.push(condition)
     end
-    self.copy(array_concat(@predicates, additions), @orderings, @limit_value,
+    self.copy(@predicates.concat(additions), @orderings, @limit_value,
       @offset_value, @projections)
   end
 
@@ -921,13 +921,13 @@ class ArelQuery
   def group(expressions)
     ArelQuery.new(@table_name, @predicates, @orderings, @limit_value, @offset_value,
       @projections, @quoted_identifiers, @bind_limits, @table_alias, @distinct_value,
-      array_concat(@groups, arel_array(expressions)), @havings, @joins, @source_query,
+      @groups.concat(arel_array(expressions)), @havings, @joins, @source_query,
       @correlations, @ctes)
   end
   def having(predicate)
     ArelQuery.new(@table_name, @predicates, @orderings, @limit_value, @offset_value,
       @projections, @quoted_identifiers, @bind_limits, @table_alias, @distinct_value,
-      @groups, array_concat(@havings, [predicate]), @joins, @source_query,
+      @groups, @havings.concat([predicate]), @joins, @source_query,
       @correlations, @ctes)
   end
   def ensure_join_alias_available(table: ArelTable)
@@ -951,21 +951,21 @@ class ArelQuery
     self.ensure_join_alias_available(table)
     ArelQuery.new(@table_name, @predicates, @orderings, @limit_value, @offset_value,
       @projections, @quoted_identifiers, @bind_limits, @table_alias, @distinct_value,
-      @groups, @havings, array_concat(@joins, [ArelJoin.new(table, predicate, "INNER")]),
+      @groups, @havings, @joins.concat([ArelJoin.new(table, predicate, "INNER")]),
       @source_query, @correlations, @ctes)
   end
   def left_join(table: ArelTable, predicate)
     self.ensure_join_alias_available(table)
     ArelQuery.new(@table_name, @predicates, @orderings, @limit_value, @offset_value,
       @projections, @quoted_identifiers, @bind_limits, @table_alias, @distinct_value,
-      @groups, @havings, array_concat(@joins, [ArelJoin.new(table, predicate, "LEFT OUTER")]),
+      @groups, @havings, @joins.concat([ArelJoin.new(table, predicate, "LEFT OUTER")]),
       @source_query, @correlations, @ctes)
   end
   def cross_join(table: ArelTable)
     self.ensure_join_alias_available(table)
     ArelQuery.new(@table_name, @predicates, @orderings, @limit_value, @offset_value,
       @projections, @quoted_identifiers, @bind_limits, @table_alias, @distinct_value,
-      @groups, @havings, array_concat(@joins, [ArelJoin.new(table, nil, "CROSS")]),
+      @groups, @havings, @joins.concat([ArelJoin.new(table, nil, "CROSS")]),
       @source_query, @correlations, @ctes)
   end
   def correlate(table: ArelTable)
@@ -987,7 +987,7 @@ class ArelQuery
     ArelQuery.new(@table_name, @predicates, @orderings, @limit_value, @offset_value,
       @projections, @quoted_identifiers, @bind_limits, @table_alias, @distinct_value,
       @groups, @havings, @joins, @source_query,
-      array_concat(@correlations, [table]), @ctes)
+      @correlations.concat([table]), @ctes)
   end
   def correlate_all(tables: Array)
     query = self
@@ -1004,7 +1004,7 @@ class ArelQuery
     ArelQuery.new(@table_name, @predicates, @orderings, @limit_value, @offset_value,
       @projections, @quoted_identifiers, @bind_limits, @table_alias, @distinct_value,
       @groups, @havings, @joins, @source_query, @correlations,
-      array_concat(@ctes, [ArelCte.new(name, query)]))
+      @ctes.concat([ArelCte.new(name, query)]))
   end
   def ensure_cte_name_available(name: String)
     duplicate = false
@@ -1025,10 +1025,10 @@ class ArelQuery
     ArelQuery.new(@table_name, @predicates, @orderings, @limit_value, @offset_value,
       @projections, @quoted_identifiers, @bind_limits, @table_alias, @distinct_value,
       @groups, @havings, @joins, @source_query, @correlations,
-      array_concat(@ctes, [ArelCte.new(name, query, true)]))
+      @ctes.concat([ArelCte.new(name, query, true)]))
   end
   def order(column_or_columns)
-    self.copy(@predicates, array_concat(@orderings, arel_array(column_or_columns)),
+    self.copy(@predicates, @orderings.concat(arel_array(column_or_columns)),
       @limit_value, @offset_value, @projections)
   end
   def take(n: Int)
@@ -1093,7 +1093,7 @@ class ArelCompoundQuery
 
   def order(ordering)
     ArelCompoundQuery.new(@left, @operator, @right,
-      array_concat(@orderings, arel_array(ordering)), @limit_value, @offset_value)
+      @orderings.concat(arel_array(ordering)), @limit_value, @offset_value)
   end
   def take(n: Int)
     if n < 0
@@ -1115,7 +1115,7 @@ class ArelCompoundQuery
     right_sql, right_params = @right.render_with(visitor)
     left_sql = visitor.render_compound_branch(left_sql, @left is ArelCompoundQuery)
     right_sql = visitor.render_compound_branch(right_sql, @right is ArelCompoundQuery)
-    params = array_concat(left_params, right_params)
+    params = left_params.concat(right_params)
     sql = "#{left_sql} #{@operator} #{right_sql}"
     rendered_orderings = []
     ordering_index = 0
@@ -1306,7 +1306,7 @@ class ArelInsert
       sql = sql + visitor.render_returning(@returning, params)
       cte_params = []
       sql = visitor.render_ctes(self, cte_params) + sql
-      return [sql, array_concat(cte_params, params)]
+      return [sql, cte_params.concat(params)]
     end
     if @source_query != nil
       if @source_columns.length() == 0
@@ -1332,7 +1332,7 @@ class ArelInsert
       sql = sql + visitor.render_returning(@returning, params)
       cte_params = []
       sql = visitor.render_ctes(self, cte_params) + sql
-      params = array_concat(cte_params, params)
+      params = cte_params.concat(params)
       return [sql, params]
     end
     if @rows.length() == 0 || @rows[0].length() == 0
@@ -1357,7 +1357,7 @@ class ArelInsert
       index = 0
       while index < first.length()
         key = first.key_at(index)
-        if !hash_include_key(row, key)
+        unless row.include_key?(key)
           raise ArgumentError.new("INSERT rows must have identical columns")
         end
         value = row[key]
@@ -1379,7 +1379,7 @@ class ArelInsert
     sql = sql + visitor.render_returning(@returning, params)
     cte_params = []
     sql = visitor.render_ctes(self, cte_params) + sql
-    params = array_concat(cte_params, params)
+    params = cte_params.concat(params)
     [sql, params]
   end
 
@@ -1420,7 +1420,7 @@ class ArelUpdate
     ArelUpdate.new(@table, assignments, @predicates, @returning, @allow_all, @ctes)
   end
   def where(predicate)
-    ArelUpdate.new(@table, @assignments, array_concat(@predicates, [predicate]), @returning,
+    ArelUpdate.new(@table, @assignments, @predicates.concat([predicate]), @returning,
       @allow_all, @ctes)
   end
   def returning(expressions)
@@ -1479,7 +1479,7 @@ class ArelUpdate
     end
     cte_params = []
     sql = visitor.render_ctes(self, cte_params) + sql
-    params = array_concat(cte_params, params)
+    params = cte_params.concat(params)
     [sql, params]
   end
 
@@ -1516,7 +1516,7 @@ class ArelDelete
   def ctes() = @ctes
   def structure() = [@table, @predicates, @returning, @allow_all, @ctes]
   def where(predicate)
-    ArelDelete.new(@table, array_concat(@predicates, [predicate]), @returning, @allow_all,
+    ArelDelete.new(@table, @predicates.concat([predicate]), @returning, @allow_all,
       @ctes)
   end
   def returning(expressions)
@@ -1557,7 +1557,7 @@ class ArelDelete
     end
     cte_params = []
     sql = visitor.render_ctes(self, cte_params) + sql
-    params = array_concat(cte_params, params)
+    params = cte_params.concat(params)
     [sql, params]
   end
 
@@ -2066,19 +2066,19 @@ end
 
 def children_tail(node) -> Array
   if node is ArelQuery
-    children = array_concat([], node.ctes())
+    children = [].concat(node.ctes())
     if node.source_query() != nil
       children.push(node.source_query())
     end
-    children = array_concat(children, node.projections())
-    children = array_concat(children, node.joins())
-    children = array_concat(children, node.predicates())
-    children = array_concat(children, node.groups())
-    children = array_concat(children, node.havings())
-    children = array_concat(children, node.orderings())
-    array_concat(children, node.correlations())
+    children = children.concat(node.projections())
+    children = children.concat(node.joins())
+    children = children.concat(node.predicates())
+    children = children.concat(node.groups())
+    children = children.concat(node.havings())
+    children = children.concat(node.orderings())
+    children.concat(node.correlations())
   elsif node is ArelCompoundQuery
-    array_concat([node.left(), node.right()], node.orderings())
+    [node.left(), node.right()].concat(node.orderings())
   elsif node is ArelCte
     [node.query()]
   elsif node is ArelConflictTarget
@@ -2097,7 +2097,7 @@ end
 def children_write(node) -> Array
   if node is ArelInsert
     state = node.structure()
-    children = array_concat([], state[8])
+    children = [].concat(state[8])
     children.push(state[0])
     if state[4] != nil
       children.push(state[4])
@@ -2130,10 +2130,10 @@ def children_write(node) -> Array
         value_index = value_index + 1
       end
     end
-    array_concat(children, state[2])
+    children.concat(state[2])
   elsif node is ArelUpdate
     state = node.structure()
-    children = array_concat([], state[5])
+    children = [].concat(state[5])
     children.push(state[0])
     if state[1] != nil
       value_index = 0
@@ -2145,14 +2145,14 @@ def children_write(node) -> Array
         value_index = value_index + 1
       end
     end
-    children = array_concat(children, state[2])
-    array_concat(children, state[3])
+    children = children.concat(state[2])
+    children.concat(state[3])
   elsif node is ArelDelete
     state = node.structure()
-    children = array_concat([], state[4])
+    children = [].concat(state[4])
     children.push(state[0])
-    children = array_concat(children, state[1])
-    array_concat(children, state[2])
+    children = children.concat(state[1])
+    children.concat(state[2])
   else
     []
   end
@@ -2392,7 +2392,7 @@ def same_nodes?(left, right) -> Bool
     index = 0
     while index < left.length()
       key = left.key_at(index)
-      if !hash_include_key(right, key)
+      unless right.include_key?(key)
         return false
       end
       left_value = left[key]

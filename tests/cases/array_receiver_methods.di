@@ -1,0 +1,18 @@
+puts([1, 2, 3].first())
+puts([].first_or(99))
+puts([1, 2, 3].last())
+puts([].last_or(99))
+puts([1, 2, 3].empty?())
+puts([].empty?())
+puts([1, 2, 3].include?(2))
+puts([1, 2, 3].include?(9))
+puts([1, 2, 3].reverse())
+puts([1, 2].concat([3, 4]))
+puts([1, nil, 2, nil, 3].compact())
+puts([1, 1, 2, 3, 2, 1].uniq())
+puts([1, [2, [3, 4], 5], 6].flatten())
+
+values = [10, 20, 30]
+puts(values.delete_at(1))
+puts(values)
+puts(values.delete_at(99))

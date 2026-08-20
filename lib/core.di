@@ -20,7 +20,7 @@ def array_last_or(values: Array, fallback)
   if values.length() == 0
     fallback
   else
-    array_last(values)
+    values.last()
   end
 end
 
@@ -126,7 +126,7 @@ def array_compact(values: Array) -> Array
   index = 0
   while index < values.length()
     item = values[index]
-    if item != nil
+    unless item == nil
       result.push(item)
     end
     index += 1
@@ -139,7 +139,7 @@ def array_uniq(values: Array) -> Array
   index = 0
   while index < values.length()
     item = values[index]
-    if array_include(result, item) == false
+    unless result.include?(item)
       result.push(item)
     end
     index += 1
@@ -153,7 +153,7 @@ def array_flatten(values: Array) -> Array
   while index < values.length()
     item = values[index]
     if item is Array
-      result = array_concat(result, array_flatten(item))
+      result = result.concat(item.flatten())
     else
       result.push(item)
     end
@@ -547,7 +547,7 @@ def array_flat_map(values: Array, callback: Callable[1]) -> Array
   while index < values.length()
     mapped = callback(values[index])
     if mapped is Array
-      result = array_concat(result, mapped)
+      result = result.concat(mapped)
     else
       result.push(mapped)
     end

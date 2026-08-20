@@ -247,7 +247,7 @@ def gremlin_worker(port, handler)
       end
     end
     connections.each_with_index(resume_if_ready)
-    connections = array_concat(still_active, newly_spawned)
+    connections = still_active.concat(newly_spawned)
   end
 end
 

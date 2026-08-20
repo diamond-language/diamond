@@ -8383,6 +8383,78 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                                 method_name->length==5&&
                                 memcmp(method_name->chars,"tally",5)==0)
                             target_name="array_tally";
+                        else if(receiver_kind==DIAMOND_OBJECT_ARRAY&&
+                                method_name->length==5&&
+                                memcmp(method_name->chars,"first",5)==0)
+                            target_name="array_first";
+                        else if(receiver_kind==DIAMOND_OBJECT_ARRAY&&
+                                method_name->length==8&&
+                                memcmp(method_name->chars,"first_or",8)==0)
+                            target_name="array_first_or";
+                        else if(receiver_kind==DIAMOND_OBJECT_ARRAY&&
+                                method_name->length==4&&
+                                memcmp(method_name->chars,"last",4)==0)
+                            target_name="array_last";
+                        else if(receiver_kind==DIAMOND_OBJECT_ARRAY&&
+                                method_name->length==7&&
+                                memcmp(method_name->chars,"last_or",7)==0)
+                            target_name="array_last_or";
+                        else if(receiver_kind==DIAMOND_OBJECT_ARRAY&&
+                                method_name->length==8&&
+                                memcmp(method_name->chars,"include?",8)==0)
+                            target_name="array_include";
+                        else if(receiver_kind==DIAMOND_OBJECT_ARRAY&&
+                                method_name->length==7&&
+                                memcmp(method_name->chars,"reverse",7)==0)
+                            target_name="array_reverse";
+                        else if(receiver_kind==DIAMOND_OBJECT_ARRAY&&
+                                method_name->length==6&&
+                                memcmp(method_name->chars,"concat",6)==0)
+                            target_name="array_concat";
+                        else if(receiver_kind==DIAMOND_OBJECT_ARRAY&&
+                                method_name->length==7&&
+                                memcmp(method_name->chars,"compact",7)==0)
+                            target_name="array_compact";
+                        else if(receiver_kind==DIAMOND_OBJECT_ARRAY&&
+                                method_name->length==4&&
+                                memcmp(method_name->chars,"uniq",4)==0)
+                            target_name="array_uniq";
+                        else if(receiver_kind==DIAMOND_OBJECT_ARRAY&&
+                                method_name->length==7&&
+                                memcmp(method_name->chars,"flatten",7)==0)
+                            target_name="array_flatten";
+                        else if(receiver_kind==DIAMOND_OBJECT_ARRAY&&
+                                method_name->length==9&&
+                                memcmp(method_name->chars,"delete_at",9)==0)
+                            target_name="array_delete_at";
+                        else if(method_name->length==6&&
+                                memcmp(method_name->chars,"empty?",6)==0)
+                            target_name=receiver_kind==DIAMOND_OBJECT_ARRAY?
+                                "array_empty":"hash_empty";
+                        else if(receiver_kind==DIAMOND_OBJECT_HASH&&
+                                method_name->length==5&&
+                                memcmp(method_name->chars,"fetch",5)==0)
+                            target_name="hash_fetch";
+                        else if(receiver_kind==DIAMOND_OBJECT_HASH&&
+                                method_name->length==4&&
+                                memcmp(method_name->chars,"keys",4)==0)
+                            target_name="hash_keys";
+                        else if(receiver_kind==DIAMOND_OBJECT_HASH&&
+                                method_name->length==6&&
+                                memcmp(method_name->chars,"values",6)==0)
+                            target_name="hash_values";
+                        else if(receiver_kind==DIAMOND_OBJECT_HASH&&
+                                method_name->length==12&&
+                                memcmp(method_name->chars,"include_key?",12)==0)
+                            target_name="hash_include_key";
+                        else if(receiver_kind==DIAMOND_OBJECT_HASH&&
+                                method_name->length==10&&
+                                memcmp(method_name->chars,"map_values",10)==0)
+                            target_name="hash_map_values";
+                        else if(receiver_kind==DIAMOND_OBJECT_HASH&&
+                                method_name->length==5&&
+                                memcmp(method_name->chars,"merge",5)==0)
+                            target_name="hash_merge";
                         if(target_name!=nullptr) {
                             const DiamondFunction *target=
                                 find_top_level_function(chunk,target_name,strlen(target_name));

@@ -18,6 +18,30 @@ application/domain helpers, which should be renamed locally as their owning
 application grows, and infrastructure functions whose prefix communicates a
 real boundary and should remain.
 
+## Status
+
+Array and Hash receiver methods are done. The mechanism was already in place:
+`vm.c`'s `INVOKE` handling for `Array`/`Hash` receivers keeps a name-forwarding
+table (around `vm.c`'s `receiver_kind==DIAMOND_OBJECT_ARRAY||...HASH` branch)
+that maps a method name straight to the matching `lib/core.di` free function
+via `find_top_level_function`, so most candidates in this doc (`map`,
+`select`, `sum`, `reject`, `find`, `each_with_index`, `sort_by`, `min_by`/
+`max_by`, `take`, `drop`, `flat_map`, `partition`, `group_by`, `zip`,
+`each_slice`, `each_cons`, `tally`, `join`) were already wired before this
+audit. What was missing has been added the same way: Array gets `first`,
+`first_or`, `last`, `last_or`, `empty?`, `include?`, `reverse`, `concat`,
+`compact`, `uniq`, `flatten`, `delete_at`; Hash gets `fetch`, `empty?`,
+`keys`, `values`, `include_key?`, `map_values`, `merge`. The free functions
+are unchanged and remain the compatibility-wrapper implementations the
+receiver methods forward to. Internal `lib/core.di` and package call sites
+(`packages/rack`, `packages/gremlin`, `packages/arel`) were migrated to the
+new receiver syntax, including the `unless`/`include?` rewrite this doc's
+own "Truthiness and `unless`" section uses as its worked example — that
+example is now the real `array_compact`/`array_uniq` source, not a
+hypothetical. `array_map_int`, `array_map_string`, `array_map_typed`, and
+`array_sort` were deliberately left as free functions per the caveats
+below (typed contracts, not drop-in receiver renames). Enumerable is next.
+
 ## High-Value Receiver Migrations
 
 ### Array candidates
@@ -193,7 +217,8 @@ inspection, or `method_missing` merely to make the code look more Rails-like.
    the free functions as compatibility wrappers.
 2. Migrate internal `lib/core*.di` call sites to receiver syntax and add focused
    behavior tests.
-3. Repeat for Hash, then Enumerable after resolving cross-receiver contracts.
+3. Done for Array and Hash (see Status above). Repeat for Enumerable after
+   resolving cross-receiver contracts.
 4. Modernize mechanical local counter updates to compound assignment.
 5. Apply `unless` and truthiness rewrites only where nil-versus-false semantics
    are explicit.
