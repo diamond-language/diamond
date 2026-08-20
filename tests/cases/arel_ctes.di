@@ -1,5 +1,5 @@
 require "../../lib/minitest"
-require "../../packages/arel/arel"
+require "../../packages/arel/lib/arel"
 
 def run_tests()
   def test_single_cte_renders_and_binds_before_main_query()

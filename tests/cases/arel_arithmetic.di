@@ -1,5 +1,5 @@
 require "../../lib/minitest"
-require "../../packages/arel/arel"
+require "../../packages/arel/lib/arel"
 
 def run_tests()
   def test_addition_is_a_structural_update_expression()

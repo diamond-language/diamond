@@ -1,5 +1,5 @@
 require "../../lib/minitest"
-require "../../packages/arel/arel"
+require "../../packages/arel/lib/arel"
 
 def run_tests()
   def test_union_combines_queries_and_binds()

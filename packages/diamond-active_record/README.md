@@ -6,7 +6,7 @@ The first slice is `ActiveRecordRepository`, which receives all metadata it
 needs instead of inspecting a schema or using dynamic dispatch:
 
 ```diamond
-require "../../packages/diamond-active_record/diamond-active_record"
+require "../../packages/diamond-active_record/lib/diamond-active_record"
 
 repository = ActiveRecordRepository.new(
   Arel.table("authors"),

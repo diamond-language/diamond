@@ -1,4 +1,4 @@
-require "../arel/arel"
+require "../../arel/lib/arel"
 
 # Explicit persistence primitives over Arel. This package deliberately does
 # not inspect schemas, infer columns, or dispatch through missing methods.

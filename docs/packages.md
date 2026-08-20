@@ -39,19 +39,16 @@ behavior for any path that already looks like a path).
 ```
 diamond_packages/
   greeter/
-    greeter.di       # entry point, same name as the directory
-    helpers.di        # anything else the package needs
+    package.di        # package metadata
+    lib/
+      greeter.di      # public entry point, same name as the package
+      helpers.di       # implementation components
 ```
 
-The package's own name is used twice — as the directory and as its entry
-file's basename — so a package's internal files can `require` each other
-by ordinary relative path (`require "helpers"` from inside
-`diamond_packages/greeter/greeter.di` resolves relative to
-`diamond_packages/greeter/`, the same relative-file resolution any
-required file already gets) without needing any awareness of the
-package convention that got it loaded in the first place. There is
-nothing else to configure — a manifest (see below) is entirely optional,
-and a package with none is still fully resolvable.
+The public entry point is resolved from `lib/<name>.di`. Package code can
+require sibling components with ordinary relative paths from that `lib/`
+directory. The loader retains the former flat `<name>.di` location as a
+compatibility fallback for packages that have not migrated yet.
 
 ## Manifests
 

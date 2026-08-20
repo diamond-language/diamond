@@ -7,7 +7,7 @@
 # connection is opened lazily on this worker's first request and
 # stashed there, reused by every request after.
 
-require "../../packages/arel/arel"
+require "../../packages/arel/lib/arel"
 require "../../packages/gremlin/gremlin"
 require "../../packages/rack/rack"
 

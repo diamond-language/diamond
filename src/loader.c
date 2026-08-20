@@ -324,11 +324,18 @@ static bool expand(Loader *loader,const char *path,const char *source,
                      * the stack at that depth. */
                     char *package_path=malloc(DIAMOND_MAX_SOURCE_PATH);
                     if(package_path!=nullptr) {
-                        const int written=snprintf(package_path,DIAMOND_MAX_SOURCE_PATH,
-                            "diamond_packages/%.*s/%.*s.di",
+                        int written=snprintf(package_path,DIAMOND_MAX_SOURCE_PATH,
+                            "diamond_packages/%.*s/lib/%.*s.di",
                             (int)request_length,requested,(int)request_length,requested);
                         resolved_as_package=written>0&&(size_t)written<DIAMOND_MAX_SOURCE_PATH&&
                             realpath(package_path,canonical)!=nullptr;
+                        if(!resolved_as_package) {
+                            written=snprintf(package_path,DIAMOND_MAX_SOURCE_PATH,
+                                "diamond_packages/%.*s/%.*s.di",
+                                (int)request_length,requested,(int)request_length,requested);
+                            resolved_as_package=written>0&&(size_t)written<DIAMOND_MAX_SOURCE_PATH&&
+                                realpath(package_path,canonical)!=nullptr;
+                        }
                         free(package_path);
                     }
                 }

@@ -1,4 +1,4 @@
-require "../../packages/diamond-active_record/diamond-active_record"
+require "../../packages/diamond-active_record/lib/diamond-active_record"
 require "../../lib/minitest"
 
 class LibraryAuthor

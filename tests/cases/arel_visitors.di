@@ -1,5 +1,5 @@
 require "../../lib/minitest"
-require "../../packages/arel/arel"
+require "../../packages/arel/lib/arel"
 
 class TestArelVisitor < ArelSQLiteVisitor
   def quote_identifier(name: String) -> String = "[#{name}]"
