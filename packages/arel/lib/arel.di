@@ -142,7 +142,7 @@ end
 
 class ArelFunction
   def initialize(name: String, arguments: Array, distinct = false)
-    if !Regexp.new("\\A[A-Za-z_][A-Za-z0-9_]*\\z").match?(name)
+    unless Regexp.new("\\A[A-Za-z_][A-Za-z0-9_]*\\z").match?(name)
       raise ArgumentError.new("SQL function name must be an identifier")
     end
     @name = name
@@ -205,7 +205,7 @@ end
 
 class ArelCast
   def initialize(expression, type_name: String)
-    if !Regexp.new("\\A[A-Za-z_][A-Za-z0-9_]*\\z").match?(type_name)
+    unless Regexp.new("\\A[A-Za-z_][A-Za-z0-9_]*\\z").match?(type_name)
       raise ArgumentError.new("SQL cast type must be an identifier")
     end
     @expression = expression
@@ -381,7 +381,7 @@ end
 
 class ArelVisitor
   def require_extension(name: String)
-    if !self.supports_extension?(name)
+    unless self.supports_extension?(name)
       raise ArgumentError.new("#{self.visitor_name()} visitor does not support #{name}")
     end
   end
@@ -413,7 +413,7 @@ class ArelVisitor
   end
 
   def render_attribute(attribute: ArelAttribute) -> String
-    if !self.attribute_allowed?(attribute)
+    unless self.attribute_allowed?(attribute)
       raise ArgumentError.new("attribute belongs to a relation outside this query")
     end
     self.quote_identifier(attribute.table().reference_name()) + "." + self.quote_identifier(attribute.name())
@@ -421,7 +421,7 @@ class ArelVisitor
 
   def render_table(table: ArelTable) -> String
     sql = self.quote_identifier(table.name())
-    if table.table_alias() != nil
+    unless table.table_alias() == nil
       sql = sql + " AS " + self.quote_identifier(table.table_alias())
     end
     sql
@@ -440,7 +440,7 @@ class ArelVisitor
       sql = query.table_name()
       if query.quoted_identifiers()
         sql = self.quote_identifier(sql)
-        if query.table_alias() != nil
+        unless query.table_alias() == nil
           sql = sql + " AS " + self.quote_identifier(query.table_alias())
         end
       end
@@ -593,7 +593,7 @@ class ArelVisitor
       end
       "#{expression.name()}(#{prefix}#{arguments.join(", ")})"
     elsif expression is ArelQualifiedStar
-      if !self.attribute_allowed?(ArelAttribute.new(expression.table(), "*"))
+      unless self.attribute_allowed?(ArelAttribute.new(expression.table(), "*"))
         raise ArgumentError.new("wildcard belongs to a relation outside this query")
       end
       self.quote_identifier(expression.table().reference_name()) + ".*"
@@ -602,7 +602,7 @@ class ArelVisitor
       "(NOT #{inner})"
     elsif expression is ArelOrdering
       sql = "#{self.render_expression(expression.expression(), params)} #{expression.direction()}"
-      if expression.nulls() != nil
+      unless expression.nulls() == nil
         self.require_extension("explicit NULL ordering")
         sql = sql + " NULLS #{expression.nulls()}"
       end
@@ -668,7 +668,7 @@ class ArelVisitor
 
   def render_join(join: ArelJoin, params: Array) -> String
     sql = "#{join.kind()} JOIN #{self.render_table(join.table())}"
-    if join.predicate() != nil
+    unless join.predicate() == nil
       sql = sql + " ON " + self.render_expression(join.predicate(), params)
     end
     sql
@@ -797,7 +797,7 @@ class ArelSQLiteVisitor < ArelVisitor
         sql = " LIMIT #{limit_value}"
       end
     end
-    if offset_value != nil
+    unless offset_value == nil
       if bind_values
         sql = sql + " OFFSET ?"
         params.push(offset_value)
@@ -1200,7 +1200,7 @@ def arel_render_insert_conflict(target, ignore: Bool, assignments, params: Array
   if targets.length() > 0
     target_sql = " (#{targets.join(", ")})"
   end
-  if predicate != nil
+  unless predicate == nil
     visitor.require_extension("conflict-target predicates")
     target_sql += " WHERE " + visitor.render_expression(predicate, params)
   end
@@ -1276,7 +1276,7 @@ class ArelInsert
   end
   def on_conflict_do_nothing(columns = [])
     target = columns
-    if !(columns is ArelConflictTarget)
+    unless columns is ArelConflictTarget
       target = arel_array(columns)
     end
     ArelInsert.new(@table, @rows, @returning, @source_columns, @source_query,
@@ -1284,7 +1284,7 @@ class ArelInsert
   end
   def on_conflict_do_update(columns, assignments: Hash)
     target = columns
-    if !(columns is ArelConflictTarget)
+    unless columns is ArelConflictTarget
       target = arel_array(columns)
     end
     ArelInsert.new(@table, @rows, @returning, @source_columns, @source_query,
@@ -1308,11 +1308,11 @@ class ArelInsert
       sql = visitor.render_ctes(self, cte_params) + sql
       return [sql, cte_params.concat(params)]
     end
-    if @source_query != nil
+    unless @source_query == nil
       if @source_columns.length() == 0
         raise ArgumentError.new("INSERT SELECT requires at least one column")
       end
-      if !@source_query.projection_count_known?()
+      unless @source_query.projection_count_known?()
         raise ArgumentError.new("INSERT SELECT requires explicit projections")
       end
       if @source_columns.length() != @source_query.projection_count()
@@ -1618,14 +1618,14 @@ end
 def with_children_tail(node, replacements: Array)
   if node is ArelBinaryExpression
     expected = 1
-    if !node.bind_right?()
+    unless node.bind_right?()
       expected = 2
     end
     if replacements.length() != expected
       raise ArgumentError.new("ArelBinaryExpression replacement child count mismatch")
     end
     right = node.right()
-    if !node.bind_right?()
+    unless node.bind_right?()
       right = replacements[1]
     end
     ArelBinaryExpression.new(replacements[0], node.operator(), right, node.bind_right?())
@@ -1665,14 +1665,14 @@ def with_children_tail(node, replacements: Array)
     ArelBetween.new(replacements[0], node.lower(), node.upper(), node.negated?())
   elsif node is ArelMembership
     expected = 1
-    if !(node.values() is Array)
+    unless node.values() is Array
       expected = 2
     end
     if replacements.length() != expected
       raise ArgumentError.new("ArelMembership replacement child count mismatch")
     end
     values = node.values()
-    if !(values is Array)
+    unless values is Array
       values = replacements[1]
     end
     ArelMembership.new(replacements[0], values, node.negated?())
@@ -1688,7 +1688,7 @@ def with_children_tail(node, replacements: Array)
     ArelScalarSubquery.new(replacements[0])
   elsif node is ArelJoin
     expected = 1
-    if node.predicate() != nil
+    unless node.predicate() == nil
       expected = 2
     end
     if replacements.length() != expected || !(replacements[0] is ArelTable)
@@ -1706,7 +1706,7 @@ def with_children_tail(node, replacements: Array)
     ArelCte.new(node.name(), replacements[0], node.recursive?())
   elsif node is ArelConflictTarget
     expected = 0
-    if node.predicate() != nil
+    unless node.predicate() == nil
       expected = 1
     end
     if replacements.length() != expected
@@ -1750,7 +1750,7 @@ def with_write_children(node, replacements: Array)
     table = replacements[index]
     index += 1
     assignments = nil
-    if state[1] != nil
+    unless state[1] == nil
       assignments = {}
       assignment_index = 0
       while assignment_index < state[1].length()
@@ -1817,7 +1817,7 @@ def with_write_children(node, replacements: Array)
     table = replacements[index]
     index += 1
     source_query = state[4]
-    if source_query != nil
+    unless source_query == nil
       source_query = replacements[index]
       index += 1
     end
@@ -1850,7 +1850,7 @@ def with_write_children(node, replacements: Array)
       index += 1
     end
     conflict_assignments = nil
-    if state[7] != nil
+    unless state[7] == nil
       conflict_assignments = {}
       value_index = 0
       while value_index < state[7].length()
@@ -1897,7 +1897,7 @@ def with_query_children(node: ArelQuery, replacements: Array)
   end
   index += node.ctes().length()
   source_query = nil
-  if node.source_query() != nil
+  unless node.source_query() == nil
     source_query = replacements[index]
     index += 1
   end
@@ -2000,7 +2000,7 @@ def walk(node, visitor = nil) -> Array
   while pending.length() > 0
     current = pending.pop()
     visited.push(current)
-    if visitor != nil
+    unless visitor == nil
       visitor.visit(current)
     end
     children = self.children(current)
@@ -2020,7 +2020,7 @@ def children(node) -> Array
     []
   elsif node is ArelBinaryExpression
     children = [node.left()]
-    if !node.bind_right?()
+    unless node.bind_right?()
       children.push(node.right())
     end
     children
@@ -2045,7 +2045,7 @@ def children(node) -> Array
     [node.left()]
   elsif node is ArelMembership
     children = [node.left()]
-    if !(node.values() is Array)
+    unless node.values() is Array
       children.push(node.values())
     end
     children
@@ -2053,7 +2053,7 @@ def children(node) -> Array
     [node.query()]
   elsif node is ArelJoin
     children = [node.table()]
-    if node.predicate() != nil
+    unless node.predicate() == nil
       children.push(node.predicate())
     end
     children
@@ -2067,7 +2067,7 @@ end
 def children_tail(node) -> Array
   if node is ArelQuery
     children = [].concat(node.ctes())
-    if node.source_query() != nil
+    unless node.source_query() == nil
       children.push(node.source_query())
     end
     children = children.concat(node.projections())
@@ -2099,13 +2099,13 @@ def children_write(node) -> Array
     state = node.structure()
     children = [].concat(state[8])
     children.push(state[0])
-    if state[4] != nil
+    unless state[4] == nil
       children.push(state[4])
     end
     row_index = 0
     while row_index < state[1].length()
       row = state[1][row_index]
-      if !(row is ArelDefaultValues)
+      unless row is ArelDefaultValues
         value_index = 0
         while value_index < row.length()
           value = row[row.key_at(value_index)]
@@ -2120,7 +2120,7 @@ def children_write(node) -> Array
     if state[5] is ArelConflictTarget
       children.push(state[5])
     end
-    if state[7] != nil
+    unless state[7] == nil
       value_index = 0
       while value_index < state[7].length()
         value = state[7][state[7].key_at(value_index)]
@@ -2135,7 +2135,7 @@ def children_write(node) -> Array
     state = node.structure()
     children = [].concat(state[5])
     children.push(state[0])
-    if state[1] != nil
+    unless state[1] == nil
       value_index = 0
       while value_index < state[1].length()
         value = state[1][state[1].key_at(value_index)]
@@ -2163,7 +2163,7 @@ def inspect(node) -> String
     "Attribute(#{node.table().reference_name()}.#{node.name()})"
   elsif node is ArelBinaryExpression
     right = "Bind(#{node.right()})"
-    if !node.bind_right?()
+    unless node.bind_right?()
       right = self.inspect(node.right())
     end
     "Binary(#{node.operator()}, #{self.inspect(node.left())}, #{right})"
@@ -2244,7 +2244,7 @@ def inspect_tail(node) -> String
     end
   elsif node is ArelOrdering
     nulls = ""
-    if node.nulls() != nil
+    unless node.nulls() == nil
       nulls = ", NULLS #{node.nulls()}"
     end
     "Ordering(#{node.direction()}#{nulls}, #{self.inspect(node.expression())})"
@@ -2252,7 +2252,7 @@ def inspect_tail(node) -> String
     "Alias(#{node.name()}, #{self.inspect(node.expression())})"
   elsif node is ArelJoin
     predicate = "none"
-    if node.predicate() != nil
+    unless node.predicate() == nil
       predicate = self.inspect(node.predicate())
     end
     "Join(#{node.kind()}, #{self.inspect(node.table())}, #{predicate})"
@@ -2273,7 +2273,7 @@ def inspect_tail(node) -> String
   elsif node is ArelUpdate
     state = node.structure()
     assignments = 0
-    if state[1] != nil
+    unless state[1] == nil
       assignments = state[1].length()
     end
     "Update(table=#{state[0].reference_name()}, assignments=#{assignments}, predicates=#{state[2].length()}, returning=#{state[3].length()}, all=#{state[4]}, ctes=#{state[5].length()})"
@@ -2314,7 +2314,7 @@ def same?(left, right) -> Bool
     end
     index = 0
     while index < left.arguments().length()
-      if !self.same?(left.arguments()[index], right.arguments()[index])
+      unless self.same?(left.arguments()[index], right.arguments()[index])
         return false
       end
       index += 1
@@ -2386,7 +2386,7 @@ def same_nodes?(left, right) -> Bool
     return false
   end
   if left is Hash
-    if !(right is Hash)
+    unless right is Hash
       return false
     end
     index = 0
@@ -2398,7 +2398,7 @@ def same_nodes?(left, right) -> Bool
       left_value = left[key]
       right_value = right[key]
       if left_value is ArelAssignmentValue
-        if !self.same?(left_value, right_value)
+        unless self.same?(left_value, right_value)
           return false
         end
       elsif left_value != right_value
@@ -2410,7 +2410,7 @@ def same_nodes?(left, right) -> Bool
   end
   index = 0
   while index < left.length()
-    if !self.same?(left[index], right[index])
+    unless self.same?(left[index], right[index])
       return false
     end
     index += 1
@@ -2462,7 +2462,7 @@ def same_insert?(left: ArelInsert, right: ArelInsert) -> Bool
     left_row = left_state[1][index]
     right_row = right_state[1][index]
     if left_row is ArelDefaultValues
-      if !self.same?(left_row, right_row)
+      unless self.same?(left_row, right_row)
         return false
       end
     elsif !self.same_nodes?(left_row, right_row)
@@ -2484,7 +2484,7 @@ def same_tail?(left, right) -> Bool
        (left.values() is Array) != (right.values() is Array)
       return false
     end
-    if !(left.values() is Array)
+    unless left.values() is Array
       return self.same?(left.values(), right.values())
     end
     if left.values().length() != right.values().length()
@@ -2527,7 +2527,7 @@ def same_tail?(left, right) -> Bool
     end
     self.same_nodes?(left.orderings(), right.orderings())
   elsif left is ArelUpdate
-    if !(right is ArelUpdate)
+    unless right is ArelUpdate
       return false
     end
     left_state = left.structure()
@@ -2540,7 +2540,7 @@ def same_tail?(left, right) -> Bool
   elsif left is ArelInsert
     right is ArelInsert && self.same_insert?(left, right)
   elsif left is ArelDelete
-    if !(right is ArelDelete)
+    unless right is ArelDelete
       return false
     end
     left_state = left.structure()
