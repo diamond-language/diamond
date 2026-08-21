@@ -771,6 +771,8 @@ static bool disassemble_chunk(FILE *stream, const char *name,
                 offset=three_registers(stream,chunk,"MODULO",offset, &valid);break;
             case DIAMOND_OP_COMPARE:
                 offset=three_registers(stream,chunk,"COMPARE",offset, &valid);break;
+            case DIAMOND_OP_POSTGRES_OPEN:
+                offset=two_registers(stream,chunk,"POSTGRES_OPEN",offset, &valid);break;
             case DIAMOND_OP_CHECK_TYPE:
                 if(!require_bytes(stream,chunk,offset,5)){valid=false;offset=chunk->code_count;break;}
                 fprintf(stream,"%-18s r%u, ","CHECK_TYPE",

@@ -603,6 +603,101 @@ call does its own prepare→bind→step→finalize; there is no persistent
 prepared-`Statement` object to explicitly reuse across calls (see "out
 of scope" below).
 
+## PostgreSQL: `PostgreSQL.open`/`.execute`/`.query`/`.last_insert_row_id`/`.close`
+
+```ruby
+db = PostgreSQL.open("host=localhost dbname=myapp user=myuser password=secret")
+db.execute("CREATE TABLE people (id SERIAL PRIMARY KEY, name TEXT, age INT)")
+db.execute("INSERT INTO people (name, age) VALUES (?, ?)", ["Ada", 30])
+id = db.last_insert_row_id()
+db.query("SELECT * FROM people WHERE age >= ?", [18])
+# => [{id: 1, name: Ada, age: 30}]
+db.close()
+```
+
+`PostgreSQL.open(conninfo)` connects via `PQconnectdb`, the system `libpq`
+(via `-lpq`) — a genuinely external C dependency exactly like `SQLite3`'s
+`libsqlite3`. `conninfo` is passed through untouched to libpq itself, so
+either its keyword/value form (`"host=... port=... dbname=... user=...
+password=..."`) or a `postgresql://user:pass@host:port/dbname` URI works,
+whatever libpq's own parser accepts. A failed connection raises a
+rescuable `PostgreSQLError` — a dedicated exception class, not `IOError`,
+for the same reason `SQLite3Error` exists: every failure this type can
+raise (a bad conninfo, a malformed statement, a bind/exec error) is
+`PostgreSQLError`, giving callers one class to `rescue` against.
+
+A `PostgreSQL` value is a new GC-managed heap object kind
+(`DIAMOND_OBJECT_POSTGRES`), a thin wrapper around a `PGconn *` — the
+same shape as `SQLite3`'s `DiamondSqlite3Handle` around a `sqlite3 *`,
+including the same closed/open sentinel (`conn` nulled by `#close()`,
+checked before any other operation) and the same "sweeping an
+unreached-but-still-open handle closes it as a safety net" GC behavior.
+
+`PostgreSQL.open` is recognized in the compiler the same way `SQLite3.open`
+is, compiling to a single `DIAMOND_OP_POSTGRES_OPEN dest, conninfo`
+instruction. `.execute`/`.query`/`.last_insert_row_id`/`.close` are native
+`DIAMOND_OP_INVOKE` dispatch on a `DIAMOND_OBJECT_POSTGRES` receiver, the
+same mechanism `SQLite3`'s own methods use:
+
+- `.execute(sql)` / `.execute(sql, params)` runs one statement via
+  `PQexecParams` and returns the number of rows it affected (`PQcmdTuples`,
+  parsed as an `Int`; `""` — e.g. from `CREATE TABLE` — means `0`) as an
+  `Int`, the useful return value for `INSERT`/`UPDATE`/`DELETE`/DDL.
+- `.query(sql)` / `.query(sql, params)` runs one statement and collects
+  every row into `Array[Hash]` (column name → typed value), same shape
+  `SQLite3#query` produces.
+- `.last_insert_row_id()` runs `SELECT lastval()` and returns its `Int`
+  result — Postgres has no direct equivalent of `sqlite3_last_insert_
+  rowid`, so this approximates it for a `serial`/`GENERATED ALWAYS AS
+  IDENTITY` column. It raises `PostgreSQLError` (`lastval` itself failing
+  with "lastval is not yet defined in this session") if no sequence has
+  been used yet on this connection — the more idiomatic Postgres pattern
+  for a specific insert's id is `INSERT ... RETURNING id` via `.query()`
+  directly, not this method.
+- `.close()` is idempotent, exactly like `SQLite3#close`.
+
+`params`, when given, is an `Array` bound *positionally* — but unlike
+`SQLite3`, which binds directly to sqlite3's own native `?` placeholders,
+Postgres's C API (`PQexecParams`) requires numbered `$1`/`$2`/...
+placeholders. `SQLite3`'s `?` spelling is kept at the Diamond level anyway,
+for API consistency between the two drivers and so either is a drop-in
+target for the same `#query(sql, params)` contract (see
+[`packages/arel/README.md`](../packages/arel/README.md)): the driver
+translates `?` to `$1`/`$2`/... internally before calling `PQexecParams`,
+skipping any `?` inside a single-quoted string literal (`''` is the
+standard SQL escaped quote). A `?` used outside a string literal always
+counts as a placeholder — Postgres's own JSONB "key exists" `?` operator,
+for instance, isn't distinguishable from one here and isn't usable through
+the params-array call form. A parameter-count mismatch raises
+`ArgumentError`; an unsupported Diamond value in `params` (anything but
+`Int`/`Float`/`String`/`Bool`/`Nil` — notably including a bignum-promoted
+`Int`, matching `SQLite3`'s own same restriction) raises `TypeError`. Bind/
+column type mapping:
+
+| Diamond → Postgres (`params`, text format) | Postgres → Diamond (`query` results, by OID) |
+|---|---|
+| `Int` → decimal text | `int2`/`int4`/`int8` → `Int` |
+| `Float` → `%.17g`, or `Infinity`/`-Infinity`/`NaN` | `float4`/`float8`/`numeric` → `Float` (lossy for a `numeric` outside `Float` precision) |
+| `String` → passed through unchanged | `text`/`varchar`/`bpchar` → `String` |
+| `Bool` → `"true"`/`"false"` | `bool` → `Bool` |
+| `Nil` → SQL `NULL` (a null `paramValues` entry) | `NULL` → `Nil` |
+| | any other type (`date`/`timestamp`/`json`/`jsonb`/`uuid`/`bytea`/arrays/...) → the raw `String` libpq's text format already returns |
+
+The last row is a deliberate, documented scope cut, not silent data loss:
+`bytea` in particular stays Postgres's default hex-text spelling
+(`\x...`), not decoded to raw bytes. `PQexecParams` itself refuses more
+than one SQL command per call regardless of parameter count, so unlike
+`SQLite3` (which needs an explicit tail-content check after
+`sqlite3_prepare_v2`), no separate multi-statement guard is needed here —
+Postgres's own rejection surfaces as an ordinary `PostgreSQLError`.
+
+Out of scope for this driver, deliberately: an Arel dialect visitor for
+Postgres (a separate project once there's a real second dialect to
+validate Arel's grammar seams against — see
+[`packages/arel/ROADMAP.md`](../packages/arel/ROADMAP.md)), prepared/named
+statements, asynchronous/non-blocking connections, connection pooling, and
+binary-format result decoding.
+
 ## Time: `Time.now`/`.utc_now`/`.at`/`.strftime`/`+`/`-`/comparisons
 
 ```ruby

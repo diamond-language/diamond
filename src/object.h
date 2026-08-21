@@ -23,6 +23,11 @@ typedef struct ssl_ctx_st SSL_CTX;
  * Matches sqlite3.h's own `typedef struct sqlite3 sqlite3;` exactly. */
 typedef struct sqlite3 sqlite3;
 
+/* Forward-declared for the same reason sqlite3 is above: only vm.c calls
+ * real libpq functions, so <libpq-fe.h> stays out of this header. Matches
+ * libpq-fe.h's own `typedef struct pg_conn PGconn;` exactly. */
+typedef struct pg_conn PGconn;
+
 typedef enum DiamondObjectKind : uint8_t {
     DIAMOND_OBJECT_STRING,
     DIAMOND_OBJECT_INSTANCE,
@@ -42,6 +47,7 @@ typedef enum DiamondObjectKind : uint8_t {
     DIAMOND_OBJECT_PROGRAM_BUILDER,
     DIAMOND_OBJECT_THREAD,
     DIAMOND_OBJECT_SQLITE3,
+    DIAMOND_OBJECT_POSTGRES,
     DIAMOND_OBJECT_TIME,
     DIAMOND_OBJECT_PROCESS_RESULT,
 } DiamondObjectKind;
@@ -299,6 +305,16 @@ typedef struct DiamondSqlite3Handle {
     DiamondObject object;
     sqlite3 *db;
 } DiamondSqlite3Handle;
+
+/* Same shape and same idempotent-close reasoning as DiamondSqlite3Handle
+ * immediately above, just wrapping a libpq PGconn* (via PQconnectdb)
+ * instead of a sqlite3*. `conn` is nulled by an explicit #close() and
+ * checked before any other operation; both GC sweep and VM teardown check
+ * that sentinel before calling PQfinish. */
+typedef struct DiamondPostgresHandle {
+    DiamondObject object;
+    PGconn *conn;
+} DiamondPostgresHandle;
 
 /* Simpler still than DiamondRegexp: owns no OS resource and no second
  * allocation either -- just two scalars. Freeing one is `free(pointer)`,

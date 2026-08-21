@@ -29,6 +29,7 @@
 #include <stdatomic.h>
 #include <spawn.h>
 #include <sqlite3.h>
+#include <libpq-fe.h>
 #include <sys/mman.h>
 #include <sys/socket.h>
 #include <sys/wait.h>
@@ -447,6 +448,10 @@ static void diamond_vm_collect_impl(DiamondVm *vm) {
             size=sizeof(DiamondSqlite3Handle);
             sqlite3 *db=((DiamondSqlite3Handle *)unreached)->db;
             if(db!=nullptr)sqlite3_close(db);
+        } else if(unreached->kind==DIAMOND_OBJECT_POSTGRES) {
+            size=sizeof(DiamondPostgresHandle);
+            PGconn *conn=((DiamondPostgresHandle *)unreached)->conn;
+            if(conn!=nullptr)PQfinish(conn);
         } else if(unreached->kind==DIAMOND_OBJECT_TIME) {
             /* No owned resource, no separate allocation -- free(unreached)
              * below is all that's needed; this branch exists only for
@@ -567,6 +572,9 @@ void diamond_vm_free(DiamondVm *vm) {
         } else if(object->kind==DIAMOND_OBJECT_SQLITE3) {
             sqlite3 *db=((DiamondSqlite3Handle *)object)->db;
             if(db!=nullptr)sqlite3_close(db);
+        } else if(object->kind==DIAMOND_OBJECT_POSTGRES) {
+            PGconn *conn=((DiamondPostgresHandle *)object)->conn;
+            if(conn!=nullptr)PQfinish(conn);
         }
         free(object);
         object = next;
@@ -1623,6 +1631,15 @@ static DiamondSqlite3Handle *allocate_sqlite3_handle(DiamondVm *vm,sqlite3 *db) 
     *handle=(DiamondSqlite3Handle){.object={.next=vm->objects,.kind=DIAMOND_OBJECT_SQLITE3},
         .db=db};
     vm->objects=&handle->object;vm->bytes_allocated+=sizeof(DiamondSqlite3Handle);return handle;
+}
+
+static DiamondPostgresHandle *allocate_postgres_handle(DiamondVm *vm,PGconn *conn) {
+    if(vm->stress_gc||vm->bytes_allocated>=vm->next_gc)diamond_vm_collect(vm);
+    DiamondPostgresHandle *handle=malloc(sizeof(DiamondPostgresHandle));
+    if(handle==nullptr)return nullptr;
+    *handle=(DiamondPostgresHandle){.object={.next=vm->objects,.kind=DIAMOND_OBJECT_POSTGRES},
+        .conn=conn};
+    vm->objects=&handle->object;vm->bytes_allocated+=sizeof(DiamondPostgresHandle);return handle;
 }
 
 static DiamondTime *allocate_time(DiamondVm *vm,double epoch,bool utc) {
@@ -5029,6 +5046,7 @@ static uint8_t exception_class_for_status(DiamondVmStatus status) {
         case DIAMOND_VM_PROGRAM_ERROR: return DIAMOND_CLASS_RUNTIME_ERROR;
         case DIAMOND_VM_THREAD_ERROR: return DIAMOND_CLASS_THREAD_ERROR;
         case DIAMOND_VM_SQLITE3_ERROR: return DIAMOND_CLASS_SQLITE3_ERROR;
+        case DIAMOND_VM_POSTGRES_ERROR: return DIAMOND_CLASS_POSTGRES_ERROR;
         default: return UINT8_MAX;
     }
 }
@@ -6226,6 +6244,377 @@ static DiamondVmStatus sqlite3_dispatch_helper(DiamondVm *vm,DiamondSqlite3Handl
      * registers[dest] (a real GC root), not a local -- see its own
      * comment. */
     return sqlite3_query_helper(vm,target_db,sql,param_values,param_count,&registers[dest]);
+}
+
+/* Postgres OIDs for the column types this driver decodes into a native
+ * Diamond type below. libpq-devel doesn't ship pg_type.h (that lives in
+ * postgresql-server-devel, a separate package this driver doesn't
+ * require) -- these are Postgres's own well-known, long-stable builtin
+ * type OIDs, hardcoded directly rather than pulling in a whole extra
+ * dependency for ten integer constants. Anything else (date/timestamp/
+ * json/jsonb/uuid/bytea/arrays/...) decodes as the raw text libpq
+ * already returns -- an explicit, documented scope cut, not silent data
+ * loss (bytea in particular stays Postgres's default hex-text spelling,
+ * not raw bytes). */
+#define DIAMOND_PG_BOOLOID 16
+#define DIAMOND_PG_INT8OID 20
+#define DIAMOND_PG_INT2OID 21
+#define DIAMOND_PG_INT4OID 23
+#define DIAMOND_PG_FLOAT4OID 700
+#define DIAMOND_PG_FLOAT8OID 701
+#define DIAMOND_PG_NUMERICOID 1700
+
+/* `?` -> `$1`/`$2`/... translation: SQLite3's own placeholder spelling is
+ * kept at the Diamond level for API/Arel-adapter consistency even though
+ * libpq's PQexecParams requires numbered placeholders. A `?` inside a
+ * single-quoted string literal (`''` is the standard SQL escaped quote)
+ * is left alone; nothing else is -- a literal `?` used outside a string
+ * (Postgres's own JSONB "key exists" operator, for instance) isn't
+ * distinguishable from a placeholder here and isn't supported through
+ * the params-array call form in this first slice. Two-pass (count
+ * placeholders, then allocate exactly and fill) rather than repeated
+ * reallocation, the same one-allocation stance the rest of this codebase
+ * already takes for string building. Returns nullptr only on OOM. */
+static char *postgres_translate_placeholders_helper(const char *sql,size_t length,
+        size_t *out_count) {
+    size_t placeholder_count=0;
+    bool in_string=false;
+    for(size_t index=0;index<length;index++) {
+        const char ch=sql[index];
+        if(in_string) {
+            if(ch=='\'') {
+                if(index+1<length&&sql[index+1]=='\'')index++;
+                else in_string=false;
+            }
+        } else if(ch=='\'') {
+            in_string=true;
+        } else if(ch=='?') {
+            placeholder_count++;
+        }
+    }
+    /* Each `?` (1 char) becomes `$` plus up to 10 digits -- far more
+     * headroom than any realistic placeholder count needs, sized once. */
+    const size_t max_extra_per_placeholder=10;
+    char *out=malloc(length+placeholder_count*max_extra_per_placeholder+1);
+    if(out==nullptr)return nullptr;
+    size_t out_index=0,placeholder_number=0;
+    in_string=false;
+    for(size_t index=0;index<length;index++) {
+        const char ch=sql[index];
+        if(in_string) {
+            out[out_index++]=ch;
+            if(ch=='\'') {
+                if(index+1<length&&sql[index+1]=='\'')out[out_index++]=sql[++index];
+                else in_string=false;
+            }
+        } else if(ch=='\'') {
+            in_string=true;out[out_index++]=ch;
+        } else if(ch=='?') {
+            placeholder_number++;
+            out_index+=(size_t)snprintf(out+out_index,max_extra_per_placeholder+1,
+                "$%zu",placeholder_number);
+        } else {
+            out[out_index++]=ch;
+        }
+    }
+    out[out_index]='\0';
+    *out_count=placeholder_count;
+    return out;
+}
+
+static void postgres_free_params_helper(char **param_values,size_t count) {
+    if(param_values==nullptr)return;
+    for(size_t index=0;index<count;index++)free(param_values[index]);
+    free(param_values);
+}
+
+/* Converts an Array of Diamond values into a NUL-terminated C string
+ * array for PQexecParams's text-format parameter list (a Nil entry stays
+ * a null pointer, PQexecParams's own spelling of SQL NULL); the caller
+ * frees it via postgres_free_params_helper. Deliberately mirrors
+ * sqlite3_bind_params_helper's exact same type-support boundary (Nil/
+ * Int/Float/Bool/String only, no Array/Hash/Instance/bignum-promoted
+ * Int) for consistency between the two drivers. */
+static DiamondVmStatus postgres_bind_params_helper(DiamondVm *vm,
+        const DiamondValue *values,size_t count,char ***out_values) {
+    char **param_values=count==0?nullptr:calloc(count,sizeof(char *));
+    if(count>0&&param_values==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+    for(size_t index=0;index<count;index++) {
+        const DiamondValue value=values[index];
+        if(value.kind==DIAMOND_VALUE_NIL)continue; /* stays nullptr = SQL NULL */
+        char buffer[64];
+        if(value.kind==DIAMOND_VALUE_INT) {
+            snprintf(buffer,sizeof buffer,"%" PRId64,value.as.integer);
+        } else if(value.kind==DIAMOND_VALUE_FLOAT) {
+            if(isnan(value.as.real))snprintf(buffer,sizeof buffer,"NaN");
+            else if(isinf(value.as.real))
+                snprintf(buffer,sizeof buffer,"%s",value.as.real<0?"-Infinity":"Infinity");
+            else snprintf(buffer,sizeof buffer,"%.17g",value.as.real);
+        } else if(value.kind==DIAMOND_VALUE_BOOL) {
+            snprintf(buffer,sizeof buffer,"%s",value.as.boolean?"true":"false");
+        } else if(value.kind==DIAMOND_VALUE_OBJECT&&
+                  value.as.object->kind==DIAMOND_OBJECT_STRING) {
+            const DiamondString *string=(const DiamondString *)value.as.object;
+            char *copy=malloc(string->length+1);
+            if(copy==nullptr) {
+                postgres_free_params_helper(param_values,count);
+                return DIAMOND_VM_OUT_OF_MEMORY;
+            }
+            memcpy(copy,string->chars,string->length);
+            copy[string->length]='\0';
+            param_values[index]=copy;
+            continue;
+        } else {
+            snprintf(vm->error,sizeof vm->error,
+                "unsupported PostgreSQL parameter type at position %zu",index+1);
+            postgres_free_params_helper(param_values,count);
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        const size_t buffer_length=strlen(buffer);
+        char *copy=malloc(buffer_length+1);
+        if(copy==nullptr) {
+            postgres_free_params_helper(param_values,count);
+            return DIAMOND_VM_OUT_OF_MEMORY;
+        }
+        memcpy(copy,buffer,buffer_length+1);
+        param_values[index]=copy;
+    }
+    *out_values=param_values;
+    return DIAMOND_VM_OK;
+}
+
+/* PQgetvalue's text-format output decoded to the matching native Diamond
+ * type for the well-known OIDs above; anything else stays the raw String
+ * libpq already returns. Only the String-allocation path can fail (OOM),
+ * matching sqlite3_column_value_helper's own bool-return/out-param shape.
+ * INT2/INT4/INT8OID are all guaranteed to fit int64_t by Postgres's own
+ * type bounds, so unlike String#to_i there's no bignum-overflow case to
+ * handle here; NUMERIC has no such bound but is deliberately decoded as
+ * Float (lossy for values outside double precision), not Int. */
+static bool postgres_decode_value_helper(DiamondVm *vm,PGresult *res,int row,int col,
+        DiamondValue *out) {
+    if(PQgetisnull(res,row,col)) {
+        *out=DIAMOND_NIL;return true;
+    }
+    const char *text=PQgetvalue(res,row,col);
+    switch(PQftype(res,col)) {
+        case DIAMOND_PG_BOOLOID:
+            *out=DIAMOND_BOOL(text[0]=='t');return true;
+        case DIAMOND_PG_INT2OID:
+        case DIAMOND_PG_INT4OID:
+        case DIAMOND_PG_INT8OID:
+            *out=DIAMOND_INT(strtoll(text,nullptr,10));return true;
+        case DIAMOND_PG_FLOAT4OID:
+        case DIAMOND_PG_FLOAT8OID:
+        case DIAMOND_PG_NUMERICOID:
+            *out=DIAMOND_FLOAT(strtod(text,nullptr));return true;
+        default: {
+            const size_t length=(size_t)PQgetlength(res,row,col);
+            DiamondString *string=allocate_string(vm,text,length);
+            if(string==nullptr)return false;
+            *out=DIAMOND_OBJECT(string);return true;
+        }
+    }
+}
+
+/* Shared translate+bind+exec step behind #execute/#query/the internal
+ * SELECT lastval() #last_insert_row_id() runs. Unlike
+ * sqlite3_prepare_helper, no manual multiple-statements guard is needed:
+ * PQexecParams itself refuses more than one SQL command regardless of
+ * parameter count, surfacing that as an ordinary error PGresult this
+ * function already turns into DIAMOND_VM_POSTGRES_ERROR. */
+static DiamondVmStatus postgres_exec_helper(DiamondVm *vm,DiamondPostgresHandle *handle,
+        const char *sql_chars,size_t sql_length,const DiamondValue *param_values,
+        size_t param_count,PGresult **out_res) {
+    size_t placeholder_count=0;
+    char *translated=postgres_translate_placeholders_helper(sql_chars,sql_length,
+        &placeholder_count);
+    if(translated==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+    if(param_count!=placeholder_count) {
+        free(translated);
+        snprintf(vm->error,sizeof vm->error,
+            "PostgreSQL statement expects %zu bound parameter(s), got %zu",
+            placeholder_count,param_count);
+        return DIAMOND_VM_ARITY_ERROR;
+    }
+    char **bound_values=nullptr;
+    const DiamondVmStatus bind_status=
+        postgres_bind_params_helper(vm,param_values,param_count,&bound_values);
+    if(bind_status!=DIAMOND_VM_OK) {
+        free(translated);
+        return bind_status;
+    }
+    PGresult *res=PQexecParams(handle->conn,translated,(int)param_count,nullptr,
+        (const char *const *)bound_values,nullptr,nullptr,0);
+    free(translated);
+    postgres_free_params_helper(bound_values,param_count);
+    if(res==nullptr) {
+        snprintf(vm->error,sizeof vm->error,"%s",PQerrorMessage(handle->conn));
+        return DIAMOND_VM_POSTGRES_ERROR;
+    }
+    const ExecStatusType status=PQresultStatus(res);
+    if(status!=PGRES_TUPLES_OK&&status!=PGRES_COMMAND_OK) {
+        snprintf(vm->error,sizeof vm->error,"%s",PQresultErrorMessage(res));
+        PQclear(res);
+        return DIAMOND_VM_POSTGRES_ERROR;
+    }
+    *out_res=res;
+    return DIAMOND_VM_OK;
+}
+
+static DiamondVmStatus postgres_execute_helper(DiamondVm *vm,DiamondPostgresHandle *handle,
+        const char *sql_chars,size_t sql_length,const DiamondValue *param_values,
+        size_t param_count,DiamondValue *result) {
+    PGresult *res=nullptr;
+    const DiamondVmStatus status=
+        postgres_exec_helper(vm,handle,sql_chars,sql_length,param_values,param_count,&res);
+    if(status!=DIAMOND_VM_OK)return status;
+    const char *affected=PQcmdTuples(res);
+    *result=DIAMOND_INT(affected[0]=='\0'?0:strtoll(affected,nullptr,10));
+    PQclear(res);
+    return DIAMOND_VM_OK;
+}
+
+/* Same GC-rooting discipline as sqlite3_query_helper: `result` must be a
+ * pointer into the caller's live registers array, `*result` is written
+ * to hold the outer Array before any further allocation, and each row's
+ * Hash is pushed onto that already-rooted Array (then each key set to
+ * Nil first, rooting the key before decoding may itself allocate a
+ * String) before its real column values are filled in one at a time. */
+static DiamondVmStatus postgres_query_helper(DiamondVm *vm,DiamondPostgresHandle *handle,
+        const char *sql_chars,size_t sql_length,const DiamondValue *param_values,
+        size_t param_count,DiamondValue *result) {
+    PGresult *res=nullptr;
+    const DiamondVmStatus status=
+        postgres_exec_helper(vm,handle,sql_chars,sql_length,param_values,param_count,&res);
+    if(status!=DIAMOND_VM_OK)return status;
+    DiamondArray *rows=allocate_array(vm,nullptr,0);
+    if(rows==nullptr) {
+        PQclear(res);
+        return DIAMOND_VM_OUT_OF_MEMORY;
+    }
+    *result=DIAMOND_OBJECT(rows);
+    const int row_count=PQntuples(res);
+    const int column_count=PQnfields(res);
+    for(int row=0;row<row_count;row++) {
+        DiamondHash *row_hash=allocate_hash(vm);
+        if(row_hash==nullptr) {
+            PQclear(res);
+            return DIAMOND_VM_OUT_OF_MEMORY;
+        }
+        if(!array_push(vm,rows,DIAMOND_OBJECT(row_hash))) {
+            PQclear(res);
+            return DIAMOND_VM_OUT_OF_MEMORY;
+        }
+        for(int col=0;col<column_count;col++) {
+            const char *column_name=PQfname(res,col);
+            DiamondString *key=allocate_string(vm,column_name,strlen(column_name));
+            if(key==nullptr) {
+                PQclear(res);
+                return DIAMOND_VM_OUT_OF_MEMORY;
+            }
+            if(!hash_set(vm,row_hash,DIAMOND_OBJECT(key),DIAMOND_NIL)) {
+                PQclear(res);
+                return DIAMOND_VM_OUT_OF_MEMORY;
+            }
+            DiamondValue column_value=DIAMOND_NIL;
+            if(!postgres_decode_value_helper(vm,res,row,col,&column_value)) {
+                PQclear(res);
+                return DIAMOND_VM_OUT_OF_MEMORY;
+            }
+            if(!hash_set(vm,row_hash,DIAMOND_OBJECT(key),column_value)) {
+                PQclear(res);
+                return DIAMOND_VM_OUT_OF_MEMORY;
+            }
+        }
+    }
+    PQclear(res);
+    return DIAMOND_VM_OK;
+}
+
+/* #execute/#query/#last_insert_row_id/#close -- factored out of the
+ * INVOKE case body for the same stack-frame reason sqlite3_dispatch_
+ * helper's own comment explains. #last_insert_row_id runs `SELECT
+ * lastval()` through postgres_query_helper and unwraps the single Int
+ * cell; it fails with a real PostgreSQLError (lastval's own "not yet
+ * defined in this session" condition) if no sequence has been used yet
+ * on this connection, the same honest-failure spirit as everything else
+ * this driver raises. */
+static DiamondVmStatus postgres_dispatch_helper(DiamondVm *vm,DiamondPostgresHandle *target_db,
+        const DiamondStringConstant *method_name,DiamondValue *registers,uint16_t base,
+        uint8_t argc,uint16_t dest) {
+    const bool execute_method=method_name->length==7&&
+        memcmp(method_name->chars,"execute",7)==0;
+    const bool query_method=method_name->length==5&&
+        memcmp(method_name->chars,"query",5)==0;
+    const bool last_insert_row_id_method=method_name->length==18&&
+        memcmp(method_name->chars,"last_insert_row_id",18)==0;
+    const bool close_method=method_name->length==5&&
+        memcmp(method_name->chars,"close",5)==0;
+    if(!execute_method&&!query_method&&!last_insert_row_id_method&&!close_method) {
+        snprintf(vm->error,sizeof vm->error,"undefined method '%.*s' for %s",
+            (int)method_name->length,method_name->chars,"PostgreSQL");
+        return DIAMOND_VM_TYPE_ERROR;
+    }
+    if(close_method) {
+        if(argc!=0)return DIAMOND_VM_ARITY_ERROR;
+        if(target_db->conn!=nullptr) {
+            PQfinish(target_db->conn);
+            target_db->conn=nullptr;
+        }
+        registers[dest]=DIAMOND_NIL;return DIAMOND_VM_OK;
+    }
+    if(target_db->conn==nullptr) {
+        snprintf(vm->error,sizeof vm->error,"PostgreSQL connection is closed");
+        return DIAMOND_VM_POSTGRES_ERROR;
+    }
+    if(last_insert_row_id_method) {
+        if(argc!=0)return DIAMOND_VM_ARITY_ERROR;
+        static const char lastval_sql[]="SELECT lastval()";
+        DiamondValue rows=DIAMOND_NIL;
+        const DiamondVmStatus query_status=postgres_query_helper(vm,target_db,
+            lastval_sql,sizeof lastval_sql-1,nullptr,0,&rows);
+        if(query_status!=DIAMOND_VM_OK)return query_status;
+        const DiamondArray *row_array=(const DiamondArray *)rows.as.object;
+        const DiamondHash *row=(const DiamondHash *)row_array->values[0].as.object;
+        registers[dest]=row->entries[0].value;
+        return DIAMOND_VM_OK;
+    }
+    /* execute/query share the same argument shape: (sql) or (sql, params). */
+    if(argc!=1&&argc!=2)return DIAMOND_VM_ARITY_ERROR;
+    if(registers[base].kind!=DIAMOND_VALUE_OBJECT||
+       registers[base].as.object->kind!=DIAMOND_OBJECT_STRING) {
+        snprintf(vm->error,sizeof vm->error,"PostgreSQL#%.*s's sql argument must be a String",
+            (int)method_name->length,method_name->chars);
+        return DIAMOND_VM_TYPE_ERROR;
+    }
+    const DiamondString *sql=(const DiamondString *)registers[base].as.object;
+    const DiamondValue *param_values=nullptr;
+    size_t param_count=0;
+    if(argc==2) {
+        if(registers[(size_t)base+1].kind!=DIAMOND_VALUE_OBJECT||
+           registers[(size_t)base+1].as.object->kind!=DIAMOND_OBJECT_ARRAY) {
+            snprintf(vm->error,sizeof vm->error,
+                "PostgreSQL#%.*s's params argument must be an Array",
+                (int)method_name->length,method_name->chars);
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        const DiamondArray *params=(const DiamondArray *)registers[(size_t)base+1].as.object;
+        param_values=params->values;
+        param_count=params->count;
+    }
+    if(execute_method) {
+        DiamondValue execute_result=DIAMOND_NIL;
+        const DiamondVmStatus execute_status=postgres_execute_helper(vm,
+            target_db,sql->chars,sql->length,param_values,param_count,&execute_result);
+        if(execute_status!=DIAMOND_VM_OK)return execute_status;
+        registers[dest]=execute_result;return DIAMOND_VM_OK;
+    }
+    /* query_method: postgres_query_helper writes directly into
+     * registers[dest] (a real GC root), not a local -- see its own
+     * comment. */
+    return postgres_query_helper(vm,target_db,sql->chars,sql->length,param_values,
+        param_count,&registers[dest]);
 }
 
 /* #year/#month/#day/#hour/#min/#sec/#wday/#yday/#to_i/#to_f/#strftime/
@@ -9885,6 +10274,14 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     VM_PROPAGATE(dispatch_status);
                     break;
                 }
+                if(receiver_kind==DIAMOND_OBJECT_POSTGRES) {
+                    if(type_argument_count!=0)VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                    const DiamondVmStatus dispatch_status=postgres_dispatch_helper(vm,
+                        (DiamondPostgresHandle *)registers[recv].as.object,
+                        method_name,registers,base,argc,dest);
+                    VM_PROPAGATE(dispatch_status);
+                    break;
+                }
                 if(receiver_kind==DIAMOND_OBJECT_TIME) {
                     if(type_argument_count!=0)VM_RETURN(DIAMOND_VM_TYPE_ERROR);
                     const DiamondVmStatus dispatch_status=time_dispatch_helper(vm,
@@ -10797,6 +11194,40 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     .as.object=(DiamondObject *)handle};
                 break;
             }
+            case DIAMOND_OP_POSTGRES_OPEN: {
+                uint16_t dest=0,conninfo_reg=0;
+                READ_SHORT(dest);READ_SHORT(conninfo_reg);
+                if(registers[conninfo_reg].kind!=DIAMOND_VALUE_OBJECT||
+                   registers[conninfo_reg].as.object->kind!=DIAMOND_OBJECT_STRING) {
+                    snprintf(vm->error,sizeof vm->error,
+                        "PostgreSQL.open argument must be a String conninfo");
+                    VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                }
+                const DiamondString *conninfo=
+                    (const DiamondString *)registers[conninfo_reg].as.object;
+                PGconn *conn=PQconnectdb(conninfo->chars);
+                /* Unlike sqlite3_open, a failed PQconnectdb still returns a
+                 * non-null conn whose PQerrorMessage must be read before
+                 * PQfinish-ing it -- conn is only ever null on the client's
+                 * own OOM, a separate case PQerrorMessage(nullptr) can't
+                 * describe. */
+                if(conn==nullptr) {
+                    VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                }
+                if(PQstatus(conn)!=CONNECTION_OK) {
+                    snprintf(vm->error,sizeof vm->error,"%s",PQerrorMessage(conn));
+                    PQfinish(conn);
+                    VM_RETURN(DIAMOND_VM_POSTGRES_ERROR);
+                }
+                DiamondPostgresHandle *handle=allocate_postgres_handle(vm,conn);
+                if(handle==nullptr) {
+                    PQfinish(conn);
+                    VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                }
+                registers[dest]=(DiamondValue){.kind=DIAMOND_VALUE_OBJECT,
+                    .as.object=(DiamondObject *)handle};
+                break;
+            }
             case DIAMOND_OP_PROGRAM_BUILDER_NEW: {
                 uint16_t dest=0;
                 READ_SHORT(dest);
@@ -11485,6 +11916,8 @@ const char *diamond_vm_status_name(DiamondVmStatus status) {
             return "thread error";
         case DIAMOND_VM_SQLITE3_ERROR:
             return "sqlite3 error";
+        case DIAMOND_VM_POSTGRES_ERROR:
+            return "postgres error";
     }
     return "unknown VM status";
 }

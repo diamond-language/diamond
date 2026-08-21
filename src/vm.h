@@ -183,6 +183,7 @@ typedef enum DiamondOpCode : uint8_t {
      * Comparable/`<=>` design doc): not a hot inner-loop operator the
      * way `<`/`==` are. */
     DIAMOND_OP_COMPARE,
+    DIAMOND_OP_POSTGRES_OPEN,
     DIAMOND_OP_COUNT,
 } DiamondOpCode;
 
@@ -233,6 +234,7 @@ typedef enum DiamondBuiltinClass : uint8_t {
     DIAMOND_CLASS_WOULD_BLOCK_ERROR,
     DIAMOND_CLASS_THREAD_ERROR,
     DIAMOND_CLASS_SQLITE3_ERROR,
+    DIAMOND_CLASS_POSTGRES_ERROR,
     DIAMOND_BUILTIN_CLASS_COUNT,
 } DiamondBuiltinClass;
 
@@ -477,6 +479,14 @@ typedef enum DiamondVmStatus : uint8_t {
      * the multi-statement guard), surfaced as SQLite3Error -- see
      * exception_class_for_status. */
     DIAMOND_VM_SQLITE3_ERROR,
+    /* PostgreSQL.open/#execute/#query/#close failures: an unreachable
+     * host or bad conninfo, a malformed statement, a bind/exec error, or
+     * a #last_insert_row_id() call before any sequence was used this
+     * session (SELECT lastval() itself raising). Message is always
+     * PQerrorMessage(conn) (open failures) or
+     * PQresultErrorMessage(res)/a locally-detected condition (everything
+     * else), surfaced as PostgreSQLError -- see exception_class_for_status. */
+    DIAMOND_VM_POSTGRES_ERROR,
 } DiamondVmStatus;
 
 typedef struct DiamondMethodCacheEntry {
