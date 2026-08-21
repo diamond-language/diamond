@@ -1,4 +1,4 @@
-# Conformance suite for ArelPostgreSQLVisitor -- Arel's second dialect (see
+# Conformance suite for Arel::PostgreSQLVisitor -- Arel's second dialect (see
 # ROADMAP.md's "pick the next dialect" milestone and this visitor's own
 # class-level comment in lib/arel.di). Requires an already-running
 # PostgreSQL server; Diamond can't spin one up itself the way it can a local
@@ -16,7 +16,7 @@ def run_tests()
     raise RuntimeError.new(
       "DIAMOND_PG_TEST_CONNINFO is not set -- run via test_postgres_dialect.sh")
   end
-  visitor = ArelPostgreSQLVisitor.new()
+  visitor = Arel::PostgreSQLVisitor.new()
 
   def test_portable_baseline_select_where_order_join(conninfo, visitor)
     db = PostgreSQL.open(conninfo)
@@ -243,7 +243,7 @@ def run_tests()
     db.close()
   end
 
-  # Constructs real ArelBinaryExpression nodes via Arel.integer_operator
+  # Constructs real Arel::BinaryExpression nodes via Arel.integer_operator
   # (not the Arel.sql raw escape hatch, which would bypass
   # render_expression_extension's require_extension("integer bitwise
   # operators") check entirely and prove nothing about the capability

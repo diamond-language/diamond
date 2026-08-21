@@ -11,7 +11,7 @@ change tracking to a repository layer -- similar to real
 [Arel](https://github.com/rails/rails/tree/main/activerecord)'s own
 historical scope in Rails.
 
-The initial renderer is `ArelSQLiteVisitor`; `ArelPostgreSQLVisitor` is the
+The initial renderer is `Arel::SQLiteVisitor`; `Arel::PostgreSQLVisitor` is the
 second, exercising the exact same node model against a live PostgreSQL
 server (see [VISITORS.md](VISITORS.md)'s Conformance section and
 `test_postgres_dialect.di`/`.sh`). Execution remains loosely coupled either
@@ -27,7 +27,7 @@ depending on a shared method convention rather than a concrete type.
 Every query and write manager accepts an optional visitor in `to_sql(visitor)`;
 `Arel.render(statement, visitor)` is the common entry point when code should not
 care which manager it has. The no-argument form continues to select
-`ArelSQLiteVisitor`. Explicit visitors propagate through derived tables,
+`Arel::SQLiteVisitor`. Explicit visitors propagate through derived tables,
 subqueries, compound branches, CTE bodies, expressions, conflict clauses, and
 `RETURNING`. Execution methods accept the visitor after the database argument,
 for example `query.to_a(db, visitor)` and `insert.execute(db, visitor)`.
@@ -48,17 +48,17 @@ Compound queries and each write manager enter `render_compound`,
 Visitors can replace a complete statement or call `super(statement)` to wrap
 SQLite's default rendering while retaining its ordered bind array.
 
-Dialect visitors can inherit `ArelVisitor` for shared AST traversal,
+Dialect visitors can inherit `Arel::Visitor` for shared AST traversal,
 relation-scope checks, nested query context, dispatch, and diagnostics without
 inheriting SQLite's capability or identifier-quoting policy. They provide a
 visitor name, capability predicate, and identifier quoting method; the default
-`ArelSQLiteVisitor` remains selected when no visitor is passed.
+`Arel::SQLiteVisitor` remains selected when no visitor is passed.
 Pagination and literal spelling are narrow grammar seams: dialects implement
 `render_pagination` and may override `render_literal` without replacing query
 traversal. SQLite binds limits and offsets, and renders an offset without an
 explicit limit as `LIMIT -1 OFFSET ?`, which is valid SQLite syntax --
 PostgreSQL's grammar accepts a bare `OFFSET ?` with no `LIMIT` clause at all,
-so `ArelPostgreSQLVisitor#render_pagination` skips that sentinel; this was
+so `Arel::PostgreSQLVisitor#render_pagination` skips that sentinel; this was
 the one real difference found when adding PostgreSQL as Arel's second
 dialect (everything else claimed identical syntax, verified against a live
 server -- see `ROADMAP.md`).
@@ -285,8 +285,8 @@ adults.to_a(db)    # runs it, returns the rows
 adults.count(db)   # runs a COUNT(*) wrapping the same query
 ```
 
-`ArelQuery` is immutable: every chain method returns a *new*
-`ArelQuery` rather than mutating the receiver, so a base query is safe
+`Arel::Query` is immutable: every chain method returns a *new*
+`Arel::Query` rather than mutating the receiver, so a base query is safe
 to reuse as a starting point for several different queries -- `adults`/
 `minors` above each see only their own added where-clause, not each
 other's, and `base` itself is never touched by either.
@@ -345,6 +345,6 @@ why nothing here names `SQLite3` directly.
 ## What's deliberately out of scope
 
 - **Visitors for adapters beyond SQLite and PostgreSQL.** Nodes contain no
-  dialect-specific rendering logic; `ArelSQLiteVisitor`/`ArelPostgreSQLVisitor`
+  dialect-specific rendering logic; `Arel::SQLiteVisitor`/`Arel::PostgreSQLVisitor`
   are deliberately separate so a third dialect's visitor can render the same
   query tree without forking it.

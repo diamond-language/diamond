@@ -1,5 +1,26 @@
 # Changelog
 
+## Arel 0.32.0
+
+- Nested every class under `module Arel` (`Arel::Table`, `Arel::Query`,
+  `Arel::SQLiteVisitor`, `Arel::PostgreSQLVisitor`, etc., ~30 classes in
+  total) instead of the flat `Arel`-prefixed naming convention used until
+  now. The 4 structural interfaces (`ArelTraversalNode` and friends) stay
+  top-level and unprefixed-unchanged -- Diamond's `interface` is purely
+  structural (no `include`, no `implements`), so they were never affected
+  by nesting and don't need to move.
+- Along the way, fixed a real compiler gap this restructuring depended on:
+  `class External < Module::Class`, `value is Module::Class`, and
+  `rescue e: Module::Class` previously only accepted a single bare
+  identifier token, so external code could never subclass, type-check
+  against, or rescue a class nested inside a module -- which would have
+  broken Arel's own documented dialect-visitor extension contract
+  (subclassing `Arel::Visitor`/`Arel::SQLiteVisitor` from a separate file,
+  exactly what Arel's own test suite already does). Fixed at the compiler
+  level (`src/compiler.c`), not worked around, since it's a real language
+  gap independent of Arel.
+- `package.di` bumped 0.31.0 -> 0.32.0.
+
 ## Arel 0.31.0
 
 - Added `ArelPostgreSQLVisitor`, Arel's second dialect, verified against a

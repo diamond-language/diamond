@@ -1,7 +1,7 @@
 require "../../lib/minitest"
 require "../../packages/arel/lib/arel"
 
-class TestArelVisitor < ArelSQLiteVisitor
+class TestArelVisitor < Arel::SQLiteVisitor
   def quote_identifier(name: String) -> String = "[#{name}]"
   def render_compound(query) -> Array = ["custom compound", []]
   def render_source(query, params: Array) -> String
@@ -9,7 +9,7 @@ class TestArelVisitor < ArelSQLiteVisitor
   end
 end
 
-class NestedTestArelVisitor < ArelSQLiteVisitor
+class NestedTestArelVisitor < Arel::SQLiteVisitor
   def render_compound(query) -> Array
     sql, params = super(query)
     ["custom #{sql}", params]
@@ -23,7 +23,7 @@ class NestedTestArelVisitor < ArelSQLiteVisitor
   end
 end
 
-class CompoundBranchTestArelVisitor < ArelSQLiteVisitor
+class CompoundBranchTestArelVisitor < Arel::SQLiteVisitor
   def render_compound_branch(sql: String, grouped: Bool) -> String
     if grouped
       "BRANCH(#{sql})"
@@ -33,7 +33,7 @@ class CompoundBranchTestArelVisitor < ArelSQLiteVisitor
   end
 end
 
-class ReturningTestArelVisitor < ArelSQLiteVisitor
+class ReturningTestArelVisitor < Arel::SQLiteVisitor
   def render_returning(expressions: Array, params: Array) -> String
     self.require_extension("returning clauses")
     rendered = []
@@ -46,7 +46,7 @@ class ReturningTestArelVisitor < ArelSQLiteVisitor
   end
 end
 
-class CtePrefixTestArelVisitor < ArelSQLiteVisitor
+class CtePrefixTestArelVisitor < Arel::SQLiteVisitor
   def render_cte_prefix(entries: Array, recursive: Bool) -> String
     prefix = "WITH_CUSTOM "
     if recursive
@@ -56,13 +56,13 @@ class CtePrefixTestArelVisitor < ArelSQLiteVisitor
   end
 end
 
-class JoinTestArelVisitor < ArelSQLiteVisitor
-  def render_join(join: ArelJoin, params: Array) -> String
+class JoinTestArelVisitor < Arel::SQLiteVisitor
+  def render_join(join: Arel::Join, params: Array) -> String
     "CUSTOM_JOIN #{self.render_table(join.table())}"
   end
 end
 
-class WriteTestArelVisitor < ArelSQLiteVisitor
+class WriteTestArelVisitor < Arel::SQLiteVisitor
   def quote_identifier(name: String) -> String = "[#{name}]"
   def render_insert(statement) -> Array
     sql, params = super(statement)
@@ -77,7 +77,7 @@ class WriteTestArelVisitor < ArelSQLiteVisitor
     ["custom #{sql}", params]
   end
   def render_expression(expression, params: Array) -> String
-    if expression is ArelExcludedAttribute
+    if expression is Arel::ExcludedAttribute
       "incoming.#{self.quote_identifier(expression.name())}"
     else
       super(expression, params)
@@ -201,7 +201,7 @@ def run_tests()
     db.execute("INSERT INTO values_table VALUES (1), (2)")
     values = Arel.table("values_table")
     query = Arel.from(values).project(values.column("value"))
-    visitor = ArelSQLiteVisitor.new()
+    visitor = Arel::SQLiteVisitor.new()
     Minitest.assert_equal(2, query.to_a(db, visitor).length())
     Minitest.assert_equal(2, query.count(db, visitor))
     db.close()
@@ -213,7 +213,7 @@ def run_tests()
     db.execute("INSERT INTO values_table VALUES (1)")
     values = Arel.table("values_table")
     branch = Arel.from(values).project(values.column("value"))
-    rows = Arel.union_all(branch, branch).to_a(db, ArelSQLiteVisitor.new())
+    rows = Arel.union_all(branch, branch).to_a(db, Arel::SQLiteVisitor.new())
     Minitest.assert_equal(2, rows.length())
     db.close()
   end
@@ -222,7 +222,7 @@ def run_tests()
     db = SQLite3.open(":memory:")
     db.execute("CREATE TABLE items (id INTEGER, qty INTEGER)")
     items = Arel.table("items")
-    visitor = ArelSQLiteVisitor.new()
+    visitor = Arel::SQLiteVisitor.new()
     insert = Arel.insert_into(items).values({"id": 1, "qty": 2})
     Minitest.assert_equal(1, insert.execute(db, visitor))
     update = Arel.update(items).set({"qty": 3}).where(items.column("id").eq(1))

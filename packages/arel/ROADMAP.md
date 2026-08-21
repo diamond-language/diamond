@@ -24,7 +24,7 @@ as nodes and quoted by the active visitor.
 
 ## Dialect grammar seams
 
-`ArelVisitor` provides shared traversal, relation-scope validation, query
+`Arel::Visitor` provides shared traversal, relation-scope validation, query
 context, statement dispatch, and diagnostics without inheriting SQLite
 capability or quoting policy. Pagination and literal spelling are independently
 overridable, and nested compound branch grouping is an explicit visitor
@@ -32,7 +32,7 @@ seam. Write `RETURNING` rendering is an explicit visitor seam as well. The
 CTE prefix spelling is an explicit visitor seam as well. The portable SQL
 baseline also delegates join-clause spelling to the visitor.
 
-**Done**: `ArelPostgreSQLVisitor` (`lib/arel.di`) is the second dialect this
+**Done**: `Arel::PostgreSQLVisitor` (`lib/arel.di`) is the second dialect this
 called for, verified against a live PostgreSQL server
 (`test_postgres_dialect.di`/`.sh` -- see `VISITORS.md`'s Conformance
 section for why that lives outside `tests/cases/`). The actual inventory,
@@ -50,7 +50,7 @@ for whoever investigates a *third* dialect next:
 - pagination was the one real grammar seam found: SQLite's grammar requires
   `LIMIT` before `OFFSET`, forcing the `LIMIT -1 OFFSET ?` sentinel for an
   offset with no limit; Postgres's grammar accepts a bare `OFFSET n` with no
-  `LIMIT` clause at all, so `ArelPostgreSQLVisitor#render_pagination` skips
+  `LIMIT` clause at all, so `Arel::PostgreSQLVisitor#render_pagination` skips
   that sentinel entirely;
 - this means the "avoid speculative abstraction" caution below was
   justified -- most of the grammar-seam machinery this section used to list

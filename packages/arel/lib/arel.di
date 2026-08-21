@@ -1,5 +1,5 @@
 # Immutable SQL AST and SQLite renderer. Query nodes describe intent; only
-# ArelSQLiteVisitor knows how that intent becomes SQL.
+# SQLiteVisitor knows how that intent becomes SQL.
 
 interface ArelTraversalNode
   def arel_children() -> Array
@@ -44,14 +44,23 @@ def arel_quote_identifier(name: String) -> String
   pieces.join()
 end
 
-class ArelNot
+def arel_cte_name(value) -> String
+  if value is String
+    value
+  else
+    value.name()
+  end
+end
+
+module Arel
+class Not
   def initialize(expression)
     @expression = expression
   end
   def expression() = @expression
 end
 
-class ArelLogical
+class Logical
   def initialize(left, operator: String, right)
     @left = left
     @operator = operator
@@ -60,12 +69,12 @@ class ArelLogical
   def left() = @left
   def operator() = @operator
   def right() = @right
-  def and_also(other) = ArelLogical.new(self, "AND", other)
-  def or_else(other) = ArelLogical.new(self, "OR", other)
-  def not_() = ArelNot.new(self)
+  def and_also(other) = Logical.new(self, "AND", other)
+  def or_else(other) = Logical.new(self, "OR", other)
+  def not_() = Not.new(self)
 end
 
-class ArelPredicate
+class Predicate
   def initialize(left, operator: String, right)
     @left = left
     @operator = operator
@@ -74,12 +83,12 @@ class ArelPredicate
   def left() = @left
   def operator() = @operator
   def right() = @right
-  def and_also(other) = ArelLogical.new(self, "AND", other)
-  def or_else(other) = ArelLogical.new(self, "OR", other)
-  def not_() = ArelNot.new(self)
+  def and_also(other) = Logical.new(self, "AND", other)
+  def or_else(other) = Logical.new(self, "OR", other)
+  def not_() = Not.new(self)
 end
 
-class ArelMembership
+class Membership
   def initialize(left, values, negated: Bool)
     @left = left
     @values = values
@@ -88,12 +97,12 @@ class ArelMembership
   def left() = @left
   def values() = @values
   def negated?() = @negated
-  def and_also(other) = ArelLogical.new(self, "AND", other)
-  def or_else(other) = ArelLogical.new(self, "OR", other)
-  def not_() = ArelNot.new(self)
+  def and_also(other) = Logical.new(self, "AND", other)
+  def or_else(other) = Logical.new(self, "OR", other)
+  def not_() = Not.new(self)
 end
 
-class ArelBetween
+class Between
   def initialize(left, lower, upper, negated: Bool)
     @left = left
     @lower = lower
@@ -104,12 +113,12 @@ class ArelBetween
   def lower() = @lower
   def upper() = @upper
   def negated?() = @negated
-  def and_also(other) = ArelLogical.new(self, "AND", other)
-  def or_else(other) = ArelLogical.new(self, "OR", other)
-  def not_() = ArelNot.new(self)
+  def and_also(other) = Logical.new(self, "AND", other)
+  def or_else(other) = Logical.new(self, "OR", other)
+  def not_() = Not.new(self)
 end
 
-class ArelCollation
+class Collation
   def initialize(expression, name: String)
     @expression = expression
     @name = name
@@ -118,7 +127,7 @@ class ArelCollation
   def name() = @name
 end
 
-class ArelOrdering
+class Ordering
   def initialize(expression, direction: String, nulls = nil)
     @expression = expression
     @direction = direction
@@ -127,11 +136,11 @@ class ArelOrdering
   def expression() = @expression
   def direction() = @direction
   def nulls() = @nulls
-  def nulls_first() = ArelOrdering.new(@expression, @direction, "FIRST")
-  def nulls_last() = ArelOrdering.new(@expression, @direction, "LAST")
+  def nulls_first() = Ordering.new(@expression, @direction, "FIRST")
+  def nulls_last() = Ordering.new(@expression, @direction, "LAST")
 end
 
-class ArelAlias
+class Alias
   def initialize(expression, name: String)
     @expression = expression
     @name = name
@@ -140,7 +149,7 @@ class ArelAlias
   def name() = @name
 end
 
-class ArelFunction
+class Function
   def initialize(name: String, arguments: Array, distinct = false)
     unless Regexp.new("\\A[A-Za-z_][A-Za-z0-9_]*\\z").match?(name)
       raise ArgumentError.new("SQL function name must be an identifier")
@@ -152,25 +161,25 @@ class ArelFunction
   def name() = @name
   def arguments() = @arguments
   def distinct?() = @distinct
-  def eq(value) = ArelPredicate.new(self, "=", value)
-  def not_eq(value) = ArelPredicate.new(self, "!=", value)
-  def lt(value) = ArelPredicate.new(self, "<", value)
-  def lteq(value) = ArelPredicate.new(self, "<=", value)
-  def gt(value) = ArelPredicate.new(self, ">", value)
-  def gteq(value) = ArelPredicate.new(self, ">=", value)
-  def like(pattern: String) = ArelPredicate.new(self, "LIKE", pattern)
-  def not_like(pattern: String) = ArelPredicate.new(self, "NOT LIKE", pattern)
-  def in_list(values: Array) = ArelMembership.new(self, values, false)
-  def not_in(values: Array) = ArelMembership.new(self, values, true)
-  def between(lower, upper) = ArelBetween.new(self, lower, upper, false)
-  def not_between(lower, upper) = ArelBetween.new(self, lower, upper, true)
-  def asc() = ArelOrdering.new(self, "ASC")
-  def desc() = ArelOrdering.new(self, "DESC")
-  def as(name: String) = ArelAlias.new(self, name)
-  def collate(name: String) = ArelCollation.new(self, name)
+  def eq(value) = Predicate.new(self, "=", value)
+  def not_eq(value) = Predicate.new(self, "!=", value)
+  def lt(value) = Predicate.new(self, "<", value)
+  def lteq(value) = Predicate.new(self, "<=", value)
+  def gt(value) = Predicate.new(self, ">", value)
+  def gteq(value) = Predicate.new(self, ">=", value)
+  def like(pattern: String) = Predicate.new(self, "LIKE", pattern)
+  def not_like(pattern: String) = Predicate.new(self, "NOT LIKE", pattern)
+  def in_list(values: Array) = Membership.new(self, values, false)
+  def not_in(values: Array) = Membership.new(self, values, true)
+  def between(lower, upper) = Between.new(self, lower, upper, false)
+  def not_between(lower, upper) = Between.new(self, lower, upper, true)
+  def asc() = Ordering.new(self, "ASC")
+  def desc() = Ordering.new(self, "DESC")
+  def as(name: String) = Alias.new(self, name)
+  def collate(name: String) = Collation.new(self, name)
 end
 
-class ArelBinaryExpression
+class BinaryExpression
   def initialize(left, operator: String, right, bind_right = true)
     @left = left
     @operator = operator
@@ -181,19 +190,19 @@ class ArelBinaryExpression
   def operator() = @operator
   def right() = @right
   def bind_right?() = @bind_right
-  def add(value) = ArelBinaryExpression.new(self, "+", value)
-  def subtract(value) = ArelBinaryExpression.new(self, "-", value)
-  def multiply(value) = ArelBinaryExpression.new(self, "*", value)
-  def divide(value) = ArelBinaryExpression.new(self, "/", value)
-  def eq(value) = ArelPredicate.new(self, "=", value)
-  def not_eq(value) = ArelPredicate.new(self, "!=", value)
-  def lt(value) = ArelPredicate.new(self, "<", value)
-  def lteq(value) = ArelPredicate.new(self, "<=", value)
-  def gt(value) = ArelPredicate.new(self, ">", value)
-  def gteq(value) = ArelPredicate.new(self, ">=", value)
+  def add(value) = BinaryExpression.new(self, "+", value)
+  def subtract(value) = BinaryExpression.new(self, "-", value)
+  def multiply(value) = BinaryExpression.new(self, "*", value)
+  def divide(value) = BinaryExpression.new(self, "/", value)
+  def eq(value) = Predicate.new(self, "=", value)
+  def not_eq(value) = Predicate.new(self, "!=", value)
+  def lt(value) = Predicate.new(self, "<", value)
+  def lteq(value) = Predicate.new(self, "<=", value)
+  def gt(value) = Predicate.new(self, ">", value)
+  def gteq(value) = Predicate.new(self, ">=", value)
 end
 
-class ArelLiteral
+class Literal
   def initialize(value)
     if !(value is Int) && !(value is Bool)
       raise ArgumentError.new("SQL literals only support Int and Bool values")
@@ -203,7 +212,7 @@ class ArelLiteral
   def value() = @value
 end
 
-class ArelCast
+class Cast
   def initialize(expression, type_name: String)
     unless Regexp.new("\\A[A-Za-z_][A-Za-z0-9_]*\\z").match?(type_name)
       raise ArgumentError.new("SQL cast type must be an identifier")
@@ -215,53 +224,53 @@ class ArelCast
   def type_name() = @type_name
 end
 
-class ArelAttribute
+class Attribute
   def initialize(table, name: String)
     @table = table
     @name = name
   end
   def table() = @table
   def name() = @name
-  def eq(value) = ArelPredicate.new(self, "=", value)
-  def not_eq(value) = ArelPredicate.new(self, "!=", value)
-  def lt(value) = ArelPredicate.new(self, "<", value)
-  def lteq(value) = ArelPredicate.new(self, "<=", value)
-  def gt(value) = ArelPredicate.new(self, ">", value)
-  def gteq(value) = ArelPredicate.new(self, ">=", value)
-  def like(pattern: String) = ArelPredicate.new(self, "LIKE", pattern)
-  def not_like(pattern: String) = ArelPredicate.new(self, "NOT LIKE", pattern)
-  def in_list(values: Array) = ArelMembership.new(self, values, false)
-  def not_in(values: Array) = ArelMembership.new(self, values, true)
-  def in_subquery(query) = ArelMembership.new(self, query, false)
-  def not_in_subquery(query) = ArelMembership.new(self, query, true)
-  def between(lower, upper) = ArelBetween.new(self, lower, upper, false)
-  def not_between(lower, upper) = ArelBetween.new(self, lower, upper, true)
-  def asc() = ArelOrdering.new(self, "ASC")
-  def desc() = ArelOrdering.new(self, "DESC")
-  def as(name: String) = ArelAlias.new(self, name)
-  def collate(name: String) = ArelCollation.new(self, name)
-  def add(value) = ArelBinaryExpression.new(self, "+", value)
-  def subtract(value) = ArelBinaryExpression.new(self, "-", value)
-  def multiply(value) = ArelBinaryExpression.new(self, "*", value)
-  def divide(value) = ArelBinaryExpression.new(self, "/", value)
-  def concat(value) = ArelBinaryExpression.new(self, "||", value)
-  def modulo(value) = ArelBinaryExpression.new(self, "%", value)
-  def add_expression(expression) = ArelBinaryExpression.new(self, "+", expression, false)
-  def subtract_expression(expression) = ArelBinaryExpression.new(self, "-", expression, false)
-  def multiply_expression(expression) = ArelBinaryExpression.new(self, "*", expression, false)
-  def divide_expression(expression) = ArelBinaryExpression.new(self, "/", expression, false)
-  def concat_expression(expression) = ArelBinaryExpression.new(self, "||", expression, false)
-  def modulo_expression(expression) = ArelBinaryExpression.new(self, "%", expression, false)
+  def eq(value) = Predicate.new(self, "=", value)
+  def not_eq(value) = Predicate.new(self, "!=", value)
+  def lt(value) = Predicate.new(self, "<", value)
+  def lteq(value) = Predicate.new(self, "<=", value)
+  def gt(value) = Predicate.new(self, ">", value)
+  def gteq(value) = Predicate.new(self, ">=", value)
+  def like(pattern: String) = Predicate.new(self, "LIKE", pattern)
+  def not_like(pattern: String) = Predicate.new(self, "NOT LIKE", pattern)
+  def in_list(values: Array) = Membership.new(self, values, false)
+  def not_in(values: Array) = Membership.new(self, values, true)
+  def in_subquery(query) = Membership.new(self, query, false)
+  def not_in_subquery(query) = Membership.new(self, query, true)
+  def between(lower, upper) = Between.new(self, lower, upper, false)
+  def not_between(lower, upper) = Between.new(self, lower, upper, true)
+  def asc() = Ordering.new(self, "ASC")
+  def desc() = Ordering.new(self, "DESC")
+  def as(name: String) = Alias.new(self, name)
+  def collate(name: String) = Collation.new(self, name)
+  def add(value) = BinaryExpression.new(self, "+", value)
+  def subtract(value) = BinaryExpression.new(self, "-", value)
+  def multiply(value) = BinaryExpression.new(self, "*", value)
+  def divide(value) = BinaryExpression.new(self, "/", value)
+  def concat(value) = BinaryExpression.new(self, "||", value)
+  def modulo(value) = BinaryExpression.new(self, "%", value)
+  def add_expression(expression) = BinaryExpression.new(self, "+", expression, false)
+  def subtract_expression(expression) = BinaryExpression.new(self, "-", expression, false)
+  def multiply_expression(expression) = BinaryExpression.new(self, "*", expression, false)
+  def divide_expression(expression) = BinaryExpression.new(self, "/", expression, false)
+  def concat_expression(expression) = BinaryExpression.new(self, "||", expression, false)
+  def modulo_expression(expression) = BinaryExpression.new(self, "%", expression, false)
 end
 
-class ArelQualifiedStar
+class QualifiedStar
   def initialize(table)
     @table = table
   end
   def table() = @table
 end
 
-class ArelTable
+class Table
   def initialize(name: String, table_alias = nil)
     @name = name
     @table_alias = table_alias
@@ -275,50 +284,42 @@ class ArelTable
       @table_alias
     end
   end
-  def as(name: String) = ArelTable.new(@name, name)
-  def column(name: String) = ArelAttribute.new(self, name)
-  def star() = ArelQualifiedStar.new(self)
+  def as(name: String) = Table.new(@name, name)
+  def column(name: String) = Attribute.new(self, name)
+  def star() = QualifiedStar.new(self)
 end
 
-def arel_cte_name(value) -> String
-  if value is String
-    value
-  else
-    value.name()
-  end
-end
-
-class ArelRawSql
+class RawSql
   def initialize(sql: String, params: Array)
     @sql = sql
     @params = params
   end
   def sql() = @sql
   def params() = @params
-  def and_also(other) = ArelLogical.new(self, "AND", other)
-  def or_else(other) = ArelLogical.new(self, "OR", other)
-  def not_() = ArelNot.new(self)
+  def and_also(other) = Logical.new(self, "AND", other)
+  def or_else(other) = Logical.new(self, "OR", other)
+  def not_() = Not.new(self)
 end
 
-class ArelExcludedAttribute
+class ExcludedAttribute
   def initialize(name: String)
     @name = name
   end
   def name() = @name
-  def add(value) = ArelBinaryExpression.new(self, "+", value)
+  def add(value) = BinaryExpression.new(self, "+", value)
 end
 
-class ArelConflictAttribute
+class ConflictAttribute
   def initialize(name: String)
     @name = name
   end
   def name() = @name
-  def eq(value) = ArelPredicate.new(self, "=", value)
-  def not_eq(value) = ArelPredicate.new(self, "!=", value)
+  def eq(value) = Predicate.new(self, "=", value)
+  def not_eq(value) = Predicate.new(self, "!=", value)
 end
 
-class ArelJoin
-  def initialize(table: ArelTable, predicate, kind: String)
+class Join
+  def initialize(table: Arel::Table, predicate, kind: String)
     @table = table
     @predicate = predicate
     @kind = kind
@@ -328,32 +329,32 @@ class ArelJoin
   def kind() = @kind
 end
 
-class ArelExists
+class Exists
   def initialize(query, negated: Bool)
     @query = query
     @negated = negated
   end
   def query() = @query
   def negated?() = @negated
-  def and_also(other) = ArelLogical.new(self, "AND", other)
-  def or_else(other) = ArelLogical.new(self, "OR", other)
-  def not_() = ArelExists.new(@query, !@negated)
+  def and_also(other) = Logical.new(self, "AND", other)
+  def or_else(other) = Logical.new(self, "OR", other)
+  def not_() = Exists.new(@query, !@negated)
 end
 
-class ArelScalarSubquery
+class ScalarSubquery
   def initialize(query)
     @query = query
   end
   def query() = @query
-  def eq(value) = ArelPredicate.new(self, "=", value)
-  def not_eq(value) = ArelPredicate.new(self, "!=", value)
-  def lt(value) = ArelPredicate.new(self, "<", value)
-  def lteq(value) = ArelPredicate.new(self, "<=", value)
-  def gt(value) = ArelPredicate.new(self, ">", value)
-  def gteq(value) = ArelPredicate.new(self, ">=", value)
+  def eq(value) = Predicate.new(self, "=", value)
+  def not_eq(value) = Predicate.new(self, "!=", value)
+  def lt(value) = Predicate.new(self, "<", value)
+  def lteq(value) = Predicate.new(self, "<=", value)
+  def gt(value) = Predicate.new(self, ">", value)
+  def gteq(value) = Predicate.new(self, ">=", value)
 end
 
-class ArelCte
+class Cte
   def initialize(name: String, query, recursive = false)
     @name = name
     @query = query
@@ -364,29 +365,14 @@ class ArelCte
   def recursive?() = @recursive
 end
 
-def arel_append_cte(ctes: Array, name: String, query, recursive = false) -> Array
-  duplicate = false
-  index = 0
-  while index < ctes.length()
-    if ctes[index].name().downcase() == name.downcase()
-      duplicate = true
-    end
-    index += 1
-  end
-  if duplicate
-    raise ArgumentError.new("duplicate CTE name")
-  end
-  ctes.concat([ArelCte.new(name, query, recursive)])
-end
-
-class ArelVisitor
+class Visitor
   def require_extension(name: String)
     unless self.supports_extension?(name)
       raise ArgumentError.new("#{self.visitor_name()} visitor does not support #{name}")
     end
   end
 
-  def attribute_allowed?(attribute: ArelAttribute) -> Bool
+  def attribute_allowed?(attribute: Arel::Attribute) -> Bool
     if @query == nil
       true
     elsif attribute.table().reference_name().downcase() == @query.base_reference_name().downcase()
@@ -412,14 +398,14 @@ class ArelVisitor
     end
   end
 
-  def render_attribute(attribute: ArelAttribute) -> String
+  def render_attribute(attribute: Arel::Attribute) -> String
     unless self.attribute_allowed?(attribute)
       raise ArgumentError.new("attribute belongs to a relation outside this query")
     end
     self.quote_identifier(attribute.table().reference_name()) + "." + self.quote_identifier(attribute.name())
   end
 
-  def render_table(table: ArelTable) -> String
+  def render_table(table: Arel::Table) -> String
     sql = self.quote_identifier(table.name())
     unless table.table_alias() == nil
       sql = sql + " AS " + self.quote_identifier(table.table_alias())
@@ -483,9 +469,9 @@ class ArelVisitor
   end
 
   def render_expression(expression, params: Array) -> String
-    if expression is ArelAttribute
+    if expression is Attribute
       self.render_attribute(expression)
-    elsif expression is ArelPredicate
+    elsif expression is Predicate
       left = self.render_expression(expression.left(), params)
       value = expression.right()
       if value == nil
@@ -496,19 +482,19 @@ class ArelVisitor
         else
           raise ArgumentError.new("nil only supports eq/not_eq predicates")
         end
-      elsif value is ArelAttribute
+      elsif value is Attribute
         "#{left} #{expression.operator()} #{self.render_attribute(value)}"
-      elsif value is ArelLiteral
+      elsif value is Literal
         "#{left} #{expression.operator()} #{self.render_expression(value, params)}"
       else
         params.push(value)
         "#{left} #{expression.operator()} ?"
       end
-    elsif expression is ArelLogical
+    elsif expression is Logical
       left = self.render_expression(expression.left(), params)
       right = self.render_expression(expression.right(), params)
       "(#{left} #{expression.operator()} #{right})"
-    elsif expression is ArelMembership
+    elsif expression is Membership
       if !(expression.values() is Array)
         subquery_sql, subquery_params = expression.values().render_with(self)
         subquery_index = 0
@@ -541,7 +527,7 @@ class ArelVisitor
         end
         "#{self.render_expression(expression.left(), params)} #{operator} (#{placeholders.join(", ")})"
       end
-    elsif expression is ArelBetween
+    elsif expression is Between
       params.push(expression.lower())
       params.push(expression.upper())
       operator = "BETWEEN"
@@ -549,10 +535,10 @@ class ArelVisitor
         operator = "NOT BETWEEN"
       end
       "#{self.render_expression(expression.left(), params)} #{operator} ? AND ?"
-    elsif expression is ArelCollation
+    elsif expression is Collation
       inner = self.render_expression(expression.expression(), params)
       "#{inner} COLLATE #{self.quote_identifier(expression.name())}"
-    elsif expression is ArelExists
+    elsif expression is Exists
       sql, bound = expression.query().render_with(self)
       bound_index = 0
       while bound_index < bound.length()
@@ -564,7 +550,7 @@ class ArelVisitor
         prefix = "NOT EXISTS"
       end
       "#{prefix} (#{sql})"
-    elsif expression is ArelScalarSubquery
+    elsif expression is ScalarSubquery
       sql, bound = expression.query().render_with(self)
       bound_index = 0
       while bound_index < bound.length()
@@ -580,7 +566,7 @@ class ArelVisitor
   # Keep the nominal narrowing chain in each method below Diamond's
   # eight-alternative union ceiling as the AST grows.
   def render_expression_tail(expression, params: Array) -> String
-    if expression is ArelFunction
+    if expression is Function
       arguments = []
       argument_index = 0
       while argument_index < expression.arguments().length()
@@ -592,25 +578,25 @@ class ArelVisitor
         prefix = "DISTINCT "
       end
       "#{expression.name()}(#{prefix}#{arguments.join(", ")})"
-    elsif expression is ArelQualifiedStar
-      unless self.attribute_allowed?(ArelAttribute.new(expression.table(), "*"))
+    elsif expression is QualifiedStar
+      unless self.attribute_allowed?(Attribute.new(expression.table(), "*"))
         raise ArgumentError.new("wildcard belongs to a relation outside this query")
       end
       self.quote_identifier(expression.table().reference_name()) + ".*"
-    elsif expression is ArelNot
+    elsif expression is Not
       inner = self.render_expression(expression.expression(), params)
       "(NOT #{inner})"
-    elsif expression is ArelOrdering
+    elsif expression is Ordering
       sql = "#{self.render_expression(expression.expression(), params)} #{expression.direction()}"
       unless expression.nulls() == nil
         self.require_extension("explicit NULL ordering")
         sql = sql + " NULLS #{expression.nulls()}"
       end
       sql
-    elsif expression is ArelAlias
+    elsif expression is Alias
       inner = self.render_expression(expression.expression(), params)
       "#{inner} AS #{self.quote_identifier(expression.name())}"
-    elsif expression is ArelRawSql
+    elsif expression is RawSql
       param_index = 0
       while param_index < expression.params().length()
         params.push(expression.params()[param_index])
@@ -623,12 +609,12 @@ class ArelVisitor
   end
 
   def render_expression_extension(expression, params: Array) -> String
-    if expression is ArelExcludedAttribute
+    if expression is ExcludedAttribute
       self.require_extension("excluded-row attributes")
       "excluded.#{self.quote_identifier(expression.name())}"
-    elsif expression is ArelConflictAttribute
+    elsif expression is ConflictAttribute
       self.quote_identifier(expression.name())
-    elsif expression is ArelBinaryExpression
+    elsif expression is BinaryExpression
       if expression.operator() == "&" || expression.operator() == "|" ||
           expression.operator() == "<<" || expression.operator() == ">>"
         self.require_extension("integer bitwise operators")
@@ -642,9 +628,9 @@ class ArelVisitor
         right = self.render_expression(expression.right(), params)
       end
       "(#{left} #{expression.operator()} #{right})"
-    elsif expression is ArelLiteral
+    elsif expression is Literal
       self.render_literal(expression.value())
-    elsif expression is ArelCast
+    elsif expression is Cast
       inner = self.render_expression(expression.expression(), params)
       "CAST(#{inner} AS #{expression.type_name()})"
     elsif expression is String
@@ -666,7 +652,7 @@ class ArelVisitor
     end
   end
 
-  def render_join(join: ArelJoin, params: Array) -> String
+  def render_join(join: Arel::Join, params: Array) -> String
     sql = "#{join.kind()} JOIN #{self.render_table(join.table())}"
     unless join.predicate() == nil
       sql = sql + " ON " + self.render_expression(join.predicate(), params)
@@ -780,7 +766,7 @@ class ArelVisitor
 
 end
 
-class ArelSQLiteVisitor < ArelVisitor
+class SQLiteVisitor < Visitor
   def visitor_name() = "SQLite"
   def quote_identifier(name: String) -> String = arel_quote_identifier(name)
   def supports_extension?(name: String) = true
@@ -810,7 +796,7 @@ class ArelSQLiteVisitor < ArelVisitor
 end
 
 # PostgreSQL's own grammar accepts a bare OFFSET with no LIMIT clause at
-# all, so unlike ArelSQLiteVisitor's render_pagination above, no LIMIT -1
+# all, so unlike SQLiteVisitor's render_pagination above, no LIMIT -1
 # sentinel is needed here. Every other capability this visitor claims
 # below (identifier quoting, ON CONFLICT, DEFAULT VALUES, RETURNING, CTEs,
 # NULLS FIRST/LAST, integer bitwise operators) uses syntax identical to
@@ -819,7 +805,7 @@ end
 # tests/cases/arel_postgres_dialect.di, not merely assumed from the
 # similarly-named syntax (see this project's own stated quality bar in
 # ROADMAP.md for why that distinction matters).
-class ArelPostgreSQLVisitor < ArelVisitor
+class PostgreSQLVisitor < Visitor
   def visitor_name() = "PostgreSQL"
   def quote_identifier(name: String) -> String = arel_quote_identifier(name)
   def supports_extension?(name: String) = true
@@ -846,7 +832,7 @@ class ArelPostgreSQLVisitor < ArelVisitor
   end
 end
 
-class ArelQuery
+class Query
   def initialize(table_name, predicates, orderings, limit_value, offset_value,
                  projections, quoted_identifiers, bind_limits, table_alias = nil,
                  distinct_value = false, groups = [], havings = [], joins = [],
@@ -869,8 +855,8 @@ class ArelQuery
     @ctes = ctes
   end
 
-  def self.for_table(table: ArelTable)
-    ArelQuery.new(table.name(), [], [], nil, nil, [ArelRawSql.new("*", [])], true, true,
+  def self.for_table(table: Arel::Table)
+    Query.new(table.name(), [], [], nil, nil, [RawSql.new("*", [])], true, true,
       table.table_alias())
   end
 
@@ -903,7 +889,7 @@ class ArelQuery
       return true
     end
     projection = @projections[0]
-    if projection is ArelRawSql
+    if projection is RawSql
       projection.sql() != "*"
     elsif projection is String
       projection != "*"
@@ -913,7 +899,7 @@ class ArelQuery
   end
 
   def copy(predicates, orderings, limit_value, offset_value, projections)
-    ArelQuery.new(@table_name, predicates, orderings, limit_value, offset_value,
+    Query.new(@table_name, predicates, orderings, limit_value, offset_value,
       projections, @quoted_identifiers, @bind_limits, @table_alias, @distinct_value,
       @groups, @havings, @joins, @source_query, @correlations, @ctes)
   end
@@ -921,7 +907,7 @@ class ArelQuery
   def where(condition, params = nil)
     additions = []
     if condition is Hash
-      table = ArelTable.new(@table_name)
+      table = Table.new(@table_name)
       index = 0
       while index < condition.length()
         key = condition.key_at(index)
@@ -929,7 +915,7 @@ class ArelQuery
         if @quoted_identifiers
           additions.push(table.column(key).eq(value))
         else
-          additions.push(ArelRawSql.new("#{key} = ?", [value]))
+          additions.push(RawSql.new("#{key} = ?", [value]))
         end
         index += 1
       end
@@ -938,7 +924,7 @@ class ArelQuery
       if bound == nil
         bound = []
       end
-      additions.push(ArelRawSql.new(condition, bound))
+      additions.push(RawSql.new(condition, bound))
     else
       additions.push(condition)
     end
@@ -951,23 +937,23 @@ class ArelQuery
   end
   def select(columns) = self.project(columns)
   def distinct()
-    ArelQuery.new(@table_name, @predicates, @orderings, @limit_value, @offset_value,
+    Query.new(@table_name, @predicates, @orderings, @limit_value, @offset_value,
       @projections, @quoted_identifiers, @bind_limits, @table_alias, true, @groups,
       @havings, @joins, @source_query, @correlations, @ctes)
   end
   def group(expressions)
-    ArelQuery.new(@table_name, @predicates, @orderings, @limit_value, @offset_value,
+    Query.new(@table_name, @predicates, @orderings, @limit_value, @offset_value,
       @projections, @quoted_identifiers, @bind_limits, @table_alias, @distinct_value,
       @groups.concat(arel_array(expressions)), @havings, @joins, @source_query,
       @correlations, @ctes)
   end
   def having(predicate)
-    ArelQuery.new(@table_name, @predicates, @orderings, @limit_value, @offset_value,
+    Query.new(@table_name, @predicates, @orderings, @limit_value, @offset_value,
       @projections, @quoted_identifiers, @bind_limits, @table_alias, @distinct_value,
       @groups, @havings.concat([predicate]), @joins, @source_query,
       @correlations, @ctes)
   end
-  def ensure_join_alias_available(table: ArelTable)
+  def ensure_join_alias_available(table: Arel::Table)
     candidate = table.reference_name()
     if candidate.downcase() == self.base_reference_name().downcase()
       raise ArgumentError.new("duplicate relation alias in query")
@@ -984,28 +970,28 @@ class ArelQuery
       raise ArgumentError.new("duplicate relation alias in query")
     end
   end
-  def join(table: ArelTable, predicate)
+  def join(table: Arel::Table, predicate)
     self.ensure_join_alias_available(table)
-    ArelQuery.new(@table_name, @predicates, @orderings, @limit_value, @offset_value,
+    Query.new(@table_name, @predicates, @orderings, @limit_value, @offset_value,
       @projections, @quoted_identifiers, @bind_limits, @table_alias, @distinct_value,
-      @groups, @havings, @joins.concat([ArelJoin.new(table, predicate, "INNER")]),
+      @groups, @havings, @joins.concat([Join.new(table, predicate, "INNER")]),
       @source_query, @correlations, @ctes)
   end
-  def left_join(table: ArelTable, predicate)
+  def left_join(table: Arel::Table, predicate)
     self.ensure_join_alias_available(table)
-    ArelQuery.new(@table_name, @predicates, @orderings, @limit_value, @offset_value,
+    Query.new(@table_name, @predicates, @orderings, @limit_value, @offset_value,
       @projections, @quoted_identifiers, @bind_limits, @table_alias, @distinct_value,
-      @groups, @havings, @joins.concat([ArelJoin.new(table, predicate, "LEFT OUTER")]),
+      @groups, @havings, @joins.concat([Join.new(table, predicate, "LEFT OUTER")]),
       @source_query, @correlations, @ctes)
   end
-  def cross_join(table: ArelTable)
+  def cross_join(table: Arel::Table)
     self.ensure_join_alias_available(table)
-    ArelQuery.new(@table_name, @predicates, @orderings, @limit_value, @offset_value,
+    Query.new(@table_name, @predicates, @orderings, @limit_value, @offset_value,
       @projections, @quoted_identifiers, @bind_limits, @table_alias, @distinct_value,
-      @groups, @havings, @joins.concat([ArelJoin.new(table, nil, "CROSS")]),
+      @groups, @havings, @joins.concat([Join.new(table, nil, "CROSS")]),
       @source_query, @correlations, @ctes)
   end
-  def correlate(table: ArelTable)
+  def correlate(table: Arel::Table)
     candidate = table.reference_name()
     if candidate.downcase() == self.base_reference_name().downcase()
       raise ArgumentError.new("correlation must reference an outer relation")
@@ -1021,7 +1007,7 @@ class ArelQuery
     if duplicate
       raise ArgumentError.new("duplicate correlated relation")
     end
-    ArelQuery.new(@table_name, @predicates, @orderings, @limit_value, @offset_value,
+    Query.new(@table_name, @predicates, @orderings, @limit_value, @offset_value,
       @projections, @quoted_identifiers, @bind_limits, @table_alias, @distinct_value,
       @groups, @havings, @joins, @source_query,
       @correlations.concat([table]), @ctes)
@@ -1038,10 +1024,10 @@ class ArelQuery
   def with(relation_or_name, query)
     name = arel_cte_name(relation_or_name)
     self.ensure_cte_name_available(name)
-    ArelQuery.new(@table_name, @predicates, @orderings, @limit_value, @offset_value,
+    Query.new(@table_name, @predicates, @orderings, @limit_value, @offset_value,
       @projections, @quoted_identifiers, @bind_limits, @table_alias, @distinct_value,
       @groups, @havings, @joins, @source_query, @correlations,
-      @ctes.concat([ArelCte.new(name, query)]))
+      @ctes.concat([Cte.new(name, query)]))
   end
   def ensure_cte_name_available(name: String)
     duplicate = false
@@ -1059,10 +1045,10 @@ class ArelQuery
   def with_recursive(relation_or_name, query)
     name = arel_cte_name(relation_or_name)
     self.ensure_cte_name_available(name)
-    ArelQuery.new(@table_name, @predicates, @orderings, @limit_value, @offset_value,
+    Query.new(@table_name, @predicates, @orderings, @limit_value, @offset_value,
       @projections, @quoted_identifiers, @bind_limits, @table_alias, @distinct_value,
       @groups, @havings, @joins, @source_query, @correlations,
-      @ctes.concat([ArelCte.new(name, query, true)]))
+      @ctes.concat([Cte.new(name, query, true)]))
   end
   def order(column_or_columns)
     self.copy(@predicates, @orderings.concat(arel_array(column_or_columns)),
@@ -1086,7 +1072,7 @@ class ArelQuery
   def to_sql(visitor = nil)
     renderer = visitor
     if renderer == nil
-      renderer = ArelSQLiteVisitor.new()
+      renderer = SQLiteVisitor.new()
     end
     self.render_with(renderer)
   end
@@ -1103,7 +1089,7 @@ class ArelQuery
   end
 end
 
-class ArelCompoundQuery
+class CompoundQuery
   def initialize(left, operator: String, right, orderings = [], limit_value = nil,
                  offset_value = nil)
     if !left.projection_count_known?() || !right.projection_count_known?()
@@ -1129,29 +1115,29 @@ class ArelCompoundQuery
   def projection_count_known?() = true
 
   def order(ordering)
-    ArelCompoundQuery.new(@left, @operator, @right,
+    CompoundQuery.new(@left, @operator, @right,
       @orderings.concat(arel_array(ordering)), @limit_value, @offset_value)
   end
   def take(n: Int)
     if n < 0
       raise ArgumentError.new("limit must be non-negative")
     end
-    ArelCompoundQuery.new(@left, @operator, @right, @orderings, n, @offset_value)
+    CompoundQuery.new(@left, @operator, @right, @orderings, n, @offset_value)
   end
   def limit(n: Int) = self.take(n)
   def skip(n: Int)
     if n < 0
       raise ArgumentError.new("offset must be non-negative")
     end
-    ArelCompoundQuery.new(@left, @operator, @right, @orderings, @limit_value, n)
+    CompoundQuery.new(@left, @operator, @right, @orderings, @limit_value, n)
   end
   def offset(n: Int) = self.skip(n)
 
   def render_default(visitor) -> Array
     left_sql, left_params = @left.render_with(visitor)
     right_sql, right_params = @right.render_with(visitor)
-    left_sql = visitor.render_compound_branch(left_sql, @left is ArelCompoundQuery)
-    right_sql = visitor.render_compound_branch(right_sql, @right is ArelCompoundQuery)
+    left_sql = visitor.render_compound_branch(left_sql, @left is CompoundQuery)
+    right_sql = visitor.render_compound_branch(right_sql, @right is CompoundQuery)
     params = left_params.concat(right_params)
     sql = "#{left_sql} #{@operator} #{right_sql}"
     rendered_orderings = []
@@ -1172,7 +1158,7 @@ class ArelCompoundQuery
   def to_sql(visitor = nil) -> Array
     renderer = visitor
     if renderer == nil
-      renderer = ArelSQLiteVisitor.new()
+      renderer = SQLiteVisitor.new()
     end
     self.render_with(renderer)
   end
@@ -1183,7 +1169,7 @@ class ArelCompoundQuery
   end
 end
 
-class ArelCteRelation < ArelTable
+class CteRelation < Table
   def recursive_body(anchor, recursive_branch)
     if anchor.base_reference_name().downcase() == self.name().downcase()
       raise ArgumentError.new("recursive CTE anchor cannot reference itself")
@@ -1191,39 +1177,63 @@ class ArelCteRelation < ArelTable
     if recursive_branch.base_reference_name().downcase() != self.name().downcase()
       raise ArgumentError.new("recursive branch must reference its CTE relation")
     end
-    ArelCompoundQuery.new(anchor, "UNION ALL", recursive_branch)
+    CompoundQuery.new(anchor, "UNION ALL", recursive_branch)
   end
 end
 
-class ArelAssignmentValue
+class AssignmentValue
   def initialize(expression)
     @expression = expression
   end
   def expression() = @expression
 end
 
-class ArelConflictTarget
+class ConflictTarget
   def initialize(columns: Array, predicate = nil)
     @columns = columns
     @predicate = predicate
   end
   def columns() = @columns
   def predicate() = @predicate
-  def where(predicate) = ArelConflictTarget.new(@columns, predicate)
-  def column(name: String) = ArelConflictAttribute.new(name)
+  def where(predicate) = ConflictTarget.new(@columns, predicate)
+  def column(name: String) = ConflictAttribute.new(name)
 end
 
-class ArelDefaultValues
+class DefaultValues
 end
 
-def arel_render_insert_conflict(target, ignore: Bool, assignments, params: Array,
+# Namespace singleton methods rather than free top-level functions:
+# Diamond's top-level function resolution is source-order (a call only
+# sees functions already defined earlier in the file), and these need
+# Cte/ConflictTarget/AssignmentValue already declared, but are also
+# called from Insert/Update/Delete below -- nesting them here, after the
+# classes they use and before their own call sites, and calling them
+# self-referentially as Arel.append_cte(...)/Arel.render_insert_conflict(...)
+# (verified this resolves the same way an external Arel.table(...) call
+# does), satisfies both constraints at once.
+def self.append_cte(ctes: Array, name: String, query, recursive = false) -> Array
+  duplicate = false
+  index = 0
+  while index < ctes.length()
+    if ctes[index].name().downcase() == name.downcase()
+      duplicate = true
+    end
+    index += 1
+  end
+  if duplicate
+    raise ArgumentError.new("duplicate CTE name")
+  end
+  ctes.concat([Cte.new(name, query, recursive)])
+end
+
+def self.render_insert_conflict(target, ignore: Bool, assignments, params: Array,
                                 visitor) -> String
   if !ignore && assignments == nil
     return ""
   end
   columns = target
   predicate = nil
-  if target is ArelConflictTarget
+  if target is ConflictTarget
     columns = target.columns()
     predicate = target.predicate()
   end
@@ -1253,7 +1263,7 @@ def arel_render_insert_conflict(target, ignore: Bool, assignments, params: Array
   while assignment_index < assignments.length()
     name = assignments.key_at(assignment_index)
     value = assignments[name]
-    if value is ArelAssignmentValue
+    if value is AssignmentValue
       rendered = visitor.render_expression(value.expression(), params)
       rendered_assignments.push("#{visitor.quote_identifier(name)} = #{rendered}")
     else
@@ -1265,8 +1275,8 @@ def arel_render_insert_conflict(target, ignore: Bool, assignments, params: Array
   " ON CONFLICT#{target_sql} DO UPDATE SET #{rendered_assignments.join(", ")}"
 end
 
-class ArelInsert
-  def initialize(table: ArelTable, rows = [], returning = [], source_columns = [],
+class Insert
+  def initialize(table: Arel::Table, rows = [], returning = [], source_columns = [],
                  source_query = nil, conflict_target = [], conflict_ignore = false,
                  conflict_assignments = nil, ctes = [])
     @table = table
@@ -1284,51 +1294,51 @@ class ArelInsert
   def structure() = [@table, @rows, @returning, @source_columns, @source_query,
     @conflict_target, @conflict_ignore, @conflict_assignments, @ctes]
   def values(attributes: Hash)
-    ArelInsert.new(@table, [attributes], @returning, [], nil, @conflict_target,
+    Insert.new(@table, [attributes], @returning, [], nil, @conflict_target,
       @conflict_ignore, @conflict_assignments, @ctes)
   end
   def values_many(rows: Array)
-    ArelInsert.new(@table, rows, @returning, [], nil, @conflict_target,
+    Insert.new(@table, rows, @returning, [], nil, @conflict_target,
       @conflict_ignore, @conflict_assignments, @ctes)
   end
   def default_values()
-    ArelInsert.new(@table, [ArelDefaultValues.new()], @returning, [], nil,
+    Insert.new(@table, [DefaultValues.new()], @returning, [], nil,
       @conflict_target, @conflict_ignore, @conflict_assignments, @ctes)
   end
   def from_query(columns: Array, query)
-    ArelInsert.new(@table, [], @returning, columns, query, @conflict_target,
+    Insert.new(@table, [], @returning, columns, query, @conflict_target,
       @conflict_ignore, @conflict_assignments, @ctes)
   end
   def with(relation_or_name, query)
     name = arel_cte_name(relation_or_name)
-    ArelInsert.new(@table, @rows, @returning, @source_columns, @source_query,
+    Insert.new(@table, @rows, @returning, @source_columns, @source_query,
       @conflict_target, @conflict_ignore, @conflict_assignments,
-      arel_append_cte(@ctes, name, query))
+      Arel.append_cte(@ctes, name, query))
   end
   def with_recursive(relation_or_name, query)
     name = arel_cte_name(relation_or_name)
-    ArelInsert.new(@table, @rows, @returning, @source_columns, @source_query,
+    Insert.new(@table, @rows, @returning, @source_columns, @source_query,
       @conflict_target, @conflict_ignore, @conflict_assignments,
-      arel_append_cte(@ctes, name, query, true))
+      Arel.append_cte(@ctes, name, query, true))
   end
   def on_conflict_do_nothing(columns = [])
     target = columns
-    unless columns is ArelConflictTarget
+    unless columns is ConflictTarget
       target = arel_array(columns)
     end
-    ArelInsert.new(@table, @rows, @returning, @source_columns, @source_query,
+    Insert.new(@table, @rows, @returning, @source_columns, @source_query,
       target, true, nil, @ctes)
   end
   def on_conflict_do_update(columns, assignments: Hash)
     target = columns
-    unless columns is ArelConflictTarget
+    unless columns is ConflictTarget
       target = arel_array(columns)
     end
-    ArelInsert.new(@table, @rows, @returning, @source_columns, @source_query,
+    Insert.new(@table, @rows, @returning, @source_columns, @source_query,
       target, false, assignments, @ctes)
   end
   def returning(expressions)
-    ArelInsert.new(@table, @rows, arel_array(expressions), @source_columns, @source_query,
+    Insert.new(@table, @rows, arel_array(expressions), @source_columns, @source_query,
       @conflict_target, @conflict_ignore, @conflict_assignments, @ctes)
   end
 
@@ -1336,7 +1346,7 @@ class ArelInsert
     if @ctes.length() > 0
       visitor.require_extension("write CTEs")
     end
-    if @rows.length() == 1 && @rows[0] is ArelDefaultValues
+    if @rows.length() == 1 && @rows[0] is DefaultValues
       visitor.require_extension("insert default values")
       params = []
       sql = "INSERT INTO #{visitor.quote_identifier(@table.name())} DEFAULT VALUES"
@@ -1364,7 +1374,7 @@ class ArelInsert
       source_sql, params = @source_query.render_with(visitor)
       sql = "INSERT INTO #{visitor.quote_identifier(@table.name())} " +
         "(#{columns.join(", ")}) #{source_sql}"
-      sql = sql + arel_render_insert_conflict(@conflict_target, @conflict_ignore,
+      sql = sql + Arel.render_insert_conflict(@conflict_target, @conflict_ignore,
         @conflict_assignments, params, visitor)
       sql = sql + visitor.render_returning(@returning, params)
       cte_params = []
@@ -1398,7 +1408,7 @@ class ArelInsert
           raise ArgumentError.new("INSERT rows must have identical columns")
         end
         value = row[key]
-        if value is ArelAssignmentValue
+        if value is AssignmentValue
           placeholders.push(visitor.render_expression(value.expression(), params))
         else
           placeholders.push("?")
@@ -1411,7 +1421,7 @@ class ArelInsert
     end
     sql = "INSERT INTO #{visitor.quote_identifier(@table.name())} " +
       "(#{columns.join(", ")}) VALUES #{value_groups.join(", ")}"
-    sql = sql + arel_render_insert_conflict(@conflict_target, @conflict_ignore,
+    sql = sql + Arel.render_insert_conflict(@conflict_target, @conflict_ignore,
       @conflict_assignments, params, visitor)
     sql = sql + visitor.render_returning(@returning, params)
     cte_params = []
@@ -1425,7 +1435,7 @@ class ArelInsert
   def to_sql(visitor = nil) -> Array
     renderer = visitor
     if renderer == nil
-      renderer = ArelSQLiteVisitor.new()
+      renderer = SQLiteVisitor.new()
     end
     self.render_with(renderer)
   end
@@ -1440,8 +1450,8 @@ class ArelInsert
   end
 end
 
-class ArelUpdate
-  def initialize(table: ArelTable, assignments = nil, predicates = [], returning = [],
+class Update
+  def initialize(table: Arel::Table, assignments = nil, predicates = [], returning = [],
                  allow_all = false, ctes = [])
     @table = table
     @assignments = assignments
@@ -1454,26 +1464,26 @@ class ArelUpdate
   def ctes() = @ctes
   def structure() = [@table, @assignments, @predicates, @returning, @allow_all, @ctes]
   def set(assignments: Hash)
-    ArelUpdate.new(@table, assignments, @predicates, @returning, @allow_all, @ctes)
+    Update.new(@table, assignments, @predicates, @returning, @allow_all, @ctes)
   end
   def where(predicate)
-    ArelUpdate.new(@table, @assignments, @predicates.concat([predicate]), @returning,
+    Update.new(@table, @assignments, @predicates.concat([predicate]), @returning,
       @allow_all, @ctes)
   end
   def returning(expressions)
-    ArelUpdate.new(@table, @assignments, @predicates, arel_array(expressions), @allow_all,
+    Update.new(@table, @assignments, @predicates, arel_array(expressions), @allow_all,
       @ctes)
   end
-  def all() = ArelUpdate.new(@table, @assignments, @predicates, @returning, true, @ctes)
+  def all() = Update.new(@table, @assignments, @predicates, @returning, true, @ctes)
   def with(relation_or_name, query)
     name = arel_cte_name(relation_or_name)
-    ArelUpdate.new(@table, @assignments, @predicates, @returning, @allow_all,
-      arel_append_cte(@ctes, name, query))
+    Update.new(@table, @assignments, @predicates, @returning, @allow_all,
+      Arel.append_cte(@ctes, name, query))
   end
   def with_recursive(relation_or_name, query)
     name = arel_cte_name(relation_or_name)
-    ArelUpdate.new(@table, @assignments, @predicates, @returning, @allow_all,
-      arel_append_cte(@ctes, name, query, true))
+    Update.new(@table, @assignments, @predicates, @returning, @allow_all,
+      Arel.append_cte(@ctes, name, query, true))
   end
 
   def render_default(visitor) -> Array
@@ -1492,7 +1502,7 @@ class ArelUpdate
     while assignment_index < @assignments.length()
       name = @assignments.key_at(assignment_index)
       value = @assignments[name]
-      if value is ArelAssignmentValue
+      if value is AssignmentValue
         rendered = visitor.render_expression(value.expression(), params)
         clauses.push("#{visitor.quote_identifier(name)} = #{rendered}")
       else
@@ -1525,7 +1535,7 @@ class ArelUpdate
   def to_sql(visitor = nil) -> Array
     renderer = visitor
     if renderer == nil
-      renderer = ArelSQLiteVisitor.new()
+      renderer = SQLiteVisitor.new()
     end
     self.render_with(renderer)
   end
@@ -1540,8 +1550,8 @@ class ArelUpdate
   end
 end
 
-class ArelDelete
-  def initialize(table: ArelTable, predicates = [], returning = [], allow_all = false,
+class Delete
+  def initialize(table: Arel::Table, predicates = [], returning = [], allow_all = false,
                  ctes = [])
     @table = table
     @predicates = predicates
@@ -1553,22 +1563,22 @@ class ArelDelete
   def ctes() = @ctes
   def structure() = [@table, @predicates, @returning, @allow_all, @ctes]
   def where(predicate)
-    ArelDelete.new(@table, @predicates.concat([predicate]), @returning, @allow_all,
+    Delete.new(@table, @predicates.concat([predicate]), @returning, @allow_all,
       @ctes)
   end
   def returning(expressions)
-    ArelDelete.new(@table, @predicates, arel_array(expressions), @allow_all, @ctes)
+    Delete.new(@table, @predicates, arel_array(expressions), @allow_all, @ctes)
   end
-  def all() = ArelDelete.new(@table, @predicates, @returning, true, @ctes)
+  def all() = Delete.new(@table, @predicates, @returning, true, @ctes)
   def with(relation_or_name, query)
     name = arel_cte_name(relation_or_name)
-    ArelDelete.new(@table, @predicates, @returning, @allow_all,
-      arel_append_cte(@ctes, name, query))
+    Delete.new(@table, @predicates, @returning, @allow_all,
+      Arel.append_cte(@ctes, name, query))
   end
   def with_recursive(relation_or_name, query)
     name = arel_cte_name(relation_or_name)
-    ArelDelete.new(@table, @predicates, @returning, @allow_all,
-      arel_append_cte(@ctes, name, query, true))
+    Delete.new(@table, @predicates, @returning, @allow_all,
+      Arel.append_cte(@ctes, name, query, true))
   end
 
   def render_default(visitor) -> Array
@@ -1603,7 +1613,7 @@ class ArelDelete
   def to_sql(visitor = nil) -> Array
     renderer = visitor
     if renderer == nil
-      renderer = ArelSQLiteVisitor.new()
+      renderer = SQLiteVisitor.new()
     end
     self.render_with(renderer)
   end
@@ -1618,145 +1628,145 @@ class ArelDelete
   end
 end
 
-class ArelInspector
+class Inspector
 def with_children(node, replacements: Array)
-  if node is ArelFunction
-    ArelFunction.new(node.name(), replacements, node.distinct?())
-  elsif node is ArelCast
+  if node is Function
+    Function.new(node.name(), replacements, node.distinct?())
+  elsif node is Cast
     if replacements.length() != 1
-      raise ArgumentError.new("ArelCast requires exactly one child")
+      raise ArgumentError.new("Cast requires exactly one child")
     end
-    ArelCast.new(replacements[0], node.type_name())
-  elsif node is ArelCollation
+    Cast.new(replacements[0], node.type_name())
+  elsif node is Collation
     if replacements.length() != 1
-      raise ArgumentError.new("ArelCollation requires exactly one child")
+      raise ArgumentError.new("Collation requires exactly one child")
     end
-    ArelCollation.new(replacements[0], node.name())
-  elsif node is ArelAlias
+    Collation.new(replacements[0], node.name())
+  elsif node is Alias
     if replacements.length() != 1
-      raise ArgumentError.new("ArelAlias requires exactly one child")
+      raise ArgumentError.new("Alias requires exactly one child")
     end
-    ArelAlias.new(replacements[0], node.name())
-  elsif node is ArelOrdering
+    Alias.new(replacements[0], node.name())
+  elsif node is Ordering
     if replacements.length() != 1
-      raise ArgumentError.new("ArelOrdering requires exactly one child")
+      raise ArgumentError.new("Ordering requires exactly one child")
     end
-    ArelOrdering.new(replacements[0], node.direction(), node.nulls())
-  elsif node is ArelAssignmentValue
+    Ordering.new(replacements[0], node.direction(), node.nulls())
+  elsif node is AssignmentValue
     if replacements.length() != 1
-      raise ArgumentError.new("ArelAssignmentValue requires exactly one child")
+      raise ArgumentError.new("AssignmentValue requires exactly one child")
     end
-    ArelAssignmentValue.new(replacements[0])
+    AssignmentValue.new(replacements[0])
   else
     self.with_children_tail(node, replacements)
   end
 end
 
 def with_children_tail(node, replacements: Array)
-  if node is ArelBinaryExpression
+  if node is BinaryExpression
     expected = 1
     unless node.bind_right?()
       expected = 2
     end
     if replacements.length() != expected
-      raise ArgumentError.new("ArelBinaryExpression replacement child count mismatch")
+      raise ArgumentError.new("BinaryExpression replacement child count mismatch")
     end
     right = node.right()
     unless node.bind_right?()
       right = replacements[1]
     end
-    ArelBinaryExpression.new(replacements[0], node.operator(), right, node.bind_right?())
-  elsif node is ArelQualifiedStar
-    if replacements.length() != 1 || !(replacements[0] is ArelTable)
-      raise ArgumentError.new("ArelQualifiedStar requires exactly one table child")
+    BinaryExpression.new(replacements[0], node.operator(), right, node.bind_right?())
+  elsif node is QualifiedStar
+    if replacements.length() != 1 || !(replacements[0] is Table)
+      raise ArgumentError.new("QualifiedStar requires exactly one table child")
     end
-    ArelQualifiedStar.new(replacements[0])
-  elsif node is ArelPredicate
+    QualifiedStar.new(replacements[0])
+  elsif node is Predicate
     expected = 1
-    structural_right = node.right() is ArelAttribute || node.right() is ArelLiteral
+    structural_right = node.right() is Attribute || node.right() is Literal
     if structural_right
       expected = 2
     end
     if replacements.length() != expected
-      raise ArgumentError.new("ArelPredicate replacement child count mismatch")
+      raise ArgumentError.new("Predicate replacement child count mismatch")
     end
     right = node.right()
     if structural_right
       right = replacements[1]
     end
-    ArelPredicate.new(replacements[0], node.operator(), right)
-  elsif node is ArelLogical
+    Predicate.new(replacements[0], node.operator(), right)
+  elsif node is Logical
     if replacements.length() != 2
-      raise ArgumentError.new("ArelLogical requires exactly two children")
+      raise ArgumentError.new("Logical requires exactly two children")
     end
-    ArelLogical.new(replacements[0], node.operator(), replacements[1])
-  elsif node is ArelNot
+    Logical.new(replacements[0], node.operator(), replacements[1])
+  elsif node is Not
     if replacements.length() != 1
-      raise ArgumentError.new("ArelNot requires exactly one child")
+      raise ArgumentError.new("Not requires exactly one child")
     end
-    ArelNot.new(replacements[0])
-  elsif node is ArelBetween
+    Not.new(replacements[0])
+  elsif node is Between
     if replacements.length() != 1
-      raise ArgumentError.new("ArelBetween requires exactly one child")
+      raise ArgumentError.new("Between requires exactly one child")
     end
-    ArelBetween.new(replacements[0], node.lower(), node.upper(), node.negated?())
-  elsif node is ArelMembership
+    Between.new(replacements[0], node.lower(), node.upper(), node.negated?())
+  elsif node is Membership
     expected = 1
     unless node.values() is Array
       expected = 2
     end
     if replacements.length() != expected
-      raise ArgumentError.new("ArelMembership replacement child count mismatch")
+      raise ArgumentError.new("Membership replacement child count mismatch")
     end
     values = node.values()
     unless values is Array
       values = replacements[1]
     end
-    ArelMembership.new(replacements[0], values, node.negated?())
-  elsif node is ArelExists
+    Membership.new(replacements[0], values, node.negated?())
+  elsif node is Exists
     if replacements.length() != 1
-      raise ArgumentError.new("ArelExists requires exactly one child")
+      raise ArgumentError.new("Exists requires exactly one child")
     end
-    ArelExists.new(replacements[0], node.negated?())
-  elsif node is ArelScalarSubquery
+    Exists.new(replacements[0], node.negated?())
+  elsif node is ScalarSubquery
     if replacements.length() != 1
-      raise ArgumentError.new("ArelScalarSubquery requires exactly one child")
+      raise ArgumentError.new("ScalarSubquery requires exactly one child")
     end
-    ArelScalarSubquery.new(replacements[0])
-  elsif node is ArelJoin
+    ScalarSubquery.new(replacements[0])
+  elsif node is Join
     expected = 1
     unless node.predicate() == nil
       expected = 2
     end
-    if replacements.length() != expected || !(replacements[0] is ArelTable)
-      raise ArgumentError.new("ArelJoin replacement children do not match its shape")
+    if replacements.length() != expected || !(replacements[0] is Table)
+      raise ArgumentError.new("Join replacement children do not match its shape")
     end
     predicate = nil
     if expected == 2
       predicate = replacements[1]
     end
-    ArelJoin.new(replacements[0], predicate, node.kind())
-  elsif node is ArelCte
+    Join.new(replacements[0], predicate, node.kind())
+  elsif node is Cte
     if replacements.length() != 1
-      raise ArgumentError.new("ArelCte requires exactly one child")
+      raise ArgumentError.new("Cte requires exactly one child")
     end
-    ArelCte.new(node.name(), replacements[0], node.recursive?())
-  elsif node is ArelConflictTarget
+    Cte.new(node.name(), replacements[0], node.recursive?())
+  elsif node is ConflictTarget
     expected = 0
     unless node.predicate() == nil
       expected = 1
     end
     if replacements.length() != expected
-      raise ArgumentError.new("ArelConflictTarget replacement child count mismatch")
+      raise ArgumentError.new("ConflictTarget replacement child count mismatch")
     end
     predicate = nil
     if expected == 1
       predicate = replacements[0]
     end
-    ArelConflictTarget.new(node.columns(), predicate)
-  elsif node is ArelCompoundQuery
+    ConflictTarget.new(node.columns(), predicate)
+  elsif node is CompoundQuery
     if replacements.length() != 2 + node.orderings().length()
-      raise ArgumentError.new("ArelCompoundQuery replacement child count mismatch")
+      raise ArgumentError.new("CompoundQuery replacement child count mismatch")
     end
     orderings = []
     index = 2
@@ -1764,11 +1774,11 @@ def with_children_tail(node, replacements: Array)
       orderings.push(replacements[index])
       index += 1
     end
-    ArelCompoundQuery.new(replacements[0], node.operator(), replacements[1], orderings,
+    CompoundQuery.new(replacements[0], node.operator(), replacements[1], orderings,
       node.limit_value(), node.offset_value())
-  elsif node is ArelQuery
+  elsif node is Query
     self.with_query_children(node, replacements)
-  elsif node is ArelUpdate || node is ArelDelete || node is ArelInsert
+  elsif node is Update || node is Delete || node is Insert
     self.with_write_children(node, replacements)
   elsif node is ArelReplaceableNode
     node.arel_with_children(replacements)
@@ -1781,7 +1791,7 @@ def with_write_children(node, replacements: Array)
   if replacements.length() != self.children(node).length()
     raise ArgumentError.new("Arel write manager replacement child count mismatch")
   end
-  if node is ArelUpdate
+  if node is Update
     state = node.structure()
     index = state[5].length()
     table = replacements[index]
@@ -1793,7 +1803,7 @@ def with_write_children(node, replacements: Array)
       while assignment_index < state[1].length()
         key = state[1].key_at(assignment_index)
         value = state[1][key]
-        if value is ArelAssignmentValue
+        if value is AssignmentValue
           value = replacements[index]
           index += 1
         end
@@ -1821,8 +1831,8 @@ def with_write_children(node, replacements: Array)
       ctes.push(replacements[cte_index])
       cte_index += 1
     end
-    ArelUpdate.new(table, assignments, predicates, returning, state[4], ctes)
-  elsif node is ArelDelete
+    Update.new(table, assignments, predicates, returning, state[4], ctes)
+  elsif node is Delete
     state = node.structure()
     index = state[4].length()
     table = replacements[index]
@@ -1847,8 +1857,8 @@ def with_write_children(node, replacements: Array)
       ctes.push(replacements[cte_index])
       cte_index += 1
     end
-    ArelDelete.new(table, predicates, returning, state[3], ctes)
-  elsif node is ArelInsert
+    Delete.new(table, predicates, returning, state[3], ctes)
+  elsif node is Insert
     state = node.structure()
     index = state[8].length()
     table = replacements[index]
@@ -1862,7 +1872,7 @@ def with_write_children(node, replacements: Array)
     row_index = 0
     while row_index < state[1].length()
       original_row = state[1][row_index]
-      if original_row is ArelDefaultValues
+      if original_row is DefaultValues
         rows.push(original_row)
       else
         row = {}
@@ -1870,7 +1880,7 @@ def with_write_children(node, replacements: Array)
         while value_index < original_row.length()
           key = original_row.key_at(value_index)
           value = original_row[key]
-          if value is ArelAssignmentValue
+          if value is AssignmentValue
             value = replacements[index]
             index += 1
           end
@@ -1882,7 +1892,7 @@ def with_write_children(node, replacements: Array)
       row_index += 1
     end
     conflict_target = state[5]
-    if conflict_target is ArelConflictTarget
+    if conflict_target is ConflictTarget
       conflict_target = replacements[index]
       index += 1
     end
@@ -1893,7 +1903,7 @@ def with_write_children(node, replacements: Array)
       while value_index < state[7].length()
         key = state[7].key_at(value_index)
         value = state[7][key]
-        if value is ArelAssignmentValue
+        if value is AssignmentValue
           value = replacements[index]
           index += 1
         end
@@ -1914,16 +1924,16 @@ def with_write_children(node, replacements: Array)
       ctes.push(replacements[cte_index])
       cte_index += 1
     end
-    ArelInsert.new(table, rows, returning, state[3], source_query, conflict_target,
+    Insert.new(table, rows, returning, state[3], source_query, conflict_target,
       state[6], conflict_assignments, ctes)
   else
     raise ArgumentError.new("Arel write manager does not support child replacement")
   end
 end
 
-def with_query_children(node: ArelQuery, replacements: Array)
+def with_query_children(node: Arel::Query, replacements: Array)
   if replacements.length() != self.children(node).length()
-    raise ArgumentError.new("ArelQuery replacement child count mismatch")
+    raise ArgumentError.new("Query replacement child count mismatch")
   end
   index = 0
   ctes = []
@@ -1986,7 +1996,7 @@ def with_query_children(node: ArelQuery, replacements: Array)
     correlations.push(replacements[index + part])
     part += 1
   end
-  ArelQuery.new(node.table_name(), predicates, orderings, node.limit_value(),
+  Query.new(node.table_name(), predicates, orderings, node.limit_value(),
     node.offset_value(), projections, node.quoted_identifiers(), node.bind_limits(),
     node.table_alias(), node.distinct_value(), groups, havings, joins, source_query,
     correlations, ctes)
@@ -2004,13 +2014,13 @@ def simplify(node, rules = [], report = false)
     end
     node = self.with_children(node, replacements)
   end
-  if node is ArelNot && node.expression() is ArelNot
+  if node is Not && node.expression() is Not
     node = node.expression().expression()
-  elsif node is ArelMembership && node.values() is Array && node.values().length() == 0
+  elsif node is Membership && node.values() is Array && node.values().length() == 0
     if node.negated?()
-      node = ArelRawSql.new("1 = 1", [])
+      node = RawSql.new("1 = 1", [])
     else
-      node = ArelRawSql.new("1 = 0", [])
+      node = RawSql.new("1 = 0", [])
     end
   end
   rule_index = 0
@@ -2051,44 +2061,44 @@ def walk(node, visitor = nil) -> Array
 end
 
 def children(node) -> Array
-  if node is ArelAttribute || node is ArelLiteral || node is ArelExcludedAttribute ||
-     node is ArelRawSql || node is ArelTable || node is ArelConflictAttribute ||
-     node is ArelDefaultValues
+  if node is Attribute || node is Literal || node is ExcludedAttribute ||
+     node is RawSql || node is Table || node is ConflictAttribute ||
+     node is DefaultValues
     []
-  elsif node is ArelBinaryExpression
+  elsif node is BinaryExpression
     children = [node.left()]
     unless node.bind_right?()
       children.push(node.right())
     end
     children
-  elsif node is ArelFunction
+  elsif node is Function
     node.arguments()
-  elsif node is ArelCast || node is ArelCollation || node is ArelAlias ||
-        node is ArelOrdering || node is ArelAssignmentValue
+  elsif node is Cast || node is Collation || node is Alias ||
+        node is Ordering || node is AssignmentValue
     [node.expression()]
-  elsif node is ArelQualifiedStar
+  elsif node is QualifiedStar
     [node.table()]
-  elsif node is ArelPredicate
+  elsif node is Predicate
     children = [node.left()]
-    if node.right() is ArelAttribute || node.right() is ArelLiteral
+    if node.right() is Attribute || node.right() is Literal
       children.push(node.right())
     end
     children
-  elsif node is ArelLogical
+  elsif node is Logical
     [node.left(), node.right()]
-  elsif node is ArelNot
+  elsif node is Not
     [node.expression()]
-  elsif node is ArelBetween
+  elsif node is Between
     [node.left()]
-  elsif node is ArelMembership
+  elsif node is Membership
     children = [node.left()]
     unless node.values() is Array
       children.push(node.values())
     end
     children
-  elsif node is ArelExists || node is ArelScalarSubquery
+  elsif node is Exists || node is ScalarSubquery
     [node.query()]
-  elsif node is ArelJoin
+  elsif node is Join
     children = [node.table()]
     unless node.predicate() == nil
       children.push(node.predicate())
@@ -2102,7 +2112,7 @@ def children(node) -> Array
 end
 
 def children_tail(node) -> Array
-  if node is ArelQuery
+  if node is Query
     children = [].concat(node.ctes())
     unless node.source_query() == nil
       children.push(node.source_query())
@@ -2114,17 +2124,17 @@ def children_tail(node) -> Array
     children = children.concat(node.havings())
     children = children.concat(node.orderings())
     children.concat(node.correlations())
-  elsif node is ArelCompoundQuery
+  elsif node is CompoundQuery
     [node.left(), node.right()].concat(node.orderings())
-  elsif node is ArelCte
+  elsif node is Cte
     [node.query()]
-  elsif node is ArelConflictTarget
+  elsif node is ConflictTarget
     if node.predicate() == nil
       []
     else
       [node.predicate()]
     end
-  elsif node is ArelInsert || node is ArelUpdate || node is ArelDelete
+  elsif node is Insert || node is Update || node is Delete
     self.children_write(node)
   else
     []
@@ -2132,7 +2142,7 @@ def children_tail(node) -> Array
 end
 
 def children_write(node) -> Array
-  if node is ArelInsert
+  if node is Insert
     state = node.structure()
     children = [].concat(state[8])
     children.push(state[0])
@@ -2142,11 +2152,11 @@ def children_write(node) -> Array
     row_index = 0
     while row_index < state[1].length()
       row = state[1][row_index]
-      unless row is ArelDefaultValues
+      unless row is DefaultValues
         value_index = 0
         while value_index < row.length()
           value = row[row.key_at(value_index)]
-          if value is ArelAssignmentValue
+          if value is AssignmentValue
             children.push(value)
           end
           value_index += 1
@@ -2154,21 +2164,21 @@ def children_write(node) -> Array
       end
       row_index += 1
     end
-    if state[5] is ArelConflictTarget
+    if state[5] is ConflictTarget
       children.push(state[5])
     end
     unless state[7] == nil
       value_index = 0
       while value_index < state[7].length()
         value = state[7][state[7].key_at(value_index)]
-        if value is ArelAssignmentValue
+        if value is AssignmentValue
           children.push(value)
         end
         value_index += 1
       end
     end
     children.concat(state[2])
-  elsif node is ArelUpdate
+  elsif node is Update
     state = node.structure()
     children = [].concat(state[5])
     children.push(state[0])
@@ -2176,7 +2186,7 @@ def children_write(node) -> Array
       value_index = 0
       while value_index < state[1].length()
         value = state[1][state[1].key_at(value_index)]
-        if value is ArelAssignmentValue
+        if value is AssignmentValue
           children.push(value)
         end
         value_index += 1
@@ -2184,7 +2194,7 @@ def children_write(node) -> Array
     end
     children = children.concat(state[2])
     children.concat(state[3])
-  elsif node is ArelDelete
+  elsif node is Delete
     state = node.structure()
     children = [].concat(state[4])
     children.push(state[0])
@@ -2196,17 +2206,17 @@ def children_write(node) -> Array
 end
 
 def inspect(node) -> String
-  if node is ArelAttribute
+  if node is Attribute
     "Attribute(#{node.table().reference_name()}.#{node.name()})"
-  elsif node is ArelBinaryExpression
+  elsif node is BinaryExpression
     right = "Bind(#{node.right()})"
     unless node.bind_right?()
       right = self.inspect(node.right())
     end
     "Binary(#{node.operator()}, #{self.inspect(node.left())}, #{right})"
-  elsif node is ArelLiteral
+  elsif node is Literal
     "Literal(#{node.value()})"
-  elsif node is ArelFunction
+  elsif node is Function
     arguments = []
     index = 0
     while index < node.arguments().length()
@@ -2214,38 +2224,38 @@ def inspect(node) -> String
       index += 1
     end
     "Function(#{node.name()}, [#{arguments.join(", ")}])"
-  elsif node is ArelCast
+  elsif node is Cast
     "Cast(#{self.inspect(node.expression())}, #{node.type_name()})"
-  elsif node is ArelExcludedAttribute
+  elsif node is ExcludedAttribute
     "Excluded(#{node.name()})"
-  elsif node is ArelTable
+  elsif node is Table
     if node.table_alias() == nil
       "Table(#{node.name()})"
     else
       "Table(#{node.name()} AS #{node.table_alias()})"
     end
-  elsif node is ArelQualifiedStar
+  elsif node is QualifiedStar
     "QualifiedStar(#{node.table().reference_name()})"
-  elsif node is ArelConflictAttribute
+  elsif node is ConflictAttribute
     "ConflictAttribute(#{node.name()})"
-  elsif node is ArelExists
+  elsif node is Exists
     prefix = "Exists"
     if node.negated?()
       prefix = "NotExists"
     end
     "#{prefix}(#{self.inspect(node.query())})"
-  elsif node is ArelScalarSubquery
+  elsif node is ScalarSubquery
     "Scalar(#{self.inspect(node.query())})"
-  elsif node is ArelAssignmentValue
+  elsif node is AssignmentValue
     "Assignment(#{self.inspect(node.expression())})"
-  elsif node is ArelConflictTarget
+  elsif node is ConflictTarget
     columns = node.columns().join(", ")
     "ConflictTarget(#{columns}, predicate=#{node.predicate() != nil})"
-  elsif node is ArelDefaultValues
+  elsif node is DefaultValues
     "DefaultValues"
-  elsif node is ArelRawSql
+  elsif node is RawSql
     "RawSql(#{node.sql()}, #{node.params().length()} binds)"
-  elsif node is ArelCollation
+  elsif node is Collation
     "Collation(#{node.name()}, #{self.inspect(node.expression())})"
   else
     self.inspect_tail(node)
@@ -2253,23 +2263,23 @@ def inspect(node) -> String
 end
 
 def inspect_tail(node) -> String
-  if node is ArelPredicate
+  if node is Predicate
     right = "Bind(#{node.right()})"
-    if node.right() is ArelAttribute || node.right() is ArelLiteral
+    if node.right() is Attribute || node.right() is Literal
       right = self.inspect(node.right())
     end
     "Predicate(#{node.operator()}, #{self.inspect(node.left())}, #{right})"
-  elsif node is ArelLogical
+  elsif node is Logical
     "Logical(#{node.operator()}, #{self.inspect(node.left())}, #{self.inspect(node.right())})"
-  elsif node is ArelNot
+  elsif node is Not
     "Not(#{self.inspect(node.expression())})"
-  elsif node is ArelBetween
+  elsif node is Between
     operator = "BETWEEN"
     if node.negated?()
       operator = "NOT BETWEEN"
     end
     "Between(#{operator}, #{self.inspect(node.left())}, #{node.lower()}, #{node.upper()})"
-  elsif node is ArelMembership
+  elsif node is Membership
     operator = "IN"
     if node.negated?()
       operator = "NOT IN"
@@ -2279,42 +2289,42 @@ def inspect_tail(node) -> String
     else
       "Membership(#{operator}, #{self.inspect(node.left())}, subquery)"
     end
-  elsif node is ArelOrdering
+  elsif node is Ordering
     nulls = ""
     unless node.nulls() == nil
       nulls = ", NULLS #{node.nulls()}"
     end
     "Ordering(#{node.direction()}#{nulls}, #{self.inspect(node.expression())})"
-  elsif node is ArelAlias
+  elsif node is Alias
     "Alias(#{node.name()}, #{self.inspect(node.expression())})"
-  elsif node is ArelJoin
+  elsif node is Join
     predicate = "none"
     unless node.predicate() == nil
       predicate = self.inspect(node.predicate())
     end
     "Join(#{node.kind()}, #{self.inspect(node.table())}, #{predicate})"
-  elsif node is ArelCte
+  elsif node is Cte
     mode = "ordinary"
     if node.recursive?()
       mode = "recursive"
     end
     "Cte(#{node.name()}, #{mode}, #{self.inspect(node.query())})"
-  elsif node is ArelQuery
+  elsif node is Query
     "Query(from=#{node.base_reference_name()}, projections=#{node.projections().length()}, predicates=#{node.predicates().length()}, joins=#{node.joins().length()}, ctes=#{node.ctes().length()})"
-  elsif node is ArelCompoundQuery
+  elsif node is CompoundQuery
     "Compound(#{node.operator()}, #{self.inspect(node.left())}, #{self.inspect(node.right())})"
-  elsif node is ArelInsert
+  elsif node is Insert
     state = node.structure()
     source = state[4] != nil
     "Insert(into=#{state[0].reference_name()}, rows=#{state[1].length()}, source=#{source}, returning=#{state[2].length()}, ctes=#{state[8].length()})"
-  elsif node is ArelUpdate
+  elsif node is Update
     state = node.structure()
     assignments = 0
     unless state[1] == nil
       assignments = state[1].length()
     end
     "Update(table=#{state[0].reference_name()}, assignments=#{assignments}, predicates=#{state[2].length()}, returning=#{state[3].length()}, all=#{state[4]}, ctes=#{state[5].length()})"
-  elsif node is ArelDelete
+  elsif node is Delete
     state = node.structure()
     "Delete(from=#{state[0].reference_name()}, predicates=#{state[1].length()}, returning=#{state[2].length()}, all=#{state[3]}, ctes=#{state[4].length()})"
   elsif node is ArelInspectable
@@ -2325,11 +2335,11 @@ def inspect_tail(node) -> String
 end
 
 def same?(left, right) -> Bool
-  if left is ArelAttribute
-    right is ArelAttribute && left.table().reference_name() == right.table().reference_name() &&
+  if left is Attribute
+    right is Attribute && left.table().reference_name() == right.table().reference_name() &&
       left.name() == right.name()
-  elsif left is ArelBinaryExpression
-    if !(right is ArelBinaryExpression) || left.operator() != right.operator() ||
+  elsif left is BinaryExpression
+    if !(right is BinaryExpression) || left.operator() != right.operator() ||
        left.bind_right?() != right.bind_right?() || !self.same?(left.left(), right.left())
       false
     elsif left.bind_right?()
@@ -2337,15 +2347,15 @@ def same?(left, right) -> Bool
     else
       self.same?(left.right(), right.right())
     end
-  elsif left is ArelLiteral
-    right is ArelLiteral && left.value() == right.value()
-  elsif left is ArelCast
-    right is ArelCast && left.type_name() == right.type_name() &&
+  elsif left is Literal
+    right is Literal && left.value() == right.value()
+  elsif left is Cast
+    right is Cast && left.type_name() == right.type_name() &&
       self.same?(left.expression(), right.expression())
-  elsif left is ArelExcludedAttribute
-    right is ArelExcludedAttribute && left.name() == right.name()
-  elsif left is ArelFunction
-    if !(right is ArelFunction) || left.name() != right.name() ||
+  elsif left is ExcludedAttribute
+    right is ExcludedAttribute && left.name() == right.name()
+  elsif left is Function
+    if !(right is Function) || left.name() != right.name() ||
        left.distinct?() != right.distinct?() || left.arguments().length() != right.arguments().length()
       return false
     end
@@ -2357,8 +2367,8 @@ def same?(left, right) -> Bool
       index += 1
     end
     true
-  elsif left is ArelRawSql
-    if !(right is ArelRawSql) || left.sql() != right.sql() ||
+  elsif left is RawSql
+    if !(right is RawSql) || left.sql() != right.sql() ||
        left.params().length() != right.params().length()
       return false
     end
@@ -2370,21 +2380,21 @@ def same?(left, right) -> Bool
       index += 1
     end
     true
-  elsif left is ArelAssignmentValue
-    right is ArelAssignmentValue && self.same?(left.expression(), right.expression())
-  elsif left is ArelDefaultValues
-    right is ArelDefaultValues
-  elsif left is ArelQualifiedStar
-    right is ArelQualifiedStar && self.same?(left.table(), right.table())
-  elsif left is ArelConflictAttribute
-    right is ArelConflictAttribute && left.name() == right.name()
-  elsif left is ArelExists
-    right is ArelExists && left.negated?() == right.negated?() &&
+  elsif left is AssignmentValue
+    right is AssignmentValue && self.same?(left.expression(), right.expression())
+  elsif left is DefaultValues
+    right is DefaultValues
+  elsif left is QualifiedStar
+    right is QualifiedStar && self.same?(left.table(), right.table())
+  elsif left is ConflictAttribute
+    right is ConflictAttribute && left.name() == right.name()
+  elsif left is Exists
+    right is Exists && left.negated?() == right.negated?() &&
       self.same?(left.query(), right.query())
-  elsif left is ArelScalarSubquery
-    right is ArelScalarSubquery && self.same?(left.query(), right.query())
-  elsif left is ArelConflictTarget
-    if !(right is ArelConflictTarget) || left.columns().length() != right.columns().length() ||
+  elsif left is ScalarSubquery
+    right is ScalarSubquery && self.same?(left.query(), right.query())
+  elsif left is ConflictTarget
+    if !(right is ConflictTarget) || left.columns().length() != right.columns().length() ||
        (left.predicate() == nil) != (right.predicate() == nil)
       return false
     end
@@ -2396,20 +2406,20 @@ def same?(left, right) -> Bool
       index += 1
     end
     left.predicate() == nil || self.same?(left.predicate(), right.predicate())
-  elsif left is ArelPredicate
-    if !(right is ArelPredicate) || left.operator() != right.operator() ||
+  elsif left is Predicate
+    if !(right is Predicate) || left.operator() != right.operator() ||
        !self.same?(left.left(), right.left())
       false
-    elsif left.right() is ArelAttribute || left.right() is ArelLiteral
+    elsif left.right() is Attribute || left.right() is Literal
       self.same?(left.right(), right.right())
     else
       left.right() == right.right()
     end
-  elsif left is ArelLogical
-    right is ArelLogical && left.operator() == right.operator() &&
+  elsif left is Logical
+    right is Logical && left.operator() == right.operator() &&
       self.same?(left.left(), right.left()) && self.same?(left.right(), right.right())
-  elsif left is ArelNot
-    right is ArelNot && self.same?(left.expression(), right.expression())
+  elsif left is Not
+    right is Not && self.same?(left.expression(), right.expression())
   else
     self.same_tail?(left, right)
   end
@@ -2434,7 +2444,7 @@ def same_nodes?(left, right) -> Bool
       end
       left_value = left[key]
       right_value = right[key]
-      if left_value is ArelAssignmentValue
+      if left_value is AssignmentValue
         unless self.same?(left_value, right_value)
           return false
         end
@@ -2455,7 +2465,7 @@ def same_nodes?(left, right) -> Bool
   true
 end
 
-def same_insert?(left: ArelInsert, right: ArelInsert) -> Bool
+def same_insert?(left: Arel::Insert, right: Arel::Insert) -> Bool
   left_state = left.structure()
   right_state = right.structure()
   if !self.same?(left_state[0], right_state[0]) ||
@@ -2498,7 +2508,7 @@ def same_insert?(left: ArelInsert, right: ArelInsert) -> Bool
   while index < left_state[1].length()
     left_row = left_state[1][index]
     right_row = right_state[1][index]
-    if left_row is ArelDefaultValues
+    if left_row is DefaultValues
       unless self.same?(left_row, right_row)
         return false
       end
@@ -2511,12 +2521,12 @@ def same_insert?(left: ArelInsert, right: ArelInsert) -> Bool
 end
 
 def same_tail?(left, right) -> Bool
-  if left is ArelBetween
-    right is ArelBetween && left.negated?() == right.negated?() &&
+  if left is Between
+    right is Between && left.negated?() == right.negated?() &&
       left.lower() == right.lower() && left.upper() == right.upper() &&
       self.same?(left.left(), right.left())
-  elsif left is ArelMembership
-    if !(right is ArelMembership) || left.negated?() != right.negated?() ||
+  elsif left is Membership
+    if !(right is Membership) || left.negated?() != right.negated?() ||
        !self.same?(left.left(), right.left()) ||
        (left.values() is Array) != (right.values() is Array)
       return false
@@ -2535,36 +2545,36 @@ def same_tail?(left, right) -> Bool
       index += 1
     end
     true
-  elsif left is ArelOrdering
-    right is ArelOrdering && left.direction() == right.direction() &&
+  elsif left is Ordering
+    right is Ordering && left.direction() == right.direction() &&
       left.nulls() == right.nulls() && self.same?(left.expression(), right.expression())
-  elsif left is ArelAlias
-    right is ArelAlias && left.name() == right.name() &&
+  elsif left is Alias
+    right is Alias && left.name() == right.name() &&
       self.same?(left.expression(), right.expression())
-  elsif left is ArelCollation
-    right is ArelCollation && left.name() == right.name() &&
+  elsif left is Collation
+    right is Collation && left.name() == right.name() &&
       self.same?(left.expression(), right.expression())
-  elsif left is ArelJoin
-    right is ArelJoin && left.kind() == right.kind() &&
+  elsif left is Join
+    right is Join && left.kind() == right.kind() &&
       self.same?(left.table(), right.table()) &&
       ((left.predicate() == nil && right.predicate() == nil) ||
        (left.predicate() != nil && right.predicate() != nil &&
         self.same?(left.predicate(), right.predicate())))
-  elsif left is ArelTable
-    right is ArelTable && left.name() == right.name() &&
+  elsif left is Table
+    right is Table && left.name() == right.name() &&
       left.table_alias() == right.table_alias()
-  elsif left is ArelCte
-    right is ArelCte && left.name() == right.name() &&
+  elsif left is Cte
+    right is Cte && left.name() == right.name() &&
       left.recursive?() == right.recursive?() && self.same?(left.query(), right.query())
-  elsif left is ArelCompoundQuery
-    if !(right is ArelCompoundQuery) || left.operator() != right.operator() ||
+  elsif left is CompoundQuery
+    if !(right is CompoundQuery) || left.operator() != right.operator() ||
        left.limit_value() != right.limit_value() || left.offset_value() != right.offset_value() ||
        !self.same?(left.left(), right.left()) || !self.same?(left.right(), right.right())
       return false
     end
     self.same_nodes?(left.orderings(), right.orderings())
-  elsif left is ArelUpdate
-    unless right is ArelUpdate
+  elsif left is Update
+    unless right is Update
       return false
     end
     left_state = left.structure()
@@ -2574,10 +2584,10 @@ def same_tail?(left, right) -> Bool
       self.same_nodes?(left_state[2], right_state[2]) &&
       self.same_nodes?(left_state[3], right_state[3]) &&
       left_state[4] == right_state[4] && self.same_nodes?(left_state[5], right_state[5])
-  elsif left is ArelInsert
-    right is ArelInsert && self.same_insert?(left, right)
-  elsif left is ArelDelete
-    unless right is ArelDelete
+  elsif left is Insert
+    right is Insert && self.same_insert?(left, right)
+  elsif left is Delete
+    unless right is Delete
       return false
     end
     left_state = left.structure()
@@ -2586,8 +2596,8 @@ def same_tail?(left, right) -> Bool
       self.same_nodes?(left_state[1], right_state[1]) &&
       self.same_nodes?(left_state[2], right_state[2]) &&
       left_state[3] == right_state[3] && self.same_nodes?(left_state[4], right_state[4])
-  elsif left is ArelQuery
-    if !(right is ArelQuery) || left.base_reference_name() != right.base_reference_name() ||
+  elsif left is Query
+    if !(right is Query) || left.base_reference_name() != right.base_reference_name() ||
        left.distinct_value() != right.distinct_value() ||
        left.limit_value() != right.limit_value() || left.offset_value() != right.offset_value() ||
        !self.same_nodes?(left.projections(), right.projections()) ||
@@ -2615,65 +2625,64 @@ def same_tail?(left, right) -> Bool
 end
 end
 
-class Arel
-  def self.table(name: String) = ArelTable.new(name)
-  def self.cte(name: String) = ArelCteRelation.new(name)
-  def self.as(expression, name: String) = ArelAlias.new(expression, name)
-  def self.asc(expression) = ArelOrdering.new(expression, "ASC")
-  def self.desc(expression) = ArelOrdering.new(expression, "DESC")
+  def self.table(name: String) = Table.new(name)
+  def self.cte(name: String) = CteRelation.new(name)
+  def self.as(expression, name: String) = Alias.new(expression, name)
+  def self.asc(expression) = Ordering.new(expression, "ASC")
+  def self.desc(expression) = Ordering.new(expression, "DESC")
   def self.sql(fragment: String, params = nil)
     bound = params
     if bound == nil
       bound = []
     end
-    ArelRawSql.new(fragment, bound)
+    RawSql.new(fragment, bound)
   end
-  def self.count(expression) = ArelFunction.new("COUNT", [expression])
-  def self.count_distinct(expression) = ArelFunction.new("COUNT", [expression], true)
-  def self.sum(expression) = ArelFunction.new("SUM", [expression])
-  def self.min(expression) = ArelFunction.new("MIN", [expression])
-  def self.max(expression) = ArelFunction.new("MAX", [expression])
-  def self.avg(expression) = ArelFunction.new("AVG", [expression])
-  def self.lower(expression) = ArelFunction.new("LOWER", [expression])
-  def self.upper(expression) = ArelFunction.new("UPPER", [expression])
-  def self.function(name: String, arguments: Array) = ArelFunction.new(name, arguments)
-  def self.exists(query) = ArelExists.new(query, false)
-  def self.not_exists(query) = ArelExists.new(query, true)
-  def self.scalar(query) = ArelScalarSubquery.new(query)
-  def self.expression(expression) = ArelAssignmentValue.new(expression)
-  def self.excluded(name: String) = ArelExcludedAttribute.new(name)
-  def self.literal(value) = ArelLiteral.new(value)
-  def self.cast(expression, type_name: String) = ArelCast.new(expression, type_name)
+  def self.count(expression) = Function.new("COUNT", [expression])
+  def self.count_distinct(expression) = Function.new("COUNT", [expression], true)
+  def self.sum(expression) = Function.new("SUM", [expression])
+  def self.min(expression) = Function.new("MIN", [expression])
+  def self.max(expression) = Function.new("MAX", [expression])
+  def self.avg(expression) = Function.new("AVG", [expression])
+  def self.lower(expression) = Function.new("LOWER", [expression])
+  def self.upper(expression) = Function.new("UPPER", [expression])
+  def self.function(name: String, arguments: Array) = Function.new(name, arguments)
+  def self.exists(query) = Exists.new(query, false)
+  def self.not_exists(query) = Exists.new(query, true)
+  def self.scalar(query) = ScalarSubquery.new(query)
+  def self.expression(expression) = AssignmentValue.new(expression)
+  def self.excluded(name: String) = ExcludedAttribute.new(name)
+  def self.literal(value) = Literal.new(value)
+  def self.cast(expression, type_name: String) = Cast.new(expression, type_name)
   def self.integer_operator(expression, operator: String, value)
     if operator != "&" && operator != "|" && operator != "<<" && operator != ">>"
       raise ArgumentError.new("unsupported SQL integer operator")
     end
-    ArelBinaryExpression.new(expression, operator, value)
+    BinaryExpression.new(expression, operator, value)
   end
-  def self.conflict_target(columns) = ArelConflictTarget.new(arel_array(columns))
+  def self.conflict_target(columns) = ConflictTarget.new(arel_array(columns))
   def self.render(statement, visitor = nil) = statement.to_sql(visitor)
-  def self.inspect(node) = ArelInspector.new().inspect(node)
-  def self.same?(left, right) = ArelInspector.new().same?(left, right)
-  def self.children(node) = ArelInspector.new().children(node)
-  def self.walk(node, visitor = nil) = ArelInspector.new().walk(node, visitor)
-  def self.simplify(node, rules = [], report = false) = ArelInspector.new().simplify(node, rules, report)
-  def self.with_children(node, replacements: Array) = ArelInspector.new().with_children(node, replacements)
-  def self.union(left, right) = ArelCompoundQuery.new(left, "UNION", right)
-  def self.union_all(left, right) = ArelCompoundQuery.new(left, "UNION ALL", right)
-  def self.intersect(left, right) = ArelCompoundQuery.new(left, "INTERSECT", right)
-  def self.except(left, right) = ArelCompoundQuery.new(left, "EXCEPT", right)
-  def self.insert_into(table: ArelTable) = ArelInsert.new(table)
-  def self.update(table: ArelTable) = ArelUpdate.new(table)
-  def self.delete_from(table: ArelTable) = ArelDelete.new(table)
+  def self.inspect(node) = Inspector.new().inspect(node)
+  def self.same?(left, right) = Inspector.new().same?(left, right)
+  def self.children(node) = Inspector.new().children(node)
+  def self.walk(node, visitor = nil) = Inspector.new().walk(node, visitor)
+  def self.simplify(node, rules = [], report = false) = Inspector.new().simplify(node, rules, report)
+  def self.with_children(node, replacements: Array) = Inspector.new().with_children(node, replacements)
+  def self.union(left, right) = CompoundQuery.new(left, "UNION", right)
+  def self.union_all(left, right) = CompoundQuery.new(left, "UNION ALL", right)
+  def self.intersect(left, right) = CompoundQuery.new(left, "INTERSECT", right)
+  def self.except(left, right) = CompoundQuery.new(left, "EXCEPT", right)
+  def self.insert_into(table: Arel::Table) = Insert.new(table)
+  def self.update(table: Arel::Table) = Update.new(table)
+  def self.delete_from(table: Arel::Table) = Delete.new(table)
   def self.from_subquery(query, name: String)
-    ArelQuery.new(name, [], [], nil, nil, [ArelRawSql.new("*", [])], true, true,
+    Query.new(name, [], [], nil, nil, [RawSql.new("*", [])], true, true,
       name, false, [], [], [], query)
   end
   def self.from(table)
-    if table is ArelTable
-      ArelQuery.for_table(table)
+    if table is Table
+      Query.for_table(table)
     else
-      ArelQuery.new(table, [], [], nil, nil, ["*"], false, false)
+      Query.new(table, [], [], nil, nil, ["*"], false, false)
     end
   end
 end

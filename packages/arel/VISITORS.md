@@ -2,20 +2,20 @@
 
 A visitor turns immutable Arel statements into `[sql, bind_params]`. Callers
 normally use `statement.to_sql(visitor)` or `Arel.render(statement, visitor)`;
-omitting the visitor selects `ArelSQLiteVisitor`.
+omitting the visitor selects `Arel::SQLiteVisitor`.
 
-`ArelVisitor` is the reusable base. It owns AST traversal, relation-scope
+`Arel::Visitor` is the reusable base. It owns AST traversal, relation-scope
 validation, nested query context, statement dispatch, capability diagnostics,
 and the portable SQL baseline. A concrete dialect supplies at least
 `visitor_name()`, `supports_extension?(name)`, `quote_identifier(name)`, and
 `render_pagination(limit, offset, params, bind_values)`. The pagination method
-owns placeholder collection for limits and offsets. `ArelSQLiteVisitor`
+owns placeholder collection for limits and offsets. `Arel::SQLiteVisitor`
 supplies those policies for the default renderer.
 
 Diamond uses method-shape conventions rather than interfaces. A visitor used
 by every current statement manager provides:
 
-- `render(query) -> Array` for an `ArelQuery`;
+- `render(query) -> Array` for an `Arel::Query`;
 - `render_compound(query) -> Array` for compound statements;
 - `render_insert(statement) -> Array`, `render_update(statement) -> Array`, and
   `render_delete(statement) -> Array` for visitor-owned write rendering;
@@ -68,7 +68,7 @@ The current named capabilities are:
 - `recursive CTEs`;
 - `integer bitwise operators`.
 
-`ArelSQLiteVisitor` supports all of them. A visitor may support any subset.
+`Arel::SQLiteVisitor` supports all of them. A visitor may support any subset.
 Unsupported use raises an `ArgumentError` naming both the visitor and the
 capability before SQL is returned.
 
@@ -93,7 +93,7 @@ the point where it renders them.
 
 ## Conformance
 
-`tests/cases/arel_dialects.di` defines an `ArelVisitor` subclass that rejects
+`tests/cases/arel_dialects.di` defines an `Arel::Visitor` subclass that rejects
 every extension without inheriting SQLite capability or quoting policy.
 Its fixtures are the current portable baseline for SELECT, INSERT, UPDATE,
 DELETE, compound queries, and CTEs. SQLite-specific rendering and execution
@@ -104,10 +104,10 @@ its renderer, then add separate fixtures for each capability it chooses to
 support. It should not claim a capability merely because the target dialect has
 similarly named syntax; bind ordering and node semantics must also match.
 
-`ArelPostgreSQLVisitor` (`lib/arel.di`) is the second such visitor, and the
+`Arel::PostgreSQLVisitor` (`lib/arel.di`) is the second such visitor, and the
 first to actually follow that guidance end to end: every capability it
 claims (`supports_extension?` returns `true` for all of them, same as
-`ArelSQLiteVisitor`) is backed by a real execution-based fixture in
+`Arel::SQLiteVisitor`) is backed by a real execution-based fixture in
 `test_postgres_dialect.di`, run against a live PostgreSQL server via
 `test_postgres_dialect.sh` -- not just plausible-looking rendered SQL. That
 suite is deliberately kept out of `tests/cases/`: everything there is

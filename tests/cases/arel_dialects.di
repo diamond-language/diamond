@@ -1,7 +1,7 @@
 require "../../lib/minitest"
 require "../../packages/arel/lib/arel"
 
-class PortableTestVisitor < ArelVisitor
+class PortableTestVisitor < Arel::Visitor
   def visitor_name() = "portable-test"
   def quote_identifier(name: String) -> String = arel_quote_identifier(name)
   def supports_extension?(name: String) = false
@@ -34,9 +34,9 @@ def run_tests()
     visitor = PortableTestVisitor.new()
     Minitest.assert_equal("portable-test", visitor.visitor_name())
     Minitest.assert_equal(false, visitor.supports_extension?("returning clauses"))
-    Minitest.assert_equal("SQLite", ArelSQLiteVisitor.new().visitor_name())
+    Minitest.assert_equal("SQLite", Arel::SQLiteVisitor.new().visitor_name())
     Minitest.assert_equal(true,
-      ArelSQLiteVisitor.new().supports_extension?("returning clauses"))
+      Arel::SQLiteVisitor.new().supports_extension?("returning clauses"))
     message = nil
     begin
       visitor.require_extension("example extension")
