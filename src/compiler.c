@@ -931,6 +931,40 @@ static int find_class_name(const Compiler *compiler,const char *name) {
     return -1;
 }
 
+/* Resolves a class name consume_qualified_name already collected into a
+ * plain C string -- used by resolve_type_name (parameter/return type
+ * annotations and, via resolve_type_name, `is` checks) and by superclass
+ * resolution, neither of which could previously represent an explicit
+ * `A::B` path at all (find_class_name alone is exact-string-only; find_class
+ * takes a single DiamondSpan token, one identifier, never a qualified
+ * path). Tries the name as given first (handles a fully-qualified path like
+ * `Shapes::Base`, or an ordinary un-nested class name), then -- unlike
+ * find_class_name alone -- falls back to the same current-module-scope-
+ * walking find_class/find_interface already do for bare `is`/`.new()`
+ * references, so a bare sibling name (`Base` from code also lexically
+ * inside `module Shapes`) still resolves for type annotations and `is`
+ * checks the same way it already did for construction and inheritance. */
+static int find_class_qualified_or_scoped(const Compiler *compiler,const char *name) {
+    const int direct=find_class_name(compiler,name);
+    if(direct>=0)return direct;
+    if(compiler->current_module<0)return -1;
+    char scope[DIAMOND_MAX_FUNCTION_NAME];
+    (void)snprintf(scope,sizeof scope,"%s",
+        compiler->program->modules[(size_t)compiler->current_module].name);
+    while(true) {
+        char qualified[DIAMOND_MAX_FUNCTION_NAME];
+        const int written=snprintf(qualified,sizeof qualified,"%s::%s",scope,name);
+        if(written>0&&(size_t)written<sizeof qualified) {
+            const int found=find_class_name(compiler,qualified);
+            if(found>=0)return found;
+        }
+        char *separator=strrchr(scope,':');
+        if(separator==nullptr)break;
+        separator[-1]='\0';
+    }
+    return -1;
+}
+
 static int find_interface_name(const Compiler *compiler,const char *name) {
     for(size_t index=0;index<compiler->program->interface_count;index++)
         if(stored_name_equals(compiler->program->interfaces[index].name,name))
@@ -1011,28 +1045,6 @@ static bool consume_qualified_name(Compiler *compiler,char *buffer,
     return true;
 }
 
-static int resolve_type(Compiler *compiler, DiamondSpan name) {
-    if (name_equals(compiler, "Int", name, false)) return DIAMOND_TYPE_INT;
-    if (name_equals(compiler, "Float", name, false)) return DIAMOND_TYPE_FLOAT;
-    if (name_equals(compiler, "String", name, false)) return DIAMOND_TYPE_STRING;
-    if (name_equals(compiler, "Bool", name, false)) return DIAMOND_TYPE_BOOL;
-    if (name_equals(compiler, "Nil", name, false)) return DIAMOND_TYPE_NIL;
-    if (name_equals(compiler, "Array", name, false)) return DIAMOND_TYPE_ARRAY;
-    if (name_equals(compiler, "Hash", name, false)) return DIAMOND_TYPE_HASH;
-    if (name_equals(compiler, "Callable", name, false)) return DIAMOND_TYPE_CALLABLE;
-    if (name_equals(compiler, "Sized", name, false)) return DIAMOND_TYPE_SIZED;
-    if (name_equals(compiler, "Symbol", name, false)) return DIAMOND_TYPE_SYMBOL;
-    for(size_t index=0;index<compiler->function->type_variable_count;index++)
-        if(name_equals(compiler,compiler->function->type_variables[index],name,false))
-            return DIAMOND_TYPE_VARIABLE_BASE+(int)index;
-    const int interface_index=find_interface(compiler,name);
-    if(interface_index>=0)return DIAMOND_TYPE_INTERFACE_BASE+interface_index;
-    const int class_index = find_class(compiler, name);
-    if (class_index >= 0) return DIAMOND_TYPE_CLASS_BASE + class_index;
-    fail(compiler, name, "unknown type annotation");
-    return DIAMOND_TYPE_NIL;
-}
-
 static int resolve_type_name(Compiler *compiler,const char *name,
                              DiamondSpan diagnostic) {
     static const struct {const char *name;uint8_t type;} builtins[]={
@@ -1049,7 +1061,7 @@ static int resolve_type_name(Compiler *compiler,const char *name,
             return DIAMOND_TYPE_VARIABLE_BASE+(int)index;
     int found=find_interface_name(compiler,name);
     if(found>=0)return DIAMOND_TYPE_INTERFACE_BASE+found;
-    found=find_class_name(compiler,name);
+    found=find_class_qualified_or_scoped(compiler,name);
     if(found>=0)return DIAMOND_TYPE_CLASS_BASE+found;
     fail(compiler,diagnostic,"unknown type annotation");return DIAMOND_TYPE_NIL;
 }
@@ -3714,13 +3726,19 @@ static uint16_t parse_precedence(Compiler *compiler, Precedence precedence) {
                 fail(compiler,compiler->current.span,"expected type after 'is'");
                 return left;
             }
-            const uint8_t tested_type=(uint8_t)resolve_type(
-                compiler,compiler->current.span);
+            const DiamondSpan tested_type_span=compiler->current.span;
+            char tested_type_name[DIAMOND_MAX_FUNCTION_NAME];
+            if(!consume_qualified_name(compiler,tested_type_name,
+                                       sizeof tested_type_name)) {
+                fail(compiler,tested_type_span,"type name is too long");
+                return left;
+            }
+            const uint8_t tested_type=(uint8_t)resolve_type_name(
+                compiler,tested_type_name,tested_type_span);
             if(tested_type>=DIAMOND_TYPE_VARIABLE_BASE&&
                tested_type<DIAMOND_TYPE_INTERFACE_BASE)
-                fail(compiler,compiler->current.span,
+                fail(compiler,tested_type_span,
                      "generic type variables cannot be used with 'is' before binding");
-            advance_token(compiler);
             const uint16_t destination=allocate_register(compiler);
             emit_instruction(compiler,DIAMOND_OP_IS_TYPE,destination,left,
                              tested_type,3);
@@ -4213,15 +4231,21 @@ static uint16_t compile_begin(Compiler *compiler) {
                 if(type_count==8) {
                     fail(compiler,compiler->current.span,"too many rescue types");break;
                 }
-                const uint8_t rescue_type=(uint8_t)resolve_type(
-                    compiler,compiler->current.span);
+                const DiamondSpan rescue_type_span=compiler->current.span;
+                char rescue_type_name[DIAMOND_MAX_FUNCTION_NAME];
+                if(!consume_qualified_name(compiler,rescue_type_name,
+                                           sizeof rescue_type_name)) {
+                    fail(compiler,rescue_type_span,"rescue type name is too long");break;
+                }
+                const uint8_t rescue_type=(uint8_t)resolve_type_name(
+                    compiler,rescue_type_name,rescue_type_span);
                 for(size_t existing=0;existing<type_count;existing++)
                     if(rescue_types[existing]==rescue_type)
-                        fail(compiler,compiler->current.span,
+                        fail(compiler,rescue_type_span,
                              "duplicate rescue type");
                 for(size_t existing=0;existing<seen_rescue_type_count;existing++)
                     if(seen_rescue_types[existing]==rescue_type)
-                        fail(compiler,compiler->current.span,
+                        fail(compiler,rescue_type_span,
                              "rescue type was already handled");
                     else if(seen_rescue_types[existing]>=DIAMOND_TYPE_CLASS_BASE&&
                             rescue_type>=DIAMOND_TYPE_CLASS_BASE) {
@@ -4232,12 +4256,11 @@ static uint16_t compile_begin(Compiler *compiler) {
                               compiler->program->classes[child].superclass!=UINT8_MAX)
                             child=compiler->program->classes[child].superclass;
                         if(child==ancestor)
-                            fail(compiler,compiler->current.span,
+                            fail(compiler,rescue_type_span,
                                  "rescue type is covered by an earlier clause");
                     }
                 rescue_types[type_count++]=rescue_type;
                 seen_rescue_types[seen_rescue_type_count++]=rescue_type;
-                advance_token(compiler);
                 if(compiler->current.kind!=DIAMOND_TOKEN_PIPE)break;
                 advance_token(compiler);
             }
@@ -5611,15 +5634,19 @@ static uint16_t compile_class(Compiler *compiler) {
         if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER) {
             fail(compiler,compiler->current.span,"expected superclass name after '<'"); return 0;
         }
-        const int parent=find_class(compiler,compiler->current.span);
-        if(parent<0) { fail(compiler,compiler->current.span,"undefined superclass"); return 0; }
+        const DiamondSpan superclass_span=compiler->current.span;
+        char superclass_name[DIAMOND_MAX_FUNCTION_NAME];
+        if(!consume_qualified_name(compiler,superclass_name,sizeof superclass_name)) {
+            fail(compiler,superclass_span,"superclass name is too long"); return 0;
+        }
+        const int parent=find_class_qualified_or_scoped(compiler,superclass_name);
+        if(parent<0) { fail(compiler,superclass_span,"undefined superclass"); return 0; }
         class->superclass=(uint8_t)parent;
         const DiamondClass *parent_class=&compiler->program->classes[(size_t)parent];
         class->field_count=parent_class->field_count;
         for(size_t field=0;field<parent_class->field_count;field++)
             for(size_t ch=0;ch<DIAMOND_MAX_FUNCTION_NAME;ch++)
                 class->fields[field][ch]=parent_class->fields[field][ch];
-        advance_token(compiler);
     }
     if(!consume_block_start(compiler)) return 0;
     const int outer=compiler->current_class; compiler->current_class=index;
