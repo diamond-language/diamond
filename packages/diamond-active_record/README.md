@@ -25,6 +25,29 @@ takes a `Hash` of column name to value, ANDed together:
 repository.where(db, {"country": "UK", "active": true})
 ```
 
+`ActiveRecordRepository.new` takes an optional fourth argument selecting
+which Arel dialect visitor to render through -- `nil` (the default) means
+Arel's own default, `ArelSQLiteVisitor`. Pass `ArelPostgreSQLVisitor.new()`
+explicitly for a `PostgreSQL` connection:
+
+```diamond
+repository = ActiveRecordRepository.new(
+  Arel.table("authors"), map_author, "id", ArelPostgreSQLVisitor.new()
+)
+```
+
+This matters even though the two dialects render identical SQL for most of
+what this repository builds: Arel's own default visitor is always
+`ArelSQLiteVisitor` regardless of which database `db` actually connects
+to, and the two dialects do genuinely diverge for some queries (SQLite's
+offset-without-limit pagination sentinel, `LIMIT -1`, is syntax PostgreSQL
+rejects outright -- see
+[`packages/arel/ROADMAP.md`](https://gitlab.com/dmn9180/diamond/-/blob/main/packages/arel/ROADMAP.md)).
+Leaving the visitor unset against a `PostgreSQL` connection isn't rejected
+here, since most queries this repository builds happen to render
+identically either way, but it's a latent correctness gap rather than a
+supported combination.
+
 Explicit associations use `ActiveRecordHasMany` and `ActiveRecordBelongsTo`:
 
 ```diamond

@@ -3,14 +3,24 @@ require "../../arel/lib/arel"
 # Explicit persistence primitives over Arel. This package deliberately does
 # not inspect schemas, infer columns, or dispatch through missing methods.
 class ActiveRecordRepository
-  def initialize(table: ArelTable, mapper: Callable[1], id_column: String = "id")
+  # `visitor` selects the Arel dialect this repository renders through --
+  # nil (the default) means Arel's own default, ArelSQLiteVisitor. Every
+  # method below threads it through explicitly rather than leaving it
+  # unstated: without this, a repository built over a PostgreSQL
+  # connection would still render through ArelSQLiteVisitor by default,
+  # which happens to produce identical SQL for the simple queries this
+  # repository builds today, but isn't guaranteed to stay that way (e.g.
+  # SQLite's own offset-without-limit pagination sentinel, LIMIT -1, is
+  # syntax PostgreSQL rejects outright -- see packages/arel/ROADMAP.md).
+  def initialize(table: ArelTable, mapper: Callable[1], id_column: String = "id", visitor = nil)
     @table = table
     @mapper = mapper
     @id_column = id_column
+    @visitor = visitor
   end
 
   def all(db)
-    rows = Arel.from(@table).to_a(db)
+    rows = Arel.from(@table).to_a(db, @visitor)
     mapped = []
     index = 0
     while index < rows.length()
@@ -21,7 +31,7 @@ class ActiveRecordRepository
   end
 
   def find(db, id)
-    rows = Arel.from(@table).where(@table.column(@id_column).eq(id)).take(1).to_a(db)
+    rows = Arel.from(@table).where(@table.column(@id_column).eq(id)).take(1).to_a(db, @visitor)
     if rows.length() == 0 then nil else @mapper(rows[0]) end
   end
 
@@ -41,7 +51,7 @@ class ActiveRecordRepository
       index += 1
     end
     query = Arel.from(@table)
-    rows = if predicate == nil then query.to_a(db) else query.where(predicate).to_a(db) end
+    rows = if predicate == nil then query.to_a(db, @visitor) else query.where(predicate).to_a(db, @visitor) end
     mapped = []
     index = 0
     while index < rows.length()
@@ -52,17 +62,17 @@ class ActiveRecordRepository
   end
 
   def create(db, attributes: Hash)
-    Arel.insert_into(@table).values(attributes).execute(db)
+    Arel.insert_into(@table).values(attributes).execute(db, @visitor)
   end
 
   def update(db, id, attributes: Hash)
     statement = Arel.update(@table).set(attributes)
-    statement.where(@table.column(@id_column).eq(id)).execute(db)
+    statement.where(@table.column(@id_column).eq(id)).execute(db, @visitor)
   end
 
   def delete(db, id)
     statement = Arel.delete_from(@table)
-    statement.where(@table.column(@id_column).eq(id)).execute(db)
+    statement.where(@table.column(@id_column).eq(id)).execute(db, @visitor)
   end
 end
 
