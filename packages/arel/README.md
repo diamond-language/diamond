@@ -14,13 +14,17 @@ historical scope in Rails.
 The initial renderer is `Arel::SQLiteVisitor`; `Arel::PostgreSQLVisitor` is the
 second, exercising the exact same node model against a live PostgreSQL
 server (see [VISITORS.md](VISITORS.md)'s Conformance section and
-`test_postgres_dialect.di`/`.sh`). Execution remains loosely coupled either
+`test_postgres_dialect.di`/`.sh`), and `Arel::MariaDBVisitor` is the third,
+verified the same way against a live MariaDB server
+(`test_mariadb_dialect.di`/`.sh`) -- named "MariaDB" rather than "MySQL"
+since real MySQL 8.x lacks `RETURNING` entirely, a MariaDB-only feature
+this visitor does support. Execution remains loosely coupled either
 way: reads call `db.query(sql, params)` and writes call
-`db.execute(sql, params)`, the method shapes both the SQLite3 and
-PostgreSQL drivers expose (see
+`db.execute(sql, params)`, the method shapes the SQLite3, PostgreSQL, and
+MySQL drivers all expose (see
 [`docs/io.md`](https://gitlab.com/dmn9180/diamond/-/blob/main/docs/io.md)'s
-"SQLite3" and "PostgreSQL" sections). Any future adapter exposing the same
-`#query(sql, params)` contract is a drop-in target, the same way
+"SQLite3", "PostgreSQL", and "MySQL" sections). Any future adapter exposing
+the same `#query(sql, params)` contract is a drop-in target, the same way
 [`packages/rack`](../rack/README.md) stayed server-agnostic by
 depending on a shared method convention rather than a concrete type.
 
@@ -61,7 +65,17 @@ PostgreSQL's grammar accepts a bare `OFFSET ?` with no `LIMIT` clause at all,
 so `Arel::PostgreSQLVisitor#render_pagination` skips that sentinel; this was
 the one real difference found when adding PostgreSQL as Arel's second
 dialect (everything else claimed identical syntax, verified against a live
-server -- see `ROADMAP.md`).
+server -- see `ROADMAP.md`). MariaDB needed its own sentinel again, like
+SQLite (its grammar also requires `LIMIT` before `OFFSET`), but a different
+one: `LIMIT 18446744073709551615` (2^64-1), MariaDB/MySQL's own documented
+"unlimited" idiom, since it has no negative-limit convention. Unlike
+PostgreSQL, MariaDB needed several more real seams beyond pagination --
+`ROADMAP.md`'s "pick the next dialect" entry has the full inventory
+(no `ON CONFLICT` syntax at all, `RETURNING` only on `INSERT`/`DELETE`,
+no bare `DEFAULT VALUES`, no `NULLS FIRST`/`LAST`, no write CTEs), enough
+that `Arel::MariaDBVisitor#render_insert`/`#render_update`/`#render_delete`
+replace the shared `render_default` fallback entirely rather than wrapping
+it (see the "Compound queries and each write manager..." paragraph above).
 `take`/`limit` and `skip`/`offset` reject negative values with `ArgumentError`.
 They remain immutable for both SELECT and compound queries.
 Pagination composes through derived sources, CTE bodies, EXISTS, membership and
@@ -357,7 +371,8 @@ why nothing here names `SQLite3` directly.
 
 ## What's deliberately out of scope
 
-- **Visitors for adapters beyond SQLite and PostgreSQL.** Nodes contain no
-  dialect-specific rendering logic; `Arel::SQLiteVisitor`/`Arel::PostgreSQLVisitor`
-  are deliberately separate so a third dialect's visitor can render the same
-  query tree without forking it.
+- **Visitors for adapters beyond SQLite, PostgreSQL, and MariaDB.** Nodes
+  contain no dialect-specific rendering logic; `Arel::SQLiteVisitor`/
+  `Arel::PostgreSQLVisitor`/`Arel::MariaDBVisitor` are deliberately separate
+  so a fourth dialect's visitor can render the same query tree without
+  forking it.

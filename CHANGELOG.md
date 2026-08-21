@@ -1,5 +1,48 @@
 # Changelog
 
+## Arel 0.34.0
+
+- Added `Arel::MariaDBVisitor`, Arel's third dialect, verified against a
+  live MariaDB 11 server (`test_mariadb_dialect.di`/`.sh`). Named
+  "MariaDB" rather than "MySQL" deliberately: real MySQL 8.x has no
+  `RETURNING` at all, a MariaDB-only feature (since 10.5) this visitor
+  does support -- calling it "MySQL" would have overclaimed for anyone
+  connecting to real MySQL.
+- Unlike `Arel::PostgreSQLVisitor` (where pagination was the only real
+  grammar seam), MariaDB diverges enough that `render_insert`/
+  `render_update`/`render_delete` needed full per-statement overrides
+  rather than the shared `render_default` fallback plus a capability
+  flag:
+  - no `ON CONFLICT` syntax at all -- `INSERT IGNORE` (do-nothing) and
+    `... ON DUPLICATE KEY UPDATE col = VALUES(col)` (do-update, the
+    `excluded.col` equivalent) instead, neither taking an explicit
+    conflict target. A plain column-list target is accepted and ignored;
+    a real target predicate or a named-constraint target (both asking
+    for something more specific than MariaDB can express) are rejected,
+    same as SQLite already rejects them. `INSERT IGNORE` is honestly a
+    broader mechanism than `ON CONFLICT ... DO NOTHING` -- a deliberately
+    accepted semantic gap, not a hidden one;
+  - `RETURNING` only works on `INSERT`/`DELETE`, not `UPDATE` (a real
+    MariaDB syntax error) -- gated by a new, visitor-private `RETURNING
+    on UPDATE` capability;
+  - bare `INSERT ... DEFAULT VALUES` isn't valid MariaDB syntax --
+    `INSERT INTO t () VALUES ()` renders instead, under the same
+    `insert default values` capability name;
+  - pagination needed its own "no limit" sentinel again, like SQLite, but
+    a different one: `LIMIT 18446744073709551615` (2^64-1, MariaDB/
+    MySQL's own documented idiom), since MariaDB has no negative-limit
+    convention;
+  - `explicit NULL ordering` and `write CTEs` have no MariaDB syntax at
+    all and are rejected outright; `recursive CTEs` stays supported on
+    the read side.
+  - Quoting (backticks), per-column `DEFAULT` in a multi-row `VALUES`
+    list, and integer bitwise operators all matched SQLite/PostgreSQL
+    exactly.
+- Covered by a self-contained rendering suite (`tests/cases/
+  arel_mariadb_dialect.di`) and a live-execution opt-in suite
+  (`test_mariadb_dialect.di`/`.sh`) run against a fresh podman container.
+- `package.di` bumped 0.33.0 -> 0.34.0.
+
 ## Arel 0.33.0
 
 - Resolved the four "Deferred expression decisions" from `ROADMAP.md` by

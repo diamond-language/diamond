@@ -47,7 +47,12 @@ Compound and all three write managers enter the selected visitor first. The
 SQLite visitor delegates to each statement's `render_default(visitor)` fallback
 for its current grammar; another visitor may replace the complete statement or
 wrap that fallback. A wrapper must return the fallback's bind array unchanged
-unless its SQL adds or removes corresponding placeholders.
+unless its SQL adds or removes corresponding placeholders. `Arel::MariaDBVisitor`
+is the first to actually replace the complete statement rather than wrap the
+fallback: its `render_insert`/`render_update`/`render_delete` reimplement all
+three from scratch (via each statement's `structure()` accessor) rather than
+calling `render_default` at all, since its upsert/RETURNING/DEFAULT VALUES
+grammar differs too much from the shared fallback to wrap.
 
 Visitors may override `quote_identifier` independently of expression
 rendering. Statement managers never call SQLite's quoting helper directly, so
@@ -68,10 +73,14 @@ The current named capabilities are:
 - `recursive CTEs`;
 - `integer bitwise operators`;
 - `per-column default values`;
-- `named-constraint conflict targets`.
+- `named-constraint conflict targets`;
+- `RETURNING on UPDATE` -- private to `Arel::MariaDBVisitor`'s own
+  `render_update` override (see below); no shared, portable code path ever
+  checks this name, unlike every other capability in this list.
 
-`Arel::SQLiteVisitor` supports every capability except the last two, which are
-genuinely PostgreSQL-only: SQLite has no per-column `DEFAULT` placeholder in a
+`Arel::SQLiteVisitor` supports every capability except `per-column default
+values` and `named-constraint conflict targets`, which are genuinely
+PostgreSQL-only: SQLite has no per-column `DEFAULT` placeholder in a
 multi-row `VALUES` list and no named-constraint `ON CONFLICT ON CONSTRAINT`
 form, only column-list conflict targets. A visitor may support any subset.
 Unsupported use raises an `ArgumentError` naming both the visitor and the
@@ -123,3 +132,23 @@ part of `make test`/CI. See `ROADMAP.md`'s "pick the next dialect" entry for
 what this pass found: nearly everything Arel models turned out to be
 identical between the two dialects (both were modeled on Postgres's own SQL
 to begin with), with pagination as the one real grammar seam.
+
+`Arel::MariaDBVisitor` (`lib/arel.di`) is the third, verified the same
+way against a live MariaDB server via `test_mariadb_dialect.di`/`.sh`.
+Named "MariaDB" rather than "MySQL" since real MySQL 8.x lacks `RETURNING`
+entirely (a MariaDB-only feature this visitor does support) -- calling it
+"MySQL" would have overclaimed. Unlike PostgreSQLVisitor, this dialect
+diverges enough from the shared portable model that `render_insert`/
+`render_update`/`render_delete` are overridden entirely rather than
+relying on `render_default` plus a capability flag: no `ON CONFLICT`
+syntax at all (`INSERT IGNORE`/`ON DUPLICATE KEY UPDATE col = VALUES(col)`
+instead, with no explicit conflict target MariaDB can express), `RETURNING`
+only on `INSERT`/`DELETE` not `UPDATE`, no bare `DEFAULT VALUES`, its own
+pagination sentinel, and no `NULLS FIRST`/`LAST` or write CTEs at all. See
+`ROADMAP.md`'s "pick the next dialect" entry for the full inventory,
+including the semantic gap this pass deliberately accepted (`INSERT
+IGNORE` suppresses a broader class of errors than `ON CONFLICT ... DO
+NOTHING` does) and the affected-rows convention difference (a no-op
+upsert reports `0`, not `1`; a value-changing `ON DUPLICATE KEY UPDATE`
+reports `2`, not `1`) worth knowing before writing further fixtures
+against it.

@@ -65,6 +65,66 @@ collection in the shared traversal whenever placeholder order is identical
 across dialects, and avoid speculative abstraction when the new dialect uses
 the same syntax and semantics as the existing two.
 
+**Done**: `Arel::MariaDBVisitor` (`lib/arel.di`) is the third dialect,
+verified against a live MariaDB 11 server
+(`test_mariadb_dialect.di`/`.sh`). Named "MariaDB" rather than "MySQL"
+deliberately: real MySQL 8.x has no `RETURNING` at all, which this visitor
+does support (a MariaDB-only feature since 10.5) -- calling it "MySQL"
+would have overclaimed for anyone actually running real MySQL. Unlike
+Postgres (where pagination was the *only* real seam), this dialect
+diverges enough that `Visitor#render_insert`/`#render_update`/
+`#render_delete` (the extension point the "Compound and all three write
+managers enter the selected visitor first" paragraph above already
+describes) needed full per-statement overrides rather than a shared
+`render_default` plus a capability flag:
+
+- MariaDB has no `ON CONFLICT` syntax at all: `INSERT IGNORE` (do-nothing)
+  and `... ON DUPLICATE KEY UPDATE col = VALUES(col)` (do-update, the
+  `excluded.col` equivalent) instead, neither taking an explicit conflict
+  target -- MariaDB always resolves against whatever unique/primary key it
+  hits. A plain column-list `ConflictTarget` is accepted (and ignored,
+  since there's nothing to render); a real target predicate or
+  `ConflictConstraintTarget` -- both requesting something more specific
+  than MariaDB can express -- are rejected via `conflict-target
+  predicates`/`named-constraint conflict targets`, same as SQLite already
+  rejects them. `INSERT IGNORE` is honestly a broader mechanism than `ON
+  CONFLICT ... DO NOTHING` (it suppresses errors for *any* constraint
+  violation on the statement, not just ones matching a specific target) --
+  a deliberately accepted semantic gap, not a hidden one;
+- `RETURNING` genuinely only works on `INSERT`/`DELETE`, not `UPDATE` (a
+  real MariaDB syntax error) -- caught directly, not assumed from the name
+  alone. Gated by its own `RETURNING on UPDATE` capability, checked before
+  ever calling the shared `render_returning` (which only knows the single
+  `returning clauses` capability, true here for `INSERT`/`DELETE`'s sake);
+- bare `INSERT ... DEFAULT VALUES` isn't valid MariaDB syntax --
+  `INSERT INTO t () VALUES ()` is the equivalent rendered instead, under
+  the same `insert default values` capability name so callers don't need
+  to know the two dialects spell it differently;
+- pagination needed its own sentinel again, like SQLite, but a different
+  one: MariaDB's grammar requires `LIMIT` before `OFFSET` same as SQLite,
+  but has no negative-limit convention -- `LIMIT 18446744073709551615`
+  (2^64-1, MariaDB/MySQL's own documented "unlimited" idiom) stands in for
+  SQLite's `LIMIT -1`;
+- `explicit NULL ordering` (`NULLS FIRST`/`LAST`) has no MariaDB syntax at
+  all, unlike both SQLite and Postgres -- rejected outright, not
+  approximated;
+- `write CTEs` (`WITH ... INSERT/UPDATE/DELETE`) aren't supported either --
+  only `WITH ... SELECT`, read-side recursive CTEs included, so
+  `recursive CTEs` stays supported (write statements are already blocked
+  earlier by the `write CTEs` rejection, so that combination never reaches
+  the recursive check);
+- quoting (backticks, not double quotes), per-column `DEFAULT` in a
+  multi-row `VALUES` list, and the integer bitwise operators all matched
+  SQLite/Postgres exactly, needing no changes.
+
+Also worth knowing for anyone writing further MariaDB conformance fixtures:
+its own `#execute`/affected-rows convention differs from Postgres/SQLite's
+for upsert specifically -- a duplicate `INSERT IGNORE` or a `ON DUPLICATE
+KEY UPDATE` that writes back the same value both report `0` rows affected
+(not `1`), while an actual value change reports `2` (not `1`) for the
+update case. Verified directly against a live server before writing any
+assertion depending on it, not assumed from the SQLite/Postgres pattern.
+
 ## Deferred expression decisions
 
 Resolved once the PostgreSQL dialect existed to check each against:
