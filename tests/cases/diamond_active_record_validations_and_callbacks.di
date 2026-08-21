@@ -38,8 +38,11 @@ def run_tests()
   end
 
   def make_before_save(log)
-    def hook(db, attributes)
-      log.push("before_save:#{attributes["name"]}")
+    def hook(db, attributes, on)
+      log.push("before_save:#{on}")
+      if on == :destroy
+        return attributes
+      end
       updated = {}
       keys = attributes.keys()
       index = 0
@@ -54,8 +57,8 @@ def run_tests()
   end
 
   def make_after_save(log)
-    def hook(db, attributes)
-      log.push("after_save:#{attributes["country"]}")
+    def hook(db, attributes, on)
+      log.push("after_save:#{on}:#{attributes["country"]}")
     end
     hook
   end
@@ -85,8 +88,8 @@ def run_tests()
   repository.create(db, {"name": "Ada", "country": "uk"})
   Minitest.assert_equal("UK", repository.find(db, 1).country())
   Minitest.assert_equal(2, log.entries().length())
-  Minitest.assert_equal("before_save:Ada", log.entries()[0])
-  Minitest.assert_equal("after_save:UK", log.entries()[1])
+  Minitest.assert_equal("before_save:create", log.entries()[0])
+  Minitest.assert_equal("after_save:create:UK", log.entries()[1])
 
   # update goes through the same validate -> before_save -> write ->
   # after_save pipeline.
@@ -103,6 +106,15 @@ def run_tests()
   end
   Minitest.assert_equal(true, update_failed)
   Minitest.assert_equal("US", repository.find(db, 1).country())
+
+  # delete runs before_save/after_save with on == :destroy and a
+  # single-entry {id_column => id} attributes Hash, not the full row --
+  # there is no attributes payload of its own for a delete.
+  Minitest.assert_equal(1, repository.delete(db, 1))
+  Minitest.assert_equal(nil, repository.find(db, 1))
+  Minitest.assert_equal(6, log.entries().length())
+  Minitest.assert_equal("before_save:destroy", log.entries()[4])
+  Minitest.assert_equal("after_save:destroy:nil", log.entries()[5])
 
   db.close()
 end

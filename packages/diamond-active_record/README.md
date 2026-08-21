@@ -78,7 +78,8 @@ def validate_author(attributes)
   errors
 end
 
-def touch_country(db, attributes)
+def touch_country(db, attributes, on)
+  return attributes if on == :destroy
   updated = {}
   attributes.keys().each() do |key| updated[key] = attributes[key] end
   updated["country"] = attributes["country"].upcase()
@@ -96,14 +97,19 @@ repository.create(db, {"name": "Ada", "country": "uk"})  # stores country "UK"
 return an `Array` of error message Strings (empty means valid).
 `#create`/`#update` run it first, before any SQL, and raise
 `ActiveRecordValidationError` (`.errors()` for the Array, `.message()` the
-joined String) on failure. `before_save`/`after_save` run around both
-`#create` and `#update` alike (both are "saves" here, the same way
-`ActiveRecordTransaction` already treats every write uniformly) as
-`callback(db, attributes)`; `before_save` runs after validation and returns
-the attributes to actually write, letting it transform values, while
-`after_save` runs once the write succeeds and its return value is ignored.
-There are no create/update/delete-specific hook variants yet -- this pair
-covers what's needed until real usage asks for finer granularity.
+joined String) on failure.
+
+`before_save`/`after_save` run around `#create`, `#update`, and `#delete`
+alike, as `callback(db, attributes, on)` -- `on` is a `Symbol`
+(`:create`/`:update`/`:destroy`) telling one shared hook which operation is
+running, rather than needing six separate create/update/destroy-specific
+hook slots. For `#delete`, `attributes` is a one-entry `Hash`
+(`{id_column => id}`), since a delete has no attributes payload of its own,
+just the row it targets. `before_save` runs after validation and returns
+the attributes to actually write, letting it transform values -- that
+return value is used for `#create`/`#update` but ignored for `#delete`
+(there's nothing to write). `after_save` runs once the operation succeeds,
+with those same attributes, and its return value is always ignored.
 
 Neither Arel nor the database drivers expose a transaction API of their
 own (`BEGIN`/`COMMIT`/`ROLLBACK` are ordinary SQL, run through the same

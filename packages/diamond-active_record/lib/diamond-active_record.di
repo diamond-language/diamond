@@ -32,17 +32,20 @@ class ActiveRecordRepository
   # raising ActiveRecordValidationError on failure. There is no rule-object
   # DSL here; validator is an ordinary function, same as mapper.
   #
-  # `before_save`/`after_save`, when given, are called around #create and
-  # #update alike (both are "saves" here, mirroring how ActiveRecordTransaction
-  # already treats every write uniformly) as `callback(db, attributes)`.
+  # `before_save`/`after_save`, when given, are called around #create,
+  # #update, and #delete alike, as `callback(db, attributes, on)` -- `on`
+  # is a Symbol (`:create`/`:update`/`:destroy`) telling a single shared
+  # hook which operation is running, rather than needing six separate
+  # create/update/destroy-specific hook slots. For #delete, `attributes`
+  # is a one-entry Hash ({id_column => id}), since a delete has no
+  # attributes payload of its own -- just the row it targets.
   # before_save runs after validation and returns the attributes Hash to
   # actually write (letting it inject/transform values, e.g. a timestamp);
-  # returning the same Hash unchanged is a no-op. after_save runs once the
-  # write succeeds, with the same (possibly before_save-transformed)
-  # attributes, and its return value is ignored. Create/update/delete-
-  # specific hook variants are deliberately not modeled yet -- this pair
-  # covers what a repository needs until real usage asks for finer
-  # granularity.
+  # returning the same Hash unchanged is a no-op. Its return value is used
+  # for #create/#update (what gets written) but ignored for #delete
+  # (there is nothing to write). after_save runs once the operation
+  # succeeds, with those same attributes, and its return value is always
+  # ignored.
   def initialize(table: ArelTable, mapper: Callable[1], id_column: String = "id", visitor = nil,
                  validator = nil, before_save = nil, after_save = nil)
     @table = table
@@ -110,11 +113,11 @@ class ActiveRecordRepository
     self.validate!(attributes)
     final_attributes = attributes
     unless @before_save == nil
-      final_attributes = @before_save(db, attributes)
+      final_attributes = @before_save(db, attributes, :create)
     end
     result = Arel.insert_into(@table).values(final_attributes).execute(db, @visitor)
     unless @after_save == nil
-      @after_save(db, final_attributes)
+      @after_save(db, final_attributes, :create)
     end
     result
   end
@@ -123,19 +126,28 @@ class ActiveRecordRepository
     self.validate!(attributes)
     final_attributes = attributes
     unless @before_save == nil
-      final_attributes = @before_save(db, attributes)
+      final_attributes = @before_save(db, attributes, :update)
     end
     statement = Arel.update(@table).set(final_attributes)
     result = statement.where(@table.column(@id_column).eq(id)).execute(db, @visitor)
     unless @after_save == nil
-      @after_save(db, final_attributes)
+      @after_save(db, final_attributes, :update)
     end
     result
   end
 
   def delete(db, id)
+    attributes = {}
+    attributes[@id_column] = id
+    unless @before_save == nil
+      @before_save(db, attributes, :destroy)
+    end
     statement = Arel.delete_from(@table)
-    statement.where(@table.column(@id_column).eq(id)).execute(db, @visitor)
+    result = statement.where(@table.column(@id_column).eq(id)).execute(db, @visitor)
+    unless @after_save == nil
+      @after_save(db, attributes, :destroy)
+    end
+    result
   end
 end
 
