@@ -66,6 +66,45 @@ object introspection resolves it. It returns `nil`, the same "not found"
 shape `ActiveRecordRepository#find` uses, rather than an empty `Array`,
 when nothing matches.
 
+`ActiveRecordRepository.new` also takes optional `validator`, `before_save`,
+and `after_save` arguments -- there is no `validates`-style class macro here
+(there's no model base class to hang one on), just ordinary functions,
+the same as `mapper`:
+
+```diamond
+def validate_author(attributes)
+  errors = []
+  errors.push("name is required") if attributes["name"] == nil || attributes["name"] == ""
+  errors
+end
+
+def touch_country(db, attributes)
+  updated = {}
+  attributes.keys().each() do |key| updated[key] = attributes[key] end
+  updated["country"] = attributes["country"].upcase()
+  updated
+end
+
+repository = ActiveRecordRepository.new(
+  Arel.table("authors"), map_author, "id", nil, validate_author, touch_country
+)
+repository.create(db, {"name": "", "country": "uk"})  # raises ActiveRecordValidationError
+repository.create(db, {"name": "Ada", "country": "uk"})  # stores country "UK"
+```
+
+`validator` is called with the caller's own attributes `Hash` and must
+return an `Array` of error message Strings (empty means valid).
+`#create`/`#update` run it first, before any SQL, and raise
+`ActiveRecordValidationError` (`.errors()` for the Array, `.message()` the
+joined String) on failure. `before_save`/`after_save` run around both
+`#create` and `#update` alike (both are "saves" here, the same way
+`ActiveRecordTransaction` already treats every write uniformly) as
+`callback(db, attributes)`; `before_save` runs after validation and returns
+the attributes to actually write, letting it transform values, while
+`after_save` runs once the write succeeds and its return value is ignored.
+There are no create/update/delete-specific hook variants yet -- this pair
+covers what's needed until real usage asks for finer granularity.
+
 Neither Arel nor the database drivers expose a transaction API of their
 own (`BEGIN`/`COMMIT`/`ROLLBACK` are ordinary SQL, run through the same
 `#execute(sql)` every write above already uses -- see
@@ -81,4 +120,4 @@ end
 ```
 
 There is no schema inspection, naming convention, object introspection,
-validation, dirty tracking, or implicit query scope.
+dirty tracking, or implicit query scope.

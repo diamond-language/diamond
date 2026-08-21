@@ -1,5 +1,18 @@
 require "../../arel/lib/arel"
 
+# Raised by ActiveRecordRepository#create/#update when a configured
+# validator reports at least one failure, before any SQL runs. `errors` is
+# the Array of message Strings the validator returned; `message` joins
+# them for the common case of just wanting one string to display or log.
+class ActiveRecordValidationError < StandardError
+  attr_reader message: String
+  attr_reader errors: Array
+  def initialize(errors: Array)
+    @errors = errors
+    @message = errors.join(", ")
+  end
+end
+
 # Explicit persistence primitives over Arel. This package deliberately does
 # not inspect schemas, infer columns, or dispatch through missing methods.
 class ActiveRecordRepository
@@ -12,11 +25,43 @@ class ActiveRecordRepository
   # repository builds today, but isn't guaranteed to stay that way (e.g.
   # SQLite's own offset-without-limit pagination sentinel, LIMIT -1, is
   # syntax PostgreSQL rejects outright -- see packages/arel/ROADMAP.md).
-  def initialize(table: ArelTable, mapper: Callable[1], id_column: String = "id", visitor = nil)
+  #
+  # `validator`, when given, is called with the caller's own attributes
+  # Hash (never a mutated copy) and must return an Array of error message
+  # Strings -- empty means valid. #create/#update run it before any SQL,
+  # raising ActiveRecordValidationError on failure. There is no rule-object
+  # DSL here; validator is an ordinary function, same as mapper.
+  #
+  # `before_save`/`after_save`, when given, are called around #create and
+  # #update alike (both are "saves" here, mirroring how ActiveRecordTransaction
+  # already treats every write uniformly) as `callback(db, attributes)`.
+  # before_save runs after validation and returns the attributes Hash to
+  # actually write (letting it inject/transform values, e.g. a timestamp);
+  # returning the same Hash unchanged is a no-op. after_save runs once the
+  # write succeeds, with the same (possibly before_save-transformed)
+  # attributes, and its return value is ignored. Create/update/delete-
+  # specific hook variants are deliberately not modeled yet -- this pair
+  # covers what a repository needs until real usage asks for finer
+  # granularity.
+  def initialize(table: ArelTable, mapper: Callable[1], id_column: String = "id", visitor = nil,
+                 validator = nil, before_save = nil, after_save = nil)
     @table = table
     @mapper = mapper
     @id_column = id_column
     @visitor = visitor
+    @validator = validator
+    @before_save = before_save
+    @after_save = after_save
+  end
+
+  def validate!(attributes: Hash)
+    if @validator == nil
+      return
+    end
+    errors = @validator(attributes)
+    unless errors.empty?()
+      raise ActiveRecordValidationError.new(errors)
+    end
   end
 
   def all(db)
@@ -62,12 +107,30 @@ class ActiveRecordRepository
   end
 
   def create(db, attributes: Hash)
-    Arel.insert_into(@table).values(attributes).execute(db, @visitor)
+    self.validate!(attributes)
+    final_attributes = attributes
+    unless @before_save == nil
+      final_attributes = @before_save(db, attributes)
+    end
+    result = Arel.insert_into(@table).values(final_attributes).execute(db, @visitor)
+    unless @after_save == nil
+      @after_save(db, final_attributes)
+    end
+    result
   end
 
   def update(db, id, attributes: Hash)
-    statement = Arel.update(@table).set(attributes)
-    statement.where(@table.column(@id_column).eq(id)).execute(db, @visitor)
+    self.validate!(attributes)
+    final_attributes = attributes
+    unless @before_save == nil
+      final_attributes = @before_save(db, attributes)
+    end
+    statement = Arel.update(@table).set(final_attributes)
+    result = statement.where(@table.column(@id_column).eq(id)).execute(db, @visitor)
+    unless @after_save == nil
+      @after_save(db, final_attributes)
+    end
+    result
   end
 
   def delete(db, id)
