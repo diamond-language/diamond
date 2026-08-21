@@ -83,7 +83,7 @@ def array_map_typed[T, U](values: Array[T], callback: Callable[[T], U]) -> Array
   index = 0
   while index < values.length()
     result.push(callback(values[index]))
-    index = index + 1
+    index += 1
   end
   result
 end
@@ -180,7 +180,7 @@ def array_delete_at(values: Array, index: Int)
     shift = index
     while shift < length - 1
       values[shift] = values[shift + 1]
-      shift = shift + 1
+      shift += 1
     end
     values.pop()
     removed
@@ -205,7 +205,7 @@ def hash_each(values: Hash, callback: Callable[2]) -> Hash
   count = values.length()
   while index < count
     callback(values.key_at(index), values.value_at(index))
-    index = index + 1
+    index += 1
   end
   values
 end
@@ -215,7 +215,7 @@ def hash_keys(values: Hash) -> Array
   index = 0
   while index < values.length()
     result.push(values.key_at(index))
-    index = index + 1
+    index += 1
   end
   result
 end
@@ -225,7 +225,7 @@ def hash_values(values: Hash) -> Array
   index = 0
   while index < values.length()
     result.push(values.value_at(index))
-    index = index + 1
+    index += 1
   end
   result
 end
@@ -236,7 +236,7 @@ def hash_include_key(values: Hash, needle) -> Bool
     if values.key_at(index) == needle
       return true
     end
-    index = index + 1
+    index += 1
   end
   false
 end
@@ -247,7 +247,7 @@ def hash_map_values(values: Hash, callback: Callable[1]) -> Hash
   while index < values.length()
     key = values.key_at(index)
     result[key] = callback(values.value_at(index))
-    index = index + 1
+    index += 1
   end
   result
 end
@@ -257,12 +257,12 @@ def hash_merge(a: Hash, b: Hash) -> Hash
   index = 0
   while index < a.length()
     result[a.key_at(index)] = a.value_at(index)
-    index = index + 1
+    index += 1
   end
   index = 0
   while index < b.length()
     result[b.key_at(index)] = b.value_at(index)
-    index = index + 1
+    index += 1
   end
   result
 end
@@ -292,14 +292,14 @@ def enumerable_count(values, callback: Callable[1]) -> Int
   if values is Hash
     def tally_pair(key, value)
       if callback(value)
-        total = total + 1
+        total += 1
       end
     end
     values.each(tally_pair)
   else
     def tally_item(item)
       if callback(item)
-        total = total + 1
+        total += 1
       end
     end
     values.each(tally_item)
@@ -384,7 +384,7 @@ def array_sum(values: Array)
   index = 0
   while index < values.length()
     total = total + values[index]
-    index = index + 1
+    index += 1
   end
   total
 end
@@ -397,7 +397,7 @@ def array_reject(values: Array, callback: Callable[1]) -> Array
     if callback(item) == false
       result.push(item)
     end
-    index = index + 1
+    index += 1
   end
   result
 end
@@ -409,7 +409,7 @@ def array_find(values: Array, callback: Callable[1])
     if callback(item)
       return item
     end
-    index = index + 1
+    index += 1
   end
   nil
 end
@@ -418,7 +418,7 @@ def array_each_with_index(values: Array, callback: Callable[2]) -> Array
   index = 0
   while index < values.length()
     callback(values[index], index)
-    index = index + 1
+    index += 1
   end
   values
 end
@@ -428,7 +428,7 @@ def enumerable_sort(values: Array) -> Array
   index = 0
   while index < values.length()
     result.push(values[index])
-    index = index + 1
+    index += 1
   end
   i = 1
   while i < result.length()
@@ -436,10 +436,10 @@ def enumerable_sort(values: Array) -> Array
     j = i - 1
     while j >= 0 && result[j] > key
       result[j + 1] = result[j]
-      j = j - 1
+      j -= 1
     end
     result[j + 1] = key
-    i = i + 1
+    i += 1
   end
   result
 end
@@ -449,7 +449,7 @@ def enumerable_sort_by(values: Array, callback: Callable[1]) -> Array
   index = 0
   while index < values.length()
     result.push(values[index])
-    index = index + 1
+    index += 1
   end
   i = 1
   while i < result.length()
@@ -458,10 +458,10 @@ def enumerable_sort_by(values: Array, callback: Callable[1]) -> Array
     j = i - 1
     while j >= 0 && callback(result[j]) > key_value
       result[j + 1] = result[j]
-      j = j - 1
+      j -= 1
     end
     result[j + 1] = key
-    i = i + 1
+    i += 1
   end
   result
 end
@@ -473,7 +473,7 @@ def enumerable_min(values: Array)
     if values[index] < result
       result = values[index]
     end
-    index = index + 1
+    index += 1
   end
   result
 end
@@ -485,7 +485,7 @@ def enumerable_max(values: Array)
     if values[index] > result
       result = values[index]
     end
-    index = index + 1
+    index += 1
   end
   result
 end
@@ -500,7 +500,7 @@ def array_min_by(values: Array, callback: Callable[1])
       result = values[index]
       result_key = key
     end
-    index = index + 1
+    index += 1
   end
   result
 end
@@ -515,7 +515,7 @@ def array_max_by(values: Array, callback: Callable[1])
       result = values[index]
       result_key = key
     end
-    index = index + 1
+    index += 1
   end
   result
 end
@@ -525,7 +525,7 @@ def array_take(values: Array, n: Int) -> Array
   index = 0
   while index < n && index < values.length()
     result.push(values[index])
-    index = index + 1
+    index += 1
   end
   result
 end
@@ -536,7 +536,7 @@ def array_drop(values: Array, n: Int) -> Array
   index = 0 if index < 0
   while index < values.length()
     result.push(values[index])
-    index = index + 1
+    index += 1
   end
   result
 end
@@ -551,7 +551,7 @@ def array_flat_map(values: Array, callback: Callable[1]) -> Array
     else
       result.push(mapped)
     end
-    index = index + 1
+    index += 1
   end
   result
 end
@@ -571,7 +571,7 @@ def array_partition(values: Array, callback: Callable[1]) -> Array
     else
       non_matching.push(item)
     end
-    index = index + 1
+    index += 1
   end
   [matching, non_matching]
 end
@@ -588,7 +588,7 @@ def array_group_by(values: Array, callback: Callable[1]) -> Hash
     else
       group.push(item)
     end
-    index = index + 1
+    index += 1
   end
   result
 end
@@ -607,7 +607,7 @@ def array_zip(values: Array, other: Array) -> Array
       nil
     end
     result.push([values[index], paired])
-    index = index + 1
+    index += 1
   end
   result
 end
@@ -628,10 +628,10 @@ def array_each_slice(values: Array, size: Int) -> Array
     slice_index = index
     while slice_index < values.length() && slice_index < index + size
       slice.push(values[slice_index])
-      slice_index = slice_index + 1
+      slice_index += 1
     end
     result.push(slice)
-    index = index + size
+    index += size
   end
   result
 end
@@ -649,10 +649,10 @@ def array_each_cons(values: Array, size: Int) -> Array
     window_index = index
     while window_index < index + size
       window.push(values[window_index])
-      window_index = window_index + 1
+      window_index += 1
     end
     result.push(window)
-    index = index + 1
+    index += 1
   end
   result
 end
@@ -668,7 +668,7 @@ def array_tally(values: Array) -> Hash
     else
       count + 1
     end
-    index = index + 1
+    index += 1
   end
   result
 end
@@ -746,7 +746,7 @@ class Range
     end
     while i < stop
       callback(i)
-      i = i + 1
+      i += 1
     end
     self
   end

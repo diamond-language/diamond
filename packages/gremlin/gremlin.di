@@ -114,7 +114,7 @@ class NonblockingConnection
   def gets()
     loop do
       newline = @buffer.index_of("\n")
-      if newline != nil
+      unless newline == nil
         line = @buffer.slice(0, newline)
         if line.length() > 0 && line.slice(line.length() - 1, 1) == "\r"
           line = line.slice(0, line.length() - 1)
@@ -177,7 +177,7 @@ def gremlin_worker(port, handler)
     conn = NonblockingConnection.new(client_socket)
     def handle_connection()
       request = http_parse_request(conn)
-      if request != nil
+      unless request == nil
         response = handler(request, context)
         http_write_response(conn, response)
       end
@@ -225,7 +225,7 @@ def gremlin_worker(port, handler)
           break
         end
         entry = spawn_connection(client_socket)
-        if entry != nil
+        unless entry == nil
           newly_spawned.push(entry)
         end
       end
@@ -285,7 +285,7 @@ def gremlin_serve(port, handler: Callable[2], threads = 1)
   i = 1
   while i < threads
     spawned.push(Thread.new(gremlin_worker, port, handler))
-    i = i + 1
+    i += 1
   end
   gremlin_worker(port, handler)
 end

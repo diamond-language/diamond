@@ -76,7 +76,7 @@ def http_parse_request(conn)
   headers = {}
   def collect_header(line)
     colon = line.index_of(": ")
-    if colon != nil
+    unless colon == nil
       name = line.slice(0, colon)
       value = line.slice(colon + 2, line.length())
       headers[name.downcase()] = value
@@ -92,7 +92,7 @@ def http_parse_request(conn)
 
   body = ""
   content_length = headers["content-length"]
-  if content_length != nil
+  unless content_length == nil
     length = content_length.to_i()
     # Treated like the "connection closed before sending a request
     # line" case above (return nil, connection closed, server moves on
@@ -128,7 +128,7 @@ def http_serve(port, handler: Callable[1])
   loop do
     conn = server.accept()
     request = http_parse_request(conn)
-    if request != nil
+    unless request == nil
       response = handler(request)
       http_write_response(conn, response)
     end
@@ -161,14 +161,14 @@ def http_parse_url(url)
   path_start = rest.index_of("/")
   host_and_port = rest
   path = "/"
-  if path_start != nil
+  unless path_start == nil
     host_and_port = rest.slice(0, path_start)
     path = rest.slice(path_start, rest.length())
   end
   colon = host_and_port.index_of(":")
   host = host_and_port
   port = 80
-  if colon != nil
+  unless colon == nil
     host = host_and_port.slice(0, colon)
     port = host_and_port.slice(colon + 1, host_and_port.length()).to_i()
   end
@@ -201,7 +201,7 @@ def http_request(method, url, headers = {}, body = "")
   response_headers = {}
   def collect_response_header(line)
     colon = line.index_of(": ")
-    if colon != nil
+    unless colon == nil
       name = line.slice(0, colon)
       value = line.slice(colon + 2, line.length())
       response_headers[name.downcase()] = value

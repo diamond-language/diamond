@@ -90,7 +90,7 @@ class Minitest
   attr_reader failures: Array
 
   def self.assert(condition: Bool, message: String = "assertion failed") -> Bool
-    if !condition
+    unless condition
       raise AssertionError.new(message)
     end
     true
@@ -139,7 +139,7 @@ class Minitest
       if collection[index] == item
         found = true
       end
-      index = index + 1
+      index += 1
     end
     prefix = if message == "" then "" else message + "\n" end
     Minitest.assert(found,
@@ -153,7 +153,7 @@ class Minitest
       if collection[index] == item
         found = true
       end
-      index = index + 1
+      index += 1
     end
     prefix = if message == "" then "" else message + "\n" end
     Minitest.assert(!found,
@@ -261,7 +261,7 @@ class Minitest
       setup_hook = @setup_hook
       teardown_hook = @teardown_hook
       begin
-        if setup_hook != nil
+        unless setup_hook == nil
           setup_hook()
         end
         callback()
@@ -276,11 +276,11 @@ class Minitest
         @errored = @errored + 1
         @failures.push("ERROR: #{name}\n  #{error.message()}")
       ensure
-        if teardown_hook != nil
+        unless teardown_hook == nil
           teardown_hook()
         end
       end
-      index = index + 1
+      index += 1
     end
     self.report()
     @failed == 0 && @errored == 0
@@ -290,7 +290,7 @@ class Minitest
     index = 0
     while index < @failures.length()
       puts(@failures[index])
-      index = index + 1
+      index += 1
     end
     puts("#{@names.length()} tests, #{@passed} passed, #{@failed} failed, #{@errored} errors, #{@skipped} skipped")
   end

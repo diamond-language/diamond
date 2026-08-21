@@ -36,7 +36,7 @@ def integer_times(n: Int, callback: Callable[1]) -> Int
   i = 0
   while i < n
     callback(i)
-    i = i + 1
+    i += 1
   end
   n
 end
@@ -45,7 +45,7 @@ def integer_upto(start: Int, stop: Int, callback: Callable[1]) -> Int
   i = start
   while i <= stop
     callback(i)
-    i = i + 1
+    i += 1
   end
   start
 end
@@ -54,7 +54,7 @@ def integer_downto(start: Int, stop: Int, callback: Callable[1]) -> Int
   i = start
   while i >= stop
     callback(i)
-    i = i - 1
+    i -= 1
   end
   start
 end
@@ -64,7 +64,7 @@ def array_sort(values: Array[Int]) -> Array[Int]
   index = 0
   while index < values.length()
     result.push(values[index])
-    index = index + 1
+    index += 1
   end
   i = 1
   while i < result.length()
@@ -72,10 +72,10 @@ def array_sort(values: Array[Int]) -> Array[Int]
     j = i - 1
     while j >= 0 && result[j] > key
       result[j + 1] = result[j]
-      j = j - 1
+      j -= 1
     end
     result[j + 1] = key
-    i = i + 1
+    i += 1
   end
   result
 end

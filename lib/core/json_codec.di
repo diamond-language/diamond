@@ -41,7 +41,7 @@ class JSONCodec
     index = 0
     while index < 4
       value = value * 16 + self.hex_digit_value(source[pos + index])
-      index = index + 1
+      index += 1
     end
     value
   end
@@ -69,7 +69,7 @@ class JSONCodec
   def skip_whitespace(source: String, pos: Int) -> Int
     length = source.length()
     while pos < length && self.is_whitespace(source[pos])
-      pos = pos + 1
+      pos += 1
     end
     pos
   end
@@ -86,11 +86,11 @@ class JSONCodec
     start = pos
     length = source.length()
     if pos < length && source[pos] == "-"
-      pos = pos + 1
+      pos += 1
     end
     digit_start = pos
     while pos < length && self.is_digit(source[pos])
-      pos = pos + 1
+      pos += 1
     end
     if pos == digit_start
       raise JSONError.new("invalid number at position #{start}")
@@ -98,10 +98,10 @@ class JSONCodec
     is_float = false
     if pos < length && source[pos] == "."
       is_float = true
-      pos = pos + 1
+      pos += 1
       fraction_start = pos
       while pos < length && self.is_digit(source[pos])
-        pos = pos + 1
+        pos += 1
       end
       if pos == fraction_start
         raise JSONError.new("invalid number at position #{start}")
@@ -109,13 +109,13 @@ class JSONCodec
     end
     if pos < length && (source[pos] == "e" || source[pos] == "E")
       is_float = true
-      pos = pos + 1
+      pos += 1
       if pos < length && (source[pos] == "+" || source[pos] == "-")
-        pos = pos + 1
+        pos += 1
       end
       exponent_start = pos
       while pos < length && self.is_digit(source[pos])
-        pos = pos + 1
+        pos += 1
       end
       if pos == exponent_start
         raise JSONError.new("invalid number at position #{start}")
@@ -131,7 +131,7 @@ class JSONCodec
   end
 
   def parse_string(source: String, pos: Int) -> Array
-    pos = pos + 1
+    pos += 1
     length = source.length()
     result = ""
     while true
@@ -142,7 +142,7 @@ class JSONCodec
       if ch == "\""
         return [result, pos + 1]
       elsif ch == "\\"
-        pos = pos + 1
+        pos += 1
         if pos >= length
           raise JSONError.new("unterminated escape sequence")
         end
@@ -172,7 +172,7 @@ class JSONCodec
         else
           raise JSONError.new("invalid escape character")
         end
-        pos = pos + 1
+        pos += 1
       else
         result = result + ch
         pos += 1
@@ -307,7 +307,7 @@ class JSONCodec
       else
         result = result + ch
       end
-      index = index + 1
+      index += 1
     end
     result + "\""
   end
@@ -321,7 +321,7 @@ class JSONCodec
         result = result + ","
       end
       result = result + self.stringify(value[index])
-      index = index + 1
+      index += 1
     end
     result + "]"
   end
@@ -342,7 +342,7 @@ class JSONCodec
       end
       encoded_value = self.stringify(value.value_at(index))
       result = result + self.stringify_string(key_string) + ":" + encoded_value
-      index = index + 1
+      index += 1
     end
     result + "}"
   end
