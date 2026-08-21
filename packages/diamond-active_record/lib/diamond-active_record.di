@@ -511,4 +511,100 @@ class Transaction
   end
 end
 
+# An optional, deliberately thin Rails-ActiveRecord-flavored layer over
+# everything above -- not a replacement for Repository/HasMany/HasOne/
+# BelongsTo/HasManyThrough (Model is built entirely out of them), just a
+# more familiar surface for anyone used to that shape. Two real Diamond
+# constraints shaped it, verified directly rather than assumed, and worth
+# understanding before extending it:
+#
+# - Diamond classes have fixed, compile-time method tables -- there is no
+#   `define_method`/`method_missing`, and the one runtime mechanism that
+#   exists (`ClassName.redefine_method`) can only repoint an *existing*
+#   method slot, never add a new one (see docs/design.md). So there is no
+#   `has_many :books`-style macro that conjures a real `books` method out
+#   of thin air -- every method a model exposes, including association
+#   readers, is written as an ordinary `def` in that model, same as any
+#   other Diamond class.
+# - Instance methods dispatch virtually (`self.foo()` called from a
+#   shared method correctly reaches a subclass's override -- confirmed
+#   directly), but `def self.x` class methods do not: `self` isn't even
+#   accessible inside one, and a bare call from inside one resolves to
+#   whichever same-named method is lexically visible at compile time, not
+#   the receiver's actual runtime class. Every instance method below
+#   (#save, #destroy, #persisted?, #id) is written so a subclass's own
+#   overrides of #repository/#to_attributes are what actually run,
+#   because that dispatch is real. The class-level surface
+#   (`Author.find`/`.all`/`.where`/`.create`) can't be inherited the same
+#   way -- each model writes its own short one-line forwarders (see the
+#   worked example in README.md), the one real per-model boilerplate
+#   this layer couldn't eliminate.
+class Model
+  def initialize(attributes: Hash = {})
+    # Copied rather than aliased, so #save's create path (which sets
+    # id_column once the id is known) never mutates a Hash the caller
+    # still holds its own reference to.
+    copy = {}
+    keys = attributes.keys()
+    index = 0
+    while index < keys.length()
+      copy[keys[index]] = attributes[keys[index]]
+      index += 1
+    end
+    @attributes = copy
+  end
+
+  # Every subclass must override both of these as instance methods (not
+  # `self.` methods -- see the class comment above for why that matters).
+  # #repository returns this model's own configured Repository (built
+  # once via `.configure`, see README.md); #to_attributes is the reverse
+  # of a Repository's own mapper function, returning this instance's
+  # current field values as the same plain Hash shape
+  # Repository#create/#update already write.
+  def repository()
+    raise RuntimeError.new("Model subclass must override #repository")
+  end
+  def to_attributes()
+    raise RuntimeError.new("Model subclass must override #to_attributes")
+  end
+
+  def id() = @attributes[self.repository().id_column()]
+  def persisted?() -> Bool = @attributes.include_key?(self.repository().id_column())
+
+  # Small, non-magic conveniences for writing a one-line association
+  # reader on a subclass (see README.md) -- these just construct the
+  # association object; #all/#get/#preload on it work exactly as
+  # documented above.
+  def has_many(repository: Repository, foreign_key: String) = HasMany.new(repository, foreign_key)
+  def has_one(repository: Repository, foreign_key: String) = HasOne.new(repository, foreign_key)
+  def belongs_to(repository: Repository) = BelongsTo.new(repository)
+
+  # Threads optimistic locking through automatically when this model's
+  # repository has a lock_column configured -- the current value already
+  # loaded into @attributes is what #update expects as
+  # expected_lock_version, so there is nothing further for a caller to
+  # pass. Raises StaleObjectError exactly as Repository#update itself
+  # does, on the same condition.
+  def save(db)
+    if self.persisted?()
+      lock_column = self.repository().lock_column()
+      if lock_column == nil
+        self.repository().update(db, self.id(), self.to_attributes())
+      else
+        self.repository().update(
+          db, self.id(), self.to_attributes(), @attributes[lock_column])
+      end
+    else
+      self.repository().create(db, self.to_attributes())
+      # Without this, @attributes never gains an id_column key, so
+      # #persisted?/#id (and therefore a later #save or #destroy) would
+      # keep treating this instance as brand new forever after its very
+      # first, successful #save.
+      @attributes[self.repository().id_column()] = db.last_insert_row_id()
+    end
+  end
+
+  def destroy(db) = self.repository().delete(db, self.id())
+end
+
 end

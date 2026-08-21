@@ -1,1 +1,1 @@
-{"name": "diamond-active_record", "version": "0.12.0"}
+{"name": "diamond-active_record", "version": "0.13.0"}

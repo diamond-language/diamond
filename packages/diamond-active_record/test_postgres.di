@@ -36,6 +36,33 @@ class LibraryAccount
   def lock_version() = @lock_version
 end
 
+# Exercises ActiveRecord::Model (README.md's "an optional Rails-flavored
+# layer") against a real second dialect -- it adds no SQL rendering of
+# its own, but #save's create path (db.last_insert_row_id()) is
+# genuinely per-driver machinery worth confirming end to end here rather
+# than assuming it behaves the same as it does against SQLite.
+class PgAuthor < ActiveRecord::Model
+  attr_accessor name: String, country: String
+
+  def initialize(attributes: Hash = {})
+    super(attributes)
+    @name = attributes["name"]
+    @country = attributes["country"]
+  end
+
+  def to_attributes() = {"name": @name, "country": @country}
+  def repository() = @@repository
+
+  def self.repository() = @@repository
+  def self.configure(repository: ActiveRecord::Repository)
+    @@repository = repository
+  end
+  def self.find(db, id) = repository().find(db, id)
+  def self.all(db) = repository().all(db)
+end
+
+def build_pg_author(row) = PgAuthor.new(row)
+
 def run_tests()
   conninfo = ENV["DIAMOND_PG_TEST_CONNINFO"]
   if conninfo == nil
@@ -202,6 +229,32 @@ def run_tests()
     db.close()
   end
 
+  def test_model_with_explicit_postgresql_visitor(conninfo)
+    db = PostgreSQL.open(conninfo)
+    db.execute("DROP TABLE IF EXISTS ar_pg_model_authors")
+    db.execute("CREATE TABLE ar_pg_model_authors (id SERIAL PRIMARY KEY, name TEXT, country TEXT)")
+
+    PgAuthor.configure(ActiveRecord::Repository.new(
+      Arel.table("ar_pg_model_authors"), build_pg_author, "id", Arel::PostgreSQLVisitor.new()))
+
+    ada = PgAuthor.new({"name": "Ada", "country": "UK"})
+    Minitest.assert_equal(false, ada.persisted?())
+    ada.save(db)
+    Minitest.assert_equal(true, ada.persisted?())
+    Minitest.assert_equal(1, PgAuthor.all(db).length())
+
+    reloaded = PgAuthor.find(db, ada.id())
+    Minitest.assert_equal("Ada", reloaded.name())
+
+    reloaded.name=("Ada Lovelace")
+    reloaded.save(db)
+    Minitest.assert_equal("Ada Lovelace", PgAuthor.find(db, ada.id()).name())
+
+    ada.destroy(db)
+    Minitest.assert_equal(0, PgAuthor.all(db).length())
+    db.close()
+  end
+
   suite = Minitest.new()
   suite.test("default visitor breaks on a real dialect difference") do
     test_default_visitor_breaks_on_a_real_dialect_difference(conninfo)
@@ -217,6 +270,9 @@ def run_tests()
   end
   suite.test("preload with explicit Arel::PostgreSQLVisitor") do
     test_preload_with_explicit_postgresql_visitor(conninfo)
+  end
+  suite.test("Model with explicit Arel::PostgreSQLVisitor") do
+    test_model_with_explicit_postgresql_visitor(conninfo)
   end
   suite.run!()
 end

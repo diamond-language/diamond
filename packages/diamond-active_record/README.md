@@ -242,3 +242,129 @@ ordinary `Hash`, nothing more.
 
 There is no schema inspection, naming convention, or object introspection,
 and no implicit query scope.
+
+## `ActiveRecord::Model` -- an optional Rails-flavored layer
+
+Everything above is deliberately explicit: repositories, associations,
+and functions you call directly, in exchange for never hiding what SQL
+runs. `ActiveRecord::Model` is a thin layer over exactly that machinery
+(nothing else) for anyone who wants a more Rails-familiar surface --
+`Author.find(db, 1)`, `author.name`, `author.save(db)` -- built out of
+`Repository` underneath, not instead of it.
+
+Two real Diamond constraints shaped what this can and can't do, verified
+directly rather than assumed:
+
+- Diamond classes have fixed, compile-time method tables -- there is no
+  `define_method`/`method_missing`, and the one runtime mechanism that
+  exists (`ClassName.redefine_method`) can only repoint an *existing*
+  method slot, never add a new one. So there is no `has_many :books`
+  macro that conjures a real `books` method into existence -- every
+  method a model exposes, associations included, is an ordinary `def`
+  you write yourself, same as any other Diamond class.
+- Instance methods dispatch virtually (confirmed directly: a shared
+  method calling `self.foo()` correctly reaches a subclass's override),
+  but `def self.x` class methods do not -- `self` isn't even accessible
+  inside one. `Model`'s shared behavior (`#save`, `#destroy`,
+  `#persisted?`, `#id`) is all instance-side for exactly this reason.
+  The class-level surface (`Author.find`/`.all`/`.where`/`.create`)
+  can't be inherited the same way, so each model writes its own short
+  one-line forwarders -- the one real per-model boilerplate this layer
+  couldn't eliminate.
+
+```diamond
+class Author < ActiveRecord::Model
+  attr_accessor name: String, country: String
+
+  def initialize(attributes: Hash = {})
+    super(attributes)
+    @name = attributes["name"]
+    @country = attributes["country"]
+  end
+
+  def to_attributes() = {"name": @name, "country": @country}
+  def repository() = @@repository
+
+  def self.repository() = @@repository
+  def self.configure(repository: ActiveRecord::Repository)
+    @@repository = repository
+  end
+  def self.find(db, id) = repository().find(db, id)
+  def self.all(db) = repository().all(db)
+  def self.where(db, conditions: Hash) = repository().where(db, conditions)
+  def self.create(db, attributes: Hash) = repository().create(db, attributes)
+
+  def books(db) = self.has_many(Book.repository(), "author_id").all(db, self.id())
+end
+
+def build_author(row) = Author.new(row)
+Author.configure(ActiveRecord::Repository.new(Arel.table("authors"), build_author, "id"))
+```
+
+```diamond
+Author.create(db, {"name": "Ada", "country": "UK"})
+ada = Author.find(db, 1)
+ada.name=("Ada Lovelace")   # attribute writers are `name=(value)`, not `name = value` --
+ada.save(db)                # Diamond has no assignment-syntax sugar for a method call
+ada.books(db)
+ada.destroy(db)
+```
+
+Every subclass overrides two **instance** methods (`#repository`,
+`#to_attributes`) so `Model`'s shared `#save`/`#destroy`/`#persisted?`/
+`#id` reach them through real virtual dispatch, and writes its own short
+**class**-method forwarders (`self.find`/`.all`/`.where`/`.create`,
+plus `self.configure` to set `@@repository` once) since those can't be
+inherited. `#to_attributes` is the reverse of a `Repository`'s own
+`mapper` function -- this instance's current field values as the same
+plain `Hash` `#create`/`#update` already write. `#save` picks `#create`
+or `#update` based on `#persisted?` (does `@attributes` have an
+`id_column` key yet), and after a successful `#create` sets that key
+from `db.last_insert_row_id()` so a later `#save`/`#destroy` on the same
+instance does the right thing. `#save` also threads optimistic locking
+through automatically when the repository has a `lock_column`
+configured, using whatever value is already in `@attributes` as
+`expected_lock_version` -- see the optimistic locking section above.
+
+Association readers are one line each, built from `Model#has_many`/
+`#has_one`/`#belongs_to` (thin wrappers constructing the same
+`HasMany`/`HasOne`/`BelongsTo` objects described earlier, nothing new):
+
+```diamond
+def books(db) = self.has_many(Book.repository(), "author_id").all(db, self.id())
+def profile(db) = self.has_one(Profile.repository(), "author_id").get(db, self.id())
+```
+
+A model that associates in **both** directions (`Author has_many :books`
+*and* `Book belongs_to :author`) hits a real ordering wall: Diamond
+resolves a class name referenced inside a method body at compile time,
+so neither class's body can name the other directly -- whichever one is
+declared second doesn't exist yet as far as the first one's code is
+concerned. The fix is the same shape as `.configure` itself: each
+association reader reads a class-variable slot filled in later, once
+both classes exist, through its own `self.wire_*` method:
+
+```diamond
+class Author < ActiveRecord::Model
+  ...
+  def books(db) = self.has_many(@@books_repository, "author_id").all(db, self.id())
+  def self.wire_books(repository: ActiveRecord::Repository)
+    @@books_repository = repository
+  end
+end
+
+class Book < ActiveRecord::Model
+  ...
+  def author(db) = self.belongs_to(@@author_repository).get(db, @author_id)
+  def self.wire_author(repository: ActiveRecord::Repository)
+    @@author_repository = repository
+  end
+end
+
+Author.wire_books(Book.repository())
+Book.wire_author(Author.repository())
+```
+
+There is still no schema inspection, naming convention, or object
+introspection here -- `attr_accessor`, `#to_attributes`, and every
+forwarder above are things you write, not things this layer infers.
