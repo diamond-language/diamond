@@ -49,7 +49,7 @@ identically either way, but it's a latent correctness gap rather than a
 supported combination.
 
 Explicit associations use `ActiveRecord::HasMany`, `ActiveRecord::HasOne`,
-and `ActiveRecord::BelongsTo`:
+`ActiveRecord::BelongsTo`, and `ActiveRecord::HasManyThrough`:
 
 ```diamond
 books = ActiveRecord::Repository.new(Arel.table("books"), map_book)
@@ -78,6 +78,29 @@ directly (`book.author_id()` above), not the child object itself -- no
 object introspection resolves it. It returns `nil`, the same "not found"
 shape `ActiveRecord::Repository#find` uses, rather than an empty `Array`,
 when nothing matches.
+
+Many-to-many via an explicit join table uses `ActiveRecord::HasManyThrough`,
+which takes the *target* repository directly (not the join table's own
+repository, if it even has one -- a join row is rarely a meaningful domain
+object) plus the join table and its two foreign-key column names:
+
+```diamond
+authorships = Arel.table("authorships")
+author_books = ActiveRecord::HasManyThrough.new(books, authorships, "author_id", "book_id")
+author_books.all(db, author.id())
+```
+
+`#all` joins the join table to the target repository's own table (using
+its own `id_column`), filters by the owner value on the join table's
+owner-key column, and maps every matching target row through the target
+repository's own mapper and visitor -- so results come back as the same
+domain objects `books.all(db)`/`books.where(db, ...)` would produce, not
+raw `Hash`es. This is why `ActiveRecord::Repository` exposes `#table`,
+`#mapper`, `#visitor`, and `#id_column` as read-only accessors: not object
+introspection (that principle is about not reflecting on an opaque mapped
+domain object by naming convention), just this package's own repository
+exposing its own explicitly-supplied configuration for another piece of
+itself to build a query with.
 
 `ActiveRecord::Repository.new` also takes optional `validator`, `before_save`,
 and `after_save` arguments -- there is no `validates`-style class macro here

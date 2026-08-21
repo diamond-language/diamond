@@ -13,8 +13,17 @@ class LibraryAuthor
     @name = name
     @country = country
   end
+  def id() = @id
   def name() = @name
   def country() = @country
+end
+
+class LibraryBook
+  def initialize(id, title)
+    @id = id
+    @title = title
+  end
+  def title() = @title
 end
 
 def run_tests()
@@ -26,6 +35,9 @@ def run_tests()
 
   def map_author(row)
     LibraryAuthor.new(row["id"], row["name"], row["country"])
+  end
+  def map_book(row)
+    LibraryBook.new(row["id"], row["title"])
   end
 
   def test_default_visitor_breaks_on_a_real_dialect_difference(conninfo)
@@ -88,12 +100,43 @@ def run_tests()
     db.close()
   end
 
+  def test_has_many_through_with_explicit_postgresql_visitor(conninfo)
+    db = PostgreSQL.open(conninfo)
+    db.execute("DROP TABLE IF EXISTS ar_pg_authorships")
+    db.execute("DROP TABLE IF EXISTS ar_pg_books")
+    db.execute("DROP TABLE IF EXISTS ar_pg_book_authors")
+    db.execute("CREATE TABLE ar_pg_book_authors (id SERIAL PRIMARY KEY, name TEXT)")
+    db.execute("CREATE TABLE ar_pg_books (id SERIAL PRIMARY KEY, title TEXT)")
+    db.execute("CREATE TABLE ar_pg_authorships (author_id INTEGER, book_id INTEGER)")
+    db.execute("INSERT INTO ar_pg_book_authors (name) VALUES (?)", ["Ada"])
+    db.execute("INSERT INTO ar_pg_books (title) VALUES (?)", ["Sketch of the Analytical Engine"])
+    db.execute("INSERT INTO ar_pg_books (title) VALUES (?)", ["Notes on the Analytical Engine"])
+    db.execute("INSERT INTO ar_pg_authorships (author_id, book_id) VALUES (?, ?)", [1, 1])
+    db.execute("INSERT INTO ar_pg_authorships (author_id, book_id) VALUES (?, ?)", [1, 2])
+
+    visitor = Arel::PostgreSQLVisitor.new()
+    authors = ActiveRecord::Repository.new(Arel.table("ar_pg_book_authors"), map_author, "id", visitor)
+    books = ActiveRecord::Repository.new(Arel.table("ar_pg_books"), map_book, "id", visitor)
+    author_books = ActiveRecord::HasManyThrough.new(
+      books, Arel.table("ar_pg_authorships"), "author_id", "book_id")
+
+    ada = authors.find(db, 1)
+    ada_books = author_books.all(db, ada.id())
+    Minitest.assert_equal(2, ada_books.length())
+    Minitest.assert_equal("Sketch of the Analytical Engine", ada_books[0].title())
+    Minitest.assert_equal("Notes on the Analytical Engine", ada_books[1].title())
+    db.close()
+  end
+
   suite = Minitest.new()
   suite.test("default visitor breaks on a real dialect difference") do
     test_default_visitor_breaks_on_a_real_dialect_difference(conninfo)
   end
   suite.test("repository with explicit Arel::PostgreSQLVisitor") do
     test_repository_with_explicit_postgresql_visitor(conninfo)
+  end
+  suite.test("HasManyThrough with explicit Arel::PostgreSQLVisitor") do
+    test_has_many_through_with_explicit_postgresql_visitor(conninfo)
   end
   suite.run!()
 end

@@ -48,6 +48,18 @@ class Repository
   # (there is nothing to write). after_save runs once the operation
   # succeeds, with those same attributes, and its return value is always
   # ignored.
+  # Read-only access to this repository's own configuration -- not object
+  # introspection (that principle is about not reflecting on an opaque
+  # mapped domain object by naming convention; these are the repository's
+  # own explicitly-supplied fields). HasManyThrough uses these to build
+  # its own join query against the target repository's table and map
+  # results through its mapper, since Repository's own #all/#find/#where
+  # only ever filter on @table itself, not a second joined table.
+  attr_reader table: Arel::Table
+  attr_reader mapper: Callable[1]
+  attr_reader visitor
+  attr_reader id_column: String
+
   def initialize(table: Arel::Table, mapper: Callable[1], id_column: String = "id", visitor = nil,
                  validator = nil, before_save = nil, after_save = nil)
     @table = table
@@ -270,6 +282,45 @@ class HasOne
     conditions[@foreign_key] = owner_id
     results = @repository.where(db, conditions)
     if results.length() == 0 then nil else results[0] end
+  end
+end
+
+# Many-to-many via an explicit join table -- no naming convention
+# resolves it (the join table, its two foreign-key column names, and the
+# target repository are all supplied directly, the same explicit shape
+# HasMany/HasOne/BelongsTo already use). Unlike those three, this can't
+# just call the target repository's own #where (which only ever filters
+# on the target's own table), since resolving the association means
+# joining the join table to the target table and filtering on the join
+# table's owner-key column -- so this builds that Arel query itself,
+# using the target repository's own table/mapper/visitor (see its three
+# read-only accessors above) to render and map results consistently with
+# how the rest of that repository already works.
+class HasManyThrough
+  def initialize(target_repository: Repository, join_table: Arel::Table,
+                 join_owner_key: String, join_target_key: String)
+    @target_repository = target_repository
+    @join_table = join_table
+    @join_owner_key = join_owner_key
+    @join_target_key = join_target_key
+  end
+
+  def all(db, owner_id)
+    target_table = @target_repository.table()
+    join_predicate = @join_table.column(@join_target_key).eq(
+      target_table.column(@target_repository.id_column()))
+    query = Arel.from(@join_table).join(target_table, join_predicate)
+    query = query.where(@join_table.column(@join_owner_key).eq(owner_id))
+    query = query.project([target_table.star()])
+    rows = query.to_a(db, @target_repository.visitor())
+    mapper = @target_repository.mapper()
+    mapped = []
+    index = 0
+    while index < rows.length()
+      mapped.push(mapper(rows[index]))
+      index += 1
+    end
+    mapped
   end
 end
 
