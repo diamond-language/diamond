@@ -271,8 +271,9 @@ the desugaring reuses the exact same `NEW` instruction sequence
 `1..(n+1)`, and `a > 0 .. b < 10` reads as `(a>0)..(b<10)`.
 
 `Range` includes `Enumerable`, so `.select`/`.count`/`.any?`/`.all?`/
-`.map`/`.reduce` all work on a range the same way they do on any other
-`Enumerable`-including class (see "Collections" below).
+`.map`/`.reduce` and the rest of `Enumerable`'s methods all work on a range
+the same way they do on any other `Enumerable`-including class (see
+"Collections" below).
 
 Scope, deliberately: `Range` is `Int`-only for v1 (`start`/`end` must
 both be `Int`) — constructing one with `Float` or any other type raises
@@ -849,8 +850,16 @@ functions in the prelude:
 [1, 2, 3].reduce(0, add)
 ```
 
-Any user-defined class gets the same six methods for free by implementing
-its own `each(callback)` and `include`-ing `Enumerable`.
+Any user-defined class gets those same six methods, plus `to_a`, `sort`,
+`sort_by`, `min`, `max`, `min_by`, `max_by`, `reject`, `find`,
+`each_with_index`, `sum`, `take`, `drop`, `flat_map`, `partition`,
+`group_by`, `zip`, `each_slice`, `each_cons`, and `tally`, for free by
+implementing its own `each(callback)` and `include`-ing `Enumerable`. The
+first six forward straight to prelude functions driven by `self.each(...)`,
+so they're generic by construction; the rest reuse Array's own existing,
+already-tested index-based implementations by materializing the receiver
+into an Array via `to_a` first (itself built on `each`) and delegating to
+those, rather than re-deriving each one generically over `each()`.
 
 A handful of further Array/Hash conveniences live in the prelude as
 plain functions (`array_reverse(values)`, not `values.reverse()` —

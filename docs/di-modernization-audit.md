@@ -42,6 +42,65 @@ hypothetical. `array_map_int`, `array_map_string`, `array_map_typed`, and
 `array_sort` were deliberately left as free functions per the caveats
 below (typed contracts, not drop-in receiver renames). Enumerable is next.
 
+Compound assignment (step 4) and the `unless`/truthiness rewrite (step 5)
+have landed in `packages/arel/lib/arel.di`, and now also in `lib/core.di`,
+`lib/core/numeric.di`, `lib/core/json_codec.di`, `lib/minitest.di`, and
+`packages/gremlin/gremlin.di`. Both passes were applied out of the
+Recommended Order below (ahead of Enumerable) because they're purely local,
+behavior-preserving syntax edits with no call-site or compilation-order
+implications, unlike the receiver-method migrations. Two categories were
+deliberately left alone rather than rewritten:
+
+- string-concatenation accumulators such as `result = result + ch` in
+  `lib/core/json_codec.di`, matching the same exclusion already applied in
+  `arel.di` (a separate StringBuilder/O(n^2) concern, not a syntax question);
+- `if callback(...) == false` guards in `lib/core.di`'s `enumerable_all` and
+  `array_reject` (around lines 334, 341, 397), where `callback` is an
+  untyped, caller-supplied `Callable[1]`. Unlike `array_include`'s
+  guaranteed-`Bool` return in this doc's own worked example, a predicate
+  that returns `nil` instead of `false` would change behavior under
+  `unless callback(...)` (nil is falsy) but not under `== false` (nil isn't
+  `false`) — the same nil-vs-false trap this doc's "Truthiness and `unless`"
+  section already warns about, just via `== false` instead of `!= nil`.
+  `gremlin.di`'s `@eof == false` inside a compound `while` condition was
+  left for the same reason it's out of the documented if-guard→`unless`
+  pattern in the first place: it's a `while` condition, not a single-branch
+  `if` guard.
+
+`packages/http/http.di` has also been swept: 6 of its 7 `if x != nil`-shaped
+guards converted to `unless`; the 7th (`http_request`'s Content-Length check,
+around line 220) has an `else` branch and was left as `if` for the same
+elsif/else reason as `arel.di`'s remaining cases. A repo-wide re-scan after
+this pass found no further unconverted compound-assignment or single-branch
+nil-guard candidates in `lib/` or `packages/`.
+
+Enumerable (step 3) turned out to need less than this doc originally
+assumed, and something different from what it assumed: `vm.c`'s native
+`INVOKE` dispatch already forwards `select`/`count`/`any?`/`all?`/`map`/
+`reduce` (Array and Hash) and `sort`/`sort_by`/`min`/`max` (Array only)
+straight to the matching `enumerable_*` function, with no leftover direct
+free-function call sites to migrate -- that part predates this audit. The
+actual gap was `module Enumerable` itself (the mixin `Range` and any other
+`each`-implementing class gets via `include Enumerable`): it only defined
+six methods, missing `sort`/`sort_by`/`min`/`max`/`min_by`/`max_by` and the
+rest of Array's Enumerable-style surface entirely -- a gap `docs/syntax.md`
+already named as "the existing asymmetry" before this pass closed it.
+`module Enumerable` now also has `to_a` (materializes the receiver via
+`self.each(...)`) plus `sort`, `sort_by`, `min`, `max`, `min_by`, `max_by`,
+`reject`, `find`, `each_with_index`, `sum`, `take`, `drop`, `flat_map`,
+`partition`, `group_by`, `zip`, `each_slice`, `each_cons`, and `tally`,
+each delegating to the existing Array-typed `array_*`/`enumerable_*`
+function on that materialized copy rather than re-deriving index-based
+logic generically (see `docs/design.md`'s Enumerable section for the
+full reasoning). Verified against both `Range` and a custom `each`-only
+class, plus the pre-existing `legacy_0362`/`0363`/`0364` Enumerable
+fixtures. `docs/syntax.md` and `docs/design.md` updated to match; a
+pre-existing, unrelated staleness in `docs/syntax.md` was spotted but left
+alone -- it still describes `array_reverse`/`array_concat`/`array_compact`/
+`array_uniq`/`array_flatten` as plain functions ("not `values.reverse()`"),
+when the Array receiver-method migration earlier in this Status section
+already gave them receiver syntax.
+
 ## High-Value Receiver Migrations
 
 ### Array candidates

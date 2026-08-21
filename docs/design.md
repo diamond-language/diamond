@@ -206,6 +206,25 @@ etc.) — any user-defined class that implements its own `each(callback)` and
 free through the *ordinary* method-dispatch path, with zero duplicated logic
 between the two routes.
 
+`sort`/`sort_by`/`min`/`max`/`min_by`/`max_by` and the rest of Array's
+Enumerable-style surface (`reject`/`find`/`each_with_index`/`sum`/`take`/
+`drop`/`flat_map`/`partition`/`group_by`/`zip`/`each_slice`/`each_cons`/
+`tally`) are implemented once, over `Array` specifically, using indexed
+access rather than `each()` — `enumerable_sort(values: Array)`, not
+`values.each(...)`-driven like `enumerable_select` above. `module Enumerable`
+still exposes all of them, but not by rewriting each one to be generic:
+it adds a `to_a()` method (itself built on `self.each(...)`, the same way
+`select`/`map`/etc. above are) that materializes the receiver into a real
+`Array`, then delegates each of these methods to the matching existing
+`array_*`/`enumerable_*` function on that materialized copy. This keeps
+those already-tested Array-indexed implementations as the single source of
+truth — an `include Enumerable` class (`Range`, or any other) pays one
+`to_a()` copy for this group rather than duplicating index-based logic
+generically, the same trade `vm.c`'s own Array-only fast path for
+`sort`/`min`/etc. already makes (see "None of these are defined on `Hash`"
+in `docs/syntax.md`'s Collections section) by not generalizing over `Hash`
+either.
+
 `array_each` requires a 1-arity callback; `hash_each` requires a 2-arity
 callback (key, value). A single `enumerable_select`-shaped function needs one
 fixed-arity glue closure to pass to `values.each(...)`, so each branches once

@@ -680,6 +680,41 @@ module Enumerable
   def all?(callback: Callable[1]) -> Bool = enumerable_all(self, callback)
   def map(callback: Callable[1]) -> Array = enumerable_map(self, callback)
   def reduce(initial, callback: Callable[2]) = enumerable_reduce(self, initial, callback)
+
+  # The methods above stay generic by driving self.each(...) directly, but
+  # sort/min/take/etc. below are only implemented once, over Array, using
+  # indexed access rather than each() -- rewriting all of them to be
+  # each()-generic would duplicate already-tested Array logic. Draining
+  # self into a materialized Array here and delegating to that existing
+  # Array-typed implementation reuses it as-is instead.
+  def to_a() -> Array
+    result = []
+    def collect(item)
+      result.push(item)
+    end
+    self.each(collect)
+    result
+  end
+
+  def sort() -> Array = enumerable_sort(self.to_a())
+  def sort_by(callback: Callable[1]) -> Array = enumerable_sort_by(self.to_a(), callback)
+  def min() = enumerable_min(self.to_a())
+  def max() = enumerable_max(self.to_a())
+  def min_by(callback: Callable[1]) = array_min_by(self.to_a(), callback)
+  def max_by(callback: Callable[1]) = array_max_by(self.to_a(), callback)
+  def reject(callback: Callable[1]) -> Array = array_reject(self.to_a(), callback)
+  def find(callback: Callable[1]) = array_find(self.to_a(), callback)
+  def each_with_index(callback: Callable[2]) -> Array = array_each_with_index(self.to_a(), callback)
+  def sum() = array_sum(self.to_a())
+  def take(n: Int) -> Array = array_take(self.to_a(), n)
+  def drop(n: Int) -> Array = array_drop(self.to_a(), n)
+  def flat_map(callback: Callable[1]) -> Array = array_flat_map(self.to_a(), callback)
+  def partition(callback: Callable[1]) -> Array = array_partition(self.to_a(), callback)
+  def group_by(callback: Callable[1]) -> Hash = array_group_by(self.to_a(), callback)
+  def zip(other: Array) -> Array = array_zip(self.to_a(), other)
+  def each_slice(size: Int) -> Array = array_each_slice(self.to_a(), size)
+  def each_cons(size: Int) -> Array = array_each_cons(self.to_a(), size)
+  def tally() -> Hash = array_tally(self.to_a())
 end
 
 # `<`/`<=`/`>`/`>=`/`==` derived from a single `<=>` an including class
