@@ -25,13 +25,23 @@ takes a `Hash` of column name to value, ANDed together:
 repository.where(db, {"country": "UK", "active": true})
 ```
 
-Explicit associations use `ActiveRecordHasMany`:
+Explicit associations use `ActiveRecordHasMany` and `ActiveRecordBelongsTo`:
 
 ```diamond
 books = ActiveRecordRepository.new(Arel.table("books"), map_book)
 author_books = ActiveRecordHasMany.new(books, "author_id")
 author_books.all(db, author_id)
+
+authors = ActiveRecordRepository.new(Arel.table("authors"), map_author)
+book_author = ActiveRecordBelongsTo.new(authors)
+book_author.get(db, book.author_id())
 ```
+
+`ActiveRecordBelongsTo#get` takes the child's own foreign-key value
+directly (`book.author_id()` above), not the child object itself -- no
+object introspection resolves it. It returns `nil`, the same "not found"
+shape `ActiveRecordRepository#find` uses, rather than an empty `Array`,
+when nothing matches.
 
 Neither Arel nor the database drivers expose a transaction API of their
 own (`BEGIN`/`COMMIT`/`ROLLBACK` are ordinary SQL, run through the same

@@ -83,6 +83,26 @@ class ActiveRecordHasMany
   end
 end
 
+class ActiveRecordBelongsTo
+  def initialize(repository: ActiveRecordRepository, owner_key: String = "id")
+    @repository = repository
+    @owner_key = owner_key
+  end
+
+  # The child's own foreign-key value is passed explicitly -- no object
+  # introspection reads it off a child instance. Unlike
+  # ActiveRecordRepository#find (which always looks up @id_column), this
+  # goes through #where so an @owner_key other than the owner repository's
+  # primary key still works; nil (not an empty Array) when nothing
+  # matches, same "not found" shape #find already uses.
+  def get(db, foreign_key_value)
+    conditions = {}
+    conditions[@owner_key] = foreign_key_value
+    results = @repository.where(db, conditions)
+    if results.length() == 0 then nil else results[0] end
+  end
+end
+
 # Neither Arel nor the database drivers expose a transaction API
 # themselves (BEGIN/COMMIT/ROLLBACK are ordinary SQL statements a caller
 # runs through the same #execute(sql) every write in this package already
