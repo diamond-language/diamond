@@ -255,9 +255,10 @@ correct regardless of which branch actually ran.
 
 ## Object model
 
-Classes are immutable module metadata rather than heap objects, with one
-narrow, explicit exception: `ClassName.redefine_method(name, callable)` (see
-below) repoints an existing method's compiled body in place at runtime.
+Classes are immutable module metadata rather than heap objects, with two
+narrow, explicit exceptions (see below): `ClassName.redefine_method(name,
+callable)` repoints an existing method's compiled body in place at runtime,
+and `ClassName.define_method(name, callable)` adds a new one.
 Instances point to their class and contain a fixed field array.
 Instance-variable names are assigned stable class-owned offsets during
 compilation; subclasses copy their parent's field-slot prefix.
@@ -525,19 +526,35 @@ already special-cases `ClassName.new(...)`, and compiles to a dedicated
 opcode carrying the target class as a compile-time operand rather than an
 ordinary dispatched call. Four structural checks reject unsafe replacements
 before the method table is touched: the name must match an existing method
-on that class directly (no superclass walk, and no defining a new method —
-`DiamondClass.methods` is a fixed-size, compile-time-populated array); the
-callable must capture no variables (a method slot only stores a raw function
-index, so captured state would be silently discarded and then read as
-invalid bytecode the first time the method dispatched); the callable's
-function must have been compiled with `owner_class` equal to the target
-class (otherwise `self`-register and `@field` offset assumptions baked in at
-compile time would be wrong for the new receiver); and the callable's real
-arity must exactly match the existing method's declared arity (avoiding a
-second metadata mutation axis). A successful call returns `nil` and calls
-the same cache-invalidation path `tests/api_invalidation.c` exercises
-directly, so already-warmed monomorphic dispatch sites correctly reflect the
-change on their very next call.
+on that class directly (no superclass walk); the callable must capture no
+variables (a method slot only stores a raw function index, so captured state
+would be silently discarded and then read as invalid bytecode the first time
+the method dispatched); the callable's function must have been compiled with
+`owner_class` equal to the target class (otherwise `self`-register and
+`@field` offset assumptions baked in at compile time would be wrong for the
+new receiver); and the callable's real arity must exactly match the existing
+method's declared arity (avoiding a second metadata mutation axis). A
+successful call returns `nil` and calls the same cache-invalidation path
+`tests/api_invalidation.c` exercises directly, so already-warmed monomorphic
+dispatch sites correctly reflect the change on their very next call.
+
+`ClassName.define_method(name, callable)` is the same mechanism's
+add-a-new-slot counterpart, recognized at the same call site and compiled to
+its own dedicated opcode. `DiamondClass.methods` is a fixed-size array
+(`DIAMOND_MAX_METHODS`, currently 256) that a class's compile-time method
+count rarely fills, so "adding" a method at runtime is just writing a new
+`DiamondMethod` entry into the next unused slot and incrementing
+`method_count` — no reallocation, no new heap object, nothing for the GC to
+track. It shares three of `redefine_method`'s four checks (String name,
+capture-free callable, `owner_class` equal to the target class) but rejects
+a name that *already* exists instead of requiring one, and drops the arity
+check entirely — a brand-new method has no prior arity to match, so it just
+takes the callable's own, the same as a `def` compiled directly into the
+class would. Deliberately kept as a separate operation from
+`redefine_method` rather than one function that branches on whether the name
+exists, so each keeps a single, predictable contract. The new method
+dispatches correctly for instances constructed before the call too, since
+lookup is by class and name at call time, never snapshotted per instance.
 
 For a direct `value == nil` or `value != nil` condition, the compiler splits a
 union type-set into nil and non-nil branch facts. Facts for locals that existed

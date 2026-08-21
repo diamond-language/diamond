@@ -430,9 +430,43 @@ end
 
 `@ivar` instance fields, `initialize` as the constructor, single inheritance
 via `<`, and `super(...)`. Classes are compile-time metadata, not
-first-class heap values, with one narrow exception:
+first-class heap values, with two narrow exceptions:
 `ClassName.redefine_method(name, callable)` repoints an existing method's
-compiled body at runtime.
+compiled body at runtime, and `ClassName.define_method(name, callable)`
+adds a brand-new method under a name the class didn't already have. Both
+take the same "patch-factory" shaped `callable` -- a nested, named
+function (Diamond has no anonymous closure literal) that captures no
+variables and was compiled inside the same class, typically returned
+from a `def self.x_factory()` that declares the nested `def` and then
+evaluates to its bare name:
+
+```ruby
+class Greeter
+  def initialize(name)
+    @name = name
+  end
+  def self.greet_factory()
+    def greet()
+      "hello, #{@name}"
+    end
+    greet
+  end
+end
+
+g = Greeter.new("Ada")
+Greeter.define_method("greet", Greeter.greet_factory())
+g.greet()  # => "hello, Ada"
+```
+
+`define_method` fails if the name already exists (use `redefine_method`
+for that) or if the callable captures a variable, isn't a method of
+`ClassName` itself, or the class already has the maximum number of
+methods. Unlike `redefine_method`, there's no arity to match against a
+prior definition -- the new method simply takes the callable's own arity,
+the same as an ordinary `def` would. The new method is visible to every
+instance immediately, including ones already constructed before the
+call, since dispatch looks the method up by class and name at call time
+rather than snapshotting anything at construction time.
 
 ### Class variables
 

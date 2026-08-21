@@ -185,6 +185,16 @@ typedef enum DiamondOpCode : uint8_t {
     DIAMOND_OP_COMPARE,
     DIAMOND_OP_POSTGRES_OPEN,
     DIAMOND_OP_MYSQL_OPEN,
+    /* `ClassName.define_method(name, callable)` -- redefine_method's
+     * add-a-new-slot counterpart: appends a new DiamondMethod entry
+     * (DIAMOND_MAX_METHODS headroom already exists in the fixed-size
+     * `methods[]` array; this is the first opcode to grow method_count
+     * itself rather than just repointing an existing entry's
+     * function_index). Same four safety checks as REDEFINE_METHOD
+     * (String name, Callable value, zero captures, owner_class matches),
+     * minus the arity-must-match check (nothing to match against yet) --
+     * see vm.c's own handler comment. */
+    DIAMOND_OP_DEFINE_METHOD,
     DIAMOND_OP_COUNT,
 } DiamondOpCode;
 

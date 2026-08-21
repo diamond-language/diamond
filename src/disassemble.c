@@ -539,6 +539,14 @@ static bool disassemble_chunk(FILE *stream, const char *name,
                     checked_register(chunk,stream,read_operand(chunk,offset+4),&valid),
                     checked_register(chunk,stream,read_operand(chunk,offset+6),&valid));
                 offset+=8;break;
+            case DIAMOND_OP_DEFINE_METHOD:
+                if(!require_bytes(stream,chunk,offset,8)){valid=false;offset=chunk->code_count;break;}
+                fprintf(stream,"%-18s r%u, class%u, r%u, r%u\n","DEFINE_METHOD",
+                    checked_register(chunk,stream,read_operand(chunk,offset+1),&valid),
+                    chunk->code[offset+3],
+                    checked_register(chunk,stream,read_operand(chunk,offset+4),&valid),
+                    checked_register(chunk,stream,read_operand(chunk,offset+6),&valid));
+                offset+=8;break;
             case DIAMOND_OP_YIELD:
                 offset=two_registers(stream,chunk,"YIELD",offset, &valid);break;
             case DIAMOND_OP_FIBER_NEW:
