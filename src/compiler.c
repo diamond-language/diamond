@@ -1535,6 +1535,28 @@ static uint16_t parse_singleton_call(Compiler *compiler,
         fail(compiler,compiler->current.span,"expected ')' after arguments");return 0;
     }
     advance_token(compiler);
+    /* `Namespace.method(args) do |x| ... end` -- same trailing-block-as-
+     * last-positional-argument desugaring parse_invoke's own DIAMOND_TOKEN_DO
+     * handling does for instance-method calls (see its comment there for
+     * the full design, including why every argument is snapshotted into a
+     * fresh temp first: compile_block's eager, unconditional BOX_LOCAL
+     * over every enclosing local could otherwise retarget a bare local
+     * register one of these arguments already resolved to). Singleton
+     * calls have no separate caller-side receiver register to snapshot
+     * (unlike parse_invoke's `receiver`) -- `self`/the owning module is
+     * filled in by the call machinery itself when method->needs_receiver,
+     * not read from a register here. */
+    if(compiler->current.kind==DIAMOND_TOKEN_DO) {
+        if(argument_count==16) {
+            fail(compiler,compiler->current.span,"too many call arguments");return 0;
+        }
+        for(size_t index=0;index<argument_count;index++) {
+            const uint16_t snapshot=allocate_register(compiler);
+            emit_instruction(compiler,DIAMOND_OP_MOVE,snapshot,arguments[index],0,2);
+            arguments[index]=snapshot;
+        }
+        arguments[argument_count++]=compile_block(compiler);
+    }
     if(argument_count<method->required_arity||argument_count>method->arity) {
         fail(compiler,name,"wrong number of arguments");return 0;
     }
