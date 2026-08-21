@@ -460,11 +460,14 @@ Counter.count()  # => 2
 slot, not a per-instance field. Reading one that's never been assigned
 gives `nil`, the same default an instance field gets; there's no
 separate declaration step. Two different classes' own `@@x` never
-collide, even with the same name — each class gets its own slot. Unlike
-instance fields, `@@cvar[index] = value` (indexed assignment into the
-variable itself) isn't supported yet — read the value out, mutate the
-local, and assign the whole thing back, the same workaround `@ivar`
-needs today for the same reason.
+collide, even with the same name — each class gets its own slot.
+`@@cvar[index] = value` and `@ivar[index] = value` (indexed assignment
+into the variable itself, as opposed to reassigning the whole variable)
+both work: `@current[key] = value` loads `@current`'s existing Hash/Array
+into a register and mutates it in place through `DIAMOND_OP_INDEX_SET`,
+the same way indexing a plain local already did — there's no extra
+"write the mutated value back to the ivar/cvar" step needed, since
+Hash/Array are heap-allocated reference values in the first place.
 
 `@@cvar` used anywhere outside a class body (a bare top-level `def`, a
 `module`) is a compile error — there's no implicit global scope it could

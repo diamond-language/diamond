@@ -3940,7 +3940,9 @@ static bool compound_assignment_ahead(const Compiler *compiler) {
 }
 
 static bool index_assignment_ahead(const Compiler *compiler) {
-    if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER) return false;
+    if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER&&
+       compiler->current.kind!=DIAMOND_TOKEN_INSTANCE_VARIABLE&&
+       compiler->current.kind!=DIAMOND_TOKEN_CLASS_VARIABLE) return false;
     DiamondLexer lookahead=compiler->lexer;
     DiamondToken token=diamond_lexer_next(&lookahead);
     if(token.kind!=DIAMOND_TOKEN_LEFT_BRACKET) return false;
@@ -4044,17 +4046,44 @@ static DiamondTokenKind postfix_modifier_ahead(const Compiler *compiler) {
 
 static uint16_t compile_index_assignment(Compiler *compiler) {
     const DiamondSpan name=compiler->current.span;
-    const int local=find_local(compiler,name);
-    if(local<0) { fail(compiler,name,"undefined local variable"); return 0; }
-    uint16_t receiver=compiler->locals[(size_t)local].reg;
-    if(compiler->locals[(size_t)local].captured) {
-        /* See parse_identifier's own BOX_LOCAL re-emission for why this
-         * defensive re-box is needed: `captured` doesn't imply this
-         * control-flow path actually ran the boxing site. */
-        emit_instruction(compiler,DIAMOND_OP_BOX_LOCAL,receiver,0,0,1);
-        const uint16_t loaded=allocate_register(compiler);
-        emit_instruction(compiler,DIAMOND_OP_GET_CELL,loaded,receiver,0,2);
-        receiver=loaded;
+    uint16_t receiver;
+    /* @ivar[key] = value / @@cvar[key] = value: unlike the plain local
+     * case below, there's no boxed-Cell concern here -- Hash/Array are
+     * heap-allocated, mutable-in-place reference objects (confirmed
+     * directly: mutating through a freshly loaded register affects the
+     * same object @ivar/@@cvar itself still points at), so loading the
+     * current value into a fresh register and running DIAMOND_OP_INDEX_SET
+     * against that register is enough; there's no separate "write the
+     * mutated value back to the ivar/cvar" step. This mirrors exactly how
+     * parse_prefix's own DIAMOND_TOKEN_INSTANCE_VARIABLE/CLASS_VARIABLE
+     * cases read one as an ordinary expression. */
+    if(compiler->current.kind==DIAMOND_TOKEN_INSTANCE_VARIABLE) {
+        receiver=allocate_register(compiler);
+        if(compiler->current_module>=0&&compiler->current_class<0) {
+            const uint8_t field=module_field_name(compiler,name);
+            emit_instruction(compiler,DIAMOND_OP_GET_IVAR_NAME,receiver,0,field,3);
+        } else {
+            const int field=field_index(compiler,name,true);
+            emit_instruction(compiler,DIAMOND_OP_GET_IVAR,receiver,0,(uint8_t)field,3);
+        }
+    } else if(compiler->current.kind==DIAMOND_TOKEN_CLASS_VARIABLE) {
+        receiver=allocate_register(compiler);
+        const int slot=class_variable_index(compiler,name,true);
+        emit_instruction(compiler,DIAMOND_OP_GET_CVAR,receiver,
+                         (uint8_t)compiler->current_class,(uint8_t)slot,3);
+    } else {
+        const int local=find_local(compiler,name);
+        if(local<0) { fail(compiler,name,"undefined local variable"); return 0; }
+        receiver=compiler->locals[(size_t)local].reg;
+        if(compiler->locals[(size_t)local].captured) {
+            /* See parse_identifier's own BOX_LOCAL re-emission for why this
+             * defensive re-box is needed: `captured` doesn't imply this
+             * control-flow path actually ran the boxing site. */
+            emit_instruction(compiler,DIAMOND_OP_BOX_LOCAL,receiver,0,0,1);
+            const uint16_t loaded=allocate_register(compiler);
+            emit_instruction(compiler,DIAMOND_OP_GET_CELL,loaded,receiver,0,2);
+            receiver=loaded;
+        }
     }
     advance_token(compiler);
     advance_token(compiler);
