@@ -225,6 +225,51 @@ def run_tests()
     db.close()
   end
 
+  def test_named_constraint_conflict_target(conninfo, visitor)
+    db = PostgreSQL.open(conninfo)
+    db.execute("DROP TABLE IF EXISTS pg_dialect_named_conflict")
+    db.execute(
+      "CREATE TABLE pg_dialect_named_conflict (" +
+      "name TEXT, qty INTEGER, CONSTRAINT pg_dialect_named_conflict_name_key UNIQUE (name))")
+    items = Arel.table("pg_dialect_named_conflict")
+    target = Arel.conflict_target_on_constraint("pg_dialect_named_conflict_name_key")
+
+    insert = Arel.insert_into(items).values({"name": "pens", "qty": 4})
+    insert = insert.on_conflict_do_nothing(target)
+    Minitest.assert_equal(1, insert.execute(db, visitor))
+    Minitest.assert_equal(0, insert.execute(db, visitor))
+
+    upsert = Arel.insert_into(items).values({"name": "pens", "qty": 4})
+    upsert = upsert.on_conflict_do_update(target, {
+      "qty": Arel.expression(Arel.excluded("qty"))
+    })
+    upsert.execute(db, visitor)
+    Minitest.assert_equal(4, db.query("SELECT qty FROM pg_dialect_named_conflict")[0]["qty"])
+
+    db.close()
+  end
+
+  def test_column_default_in_multi_row_insert(conninfo, visitor)
+    db = PostgreSQL.open(conninfo)
+    db.execute("DROP TABLE IF EXISTS pg_dialect_column_default")
+    db.execute(
+      "CREATE TABLE pg_dialect_column_default (name TEXT, qty INTEGER DEFAULT 7)")
+    items = Arel.table("pg_dialect_column_default")
+
+    insert = Arel.insert_into(items).values_many([
+      {"name": "pens", "qty": 4},
+      {"name": "pencils", "qty": Arel.column_default()}
+    ])
+    Minitest.assert_equal(2, insert.execute(db, visitor))
+    rows = Arel.from(items).order(items.column("name").asc()).to_a(db, visitor)
+    Minitest.assert_equal("pencils", rows[0]["name"])
+    Minitest.assert_equal(7, rows[0]["qty"])
+    Minitest.assert_equal("pens", rows[1]["name"])
+    Minitest.assert_equal(4, rows[1]["qty"])
+
+    db.close()
+  end
+
   def test_nulls_first_and_nulls_last(conninfo, visitor)
     db = PostgreSQL.open(conninfo)
     db.execute("DROP TABLE IF EXISTS pg_dialect_scores")
@@ -306,6 +351,12 @@ def run_tests()
   end
   suite.test("ON CONFLICT DO NOTHING / DO UPDATE") do
     test_on_conflict_do_nothing_and_do_update(conninfo, visitor)
+  end
+  suite.test("named-constraint conflict target") do
+    test_named_constraint_conflict_target(conninfo, visitor)
+  end
+  suite.test("per-column DEFAULT in multi-row INSERT") do
+    test_column_default_in_multi_row_insert(conninfo, visitor)
   end
   suite.test("NULLS FIRST / NULLS LAST") do
     test_nulls_first_and_nulls_last(conninfo, visitor)

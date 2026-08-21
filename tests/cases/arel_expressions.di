@@ -38,7 +38,32 @@ def run_tests()
     rescue error: ArgumentError
       message = error.message()
     end
-    Minitest.assert_equal("SQL cast type must be an identifier", message)
+    Minitest.assert_equal(
+      "SQL cast type must be an identifier, optionally with a numeric parameter list", message)
+  end
+
+  # Verified directly against both SQLite and PostgreSQL that a
+  # parameterized cast type works identically on each -- no visitor
+  # capability needed, unlike the genuinely dialect-specific extensions
+  # elsewhere in this suite.
+  def test_cast_types_accept_a_numeric_parameter_list()
+    values = Arel.table("values_table")
+    cast = Arel.cast(values.column("number"), "NUMERIC(10, 2)")
+    query = Arel.from(values).project([Arel.as(cast, "number")])
+    sql, params = query.to_sql()
+    Minitest.assert_equal(
+      "SELECT CAST(\"values_table\".\"number\" AS NUMERIC(10, 2)) AS \"number\" FROM \"values_table\"",
+      sql)
+    Minitest.assert_equal(0, params.length())
+
+    rejected = nil
+    begin
+      Arel.cast(Arel.literal(1), "NUMERIC(1,2,3)")
+    rescue error: ArgumentError
+      rejected = error.message()
+    end
+    Minitest.assert_equal(
+      "SQL cast type must be an identifier, optionally with a numeric parameter list", rejected)
   end
 
   def test_string_concatenation_is_structural()
@@ -60,6 +85,7 @@ def run_tests()
   suite.test("generic function validation", test_generic_function_names_reject_sql_fragments)
   suite.test("structural CAST", test_casts_are_structural_and_preserve_binds)
   suite.test("CAST type validation", test_cast_types_reject_sql_fragments)
+  suite.test("CAST numeric parameter list", test_cast_types_accept_a_numeric_parameter_list)
   suite.test("structural concatenation", test_string_concatenation_is_structural)
   suite.run!()
 end

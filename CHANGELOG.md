@@ -1,5 +1,33 @@
 # Changelog
 
+## Arel 0.33.0
+
+- Resolved the four "Deferred expression decisions" from `ROADMAP.md` by
+  checking each directly against the PostgreSQL dialect:
+  - `Arel.cast(expression, type_name)` now accepts an optional numeric
+    parameter list (e.g. `NUMERIC(10, 2)`) -- verified portable across both
+    dialects, so this needed only a widened validation regex, not a
+    capability gate or a new node.
+  - Added `Arel.column_default()`, a new `ColumnDefault` node that fills a
+    single column of a multi-row INSERT with the table's own `DEFAULT`.
+    Genuinely PostgreSQL-only (SQLite's multi-row `VALUES` grammar has no
+    per-column `DEFAULT` placeholder), gated behind the new
+    `per-column default values` capability.
+  - Added `Arel.conflict_target_on_constraint(name)`, a new
+    `ConflictConstraintTarget` node rendering `ON CONFLICT ON CONSTRAINT
+    name` instead of a column list. Also genuinely PostgreSQL-only, gated
+    behind the new `named-constraint conflict targets` capability. Fixed a
+    bug found while adding this: `Insert#on_conflict_do_nothing`/
+    `#on_conflict_do_update` only special-cased `ConflictTarget`, so passing
+    a `ConflictConstraintTarget` fell through into `arel_array`, silently
+    wrapping it in an `Array` instead of passing it through.
+  - The fourth item, additional operators beyond the measured SQLite use
+    cases, stays deferred -- no concrete need has surfaced yet.
+- `Arel::SQLiteVisitor#supports_extension?` now rejects these two new
+  capabilities by name; every other capability (and `Arel::PostgreSQLVisitor`)
+  is unaffected.
+- `package.di` bumped 0.32.0 -> 0.33.0.
+
 ## Arel 0.32.0
 
 - Nested every class under `module Arel` (`Arel::Table`, `Arel::Query`,

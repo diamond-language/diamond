@@ -197,8 +197,10 @@ across every node class. All ordinary right operands remain binds.
 
 `Arel.function(name, arguments)` constructs a generic function after validating
 that its name is a single identifier. `Arel.cast(expression, type_name)` does
-the same for simple CAST type names. Parameterized or dialect-specific type
-fragments still require an explicit dialect extension or `Arel.sql`.
+the same for simple CAST type names, plus an optional numeric parameter list
+such as `NUMERIC(10, 2)` -- verified portable across both dialects, so this
+needs no capability check. Other dialect-specific type fragments still
+require `Arel.sql`.
 
 `Arel.inspect(node)` returns a deterministic structural description rather than
 executable SQL. It covers expressions, predicates, decorators, relations,
@@ -253,11 +255,22 @@ Third-party nodes can structurally opt into the tooling protocols by providing
 type chain while allowing them to participate in traversal, transformations,
 diagnostics, and equality.
 
-`Arel.conflict_target(columns)` builds an immutable SQLite conflict target.
-Use `target.column(name)` with `where(predicate)` for partial unique indexes;
-`Arel.literal(value)` supplies the literal integer or boolean SQLite requires
-when matching an index predicate. Strings are deliberately rejected as
-structural literals and remain binds everywhere else.
+`Arel.conflict_target(columns)` builds an immutable conflict target from a
+column list, portable across both dialects. Use `target.column(name)` with
+`where(predicate)` for partial unique indexes; `Arel.literal(value)` supplies
+the literal integer or boolean SQLite requires when matching an index
+predicate. Strings are deliberately rejected as structural literals and
+remain binds everywhere else. `Arel.conflict_target_on_constraint(name)`
+builds a named-constraint conflict target (`ON CONFLICT ON CONSTRAINT name`)
+instead of a column list -- genuinely PostgreSQL-only, gated behind the
+`named-constraint conflict targets` capability; `Arel::SQLiteVisitor` rejects
+it, since SQLite's `ON CONFLICT` has no such form.
+
+`Arel.column_default()` fills a single column of a multi-row INSERT with the
+table's own `DEFAULT`, distinct from `Arel.insert_into(table).default_values()`
+which defaults the whole row. Also genuinely PostgreSQL-only (SQLite's
+multi-row `VALUES` grammar has no per-column `DEFAULT` placeholder), gated
+behind the `per-column default values` capability.
 
 UPDATE and DELETE require a predicate unless the caller explicitly opts into a
 whole-table operation with `all()`. SQLite `RETURNING` is available on all three

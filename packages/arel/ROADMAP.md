@@ -67,13 +67,24 @@ the same syntax and semantics as the existing two.
 
 ## Deferred expression decisions
 
-These need another dialect or a real query before they justify nodes:
+Resolved once the PostgreSQL dialect existed to check each against:
 
-- per-column DEFAULT, which SQLite does not accept wherever other dialects do;
-- named-constraint conflict targets;
-- parameterized or dialect-specific CAST type declarations;
-- additional operators beyond the measured SQLite use cases.
+- per-column DEFAULT: genuinely PostgreSQL-only (SQLite's multi-row `VALUES`
+  grammar has no per-column `DEFAULT` placeholder). Modeled as `ColumnDefault`
+  (`Arel.column_default()`), gated behind the `per-column default values`
+  capability -- `Arel::SQLiteVisitor` rejects it, `Arel::PostgreSQLVisitor`
+  accepts it;
+- named-constraint conflict targets: also genuinely PostgreSQL-only (SQLite's
+  `ON CONFLICT` only ever takes a column list, never `ON CONSTRAINT name`).
+  Modeled as `ConflictConstraintTarget`
+  (`Arel.conflict_target_on_constraint(name)`), gated behind the
+  `named-constraint conflict targets` capability;
+- parameterized CAST type declarations (e.g. `NUMERIC(10, 2)`): turned out
+  portable -- verified directly against both dialects that they accept
+  identical syntax here, so this needed a widened regex on `Cast`'s type
+  validation, not a capability gate or a new node.
 
+Still deferred -- additional operators beyond the measured SQLite use cases.
 Do not emulate unsupported SQLite syntax merely for API symmetry.
 
 ## Quality bar

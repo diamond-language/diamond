@@ -66,9 +66,14 @@ The current named capabilities are:
 - `explicit NULL ordering`;
 - `write CTEs`;
 - `recursive CTEs`;
-- `integer bitwise operators`.
+- `integer bitwise operators`;
+- `per-column default values`;
+- `named-constraint conflict targets`.
 
-`Arel::SQLiteVisitor` supports all of them. A visitor may support any subset.
+`Arel::SQLiteVisitor` supports every capability except the last two, which are
+genuinely PostgreSQL-only: SQLite has no per-column `DEFAULT` placeholder in a
+multi-row `VALUES` list and no named-constraint `ON CONFLICT ON CONSTRAINT`
+form, only column-list conflict targets. A visitor may support any subset.
 Unsupported use raises an `ArgumentError` naming both the visitor and the
 capability before SQL is returned.
 
@@ -106,8 +111,8 @@ similarly named syntax; bind ordering and node semantics must also match.
 
 `Arel::PostgreSQLVisitor` (`lib/arel.di`) is the second such visitor, and the
 first to actually follow that guidance end to end: every capability it
-claims (`supports_extension?` returns `true` for all of them, same as
-`Arel::SQLiteVisitor`) is backed by a real execution-based fixture in
+claims (`supports_extension?` returns `true` for all of them, a strict
+superset of `Arel::SQLiteVisitor`'s) is backed by a real execution-based fixture in
 `test_postgres_dialect.di`, run against a live PostgreSQL server via
 `test_postgres_dialect.sh` -- not just plausible-looking rendered SQL. That
 suite is deliberately kept out of `tests/cases/`: everything there is

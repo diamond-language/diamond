@@ -213,9 +213,18 @@ class Literal
 end
 
 class Cast
+  # A bare identifier (INTEGER, TEXT) or an identifier with a numeric
+  # parameter list (VARCHAR(255), NUMERIC(10,2), optional whitespace
+  # after the comma) -- verified directly that both forms already work
+  # identically on SQLite and PostgreSQL, so no visitor capability is
+  # needed here, unlike the genuinely dialect-specific extensions below.
+  # The pattern only ever admits letters/digits/underscore/comma/
+  # whitespace/parens, so it stays injection-safe with the wider match.
   def initialize(expression, type_name: String)
-    unless Regexp.new("\\A[A-Za-z_][A-Za-z0-9_]*\\z").match?(type_name)
-      raise ArgumentError.new("SQL cast type must be an identifier")
+    pattern = Regexp.new("\\A[A-Za-z_][A-Za-z0-9_]*(\\([0-9]+(,\\s*[0-9]+)?\\))?\\z")
+    unless pattern.match?(type_name)
+      raise ArgumentError.new(
+        "SQL cast type must be an identifier, optionally with a numeric parameter list")
     end
     @expression = expression
     @type_name = type_name
@@ -769,7 +778,13 @@ end
 class SQLiteVisitor < Visitor
   def visitor_name() = "SQLite"
   def quote_identifier(name: String) -> String = arel_quote_identifier(name)
-  def supports_extension?(name: String) = true
+  # Every other capability is genuine SQLite syntax; these two are not --
+  # verified directly (both raise a real SQLite syntax error) rather than
+  # assumed: a bare DEFAULT in a VALUES row, and ON CONFLICT ON CONSTRAINT
+  # naming a constraint directly. SQLite has no equivalent for either.
+  def supports_extension?(name: String) -> Bool
+    name != "per-column default values" && name != "named-constraint conflict targets"
+  end
   def render_pagination(limit_value, offset_value, params: Array,
                         bind_values = true) -> String
     sql = ""
@@ -797,14 +812,17 @@ end
 
 # PostgreSQL's own grammar accepts a bare OFFSET with no LIMIT clause at
 # all, so unlike SQLiteVisitor's render_pagination above, no LIMIT -1
-# sentinel is needed here. Every other capability this visitor claims
+# sentinel is needed here. Most other capabilities this visitor claims
 # below (identifier quoting, ON CONFLICT, DEFAULT VALUES, RETURNING, CTEs,
-# NULLS FIRST/LAST, integer bitwise operators) uses syntax identical to
+# NULLS FIRST/LAST, integer bitwise operators) use syntax identical to
 # SQLite's own -- both were modeled on Postgres's own SQL to begin with --
 # verified against a live PostgreSQL container in
 # tests/cases/arel_postgres_dialect.di, not merely assumed from the
 # similarly-named syntax (see this project's own stated quality bar in
-# ROADMAP.md for why that distinction matters).
+# ROADMAP.md for why that distinction matters). Two capabilities really
+# are Postgres-only, unlike everything else here: per-column default
+# values in a VALUES row, and named-constraint conflict targets --
+# SQLiteVisitor's own supports_extension? explicitly excludes both.
 class PostgreSQLVisitor < Visitor
   def visitor_name() = "PostgreSQL"
   def quote_identifier(name: String) -> String = arel_quote_identifier(name)
@@ -1199,7 +1217,31 @@ class ConflictTarget
   def column(name: String) = ConflictAttribute.new(name)
 end
 
+# `ON CONFLICT ON CONSTRAINT name DO ...` -- names the constraint directly
+# instead of repeating its column list (or for a constraint ConflictTarget's
+# column-list form can't express at all, like an exclusion constraint).
+# Verified directly: PostgreSQL accepts this; SQLite has no equivalent
+# (rejects it as a syntax error -- SQLite's own UPSERT grammar has no
+# named-constraint form), so this is gated behind the "named-constraint
+# conflict targets" capability.
+class ConflictConstraintTarget
+  def initialize(name: String)
+    @name = name
+  end
+  def name() = @name
+end
+
 class DefaultValues
+end
+
+# A per-column DEFAULT within an ordinary VALUES row (`INSERT INTO t (a,
+# b) VALUES (1, DEFAULT)`), as opposed to DefaultValues above (the whole
+# row is DEFAULT VALUES, no column list at all). Verified directly against
+# both dialects before adding this: PostgreSQL accepts a bare DEFAULT in a
+# VALUES list (single- and multi-row); SQLite rejects it outright as a
+# syntax error, so this is gated behind the "per-column default values"
+# capability, unlike Cast above.
+class ColumnDefault
 end
 
 # Namespace singleton methods rather than free top-level functions:
@@ -1231,25 +1273,30 @@ def self.render_insert_conflict(target, ignore: Bool, assignments, params: Array
   if !ignore && assignments == nil
     return ""
   end
-  columns = target
-  predicate = nil
-  if target is ConflictTarget
-    columns = target.columns()
-    predicate = target.predicate()
-  end
-  targets = []
-  target_index = 0
-  while target_index < columns.length()
-    targets.push(visitor.quote_identifier(columns[target_index]))
-    target_index += 1
-  end
   target_sql = ""
-  if targets.length() > 0
-    target_sql = " (#{targets.join(", ")})"
-  end
-  unless predicate == nil
-    visitor.require_extension("conflict-target predicates")
-    target_sql += " WHERE " + visitor.render_expression(predicate, params)
+  if target is ConflictConstraintTarget
+    visitor.require_extension("named-constraint conflict targets")
+    target_sql = " ON CONSTRAINT #{visitor.quote_identifier(target.name())}"
+  else
+    columns = target
+    predicate = nil
+    if target is ConflictTarget
+      columns = target.columns()
+      predicate = target.predicate()
+    end
+    targets = []
+    target_index = 0
+    while target_index < columns.length()
+      targets.push(visitor.quote_identifier(columns[target_index]))
+      target_index += 1
+    end
+    if targets.length() > 0
+      target_sql = " (#{targets.join(", ")})"
+    end
+    unless predicate == nil
+      visitor.require_extension("conflict-target predicates")
+      target_sql += " WHERE " + visitor.render_expression(predicate, params)
+    end
   end
   visitor.require_extension("upsert conflict actions")
   if ignore
@@ -1323,7 +1370,7 @@ class Insert
   end
   def on_conflict_do_nothing(columns = [])
     target = columns
-    unless columns is ConflictTarget
+    unless columns is ConflictTarget || columns is ConflictConstraintTarget
       target = arel_array(columns)
     end
     Insert.new(@table, @rows, @returning, @source_columns, @source_query,
@@ -1331,7 +1378,7 @@ class Insert
   end
   def on_conflict_do_update(columns, assignments: Hash)
     target = columns
-    unless columns is ConflictTarget
+    unless columns is ConflictTarget || columns is ConflictConstraintTarget
       target = arel_array(columns)
     end
     Insert.new(@table, @rows, @returning, @source_columns, @source_query,
@@ -1410,6 +1457,9 @@ class Insert
         value = row[key]
         if value is AssignmentValue
           placeholders.push(visitor.render_expression(value.expression(), params))
+        elsif value is ColumnDefault
+          visitor.require_extension("per-column default values")
+          placeholders.push("DEFAULT")
         else
           placeholders.push("?")
           params.push(value)
@@ -2660,6 +2710,8 @@ end
     BinaryExpression.new(expression, operator, value)
   end
   def self.conflict_target(columns) = ConflictTarget.new(arel_array(columns))
+  def self.conflict_target_on_constraint(name: String) = ConflictConstraintTarget.new(name)
+  def self.column_default() = ColumnDefault.new()
   def self.render(statement, visitor = nil) = statement.to_sql(visitor)
   def self.inspect(node) = Inspector.new().inspect(node)
   def self.same?(left, right) = Inspector.new().same?(left, right)

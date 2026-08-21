@@ -156,6 +156,32 @@ def run_tests()
     Minitest.assert_equal("portable-test visitor does not support write CTEs", message)
   end
 
+  def test_column_defaults_are_a_dialect_extension()
+    items = Arel.table("items")
+    insert = Arel.insert_into(items).values({"name": "pens", "qty": Arel.column_default()})
+    message = nil
+    begin
+      insert.to_sql(PortableTestVisitor.new())
+    rescue error: ArgumentError
+      message = error.message()
+    end
+    Minitest.assert_equal("portable-test visitor does not support per-column default values", message)
+  end
+
+  def test_named_constraint_targets_are_a_dialect_extension()
+    items = Arel.table("items")
+    insert = Arel.insert_into(items).values({"name": "pens"})
+    insert = insert.on_conflict_do_nothing(Arel.conflict_target_on_constraint("items_name_key"))
+    message = nil
+    begin
+      insert.to_sql(PortableTestVisitor.new())
+    rescue error: ArgumentError
+      message = error.message()
+    end
+    Minitest.assert_equal(
+      "portable-test visitor does not support named-constraint conflict targets", message)
+  end
+
   def test_portable_select_nodes_render_without_extensions()
     people = Arel.table("people")
     query = Arel.from(people).project([
@@ -242,6 +268,8 @@ def run_tests()
   suite.test("partial conflict extension", test_partial_conflict_targets_are_dialect_extensions)
   suite.test("upsert extension", test_upsert_actions_are_dialect_extensions)
   suite.test("default values extension", test_default_values_are_a_dialect_extension)
+  suite.test("column default extension", test_column_defaults_are_a_dialect_extension)
+  suite.test("named-constraint target extension", test_named_constraint_targets_are_a_dialect_extension)
   suite.test("portable SELECT nodes", test_portable_select_nodes_render_without_extensions)
   suite.test("portable write nodes", test_portable_write_nodes_render_without_extensions)
   suite.test("portable compounds and CTEs", test_portable_compounds_and_ctes_render_without_extensions)
