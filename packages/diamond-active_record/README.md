@@ -102,6 +102,35 @@ domain object by naming convention), just this package's own repository
 exposing its own explicitly-supplied configuration for another piece of
 itself to build a query with.
 
+Every association above also has a `#preload` batch form, avoiding the
+N+1 query pattern a loop calling `#all`/`#get` once per owner would
+produce -- one query for every owner instead:
+
+```diamond
+author_ids = [1, 2, 3]
+grouped = author_books.preload(db, author_ids)
+grouped[1]   # => Array of that author's books, [] if it has none
+```
+
+`HasMany#preload`/`HasManyThrough#preload` take an `Array` of owner
+values and return a `Hash` of owner value -> `Array` of mapped records,
+with every owner value passed in getting a key (an empty `Array`, not a
+missing one, when it has no matches). `HasOne#preload` takes the same
+shape but returns a mapped record or `nil` per owner, the same
+"not found" shape `#get` uses -- if more than one row matches a given
+owner (a data-integrity assumption `HasOne` doesn't enforce), the last
+one wins, same as `#get` only ever looking at the first result of an
+unordered set. `BelongsTo#preload` takes an `Array` of the *children's*
+own foreign-key values (matching `#get`'s own argument, not an owner id)
+and returns a `Hash` keyed the same way.
+
+There is no association caching or attachment to the owner objects
+themselves -- there's no model base class to attach a `.books`-style
+reader to (`mapper` builds whatever opaque class the caller wants), so
+`#preload` just returns the `Hash`; combining it with an already-loaded
+list of owners (by their own id) is the caller's own explicit step, the
+same "no object introspection" stance the rest of this package takes.
+
 `ActiveRecord::Repository.new` also takes optional `validator`, `before_save`,
 and `after_save` arguments -- there is no `validates`-style class macro here
 (there's no model base class to hang one on), just ordinary functions,

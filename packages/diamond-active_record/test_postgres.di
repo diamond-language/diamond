@@ -168,6 +168,40 @@ def run_tests()
     db.close()
   end
 
+  def test_preload_with_explicit_postgresql_visitor(conninfo)
+    db = PostgreSQL.open(conninfo)
+    db.execute("DROP TABLE IF EXISTS ar_pg_authorships")
+    db.execute("DROP TABLE IF EXISTS ar_pg_books")
+    db.execute("DROP TABLE IF EXISTS ar_pg_book_authors")
+    db.execute("CREATE TABLE ar_pg_book_authors (id SERIAL PRIMARY KEY, name TEXT)")
+    db.execute("CREATE TABLE ar_pg_books (id SERIAL PRIMARY KEY, title TEXT, author_id INTEGER)")
+    db.execute("CREATE TABLE ar_pg_authorships (author_id INTEGER, book_id INTEGER)")
+    db.execute("INSERT INTO ar_pg_book_authors (name) VALUES (?)", ["Ada"])
+    db.execute("INSERT INTO ar_pg_book_authors (name) VALUES (?)", ["Grace"])
+    db.execute(
+      "INSERT INTO ar_pg_books (title, author_id) VALUES (?, ?)", ["Sketch", 1])
+    db.execute(
+      "INSERT INTO ar_pg_books (title, author_id) VALUES (?, ?)", ["Notes", 1])
+    db.execute("INSERT INTO ar_pg_authorships (author_id, book_id) VALUES (?, ?)", [1, 1])
+    db.execute("INSERT INTO ar_pg_authorships (author_id, book_id) VALUES (?, ?)", [1, 2])
+
+    visitor = Arel::PostgreSQLVisitor.new()
+    authors = ActiveRecord::Repository.new(Arel.table("ar_pg_book_authors"), map_author, "id", visitor)
+    books = ActiveRecord::Repository.new(Arel.table("ar_pg_books"), map_book, "id", visitor)
+
+    author_books = ActiveRecord::HasMany.new(books, "author_id")
+    grouped = author_books.preload(db, [1, 2])
+    Minitest.assert_equal(2, grouped[1].length())
+    Minitest.assert_equal(0, grouped[2].length())
+
+    author_books_through = ActiveRecord::HasManyThrough.new(
+      books, Arel.table("ar_pg_authorships"), "author_id", "book_id")
+    grouped_through = author_books_through.preload(db, [1, 2])
+    Minitest.assert_equal(2, grouped_through[1].length())
+    Minitest.assert_equal(0, grouped_through[2].length())
+    db.close()
+  end
+
   suite = Minitest.new()
   suite.test("default visitor breaks on a real dialect difference") do
     test_default_visitor_breaks_on_a_real_dialect_difference(conninfo)
@@ -180,6 +214,9 @@ def run_tests()
   end
   suite.test("optimistic locking with explicit Arel::PostgreSQLVisitor") do
     test_optimistic_locking_with_explicit_postgresql_visitor(conninfo)
+  end
+  suite.test("preload with explicit Arel::PostgreSQLVisitor") do
+    test_preload_with_explicit_postgresql_visitor(conninfo)
   end
   suite.run!()
 end

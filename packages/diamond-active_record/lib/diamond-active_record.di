@@ -303,6 +303,31 @@ class HasMany
     conditions[@foreign_key] = owner_id
     @repository.where(db, conditions)
   end
+
+  # Batch form of #all -- one query for every owner_id instead of one
+  # query per owner, avoiding the N+1 pattern a naive loop over #all
+  # would produce. Returns a Hash of owner_id -> Array of mapped records;
+  # every owner_id passed in gets a key (an empty Array if it has none),
+  # so a caller never needs its own fallback for a missing key.
+  def preload(db, owner_ids: Array)
+    table = @repository.table()
+    rows = Arel.from(table).where(
+      table.column(@foreign_key).in_list(owner_ids)).to_a(db, @repository.visitor())
+    mapper = @repository.mapper()
+    grouped = {}
+    index = 0
+    while index < owner_ids.length()
+      grouped[owner_ids[index]] = []
+      index += 1
+    end
+    row_index = 0
+    while row_index < rows.length()
+      row = rows[row_index]
+      grouped[row[@foreign_key]].push(mapper(row))
+      row_index += 1
+    end
+    grouped
+  end
 end
 
 class HasOne
@@ -323,6 +348,32 @@ class HasOne
     conditions[@foreign_key] = owner_id
     results = @repository.where(db, conditions)
     if results.length() == 0 then nil else results[0] end
+  end
+
+  # Batch form of #get -- one query for every owner_id. Returns a Hash of
+  # owner_id -> mapped record or nil, the same "not found" shape #get
+  # uses, for every owner_id passed in. If more than one row matches a
+  # given owner_id (a data-integrity assumption this association doesn't
+  # enforce), the last one wins -- same as #get looking at only the
+  # first result, just the opposite end of an unordered result set.
+  def preload(db, owner_ids: Array)
+    table = @repository.table()
+    rows = Arel.from(table).where(
+      table.column(@foreign_key).in_list(owner_ids)).to_a(db, @repository.visitor())
+    mapper = @repository.mapper()
+    grouped = {}
+    index = 0
+    while index < owner_ids.length()
+      grouped[owner_ids[index]] = nil
+      index += 1
+    end
+    row_index = 0
+    while row_index < rows.length()
+      row = rows[row_index]
+      grouped[row[@foreign_key]] = mapper(row)
+      row_index += 1
+    end
+    grouped
   end
 end
 
@@ -363,6 +414,38 @@ class HasManyThrough
     end
     mapped
   end
+
+  # Batch form of #all -- one join query for every owner_id instead of
+  # one join query per owner. Returns a Hash of owner_id -> Array of
+  # mapped target records, an empty Array for an owner_id with none.
+  # Projects the join table's own owner-key column alongside the target
+  # table's star purely to know which owner each returned row belongs to
+  # when grouping -- a narrow, deliberate addition to the star projection
+  # #all already uses, safe as long as the join table's owner-key column
+  # name doesn't collide with one of the target table's own column names.
+  def preload(db, owner_ids: Array)
+    target_table = @target_repository.table()
+    join_predicate = @join_table.column(@join_target_key).eq(
+      target_table.column(@target_repository.id_column()))
+    query = Arel.from(@join_table).join(target_table, join_predicate)
+    query = query.where(@join_table.column(@join_owner_key).in_list(owner_ids))
+    query = query.project([@join_table.column(@join_owner_key), target_table.star()])
+    rows = query.to_a(db, @target_repository.visitor())
+    mapper = @target_repository.mapper()
+    grouped = {}
+    index = 0
+    while index < owner_ids.length()
+      grouped[owner_ids[index]] = []
+      index += 1
+    end
+    row_index = 0
+    while row_index < rows.length()
+      row = rows[row_index]
+      grouped[row[@join_owner_key]].push(mapper(row))
+      row_index += 1
+    end
+    grouped
+  end
 end
 
 class BelongsTo
@@ -382,6 +465,30 @@ class BelongsTo
     conditions[@owner_key] = foreign_key_value
     results = @repository.where(db, conditions)
     if results.length() == 0 then nil else results[0] end
+  end
+
+  # Batch form of #get -- one query for every foreign_key_value instead
+  # of one per child. Returns a Hash of foreign_key_value -> mapped owner
+  # record or nil, the same "not found" shape #get uses, for every value
+  # passed in.
+  def preload(db, foreign_key_values: Array)
+    table = @repository.table()
+    rows = Arel.from(table).where(
+      table.column(@owner_key).in_list(foreign_key_values)).to_a(db, @repository.visitor())
+    mapper = @repository.mapper()
+    grouped = {}
+    index = 0
+    while index < foreign_key_values.length()
+      grouped[foreign_key_values[index]] = nil
+      index += 1
+    end
+    row_index = 0
+    while row_index < rows.length()
+      row = rows[row_index]
+      grouped[row[@owner_key]] = mapper(row)
+      row_index += 1
+    end
+    grouped
   end
 end
 
