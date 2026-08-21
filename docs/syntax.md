@@ -861,23 +861,30 @@ already-tested index-based implementations by materializing the receiver
 into an Array via `to_a` first (itself built on `each`) and delegating to
 those, rather than re-deriving each one generically over `each()`.
 
-A handful of further Array/Hash conveniences live in the prelude as
-plain functions (`array_reverse(values)`, not `values.reverse()` —
-receiver syntax only exists for the natives and the Enumerable/forwarding
-set above): `array_reverse(values)` returns a new array in reverse
-order; `array_concat(values, other)` returns a new array with `other`'s
-elements appended; `array_compact(values)` returns a new array with any
-`nil` elements dropped; `array_uniq(values)` returns a new array with
-only the first occurrence of each distinct (`==`) element, order
-preserved; `array_flatten(values)` returns a new array with nested
-arrays fully flattened (recursively, matching Ruby's default);
-`array_join(values, separator = "")` is a thin wrapper around the
-native `.join()` above, kept for existing callers that prefer the
-free-function spelling; `array_delete_at(values, index)` mutates
-`values` in place (like the native `.push`/`.pop`), removing and
-returning the element at `index`, or `nil` without mutating if `index`
-is out of bounds; `hash_merge(a, b)` returns a new `Hash` with `a`'s
-pairs then `b`'s applied on top (`b` wins on key conflicts).
+A handful of further Array/Hash conveniences work as receiver syntax too,
+forwarding the same way the Enumerable set above does:
+`values.reverse()` returns a new array in reverse order;
+`values.concat(other)` returns a new array with `other`'s elements
+appended; `values.compact()` returns a new array with any `nil` elements
+dropped; `values.uniq()` returns a new array with only the first
+occurrence of each distinct (`==`) element, order preserved;
+`values.flatten()` returns a new array with nested arrays fully
+flattened (recursively, matching Ruby's default);
+`values.delete_at(index)` mutates `values` in place (like the native
+`.push`/`.pop`), removing and returning the element at `index`, or `nil`
+without mutating if `index` is out of bounds; `hash.merge(other)` returns
+a new `Hash` with the receiver's pairs then `other`'s applied on top
+(`other` wins on key conflicts). Like the rest of the Enumerable set,
+`vm.c`'s native dispatch resolves each of these receiver calls to a
+same-named top-level prelude function (`array_reverse`, `array_concat`,
+...) at runtime, so that free-function spelling still exists underneath
+and can't be removed without a native-dispatch rework -- receiver syntax
+is simply the only spelling documented and used going forward.
+`array_join(values, separator = "")` was the one exception: a thin
+wrapper *around* the already-native `.join()` above rather than
+`.join()`'s own implementation, with no dispatch dependency on its name,
+so it has been removed now that `values.join(separator)` is the only
+spelling.
 
 `Int`/`Float` have no per-value method dispatch (both are scalar
 `DiamondValue`s, not heap objects), so numeric helpers are plain

@@ -94,12 +94,35 @@ function on that materialized copy rather than re-deriving index-based
 logic generically (see `docs/design.md`'s Enumerable section for the
 full reasoning). Verified against both `Range` and a custom `each`-only
 class, plus the pre-existing `legacy_0362`/`0363`/`0364` Enumerable
-fixtures. `docs/syntax.md` and `docs/design.md` updated to match; a
-pre-existing, unrelated staleness in `docs/syntax.md` was spotted but left
-alone -- it still describes `array_reverse`/`array_concat`/`array_compact`/
-`array_uniq`/`array_flatten` as plain functions ("not `values.reverse()`"),
-when the Array receiver-method migration earlier in this Status section
-already gave them receiver syntax.
+fixtures. `docs/syntax.md` and `docs/design.md` updated to match.
+
+Step 6 (removing compatibility wrappers) turned out to be far narrower
+than its "one deliberate cleanup release" framing implied, once checked
+against how receiver dispatch actually works: `vm.c`'s `DIAMOND_OP_INVOKE`
+resolves `values.map(cb)`/`hash.fetch(...)`/etc. by looking up a
+same-named top-level prelude function (`find_top_level_function`) at
+runtime and forwarding to it -- roughly 38 of the `array_*`/`hash_*`/
+`enumerable_*` functions across this doc's candidate lists *are* that
+lookup's real target, not a redundant layer in front of one. Deleting any
+of them breaks the receiver method itself for every `Array`/`Hash` in the
+language; the doc's own "candidates" framing assumed they'd become
+genuinely removable once receiver syntax existed, which isn't how the
+mechanism works. The one function that actually fit the "redundant
+wrapper" description was `array_join` (`values.join(separator)`, forwarding
+to the already fully-native, non-table-dispatched `.join()`, per
+`src/vm.c`'s `array_join_helper` comment) -- it has been deleted from
+`lib/core.di`. `tests/cases/array_join_method.di` (which exercised both
+`.join()` and the free-function form) and `tests/cases/legacy_0440`
+through `legacy_0443` (which existed solely to test the free-function
+form) were updated to `values.join(...)` receiver syntax, preserving their
+coverage (including `legacy_0443`'s `nil`/`Bool` element stringification
+case) with matching `.expected` output confirmed against the built binary.
+`docs/syntax.md` and this doc's own "Array candidates" section updated to
+match; the rest of the `array_*`/`hash_*`/`enumerable_*` free functions
+stay exactly as they are -- true removal would need a native-dispatch
+rework (hardcoding these directly in `vm.c` instead of runtime name
+lookup), which is out of scope for a modernization pass and not attempted
+here.
 
 ## High-Value Receiver Migrations
 
@@ -127,9 +150,11 @@ values.each_slice(2)
 values.group_by(callback)
 ```
 
-`array_join` is lower priority because `Array#join` is already native and the
-free function is only a compatibility wrapper. `array_sort` in
-`lib/core/numeric.di` is also a special case: it is typed specifically for
+`array_join` was removed (see Status above): `Array#join` is already native
+and the free function was only a compatibility wrapper, unlike the rest of
+this list, whose free functions remain vm.c's actual dispatch targets.
+`array_sort` in `lib/core/numeric.di` is also a special case: it is typed
+specifically for
 `Array[Int]` and should either become an Array method with a deliberate typed
 contract or be replaced by the existing native sorting surface, not blindly
 renamed.
@@ -282,7 +307,10 @@ inspection, or `method_missing` merely to make the code look more Rails-like.
 5. Apply `unless` and truthiness rewrites only where nil-versus-false semantics
    are explicit.
 6. Remove compatibility wrappers only in a deliberate language/library
-   cleanup release.
+   cleanup release -- done for `array_join`, the one genuinely redundant
+   wrapper found; see Status above for why the rest of this doc's
+   `array_*`/`hash_*`/`enumerable_*` candidates aren't actually removable
+   without a native-dispatch rework.
 
 The key constraint is source-order compilation: method additions and call-site
 migration should land in dependency order, with the full native and REPL suites

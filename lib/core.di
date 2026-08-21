@@ -162,15 +162,6 @@ def array_flatten(values: Array) -> Array
   result
 end
 
-# Kept as a free function for existing callers, but the loop that used
-# to live here (`result = result + "#{piece}"`, once per element) was
-# exactly the O(n^2) concatenation-in-a-loop pattern the pre-release
-# audit flagged -- #join is now a genuine native, StringBuilder-backed
-# method (src/vm.c's INVOKE handler), O(n) total.
-def array_join(values: Array, separator: String = "") -> String
-  values.join(separator)
-end
-
 def array_delete_at(values: Array, index: Int)
   length = values.length()
   if index < 0 || index >= length

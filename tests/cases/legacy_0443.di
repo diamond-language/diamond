@@ -1,1 +1,1 @@
-array_join(["a", nil, true])
+["a", nil, true].join()

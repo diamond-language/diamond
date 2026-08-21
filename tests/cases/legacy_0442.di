@@ -1,1 +1,1 @@
-array_join([])
+[].join()
