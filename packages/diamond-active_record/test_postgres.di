@@ -1,4 +1,4 @@
-# Opt-in cross-dialect conformance test for ActiveRecordRepository's
+# Opt-in cross-dialect conformance test for ActiveRecord::Repository's
 # visitor parameter (see README.md). Requires an already-running PostgreSQL
 # server -- run via test_postgres.sh, which manages its own throwaway
 # container, the same pattern packages/arel/test_postgres_dialect.di/.sh
@@ -35,9 +35,9 @@ def run_tests()
     db.execute("INSERT INTO ar_pg_authors (name, country) VALUES (?, ?)", ["Ada", "UK"])
     db.execute("INSERT INTO ar_pg_authors (name, country) VALUES (?, ?)", ["Grace", "USA"])
 
-    # Leaving the visitor unset (nil, Arel's own default ArelSQLiteVisitor)
+    # Leaving the visitor unset (nil, Arel's own default Arel::SQLiteVisitor)
     # against a real PostgreSQL connection isn't rejected by
-    # ActiveRecordRepository, but it's a latent correctness gap, not a
+    # ActiveRecord::Repository, but it's a latent correctness gap, not a
     # supported combination -- offset-only pagination is where the two
     # dialects actually diverge (SQLite's LIMIT -1 sentinel is syntax
     # Postgres rejects outright), demonstrated here directly through Arel
@@ -61,8 +61,8 @@ def run_tests()
     db.execute("INSERT INTO ar_pg_authors (name, country) VALUES (?, ?)", ["Grace", "USA"])
     db.execute("INSERT INTO ar_pg_authors (name, country) VALUES (?, ?)", ["Bob", "UK"])
 
-    repository = ActiveRecordRepository.new(
-      Arel.table("ar_pg_authors"), map_author, "id", ArelPostgreSQLVisitor.new())
+    repository = ActiveRecord::Repository.new(
+      Arel.table("ar_pg_authors"), map_author, "id", Arel::PostgreSQLVisitor.new())
 
     Minitest.assert_equal("Ada", repository.find(db, 1).name())
     Minitest.assert_equal(3, repository.all(db).length())
@@ -80,7 +80,7 @@ def run_tests()
     Minitest.assert_equal(1, repository.delete(db, 4))
     Minitest.assert_equal(3, repository.all(db).length())
 
-    ActiveRecordTransaction.run(db) do
+    ActiveRecord::Transaction.run(db) do
       repository.create(db, {"name": "Committed", "country": "FR"})
     end
     Minitest.assert_equal(4, repository.all(db).length())
@@ -92,7 +92,7 @@ def run_tests()
   suite.test("default visitor breaks on a real dialect difference") do
     test_default_visitor_breaks_on_a_real_dialect_difference(conninfo)
   end
-  suite.test("repository with explicit ArelPostgreSQLVisitor") do
+  suite.test("repository with explicit Arel::PostgreSQLVisitor") do
     test_repository_with_explicit_postgresql_visitor(conninfo)
   end
   suite.run!()

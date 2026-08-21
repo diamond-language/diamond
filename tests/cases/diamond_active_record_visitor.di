@@ -21,13 +21,13 @@ def run_tests()
   db.execute("INSERT INTO authors (name, country) VALUES (?, ?)", ["Ada", "UK"])
   db.execute("INSERT INTO authors (name, country) VALUES (?, ?)", ["Grace", "USA"])
 
-  # An explicit visitor (here ArelSQLiteVisitor itself, to stay
+  # An explicit visitor (here Arel::SQLiteVisitor itself, to stay
   # self-contained without a live PostgreSQL server -- see
   # packages/arel/test_postgres_dialect.di for the cross-dialect version
   # of this same check) should thread through every repository method
   # identically to leaving it nil.
-  repository = ActiveRecordRepository.new(
-    Arel.table("authors"), map_author, "id", ArelSQLiteVisitor.new())
+  repository = ActiveRecord::Repository.new(
+    Arel.table("authors"), map_author, "id", Arel::SQLiteVisitor.new())
 
   Minitest.assert_equal("Ada", repository.find(db, 1).name())
   Minitest.assert_equal(2, repository.all(db).length())

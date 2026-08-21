@@ -22,7 +22,7 @@ def run_tests()
   db.execute("INSERT INTO books (title, author_id, available) VALUES (?, ?, ?)", ["Book B", 1, 0])
   db.execute("INSERT INTO books (title, author_id, available) VALUES (?, ?, ?)", ["Book C", 2, 1])
 
-  repository = ActiveRecordRepository.new(Arel.table("books"), map_book)
+  repository = ActiveRecord::Repository.new(Arel.table("books"), map_book)
 
   multi_conditions = {}
   multi_conditions["author_id"] = 1
@@ -33,13 +33,13 @@ def run_tests()
 
   Minitest.assert_equal(3, repository.where(db, {}).length())
 
-  ActiveRecordTransaction.run(db) do
+  ActiveRecord::Transaction.run(db) do
     repository.create(db, {"title": "Book D", "author_id": 3, "available": 1})
   end
   Minitest.assert_equal(4, repository.all(db).length())
 
   begin
-    ActiveRecordTransaction.run(db) do
+    ActiveRecord::Transaction.run(db) do
       repository.create(db, {"title": "Book E", "author_id": 4, "available": 1})
       raise RuntimeError.new("boom")
     end

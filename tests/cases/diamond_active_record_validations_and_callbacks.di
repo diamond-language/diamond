@@ -67,7 +67,7 @@ def run_tests()
   db.execute("CREATE TABLE authors (id INTEGER PRIMARY KEY, name TEXT, country TEXT)")
 
   log = SaveLog.new()
-  repository = ActiveRecordRepository.new(
+  repository = ActiveRecord::Repository.new(
     Arel.table("authors"), map_author, "id", nil,
     validate_author, make_before_save(log), make_after_save(log))
 
@@ -75,7 +75,7 @@ def run_tests()
   validation_failed = false
   begin
     repository.create(db, {"name": "", "country": "UK"})
-  rescue e: ActiveRecordValidationError
+  rescue e: ActiveRecord::ValidationError
     validation_failed = true
     Minitest.assert_equal(1, e.errors().length())
     Minitest.assert_equal("name is required", e.errors()[0])
@@ -101,7 +101,7 @@ def run_tests()
   update_failed = false
   begin
     repository.update(db, 1, {"name": "", "country": "us"})
-  rescue e: ActiveRecordValidationError
+  rescue e: ActiveRecord::ValidationError
     update_failed = true
   end
   Minitest.assert_equal(true, update_failed)

@@ -33,9 +33,9 @@ def run_tests()
   db.execute("INSERT INTO books (title, author_id) VALUES (?, ?)", ["Book A", 1])
   db.execute("INSERT INTO books (title, author_id) VALUES (?, ?)", ["Orphan Book", 99])
 
-  authors = ActiveRecordRepository.new(Arel.table("authors"), map_author)
-  books = ActiveRecordRepository.new(Arel.table("books"), map_book)
-  book_author = ActiveRecordBelongsTo.new(authors)
+  authors = ActiveRecord::Repository.new(Arel.table("authors"), map_author)
+  books = ActiveRecord::Repository.new(Arel.table("books"), map_book)
+  book_author = ActiveRecord::BelongsTo.new(authors)
 
   book = books.find(db, 1)
   author = book_author.get(db, book.author_id())

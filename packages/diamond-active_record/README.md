@@ -2,13 +2,13 @@
 
 An explicit, low-magic persistence layer built on Arel.
 
-The first slice is `ActiveRecordRepository`, which receives all metadata it
+The first slice is `ActiveRecord::Repository`, which receives all metadata it
 needs instead of inspecting a schema or using dynamic dispatch:
 
 ```diamond
 require "../../packages/diamond-active_record/lib/diamond-active_record"
 
-repository = ActiveRecordRepository.new(
+repository = ActiveRecord::Repository.new(
   Arel.table("authors"),
   map_author,
   "id"
@@ -25,20 +25,20 @@ takes a `Hash` of column name to value, ANDed together:
 repository.where(db, {"country": "UK", "active": true})
 ```
 
-`ActiveRecordRepository.new` takes an optional fourth argument selecting
+`ActiveRecord::Repository.new` takes an optional fourth argument selecting
 which Arel dialect visitor to render through -- `nil` (the default) means
-Arel's own default, `ArelSQLiteVisitor`. Pass `ArelPostgreSQLVisitor.new()`
+Arel's own default, `Arel::SQLiteVisitor`. Pass `Arel::PostgreSQLVisitor.new()`
 explicitly for a `PostgreSQL` connection:
 
 ```diamond
-repository = ActiveRecordRepository.new(
-  Arel.table("authors"), map_author, "id", ArelPostgreSQLVisitor.new()
+repository = ActiveRecord::Repository.new(
+  Arel.table("authors"), map_author, "id", Arel::PostgreSQLVisitor.new()
 )
 ```
 
 This matters even though the two dialects render identical SQL for most of
 what this repository builds: Arel's own default visitor is always
-`ArelSQLiteVisitor` regardless of which database `db` actually connects
+`Arel::SQLiteVisitor` regardless of which database `db` actually connects
 to, and the two dialects do genuinely diverge for some queries (SQLite's
 offset-without-limit pagination sentinel, `LIMIT -1`, is syntax PostgreSQL
 rejects outright -- see
@@ -48,25 +48,25 @@ here, since most queries this repository builds happen to render
 identically either way, but it's a latent correctness gap rather than a
 supported combination.
 
-Explicit associations use `ActiveRecordHasMany` and `ActiveRecordBelongsTo`:
+Explicit associations use `ActiveRecord::HasMany` and `ActiveRecord::BelongsTo`:
 
 ```diamond
-books = ActiveRecordRepository.new(Arel.table("books"), map_book)
-author_books = ActiveRecordHasMany.new(books, "author_id")
+books = ActiveRecord::Repository.new(Arel.table("books"), map_book)
+author_books = ActiveRecord::HasMany.new(books, "author_id")
 author_books.all(db, author_id)
 
-authors = ActiveRecordRepository.new(Arel.table("authors"), map_author)
-book_author = ActiveRecordBelongsTo.new(authors)
+authors = ActiveRecord::Repository.new(Arel.table("authors"), map_author)
+book_author = ActiveRecord::BelongsTo.new(authors)
 book_author.get(db, book.author_id())
 ```
 
-`ActiveRecordBelongsTo#get` takes the child's own foreign-key value
+`ActiveRecord::BelongsTo#get` takes the child's own foreign-key value
 directly (`book.author_id()` above), not the child object itself -- no
 object introspection resolves it. It returns `nil`, the same "not found"
-shape `ActiveRecordRepository#find` uses, rather than an empty `Array`,
+shape `ActiveRecord::Repository#find` uses, rather than an empty `Array`,
 when nothing matches.
 
-`ActiveRecordRepository.new` also takes optional `validator`, `before_save`,
+`ActiveRecord::Repository.new` also takes optional `validator`, `before_save`,
 and `after_save` arguments -- there is no `validates`-style class macro here
 (there's no model base class to hang one on), just ordinary functions,
 the same as `mapper`:
@@ -86,17 +86,17 @@ def touch_country(db, attributes, on)
   updated
 end
 
-repository = ActiveRecordRepository.new(
+repository = ActiveRecord::Repository.new(
   Arel.table("authors"), map_author, "id", nil, validate_author, touch_country
 )
-repository.create(db, {"name": "", "country": "uk"})  # raises ActiveRecordValidationError
+repository.create(db, {"name": "", "country": "uk"})  # raises ActiveRecord::ValidationError
 repository.create(db, {"name": "Ada", "country": "uk"})  # stores country "UK"
 ```
 
 `validator` is called with the caller's own attributes `Hash` and must
 return an `Array` of error message Strings (empty means valid).
 `#create`/`#update` run it first, before any SQL, and raise
-`ActiveRecordValidationError` (`.errors()` for the Array, `.message()` the
+`ActiveRecord::ValidationError` (`.errors()` for the Array, `.message()` the
 joined String) on failure.
 
 `before_save`/`after_save` run around `#create`, `#update`, and `#delete`
@@ -115,11 +115,11 @@ Neither Arel nor the database drivers expose a transaction API of their
 own (`BEGIN`/`COMMIT`/`ROLLBACK` are ordinary SQL, run through the same
 `#execute(sql)` every write above already uses -- see
 [`docs/io.md`](https://gitlab.com/dmn9180/diamond/-/blob/main/docs/io.md)).
-`ActiveRecordTransaction` is that one missing piece: it commits on a
+`ActiveRecord::Transaction` is that one missing piece: it commits on a
 normal return and rolls back and re-raises on any exception.
 
 ```diamond
-ActiveRecordTransaction.run(db) do
+ActiveRecord::Transaction.run(db) do
   repository.create(db, {"name": "Grace", "country": "USA"})
   repository.update(db, 1, {"country": "England"})
 end
