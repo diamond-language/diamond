@@ -25,8 +25,23 @@ class ActiveRecordRepository
     if rows.length() == 0 then nil else @mapper(rows[0]) end
   end
 
-  def where(db, column_name: String, value)
-    rows = Arel.from(@table).where(@table.column(column_name).eq(value)).to_a(db)
+  # `conditions` is a Hash of column name to value, ANDed together via
+  # `eq` -- still no query-builder DSL exposed here, just the one shape
+  # a repository caller actually needs (see ActiveRecordHasMany#all,
+  # which now builds one of these instead of taking a bare column/value
+  # pair).
+  def where(db, conditions: Hash)
+    keys = conditions.keys()
+    predicate = nil
+    index = 0
+    while index < keys.length()
+      key = keys[index]
+      column_predicate = @table.column(key).eq(conditions[key])
+      predicate = if predicate == nil then column_predicate else predicate.and_also(column_predicate) end
+      index += 1
+    end
+    query = Arel.from(@table)
+    rows = if predicate == nil then query.to_a(db) else query.where(predicate).to_a(db) end
     mapped = []
     index = 0
     while index < rows.length()
@@ -62,6 +77,27 @@ class ActiveRecordHasMany
   # The owner value is passed explicitly. No object introspection or naming
   # convention is involved in resolving the association.
   def all(db, owner_id)
-    @repository.where(db, @foreign_key, owner_id)
+    conditions = {}
+    conditions[@foreign_key] = owner_id
+    @repository.where(db, conditions)
+  end
+end
+
+# Neither Arel nor the database drivers expose a transaction API
+# themselves (BEGIN/COMMIT/ROLLBACK are ordinary SQL statements a caller
+# runs through the same #execute(sql) every write in this package already
+# uses -- see docs/io.md). This is that one missing piece: run `callback`,
+# commit on a normal return, roll back and re-raise on any exception.
+class ActiveRecordTransaction
+  def self.run(db, callback: Callable[0])
+    db.execute("BEGIN")
+    begin
+      result = callback()
+      db.execute("COMMIT")
+      result
+    rescue error: StandardError
+      db.execute("ROLLBACK")
+      raise error
+    end
   end
 end
