@@ -26,6 +26,16 @@ class LibraryBook
   def title() = @title
 end
 
+class LibraryAccount
+  def initialize(id, balance, lock_version)
+    @id = id
+    @balance = balance
+    @lock_version = lock_version
+  end
+  def balance() = @balance
+  def lock_version() = @lock_version
+end
+
 def run_tests()
   conninfo = ENV["DIAMOND_PG_TEST_CONNINFO"]
   if conninfo == nil
@@ -38,6 +48,9 @@ def run_tests()
   end
   def map_book(row)
     LibraryBook.new(row["id"], row["title"])
+  end
+  def map_account(row)
+    LibraryAccount.new(row["id"], row["balance"], row["lock_version"])
   end
 
   def test_default_visitor_breaks_on_a_real_dialect_difference(conninfo)
@@ -128,6 +141,33 @@ def run_tests()
     db.close()
   end
 
+  def test_optimistic_locking_with_explicit_postgresql_visitor(conninfo)
+    db = PostgreSQL.open(conninfo)
+    db.execute("DROP TABLE IF EXISTS ar_pg_accounts")
+    db.execute(
+      "CREATE TABLE ar_pg_accounts (id SERIAL PRIMARY KEY, balance INTEGER, lock_version INTEGER)")
+    db.execute(
+      "INSERT INTO ar_pg_accounts (balance, lock_version) VALUES (?, ?)", [100, 0])
+
+    visitor = Arel::PostgreSQLVisitor.new()
+    repository = ActiveRecord::Repository.new(
+      Arel.table("ar_pg_accounts"), map_account, "id", visitor, nil, nil, nil, "lock_version")
+
+    account = repository.find(db, 1)
+    Minitest.assert_equal(1, repository.update(db, 1, {"balance": 150}, account.lock_version()))
+    Minitest.assert_equal(1, repository.find(db, 1).lock_version())
+
+    message = nil
+    begin
+      repository.update(db, 1, {"balance": 200}, account.lock_version())
+    rescue error: ActiveRecord::StaleObjectError
+      message = error.message()
+    end
+    Minitest.assert_equal("attempted to update a stale object (id=1)", message)
+    Minitest.assert_equal(150, repository.find(db, 1).balance())
+    db.close()
+  end
+
   suite = Minitest.new()
   suite.test("default visitor breaks on a real dialect difference") do
     test_default_visitor_breaks_on_a_real_dialect_difference(conninfo)
@@ -137,6 +177,9 @@ def run_tests()
   end
   suite.test("HasManyThrough with explicit Arel::PostgreSQLVisitor") do
     test_has_many_through_with_explicit_postgresql_visitor(conninfo)
+  end
+  suite.test("optimistic locking with explicit Arel::PostgreSQLVisitor") do
+    test_optimistic_locking_with_explicit_postgresql_visitor(conninfo)
   end
   suite.run!()
 end

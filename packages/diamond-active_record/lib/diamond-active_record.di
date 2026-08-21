@@ -15,6 +15,19 @@ class ValidationError < StandardError
   end
 end
 
+# Raised by Repository#update when optimistic locking is configured
+# (see Repository's lock_column) and the row's lock column no longer
+# matches the caller's expected_lock_version -- someone else updated (or
+# deleted) this row first. `id` is the row this update targeted.
+class StaleObjectError < StandardError
+  attr_reader message: String
+  attr_reader id
+  def initialize(id)
+    @id = id
+    @message = "attempted to update a stale object (id=#{id})"
+  end
+end
+
 # Explicit persistence primitives over Arel. This package deliberately does
 # not inspect schemas, infer columns, or dispatch through missing methods.
 class Repository
@@ -48,6 +61,18 @@ class Repository
   # (there is nothing to write). after_save runs once the operation
   # succeeds, with those same attributes, and its return value is always
   # ignored.
+  # `lock_column`, when given, turns on optimistic locking for #update:
+  # the caller passes the version value it loaded as expected_lock_version,
+  # #update matches it in the WHERE clause alongside id_column and bumps
+  # it by one in the same statement, and a StaleObjectError is raised
+  # (rather than silently updating 0 rows, or a different row's version)
+  # when nothing matched -- someone else updated (or deleted) this row
+  # first. No naming convention (there's no assumed "lock_version" column
+  # name) and no automatic version-loading -- the caller already has the
+  # row it loaded, expected_lock_version is just that row's own current
+  # lock_column value, passed explicitly like everything else in this
+  # package.
+  #
   # Read-only access to this repository's own configuration -- not object
   # introspection (that principle is about not reflecting on an opaque
   # mapped domain object by naming convention; these are the repository's
@@ -59,9 +84,10 @@ class Repository
   attr_reader mapper: Callable[1]
   attr_reader visitor
   attr_reader id_column: String
+  attr_reader lock_column
 
   def initialize(table: Arel::Table, mapper: Callable[1], id_column: String = "id", visitor = nil,
-                 validator = nil, before_save = nil, after_save = nil)
+                 validator = nil, before_save = nil, after_save = nil, lock_column = nil)
     @table = table
     @mapper = mapper
     @id_column = id_column
@@ -69,6 +95,7 @@ class Repository
     @validator = validator
     @before_save = before_save
     @after_save = after_save
+    @lock_column = lock_column
   end
 
   def validate!(attributes: Hash)
@@ -136,14 +163,28 @@ class Repository
     result
   end
 
-  def update(db, id, attributes: Hash)
+  def update(db, id, attributes: Hash, expected_lock_version = nil)
     self.validate!(attributes)
     final_attributes = attributes
     unless @before_save == nil
       final_attributes = @before_save(db, attributes, :update)
     end
+    predicate = @table.column(@id_column).eq(id)
+    unless @lock_column == nil
+      if expected_lock_version == nil
+        raise ArgumentError.new(
+          "expected_lock_version is required when lock_column is configured")
+      end
+      bump = {}
+      bump[@lock_column] = expected_lock_version + 1
+      final_attributes = final_attributes.merge(bump)
+      predicate = predicate.and_also(@table.column(@lock_column).eq(expected_lock_version))
+    end
     statement = Arel.update(@table).set(final_attributes)
-    result = statement.where(@table.column(@id_column).eq(id)).execute(db, @visitor)
+    result = statement.where(predicate).execute(db, @visitor)
+    if @lock_column != nil && result == 0
+      raise StaleObjectError.new(id)
+    end
     unless @after_save == nil
       @after_save(db, final_attributes, :update)
     end

@@ -147,6 +147,31 @@ return value is used for `#create`/`#update` but ignored for `#delete`
 (there's nothing to write). `after_save` runs once the operation succeeds,
 with those same attributes, and its return value is always ignored.
 
+`ActiveRecord::Repository.new` also takes an optional `lock_column`
+argument turning on optimistic locking for `#update`. There is no assumed
+column name (no `lock_version` convention) and no automatic version
+loading -- the caller passes the version value it already has (from the
+row it loaded) as `#update`'s `expected_lock_version` argument, the same
+explicit-argument shape every other option here uses:
+
+```diamond
+repository = ActiveRecord::Repository.new(
+  Arel.table("accounts"), map_account, "id", nil, nil, nil, nil, "lock_version"
+)
+account = repository.find(db, 1)
+repository.update(db, 1, {"balance": 150}, account.lock_version())
+```
+
+`#update` matches `expected_lock_version` against `lock_column` in the
+same `WHERE` clause as `id_column`, and bumps `lock_column` by one in the
+same statement -- one round trip, not a separate check-then-write. If
+nothing matched (someone else updated, or deleted, this row first),
+it raises `ActiveRecord::StaleObjectError` (`.id()` for the row it
+targeted, `.message()` for a description) instead of silently updating
+zero rows or a different row entirely. Passing `nil` (the default) for
+`expected_lock_version` while `lock_column` is configured raises
+`ArgumentError` rather than skipping the check.
+
 Neither Arel nor the database drivers expose a transaction API of their
 own (`BEGIN`/`COMMIT`/`ROLLBACK` are ordinary SQL, run through the same
 `#execute(sql)` every write above already uses -- see
