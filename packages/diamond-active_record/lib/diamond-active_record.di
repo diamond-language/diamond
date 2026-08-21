@@ -252,6 +252,27 @@ class HasMany
   end
 end
 
+class HasOne
+  def initialize(repository: Repository, foreign_key: String,
+                 owner_key: String = "id")
+    @repository = repository
+    @foreign_key = foreign_key
+    @owner_key = owner_key
+  end
+
+  # Same shape as HasMany -- the owner value is passed explicitly, no
+  # object introspection or naming convention resolves it -- but returns a
+  # single record or nil, the same "not found" shape BelongsTo#get uses,
+  # since the relationship is one-to-one on this side rather than
+  # one-to-many.
+  def get(db, owner_id)
+    conditions = {}
+    conditions[@foreign_key] = owner_id
+    results = @repository.where(db, conditions)
+    if results.length() == 0 then nil else results[0] end
+  end
+end
+
 class BelongsTo
   def initialize(repository: Repository, owner_key: String = "id")
     @repository = repository

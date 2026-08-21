@@ -48,17 +48,30 @@ here, since most queries this repository builds happen to render
 identically either way, but it's a latent correctness gap rather than a
 supported combination.
 
-Explicit associations use `ActiveRecord::HasMany` and `ActiveRecord::BelongsTo`:
+Explicit associations use `ActiveRecord::HasMany`, `ActiveRecord::HasOne`,
+and `ActiveRecord::BelongsTo`:
 
 ```diamond
 books = ActiveRecord::Repository.new(Arel.table("books"), map_book)
 author_books = ActiveRecord::HasMany.new(books, "author_id")
 author_books.all(db, author_id)
 
+profiles = ActiveRecord::Repository.new(Arel.table("profiles"), map_profile)
+author_profile = ActiveRecord::HasOne.new(profiles, "author_id")
+author_profile.get(db, author_id)
+
 authors = ActiveRecord::Repository.new(Arel.table("authors"), map_author)
 book_author = ActiveRecord::BelongsTo.new(authors)
 book_author.get(db, book.author_id())
 ```
+
+`ActiveRecord::HasOne#get` takes the owner's own key value directly
+(`author_id` above), the same explicit-argument shape `ActiveRecord::HasMany#all`
+already uses -- no object introspection or naming convention resolves it.
+Unlike `HasMany#all`, which returns an `Array`, it returns a single record or
+`nil` when nothing matches, the same "not found" shape
+`ActiveRecord::BelongsTo#get` uses, since the relationship is one-to-one on
+this side.
 
 `ActiveRecord::BelongsTo#get` takes the child's own foreign-key value
 directly (`book.author_id()` above), not the child object itself -- no
