@@ -66,7 +66,7 @@ The current named capabilities are:
 - `explicit NULL ordering`;
 - `write CTEs`;
 - `recursive CTEs`;
-- `SQLite integer operators`.
+- `integer bitwise operators`.
 
 `ArelSQLiteVisitor` supports all of them. A visitor may support any subset.
 Unsupported use raises an `ArgumentError` naming both the visitor and the
@@ -103,3 +103,18 @@ A future database visitor should begin by running the portable fixtures against
 its renderer, then add separate fixtures for each capability it chooses to
 support. It should not claim a capability merely because the target dialect has
 similarly named syntax; bind ordering and node semantics must also match.
+
+`ArelPostgreSQLVisitor` (`lib/arel.di`) is the second such visitor, and the
+first to actually follow that guidance end to end: every capability it
+claims (`supports_extension?` returns `true` for all of them, same as
+`ArelSQLiteVisitor`) is backed by a real execution-based fixture in
+`test_postgres_dialect.di`, run against a live PostgreSQL server via
+`test_postgres_dialect.sh` -- not just plausible-looking rendered SQL. That
+suite is deliberately kept out of `tests/cases/`: everything there is
+self-contained (in-memory SQLite), while this needs an already-running
+external server Diamond can't spin up itself, so it's opt-in
+(`test_postgres_dialect.sh` manages its own throwaway container) rather than
+part of `make test`/CI. See `ROADMAP.md`'s "pick the next dialect" entry for
+what this pass found: nearly everything Arel models turned out to be
+identical between the two dialects (both were modeled on Postgres's own SQL
+to begin with), with pagination as the one real grammar seam.

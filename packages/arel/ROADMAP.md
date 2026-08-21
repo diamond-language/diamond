@@ -22,33 +22,48 @@ Raw SQL remains an explicit escape hatch, not the representation used by new
 features. Values are bind parameters by default. Identifiers are represented
 as nodes and quoted by the active visitor.
 
-## Next milestone: dialect grammar seams
+## Dialect grammar seams
 
-`ArelVisitor` now provides shared traversal, relation-scope validation, query
+`ArelVisitor` provides shared traversal, relation-scope validation, query
 context, statement dispatch, and diagnostics without inheriting SQLite
 capability or quoting policy. Pagination and literal spelling are independently
-overridable, and nested compound branch grouping is now an explicit visitor
-seam. Write `RETURNING` rendering is now an explicit visitor seam as well. The
-CTE prefix spelling is now an explicit visitor seam as well. The portable SQL
-baseline now also delegates join-clause spelling to the visitor. The remaining
-grammar choices should be exposed only when a second dialect or real query
-requires them:
+overridable, and nested compound branch grouping is an explicit visitor
+seam. Write `RETURNING` rendering is an explicit visitor seam as well. The
+CTE prefix spelling is an explicit visitor seam as well. The portable SQL
+baseline also delegates join-clause spelling to the visitor.
 
-- choose the next production dialect and inventory its concrete differences
-  before adding another hook;
-- investigate remaining compound grouping and write-clause spelling against
-  that dialect rather than assuming they differ;
-- add narrowly named visitor methods for those differences instead of copying
-  the complete expression renderer;
-- keep bind collection in the shared traversal whenever placeholder order is
-  identical across dialects;
-- require focused conformance fixtures for each overridden grammar seam;
-- avoid speculative abstraction when SQLite and the future dialect use the
-  same syntax and semantics.
+**Done**: `ArelPostgreSQLVisitor` (`lib/arel.di`) is the second dialect this
+called for, verified against a live PostgreSQL server
+(`test_postgres_dialect.di`/`.sh` -- see `VISITORS.md`'s Conformance
+section for why that lives outside `tests/cases/`). The actual inventory,
+for whoever investigates a *third* dialect next:
 
-Completion means a second renderer can inherit the portable visitor and
-override its genuine grammar differences without forking traversal or query
-validation.
+- almost everything Arel currently models is identical syntax and semantics
+  between SQLite and PostgreSQL, because SQLite's own CTE/`RETURNING`/
+  `ON CONFLICT` support was deliberately modeled on Postgres's to begin
+  with -- identifier quoting, `ON CONFLICT ... DO NOTHING`/`DO UPDATE`,
+  `DEFAULT VALUES`, `RETURNING`, `WITH`/`WITH RECURSIVE`,
+  `NULLS FIRST`/`NULLS LAST`, and the integer bitwise operators (`&`/`|`/
+  `<<`/`>>`, renamed from the SQLite-specific-sounding "SQLite integer
+  operators" to "integer bitwise operators" as part of this work, since a
+  non-SQLite visitor now claims it too) all needed zero new hooks;
+- pagination was the one real grammar seam found: SQLite's grammar requires
+  `LIMIT` before `OFFSET`, forcing the `LIMIT -1 OFFSET ?` sentinel for an
+  offset with no limit; Postgres's grammar accepts a bare `OFFSET n` with no
+  `LIMIT` clause at all, so `ArelPostgreSQLVisitor#render_pagination` skips
+  that sentinel entirely;
+- this means the "avoid speculative abstraction" caution below was
+  justified -- most of the grammar-seam machinery this section used to list
+  as open questions turned out not to need dialect-specific hooks once a
+  real second dialect existed to check against.
+
+For a third dialect: choose it and inventory its concrete differences before
+adding another hook, the same way this pass did, rather than assuming the
+SQLite/Postgres split above generalizes -- add narrowly named visitor methods
+only for differences an actual conformance fixture proves exist, keep bind
+collection in the shared traversal whenever placeholder order is identical
+across dialects, and avoid speculative abstraction when the new dialect uses
+the same syntax and semantics as the existing two.
 
 ## Deferred expression decisions
 

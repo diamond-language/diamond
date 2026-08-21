@@ -1,5 +1,18 @@
 # Changelog
 
+## Arel 0.31.0
+
+- Added `ArelPostgreSQLVisitor`, Arel's second dialect, verified against a
+  live PostgreSQL server (`packages/arel/test_postgres_dialect.di`/`.sh`,
+  opt-in and outside `tests/cases/` since it needs an already-running
+  external server).
+- Found nearly everything Arel models is identical syntax between SQLite
+  and PostgreSQL (both were modeled on Postgres's own SQL); pagination was
+  the one real grammar seam (PostgreSQL accepts a bare `OFFSET` with no
+  `LIMIT`, unlike SQLite's `LIMIT -1` sentinel).
+- Renamed the `"SQLite integer operators"` capability to `"integer bitwise
+  operators"`, since a non-SQLite visitor now claims it too.
+
 ## Arel 0.30.0
 
 - Matched SQLite's case-insensitive name resolution when validating relation,

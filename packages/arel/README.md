@@ -11,11 +11,15 @@ change tracking to a repository layer -- similar to real
 [Arel](https://github.com/rails/rails/tree/main/activerecord)'s own
 historical scope in Rails.
 
-The initial renderer is `ArelSQLiteVisitor`, but execution remains loosely
-coupled: reads call `db.query(sql, params)` and writes call
-`db.execute(sql, params)`, the method shapes the SQLite3 driver exposes (see
+The initial renderer is `ArelSQLiteVisitor`; `ArelPostgreSQLVisitor` is the
+second, exercising the exact same node model against a live PostgreSQL
+server (see [VISITORS.md](VISITORS.md)'s Conformance section and
+`test_postgres_dialect.di`/`.sh`). Execution remains loosely coupled either
+way: reads call `db.query(sql, params)` and writes call
+`db.execute(sql, params)`, the method shapes both the SQLite3 and
+PostgreSQL drivers expose (see
 [`docs/io.md`](https://gitlab.com/dmn9180/diamond/-/blob/main/docs/io.md)'s
-"SQLite3" section). Any future adapter exposing the same
+"SQLite3" and "PostgreSQL" sections). Any future adapter exposing the same
 `#query(sql, params)` contract is a drop-in target, the same way
 [`packages/rack`](../rack/README.md) stayed server-agnostic by
 depending on a shared method convention rather than a concrete type.
@@ -29,8 +33,8 @@ subqueries, compound branches, CTE bodies, expressions, conflict clauses, and
 for example `query.to_a(db, visitor)` and `insert.execute(db, visitor)`.
 Visitors declare dialect support through named extension capabilities.
 Excluded-row attributes, partial conflict targets, upserts, DEFAULT VALUES,
-RETURNING, explicit NULL ordering, write and recursive CTEs, and SQLite integer
-operators fail early with a visitor-specific diagnostic when unsupported.
+RETURNING, explicit NULL ordering, write and recursive CTEs, and integer
+bitwise operators fail early with a visitor-specific diagnostic when unsupported.
 Ordinary SELECTs, compounds, non-recursive read CTEs, and basic INSERT, UPDATE,
 and DELETE statements form the portable fixture baseline. See
 [VISITORS.md](VISITORS.md) for the complete protocol and capability names.
@@ -52,7 +56,12 @@ visitor name, capability predicate, and identifier quoting method; the default
 Pagination and literal spelling are narrow grammar seams: dialects implement
 `render_pagination` and may override `render_literal` without replacing query
 traversal. SQLite binds limits and offsets, and renders an offset without an
-explicit limit as `LIMIT -1 OFFSET ?`, which is valid SQLite syntax.
+explicit limit as `LIMIT -1 OFFSET ?`, which is valid SQLite syntax --
+PostgreSQL's grammar accepts a bare `OFFSET ?` with no `LIMIT` clause at all,
+so `ArelPostgreSQLVisitor#render_pagination` skips that sentinel; this was
+the one real difference found when adding PostgreSQL as Arel's second
+dialect (everything else claimed identical syntax, verified against a live
+server -- see `ROADMAP.md`).
 `take`/`limit` and `skip`/`offset` reject negative values with `ArgumentError`.
 They remain immutable for both SELECT and compound queries.
 Pagination composes through derived sources, CTE bodies, EXISTS, membership and
@@ -335,6 +344,7 @@ why nothing here names `SQLite3` directly.
 
 ## What's deliberately out of scope
 
-- **Visitors for other adapters.** Nodes contain no SQLite rendering logic;
-  `ArelSQLiteVisitor` is deliberately separate so later dialect visitors can
-  render the same query tree.
+- **Visitors for adapters beyond SQLite and PostgreSQL.** Nodes contain no
+  dialect-specific rendering logic; `ArelSQLiteVisitor`/`ArelPostgreSQLVisitor`
+  are deliberately separate so a third dialect's visitor can render the same
+  query tree without forking it.

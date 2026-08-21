@@ -631,7 +631,7 @@ class ArelVisitor
     elsif expression is ArelBinaryExpression
       if expression.operator() == "&" || expression.operator() == "|" ||
           expression.operator() == "<<" || expression.operator() == ">>"
-        self.require_extension("SQLite integer operators")
+        self.require_extension("integer bitwise operators")
       end
       left = self.render_expression(expression.left(), params)
       right = ""
@@ -790,6 +790,43 @@ class ArelSQLiteVisitor < ArelVisitor
     if limit_value == nil && offset_value != nil
       sql = " LIMIT -1"
     elsif limit_value != nil
+      if bind_values
+        sql = " LIMIT ?"
+        params.push(limit_value)
+      else
+        sql = " LIMIT #{limit_value}"
+      end
+    end
+    unless offset_value == nil
+      if bind_values
+        sql = sql + " OFFSET ?"
+        params.push(offset_value)
+      else
+        sql = sql + " OFFSET #{offset_value}"
+      end
+    end
+    sql
+  end
+end
+
+# PostgreSQL's own grammar accepts a bare OFFSET with no LIMIT clause at
+# all, so unlike ArelSQLiteVisitor's render_pagination above, no LIMIT -1
+# sentinel is needed here. Every other capability this visitor claims
+# below (identifier quoting, ON CONFLICT, DEFAULT VALUES, RETURNING, CTEs,
+# NULLS FIRST/LAST, integer bitwise operators) uses syntax identical to
+# SQLite's own -- both were modeled on Postgres's own SQL to begin with --
+# verified against a live PostgreSQL container in
+# tests/cases/arel_postgres_dialect.di, not merely assumed from the
+# similarly-named syntax (see this project's own stated quality bar in
+# ROADMAP.md for why that distinction matters).
+class ArelPostgreSQLVisitor < ArelVisitor
+  def visitor_name() = "PostgreSQL"
+  def quote_identifier(name: String) -> String = arel_quote_identifier(name)
+  def supports_extension?(name: String) = true
+  def render_pagination(limit_value, offset_value, params: Array,
+                        bind_values = true) -> String
+    sql = ""
+    unless limit_value == nil
       if bind_values
         sql = " LIMIT ?"
         params.push(limit_value)

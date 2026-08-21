@@ -225,7 +225,7 @@ def run_tests()
     rescue error: ArgumentError
       message = error.message()
     end
-    Minitest.assert_equal("portable-test visitor does not support SQLite integer operators", message)
+    Minitest.assert_equal("portable-test visitor does not support integer bitwise operators", message)
     message = nil
     begin
       Arel.from(Arel.cte("items")).with_recursive(
