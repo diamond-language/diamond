@@ -28,6 +28,12 @@ typedef struct sqlite3 sqlite3;
  * libpq-fe.h's own `typedef struct pg_conn PGconn;` exactly. */
 typedef struct pg_conn PGconn;
 
+/* Forward-declared for the same reason PGconn is above: only vm.c calls
+ * real MariaDB Connector/C (libmysqlclient-API-compatible) functions, so
+ * <mysql.h> stays out of this header. Matches mysql.h's own
+ * `typedef struct st_mysql MYSQL;` exactly. */
+typedef struct st_mysql MYSQL;
+
 typedef enum DiamondObjectKind : uint8_t {
     DIAMOND_OBJECT_STRING,
     DIAMOND_OBJECT_INSTANCE,
@@ -48,6 +54,7 @@ typedef enum DiamondObjectKind : uint8_t {
     DIAMOND_OBJECT_THREAD,
     DIAMOND_OBJECT_SQLITE3,
     DIAMOND_OBJECT_POSTGRES,
+    DIAMOND_OBJECT_MYSQL,
     DIAMOND_OBJECT_TIME,
     DIAMOND_OBJECT_PROCESS_RESULT,
 } DiamondObjectKind;
@@ -315,6 +322,16 @@ typedef struct DiamondPostgresHandle {
     DiamondObject object;
     PGconn *conn;
 } DiamondPostgresHandle;
+
+/* Same shape and same idempotent-close reasoning as DiamondPostgresHandle
+ * immediately above, just wrapping a MYSQL* (via mysql_init +
+ * mysql_real_connect) instead of a PGconn*. `conn` is nulled by an
+ * explicit #close() and checked before any other operation; both GC
+ * sweep and VM teardown check that sentinel before calling mysql_close. */
+typedef struct DiamondMysqlHandle {
+    DiamondObject object;
+    MYSQL *conn;
+} DiamondMysqlHandle;
 
 /* Simpler still than DiamondRegexp: owns no OS resource and no second
  * allocation either -- just two scalars. Freeing one is `free(pointer)`,

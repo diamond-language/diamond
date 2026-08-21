@@ -698,6 +698,99 @@ validate Arel's grammar seams against — see
 statements, asynchronous/non-blocking connections, connection pooling, and
 binary-format result decoding.
 
+## MySQL: `MySQL.open`/`.execute`/`.query`/`.last_insert_row_id`/`.close`
+
+```ruby
+db = MySQL.open("localhost", "myuser", "secret", "myapp", 3306)
+db.execute("CREATE TABLE people (id INTEGER PRIMARY KEY AUTO_INCREMENT, name TEXT, age INT)")
+db.execute("INSERT INTO people (name, age) VALUES (?, ?)", ["Ada", 30])
+id = db.last_insert_row_id()
+db.query("SELECT * FROM people WHERE age >= ?", [18])
+# => [{id: 1, name: Ada, age: 30}]
+db.close()
+```
+
+`MySQL.open(host, user, password, database, port)` connects via
+`mysql_real_connect`, MariaDB Connector/C (via `-lmariadb`, libmysqlclient-API-
+compatible) — a genuinely external C dependency exactly like `SQLite3`'s
+`libsqlite3` and `PostgreSQL`'s `libpq`. Unlike `PostgreSQL.open`'s single
+conninfo `String` (libpq parses that key=value format itself), these are five
+required, explicit positional arguments — MariaDB Connector/C's
+`mysql_real_connect` takes discrete fields with no such conninfo string to
+parse, so this driver takes them the same explicit way rather than inventing
+a DSN mini-language it would then own the parsing/escaping/documentation of.
+`port` has no default; a bind port default would hide a real, easy-to-get-
+wrong choice (`3306` vs. a nonstandard port) rather than a rarely-needed
+knob. A failed connection raises a rescuable `MySQLError` — a dedicated
+exception class for the same reason `SQLite3Error`/`PostgreSQLError` exist:
+every failure this type can raise (unreachable host, bad credentials, a
+malformed statement, a bind/exec error) is `MySQLError`, giving callers one
+class to `rescue` against.
+
+A `MySQL` value is a new GC-managed heap object kind
+(`DIAMOND_OBJECT_MYSQL`), a thin wrapper around a `MYSQL *` — the same shape
+as `SQLite3`/`PostgreSQL`'s own handles, including the same closed/open
+sentinel (`conn` nulled by `#close()`, checked before any other operation)
+and the same "sweeping an unreached-but-still-open handle closes it as a
+safety net" GC behavior.
+
+`MySQL.open` is recognized in the compiler the same way `SQLite3.open`/
+`PostgreSQL.open` are, compiling to a single
+`DIAMOND_OP_MYSQL_OPEN dest, host, user, password, database, port`
+instruction. `.execute`/`.query`/`.last_insert_row_id`/`.close` are native
+`DIAMOND_OP_INVOKE` dispatch on a `DIAMOND_OBJECT_MYSQL` receiver, the same
+mechanism `SQLite3`/`PostgreSQL`'s own methods use:
+
+- `.execute(sql)` / `.execute(sql, params)` prepares and executes one
+  statement (via `mysql_stmt_*`, MariaDB Connector/C's real out-of-band
+  binary parameter binding — not string interpolation/escaping) and returns
+  `mysql_stmt_affected_rows` as an `Int`, the useful return value for
+  `INSERT`/`UPDATE`/`DELETE`/DDL.
+- `.query(sql)` / `.query(sql, params)` runs one statement and collects
+  every row into `Array[Hash]` (column name → typed value), same shape
+  `SQLite3#query`/`PostgreSQL#query` produce.
+- `.last_insert_row_id()` is a direct `mysql_insert_id(conn)` call —
+  simpler than `PostgreSQL#last_insert_row_id`'s own `SELECT lastval()`
+  round-trip, since MySQL's client library tracks the connection's last
+  `AUTO_INCREMENT` value itself. Unlike `lastval()`, it has no "not yet
+  defined this session" failure mode: an unused connection just reads
+  back `0`.
+- `.close()` is idempotent, exactly like `SQLite3#close`/`PostgreSQL#close`.
+
+`params`, when given, is an `Array` bound *positionally* through real
+prepared-statement parameter binding — MySQL's own placeholder spelling is
+already `?`, the same as `SQLite3`'s, so (unlike `PostgreSQL`) no
+translation step is needed. A parameter-count mismatch (checked against
+`mysql_stmt_param_count` after preparing) raises `ArgumentError`; an
+unsupported Diamond value in `params` (anything but
+`Int`/`Float`/`String`/`Bool`/`Nil`, matching both other drivers' same
+restriction) raises `TypeError`. Bind/column type mapping:
+
+| Diamond → MySQL (`params`, prepared-statement binary protocol) | MySQL → Diamond (`query` results, by field type) |
+|---|---|
+| `Int` → `MYSQL_TYPE_LONGLONG` | `TINY`/`SHORT`/`LONG`/`LONGLONG`/`INT24`/`YEAR` → `Int` |
+| `Float` → `MYSQL_TYPE_DOUBLE` | `FLOAT`/`DOUBLE`/`DECIMAL`/`NEWDECIMAL` → `Float` |
+| `String` → `MYSQL_TYPE_STRING` | `STRING`/`VAR_STRING`/`BLOB`/anything else → the raw `String` its text form decodes to |
+| `Bool` → `MYSQL_TYPE_TINY` (`0`/`1`) | (no native boolean type — see below) |
+| `Nil` → `MYSQL_TYPE_NULL` | `NULL` → `Nil` |
+
+The last result row is a deliberate, documented scope cut, not silent data
+loss: dates/times/JSON/bit fields all stay MySQL's own text spelling. MySQL
+has no native boolean type — `TINYINT(1)` is only a convention, indistinguishable
+at the protocol level from any other `TINYINT` column — so every integer
+type decodes as `Int` here, the same tradeoff `SQLite3` (also boolean-less)
+already makes, unlike `PostgreSQL`'s real `bool` OID. This connection is
+never opened with `CLIENT_MULTI_STATEMENTS`, so unlike `SQLite3` (which
+needs an explicit tail-content check) or `PostgreSQL` (whose `PQexecParams`
+refuses multiple commands itself), a semicolon-separated second statement
+here is simply a syntax error `mysql_stmt_prepare` itself raises as an
+ordinary `MySQLError`.
+
+Out of scope for this driver, deliberately, for the same reasons
+`PostgreSQL`'s own scope cuts are: an Arel dialect visitor for MySQL,
+connection pooling, and `unix_socket`/`CLIENT_MULTI_STATEMENTS` connection
+options.
+
 ## Time: `Time.now`/`.utc_now`/`.at`/`.strftime`/`+`/`-`/comparisons
 
 ```ruby

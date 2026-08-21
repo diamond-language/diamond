@@ -184,6 +184,7 @@ typedef enum DiamondOpCode : uint8_t {
      * way `<`/`==` are. */
     DIAMOND_OP_COMPARE,
     DIAMOND_OP_POSTGRES_OPEN,
+    DIAMOND_OP_MYSQL_OPEN,
     DIAMOND_OP_COUNT,
 } DiamondOpCode;
 
@@ -235,6 +236,7 @@ typedef enum DiamondBuiltinClass : uint8_t {
     DIAMOND_CLASS_THREAD_ERROR,
     DIAMOND_CLASS_SQLITE3_ERROR,
     DIAMOND_CLASS_POSTGRES_ERROR,
+    DIAMOND_CLASS_MYSQL_ERROR,
     DIAMOND_BUILTIN_CLASS_COUNT,
 } DiamondBuiltinClass;
 
@@ -487,6 +489,13 @@ typedef enum DiamondVmStatus : uint8_t {
      * PQresultErrorMessage(res)/a locally-detected condition (everything
      * else), surfaced as PostgreSQLError -- see exception_class_for_status. */
     DIAMOND_VM_POSTGRES_ERROR,
+    /* MySQL.open/#execute/#query/#close failures: an unreachable host or
+     * bad credentials, a malformed statement, a bind/exec error, or the
+     * placeholder-count mismatch check mysql_stmt_param_count enables.
+     * Message is always mysql_error(conn) (open failures) or
+     * mysql_stmt_error(stmt)/a locally-detected condition (everything
+     * else), surfaced as MySQLError -- see exception_class_for_status. */
+    DIAMOND_VM_MYSQL_ERROR,
 } DiamondVmStatus;
 
 typedef struct DiamondMethodCacheEntry {

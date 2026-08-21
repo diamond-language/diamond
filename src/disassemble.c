@@ -106,6 +106,31 @@ static size_t three_registers(FILE *stream, const DiamondChunk *chunk,
     return offset + 7;
 }
 
+/* Only MYSQL_OPEN needs more than three register operands (dest plus
+ * host/user/password/database/port), so this is a one-off rather than a
+ * generalized n_registers helper -- same shape as two_registers/
+ * three_registers above, just six wide. */
+static size_t six_registers(FILE *stream, const DiamondChunk *chunk,
+                            const char *name, size_t offset, bool *valid) {
+    if (!require_bytes(stream, chunk, offset, 13)) return chunk->code_count;
+    const uint16_t first = checked_register(chunk, stream,
+        read_operand(chunk, offset + 1), valid);
+    const uint16_t second = checked_register(chunk, stream,
+        read_operand(chunk, offset + 3), valid);
+    const uint16_t third = checked_register(chunk, stream,
+        read_operand(chunk, offset + 5), valid);
+    const uint16_t fourth = checked_register(chunk, stream,
+        read_operand(chunk, offset + 7), valid);
+    const uint16_t fifth = checked_register(chunk, stream,
+        read_operand(chunk, offset + 9), valid);
+    const uint16_t sixth = checked_register(chunk, stream,
+        read_operand(chunk, offset + 11), valid);
+    fprintf(stream, "%-18s r%u, r%u, r%u, r%u, r%u, r%u", name,
+        first, second, third, fourth, fifth, sixth);
+    fputc('\n', stream);
+    return offset + 13;
+}
+
 static bool print_type_set(FILE *stream,const DiamondChunk *chunk,
                            uint8_t set_index) {
     if((size_t)set_index>=chunk->type_set_count) {
@@ -773,6 +798,8 @@ static bool disassemble_chunk(FILE *stream, const char *name,
                 offset=three_registers(stream,chunk,"COMPARE",offset, &valid);break;
             case DIAMOND_OP_POSTGRES_OPEN:
                 offset=two_registers(stream,chunk,"POSTGRES_OPEN",offset, &valid);break;
+            case DIAMOND_OP_MYSQL_OPEN:
+                offset=six_registers(stream,chunk,"MYSQL_OPEN",offset, &valid);break;
             case DIAMOND_OP_CHECK_TYPE:
                 if(!require_bytes(stream,chunk,offset,5)){valid=false;offset=chunk->code_count;break;}
                 fprintf(stream,"%-18s r%u, ","CHECK_TYPE",

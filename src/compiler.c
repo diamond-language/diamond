@@ -1810,6 +1810,81 @@ static uint16_t parse_postgres_open_call(Compiler *compiler) {
     return dest;
 }
 
+/* `MySQL.open(host, user, password, database, port)` -- unlike
+ * PostgreSQL.open's single conninfo String (libpq parses that key=value
+ * format itself), MariaDB Connector/C's mysql_real_connect wants these as
+ * discrete arguments with no such string to parse, so this takes them the
+ * same explicit way rather than inventing a DSN mini-language this project
+ * would then own the parsing/escaping/documentation of. Five required
+ * positional arguments, comma-separated like TCPSocket.connect's host/port
+ * pair, just longer -- no optional/defaulted trailing argument the way
+ * TCPServer.listen's reuse_port is, since a bind port default would hide a
+ * real, easy-to-get-wrong choice (3306 vs. a nonstandard port) rather than
+ * a rarely-needed knob. */
+static uint16_t parse_mysql_open_call(Compiler *compiler) {
+    advance_token(compiler); /* consume '.' */
+    if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER||
+       !name_equals(compiler,"open",compiler->current.span,false)) {
+        fail(compiler,compiler->current.span,"expected 'open' after 'MySQL'");
+        return 0;
+    }
+    advance_token(compiler); /* consume 'open' */
+    if(compiler->current.kind!=DIAMOND_TOKEN_LEFT_PAREN) {
+        fail(compiler,compiler->current.span,"expected '(' after 'MySQL.open'");
+        return 0;
+    }
+    advance_token(compiler);
+    skip_newlines(compiler);
+    const uint16_t host_register=parse_expression(compiler);
+    skip_newlines(compiler);
+    if(compiler->current.kind!=DIAMOND_TOKEN_COMMA) {
+        fail(compiler,compiler->current.span,"expected ',' after MySQL.open host");
+        return 0;
+    }
+    advance_token(compiler);
+    skip_newlines(compiler);
+    const uint16_t user_register=parse_expression(compiler);
+    skip_newlines(compiler);
+    if(compiler->current.kind!=DIAMOND_TOKEN_COMMA) {
+        fail(compiler,compiler->current.span,"expected ',' after MySQL.open user");
+        return 0;
+    }
+    advance_token(compiler);
+    skip_newlines(compiler);
+    const uint16_t password_register=parse_expression(compiler);
+    skip_newlines(compiler);
+    if(compiler->current.kind!=DIAMOND_TOKEN_COMMA) {
+        fail(compiler,compiler->current.span,"expected ',' after MySQL.open password");
+        return 0;
+    }
+    advance_token(compiler);
+    skip_newlines(compiler);
+    const uint16_t database_register=parse_expression(compiler);
+    skip_newlines(compiler);
+    if(compiler->current.kind!=DIAMOND_TOKEN_COMMA) {
+        fail(compiler,compiler->current.span,"expected ',' after MySQL.open database");
+        return 0;
+    }
+    advance_token(compiler);
+    skip_newlines(compiler);
+    const uint16_t port_register=parse_expression(compiler);
+    skip_newlines(compiler);
+    if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
+        fail(compiler,compiler->current.span,"expected ')' after MySQL.open arguments");
+        return 0;
+    }
+    advance_token(compiler);
+    const uint16_t dest=allocate_register(compiler);
+    emit_opcode(compiler,DIAMOND_OP_MYSQL_OPEN);
+    emit_register(compiler,dest);
+    emit_register(compiler,host_register);
+    emit_register(compiler,user_register);
+    emit_register(compiler,password_register);
+    emit_register(compiler,database_register);
+    emit_register(compiler,port_register);
+    return dest;
+}
+
 static uint16_t parse_regexp_new_call(Compiler *compiler) {
     advance_token(compiler); /* consume '.' */
     if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER||
@@ -2578,6 +2653,10 @@ static uint16_t parse_name(Compiler *compiler) {
        compiler->current.kind==DIAMOND_TOKEN_DOT&&
        name_equals(compiler,"PostgreSQL",name,false))
         return parse_postgres_open_call(compiler);
+    if(class_index<0&&find_local(compiler,name)<0&&find_function(compiler,name)<0&&
+       compiler->current.kind==DIAMOND_TOKEN_DOT&&
+       name_equals(compiler,"MySQL",name,false))
+        return parse_mysql_open_call(compiler);
     if(class_index<0&&find_local(compiler,name)<0&&find_function(compiler,name)<0&&
        compiler->current.kind==DIAMOND_TOKEN_DOT&&
        name_equals(compiler,"Time",name,false))
@@ -6434,6 +6513,7 @@ void diamond_program_init(DiamondProgram *program) {
         [DIAMOND_CLASS_THREAD_ERROR]={"ThreadError",DIAMOND_CLASS_STANDARD_ERROR},
         [DIAMOND_CLASS_SQLITE3_ERROR]={"SQLite3Error",DIAMOND_CLASS_STANDARD_ERROR},
         [DIAMOND_CLASS_POSTGRES_ERROR]={"PostgreSQLError",DIAMOND_CLASS_STANDARD_ERROR},
+        [DIAMOND_CLASS_MYSQL_ERROR]={"MySQLError",DIAMOND_CLASS_STANDARD_ERROR},
     };
     program->class_count=DIAMOND_BUILTIN_CLASS_COUNT;
     for(size_t index=0;index<DIAMOND_BUILTIN_CLASS_COUNT;index++) {

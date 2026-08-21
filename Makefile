@@ -1,7 +1,11 @@
 CC := gcc
 REGINOLD_DIR := reginold
 REGINOLD_LIB := $(REGINOLD_DIR)/libreginold.a
-CPPFLAGS := -Isrc -I$(REGINOLD_DIR)
+# -I/usr/include/mysql(/mysql): mariadb_config --cflags's own include path
+# for MariaDB Connector/C (libmysqlclient-API-compatible) -- unlike
+# sqlite3.h/libpq-fe.h, mysql.h isn't installed directly under /usr/include,
+# so (unlike those two) an explicit -I is required to find it.
+CPPFLAGS := -Isrc -I$(REGINOLD_DIR) -I/usr/include/mysql -I/usr/include/mysql/mysql
 CFLAGS_COMMON := -std=c23 -Wall -Wextra -Wpedantic -Wconversion -Wshadow \
 	-Wstrict-prototypes -Werror=implicit-function-declaration
 CFLAGS_DEBUG := -O0 -g3 -DDIAMOND_DEBUG
@@ -14,7 +18,7 @@ LDFLAGS_SANITIZE := -fsanitize=address,undefined
 # addition to CFLAGS_SANITIZE -- see docs/threads.md and tests/tsan_test.sh.
 CFLAGS_TSAN := $(CFLAGS_DEBUG) -fsanitize=thread
 LDFLAGS_TSAN := -fsanitize=thread
-LDLIBS := -lm $(REGINOLD_DIR)/libreginold.a -lsqlite3 -lpq -ldl -lpthread -lssl -lcrypto
+LDLIBS := -lm $(REGINOLD_DIR)/libreginold.a -lsqlite3 -lpq -lmariadb -ldl -lpthread -lssl -lcrypto
 
 # libFuzzer is a Clang/LLVM feature (-fsanitize=fuzzer isn't recognized by
 # GCC at all) -- the fuzz binary is the one build variant in this Makefile
@@ -160,11 +164,11 @@ test-repl: debug
 
 $(BUILD_DIR)/compile_fuzzer: fuzz/compile_fuzzer.c $(API_SOURCES) $(REGINOLD_LIB)
 	@mkdir -p $(BUILD_DIR)
-	$(CC_FUZZ) $(CPPFLAGS) $(CFLAGS_FUZZ) $(API_SOURCES) $< -lm $(REGINOLD_DIR)/libreginold.a -lsqlite3 -lpq -ldl -lpthread -lssl -lcrypto -o $@
+	$(CC_FUZZ) $(CPPFLAGS) $(CFLAGS_FUZZ) $(API_SOURCES) $< -lm $(REGINOLD_DIR)/libreginold.a -lsqlite3 -lpq -lmariadb -ldl -lpthread -lssl -lcrypto -o $@
 
 $(BUILD_DIR)/execute_fuzzer: fuzz/execute_fuzzer.c $(API_SOURCES) $(REGINOLD_LIB)
 	@mkdir -p $(BUILD_DIR)
-	$(CC_FUZZ) $(CPPFLAGS) $(CFLAGS_FUZZ) $(API_SOURCES) $< -lm $(REGINOLD_DIR)/libreginold.a -lsqlite3 -lpq -ldl -lpthread -lssl -lcrypto -o $@
+	$(CC_FUZZ) $(CPPFLAGS) $(CFLAGS_FUZZ) $(API_SOURCES) $< -lm $(REGINOLD_DIR)/libreginold.a -lsqlite3 -lpq -lmariadb -ldl -lpthread -lssl -lcrypto -o $@
 
 fuzz: $(BUILD_DIR)/compile_fuzzer $(BUILD_DIR)/execute_fuzzer
 
