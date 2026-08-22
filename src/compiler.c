@@ -6355,61 +6355,68 @@ static uint16_t compile_class(Compiler *compiler) {
         fail(compiler,name,"class name is too long"); return 0;
     }
     const int existing_class=find_class_name(compiler,stored_name);
-    /* A name diamond_compile's own (separate, already-finished) discovery
-     * pass already registered (see that function's own comment, and
-     * DiamondClass's declared_by_discovery field, src/vm.h) is this
-     * class's own pre-reserved slot, not a real collision -- claim it
-     * instead of either erroring or appending a second entry. Everything
-     * about the slot except its index/name gets rebuilt from scratch
-     * below exactly as a fresh registration would, since a class's own
-     * fields/methods depend only on its own body, not on anything
-     * discovery_pass tolerated elsewhere. The `!compiler->discovery_pass`
-     * conjunct matters: within discovery's own single walk, a name it
-     * just registered also has declared_by_discovery=true (see the else
-     * branch below), but that must NOT read as "claimable" there --
-     * otherwise a genuine `class Foo` declared twice within discovery's
-     * own walk would wrongly claim its own first registration instead of
-     * correctly erroring on the duplicate. Claiming only ever makes sense
-     * in the second, real pass, against slots a *prior* pass seeded. */
-    const bool claiming = existing_class>=0 && !compiler->discovery_pass &&
-        compiler->program->classes[(size_t)existing_class].declared_by_discovery;
-    if(!claiming && (existing_class>=0||
-       find_interface_name(compiler,stored_name)>=0||
-       find_module_name(compiler,stored_name)>=0)) {
+    /* A class can always be reopened -- see compile_module's identical
+     * comment. Only a cross-kind collision stays a hard error. */
+    if(find_interface_name(compiler,stored_name)>=0||
+       find_module_name(compiler,stored_name)>=0) {
         fail(compiler,name,"type name is already defined");return 0;
     }
-    if(!claiming && compiler->program->class_count==DIAMOND_MAX_CLASSES) {
-        fail(compiler, name, "expected valid class name"); return 0;
-    }
-    const int index=claiming
-        ? existing_class : (int)compiler->program->class_count++;
-    DiamondClass *class=&compiler->program->classes[(size_t)index];
-    if(claiming) {
-        /* Not just the counts: several registration sites (interface
-         * method arity in compile_interface, confirmed directly as the
-         * cause of a real bug here) accumulate straight into a table
-         * slot's own fields (e.g. `method->arity++`) trusting it starts
-         * at zero, rather than assigning an absolute value -- resetting
-         * only the *counts* left discovery's own stale field/method
-         * contents sitting in these arrays for a claimed slot to
-         * silently accumulate on top of. A full zero of every array this
-         * class body is about to rebuild is the robust fix, not chasing
-         * each accumulate-in-place site individually. */
-        memset(class->methods,0,sizeof class->methods);
-        memset(class->singleton_methods,0,sizeof class->singleton_methods);
-        memset(class->fields,0,sizeof class->fields);
-        memset(class->class_variables,0,sizeof class->class_variables);
-        class->method_count=0;
-        class->singleton_method_count=0;
-        class->field_count=0;
-        class->class_variable_count=0;
-        class->declared_by_discovery=false;
+    int index;
+    DiamondClass *class;
+    /* True once this class's superclass (real or "none") has already
+     * been decided by an earlier declaration *within this same compile
+     * pass* -- a later reopen's own `< Super` clause (if any) gets
+     * validated against that decision instead of overwriting it, so a
+     * reopen can't silently change what a class inherits from or stomp
+     * fields already copied from its superclass. False for a class's
+     * first declaration this pass (whether or not it states `< Super`)
+     * -- there's nothing yet to conflict with. */
+    bool superclass_decided;
+    if(existing_class>=0) {
+        index=existing_class;
+        class=&compiler->program->classes[(size_t)index];
+        if(class->declared_by_discovery) {
+            /* First time *this* compile pass touches a slot the *other*
+             * (already-finished) pass populated -- see diamond_compile's
+             * own comment on declared_by_discovery. Full zero, not just
+             * the counts: several registration sites (interface method
+             * arity in compile_interface, confirmed directly as the
+             * cause of a real bug here) accumulate straight into a
+             * slot's own fields trusting they start at zero, rather than
+             * assigning an absolute value -- resetting only the counts
+             * left the other pass's stale contents sitting in these
+             * arrays for a claimed slot to silently accumulate on top
+             * of. */
+            memset(class->methods,0,sizeof class->methods);
+            memset(class->singleton_methods,0,sizeof class->singleton_methods);
+            memset(class->fields,0,sizeof class->fields);
+            memset(class->class_variables,0,sizeof class->class_variables);
+            class->method_count=0;
+            class->singleton_method_count=0;
+            class->field_count=0;
+            class->class_variable_count=0;
+            class->superclass=UINT8_MAX;
+            class->declared_by_discovery=false;
+            superclass_decided=false;
+        } else {
+            /* Already owned by this pass (freshly created earlier in
+             * this same pass, or already reset just above) -- a genuine
+             * reopen within the current pass. Merge new content on top
+             * without resetting anything; the superclass this class
+             * already has (if any) was decided by its first declaration
+             * this pass. */
+            superclass_decided=true;
+        }
     } else {
-        /* Recorded so a *later* real pass (never this same pass) knows
-         * this slot is claimable -- see the comment above. */
-        class->declared_by_discovery=compiler->discovery_pass;
+        if(compiler->program->class_count==DIAMOND_MAX_CLASSES) {
+            fail(compiler, name, "expected valid class name"); return 0;
+        }
+        index=(int)compiler->program->class_count++;
+        class=&compiler->program->classes[(size_t)index];
+        class->declared_by_discovery=false;
+        class->superclass=UINT8_MAX;
+        superclass_decided=false;
     }
-    class->superclass=UINT8_MAX;
     class->declaration_line=(uint32_t)name.line;
     class->declaration_column=(uint32_t)name.column;
     class->declaration_start=name.start;
@@ -6427,12 +6434,20 @@ static uint16_t compile_class(Compiler *compiler) {
         }
         const int parent=find_class_qualified_or_scoped(compiler,superclass_name);
         if(parent<0) { fail(compiler,superclass_span,"undefined superclass"); return 0; }
-        class->superclass=(uint8_t)parent;
-        const DiamondClass *parent_class=&compiler->program->classes[(size_t)parent];
-        class->field_count=parent_class->field_count;
-        for(size_t field=0;field<parent_class->field_count;field++)
-            for(size_t ch=0;ch<DIAMOND_MAX_FUNCTION_NAME;ch++)
-                class->fields[field][ch]=parent_class->fields[field][ch];
+        if(!superclass_decided) {
+            class->superclass=(uint8_t)parent;
+            const DiamondClass *parent_class=&compiler->program->classes[(size_t)parent];
+            class->field_count=parent_class->field_count;
+            for(size_t field=0;field<parent_class->field_count;field++)
+                for(size_t ch=0;ch<DIAMOND_MAX_FUNCTION_NAME;ch++)
+                    class->fields[field][ch]=parent_class->fields[field][ch];
+        } else if(class->superclass!=(uint8_t)parent) {
+            fail(compiler,superclass_span,
+                 "superclass mismatch for reopened class");return 0;
+        }
+        /* else: reopen restates the same superclass already on record --
+         * validated no-op; fields were already copied once, don't stomp
+         * whatever this class has accumulated on its own since then. */
     }
     if(!consume_block_start(compiler)) return 0;
     const int outer=compiler->current_class; compiler->current_class=index;
@@ -6536,33 +6551,48 @@ static uint16_t compile_module(Compiler *compiler) {
         fail(compiler,name,"module name is too long");return 0;
     }
     const int existing_module=find_module_name(compiler,stored_name);
-    /* See compile_class's own identical comment on declared_by_discovery
-     * and the !compiler->discovery_pass conjunct. */
-    const bool claiming=existing_module>=0&&!compiler->discovery_pass&&
-        compiler->program->modules[(size_t)existing_module].declared_by_discovery;
-    if(!claiming&&(existing_module>=0||
-       find_class_name(compiler,stored_name)>=0||
-       find_interface_name(compiler,stored_name)>=0)) {
+    /* A module can always be reopened -- a second `module Foo ... end`
+     * adds to the same module rather than erroring (see docs/syntax.md's
+     * "Classes" section and this session's own module/class-reopening
+     * design). Only a cross-*kind* collision (the same name already a
+     * class or interface) stays a hard error. */
+    if(find_class_name(compiler,stored_name)>=0||
+       find_interface_name(compiler,stored_name)>=0) {
         fail(compiler,name,"module name is already defined");return 0;
     }
-    if(!claiming&&compiler->program->module_count==DIAMOND_MAX_MODULES) {
-        fail(compiler,name,"expected valid module name");return 0;
-    }
-    const int index=claiming
-        ? existing_module : (int)compiler->program->module_count++;
-    DiamondModule *module=&compiler->program->modules[(size_t)index];
-    if(claiming) {
-        /* See compile_class's own identical comment on why a full zero
-         * of these arrays, not just the counts, is needed here. */
-        memset(module->methods,0,sizeof module->methods);
-        memset(module->singleton_methods,0,sizeof module->singleton_methods);
-        memset(module->fields,0,sizeof module->fields);
-        module->method_count=0;
-        module->singleton_method_count=0;
-        module->field_count=0;
-        module->declared_by_discovery=false;
+    int index;
+    DiamondModule *module;
+    if(existing_module>=0) {
+        index=existing_module;
+        module=&compiler->program->modules[(size_t)index];
+        if(module->declared_by_discovery) {
+            /* First time *this* compile pass touches a slot the *other*
+             * (already-finished) pass populated -- see diamond_compile's
+             * own comment on declared_by_discovery. Full zero, not just
+             * the counts: compile_interface's own method->arity++ (and
+             * anything else that accumulates into a slot's fields
+             * trusting they start at zero) needs truly-empty arrays to
+             * rebuild from, not whatever the other pass already left
+             * there. */
+            memset(module->methods,0,sizeof module->methods);
+            memset(module->singleton_methods,0,sizeof module->singleton_methods);
+            memset(module->fields,0,sizeof module->fields);
+            module->method_count=0;
+            module->singleton_method_count=0;
+            module->field_count=0;
+            module->declared_by_discovery=false;
+        }
+        /* else: already owned by this pass (freshly created earlier in
+         * this same pass, or already reset just above) -- this is a
+         * genuine reopen within the current pass. Merge new content on
+         * top without resetting anything. */
     } else {
-        module->declared_by_discovery=compiler->discovery_pass;
+        if(compiler->program->module_count==DIAMOND_MAX_MODULES) {
+            fail(compiler,name,"expected valid module name");return 0;
+        }
+        index=(int)compiler->program->module_count++;
+        module=&compiler->program->modules[(size_t)index];
+        module->declared_by_discovery=false;
     }
     (void)snprintf(module->name,sizeof module->name,"%s",stored_name);
     module->declaration_line=(uint32_t)name.line;
@@ -7445,6 +7475,26 @@ bool diamond_compile(const char *source, DiamondProgram *program,
     program->interface_count = discovery->interface_count;
     memcpy(program->modules, discovery->modules, sizeof program->modules);
     program->module_count = discovery->module_count;
+
+    /* Mark every *user* class/module entry just copied as "populated by
+     * a pass other than the one about to run" -- compile_class/
+     * compile_module only reset declared_by_discovery to false the
+     * instant *they themselves* touch a slot (needed so a genuine reopen
+     * within one pass's own walk merges instead of resetting), so by the
+     * time discovery finishes, every entry it created already reads
+     * false again. Without this explicit re-marking here, the real pass
+     * would treat discovery's leftover (bytecode-discarded) method/field
+     * tables as "already mine" and merge its own real methods on top
+     * instead of resetting first -- silently duplicating every method
+     * table entry. Built-in classes (Exception and friends,
+     * DIAMOND_BUILTIN_CLASS_COUNT of them, registered identically by
+     * both programs' own diamond_program_init and never re-declared by
+     * user code) are skipped -- nothing ever "reopens" them through this
+     * path, so there's nothing to mark stale. */
+    for(size_t index=DIAMOND_BUILTIN_CLASS_COUNT;index<program->class_count;index++)
+        program->classes[index].declared_by_discovery=true;
+    for(size_t index=0;index<program->module_count;index++)
+        program->modules[index].declared_by_discovery=true;
 
     diamond_program_free(discovery);
     free(discovery);

@@ -215,17 +215,43 @@ source twice: a throwaway first pass (`discovery_pass` on `Compiler`)
 tolerates an unresolved forward reference just long enough to walk the
 entire file and fully register every class/module/interface's name,
 fields, and methods (including singleton methods) regardless of order,
-then a real second pass runs with everything already known, claiming each
-pre-registered slot (`declared_by_discovery` on `DiamondClass`/
-`DiamondModule`/`DiamondInterface`) instead of erroring on a rediscovered
-name. See `tests/cases/forward_declarations.di`. This is *not* a general
-predeclaration/IR change -- there is still no retained AST, and a
-superclass/base-interface still needs to be declared first (that copies
-the referenced declaration's already-*fully-compiled* field table, not
-just its name -- seeing it registered isn't enough, see
+then a real second pass runs with everything already known, resuming
+work on each pre-registered slot (`declared_by_discovery` on
+`DiamondClass`/`DiamondModule`/`DiamondInterface`) instead of erroring on
+a rediscovered name. See `tests/cases/forward_declarations.di`. This is
+*not* a general predeclaration/IR change -- there is still no retained
+AST, and a superclass/base-interface still needs to be declared first
+(that copies the referenced declaration's already-*fully-compiled* field
+table, not just its name -- seeing it registered isn't enough, see
 `tests/cases/forward_declaration_superclass_still_fails.di`). Top-level
 bare function forward/mutual calls are a related but separate, still-open
 case -- see "Forward and mutual calls" below.
+
+Resolved separately (built on the same `declared_by_discovery` machinery,
+but a genuinely different feature): a `class`/`module` can now be
+**reopened** -- a second `class Name`/`module Name ... end` for a name
+that already exists adds methods/fields/nested classes to it instead of
+erroring, whether the second declaration is later in the same file or (the
+actual motivation) in a separate file pulled in by `require`. This is what
+makes a real per-class-per-file split of a large package like
+`packages/arel/lib/arel.di` possible without a workaround -- that package
+wraps its whole class list in one `module Arel ... end`, and every class
+file splitting it needs to reopen that same module. `declared_by_discovery`
+now means "populated by a *different, already-finished* compile pass, not
+yet touched by the one currently running" -- exactly one reset happens the
+first time the *current* pass touches such a slot, and every subsequent
+sighting within that same pass (a genuine reopen) merges without
+resetting. Redefining an existing method name via reopen is still a
+compile error (`compile_definition`'s existing duplicate-method check
+needed no changes at all to keep enforcing this); a reopen's own `<
+Super` clause is validated against whatever superclass the class already
+has rather than re-applied, erroring (`superclass mismatch for reopened
+class`) on a genuine conflict rather than silently changing what already-
+written code inherits from. Interfaces don't support reopening -- kept
+out deliberately, narrower in scope than what was asked for. See
+`tests/cases/module_and_class_reopening.di` and
+`tests/multifile/reopen_main.di` (the cross-file case, combined with a
+forward reference, in one test).
 
 ## Language and library directions
 

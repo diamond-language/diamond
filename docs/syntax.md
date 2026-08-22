@@ -507,6 +507,44 @@ instance immediately, including ones already constructed before the
 call, since dispatch looks the method up by class and name at call time
 rather than snapshotting anything at construction time.
 
+### Reopening
+
+A second `class Name ... end` (or `module Name ... end`) for a name that
+already exists adds to it -- new methods, new `@ivar`-backed fields, new
+nested classes -- rather than erroring, whether the second declaration
+is later in the same file or (the more common reason to want this) in a
+separate file pulled in by `require`:
+
+```ruby
+class Widget
+  def initialize(name)
+    @name = name
+  end
+  def name() = @name
+end
+
+class Widget
+  def rename(new_name)
+    @name = new_name
+  end
+end
+
+w = Widget.new("ada")
+w.rename("grace")
+w.name()  # => "grace"
+```
+
+Redefining a method that already exists is still a compile error
+(`duplicate or excessive method definition`) -- reopening only ever
+*adds*, it doesn't loosen this. A reopen's own `< Super` clause (if any)
+is checked against whatever superclass the class already has (from an
+earlier declaration this compile), not re-applied: omit it to leave the
+existing superclass alone, restate the same one for a harmless no-op, or
+name a different one to get a compile error (`superclass mismatch for
+reopened class`) rather than silently changing what the class inherits
+from underneath already-written code. Interfaces don't support
+reopening -- a second `interface Name` is still a hard error.
+
 ### `self` inside `def self.x`
 
 A `def self.x` method declared directly inside a class (not a module --
@@ -757,7 +795,11 @@ itself.
 `module Name ... end` declares a module; `include Name` copies its method
 descriptors into the receiving class (mixin-style composition, not
 inheritance). `def self.name` inside a module declares a namespace
-singleton function rather than an instance method.
+singleton function rather than an instance method. Like a class (see
+"Reopening" above), a module can be reopened -- a second `module Name`
+adds more methods/nested classes to the same module instead of erroring,
+the usual way to split a module's classes across several files while
+keeping one `require`-able entry point.
 
 ## Gradual typing
 

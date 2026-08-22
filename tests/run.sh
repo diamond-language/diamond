@@ -659,6 +659,15 @@ actual="$($diamond tests/multifile/main.di)"
 actual="$($diamond tests/multifile/load_once_main.di)"
 [[ "$actual" == "42" ]]
 
+# Module and class reopening across files (see docs/syntax.md's
+# "Classes" section) -- reopen_a.di/reopen_b.di each open `module
+# Shared; class Widget; ... end; end` with a different method, and
+# reopen_a.di's own `Consumer` forward-references `Extra`, declared only
+# in reopen_b.di -- exercises reopening and the declaration-discovery
+# pass together, cross-file, the actual motivating scenario for both.
+actual="$($diamond tests/multifile/reopen_main.di)"
+[[ "$actual" == "[a, b, extra-hi]" ]]
+
 if "$diamond" tests/multifile/cycle_a.di >/dev/null 2>&1; then
     echo "circular require unexpectedly loaded" >&2
     exit 1
