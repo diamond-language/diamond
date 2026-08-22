@@ -11,7 +11,10 @@
 #include "diagnostics.h"
 #include "disassemble.h"
 #include "lexer.h"
+#include "loader.h"
+#include "receiver.h"
 
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -38,6 +41,22 @@ static DiamondToken identifier_token_at(const char *source,size_t target_line,
            target_column<current.span.column+current.span.length)
             return current;
     }
+}
+
+/* A raw byte offset into `text` for 1-based `line`/`column` -- only
+ * needed for an untitled/non-file:// document, same as completion.c's
+ * own copy (see its comment); duplicated rather than shared for the
+ * same reason identifier_token_at above already is. */
+static size_t raw_offset_for(const char *text,size_t length,size_t line,size_t column) {
+    size_t offset=0,current_line=1;
+    while(offset<length&&current_line<line) {
+        if(text[offset]=='\n')current_line++;
+        offset++;
+    }
+    size_t result=offset;
+    for(size_t moved=1;moved<column&&result<length&&text[result]!='\n';moved++)
+        result++;
+    return result;
 }
 
 static JsonValue *hover_result(const char *text) {
@@ -127,13 +146,23 @@ JsonValue *hover_compute(const DocumentTable *documents,const char *uri,
     if(name_length>=sizeof name)name_length=sizeof name-1;
     memcpy(name,source_copy+identifier.span.start,name_length);
     name[name_length]='\0';
+    const size_t identifier_line=identifier.span.line;
+    const size_t identifier_column=identifier.span.column;
     free(source_copy);
 
     char *path=diagnostics_uri_to_path(uri);
+    /* Kept alive (not freed right after diamond_compile like before
+     * receiver-method support existed) since the receiver-resolution
+     * fallback below needs to re-lex `combined` itself -- see
+     * lsp/receiver.h. bundle/user_offset let it translate the
+     * identifier's own raw-document line/column into that same
+     * compiled-buffer coordinate space, the same translation
+     * definition.c/completion.c already needed for their own reasons. */
+    DiamondSourceBundle bundle;
+    size_t user_offset=0;
     char *combined=diamond_lsp_build_compile_buffer(path,text,length,
-        document_resolve_source,(void *)documents,nullptr,nullptr);
-    free(path);
-    if(combined==nullptr)return json_null();
+        document_resolve_source,(void *)documents,&bundle,&user_offset);
+    if(combined==nullptr) {free(path);return json_null();}
 
     /* Same lazily-allocated, reused-across-calls scratch buffer
      * diagnostics_compute keeps (see its own comment) -- a fresh
@@ -151,13 +180,18 @@ JsonValue *hover_compute(const DocumentTable *documents,const char *uri,
     static DiamondProgram *scratch=nullptr;
     if(scratch==nullptr) {
         scratch=calloc(1,sizeof *scratch);
-        if(scratch==nullptr) {free(combined);return nullptr;}
+        if(scratch==nullptr) {
+            free(combined);free(path);diamond_source_bundle_free(&bundle);
+            return nullptr;
+        }
     }
     DiamondDiagnostic diagnostic;
     diamond_program_free(scratch);
     const bool ok=diamond_compile(combined,scratch,&diagnostic);
-    free(combined);
-    if(!ok)return json_null();
+    if(!ok) {
+        free(combined);free(path);diamond_source_bundle_free(&bundle);
+        return json_null();
+    }
 
     const DiamondChunk chunk=diamond_program_chunk(scratch);
     for(size_t index=0;index<chunk.function_count;index++) {
@@ -165,6 +199,7 @@ JsonValue *hover_compute(const DocumentTable *documents,const char *uri,
         if(function->owner_class==UINT8_MAX&&!function->nested&&
            strcmp(function->name,name)==0) {
             char *signature=format_function_signature(&chunk,function);
+            free(combined);free(path);diamond_source_bundle_free(&bundle);
             if(signature==nullptr)return nullptr;
             JsonValue *result=hover_result(signature);
             free(signature);
@@ -174,6 +209,7 @@ JsonValue *hover_compute(const DocumentTable *documents,const char *uri,
     for(size_t index=0;index<chunk.class_count;index++) {
         if(strcmp(chunk.classes[index].name,name)==0) {
             char *signature=format_class_signature(&chunk,&chunk.classes[index]);
+            free(combined);free(path);diamond_source_bundle_free(&bundle);
             if(signature==nullptr)return nullptr;
             JsonValue *result=hover_result(signature);
             free(signature);
@@ -184,6 +220,7 @@ JsonValue *hover_compute(const DocumentTable *documents,const char *uri,
         if(strcmp(chunk.interfaces[index].name,name)==0) {
             char signature[96];
             (void)snprintf(signature,sizeof signature,"interface %s",name);
+            free(combined);free(path);diamond_source_bundle_free(&bundle);
             return hover_result(signature);
         }
     }
@@ -191,8 +228,33 @@ JsonValue *hover_compute(const DocumentTable *documents,const char *uri,
         if(strcmp(chunk.modules[index].name,name)==0) {
             char signature[96];
             (void)snprintf(signature,sizeof signature,"module %s",name);
+            free(combined);free(path);diamond_source_bundle_free(&bundle);
             return hover_result(signature);
         }
     }
+
+    /* Fallback: not a top-level function/class/interface/module name --
+     * see whether `identifier` is instead a method name reached through
+     * `receiver.method(...)` (lsp/receiver.h). */
+    const size_t identifier_offset=path!=nullptr
+        ? diamond_resolve_source_position(path,combined,&bundle,user_offset,
+              identifier_line,identifier_column)
+        : user_offset+raw_offset_for(text,length,identifier_line,identifier_column);
+    size_t class_index;bool is_singleton;
+    if(identifier_offset!=SIZE_MAX&&
+       receiver_resolve_class(scratch,&chunk,combined,identifier_offset,&class_index,&is_singleton)) {
+        const DiamondMethod *method=
+            receiver_lookup_method(&chunk,class_index,is_singleton,name,name_length);
+        if(method!=nullptr) {
+            const DiamondFunction *function=chunk.functions[method->function_index];
+            char *signature=format_function_signature(&chunk,function);
+            free(combined);free(path);diamond_source_bundle_free(&bundle);
+            if(signature==nullptr)return nullptr;
+            JsonValue *result=hover_result(signature);
+            free(signature);
+            return result;
+        }
+    }
+    free(combined);free(path);diamond_source_bundle_free(&bundle);
     return json_null();
 }

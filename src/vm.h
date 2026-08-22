@@ -391,6 +391,14 @@ typedef struct DiamondScopeLocal {
     char name[DIAMOND_MAX_FUNCTION_NAME];
     size_t valid_start;
     size_t valid_end;
+    /* Compiler's own known_types[reg] for this local's register at the
+     * moment its scope entry was snapshotted (record_scope_locals,
+     * src/compiler.c) -- the type as of first assignment, not
+     * re-checked after a later reassignment in the same scope. lsp/'s
+     * only reason for existing (receiver.method() resolution,
+     * docs/lsp.md), same caveat DiamondScopeLocal's own struct comment
+     * already carries for why nothing else in the VM reads this. */
+    uint8_t known_type;
 } DiamondScopeLocal;
 
 typedef struct DiamondFunction {
@@ -405,6 +413,19 @@ typedef struct DiamondFunction {
     uint32_t declaration_line;
     uint32_t declaration_column;
     size_t declaration_start;
+    /* Byte offset in the *compiled* buffer of the position right after
+     * this function's own closing `end` (or, for an endless `def
+     * foo()=expr` or the top-level program itself, the equivalent point
+     * with no `end` token at all) -- record_scope_locals's own
+     * `valid_end` argument at every one of its call sites (src/
+     * compiler.c), copied here too so a function's body extent is known
+     * even when it has zero parameters and zero locals (so
+     * scope_locals itself is empty and can't answer "does this function
+     * contain byte offset X" on its own). lsp/receiver.c's only reason
+     * for existing -- finding which function's body a bare `self` token
+     * lexically falls inside, to resolve `self.foo(...)`'s receiver
+     * class via that function's own owner_class. */
+    size_t body_end;
     uint8_t code[DIAMOND_MAX_CODE];
     uint32_t lines[DIAMOND_MAX_CODE];
     uint32_t columns[DIAMOND_MAX_CODE];

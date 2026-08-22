@@ -58,15 +58,23 @@ item.
 
 ### Improve receiver-aware language tooling
 
-The LSP understands declarations and locals recorded by a compiled program, but
-method completion/hover/definition through `receiver.method` requires a useful
-receiver type and potentially several candidate classes.
+The LSP now resolves `receiver.method` (completion, hover, definition) for the
+three statically-known-without-real-type-inference receiver forms: a literal
+class name, `self` inside an instance method or a class-owned `def self.x`,
+and a local variable last known (at its own declaration) to hold
+`ClassName.new(...)` (`DiamondScopeLocal.known_type`, `src/vm.h`, a byte
+snapshot of the compiler's existing per-register `known_types` state, taken
+at the exact point that local's scope closes -- the only new compiler state
+this needed). See `docs/lsp.md` and `lsp/receiver.c` for the mechanism and its
+scope cuts in full.
 
-Potential independent slices:
+Remaining, still open:
 
-- receiver-aware method completion for statically known nominal types;
-- hover and definition for the same constrained case;
-- union receiver results with explicit ambiguity handling;
+- union receiver results with explicit ambiguity handling (`known_type_sets`,
+  several candidate classes);
+- an instance-variable receiver, a chained call's return value as a receiver,
+  or a local reassigned to a different class later in the same scope
+  (`known_type` reflects first declaration, not a later reassignment);
 - dependency-aware symbol information beyond one combined compilation;
 - incremental compilation only after there is a compiler architecture that can
   benefit from incremental document synchronization.

@@ -4422,6 +4422,7 @@ static void record_scope_locals(Compiler *compiler,size_t start_index,
         recorded->name[length]='\0';
         recorded->valid_start=local->name.start;
         recorded->valid_end=valid_end;
+        recorded->known_type=compiler->known_types[local->reg];
     }
 }
 
@@ -4836,9 +4837,11 @@ static uint16_t compile_block(Compiler *compiler) {
     uint16_t captures[16];
     for(size_t i=0;i<compiler->capture_count;i++)captures[i]=compiler->capture_registers[i];
     const size_t capture_count=compiler->capture_count;
-    if(!compiler->failed)
-        record_scope_locals(compiler,0,compiler->local_count,
-            compiler->previous.span.start+compiler->previous.span.length);
+    if(!compiler->failed) {
+        const size_t body_end=compiler->previous.span.start+compiler->previous.span.length;
+        record_scope_locals(compiler,0,compiler->local_count,body_end);
+        function->body_end=body_end;
+    }
 
     compiler->function = outer_function;
     compiler->local_count = outer_local_count;
@@ -5321,9 +5324,11 @@ static uint16_t compile_definition(Compiler *compiler) {
     uint16_t captures[16];
     for(size_t i=0;i<compiler->capture_count;i++)captures[i]=compiler->capture_registers[i];
     const size_t capture_count=compiler->capture_count;
-    if(!compiler->failed)
-        record_scope_locals(compiler,0,compiler->local_count,
-            compiler->previous.span.start+compiler->previous.span.length);
+    if(!compiler->failed) {
+        const size_t body_end=compiler->previous.span.start+compiler->previous.span.length;
+        record_scope_locals(compiler,0,compiler->local_count,body_end);
+        function->body_end=body_end;
+    }
     compiler->function = outer_function;
     compiler->local_count = outer_local_count;
     for (size_t index = 0; index < outer_local_count; index++) {
@@ -6800,6 +6805,7 @@ bool diamond_compile(const char *source, DiamondProgram *program,
     program->entry.register_count = compiler.next_register;
     if (!compiler.failed) {
         record_scope_locals(&compiler,0,compiler.local_count,strlen(source));
+        program->entry.body_end=strlen(source);
         emit_instruction(&compiler, DIAMOND_OP_RETURN, result, 0, 0, 1);
         for(size_t class_index=0;class_index<program->class_count;class_index++) {
             DiamondClass *class=&program->classes[class_index];

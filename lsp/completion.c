@@ -4,6 +4,7 @@
 #include "compiler.h"
 #include "diagnostics.h"
 #include "loader.h"
+#include "receiver.h"
 #include "vm.h"
 
 #include <stdlib.h>
@@ -42,6 +43,26 @@ static size_t raw_offset_for(const char *text,size_t length,size_t line,size_t c
     for(size_t moved=1;moved<column&&result<length&&text[result]!='\n';moved++)
         result++;
     return result;
+}
+
+/* Pushes every method name in `class_index`'s own singleton_methods[]
+ * (is_singleton true) or methods[] (false), then its superclass's, and
+ * so on -- matching a receiver.<partial>| completion's own name
+ * candidates (lsp/receiver.h), not deduplicated against an override
+ * further down the chain, same as this file's other completion lists
+ * don't dedupe against each other either. */
+static bool push_class_methods(JsonValue *items,const DiamondChunk *chunk,
+        size_t class_index,bool is_singleton) {
+    size_t current=class_index;
+    while(current!=UINT8_MAX) {
+        const DiamondClass *class=&chunk->classes[current];
+        const DiamondMethod *methods=is_singleton?class->singleton_methods:class->methods;
+        const size_t count=is_singleton?class->singleton_method_count:class->method_count;
+        for(size_t index=0;index<count;index++)
+            if(!push_item(items,methods[index].name,COMPLETION_KIND_FUNCTION))return false;
+        current=class->superclass;
+    }
+    return true;
 }
 
 /* Pushes every DiamondScopeLocal in `function` whose valid range
@@ -112,6 +133,10 @@ JsonValue *completion_compute(const DocumentTable *documents,const char *uri,
         okay=push_scope_locals(items,&scratch->entry,cursor_offset);
         for(size_t index=0;okay&&index<scratch->function_count;index++)
             okay=push_scope_locals(items,scratch->functions[index],cursor_offset);
+        size_t class_index;bool is_singleton;
+        if(okay&&receiver_resolve_class(scratch,&chunk,combined,cursor_offset,
+               &class_index,&is_singleton))
+            okay=push_class_methods(items,&chunk,class_index,is_singleton);
     }
     free(combined);free(path);diamond_source_bundle_free(&bundle);
     if(!okay) {json_free(items);return nullptr;}

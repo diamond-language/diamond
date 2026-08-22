@@ -5,7 +5,9 @@
 #include "diagnostics.h"
 #include "lexer.h"
 #include "loader.h"
+#include "receiver.h"
 
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -24,6 +26,22 @@ static DiamondToken identifier_token_at(const char *source,size_t target_line,
            target_column<current.span.column+current.span.length)
             return current;
     }
+}
+
+/* A raw byte offset into `text` for 1-based `line`/`column` -- only
+ * needed for an untitled/non-file:// document, same as completion.c's
+ * own copy (see its comment); duplicated rather than shared for the
+ * same reason identifier_token_at above already is. */
+static size_t raw_offset_for(const char *text,size_t length,size_t line,size_t column) {
+    size_t offset=0,current_line=1;
+    while(offset<length&&current_line<line) {
+        if(text[offset]=='\n')current_line++;
+        offset++;
+    }
+    size_t result=offset;
+    for(size_t moved=1;moved<column&&result<length&&text[result]!='\n';moved++)
+        result++;
+    return result;
 }
 
 static JsonValue *location_result(const char *uri,size_t line,size_t column,size_t name_length) {
@@ -64,6 +82,8 @@ JsonValue *definition_compute(const DocumentTable *documents,const char *uri,
     if(name_length>=sizeof name)name_length=sizeof name-1;
     memcpy(name,source_copy+identifier.span.start,name_length);
     name[name_length]='\0';
+    const size_t identifier_line=identifier.span.line;
+    const size_t identifier_column=identifier.span.column;
     free(source_copy);
 
     char *path=diagnostics_uri_to_path(uri);
@@ -140,6 +160,30 @@ JsonValue *definition_compute(const DocumentTable *documents,const char *uri,
             declaration_start=module->declaration_start;
             declaration_name_length=strlen(module->name);
             found=true;
+        }
+    }
+    if(!found) {
+        /* Not a top-level function/class/interface/module name -- see
+         * whether `identifier` is instead a method name reached through
+         * `receiver.method(...)` (lsp/receiver.h). */
+        const size_t identifier_offset=path!=nullptr
+            ? diamond_resolve_source_position(path,combined,&bundle,user_offset,
+                  identifier_line,identifier_column)
+            : user_offset+raw_offset_for(text,length,identifier_line,identifier_column);
+        size_t class_index;bool is_singleton;
+        if(identifier_offset!=SIZE_MAX&&
+           receiver_resolve_class(scratch,&chunk,combined,identifier_offset,&class_index,&is_singleton)) {
+            const DiamondMethod *method=
+                receiver_lookup_method(&chunk,class_index,is_singleton,name,name_length);
+            if(method!=nullptr&&
+               chunk.functions[method->function_index]->declaration_start>=user_offset) {
+                const DiamondFunction *function=chunk.functions[method->function_index];
+                declaration_line=function->declaration_line;
+                declaration_column=function->declaration_column;
+                declaration_start=function->declaration_start;
+                declaration_name_length=strlen(function->name);
+                found=true;
+            }
         }
     }
     if(!found) {

@@ -79,9 +79,27 @@ search over a real (if scoped) lexical symbol table:
     didOpen away). `range`/`selectionRange` are identical for each
     entry (just the name token — nothing tracks a declaration's full
     extent).
-  - All three deliberately don't resolve a method name reached through
-    `receiver.method(...)`: which class's method is meant depends on
-    `receiver`'s runtime type, which nothing here infers. All three also
+  - All three also fall back to `lsp/receiver.c` for a method name
+    reached through `receiver.method(...)`, for the three receiver forms
+    resolvable without real type inference: a literal class name
+    (`Author.find`), `self` inside an instance method or a class-owned
+    `def self.x` (wall 2's `DIAMOND_VALUE_CLASS`, `docs/design.md`), or a
+    local variable last known (at its own declaration) to hold
+    `ClassName.new(...)` — `DiamondScopeLocal.known_type` (`src/vm.h`),
+    a byte snapshot of the compiler's own `known_types[reg]` at the
+    exact moment `record_scope_locals` closes that local's scope, the
+    only new compiler-side state this needed. `self`'s own enclosing
+    class comes from `DiamondFunction.owner_class` via
+    `DiamondFunction.body_end` (`src/vm.h`, populated at every
+    function-closing site alongside `declaration_start` so even a
+    zero-parameter, zero-local method — a very common `self.foo()`
+    one-liner shape — still has a real body extent to locate `self`
+    within); `receiver_lookup_method` then walks the receiver's class and
+    its superclass chain by name, mirroring `lookup_method`/
+    `lookup_singleton_method` (`src/vm.c`) at the source level. A union
+    type, an instance-variable receiver, a chained call
+    (`foo().bar()`), or any receiver this can't resolve falls back to
+    the ordinary "not found" result instead of a guess. All three also
     require the *document* to currently compile cleanly — otherwise they
     return `null`/empty rather than a stale result; the document's own
     diagnostics already say why.
@@ -110,7 +128,12 @@ search over a real (if scoped) lexical symbol table:
   Doesn't filter by whatever's already typed (every mainstream client
   already does that client-side against the full list this returns) or
   suggest language keywords; requires a clean compile, same rule as
-  hover/definition/documentSymbol.
+  hover/definition/documentSymbol. When the cursor sits right after
+  `receiver.` (method name partially typed or not yet typed at all),
+  also appends the receiver's own class's methods and its superclass
+  chain's, via the same `lsp/receiver.c` resolution hover/definition
+  use — not deduplicated against each other or the rest of the list, same
+  as nothing else here dedupes either.
 - `workspace/symbol` (`lsp/workspace_symbol.c`) recursively walks the
   workspace root given via `initialize` (skipping dotfiles/dotdirs —
   `.git` and friends), compiles every `*.di` file it finds the same way
@@ -202,14 +225,17 @@ exit-without-shutdown edge cases.
 
 ## What's deliberately out of scope so far
 
-- **Completion/workspace symbol results for a method name reached
-  through `receiver.method(...)`, or for anything needing scope
-  resolution beyond a single compiled program's own function/class/
-  local tables** — same underlying gap as the next bullet.
-- **Hover/definition/documentSymbol on a method name reached through
-  `receiver.method(...)`** — needs type inference on `receiver` to know
-  which class's method is meant (possibly several classes define a
-  same-named method); see above.
+- **`receiver.method(...)` support beyond the three resolvable receiver
+  forms above** — a union/ambiguous receiver type (`known_type_sets`,
+  several candidate classes), an instance-variable receiver (`@item.
+  foo()`), a receiver that's itself a call's return value
+  (`make_box().get()`), or a local reassigned to a different class
+  later in the same scope (`known_type` reflects the type as of the
+  local's own declaration, not a later reassignment) all still fall back
+  to "not found" rather than resolving.
+- **Workspace symbol results for a method name reached through
+  `receiver.method(...)`, or for anything needing scope resolution
+  beyond a single compiled program's own function/class/local tables.**
 - **Incremental sync** — `textDocumentSync` only ever advertises `Full`.
   Diamond has no incremental-recompile story at all yet (every compile is
   a fresh `diamond_compile` call over the whole combined buffer), so
