@@ -1,5 +1,8 @@
 # diamond-active_record
 
+See [ROADMAP.md](ROADMAP.md) for the forward-looking plan to bring
+`ActiveRecord::Model` closer to real Ruby ActiveRecord.
+
 An explicit, low-magic persistence layer built on Arel.
 
 The first slice is `ActiveRecord::Repository`, which receives all metadata it
