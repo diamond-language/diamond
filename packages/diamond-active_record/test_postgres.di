@@ -244,7 +244,7 @@ def run_tests()
     reloaded = PgAuthor.find(db, ada.id())
     Minitest.assert_equal("Ada", reloaded.name())
 
-    reloaded.name=("Ada Lovelace")
+    reloaded.name = "Ada Lovelace"
     reloaded.save(db)
     Minitest.assert_equal("Ada Lovelace", PgAuthor.find(db, ada.id()).name())
 

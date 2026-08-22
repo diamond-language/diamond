@@ -374,8 +374,8 @@ Author.configure(ActiveRecord::Repository.new(Arel.table("authors"), build_autho
 ```diamond
 Author.create(db, {"name": "Ada", "country": "UK"})  # Model's own self.create, inherited
 ada = Author.find(db, 1)                             # likewise self.find
-ada.name=("Ada Lovelace")   # attribute writers are `name=(value)`, not `name = value` --
-ada.save(db)                # Diamond has no assignment-syntax sugar for a method call
+ada.name = "Ada Lovelace"
+ada.save(db)
 ada.books(db)
 ada.destroy(db)
 ```

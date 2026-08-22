@@ -2941,6 +2941,26 @@ static uint16_t emit_invoke_call(Compiler *compiler, uint16_t receiver,
     return dest;
 }
 
+/* Only consulted when a writer-call's '=' is immediately followed by
+ * '[' -- disambiguates the existing (real, if never yet exercised)
+ * explicit generic writer call recv.attr=[T](value) from the new bare
+ * assignment sugar's array-literal right-hand side recv.attr = [1, 2].
+ * Same balanced-bracket lookahead index_assignment_ahead already uses;
+ * only reads as generics when the matching ']' is directly followed by
+ * '(', exactly the shape every ordinary generic call already requires. */
+static bool writer_generic_arguments_ahead(const Compiler *compiler) {
+    DiamondLexer lookahead = compiler->lexer;
+    size_t depth = 1;
+    for (;;) {
+        DiamondToken token = diamond_lexer_next(&lookahead);
+        if (token.kind == DIAMOND_TOKEN_EOF || token.kind == DIAMOND_TOKEN_ERROR)
+            return false;
+        if (token.kind == DIAMOND_TOKEN_LEFT_BRACKET) depth++;
+        if (token.kind == DIAMOND_TOKEN_RIGHT_BRACKET && --depth == 0) break;
+    }
+    return diamond_lexer_next(&lookahead).kind == DIAMOND_TOKEN_LEFT_PAREN;
+}
+
 static uint16_t parse_invoke(Compiler *compiler, uint16_t receiver) {
     advance_token(compiler);
     if (compiler->current.kind != DIAMOND_TOKEN_IDENTIFIER) {
@@ -2953,7 +2973,8 @@ static uint16_t parse_invoke(Compiler *compiler, uint16_t receiver) {
         writer_name=true;advance_token(compiler);
     }
     uint8_t type_arguments[8];size_t type_argument_count=0;
-    if(compiler->current.kind==DIAMOND_TOKEN_LEFT_BRACKET) {
+    if(compiler->current.kind==DIAMOND_TOKEN_LEFT_BRACKET &&
+       (!writer_name||writer_generic_arguments_ahead(compiler))) {
         advance_token(compiler);
         skip_newlines(compiler);
         while(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_BRACKET&&
@@ -2974,6 +2995,15 @@ static uint16_t parse_invoke(Compiler *compiler, uint16_t receiver) {
                  "expected ']' after generic arguments");return 0;
         }
         advance_token(compiler);
+    }
+    /* `recv.attr = value` -- sugar for `recv.attr=(value)`. Only a plain
+     * assignment is supported (mirrors compile_assignment's own RHS): one
+     * expression, no trailing '(', no do-block (a setter takes exactly one
+     * argument, never a block). */
+    if (writer_name && compiler->current.kind != DIAMOND_TOKEN_LEFT_PAREN) {
+        const uint16_t value = parse_expression(compiler);
+        return emit_invoke_call(compiler, receiver, name, true,
+            type_arguments, type_argument_count, &value, 1);
     }
     if (compiler->current.kind != DIAMOND_TOKEN_LEFT_PAREN) {
         fail(compiler, compiler->current.span,

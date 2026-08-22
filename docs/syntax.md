@@ -127,6 +127,31 @@ targets plain `=` and multiple assignment accept. Indexed targets
 (`arr[i] += 1`, `hash[k] ||= default`) aren't supported yet; write the
 indexed read and assignment out separately.
 
+## Writer-call assignment sugar
+
+```ruby
+class Author
+  attr_accessor name: String
+end
+
+ada = Author.new()
+ada.name = "Ada Lovelace"   # sugar for ada.name=("Ada Lovelace")
+puts(ada.name())            # => "Ada Lovelace"
+```
+
+`receiver.attr = value` is pure sugar for the writer-method call
+`receiver.attr=(value)` — the same call either spelling compiles to, reaching
+any writer method, hand-written or `attr_accessor`-synthesized. Because it's
+just a re-spelling of an ordinary method call rather than new assignment
+semantics, the expression's own value is whatever the writer method actually
+returns (an `attr_accessor`-generated writer returns the value it was just
+given, but a hand-written one is free to return anything). The receiver can
+be any expression, not just a local — `Author.new().name = "Ada"` and
+`book.author().name = "Ada"` both work — and the right-hand side is one
+ordinary expression, parsed exactly like plain assignment's own
+right-hand side (so `attr = [1, 2, 3]` is the array literal, not an
+attempt at generic arguments).
+
 ## Multiple assignment
 
 ```ruby
