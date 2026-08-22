@@ -62,24 +62,30 @@ call site was updated (`tests/cases/diamond_active_record_model.di`,
 `tests/cases/diamond_active_record_relation.di` and `README.md`'s new
 `ActiveRecord::Relation` section.
 
+The smaller ergonomic-polish items landed too: `self.find_by(db,
+conditions)` (`where(conditions).first(db)` in one line);
+`#save!`/`#destroy!`/`self.create!` as `!`-suffixed aliases for
+`#save`/`#destroy`/`self.create` (checked directly: every write here
+already always raises on failure -- `ValidationError`/`StaleObjectError`
+-- so unlike real ActiveRecord there's no quiet-failure mode for a bang
+form to distinguish from; both spellings behave identically, provided
+purely for Rails-naming familiarity); `#to_json`/`#as_json` (`#as_json`
+is the plain `Hash` `#to_attributes` already returns, a subclass's
+override point for a different JSON shape; `#to_json` is
+`JSON.stringify(#as_json())`); and a README callout documenting the
+`def self.scope_name() = self.where({...})` convention in place of a
+`scope` macro. See `tests/cases/diamond_active_record_ergonomics.di` and
+the README.md sections right after `ActiveRecord::Relation`.
+
 ## Priority order for next session
 
-### 1. Smaller ergonomic polish
-
-- `find_by(db, conditions)` -- `where(...).first`, one line now that
-  `Relation` exists;
-- bang methods (`save!`, `create!`, `destroy!`) raising instead of
-  returning a falsy/unsaved result -- check what `#save` currently
-  returns on failure first;
-- `to_json`/`as_json` on `Model` instances, built from `#to_attributes`
-  and the `JSON` module already in the prelude (`packages/arel`'s own
-  test suites already exercise real JSON, no new plumbing needed);
-- document the "scope" convention explicitly: since `scope :active, ->
-  { ... }`-style macros aren't reachable (see the wall above), an
-  ordinary `def self.active() = self.where({"active": true})` on
-  each model already gets the same practical result today -- worth a
-  README callout so users don't go looking for a `scope` macro that
-  isn't coming.
+Nothing queued right now -- the items this file has tracked since
+`README.md`'s own `ActiveRecord::Model` section landed (writer-call
+sugar, `Relation`, and the ergonomic polish above) are all done. Revisit
+`README.md`'s own "an optional Rails-flavored layer" section for what
+this still doesn't do (no `has_many :sym`-style macros, no schema
+migrations -- see "Explicitly not planned" below) before picking a new
+direction.
 
 ## Explicitly not planned (revisit only with a real, separate design pass)
 

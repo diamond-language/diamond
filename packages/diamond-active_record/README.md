@@ -407,6 +407,42 @@ inspection or naming convention here to build one from, so `#first`
 without a preceding `.order(...)` returns whatever row the database
 happens to return first.
 
+`self.find_by(db, conditions)` is `where(conditions).first(db)` in one
+line -- a single matching instance, or `nil`, with the same "no implicit
+`ORDER BY`" caveat as `#first` itself.
+
+`#save!`/`#destroy!`/`self.create!` are `!`-suffixed aliases for
+`#save`/`#destroy`/`self.create`, provided purely for Rails-naming
+familiarity. Unlike real ActiveRecord, where the plain (non-`!`) forms
+swallow a validation failure and return `false` while the `!` forms
+raise, every write here (`#save`/`#destroy`/`self.create`, and by
+extension `Repository#create`/`#update`/`#delete` underneath them)
+already always raises on failure (`ActiveRecord::ValidationError`,
+`ActiveRecord::StaleObjectError`) -- there is no quiet failure mode to
+distinguish a bang form from. Both spellings behave identically; use
+whichever reads better at the call site.
+
+`#to_json`/`#as_json` build on `#to_attributes` and the `JSON` module
+already in the prelude -- `#as_json` is the same plain `Hash`
+`#to_attributes` already returns (a subclass can override just this one
+method for a different JSON shape -- dropping a column, embedding an
+association -- without touching `#to_json` itself), and `#to_json` is
+`JSON.stringify(#as_json())`.
+
+Since `has_many :sym`/`validates ...`-style declarative macros aren't
+reachable (see the two real Diamond constraints above), there is no
+`scope` macro either -- an ordinary class method already gets the same
+practical result:
+
+```diamond
+class Author < ActiveRecord::Model
+  ...
+  def self.uk() = self.where({"country": "UK"})
+end
+
+Author.uk().order(...).to_a(db)
+```
+
 Every subclass overrides two **instance** methods (`#repository`,
 `#to_attributes`) so `Model`'s shared `#save`/`#destroy`/`#persisted?`/
 `#id` reach them through real virtual dispatch. `self.find`/`.all`/

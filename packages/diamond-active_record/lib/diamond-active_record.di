@@ -764,6 +764,15 @@ class Model
   def id() = @attributes[self.repository().id_column()]
   def persisted?() -> Bool = @attributes.include_key?(self.repository().id_column())
 
+  # #as_json is the same plain Hash #to_attributes already builds -- the
+  # override point for a subclass that wants a different JSON shape than
+  # its raw attributes (dropping a column, renaming a key, embedding an
+  # association) without touching #to_json itself. #to_json is just
+  # JSON.stringify(#as_json()) -- the JSON module already in the prelude,
+  # no new plumbing.
+  def as_json() = self.to_attributes()
+  def to_json() -> String = JSON.stringify(self.as_json())
+
   # Small, non-magic conveniences for writing a one-line association
   # reader on a subclass (see README.md) -- these just construct the
   # association object; #all/#get/#preload on it work exactly as
@@ -799,6 +808,17 @@ class Model
 
   def destroy(db) = self.repository().delete(db, self.id())
 
+  # `!`-suffixed aliases for #save/#destroy, provided purely for
+  # Rails-naming familiarity -- unlike real ActiveRecord, where plain
+  # #save/#destroy swallow a validation failure and return false while
+  # #save!/#destroy! raise, this package's #save/#destroy already always
+  # raise on failure (ValidationError, StaleObjectError -- see Repository
+  # above), so there is no quiet failure mode to distinguish from. Both
+  # spellings behave identically; use whichever reads better at the call
+  # site.
+  def save!(db) = self.save(db)
+  def destroy!(db) = self.destroy(db)
+
   # Class-level finders, shared here and inherited by every subclass --
   # made possible by Diamond's virtual self.foo(...) dispatch inside a
   # class-owned singleton method (self, here, is whichever subclass the
@@ -824,7 +844,13 @@ class Model
   def self.find(db, id) = self.repository().find(db, id)
   def self.all() = self.repository().relation()
   def self.where(conditions: Hash) = self.repository().relation().where(conditions)
+  # `where(...).first`, one line -- a single matching instance, or nil,
+  # with the same "no implicit ORDER BY" caveat #first(db) already has.
+  def self.find_by(db, conditions: Hash) = self.repository().relation().where(conditions).first(db)
   def self.create(db, attributes: Hash) = self.repository().create(db, attributes)
+  # See #save!/#destroy! above on why this behaves identically to
+  # self.create -- self.create already raises on a validation failure.
+  def self.create!(db, attributes: Hash) = self.create(db, attributes)
   def self.find_each(db, callback: Callable[1], batch_size = 1000)
     self.repository().find_each(db, callback, batch_size)
   end
