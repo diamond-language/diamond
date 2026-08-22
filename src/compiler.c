@@ -114,6 +114,21 @@ typedef struct Compiler {
      * checked against. Not itself return-type-check logic, just a signal
      * of whether that check applies at all this time. */
     bool sequence_diverges;
+    /* True only during diamond_compile's first, throwaway pass over the
+     * source (see diamond_compile's own comment) -- purely to let a
+     * forward reference to a not-yet-declared class/module/interface
+     * name (used as a value: construction, a singleton call, a type
+     * annotation -- never a superclass/base-interface, which still needs
+     * the referenced declaration fully compiled already, not just known
+     * by name) survive instead of aborting compilation, so this pass can
+     * walk the *entire* source and fully register every declaration's
+     * name/fields/methods regardless of textual order. This pass's own
+     * bytecode is discarded; only program->classes/interfaces/modules
+     * (and top-level function signatures) survive into the real second
+     * pass, which runs with discovery_pass false and behaves exactly as
+     * a normal compile always has, except every declaration is already
+     * known up front. */
+    bool discovery_pass;
 } Compiler;
 
 static uint16_t parse_expression(Compiler *compiler);
@@ -1063,7 +1078,18 @@ static int resolve_type_name(Compiler *compiler,const char *name,
     if(found>=0)return DIAMOND_TYPE_INTERFACE_BASE+found;
     found=find_class_qualified_or_scoped(compiler,name);
     if(found>=0)return DIAMOND_TYPE_CLASS_BASE+found;
-    fail(compiler,diagnostic,"unknown type annotation");return DIAMOND_TYPE_NIL;
+    /* During diamond_compile's own discovery pass only: a type annotation
+     * naming a class/interface declared *later* in the source hasn't
+     * been discovered yet by this point in discovery's own walk (that's
+     * the whole reason discovery exists -- see diamond_compile's own
+     * comment). Tolerate it here rather than aborting discovery, so it
+     * can keep walking to the real, later declaration; the real second
+     * pass runs with every declaration already known up front, so it
+     * either resolves this correctly there or, if the name genuinely
+     * never exists, hits this exact fail() again for real. */
+    if(!compiler->discovery_pass)
+        fail(compiler,diagnostic,"unknown type annotation");
+    return DIAMOND_TYPE_NIL;
 }
 
 static int parse_type_annotation(Compiler *compiler) {
@@ -2892,6 +2918,30 @@ static uint16_t parse_name(Compiler *compiler) {
         (compiler->current.kind==DIAMOND_TOKEN_LEFT_BRACKET&&
          find_local(compiler,name)<0&&find_function(compiler,name)>=0)) {
         return parse_call(compiler, name);
+    }
+    /* During diamond_compile's own discovery pass only: `class_index<0`
+     * here means this identifier isn't a known class (or module, or any
+     * of the built-in Fiber/File/SQLite3/etc. names already ruled out
+     * above) *yet* -- for a genuine forward reference (the whole reason
+     * discovery exists, see that function's own comment), the class
+     * declaration just hasn't been reached by this pass's own walk. A
+     * capitalized name immediately followed by '.' is exactly the shape
+     * `SomeClass.new(...)`/`SomeClass.someMethod(...)` -- rather than
+     * re-deriving how to parse either of those forms here, substitute a
+     * harmless NIL for the (as far as this pass knows) unresolved name
+     * and let this expression's own postfix-chain loop (parse_precedence)
+     * consume the following '.method(...)' exactly the way it already
+     * does for any other receiver, via parse_invoke -- discovery's own
+     * bytecode is discarded regardless of what it computes here. If the
+     * name is genuinely undefined (a real typo, not a forward reference),
+     * this pass simply won't record that -- the second, real pass has no
+     * such tolerance and will correctly fail on it there instead. */
+    if(compiler->discovery_pass&&class_index<0&&module_index<0&&
+       compiler->current.kind==DIAMOND_TOKEN_DOT&&
+       compiler->source[name.start]>='A'&&compiler->source[name.start]<='Z') {
+        const uint16_t destination=allocate_register(compiler);
+        emit_instruction(compiler,DIAMOND_OP_NIL,destination,0,0,1);
+        return destination;
     }
     return parse_identifier(compiler);
 }
@@ -6296,8 +6346,7 @@ static void compile_delegate(Compiler *compiler) {
 
 static uint16_t compile_class(Compiler *compiler) {
     advance_token(compiler);
-    if (compiler->current.kind != DIAMOND_TOKEN_IDENTIFIER ||
-        compiler->program->class_count == DIAMOND_MAX_CLASSES) {
+    if (compiler->current.kind != DIAMOND_TOKEN_IDENTIFIER) {
         fail(compiler, compiler->current.span, "expected valid class name"); return 0;
     }
     DiamondSpan name=compiler->current.span;
@@ -6305,13 +6354,61 @@ static uint16_t compile_class(Compiler *compiler) {
     if(!declaration_name(compiler,stored_name,sizeof stored_name,name)) {
         fail(compiler,name,"class name is too long"); return 0;
     }
-    if(find_class_name(compiler,stored_name)>=0||
+    const int existing_class=find_class_name(compiler,stored_name);
+    /* A name diamond_compile's own (separate, already-finished) discovery
+     * pass already registered (see that function's own comment, and
+     * DiamondClass's declared_by_discovery field, src/vm.h) is this
+     * class's own pre-reserved slot, not a real collision -- claim it
+     * instead of either erroring or appending a second entry. Everything
+     * about the slot except its index/name gets rebuilt from scratch
+     * below exactly as a fresh registration would, since a class's own
+     * fields/methods depend only on its own body, not on anything
+     * discovery_pass tolerated elsewhere. The `!compiler->discovery_pass`
+     * conjunct matters: within discovery's own single walk, a name it
+     * just registered also has declared_by_discovery=true (see the else
+     * branch below), but that must NOT read as "claimable" there --
+     * otherwise a genuine `class Foo` declared twice within discovery's
+     * own walk would wrongly claim its own first registration instead of
+     * correctly erroring on the duplicate. Claiming only ever makes sense
+     * in the second, real pass, against slots a *prior* pass seeded. */
+    const bool claiming = existing_class>=0 && !compiler->discovery_pass &&
+        compiler->program->classes[(size_t)existing_class].declared_by_discovery;
+    if(!claiming && (existing_class>=0||
        find_interface_name(compiler,stored_name)>=0||
-       find_module_name(compiler,stored_name)>=0) {
+       find_module_name(compiler,stored_name)>=0)) {
         fail(compiler,name,"type name is already defined");return 0;
     }
-    const int index=(int)compiler->program->class_count++;
+    if(!claiming && compiler->program->class_count==DIAMOND_MAX_CLASSES) {
+        fail(compiler, name, "expected valid class name"); return 0;
+    }
+    const int index=claiming
+        ? existing_class : (int)compiler->program->class_count++;
     DiamondClass *class=&compiler->program->classes[(size_t)index];
+    if(claiming) {
+        /* Not just the counts: several registration sites (interface
+         * method arity in compile_interface, confirmed directly as the
+         * cause of a real bug here) accumulate straight into a table
+         * slot's own fields (e.g. `method->arity++`) trusting it starts
+         * at zero, rather than assigning an absolute value -- resetting
+         * only the *counts* left discovery's own stale field/method
+         * contents sitting in these arrays for a claimed slot to
+         * silently accumulate on top of. A full zero of every array this
+         * class body is about to rebuild is the robust fix, not chasing
+         * each accumulate-in-place site individually. */
+        memset(class->methods,0,sizeof class->methods);
+        memset(class->singleton_methods,0,sizeof class->singleton_methods);
+        memset(class->fields,0,sizeof class->fields);
+        memset(class->class_variables,0,sizeof class->class_variables);
+        class->method_count=0;
+        class->singleton_method_count=0;
+        class->field_count=0;
+        class->class_variable_count=0;
+        class->declared_by_discovery=false;
+    } else {
+        /* Recorded so a *later* real pass (never this same pass) knows
+         * this slot is claimable -- see the comment above. */
+        class->declared_by_discovery=compiler->discovery_pass;
+    }
     class->superclass=UINT8_MAX;
     class->declaration_line=(uint32_t)name.line;
     class->declaration_column=(uint32_t)name.column;
@@ -6430,8 +6527,7 @@ static uint16_t compile_module(Compiler *compiler) {
              "modules must be declared at top level");return 0;
     }
     advance_token(compiler);
-    if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER||
-       compiler->program->module_count==DIAMOND_MAX_MODULES) {
+    if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER) {
         fail(compiler,compiler->current.span,"expected valid module name");return 0;
     }
     const DiamondSpan name=compiler->current.span;
@@ -6439,13 +6535,35 @@ static uint16_t compile_module(Compiler *compiler) {
     if(!declaration_name(compiler,stored_name,sizeof stored_name,name)) {
         fail(compiler,name,"module name is too long");return 0;
     }
-    if(find_module_name(compiler,stored_name)>=0||
+    const int existing_module=find_module_name(compiler,stored_name);
+    /* See compile_class's own identical comment on declared_by_discovery
+     * and the !compiler->discovery_pass conjunct. */
+    const bool claiming=existing_module>=0&&!compiler->discovery_pass&&
+        compiler->program->modules[(size_t)existing_module].declared_by_discovery;
+    if(!claiming&&(existing_module>=0||
        find_class_name(compiler,stored_name)>=0||
-       find_interface_name(compiler,stored_name)>=0) {
+       find_interface_name(compiler,stored_name)>=0)) {
         fail(compiler,name,"module name is already defined");return 0;
     }
-    const int index=(int)compiler->program->module_count++;
+    if(!claiming&&compiler->program->module_count==DIAMOND_MAX_MODULES) {
+        fail(compiler,name,"expected valid module name");return 0;
+    }
+    const int index=claiming
+        ? existing_module : (int)compiler->program->module_count++;
     DiamondModule *module=&compiler->program->modules[(size_t)index];
+    if(claiming) {
+        /* See compile_class's own identical comment on why a full zero
+         * of these arrays, not just the counts, is needed here. */
+        memset(module->methods,0,sizeof module->methods);
+        memset(module->singleton_methods,0,sizeof module->singleton_methods);
+        memset(module->fields,0,sizeof module->fields);
+        module->method_count=0;
+        module->singleton_method_count=0;
+        module->field_count=0;
+        module->declared_by_discovery=false;
+    } else {
+        module->declared_by_discovery=compiler->discovery_pass;
+    }
     (void)snprintf(module->name,sizeof module->name,"%s",stored_name);
     module->declaration_line=(uint32_t)name.line;
     module->declaration_column=(uint32_t)name.column;
@@ -6586,8 +6704,7 @@ static uint16_t compile_interface(Compiler *compiler) {
              "interfaces must be declared at top level");return 0;
     }
     advance_token(compiler);
-    if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER||
-       compiler->program->interface_count==DIAMOND_MAX_INTERFACES) {
+    if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER) {
         fail(compiler,compiler->current.span,"expected valid interface name");return 0;
     }
     const DiamondSpan name=compiler->current.span;
@@ -6595,13 +6712,37 @@ static uint16_t compile_interface(Compiler *compiler) {
     if(!declaration_name(compiler,stored_name,sizeof stored_name,name)) {
         fail(compiler,name,"interface name is too long");return 0;
     }
-    if(find_interface_name(compiler,stored_name)>=0||
+    const int existing_interface=find_interface_name(compiler,stored_name);
+    /* See compile_class's own identical comment on declared_by_discovery
+     * and the !compiler->discovery_pass conjunct. */
+    const bool claiming=existing_interface>=0&&!compiler->discovery_pass&&
+        compiler->program->interfaces[(size_t)existing_interface].declared_by_discovery;
+    if(!claiming&&(existing_interface>=0||
        find_class_name(compiler,stored_name)>=0||
-       find_module_name(compiler,stored_name)>=0) {
+       find_module_name(compiler,stored_name)>=0)) {
         fail(compiler,name,"type name is already defined");return 0;
     }
-    DiamondInterface *interface=
-        &compiler->program->interfaces[compiler->program->interface_count++];
+    if(!claiming&&compiler->program->interface_count==DIAMOND_MAX_INTERFACES) {
+        fail(compiler,name,"expected valid interface name");return 0;
+    }
+    DiamondInterface *interface=claiming
+        ? &compiler->program->interfaces[(size_t)existing_interface]
+        : &compiler->program->interfaces[compiler->program->interface_count++];
+    if(claiming) {
+        /* See compile_class's own identical comment on why a full zero
+         * of this array, not just the count, is needed here -- this is
+         * in fact where the bug was actually found: compile_interface's
+         * own method->arity++ below (parsing each `(param, ...)` list)
+         * accumulates directly onto whatever was already sitting in
+         * interface->methods[n], rather than assigning an absolute
+         * value, so a claimed slot's stale discovery-pass arity was
+         * silently being added to instead of replaced. */
+        memset(interface->methods,0,sizeof interface->methods);
+        interface->method_count=0;
+        interface->declared_by_discovery=false;
+    } else {
+        interface->declared_by_discovery=compiler->discovery_pass;
+    }
     interface->type_sets=compiler->program->entry.type_sets;
     (void)snprintf(interface->name,sizeof interface->name,"%s",stored_name);
     interface->declaration_line=(uint32_t)name.line;
@@ -7193,11 +7334,17 @@ size_t diamond_resolve_source_position(const char *path,const char *combined,
     return SIZE_MAX;
 }
 
-bool diamond_compile(const char *source, DiamondProgram *program,
-                     DiamondDiagnostic *diagnostic) {
-    const bool allow_top_level_redefinition = program->allow_top_level_redefinition;
-    diamond_program_init(program);
-    program->allow_top_level_redefinition = allow_top_level_redefinition;
+/* The actual compile, run twice by diamond_compile below -- once
+ * (discovery_pass=true) into a throwaway DiamondProgram purely to
+ * register every class/module/interface's name/fields/methods
+ * regardless of textual order, then again (discovery_pass=false) into
+ * the real, caller-supplied program, now with every declaration already
+ * known. `program` must already be freshly diamond_program_init'd (with
+ * allow_top_level_redefinition already restored onto it) by the caller --
+ * both passes need that same prologue against their own separate
+ * program, so it stays there rather than duplicated in here. */
+static bool run_compile_pass(const char *source, DiamondProgram *program,
+                             DiamondDiagnostic *diagnostic, bool discovery_pass) {
     *diagnostic = (DiamondDiagnostic){};
     Compiler compiler = {
         .source = source,
@@ -7209,6 +7356,7 @@ bool diamond_compile(const char *source, DiamondProgram *program,
         .current_exception = -1,
         .current_retry_target = SIZE_MAX,
         .diagnostic = diagnostic,
+        .discovery_pass = discovery_pass,
     };
     diamond_lexer_init(&compiler.lexer, source);
     compiler.current = diamond_lexer_next(&compiler.lexer);
@@ -7242,6 +7390,66 @@ bool diamond_compile(const char *source, DiamondProgram *program,
         }
     }
     return !compiler.failed;
+}
+
+/* Compiles `source` twice. The first pass (see run_compile_pass's own
+ * comment) is a throwaway declaration-discovery compile: it runs into a
+ * separate, temporary DiamondProgram whose bytecode is discarded in
+ * full, but whose class/module/interface tables (names, fields,
+ * methods -- fully populated regardless of textual order, since a real
+ * error there is the only thing that can stop this pass) are copied
+ * into the second, real pass's own program before it starts. This is
+ * what lets `SomeClass.new(...)`/`SomeClass.someMethod(...)`/a type
+ * annotation reference a class/module/interface declared *later* in the
+ * same source -- see docs/roadmap.md and the forward-declarations plan.
+ * A real syntax/semantic error unrelated to a forward reference still
+ * fails identically in the first pass, and the second pass never runs --
+ * the caller sees exactly one clean error, same as a single-pass compile
+ * always has. Superclass/base-interface resolution is deliberately left
+ * exactly as strict as before in both passes (see compile_class's own
+ * comment on `claiming`): that needs the referenced class already fully
+ * compiled, not just known by name, which this doesn't attempt to fix. */
+bool diamond_compile(const char *source, DiamondProgram *program,
+                     DiamondDiagnostic *diagnostic) {
+    const bool allow_top_level_redefinition = program->allow_top_level_redefinition;
+
+    DiamondProgram *discovery = calloc(1, sizeof *discovery);
+    diamond_program_init(discovery);
+    discovery->allow_top_level_redefinition = allow_top_level_redefinition;
+    DiamondDiagnostic discovery_diagnostic = {0};
+    const bool discovered = run_compile_pass(
+        source, discovery, &discovery_diagnostic, /*discovery_pass=*/true);
+
+    diamond_program_init(program);
+    program->allow_top_level_redefinition = allow_top_level_redefinition;
+    if (!discovered) {
+        *diagnostic = discovery_diagnostic;
+        diamond_program_free(discovery);
+        free(discovery);
+        return false;
+    }
+
+    /* Carry discovery's fully-populated class/module/interface tables
+     * (names, fields, methods -- everything but real bytecode) into the
+     * second, real pass's own program, *before* that pass starts, so
+     * every declaration is already known regardless of textual order.
+     * `classes`/`interfaces`/`modules` are plain, pointer-free embedded
+     * arrays (src/compiler.h) -- a byte copy is enough, no separate
+     * ownership to transfer. compile_class/compile_module/
+     * compile_interface's own claiming logic (see their comments) is
+     * what makes the second pass treat every copied entry as its own
+     * pre-reserved slot instead of a duplicate declaration. */
+    memcpy(program->classes, discovery->classes, sizeof program->classes);
+    program->class_count = discovery->class_count;
+    memcpy(program->interfaces, discovery->interfaces, sizeof program->interfaces);
+    program->interface_count = discovery->interface_count;
+    memcpy(program->modules, discovery->modules, sizeof program->modules);
+    program->module_count = discovery->module_count;
+
+    diamond_program_free(discovery);
+    free(discovery);
+
+    return run_compile_pass(source, program, diagnostic, /*discovery_pass=*/false);
 }
 
 DiamondChunk diamond_program_chunk(const DiamondProgram *program) {

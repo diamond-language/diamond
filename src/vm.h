@@ -320,6 +320,15 @@ typedef struct DiamondInterface {
     DiamondInterfaceMethod methods[DIAMOND_MAX_METHODS];
     size_t method_count;
     const DiamondTypeSet *type_sets;
+    /* True only for an entry seeded by diamond_compile's own throwaway
+     * discovery pass and not yet "claimed" by the real second pass --
+     * compile_interface's own name-collision check (src/compiler.c) reads
+     * this to tell "this is my own pre-registered slot, reuse it" apart
+     * from a genuine duplicate declaration. Never true outside that one
+     * seeding window; a normal single compile (the discovery pass
+     * itself, or any DiamondInterface built directly by the
+     * ProgramBuilder native bridge in src/vm.c) never sets it. */
+    bool declared_by_discovery;
 } DiamondInterface;
 
 typedef struct DiamondModule {
@@ -333,6 +342,8 @@ typedef struct DiamondModule {
     size_t singleton_method_count;
     char fields[DIAMOND_MAX_FIELDS][DIAMOND_MAX_FUNCTION_NAME];
     size_t field_count;
+    /* See DiamondInterface's own copy of this field just above. */
+    bool declared_by_discovery;
 } DiamondModule;
 
 typedef struct DiamondClass DiamondClass;
@@ -377,6 +388,8 @@ struct DiamondClass {
      * DiamondValue can ever live in them. */
     char class_variables[DIAMOND_MAX_FIELDS][DIAMOND_MAX_FUNCTION_NAME];
     size_t class_variable_count;
+    /* See DiamondInterface's own copy of this field (this file, above). */
+    bool declared_by_discovery;
 };
 
 /* One local variable or parameter's name and the byte range (in the

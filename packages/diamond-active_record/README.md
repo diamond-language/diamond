@@ -440,13 +440,21 @@ def profile(db) = self.has_one(Profile.repository(), "author_id").get(db, self.i
 ```
 
 A model that associates in **both** directions (`Author has_many :books`
-*and* `Book belongs_to :author`) hits a real ordering wall: Diamond
-resolves a class name referenced inside a method body at compile time,
-so neither class's body can name the other directly -- whichever one is
-declared second doesn't exist yet as far as the first one's code is
-concerned. The fix is the same shape as `.configure` itself: each
-association reader reads a class-variable slot filled in later, once
-both classes exist, through its own `self.wire_*` method:
+*and* `Book belongs_to :author`) used to hit a real ordering wall: Diamond
+used to resolve a class name referenced inside a method body only against
+whatever had already been compiled earlier in the file, so neither
+class's body could name the other directly -- whichever one was declared
+second didn't exist yet as far as the first one's code was concerned.
+This has since been fixed at the language level (`docs/roadmap.md`'s
+"Compiler representation" section): `Author#books` can now call
+`Book.repository()` directly, and `Book#author` can call
+`Author.repository()` directly, regardless of which class is declared
+first, or that each needs the other. The `wire_*` pattern below still
+works exactly as shown (nothing about it broke), but a new model no
+longer needs it just to solve this specific ordering problem -- it
+remains useful only if a model wants an association's target repository
+resolved through some *other* indirection than a plain class-variable
+read/write, the same shape as `.configure` itself:
 
 ```diamond
 class Author < ActiveRecord::Model

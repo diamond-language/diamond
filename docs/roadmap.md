@@ -205,10 +205,27 @@ Open questions:
   reusable prelude compilation, or native code generation;
 - whether register reuse can reduce large-function bytecode/frame pressure
   without obscuring source facts and closure capture;
-- whether forward declarations are worth a predeclaration pass, given the
-  current single-pass compiler's simplicity;
 - which fixed table/offset limits should be widened, removed, or kept as
   deliberate implementation boundaries;
+
+Resolved: a class/module/interface (and a type annotation naming one) can
+now be referenced before its own declaration is textually reached later in
+the same source -- `diamond_compile` (`src/compiler.c`) runs the whole
+source twice: a throwaway first pass (`discovery_pass` on `Compiler`)
+tolerates an unresolved forward reference just long enough to walk the
+entire file and fully register every class/module/interface's name,
+fields, and methods (including singleton methods) regardless of order,
+then a real second pass runs with everything already known, claiming each
+pre-registered slot (`declared_by_discovery` on `DiamondClass`/
+`DiamondModule`/`DiamondInterface`) instead of erroring on a rediscovered
+name. See `tests/cases/forward_declarations.di`. This is *not* a general
+predeclaration/IR change -- there is still no retained AST, and a
+superclass/base-interface still needs to be declared first (that copies
+the referenced declaration's already-*fully-compiled* field table, not
+just its name -- seeing it registered isn't enough, see
+`tests/cases/forward_declaration_superclass_still_fails.di`). Top-level
+bare function forward/mutual calls are a related but separate, still-open
+case -- see "Forward and mutual calls" below.
 
 ## Language and library directions
 
@@ -341,9 +358,20 @@ Smaller viable improvements include:
 
 Bare calls resolve only previously declared top-level functions in file order.
 Receiver-based method calls resolve dynamically and are the existing workaround
-for mutually recursive methods. Fixing bare forward calls requires at least a
-declaration-discovery pass and must be weighed against the intentionally direct
-compiler.
+for mutually recursive methods.
+
+Classes/modules/interfaces now go through exactly the declaration-discovery
+pass this section used to say fixing this would require -- see "Compiler
+representation" above. Top-level bare functions still don't: unlike a class
+(an embedded, fixed-size table entry that can be pre-registered by name and
+"claimed" later), `program->functions` is a flat, dynamically-growable array
+of `DiamondFunction*` shared by every function in the program, top-level or
+not, and a `CALL` site bakes in the callee's `function_index` directly, so a
+forward call would need that index *reserved* ahead of the callee's own real
+compilation, not just its name known -- the same "claim, don't duplicate"
+trick, but for a different, currently-unsplittable table. A real fix is more
+invasive than the class/module/interface case turned out to be, not just a
+smaller version of it.
 
 ### Classes as ordinary runtime objects
 

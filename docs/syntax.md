@@ -1205,6 +1205,21 @@ captures) — the plain-`Array` result covers the common case; `Regexp.new`
 
 ## No AST
 
-The compiler is a single-pass Pratt parser that emits register bytecode
-directly; there is no retained AST. Pass `--dump-bytecode` on the CLI to
-see how any construct in this document actually lowers.
+The compiler is a Pratt parser that emits register bytecode directly;
+there is no retained AST. `diamond_compile` actually runs this parser
+twice per compile, not once: a throwaway first "discovery" pass walks the
+whole source (tolerating a forward reference to a not-yet-declared
+class/module/interface just long enough to keep going) purely to
+register every declaration regardless of textual order, then a real
+second pass emits the bytecode that actually runs, with every
+declaration already known from the start -- see `docs/roadmap.md`'s
+"Compiler representation" section. This is what lets a class construct
+or call a singleton method on another class declared later in the same
+file (`SomeClass.new(...)`, `OtherClass.someMethod(...)`), and lets a
+type annotation name a class declared later too. A superclass still has
+to be declared first (`class B < A` needs `A`'s complete, already-*fully-
+compiled* field table, not just its name), and there's still no retained
+AST for either pass to share — each is a full, independent walk of the
+token stream. Pass `--dump-bytecode` on the CLI to see how any construct
+in this document actually lowers (that dump reflects only the second,
+real pass's output).

@@ -1,13 +1,19 @@
 require "../../packages/diamond-active_record/lib/diamond-active_record"
 require "../../lib/minitest"
 
-# Author and Book associate in both directions (has_many/belongs_to), so
-# neither class body can name the other directly -- Diamond resolves a
-# class name inside a method body at compile time, and the two classes
-# can't both come first. Each association reader instead reads a
-# class-variable slot filled in later, once both classes exist, via its
-# own self.wire_* call -- the same one-time "configure after everything
-# exists" shape Model.configure itself already requires.
+# Author and Book associate in both directions (has_many/belongs_to).
+# This used to force the wire_* indirection below, since Diamond used to
+# resolve a class name inside a method body only against whatever had
+# already been compiled earlier in the file, and the two classes couldn't
+# both come first -- fixed since (see docs/roadmap.md's "Compiler
+# representation" section: diamond_compile's own declaration-discovery
+# pass), so `Book.repository()`/`Author.repository()` would now resolve
+# fine called directly from each other's body regardless of order. Kept
+# here anyway as real, still-valid coverage of the wire_* pattern itself,
+# which remains useful for association wiring that wants some other
+# indirection than a plain class-variable read/write -- the same one-time
+# "configure after everything exists" shape Model.configure itself
+# already requires.
 class Author < ActiveRecord::Model
   attr_accessor name: String, country: String
 
