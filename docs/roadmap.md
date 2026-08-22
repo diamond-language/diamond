@@ -77,10 +77,12 @@ real MySQL-specific quirk found: its row-alias upsert syntax has no
 top of Arel as an explicit, low-magic persistence layer (`Repository`,
 four association kinds, optimistic locking, eager loading, batch
 iteration, nested transactions via savepoints), plus an optional
-`ActiveRecord::Model` layer for a more Rails-familiar surface. Remaining
-forward plan lives in
-[../packages/arel/ROADMAP.md](../packages/arel/ROADMAP.md): the
-still-deferred "additional operators" item, and a fifth dialect
+`ActiveRecord::Model` layer for a more Rails-familiar surface. The
+"additional operators" item is now closed, deliberately not pursued --
+checked its full history and it was explicitly left open twice before
+for the same reason ("no concrete need has surfaced yet"), still true;
+see [../packages/arel/ROADMAP.md](../packages/arel/ROADMAP.md) for the
+full reasoning. Remaining forward plan there is just a fifth dialect
 whenever one is worth adding.
 
 ### Improve receiver-aware language tooling

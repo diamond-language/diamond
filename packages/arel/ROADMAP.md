@@ -192,8 +192,33 @@ Resolved once the PostgreSQL dialect existed to check each against:
   identical syntax here, so this needed a widened regex on `Cast`'s type
   validation, not a capability gate or a new node.
 
-Still deferred -- additional operators beyond the measured SQLite use cases.
-Do not emulate unsupported SQLite syntax merely for API symmetry.
+**Closed, deliberately not pursued**: additional operators beyond the
+measured SQLite use cases. Unlike the three items above, nothing ever
+resolved this one against a second dialect or a real consuming need --
+checked the full history of this exact line (unchanged since it was
+first written) and it was explicitly left open twice before, each time
+for the same stated reason: "no concrete need has surfaced yet." That's
+still true. No file in this package, no test, and no prior commit names
+a single candidate operator (no `LIKE` variant beyond plain `LIKE`, no
+`IS DISTINCT FROM`, no regex match, no JSON/array operators, no unary
+negation) -- there is no "measured" use case driving this, so adding
+operators now would be exactly the speculative API-symmetry expansion
+this line already warns against. Revisit only when a real consuming
+need actually surfaces (a repository method that needs one, a dialect
+that renders one differently), not preemptively.
+
+Worth knowing for anyone who does revisit this: a handful of existing
+operator methods already aren't exercised by any test today --
+`lteq`, `not_in_subquery`, `subtract_expression`, `multiply_expression`,
+`divide_expression`, `concat_expression`, `modulo_expression` (the
+`_expression` variants of `Attribute`'s own arithmetic operators, taking
+an AST node instead of a bind value on the right side). These were
+added as symmetric pairs alongside their tested counterparts rather than
+against a measured need, the same pattern this section's own guidance
+warns future additions against -- not removed here since deleting public
+API surface is its own separate decision, but a real candidate for
+either a conformance fixture (if they're worth keeping) or removal (if
+they're not) the next time this area gets touched.
 
 ## Quality bar
 
