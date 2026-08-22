@@ -14,11 +14,17 @@ historical scope in Rails.
 The initial renderer is `Arel::SQLiteVisitor`; `Arel::PostgreSQLVisitor` is the
 second, exercising the exact same node model against a live PostgreSQL
 server (see [VISITORS.md](VISITORS.md)'s Conformance section and
-`test_postgres_dialect.di`/`.sh`), and `Arel::MariaDBVisitor` is the third,
+`test_postgres_dialect.di`/`.sh`), `Arel::MariaDBVisitor` is the third,
 verified the same way against a live MariaDB server
 (`test_mariadb_dialect.di`/`.sh`) -- named "MariaDB" rather than "MySQL"
 since real MySQL 8.x lacks `RETURNING` entirely, a MariaDB-only feature
-this visitor does support. Execution remains loosely coupled either
+this visitor does support -- and `Arel::MySQLVisitor` is the fourth,
+verified against a live MySQL 8 server (`test_mysql_dialect.di`/`.sh`).
+Both MariaDB and MySQL are reached through the same native `MySQL` class
+(`docs/io.md`) -- Diamond's native connectivity there was never
+MariaDB-branded, it already speaks the real MySQL wire protocol via
+MariaDB Connector/C, so the fourth dialect needed no new native code,
+only a new visitor. Execution remains loosely coupled either
 way: reads call `db.query(sql, params)` and writes call
 `db.execute(sql, params)`, the method shapes the SQLite3, PostgreSQL, and
 MySQL drivers all expose (see
@@ -76,6 +82,17 @@ no bare `DEFAULT VALUES`, no `NULLS FIRST`/`LAST`, no write CTEs), enough
 that `Arel::MariaDBVisitor#render_insert`/`#render_update`/`#render_delete`
 replace the shared `render_default` fallback entirely rather than wrapping
 it (see the "Compound queries and each write manager..." paragraph above).
+`Arel::MySQLVisitor` shares the same pagination sentinel and nearly every
+other MariaDB seam (verified live, not assumed from the similarly-named
+syntax) -- the one real difference is `RETURNING`, which real MySQL 8 lacks
+on every statement kind, not just `UPDATE`. It also renders upserts
+differently: MySQL 8's `ON DUPLICATE KEY UPDATE col = VALUES(col)` still
+works but is deprecated in favor of a row-alias form
+(`INSERT ... VALUES (...) AS new_row ... col = new_row.col`), which
+`Arel::MySQLVisitor` emits instead -- except for an `INSERT ... SELECT`
+source, where the row-alias form has no working syntax at all (verified
+live) and the older `VALUES(col)` form is still what gets rendered; see
+`ROADMAP.md`'s own entry for the full comparison.
 `take`/`limit` and `skip`/`offset` reject negative values with `ArgumentError`.
 They remain immutable for both SELECT and compound queries.
 Pagination composes through derived sources, CTE bodies, EXISTS, membership and
@@ -371,8 +388,8 @@ why nothing here names `SQLite3` directly.
 
 ## What's deliberately out of scope
 
-- **Visitors for adapters beyond SQLite, PostgreSQL, and MariaDB.** Nodes
-  contain no dialect-specific rendering logic; `Arel::SQLiteVisitor`/
-  `Arel::PostgreSQLVisitor`/`Arel::MariaDBVisitor` are deliberately separate
-  so a fourth dialect's visitor can render the same query tree without
-  forking it.
+- **Visitors for adapters beyond SQLite, PostgreSQL, MariaDB, and MySQL.**
+  Nodes contain no dialect-specific rendering logic; `Arel::SQLiteVisitor`/
+  `Arel::PostgreSQLVisitor`/`Arel::MariaDBVisitor`/`Arel::MySQLVisitor` are
+  deliberately separate so a fifth dialect's visitor can render the same
+  query tree without forking it.

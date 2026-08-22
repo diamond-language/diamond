@@ -152,3 +152,21 @@ NOTHING` does) and the affected-rows convention difference (a no-op
 upsert reports `0`, not `1`; a value-changing `ON DUPLICATE KEY UPDATE`
 reports `2`, not `1`) worth knowing before writing further fixtures
 against it.
+
+`Arel::MySQLVisitor` (`lib/arel.di`) is the fourth, verified against a
+live MySQL 8 server via `test_mysql_dialect.di`/`.sh`. It does *not*
+support `RETURNING on UPDATE` -- unlike MariaDBVisitor, it rejects
+`RETURNING` unconditionally through the single shared `returning clauses`
+capability, since MySQL 8 has no `RETURNING` on any statement kind at all,
+so the private `RETURNING on UPDATE` capability above is specific to
+MariaDBVisitor's own narrower gap and doesn't apply here. Otherwise nearly
+identical to MariaDBVisitor (verified live, not assumed) -- same
+`INSERT IGNORE`, pagination sentinel, `NULLS FIRST`/`LAST` and write-CTE
+rejection, and `0`/`2` affected-rows convention. The one other real
+difference is upsert rendering: MySQL 8's `ON DUPLICATE KEY UPDATE col =
+VALUES(col)` is deprecated in favor of a row-alias form
+(`... VALUES (...) AS new_row ... col = new_row.col`), which this visitor
+emits for a `VALUES(...)`-list insert, falling back to the older
+`VALUES(col)` form for an `INSERT ... SELECT` source -- verified live that
+the row-alias form has no working syntax at all for that shape. See
+`ROADMAP.md`'s own entry for the full comparison.

@@ -786,10 +786,14 @@ refuses multiple commands itself), a semicolon-separated second statement
 here is simply a syntax error `mysql_stmt_prepare` itself raises as an
 ordinary `MySQLError`.
 
-Out of scope for this driver, deliberately, for the same reasons
-`PostgreSQL`'s own scope cuts are: an Arel dialect visitor for MySQL,
-connection pooling, and `unix_socket`/`CLIENT_MULTI_STATEMENTS` connection
-options.
+An Arel dialect visitor for MySQL now exists --
+`Arel::MySQLVisitor` (`packages/arel/lib/arel.di`), verified against a
+live MySQL 8 server (`packages/arel/README.md`,
+`packages/arel/ROADMAP.md`) -- reusing this driver unchanged, since it
+was never MariaDB-specific at the native layer. Still out of scope for
+this driver, deliberately, for the same reasons `PostgreSQL`'s own scope
+cuts are: connection pooling and `unix_socket`/`CLIENT_MULTI_STATEMENTS`
+connection options.
 
 ## Time: `Time.now`/`.utc_now`/`.at`/`.strftime`/`+`/`-`/comparisons
 

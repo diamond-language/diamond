@@ -125,6 +125,54 @@ KEY UPDATE` that writes back the same value both report `0` rows affected
 update case. Verified directly against a live server before writing any
 assertion depending on it, not assumed from the SQLite/Postgres pattern.
 
+**Done**: `Arel::MySQLVisitor` (`lib/arel.di`) is the fourth dialect,
+verified against a live MySQL 8 server (`test_mysql_dialect.di`/`.sh`).
+Correcting an earlier assumption in this doc and `docs/roadmap.md`: a
+fourth dialect does *not* need new native connectivity. Diamond's
+"MariaDB" native support was never MariaDB-branded at the native layer at
+all -- the object kind, handle struct, and stdlib class are literally
+named `MySQL` (`src/object.h`, `docs/io.md`), backed by MariaDB
+Connector/C, which already speaks the real MySQL wire protocol. This
+dialect is purely a new visitor, no native code.
+
+Checked every dialect-specific behavior `Arel::MariaDBVisitor` implements
+against a live MySQL 8.4.11 server rather than assuming MariaDB's own
+findings still applied -- almost all of it is identical shared MariaDB/
+MySQL syntax: backtick quoting, the `LIMIT 18446744073709551615` pagination
+sentinel, `INSERT IGNORE`, bare `INSERT INTO t () VALUES ()`, rejecting
+`NULLS FIRST`/`LAST` and write CTEs, and the `0`/`2` upsert affected-rows
+convention all matched exactly. Two real differences:
+
+- `RETURNING` doesn't exist in MySQL 8 on *any* statement kind (MariaDB has
+  had it on `INSERT`/`DELETE` since 10.5) -- rejected unconditionally
+  through the single shared `returning clauses` capability
+  (`Visitor#render_returning`), simpler than MariaDB's own two-part gate
+  (a separate, narrower `RETURNING on UPDATE` rejection was only needed
+  because MariaDB *does* support it elsewhere);
+- `ON DUPLICATE KEY UPDATE col = VALUES(col)` still works on MySQL 8 but is
+  deprecated (warning 1287, verified live) in favor of a row-alias form:
+  `INSERT ... VALUES (...) AS new_row ON DUPLICATE KEY UPDATE col =
+  new_row.col`. `Arel::MySQLVisitor` emits this modern form for a
+  `VALUES(...)`-list insert (confirmed live that the alias can always be
+  present, even unreferenced, with no warning or error) -- **except** for
+  an `INSERT ... SELECT` source, where the row-alias form has no working
+  syntax at all: every placement tried against a live server (after the
+  table name, after the column list, after the SELECT) is either a syntax
+  error or silently aliases the wrong table (the `FROM` source, not the
+  inserted row). That shape keeps rendering the older `VALUES(col)` form,
+  the only thing that actually works there -- a genuine, live-discovered
+  asymmetry MySQL's own docs don't advertise, tracked by a
+  `@mysql_insert_uses_row_alias` instance flag `MySQLVisitor` sets per
+  render (`Visitor` already has this kind of mutable per-render state
+  precedent in `@query`).
+
+Also worth knowing: real MySQL 8 is stricter than MariaDB about DDL, not
+Arel-rendered SQL -- a bare `TEXT`/`BLOB` column can't have a `DEFAULT` or
+appear in a `UNIQUE` key without an explicit prefix length (MariaDB allows
+both). This only affects `test_mysql_dialect.di`'s own fixture schemas
+(`VARCHAR(50)` where the MariaDB fixture uses bare `TEXT`), not anything
+Arel generates, since Arel never renders `CREATE TABLE`.
+
 ## Deferred expression decisions
 
 Resolved once the PostgreSQL dialect existed to check each against:
