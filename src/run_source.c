@@ -3,6 +3,7 @@
 #include "compiler.h"
 #include "disassemble.h"
 #include "loader.h"
+#include "prelude.h"
 #include "value.h"
 #include "vm.h"
 
@@ -10,26 +11,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-static constexpr unsigned char DIAMOND_CORE_SOURCE[] = {
-#embed "../lib/core.di" suffix(,)
-    0
-};
-static constexpr unsigned char DIAMOND_CORE_STRING_BUILDER_SOURCE[] = {
-#embed "../lib/core/string_builder.di" suffix(,)
-    0
-};
-static constexpr unsigned char DIAMOND_CORE_NUMERIC_SOURCE[] = {
-#embed "../lib/core/numeric.di" suffix(,)
-    0
-};
-static constexpr unsigned char DIAMOND_CORE_JSON_CODEC_SOURCE[] = {
-#embed "../lib/core/json_codec.di" suffix(,)
-    0
-};
-static constexpr unsigned char DIAMOND_CORE_JSON_SOURCE[] = {
-#embed "../lib/core/json.di" suffix(,)
-    0
-};
 static constexpr char DIAMOND_USER_LINE_RESET[] = "\n#line 1\n";
 
 static void print_diagnostic(const char *name, const char *source,
@@ -55,50 +36,28 @@ int diamond_run_source_with_program(const char *name, const char *source,
     if(!diamond_load_program(name,source,&bundle,load_error,sizeof load_error)) {
         fprintf(stderr,"diamond: %s\n",load_error);return 74;
     }
-    const size_t core_length=sizeof(DIAMOND_CORE_SOURCE)-1;
-    const size_t string_builder_length=
-        sizeof(DIAMOND_CORE_STRING_BUILDER_SOURCE)-1;
-    const size_t numeric_length=sizeof(DIAMOND_CORE_NUMERIC_SOURCE)-1;
-    const size_t json_codec_length=sizeof(DIAMOND_CORE_JSON_CODEC_SOURCE)-1;
-    const size_t json_length=sizeof(DIAMOND_CORE_JSON_SOURCE)-1;
+    const bool include_json=diamond_prelude_needs_json(bundle.source);
+    const size_t prelude_length=diamond_prelude_length(include_json);
     const size_t source_length=strlen(bundle.source);
     const size_t reset_length=sizeof(DIAMOND_USER_LINE_RESET)-1;
-    if(source_length > SIZE_MAX - core_length - string_builder_length -
-                       numeric_length - json_codec_length - json_length -
-                       reset_length - 1) {
+    if(source_length > SIZE_MAX - prelude_length - reset_length - 1) {
         fprintf(stderr,"diamond: expanded source is too large\n");
         diamond_source_bundle_free(&bundle);
         return 74;
     }
-    char *combined=malloc(core_length+string_builder_length+numeric_length+
-                          json_codec_length+json_length+
-                          reset_length+source_length+1);
+    char *combined=malloc(prelude_length+reset_length+source_length+1);
     if(combined==nullptr) {
         fprintf(stderr,"diamond: out of memory building expanded source\n");
         diamond_source_bundle_free(&bundle);
         return 74;
     }
-    memcpy(combined, DIAMOND_CORE_NUMERIC_SOURCE, numeric_length);
-    memcpy(combined + numeric_length, DIAMOND_CORE_SOURCE, core_length);
-    memcpy(combined + numeric_length + core_length,
-           DIAMOND_CORE_STRING_BUILDER_SOURCE, string_builder_length);
-    memcpy(combined + numeric_length + core_length + string_builder_length,
-           DIAMOND_CORE_JSON_CODEC_SOURCE, json_codec_length);
-    memcpy(combined + numeric_length + core_length + string_builder_length +
-           json_codec_length, DIAMOND_CORE_JSON_SOURCE, json_length);
-    memcpy(combined + numeric_length + core_length + string_builder_length +
-           json_codec_length + json_length,
-           DIAMOND_USER_LINE_RESET, reset_length);
-    memcpy(combined + numeric_length + core_length + string_builder_length +
-           json_codec_length + json_length + reset_length,
-           bundle.source, source_length + 1);
+    size_t offset=diamond_prelude_write(combined,include_json);
+    memcpy(combined+offset,DIAMOND_USER_LINE_RESET,reset_length);offset+=reset_length;
+    memcpy(combined+offset,bundle.source,source_length+1);
     DiamondDiagnostic diagnostic;
     diamond_program_free(program);
     if (!diamond_compile(combined, program, &diagnostic)) {
-        print_diagnostic(name,combined,diagnostic,&bundle,
-                         core_length+string_builder_length+numeric_length+
-                         json_codec_length+json_length+
-                         reset_length);
+        print_diagnostic(name,combined,diagnostic,&bundle,prelude_length+reset_length);
         free(combined);
         diamond_source_bundle_free(&bundle);
         return 65;

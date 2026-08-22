@@ -2,75 +2,13 @@
 
 #include "compiler.h"
 #include "loader.h"
+#include "prelude.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-/* Mirrors src/run_source.c's own recipe exactly: the same five embedded
- * prelude files (lib/core.di plus the string_builder/numeric/json_codec/
- * json modules extracted out of it), in the same concatenation order,
- * kept in sync manually the same way lsp/compile_buffer.c's own copy is
- * (see its own comment on why there's no shared helper) -- this file
- * previously only embedded lib/core.di alone, silently leaving any
- * document using JSON/StringBuilder/numeric.di's own top-level functions
- * unable to compile through diagnostics specifically (confirmed
- * directly: hover/definition already resolved `JSON` correctly via
- * lsp/compile_buffer.c, while this file's own diagnostics still reported
- * a spurious "undefined local variable" on it). Then a "#line 1" reset
- * so line numbers in a compiled diagnostic are 1-based from the
- * document's own first line -- confirmed against src/lexer.c's handling
- * of that exact comment, not assumed. */
-static constexpr unsigned char DIAMOND_CORE_SOURCE[] = {
-#embed "../lib/core.di" suffix(,)
-    0
-};
-static constexpr unsigned char DIAMOND_CORE_STRING_BUILDER_SOURCE[] = {
-#embed "../lib/core/string_builder.di" suffix(,)
-    0
-};
-static constexpr unsigned char DIAMOND_CORE_NUMERIC_SOURCE[] = {
-#embed "../lib/core/numeric.di" suffix(,)
-    0
-};
-static constexpr unsigned char DIAMOND_CORE_JSON_CODEC_SOURCE[] = {
-#embed "../lib/core/json_codec.di" suffix(,)
-    0
-};
-static constexpr unsigned char DIAMOND_CORE_JSON_SOURCE[] = {
-#embed "../lib/core/json.di" suffix(,)
-    0
-};
 static constexpr char DIAMOND_USER_LINE_RESET[] = "\n#line 1\n";
-
-static size_t diamond_prelude_length(void) {
-    return sizeof(DIAMOND_CORE_NUMERIC_SOURCE)-1+sizeof(DIAMOND_CORE_SOURCE)-1+
-        sizeof(DIAMOND_CORE_STRING_BUILDER_SOURCE)-1+
-        sizeof(DIAMOND_CORE_JSON_CODEC_SOURCE)-1+sizeof(DIAMOND_CORE_JSON_SOURCE)-1;
-}
-
-/* Writes the five prelude files into `destination` in concatenation
- * order (numeric -> core -> string_builder -> json_codec -> json),
- * mirroring src/run_source.c exactly. Returns the number of bytes
- * written (== diamond_prelude_length()), so a caller can append
- * whatever comes next (the `#line 1` reset, then the document's own
- * source) at the returned offset. */
-static size_t write_diamond_prelude(char *destination) {
-    size_t offset=0;
-    const size_t numeric_length=sizeof(DIAMOND_CORE_NUMERIC_SOURCE)-1;
-    const size_t core_length=sizeof(DIAMOND_CORE_SOURCE)-1;
-    const size_t string_builder_length=sizeof(DIAMOND_CORE_STRING_BUILDER_SOURCE)-1;
-    const size_t json_codec_length=sizeof(DIAMOND_CORE_JSON_CODEC_SOURCE)-1;
-    const size_t json_length=sizeof(DIAMOND_CORE_JSON_SOURCE)-1;
-    memcpy(destination+offset,DIAMOND_CORE_NUMERIC_SOURCE,numeric_length);offset+=numeric_length;
-    memcpy(destination+offset,DIAMOND_CORE_SOURCE,core_length);offset+=core_length;
-    memcpy(destination+offset,DIAMOND_CORE_STRING_BUILDER_SOURCE,string_builder_length);
-    offset+=string_builder_length;
-    memcpy(destination+offset,DIAMOND_CORE_JSON_CODEC_SOURCE,json_codec_length);
-    offset+=json_codec_length;
-    memcpy(destination+offset,DIAMOND_CORE_JSON_SOURCE,json_length);offset+=json_length;
-    return offset;
-}
 
 char *diagnostics_uri_to_path(const char *uri) {
     static constexpr char prefix[]="file://";
@@ -255,14 +193,15 @@ JsonValue *diagnostics_compute(const DocumentTable *documents,const char *uri,
      * docs/lsp.md. */
     char *path=diagnostics_uri_to_path(uri);
     if(path==nullptr) {
-        const size_t prelude_length=diamond_prelude_length();
+        const bool include_json=diamond_prelude_needs_json(text);
+        const size_t prelude_length=diamond_prelude_length(include_json);
         const size_t reset_length=sizeof(DIAMOND_USER_LINE_RESET)-1;
         char *combined=malloc(prelude_length+reset_length+length+1);
         if(combined==nullptr) {
             json_free(diagnostics);
             return nullptr;
         }
-        size_t offset=write_diamond_prelude(combined);
+        size_t offset=diamond_prelude_write(combined,include_json);
         memcpy(combined+offset,DIAMOND_USER_LINE_RESET,reset_length);offset+=reset_length;
         memcpy(combined+offset,text,length);
         combined[offset+length]='\0';
@@ -317,7 +256,8 @@ JsonValue *diagnostics_compute(const DocumentTable *documents,const char *uri,
         return diagnostics;
     }
 
-    const size_t prelude_length=diamond_prelude_length();
+    const bool include_json=diamond_prelude_needs_json(bundle.source);
+    const size_t prelude_length=diamond_prelude_length(include_json);
     const size_t reset_length=sizeof(DIAMOND_USER_LINE_RESET)-1;
     const size_t bundle_length=strlen(bundle.source);
     char *combined=malloc(prelude_length+reset_length+bundle_length+1);
@@ -327,7 +267,7 @@ JsonValue *diagnostics_compute(const DocumentTable *documents,const char *uri,
         json_free(diagnostics);
         return nullptr;
     }
-    size_t offset=write_diamond_prelude(combined);
+    size_t offset=diamond_prelude_write(combined,include_json);
     memcpy(combined+offset,DIAMOND_USER_LINE_RESET,reset_length);offset+=reset_length;
     memcpy(combined+offset,bundle.source,bundle_length+1);
 

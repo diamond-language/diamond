@@ -11,27 +11,47 @@ implementation work reveals a more valuable question.
 
 ### Reduce prelude compilation cost
 
-`lib/core.di` is prepended and compiled from source for every program. The batch
-test runner reuses its large `DiamondProgram`, but still recompiles the complete
-prelude for every case. Recent measurements show the batch corpus is now
-CPU-bound enough for that repeated work to matter.
+`lib/core.di` (780 lines) is prepended and compiled from source for every
+program, alongside four extracted modules -- `lib/core/string_builder.di`,
+`lib/core/numeric.di`, `lib/core/json_codec.di`, `lib/core/json.di` -- all
+five assembled by one shared helper, `src/prelude.c`/`.h`
+(`diamond_prelude_needs_json`/`_length`/`_write`), which every embedding
+site (`src/run_source.c`, `src/repl.c`, `lsp/compile_buffer.c`,
+`lsp/diagnostics.c`) now calls into instead of each keeping its own copy --
+that duplication had drifted once already (`lsp/compile_buffer.c`/
+`lsp/diagnostics.c` fell behind to embedding `lib/core.di` alone, silently
+breaking LSP support for any document using JSON/StringBuilder/numeric
+functions; fixed, then consolidated so it can't drift a second time).
 
-For maintainability, the prelude is being assembled from logical source modules
-at the native embedding boundary while `lib/core.di` remains the compatibility
-entry point. `lib/core/string_builder.di` and `lib/core/json.di` are the first
-extracted modules; the CLI and REPL append them to the embedded core source in
-dependency order before compilation.
+Steps 1 and 2 of this section's own investigation order are done, with
+measured numbers rather than estimates (a standalone harness timing
+`diamond_compile()` directly): `lib/core.di` alone compiles in ~3.85ms,
+the full 5-file prelude in ~6.53ms -- `json_codec.di`+`json.di` account for
+~1.78ms of that (~27%), while `string_builder.di`+`numeric.di` together
+cost under 1ms and were left always-included (too little to gain, and
+`numeric.di`'s bare function names like `abs`/`min`/`max` are far more
+likely to false-positive/negative under a text search than JSON's
+distinctive `JSON.`/`JSONCodec`/`JSONError`). `diamond_prelude_needs_json`
+does exactly that conservative substring search -- a superset match by
+design, since a false "skip" breaks compilation while a false "include"
+only costs the ~1.78ms being saved -- over the exact text that will
+compile (the raw document, or a `require`-resolved bundle where one
+exists), and `json_codec.di`/`json.di` are skipped whenever it finds
+nothing. Measured corpus effect: `./build/run_cases tests/cases
+build/case_output` (1,072 cases, one process, release build) went from
+3.744s to ~3.18s real (repeatable across several runs) -- a real ~15%
+reduction, smaller than a naive per-compile-percentage estimate would
+suggest since many cases' own user code, not the prelude, dominates their
+individual compile cost.
 
-Investigate in this order:
-
-1. split the prelude into coherent source modules, beginning with JSON;
-2. measure conservative source-driven module selection for optional facilities;
-3. design a reusable compiled-prelude snapshot or compiler append mode if source
-   selection cannot deliver a meaningful improvement;
-4. preserve CLI/test semantic parity and source-mapped diagnostics throughout.
-
-A physical file split alone is not a performance improvement: ordinary
-`require` expansion still flattens and recompiles every selected file.
+Step 3 (a reusable compiled-prelude snapshot or compiler append mode) is
+deliberately not pursued now -- source selection already delivered a real,
+measured win without it, matching this section's own stated condition for
+skipping straight to step 3 ("if source selection cannot deliver a
+meaningful improvement"). Revisit only if a future measurement shows the
+remaining always-included prelude cost (`core.di`+`string_builder.di`+
+`numeric.di`, ~4.75ms) still dominates in a way source selection alone
+can't address.
 
 ### Continue the Arel relational algebra
 

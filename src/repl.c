@@ -3,6 +3,7 @@
 #include "repl.h"
 #include "compiler.h"
 #include "loader.h"
+#include "prelude.h"
 #include "value.h"
 #include "vm.h"
 
@@ -13,26 +14,6 @@
 #include <termios.h>
 #include <unistd.h>
 
-static constexpr unsigned char DIAMOND_CORE_SOURCE[] = {
-#embed "../lib/core.di" suffix(,)
-    0
-};
-static constexpr unsigned char DIAMOND_CORE_STRING_BUILDER_SOURCE[] = {
-#embed "../lib/core/string_builder.di" suffix(,)
-    0
-};
-static constexpr unsigned char DIAMOND_CORE_NUMERIC_SOURCE[] = {
-#embed "../lib/core/numeric.di" suffix(,)
-    0
-};
-static constexpr unsigned char DIAMOND_CORE_JSON_CODEC_SOURCE[] = {
-#embed "../lib/core/json_codec.di" suffix(,)
-    0
-};
-static constexpr unsigned char DIAMOND_CORE_JSON_SOURCE[] = {
-#embed "../lib/core/json.di" suffix(,)
-    0
-};
 static constexpr char DIAMOND_USER_LINE_RESET[] = "\n#line 1\n";
 
 /* Growable byte buffer, used both for the accumulated session source and
@@ -423,47 +404,26 @@ static bool try_compile(const char *source, DiamondProgram *program,
         (void)snprintf(error_buffer, error_buffer_size, "%s", load_error);
         return false;
     }
-    const size_t core_length = sizeof(DIAMOND_CORE_SOURCE) - 1;
-    const size_t string_builder_length =
-        sizeof(DIAMOND_CORE_STRING_BUILDER_SOURCE) - 1;
-    const size_t numeric_length = sizeof(DIAMOND_CORE_NUMERIC_SOURCE) - 1;
-    const size_t json_codec_length =
-        sizeof(DIAMOND_CORE_JSON_CODEC_SOURCE) - 1;
-    const size_t json_length = sizeof(DIAMOND_CORE_JSON_SOURCE) - 1;
+    const bool include_json = diamond_prelude_needs_json(bundle.source);
+    const size_t prelude_length = diamond_prelude_length(include_json);
     const size_t reset_length = sizeof(DIAMOND_USER_LINE_RESET) - 1;
     const size_t source_length = strlen(bundle.source);
-    char *combined = malloc(core_length + string_builder_length + numeric_length +
-                            json_codec_length + json_length +
-                            reset_length + source_length + 1);
+    char *combined = malloc(prelude_length + reset_length + source_length + 1);
     if (combined == nullptr) {
         (void)snprintf(error_buffer, error_buffer_size, "out of memory");
         diamond_source_bundle_free(&bundle);
         return false;
     }
-    memcpy(combined, DIAMOND_CORE_NUMERIC_SOURCE, numeric_length);
-    memcpy(combined + numeric_length, DIAMOND_CORE_SOURCE, core_length);
-    memcpy(combined + numeric_length + core_length,
-           DIAMOND_CORE_STRING_BUILDER_SOURCE, string_builder_length);
-        memcpy(combined + numeric_length + core_length + string_builder_length,
-            DIAMOND_CORE_JSON_CODEC_SOURCE, json_codec_length);
-        memcpy(combined + numeric_length + core_length + string_builder_length +
-            json_codec_length, DIAMOND_CORE_JSON_SOURCE, json_length);
-        memcpy(combined + numeric_length + core_length + string_builder_length +
-            json_codec_length + json_length,
-            DIAMOND_USER_LINE_RESET, reset_length);
-        memcpy(combined + numeric_length + core_length + string_builder_length +
-            json_codec_length + json_length + reset_length,
-            bundle.source, source_length + 1);
+    size_t offset = diamond_prelude_write(combined, include_json);
+    memcpy(combined + offset, DIAMOND_USER_LINE_RESET, reset_length);offset += reset_length;
+    memcpy(combined + offset, bundle.source, source_length + 1);
 
     DiamondDiagnostic diagnostic;
     program->allow_top_level_redefinition = true;
     const bool ok = diamond_compile(combined, program, &diagnostic);
     if (!ok) {
         const DiamondResolvedLocation resolved = diamond_resolve_diagnostic_location(
-            "<repl>", combined, diagnostic, &bundle,
-            core_length + string_builder_length + numeric_length +
-            json_codec_length + json_length +
-            reset_length);
+            "<repl>", combined, diagnostic, &bundle, prelude_length + reset_length);
         (void)snprintf(error_buffer, error_buffer_size, "%zu:%zu: error: %s",
                        resolved.line, resolved.column, diagnostic.message);
         *out_incomplete = strcmp(resolved.path, "<repl>") == 0 &&
