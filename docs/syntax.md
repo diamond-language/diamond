@@ -284,6 +284,12 @@ a `Range` there raises a `TypeError` rather than slicing; that's a
 separate, larger change to `DIAMOND_OP_INDEX_GET`'s own dispatch, not
 part of `Range` itself.
 
+Indexed *compound* assignment against a plain `Int` index is supported,
+though: `arr[i] += 1`, `h[k] -= 1`, and the rest of `+=`/`-=`/`*=`/`/=`/
+`%=`/`||=`/`&&=` all work against an Array element or Hash value, the
+same as plain `arr[i] = v` — the index expression is evaluated exactly
+once either way.
+
 ## Symbols
 
 ```ruby

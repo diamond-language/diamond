@@ -4202,6 +4202,29 @@ static bool index_assignment_ahead(const Compiler *compiler) {
     return diamond_lexer_next(&lookahead).kind==DIAMOND_TOKEN_EQUAL;
 }
 
+/* Same balanced-`[...]`-bracket scan as index_assignment_ahead just
+ * above, but for `arr[i] += 1`-shaped indexed compound assignment
+ * instead of plain `arr[i] = v` -- checks for a compound-assignment
+ * operator (compound_assignment_token, shared with compound_assignment_
+ * ahead) after the closing `]` instead of a bare `=`. */
+static bool index_compound_assignment_ahead(const Compiler *compiler) {
+    if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER&&
+       compiler->current.kind!=DIAMOND_TOKEN_INSTANCE_VARIABLE&&
+       compiler->current.kind!=DIAMOND_TOKEN_CLASS_VARIABLE) return false;
+    DiamondLexer lookahead=compiler->lexer;
+    DiamondToken token=diamond_lexer_next(&lookahead);
+    if(token.kind!=DIAMOND_TOKEN_LEFT_BRACKET) return false;
+    size_t depth=1;
+    while(depth>0) {
+        token=diamond_lexer_next(&lookahead);
+        if(token.kind==DIAMOND_TOKEN_EOF || token.kind==DIAMOND_TOKEN_ERROR)
+            return false;
+        if(token.kind==DIAMOND_TOKEN_LEFT_BRACKET) depth++;
+        if(token.kind==DIAMOND_TOKEN_RIGHT_BRACKET) depth--;
+    }
+    return compound_assignment_token(diamond_lexer_next(&lookahead).kind);
+}
+
 static bool destructuring_target_kind(DiamondTokenKind kind) {
     return kind==DIAMOND_TOKEN_IDENTIFIER||kind==DIAMOND_TOKEN_INSTANCE_VARIABLE||
            kind==DIAMOND_TOKEN_CLASS_VARIABLE;
@@ -4346,6 +4369,85 @@ static uint16_t compile_index_assignment(Compiler *compiler) {
     const uint16_t value=parse_expression(compiler);
     emit_instruction(compiler,DIAMOND_OP_INDEX_SET,receiver,index,value,3);
     return value;
+}
+
+/* `arr[i] += 1`-shaped indexed compound assignment -- the receiver-
+ * loading prologue is a verbatim copy of compile_index_assignment's own
+ * just above (identical regardless of what follows the index), and the
+ * operator dispatch is the same shape compile_compound_assignment uses
+ * below for a plain local/@ivar/@@cvar target (||=/&&= short-circuit via
+ * a conditional jump around evaluating the right-hand side at all;
+ * +=, -=, *=, /=, and %= all reduce to one compile_binary_op call). The one new
+ * concern beyond compile_index_assignment's own is avoiding double-
+ * evaluation of the index expression -- solved by keeping the single
+ * register parse_expression already returns for it and reusing that
+ * same register for both the read (INDEX_GET) and the write back
+ * (INDEX_SET), the same way the receiver register is already reused for
+ * both today. */
+static uint16_t compile_index_compound_assignment(Compiler *compiler) {
+    const DiamondSpan name=compiler->current.span;
+    uint16_t receiver;
+    if(compiler->current.kind==DIAMOND_TOKEN_INSTANCE_VARIABLE) {
+        receiver=allocate_register(compiler);
+        if(compiler->current_module>=0&&compiler->current_class<0) {
+            const uint8_t field=module_field_name(compiler,name);
+            emit_instruction(compiler,DIAMOND_OP_GET_IVAR_NAME,receiver,0,field,3);
+        } else {
+            const int field=field_index(compiler,name,true);
+            emit_instruction(compiler,DIAMOND_OP_GET_IVAR,receiver,0,(uint8_t)field,3);
+        }
+    } else if(compiler->current.kind==DIAMOND_TOKEN_CLASS_VARIABLE) {
+        receiver=allocate_register(compiler);
+        const int slot=class_variable_index(compiler,name,true);
+        emit_instruction(compiler,DIAMOND_OP_GET_CVAR,receiver,
+                         (uint8_t)compiler->current_class,(uint8_t)slot,3);
+    } else {
+        const int local=find_local(compiler,name);
+        if(local<0) { fail(compiler,name,"undefined local variable"); return 0; }
+        receiver=compiler->locals[(size_t)local].reg;
+        if(compiler->locals[(size_t)local].captured) {
+            /* See compile_index_assignment's own comment on this exact
+             * defensive re-box. */
+            emit_instruction(compiler,DIAMOND_OP_BOX_LOCAL,receiver,0,0,1);
+            const uint16_t loaded=allocate_register(compiler);
+            emit_instruction(compiler,DIAMOND_OP_GET_CELL,loaded,receiver,0,2);
+            receiver=loaded;
+        }
+    }
+    advance_token(compiler);
+    advance_token(compiler);
+    const uint16_t index=parse_expression(compiler);
+    if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_BRACKET) {
+        fail(compiler,compiler->current.span,"expected ']' after assignment index");
+        return 0;
+    }
+    advance_token(compiler);
+    const uint16_t left=allocate_register(compiler);
+    emit_instruction(compiler,DIAMOND_OP_INDEX_GET,left,receiver,index,3);
+    const DiamondTokenKind op_kind=compiler->current.kind;
+    advance_token(compiler);
+    if(op_kind==DIAMOND_TOKEN_OR_OR_EQUAL||op_kind==DIAMOND_TOKEN_AND_AND_EQUAL) {
+        const bool is_and=op_kind==DIAMOND_TOKEN_AND_AND_EQUAL;
+        const uint16_t destination=allocate_register(compiler);
+        emit_instruction(compiler,DIAMOND_OP_MOVE,destination,left,0,2);
+        const size_t end_jump=emit_jump(compiler,
+            is_and?DIAMOND_OP_JUMP_IF_FALSE:DIAMOND_OP_JUMP_IF_TRUE,left);
+        const uint16_t right=parse_expression(compiler);
+        emit_instruction(compiler,DIAMOND_OP_MOVE,destination,right,0,2);
+        patch_jump(compiler,end_jump,compiler->function->code_count);
+        emit_instruction(compiler,DIAMOND_OP_INDEX_SET,receiver,index,destination,3);
+        return destination;
+    }
+    const DiamondTokenKind plain_op=
+        op_kind==DIAMOND_TOKEN_PLUS_EQUAL?DIAMOND_TOKEN_PLUS:
+        op_kind==DIAMOND_TOKEN_MINUS_EQUAL?DIAMOND_TOKEN_MINUS:
+        op_kind==DIAMOND_TOKEN_STAR_EQUAL?DIAMOND_TOKEN_STAR:
+        op_kind==DIAMOND_TOKEN_SLASH_EQUAL?DIAMOND_TOKEN_SLASH:
+        DIAMOND_TOKEN_PERCENT;
+    const uint16_t right=parse_expression(compiler);
+    const uint16_t destination=compile_binary_op(compiler,plain_op,left,right);
+    emit_instruction(compiler,DIAMOND_OP_INDEX_SET,receiver,index,destination,3);
+    return destination;
 }
 
 static uint16_t compile_return(Compiler *compiler) {
@@ -6859,6 +6961,8 @@ static uint16_t compile_sequence(Compiler *compiler) {
         } else {
             if(index_assignment_ahead(compiler))
                 result=compile_index_assignment(compiler);
+            else if(index_compound_assignment_ahead(compiler))
+                result=compile_index_compound_assignment(compiler);
             else if(multi_assignment_ahead(compiler))
                 result=compile_multi_assignment(compiler);
             else if(compound_assignment_ahead(compiler))

@@ -218,10 +218,37 @@ Continue adding familiar constructs only when they compose naturally with
 Diamond's object model. Candidates should be evaluated as independent slices,
 with explicit semantics rather than assumed Ruby parity.
 
+**Done**: indexed compound assignment (`arr[i] += 1`, `h[k] -= 1`, ...,
+`src/compiler.c`'s `compile_index_compound_assignment`, alongside
+`compile_index_assignment`/`compile_compound_assignment`) -- pure
+compiler-level sugar over the existing `DIAMOND_OP_INDEX_GET`/`SET`
+opcodes and `compile_binary_op`, no VM or opcode changes. The index
+expression is evaluated exactly once (the register `parse_expression`
+already returns for it is reused for both the read and the write back),
+matching how the receiver register was already reused for both halves of
+a plain `arr[i] = v`. Confirmed directly against every receiver shape
+ordinary indexed assignment supports (local, `@ivar`, `@@cvar`, a
+captured/boxed local) and all seven compound operators, including
+`||=`/`&&=`'s real short-circuit semantics (the right-hand side isn't
+evaluated at all when short-circuited) -- see
+`tests/cases/indexed_compound_assignment.di`.
+
 Areas still worth examining include:
 
 - richer pattern matching beyond equality-based `case`/`when`;
-- indexed compound assignment and range-based collection slicing;
+- **range-based collection slicing** (`arr[1..3]`, `hash[range]`) --
+  split off from the item above once scoped, since it's materially more
+  entangled: `Range` isn't a native VM value at all, just a plain
+  user-space class (`lib/core.di`), so recognizing one inside
+  `DIAMOND_OP_INDEX_GET`/`SET`'s dispatch means reaching into a
+  prelude-defined class's internal fields, unlike anything the VM's
+  opcode dispatch does today. Slice *assignment* additionally has an open
+  semantic question this doc doesn't answer yet: does replacing an
+  N-element range with a differently-sized replacement grow/shrink the
+  array (Ruby-style splice -- array resizing-in-place is already an
+  established native capability via `push`/`pop`/`delete_at`, so that
+  part isn't new), or does Diamond want something simpler for a first
+  version? Decide that before implementing, not while implementing;
 - protected visibility, if a real library design needs it;
 - enumerator/lazy iteration semantics versus the current eager collection APIs;
 - a principled protocol for native collection extension instead of expanding
