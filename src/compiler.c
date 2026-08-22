@@ -7072,6 +7072,7 @@ void diamond_program_init(DiamondProgram *program) {
         [DIAMOND_CLASS_POSTGRES_ERROR]={"PostgreSQLError",DIAMOND_CLASS_STANDARD_ERROR},
         [DIAMOND_CLASS_MYSQL_ERROR]={"MySQLError",DIAMOND_CLASS_STANDARD_ERROR},
     };
+    program->range_class_index=UINT8_MAX;
     program->class_count=DIAMOND_BUILTIN_CLASS_COUNT;
     for(size_t index=0;index<DIAMOND_BUILTIN_CLASS_COUNT;index++) {
         DiamondClass *class=&program->classes[index];
@@ -7199,6 +7200,15 @@ bool diamond_compile(const char *source, DiamondProgram *program,
                 class->shapes[field_count]=(DiamondShape){
                     .class=class,.field_count=(uint8_t)field_count};
             }
+            /* Resolved by name, once, here -- never hardcoded, since a
+             * conservative prelude that skips optional modules can shift
+             * which index a *later*-defined class lands at (confirmed
+             * directly; Range itself is safe today since lib/core.di
+             * defines it before any conditionally-included module, but
+             * nothing should assume that stays true). See DiamondChunk's
+             * own comment (src/vm.h) for what this is for. */
+            if(strcmp(class->name,"Range")==0)
+                program->range_class_index=(uint8_t)class_index;
         }
     }
     return !compiler.failed;
@@ -7227,5 +7237,6 @@ DiamondChunk diamond_program_chunk(const DiamondProgram *program) {
         .modules=program->modules,
         .module_count=program->module_count,
         .register_count=program->entry.register_count,
+        .range_class_index=program->range_class_index,
     };
 }

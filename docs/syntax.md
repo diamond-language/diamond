@@ -278,11 +278,19 @@ the same way they do on any other `Enumerable`-including class (see
 Scope, deliberately: `Range` is `Int`-only for v1 (`start`/`end` must
 both be `Int`) — constructing one with `Float` or any other type raises
 a `TypeError`, the same cut `array_sort` already makes elsewhere.
-Range-based indexing/slicing (`arr[1..3]`, `hash[range]`) isn't
-supported yet either — indexing still expects a plain `Int`, so passing
-a `Range` there raises a `TypeError` rather than slicing; that's a
-separate, larger change to `DIAMOND_OP_INDEX_GET`'s own dispatch, not
-part of `Range` itself.
+Range-based indexing/slicing works for `Array` (not `Hash` — real Ruby
+doesn't support `Hash#[]` with a Range either, `[]` there is always plain
+key lookup): `arr[1..3]` returns a fresh `Array` of the selected elements,
+inclusive or exclusive matching the range's own `..`/`...`. The *start*
+is bounds-checked (`arr[10..20]` on a 3-element array raises `IndexError`,
+even though `start==array.length()` is valid and simply yields an empty
+`Array`), but the implied *length* is silently clamped to whatever's
+actually available — `arr[1..100]` is not an error. Writing a slice
+(`arr[1..3] = [a, b, c]`) requires the replacement to have *exactly* as
+many elements as the range covers (after the same clamping) — no
+Ruby-style grow/shrink splice in this first version; a length mismatch
+raises `TypeError` and leaves the array completely untouched, checked
+before writing any element back.
 
 Indexed *compound* assignment against a plain `Int` index is supported,
 though: `arr[i] += 1`, `h[k] -= 1`, and the rest of `+=`/`-=`/`*=`/`/=`/

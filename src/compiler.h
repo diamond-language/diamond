@@ -32,6 +32,11 @@ typedef struct DiamondProgram {
     char namespace_constants[DIAMOND_MAX_NAMESPACE_CONSTANTS]
                             [DIAMOND_MAX_FUNCTION_NAME];
     size_t namespace_constant_count;
+    /* See DiamondChunk's own copy of this field (src/vm.h) for what it's
+     * for -- resolved once at the end of diamond_compile, UINT8_MAX
+     * (set in diamond_program_init, alongside every other zero-init
+     * default) until then/if never found. */
+    uint8_t range_class_index;
 } DiamondProgram;
 
 typedef struct DiamondDiagnostic {

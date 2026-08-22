@@ -506,6 +506,15 @@ typedef struct DiamondChunk {
     uint8_t parameter_offset;
     const DiamondTypeBinding *type_variable_bindings;
     uint16_t register_count;
+    /* Index into `classes` of the class named "Range" (lib/core.di),
+     * resolved once at the end of diamond_compile (by name, never
+     * hardcoded -- confirmed directly that its index can shift with
+     * conservative prelude module selection, so nothing may assume a
+     * fixed value), UINT8_MAX if not found (a scratch/partial compile
+     * without the prelude). DIAMOND_OP_INDEX_GET/SET's only reason for
+     * existing -- recognizing a Range receiver for arr[range] slicing
+     * without a native VM value kind for Range at all. */
+    uint8_t range_class_index;
 } DiamondChunk;
 
 typedef enum DiamondVmStatus : uint8_t {
@@ -680,6 +689,24 @@ struct DiamondVm {
     size_t quickening_observations;
     size_t quickened_sites;
     size_t deoptimized_sites;
+    /* Copied from the top-level DiamondChunk's own field once, at
+     * diamond_vm_run's own entry -- NOT re-read from whatever
+     * DiamondChunk happens to be ambient at a given opcode, since a
+     * nested function/closure call constructs its *own* fresh
+     * DiamondChunk view at each call site (many places in this file),
+     * none of which carry a program-wide field like this one along
+     * unless it's threaded through some other way. Living on DiamondVm
+     * instead sidesteps needing to touch every one of those call sites:
+     * the underlying classes[] array itself is the same memory across
+     * every such view in the common (single-program, non-ProgramBuilder-
+     * adopted) case, so `&chunk->classes[vm->range_class_index]` stays
+     * correct however deep in a nested call this is read. See
+     * DiamondChunk's own copy of this comment (this field exists so
+     * DIAMOND_OP_INDEX_GET/SET can recognize a Range instance -- lib/
+     * core.di, no native VM value kind for Range at all -- without a
+     * hardcoded class index, confirmed directly that one can shift with
+     * conservative prelude module selection). */
+    uint8_t range_class_index;
     DiamondValue namespace_constants[DIAMOND_MAX_NAMESPACE_CONSTANTS];
     bool namespace_constant_initialized[DIAMOND_MAX_NAMESPACE_CONSTANTS];
     /* Class variable values, indexed as class_variables[class_index *

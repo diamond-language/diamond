@@ -498,7 +498,7 @@ void diamond_vm_collect(DiamondVm *vm) {
 }
 
 void diamond_vm_init(DiamondVm *vm) {
-    *vm = (DiamondVm){.next_gc = 2048};
+    *vm = (DiamondVm){.next_gc = 2048,.range_class_index=UINT8_MAX};
     vm->quickening_threshold = 1;
     vm->monomorphic_threshold = 1;
     /* A write(2)/SSL_write to a TCP connection the peer has already reset
@@ -1112,6 +1112,7 @@ static DiamondProgram *clone_program_from_chunk(const DiamondChunk *chunk) {
     clone->class_count=chunk->class_count;
     memcpy(clone->interfaces,chunk->interfaces,sizeof clone->interfaces);
     clone->interface_count=chunk->interface_count;
+    clone->range_class_index=chunk->range_class_index;
     return clone;
 }
 
@@ -1147,7 +1148,15 @@ static void *thread_entry_trampoline(void *argument) {
         .parameter_type_sets=target_fn->parameter_type_sets,
         .type_variable_count=target_fn->type_variable_count,
         .parameter_offset=target_fn->owner_class==UINT8_MAX?0:1,
-        .register_count=target_fn->register_count};
+        .register_count=target_fn->register_count,
+        .range_class_index=thread->child_program->range_class_index};
+    /* This trampoline calls run_chunk directly rather than through
+     * diamond_vm_run (this is a spawned Thread's own dedicated entry
+     * point, on its own OS thread, never diamond_vm_run's top-level
+     * caller), so it has to seed range_class_index onto child_vm itself
+     * here -- diamond_vm_run's own copy of this same assignment never
+     * runs for a Thread. See DiamondVm's own comment on this field. */
+    thread->child_vm->range_class_index=thread->child_program->range_class_index;
     DiamondValue run_result=DIAMOND_NIL;
     const DiamondVmStatus run_status=run_chunk(&child_chunk,thread->child_vm,
         thread->args,thread->arg_count,0,nullptr,&run_result);
@@ -5019,6 +5028,71 @@ static bool array_value_satisfies_constraints(DiamondArray *array,
         if(!value_matches_set(&context,value,constraint->set_index,true))return false;
     }
     return true;
+}
+
+/* Recognizes an INDEX_GET/SET operand that's a Range instance (lib/
+ * core.di, fields @start/@end/@exclusive at slots 0/1/2 in declaration
+ * order -- confirmed directly against field_index's own create-on-
+ * first-miss slot assignment) rather than a plain Int -- there's no
+ * native VM value kind for Range at all, it's an ordinary user-space
+ * class, so this is the one place that needs to reach into a prelude-
+ * defined class's own instance fields.
+ *
+ * Reads the resolved class index from `vm->range_class_index`, not
+ * `chunk->range_class_index` -- confirmed directly (a real bug caught
+ * before shipping) that a nested function/closure call constructs its
+ * *own* fresh DiamondChunk view at the call site (many places in this
+ * file), none of which propagate a program-wide field like this one, so
+ * reading it off whatever chunk happens to be ambient at a given opcode
+ * would silently stop working inside any nested def. DiamondVm doesn't
+ * have that problem: it's seeded once, at the true top of execution
+ * (diamond_vm_run, and separately at every place that starts a VM
+ * without going through it -- ProgramBuilder#run's own child VM goes
+ * through diamond_vm_run so needs nothing extra; a spawned Thread's
+ * trampoline calls run_chunk directly and seeds it there instead -- see
+ * DiamondVm's own comment on this field). `chunk->classes` itself is
+ * still used for the actual pointer-equality target, since the
+ * underlying classes[] array is the same memory across every such view
+ * in the common (single-program) case -- only *which slot* to look at
+ * needed moving, not the class table itself.
+ *
+ * Returns -1 if `index_value` isn't recognizably a Range for this VM
+ * (including an instance whose *own* class actually lives in a
+ * different, ProgramBuilder-adopted chunk than `chunk` itself -- a
+ * deliberate scope cut, not a crash) -- caller falls through to its
+ * existing plain-Int handling, unchanged. Returns 0 if it is a Range
+ * but its own @start is out of bounds for `array_count` (vm->error
+ * already set, matching this opcode's own existing bounds-error
+ * message/format) -- caller should VM_RETURN(DIAMOND_VM_INDEX_ERROR)
+ * immediately. Returns 1 with `*out_start`/`*out_length` set
+ * otherwise -- length already clamped to whatever's actually
+ * available past `start`, matching String#slice's own established
+ * convention (docs/design.md): an over-long range is not an error,
+ * only an out-of-bounds start is. */
+static int resolve_array_range(DiamondVm *vm,const DiamondChunk *chunk,
+        DiamondValue index_value,size_t array_count,
+        size_t *out_start,size_t *out_length) {
+    if(vm->range_class_index==UINT8_MAX)return -1;
+    if(index_value.kind!=DIAMOND_VALUE_OBJECT||
+       index_value.as.object->kind!=DIAMOND_OBJECT_INSTANCE)
+        return -1;
+    const DiamondInstance *instance=(const DiamondInstance *)index_value.as.object;
+    if(instance->class!=&chunk->classes[vm->range_class_index])return -1;
+    const int64_t start=instance->fields[0].as.integer;
+    const int64_t end=instance->fields[1].as.integer;
+    const bool exclusive=instance->fields[2].as.boolean;
+    if(start<0||(uint64_t)start>array_count) {
+        snprintf(vm->error,sizeof vm->error,
+                 "index %" PRId64 " out of bounds for Array of length %zu",
+                 start,array_count);
+        return 0;
+    }
+    const int64_t inclusive_end=exclusive?end-1:end;
+    const size_t available=array_count-(size_t)start;
+    const size_t requested=inclusive_end<start?0:(size_t)(inclusive_end-start+1);
+    *out_start=(size_t)start;
+    *out_length=requested<available?requested:available;
+    return 1;
 }
 
 static bool array_push(DiamondVm *vm,DiamondArray *array,DiamondValue value) {
@@ -11350,10 +11424,22 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     registers[destination]=DIAMOND_OBJECT(character);
                     break;
                 }
-                if(registers[receiver].as.object->kind!=DIAMOND_OBJECT_ARRAY ||
-                   registers[index_register].kind!=DIAMOND_VALUE_INT)
+                if(registers[receiver].as.object->kind!=DIAMOND_OBJECT_ARRAY)
                     VM_RETURN(DIAMOND_VM_TYPE_ERROR);
                 DiamondArray *array=(DiamondArray *)registers[receiver].as.object;
+                size_t range_start=0,range_length=0;
+                const int range_result=resolve_array_range(vm,chunk,
+                    registers[index_register],array->count,&range_start,&range_length);
+                if(range_result==0)VM_RETURN(DIAMOND_VM_INDEX_ERROR);
+                if(range_result==1) {
+                    DiamondArray *sliced=
+                        allocate_array(vm,&array->values[range_start],range_length);
+                    if(sliced==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                    registers[destination]=DIAMOND_OBJECT(sliced);
+                    break;
+                }
+                if(registers[index_register].kind!=DIAMOND_VALUE_INT)
+                    VM_RETURN(DIAMOND_VM_TYPE_ERROR);
                 const int64_t index=registers[index_register].as.integer;
                 if(index<0 || (uint64_t)index>=array->count) {
                     snprintf(vm->error,sizeof vm->error,
@@ -11386,10 +11472,45 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                              "String does not support element assignment");
                     VM_RETURN(DIAMOND_VM_TYPE_ERROR);
                 }
-                if(registers[receiver].as.object->kind!=DIAMOND_OBJECT_ARRAY ||
-                   registers[index_register].kind!=DIAMOND_VALUE_INT)
+                if(registers[receiver].as.object->kind!=DIAMOND_OBJECT_ARRAY)
                     VM_RETURN(DIAMOND_VM_TYPE_ERROR);
                 DiamondArray *array=(DiamondArray *)registers[receiver].as.object;
+                size_t range_start=0,range_length=0;
+                const int range_result=resolve_array_range(vm,chunk,
+                    registers[index_register],array->count,&range_start,&range_length);
+                if(range_result==0)VM_RETURN(DIAMOND_VM_INDEX_ERROR);
+                if(range_result==1) {
+                    /* Deliberately no grow/shrink splice in this first
+                     * version (docs/roadmap.md) -- the replacement must
+                     * be an Array of exactly the range's own (already
+                     * clamped) length. Every replacement value is
+                     * checked against the array's own type constraints
+                     * *before* writing any of them back, so a
+                     * constraint violation partway through leaves the
+                     * array completely untouched, not half-mutated. */
+                    if(registers[source].kind!=DIAMOND_VALUE_OBJECT||
+                       registers[source].as.object->kind!=DIAMOND_OBJECT_ARRAY||
+                       ((DiamondArray *)registers[source].as.object)->count!=range_length) {
+                        snprintf(vm->error,sizeof vm->error,
+                                 "range assignment requires a replacement Array of "
+                                 "exactly %zu element(s)",range_length);
+                        VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                    }
+                    const DiamondArray *replacement=
+                        (const DiamondArray *)registers[source].as.object;
+                    for(size_t i=0;i<range_length;i++) {
+                        if(!array_value_satisfies_constraints(array,replacement->values[i])) {
+                            snprintf(vm->error,sizeof vm->error,
+                                     "array element violates its type annotation");
+                            VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                        }
+                    }
+                    for(size_t i=0;i<range_length;i++)
+                        array->values[range_start+i]=replacement->values[i];
+                    break;
+                }
+                if(registers[index_register].kind!=DIAMOND_VALUE_INT)
+                    VM_RETURN(DIAMOND_VM_TYPE_ERROR);
                 const int64_t index=registers[index_register].as.integer;
                 if(index<0 || (uint64_t)index>=array->count) {
                     snprintf(vm->error,sizeof vm->error,
@@ -12627,6 +12748,7 @@ DiamondVmStatus diamond_vm_run(DiamondVm *vm, const DiamondChunk *chunk,
     vm->shape_transitions=0;
     vm->quickened_sites=0;
     vm->deoptimized_sites=0;
+    vm->range_class_index=chunk->range_class_index;
     return run_chunk(chunk, vm, nullptr, 0, 0, nullptr, result);
 }
 

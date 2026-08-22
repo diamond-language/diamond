@@ -236,19 +236,23 @@ evaluated at all when short-circuited) -- see
 Areas still worth examining include:
 
 - richer pattern matching beyond equality-based `case`/`when`;
-- **range-based collection slicing** (`arr[1..3]`, `hash[range]`) --
-  split off from the item above once scoped, since it's materially more
-  entangled: `Range` isn't a native VM value at all, just a plain
-  user-space class (`lib/core.di`), so recognizing one inside
-  `DIAMOND_OP_INDEX_GET`/`SET`'s dispatch means reaching into a
-  prelude-defined class's internal fields, unlike anything the VM's
-  opcode dispatch does today. Slice *assignment* additionally has an open
-  semantic question this doc doesn't answer yet: does replacing an
-  N-element range with a differently-sized replacement grow/shrink the
-  array (Ruby-style splice -- array resizing-in-place is already an
-  established native capability via `push`/`pop`/`delete_at`, so that
-  part isn't new), or does Diamond want something simpler for a first
-  version? Decide that before implementing, not while implementing;
+- **Done**: range-based Array slicing (`arr[1..3]` read,
+  `arr[1..3] = [...]` write). `Range` has no native VM value kind at
+  all -- it's a plain user-space class (`lib/core.di`) -- so
+  `DIAMOND_OP_INDEX_GET`/`SET` recognize one by comparing an index
+  operand's own `->class` against a `Range` class index resolved once
+  by name at the end of `diamond_compile` and cached on `DiamondVm`
+  (confirmed directly that `DiamondChunk`, not `DiamondVm`, was the
+  wrong place for this: a nested function/closure call builds its own
+  fresh `DiamondChunk` view at the call site, none of which propagate a
+  program-wide field like this one, so the first version of this cache
+  silently stopped working inside any nested `def` -- caught before
+  shipping). Slice write requires the replacement's length to exactly
+  match the range's own (already-clamped) length -- no Ruby-style
+  grow/shrink splice in this version, raising `TypeError` and leaving
+  the array untouched otherwise. `Hash` is untouched (real Ruby doesn't
+  support Range-based `Hash#[]` either). See `docs/syntax.md` for the
+  full bounds/clamping rules;
 - protected visibility, if a real library design needs it;
 - enumerator/lazy iteration semantics versus the current eager collection APIs;
 - a principled protocol for native collection extension instead of expanding
