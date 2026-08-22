@@ -517,6 +517,29 @@ Writer suffixes are resolved and copied as part of both names.
 Alias declarations accept either bare comma-separated names or one
 parenthesized pair.
 
+`delegate name(params), to: @ivar` compiles a genuinely new forwarding
+method rather than aliasing an existing one -- there is no existing
+method to copy, since the point is calling out to a *different* object's
+method of the same name. Unlike `attr_reader`/`attr_writer`, whose body is
+always exactly one opcode (a field load/store) hand-written directly into
+the generated `DiamondFunction`'s bytecode, `delegate`'s body is a real
+dynamic-dispatch call with arbitrary declared arity, so it's compiled
+through the same register-allocating/instruction-emitting machinery an
+ordinary `def` uses -- `compile_delegate` temporarily redirects the
+compiler at a fresh function exactly the way `compile_definition` does for
+every other method, minus the closure-capture bookkeeping a class/module
+member never needs. The target must be a bare instance variable (auto-
+declared on first reference, the same as any other `@ivar`); parameters
+are bare names with no type annotations, defaults, or splat/block
+forwarding; the delegated call always reuses the declaring name (no
+renaming). Because the result is an ordinary method registered in the
+usual method table, it participates in inheritance, `super`,
+`respond_to?`, and `redefine_method` exactly like a hand-written one --
+deliberately, since a parallel dispatch mechanism was the one thing this
+feature was scoped to avoid. Native-compiler only for now (not mirrored in
+the self-hosted parser, which is in maintenance mode); see
+`docs/roadmap.md`'s own entry for the reasoning.
+
 `ClassName.redefine_method(name, callable)` is `alias_method`'s runtime,
 value-taking counterpart: it repoints an *existing* method slot to a
 different already-compiled function, rather than resolving names at compile

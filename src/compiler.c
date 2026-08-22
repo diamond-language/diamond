@@ -2896,6 +2896,51 @@ static uint16_t parse_name(Compiler *compiler) {
     return parse_identifier(compiler);
 }
 
+/* Shared tail of a dynamic-dispatch method call: copies `receiver` and
+ * every one of `args[0..count)` into one contiguous register run (INVOKE's
+ * own calling convention needs its receiver/args argument block
+ * contiguous, unlike arbitrary scattered registers a caller might already
+ * hold), resolves `method_name` into the current function's string-
+ * constant table, and emits DIAMOND_OP_INVOKE (or DIAMOND_OP_INVOKE_TYPED
+ * when `type_argument_count>0`). Originally inline at the end of
+ * parse_invoke (this is that same code, unchanged); pulled out so
+ * compile_delegate (src/compiler.c, `delegate name(params), to: @ivar`)
+ * can reuse it directly with already-known registers instead of
+ * re-parsing `@ivar.name(args)` from source tokens it doesn't have --
+ * `delegate` always calls this with writer_name=false, type_arguments=
+ * nullptr, type_argument_count=0, since neither writer-call syntax nor
+ * generics apply to its scope. */
+static uint16_t emit_invoke_call(Compiler *compiler, uint16_t receiver,
+        DiamondSpan method_name, bool writer_name,
+        const uint8_t *type_arguments, size_t type_argument_count,
+        const uint16_t *args, size_t count) {
+    const uint16_t base = allocate_register(compiler);
+    for (size_t i=1;i<count;i++) (void)allocate_register(compiler);
+    for (size_t i=0;i<count;i++) emit_instruction(compiler, DIAMOND_OP_MOVE,
+        (uint16_t)(base+i), args[i], 0, 2);
+    const uint16_t dest=allocate_register(compiler);
+    const uint8_t method=add_name_string(compiler,method_name);
+    if(writer_name&&!compiler->failed) {
+        DiamondStringConstant *string=&compiler->function->strings[method];
+        if(string->length==DIAMOND_MAX_STRING_LENGTH)
+            fail(compiler,method_name,"method name is too long");
+        else {
+            string->chars[string->length++]='=';
+            string->chars[string->length]='\0';
+        }
+    }
+    emit_opcode(compiler,type_argument_count==0?
+        DIAMOND_OP_INVOKE:DIAMOND_OP_INVOKE_TYPED);emit_register(compiler,dest);
+    emit_register(compiler,receiver); emit_byte(compiler,method); emit_register(compiler,base);
+    emit_byte(compiler,(uint8_t)count);
+    if(type_argument_count>0) {
+        emit_byte(compiler,(uint8_t)type_argument_count);
+        for(size_t index=0;index<type_argument_count;index++)
+            emit_byte(compiler,type_arguments[index]);
+    }
+    return dest;
+}
+
 static uint16_t parse_invoke(Compiler *compiler, uint16_t receiver) {
     advance_token(compiler);
     if (compiler->current.kind != DIAMOND_TOKEN_IDENTIFIER) {
@@ -2981,31 +3026,8 @@ static uint16_t parse_invoke(Compiler *compiler, uint16_t receiver) {
         }
         args[count++]=compile_block(compiler);
     }
-    const uint16_t base = allocate_register(compiler);
-    for (size_t i=1;i<count;i++) (void)allocate_register(compiler);
-    for (size_t i=0;i<count;i++) emit_instruction(compiler, DIAMOND_OP_MOVE,
-        (uint16_t)(base+i), args[i], 0, 2);
-    const uint16_t dest=allocate_register(compiler);
-    const uint8_t method=add_name_string(compiler,name);
-    if(writer_name&&!compiler->failed) {
-        DiamondStringConstant *string=&compiler->function->strings[method];
-        if(string->length==DIAMOND_MAX_STRING_LENGTH)
-            fail(compiler,name,"method name is too long");
-        else {
-            string->chars[string->length++]='=';
-            string->chars[string->length]='\0';
-        }
-    }
-    emit_opcode(compiler,type_argument_count==0?
-        DIAMOND_OP_INVOKE:DIAMOND_OP_INVOKE_TYPED);emit_register(compiler,dest);
-    emit_register(compiler,receiver); emit_byte(compiler,method); emit_register(compiler,base);
-    emit_byte(compiler,(uint8_t)count);
-    if(type_argument_count>0) {
-        emit_byte(compiler,(uint8_t)type_argument_count);
-        for(size_t index=0;index<type_argument_count;index++)
-            emit_byte(compiler,type_arguments[index]);
-    }
-    return dest;
+    return emit_invoke_call(compiler,receiver,name,writer_name,
+        type_arguments,type_argument_count,args,count);
 }
 
 /* `self.method_name(...)` written inside a class-owned singleton method's
@@ -5885,6 +5907,261 @@ static void compile_alias_method(Compiler *compiler) {
     }
 }
 
+/* `delegate name(params...), to: @ivar` -- compiles into an ordinary
+ * forwarding method, as if the source had literally been
+ * `def name(params...) @ivar.name(params...) end`: same method metadata,
+ * visibility, inheritance, interface checks, dispatch caches, arity
+ * validation, and respond_to? behavior as any other method, not a
+ * parallel runtime dispatch mechanism (docs/roadmap.md's "Explicit-arity
+ * method delegation"). Deliberately scoped: the target must be a bare
+ * instance variable (no arbitrary expression, no `to: some_method()`);
+ * parameters are bare names only (no type annotations, no defaults, no
+ * splat/block forwarding); the forwarded call always uses the same name
+ * declared here (no renaming). Valid in both class and module bodies,
+ * mirroring compile_attribute_named's own class/module split just above
+ * (field-index GET_IVAR for a class, name-keyed GET_IVAR_NAME for a
+ * module, module_field_name already handling that field's registration
+ * and marking uses_instance_state) -- but unlike that function's fixed
+ * one-opcode body, this one's body is a full dynamic-dispatch call, so
+ * it's compiled through the ordinary allocate_register/emit_instruction/
+ * emit_opcode machinery instead of hand-written bytes, temporarily
+ * switching compiler->function to a fresh DiamondFunction the same way
+ * compile_definition does for every ordinary `def` -- mirroring the
+ * reduced subset of its own outer-state save/restore that actually
+ * applies here (this is always a direct class/module member, never
+ * nested inside another function's live compile, so the closure-capture
+ * bookkeeping compile_definition also carries is simply never needed). */
+static void compile_delegate(Compiler *compiler) {
+    const DiamondSpan keyword=compiler->current.span;
+    advance_token(compiler);
+    if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER) {
+        fail(compiler,compiler->current.span,"expected method name after 'delegate'");
+        return;
+    }
+    const DiamondSpan method_name=compiler->current.span;
+    if(method_name.length>=DIAMOND_MAX_FUNCTION_NAME) {
+        fail(compiler,method_name,"delegated method name is too long");return;
+    }
+    advance_token(compiler);
+    if(compiler->current.kind!=DIAMOND_TOKEN_LEFT_PAREN) {
+        fail(compiler,compiler->current.span,
+             "expected '(' after delegated method name");return;
+    }
+    advance_token(compiler);
+    skip_newlines(compiler);
+    DiamondSpan parameter_names[16];size_t parameter_count=0;
+    while(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN&&!compiler->failed) {
+        if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER) {
+            fail(compiler,compiler->current.span,"expected parameter name");return;
+        }
+        if(parameter_count==16) {
+            fail(compiler,compiler->current.span,"too many parameters");return;
+        }
+        parameter_names[parameter_count++]=compiler->current.span;
+        advance_token(compiler);
+        skip_newlines(compiler);
+        if(compiler->current.kind!=DIAMOND_TOKEN_COMMA)break;
+        advance_token(compiler);
+        skip_newlines(compiler);
+    }
+    if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
+        fail(compiler,compiler->current.span,
+             "expected ')' after delegate parameters");return;
+    }
+    advance_token(compiler);
+    if(compiler->current.kind!=DIAMOND_TOKEN_COMMA) {
+        fail(compiler,compiler->current.span,
+             "expected ', to: @ivar' after delegate parameters");return;
+    }
+    advance_token(compiler);
+    if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER||
+       !name_equals(compiler,"to",compiler->current.span,false)) {
+        fail(compiler,compiler->current.span,"expected 'to:' in delegate");return;
+    }
+    advance_token(compiler);
+    if(compiler->current.kind!=DIAMOND_TOKEN_COLON) {
+        fail(compiler,compiler->current.span,"expected ':' after 'to'");return;
+    }
+    advance_token(compiler);
+    if(compiler->current.kind!=DIAMOND_TOKEN_INSTANCE_VARIABLE) {
+        fail(compiler,compiler->current.span,
+             "delegate target must be an instance variable");return;
+    }
+    const DiamondSpan target=compiler->current.span;
+    advance_token(compiler);
+
+    char stored_name[DIAMOND_MAX_FUNCTION_NAME];
+    for(size_t index=0;index<method_name.length;index++)
+        stored_name[index]=compiler->source[method_name.start+index];
+    stored_name[method_name.length]='\0';
+
+    const bool in_class=compiler->current_class>=0;
+    if(!in_class&&compiler->current_module<0) {
+        fail(compiler,keyword,"delegate is only valid inside a class or module");
+        return;
+    }
+    if(!in_class&&compiler->module_function_mode) {
+        fail(compiler,keyword,
+             "stateful delegate cannot use module_function mode");return;
+    }
+    DiamondMethod *methods=nullptr;size_t *method_count=nullptr;
+    if(in_class) {
+        DiamondClass *class=
+            &compiler->program->classes[(size_t)compiler->current_class];
+        methods=class->methods;method_count=&class->method_count;
+    } else {
+        DiamondModule *module=
+            &compiler->program->modules[(size_t)compiler->current_module];
+        methods=module->methods;method_count=&module->method_count;
+    }
+    for(size_t index=0;index<*method_count;index++)
+        if(!methods[index].included&&strcmp(methods[index].name,stored_name)==0) {
+            fail(compiler,method_name,"delegated method name is already defined");
+            return;
+        }
+    if(*method_count==DIAMOND_MAX_METHODS) {
+        fail(compiler,method_name,"too many methods");return;
+    }
+
+    /* Same outer-state save shape as compile_definition's own (see its
+     * own comments for why each field matters and the inline-then-heap
+     * known_types/known_type_sets fallback), minus enclosing_locals/
+     * capture_registers -- always empty here, see this function's own
+     * top comment. */
+    DiamondFunction *outer_function=compiler->function;
+    Local outer_locals[DIAMOND_MAX_LOCALS];
+    const size_t outer_local_count=compiler->local_count;
+    for(size_t index=0;index<outer_local_count;index++)
+        outer_locals[index]=compiler->locals[index];
+    const uint16_t outer_next_register=compiler->next_register;
+    const DiamondSpan outer_method=compiler->current_method;
+    const bool outer_in_method=compiler->in_method;
+    const bool outer_in_singleton_method=compiler->in_singleton_method;
+    const bool outer_in_function=compiler->in_function;
+    const int outer_return_type=compiler->current_return_type;
+    const DiamondSpan outer_return_type_span=compiler->current_return_type_span;
+    const int outer_exception=compiler->current_exception;
+    const size_t outer_retry_target=compiler->current_retry_target;
+    LoopContext *outer_loop=compiler->current_loop;
+    uint8_t inline_outer_known_types[256];int16_t inline_outer_known_type_sets[256];
+    uint8_t *outer_known_types=inline_outer_known_types;
+    int16_t *outer_known_type_sets=inline_outer_known_type_sets;
+    uint8_t *heap_outer_known_types=nullptr;int16_t *heap_outer_known_type_sets=nullptr;
+    if(outer_next_register>256) {
+        heap_outer_known_types=malloc((size_t)outer_next_register*sizeof(uint8_t));
+        heap_outer_known_type_sets=
+            malloc((size_t)outer_next_register*sizeof(int16_t));
+        if(heap_outer_known_types==nullptr||heap_outer_known_type_sets==nullptr) {
+            fail(compiler,keyword,"out of memory compiling delegate");
+            free(heap_outer_known_types);free(heap_outer_known_type_sets);
+            return;
+        }
+        outer_known_types=heap_outer_known_types;
+        outer_known_type_sets=heap_outer_known_type_sets;
+    }
+    for(size_t index=0;index<outer_next_register;index++)
+        {outer_known_types[index]=compiler->known_types[index];
+         outer_known_type_sets[index]=compiler->known_type_sets[index];}
+
+    DiamondFunction *function=diamond_program_add_function(compiler->program);
+    if(function==nullptr) {
+        fail(compiler,keyword,"out of memory");
+        free(heap_outer_known_types);free(heap_outer_known_type_sets);
+        return;
+    }
+    const uint16_t function_index=(uint16_t)(compiler->program->function_count-1);
+    (void)snprintf(function->name,sizeof function->name,"%s",stored_name);
+    function->owner_class=in_class?(uint8_t)compiler->current_class:UINT8_MAX-1;
+    function->declaration_line=(uint32_t)keyword.line;
+    function->declaration_column=(uint32_t)keyword.column;
+    function->declaration_start=keyword.start;
+    function->return_type_set=UINT8_MAX;
+    for(size_t index=0;index<16;index++)function->parameter_type_sets[index]=UINT8_MAX;
+
+    compiler->function=function;
+    compiler->local_count=0;
+    compiler->next_register=0;
+    compiler->current_method=method_name;
+    compiler->in_method=true;
+    compiler->in_singleton_method=false;
+    compiler->in_function=false;
+    compiler->current_return_type=-1;
+    compiler->current_return_type_span=(DiamondSpan){};
+    compiler->current_exception=-1;
+    compiler->current_retry_target=SIZE_MAX;
+    compiler->current_loop=nullptr;
+
+    (void)allocate_register(compiler); /* self */
+    function->arity=1;function->required_arity=1;
+    uint16_t parameter_registers[16];
+    for(size_t index=0;index<parameter_count;index++) {
+        parameter_registers[index]=allocate_register(compiler);
+        compiler->locals[compiler->local_count++]=(Local){
+            .name=parameter_names[index],.reg=parameter_registers[index]};
+        size_t name_length=parameter_names[index].length;
+        if(name_length>=DIAMOND_MAX_FUNCTION_NAME)
+            name_length=DIAMOND_MAX_FUNCTION_NAME-1;
+        for(size_t char_index=0;char_index<name_length;char_index++)
+            function->parameter_names[index][char_index]=
+                compiler->source[parameter_names[index].start+char_index];
+        function->parameter_names[index][name_length]='\0';
+    }
+    function->arity=(uint8_t)(function->arity+parameter_count);
+    function->required_arity=function->arity;
+
+    uint16_t ivar_register;
+    if(in_class) {
+        const int field=field_index(compiler,target,true);
+        ivar_register=allocate_register(compiler);
+        emit_instruction(compiler,DIAMOND_OP_GET_IVAR,ivar_register,0,
+                          (uint8_t)field,3);
+    } else {
+        const uint8_t field=module_field_name(compiler,target);
+        ivar_register=allocate_register(compiler);
+        emit_instruction(compiler,DIAMOND_OP_GET_IVAR_NAME,ivar_register,0,
+                          field,3);
+    }
+    const uint16_t result=emit_invoke_call(compiler,ivar_register,method_name,
+        false,nullptr,0,parameter_registers,parameter_count);
+    emit_instruction(compiler,DIAMOND_OP_RETURN,result,0,0,1);
+
+    function->capture_count=0;
+    function->register_count=compiler->next_register;
+    if(!compiler->failed) {
+        const size_t body_end=target.start+target.length;
+        record_scope_locals(compiler,0,compiler->local_count,body_end);
+        function->body_end=body_end;
+    }
+
+    compiler->function=outer_function;
+    compiler->local_count=outer_local_count;
+    for(size_t index=0;index<outer_local_count;index++)
+        compiler->locals[index]=outer_locals[index];
+    compiler->next_register=outer_next_register;
+    compiler->current_method=outer_method;
+    compiler->in_method=outer_in_method;
+    compiler->in_singleton_method=outer_in_singleton_method;
+    compiler->in_function=outer_in_function;
+    compiler->current_return_type=outer_return_type;
+    compiler->current_return_type_span=outer_return_type_span;
+    compiler->current_exception=outer_exception;
+    compiler->current_retry_target=outer_retry_target;
+    compiler->current_loop=outer_loop;
+    for(size_t index=0;index<outer_next_register;index++)
+        {compiler->known_types[index]=outer_known_types[index];
+         compiler->known_type_sets[index]=outer_known_type_sets[index];}
+    free(heap_outer_known_types);free(heap_outer_known_type_sets);
+
+    if(compiler->failed)return;
+    DiamondMethod *method=&methods[(*method_count)++];
+    (void)snprintf(method->name,sizeof method->name,"%s",stored_name);
+    method->function_index=function_index;
+    method->arity=(uint8_t)parameter_count;
+    method->required_arity=(uint8_t)parameter_count;
+    method->included=false;
+    method->is_private=compiler->methods_private;
+}
+
 static uint16_t compile_class(Compiler *compiler) {
     advance_token(compiler);
     if (compiler->current.kind != DIAMOND_TOKEN_IDENTIFIER ||
@@ -5943,6 +6220,8 @@ static uint16_t compile_class(Compiler *compiler) {
                  "module_function is only valid in modules");break;
         } else if(compiler->current.kind==DIAMOND_TOKEN_ALIAS_METHOD) {
             compile_alias_method(compiler);
+        } else if(compiler->current.kind==DIAMOND_TOKEN_DELEGATE) {
+            compile_delegate(compiler);
         } else if(compiler->current.kind==DIAMOND_TOKEN_ATTR||
                   compiler->current.kind==DIAMOND_TOKEN_ATTR_READER||
                   compiler->current.kind==DIAMOND_TOKEN_ATTR_WRITER||
@@ -6056,6 +6335,8 @@ static uint16_t compile_module(Compiler *compiler) {
             compile_module_function(compiler);
         } else if(compiler->current.kind==DIAMOND_TOKEN_ALIAS_METHOD) {
             compile_alias_method(compiler);
+        } else if(compiler->current.kind==DIAMOND_TOKEN_DELEGATE) {
+            compile_delegate(compiler);
         } else if(compiler->current.kind==DIAMOND_TOKEN_ATTR||
                   compiler->current.kind==DIAMOND_TOKEN_ATTR_READER||
                   compiler->current.kind==DIAMOND_TOKEN_ATTR_WRITER||

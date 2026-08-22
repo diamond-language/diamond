@@ -229,8 +229,8 @@ Areas still worth examining include:
 
 ### Explicit-arity method delegation
 
-Add a deliberately scoped first version of class/module delegation with the
-target and complete parameter list visible in source:
+**Done**: a deliberately scoped first version of class/module delegation,
+with the target and complete parameter list visible in source:
 
 ```ruby
 class Account
@@ -239,12 +239,29 @@ class Account
 end
 ```
 
-Initially restrict targets to instance variables and compile each declaration
-into an ordinary forwarding method. That preserves Diamond's existing method
-metadata, visibility, inheritance, interface checks, dispatch caches, arity
-validation, and `respond_to?` behavior instead of adding a parallel runtime
-dispatch model. The native and self-hosted parsers must remain in parity, and
-generated methods should appear in language tooling like any other method.
+Targets are restricted to instance variables (`@name`, both classes and
+modules -- a module's own field goes through the same name-keyed
+`GET_IVAR_NAME` path `attr_reader` already uses for module state), and
+each declaration compiles into an ordinary forwarding method (`src/
+compiler.c`'s `compile_delegate`, alongside `compile_attribute`/
+`compile_alias_method`) -- as if the source had literally been
+`def name(params) @ivar.name(params) end`. Confirmed directly: the
+generated method participates in inheritance/override/`super`,
+`respond_to?`, and `redefine_method`/method-cache invalidation exactly
+like a hand-written one would (`tests/cases/method_delegation.di`),
+since it *is* one -- not a parallel dispatch model. Parameters are bare
+names only (no type annotations, no defaults, no splat/block
+forwarding); the forwarded call always uses the same name declared
+(`delegate foo(), to: @bar` always calls `@bar.foo()`, never a renamed
+target) -- both deliberate scope cuts, not oversights.
+
+**Native-only, not self-hosted**: the self-hosted parser
+(`selfhost/lexer.di`/`parser.di`) does not recognize `delegate` --
+self-hosting is paused elsewhere in this document (growing new feature
+parity isn't happening right now, only the two bootstrap smoke checks
+are kept green), and nothing in the self-hosted parser's own source uses
+`delegate`, so this is a deliberate, documented parity gap rather than a
+silent one. Revisit if self-hosting work ever resumes in earnest.
 
 Do not infer arity from an untyped target or add Rails-style name-only
 delegation in this slice. Arbitrary forwarding depends on variadic/splat call
