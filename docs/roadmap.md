@@ -73,7 +73,7 @@ class already speaking the real MySQL wire protocol
 (`packages/arel/ROADMAP.md` has the full comparison, including the one
 real MySQL-specific quirk found: its row-alias upsert syntax has no
 `INSERT ... SELECT` equivalent, unlike its `VALUES(...)`-list form).
-`diamond-active_record` (`packages/diamond-active_record/`) now sits on
+`active_record` (`packages/active_record/`) now sits on
 top of Arel as an explicit, low-magic persistence layer (`Repository`,
 four association kinds, optimistic locking, eager loading, batch
 iteration, nested transactions via savepoints), plus an optional

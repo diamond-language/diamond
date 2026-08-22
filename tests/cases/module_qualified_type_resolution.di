@@ -1,7 +1,7 @@
 # Qualified Module::Class resolution in three grammar positions that
 # previously only accepted a single bare identifier token: superclass
 # declarations, `is` type checks, and `rescue` clause types. Found while
-# restructuring Arel/diamond-active_record under real module namespaces --
+# restructuring Arel/active_record under real module namespaces --
 # external code needs to subclass a nested class (e.g. a third-party Arel
 # dialect visitor extending Arel::Visitor from its own file), which a bare
 # name can never do since Diamond has no module-reopening.

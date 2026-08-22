@@ -31,7 +31,7 @@ class Ping
 end
 
 # A class inside a module referencing a sibling class declared later in
-# the same module -- the real shape diamond-active_record's own
+# the same module -- the real shape active_record's own
 # Repository/Relation classes are in.
 module Nested
   class First
@@ -51,8 +51,8 @@ end
 # call is arity-checked against the callee's actual signature at compile
 # time, which requires the callee to be *fully* compiled already, not
 # just registered by name -- and it's the case
-# packages/diamond-active_record's own `wire_*` class-variable-indirection
-# pattern (tests/cases/diamond_active_record_model.di) exists to work
+# packages/active_record's own `wire_*` class-variable-indirection
+# pattern (tests/cases/active_record_model.di) exists to work
 # around, for exactly this reason.
 class ThisSide
   def self.call_other() = OtherSide.value()

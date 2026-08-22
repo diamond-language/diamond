@@ -2,7 +2,7 @@
 # "Classes" section): a second `module Foo ... end`/`class Foo ... end`
 # for a name that already exists now adds to it instead of erroring --
 # the real gap that blocked splitting packages/arel and
-# packages/diamond-active_record into one file per class, unrelated to
+# packages/active_record into one file per class, unrelated to
 # (but built on top of) this session's earlier declaration-discovery
 # pass. Genuine cross-file coverage lives in tests/multifile/ (this file
 # tests the same compiler mechanism, which doesn't care whether a

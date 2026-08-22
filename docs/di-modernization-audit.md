@@ -289,7 +289,7 @@ Prefer the fuller method surface already used by the codebase:
 
 ### Explicit query and persistence syntax
 
-The Arel and `diamond-active_record` code is already aligned with the newer
+The Arel and `active_record` code is already aligned with the newer
 explicit style: intermediate statements make line-oriented chaining clear,
 repositories receive tables/mappers/keys explicitly, and associations receive
 foreign keys explicitly. Keep that style. Do not introduce DSL magic, schema
