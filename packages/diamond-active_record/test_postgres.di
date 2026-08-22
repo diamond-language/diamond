@@ -253,6 +253,40 @@ def run_tests()
     db.close()
   end
 
+  def test_batches_with_explicit_postgresql_visitor(conninfo)
+    db = PostgreSQL.open(conninfo)
+    db.execute("DROP TABLE IF EXISTS ar_pg_batch_authors")
+    db.execute("CREATE TABLE ar_pg_batch_authors (id SERIAL PRIMARY KEY, name TEXT, country TEXT)")
+    index = 0
+    while index < 25
+      db.execute(
+        "INSERT INTO ar_pg_batch_authors (name, country) VALUES (?, ?)", ["Author #{index}", "UK"])
+      index += 1
+    end
+
+    repository = ActiveRecord::Repository.new(
+      Arel.table("ar_pg_batch_authors"), map_author, "id", Arel::PostgreSQLVisitor.new())
+
+    seen_ids = []
+    def collect_id(author)
+      seen_ids.push(author.id())
+    end
+    repository.find_each(db, collect_id, 7)
+    Minitest.assert_equal(25, seen_ids.length())
+    Minitest.assert_equal(1, seen_ids[0])
+    Minitest.assert_equal(25, seen_ids[24])
+
+    batch_sizes = []
+    def collect_batch_size(batch)
+      batch_sizes.push(batch.length())
+    end
+    repository.find_in_batches(db, collect_batch_size, 10)
+    Minitest.assert_equal(3, batch_sizes.length())
+    Minitest.assert_equal(10, batch_sizes[0])
+    Minitest.assert_equal(5, batch_sizes[2])
+    db.close()
+  end
+
   suite = Minitest.new()
   suite.test("default visitor breaks on a real dialect difference") do
     test_default_visitor_breaks_on_a_real_dialect_difference(conninfo)
@@ -271,6 +305,9 @@ def run_tests()
   end
   suite.test("Model with explicit Arel::PostgreSQLVisitor") do
     test_model_with_explicit_postgresql_visitor(conninfo)
+  end
+  suite.test("batches with explicit Arel::PostgreSQLVisitor") do
+    test_batches_with_explicit_postgresql_visitor(conninfo)
   end
   suite.run!()
 end

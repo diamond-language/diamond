@@ -240,6 +240,37 @@ but identity equality if an attribute value is itself an `Array`/`Hash`.
 There is no repository integration beyond that -- `#changes` is an
 ordinary `Hash`, nothing more.
 
+`ActiveRecord::Repository#find_each`/`#find_in_batches` iterate an entire
+table without loading it all into memory at once, the way `#all` does:
+
+```diamond
+def process_author(author)
+  puts(author.name())
+end
+
+repository.find_each(db, process_author, 500)
+```
+
+`#find_in_batches` is the same idea, but its callback receives one `Array`
+of at most `batch_size` mapped records per call instead of one record at a
+time; `#find_each` is built on top of it, unwrapping each batch into
+individual calls. Both page by `id_column`
+(`WHERE id_column > last_seen_id ORDER BY id_column ASC LIMIT batch_size`)
+rather than SQL `OFFSET` -- the same keyset-pagination strategy Rails'
+own `find_in_batches` uses: an `OFFSET`-based page re-scans and discards
+every earlier page's rows on the server each time, and silently skips or
+repeats rows if the table is written to while iterating (a row deleted
+from an earlier page shifts every later page's `OFFSET` by one). This
+avoids both, at the cost of requiring `id_column` to be meaningfully
+ordered (an ordinary integer primary key always is). `batch_size`
+defaults to 1000 and must be at least 1. The callback, like `mapper`
+and everything else in this package, is an ordinary function -- there is
+no cursor object or enumerator to hold open across calls.
+
+`ActiveRecord::Model` exposes the same two as shared, inherited
+`self.find_each`/`self.find_in_batches` class methods, alongside
+`self.find`/`.all`/`.where`/`.create`.
+
 There is no schema inspection, naming convention, or object introspection,
 and no implicit query scope.
 

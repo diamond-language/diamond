@@ -204,6 +204,66 @@ class Repository
     end
     result
   end
+
+  # Batch iteration over the *entire* table, one batch of at most
+  # batch_size mapped records per callback call -- unlike #all, which
+  # loads everything into memory in one query. Pages by id_column
+  # (`WHERE id_column > last_seen_id ORDER BY id_column ASC LIMIT
+  # batch_size`) rather than SQL OFFSET, the same keyset-pagination
+  # strategy Rails' own find_in_batches uses: an OFFSET-based page N
+  # re-scans and discards the first (N-1)*batch_size rows on the
+  # server for every page, and silently skips or repeats rows if the
+  # table is written to while iterating (a row deleted from an
+  # earlier page shifts every later page's OFFSET by one); this
+  # doesn't have either problem, at the cost of requiring id_column to
+  # be usable in an ORDER BY/> comparison (an ordinary integer primary
+  # key always is).
+  def find_in_batches(db, callback: Callable[1], batch_size = 1000)
+    if batch_size < 1
+      raise ArgumentError.new("batch_size must be at least 1")
+    end
+    id_column = @table.column(@id_column)
+    last_id = nil
+    while true
+      query = Arel.from(@table).order(id_column.asc()).take(batch_size)
+      unless last_id == nil
+        query = query.where(id_column.gt(last_id))
+      end
+      rows = query.to_a(db, @visitor)
+      if rows.empty?()
+        break
+      end
+      mapped = []
+      index = 0
+      while index < rows.length()
+        mapped.push(@mapper(rows[index]))
+        index += 1
+      end
+      callback(mapped)
+      last_id = rows[rows.length() - 1][@id_column]
+      if rows.length() < batch_size
+        break
+      end
+    end
+  end
+
+  # #find_in_batches, but callback receives one mapped record at a time
+  # instead of a whole batch -- the same batch-size/query-shape
+  # tradeoff, just a per-record calling convention. Its own callback is
+  # a nested closure capturing find_each's own callback argument
+  # (Diamond has no anonymous closure literal, so this is the ordinary
+  # named-nested-function shape everywhere else in this package already
+  # uses to pass a Callable).
+  def find_each(db, callback: Callable[1], batch_size = 1000)
+    def call_each_in_batch(batch)
+      index = 0
+      while index < batch.length()
+        callback(batch[index])
+        index += 1
+      end
+    end
+    self.find_in_batches(db, call_each_in_batch, batch_size)
+  end
 end
 
 # Explicit change tracking for a plain attributes Hash -- there is no
@@ -625,6 +685,12 @@ class Model
   def self.all(db) = self.repository().all(db)
   def self.where(db, conditions: Hash) = self.repository().where(db, conditions)
   def self.create(db, attributes: Hash) = self.repository().create(db, attributes)
+  def self.find_each(db, callback: Callable[1], batch_size = 1000)
+    self.repository().find_each(db, callback, batch_size)
+  end
+  def self.find_in_batches(db, callback: Callable[1], batch_size = 1000)
+    self.repository().find_in_batches(db, callback, batch_size)
+  end
 end
 
 end
