@@ -77,6 +77,21 @@ override point for a different JSON shape; `#to_json` is
 `scope` macro. See `tests/cases/active_record_ergonomics.di` and
 the README.md sections right after `ActiveRecord::Relation`.
 
+The package itself was also renamed from `diamond-active_record` to
+`active_record` (dropping the "diamond-" prefix, matching every other
+package here -- arel, gremlin, http, rack -- and split from one 862-line
+file into one file per class under `lib/active_record/` (`repository.di`,
+`relation.di`, `model.di`, etc.), with `lib/active_record.di` now just a
+thin entry point requiring each of them in turn. Both were possible
+without any ordering constraints because of two compiler features that
+landed the same session: forward references (a class can construct or
+call a singleton method on another class declared in a file required
+later) and reopening (each per-class file independently opens `module
+ActiveRecord`, merging into the same module rather than erroring) -- see
+`docs/roadmap.md`'s "Compiler representation" section for both. Verified
+directly that require order genuinely doesn't matter (a fully reversed
+require order loads and runs identically).
+
 ## Priority order for next session
 
 Nothing queued right now -- the items this file has tracked since
