@@ -119,6 +119,42 @@ static char *format_function_signature(const DiamondChunk *chunk,
     return buffer;
 }
 
+/* Formats every match in `functions[0..count)` (each already known to
+ * define the looked-up method) as a hover string -- just that one
+ * signature when every match agrees on it textually (the common case:
+ * a shared interface-like method, or the ordinary single-candidate
+ * path), otherwise one `ClassName#signature` line per match so a real
+ * union receiver's ambiguity is visible instead of silently picking
+ * one. `class_names[i]` is `chunk->classes[class_indices[i]].name`,
+ * passed separately since the caller already has both handy. */
+static char *format_receiver_signatures(const DiamondChunk *chunk,
+        const DiamondFunction *const *functions,const char *const *class_names,size_t count) {
+    if(count==0)return nullptr;
+    char *first_signature=format_function_signature(chunk,functions[0]);
+    if(first_signature==nullptr)return nullptr;
+    bool all_same=true;
+    for(size_t index=1;index<count&&all_same;index++) {
+        char *other=format_function_signature(chunk,functions[index]);
+        if(other==nullptr) {free(first_signature);return nullptr;}
+        if(strcmp(first_signature,other)!=0)all_same=false;
+        free(other);
+    }
+    if(all_same||count==1)return first_signature;
+    char *buffer=nullptr;size_t buffer_length=0;
+    FILE *stream=open_memstream(&buffer,&buffer_length);
+    if(stream==nullptr) {free(first_signature);return nullptr;}
+    fprintf(stream,"%s#%s",class_names[0],first_signature);
+    free(first_signature);
+    for(size_t index=1;index<count;index++) {
+        char *signature=format_function_signature(chunk,functions[index]);
+        if(signature==nullptr) {fclose(stream);free(buffer);return nullptr;}
+        fprintf(stream,"\n%s#%s",class_names[index],signature);
+        free(signature);
+    }
+    fclose(stream);
+    return buffer;
+}
+
 static char *format_class_signature(const DiamondChunk *chunk,const DiamondClass *class) {
     char *buffer=nullptr;size_t buffer_length=0;
     FILE *stream=open_memstream(&buffer,&buffer_length);
@@ -240,14 +276,24 @@ JsonValue *hover_compute(const DocumentTable *documents,const char *uri,
         ? diamond_resolve_source_position(path,combined,&bundle,user_offset,
               identifier_line,identifier_column)
         : user_offset+raw_offset_for(text,length,identifier_line,identifier_column);
-    size_t class_index;bool is_singleton;
-    if(identifier_offset!=SIZE_MAX&&
-       receiver_resolve_class(scratch,&chunk,combined,identifier_offset,&class_index,&is_singleton)) {
-        const DiamondMethod *method=
-            receiver_lookup_method(&chunk,class_index,is_singleton,name,name_length);
-        if(method!=nullptr) {
-            const DiamondFunction *function=chunk.functions[method->function_index];
-            char *signature=format_function_signature(&chunk,function);
+    size_t class_indices[DIAMOND_MAX_UNION_TYPES];bool is_singleton;
+    if(identifier_offset!=SIZE_MAX) {
+        const size_t candidate_count=receiver_resolve_classes(scratch,&chunk,combined,
+            identifier_offset,class_indices,DIAMOND_MAX_UNION_TYPES,&is_singleton);
+        const DiamondFunction *matched_functions[DIAMOND_MAX_UNION_TYPES];
+        const char *matched_class_names[DIAMOND_MAX_UNION_TYPES];
+        size_t matched_count=0;
+        for(size_t index=0;index<candidate_count;index++) {
+            const DiamondMethod *method=receiver_lookup_method(
+                &chunk,class_indices[index],is_singleton,name,name_length);
+            if(method==nullptr)continue;
+            matched_functions[matched_count]=chunk.functions[method->function_index];
+            matched_class_names[matched_count]=chunk.classes[class_indices[index]].name;
+            matched_count++;
+        }
+        if(matched_count>0) {
+            char *signature=format_receiver_signatures(
+                &chunk,matched_functions,matched_class_names,matched_count);
             free(combined);free(path);diamond_source_bundle_free(&bundle);
             if(signature==nullptr)return nullptr;
             JsonValue *result=hover_result(signature);

@@ -59,22 +59,34 @@ item.
 ### Improve receiver-aware language tooling
 
 The LSP now resolves `receiver.method` (completion, hover, definition) for the
-three statically-known-without-real-type-inference receiver forms: a literal
-class name, `self` inside an instance method or a class-owned `def self.x`,
-and a local variable last known (at its own declaration) to hold
-`ClassName.new(...)` (`DiamondScopeLocal.known_type`, `src/vm.h`, a byte
-snapshot of the compiler's existing per-register `known_types` state, taken
-at the exact point that local's scope closes -- the only new compiler state
-this needed). See `docs/lsp.md` and `lsp/receiver.c` for the mechanism and its
+statically-known-without-real-type-inference receiver forms: a literal class
+name, `self` inside an instance method or a class-owned `def self.x`, a local
+variable last known (at its own declaration) to hold `ClassName.new(...)`
+(`DiamondScopeLocal.known_type`, `src/vm.h`, a byte snapshot of the compiler's
+existing per-register `known_types` state, taken at the exact point that
+local's scope closes), and now also a union receiver -- a parameter (or a
+local initialized from one) given an explicit `pet: Dog | Cat` annotation
+(`DiamondScopeLocal.known_type_set`, the same snapshot idea applied to
+`known_type_sets`, decoded against the owning function's own `type_sets[]`).
+Resolves against every class-kind union member that defines the method: one
+signature when they agree, `ClassName#signature` per match when they don't,
+a `Location[]` from go-to-definition when there's more than one match. Only
+new compiler state this needed, either time. Confirmed directly (not
+assumed) that the compiler does **not** build a union type from a branching
+assignment like `x = cond ? Dog.new() : Cat.new()` -- `parse_if`'s merge only
+keeps a type-set match when both branches already agree on the exact same
+set index (`src/compiler.c`), so that shape still isn't resolvable here; the
+only real source of a multi-class union is an explicit source-level
+annotation. See `docs/lsp.md` and `lsp/receiver.c` for the mechanism and its
 scope cuts in full.
 
 Remaining, still open:
 
-- union receiver results with explicit ambiguity handling (`known_type_sets`,
-  several candidate classes);
 - an instance-variable receiver, a chained call's return value as a receiver,
-  or a local reassigned to a different class later in the same scope
-  (`known_type` reflects first declaration, not a later reassignment);
+  a local reassigned to a different class later in the same scope
+  (`known_type`/`known_type_set` reflect first declaration, not a later
+  reassignment), or a branch-merged "union" the compiler doesn't actually
+  track as one;
 - dependency-aware symbol information beyond one combined compilation;
 - incremental compilation only after there is a compiler architecture that can
   benefit from incremental document synchronization.

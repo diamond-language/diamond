@@ -80,29 +80,48 @@ search over a real (if scoped) lexical symbol table:
     entry (just the name token — nothing tracks a declaration's full
     extent).
   - All three also fall back to `lsp/receiver.c` for a method name
-    reached through `receiver.method(...)`, for the three receiver forms
+    reached through `receiver.method(...)`, for the receiver forms
     resolvable without real type inference: a literal class name
     (`Author.find`), `self` inside an instance method or a class-owned
-    `def self.x` (wall 2's `DIAMOND_VALUE_CLASS`, `docs/design.md`), or a
+    `def self.x` (wall 2's `DIAMOND_VALUE_CLASS`, `docs/design.md`), a
     local variable last known (at its own declaration) to hold
     `ClassName.new(...)` — `DiamondScopeLocal.known_type` (`src/vm.h`),
     a byte snapshot of the compiler's own `known_types[reg]` at the
     exact moment `record_scope_locals` closes that local's scope, the
-    only new compiler-side state this needed. `self`'s own enclosing
-    class comes from `DiamondFunction.owner_class` via
-    `DiamondFunction.body_end` (`src/vm.h`, populated at every
-    function-closing site alongside `declaration_start` so even a
-    zero-parameter, zero-local method — a very common `self.foo()`
-    one-liner shape — still has a real body extent to locate `self`
-    within); `receiver_lookup_method` then walks the receiver's class and
-    its superclass chain by name, mirroring `lookup_method`/
-    `lookup_singleton_method` (`src/vm.c`) at the source level. A union
-    type, an instance-variable receiver, a chained call
-    (`foo().bar()`), or any receiver this can't resolve falls back to
-    the ordinary "not found" result instead of a guess. All three also
-    require the *document* to currently compile cleanly — otherwise they
-    return `null`/empty rather than a stale result; the document's own
-    diagnostics already say why.
+    only new compiler-side state this needed — or a parameter (or a
+    local initialized from one) given an explicit union annotation
+    (`pet: Dog | Cat`) — `DiamondScopeLocal.known_type_set` (`src/vm.h`),
+    the same snapshot idea applied to the compiler's own
+    `known_type_sets[reg]`, decoded against the *owning function's own*
+    `type_sets[]` table (a set index means nothing against any other
+    function's). `self`'s own enclosing class comes from
+    `DiamondFunction.owner_class` via `DiamondFunction.body_end`
+    (`src/vm.h`, populated at every function-closing site alongside
+    `declaration_start` so even a zero-parameter, zero-local method — a
+    very common `self.foo()` one-liner shape — still has a real body
+    extent to locate `self` within); `receiver_lookup_method` then walks
+    each candidate class and its superclass chain by name, mirroring
+    `lookup_method`/`lookup_singleton_method` (`src/vm.c`) at the source
+    level. A union receiver resolves against *every* class-kind member
+    that defines the method: hover shows one signature when every match
+    agrees on it textually, or `ClassName#signature` per match when they
+    differ; go-to-definition returns a `Location[]` when there's more
+    than one match (single `Location` otherwise, unchanged); completion
+    lists every candidate's own methods, undeduplicated. **A union type
+    only ever comes from an explicit source-level annotation** — the
+    compiler does not build one from a branching assignment
+    (`x = cond ? Dog.new() : Cat.new()` leaves `x` with no tracked type
+    at all, not a two-member union; `parse_if`'s merge logic only keeps
+    a type-set match when both branches already agree on the exact same
+    set index, `src/compiler.c`), so that shape still falls back to
+    "not found" here, same as before this slice. An instance-variable
+    receiver, a chained call (`foo().bar()`), a local reassigned to a
+    different class after its own declaration, or any other receiver
+    this can't resolve also falls back to the ordinary "not found"
+    result instead of a guess. All three also require the *document* to
+    currently compile cleanly — otherwise they return `null`/empty
+    rather than a stale result; the document's own diagnostics already
+    say why.
 - `textDocument/completion` (`lsp/completion.c`) suggests every
   top-level function, class, module, and interface in the whole compiled program (not just this
   document's own — `lib/core.di`'s prelude and anything pulled in via
@@ -225,14 +244,17 @@ exit-without-shutdown edge cases.
 
 ## What's deliberately out of scope so far
 
-- **`receiver.method(...)` support beyond the three resolvable receiver
-  forms above** — a union/ambiguous receiver type (`known_type_sets`,
-  several candidate classes), an instance-variable receiver (`@item.
-  foo()`), a receiver that's itself a call's return value
-  (`make_box().get()`), or a local reassigned to a different class
-  later in the same scope (`known_type` reflects the type as of the
-  local's own declaration, not a later reassignment) all still fall back
-  to "not found" rather than resolving.
+- **`receiver.method(...)` support beyond the resolvable receiver forms
+  above** — an instance-variable receiver (`@item.foo()`), a receiver
+  that's itself a call's return value (`make_box().get()`), or a local
+  reassigned to a different class later in the same scope (`known_type`/
+  `known_type_set` reflect the type as of the local's own declaration,
+  not a later reassignment) all still fall back to "not found" rather
+  than resolving. A union receiver *is* now resolved, but only for an
+  explicit source-level `Dog | Cat` annotation — the compiler does not
+  build one from a branching assignment
+  (`x = cond ? Dog.new() : Cat.new()`), so that shape stays unresolved
+  too; see the hover/definition/documentSymbol bullet above for why.
 - **Workspace symbol results for a method name reached through
   `receiver.method(...)`, or for anything needing scope resolution
   beyond a single compiled program's own function/class/local tables.**

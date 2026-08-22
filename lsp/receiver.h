@@ -6,15 +6,21 @@
 #include <stdbool.h>
 #include <stddef.h>
 
-/* Resolves the class named by a `receiver.` expression's receiver, for
- * the three deliberately scoped forms the LSP understands (see
- * docs/lsp.md): a literal class name (`Author.find`), `self` inside an
- * instance method or a class-owned `def self.x` (wall 2,
- * DIAMOND_VALUE_CLASS), or a local variable whose known type at its
- * declaration was `ClassName.new(...)` (DiamondScopeLocal.known_type,
- * src/vm.h). Everything else -- an ivar receiver, a chained call
- * (`foo().bar`), a union/ambiguous type -- deliberately returns false so
- * callers fall back to their existing non-receiver behavior.
+/* Resolves the class(es) named by a `receiver.` expression's receiver,
+ * for the forms the LSP understands (see docs/lsp.md): a literal class
+ * name (`Author.find`), `self` inside an instance method or a
+ * class-owned `def self.x` (wall 2, DIAMOND_VALUE_CLASS), a local
+ * variable whose known type at its declaration was `ClassName.new(...)`
+ * (DiamondScopeLocal.known_type, src/vm.h), or a parameter (or a local
+ * initialized from one) given an explicit union annotation
+ * (`x: Dog | Cat`, DiamondScopeLocal.known_type_set) -- every one of
+ * that union's class-kind members is returned as its own candidate.
+ * Everything else -- an ivar receiver, a chained call (`foo().bar`), a
+ * local reassigned to a different class after its own declaration, or a
+ * "union" that only exists because of a branching assignment (the
+ * compiler doesn't track that as a union at all, see DiamondScopeLocal's
+ * own comment) -- deliberately returns 0 so callers fall back to their
+ * existing non-receiver behavior.
  *
  * `source` is the raw, un-prelude-bundled open-document text (matching
  * what identifier_token_at already tokenizes in hover.c/definition.c).
@@ -25,14 +31,21 @@
  * triggered right after `receiver.` (with the method name partially
  * typed or not yet typed at all), pass the raw cursor offset instead.
  *
- * On success, *class_index is an index into chunk->classes and
- * *is_singleton says whether the receiver's method should be looked up
- * in that class's singleton_methods[] (self inside a class-owned
- * `def self.x`, or a literal class name) or its ordinary methods[]
- * (self inside an instance method, or a local holding an instance). */
-bool receiver_resolve_class(const DiamondProgram *program,
+ * On a match, writes up to `max_candidates` class indices into
+ * `class_indices` (an index into chunk->classes each) and returns how
+ * many -- 0 means no supported receiver form was found. Every candidate
+ * shares one `is_singleton`: whether the receiver's method should be
+ * looked up in each class's singleton_methods[] (self inside a
+ * class-owned `def self.x`, or a literal class name -- always exactly
+ * one candidate) or its ordinary methods[] (self inside an instance
+ * method, or a local holding an instance or union of instances). A
+ * caller only interested in the single-candidate case can just use
+ * element 0 when the return value is 1. `max_candidates` should be at
+ * least DIAMOND_MAX_UNION_TYPES (src/vm.h) to never truncate a real
+ * union's own member count. */
+size_t receiver_resolve_classes(const DiamondProgram *program,
         const DiamondChunk *chunk,const char *source,size_t stop_offset,
-        size_t *class_index,bool *is_singleton);
+        size_t *class_indices,size_t max_candidates,bool *is_singleton);
 
 /* Walks `class_index` and its superclass chain (chunk->classes[i].
  * superclass, UINT8_MAX-terminated) for a method named `name` --

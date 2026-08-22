@@ -399,6 +399,21 @@ typedef struct DiamondScopeLocal {
      * docs/lsp.md), same caveat DiamondScopeLocal's own struct comment
      * already carries for why nothing else in the VM reads this. */
     uint8_t known_type;
+    /* Compiler's own known_type_sets[reg] for this local's register at
+     * the same snapshot moment as known_type above -- meaningful only
+     * relative to the *owning function's own* type_sets[] table (a set
+     * index means nothing against any other function's), unlike
+     * known_type which is globally self-describing. -1 (matching the
+     * compiler's own "no set" sentinel) when there isn't one -- e.g. an
+     * ordinary single-class local. Only ever real for a parameter (or a
+     * local initialized from one) given an explicit `x: Dog | Cat`
+     * union annotation: the compiler does not build a union type from a
+     * branching assignment like `cond ? Dog.new() : Cat.new()` today
+     * (parse_if's merge only keeps a type-set match when both branches
+     * already agree on the exact same set index, src/compiler.c), so
+     * this field stays -1 for that shape even though it reads like it
+     * should hold something. lsp/receiver.c's only reason for existing. */
+    int16_t known_type_set;
 } DiamondScopeLocal;
 
 typedef struct DiamondFunction {

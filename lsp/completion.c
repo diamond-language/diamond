@@ -133,10 +133,13 @@ JsonValue *completion_compute(const DocumentTable *documents,const char *uri,
         okay=push_scope_locals(items,&scratch->entry,cursor_offset);
         for(size_t index=0;okay&&index<scratch->function_count;index++)
             okay=push_scope_locals(items,scratch->functions[index],cursor_offset);
-        size_t class_index;bool is_singleton;
-        if(okay&&receiver_resolve_class(scratch,&chunk,combined,cursor_offset,
-               &class_index,&is_singleton))
-            okay=push_class_methods(items,&chunk,class_index,is_singleton);
+        size_t class_indices[DIAMOND_MAX_UNION_TYPES];bool is_singleton;
+        if(okay) {
+            const size_t candidate_count=receiver_resolve_classes(scratch,&chunk,combined,
+                cursor_offset,class_indices,DIAMOND_MAX_UNION_TYPES,&is_singleton);
+            for(size_t index=0;okay&&index<candidate_count;index++)
+                okay=push_class_methods(items,&chunk,class_indices[index],is_singleton);
+        }
     }
     free(combined);free(path);diamond_source_bundle_free(&bundle);
     if(!okay) {json_free(items);return nullptr;}

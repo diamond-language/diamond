@@ -4423,6 +4423,7 @@ static void record_scope_locals(Compiler *compiler,size_t start_index,
         recorded->valid_start=local->name.start;
         recorded->valid_end=valid_end;
         recorded->known_type=compiler->known_types[local->reg];
+        recorded->known_type_set=compiler->known_type_sets[local->reg];
     }
 }
 

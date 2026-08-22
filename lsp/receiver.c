@@ -120,36 +120,54 @@ static const DiamondFunction *find_enclosing_function(
  * shadowing declaration over an outer one of the same name. */
 static void consider_local_candidate(const DiamondFunction *candidate,
         const char *name,size_t name_length,size_t offset,
-        const DiamondScopeLocal **best,size_t *best_end) {
+        const DiamondScopeLocal **best,size_t *best_end,const DiamondFunction **owner) {
     for(size_t index=0;index<candidate->scope_local_count;index++) {
         const DiamondScopeLocal *local=&candidate->scope_locals[index];
         if(offset<local->valid_start||offset>=local->valid_end)continue;
         if(strlen(local->name)!=name_length||memcmp(local->name,name,name_length)!=0)continue;
-        if(local->valid_end<*best_end) {*best_end=local->valid_end;*best=local;}
+        if(local->valid_end<*best_end) {*best_end=local->valid_end;*best=local;*owner=candidate;}
     }
 }
 
+/* `*owner` receives the DiamondFunction the match's scope_locals entry
+ * belongs to -- a local's own known_type_set (if it has one) only means
+ * anything against *that* function's own type_sets[] table, never
+ * chunk-wide, so a union-receiver caller needs it to decode the set. */
 static const DiamondScopeLocal *find_scope_local(
         const DiamondProgram *program,const DiamondChunk *chunk,
-        const char *name,size_t name_length,size_t offset) {
+        const char *name,size_t name_length,size_t offset,
+        const DiamondFunction **owner) {
     const DiamondScopeLocal *best=nullptr;
     size_t best_end=SIZE_MAX;
-    consider_local_candidate(&program->entry,name,name_length,offset,&best,&best_end);
+    *owner=nullptr;
+    consider_local_candidate(&program->entry,name,name_length,offset,&best,&best_end,owner);
     for(size_t index=0;index<chunk->function_count;index++)
-        consider_local_candidate(chunk->functions[index],name,name_length,offset,&best,&best_end);
+        consider_local_candidate(chunk->functions[index],name,name_length,offset,&best,&best_end,owner);
     return best;
 }
 
-bool receiver_resolve_class(const DiamondProgram *program,
+/* True iff `known_type` (a compiler known_types[reg]-shaped byte) names
+ * a specific, in-range class -- shared by the single-class known_type
+ * path and by each member of a known_type_set's own class-kind check. */
+static bool decode_class_type(const DiamondChunk *chunk,uint8_t known_type,size_t *class_index) {
+    if(known_type<DIAMOND_TYPE_CLASS_BASE||known_type>=DIAMOND_TYPE_VARIABLE_BASE)return false;
+    const size_t index=(size_t)(known_type-DIAMOND_TYPE_CLASS_BASE);
+    if(index>=chunk->class_count)return false;
+    *class_index=index;
+    return true;
+}
+
+size_t receiver_resolve_classes(const DiamondProgram *program,
         const DiamondChunk *chunk,const char *source,size_t stop_offset,
-        size_t *class_index,bool *is_singleton) {
+        size_t *class_indices,size_t max_candidates,bool *is_singleton) {
+    if(max_candidates==0)return 0;
     const ReceiverContext context=classify_receiver(source,stop_offset);
     if(context.kind==RECEIVER_SELF) {
         const DiamondFunction *enclosing=find_enclosing_function(program,chunk,context.self_offset);
-        if(enclosing==nullptr||enclosing->owner_class==UINT8_MAX)return false;
-        *class_index=enclosing->owner_class;
+        if(enclosing==nullptr||enclosing->owner_class==UINT8_MAX)return 0;
+        class_indices[0]=enclosing->owner_class;
         *is_singleton=function_is_singleton_of(chunk,&chunk->classes[enclosing->owner_class],enclosing);
-        return true;
+        return 1;
     }
     if(context.kind==RECEIVER_NAME) {
         char name[DIAMOND_MAX_FUNCTION_NAME];
@@ -159,22 +177,37 @@ bool receiver_resolve_class(const DiamondProgram *program,
         name[length]='\0';
         for(size_t index=0;index<chunk->class_count;index++) {
             if(strcmp(chunk->classes[index].name,name)==0) {
-                *class_index=index;*is_singleton=true;
-                return true;
+                class_indices[0]=index;*is_singleton=true;
+                return 1;
             }
         }
+        const DiamondFunction *owner=nullptr;
         const DiamondScopeLocal *local=
-            find_scope_local(program,chunk,name,length,context.name_span.start);
-        if(local==nullptr)return false;
-        if(local->known_type<DIAMOND_TYPE_CLASS_BASE||
-           local->known_type>=DIAMOND_TYPE_VARIABLE_BASE)
-            return false;
-        const size_t index=(size_t)(local->known_type-DIAMOND_TYPE_CLASS_BASE);
-        if(index>=chunk->class_count)return false;
-        *class_index=index;*is_singleton=false;
-        return true;
+            find_scope_local(program,chunk,name,length,context.name_span.start,&owner);
+        if(local==nullptr)return 0;
+        *is_singleton=false;
+        size_t single_class;
+        if(decode_class_type(chunk,local->known_type,&single_class)) {
+            class_indices[0]=single_class;
+            return 1;
+        }
+        /* Not a single definite class -- see whether it's an explicit
+         * union annotation (`x: Dog | Cat`) instead. known_type_set only
+         * means anything against the function that owns this scope
+         * entry's own type_sets[] table (see find_scope_local's own
+         * comment), never chunk-wide. */
+        if(local->known_type_set<0||owner==nullptr)return 0;
+        if((size_t)local->known_type_set>=owner->type_set_count)return 0;
+        const DiamondTypeSet *set=&owner->type_sets[(size_t)local->known_type_set];
+        size_t found=0;
+        for(size_t index=0;index<set->count&&found<max_candidates;index++) {
+            size_t member_class;
+            if(decode_class_type(chunk,set->members[index].id,&member_class))
+                class_indices[found++]=member_class;
+        }
+        return found;
     }
-    return false;
+    return 0;
 }
 
 const DiamondMethod *receiver_lookup_method(const DiamondChunk *chunk,

@@ -162,29 +162,35 @@ JsonValue *definition_compute(const DocumentTable *documents,const char *uri,
             found=true;
         }
     }
-    if(!found) {
+    const DiamondFunction *matched_functions[DIAMOND_MAX_UNION_TYPES];
+    size_t match_count=0;
+    if(found) {
+        /* A top-level name is unambiguous by construction (single
+         * inheritance, no overloading) -- always exactly one match. */
+        matched_functions[match_count++]=nullptr;
+    } else {
         /* Not a top-level function/class/interface/module name -- see
          * whether `identifier` is instead a method name reached through
-         * `receiver.method(...)` (lsp/receiver.h). */
+         * `receiver.method(...)` (lsp/receiver.h), possibly against
+         * several candidate classes for a union receiver. */
         const size_t identifier_offset=path!=nullptr
             ? diamond_resolve_source_position(path,combined,&bundle,user_offset,
                   identifier_line,identifier_column)
             : user_offset+raw_offset_for(text,length,identifier_line,identifier_column);
-        size_t class_index;bool is_singleton;
-        if(identifier_offset!=SIZE_MAX&&
-           receiver_resolve_class(scratch,&chunk,combined,identifier_offset,&class_index,&is_singleton)) {
+        size_t class_indices[DIAMOND_MAX_UNION_TYPES];bool is_singleton;
+        const size_t candidate_count=identifier_offset!=SIZE_MAX
+            ? receiver_resolve_classes(scratch,&chunk,combined,identifier_offset,
+                  class_indices,DIAMOND_MAX_UNION_TYPES,&is_singleton)
+            : 0;
+        for(size_t index=0;index<candidate_count;index++) {
             const DiamondMethod *method=
-                receiver_lookup_method(&chunk,class_index,is_singleton,name,name_length);
-            if(method!=nullptr&&
-               chunk.functions[method->function_index]->declaration_start>=user_offset) {
-                const DiamondFunction *function=chunk.functions[method->function_index];
-                declaration_line=function->declaration_line;
-                declaration_column=function->declaration_column;
-                declaration_start=function->declaration_start;
-                declaration_name_length=strlen(function->name);
-                found=true;
-            }
+                receiver_lookup_method(&chunk,class_indices[index],is_singleton,name,name_length);
+            if(method==nullptr)continue;
+            const DiamondFunction *function=chunk.functions[method->function_index];
+            if(function->declaration_start<user_offset)continue;
+            matched_functions[match_count++]=function;
         }
+        found=match_count>0;
     }
     if(!found) {
         free(combined);free(path);diamond_source_bundle_free(&bundle);
@@ -192,29 +198,51 @@ JsonValue *definition_compute(const DocumentTable *documents,const char *uri,
     }
 
     const char *display_name=path!=nullptr?path:uri;
-    const DiamondDiagnostic synthetic={
-        .span={.start=declaration_start,.length=declaration_name_length,
-               .line=declaration_line,.column=declaration_column},
-        .message="",
-    };
-    const DiamondResolvedLocation resolved=diamond_resolve_diagnostic_location(
-        display_name,combined,synthetic,&bundle,user_offset);
-
-    char *resolved_uri_owned=nullptr;
-    const char *result_uri=uri;
-    if(strcmp(resolved.path,display_name)!=0) {
-        resolved_uri_owned=diagnostics_path_to_uri(resolved.path);
-        if(resolved_uri_owned==nullptr) {
-            free(combined);free(path);diamond_source_bundle_free(&bundle);
-            return nullptr;
+    JsonValue *locations[DIAMOND_MAX_UNION_TYPES];
+    for(size_t index=0;index<match_count;index++) {
+        /* matched_functions[index]==nullptr means the top-level-name
+         * path already populated declaration_line/column/start/
+         * declaration_name_length directly -- otherwise pull them from
+         * the resolved receiver method's own DiamondFunction. */
+        uint32_t match_line=declaration_line,match_column=declaration_column;
+        size_t match_start=declaration_start,match_name_length=declaration_name_length;
+        if(matched_functions[index]!=nullptr) {
+            match_line=matched_functions[index]->declaration_line;
+            match_column=matched_functions[index]->declaration_column;
+            match_start=matched_functions[index]->declaration_start;
+            match_name_length=strlen(matched_functions[index]->name);
         }
-        result_uri=resolved_uri_owned;
+        const DiamondDiagnostic synthetic={
+            .span={.start=match_start,.length=match_name_length,
+                   .line=match_line,.column=match_column},
+            .message="",
+        };
+        const DiamondResolvedLocation resolved=diamond_resolve_diagnostic_location(
+            display_name,combined,synthetic,&bundle,user_offset);
+        char *resolved_uri_owned=nullptr;
+        const char *result_uri=uri;
+        if(strcmp(resolved.path,display_name)!=0) {
+            resolved_uri_owned=diagnostics_path_to_uri(resolved.path);
+            if(resolved_uri_owned==nullptr) {
+                for(size_t cleanup=0;cleanup<index;cleanup++)json_free(locations[cleanup]);
+                free(combined);free(path);diamond_source_bundle_free(&bundle);
+                return nullptr;
+            }
+            result_uri=resolved_uri_owned;
+        }
+        locations[index]=location_result(result_uri,resolved.line,resolved.column,match_name_length);
+        free(resolved_uri_owned);
     }
-    JsonValue *result=location_result(result_uri,resolved.line,resolved.column,
-        declaration_name_length);
-    free(resolved_uri_owned);
     free(combined);
     free(path);
     diamond_source_bundle_free(&bundle);
+    if(match_count==1)return locations[0];
+    JsonValue *result=json_array();
+    if(result==nullptr) {
+        for(size_t index=0;index<match_count;index++)json_free(locations[index]);
+        return nullptr;
+    }
+    for(size_t index=0;index<match_count;index++)
+        if(!json_array_push(result,locations[index])) {json_free(result);return nullptr;}
     return result;
 }
