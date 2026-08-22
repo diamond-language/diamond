@@ -287,6 +287,30 @@ def run_tests()
     db.close()
   end
 
+  def test_nested_transaction_with_explicit_postgresql_visitor(conninfo)
+    db = PostgreSQL.open(conninfo)
+    db.execute("DROP TABLE IF EXISTS ar_pg_nested_authors")
+    db.execute("CREATE TABLE ar_pg_nested_authors (id SERIAL PRIMARY KEY, name TEXT, country TEXT)")
+    repository = ActiveRecord::Repository.new(Arel.table("ar_pg_nested_authors"), map_author)
+
+    ActiveRecord::Transaction.run(db) do
+      repository.create(db, {"name": "Ada", "country": "UK"})
+      failed = false
+      begin
+        ActiveRecord::Transaction.run_nested(db, "before_grace") do
+          repository.create(db, {"name": "Grace", "country": "USA"})
+          raise RuntimeError.new("oops")
+        end
+      rescue error: RuntimeError
+        failed = true
+      end
+      Minitest.assert_equal(true, failed)
+    end
+    Minitest.assert_equal(1, repository.all(db).length())
+    Minitest.assert_equal("Ada", repository.all(db)[0].name())
+    db.close()
+  end
+
   suite = Minitest.new()
   suite.test("default visitor breaks on a real dialect difference") do
     test_default_visitor_breaks_on_a_real_dialect_difference(conninfo)
@@ -308,6 +332,9 @@ def run_tests()
   end
   suite.test("batches with explicit Arel::PostgreSQLVisitor") do
     test_batches_with_explicit_postgresql_visitor(conninfo)
+  end
+  suite.test("nested transaction with explicit Arel::PostgreSQLVisitor") do
+    test_nested_transaction_with_explicit_postgresql_visitor(conninfo)
   end
   suite.run!()
 end

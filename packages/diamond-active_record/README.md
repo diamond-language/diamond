@@ -215,6 +215,42 @@ ActiveRecord::Transaction.run(db) do
 end
 ```
 
+`ActiveRecord::Transaction.run_nested(db, savepoint_name, callback)` is
+for use *inside* an already-running `#run` (or any transaction the
+caller already opened itself) -- databases don't support nesting a real
+`BEGIN`/`COMMIT`, so this runs `callback` inside a named `SAVEPOINT`
+instead, releasing it on a normal return or rolling back to it (not the
+whole outer transaction) on any exception:
+
+```diamond
+ActiveRecord::Transaction.run(db) do
+  repository.create(db, {"name": "Ada", "country": "UK"})
+  begin
+    ActiveRecord::Transaction.run_nested(db, "before_grace") do
+      repository.create(db, {"name": "Grace", "country": "USA"})
+      raise RuntimeError.new("oops")
+    end
+  rescue error: RuntimeError
+    # "Ada" is still committed once the outer block returns; "Grace" is not.
+  end
+end
+```
+
+Verified directly that `SAVEPOINT`/`RELEASE SAVEPOINT`/`ROLLBACK TO
+SAVEPOINT` are identical syntax and semantics across all three supported
+dialects (SQLite, PostgreSQL, MariaDB), so `#run_nested` needs no
+visitor/dialect parameter the way `Repository` does. There is no
+automatic nesting detection -- there's no ambient "am I already inside a
+transaction" state exposed to Diamond code to detect that with, and
+guessing from some other signal would be exactly the kind of implicit
+magic this package avoids everywhere else, so the caller always says
+which one it means. `savepoint_name` is restricted to ASCII letters,
+digits, and underscores, and can't start with a digit -- a `SAVEPOINT`
+name has no bind-parameter form in any of the three dialects (the same
+reason a table or column name can't be bound either), so this is
+validated before ever being interpolated into SQL text, closing off that
+injection surface entirely rather than trusting the caller to.
+
 There's no model base class here to instrument arbitrary setters on --
 `mapper` builds whatever class the caller wants, opaque to this package --
 so `ActiveRecord::DirtyAttributes` tracks changes on a plain attributes
