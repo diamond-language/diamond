@@ -35,11 +35,26 @@ A physical file split alone is not a performance improvement: ordinary
 
 ### Continue the Arel relational algebra
 
-The SQLite-first Arel package now has expression nodes, grouping, joins,
-correlated subqueries, CTEs, set operations, and write statement managers. Its
-remaining forward plan lives in
-[../packages/arel/ROADMAP.md](../packages/arel/ROADMAP.md), currently focused on
-measured dialect grammar seams and conformance coverage.
+The Arel package now has expression nodes, grouping, joins, correlated
+subqueries, CTEs, set operations, and write statement managers, rendered
+through three dialect visitors -- `Arel::SQLiteVisitor` (the original,
+still the default), `Arel::PostgreSQLVisitor`, and `Arel::MariaDBVisitor`
+(named for the server it was actually verified against, since some of
+what it supports, like `RETURNING`, is MariaDB-specific rather than true
+of MySQL generally). Each was verified against a live server, not
+assumed from similarly-named syntax; the four items this section used to
+call "deferred expression decisions" (per-column `DEFAULT`,
+named-constraint conflict targets, parameterized `CAST` types, additional
+operators) are resolved. `diamond-active_record` (`packages/
+diamond-active_record/`) now sits on top of Arel as an explicit,
+low-magic persistence layer (`Repository`, four association kinds,
+optimistic locking, eager loading, batch iteration, nested transactions
+via savepoints), plus an optional `ActiveRecord::Model` layer for a more
+Rails-familiar surface. Remaining forward plan lives in
+[../packages/arel/ROADMAP.md](../packages/arel/ROADMAP.md): a fourth
+dialect (real work now, since MariaDB was the one with an existing
+native driver to build on) and the still-deferred "additional operators"
+item.
 
 ### Improve receiver-aware language tooling
 
@@ -236,9 +251,24 @@ compiler.
 ### Classes as ordinary runtime objects
 
 Class and module metadata remain program-owned structures rather than ordinary
-instances of `Class`/`Module`. Moving to a fully reified metaobject model would
-affect dispatch, GC ownership, constants, self-hosting, and cross-program values;
-it should be motivated by a concrete capability rather than Ruby resemblance.
+instances of `Class`/`Module` in the general sense -- there is still no way to
+pass a class as an ordinary argument, store one as an attribute, or name one
+dynamically by a computed string, and a fully reified metaobject model (every
+class a real, GC-owned heap instance, first-class the way Ruby's `Class` is)
+remains undone. It would affect dispatch, GC ownership, constants,
+self-hosting, and cross-program values, and should stay motivated by a
+concrete capability rather than Ruby resemblance -- which is exactly what
+happened for one narrow slice of it: `self` inside a class-owned `def self.x`
+method now evaluates to a lightweight `DIAMOND_VALUE_CLASS` value (a 1-byte
+class index carried in `DiamondValue`'s existing union, no heap allocation,
+no GC changes), and `self.foo(...)` there dispatches virtually against it --
+built specifically so `ActiveRecord::Model` could provide shared, inherited
+class-level methods (`self.find`/`.all`/`.where`/`.create`/`.find_each`/
+`.find_in_batches`) instead of requiring each subclass to redeclare them. See
+`docs/design.md` and `docs/syntax.md` for the full mechanism and its
+deliberately narrow scope. General reification -- classes as fully ordinary,
+freely-passable runtime values -- is still the larger, undone question this
+section originally posed.
 
 ### Stable compiler boundary
 
