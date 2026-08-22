@@ -20,7 +20,7 @@ away the real language constraints already found and documented in
   tracking (`DirtyAttributes`), validators and before/after-save hooks
   (`Repository`), batch iteration, and nested transactions.
 
-Two real, already-confirmed Diamond limits shape everything below:
+One real, already-confirmed Diamond limit shapes everything below:
 
 - **No `define_method`/`method_missing` in the general sense.** There is
   no way to synthesize a new method body from a symbol at compile or
@@ -32,55 +32,42 @@ Two real, already-confirmed Diamond limits shape everything below:
   a large, separate design question, not a diamond-active_record task.
   Don't attempt this without first scoping *that* as its own language
   feature.
-- **No assignment-syntax sugar for a method call.** `ada.name=("Ada
-  Lovelace")` needs the explicit call parens -- `ada.name = "Ada
-  Lovelace"` doesn't parse today. This is the single most visible
-  difference from real Ruby in every example in `README.md`.
+
+Writer-call assignment sugar landed: `receiver.attr = expr` now desugars
+at parse time (inside `parse_invoke`, `src/compiler.c`) into the
+writer-method call `receiver.attr=(expr)` it always compiled to. Every
+`ActiveRecord::Model` example in `README.md` has been rewritten from
+`ada.name=("Ada Lovelace")` to the real Ruby spelling `ada.name = "Ada
+Lovelace"`. See `docs/syntax.md`'s "Writer-call assignment sugar" section
+and `tests/cases/writer_call_assignment_sugar.di` for the language-level
+details (in particular: an array-literal right-hand side, `attr = [1,
+2]`, needed a lookahead to avoid being misread as the pre-existing,
+never-actually-used generic writer-call syntax `attr=[T](value)`).
+
+A lazy, chainable `ActiveRecord::Relation` also landed: `Model.all`/
+`Model.where` no longer take `db` and no longer execute immediately --
+they return a `Relation` wrapping the same `Arel::Query` `Repository`
+already builds internally, chaining `.where(...)`/`.order(...)`/
+`.limit(...)`/`.take(...)`/`.skip(...)`/`.offset(...)` (all forwarded
+straight to `Arel::Query`'s own already-immutable methods, see
+`packages/arel/README.md`) and executing only at a terminal `.to_a(db)`/
+`.first(db)`/`.count(db)`. `Repository`'s own eager `#all(db)`/
+`#where(db, conditions)` are unchanged (still used by
+`HasMany`/`HasOne`/`BelongsTo`); `Repository#relation()` is the new entry
+point `Model.all`/`Model.where` build on. This was a breaking change to
+`Model`'s class-level `self.all`/`self.where` signatures -- every in-repo
+call site was updated (`tests/cases/diamond_active_record_model.di`,
+`packages/diamond-active_record/test_postgres.di`) to the new
+`Model.all().to_a(db)`/`Model.where(conditions).to_a(db)` shape. See
+`tests/cases/diamond_active_record_relation.di` and `README.md`'s new
+`ActiveRecord::Relation` section.
 
 ## Priority order for next session
 
-### 1. Writer-call assignment sugar (language feature, do this first)
+### 1. Smaller ergonomic polish
 
-The highest-leverage single change: teach the compiler that
-`receiver.identifier = expr` (no existing local/`@ivar`/`@@cvar`
-assignment shape matches, and `identifier` isn't followed by `(`) desugars
-into `receiver.identifier=(expr)` -- exactly the writer-method-call
-`parse_invoke` (`src/compiler.c`) already knows how to compile, just
-reached from different surface syntax. This is a compiler-only change
-(new lookahead predicate alongside `assignment_ahead`/`index_assignment_
-ahead`, new `compile_writer_call_assignment`-shaped function reusing
-`parse_invoke`'s own call-emission tail), in the same spirit as this
-session's indexed-compound-assignment work -- research the exact
-parse-ahead disambiguation needed (a bare `obj.attr` followed by `=` needs
-to be distinguished from a compound-assignment-eligible local, and from
-an ordinary `obj.attr == other` comparison) before writing a plan.
-
-Once this lands, every `ActiveRecord::Model` example in `README.md`
-gets rewritten from `ada.name=("Ada Lovelace")` to the real Ruby spelling
-`ada.name = "Ada Lovelace"` -- the biggest single visual win available.
-
-### 2. A lazy, chainable `Relation` for the class-level query interface
-
-Today `Model.where(db, conditions)` executes immediately and returns rows.
-Real ActiveRecord's `where`/`order`/`limit`/`.first`/`.find_by` chain
-lazily (`User.where(active: true).order(:name).limit(10)`) and only hit
-the database once actually enumerated (`.to_a`, `.each`, `.first`, ...).
-
-Design an `ActiveRecord::Relation` wrapping the same `Arel` query object
-`Repository` already builds internally, exposing `.where(...)`/`.order(...)`/
-`.limit(...)`/`.first(db)`/`.to_a(db)`/`.count(db)` as chain methods that
-just keep composing the underlying Arel query (`Arel.from(table).where(...)`,
-etc. -- all already exposed), executing only at the terminal call. `Model`'s
-own `self.where` would return one of these instead of eager rows.
-This is a real design task: read `packages/arel/README.md`'s own
-query-builder API first (it's already immutable/chainable at the Arel
-level -- `Relation` mostly needs to be a thin per-model wrapper that maps
-rows through each model's own `#to_attributes`-inverse constructor,
-not a new query engine).
-
-### 3. Smaller ergonomic polish (do alongside or after #2)
-
-- `find_by(db, conditions)` -- `where(...).first`, one line once #2 exists;
+- `find_by(db, conditions)` -- `where(...).first`, one line now that
+  `Relation` exists;
 - bang methods (`save!`, `create!`, `destroy!`) raising instead of
   returning a falsy/unsaved result -- check what `#save` currently
   returns on failure first;
@@ -89,7 +76,7 @@ not a new query engine).
   test suites already exercise real JSON, no new plumbing needed);
 - document the "scope" convention explicitly: since `scope :active, ->
   { ... }`-style macros aren't reachable (see the wall above), an
-  ordinary `def self.active(db) = self.where(db, {"active": true})` on
+  ordinary `def self.active() = self.where({"active": true})` on
   each model already gets the same practical result today -- worth a
   README callout so users don't go looking for a `scope` macro that
   isn't coming.

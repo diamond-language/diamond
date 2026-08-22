@@ -239,7 +239,7 @@ def run_tests()
     Minitest.assert_equal(false, ada.persisted?())
     ada.save(db)
     Minitest.assert_equal(true, ada.persisted?())
-    Minitest.assert_equal(1, PgAuthor.all(db).length())
+    Minitest.assert_equal(1, PgAuthor.all().to_a(db).length())
 
     reloaded = PgAuthor.find(db, ada.id())
     Minitest.assert_equal("Ada", reloaded.name())
@@ -249,7 +249,7 @@ def run_tests()
     Minitest.assert_equal("Ada Lovelace", PgAuthor.find(db, ada.id()).name())
 
     ada.destroy(db)
-    Minitest.assert_equal(0, PgAuthor.all(db).length())
+    Minitest.assert_equal(0, PgAuthor.all().to_a(db).length())
     db.close()
   end
 

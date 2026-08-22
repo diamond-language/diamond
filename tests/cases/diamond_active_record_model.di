@@ -71,13 +71,13 @@ def run_tests()
   # Class-level, Rails-shaped surface.
   Author.create(db, {"name": "Ada", "country": "UK"})
   Author.create(db, {"name": "Grace", "country": "USA"})
-  Minitest.assert_equal(2, Author.all(db).length())
+  Minitest.assert_equal(2, Author.all().to_a(db).length())
 
   ada = Author.find(db, 1)
   Minitest.assert_equal("Ada", ada.name())
   Minitest.assert_equal(true, ada.persisted?())
 
-  uk_authors = Author.where(db, {"country": "UK"})
+  uk_authors = Author.where({"country": "UK"}).to_a(db)
   Minitest.assert_equal(1, uk_authors.length())
   Minitest.assert_equal("Ada", uk_authors[0].name())
 
@@ -92,7 +92,7 @@ def run_tests()
   marie = Author.new({"name": "Marie", "country": "France"})
   Minitest.assert_equal(false, marie.persisted?())
   marie.save(db)
-  Minitest.assert_equal(3, Author.all(db).length())
+  Minitest.assert_equal(3, Author.all().to_a(db).length())
 
   # Association readers, one line each on the model itself, no macro.
   Book.create(db, {"title": "Sketch of the Analytical Engine", "author_id": 1})
@@ -106,9 +106,9 @@ def run_tests()
   Minitest.assert_equal("Ada Lovelace", book_author.name())
 
   # #destroy.
-  Minitest.assert_equal(3, Author.all(db).length())
+  Minitest.assert_equal(3, Author.all().to_a(db).length())
   marie.destroy(db)
-  Minitest.assert_equal(2, Author.all(db).length())
+  Minitest.assert_equal(2, Author.all().to_a(db).length())
 
   db.close()
 end

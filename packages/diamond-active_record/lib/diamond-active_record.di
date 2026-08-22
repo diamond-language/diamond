@@ -28,6 +28,62 @@ class StaleObjectError < StandardError
   end
 end
 
+# A thin, lazy wrapper over an Arel::Query -- built by Repository#relation
+# below (defined first: Diamond resolves a class name referenced inside a
+# method body at compile time, so this has to come before Repository, not
+# just before Repository#relation's own definition). Not constructed by
+# hand against an arbitrary query/mapper/visitor the way HasMany/HasOne
+# are meant to be, though nothing stops that. Every chain method here
+# (#where/#order/#take/#skip) just forwards to the same method
+# Arel::Query already has (packages/arel/README.md's own "immutable,
+# chainable" query builder) and wraps the new Query it returns in a new
+# Relation -- no query-building logic lives here at all. Nothing hits the
+# database until #to_a/#first/#count, at which point rows are mapped
+# through the same @mapper Repository#all/#where already use.
+class Relation
+  def initialize(query, mapper: Callable[1], visitor = nil)
+    @query = query
+    @mapper = mapper
+    @visitor = visitor
+  end
+
+  # Query#where already accepts a plain Hash and ANDs its keys together
+  # via `eq` (see packages/arel/README.md's "Compatibility where"), so
+  # there is no predicate-building of this Relation's own -- unlike
+  # Repository#where below, which still hand-rolls that loop for its own
+  # eager, non-Relation callers.
+  def where(conditions) = Relation.new(@query.where(conditions), @mapper, @visitor)
+  def order(column_or_columns) = Relation.new(@query.order(column_or_columns), @mapper, @visitor)
+  def take(n: Int) = Relation.new(@query.take(n), @mapper, @visitor)
+  def limit(n: Int) = self.take(n)
+  def skip(n: Int) = Relation.new(@query.skip(n), @mapper, @visitor)
+  def offset(n: Int) = self.skip(n)
+
+  def to_a(db)
+    rows = @query.to_a(db, @visitor)
+    mapped = []
+    index = 0
+    while index < rows.length()
+      mapped.push(@mapper(rows[index]))
+      index += 1
+    end
+    mapped
+  end
+
+  # Deliberately does not add an implicit `ORDER BY` (e.g. by primary
+  # key) the way real ActiveRecord's #first does -- this package has no
+  # schema inspection or naming convention to build one from (see
+  # README.md), so #first without a preceding #order returns whatever row
+  # the database happens to return first. Chain #order(...) first for a
+  # deterministic result.
+  def first(db)
+    rows = self.take(1).to_a(db)
+    if rows.length() == 0 then nil else rows[0] end
+  end
+
+  def count(db) = @query.count(db, @visitor)
+end
+
 # Explicit persistence primitives over Arel. This package deliberately does
 # not inspect schemas, infer columns, or dispatch through missing methods.
 class Repository
@@ -149,6 +205,12 @@ class Repository
     end
     mapped
   end
+
+  # A lazy, chainable starting point over this repository's own table --
+  # see Relation below. Unlike #all/#where above (which hit the database
+  # immediately), nothing here runs until a terminal call
+  # (#to_a/#first/#count) on the Relation it returns.
+  def relation() = Relation.new(Arel.from(@table), @mapper, @visitor)
 
   def create(db, attributes: Hash)
     self.validate!(attributes)
@@ -751,12 +813,19 @@ class Model
   # was made through, so an inherited self.repository() reading
   # Model's own @@repository would give every subclass the same shared
   # slot instead of its own. See README.md for the full worked example.
+  #
+  # self.all/self.where are lazy: they return a Relation (see above)
+  # rather than rows, and take no `db` -- nothing hits the database until
+  # a terminal call (#to_a(db)/#first(db)/#count(db)) on the Relation
+  # they hand back, so `.order(...)`/`.limit(...)`/further `.where(...)`
+  # can be chained on first, the same way real ActiveRecord's do:
+  # `Author.where({"country": "UK"}).order(...).limit(10).to_a(db)`.
   def self.repository()
     raise RuntimeError.new("Model subclass must override self.repository")
   end
   def self.find(db, id) = self.repository().find(db, id)
-  def self.all(db) = self.repository().all(db)
-  def self.where(db, conditions: Hash) = self.repository().where(db, conditions)
+  def self.all() = self.repository().relation()
+  def self.where(conditions: Hash) = self.repository().relation().where(conditions)
   def self.create(db, attributes: Hash) = self.repository().create(db, attributes)
   def self.find_each(db, callback: Callable[1], batch_size = 1000)
     self.repository().find_each(db, callback, batch_size)

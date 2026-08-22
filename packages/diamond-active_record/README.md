@@ -308,7 +308,9 @@ no cursor object or enumerator to hold open across calls.
 
 `ActiveRecord::Model` exposes the same two as shared, inherited
 `self.find_each`/`self.find_in_batches` class methods, alongside
-`self.find`/`.all`/`.where`/`.create`.
+`self.find`/`.all`/`.where`/`.create`. Unlike `Repository`'s own `#all`/
+`#where` above, `Model`'s `self.all`/`self.where` are lazy: see
+`ActiveRecord::Relation` below.
 
 There is no schema inspection, naming convention, or object introspection,
 and no implicit query scope.
@@ -379,6 +381,31 @@ ada.save(db)
 ada.books(db)
 ada.destroy(db)
 ```
+
+`self.all`/`self.where` are lazy and chainable -- unlike every other
+`Model` class method above, neither takes `db`, since nothing runs until
+a terminal call on the `ActiveRecord::Relation` they return:
+
+```diamond
+name = Arel.table("authors").column("name")
+uk_authors = Author.where({"country": "UK"}).order(name.asc()).limit(10)
+uk_authors.to_a(db)                         # only now does any SQL actually run
+
+Author.where({"country": "UK"}).first(db)   # a single Author, or nil
+Author.all().count(db)                      # an Int
+```
+
+`ActiveRecord::Relation` is a thin wrapper over the same `Arel::Query`
+`Repository` already builds internally (see `packages/arel/README.md` --
+`Arel::Query` is itself already immutable and chainable, so `Relation`
+adds no query-building logic of its own, just `#where`/`#order`/`#take`/
+`#limit`/`#skip`/`#offset` forwarding to it and mapping rows through this
+model's own row-mapper function at the three terminal calls, `#to_a(db)`/
+`#first(db)`/`#count(db)`). Deliberately, `#first(db)` does **not** add an
+implicit `ORDER BY` the way real ActiveRecord's does -- there is no schema
+inspection or naming convention here to build one from, so `#first`
+without a preceding `.order(...)` returns whatever row the database
+happens to return first.
 
 Every subclass overrides two **instance** methods (`#repository`,
 `#to_attributes`) so `Model`'s shared `#save`/`#destroy`/`#persisted?`/
