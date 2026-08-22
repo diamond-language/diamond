@@ -256,21 +256,25 @@ Two real Diamond constraints shaped what this can and can't do, verified
 directly rather than assumed:
 
 - Diamond classes have fixed, compile-time method tables -- there is no
-  `define_method`/`method_missing`, and the one runtime mechanism that
-  exists (`ClassName.redefine_method`) can only repoint an *existing*
-  method slot, never add a new one. So there is no `has_many :books`
-  macro that conjures a real `books` method into existence -- every
-  method a model exposes, associations included, is an ordinary `def`
-  you write yourself, same as any other Diamond class.
+  `define_method`/`method_missing` in the general sense Ruby has it (a
+  narrower runtime `ClassName.define_method` does exist, see
+  `docs/syntax.md`, but it can only expose an *already-compiled* method
+  body under a new name, not synthesize new logic from a symbol like
+  `:books`). So there is still no `has_many :books` macro that conjures a
+  real `books` method into existence from nothing -- every method a model
+  exposes, associations included, is an ordinary `def` you write
+  yourself, same as any other Diamond class.
 - Instance methods dispatch virtually (confirmed directly: a shared
-  method calling `self.foo()` correctly reaches a subclass's override),
-  but `def self.x` class methods do not -- `self` isn't even accessible
-  inside one. `Model`'s shared behavior (`#save`, `#destroy`,
-  `#persisted?`, `#id`) is all instance-side for exactly this reason.
-  The class-level surface (`Author.find`/`.all`/`.where`/`.create`)
-  can't be inherited the same way, so each model writes its own short
-  one-line forwarders -- the one real per-model boilerplate this layer
-  couldn't eliminate.
+  method calling `self.foo()` correctly reaches a subclass's override).
+  `def self.x` class methods originally couldn't do this at all -- `self`
+  wasn't even accessible inside one -- but this has since been fixed at
+  the language level (see `docs/syntax.md`/`docs/design.md`): `self`
+  inside a class-owned singleton method now holds the actual receiver
+  class, and `self.foo(...)` there dispatches virtually the same way an
+  instance method's `self.foo()` already did. This is what lets `Model`
+  itself provide `self.find`/`.all`/`.where`/`.create` as shared,
+  inherited methods below, rather than requiring each model to write its
+  own copies.
 
 ```diamond
 class Author < ActiveRecord::Model
@@ -289,10 +293,6 @@ class Author < ActiveRecord::Model
   def self.configure(repository: ActiveRecord::Repository)
     @@repository = repository
   end
-  def self.find(db, id) = repository().find(db, id)
-  def self.all(db) = repository().all(db)
-  def self.where(db, conditions: Hash) = repository().where(db, conditions)
-  def self.create(db, attributes: Hash) = repository().create(db, attributes)
 
   def books(db) = self.has_many(Book.repository(), "author_id").all(db, self.id())
 end
@@ -302,8 +302,8 @@ Author.configure(ActiveRecord::Repository.new(Arel.table("authors"), build_autho
 ```
 
 ```diamond
-Author.create(db, {"name": "Ada", "country": "UK"})
-ada = Author.find(db, 1)
+Author.create(db, {"name": "Ada", "country": "UK"})  # Model's own self.create, inherited
+ada = Author.find(db, 1)                             # likewise self.find
 ada.name=("Ada Lovelace")   # attribute writers are `name=(value)`, not `name = value` --
 ada.save(db)                # Diamond has no assignment-syntax sugar for a method call
 ada.books(db)
@@ -312,10 +312,17 @@ ada.destroy(db)
 
 Every subclass overrides two **instance** methods (`#repository`,
 `#to_attributes`) so `Model`'s shared `#save`/`#destroy`/`#persisted?`/
-`#id` reach them through real virtual dispatch, and writes its own short
-**class**-method forwarders (`self.find`/`.all`/`.where`/`.create`,
-plus `self.configure` to set `@@repository` once) since those can't be
-inherited. `#to_attributes` is the reverse of a `Repository`'s own
+`#id` reach them through real virtual dispatch. `self.find`/`.all`/
+`.where`/`.create` are shared the same way, at the **class** level, and
+don't need to be repeated per model. The one thing every model still
+writes for itself is `self.repository()`/`self.configure(repository)` --
+`@@repository` is a class variable, and Diamond scopes `@@cvar` storage
+to whichever class the code reading/writing it is defined in, not the
+receiver a call was made through, so an inherited `self.repository()`
+reading `Model`'s own `@@repository` would give every subclass the same
+shared slot instead of its own; each model needs its own copy of just
+these two lines to get its own isolated slot. `#to_attributes` is the
+reverse of a `Repository`'s own
 `mapper` function -- this instance's current field values as the same
 plain `Hash` `#create`/`#update` already write. `#save` picks `#create`
 or `#update` based on `#persisted?` (does `@attributes` have an

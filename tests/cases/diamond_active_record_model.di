@@ -24,10 +24,6 @@ class Author < ActiveRecord::Model
   def self.configure(repository: ActiveRecord::Repository)
     @@repository = repository
   end
-  def self.find(db, id) = repository().find(db, id)
-  def self.all(db) = repository().all(db)
-  def self.where(db, conditions: Hash) = repository().where(db, conditions)
-  def self.create(db, attributes: Hash) = repository().create(db, attributes)
 
   def books(db) = self.has_many(@@books_repository, "author_id").all(db, self.id())
   def self.wire_books(repository: ActiveRecord::Repository)
@@ -53,9 +49,6 @@ class Book < ActiveRecord::Model
   def self.configure(repository: ActiveRecord::Repository)
     @@repository = repository
   end
-  def self.find(db, id) = repository().find(db, id)
-  def self.all(db) = repository().all(db)
-  def self.create(db, attributes: Hash) = repository().create(db, attributes)
 
   def author(db) = self.belongs_to(@@author_repository).get(db, @author_id)
   def self.wire_author(repository: ActiveRecord::Repository)

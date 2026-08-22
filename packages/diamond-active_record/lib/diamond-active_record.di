@@ -605,6 +605,26 @@ class Model
   end
 
   def destroy(db) = self.repository().delete(db, self.id())
+
+  # Class-level finders, shared here and inherited by every subclass --
+  # made possible by Diamond's virtual self.foo(...) dispatch inside a
+  # class-owned singleton method (self, here, is whichever subclass the
+  # original call actually named, not Model, even though these four
+  # methods are only ever compiled once). Each subclass still has to
+  # write its own self.repository() (and a self.configure(repository) to
+  # set it) rather than inheriting one -- @@repository is a class
+  # variable, and Diamond scopes @@cvar storage to whichever class the
+  # *code that reads/writes it* is defined in, not the receiver a call
+  # was made through, so an inherited self.repository() reading
+  # Model's own @@repository would give every subclass the same shared
+  # slot instead of its own. See README.md for the full worked example.
+  def self.repository()
+    raise RuntimeError.new("Model subclass must override self.repository")
+  end
+  def self.find(db, id) = self.repository().find(db, id)
+  def self.all(db) = self.repository().all(db)
+  def self.where(db, conditions: Hash) = self.repository().where(db, conditions)
+  def self.create(db, attributes: Hash) = self.repository().create(db, attributes)
 end
 
 end

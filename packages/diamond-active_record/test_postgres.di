@@ -57,8 +57,6 @@ class PgAuthor < ActiveRecord::Model
   def self.configure(repository: ActiveRecord::Repository)
     @@repository = repository
   end
-  def self.find(db, id) = repository().find(db, id)
-  def self.all(db) = repository().all(db)
 end
 
 def build_pg_author(row) = PgAuthor.new(row)
