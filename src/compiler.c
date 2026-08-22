@@ -1488,9 +1488,19 @@ static uint16_t parse_call(Compiler *compiler, DiamondSpan name) {
     return destination;
 }
 
+/* receiver_class_index: the literal class named at this call site
+ * (`Author.find(...)` -> Author's own class index), or -1 for a module
+ * singleton call (modules have no receiver value at all). Only used when
+ * method->needs_receiver -- populates the callee's implicit self slot
+ * (register 0) with a real DIAMOND_VALUE_CLASS literal for a class-owned
+ * singleton method, so `self` inside an inherited method's body reflects
+ * the actual receiver rather than owner_class. A module call's slot stays
+ * zero-inited (DIAMOND_VALUE_NIL) exactly as before -- modules have no
+ * `self` story and nothing reads that slot as one. */
 static uint16_t parse_singleton_call(Compiler *compiler,
                                     const DiamondMethod *method,
-                                    DiamondSpan namespace_name) {
+                                    DiamondSpan namespace_name,
+                                    int receiver_class_index) {
     if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER) {
         fail(compiler,compiler->current.span,
              "expected singleton function after module name");return 0;
@@ -1575,8 +1585,16 @@ static uint16_t parse_singleton_call(Compiler *compiler,
     const size_t call_count=argument_count+(method->needs_receiver?1:0);
     const uint16_t base=allocate_register(compiler);
     for(size_t index=1;index<call_count;index++)(void)allocate_register(compiler);
-    /* No NIL for `base` when needs_receiver: sole writer, already
-     * zero-inited by run_chunk's [0, register_count) init. */
+    /* No NIL for `base` when needs_receiver and there's no literal class
+     * (a module call): sole writer, already zero-inited by run_chunk's
+     * [0, register_count) init. A class singleton call instead loads the
+     * literal receiver class right here, the one place this slot gets a
+     * real value instead of relying on zero-init. */
+    if(method->needs_receiver&&receiver_class_index>=0) {
+        emit_opcode(compiler,DIAMOND_OP_LOAD_CLASS);
+        emit_register(compiler,base);
+        emit_byte(compiler,(uint8_t)receiver_class_index);
+    }
     for(size_t index=0;index<argument_count;index++)
         emit_instruction(compiler,DIAMOND_OP_MOVE,
                          (uint16_t)(base+index+(method->needs_receiver?1:0)),
@@ -2661,7 +2679,7 @@ static uint16_t parse_name(Compiler *compiler) {
             fail(compiler,compiler->current.span,
                  "undefined module singleton function");return 0;
         }
-        return parse_singleton_call(compiler,method,name);
+        return parse_singleton_call(compiler,method,name,-1);
     }
     const int constant=find_namespace_constant(compiler,name);
     if(constant>=0&&find_local(compiler,name)<0) {
@@ -2836,7 +2854,7 @@ static uint16_t parse_name(Compiler *compiler) {
                 fail(compiler,compiler->current.span,
                      "undefined class singleton method");return 0;
             }
-            return parse_singleton_call(compiler,method,name);
+            return parse_singleton_call(compiler,method,name,class_index);
         }
         advance_token(compiler);
         if (compiler->current.kind != DIAMOND_TOKEN_LEFT_PAREN) {
@@ -2987,6 +3005,83 @@ static uint16_t parse_invoke(Compiler *compiler, uint16_t receiver) {
         for(size_t index=0;index<type_argument_count;index++)
             emit_byte(compiler,type_arguments[index]);
     }
+    return dest;
+}
+
+/* `self.method_name(...)` written inside a class-owned singleton method's
+ * own body -- `self` (register 0) already holds a real DIAMOND_VALUE_CLASS
+ * value there (see compile_definition's direct_class_singleton_member
+ * branch), but unlike an ordinary instance method's self.foo() (which is
+ * just ordinary parse_invoke against register 0 as any other receiver),
+ * the target here genuinely can't be resolved at compile time: this
+ * method body is compiled once, but self may hold a *different* class at
+ * each call (an inherited method reached via a subclass). Emits a
+ * dedicated opcode that resolves by name against self's actual
+ * class_index at runtime instead -- see DIAMOND_OP_INVOKE_SELF_METHOD's
+ * own comment in vm.h. Mirrors parse_invoke's argument-marshaling shape
+ * exactly, minus generic type arguments (not needed for this first
+ * pass -- self.foo[T](...) isn't supported). */
+static uint16_t parse_self_class_method_call(Compiler *compiler) {
+    advance_token(compiler); /* consume '.' */
+    if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER) {
+        fail(compiler,compiler->current.span,"expected method name after 'self.'");
+        return 0;
+    }
+    const DiamondSpan name=compiler->current.span;
+    advance_token(compiler);
+    bool writer_name=false;
+    if(compiler->current.kind==DIAMOND_TOKEN_EQUAL) {
+        writer_name=true;advance_token(compiler);
+    }
+    if(compiler->current.kind!=DIAMOND_TOKEN_LEFT_PAREN) {
+        fail(compiler,compiler->current.span,
+             "member access requires a method call with '()'");return 0;
+    }
+    advance_token(compiler);
+    skip_newlines(compiler);
+    uint16_t args[16];size_t count=0;
+    while(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN&&!compiler->failed) {
+        if(count==16) {fail(compiler,compiler->current.span,"too many arguments");break;}
+        args[count++]=parse_expression(compiler);
+        skip_newlines(compiler);
+        if(compiler->current.kind!=DIAMOND_TOKEN_COMMA)break;
+        advance_token(compiler);
+        skip_newlines(compiler);
+        if(compiler->current.kind==DIAMOND_TOKEN_RIGHT_PAREN)break;
+    }
+    if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
+        fail(compiler,compiler->current.span,"expected ')' after arguments");return 0;
+    }
+    advance_token(compiler);
+    if(compiler->current.kind==DIAMOND_TOKEN_DO) {
+        if(count==16) {fail(compiler,compiler->current.span,"too many arguments");return 0;}
+        for(size_t i=0;i<count;i++) {
+            const uint16_t snapshot=allocate_register(compiler);
+            emit_instruction(compiler,DIAMOND_OP_MOVE,snapshot,args[i],0,2);
+            args[i]=snapshot;
+        }
+        args[count++]=compile_block(compiler);
+    }
+    const uint16_t base=allocate_register(compiler);
+    for(size_t i=1;i<count;i++)(void)allocate_register(compiler);
+    for(size_t i=0;i<count;i++)
+        emit_instruction(compiler,DIAMOND_OP_MOVE,(uint16_t)(base+i),args[i],0,2);
+    const uint16_t dest=allocate_register(compiler);
+    const uint8_t method=add_name_string(compiler,name);
+    if(writer_name&&!compiler->failed) {
+        DiamondStringConstant *string=&compiler->function->strings[method];
+        if(string->length==DIAMOND_MAX_STRING_LENGTH)
+            fail(compiler,name,"method name is too long");
+        else {
+            string->chars[string->length++]='=';
+            string->chars[string->length]='\0';
+        }
+    }
+    emit_opcode(compiler,DIAMOND_OP_INVOKE_SELF_METHOD);
+    emit_register(compiler,dest);
+    emit_byte(compiler,method);
+    emit_register(compiler,base);
+    emit_byte(compiler,(uint8_t)count);
     return dest;
 }
 
@@ -3479,6 +3574,16 @@ static uint16_t parse_prefix(Compiler *compiler) {
             if (!compiler->in_method) {
                 fail(compiler, compiler->previous.span, "'self' used outside a method");
                 return 0;
+            }
+            /* self.foo(...) inside a class-owned singleton method's own
+             * body needs real dynamic dispatch (see
+             * parse_self_class_method_call's own comment) -- everywhere
+             * else (an ordinary instance method, or bare `self` with no
+             * following call inside a singleton method), self stays an
+             * ordinary register-0 value, unchanged. */
+            if(compiler->in_singleton_method&&compiler->current_class>=0&&
+               compiler->current.kind==DIAMOND_TOKEN_DOT) {
+                return parse_self_class_method_call(compiler);
             }
             return 0;
         case DIAMOND_TOKEN_SUPER:
@@ -4882,8 +4987,18 @@ static uint16_t compile_definition(Compiler *compiler) {
         at_top_level&&compiler->current_module>=0&&!module_singleton;
     const bool nested_in_singleton_method=
         !at_top_level&&compiler->in_singleton_method;
+    /* `def self.x` directly inside a *class* (not a module -- modules have
+     * no superclass chain and nothing to virtually dispatch against, so
+     * this deliberately excludes compiler->current_module). Gains the same
+     * owner_class/implicit-self treatment direct_class_member already
+     * gets below, so `self` becomes usable inside the singleton method's
+     * own body and external calls can populate it with the literal
+     * receiver class (see DIAMOND_OP_LOAD_CLASS's own comment). */
+    const bool direct_class_singleton_member=
+        at_top_level&&compiler->current_class>=0&&module_singleton;
     function->owner_class=
-        (direct_class_member||(nested_in_singleton_method&&compiler->current_class>=0))?
+        (direct_class_member||direct_class_singleton_member||
+         (nested_in_singleton_method&&compiler->current_class>=0))?
             (uint8_t)compiler->current_class:
         (direct_module_member||(nested_in_singleton_method&&compiler->current_module>=0))?
             UINT8_MAX-1:UINT8_MAX;
@@ -5018,7 +5133,8 @@ static uint16_t compile_definition(Compiler *compiler) {
                 compiler->capture_registers[i]=compiler->enclosing_locals[i].reg;
         }
     }
-    if(direct_class_member||direct_module_member||nested_in_singleton_method) {
+    if(direct_class_member||direct_module_member||direct_class_singleton_member||
+       nested_in_singleton_method) {
         (void)allocate_register(compiler);
         function->arity = 1;
         function->required_arity=1;
@@ -5268,7 +5384,18 @@ static uint16_t compile_definition(Compiler *compiler) {
                 &class->singleton_methods[class->singleton_method_count++];
             for(size_t i=0;i<copy_length;i++)method->name[i]=function->name[i];
             method->name[copy_length]='\0';method->function_index=(uint16_t)function_index;
-            method->arity=function->arity;method->required_arity=function->required_arity;
+            /* Class-owned (unlike module) singleton methods now reserve
+             * register 0 for an implicit `self` -- function->arity/
+             * required_arity already include that slot (compile_definition's
+             * direct_class_singleton_member branch), so the method table's
+             * own arity (what external callers are checked against, see
+             * parse_singleton_call) must subtract it back out, the same
+             * way an ordinary instance method's entry does just above.
+             * needs_receiver tells parse_singleton_call's call site to
+             * reserve and fill that slot instead of leaving it zero-inited. */
+            method->arity=(uint8_t)(function->arity-1);
+            method->required_arity=(uint8_t)(function->required_arity-1);
+            method->needs_receiver=true;
         }
     } else if(compiler->current_module>=0&&!module_singleton&&
               !compiler->failed&&at_top_level) {

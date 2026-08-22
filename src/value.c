@@ -85,6 +85,16 @@ void diamond_value_fprint(FILE *stream, DiamondValue value) {
         case DIAMOND_VALUE_FLOAT:
             fprint_float(stream, value.as.real);
             break;
+        case DIAMOND_VALUE_CLASS:
+            /* No chunk/program context reaches this low-level, value-only
+             * print path, so this can't resolve class_index back to the
+             * class's real name (unlike DIAMOND_OBJECT_INSTANCE, a Class
+             * value stores no self-contained data of its own to print
+             * from) -- printing a Class value is a diagnostic nicety, not
+             * something normal program behavior depends on, so the index
+             * alone is an acceptable, deliberately narrow scope cut. */
+            fprintf(stream, "#<Class:%u>", value.as.class_index);
+            break;
         case DIAMOND_VALUE_OBJECT: {
             const DiamondString *string = (const DiamondString *)value.as.object;
             if (value.as.object->kind == DIAMOND_OBJECT_STRING) {

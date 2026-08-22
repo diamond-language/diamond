@@ -468,6 +468,61 @@ instance immediately, including ones already constructed before the
 call, since dispatch looks the method up by class and name at call time
 rather than snapshotting anything at construction time.
 
+### `self` inside `def self.x`
+
+A `def self.x` method declared directly inside a class (not a module --
+see below) can use `self`, and `self.method_name(...)` dispatches
+virtually: it looks `method_name` up against `self`'s *actual* class,
+walking that class's own superclass chain, rather than resolving to
+whatever's lexically visible where the calling method happens to be
+defined. This is what lets one method shared on a base class reach each
+subclass's own override:
+
+```ruby
+class Model
+  def self.table_name()
+    "model_default"
+  end
+  def self.describe()
+    self.table_name()
+  end
+end
+
+class Author < Model
+  def self.table_name()
+    "authors"
+  end
+end
+
+Author.describe()  # => "authors" -- describe is inherited from Model,
+                    # but self.table_name() still reaches Author's own
+Model.describe()    # => "model_default"
+```
+
+`self` also works as an ordinary value with no following call (it holds
+the class itself, comparable with `==` and usable anywhere a value is
+expected) -- but a Class value has no general-purpose literal syntax of
+its own; the only way to obtain one is `self` inside a class-owned
+singleton method.
+
+Only the **explicit** `self.foo(...)` form dispatches this way. A **bare**
+call to a sibling `self.` method (`table_name()` instead of
+`self.table_name()`) does not -- and, as of this feature, no longer even
+resolves to a sibling method at all; it's an ordinary undefined-function
+error. (Before this, a bare call happened to reach a sibling class method
+by accident: singleton methods shared the same "not a class member"
+compile-time tag as plain top-level functions, so top-level function
+lookup found them incidentally. Giving `self` a real value required
+giving singleton methods a real owner, which closes that accident --
+class-owned singleton methods now behave exactly like module ones always
+did, where a bare sibling call was already an error. Use `self.foo(...)`
+explicitly in both cases now.)
+
+Module namespace singletons (`def self.name` inside a `module` block) are
+unaffected by any of this -- `self` still isn't accessible there, and
+`ModuleName.name(...)` still resolves entirely at compile time. Modules
+have no superclass chain and nothing to virtually dispatch against.
+
 ### Class variables
 
 ```ruby

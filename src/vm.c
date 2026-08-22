@@ -3941,6 +3941,8 @@ static bool values_equal(DiamondValue left, DiamondValue right) {
             return left.as.integer == right.as.integer;
         case DIAMOND_VALUE_FLOAT:
             return left.as.real == right.as.real;
+        case DIAMOND_VALUE_CLASS:
+            return left.as.class_index == right.as.class_index;
         case DIAMOND_VALUE_OBJECT: {
             if (left.as.object->kind != right.as.object->kind) return false;
             if(left.as.object->kind==DIAMOND_OBJECT_INSTANCE ||
@@ -4001,6 +4003,7 @@ static uint64_t hash_value(DiamondValue value) {
         case DIAMOND_VALUE_NIL:return hash_mix64(0);
         case DIAMOND_VALUE_BOOL:return hash_mix64(value.as.boolean?1:2);
         case DIAMOND_VALUE_INT:return hash_mix64((uint64_t)value.as.integer);
+        case DIAMOND_VALUE_CLASS:return hash_mix64((uint64_t)value.as.class_index);
         case DIAMOND_VALUE_FLOAT: {
             const double real=value.as.real;
             /* A Float that's exactly equal to some Int64 (e.g. 3.0)
@@ -4128,6 +4131,31 @@ static const DiamondMethod *lookup_method(const DiamondChunk *chunk,
     while (current != nullptr) {
         for(size_t index=current->method_count;index>0;index--) {
             const DiamondMethod *method=&current->methods[index-1];
+            if (strlen(method->name) == length &&
+                memcmp(method->name, name, length) == 0) {
+                return method;
+            }
+        }
+        current = current->superclass == UINT8_MAX
+            ? nullptr : &chunk->classes[current->superclass];
+    }
+    return nullptr;
+}
+
+/* lookup_method's exact algorithm, over singleton_methods[] instead of
+ * methods[] -- the runtime half of DIAMOND_OP_INVOKE_SELF_METHOD's
+ * `self.foo(...)` dispatch: walks from the actual receiver class (read
+ * out of a DIAMOND_VALUE_CLASS value at the call site, not the literal
+ * class the calling method happens to be lexically defined in) up its
+ * superclass chain, first match wins -- same MRO ordinary instance
+ * dispatch already uses. */
+static const DiamondMethod *lookup_singleton_method(const DiamondChunk *chunk,
+                                          const DiamondClass *class,
+                                          const char *name, size_t length) {
+    const DiamondClass *current = class;
+    while (current != nullptr) {
+        for(size_t index=current->singleton_method_count;index>0;index--) {
+            const DiamondMethod *method=&current->singleton_methods[index-1];
             if (strlen(method->name) == length &&
                 memcmp(method->name, name, length) == 0) {
                 return method;
@@ -5439,6 +5467,18 @@ static bool builder_format_value(StringBuilder *builder,DiamondValue value) {
             }
         if(!builder_append(builder,scalar,(size_t)length))return false;
         return has_marker||builder_append(builder,".0",2);
+    }
+    if(value.kind==DIAMOND_VALUE_CLASS) {
+        /* No chunk/program context reaches this value-only formatting
+         * path (unlike DIAMOND_OBJECT_INSTANCE below, which prints its
+         * real class name straight off the object's own `->class`
+         * pointer) -- see value.c's diamond_value_fprint for the same
+         * deliberate scope cut. Handled before the unconditional
+         * `value.as.object` read just below, which would otherwise
+         * reinterpret this value's `class_index` byte as a pointer. */
+        length=snprintf(scalar,sizeof scalar,"#<Class:%u>",value.as.class_index);
+        return length>=0&&(size_t)length<sizeof scalar&&
+            builder_append(builder,scalar,(size_t)length);
     }
     const DiamondObject *object=value.as.object;
     if(object->kind==DIAMOND_OBJECT_STRING) {
@@ -11647,6 +11687,72 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 class->method_count++;
                 diamond_vm_invalidate_method_caches(vm);
                 registers[dest]=DIAMOND_NIL;break;
+            }
+            case DIAMOND_OP_LOAD_CLASS: {
+                uint16_t dest=0;uint8_t class_operand=0;
+                READ_SHORT(dest);READ_BYTE(class_operand);
+                if((size_t)class_operand>=chunk->class_count)
+                    VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
+                registers[dest]=DIAMOND_CLASS(class_operand);break;
+            }
+            /* `self.method_name(...)` inside a class-owned singleton
+             * method body -- the runtime half of parse_self_class_method_
+             * call's emission. registers[0] (self) is expected to already
+             * hold a DIAMOND_VALUE_CLASS (guaranteed by the compiler only
+             * ever emitting this opcode inside a class-owned singleton
+             * method, where compile_definition reserves and populates
+             * that slot), resolved by name via lookup_singleton_method
+             * (lookup_method's exact algorithm, over singleton_methods[]
+             * instead) starting from self's *actual* class_index and
+             * walking its superclass chain -- not the literal class this
+             * calling function happens to be lexically defined in, which
+             * is the entire point: an inherited method reaches whichever
+             * subclass actually received the original external call. */
+            case DIAMOND_OP_INVOKE_SELF_METHOD: {
+                uint16_t dest=0,base=0;uint8_t name_index=0;uint8_t argc=0;
+                READ_SHORT(dest);READ_BYTE(name_index);READ_SHORT(base);READ_BYTE(argc);
+                if(registers[0].kind!=DIAMOND_VALUE_CLASS)
+                    VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
+                const uint8_t class_operand=registers[0].as.class_index;
+                if((size_t)class_operand>=chunk->class_count||
+                   (size_t)name_index>=chunk->string_count)
+                    VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
+                const DiamondClass *class=&chunk->classes[class_operand];
+                const DiamondStringConstant *method_name=&chunk->strings[name_index];
+                const DiamondMethod *method=lookup_singleton_method(chunk,class,
+                    method_name->chars,method_name->length);
+                if(method==nullptr) {
+                    snprintf(vm->error,sizeof vm->error,
+                        "undefined class singleton method '%.*s' for %s",
+                        (int)method_name->length,method_name->chars,class->name);
+                    VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                }
+                if(argc<method->required_arity||argc>method->arity)
+                    VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                if((size_t)base+argc>DIAMOND_REGISTER_COUNT)
+                    VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
+                DiamondValue args[17];args[0]=registers[0];
+                for(size_t index=0;index<argc;index++)args[index+1]=registers[(size_t)base+index];
+                if((size_t)method->function_index>=chunk->function_count)
+                    VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
+                const DiamondFunction *fn=chunk->functions[method->function_index];
+                const DiamondChunk child={.name=fn->name,.code=fn->code,
+                  .lines=fn->lines,.columns=fn->columns,.code_count=fn->code_count,
+                  .constants=fn->constants,.constant_count=fn->constant_count,
+                  .strings=fn->strings,.string_count=fn->string_count,
+                  .type_sets=fn->type_sets,.type_set_count=fn->type_set_count,
+                  .functions=chunk->functions,.function_count=chunk->function_count,
+                  .classes=chunk->classes,.class_count=chunk->class_count,
+                  .interfaces=chunk->interfaces,.interface_count=chunk->interface_count,
+                  .parameter_type_sets=fn->parameter_type_sets,
+                  .type_variable_count=fn->type_variable_count,
+                  .parameter_offset=fn->owner_class==UINT8_MAX?0:1,
+                  .register_count=fn->register_count};
+                DiamondValue call_result=DIAMOND_NIL;
+                const DiamondVmStatus self_call_status=run_chunk(&child,vm,args,
+                    (size_t)argc+1,depth+1,nullptr,&call_result);
+                VM_PROPAGATE(self_call_status);
+                registers[dest]=call_result;break;
             }
             case DIAMOND_OP_FIBER_NEW: {
                 uint16_t dest=0,callable_reg=0;

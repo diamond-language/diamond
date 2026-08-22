@@ -255,10 +255,13 @@ correct regardless of which branch actually ran.
 
 ## Object model
 
-Classes are immutable module metadata rather than heap objects, with two
+Classes are immutable module metadata rather than heap objects, with three
 narrow, explicit exceptions (see below): `ClassName.redefine_method(name,
 callable)` repoints an existing method's compiled body in place at runtime,
-and `ClassName.define_method(name, callable)` adds a new one.
+`ClassName.define_method(name, callable)` adds a new one, and `self` inside
+a class-owned `def self.x` method evaluates to a lightweight
+`DIAMOND_VALUE_CLASS` value (just a class index, not a heap object) so that
+kind of method can dispatch virtually.
 Instances point to their class and contain a fixed field array.
 Instance-variable names are assigned stable class-owned offsets during
 compilation; subclasses copy their parent's field-slot prefix.
@@ -555,6 +558,67 @@ class would. Deliberately kept as a separate operation from
 exists, so each keeps a single, predictable contract. The new method
 dispatches correctly for instances constructed before the call too, since
 lookup is by class and name at call time, never snapshotted per instance.
+
+A `def self.x` method declared directly inside a class (not a module) also
+now gets real virtual dispatch for `self.foo(...)` written in its own body,
+via a new lightweight `DIAMOND_VALUE_CLASS` value kind: a 1-byte
+`class_index` (into the ambient chunk's `classes[]`) carried directly in
+`DiamondValue`'s existing union, alongside `bool`/`int64_t`/etc. -- no struct
+growth, and no GC changes at all, since it owns no heap pointer for the
+marker to trace (the same reason INT/FLOAT/BOOL/NIL already need none).
+Deliberately narrow: a Class value only ever appears in register 0 (`self`)
+inside a class-owned singleton method and as the receiver of `self.foo(...)`
+dispatch there -- there's no other syntax to construct or pass one, though
+nothing stops it flowing into an ordinary `Hash`/`Array`/return value once it
+exists, so `values_equal`/`hash_value`/the three value-printing paths do
+carry real cases for it (equal-by-index, hash-of-index, `#<Class:N>` --
+no chunk/program context reaches those low-level paths to resolve a real
+class name, so the index is what prints).
+
+Mechanically, a class-owned singleton method now gets the same
+implicit-self treatment an ordinary instance method already has:
+`compile_definition` reserves register 0 and bumps `arity`/`required_arity`
+by one, and (new) gives the function a real `owner_class` (previously
+always `UINT8_MAX`, "not a method," for every singleton method regardless of
+class or module). An external call with a literal class name
+(`Author.find(db, 1)`) still resolves its *target function* exactly as
+before -- walking the literal class's own `singleton_methods` then its
+superclass chain, entirely at compile time -- but now also loads that
+literal class (`Author`, via the new `DIAMOND_OP_LOAD_CLASS`) into the
+callee's register 0, so `self` inside an *inherited* method's body reflects
+the actual receiver rather than `owner_class` (whichever ancestor the method
+happens to be lexically defined on). `self.foo(...)` inside such a method
+is the one call form that can't resolve at compile time -- the same body is
+compiled once, but `self` may hold a different class on each invocation --
+so it's a new opcode, `DIAMOND_OP_INVOKE_SELF_METHOD`, whose runtime handler
+is `lookup_method`'s exact walk-the-superclass-chain algorithm reused
+verbatim over `singleton_methods[]` instead of `methods[]`
+(`lookup_singleton_method`), finishing with the same runtime-indirect call
+shape `DIAMOND_OP_CALL_CLOSURE` already uses (build a `DiamondChunk` view
+from the resolved function, `run_chunk` it) rather than a bytecode-fixed
+target.
+
+Giving singleton methods a real `owner_class` has one deliberate side
+effect: a **bare** call to a sibling singleton method (no explicit `self.`)
+used to reach it by accident, since `find_function` (ordinary bare-call
+resolution) matches any function with `owner_class==UINT8_MAX` regardless of
+where it's declared, and singleton methods previously all had that value
+regardless of class or module. Module namespace singletons never benefited
+from this (they were already tagged `UINT8_MAX-1`, distinct from a plain
+function, so a bare sibling call there was already an error); only
+class-owned ones did, incidentally. Now that a class-owned singleton method
+needs its class's real index for `self` to mean anything, it's excluded
+from `find_function` the same way module ones always were -- closing an
+inconsistency rather than introducing one. Nothing in the existing corpus
+(including the self-hosted parser/lexer differential suite) relied on the
+old accident; `self.foo(...)` is the one spelling that reaches a sibling
+method now, uniformly, whether it needs to be virtual or not.
+
+Everything above is scoped deliberately narrowly and stops well short of
+making classes first-class runtime values in general: there is still no way
+to pass a class as an ordinary argument, store one as an attribute, or name
+one dynamically by a computed string -- only `self` inside the one context
+above ever produces a Class value.
 
 For a direct `value == nil` or `value != nil` condition, the compiler splits a
 union type-set into nil and non-nil branch facts. Facts for locals that existed

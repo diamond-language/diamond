@@ -195,6 +195,31 @@ typedef enum DiamondOpCode : uint8_t {
      * minus the arity-must-match check (nothing to match against yet) --
      * see vm.c's own handler comment. */
     DIAMOND_OP_DEFINE_METHOD,
+    /* Loads a DIAMOND_VALUE_CLASS literal (a compile-time-known class
+     * index, not a heap object) into a register -- used only to populate
+     * the implicit `self` slot (register 0) of a class-owned singleton
+     * method call with the *literal* class named at the call site, e.g.
+     * `Author.find(db, 1)` loads Author's own class_index even when
+     * `find` is inherited from Model, so `self` inside `find`'s body
+     * reflects the actual receiver rather than Model (find's owner_class).
+     * See DIAMOND_OP_INVOKE_SELF_METHOD below for what makes that useful. */
+    DIAMOND_OP_LOAD_CLASS,
+    /* `self.method_name(...)` written inside a class-owned singleton
+     * method body -- the one place a Class value (register 0/self) is
+     * ever dispatched against dynamically rather than resolved at compile
+     * time: looks up method_name by name against self's actual
+     * class_index, walking its superclass chain (mirrors lookup_method's
+     * exact algorithm, vm.c), then calls it. This is what lets a method
+     * shared on a base class (e.g. Model#self.find calling
+     * self.repository()) reach whichever subclass actually received the
+     * original call, even though find's own body is compiled once on
+     * Model. Bare (non-self.) calls to a sibling singleton method are
+     * deliberately NOT changed by this -- they keep resolving statically,
+     * exactly as before; only the explicit self.foo(...) form is virtual.
+     * See docs/design.md for the full scope (module namespace singletons
+     * and bare calls are unaffected; Class values aren't general-purpose
+     * runtime values). */
+    DIAMOND_OP_INVOKE_SELF_METHOD,
     DIAMOND_OP_COUNT,
 } DiamondOpCode;
 
