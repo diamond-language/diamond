@@ -1,0 +1,9 @@
+NoMethodError raised for a class with no method_missing
+called anything with 0 args
+called another with 3 args
+ArgumentError raised for method_missing arity mismatch
+real method
+missing: fake
+TypeError raised for a missing + operator, not NoMethodError
+method_missing smoke ok
+nil

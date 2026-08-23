@@ -4576,6 +4576,74 @@ static DiamondVmStatus invoke_operator_method(DiamondVm *vm,
     return run_chunk(&child,vm,args,argument_count,depth+1,nullptr,result);
 }
 
+/* ClassName#method_missing(name, args) -- called when ordinary instance
+ * method dispatch (the main DIAMOND_OP_INVOKE-family site) fails to find
+ * `attempted_name` on the receiver's own class. Mirrors
+ * invoke_operator_method's own found-or-not shape directly (*found stays
+ * false, *result untouched, status DIAMOND_VM_OK, when the class has no
+ * method_missing of its own either) so the caller raises the default
+ * NoMethodError instead -- there is no risk of this recursing into
+ * itself: reaching this function at all already means lookup_method_cached
+ * failed to find `attempted_name`, and the lookup_method call here is for
+ * the fixed literal name "method_missing", a different lookup entirely.
+ * `call_args` points into the caller's own live register file (the
+ * original call's explicit arguments, receiver excluded) -- already part
+ * of the current frame's GC roots via mark_frame_chain, same as every
+ * other dispatch site's own args[] construction. name_symbol is not: it's
+ * a brand-new allocation with no register or container to live in until
+ * args[] is built below, so it's gc_protect'd across the allocate_array
+ * call that follows it (confirmed as a real bug under
+ * DIAMOND_STRESS_GC=1, not just theoretical -- same "root it before the
+ * next allocation" lesson as populate_default_argv_env's own key_mark).
+ *
+ * Deliberately scoped to this one dispatch site (ordinary instance method
+ * calls) for a first version -- not operator overloading
+ * (invoke_operator_method), not #to_s (stringify_value), not super, not
+ * self.-singleton dispatch. Each of those already has its own sensible
+ * fallback (native operator semantics, a default object representation,
+ * a real "no such superclass method" error, a separate method table) that
+ * silently redirecting through method_missing would be more likely to
+ * surprise than help; a class wanting custom behavior there defines the
+ * specific method directly. See docs/design.md. */
+static DiamondVmStatus method_missing_helper(DiamondVm *vm,const DiamondChunk *owner,
+        const DiamondInstance *receiver,const char *attempted_name,size_t attempted_length,
+        const DiamondValue *call_args,size_t call_arg_count,size_t depth,
+        DiamondValue *result,bool *found) {
+    static const char missing_name[]="method_missing";
+    const DiamondMethod *method=lookup_method(owner,receiver->class,
+        missing_name,sizeof(missing_name)-1);
+    if(method==nullptr) {*found=false;return DIAMOND_VM_OK;}
+    *found=true;
+    if(2<method->required_arity||2>method->arity)
+        return DIAMOND_VM_ARITY_ERROR;
+    DiamondSymbol *name_symbol=allocate_symbol(vm,attempted_name,attempted_length);
+    if(name_symbol==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+    const size_t name_mark=vm->gc_protected_count;
+    if(!gc_protect(vm,DIAMOND_OBJECT(name_symbol)))return DIAMOND_VM_OUT_OF_MEMORY;
+    DiamondArray *args_array=allocate_array(vm,call_args,call_arg_count);
+    gc_unprotect(vm,name_mark);
+    if(args_array==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+    DiamondValue args[3]={DIAMOND_OBJECT((DiamondObject *)receiver),
+        DIAMOND_OBJECT(name_symbol),DIAMOND_OBJECT(args_array)};
+    /* See DIAMOND_OP_INVOKE_TYPED's own comment on function_chunk. */
+    const DiamondChunk *function_chunk=
+        method->source_chunk!=nullptr?method->source_chunk:owner;
+    const DiamondFunction *fn=function_chunk->functions[method->function_index];
+    const DiamondChunk child={.name=fn->name,.code=fn->code,
+      .lines=fn->lines,.columns=fn->columns,.code_count=fn->code_count,
+      .constants=fn->constants,.constant_count=fn->constant_count,
+      .strings=fn->strings,.string_count=fn->string_count,
+      .type_sets=fn->type_sets,.type_set_count=fn->type_set_count,
+      .functions=function_chunk->functions,.function_count=function_chunk->function_count,
+      .classes=function_chunk->classes,.class_count=function_chunk->class_count,
+      .interfaces=function_chunk->interfaces,.interface_count=function_chunk->interface_count,
+      .parameter_type_sets=fn->parameter_type_sets,
+      .type_variable_count=fn->type_variable_count,
+      .parameter_offset=fn->owner_class==UINT8_MAX?0:1,
+      .register_count=fn->register_count};
+    return run_chunk(&child,vm,args,3,depth+1,nullptr,result);
+}
+
 /* Shared fallback for `+` once the fast Int/Int path doesn't apply:
  * bignum promotion, mixed Int/Float promotion, String concatenation, and
  * an Instance's own `+` operator-overload method, in that exact order --
@@ -5623,6 +5691,7 @@ static uint8_t exception_class_for_status(DiamondVmStatus status) {
         case DIAMOND_VM_SQLITE3_ERROR: return DIAMOND_CLASS_SQLITE3_ERROR;
         case DIAMOND_VM_POSTGRES_ERROR: return DIAMOND_CLASS_POSTGRES_ERROR;
         case DIAMOND_VM_MYSQL_ERROR: return DIAMOND_CLASS_MYSQL_ERROR;
+        case DIAMOND_VM_NO_METHOD_ERROR: return DIAMOND_CLASS_NO_METHOD_ERROR;
         default: return UINT8_MAX;
     }
 }
@@ -11522,7 +11591,22 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                         vm->direct_dispatch_rewrites++;
                     }
                 }
-                if(method==nullptr) VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                if(method==nullptr) {
+                    DiamondValue missing_result=DIAMOND_NIL;
+                    bool missing_found=false;
+                    const DiamondVmStatus missing_status=method_missing_helper(vm,owner,
+                        instance,method_name->chars,method_name->length,
+                        &registers[base],argc,depth,&missing_result,&missing_found);
+                    if(missing_found) {
+                        VM_PROPAGATE(missing_status);
+                        registers[dest]=missing_result;
+                        break;
+                    }
+                    snprintf(vm->error,sizeof vm->error,
+                        "undefined method '%.*s' for an instance of %s",
+                        (int)method_name->length,method_name->chars,instance->class->name);
+                    VM_RETURN(DIAMOND_VM_NO_METHOD_ERROR);
+                }
                 if(method->is_private&&!(chunk->parameter_offset==1&&recv==0)) {
                     snprintf(vm->error,sizeof vm->error,
                         "private method '%.*s' called with an explicit receiver",
@@ -13453,6 +13537,8 @@ const char *diamond_vm_status_name(DiamondVmStatus status) {
             return "postgres error";
         case DIAMOND_VM_MYSQL_ERROR:
             return "mysql error";
+        case DIAMOND_VM_NO_METHOD_ERROR:
+            return "undefined method";
     }
     return "unknown VM status";
 }

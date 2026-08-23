@@ -290,6 +290,7 @@ typedef enum DiamondBuiltinClass : uint8_t {
     DIAMOND_CLASS_SQLITE3_ERROR,
     DIAMOND_CLASS_POSTGRES_ERROR,
     DIAMOND_CLASS_MYSQL_ERROR,
+    DIAMOND_CLASS_NO_METHOD_ERROR,
     DIAMOND_BUILTIN_CLASS_COUNT,
 } DiamondBuiltinClass;
 
@@ -631,6 +632,14 @@ typedef enum DiamondVmStatus : uint8_t {
      * mysql_stmt_error(stmt)/a locally-detected condition (everything
      * else), surfaced as MySQLError -- see exception_class_for_status. */
     DIAMOND_VM_MYSQL_ERROR,
+    /* An ordinary instance method call found no method of that name on
+     * the receiver's class (superclass chain included) and the class has
+     * no method_missing of its own either -- see method_missing_helper's
+     * own comment (src/vm.c) for the full fallback shape and its
+     * deliberately narrow scope (this one dispatch site only). Surfaced
+     * as NoMethodError, a real descriptive exception instead of the bare
+     * generic TypeError this replaced. */
+    DIAMOND_VM_NO_METHOD_ERROR,
 } DiamondVmStatus;
 
 typedef struct DiamondMethodCacheEntry {

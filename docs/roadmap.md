@@ -376,11 +376,31 @@ them) and the same seeding applied to `Thread.new`'s own trampoline
 (only `bound_values`, fixed at `compile_method` time, and the target
 class's existing fields are visible -- this is not a general `eval` and
 was never meant to become one); bare parameter names only, matching
-`delegate`'s own existing scope cut. `method_missing` is a separate,
-smaller, already-scoped-out follow-up (a fallback at the existing
-dispatch-miss branch, `lookup_method`/`lookup_method_cached` already
-being the single choke point every call site shares) -- not attempted
-here.
+`delegate`'s own existing scope cut.
+
+### `method_missing`
+
+**Done, in scope**: `def method_missing(name, args)` is now consulted at
+the existing dispatch-miss branch (`lookup_method`/`lookup_method_cached`
+already being the single choke point every ordinary instance-call call
+site shares) instead of always raising immediately -- a class with no
+`method_missing` still gets the same failure it always did, now surfaced
+as a dedicated `NoMethodError` (a new `StandardError` subclass) rather
+than a generic `TypeError`. See `docs/design.md`'s "`method_missing`"
+section for the full mechanism and scope cuts.
+
+Confirmed directly, not assumed: a `DIAMOND_STRESS_GC=1` run surfaced a
+real heap-use-after-free (an unrooted `Symbol` collected out from under
+itself by the very next allocation) that the non-stress run's matching
+output completely hid -- fixed via `gc_protect`, and now part of why
+every new dispatch helper allocating more than one fresh heap value before
+they're all reachable from a single register/container gets this same
+scrutiny going forward.
+
+**Deliberately not in scope**: only the ordinary instance-method dispatch
+site -- not operator overloading, not `#to_s`, not `super`, not
+`self.`-singleton dispatch, each of which already has its own sensible
+fallback that silent redirection would more likely surprise than help.
 
 ### Native service depth
 

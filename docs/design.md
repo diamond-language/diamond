@@ -698,6 +698,67 @@ the same level Ruby's own `class_eval`/`define_method` already assume --
 meant for programmer-authored macro implementations, not untrusted
 end-user input.
 
+### `method_missing`
+
+`def method_missing(name, args)` on a class is consulted whenever ordinary
+instance-method dispatch (`lookup_method`) finds no method by that name on
+the receiver's class -- `name` is the attempted method as a `Symbol`,
+`args` an `Array` of the call's own explicit arguments (the receiver
+itself is not included, matching every other language's version of this
+shape). A real method of that name always wins; dispatch never even
+reaches the `method_missing` fallback for a method that exists, on any
+ancestor, so it can't intercept calls to things a class actually defines.
+
+```ruby
+class Ghost
+  def method_missing(name, args)
+    "called #{name} with #{args.length()} args"
+  end
+end
+
+g = Ghost.new()
+puts(g.anything())        # called anything with 0 args
+```
+
+If a class has no `method_missing` of its own, a dispatch miss raises
+`NoMethodError` (a new `StandardError` subclass) exactly as before this
+feature existed -- `method_missing` is a fallback, not a replacement for
+normal error behavior. If `method_missing` itself doesn't accept exactly
+two required parameters, a miss raises `ArgumentError`, same as calling
+any other method with the wrong arity.
+
+Implementation-wise this reuses the exact dispatch-miss branch point
+`compile_method`'s own `NoMethodError` work already introduced, and the
+same `lookup_method`/`source_chunk` machinery documented above --
+`method_missing` itself is found via an ordinary `lookup_method` call
+against the receiver's class, so a `method_missing` defined on a
+superclass is found for a subclass instance the same way any other
+inherited method would be.
+
+One correctness pitfall this surfaced, worth recording: the `Symbol` and
+`Array` built for the `name`/`args` arguments are fresh allocations with
+no register or container to hold them live until they're both folded
+into the call's `args[]`. Under `DIAMOND_STRESS_GC=1` (which forces a
+collection on *every* allocation), the second allocation could collect
+the first, unrooted one out from under itself -- a real, confirmed
+heap-use-after-free, not just theoretical. Fixed by `gc_protect`ing the
+first value across the second allocation, the same "root it before the
+next allocation can run" pattern already used elsewhere in this file
+(e.g. `populate_default_argv_env`'s own `key_mark`) -- this is the
+standard shape of bug to watch for whenever a dispatch helper needs more
+than one *new* heap allocation before they're all reachable from a
+single register or container.
+
+**Deliberately scoped to this one dispatch site** (ordinary instance
+method calls) for a first version -- not operator overloading
+(`invoke_operator_method`), not `#to_s` (`stringify_value`), not `super`,
+not `self.`-singleton dispatch. Each of those already has its own
+sensible fallback (native operator semantics, a default object
+representation, a real "no such superclass method" error, a separate
+method table) that silently redirecting through `method_missing` would
+be more likely to surprise than help; a class wanting custom behavior
+there defines the specific method directly.
+
 A `def self.x` method declared directly inside a class (not a module) also
 now gets real virtual dispatch for `self.foo(...)` written in its own body,
 via a new lightweight `DIAMOND_VALUE_CLASS` value kind: a 1-byte
