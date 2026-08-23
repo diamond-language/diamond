@@ -503,6 +503,73 @@ deliberately narrow scope. General reification -- classes as fully ordinary,
 freely-passable runtime values -- is still the larger, undone question this
 section originally posed.
 
+### Nested `def` closures don't capture `self`/ivars
+
+Diamond has no anonymous closure literal (see "Classes" in `docs/syntax.md`)
+-- a nested, named `def` is the only closure mechanism, and it captures
+ordinary outer locals/parameters correctly (confirmed throughout this
+codebase: `packages/rack`'s `rack_terminal_wrap`, `packages/gremlin`'s
+`spawn_connection`/`handle_connection`). But `self`/`@ivar` references
+inside a nested `def` are compiled exactly like they would be in any other
+method body -- register-0-relative -- rather than captured from the
+enclosing scope. That's exactly right for the one thing nested `def`s are
+documented to be used for today, `define_method`/`redefine_method`'s
+"patch factory" idiom (`docs/syntax.md`'s `Greeter.greet_factory` example:
+a nested `def greet() = "hello, #{@name}"`, explicitly described as
+"captures no variables," whose `@name` only becomes meaningful once
+`define_method` installs it as a real method and gives it a genuine
+receiver through ordinary dispatch) -- but it means a nested `def` that
+is instead called *immediately*, in place, never installed anywhere,
+cannot reference `self`/`@ivar`/an implicit-self method call at all:
+confirmed directly, both `self.foo()` and `@ivar` from inside such a
+closure raise a runtime `TypeError`, for instance methods and `def self.x`
+methods alike (not a `self.`-method-specific gap). Found while building
+`packages/active_record`'s migration/validator work this session, which
+had to route around it (`ActiveRecord::Migrator` calls back via the
+literal class name `Migrator.record_applied(...)` instead of
+`self.record_applied(...)` from inside its own per-migration closures).
+
+The same syntax -- a nested `def` -- is being asked to mean two genuinely
+different things: an ordinary immediately-invoked closure (wants `self`
+to mean "whatever `self` already is here," true lexical capture, the
+Ruby-block default) versus a detached patch meant for later installation
+(wants `self`/ivars left unresolved until then, which is what today's
+behavior actually gives). Any fix has to keep the second case working --
+`define_method`/`redefine_method` depend on it -- while making the first
+case actually usable. That requires the compiler to tell the two apart
+for a given nested `def`, which the identical syntax doesn't currently
+signal at all. Candidate approaches, not evaluated in depth, no leaning:
+
+- **Escape-based inference**: capture `self` lexically by default;
+  suppress that (fall back to today's deferred-binding behavior) only for
+  a nested `def` whose value is returned, stored, or passed to another
+  call (`define_method`/`redefine_method` in particular) rather than
+  called directly within its own enclosing method. Non-breaking (every
+  existing patch-factory example is always returned/passed, never called
+  in place) and needs no new syntax, but is a real per-function escape
+  analysis, and inferring behavior from usage shape cuts against this
+  language's general preference for explicit over implicit (see, e.g.,
+  why `require_cut` is a separate keyword from `require` rather than an
+  inferred fallback, `docs/packages.md`).
+- **New explicit syntax for the lexical case**: leave nested `def`'s
+  existing deferred-binding semantics alone entirely (zero risk to
+  `define_method`/`redefine_method`), and add a distinct, explicit form
+  for a true self-capturing closure instead -- consistent with "no
+  anonymous closure literal" being a deliberate, already-stated scope cut
+  rather than an oversight, and with this language's general preference
+  for a new explicit form over inferring intent. Costs a real grammar
+  addition and a second closure-compilation path to maintain.
+- **A modifier on the existing form**: keep one `def` syntax, but require
+  an explicit marker at the declaration (e.g. a keyword) to opt into
+  lexical `self` capture, defaulting to today's deferred-binding behavior
+  when absent. Smaller surface than a whole new form, but still two
+  compiled shapes behind one keyword, distinguished only by a modifier
+  easy to forget.
+
+No decision made. Revisit if this keeps surfacing in real code the way it
+did for `active_record`'s migrations, rather than generalizing from one
+occurrence.
+
 ### Stable compiler boundary
 
 `ProgramBuilder` exists to support the self-hosted bootstrap. It is not a stable
