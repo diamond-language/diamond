@@ -1,1 +1,1 @@
-require "bad_manifest_pkg"
+require_cut "bad_manifest_pkg"

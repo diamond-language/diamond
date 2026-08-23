@@ -1,1 +1,1 @@
-require "missing_name_pkg"
+require_cut "missing_name_pkg"

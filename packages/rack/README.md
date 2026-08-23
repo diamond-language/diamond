@@ -17,7 +17,7 @@ gremlin-flavored -- see "Using it with `http_serve`" below.
 ## Install
 
 Same story as `packages/http`/`packages/gremlin` -- copy this directory
-into another project as `diamond_packages/rack/`, or give it its own git
+into another project as `cuts/rack/`, or give it its own git
 remote and depend on it via `facet` (see
 [`docs/packages.md`](https://gitlab.com/dmn9180/diamond/-/blob/main/docs/packages.md)).
 

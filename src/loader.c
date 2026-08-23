@@ -80,20 +80,20 @@ static bool manifest_hash_get_string(const DiamondHash *hash,const char *key,
     return false;
 }
 
-/* A package manifest is compiled and run standalone (not through expand()'s
+/* A cut manifest is compiled and run standalone (not through expand()'s
  * own require pipeline - manifests are metadata, not programs, so require
  * inside one is deliberately unsupported) to get back a Hash whose "name"
- * must match the package's own directory. DiamondProgram/DiamondVm are
+ * must match the cut's own directory. DiamondProgram/DiamondVm are
  * heap-allocated rather than stack-declared: expand() recurses once per
  * require depth, and sizeof(DiamondProgram) is over 3MB - a stack-declared
  * instance in every frame is exactly the mistake that once overflowed the
  * stack at DIAMOND_MAX_REQUIRE_DEPTH nesting. */
-static bool validate_package_manifest(Loader *loader,const char *name,
+static bool validate_cut_manifest(Loader *loader,const char *name,
         size_t name_length,const char *including_path,size_t including_line) {
     char *manifest_path=malloc(DIAMOND_MAX_SOURCE_PATH);
     if(manifest_path==nullptr)return true;
     const int written=snprintf(manifest_path,DIAMOND_MAX_SOURCE_PATH,
-        "diamond_packages/%.*s/package.di",(int)name_length,name);
+        "cuts/%.*s/cut.cut",(int)name_length,name);
     char canonical_manifest[DIAMOND_MAX_SOURCE_PATH];
     const bool has_manifest=written>0&&(size_t)written<DIAMOND_MAX_SOURCE_PATH&&
         realpath(manifest_path,canonical_manifest)!=nullptr;
@@ -103,7 +103,7 @@ static bool validate_package_manifest(Loader *loader,const char *name,
     char *manifest_source=read_source(canonical_manifest);
     if(manifest_source==nullptr) {
         (void)snprintf(loader->error,loader->error_capacity,
-            "%s:%zu: cannot read package manifest '%s': %s",
+            "%s:%zu: cannot read cut manifest '%s': %s",
             including_path,including_line,canonical_manifest,strerror(errno));
         return false;
     }
@@ -113,7 +113,7 @@ static bool validate_package_manifest(Loader *loader,const char *name,
     if(program==nullptr||vm==nullptr) {
         free(manifest_source);free(program);free(vm);
         (void)snprintf(loader->error,loader->error_capacity,
-            "%s:%zu: out of memory validating package manifest '%s'",
+            "%s:%zu: out of memory validating cut manifest '%s'",
             including_path,including_line,canonical_manifest);
         return false;
     }
@@ -124,7 +124,7 @@ static bool validate_package_manifest(Loader *loader,const char *name,
     DiamondValue result=DIAMOND_NIL;
     if(!diamond_compile(manifest_source,program,&diagnostic)) {
         (void)snprintf(loader->error,loader->error_capacity,
-            "%s:%zu: package manifest '%s' failed to compile at line %zu: %s",
+            "%s:%zu: cut manifest '%s' failed to compile at line %zu: %s",
             including_path,including_line,canonical_manifest,
             diagnostic.span.line,diagnostic.message);
         ok=false;
@@ -138,7 +138,7 @@ static bool validate_package_manifest(Loader *loader,const char *name,
         if(status!=DIAMOND_VM_OK) {
             const char *detail=diamond_vm_error(vm);
             (void)snprintf(loader->error,loader->error_capacity,
-                "%s:%zu: package manifest '%s' failed: %s",
+                "%s:%zu: cut manifest '%s' failed: %s",
                 including_path,including_line,canonical_manifest,
                 detail!=nullptr?detail:diamond_vm_status_name(status));
             ok=false;
@@ -147,7 +147,7 @@ static bool validate_package_manifest(Loader *loader,const char *name,
     if(ok&&(result.kind!=DIAMOND_VALUE_OBJECT||
             result.as.object->kind!=DIAMOND_OBJECT_HASH)) {
         (void)snprintf(loader->error,loader->error_capacity,
-            "%s:%zu: package manifest '%s' must evaluate to a Hash",
+            "%s:%zu: cut manifest '%s' must evaluate to a Hash",
             including_path,including_line,canonical_manifest);
         ok=false;
     }
@@ -157,7 +157,7 @@ static bool validate_package_manifest(Loader *loader,const char *name,
             declared_name.kind!=DIAMOND_VALUE_OBJECT||
             declared_name.as.object->kind!=DIAMOND_OBJECT_STRING)) {
         (void)snprintf(loader->error,loader->error_capacity,
-            "%s:%zu: package manifest '%s' must have a String 'name' key",
+            "%s:%zu: cut manifest '%s' must have a String 'name' key",
             including_path,including_line,canonical_manifest);
         ok=false;
     }
@@ -165,7 +165,7 @@ static bool validate_package_manifest(Loader *loader,const char *name,
         const DiamondString *declared=(const DiamondString *)declared_name.as.object;
         if(declared->length!=name_length||memcmp(declared->chars,name,name_length)!=0) {
             (void)snprintf(loader->error,loader->error_capacity,
-                "%s:%zu: package manifest '%s' declares name '%.*s', expected '%.*s'",
+                "%s:%zu: cut manifest '%s' declares name '%.*s', expected '%.*s'",
                 including_path,including_line,canonical_manifest,
                 (int)declared->length,declared->chars,(int)name_length,name);
             ok=false;
@@ -176,7 +176,7 @@ static bool validate_package_manifest(Loader *loader,const char *name,
        (declared_version.kind!=DIAMOND_VALUE_OBJECT||
         declared_version.as.object->kind!=DIAMOND_OBJECT_STRING)) {
         (void)snprintf(loader->error,loader->error_capacity,
-            "%s:%zu: package manifest '%s' key 'version' must be a String",
+            "%s:%zu: cut manifest '%s' key 'version' must be a String",
             including_path,including_line,canonical_manifest);
         ok=false;
     }
@@ -245,15 +245,20 @@ static bool expand(Loader *loader,const char *path,const char *source,
         if(source[offset]=='\n')offset++;
         size_t cursor=line_start;
         while(cursor<line_end&&(source[cursor]==' '||source[cursor]=='\t'))cursor++;
-        const char keyword[]="require";
-        bool required=line_end-cursor>=sizeof keyword-1&&
-            memcmp(source+cursor,keyword,sizeof keyword-1)==0;
-        const size_t keyword_end=cursor+sizeof keyword-1;
+        const char keyword_cut[]="require_cut";
+        const char keyword_plain[]="require";
+        const bool is_cut=line_end-cursor>=sizeof keyword_cut-1&&
+            memcmp(source+cursor,keyword_cut,sizeof keyword_cut-1)==0;
+        const size_t keyword_length=is_cut?sizeof keyword_cut-1:sizeof keyword_plain-1;
+        bool required=is_cut||
+            (line_end-cursor>=sizeof keyword_plain-1&&
+             memcmp(source+cursor,keyword_plain,sizeof keyword_plain-1)==0);
+        const size_t keyword_end=cursor+keyword_length;
         const bool require_candidate=required &&
             (keyword_end==line_end||source[keyword_end]==' '||
              source[keyword_end]=='\t'||source[keyword_end]=='"');
         required=require_candidate;
-        size_t quote=cursor+sizeof keyword-1;
+        size_t quote=cursor+keyword_length;
         while(required&&quote<line_end&&(source[quote]==' '||source[quote]=='\t'))quote++;
         required=required&&quote<line_end&&source[quote]=='"';
         size_t close=required?quote+1:quote;
@@ -292,61 +297,74 @@ static bool expand(Loader *loader,const char *path,const char *source,
                 return false;
             }
             memcpy(requested,source+quote+1,request_length);requested[request_length]='\0';
-            const bool bare_name=memchr(requested,'/',request_length)==nullptr;
-            if(request_length<3||strcmp(requested+request_length-3,".di")!=0)
-                memcpy(requested+request_length,".di",4);
-            char joined[DIAMOND_MAX_SOURCE_PATH];
-            const char *slash=strrchr(path,'/');
-            const size_t directory=slash==nullptr?0:(size_t)(slash-path)+1;
-            if(requested[0]=='/') {
-                if(strlen(requested)+1>sizeof joined) {
-                    (void)snprintf(loader->error,loader->error_capacity,
-                        "%s:%zu: resolved required path is too long",path,line);
-                    return false;
-                }
-                strcpy(joined,requested);
-            } else {
-                if(directory+strlen(requested)+1>sizeof joined) {
-                    (void)snprintf(loader->error,loader->error_capacity,
-                        "%s:%zu: resolved required path is too long",path,line);
-                    return false;
-                }
-                memcpy(joined,path,directory);strcpy(joined+directory,requested);
-            }
             char canonical[DIAMOND_MAX_SOURCE_PATH];
-            if(realpath(joined,canonical)==nullptr) {
-                const int relative_errno=errno;
-                bool resolved_as_package=false;
-                if(bare_name) {
-                    /* Heap-allocated rather than a stack buffer: expand() recurses
-                     * once per require depth (up to DIAMOND_MAX_REQUIRE_DEPTH), and
-                     * a fixed-size path buffer in every frame is enough to overflow
-                     * the stack at that depth. */
-                    char *package_path=malloc(DIAMOND_MAX_SOURCE_PATH);
-                    if(package_path!=nullptr) {
-                        int written=snprintf(package_path,DIAMOND_MAX_SOURCE_PATH,
-                            "diamond_packages/%.*s/lib/%.*s.di",
-                            (int)request_length,requested,(int)request_length,requested);
-                        resolved_as_package=written>0&&(size_t)written<DIAMOND_MAX_SOURCE_PATH&&
-                            realpath(package_path,canonical)!=nullptr;
-                        if(!resolved_as_package) {
-                            written=snprintf(package_path,DIAMOND_MAX_SOURCE_PATH,
-                                "diamond_packages/%.*s/%.*s.di",
-                                (int)request_length,requested,(int)request_length,requested);
-                            resolved_as_package=written>0&&(size_t)written<DIAMOND_MAX_SOURCE_PATH&&
-                                realpath(package_path,canonical)!=nullptr;
-                        }
-                        free(package_path);
-                    }
+            if(is_cut) {
+                if(memchr(requested,'/',request_length)!=nullptr) {
+                    (void)snprintf(loader->error,loader->error_capacity,
+                        "%s:%zu: require_cut path must be a bare cut name, not '%s'",
+                        path,line,requested);
+                    return false;
                 }
-                if(!resolved_as_package) {
+                /* Heap-allocated rather than a stack buffer: expand() recurses
+                 * once per require depth (up to DIAMOND_MAX_REQUIRE_DEPTH), and
+                 * a fixed-size path buffer in every frame is enough to overflow
+                 * the stack at that depth. */
+                char *cut_path=malloc(DIAMOND_MAX_SOURCE_PATH);
+                if(cut_path==nullptr) {
+                    (void)snprintf(loader->error,loader->error_capacity,
+                        "%s:%zu: out of memory resolving require_cut '%s'",
+                        path,line,requested);
+                    return false;
+                }
+                int written=snprintf(cut_path,DIAMOND_MAX_SOURCE_PATH,
+                    "cuts/%.*s/lib/%.*s.di",
+                    (int)request_length,requested,(int)request_length,requested);
+                bool resolved=written>0&&(size_t)written<DIAMOND_MAX_SOURCE_PATH&&
+                    realpath(cut_path,canonical)!=nullptr;
+                if(!resolved) {
+                    written=snprintf(cut_path,DIAMOND_MAX_SOURCE_PATH,
+                        "cuts/%.*s/%.*s.di",
+                        (int)request_length,requested,(int)request_length,requested);
+                    resolved=written>0&&(size_t)written<DIAMOND_MAX_SOURCE_PATH&&
+                        realpath(cut_path,canonical)!=nullptr;
+                }
+                free(cut_path);
+                if(!resolved) {
+                    (void)snprintf(loader->error,loader->error_capacity,
+                        "%s:%zu: cannot require_cut '%s': no cuts/%.*s/lib/%.*s.di",
+                        path,line,requested,
+                        (int)request_length,requested,(int)request_length,requested);
+                    return false;
+                }
+                if(!validate_cut_manifest(loader,requested,request_length,path,line))
+                    return false;
+            } else {
+                if(request_length<3||strcmp(requested+request_length-3,".di")!=0)
+                    memcpy(requested+request_length,".di",4);
+                char joined[DIAMOND_MAX_SOURCE_PATH];
+                const char *slash=strrchr(path,'/');
+                const size_t directory=slash==nullptr?0:(size_t)(slash-path)+1;
+                if(requested[0]=='/') {
+                    if(strlen(requested)+1>sizeof joined) {
+                        (void)snprintf(loader->error,loader->error_capacity,
+                            "%s:%zu: resolved required path is too long",path,line);
+                        return false;
+                    }
+                    strcpy(joined,requested);
+                } else {
+                    if(directory+strlen(requested)+1>sizeof joined) {
+                        (void)snprintf(loader->error,loader->error_capacity,
+                            "%s:%zu: resolved required path is too long",path,line);
+                        return false;
+                    }
+                    memcpy(joined,path,directory);strcpy(joined+directory,requested);
+                }
+                if(realpath(joined,canonical)==nullptr) {
                     (void)snprintf(loader->error,loader->error_capacity,
                         "%s:%zu: cannot require '%s': %s",path,line,joined,
-                        strerror(relative_errno));return false;
-                }
-                if(!validate_package_manifest(loader,requested,request_length,
-                                              path,line))
+                        strerror(errno));
                     return false;
+                }
             }
             char *dependency=loader->override!=nullptr?
                 loader->override(canonical,loader->override_data):nullptr;

@@ -1,1 +1,1 @@
-require "nonstring_name_pkg"
+require_cut "nonstring_name_pkg"

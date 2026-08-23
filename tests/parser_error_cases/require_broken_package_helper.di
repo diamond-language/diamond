@@ -1,1 +1,1 @@
-require "nested_broken_source_pkg"
+require_cut "nested_broken_source_pkg"

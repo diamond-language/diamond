@@ -1,1 +1,1 @@
-require "unreadable_manifest_pkg"
+require_cut "unreadable_manifest_pkg"

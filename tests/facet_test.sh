@@ -29,22 +29,22 @@ def greet(name)
   "hello, " + name
 end
 EOF
-echo '{"name": "greeter", "version": "1.0.0"}' > greeter_repo/package.di
+echo '{"name": "greeter", "version": "1.0.0"}' > greeter_repo/cut.cut
 commit_repo greeter_repo
 (cd greeter_repo && git tag v1.0.0)
 greeter_v1="$(cd greeter_repo && git rev-parse v1.0.0)"
 
 mkdir project1
-cat > project1/package.di <<EOF
+cat > project1/cut.cut <<EOF
 {"name": "myapp", "dependencies": {"greeter": {"git": "$work/greeter_repo", "tag": "v1.0.0"}}}
 EOF
 (cd project1 && "$facet" install >/dev/null)
 
-[[ -f project1/diamond_packages/greeter/greeter.di ]]
-[[ ! -d project1/diamond_packages/greeter/.git ]]
+[[ -f project1/cuts/greeter/greeter.di ]]
+[[ ! -d project1/cuts/greeter/.git ]]
 [[ -f project1/facet.lock ]]
 
-actual="$(cd project1 && "$diamond" -e 'require "greeter"
+actual="$(cd project1 && "$diamond" -e 'require_cut "greeter"
 greet("world")')"
 [[ "$actual" == "hello, world" ]]
 
@@ -59,12 +59,12 @@ EOF
     git tag -d v1.0.0 >/dev/null && git tag v1.0.0)
 
 (cd project1 && "$facet" install >/dev/null)
-actual="$(cd project1 && "$diamond" -e 'require "greeter"
+actual="$(cd project1 && "$diamond" -e 'require_cut "greeter"
 greet("world")')"
 [[ "$actual" == "hello, world" ]]
 
 (cd project1 && "$facet" update >/dev/null)
-actual="$(cd project1 && "$diamond" -e 'require "greeter"
+actual="$(cd project1 && "$diamond" -e 'require_cut "greeter"
 greet("world")')"
 [[ "$actual" == "hi, world" ]]
 
@@ -72,35 +72,35 @@ greet("world")')"
 
 mkdir c_repo
 printf 'def c_value()\n  3\nend\n' > c_repo/c.di
-echo '{"name": "c"}' > c_repo/package.di
+echo '{"name": "c"}' > c_repo/cut.cut
 commit_repo c_repo
 (cd c_repo && git tag v1.0.0)
 
 mkdir b_repo
-printf 'require "c"\ndef b_value()\n  c_value() + 1\nend\n' > b_repo/b.di
-cat > b_repo/package.di <<EOF
+printf 'require_cut "c"\ndef b_value()\n  c_value() + 1\nend\n' > b_repo/b.di
+cat > b_repo/cut.cut <<EOF
 {"name": "b", "dependencies": {"c": {"git": "$work/c_repo", "tag": "v1.0.0"}}}
 EOF
 commit_repo b_repo
 (cd b_repo && git tag v1.0.0)
 
 mkdir a_repo
-printf 'require "b"\ndef a_value()\n  b_value() + 1\nend\n' > a_repo/a.di
-cat > a_repo/package.di <<EOF
+printf 'require_cut "b"\ndef a_value()\n  b_value() + 1\nend\n' > a_repo/a.di
+cat > a_repo/cut.cut <<EOF
 {"name": "a", "dependencies": {"b": {"git": "$work/b_repo", "tag": "v1.0.0"}}}
 EOF
 commit_repo a_repo
 (cd a_repo && git tag v1.0.0)
 
 mkdir project2
-cat > project2/package.di <<EOF
+cat > project2/cut.cut <<EOF
 {"name": "myapp", "dependencies": {"a": {"git": "$work/a_repo", "tag": "v1.0.0"}}}
 EOF
 (cd project2 && "$facet" install >/dev/null)
-[[ -f project2/diamond_packages/a/a.di ]]
-[[ -f project2/diamond_packages/b/b.di ]]
-[[ -f project2/diamond_packages/c/c.di ]]
-actual="$(cd project2 && "$diamond" -e 'require "a"
+[[ -f project2/cuts/a/a.di ]]
+[[ -f project2/cuts/b/b.di ]]
+[[ -f project2/cuts/c/c.di ]]
+actual="$(cd project2 && "$diamond" -e 'require_cut "a"
 a_value()')"
 [[ "$actual" == "5" ]]
 
@@ -108,19 +108,19 @@ a_value()')"
 
 mkdir shared_repo
 echo 'shared' > shared_repo/shared.di
-echo '{"name": "shared"}' > shared_repo/package.di
+echo '{"name": "shared"}' > shared_repo/cut.cut
 commit_repo shared_repo
 (cd shared_repo && git tag v1.0.0)
 
 mkdir y_repo
-printf 'require "shared"\n' > y_repo/y.di
-cat > y_repo/package.di <<EOF
+printf 'require_cut "shared"\n' > y_repo/y.di
+cat > y_repo/cut.cut <<EOF
 {"name": "y", "dependencies": {"shared": {"git": "$work/shared_repo", "branch": "main"}}}
 EOF
 commit_repo y_repo
 
 mkdir project3
-cat > project3/package.di <<EOF
+cat > project3/cut.cut <<EOF
 {"name": "myapp", "dependencies": {"shared": {"git": "$work/shared_repo", "tag": "v1.0.0"}, "y": {"git": "$work/y_repo", "branch": "main"}}}
 EOF
 error_file="$(mktemp)"
@@ -133,15 +133,15 @@ grep -q "myapp" "$error_file"
 grep -q "'y'" "$error_file"
 rm -f "$error_file"
 
-# --- a dependency whose own package.di declares the wrong name is rejected ---
+# --- a dependency whose own cut.cut declares the wrong name is rejected ---
 
 mkdir mislabeled_repo
 echo 'x' > mislabeled_repo/x.di
-echo '{"name": "not-what-it-is-called"}' > mislabeled_repo/package.di
+echo '{"name": "not-what-it-is-called"}' > mislabeled_repo/cut.cut
 commit_repo mislabeled_repo
 
 mkdir project4
-cat > project4/package.di <<EOF
+cat > project4/cut.cut <<EOF
 {"name": "myapp", "dependencies": {"thing": {"git": "$work/mislabeled_repo", "branch": "main"}}}
 EOF
 error_file="$(mktemp)"
@@ -155,7 +155,7 @@ rm -f "$error_file"
 # --- malformed dependency shapes are rejected before any cloning happens ---
 
 mkdir project5
-echo '{"name": "myapp", "dependencies": "oops"}' > project5/package.di
+echo '{"name": "myapp", "dependencies": "oops"}' > project5/cut.cut
 error_file="$(mktemp)"
 if (cd project5 && "$facet" install) >/dev/null 2>"$error_file"; then
     echo "facet install unexpectedly accepted a non-Hash dependencies key" >&2
@@ -164,7 +164,7 @@ fi
 grep -q "'dependencies' must be a Hash" "$error_file"
 rm -f "$error_file"
 
-echo '{"name": "myapp", "dependencies": {"x": {"git": "url"}}}' > project5/package.di
+echo '{"name": "myapp", "dependencies": {"x": {"git": "url"}}}' > project5/cut.cut
 error_file="$(mktemp)"
 if (cd project5 && "$facet" install) >/dev/null 2>"$error_file"; then
     echo "facet install unexpectedly accepted a dependency with no ref key" >&2
@@ -173,7 +173,7 @@ fi
 grep -q "must specify exactly one of tag/branch/commit" "$error_file"
 rm -f "$error_file"
 
-echo '{"name": "myapp", "dependencies": {"x": {"git": "url", "tag": "a", "branch": "b"}}}' > project5/package.di
+echo '{"name": "myapp", "dependencies": {"x": {"git": "url", "tag": "a", "branch": "b"}}}' > project5/cut.cut
 error_file="$(mktemp)"
 if (cd project5 && "$facet" install) >/dev/null 2>"$error_file"; then
     echo "facet install unexpectedly accepted a dependency with ambiguous ref keys" >&2
@@ -182,7 +182,7 @@ fi
 grep -q "must specify exactly one of tag/branch/commit" "$error_file"
 rm -f "$error_file"
 
-echo '{"name": "myapp", "dependencies": {"x": {"tag": "a"}}}' > project5/package.di
+echo '{"name": "myapp", "dependencies": {"x": {"tag": "a"}}}' > project5/cut.cut
 error_file="$(mktemp)"
 if (cd project5 && "$facet" install) >/dev/null 2>"$error_file"; then
     echo "facet install unexpectedly accepted a dependency with no git key" >&2
@@ -192,7 +192,7 @@ grep -q "missing a valid String 'git' key" "$error_file"
 rm -f "$error_file"
 
 # none of the above malformed-manifest cases should ever have cloned anything
-[[ ! -e project5/diamond_packages/.facet-tmp ]] || [[ -z "$(ls -A project5/diamond_packages/.facet-tmp 2>/dev/null)" ]]
+[[ ! -e project5/cuts/.facet-tmp ]] || [[ -z "$(ls -A project5/cuts/.facet-tmp 2>/dev/null)" ]]
 
 # --- a manifest's git/ref fields reach git's own argv as plain positional
 # strings, never shell-interpreted or parsed as git options -- a
@@ -203,7 +203,7 @@ rm -f "$error_file"
 # execution through git's own hook/pack mechanisms). ---
 
 mkdir project7
-cat > project7/package.di <<'EOF'
+cat > project7/cut.cut <<'EOF'
 {"name": "myapp", "dependencies": {"x": {"git": "--upload-pack=touch /tmp/facet_injection_probe", "tag": "main"}}}
 EOF
 rm -f /tmp/facet_injection_probe
@@ -221,7 +221,7 @@ fi
 rm -f "$error_file"
 
 mkdir project8
-cat > project8/package.di <<EOF
+cat > project8/cut.cut <<EOF
 {"name": "myapp", "dependencies": {"greeter": {"git": "$work/greeter_repo", "tag": "--upload-pack=touch /tmp/facet_injection_probe"}}}
 EOF
 error_file="$(mktemp)"
@@ -237,15 +237,15 @@ fi
 }
 rm -f "$error_file"
 
-# --- no package.di at all ---
+# --- no cut.cut at all ---
 
 mkdir project6
 error_file="$(mktemp)"
 if (cd project6 && "$facet" install) >/dev/null 2>"$error_file"; then
-    echo "facet install unexpectedly succeeded with no package.di" >&2
+    echo "facet install unexpectedly succeeded with no cut.cut" >&2
     exit 1
 fi
-grep -q "no package.di found" "$error_file"
+grep -q "no cut.cut found" "$error_file"
 rm -f "$error_file"
 
 # --- bare invocation and unknown subcommand print usage ---

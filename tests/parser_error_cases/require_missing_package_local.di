@@ -1,1 +1,1 @@
-require "missing_local_pkg"
+require_cut "missing_local_pkg"

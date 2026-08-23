@@ -10,11 +10,11 @@ history in sync with.
 ## Install
 
 Either copy this directory straight into another project as
-`diamond_packages/http/`, or give it its own git remote and depend on
+`cuts/http/`, or give it its own git remote and depend on
 that:
 
 ```ruby
-# package.di, in your project
+# cut.cut, in your project
 {"name": "myapp", "dependencies": {"http": {"git": "<url-of-a-remote-for-this-directory>", "tag": "v0.1.0"}}}
 ```
 
@@ -25,7 +25,7 @@ $ facet install
 ## Usage
 
 ```ruby
-require "http"
+require_cut "http"
 
 def run()
   def handler(request)
@@ -40,7 +40,7 @@ run()
 ### Client
 
 ```ruby
-require "http"
+require_cut "http"
 
 response = http_get("http://example.com/status")
 puts(response["status"])

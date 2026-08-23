@@ -267,9 +267,12 @@ require "support/formatting.di"
 ```
 
 Paths are relative to the requiring file, `.di` is inferred, canonical files
-load once, and cycles are rejected. Installed packages are resolved from
-`diamond_packages/` after ordinary relative resolution fails. Diagnostics and
-runtime traces retain the original imported file, line, and column.
+load once, and cycles are rejected. `require` never falls back to anything
+else — an installed package (a "cut") is reached explicitly instead, with
+`require_cut "name"`, resolved from `cuts/<name>/lib/<name>.di` against the
+process's own working directory. The two never compete: a relative file and
+a same-named cut can coexist without either shadowing the other. Diagnostics
+and runtime traces retain the original imported file, line, and column.
 
 ## Standard and native facilities
 

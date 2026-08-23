@@ -1,1 +1,1 @@
-require "broken_manifest_pkg"
+require_cut "broken_manifest_pkg"

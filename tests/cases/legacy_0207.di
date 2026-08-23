@@ -7,6 +7,6 @@ class Box
 end
 begin
  Box.new().answer()
-rescue error: TypeError
+rescue error: NoMethodError
  Tools.answer()
 end

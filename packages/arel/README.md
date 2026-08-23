@@ -103,7 +103,7 @@ order.
 ## Install
 
 Same story as the other packages here -- copy this directory into
-another project as `diamond_packages/arel/`, or give it its own git
+another project as `cuts/arel/`, or give it its own git
 remote and depend on it via `facet` (see
 [`docs/packages.md`](https://gitlab.com/dmn9180/diamond/-/blob/main/docs/packages.md)).
 

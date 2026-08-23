@@ -764,49 +764,63 @@ grep -q '== double ==' <<<"$actual"
 grep -q '== greet ==' <<<"$actual"
 
 pkg_dir="$(mktemp -d)"
-mkdir -p "$pkg_dir/diamond_packages/greeter"
-printf 'def greet(name)\n  "hi, " + name\nend\n' >"$pkg_dir/diamond_packages/greeter/greeter.di"
-printf 'require "greeter"\ngreet("world")\n' >"$pkg_dir/main.di"
+mkdir -p "$pkg_dir/cuts/greeter/lib"
+printf 'def greet(name)\n  "hi, " + name\nend\n' >"$pkg_dir/cuts/greeter/lib/greeter.di"
+printf 'require_cut "greeter"\ngreet("world")\n' >"$pkg_dir/main.di"
 actual="$(cd "$pkg_dir" && "$diamond_abs" main.di)"
 [[ "$actual" == "hi, world" ]]
 
-printf 'def greet(name)\n  "relative wins: " + name\nend\n' >"$pkg_dir/greeter.di"
-actual="$(cd "$pkg_dir" && "$diamond_abs" main.di)"
-[[ "$actual" == "relative wins: world" ]]
-rm -f "$pkg_dir/greeter.di"
+# A relative file of the same name never competes with a cut -- require
+# and require_cut are two entirely separate, unambiguous mechanisms, so a
+# same-named cuts/greeter directory sitting alongside greeter.di changes
+# nothing about what plain `require "greeter"` resolves to.
+printf 'def greet(name)\n  "relative: " + name\nend\n' >"$pkg_dir/greeter.di"
+printf 'require "greeter"\ngreet("world")\n' >"$pkg_dir/relative_main.di"
+actual="$(cd "$pkg_dir" && "$diamond_abs" relative_main.di)"
+[[ "$actual" == "relative: world" ]]
+rm -f "$pkg_dir/greeter.di" "$pkg_dir/relative_main.di"
 
-mkdir -p "$pkg_dir/diamond_packages/pkg"
-printf 'def helper_fn()\n  "helped"\nend\n' >"$pkg_dir/diamond_packages/pkg/helper.di"
-printf 'require "helper"\ndef pkg_fn()\n  helper_fn()\nend\n' >"$pkg_dir/diamond_packages/pkg/pkg.di"
-printf 'require "pkg"\npkg_fn()\n' >"$pkg_dir/pkg_main.di"
+mkdir -p "$pkg_dir/cuts/pkg/lib"
+printf 'def helper_fn()\n  "helped"\nend\n' >"$pkg_dir/cuts/pkg/lib/helper.di"
+printf 'require "helper"\ndef pkg_fn()\n  helper_fn()\nend\n' >"$pkg_dir/cuts/pkg/lib/pkg.di"
+printf 'require_cut "pkg"\npkg_fn()\n' >"$pkg_dir/pkg_main.di"
 actual="$(cd "$pkg_dir" && "$diamond_abs" pkg_main.di)"
 [[ "$actual" == "helped" ]]
 
 pkg_missing_error="$(mktemp)"
-printf 'require "no_such_package"\n' >"$pkg_dir/missing_main.di"
+printf 'require_cut "no_such_cut"\n' >"$pkg_dir/missing_main.di"
 if (cd "$pkg_dir" && "$diamond_abs" missing_main.di) >/dev/null 2>"$pkg_missing_error"; then
-    echo "nonexistent package require unexpectedly succeeded" >&2
+    echo "nonexistent cut require_cut unexpectedly succeeded" >&2
     rm -rf "$pkg_dir" "$pkg_missing_error"
     exit 1
 fi
-grep -q "cannot require '.*no_such_package.di'" "$pkg_missing_error"
-rm -rf "$pkg_dir" "$pkg_missing_error"
+grep -q "cannot require_cut 'no_such_cut'" "$pkg_missing_error"
+
+slash_error="$(mktemp)"
+printf 'require_cut "sub/greeter"\n' >"$pkg_dir/slash_main.di"
+if (cd "$pkg_dir" && "$diamond_abs" slash_main.di) >/dev/null 2>"$slash_error"; then
+    echo "require_cut with a slash unexpectedly succeeded" >&2
+    rm -rf "$pkg_dir" "$pkg_missing_error" "$slash_error"
+    exit 1
+fi
+grep -q "require_cut path must be a bare cut name" "$slash_error"
+rm -rf "$pkg_dir" "$pkg_missing_error" "$slash_error"
 
 manifest_dir="$(mktemp -d)"
-mkdir -p "$manifest_dir/diamond_packages/greeter"
-printf 'def greet(name)\n  "hi, " + name\nend\n' >"$manifest_dir/diamond_packages/greeter/greeter.di"
-printf 'require "greeter"\ngreet("world")\n' >"$manifest_dir/main.di"
+mkdir -p "$manifest_dir/cuts/greeter/lib"
+printf 'def greet(name)\n  "hi, " + name\nend\n' >"$manifest_dir/cuts/greeter/lib/greeter.di"
+printf 'require_cut "greeter"\ngreet("world")\n' >"$manifest_dir/main.di"
 
-printf '{"name": "greeter", "version": "0.1.0"}\n' >"$manifest_dir/diamond_packages/greeter/package.di"
+printf '{"name": "greeter", "version": "0.1.0"}\n' >"$manifest_dir/cuts/greeter/cut.cut"
 actual="$(cd "$manifest_dir" && "$diamond_abs" main.di)"
 [[ "$actual" == "hi, world" ]]
-rm -f "$manifest_dir/diamond_packages/greeter/package.di"
+rm -f "$manifest_dir/cuts/greeter/cut.cut"
 
 actual="$(cd "$manifest_dir" && "$diamond_abs" main.di)"
 [[ "$actual" == "hi, world" ]]
 
 manifest_error="$(mktemp)"
-printf '{"name": "wrong_name"}\n' >"$manifest_dir/diamond_packages/greeter/package.di"
+printf '{"name": "wrong_name"}\n' >"$manifest_dir/cuts/greeter/cut.cut"
 if (cd "$manifest_dir" && "$diamond_abs" main.di) >/dev/null 2>"$manifest_error"; then
     echo "mismatched manifest name unexpectedly succeeded" >&2
     rm -rf "$manifest_dir" "$manifest_error"
@@ -814,7 +828,7 @@ if (cd "$manifest_dir" && "$diamond_abs" main.di) >/dev/null 2>"$manifest_error"
 fi
 grep -q "declares name 'wrong_name', expected 'greeter'" "$manifest_error"
 
-printf '42\n' >"$manifest_dir/diamond_packages/greeter/package.di"
+printf '42\n' >"$manifest_dir/cuts/greeter/cut.cut"
 if (cd "$manifest_dir" && "$diamond_abs" main.di) >/dev/null 2>"$manifest_error"; then
     echo "non-Hash manifest unexpectedly succeeded" >&2
     rm -rf "$manifest_dir" "$manifest_error"
@@ -822,7 +836,7 @@ if (cd "$manifest_dir" && "$diamond_abs" main.di) >/dev/null 2>"$manifest_error"
 fi
 grep -q "must evaluate to a Hash" "$manifest_error"
 
-printf '{"version": "0.1.0"}\n' >"$manifest_dir/diamond_packages/greeter/package.di"
+printf '{"version": "0.1.0"}\n' >"$manifest_dir/cuts/greeter/cut.cut"
 if (cd "$manifest_dir" && "$diamond_abs" main.di) >/dev/null 2>"$manifest_error"; then
     echo "manifest missing name key unexpectedly succeeded" >&2
     rm -rf "$manifest_dir" "$manifest_error"
@@ -830,7 +844,7 @@ if (cd "$manifest_dir" && "$diamond_abs" main.di) >/dev/null 2>"$manifest_error"
 fi
 grep -q "must have a String 'name' key" "$manifest_error"
 
-printf '{"name": "greeter", "version": 1}\n' >"$manifest_dir/diamond_packages/greeter/package.di"
+printf '{"name": "greeter", "version": 1}\n' >"$manifest_dir/cuts/greeter/cut.cut"
 if (cd "$manifest_dir" && "$diamond_abs" main.di) >/dev/null 2>"$manifest_error"; then
     echo "non-String version unexpectedly succeeded" >&2
     rm -rf "$manifest_dir" "$manifest_error"
@@ -838,7 +852,7 @@ if (cd "$manifest_dir" && "$diamond_abs" main.di) >/dev/null 2>"$manifest_error"
 fi
 grep -q "key 'version' must be a String" "$manifest_error"
 
-printf 'this is not valid Diamond syntax )))\n' >"$manifest_dir/diamond_packages/greeter/package.di"
+printf 'this is not valid Diamond syntax )))\n' >"$manifest_dir/cuts/greeter/cut.cut"
 if (cd "$manifest_dir" && "$diamond_abs" main.di) >/dev/null 2>"$manifest_error"; then
     echo "manifest with a compile error unexpectedly succeeded" >&2
     rm -rf "$manifest_dir" "$manifest_error"
@@ -846,16 +860,16 @@ if (cd "$manifest_dir" && "$diamond_abs" main.di) >/dev/null 2>"$manifest_error"
 fi
 grep -q "failed to compile at line" "$manifest_error"
 
-printf 'raise "manifest boom"\n' >"$manifest_dir/diamond_packages/greeter/package.di"
+printf 'raise "manifest boom"\n' >"$manifest_dir/cuts/greeter/cut.cut"
 if (cd "$manifest_dir" && "$diamond_abs" main.di) >/dev/null 2>"$manifest_error"; then
     echo "manifest that raises unexpectedly succeeded" >&2
     rm -rf "$manifest_dir" "$manifest_error"
     exit 1
 fi
-grep -q "package manifest '.*' failed: uncaught exception: manifest boom" "$manifest_error"
+grep -q "cut manifest '.*' failed: uncaught exception: manifest boom" "$manifest_error"
 rm -f "$manifest_error"
 
-printf '{"name": "greeter", "version": "0.1.0"}\n' >"$manifest_dir/diamond_packages/greeter/package.di"
+printf '{"name": "greeter", "version": "0.1.0"}\n' >"$manifest_dir/cuts/greeter/cut.cut"
 actual="$(cd "$manifest_dir" && DIAMOND_STRESS_GC=1 "$diamond_abs" main.di)"
 [[ "$actual" == "hi, world" ]]
 rm -rf "$manifest_dir"

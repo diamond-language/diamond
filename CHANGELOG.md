@@ -411,7 +411,11 @@ bytecode, or semantic stability.
 ### Tooling and ecosystem
 
 - Added `facet`, a git-ref package manager with manifests, lockfiles, conflict
-  detection, package installation, and package-aware `require` fallback.
+  detection, and package ("cut") installation.
+- Added `require_cut`, an explicit, unambiguous require form for reaching an
+  installed cut (`cuts/<name>/lib/<name>.di`) that never competes with
+  ordinary `require`'s own relative-file resolution -- replacing an earlier
+  implicit bare-name package fallback on plain `require`.
 - Added HTTP, Rack-style middleware, Gremlin server, and Arel-style SQL query
   builder packages.
 - Expanded Arel with quoted expression nodes, grouping/aggregates, structural

@@ -1,1 +1,1 @@
-require "circular_pkg"
+require_cut "circular_pkg"

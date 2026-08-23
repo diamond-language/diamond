@@ -1,1 +1,1 @@
-require "interpolation_broken_pkg"
+require_cut "interpolation_broken_pkg"

@@ -260,8 +260,8 @@ static bool git_rev_parse_head(const char *repository, char *out, size_t out_siz
 
 /* --- manifest/lockfile reading: both are just Diamond Hash literals,
  * compiled and run standalone exactly the way src/loader.c's
- * validate_package_manifest already evaluates package.di - duplicated
- * here rather than shared, since this needs a different
+ * validate_cut_manifest already evaluates a cut's own <name>.cut -
+ * duplicated here rather than shared, since this needs a different
  * error-reporting shape (stderr + exit code, not a Loader error
  * buffer) and facet.lock has no counterpart in the runtime at all. --- */
 
@@ -588,7 +588,7 @@ static bool resolve_dependency(const FacetDependency *dependency,
 
     char nested_manifest_path[FACET_MAX_PATH];
     written = snprintf(nested_manifest_path, sizeof nested_manifest_path,
-                       "%s/package.di", scratch_path);
+                       "%s/cut.cut", scratch_path);
     if (written < 0 || (size_t)written >= sizeof nested_manifest_path) {
         (void)snprintf(error, error_size, "path too long while resolving '%s'",
                        dependency->name);
@@ -626,9 +626,9 @@ static bool resolve_manifest_dependencies(const FacetManifest *manifest,
 }
 
 /* --- install: move each resolved package's checkout into
- * diamond_packages/<name>, stripping .git first - facet.lock, not a
- * live repo sitting inside diamond_packages/, is the source of truth
- * for "what commit." The scratch root lives inside diamond_packages/
+ * cuts/<name>, stripping .git first - facet.lock, not a
+ * live repo sitting inside cuts/, is the source of truth
+ * for "what commit." The scratch root lives inside cuts/
  * itself so this rename() is always same-filesystem. --- */
 
 static bool strip_git_directory(const char *package_path) {
@@ -648,7 +648,7 @@ static bool install_resolution(const FacetResolution *resolution,
         char final_path[FACET_MAX_PATH];
         (void)snprintf(scratch_path, sizeof scratch_path, "%s/%s", scratch_root,
                        resolved->name);
-        (void)snprintf(final_path, sizeof final_path, "diamond_packages/%s",
+        (void)snprintf(final_path, sizeof final_path, "cuts/%s",
                        resolved->name);
         if (!file_exists(scratch_path)) {
             /* facet.lock-driven install: resolution didn't clone anything
@@ -676,12 +676,12 @@ static bool install_resolution(const FacetResolution *resolution,
 
 static int run_install_or_update(bool force_resolve) {
     char error[512];
-    if (!file_exists("package.di")) {
-        fprintf(stderr, "facet: no package.di found in the current directory\n");
+    if (!file_exists("cut.cut")) {
+        fprintf(stderr, "facet: no cut.cut found in the current directory\n");
         return 66;
     }
-    const char *scratch_root = "diamond_packages/.facet-tmp";
-    if (!ensure_directory("diamond_packages") || !ensure_directory(scratch_root)) {
+    const char *scratch_root = "cuts/.facet-tmp";
+    if (!ensure_directory("cuts") || !ensure_directory(scratch_root)) {
         fprintf(stderr, "facet: cannot create '%s': %s\n", scratch_root,
                 strerror(errno));
         return 74;
@@ -692,7 +692,7 @@ static int run_install_or_update(bool force_resolve) {
         ok = parse_lockfile("facet.lock", &resolution, error, sizeof error);
     } else {
         FacetManifest manifest;
-        ok = parse_manifest("package.di", &manifest, error, sizeof error) &&
+        ok = parse_manifest("cut.cut", &manifest, error, sizeof error) &&
              resolve_manifest_dependencies(&manifest, manifest.name, &resolution,
                                            scratch_root, error, sizeof error) &&
              write_lockfile("facet.lock", &resolution, error, sizeof error);

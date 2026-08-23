@@ -1,1 +1,1 @@
-require "version_manifest_pkg"
+require_cut "version_manifest_pkg"

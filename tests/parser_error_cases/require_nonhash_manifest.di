@@ -1,1 +1,1 @@
-require "nonhash_manifest_pkg"
+require_cut "nonhash_manifest_pkg"

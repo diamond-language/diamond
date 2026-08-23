@@ -12,8 +12,8 @@ connection's own progress.
 ## Install
 
 Same story as `packages/http` -- either copy this directory straight into
-another project as `diamond_packages/gremlin/` (alongside a
-`diamond_packages/http/` for the `require "../http/http"` this package
+another project as `cuts/gremlin/` (alongside a
+`cuts/http/` for the `require "../http/http"` this package
 makes internally to still exist), or give both their own git remotes and
 depend on them via `facet` (see
 [`docs/packages.md`](https://gitlab.com/dmn9180/diamond/-/blob/main/docs/packages.md)).

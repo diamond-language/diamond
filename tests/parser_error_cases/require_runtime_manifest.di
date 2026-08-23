@@ -1,1 +1,1 @@
-require "runtime_manifest_pkg"
+require_cut "runtime_manifest_pkg"

@@ -1,1 +1,1 @@
-require "broken_source_pkg"
+require_cut "broken_source_pkg"
