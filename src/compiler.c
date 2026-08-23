@@ -5529,24 +5529,51 @@ static uint16_t compile_definition(Compiler *compiler, bool captures_self) {
      * receiver class (see DIAMOND_OP_LOAD_CLASS's own comment). */
     const bool direct_class_singleton_member=
         at_top_level&&compiler->current_class>=0&&module_singleton;
-    /* owner_class marks a function as "this is a method" for the
-     * redefine_method/define_method patch-factory idiom specifically
-     * (see the big comment above nested_in_singleton_method) -- a
-     * `closure` (captures_self) is never a patch factory, never installed
-     * via redefine_method/define_method, and gets self entirely through
-     * its own capture rather than an implicit-receiver call-convention
-     * slot (see the captures_self handling below), so it must never pick
-     * up owner_class here even when directly nested inside a singleton
-     * method -- doing so silently adds an implicit-receiver parameter
-     * slot elsewhere (fn->owner_class==UINT8_MAX?0:1's parameter_offset,
-     * used at every INVOKE-family call site) that a `closure`'s own
-     * declared arity, and its own call sites, never account for. */
+    /* owner_class serves two genuinely different purposes bundled into
+     * one field: (1) "this function is a real class/module method,
+     * eligible for redefine_method/define_method" -- checked as an
+     * *exact* value match against a real class index
+     * (DIAMOND_OP_REDEFINE_METHOD's own `new_function->owner_class!=
+     * class_operand`, src/vm.c) -- and (2) "register 0 is already
+     * spoken for, every calling convention that places arguments must
+     * skip it" (parameter_offset, computed everywhere in src/vm.c as a
+     * plain `fn->owner_class==UINT8_MAX?0:1` binary check -- confirmed
+     * nowhere in this codebase tests for one *specific* non-UINT8_MAX
+     * value except the assignment sites themselves, so any non-UINT8_MAX
+     * sentinel gets (2) for free with no other call site changes).
+     *
+     * A `closure` (captures_self) needs (2) without (1): it reserves
+     * register 0 itself, internally, for the materialized captured self
+     * (see the captures_self handling below), so calls to it must still
+     * skip register 0 the same way a real method's implicit receiver
+     * already does -- confirmed the hard way as a real bug: leaving
+     * owner_class at UINT8_MAX here computed parameter_offset=0,
+     * silently colliding a closure's own first *declared* parameter
+     * with its self-capture register. But it must never satisfy (1) --
+     * it's never a patch factory, never installable via redefine_method/
+     * define_method. A third sentinel, distinct from UINT8_MAX (no
+     * owner_class at all) and UINT8_MAX-1 (the existing module-method
+     * sentinel, diamond_compile's own convention, comfortably above
+     * DIAMOND_MAX_CLASSES=128's real range either way), gives it (2)
+     * while permanently failing (1)'s exact-match check.
+     *
+     * One more site needed a matching fix, not just this one:
+     * call_closure_helper's own needs_self_slot padding (src/vm.c) --
+     * used by CALL_CLOSURE and tap's block-invocation sites, the only
+     * ways a Callable *value* (as opposed to ordinary method dispatch)
+     * ever actually runs -- inflates its own arity-bounds check by one
+     * for *any* owner_class!=UINT8_MAX function, correct for a genuine
+     * method's real implicit-receiver argument but wrong here too: this
+     * sentinel's whole point is that nothing external ever supplies
+     * register 0's value, so the bounds check must stay un-inflated,
+     * matching this closure's own true, undistorted declared arity. */
     function->owner_class=
         (direct_class_member||direct_class_singleton_member||
          (nested_in_singleton_method&&!captures_self&&compiler->current_class>=0))?
             (uint8_t)compiler->current_class:
         (direct_module_member||(nested_in_singleton_method&&!captures_self&&compiler->current_module>=0))?
-            UINT8_MAX-1:UINT8_MAX;
+            UINT8_MAX-1:
+        captures_self?UINT8_MAX-2:UINT8_MAX;
     function->nested=!at_top_level;
     size_t copy_length=name.length;
     for (size_t index = 0; index < copy_length; index++) {

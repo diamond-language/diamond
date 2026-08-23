@@ -966,6 +966,62 @@ redeclared inside a loop body used to raise a runtime `TypeError` on the
 second iteration. Fixed separately -- see "Locals captured inside a loop
 body go stale" below.
 
+### `closure` with its own declared parameters collided with self capture
+
+A second bug, surfaced only once a `closure` was tested with declared
+parameters of its own (every test case up through the mechanism above
+used zero-arg closures) -- not the loop-staleness bug, and not fixed by
+it. `compile_definition` reserves register 0 in the closure's own
+function for the materialized captured self, via one `GET_CAPTURE`
+emitted *before* parameter parsing begins (see above). A closure's own
+declared parameters, compiled immediately after, start at whatever
+register is next free -- register 1, correctly, *if* the calling
+convention that places arguments also knows to skip register 0. But a
+`closure` kept `owner_class==UINT8_MAX` (the "not a method" sentinel,
+deliberately, to stay excluded from `redefine_method`'s installation
+path -- see above), and every calling convention in `src/vm.c` computes
+`parameter_offset`/its own implicit-receiver-skip decision as a plain
+`fn->owner_class==UINT8_MAX?0:1` binary check. So a `closure`'s own
+first declared parameter silently landed in register 0 too, colliding
+with (overwriting) the self-materialization that was supposed to live
+there -- confirmed directly: calling a one-parameter `closure` through a
+`Callable[1]`-typed value corrupted the parameter's own value inside the
+closure's body.
+
+Fixing this without also re-admitting a `closure` to
+`redefine_method`'s installation path needed splitting `owner_class`'s
+two bundled meanings apart, not just picking one: (1) "this is a real
+class/module method, eligible for `redefine_method`/`define_method`"
+(checked as an *exact* match against a specific class index, only at
+`DIAMOND_OP_REDEFINE_METHOD`'s own installation site) and (2) "register
+0 is already spoken for, every calling convention must skip it"
+(`parameter_offset`, checked everywhere else as a binary `==`/`!=
+UINT8_MAX` test, confirmed via exhaustive grep to never test for one
+*specific* non-`UINT8_MAX` value anywhere else in the codebase). A third
+`owner_class` sentinel (`UINT8_MAX-2`, distinct from `UINT8_MAX` and the
+existing `UINT8_MAX-1` module-method sentinel, comfortably outside
+`DIAMOND_MAX_CLASSES`'s real range either way) gives a `closure` (2) for
+free, at every one of the many `parameter_offset` call sites in
+`src/vm.c`, with no per-site changes needed, while permanently failing
+(1)'s exact-match check.
+
+One call site needed a paired, explicit fix rather than picking this up
+automatically: `call_closure_helper` (`src/vm.c`, the shared mechanism
+behind `CALL_CLOSURE` and `tap`'s block invocation -- the only ways a
+`Callable` *value*, as opposed to ordinary method dispatch, actually
+runs) pads a phantom `DIAMOND_NIL` into argument position 0 for any
+`owner_class!=UINT8_MAX` function, to shift real arguments to start at
+register 1 -- correct and still needed for a `closure`, which does need
+that shift. But it also uses that same padded, inflated count for its
+own arity-bounds check, correct for a genuine method (whose declared
+arity *was* bumped by one to account for a real implicit-receiver
+argument) but wrong for a `closure` (whose declared arity is
+deliberately left un-inflated, since nothing external ever supplies
+register 0's value). Fixed by checking the new sentinel specifically
+(`self_via_capture`) and comparing the arity bounds against the real,
+un-padded argument count in that case, while still passing the padded
+array/count through to `run_chunk` for correct register placement.
+
 ### Locals captured inside a loop body go stale
 
 A `while`/`until`/`loop` body is compiled exactly once; every iteration

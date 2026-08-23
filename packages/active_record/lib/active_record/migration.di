@@ -43,21 +43,23 @@ module ActiveRecord
 # order that matters, timestamp-shaped or not.
 #
 # Every method below is `self.`-owned, never instantiated -- same as
-# Transaction. #run/#rollback still don't build on Transaction.run
-# itself (which takes a zero-arg Callable), even though the specific bug
-# that originally motivated this (a nested `def`/`closure` redeclared a
-# second time inside a loop body raising a runtime TypeError -- needed
-# here, one transaction per migration) has since been fixed at the
-# language level (docs/roadmap.md's "Open design decisions" section).
-# Passing a *named* nested-`def` reference to `Transaction.run` hits a
-# separate, still-open gap instead: confirmed directly, with no loop
-# involved at all, that it type-checks as a bare `Callable` rather than
-# narrowing to the `Callable[0]` `Transaction.run` declares (a `do...end`
-# block literal doesn't have this problem, but `Transaction.run(db) do
-# ... end` can't be re-declared per loop iteration the way a callback
-# reference can). So #run/#rollback keep inlining Transaction.run's own
-# three-line BEGIN/COMMIT/ROLLBACK shape per iteration instead of
-# wrapping a callback.
+# Transaction. #run/#rollback build on Transaction.run itself (a zero-arg
+# Callable), one `closure` declared fresh per loop iteration so each
+# wraps that iteration's own migration and version. Getting here took
+# two separate language-level fixes, both now resolved (docs/roadmap.md's
+# "Language and library directions" section): a nested `def`/`closure`
+# redeclared a second time inside a loop body used to raise a runtime
+# TypeError on the second iteration -- needed here, one transaction per
+# migration -- and, independently, a `def`/`closure` nested directly
+# inside a `def self.x` method (true of every method here) used to
+# type-check as a bare `Callable` rather than narrowing to the
+# `Callable[0]` `Transaction.run` declares, or (once that was fixed for
+# `closure` specifically) miscompiled entirely for a `closure` that also
+# declares its own parameters. Plain nested `def` still can't be passed
+# to `Transaction.run` this way -- it remains the `redefine_method`
+# patch-factory form, unrelated to this -- but `closure` (needed here
+# only for the loop-redeclaration behavior, not for any actual self/
+# ivar capture -- neither callback below reads `self`) works correctly.
 class Migrator
   def self.migrations_table() = Arel.table("schema_migrations")
 
@@ -116,15 +118,11 @@ class Migrator
       version = migration["version"]
       unless applied.include?(version)
         up = migration["up"]
-        db.execute("BEGIN")
-        begin
+        closure apply_migration()
           up(db)
           Migrator.record_applied(db, version, visitor)
-          db.execute("COMMIT")
-        rescue error: StandardError
-          db.execute("ROLLBACK")
-          raise error
         end
+        Transaction.run(db, apply_migration)
       end
       index += 1
     end
@@ -161,15 +159,11 @@ class Migrator
       if down == nil
         raise RuntimeError.new("migration #{version} has no \"down\" entry (irreversible)")
       end
-      db.execute("BEGIN")
-      begin
+      closure revert_migration()
         down(db)
         Migrator.remove_applied(db, version, visitor)
-        db.execute("COMMIT")
-      rescue error: StandardError
-        db.execute("ROLLBACK")
-        raise error
       end
+      Transaction.run(db, revert_migration)
       index += 1
     end
   end

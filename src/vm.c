@@ -6585,6 +6585,17 @@ static DiamondVmStatus call_closure_helper(DiamondVm *vm,const DiamondChunk *chu
         const DiamondValue *registers,uint16_t base,uint8_t argc,size_t depth,
         DiamondValue *result) {
     const bool needs_self_slot=fn->owner_class!=UINT8_MAX;
+    /* A `closure` (compiler.c's UINT8_MAX-2 owner_class sentinel) also
+     * needs the phantom-slot-0 padding below -- it reserves register 0
+     * for its own materialized captured self, so real arguments still
+     * need to land starting at register 1, exactly like a genuine
+     * method's implicit receiver. But unlike a genuine method, nothing
+     * external ever supplies that slot's value, so fn->arity/
+     * required_arity were never inflated to account for it (see
+     * compiler.c's owner_class comment) -- the arity-bounds check below
+     * must compare against the real, un-inflated argc, not the padded
+     * argument_count used only to place real arguments correctly. */
+    const bool self_via_capture=fn->owner_class==UINT8_MAX-2;
     DiamondValue call_arguments[17];
     const DiamondValue *arguments=&registers[base];
     size_t argument_count=argc;
@@ -6596,7 +6607,8 @@ static DiamondVmStatus call_closure_helper(DiamondVm *vm,const DiamondChunk *chu
         arguments=call_arguments;
         argument_count=(size_t)argc+1;
     }
-    if(argument_count<fn->required_arity||argument_count>fn->arity)
+    const size_t arity_check_count=self_via_capture?(size_t)argc:argument_count;
+    if(arity_check_count<fn->required_arity||arity_check_count>fn->arity)
         return DIAMOND_VM_ARITY_ERROR;
     const DiamondChunk child={.name=fn->name,.code=fn->code,.lines=fn->lines,
       .columns=fn->columns,.code_count=fn->code_count,.constants=fn->constants,

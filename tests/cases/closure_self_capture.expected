@@ -3,6 +3,8 @@
 12
 99
 Thread.new rejected a self-capturing closure
+21
+21
 [100, 101, 102]
 closure self-capture smoke ok
 nil

@@ -101,6 +101,43 @@ class LoopWidget
     results
   end
 end
+# A closure that declares its own parameter(s), on top of capturing
+# self -- was a real, separate bug: self-materialization reserves
+# register 0 before parameter parsing, so a closure's own first declared
+# parameter must start at register 1, same as an ordinary method's
+# implicit receiver. Exercised both as a direct call and passed as a
+# Callable[N]-typed value, since only the latter actually surfaced the
+# bug (a direct call's own arguments still landed correctly on the
+# stack; it was the arity-bounds check on the *value* path -- CALL_CLOSURE
+# -- that either rejected a real Callable[1] as a bare Callable, or,
+# once that was fixed, miscounted the argument itself).
+class ScaleWidget
+  def initialize(factor)
+    @factor = factor
+  end
+
+  def scale(n)
+    closure inner(x)
+      x * @factor
+    end
+    inner(n)
+  end
+
+  def scaler()
+    closure inner(x)
+      x * @factor
+    end
+    inner
+  end
+end
+
+def apply_callable(callback: Callable[1], value)
+  callback(value)
+end
+
+puts(ScaleWidget.new(3).scale(7))              # 21, direct call
+puts(apply_callable(ScaleWidget.new(3).scaler(), 7))  # 21, via Callable[1]
+
 puts(LoopWidget.new(100).run())
 
 puts("closure self-capture smoke ok")

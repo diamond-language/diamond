@@ -460,6 +460,28 @@ binding, and others) aren't touched -- a local declared via one of those
 forms inside a capturing loop, then itself captured later in the same
 body, remains unfixed. Revisit if that shape shows up in practice.
 
+### `closure` with declared parameters collided with self capture
+
+**Done, in scope.** Also surfaced by `active_record`'s migration-runner
+use case, and separate from the loop-staleness bug above: passing a
+zero-arg `closure` to a `Callable[0]`-typed parameter worked correctly
+as soon as the `closure` feature itself landed, but a `closure` that
+also declares its own parameter(s) didn't -- its self-materialization
+and its first declared parameter both landed in register 0, since a
+`closure` kept `owner_class==UINT8_MAX` (deliberately, to stay excluded
+from `redefine_method`'s installation path) and every calling
+convention's implicit-receiver-skip decision is keyed off that same
+field. Fixed with a third `owner_class` sentinel value, distinct from
+"not a method" and the existing module-method sentinel, that gets a
+`closure` the register-0 skip everywhere it's needed while still
+permanently failing `redefine_method`'s own exact-match installation
+check -- plus a paired fix in `call_closure_helper` (`src/vm.c`, the
+shared mechanism behind calling any `Callable` *value* directly) so a
+`closure`'s arity-bounds check uses its own real, un-inflated declared
+arity rather than the padded count used only for register placement.
+See `docs/design.md`'s "`closure` with its own declared parameters
+collided with self capture" section for the full mechanism.
+
 ### Native service depth
 
 The current native APIs intentionally expose useful, narrow slices. Possible
