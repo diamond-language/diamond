@@ -315,6 +315,173 @@ no cursor object or enumerator to hold open across calls.
 There is no schema inspection, naming convention, or object introspection,
 and no implicit query scope.
 
+## Validators
+
+`Repository`'s own `validator` argument (above) is any ordinary
+`attributes -> Array[String]` function -- `ActiveRecord::Validators` is a
+small library of reusable ones, so a model doesn't have to hand-roll
+`if attributes["name"] == nil || attributes["name"] == "" then ...` every
+time. Each `self.xxx` builds and returns one such function; `#combine`
+concatenates several into one for `Repository.new`'s own `validator` slot:
+
+```diamond
+validator = ActiveRecord::Validators.combine([
+  ActiveRecord::Validators.presence("name"),
+  ActiveRecord::Validators.length("name", maximum: 100),
+  ActiveRecord::Validators.format("email", Regexp.new("^[^@]+@[^@]+$")),
+])
+repository = ActiveRecord::Repository.new(
+  Arel.table("authors"), build_author, "id", nil, validator)
+repository.create(db, {"name": "", "email": "bad"})  # raises ValidationError, 2 errors
+```
+
+There is no `validates :field, presence: true`-style class macro here,
+same as everywhere else in this package -- a model wires these up
+explicitly, the same as `mapper`/`before_save`/`after_save` already are.
+
+- `presence(field, message = nil)` -- fails on `nil` or `""`.
+- `length(field, minimum = nil, maximum = nil, message = nil)` -- checks
+  `value.length()` (works for `String`/`Array`/`Hash` alike); `nil`
+  passes silently (that's `presence`'s job, not this one's).
+- `numericality(field, message = nil)` -- Diamond has no `is_a?`/`class()`
+  runtime type check (confirmed: neither exists), so this is duck-typed
+  instead: `value + 0` inside a `rescue error: TypeError`, the same
+  reasoning `nil`/a `String` both fail this and an `Int`/`Float` both
+  pass it. `nil` fails (matching real ActiveRecord's own
+  `allow_nil: false` default) -- pair with `presence` if `nil` should be
+  reported as "required" instead of "must be numeric".
+- `format(field, pattern, message = nil)` -- `pattern` is an ordinary
+  `Regexp`, matched with `#match?`. `nil` fails.
+- `inclusion(field, values, message = nil)` -- `values.include?(value)`.
+- `uniqueness(db, table, field, visitor = nil, message = nil)` -- the one
+  check needing a real query. `Repository`'s own `validator` is called as
+  `@validator(attributes)`, never `(db, attributes)`, so this closes over
+  `db` directly instead (an ordinary captured value, built where `db` is
+  already in scope -- typically `self.configure`), rather than changing
+  `Repository`'s signature. **Only correct for `#create`**: `Repository`'s
+  validator has no access to the row's own `id` (or even whether this is
+  a `#create` or `#update` at all), so on `#update` this will also flag a
+  record whose unique field is unchanged as conflicting with itself -- a
+  real `Repository`-level constraint, not something `uniqueness` works
+  around.
+- `combine(validators)` -- runs every validator in `validators` and
+  concatenates their error `Array`s, standing in for what several
+  `validates` calls would do declaratively in real ActiveRecord.
+
+Each `self.xxx` returns a nested `def` closing over its own arguments
+(field name, options, message) -- the same closure-returning shape
+`packages/rack`'s `rack_terminal_wrap` already uses. One real limit worth
+knowing if writing a new validator of this shape: a closure nested inside
+a `def self.x` singleton method does **not** inherit that method's own
+`self` -- a `self.foo()` call from inside such a closure raises a runtime
+`TypeError` (confirmed directly). None of the validators above need to
+call back into `Validators` itself, so this doesn't affect them, but it's
+the reason `ActiveRecord::Migrator` (below) never routes through
+`ActiveRecord::Transaction.run`.
+
+## Migrations
+
+Versioned, ordered schema changes -- the piece connecting `Repository`/
+`Transaction` (which both assume a schema already exists) to a database
+that actually evolves over time. Deliberately raw SQL, not a
+dialect-aware DDL builder: Arel itself only ever renders
+SELECT/INSERT/UPDATE/DELETE, never CREATE/ALTER/DROP, and this follows
+that same scope cut rather than inventing a second, DDL-flavored query
+builder on top.
+
+A migration is a plain `Hash`, not a class -- the same shape `mapper`/
+`validator`/`before_save`/`after_save` already are (an ordinary function
+reference, stored and invoked as a value). This isn't a style choice: a
+bare class name is not a passable runtime value in Diamond at all --
+`ClassName.method(...)` only ever resolves against a *literal* class name
+written at that exact call site, entirely at compile time (confirmed
+directly), and `ActiveRecord::Migrator` only ever sees a migration as one
+element of a generic runtime `Array`, so a class-shaped migration could
+never have its methods invoked dynamically the way a real migration
+needs.
+
+```diamond
+def create_authors_up(db)
+  db.execute("CREATE TABLE authors (id INTEGER PRIMARY KEY, name TEXT, country TEXT)")
+end
+def create_authors_down(db)
+  db.execute("DROP TABLE authors")
+end
+def create_authors_migration() = {
+  "version": "20260101120000", "up": create_authors_up, "down": create_authors_down
+}
+```
+
+`"down"` is optional -- a missing key reads back `nil` (an ordinary
+lookup, not an error), and `#rollback` raises a clear error rather than
+silently no-opping if it's ever actually called for an irreversible
+migration. `"version"` only has to be a stable, unique `String` -- nothing
+here sorts or compares version values at all (Diamond's `String` has no
+ordering comparison: `<`/`>` raise `TypeError`, `<=>` returns `nil`,
+confirmed directly), so a caller's own `Array` order is the only order
+that matters, timestamp-shaped or not.
+
+```diamond
+# create_books_migration defined the same way, its own "up"/"down" pair
+migrations = [create_authors_migration(), create_books_migration()]
+ActiveRecord::Migrator.run(db, migrations)
+```
+
+`#run(db, migrations, visitor = nil)` ensures a `schema_migrations`
+bookkeeping table exists (`CREATE TABLE IF NOT EXISTS`, identical syntax
+across all four supported dialects), rejects a duplicate `"version"`
+anywhere in `migrations`, then walks `migrations` in the given `Array`'s
+own order applying every one not yet recorded -- each inside its own
+transaction, so a failure partway through a multi-migration run leaves
+every prior migration committed and correctly excluded from the next
+`#run`. Safe to call repeatedly: already-applied migrations are skipped,
+never re-run.
+
+`#rollback(db, migrations, steps = 1, visitor = nil)` walks `migrations`
+in *reverse* `Array` order, collecting the first `steps` whose version is
+currently applied, and reverses each (also inside its own transaction) --
+raising if any of them has no `"down"` entry rather than silently
+skipping it.
+
+`#pending(db, migrations)` / `#applied(db, migrations)` return the
+not-yet-applied / already-applied subset of `migrations`, in the given
+`Array`'s own order -- cheap status helpers for a project's own migration
+script to print before running anything.
+
+**No directory scanning.** Diamond has no directory-listing/glob
+primitive at all, and this package wouldn't use one even if it existed --
+a consuming project explicitly `require`s each migration file (ordinary
+compile-time `require`, one line per file) and lists them in order
+itself:
+
+```diamond
+# db/migrate.di, in a project using active_record
+require "./migrate/20260101120000_create_authors"
+require "./migrate/20260102093000_create_books"
+
+ActiveRecord::Migrator.run(db, [create_authors_migration(), create_books_migration()])
+```
+
+## Concurrency and connections
+
+`packages/gremlin`'s `threads: N` already gives each worker its own
+independent heap -- and, checked directly against `src/vm.c`, a DB
+connection object cannot cross a `Thread.new` boundary at all
+(`copy_value_into_vm` rejects `DIAMOND_OBJECT_SQLITE3`/`POSTGRES`/`MYSQL`,
+same bucket as `File`/`Socket`/`Listener`). There is therefore no way to
+share one open connection across threads, and no connection-pooling
+primitive to build here even if that were desired. This isn't a gap:
+every DB call in this package (`sqlite3_step`/`PQexecParams`/MySQL's
+query calls) is fully synchronous C with no fiber-yield integration the
+way sockets have, so a query blocks the *entire* worker thread for its
+duration regardless of how many connection objects that thread holds --
+meaning one connection opened once per `gremlin_serve` worker, reused for
+every request that worker ever handles, is both the only option and
+already sufficient. Scaling DB throughput is `threads: N`, not a pool.
+Worth knowing as a real limitation: a slow query on one worker stalls
+every other connection that worker is concurrently juggling, not just
+the one that issued it.
+
 ## `ActiveRecord::Model` -- an optional Rails-flavored layer
 
 Everything above is deliberately explicit: repositories, associations,

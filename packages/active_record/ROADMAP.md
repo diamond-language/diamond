@@ -117,7 +117,37 @@ require order loads and runs identically).
 
 ## Priority order for next session
 
-Nothing queued right now. Since the previous entry here: `Model#secure_password=`/
+Nothing queued right now. Since the previous entry here: migrations
+(`ActiveRecord::Migrator.run`/`.rollback`/`.pending`/`.applied`) and a
+reusable validators library (`ActiveRecord::Validators.presence`/
+`.length`/`.numericality`/`.format`/`.inclusion`/`.uniqueness`/
+`.combine`) landed -- see `README.md`'s new "Migrations" and
+"Validators" sections. Also settled, with code, the previously-open
+"do we need connection pooling" question: no, and no pooling primitive
+is buildable or needed at all -- see README.md's new "Concurrency and
+connections" section (a DB connection object cannot cross a
+`Thread.new` boundary, confirmed against `src/vm.c`, and every DB call
+is fully blocking with no fiber-yield integration, so one connection
+per `gremlin_serve` worker is both the only option and already
+sufficient).
+
+Two real Diamond constraints surfaced while building migrations
+specifically, both worth remembering generally, not just here:
+`ClassName.method(...)` only ever resolves against a *literal* class
+name written at that exact call site, entirely at compile time -- a
+bare class name is not a passable runtime value at all, so a migration
+had to become a plain `Hash` (mirroring `mapper`/`validator`), not a
+class with `self.up`/`self.down`. And a closure nested inside a `def
+self.x` singleton method does not inherit that method's own `self` --
+`self.foo()` from inside such a closure raises a runtime `TypeError` --
+which is why `Migrator.run`/`.rollback` inline `Transaction.run`'s own
+BEGIN/COMMIT/ROLLBACK shape per migration rather than wrapping a
+callback (a nested `def` redeclared on a second loop iteration also
+independently raises a runtime `TypeError`, confirmed separately).
+`Validators`' own closures never needed to call back into `Validators`
+itself, so neither pitfall affected them.
+
+Before that: `Model#secure_password=`/
 `#authenticate`, a `has_secure_password`-style pair of instance methods
 (bcrypt cost 12, no macro -- same explicit-wiring shape as `has_many`/
 `has_one`/`belongs_to`), landed on top of Diamond proper gaining real
@@ -133,18 +163,34 @@ above is deliberately left untyped so `#authenticate` can read a nil
 digest back on a model that never called `#secure_password=`.
 
 Revisit `README.md`'s own "an optional Rails-flavored layer" section for
-what this still doesn't do (no `has_many :sym`-style macros, no schema
-migrations -- see "Explicitly not planned" below) before picking a new
-direction.
+what this still doesn't do (no `has_many :sym`-style macros -- see
+"Explicitly not planned" below) before picking a new direction.
 
 ## Explicitly not planned (revisit only with a real, separate design pass)
 
-- `has_many :sym`/`belongs_to :sym`/`validates ... `-style declarative
-  macros -- blocked on a general metaprogramming/macro system, a
-  language-level feature far bigger than this package;
-- schema migrations / `ActiveRecord::Schema`-style DDL management --
-  never been in scope for this package (Arel doesn't render `CREATE
-  TABLE` either, by design);
-- multi-database/connection-pool management -- no current native
-  connection-pooling primitive to build on (see `docs/roadmap.md`'s
-  own "Native service depth" section).
+- `has_many :sym`/`belongs_to :sym`/`validates ... `-style *declarative*
+  macros -- no longer blocked at the language level (`compile_method`
+  resolved the general metaprogramming gap this used to cite, see
+  `docs/design.md`'s "Runtime method synthesis" section), but a
+  deliberate choice made again this session: validations landed as
+  composable plain-function building blocks instead (`README.md`'s
+  "Validators" section) -- closer to how `mapper`/`before_save` already
+  work here than to a new declarative surface;
+- schema dump/introspection (a Rails `schema.rb`-style snapshot, or any
+  `information_schema`/`PRAGMA table_info` querying) -- migrations
+  create/alter schema now (`README.md`'s "Migrations" section), but this
+  package still states "no schema inspection... by design" in several
+  places, and a dump/introspection layer would reverse that stance;
+  revisit only as its own explicit decision, not a natural extension of
+  migrations;
+- a dialect-aware DDL builder (`create_table("books") { |t| ... }`-style)
+  -- migrations use raw SQL per migration instead, matching Arel's own
+  existing SELECT/INSERT/UPDATE/DELETE-only scope cut (it never renders
+  CREATE/ALTER/DROP either);
+- multi-database/connection-pool management -- settled, not just
+  deferred: a DB connection object cannot cross a `Thread.new` boundary
+  at all (confirmed against `src/vm.c`), and every DB call is fully
+  blocking with no fiber-yield integration, so pooling is both
+  impossible to build across threads and pointless within one (queries
+  serialize per-thread regardless of connection count) -- see
+  `README.md`'s "Concurrency and connections" section.
