@@ -787,6 +787,14 @@ static bool disassemble_chunk(FILE *stream, const char *name,
                 offset=three_registers(stream,chunk,"SHIFT_LEFT",offset, &valid);break;
             case DIAMOND_OP_PROCESS_RUN:
                 offset=two_registers(stream,chunk,"PROCESS_RUN",offset, &valid);break;
+            case DIAMOND_OP_BCRYPT_HASH:
+                offset=three_registers(stream,chunk,"BCRYPT_HASH",offset, &valid);break;
+            case DIAMOND_OP_BCRYPT_VERIFY:
+                offset=three_registers(stream,chunk,"BCRYPT_VERIFY",offset, &valid);break;
+            case DIAMOND_OP_SECURE_RANDOM_BYTES:
+                offset=two_registers(stream,chunk,"SECURE_RANDOM_BYTES",offset, &valid);break;
+            case DIAMOND_OP_SECURE_RANDOM_HEX:
+                offset=two_registers(stream,chunk,"SECURE_RANDOM_HEX",offset, &valid);break;
             case DIAMOND_OP_DEBUGGER: {
                 if(!require_bytes(stream,chunk,offset,4)){valid=false;offset=chunk->code_count;break;}
                 const uint16_t dest=checked_register(chunk,stream,

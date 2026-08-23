@@ -2653,6 +2653,153 @@ static uint16_t parse_process_call(Compiler *compiler) {
     return 0;
 }
 
+/* BCrypt.hash(password, cost) -- both arguments always required (no
+ * optional-argument support at this hand-rolled class-call parse layer);
+ * `cost`'s default of 12 lives one layer up, in
+ * ActiveRecord::Model#secure_password=, the one real caller that wants a
+ * default. Mirrors parse_tls_connect_call's own two-fixed-argument shape. */
+static uint16_t parse_bcrypt_hash_call(Compiler *compiler) {
+    if(compiler->current.kind!=DIAMOND_TOKEN_LEFT_PAREN) {
+        fail(compiler,compiler->current.span,"expected '(' after 'BCrypt.hash'");
+        return 0;
+    }
+    advance_token(compiler);
+    skip_newlines(compiler);
+    const uint16_t password_register=parse_expression(compiler);
+    skip_newlines(compiler);
+    if(compiler->current.kind!=DIAMOND_TOKEN_COMMA) {
+        fail(compiler,compiler->current.span,"expected ',' after BCrypt.hash password");
+        return 0;
+    }
+    advance_token(compiler);
+    skip_newlines(compiler);
+    const uint16_t cost_register=parse_expression(compiler);
+    skip_newlines(compiler);
+    if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
+        fail(compiler,compiler->current.span,"expected ')' after BCrypt.hash arguments");
+        return 0;
+    }
+    advance_token(compiler);
+    const uint16_t dest=allocate_register(compiler);
+    emit_opcode(compiler,DIAMOND_OP_BCRYPT_HASH);
+    emit_register(compiler,dest);
+    emit_register(compiler,password_register);
+    emit_register(compiler,cost_register);
+    return dest;
+}
+
+static uint16_t parse_bcrypt_verify_call(Compiler *compiler) {
+    if(compiler->current.kind!=DIAMOND_TOKEN_LEFT_PAREN) {
+        fail(compiler,compiler->current.span,"expected '(' after 'BCrypt.verify'");
+        return 0;
+    }
+    advance_token(compiler);
+    skip_newlines(compiler);
+    const uint16_t password_register=parse_expression(compiler);
+    skip_newlines(compiler);
+    if(compiler->current.kind!=DIAMOND_TOKEN_COMMA) {
+        fail(compiler,compiler->current.span,"expected ',' after BCrypt.verify password");
+        return 0;
+    }
+    advance_token(compiler);
+    skip_newlines(compiler);
+    const uint16_t digest_register=parse_expression(compiler);
+    skip_newlines(compiler);
+    if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
+        fail(compiler,compiler->current.span,"expected ')' after BCrypt.verify arguments");
+        return 0;
+    }
+    advance_token(compiler);
+    const uint16_t dest=allocate_register(compiler);
+    emit_opcode(compiler,DIAMOND_OP_BCRYPT_VERIFY);
+    emit_register(compiler,dest);
+    emit_register(compiler,password_register);
+    emit_register(compiler,digest_register);
+    return dest;
+}
+
+static uint16_t parse_bcrypt_call(Compiler *compiler) {
+    advance_token(compiler); /* consume '.' */
+    if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER) {
+        fail(compiler,compiler->current.span,"expected 'hash' or 'verify' after 'BCrypt'");
+        return 0;
+    }
+    const DiamondSpan method=compiler->current.span;
+    if(name_equals(compiler,"hash",method,false)) {
+        advance_token(compiler);
+        return parse_bcrypt_hash_call(compiler);
+    }
+    if(name_equals(compiler,"verify",method,false)) {
+        advance_token(compiler);
+        return parse_bcrypt_verify_call(compiler);
+    }
+    fail(compiler,method,"expected 'hash' or 'verify' after 'BCrypt'");
+    return 0;
+}
+
+/* SecureRandom.bytes(n) / SecureRandom.hex(n) -- single fixed argument,
+ * mirrors parse_process_run_call's own one-argument shape. */
+static uint16_t parse_secure_random_bytes_call(Compiler *compiler) {
+    if(compiler->current.kind!=DIAMOND_TOKEN_LEFT_PAREN) {
+        fail(compiler,compiler->current.span,"expected '(' after 'SecureRandom.bytes'");
+        return 0;
+    }
+    advance_token(compiler);
+    skip_newlines(compiler);
+    const uint16_t count_register=parse_expression(compiler);
+    skip_newlines(compiler);
+    if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
+        fail(compiler,compiler->current.span,"expected ')' after SecureRandom.bytes arguments");
+        return 0;
+    }
+    advance_token(compiler);
+    const uint16_t dest=allocate_register(compiler);
+    emit_opcode(compiler,DIAMOND_OP_SECURE_RANDOM_BYTES);
+    emit_register(compiler,dest);
+    emit_register(compiler,count_register);
+    return dest;
+}
+
+static uint16_t parse_secure_random_hex_call(Compiler *compiler) {
+    if(compiler->current.kind!=DIAMOND_TOKEN_LEFT_PAREN) {
+        fail(compiler,compiler->current.span,"expected '(' after 'SecureRandom.hex'");
+        return 0;
+    }
+    advance_token(compiler);
+    skip_newlines(compiler);
+    const uint16_t count_register=parse_expression(compiler);
+    skip_newlines(compiler);
+    if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
+        fail(compiler,compiler->current.span,"expected ')' after SecureRandom.hex arguments");
+        return 0;
+    }
+    advance_token(compiler);
+    const uint16_t dest=allocate_register(compiler);
+    emit_opcode(compiler,DIAMOND_OP_SECURE_RANDOM_HEX);
+    emit_register(compiler,dest);
+    emit_register(compiler,count_register);
+    return dest;
+}
+
+static uint16_t parse_secure_random_call(Compiler *compiler) {
+    advance_token(compiler); /* consume '.' */
+    if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER) {
+        fail(compiler,compiler->current.span,"expected 'bytes' or 'hex' after 'SecureRandom'");
+        return 0;
+    }
+    const DiamondSpan method=compiler->current.span;
+    if(name_equals(compiler,"bytes",method,false)) {
+        advance_token(compiler);
+        return parse_secure_random_bytes_call(compiler);
+    }
+    if(name_equals(compiler,"hex",method,false)) {
+        advance_token(compiler);
+        return parse_secure_random_hex_call(compiler);
+    }
+    fail(compiler,method,"expected 'bytes' or 'hex' after 'SecureRandom'");
+    return 0;
+}
+
 static uint16_t parse_name(Compiler *compiler) {
     const DiamondSpan name = compiler->previous.span;
     int class_index=find_class(compiler,name);
@@ -2746,6 +2893,14 @@ static uint16_t parse_name(Compiler *compiler) {
        compiler->current.kind==DIAMOND_TOKEN_DOT&&
        name_equals(compiler,"Process",name,false))
         return parse_process_call(compiler);
+    if(class_index<0&&find_local(compiler,name)<0&&find_function(compiler,name)<0&&
+       compiler->current.kind==DIAMOND_TOKEN_DOT&&
+       name_equals(compiler,"BCrypt",name,false))
+        return parse_bcrypt_call(compiler);
+    if(class_index<0&&find_local(compiler,name)<0&&find_function(compiler,name)<0&&
+       compiler->current.kind==DIAMOND_TOKEN_DOT&&
+       name_equals(compiler,"SecureRandom",name,false))
+        return parse_secure_random_call(compiler);
     if(class_index<0&&find_local(compiler,name)<0&&find_function(compiler,name)<0&&
        compiler->current.kind==DIAMOND_TOKEN_DOT&&
        name_equals(compiler,"ProgramBuilder",name,false))

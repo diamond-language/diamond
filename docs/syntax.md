@@ -1094,6 +1094,46 @@ Diamond has no wall-clock/calendar `Time` type yet — no `.year`/
 `.to_s`/parsing — this is deliberately just enough to measure an
 elapsed duration, not a step toward one.
 
+`BCrypt.hash(password: String, cost: Int)` and `BCrypt.verify(password:
+String, digest: String) -> Bool` are native bcrypt password hashing,
+backed by this system's own `libxcrypt` (`crypt_gensalt_rn`/`crypt_r`,
+real `$2b$` bcrypt) rather than a vendored implementation — the same
+"link a system library" pattern every other native dependency here
+already follows (`sqlite3`, `libpq`, `mariadb`, OpenSSL). `.hash` always
+takes both arguments explicitly (no default `cost` at this layer — see
+`packages/active_record/README.md`'s `#secure_password=` for where a
+default of 12 actually lives); `cost` outside `4..31` raises
+`ArgumentError` before any hashing happens. `.verify` re-derives a digest
+from `password` using `digest` itself as the salt/settings source and
+compares with a constant-time comparison — a malformed or foreign
+`digest` (not a real bcrypt hash) is an ordinary `false`, not an
+exception, since checking a password against a bad hash is a normal
+outcome here, not a programmer error:
+
+```ruby
+digest = BCrypt.hash("hunter2", 12)   # => "$2b$12$..."
+BCrypt.verify("hunter2", digest)      # => true
+BCrypt.verify("wrong", digest)        # => false
+```
+
+`libxcrypt`'s bcrypt support is a Linux-specific fact about this system's
+`crypt(3)`, not something Diamond papers over — see `docs/roadmap.md`'s
+"Explicitly deferred" section on multi-platform portability. A password
+containing an embedded NUL byte is truncated at that point before
+hashing, the same inherent limitation every C-`crypt`-backed bcrypt
+binding has (`password` is passed to `crypt_r` as a NUL-terminated C
+string).
+
+`SecureRandom.bytes(n: Int) -> String` returns `n` cryptographically
+random bytes (OpenSSL `RAND_bytes`, already linked for TLS) as a raw
+Diamond `String` — Diamond strings are already raw byte buffers, so no
+separate binary type is needed. `SecureRandom.hex(n: Int) -> String`
+returns the same `n` random bytes hex-encoded, as a `2*n`-character
+`String`. Both raise `ArgumentError` for a negative `n` (or one large
+enough to overflow the underlying `int`-sized call into OpenSSL).
+Suited to session/remember-me/password-reset tokens and similar —
+`SecureRandom.hex(32)` for a 256-bit token as a 64-character hex string.
+
 `array_sort(values: Array[Int])` returns a new sorted array (input
 untouched); `Int` is the only type with a native ordering comparison,
 so this is Int-only, checked up front (`expected Array[Int], got

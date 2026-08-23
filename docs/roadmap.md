@@ -354,6 +354,24 @@ extensions should be demand-driven:
 - richer time parsing/timezone support;
 - surfacing stdout write failures as rescuable exceptions.
 
+**Done**: password hashing and a CSPRNG, driven by a real need (building an
+authentication system on Diamond) rather than speculatively. `BCrypt.hash`/
+`.verify` (`src/vm.c`) is real bcrypt via this system's own `libxcrypt`
+(`crypt_gensalt_rn`/`crypt_r`) -- not a vendored implementation, matching
+this project's existing "link a system library" pattern for every other
+native dependency rather than introducing a new one. `SecureRandom.bytes`/
+`.hex` uses OpenSSL's `RAND_bytes`, already linked for TLS. Both are
+class-level "stateless call" natives, the same shape as `Time`/`Process`
+(own opcode per method, no new `DIAMOND_OBJECT_*` kind). See
+`docs/syntax.md` for the full API and `packages/active_record/README.md`'s
+"`has_secure_password`-style password hashing" section for the userspace
+helper built on top (`Model#secure_password=`/`#authenticate`, no macro --
+same explicit-wiring shape `has_many`/`has_one`/`belongs_to` already use).
+General digest hashing (SHA-256 etc.) and HMAC remain undone -- OpenSSL
+already provides both via the same linked `libcrypto`, so adding them
+later is a small, low-risk extension of this same pattern, not a new
+dependency decision.
+
 ### Package ecosystem
 
 `facet` uses git URLs and exact refs. A hosted registry, semantic-version

@@ -10,6 +10,7 @@
 #include "disassemble.h"
 #include "loader.h"
 
+#include <crypt.h>
 #include <ctype.h>
 #include <errno.h>
 #include <limits.h>
@@ -21,7 +22,9 @@
 #include <string.h>
 #include <fcntl.h>
 #include <netdb.h>
+#include <openssl/crypto.h>
 #include <openssl/err.h>
+#include <openssl/rand.h>
 #include <openssl/ssl.h>
 #include <poll.h>
 #include <pthread.h>
@@ -4450,6 +4453,151 @@ static DiamondVmStatus time_at_helper(DiamondVm *vm,DiamondValue epoch_value,
     DiamondTime *time=allocate_time(vm,epoch,false);
     if(time==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
     *out_result=DIAMOND_OBJECT(time);
+    return DIAMOND_VM_OK;
+}
+
+/* BCrypt.hash(password, cost) -- crypt_gensalt_rn generates a full "$2b$
+ * <cost>$<22-char-salt>" setting string, passing rbytes=nullptr so
+ * libxcrypt pulls its own entropy from the OS (CRYPT_GENSALT_IMPLEMENTS_
+ * AUTO_ENTROPY, see /usr/include/crypt.h) -- no separate RAND_bytes call
+ * needed here, unlike SecureRandom below. `struct crypt_data` is 32KB
+ * (CRYPT_DATA_INTERNAL_SIZE), too large to put on a Fiber's own (smaller,
+ * mmapped) C stack safely, so it's heap-allocated per call rather than a
+ * local, unlike the small fixed-size buffers elsewhere in this function.
+ * `password->chars` is passed as a NUL-terminated C string (libcrypt's own
+ * API shape) -- an embedded NUL byte in the password truncates what
+ * actually gets hashed, the same inherent limitation every C-crypt-backed
+ * bcrypt binding has; not otherwise validated against here. */
+static DiamondVmStatus bcrypt_hash_helper(DiamondVm *vm,DiamondValue password_value,
+        DiamondValue cost_value,DiamondValue *out_result) {
+    if(password_value.kind!=DIAMOND_VALUE_OBJECT||
+       password_value.as.object->kind!=DIAMOND_OBJECT_STRING)
+        return DIAMOND_VM_TYPE_ERROR;
+    if(cost_value.kind!=DIAMOND_VALUE_INT)return DIAMOND_VM_TYPE_ERROR;
+    const int64_t cost=cost_value.as.integer;
+    if(cost<4||cost>31) {
+        (void)snprintf(vm->error,sizeof vm->error,
+            "BCrypt.hash cost must be between 4 and 31, got %" PRId64,cost);
+        return DIAMOND_VM_ARITY_ERROR;
+    }
+    const DiamondString *password=(const DiamondString *)password_value.as.object;
+    char salt[CRYPT_GENSALT_OUTPUT_SIZE];
+    if(crypt_gensalt_rn("$2b$",(unsigned long)cost,nullptr,0,salt,sizeof salt)==nullptr) {
+        (void)snprintf(vm->error,sizeof vm->error,"BCrypt.hash: failed to generate a salt");
+        return DIAMOND_VM_PROGRAM_ERROR;
+    }
+    struct crypt_data *data=calloc(1,sizeof *data);
+    if(data==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+    const char *digest=crypt_r(password->chars,salt,data);
+    if(digest==nullptr||digest[0]=='*') {
+        free(data);
+        (void)snprintf(vm->error,sizeof vm->error,"BCrypt.hash: crypt_r failed unexpectedly");
+        return DIAMOND_VM_PROGRAM_ERROR;
+    }
+    DiamondString *result=allocate_string(vm,digest,strlen(digest));
+    free(data);
+    if(result==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+    *out_result=DIAMOND_OBJECT(result);
+    return DIAMOND_VM_OK;
+}
+
+/* BCrypt.verify(password, digest) -- re-hashes `password` against
+ * `digest` itself used as the crypt(3) "setting" (a valid bcrypt hash is
+ * also a valid setting string: crypt_r reads only its own "$2b$<cost>$
+ * <salt>" prefix and ignores the rest), then compares with OpenSSL's
+ * CRYPTO_memcmp (constant-time) rather than plain memcmp/strcmp -- real
+ * defense-in-depth against a timing attack on the stored-hash comparison,
+ * essentially free given libcrypto is already linked for TLS. A malformed
+ * `digest` (crypt_r returns nullptr, or libxcrypt's own "invalid setting"
+ * signal -- an output starting with '*', see crypt.h) or a length
+ * mismatch is treated as an ordinary non-match (false), not an exception
+ * -- verifying against a bad/foreign hash is a normal outcome here, not a
+ * program error. */
+static DiamondVmStatus bcrypt_verify_helper(DiamondVm *vm,DiamondValue password_value,
+        DiamondValue digest_value,DiamondValue *out_result) {
+    (void)vm;
+    if(password_value.kind!=DIAMOND_VALUE_OBJECT||
+       password_value.as.object->kind!=DIAMOND_OBJECT_STRING)
+        return DIAMOND_VM_TYPE_ERROR;
+    if(digest_value.kind!=DIAMOND_VALUE_OBJECT||
+       digest_value.as.object->kind!=DIAMOND_OBJECT_STRING)
+        return DIAMOND_VM_TYPE_ERROR;
+    const DiamondString *password=(const DiamondString *)password_value.as.object;
+    const DiamondString *digest=(const DiamondString *)digest_value.as.object;
+    struct crypt_data *data=calloc(1,sizeof *data);
+    if(data==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+    const char *computed=crypt_r(password->chars,digest->chars,data);
+    bool matches=false;
+    if(computed!=nullptr&&computed[0]!='*') {
+        const size_t computed_length=strlen(computed);
+        if(computed_length==digest->length)
+            matches=CRYPTO_memcmp(computed,digest->chars,computed_length)==0;
+    }
+    free(data);
+    *out_result=DIAMOND_BOOL(matches);
+    return DIAMOND_VM_OK;
+}
+
+/* SecureRandom.bytes(n) -- OpenSSL RAND_bytes, already linked for TLS.
+ * Diamond's own String is already documented as a raw byte buffer
+ * (docs/io.md), so arbitrary random bytes need no separate encoding
+ * here, unlike .hex below. */
+static DiamondVmStatus secure_random_bytes_helper(DiamondVm *vm,DiamondValue count_value,
+        DiamondValue *out_result) {
+    if(count_value.kind!=DIAMOND_VALUE_INT)return DIAMOND_VM_TYPE_ERROR;
+    const int64_t count=count_value.as.integer;
+    if(count<0||count>INT32_MAX) {
+        (void)snprintf(vm->error,sizeof vm->error,
+            "SecureRandom.bytes count must be between 0 and %d",INT32_MAX);
+        return DIAMOND_VM_ARITY_ERROR;
+    }
+    unsigned char *buffer=malloc(count>0?(size_t)count:1);
+    if(buffer==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+    if(count>0&&RAND_bytes(buffer,(int)count)!=1) {
+        free(buffer);
+        (void)snprintf(vm->error,sizeof vm->error,"SecureRandom.bytes: RAND_bytes failed");
+        return DIAMOND_VM_PROGRAM_ERROR;
+    }
+    DiamondString *result=allocate_string(vm,(const char *)buffer,(size_t)count);
+    free(buffer);
+    if(result==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+    *out_result=DIAMOND_OBJECT(result);
+    return DIAMOND_VM_OK;
+}
+
+/* SecureRandom.hex(n) -- n random bytes (RAND_bytes, as above), hex-
+ * encoded into a 2*n-length String. */
+static DiamondVmStatus secure_random_hex_helper(DiamondVm *vm,DiamondValue count_value,
+        DiamondValue *out_result) {
+    if(count_value.kind!=DIAMOND_VALUE_INT)return DIAMOND_VM_TYPE_ERROR;
+    const int64_t count=count_value.as.integer;
+    if(count<0||count>INT32_MAX/2) {
+        (void)snprintf(vm->error,sizeof vm->error,
+            "SecureRandom.hex count must be between 0 and %d",INT32_MAX/2);
+        return DIAMOND_VM_ARITY_ERROR;
+    }
+    unsigned char *buffer=malloc(count>0?(size_t)count:1);
+    if(buffer==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+    if(count>0&&RAND_bytes(buffer,(int)count)!=1) {
+        free(buffer);
+        (void)snprintf(vm->error,sizeof vm->error,"SecureRandom.hex: RAND_bytes failed");
+        return DIAMOND_VM_PROGRAM_ERROR;
+    }
+    char *hex=malloc(count>0?(size_t)count*2:1);
+    if(hex==nullptr) {
+        free(buffer);
+        return DIAMOND_VM_OUT_OF_MEMORY;
+    }
+    static const char digits[]="0123456789abcdef";
+    for(int64_t index=0;index<count;index++) {
+        hex[index*2]=digits[(buffer[index]>>4)&0xF];
+        hex[index*2+1]=digits[buffer[index]&0xF];
+    }
+    free(buffer);
+    DiamondString *result=allocate_string(vm,hex,(size_t)count*2);
+    free(hex);
+    if(result==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+    *out_result=DIAMOND_OBJECT(result);
     return DIAMOND_VM_OK;
 }
 
@@ -11352,6 +11500,42 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 const DiamondVmStatus run_status=process_run_helper(vm,
                     (DiamondArray *)registers[argv_register].as.object,process_result);
                 VM_PROPAGATE(run_status);
+                break;
+            }
+            case DIAMOND_OP_BCRYPT_HASH: {
+                uint16_t destination=0,password_register=0,cost_register=0;
+                READ_SHORT(destination);READ_SHORT(password_register);
+                READ_SHORT(cost_register);
+                const DiamondVmStatus hash_status=bcrypt_hash_helper(vm,
+                    registers[password_register],registers[cost_register],
+                    &registers[destination]);
+                VM_PROPAGATE(hash_status);
+                break;
+            }
+            case DIAMOND_OP_BCRYPT_VERIFY: {
+                uint16_t destination=0,password_register=0,digest_register=0;
+                READ_SHORT(destination);READ_SHORT(password_register);
+                READ_SHORT(digest_register);
+                const DiamondVmStatus verify_status=bcrypt_verify_helper(vm,
+                    registers[password_register],registers[digest_register],
+                    &registers[destination]);
+                VM_PROPAGATE(verify_status);
+                break;
+            }
+            case DIAMOND_OP_SECURE_RANDOM_BYTES: {
+                uint16_t destination=0,count_register=0;
+                READ_SHORT(destination);READ_SHORT(count_register);
+                const DiamondVmStatus bytes_status=secure_random_bytes_helper(vm,
+                    registers[count_register],&registers[destination]);
+                VM_PROPAGATE(bytes_status);
+                break;
+            }
+            case DIAMOND_OP_SECURE_RANDOM_HEX: {
+                uint16_t destination=0,count_register=0;
+                READ_SHORT(destination);READ_SHORT(count_register);
+                const DiamondVmStatus hex_status=secure_random_hex_helper(vm,
+                    registers[count_register],&registers[destination]);
+                VM_PROPAGATE(hex_status);
                 break;
             }
             case DIAMOND_OP_DEBUGGER: {

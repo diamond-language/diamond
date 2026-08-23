@@ -94,11 +94,23 @@ require order loads and runs identically).
 
 ## Priority order for next session
 
-Nothing queued right now -- the items this file has tracked since
-`README.md`'s own `ActiveRecord::Model` section landed (writer-call
-sugar, `Relation`, and the ergonomic polish above) are all done. Revisit
-`README.md`'s own "an optional Rails-flavored layer" section for what
-this still doesn't do (no `has_many :sym`-style macros, no schema
+Nothing queued right now. Since the previous entry here: `Model#secure_password=`/
+`#authenticate`, a `has_secure_password`-style pair of instance methods
+(bcrypt cost 12, no macro -- same explicit-wiring shape as `has_many`/
+`has_one`/`belongs_to`), landed on top of Diamond proper gaining real
+password hashing for the first time -- a native `BCrypt` class
+(`.hash`/`.verify`, backed by this system's `libxcrypt`, not a vendored
+implementation) and a native `SecureRandom` class (`.bytes`/`.hex`, via
+OpenSSL's already-linked `RAND_bytes`) -- see `docs/syntax.md`. Also
+surfaced one real Diamond gotcha worth remembering generally, not just
+here: a *typed* `attr_accessor` (e.g. `password_digest: String`)
+generates a getter that enforces its return type at runtime, raising on
+a nil-valued ivar rather than just returning nil -- `password_digest`
+above is deliberately left untyped so `#authenticate` can read a nil
+digest back on a model that never called `#secure_password=`.
+
+Revisit `README.md`'s own "an optional Rails-flavored layer" section for
+what this still doesn't do (no `has_many :sym`-style macros, no schema
 migrations -- see "Explicitly not planned" below) before picking a new
 direction.
 

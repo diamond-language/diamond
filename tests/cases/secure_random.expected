@@ -1,0 +1,11 @@
+16
+true
+0
+16
+true
+true
+0
+ArgumentError raised
+ArgumentError raised
+secure_random smoke ok
+nil

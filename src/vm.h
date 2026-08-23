@@ -220,6 +220,18 @@ typedef enum DiamondOpCode : uint8_t {
      * and bare calls are unaffected; Class values aren't general-purpose
      * runtime values). */
     DIAMOND_OP_INVOKE_SELF_METHOD,
+    /* BCrypt.hash(password, cost) / BCrypt.verify(password, digest) --
+     * both fixed-arity (no optional-argument support at this hand-rolled
+     * class-call parse layer, see parse_bcrypt_call's own comment), backed
+     * by libxcrypt's crypt_gensalt_rn/crypt_r (src/vm.c is the only file
+     * allowed to include <crypt.h>, same confinement rule object.h already
+     * documents for OpenSSL). */
+    DIAMOND_OP_BCRYPT_HASH,
+    DIAMOND_OP_BCRYPT_VERIFY,
+    /* SecureRandom.bytes(n) / SecureRandom.hex(n) -- OpenSSL RAND_bytes,
+     * already linked for TLS. */
+    DIAMOND_OP_SECURE_RANDOM_BYTES,
+    DIAMOND_OP_SECURE_RANDOM_HEX,
     DIAMOND_OP_COUNT,
 } DiamondOpCode;
 

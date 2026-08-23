@@ -77,6 +77,36 @@ class Model
   def has_one(repository: Repository, foreign_key: String) = HasOne.new(repository, foreign_key)
   def belongs_to(repository: Repository) = BelongsTo.new(repository)
 
+  # has_secure_password-style helpers, deliberately not a macro -- there
+  # is no `has_secure_password :password` conjuring a real method into
+  # existence from a symbol, for the same reason `has_many`/`has_one`/
+  # `belongs_to` above aren't macros either (see this file's own class
+  # comment and README.md). A model wires this up the same explicit way:
+  # an ordinary `attr_accessor password_digest` (deliberately untyped, not
+  # `: String` -- a model that never called #secure_password= has a nil
+  # digest, and a typed attr_accessor's generated getter enforces its
+  # return type at runtime, raising on a nil read rather than just
+  # returning nil; #authenticate below relies on getting nil back), read
+  # in `#initialize`/written into `#to_attributes`, same as any other
+  # column. Backed by BCrypt (native, see docs/syntax.md), bcrypt cost 12
+  # (matching Rails' own BCrypt::Engine::DEFAULT_COST) -- not
+  # configurable per call here; a model wanting a different cost calls
+  # `BCrypt.hash(password, cost)` directly instead of this helper.
+  #
+  # Deliberately calls self.password_digest()/self.password_digest=(...)
+  # rather than touching @password_digest directly -- the same virtual
+  # self.foo() dispatch #save/#destroy/#id already rely on above to reach
+  # whatever a subclass's own attr_accessor generated, not any new or
+  # untested behavior around inherited @ivar auto-declaration.
+  def secure_password=(password: String)
+    self.password_digest=(BCrypt.hash(password, 12))
+  end
+
+  def authenticate(password: String) -> Bool
+    digest = self.password_digest()
+    digest != nil && BCrypt.verify(password, digest)
+  end
+
   # Threads optimistic locking through automatically when this model's
   # repository has a lock_column configured -- the current value already
   # loaded into @attributes is what #update expects as

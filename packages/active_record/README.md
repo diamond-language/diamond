@@ -516,3 +516,64 @@ Book.wire_author(Author.repository())
 There is still no schema inspection, naming convention, or object
 introspection here -- `attr_accessor`, `#to_attributes`, and every
 forwarder above are things you write, not things this layer infers.
+
+### `has_secure_password`-style password hashing
+
+`Model#secure_password=`/`#authenticate` are a `has_secure_password`-style
+pair of instance methods, built on the native `BCrypt` class (bcrypt
+password hashing, backed by this system's `libxcrypt`, not a vendored
+implementation -- see `docs/syntax.md`). Like every association reader
+above, this is **not** a macro -- there is no `has_secure_password
+:password` conjuring a `password_digest` column or new methods into
+existence from a symbol, for the same reason `has_many`/`has_one`/
+`belongs_to` aren't macros either. A model wires it up the same explicit
+way it wires up every other column:
+
+```diamond
+class User < ActiveRecord::Model
+  # password_digest deliberately untyped, not `: String` -- a user that
+  # never called #secure_password= (an invited-but-not-yet-onboarded
+  # account, say) has a nil digest, and a *typed* attr_accessor's
+  # generated getter enforces its return type at runtime, raising on a
+  # nil read rather than just returning nil the way #authenticate needs.
+  attr_accessor email: String, password_digest
+
+  def initialize(attributes: Hash = {})
+    super(attributes)
+    @email = attributes["email"]
+    @password_digest = attributes["password_digest"]
+  end
+
+  def to_attributes() = {"email": @email, "password_digest": @password_digest}
+  def repository() = @@repository
+
+  def self.repository() = @@repository
+  def self.configure(repository: ActiveRecord::Repository)
+    @@repository = repository
+  end
+end
+
+User.configure(ActiveRecord::Repository.new(Arel.table("users"), build_user, "id"))
+
+user = User.new({"email": "ada@example.com"})
+user.secure_password = "hunter2"   # writer-call sugar -> secure_password=(...)
+user.save(db)
+
+user.authenticate("hunter2")       # => true
+user.authenticate("wrong")         # => false
+```
+
+`#secure_password=` hashes with `BCrypt.hash(password, 12)` (bcrypt cost
+12, matching Rails' own `BCrypt::Engine::DEFAULT_COST`) and writes the
+result through `self.password_digest=(...)` -- the ordinary writer
+`attr_accessor` already generated, not a direct `@password_digest`
+write, the same virtual `self.foo(...)` dispatch `#save`/`#destroy`/`#id`
+already rely on to reach whatever a subclass's own accessor generated.
+The cost isn't configurable through this helper; call `BCrypt.hash(password,
+cost)` directly for a different one. `#authenticate` reads back through
+`self.password_digest()` and returns `false` (not an exception) both when
+the stored digest is `nil` (nothing set yet) and when it's a well-formed
+digest that just doesn't match -- there is no quiet-vs-raising distinction
+to make here, unlike `#save`/`#destroy` elsewhere in this package, since a
+failed authentication attempt is an entirely ordinary outcome, not a
+programmer error.
