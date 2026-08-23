@@ -1,337 +1,470 @@
-# End-to-end demo: a gremlin server, wrapped in a rack logging
-# middleware, serving HTML pages backed by arel queries against the
-# SQLite3 database setup_db.di seeded. Run setup_db.di first.
+# End-to-end demo: a gremlin server, wrapped in a rack logging/timing
+# middleware chain, serving HTML pages backed by ActiveRecord::Model
+# classes (Author, Book) over arel queries against the SQLite3 database
+# setup_db.di seeded. Run setup_db.di first.
+#
+# Organized as plain Diamond classes throughout: Author/Book are
+# ActiveRecord::Model subclasses with a real has_many/belongs_to
+# association between them; Page/TableView/Form/Response hold view-rendering
+# and response-building as namespaced `self.` methods instead of free
+# top-level functions; AuthorsController/BooksController hold one
+# `self.` method per route action; Router owns path parsing and
+# dispatches to them.
+#
+# The one place this app is still deliberately plain functions is the
+# rack middleware chain (`route`/`logging_middleware`/
+# `timing_middleware`/`app` below) -- not a style choice but a real
+# constraint documented in packages/rack/rack.di: a middleware is a
+# `Callable`, and Diamond classes are compile-time metadata, not
+# first-class runtime values (docs/roadmap.md's "Classes as ordinary
+# runtime objects" section) -- there is no way to hand `rack_compose` a
+# class or an instance in place of a bare, zero-capture `def` reference.
+# `route` is a one-line shim into `Router.dispatch`, the same pattern
+# rack's own `rack_terminal_wrap` uses internally for an app handler.
 #
 # gremlin_serve gives each worker its own persistent `context` Hash
 # (see packages/gremlin/gremlin.di's "Per-worker context") -- the db
 # connection is opened lazily on this worker's first request and
-# stashed there, reused by every request after.
+# stashed there, reused by every request after (Database.get below).
 
-require "../../packages/arel/lib/arel"
+require "../../packages/active_record/lib/active_record"
 require "../../packages/gremlin/gremlin"
 require "../../packages/rack/rack"
 
-def db_path()
-  "library.db"
-end
-
-def get_db(context)
-  db = context["db"]
-  if db == nil
-    db = SQLite3.open(db_path())
-    context["db"] = db
+# Per-worker SQLite connection, lazily opened and cached on `context` --
+# same one-instance-per-worker shape RackChain (packages/rack/rack.di)
+# uses for the middleware chain itself.
+class Database
+  def self.path() = "library.db"
+  def self.get(context)
+    db = context["db"]
+    if db == nil
+      db = SQLite3.open(Database.path())
+      context["db"] = db
+    end
+    db
   end
-  db
 end
 
-def nav()
-  "<p><a href=\"/\">Home</a> | <a href=\"/authors\">Authors</a> | " +
-  "<a href=\"/books\">Books</a> | " +
-  "<a href=\"/books/available\">Available books</a> | " +
-  "<a href=\"/authors/new\">New author</a> | " +
-  "<a href=\"/books/new\">New book</a></p>"
+class Author < ActiveRecord::Model
+  attr_accessor name: String, country: String
+
+  def initialize(attributes: Hash = {})
+    super(attributes)
+    @name = attributes["name"]
+    @country = attributes["country"]
+  end
+
+  def to_attributes() = {"name": @name, "country": @country}
+  def repository() = @@repository
+
+  def self.repository() = @@repository
+  def self.configure(repository: ActiveRecord::Repository)
+    @@repository = repository
+  end
+
+  def books(db) = self.has_many(Book.repository(), "author_id").all(db, self.id())
 end
 
-def render_page(title, body)
-  "<!DOCTYPE html><html><head><title>#{title}</title></head>" +
-  "<body><h1>#{title}</h1>#{nav()}#{body}</body></html>"
+def build_author(row) = Author.new(row)
+
+class Book < ActiveRecord::Model
+  attr_accessor title: String, author_id, year, available
+
+  def initialize(attributes: Hash = {})
+    super(attributes)
+    @title = attributes["title"]
+    @author_id = attributes["author_id"]
+    @year = attributes["year"]
+    @available = attributes["available"]
+  end
+
+  def to_attributes()
+    {"title": @title, "author_id": @author_id, "year": @year, "available": @available}
+  end
+  def repository() = @@repository
+
+  def self.repository() = @@repository
+  def self.configure(repository: ActiveRecord::Repository)
+    @@repository = repository
+  end
+
+  def available?() -> Bool = @available == 1
+  def author(db) = self.belongs_to(Author.repository()).get(db, @author_id)
 end
 
-def decode_form_value(value)
-  result = value
-  plus = result.index_of("+")
-  while plus != nil
-    result = result.slice(0, plus) + " " + result.slice(plus + 1, result.length())
+def build_book(row) = Book.new(row)
+
+# ---------------------------------------------------------------------
+# Views: HTML rendering, grouped by concern rather than as free
+# functions closing over a mutable `rows` local the way this file used
+# to build tables (`Array#map` + `#join` replaces that pattern here).
+# ---------------------------------------------------------------------
+
+class Page
+  def self.nav()
+    "<p><a href=\"/\">Home</a> | <a href=\"/authors\">Authors</a> | " +
+    "<a href=\"/books\">Books</a> | " +
+    "<a href=\"/books/available\">Available books</a> | " +
+    "<a href=\"/authors/new\">New author</a> | " +
+    "<a href=\"/books/new\">New book</a></p>"
+  end
+
+  def self.render(title, body)
+    "<!DOCTYPE html><html><head><title>#{title}</title></head>" +
+    "<body><h1>#{title}</h1>#{Page.nav()}#{body}</body></html>"
+  end
+end
+
+class TableView
+  def self.authors(authors: Array)
+    rows = authors.map() do |author|
+      "<tr><td><a href=\"/authors/#{author.id()}\">#{author.name()}</a></td>" +
+        "<td>#{author.country()}</td></tr>"
+    end.join()
+    "<table border=\"1\"><tr><th>Name</th><th>Country</th></tr>#{rows}</table>"
+  end
+
+  # `authors_by_id`: Hash of author id -> Author, from a batch
+  # BelongsTo#preload (see BooksController.authors_by_id) so this
+  # doesn't run one query per row.
+  def self.books(books: Array, authors_by_id: Hash)
+    rows = books.map() do |book|
+      author = authors_by_id[book.author_id()]
+      author_name = if author == nil then "" else author.name() end
+      status = if book.available?() then "yes" else "no" end
+      "<tr><td><a href=\"/books/#{book.id()}\">#{book.title()}</a></td>" +
+        "<td>#{author_name}</td><td>#{book.year()}</td><td>#{status}</td></tr>"
+    end.join()
+    "<table border=\"1\"><tr><th>Title</th><th>Author</th><th>Year</th>" +
+    "<th>Available</th></tr>#{rows}</table>"
+  end
+
+  # Books already scoped to one author (their own show page) -- no
+  # author column needed.
+  def self.author_books(books: Array)
+    rows = books.map() do |book|
+      status = if book.available?() then "yes" else "no" end
+      "<tr><td><a href=\"/books/#{book.id()}\">#{book.title()}</a></td>" +
+        "<td>#{book.year()}</td><td>#{status}</td></tr>"
+    end.join()
+    "<table border=\"1\"><tr><th>Title</th><th>Year</th><th>Available</th></tr>#{rows}</table>"
+  end
+end
+
+class Form
+  def self.decode(value: String) -> String
+    result = value
     plus = result.index_of("+")
+    while plus != nil
+      result = result.slice(0, plus) + " " + result.slice(plus + 1, result.length())
+      plus = result.index_of("+")
+    end
+    result
   end
-  result
+
+  def self.parse(request)
+    values = {}
+    source = request["body"]
+    if request["method"] == "GET"
+      source = request["path"]
+      question = source.index_of("?")
+      source = if question == nil then "" else source.slice(question + 1, source.length()) end
+    end
+    source.split("&").each() do |pair|
+      equals = pair.index_of("=")
+      if equals != nil
+        values[Form.decode(pair.slice(0, equals))] = Form.decode(pair.slice(equals + 1, pair.length()))
+      end
+    end
+    values
+  end
+
+  def self.render(action, method, fields: Array, submit)
+    rows = fields.map() do |field|
+      "<p><label>#{field["label"]}: " +
+        "<input name=\"#{field["name"]}\" value=\"#{field["value"]}\"></label></p>"
+    end.join()
+    "<form method=\"#{method}\" action=\"#{action}\">#{rows}" +
+      "<p><button type=\"submit\">#{submit}</button></p></form>"
+  end
 end
 
-def parse_form(request)
-  values = {}
-  source = request["body"]
-  if request["method"] == "GET"
-    source = request["path"]
-    question = source.index_of("?")
-    if question == nil
-      source = ""
+class Response
+  def self.html(status: Int, body) = [status, {"Content-Type": "text/html"}, body]
+  def self.text(status: Int, body) = [status, {"Content-Type": "text/plain"}, body]
+  def self.redirect(location: String, body) = [302, {"Location": location}, body]
+  def self.not_found(path) = Response.text(404, "not found: #{path}")
+end
+
+# ---------------------------------------------------------------------
+# Controllers: one `self.` method per route action.
+# ---------------------------------------------------------------------
+
+class AuthorsController
+  def self.index(request, context)
+    db = Database.get(context)
+    authors = Author.all().order("name").to_a(db)
+    Response.html(200, Page.render("Authors", TableView.authors(authors)))
+  end
+
+  def self.show(request, context, id)
+    db = Database.get(context)
+    author = Author.find(db, id)
+    if author == nil
+      return Response.not_found(request["path"])
+    end
+    body = "<p>#{author.name()} is from #{author.country()}.</p>" +
+      "<h2>Books</h2>" + TableView.author_books(author.books(db)) +
+      "<p><a href=\"/authors/#{id}/edit\">Edit author</a> | " +
+      "<form method=\"POST\" action=\"/authors/#{id}/delete\"><button>Delete author</button></form></p>"
+    Response.html(200, Page.render(author.name(), body))
+  end
+
+  # Diamond's declaration-discovery pass lets one class forward-reference
+  # *another* class's not-yet-compiled methods, but a class's own real
+  # compile pass rebuilds its method table top to bottom as it goes
+  # (see docs/roadmap.md's "Compiler representation" section) -- so
+  # `.form` below has to come before new_form/edit, its own callers,
+  # even though it's private helper-shaped and would otherwise read
+  # better lower down.
+  def self.form(request, context, id)
+    db = Database.get(context)
+    author = if id == nil then Author.new({"name": "", "country": ""}) else Author.find(db, id) end
+    if id != nil && author == nil
+      return Response.not_found(request["path"])
+    end
+    action = if id == nil then "/authors" else "/authors/#{id}" end
+    title = if id == nil then "New author" else "Edit author" end
+    submit = if id == nil then "Create author" else "Save author" end
+    body = Form.render(action, "POST", [
+      {"name": "name", "label": "Name", "value": author.name()},
+      {"name": "country", "label": "Country", "value": author.country()}
+    ], submit)
+    Response.html(200, Page.render(title, body))
+  end
+
+  def self.new_form(request, context) = AuthorsController.form(request, context, nil)
+  def self.edit(request, context, id) = AuthorsController.form(request, context, id)
+
+  def self.create(request, context)
+    db = Database.get(context)
+    form = Form.parse(request)
+    Author.create(db, {"name": form["name"], "country": form["country"]})
+    Response.redirect("/authors", "created")
+  end
+
+  def self.update(request, context, id)
+    db = Database.get(context)
+    author = Author.find(db, id)
+    if author == nil
+      return Response.not_found(request["path"])
+    end
+    form = Form.parse(request)
+    author.name = form["name"]
+    author.country = form["country"]
+    author.save(db)
+    Response.redirect("/authors/#{id}", "updated")
+  end
+
+  def self.destroy(request, context, id)
+    db = Database.get(context)
+    author = Author.find(db, id)
+    if author != nil
+      author.destroy(db)
+    end
+    Response.redirect("/authors", "deleted")
+  end
+end
+
+class BooksController
+  # Batch-loads the authors a page of books references, one query
+  # instead of one per row -- ActiveRecord::BelongsTo#preload, see
+  # packages/active_record/README.md's "N+1" section.
+  def self.authors_by_id(db, books: Array)
+    author_ids = books.map() do |book| book.author_id() end
+    ActiveRecord::BelongsTo.new(Author.repository()).preload(db, author_ids)
+  end
+
+  def self.index(request, context)
+    db = Database.get(context)
+    books = Book.all().order("year").to_a(db)
+    Response.html(200, Page.render("Books",
+      TableView.books(books, BooksController.authors_by_id(db, books))))
+  end
+
+  def self.available(request, context)
+    db = Database.get(context)
+    books = Book.where({"available": 1}).order("year").to_a(db)
+    Response.html(200, Page.render("Available books",
+      TableView.books(books, BooksController.authors_by_id(db, books))))
+  end
+
+  def self.show(request, context, id)
+    db = Database.get(context)
+    book = Book.find(db, id)
+    if book == nil
+      return Response.not_found(request["path"])
+    end
+    # book.author(db) can be nil -- there's no cascading delete here (see
+    # AuthorsController.destroy), so a book can outlive its author.
+    author = book.author(db)
+    author_link = if author == nil
+      "unknown"
     else
-      source = source.slice(question + 1, source.length())
+      "<a href=\"/authors/#{book.author_id()}\">#{author.name()}</a>"
     end
+    body = "<p>Author: #{author_link}</p>" +
+      "<p>Published: #{book.year()}</p><p>Available: #{book.available()}</p>" +
+      "<p><a href=\"/books/#{id}/edit\">Edit book</a> | " +
+      "<form method=\"POST\" action=\"/books/#{id}/delete\"><button>Delete book</button></form></p>"
+    Response.html(200, Page.render(book.title(), body))
   end
-  pairs = source.split("&")
-  def parse_pair(pair)
-    equals = pair.index_of("=")
-    if equals != nil
-      values[decode_form_value(pair.slice(0, equals))] = decode_form_value(pair.slice(equals + 1, pair.length()))
+
+  # See AuthorsController.form's own comment on why this has to come
+  # before new_form/edit, its own callers.
+  def self.form(request, context, id)
+    db = Database.get(context)
+    book = if id == nil
+      Book.new({"title": "", "author_id": "", "year": "", "available": 1})
+    else
+      Book.find(db, id)
     end
+    if id != nil && book == nil
+      return Response.not_found(request["path"])
+    end
+    authors = Author.all().order("name").to_a(db)
+    options = authors.map() do |author|
+      selected = if author.id() == book.author_id() then " selected" else "" end
+      "<option value=\"#{author.id()}\"#{selected}>#{author.name()}</option>"
+    end.join()
+    action = if id == nil then "/books" else "/books/#{id}" end
+    title = if id == nil then "New book" else "Edit book" end
+    submit = if id == nil then "Create book" else "Save book" end
+    body = "<form method=\"POST\" action=\"#{action}\">" +
+      "<p><label>Author: <select name=\"author_id\">#{options}</select></label></p>" +
+      "<p><label>Title: <input name=\"title\" value=\"#{book.title()}\"></label></p>" +
+      "<p><label>Year: <input name=\"year\" value=\"#{book.year()}\"></label></p>" +
+      "<p><label>Available (1 or 0): <input name=\"available\" value=\"#{book.available()}\"></label></p>" +
+      "<p><button type=\"submit\">#{submit}</button></p></form>"
+    Response.html(200, Page.render(title, body))
   end
-  pairs.each(parse_pair)
-  values
-end
 
-def path_without_query(path)
-  question = path.index_of("?")
-  if question == nil then path else path.slice(0, question) end
-end
+  def self.new_form(request, context) = BooksController.form(request, context, nil)
+  def self.edit(request, context, id) = BooksController.form(request, context, id)
 
-def render_form(action, method, fields, submit)
-  rows = ""
-  def render_field(field)
-    rows = rows + "<p><label>#{field["label"]}: " +
-      "<input name=\"#{field["name"]}\" value=\"#{field["value"]}\"></label></p>"
+  def self.attributes_from_form(form: Hash)
+    {"title": form["title"], "author_id": form["author_id"].to_i(),
+     "year": form["year"].to_i(), "available": form["available"].to_i()}
   end
-  fields.each(render_field)
-  "<form method=\"#{method}\" action=\"#{action}\">#{rows}" +
-    "<p><button type=\"submit\">#{submit}</button></p></form>"
-end
 
-def render_authors_table(authors)
-  rows = ""
-  def render_row(author)
-    rows = rows + "<tr><td><a href=\"/authors/#{author["id"]}\">#{author["name"]}</a></td>" +
-      "<td>#{author["country"]}</td></tr>"
+  def self.create(request, context)
+    db = Database.get(context)
+    Book.create(db, BooksController.attributes_from_form(Form.parse(request)))
+    Response.redirect("/books", "created")
   end
-  authors.each(render_row)
-  "<table border=\"1\"><tr><th>Name</th><th>Country</th></tr>#{rows}</table>"
-end
 
-def render_books_table(books)
-  rows = ""
-  def render_row(book)
-    status = if book["available"] == 1 then "yes" else "no" end
-    rows = rows + "<tr><td><a href=\"/books/#{book["id"]}\">#{book["title"]}</a></td><td>#{book["author_name"]}</td>" +
-                  "<td>#{book["year"]}</td><td>#{status}</td></tr>"
+  def self.update(request, context, id)
+    db = Database.get(context)
+    book = Book.find(db, id)
+    if book == nil
+      return Response.not_found(request["path"])
+    end
+    values = BooksController.attributes_from_form(Form.parse(request))
+    book.title = values["title"]
+    book.author_id = values["author_id"]
+    book.year = values["year"]
+    book.available = values["available"]
+    book.save(db)
+    Response.redirect("/books/#{id}", "updated")
   end
-  books.each(render_row)
-  "<table border=\"1\"><tr><th>Title</th><th>Author</th><th>Year</th>" +
-  "<th>Available</th></tr>#{rows}</table>"
-end
 
-def home_handler(request, context)
-  body = "<p>A tiny end-to-end demo: SQLite3 + arel + gremlin + rack.</p>"
-  [200, {"Content-Type": "text/html"}, render_page("Library", body)]
-end
-
-def authors_handler(request, context)
-  db = get_db(context)
-  authors = Arel.from("authors").order("name").to_a(db)
-  [200, {"Content-Type": "text/html"}, render_page("Authors", render_authors_table(authors))]
-end
-
-def books_query()
-  books = Arel.table("books")
-  authors = Arel.table("authors")
-  Arel.from(books).project([
-    books.column("id"), books.column("title"), books.column("author_id"),
-    books.column("year"), books.column("available"),
-    authors.column("name").as("author_name")
-  ]).join(authors, books.column("author_id").eq(authors.column("id")))
-end
-
-def author_by_id(db, id)
-  authors = Arel.table("authors")
-  rows = Arel.from(authors).where(authors.column("id").eq(id)).take(1).to_a(db)
-  if rows.length() == 0 then nil else rows[0] end
-end
-
-def books_for_author(db, author_id)
-  books = Arel.table("books")
-  Arel.from(books).where(books.column("author_id").eq(author_id)).order("year").to_a(db)
-end
-
-def not_found_handler(request, context)
-  [404, {"Content-Type": "text/plain"}, "not found: #{request["path"]}"]
-end
-
-def render_books_table_with_links(books)
-  rows = ""
-  def render_row(book)
-    status = if book["available"] == 1 then "yes" else "no" end
-    rows = rows + "<tr><td><a href=\"/books/#{book["id"]}\">#{book["title"]}</a></td>" +
-      "<td>#{book["year"]}</td><td>#{status}</td></tr>"
+  def self.destroy(request, context, id)
+    db = Database.get(context)
+    book = Book.find(db, id)
+    if book != nil
+      book.destroy(db)
+    end
+    Response.redirect("/books", "deleted")
   end
-  books.each(render_row)
-  "<table border=\"1\"><tr><th>Title</th><th>Year</th><th>Available</th></tr>#{rows}</table>"
 end
 
-def author_show_handler(request, context, id)
-  db = get_db(context)
-  author = author_by_id(db, id)
-  if author == nil
-    return not_found_handler(request, context)
+# ---------------------------------------------------------------------
+# Routing.
+# ---------------------------------------------------------------------
+
+class Router
+  def self.path_without_query(path)
+    question = path.index_of("?")
+    if question == nil then path else path.slice(0, question) end
   end
-  books = books_for_author(db, id)
-  body = "<p>#{author["name"]} is from #{author["country"]}.</p>" +
-    "<h2>Books</h2>" + render_books_table_with_links(books) +
-    "<p><a href=\"/authors/#{id}/edit\">Edit author</a> | " +
-    "<form method=\"POST\" action=\"/authors/#{id}/delete\"><button>Delete author</button></form></p>"
-  [200, {"Content-Type": "text/html"}, render_page(author["name"], body)]
-end
 
-def book_by_id(db, id)
-  query = books_query()
-  rows = query.where(query.joins()[0].table().column("id").eq(id)).take(1).to_a(db)
-  if rows.length() == 0 then nil else rows[0] end
-end
-
-def book_show_handler(request, context, id)
-  db = get_db(context)
-  book = book_by_id(db, id)
-  if book == nil
-    return not_found_handler(request, context)
-  end
-  body = "<p>Author: <a href=\"/authors/#{book["author_id"]}\">#{book["author_name"]}</a></p>" +
-    "<p>Published: #{book["year"]}</p><p>Available: #{book["available"]}</p>" +
-    "<p><a href=\"/books/#{id}/edit\">Edit book</a> | " +
-    "<form method=\"POST\" action=\"/books/#{id}/delete\"><button>Delete book</button></form></p>"
-  [200, {"Content-Type": "text/html"}, render_page(book["title"], body)]
-end
-
-def author_form_handler(request, context, id = nil)
-  db = get_db(context)
-  author = if id == nil then {"name": "", "country": ""} else author_by_id(db, id) end
-  if id != nil && author == nil
-    return not_found_handler(request, context)
-  end
-  action = if id == nil then "/authors" else "/authors/#{id}" end
-  title = if id == nil then "New author" else "Edit author" end
-  body = render_form(action, "POST", [
-    {"name": "name", "label": "Name", "value": author["name"]},
-    {"name": "country", "label": "Country", "value": author["country"]}
-  ], if id == nil then "Create author" else "Save author" end)
-  [200, {"Content-Type": "text/html"}, render_page(title, body)]
-end
-
-def author_write_handler(request, context, id = nil)
-  db = get_db(context)
-  form = parse_form(request)
-  if id == nil
-    Arel.insert_into(Arel.table("authors")).values({
-      "name": form["name"], "country": form["country"]}).execute(db)
-    return [302, {"Location": "/authors"}, "created"]
-  end
-  author = Arel.table("authors")
-  update = Arel.update(author).set({"name": form["name"], "country": form["country"]})
-  update.where(author.column("id").eq(id)).execute(db)
-  [302, {"Location": "/authors/#{id}"}, "updated"]
-end
-
-def author_delete_handler(request, context, id)
-  db = get_db(context)
-  authors = Arel.table("authors")
-  Arel.delete_from(authors).where(authors.column("id").eq(id)).execute(db)
-  [302, {"Location": "/authors"}, "deleted"]
-end
-
-def book_form_handler(request, context, id = nil)
-  db = get_db(context)
-  book = if id == nil then {"title": "", "author_id": "", "year": "", "available": 1} else book_by_id(db, id) end
-  if id != nil && book == nil
-    return not_found_handler(request, context)
-  end
-  authors = Arel.from("authors").order("name").to_a(db)
-  options = ""
-  def render_author_option(author)
-    selected = if author["id"] == book["author_id"] then " selected" else "" end
-    options = options + "<option value=\"#{author["id"]}\"#{selected}>#{author["name"]}</option>"
-  end
-  authors.each(render_author_option)
-  action = if id == nil then "/books" else "/books/#{id}" end
-  title = if id == nil then "New book" else "Edit book" end
-  submit = if id == nil then "Create book" else "Save book" end
-  body = "<form method=\"POST\" action=\"#{action}\">" +
-    "<p><label>Author: <select name=\"author_id\">#{options}</select></label></p>" +
-    "<p><label>Title: <input name=\"title\" value=\"#{book["title"]}\"></label></p>" +
-    "<p><label>Year: <input name=\"year\" value=\"#{book["year"]}\"></label></p>" +
-    "<p><label>Available (1 or 0): <input name=\"available\" value=\"#{book["available"]}\"></label></p>" +
-    "<p><button type=\"submit\">#{submit}</button></p></form>"
-  [200, {"Content-Type": "text/html"}, render_page(title, body)]
-end
-
-def book_write_handler(request, context, id = nil)
-  db = get_db(context)
-  form = parse_form(request)
-  values = {"title": form["title"], "author_id": form["author_id"].to_i(),
-    "year": form["year"].to_i(), "available": form["available"].to_i()}
-  books = Arel.table("books")
-  if id == nil
-    Arel.insert_into(books).values(values).execute(db)
-    return [302, {"Location": "/books"}, "created"]
-  end
-  Arel.update(books).set(values).where(books.column("id").eq(id)).execute(db)
-  [302, {"Location": "/books/#{id}"}, "updated"]
-end
-
-def book_delete_handler(request, context, id)
-  db = get_db(context)
-  books = Arel.table("books")
-  Arel.delete_from(books).where(books.column("id").eq(id)).execute(db)
-  [302, {"Location": "/books"}, "deleted"]
-end
-
-def books_handler(request, context)
-  db = get_db(context)
-  books = books_query().order("year").to_a(db)
-  body = render_books_table(books)
-  [200, {"Content-Type": "text/html"}, render_page("Books", body)]
-end
-
-def available_books_handler(request, context)
-  db = get_db(context)
-  books = books_query().where({"available": 1}).order("year").to_a(db)
-  body = render_books_table(books)
-  [200, {"Content-Type": "text/html"}, render_page("Available books", body)]
-end
-
-def route(request, context)
-  path = path_without_query(request["path"])
-  if path == "/"
-    home_handler(request, context)
-  elsif path == "/authors"
-    if request["method"] == "POST" then author_write_handler(request, context) else authors_handler(request, context) end
-  elsif path == "/authors/new"
-    author_form_handler(request, context)
-  elsif path == "/books"
-    if request["method"] == "POST" then book_write_handler(request, context) else books_handler(request, context) end
-  elsif path == "/books/new"
-    book_form_handler(request, context)
-  elsif path == "/books/available"
-    available_books_handler(request, context)
-  elsif path.slice(0, 9) == "/authors/"
-    rest = path.slice(9, path.length())
+  # "42/edit" -> [42, "/edit"]; "42" -> [42, ""].
+  def self.segment_id(rest: String)
     slash = rest.index_of("/")
     id_text = if slash == nil then rest else rest.slice(0, slash) end
-    id = id_text.to_i()
     suffix = if slash == nil then "" else rest.slice(slash, rest.length()) end
-    if suffix == "/edit"
-      author_form_handler(request, context, id)
-    elsif suffix == "/delete"
-      author_delete_handler(request, context, id)
-    elsif request["method"] == "POST"
-      author_write_handler(request, context, id)
+    [id_text.to_i(), suffix]
+  end
+
+  def self.dispatch(request, context)
+    path = Router.path_without_query(request["path"])
+    if path == "/"
+      Response.html(200, Page.render("Library",
+        "<p>A tiny end-to-end demo: SQLite3 + arel + active_record + gremlin + rack.</p>"))
+    elsif path == "/authors"
+      if request["method"] == "POST"
+        AuthorsController.create(request, context)
+      else
+        AuthorsController.index(request, context)
+      end
+    elsif path == "/authors/new"
+      AuthorsController.new_form(request, context)
+    elsif path == "/books"
+      if request["method"] == "POST"
+        BooksController.create(request, context)
+      else
+        BooksController.index(request, context)
+      end
+    elsif path == "/books/new"
+      BooksController.new_form(request, context)
+    elsif path == "/books/available"
+      BooksController.available(request, context)
+    elsif path.slice(0, 9) == "/authors/"
+      id, suffix = Router.segment_id(path.slice(9, path.length()))
+      if suffix == "/edit"
+        AuthorsController.edit(request, context, id)
+      elsif suffix == "/delete"
+        AuthorsController.destroy(request, context, id)
+      elsif request["method"] == "POST"
+        AuthorsController.update(request, context, id)
+      else
+        AuthorsController.show(request, context, id)
+      end
+    elsif path.slice(0, 7) == "/books/"
+      id, suffix = Router.segment_id(path.slice(7, path.length()))
+      if suffix == "/edit"
+        BooksController.edit(request, context, id)
+      elsif suffix == "/delete"
+        BooksController.destroy(request, context, id)
+      elsif request["method"] == "POST"
+        BooksController.update(request, context, id)
+      else
+        BooksController.show(request, context, id)
+      end
     else
-      author_show_handler(request, context, id)
+      Response.not_found(request["path"])
     end
-  elsif path.slice(0, 7) == "/books/"
-    rest = path.slice(7, path.length())
-    slash = rest.index_of("/")
-    id_text = if slash == nil then rest else rest.slice(0, slash) end
-    id = id_text.to_i()
-    suffix = if slash == nil then "" else rest.slice(slash, rest.length()) end
-    if suffix == "/edit"
-      book_form_handler(request, context, id)
-    elsif suffix == "/delete"
-      book_delete_handler(request, context, id)
-    elsif request["method"] == "POST"
-      book_write_handler(request, context, id)
-    else
-      book_show_handler(request, context, id)
-    end
-  else
-    not_found_handler(request, context)
   end
 end
+
+# ---------------------------------------------------------------------
+# rack/gremlin wiring -- plain functions from here down; see the file
+# header for why (rack middleware and gremlin_serve's handler must be
+# zero-capture Callables, and classes aren't first-class values here).
+# ---------------------------------------------------------------------
+
+def route(request, context) = Router.dispatch(request, context)
 
 def logging_middleware(request, context, forward)
   response = forward(request, context)
@@ -354,6 +487,9 @@ def app(request, context)
   chain = rack_compose([timing_middleware, logging_middleware], route)
   rack_run_chain(chain, 0, request, context)
 end
+
+Author.configure(ActiveRecord::Repository.new(Arel.table("authors"), build_author, "id"))
+Book.configure(ActiveRecord::Repository.new(Arel.table("books"), build_book, "id"))
 
 puts("listening on http://127.0.0.1:18080 (Ctrl-C to stop)")
 gremlin_serve(18080, app)

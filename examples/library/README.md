@@ -2,14 +2,25 @@
 
 An end-to-end smoke test wiring together everything in `packages/`:
 `SQLite3` (native driver) →
-[`arel`](../../packages/arel/README.md) (query
-builder) → [`gremlin`](../../packages/gremlin/README.md) (server) →
+[`arel`](../../packages/arel/README.md) (query builder) →
+[`active_record`](../../packages/active_record/README.md) (`ActiveRecord::Model`
+layer) → [`gremlin`](../../packages/gremlin/README.md) (server) →
 [`rack`](../../packages/rack/README.md) (middleware). Not a package
 itself -- just a small app proving the pieces actually compose.
 
-A tiny two-table library catalog: `authors` and `books`, with Arel joins for
-the book index and association links on both detail pages. The app includes
-HTML forms for creating and editing authors and books, plus delete actions.
+A tiny two-table library catalog: `authors` and `books`, modeled as
+`ActiveRecord::Model` classes with a real `has_many`/`belongs_to`
+association between them. The app includes HTML forms for creating and
+editing authors and books, plus delete actions.
+
+`app.di` is organized as plain Diamond classes throughout -- `Author`/
+`Book` (models), `Page`/`TableView`/`Form`/`Response` (view rendering and
+response building), `AuthorsController`/`BooksController` (one `self.`
+method per route action), and `Router` (path parsing and dispatch). The
+one place it's still plain functions is the rack middleware chain itself
+(`route`/`logging_middleware`/`timing_middleware`/`app`) -- a real
+language constraint, not a style choice: see the comment at the top of
+`app.di`.
 
 ## Run it
 
@@ -36,5 +47,9 @@ Every request is logged to stdout by the `rack` logging middleware
 (gitignored) -- rerun `setup_db.di` any time to reset it.
 
 The navigation links expose `/authors/new` and `/books/new`. Existing records
-have edit and delete actions on their show pages; writes use Arel insert,
-update, and delete managers with SQLite execution.
+have edit and delete actions on their show pages; writes go through
+`ActiveRecord::Model#save`/`#destroy` (`Author.create`/`Book.create` for
+new records), not raw Arel managers directly. There's no cascading
+delete -- deleting an author whose books still reference it leaves those
+books with a dangling `author_id`; `BooksController.show` and the books
+table both handle that (`author == nil`) rather than crashing.
