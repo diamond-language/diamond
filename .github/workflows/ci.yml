@@ -17,8 +17,8 @@ jobs:
     container: fedora:latest
     steps:
       - name: Install dependencies
-        run: dnf install -y gcc clang make git diffutils findutils compiler-rt libasan libubsan libtsan openssl-devel sqlite-devel libpq-devel mariadb-connector-c-devel bc nmap-ncat openssl
-      - uses: actions/checkout@v4
+        run: dnf install -y gcc clang make git diffutils findutils compiler-rt libasan libubsan libtsan openssl-devel sqlite-devel libpq-devel mariadb-connector-c-devel libxcrypt-devel bc nmap-ncat openssl
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 1
       - name: make test-all
