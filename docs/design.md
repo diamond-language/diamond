@@ -874,6 +874,99 @@ precedence. For a direct conditional test, union members accepted by `Type`
 (including nominal subclasses) flow into the true branch and the complement
 flows into the false branch. Compound boolean conditions remain conservative.
 
+### `closure name() ... end`
+
+A plain nested `def` closes over ordinary outer locals correctly (each
+gets `DIAMOND_OP_BOX_LOCAL`'d in the enclosing function and read back via
+`DIAMOND_OP_GET_CAPTURE`), but never over `self`/`@ivar` -- those compile
+exactly like an ordinary method body, hardcoding register 0 as the
+receiver, on the assumption that whatever eventually calls this function
+will supply a real receiver there itself. That assumption holds for the
+one thing a plain nested `def` is actually for -- a
+`define_method`/`redefine_method` patch factory, given a genuine `self`
+at *installation* time through ordinary method dispatch -- but is simply
+false for a closure invoked immediately, in place, which never goes
+through that call convention at all. `closure name() ... end` is a
+second, separate nested-function form for exactly that case: it captures
+`self` the same way it captures any other outer value, so `self`,
+`@ivar`, and `self.foo(...)` all work correctly when called directly.
+
+**Why self can't just be added to the ordinary capture list as-is.**
+`self` isn't a named `Local` at all (register 0 is implicit, populated by
+the call convention, never registered in `compiler->locals[]`), so
+`compile_definition`'s existing by-name capture growth (`parse_identifier`
+scanning `enclosing_locals` for a matching name) has nothing to match
+against. And boxing register 0 *in place* the way an ordinary captured
+local is boxed -- turning it into a `DiamondCell` right there in the
+enclosing function -- would be actively wrong: every other `self`/`@ivar`
+access in that same enclosing method (before or after the `closure`
+statement, all still ordinary unmodified code) hardcodes register 0
+unconditionally, with no `.captured`-flag check the way a named local's
+own reads already have; boxing it would silently corrupt every one of
+those into reading a `Cell` where an `Instance`/class value was expected.
+The fix: copy self into a **freshly allocated register in the enclosing
+function**, box *that copy*, and add its index to the capture list --
+register 0 itself, and everything else in the enclosing method that reads
+it, is never touched.
+
+**Why the closure's own body doesn't need new self/ivar codegen at all.**
+`GET_IVAR`/`SET_IVAR` already take a generic receiver register operand at
+the VM level (confirmed directly, not assumed) -- the literal `0` every
+ordinary method's compiled body passes is a compiler choice, not an
+opcode constraint. But `DIAMOND_OP_INVOKE_SELF_METHOD` (the opcode
+`self.foo(...)` compiles to inside a class-owned singleton method) *is*
+hardcoded to register 0 at the VM level, unconditionally, with no
+receiver operand at all. Rather than teach every one of these sites about
+a per-closure capture index, `compile_definition` instead reserves
+register 0 in the **closure's own** function (guaranteed available: its
+`next_register` was just reset to 0 and nothing has claimed it yet) and
+emits one `DIAMOND_OP_GET_CAPTURE` into it, immediately, before compiling
+any of the closure's own body. From that point on, the closure's register
+0 legitimately holds self, and every existing `self`/`@ivar`/
+`self.foo(...)` code path -- `parse_prefix`'s `DIAMOND_TOKEN_SELF`/
+`INSTANCE_VARIABLE` cases, `compile_assignment_store`, and
+`DIAMOND_OP_INVOKE_SELF_METHOD`'s own VM handler -- runs completely
+unmodified. `self.foo(...)` against a class-owned singleton method's
+sibling works the same way: `compiler->in_singleton_method` is set true
+for the closure too, whenever it's declared directly inside a `def
+self.x` (the same depth-1-only condition `redefine_method`'s own
+patch-factory idiom already uses,
+`nested_in_singleton_method`), so `self.foo(...)` there resolves through
+the ordinary `parse_self_class_method_call`/`INVOKE_SELF_METHOD` path,
+reading the correctly materialized `DIAMOND_VALUE_CLASS` back out of
+register 0.
+
+One existing mechanism needed a matching fix, not just a new one added
+alongside it: `nested_in_singleton_method` closures already got
+`function->owner_class` set to mark them as "this is a method," purely so
+`redefine_method` installation treats them correctly once patched in --
+but that marking also implies an extra implicit-receiver parameter slot
+everywhere a function's own arity/`parameter_offset` gets consulted. A
+`closure` is never installed via `redefine_method` and gets self entirely
+through capture, not a call-time argument, so it must never pick up
+`owner_class` even when directly nested inside a singleton method --
+confirmed the hard way: leaving this unexcluded produced a real "wrong
+number of arguments" at the *call site of the closure itself*, not
+anywhere near the actual `self.foo(...)` call inside it, since the
+receiver-slot assumption was baked into the closure's own declared arity,
+not its body.
+
+No VM/opcode changes, no `DiamondClosure` struct field additions, no GC
+changes. Self capture rides in the existing `captures[16]`/`capture_count`
+array like any other captured value, which is also what makes two
+existing invariants keep protecting a `closure` correctly for free: the
+`Thread.new` zero-capture-only check and `copy_value_into_vm`'s cross-heap
+gate both already reject any closure with `capture_count!=0` (a
+`closure`'s is always `>=1`), and `define_method`/`redefine_method`
+already require a capture-free callable -- neither needed to learn
+anything new about this feature to keep rejecting it correctly.
+
+**Explicitly not fixed by this feature**: a nested `def`/`closure`
+redeclared a second time inside the same loop body raises a runtime
+`TypeError` at the second declaration -- a separate, pre-existing bug
+this feature's own work surfaced but did not investigate. See
+`docs/roadmap.md`'s "Open design decisions" section.
+
 ## Deliberate constraints
 
 - No Ruby compatibility guarantee.

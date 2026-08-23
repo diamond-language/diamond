@@ -507,6 +507,55 @@ instance immediately, including ones already constructed before the
 call, since dispatch looks the method up by class and name at call time
 rather than snapshotting anything at construction time.
 
+### `closure name() ... end`
+
+A plain nested `def`, as above, is built for exactly one job: a detached
+patch, meant to be handed to `define_method`/`redefine_method` and given
+a real `self` later, at installation. Called directly instead -- in
+place, never installed anywhere -- its `self`/`@ivar` references don't
+mean anything: nothing ever supplied a receiver for them. `closure name()
+... end` is the other case: an ordinary closure, called immediately, that
+also closes over `self` (and therefore `@ivar` and `self.foo(...)`) the
+same way it already closes over an ordinary outer local:
+
+```ruby
+class Widget
+  def initialize(x)
+    @x = x
+  end
+  def helper(n) = n * 2
+
+  def run(value)
+    closure inner()
+      self.helper(value) + @x
+    end
+    inner()
+  end
+end
+
+Widget.new(10).run(5)  # => 20
+```
+
+Legal only where `self` already exists -- inside an instance method or a
+class-owned `def self.x` -- a `closure` declared at top level, or inside
+a plain top-level `def`, is a compile error rather than something that
+silently compiles into nonsense. `self.foo(...)` inside one dispatches
+correctly whether the captured `self` is an instance or (inside a
+`def self.x`, directly -- not nested any deeper, the same depth-1 limit
+`redefine_method`'s own patch-factory idiom already has) a class value.
+
+`closure`'s value is an ordinary `Callable` like any other capturing
+closure -- which means it still can't cross a `Thread.new` boundary
+(`Thread.new`'s own capture-free requirement, see "Threads"), and it
+still can't be handed to `define_method`/`redefine_method` (both require
+a capture-free callable too) -- `closure` and plain nested `def` solve
+two different problems and aren't interchangeable.
+
+One real, separate limitation `closure` inherits from plain nested `def`,
+not something this feature fixes: redeclaring either one a second time
+inside the same loop body raises a runtime `TypeError` at the second
+declaration. See `docs/roadmap.md`'s "Open design decisions" section.
+
 ### Reopening
 
 A second `class Name ... end` (or `module Name ... end`) for a name that

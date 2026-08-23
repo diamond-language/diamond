@@ -3902,7 +3902,14 @@ static uint16_t parse_prefix(Compiler *compiler) {
              * parse_self_class_method_call's own comment) -- everywhere
              * else (an ordinary instance method, or bare `self` with no
              * following call inside a singleton method), self stays an
-             * ordinary register-0 value, unchanged. */
+             * ordinary register-0 value, unchanged. A `closure name()
+             * ... end` body reuses this exact same code unmodified: its
+             * own register 0 already holds a materialized copy of the
+             * captured self (see compile_definition's captures_self
+             * handling), and in_singleton_method is set true there too
+             * when appropriate, so this check and the plain `return 0`
+             * both already do the right thing with no capture-specific
+             * branch needed here at all. */
             if(compiler->in_singleton_method&&compiler->current_class>=0&&
                compiler->current.kind==DIAMOND_TOKEN_DOT) {
                 return parse_self_class_method_call(compiler);
@@ -4550,6 +4557,7 @@ static bool multi_assignment_ahead(const Compiler *compiler) {
 
 static DiamondTokenKind postfix_modifier_ahead(const Compiler *compiler) {
     if (compiler->current.kind == DIAMOND_TOKEN_DEF ||
+        compiler->current.kind == DIAMOND_TOKEN_CLOSURE ||
         compiler->current.kind == DIAMOND_TOKEN_CLASS ||
         compiler->current.kind == DIAMOND_TOKEN_INTERFACE ||
         compiler->current.kind == DIAMOND_TOKEN_MODULE) {
@@ -5313,8 +5321,13 @@ static uint16_t compile_block(Compiler *compiler) {
     return result;
 }
 
-static uint16_t compile_definition(Compiler *compiler) {
+static uint16_t compile_definition(Compiler *compiler, bool captures_self) {
     const bool at_top_level = compiler->function == &compiler->program->entry;
+    if(captures_self && !compiler->in_method) {
+        fail(compiler,compiler->current.span,
+             "closure requires an enclosing method -- no 'self' is available here");
+        return 0;
+    }
     advance_token(compiler);
     bool module_singleton=false;
     if(compiler->current.kind==DIAMOND_TOKEN_SELF&&
@@ -5424,11 +5437,23 @@ static uint16_t compile_definition(Compiler *compiler) {
      * receiver class (see DIAMOND_OP_LOAD_CLASS's own comment). */
     const bool direct_class_singleton_member=
         at_top_level&&compiler->current_class>=0&&module_singleton;
+    /* owner_class marks a function as "this is a method" for the
+     * redefine_method/define_method patch-factory idiom specifically
+     * (see the big comment above nested_in_singleton_method) -- a
+     * `closure` (captures_self) is never a patch factory, never installed
+     * via redefine_method/define_method, and gets self entirely through
+     * its own capture rather than an implicit-receiver call-convention
+     * slot (see the captures_self handling below), so it must never pick
+     * up owner_class here even when directly nested inside a singleton
+     * method -- doing so silently adds an implicit-receiver parameter
+     * slot elsewhere (fn->owner_class==UINT8_MAX?0:1's parameter_offset,
+     * used at every INVOKE-family call site) that a `closure`'s own
+     * declared arity, and its own call sites, never account for. */
     function->owner_class=
         (direct_class_member||direct_class_singleton_member||
-         (nested_in_singleton_method&&compiler->current_class>=0))?
+         (nested_in_singleton_method&&!captures_self&&compiler->current_class>=0))?
             (uint8_t)compiler->current_class:
-        (direct_module_member||(nested_in_singleton_method&&compiler->current_module>=0))?
+        (direct_module_member||(nested_in_singleton_method&&!captures_self&&compiler->current_module>=0))?
             UINT8_MAX-1:UINT8_MAX;
     function->nested=!at_top_level;
     size_t copy_length=name.length;
@@ -5541,8 +5566,42 @@ static uint16_t compile_definition(Compiler *compiler) {
     for(size_t index=0;index<outer_next_register;index++)
         {outer_known_types[index]=compiler->known_types[index];
          outer_known_type_sets[index]=compiler->known_type_sets[index];}
+    /* Copy self into a fresh register of the *enclosing* function and box
+     * that copy, rather than boxing register 0 (self's own real home)
+     * in place the way an ordinary captured Local already does. Every
+     * other self/@ivar access in the enclosing method hardcodes literal
+     * register 0 unconditionally (see parse_prefix's DIAMOND_TOKEN_SELF/
+     * INSTANCE_VARIABLE cases and compile_assignment_store) -- none of
+     * them check a `.captured`-style flag the way an ordinary Local read
+     * does, so boxing register 0 itself would silently corrupt every
+     * other self/@ivar access in this same method that runs after this
+     * point, turning a raw Instance/Class value into a Cell those sites
+     * never expect. Capturing an isolated copy instead leaves register 0
+     * completely untouched. */
+    uint16_t self_copy_register=0;
+    if(captures_self) {
+        self_copy_register=allocate_register(compiler);
+        emit_instruction(compiler,DIAMOND_OP_MOVE,self_copy_register,0,0,2);
+        emit_instruction(compiler,DIAMOND_OP_BOX_LOCAL,self_copy_register,0,0,1);
+    }
     compiler->function = function;
-    compiler->in_singleton_method = at_top_level && module_singleton;
+    /* A captures_self closure nested *directly* inside a `def self.x`
+     * method also needs in_singleton_method true, for exactly the same
+     * reason nested_in_singleton_method's own existing arm below does:
+     * self.foo(...) inside its body must resolve through
+     * parse_self_class_method_call/DIAMOND_OP_INVOKE_SELF_METHOD, not an
+     * ordinary instance-shaped call -- and that opcode reads its class
+     * receiver from register 0 unconditionally (confirmed directly in
+     * src/vm.c, not just a compiler convention the way GET_IVAR's own
+     * receiver operand is), which is exactly the register this closure's
+     * own self-capture materializes into below. Nested any deeper than
+     * directly inside the singleton method gets neither, the same
+     * pre-existing depth-1-only limit nested_in_singleton_method already
+     * has for the patch-factory case (see the class_operand comment
+     * above `direct_class_member`). */
+    compiler->in_singleton_method =
+        (at_top_level && module_singleton) ||
+        (captures_self && nested_in_singleton_method);
     compiler->current_loop=nullptr;
     compiler->current_exception=-1;
     compiler->current_retry_target=SIZE_MAX;
@@ -5561,12 +5620,37 @@ static uint16_t compile_definition(Compiler *compiler) {
                 compiler->capture_registers[i]=compiler->enclosing_locals[i].reg;
         }
     }
-    if(direct_class_member||direct_module_member||direct_class_singleton_member||
-       nested_in_singleton_method) {
+    if((direct_class_member||direct_module_member||direct_class_singleton_member||
+        nested_in_singleton_method)&&!captures_self) {
         (void)allocate_register(compiler);
         function->arity = 1;
         function->required_arity=1;
         compiler->current_method = name;
+        compiler->in_method = true;
+    } else if(captures_self) {
+        /* self arrives entirely via capture, not an implicit-receiver
+         * call convention -- no extra arity (a closure is called with
+         * exactly the arguments its own parameter list declares). But
+         * register 0 *is* reserved here, unlike a plain nested def:
+         * every ordinary self/@ivar/self.foo() code path (parse_prefix's
+         * DIAMOND_TOKEN_SELF/INSTANCE_VARIABLE, compile_assignment_store,
+         * DIAMOND_OP_INVOKE_SELF_METHOD's own VM handler) hardcodes
+         * literal register 0 unconditionally and unchanged -- reusing
+         * all of that as-is (rather than teaching each one about a
+         * capture index) means this closure's own register 0 must
+         * actually hold self, materialized here via GET_CAPTURE, exactly
+         * once, before any of its own body compiles. Guaranteed to land
+         * in register 0: next_register was just reset to 0 above and
+         * nothing else has allocated from it yet on this path. */
+        if(compiler->capture_count==16) {
+            fail(compiler,name,"nested function sees too many lexical bindings");
+        } else {
+            const size_t self_capture_index=compiler->capture_count;
+            compiler->capture_registers[compiler->capture_count++]=self_copy_register;
+            const uint16_t self_register=allocate_register(compiler);
+            emit_instruction(compiler,DIAMOND_OP_GET_CAPTURE,self_register,
+                             (uint8_t)self_capture_index,0,2);
+        }
         compiler->in_method = true;
     }
 
@@ -6741,7 +6825,7 @@ static uint16_t compile_class(Compiler *compiler) {
                 class->methods[class->method_count++].included=true;
             }
         } else if(compiler->current.kind==DIAMOND_TOKEN_DEF) {
-            (void)compile_definition(compiler);
+            (void)compile_definition(compiler,false);
         } else {
             fail(compiler,compiler->current.span,
                  "expected method definition or include in class");break;
@@ -6926,7 +7010,7 @@ static uint16_t compile_module(Compiler *compiler) {
                 module->methods[module->method_count++].included=true;
             }
         } else if(compiler->current.kind==DIAMOND_TOKEN_DEF) {
-            (void)compile_definition(compiler);
+            (void)compile_definition(compiler,false);
         } else if(compiler->current.kind==DIAMOND_TOKEN_MODULE) {
             (void)compile_module(compiler);
         } else if(compiler->current.kind==DIAMOND_TOKEN_CLASS) {
@@ -7354,11 +7438,14 @@ static uint16_t compile_sequence(Compiler *compiler) {
         const size_t body_start = compiler->function->code_count;
         const bool declaration_statement =
             compiler->current.kind == DIAMOND_TOKEN_DEF ||
+            compiler->current.kind == DIAMOND_TOKEN_CLOSURE ||
             compiler->current.kind == DIAMOND_TOKEN_CLASS ||
             compiler->current.kind == DIAMOND_TOKEN_INTERFACE ||
             compiler->current.kind == DIAMOND_TOKEN_MODULE;
         if (compiler->current.kind == DIAMOND_TOKEN_DEF) {
-            result = compile_definition(compiler);
+            result = compile_definition(compiler,false);
+        } else if (compiler->current.kind == DIAMOND_TOKEN_CLOSURE) {
+            result = compile_definition(compiler,true);
         } else if (compiler->current.kind == DIAMOND_TOKEN_CLASS) {
             result = compile_class(compiler);
         } else if (compiler->current.kind == DIAMOND_TOKEN_INTERFACE) {

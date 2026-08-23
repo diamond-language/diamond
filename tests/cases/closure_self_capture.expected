@@ -1,0 +1,8 @@
+20
+11
+12
+99
+Thread.new rejected a self-capturing closure
+[100, redeclaration TypeError at iteration 1]
+closure self-capture smoke ok
+nil
