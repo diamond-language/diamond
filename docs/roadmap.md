@@ -420,13 +420,45 @@ self capture rides in the existing `captures[]`/`capture_count` array
 like any other captured value) and `docs/syntax.md`'s own section for the
 language-level shape and examples.
 
-**Explicitly not fixed by this feature, confirmed rather than assumed**:
+Surfaced by this feature's own work (motivated by `active_record`'s own
+migration-runner use case) and fixed separately, in the same session:
 a nested `def`/`closure` redeclared a second time inside the same loop
-body still raises a runtime `TypeError` at the second declaration -- a
-separate, pre-existing bug this feature's own work surfaced (motivated by
-`active_record`'s own migration-runner use case, which needed exactly
-this shape) but did not investigate or fix. Revisit as its own issue if
-it keeps mattering in practice.
+body used to raise a runtime `TypeError` at the second declaration -- see
+"Locals captured inside a loop body go stale" below.
+
+### Locals captured inside a loop body go stale
+
+**Done, in scope.** A loop body is compiled once and every iteration
+after the first reaches it via a jump back to that same bytecode -- a
+local captured by a nested `def`/`closure` partway through the body gets
+its register boxed in place, and any reference to it compiled *before*
+that capture was discovered stayed a stale raw-register read that only
+the lucky first iteration (box hasn't happened yet) survived. Confirmed
+directly, and confirmed broader than the originally-reported "redeclared
+closure" framing: an ordinary body statement referencing an outer
+pre-loop-declared local has the same problem with no closure
+redeclaration in sight (`loop do ... break if ... end`), and so does a
+local declared fresh *inside* the loop body, captured further down in
+the same body, independent of any outer local. Fixed by a cheap
+lookahead at the top of any `while`/`until`/`loop` that detects a
+`def`/`closure` anywhere in that loop's own body and, if found,
+preemptively marks every already-visible local -- and every local
+declared from then on -- as captured, so they all get the existing
+box-aware codegen from their very first compilation instead of only
+from wherever the actual capturing `def`/`closure` happens to sit. No
+VM/opcode changes, no changes to `break`/`next`/`redo`'s jump targets
+(confirmed unnecessary, not just skipped). See `docs/design.md`'s
+"Locals captured inside a loop body go stale" section for the full
+mechanism.
+
+**Deliberately narrower than exhaustive, confirmed rather than assumed**:
+covers plain assignment (`define_local`, the sole site for
+`x = value`-style declarations) and pre-existing locals, which are the
+two failure modes actually reproduced. Seven other, rarer local-
+registration sites (destructuring, `rescue error:` bindings, parameter
+binding, and others) aren't touched -- a local declared via one of those
+forms inside a capturing loop, then itself captured later in the same
+body, remains unfixed. Revisit if that shape shows up in practice.
 
 ### Native service depth
 

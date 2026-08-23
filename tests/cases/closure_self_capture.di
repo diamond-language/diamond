@@ -77,13 +77,13 @@ rescue error: TypeError
   puts("Thread.new rejected a self-capturing closure")
 end
 
-# Known, separate, pre-existing limitation -- NOT fixed by this feature:
-# a nested def/closure redeclared a second time inside the same loop
-# body raises a runtime TypeError at the *second* declaration. closure
-# shares the underlying DIAMOND_OP_CLOSURE-emission machinery with plain
-# nested def, so it inherits this too -- confirmed directly, documented
-# here rather than assumed either way. See docs/roadmap.md's "Open
-# design decisions" section.
+# A closure (or plain nested def) redeclared inside a loop body, each
+# iteration capturing that iteration's own @ivar/local state correctly --
+# was a real, separate bug (a loop body compiles once and every
+# iteration after the first reaches it via a jump back, so a local
+# referenced before the point a nested def/closure captures it stayed a
+# stale raw-register read once boxed), fixed independently of this
+# feature. See docs/roadmap.md's "Open design decisions" section.
 class LoopWidget
   def initialize(x)
     @x = x
@@ -91,16 +91,12 @@ class LoopWidget
   def run()
     i = 0
     results = []
-    begin
-      while i < 3
-        closure inner()
-          @x + i
-        end
-        results.push(inner())
-        i += 1
+    while i < 3
+      closure inner()
+        @x + i
       end
-    rescue error: TypeError
-      results.push("redeclaration TypeError at iteration #{i}")
+      results.push(inner())
+      i += 1
     end
     results
   end

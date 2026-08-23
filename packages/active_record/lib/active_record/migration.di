@@ -43,12 +43,21 @@ module ActiveRecord
 # order that matters, timestamp-shaped or not.
 #
 # Every method below is `self.`-owned, never instantiated -- same as
-# Transaction. #run/#rollback don't build on Transaction.run itself
-# (which takes a zero-arg Callable) -- confirmed directly that a nested
-# `def` declared a second time inside a loop body (needed here, one
-# transaction per migration) raises a runtime TypeError, so #run/#rollback
-# inline Transaction.run's own three-line BEGIN/COMMIT/ROLLBACK shape
-# per iteration instead of wrapping a callback.
+# Transaction. #run/#rollback still don't build on Transaction.run
+# itself (which takes a zero-arg Callable), even though the specific bug
+# that originally motivated this (a nested `def`/`closure` redeclared a
+# second time inside a loop body raising a runtime TypeError -- needed
+# here, one transaction per migration) has since been fixed at the
+# language level (docs/roadmap.md's "Open design decisions" section).
+# Passing a *named* nested-`def` reference to `Transaction.run` hits a
+# separate, still-open gap instead: confirmed directly, with no loop
+# involved at all, that it type-checks as a bare `Callable` rather than
+# narrowing to the `Callable[0]` `Transaction.run` declares (a `do...end`
+# block literal doesn't have this problem, but `Transaction.run(db) do
+# ... end` can't be re-declared per loop iteration the way a callback
+# reference can). So #run/#rollback keep inlining Transaction.run's own
+# three-line BEGIN/COMMIT/ROLLBACK shape per iteration instead of
+# wrapping a callback.
 class Migrator
   def self.migrations_table() = Arel.table("schema_migrations")
 

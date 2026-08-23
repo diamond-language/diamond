@@ -961,11 +961,75 @@ gate both already reject any closure with `capture_count!=0` (a
 already require a capture-free callable -- neither needed to learn
 anything new about this feature to keep rejecting it correctly.
 
-**Explicitly not fixed by this feature**: a nested `def`/`closure`
-redeclared a second time inside the same loop body raises a runtime
-`TypeError` at the second declaration -- a separate, pre-existing bug
-this feature's own work surfaced but did not investigate. See
-`docs/roadmap.md`'s "Open design decisions" section.
+Surfaced, not fixed, by this feature's own work: a nested `def`/`closure`
+redeclared inside a loop body used to raise a runtime `TypeError` on the
+second iteration. Fixed separately -- see "Locals captured inside a loop
+body go stale" below.
+
+### Locals captured inside a loop body go stale
+
+A `while`/`until`/`loop` body is compiled exactly once; every iteration
+after the first reaches it by jumping back to that same already-emitted
+bytecode (`parse_while`/`parse_loop`). If a local gets captured by a
+nested `def`/`closure` declared partway through that body, capturing it
+boxes its register **in place** into a `DiamondCell`
+(`DIAMOND_OP_BOX_LOCAL`). Any reference to that local compiled *before*
+the point the capture was discovered -- an ordinary raw register read,
+compiled before the compiler knew better -- goes stale: correct on the
+first iteration (the box hasn't happened yet), a type error on every
+iteration after, once the same raw-read bytecode re-executes against a
+register that's now a `Cell`.
+
+Confirmed directly (not assumed) that this is not specific to `while`'s
+own condition expression: an ordinary body statement referencing an
+outer, pre-loop-declared local ahead of the capturing `def`/`closure`
+breaks the same way (reproduced with `loop do ... break if ... end`, no
+separate condition involved at all), and so does **a local declared
+fresh inside the loop body itself**, later captured further down in the
+same body (reproduced independently of any outer local at all).
+
+Fixed by never emitting the stale bytecode in the first place, rather
+than working around it after the fact -- no loop-rotation/code
+duplication, and (confirmed unnecessary) no changes to `break`/`next`/
+`redo`'s jump targets, since `next`'s existing jump back to the loop's
+own condition becomes safe automatically once that condition is
+box-aware from its one and only compilation:
+
+1. A cheap presence scan at the top of any `while`/`until`/`loop`, before
+   compiling its condition or body: a throwaway `DiamondLexer` copy walks
+   tokens from the current position looking for a `def`/`closure`
+   anywhere within *this* loop's own body (tracked via an opener/`end`
+   depth counter over the complete set of `end`-terminated block
+   openers -- `if`/`unless`/`while`/`until`/`loop`/`case`/`begin`/
+   `class`/`module`/`interface`/`def`/`closure`; `do`/`then` are
+   decoration, not openers; `else`/`elsif`/`when`/`rescue`/`ensure` are
+   mid-block separators, not new openers).
+2. If found, a new `Compiler` field, `loop_captures_pending`, is set for
+   the duration of that loop's condition + body compilation (restored
+   afterward; sticky across nested loops -- an inner loop reached while
+   it's already `true` skips its own scan, since anything declared since
+   already picked up the flag at declaration time, see point 4).
+3. The moment it's set, every currently-visible local is marked
+   `.captured = true` immediately -- covering the "outer, pre-loop-
+   declared local" case. Every existing read/write of a `.captured`
+   local already goes through the correct `BOX_LOCAL`+`GET_CELL`/
+   `SET_CELL` path (`parse_identifier`, `compile_assignment_store`);
+   nothing new needed there, this only flips the flag earlier than it
+   would otherwise be discovered.
+4. `define_local` (the single shared helper behind ordinary
+   `x = value`-style new-variable declaration) sets a newly declared
+   local's own `.captured` to `loop_captures_pending` at the moment of
+   declaration, instead of always defaulting `false` -- covering the
+   "freshly declared inside the loop, captured later in the same body"
+   case.
+
+No VM/opcode changes. Deliberately narrower than exhaustive: `define_local`
+is the sole site for plain assignment, but seven other, rarer local-
+registration sites exist (destructuring, `rescue error:` bindings,
+parameter binding, and others) that this pass doesn't touch -- a local
+declared via one of those forms inside a capturing loop, then itself
+captured later in the same body, remains unfixed. Confirmed as a real,
+documented remaining gap rather than assumed away.
 
 ## Deliberate constraints
 

@@ -87,6 +87,22 @@ typedef struct Compiler {
      * gets, even though the closure itself isn't a class member -- see
      * compile_definition's own use, and docs/roadmap.md for why. */
     bool in_singleton_method;
+    /* True while compiling a while/until/loop's own condition+body once
+     * a def/closure has been found anywhere within it (loop_body_may_
+     * capture) -- makes every local reference/declaration from that point
+     * go through the existing .captured-flag-driven BOX_LOCAL/GET_CELL/
+     * SET_CELL codegen (parse_identifier, compile_assignment_store,
+     * define_local) from its very first compilation, rather than only
+     * from wherever the actual capturing def/closure happens to sit in
+     * source order. Fixes a real bug: a loop body is compiled once and
+     * reached again via a jump back, so any reference compiled *before*
+     * a mid-body capture was discovered stays a stale raw-register read
+     * that only a lucky first iteration (box hasn't happened yet)
+     * survives -- confirmed directly, not assumed, see docs/roadmap.md.
+     * Sticky across nested loops (an inner loop reached while this is
+     * already true skips its own scan/premark -- see parse_while/
+     * parse_loop's own comments). */
+    bool loop_captures_pending;
     uint8_t known_types[DIAMOND_REGISTER_COUNT];
     int16_t known_type_sets[DIAMOND_REGISTER_COUNT];
     bool in_function;
@@ -609,7 +625,16 @@ static uint16_t define_local(Compiler *compiler, DiamondSpan name) {
         return 0;
     }
     const uint16_t reg = allocate_register(compiler);
-    compiler->locals[compiler->local_count++] = (Local){.name = name, .reg = reg};
+    /* .captured starts true, rather than the usual false, whenever this
+     * declaration happens inside a loop body a def/closure was found
+     * somewhere in (loop_captures_pending) -- a local declared fresh
+     * inside such a loop, then captured later in that same body, needs
+     * every one of its own subsequent reads/writes (including ones
+     * compiled before that later def/closure is even reached) to already
+     * be box-aware, for the same reason a pre-existing outer local does
+     * (see loop_captures_pending's own comment). */
+    compiler->locals[compiler->local_count++] =
+        (Local){.name = name, .reg = reg, .captured = compiler->loop_captures_pending};
     return reg;
 }
 
@@ -3794,12 +3819,72 @@ static uint16_t parse_if(Compiler *compiler,bool inverted) {
     return destination;
 }
 
+/* Cheap lookahead: does a def/closure declaration appear anywhere within
+ * the loop body about to be compiled -- from the current parse position
+ * through *this* loop's own matching `end`, at any nesting depth inside
+ * it (a def/closure nested inside an if/case/etc. within the loop still
+ * counts, since enclosing_locals/capture threading already works
+ * transitively through those) -- without scanning past it into whatever
+ * follows. A throwaway DiamondLexer copy, the same zero-cost snapshot
+ * idiom postfix_modifier_ahead/others already use for lookahead; never
+ * advances the real parse position. Tracks end-terminated block nesting
+ * via the complete set of opener keywords (confirmed against every
+ * compiler function that consumes a trailing DIAMOND_TOKEN_END):
+ * if/unless/while/until/loop/case/begin/class/module/interface/def/
+ * closure. `do`/`then` are decoration, not openers (consume_loop_start/
+ * consume_conditional_start); else/elsif/when/rescue/ensure are
+ * mid-block separators the *same* opener already accounts for, not new
+ * openers of their own. Deliberately doesn't special-case the endless
+ * `def foo() = ...`/`closure foo() = ...` form (no matching `end` at
+ * all): it returns true the instant it sees the def/closure token,
+ * before it would ever need to know whether one exists. */
+static bool loop_body_may_capture(const Compiler *compiler) {
+    DiamondLexer lookahead=compiler->lexer;
+    DiamondToken token=compiler->current;
+    size_t depth=0;
+    while(token.kind!=DIAMOND_TOKEN_EOF) {
+        if(token.kind==DIAMOND_TOKEN_DEF||token.kind==DIAMOND_TOKEN_CLOSURE)return true;
+        if(token.kind==DIAMOND_TOKEN_IF||token.kind==DIAMOND_TOKEN_UNLESS||
+           token.kind==DIAMOND_TOKEN_WHILE||token.kind==DIAMOND_TOKEN_UNTIL||
+           token.kind==DIAMOND_TOKEN_LOOP||token.kind==DIAMOND_TOKEN_CASE||
+           token.kind==DIAMOND_TOKEN_BEGIN||token.kind==DIAMOND_TOKEN_CLASS||
+           token.kind==DIAMOND_TOKEN_MODULE||token.kind==DIAMOND_TOKEN_INTERFACE) {
+            depth++;
+        } else if(token.kind==DIAMOND_TOKEN_END) {
+            if(depth==0)return false;
+            depth--;
+        }
+        token=diamond_lexer_next(&lookahead);
+    }
+    return false;
+}
+
+/* Marks every currently-visible local in the enclosing function
+ * captured, so its subsequent reads/writes -- including ones textually
+ * before wherever the def/closure that triggered this actually sits --
+ * go through the existing box-aware codegen from here on. Called once,
+ * at a capturing loop's own entry; see loop_captures_pending's own
+ * comment for why this needs to happen before the condition/body
+ * compiles rather than lazily at the real capture site. */
+static void mark_locals_captured(Compiler *compiler) {
+    for(size_t index=0;index<compiler->local_count;index++)
+        compiler->locals[index].captured=true;
+}
+
 static uint16_t parse_while(Compiler *compiler,bool inverted) {
     const uint16_t destination=allocate_register(compiler);
     emit_instruction(compiler,DIAMOND_OP_NIL,destination,0,0,1);
     const size_t loop_start = compiler->function->code_count;
+    const bool outer_loop_captures_pending=compiler->loop_captures_pending;
+    if(!compiler->loop_captures_pending&&loop_body_may_capture(compiler)) {
+        compiler->loop_captures_pending=true;
+        mark_locals_captured(compiler);
+    }
     const uint16_t condition = parse_expression(compiler);
-    if (!consume_loop_start(compiler)) return 0;
+    if (!consume_loop_start(compiler)) {
+        compiler->loop_captures_pending=outer_loop_captures_pending;
+        return 0;
+    }
     uint16_t branch_condition=condition;
     if(inverted) {
         branch_condition=allocate_register(compiler);
@@ -3816,6 +3901,7 @@ static uint16_t parse_while(Compiler *compiler,bool inverted) {
     compiler->current_loop=&loop;
     (void)compile_sequence(compiler);
     compiler->current_loop=loop.previous;
+    compiler->loop_captures_pending=outer_loop_captures_pending;
     emit_absolute_jump(compiler, loop_start);
     patch_jump(compiler, exit_jump, compiler->function->code_count);
     for(size_t index=0;index<loop.break_count;index++)
@@ -3833,6 +3919,11 @@ static uint16_t parse_loop(Compiler *compiler) {
     const uint16_t destination=allocate_register(compiler);
     emit_instruction(compiler,DIAMOND_OP_NIL,destination,0,0,1);
     if(!consume_loop_start(compiler))return destination;
+    const bool outer_loop_captures_pending=compiler->loop_captures_pending;
+    if(!compiler->loop_captures_pending&&loop_body_may_capture(compiler)) {
+        compiler->loop_captures_pending=true;
+        mark_locals_captured(compiler);
+    }
     const size_t body_start=compiler->function->code_count;
     LoopContext loop={.previous=compiler->current_loop,
         .continue_target=body_start,.redo_target=body_start,
@@ -3840,6 +3931,7 @@ static uint16_t parse_loop(Compiler *compiler) {
     compiler->current_loop=&loop;
     (void)compile_sequence(compiler);
     compiler->current_loop=loop.previous;
+    compiler->loop_captures_pending=outer_loop_captures_pending;
     emit_absolute_jump(compiler,body_start);
     for(size_t index=0;index<loop.break_count;index++)
         patch_jump(compiler,loop.breaks[index],compiler->function->code_count);
