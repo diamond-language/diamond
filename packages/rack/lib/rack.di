@@ -42,48 +42,10 @@
 # `rack_app`-style entry point below), exactly what gremlin_serve's
 # `handler` contract already requires today, unchanged.
 
-def rack_terminal_wrap(app)
-  def terminal(request, context, forward)
-    app(request, context)
-  end
-  terminal
-end
-
-# middlewares: Array of Callable[3]. app: Callable[2], the terminal
-# handler. Returns a plain Array -- see the file comment above for why
-# that matters.
-def rack_compose(middlewares, app)
-  middlewares.concat([rack_terminal_wrap(app)])
-end
-
-def rack_run_chain(chain, index, request, context)
-  if index >= chain.length()
-    raise RuntimeError.new("rack: chain exhausted without a response " +
-      "(a middleware called forward() more times than the chain has steps)")
-  end
-  current = chain[index]
-  def forward(req, ctx)
-    rack_run_chain(chain, index + 1, req, ctx)
-  end
-  current(request, context, forward)
-end
-
-# Memoizes one composed chain per class per VM -- the common case (one
-# app per process). Each Thread-spawned gremlin worker has its own
-# independent VM, so @@instance is independently nil the first time
-# each worker's own rack_app runs, and independently set from then on;
-# no locking needed even across fibers within one worker, since
-# `builder()` does no I/O and can't yield mid-check.
-#
-# A program that genuinely needs several independent chains at once
-# (not the common case this is built for) should write its own small
-# memoizing class following this same two-line pattern, keyed however
-# it needs -- RackChain itself only ever holds one.
-class RackChain
-  def self.get(builder: Callable[0])
-    if @@instance == nil
-      @@instance = builder()
-    end
-    @@instance
-  end
-end
+# One file per logical grouping: the plain chain-building/running
+# functions (chain_composition), then RackChain, the one real class
+# here (rack_chain). Neither references the other, so order between
+# them doesn't matter -- kept in the same order as the original
+# single-file layout.
+require "./rack/chain_composition"
+require "./rack/rack_chain"

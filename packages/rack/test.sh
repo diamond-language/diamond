@@ -31,8 +31,8 @@ server_src() {
         serve_call="gremlin_serve($port, rack_app, threads: $threads)"
     fi
     cat <<SRCEOF
-require "$(pwd)/../gremlin/gremlin"
-require "$(pwd)/rack"
+require "$(pwd)/../gremlin/lib/gremlin"
+require "$(pwd)/lib/rack"
 
 def logging_middleware(request, context, forward)
   response = forward(request, context)

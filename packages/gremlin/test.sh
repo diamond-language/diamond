@@ -26,7 +26,7 @@ server_src() {
         serve_call="gremlin_serve($port, handler, threads: $threads)"
     fi
     cat <<SRCEOF
-require "$(pwd)/gremlin"
+require "$(pwd)/lib/gremlin"
 def run()
   def handler(request, context)
     if request["method"] == "GET"

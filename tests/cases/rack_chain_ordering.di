@@ -1,4 +1,4 @@
-require "../../packages/rack/rack"
+require "../../packages/rack/lib/rack"
 
 def outer_middleware(request, context, forward)
   context["log"].push("outer:before")

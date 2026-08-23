@@ -1,4 +1,4 @@
-require "../../packages/rack/rack"
+require "../../packages/rack/lib/rack"
 
 def auth_middleware(request, context, forward)
   if request["headers"]["authorization"] == "Bearer secret"

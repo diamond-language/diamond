@@ -36,7 +36,7 @@ already is -- so an existing handler needs no changes to become the tail
 of a chain.
 
 ```ruby
-require "/path/to/rack"
+require "/path/to/rack/lib/rack"
 
 def logging_middleware(request, context, forward)
   response = forward(request, context)
@@ -71,8 +71,8 @@ At `threads: 1` (the default), wiring is exactly the snippet above:
 build `chain` once, and drive it from a top-level handler:
 
 ```ruby
-require "/path/to/gremlin"
-require "/path/to/rack"
+require "/path/to/gremlin/lib/gremlin"
+require "/path/to/rack/lib/rack"
 
 chain = rack_compose([logging_middleware, auth_middleware], app_handler)
 
@@ -135,8 +135,8 @@ none of the capture restriction above applies. The plain closure-based
 form works directly, no `RackChain` needed:
 
 ```ruby
-require "/path/to/http"
-require "/path/to/rack"
+require "/path/to/http/lib/http"
+require "/path/to/rack/lib/rack"
 
 chain = rack_compose([logging_middleware], app_handler)
 

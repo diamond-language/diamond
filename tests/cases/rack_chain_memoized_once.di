@@ -1,4 +1,4 @@
-require "../../packages/rack/rack"
+require "../../packages/rack/lib/rack"
 
 def build_first()
   "first"

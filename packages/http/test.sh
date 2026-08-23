@@ -21,7 +21,7 @@ wait_for_port() {
 http_port=18743
 http_out="$(mktemp)"
 http_src="$(cat <<'HTTPEOF'
-require "http"
+require "./lib/http"
 def run()
   def handler(request)
     path = request["path"]
@@ -47,7 +47,7 @@ rm -f "$http_out"
 http_port=18744
 http_out="$(mktemp)"
 http_src="$(cat <<'HTTPEOF'
-require "http"
+require "./lib/http"
 def run()
   def handler(request)
     method = request["method"]
@@ -77,7 +77,7 @@ rm -f "$http_out"
 http_port=18745
 http_out="$(mktemp)"
 http_src="$(cat <<'HTTPEOF'
-require "http"
+require "./lib/http"
 def run()
   def handler(request)
     body = request["body"]
@@ -107,7 +107,7 @@ rm -f "$http_out"
 http_port=18746
 http_out="$(mktemp)"
 http_src="$(cat <<'HTTPEOF'
-require "http"
+require "./lib/http"
 def run()
   def handler(request)
     if request["method"] == "GET"
@@ -132,7 +132,7 @@ wait_for_port "$http_port"
 { exec 3<&- 3>&-; } 2>/dev/null || true
 
 client_src="$(cat <<CLIENTEOF
-require "http"
+require "./lib/http"
 response = http_get("http://127.0.0.1:$http_port/world")
 puts(response["status"])
 puts(response["headers"]["content-type"])
@@ -152,7 +152,7 @@ rm -f "$http_out"
 # rather than silently connecting in the clear on port 443 -- no
 # server needed, this never gets as far as opening a connection.
 error_response="$(timeout 10 "$diamond" -e '
-require "http"
+require "./lib/http"
 begin
   http_get("https://example.com/")
 rescue error: ArgumentError
@@ -170,7 +170,7 @@ end
 http_port=18747
 http_out="$(mktemp)"
 http_src="$(cat <<'HTTPEOF'
-require "http"
+require "./lib/http"
 def run()
   def handler(request)
     [200, {"Content-Type": "text/plain"}, "still alive"]
@@ -233,7 +233,7 @@ fake_server_pid=$!
 # fixed wait is reliable here.
 sleep 0.3
 oversized_body_response="$(timeout 10 "$diamond" -e "
-require \"http\"
+require \"./lib/http\"
 begin
   http_get(\"http://127.0.0.1:$oversized_body_port/\")
 rescue error: IOError

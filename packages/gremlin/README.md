@@ -13,7 +13,7 @@ connection's own progress.
 
 Same story as `packages/http` -- either copy this directory straight into
 another project as `cuts/gremlin/` (alongside a
-`cuts/http/` for the `require "../http/http"` this package
+`cuts/http/` for the `require "../../http/lib/http"` this package
 makes internally to still exist), or give both their own git remotes and
 depend on them via `facet` (see
 [`docs/packages.md`](https://gitlab.com/dmn9180/diamond/-/blob/main/docs/packages.md)).
@@ -21,7 +21,7 @@ depend on them via `facet` (see
 ## Usage
 
 ```ruby
-require "/path/to/gremlin"
+require "/path/to/gremlin/lib/gremlin"
 
 def run()
   def handler(request, context)

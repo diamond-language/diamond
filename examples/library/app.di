@@ -28,8 +28,8 @@
 # stashed there, reused by every request after (Database.get below).
 
 require "../../packages/active_record/lib/active_record"
-require "../../packages/gremlin/gremlin"
-require "../../packages/rack/rack"
+require "../../packages/gremlin/lib/gremlin"
+require "../../packages/rack/lib/rack"
 
 # Per-worker SQLite connection, lazily opened and cached on `context` --
 # same one-instance-per-worker shape RackChain (packages/rack/rack.di)
