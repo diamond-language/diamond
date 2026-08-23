@@ -1,0 +1,9 @@
+Hello, Ada
+GRACE
+ArgumentError raised: field mismatch
+ArgumentError raised: syntax error
+other: X
+Hi, Ada
+[X]
+compile_method smoke ok
+nil

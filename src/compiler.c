@@ -1719,6 +1719,69 @@ static uint16_t parse_define_method_call(Compiler *compiler, int class_index) {
     return dest;
 }
 
+/* `ClassName.compile_method(name, params, body_source, bound_values)` --
+ * compiles a new method body from a source string at runtime and returns
+ * a Callable meant to be passed to define_method above (not
+ * redefine_method, and not general Callable use -- see vm.c's own
+ * DIAMOND_OP_COMPILE_METHOD/DIAMOND_OP_DEFINE_METHOD handler comments
+ * and docs/design.md's "Runtime method synthesis" section for the full
+ * scope). `bound_values` is a Hash of already-evaluated values (e.g. the
+ * result of calling a *different* class's own method, which body_source
+ * itself has no way to name directly -- see that same doc section)
+ * spliced in as extra trailing parameters; pass `{}` when there are
+ * none. Four arguments instead of redefine_method/define_method's two,
+ * otherwise the same shape. */
+static uint16_t parse_compile_method_call(Compiler *compiler, int class_index) {
+    advance_token(compiler); /* consume 'compile_method' */
+    if (compiler->current.kind != DIAMOND_TOKEN_LEFT_PAREN) {
+        fail(compiler, compiler->current.span, "expected '(' after 'compile_method'");
+        return 0;
+    }
+    advance_token(compiler);
+    skip_newlines(compiler);
+    const uint16_t name_register = parse_expression(compiler);
+    skip_newlines(compiler);
+    if (compiler->current.kind != DIAMOND_TOKEN_COMMA) {
+        fail(compiler, compiler->current.span, "expected ',' after compile_method name");
+        return 0;
+    }
+    advance_token(compiler);
+    skip_newlines(compiler);
+    const uint16_t params_register = parse_expression(compiler);
+    skip_newlines(compiler);
+    if (compiler->current.kind != DIAMOND_TOKEN_COMMA) {
+        fail(compiler, compiler->current.span, "expected ',' after compile_method params");
+        return 0;
+    }
+    advance_token(compiler);
+    skip_newlines(compiler);
+    const uint16_t body_register = parse_expression(compiler);
+    skip_newlines(compiler);
+    if (compiler->current.kind != DIAMOND_TOKEN_COMMA) {
+        fail(compiler, compiler->current.span, "expected ',' after compile_method body_source");
+        return 0;
+    }
+    advance_token(compiler);
+    skip_newlines(compiler);
+    const uint16_t bound_values_register = parse_expression(compiler);
+    skip_newlines(compiler);
+    if (compiler->current.kind != DIAMOND_TOKEN_RIGHT_PAREN) {
+        fail(compiler, compiler->current.span, "expected ')' after compile_method arguments");
+        return 0;
+    }
+    advance_token(compiler);
+    const uint16_t dest = allocate_register(compiler);
+    emit_opcode(compiler, DIAMOND_OP_COMPILE_METHOD);
+    emit_register(compiler,dest);
+    emit_byte(compiler, (uint8_t)class_index);
+    emit_register(compiler,name_register);
+    emit_register(compiler,params_register);
+    emit_register(compiler,body_register);
+    emit_register(compiler,bound_values_register);
+    compiler->known_types[dest] = DIAMOND_TYPE_CALLABLE;
+    return dest;
+}
+
 static uint16_t parse_fiber_new_call(Compiler *compiler) {
     advance_token(compiler); /* consume '.' */
     if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER||
@@ -3018,6 +3081,8 @@ static uint16_t parse_name(Compiler *compiler) {
             return parse_redefine_method_call(compiler,class_index);
         if(name_equals(compiler,"define_method",compiler->current.span,false))
             return parse_define_method_call(compiler,class_index);
+        if(name_equals(compiler,"compile_method",compiler->current.span,false))
+            return parse_compile_method_call(compiler,class_index);
         if(!name_equals(compiler,"new",compiler->current.span,false)) {
             const DiamondMethod *method=nullptr;
             const DiamondClass *owner=

@@ -582,6 +582,122 @@ exists, so each keeps a single, predictable contract. The new method
 dispatches correctly for instances constructed before the call too, since
 lookup is by class and name at call time, never snapshotted per instance.
 
+### Runtime method synthesis
+
+`ClassName.compile_method(name, params, body_source, bound_values)`
+compiles a *new* method body from a source string at runtime and returns
+a `Callable`, meant to be installed with the `define_method` above --
+`define_method`'s existing "add a new slot" mechanism already handles
+attaching it to a class, since ordinary dispatch was already runtime
+name-lookup, not a compile-time-baked slot (`lookup_method`/
+`lookup_method_cached`). The actual gap this closes is that
+`define_method`'s callable previously always had to be an
+already-compiled nested `def`, physically written in the source --
+`compile_method` is the missing piece letting `has_many`-style
+associative helpers (`packages/active_record`) synthesize a method body
+from a runtime string instead, closer to Ruby's own dynamic
+metaprogramming without a general `eval`.
+
+```ruby
+class Author < ActiveRecord::Model
+  def self.configure(repository: ActiveRecord::Repository)
+    @@repository = repository
+    callable = Author.compile_method("books", ["db"],
+      "self.has_many(target_repo, \"author_id\").all(db, self.id())",
+      {"target_repo": Book.repository()})
+    Author.define_method("books", callable)
+  end
+end
+```
+
+**Why this can't just append to the running program's own function
+table.** `chunk->functions` is a fixed array, allocated once when a
+`DiamondProgram` finishes compiling and never grown afterward
+(`diamond_program_add_function` only ever runs *during* construction);
+appending new bytecode to an already-running chunk isn't safe. Instead,
+`compile_method` synthesizes a tiny, self-contained source string:
+
+```
+class <ClassName>
+  attr_accessor <field1>, <field2>, ...
+  def <name>(<params>, <bound_value_names>)
+    <body_source>
+  end
+end
+```
+
+and compiles it, through the ordinary unmodified `diamond_compile()`,
+into a **separate, throwaway `DiamondProgram`** -- kept alive forever via
+the same `vm->adopted_programs` list `ProgramBuilder`'s own adopt mode
+already uses (`adopt_program`), rather than any new lifetime mechanism.
+The `attr_accessor` line re-declares the target class's *existing* field
+names, in the same order, using the compiler's completely unmodified
+`@ivar` auto-declare-on-first-reference machinery -- this is what seeds
+an identically-shaped field table in the throwaway program without a new
+compiler entry point, and `compile_method` then requires the resulting
+class's `field_count` to match the original *exactly*: if `body_source`
+referenced or auto-declared any field beyond that seeded list, the call
+fails with `ArgumentError` rather than installing a method whose
+`@field` offsets don't mean what the real class's instances expect.
+Growing a class's *own* field count at runtime, by contrast, is never
+attempted -- `allocate_instance` sizes an instance's `fields[]` from
+`class->field_count` once, at allocation time, so already-existing
+instances would be left with a too-small allocation.
+
+**Why `body_source` can't name another class directly.** `class <Name>`
+above declares a brand-new, unrelated class inside the throwaway
+program -- Diamond's cross-program isolation (the same fact that makes
+two independently-compiled `ProgramBuilder` programs safe to run
+side-by-side, disambiguated by `DiamondInstance.owner`) means this can
+never collide with a same-named class in the real, currently-running
+program, but it also means a bare reference to some *other* class (like
+`Book` in the example above) has nothing to resolve against: class
+references compile to indices into whichever program compiled them, and
+the throwaway program was never told `Book` exists. `bound_values` is
+the answer -- a `Hash` of already-evaluated values (typically the result
+of calling a method on a class `body_source` has no way to name), copied
+onto the returned `DiamondClosure` and, once installed via
+`define_method`, onto the class's own `DiamondMethod` entry
+(`bound_values`/`bound_value_count`; capped at `DIAMOND_MAX_BOUND_VALUES`,
+8). Every dispatch site appends them after the caller's own explicit
+arguments before entering the function -- a caller of the installed
+method never supplies them, so `arity`/`required_arity` on that
+`DiamondMethod` already exclude them. This is the one place this feature
+needed real, ongoing GC cooperation: `vm->adopted_programs`' own
+`bound_values` arrays are walked and marked directly in
+`diamond_vm_collect`, since `DiamondMethod`/`DiamondClass` entries are
+otherwise pure program metadata that never reference GC heap values at
+all.
+
+**Why a method installed this way can safely call `self.foo()` against
+the real receiver even though its *own* bytecode's ambient chunk is the
+throwaway program.** Every instance method call inside the compiled body
+still needs to resolve against whichever chunk the *receiver's actual
+class* lives in, not whichever chunk happens to be executing --
+previously the same thing, always, for every chunk in a single vm's
+call stack, so nothing tracked them separately. `DiamondVm.root_chunk`
+(set once, in `diamond_vm_run`, to the chunk the vm was first invoked
+with) makes that distinction real: `instance->owner==nullptr` now means
+"belongs to `root_chunk`," not "belongs to whatever chunk is ambient
+right now." `DiamondMethod.source_chunk` (nullptr for every ordinary,
+source-declared method) plays the same role for resolving the
+*compiled-method's own* `function_index`, the two together letting a
+`compile_method` result's bytecode correctly reference both itself
+(its own chunk) and the instance it was called on (`root_chunk`) in the
+same call.
+
+**Deliberately out of scope for this first version:** `self.`
+class-owned singleton methods (instance methods only -- `self.foo` has
+its own separate `DIAMOND_VALUE_CLASS` dispatch, not touched here);
+closures over the *calling* scope's own locals (only `bound_values`,
+fixed at `compile_method` time, and the target class's existing fields
+are visible); bare parameter names only, the same scope cut `delegate`
+already uses (no types, defaults, splat, or block forwarding). Trust
+model: `body_source` runs as real compiled bytecode with no sandboxing,
+the same level Ruby's own `class_eval`/`define_method` already assume --
+meant for programmer-authored macro implementations, not untrusted
+end-user input.
+
 A `def self.x` method declared directly inside a class (not a module) also
 now gets real virtual dispatch for `self.foo(...)` written in its own body,
 via a new lightweight `DIAMOND_VALUE_CLASS` value kind: a 1-byte

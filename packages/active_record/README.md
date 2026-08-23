@@ -327,15 +327,18 @@ runs. `ActiveRecord::Model` is a thin layer over exactly that machinery
 Two real Diamond constraints shaped what this can and can't do, verified
 directly rather than assumed:
 
-- Diamond classes have fixed, compile-time method tables -- there is no
-  `define_method`/`method_missing` in the general sense Ruby has it (a
-  narrower runtime `ClassName.define_method` does exist, see
-  `docs/syntax.md`, but it can only expose an *already-compiled* method
-  body under a new name, not synthesize new logic from a symbol like
-  `:books`). So there is still no `has_many :books` macro that conjures a
-  real `books` method into existence from nothing -- every method a model
-  exposes, associations included, is an ordinary `def` you write
-  yourself, same as any other Diamond class.
+- Diamond classes have fixed, compile-time method tables, and there is
+  still no `has_many :books`-style *class-body macro* that would expand
+  into a real method by itself -- but `ClassName.compile_method` (see
+  `docs/design.md`'s "Runtime method synthesis" section) can now compile
+  a method body from a runtime string and, together with
+  `ClassName.define_method`, attach it to an already-loaded class. A
+  model that wants a synthesized association reader writes ordinary
+  imperative code in its own `self.configure` to build one -- see
+  "Association readers" below for a worked `has_many` example -- every
+  method a model exposes is still either a hand-written `def`, or
+  explicitly synthesized this way, nothing conjures one implicitly from
+  a bare symbol.
 - Instance methods dispatch virtually (confirmed directly: a shared
   method calling `self.foo()` correctly reaches a subclass's override).
   `def self.x` class methods originally couldn't do this at all -- `self`
@@ -474,6 +477,38 @@ Association readers are one line each, built from `Model#has_many`/
 def books(db) = self.has_many(Book.repository(), "author_id").all(db, self.id())
 def profile(db) = self.has_one(Profile.repository(), "author_id").get(db, self.id())
 ```
+
+The one-liner above is still the simplest way to write an association
+reader, and is what most models should reach for. `ClassName.compile_method`
+(`docs/design.md`'s "Runtime method synthesis" section) offers a second,
+*synthesized* way to build the same shape of method from `self.configure`
+instead of a hand-written `def` -- useful mainly when a model wants to
+build several similar readers programmatically rather than writing one
+`def` per association:
+
+```diamond
+class Author < ActiveRecord::Model
+  ...
+  def self.configure(repository: ActiveRecord::Repository)
+    @@repository = repository
+    # body_source can't name Book directly -- it compiles as its own
+    # isolated program with no knowledge of the real one's other
+    # classes (see docs/design.md) -- so Book.repository() is evaluated
+    # here, in this method's own real compile, and threaded in via
+    # bound_values instead.
+    callable = Author.compile_method("books", ["db"],
+      "self.has_many(target_repo, \"author_id\").all(db, self.id())",
+      {"target_repo": Book.repository()})
+    Author.define_method("books", callable)
+  end
+end
+```
+
+`ada.books(db)` then works exactly like the hand-written version above --
+same method, same dispatch, the only difference is where its body came
+from. Still not a `has_many :books` class-body macro (there's no
+declarative statement that expands into this for you); it's ordinary
+Diamond code that happens to build a method instead of calling one.
 
 A model that associates in **both** directions (`Author has_many :books`
 *and* `Book belongs_to :author`) used to hit a real ordering wall: Diamond

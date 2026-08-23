@@ -20,18 +20,41 @@ away the real language constraints already found and documented in
   tracking (`DirtyAttributes`), validators and before/after-save hooks
   (`Repository`), batch iteration, and nested transactions.
 
-One real, already-confirmed Diamond limit shapes everything below:
+One real Diamond limit used to shape everything below, and is now
+resolved at the language level (still worth understanding, since it
+still shapes what an association reader looks like here):
 
-- **No `define_method`/`method_missing` in the general sense.** There is
-  no way to synthesize a new method body from a symbol at compile or
-  load time (`ClassName.define_method` can only expose an
-  *already-compiled* body under a new name -- see `docs/syntax.md`). So
-  `has_many :books`/`validates :name, presence: true`-style declarative
-  macros that conjure real methods into existence are **not reachable**
-  without a genuinely new language-level metaprogramming/macro system --
-  a large, separate design question, not a active_record task.
-  Don't attempt this without first scoping *that* as its own language
-  feature.
+- **Resolved**: `ClassName.compile_method(name, params, body_source,
+  bound_values)` (`docs/design.md`'s "Runtime method synthesis" section)
+  compiles a method body from a runtime source string and returns a
+  `Callable` for `ClassName.define_method` to install -- the piece that
+  was missing before, since `define_method` alone could only expose an
+  *already-compiled* body under a new name. This is what
+  `Model#has_many`/`#has_one`/`#belongs_to` build on when a model wants
+  a real association-reader method synthesized in `self.configure`
+  rather than hand-written, e.g.:
+
+  ```ruby
+  def self.configure(repository: ActiveRecord::Repository)
+    @@repository = repository
+    callable = Author.compile_method("books", ["db"],
+      "self.has_many(target_repo, \"author_id\").all(db, self.id())",
+      {"target_repo": Book.repository()})
+    Author.define_method("books", callable)
+  end
+  ```
+
+  Still genuinely not a `has_many :books` class-body macro in the Ruby
+  sense -- there's no declarative `has_many :sym` statement that expands
+  into this by itself, just ordinary imperative code inside
+  `self.configure` that a model can choose to write (or not: the
+  original one-line `def books(db) = self.has_many(...)` form from
+  README.md still works fine and is simpler for a model with only one
+  or two associations). `body_source` also can't name another class
+  directly (`Book` above, say) -- that's what `bound_values` is for,
+  since the synthesized method body compiles as its own separate,
+  isolated program with no knowledge of the real program's other
+  classes. See `docs/design.md` for exactly why.
 
 Writer-call assignment sugar landed: `receiver.attr = expr` now desugars
 at parse time (inside `parse_invoke`, `src/compiler.c`) into the

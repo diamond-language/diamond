@@ -9,6 +9,7 @@
 #include "compiler.h"
 #include "disassemble.h"
 #include "loader.h"
+#include "prelude.h"
 
 #include <crypt.h>
 #include <ctype.h>
@@ -338,8 +339,18 @@ static void mark_fiber(const DiamondFiber *fiber) {
         mark_frame_chain(fiber->native_frames);
 }
 
+/* Defined near DiamondAdoptedProgram itself (this function is used
+ * before that type is declared) -- marks every compile_method
+ * bound_value kept alive in vm->adopted_programs, the one place this
+ * whole feature needs the collector's help (everything else it added --
+ * DiamondClosure.foreign_chunk, DiamondMethod.source_chunk -- is a
+ * non-owning reference to something else's already-covered lifetime).
+ * A no-op for a ProgramBuilder-only adoption (bound_value_count==0). */
+static void mark_adopted_programs(void *list);
+
 static void diamond_vm_collect_impl(DiamondVm *vm) {
     if(vm->has_exception)mark_value(vm->exception);
+    mark_adopted_programs(vm->adopted_programs);
     mark_value(vm->argv_value);
     mark_value(vm->env_value);
     for(size_t index=0;index<vm->gc_protected_count;index++)
@@ -1158,8 +1169,13 @@ static void *thread_entry_trampoline(void *argument) {
      * point, on its own OS thread, never diamond_vm_run's top-level
      * caller), so it has to seed range_class_index onto child_vm itself
      * here -- diamond_vm_run's own copy of this same assignment never
-     * runs for a Thread. See DiamondVm's own comment on this field. */
+     * runs for a Thread. See DiamondVm's own comment on this field.
+     * root_chunk needs the same seeding, for the same reason -- &child_chunk
+     * is safe to store there despite being a local: root_chunk is only
+     * ever read while run_chunk(&child_chunk,...) below is still on the
+     * stack, the same lifetime child_chunk itself already relies on. */
     thread->child_vm->range_class_index=thread->child_program->range_class_index;
+    thread->child_vm->root_chunk=&child_chunk;
     DiamondValue run_result=DIAMOND_NIL;
     const DiamondVmStatus run_status=run_chunk(&child_chunk,thread->child_vm,
         thread->args,thread->arg_count,0,nullptr,&run_result);
@@ -1402,6 +1418,9 @@ static DiamondVmStatus dispatch_pending_signals(DiamondVm *vm,const DiamondChunk
         *any_invoked=true;
         const DiamondClosure *handler=
             (const DiamondClosure *)vm->trapped_signal_handlers[index].as.object;
+        /* See DIAMOND_OP_CALL_CLOSURE's own comment -- a compile_method
+         * result is scoped to define_method, not general Callable use. */
+        if(handler->foreign_chunk!=nullptr)continue;
         if(handler->function_index>=chunk->function_count)continue;
         const DiamondFunction *fn=chunk->functions[handler->function_index];
         DiamondChunk child={.name=fn->name,.code=fn->code,.lines=fn->lines,
@@ -1706,26 +1725,45 @@ static DiamondProcessResult *allocate_process_result(DiamondVm *vm) {
  * is heap-allocated and never relocated), so it's safe for any number of
  * DiamondInstance.owner fields to keep pointing at &node->chunk
  * indefinitely. */
+enum { DIAMOND_MAX_BOUND_VALUES = 8 };
+
 typedef struct DiamondAdoptedProgram {
     DiamondProgram *program;
     DiamondChunk chunk;
+    /* ClassName.compile_method's own bound_values: Hash argument, copied
+     * here so they outlive the call that created them -- see
+     * DiamondClosure.bound_values's own comment (src/object.h). Empty
+     * (bound_value_count==0) for a ProgramBuilder adoption, the other
+     * caller of adopt_program below. diamond_vm_collect walks
+     * vm->adopted_programs and marks these directly (see its own
+     * comment) -- the one part of this whole feature that makes a
+     * persistent, program-metadata-adjacent structure hold live GC
+     * values, unlike everything else adopt_program already managed. */
+    DiamondValue bound_values[DIAMOND_MAX_BOUND_VALUES];
+    uint8_t bound_value_count;
     struct DiamondAdoptedProgram *next;
 } DiamondAdoptedProgram;
 
 /* Transfers ownership of `program` (previously a ProgramBuilder's own
  * `program`, about to otherwise be freed alongside it) to `vm`, and
- * returns a pointer to the persistent DiamondChunk view a copied
- * instance's `owner` field can safely reference forever. Returns nullptr
- * (leaving `program` unadopted, caller still responsible for it) only on
- * allocation failure. */
-static const DiamondChunk *adopt_program(DiamondVm *vm,DiamondProgram *program) {
+ * returns the persistent node a copied instance's `owner` field (via
+ * &result->chunk) or a compile_method closure's `bound_values` field
+ * (via result->bound_values) can safely reference forever. Returns
+ * nullptr (leaving `program` unadopted, caller still responsible for it)
+ * only on allocation failure. `bound_values`/`bound_value_count` may be
+ * nullptr/0 (ProgramBuilder's own adoption never has any). */
+static DiamondAdoptedProgram *adopt_program(DiamondVm *vm,DiamondProgram *program,
+        const DiamondValue *bound_values,uint8_t bound_value_count) {
     DiamondAdoptedProgram *node=malloc(sizeof *node);
     if(node==nullptr)return nullptr;
     node->program=program;
     node->chunk=diamond_program_chunk(program);
+    node->bound_value_count=bound_value_count;
+    for(uint8_t index=0;index<bound_value_count;index++)
+        node->bound_values[index]=bound_values[index];
     node->next=(DiamondAdoptedProgram *)vm->adopted_programs;
     vm->adopted_programs=node;
-    return &node->chunk;
+    return node;
 }
 
 static void free_adopted_programs(void *list) {
@@ -1737,6 +1775,257 @@ static void free_adopted_programs(void *list) {
         free(node);
         node=next;
     }
+}
+
+static void mark_adopted_programs(void *list) {
+    const DiamondAdoptedProgram *node=(const DiamondAdoptedProgram *)list;
+    while(node!=nullptr) {
+        for(uint8_t index=0;index<node->bound_value_count;index++)
+            mark_value(node->bound_values[index]);
+        node=node->next;
+    }
+}
+
+/* ClassName.compile_method(name, params, body_source) -- see
+ * docs/design.md's "Runtime method synthesis" section for the full
+ * design. Validates every identifier that gets spliced into the
+ * synthesized source itself (name, each param); body_source is not
+ * restricted, since letting it be arbitrary Diamond source is the whole
+ * point -- same trust level as Ruby's class_eval/define_method, not
+ * something to sandbox against here. */
+static bool is_valid_identifier(const char *chars,size_t length) {
+    if(length==0)return false;
+    if(!(isalpha((unsigned char)chars[0])||chars[0]=='_'))return false;
+    for(size_t index=1;index<length;index++)
+        if(!(isalnum((unsigned char)chars[index])||chars[index]=='_'))return false;
+    return true;
+}
+
+typedef struct GrowBuffer {
+    char *data;
+    size_t length;
+    size_t capacity;
+} GrowBuffer;
+
+static bool grow_buffer_append(GrowBuffer *buffer,const char *text,size_t text_length) {
+    if(buffer->length+text_length+1>buffer->capacity) {
+        size_t new_capacity=buffer->capacity==0?256:buffer->capacity;
+        while(new_capacity<buffer->length+text_length+1)new_capacity*=2;
+        char *new_data=realloc(buffer->data,new_capacity);
+        if(new_data==nullptr)return false;
+        buffer->data=new_data;buffer->capacity=new_capacity;
+    }
+    memcpy(buffer->data+buffer->length,text,text_length);
+    buffer->length+=text_length;
+    buffer->data[buffer->length]='\0';
+    return true;
+}
+
+#define GROW_BUFFER_APPEND_LITERAL(buffer_,literal_) \
+    grow_buffer_append((buffer_),(literal_),sizeof(literal_)-1)
+
+/* Synthesizes "class <Name>\n  attr_accessor <fields>\n  def <method_name>
+ * (<params>)\n<body_source>\n  end\nend\n" -- the attr_accessor line
+ * (skipped when the class has no fields) re-declares target_class's own
+ * existing field names, in order, using the compiler's completely
+ * unmodified @ivar auto-declare-on-first-reference machinery to seed an
+ * identically-shaped field table in the throwaway program compiled
+ * below, rather than adding any new compiler entry point for this. */
+/* `bound_values_hash` is nullptr-safe (an empty bound_values Hash still
+ * has a live, zero-count DiamondHash object -- this file never passes
+ * nullptr here, but treating it as "no bound values" defensively costs
+ * nothing). Each key becomes an extra trailing parameter name after
+ * params_array's own, in the same order compile_method_helper iterates
+ * the same hash separately to collect the *values* -- the two orders
+ * must match, so both walk `hash->entries[0..count)` directly rather
+ * than one of them going through some other iteration order. */
+static bool build_compiled_method_source(GrowBuffer *buffer,const DiamondClass *target_class,
+        const DiamondString *name_string,const DiamondArray *params_array,
+        const DiamondString *body_string,const DiamondHash *bound_values_hash,
+        DiamondVm *vm,bool *validation_failed) {
+    *validation_failed=false;
+    if(!is_valid_identifier(name_string->chars,name_string->length)) {
+        snprintf(vm->error,sizeof vm->error,"compile_method name must be a valid method name");
+        *validation_failed=true;return false;
+    }
+    if(!GROW_BUFFER_APPEND_LITERAL(buffer,"class "))return false;
+    const size_t class_name_length=strlen(target_class->name);
+    if(!grow_buffer_append(buffer,target_class->name,class_name_length))return false;
+    if(!GROW_BUFFER_APPEND_LITERAL(buffer,"\n"))return false;
+    if(target_class->field_count>0) {
+        if(!GROW_BUFFER_APPEND_LITERAL(buffer,"  attr_accessor "))return false;
+        for(size_t index=0;index<target_class->field_count;index++) {
+            if(index>0&&!GROW_BUFFER_APPEND_LITERAL(buffer,", "))return false;
+            const size_t field_length=strlen(target_class->fields[index]);
+            if(!grow_buffer_append(buffer,target_class->fields[index],field_length))return false;
+        }
+        if(!GROW_BUFFER_APPEND_LITERAL(buffer,"\n"))return false;
+    }
+    if(!GROW_BUFFER_APPEND_LITERAL(buffer,"  def "))return false;
+    if(!grow_buffer_append(buffer,name_string->chars,name_string->length))return false;
+    if(!GROW_BUFFER_APPEND_LITERAL(buffer,"("))return false;
+    bool any_param=false;
+    for(size_t index=0;index<params_array->count;index++) {
+        const DiamondValue param=params_array->values[index];
+        if(param.kind!=DIAMOND_VALUE_OBJECT||param.as.object->kind!=DIAMOND_OBJECT_STRING) {
+            snprintf(vm->error,sizeof vm->error,"compile_method params must be an Array of Strings");
+            *validation_failed=true;return false;
+        }
+        const DiamondString *param_string=(const DiamondString *)param.as.object;
+        if(!is_valid_identifier(param_string->chars,param_string->length)) {
+            snprintf(vm->error,sizeof vm->error,
+                "compile_method param names must be valid identifiers");
+            *validation_failed=true;return false;
+        }
+        if(any_param&&!GROW_BUFFER_APPEND_LITERAL(buffer,", "))return false;
+        if(!grow_buffer_append(buffer,param_string->chars,param_string->length))return false;
+        any_param=true;
+    }
+    for(size_t index=0;index<bound_values_hash->count;index++) {
+        const DiamondValue key=bound_values_hash->entries[index].key;
+        if(key.kind!=DIAMOND_VALUE_OBJECT||key.as.object->kind!=DIAMOND_OBJECT_STRING) {
+            snprintf(vm->error,sizeof vm->error,
+                "compile_method bound_values keys must be Strings");
+            *validation_failed=true;return false;
+        }
+        const DiamondString *key_string=(const DiamondString *)key.as.object;
+        if(!is_valid_identifier(key_string->chars,key_string->length)) {
+            snprintf(vm->error,sizeof vm->error,
+                "compile_method bound_values keys must be valid identifiers");
+            *validation_failed=true;return false;
+        }
+        if(any_param&&!GROW_BUFFER_APPEND_LITERAL(buffer,", "))return false;
+        if(!grow_buffer_append(buffer,key_string->chars,key_string->length))return false;
+        any_param=true;
+    }
+    if(!GROW_BUFFER_APPEND_LITERAL(buffer,")\n"))return false;
+    if(!grow_buffer_append(buffer,body_string->chars,body_string->length))return false;
+    return GROW_BUFFER_APPEND_LITERAL(buffer,"\n  end\nend\n");
+}
+
+/* Finds the DiamondClass this compile compiled (by name -- the prelude
+ * already declares many classes of its own, so the synthesized class
+ * is not reliably at any fixed index) and validates its field_count
+ * exactly matches target_class's own -- the one check that actually
+ * proves body_source didn't reference/auto-declare any field beyond
+ * the ones build_compiled_method_source seeded via attr_accessor, i.e.
+ * that every @field offset the compiled bytecode assumes is valid
+ * against target_class's real instances. */
+static const DiamondClass *find_matching_synthetic_class(const DiamondChunk *synthetic_chunk,
+        const DiamondClass *target_class,DiamondVm *vm) {
+    const size_t class_name_length=strlen(target_class->name);
+    for(size_t index=0;index<synthetic_chunk->class_count;index++) {
+        const DiamondClass *candidate=&synthetic_chunk->classes[index];
+        if(strlen(candidate->name)==class_name_length&&
+           memcmp(candidate->name,target_class->name,class_name_length)==0) {
+            if(candidate->field_count!=target_class->field_count) {
+                snprintf(vm->error,sizeof vm->error,
+                    "compile_method body references a field '%s' does not have",
+                    target_class->name);
+                return nullptr;
+            }
+            return candidate;
+        }
+    }
+    snprintf(vm->error,sizeof vm->error,
+        "compile_method: internal error locating compiled class '%s'",target_class->name);
+    return nullptr;
+}
+
+static DiamondVmStatus compile_method_helper(DiamondVm *vm,const DiamondClass *target_class,
+        const DiamondString *name_string,const DiamondArray *params_array,
+        const DiamondString *body_string,const DiamondHash *bound_values_hash,
+        DiamondValue *out_result) {
+    if(name_string->length==0||name_string->length>=DIAMOND_MAX_FUNCTION_NAME) {
+        snprintf(vm->error,sizeof vm->error,
+            "compile_method name must be 1 to %d characters",DIAMOND_MAX_FUNCTION_NAME-1);
+        return DIAMOND_VM_ARITY_ERROR;
+    }
+    if(bound_values_hash->count>DIAMOND_MAX_BOUND_VALUES) {
+        snprintf(vm->error,sizeof vm->error,
+            "compile_method bound_values must have at most %d entries",
+            DIAMOND_MAX_BOUND_VALUES);
+        return DIAMOND_VM_ARITY_ERROR;
+    }
+    GrowBuffer source={0};
+    bool validation_failed=false;
+    if(!build_compiled_method_source(&source,target_class,name_string,params_array,
+            body_string,bound_values_hash,vm,&validation_failed)) {
+        free(source.data);
+        if(validation_failed)return DIAMOND_VM_ARITY_ERROR;
+        return DIAMOND_VM_OUT_OF_MEMORY;
+    }
+    const bool include_json=diamond_prelude_needs_json(source.data);
+    const size_t prelude_length=diamond_prelude_length(include_json);
+    char *combined=malloc(prelude_length+source.length+1);
+    if(combined==nullptr) {
+        free(source.data);
+        return DIAMOND_VM_OUT_OF_MEMORY;
+    }
+    const size_t offset=diamond_prelude_write(combined,include_json);
+    memcpy(combined+offset,source.data,source.length+1);
+    free(source.data);
+    DiamondProgram *program=malloc(sizeof *program);
+    if(program==nullptr) {
+        free(combined);
+        return DIAMOND_VM_OUT_OF_MEMORY;
+    }
+    diamond_program_init(program);
+    DiamondDiagnostic diagnostic;
+    const bool compiled=diamond_compile(combined,program,&diagnostic);
+    free(combined);
+    if(!compiled) {
+        snprintf(vm->error,sizeof vm->error,"compile_method: %s",diagnostic.message);
+        diamond_program_free(program);
+        free(program);
+        return DIAMOND_VM_ARITY_ERROR;
+    }
+    const DiamondChunk synthetic_chunk=diamond_program_chunk(program);
+    const DiamondClass *synthetic_class=
+        find_matching_synthetic_class(&synthetic_chunk,target_class,vm);
+    if(synthetic_class==nullptr) {
+        diamond_program_free(program);
+        free(program);
+        return DIAMOND_VM_ARITY_ERROR;
+    }
+    const DiamondMethod *synthetic_method=nullptr;
+    for(size_t index=0;index<synthetic_class->method_count;index++)
+        if(strlen(synthetic_class->methods[index].name)==name_string->length&&
+           memcmp(synthetic_class->methods[index].name,name_string->chars,
+                  name_string->length)==0)
+            synthetic_method=&synthetic_class->methods[index];
+    if(synthetic_method==nullptr) {
+        snprintf(vm->error,sizeof vm->error,
+            "compile_method: internal error locating compiled method '%.*s'",
+            (int)name_string->length,name_string->chars);
+        diamond_program_free(program);
+        free(program);
+        return DIAMOND_VM_ARITY_ERROR;
+    }
+    const uint16_t function_index=synthetic_method->function_index;
+    /* Collected in the same order build_compiled_method_source walked
+     * bound_values_hash->entries to emit their names as trailing
+     * parameters -- see that function's own comment on why both must
+     * agree. */
+    DiamondValue bound_values[DIAMOND_MAX_BOUND_VALUES];
+    const uint8_t bound_value_count=(uint8_t)bound_values_hash->count;
+    for(uint8_t index=0;index<bound_value_count;index++)
+        bound_values[index]=bound_values_hash->entries[index].value;
+    DiamondAdoptedProgram *adopted=
+        adopt_program(vm,program,bound_values,bound_value_count);
+    if(adopted==nullptr) {
+        diamond_program_free(program);
+        free(program);
+        return DIAMOND_VM_OUT_OF_MEMORY;
+    }
+    DiamondClosure *closure=allocate_closure(vm,function_index,nullptr,0);
+    if(closure==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+    closure->foreign_chunk=&adopted->chunk;
+    closure->intended_class=target_class;
+    closure->bound_values=adopted->bound_values;
+    closure->bound_value_count=bound_value_count;
+    *out_result=DIAMOND_OBJECT(closure);
+    return DIAMOND_VM_OK;
 }
 
 /* Account for the program container here; dynamically added function records
@@ -2320,8 +2609,10 @@ static bool copy_value_into_vm(DiamondVm *dest_vm, DiamondValue value,
                     &rebase_dest_classes[offset],nullptr);
             } else {
                 if(*adopted_owner==nullptr) {
-                    *adopted_owner=adopt_program(dest_vm,source_program);
-                    if(*adopted_owner==nullptr)return false;
+                    const DiamondAdoptedProgram *adopted=
+                        adopt_program(dest_vm,source_program,nullptr,0);
+                    if(adopted==nullptr)return false;
+                    *adopted_owner=&adopted->chunk;
                 }
                 copy=allocate_instance(dest_vm,source->class,*adopted_owner);
             }
@@ -4239,7 +4530,12 @@ static DiamondVmStatus invoke_operator_method(DiamondVm *vm,
         size_t depth, const uint8_t *site, const DiamondInstance *receiver,
         const char *name, size_t name_length, const DiamondValue *argument,
         DiamondValue *result, bool *found) {
-    const DiamondChunk *owner=receiver->owner!=nullptr?receiver->owner:chunk;
+    /* No longer needed for the owner fallback below (vm->root_chunk
+     * replaced it, see that field's own comment) -- kept as a parameter
+     * so every call site doesn't need updating for what's otherwise an
+     * internal implementation detail. */
+    (void)chunk;
+    const DiamondChunk *owner=receiver->owner!=nullptr?receiver->owner:vm->root_chunk;
     const DiamondMethod *method=lookup_method_cached(vm,owner,site,
         receiver->class,name,name_length);
     if(method==nullptr) {*found=false;return DIAMOND_VM_OK;}
@@ -4253,18 +4549,26 @@ static DiamondVmStatus invoke_operator_method(DiamondVm *vm,
     if(explicit_argument_count<method->required_arity||
        explicit_argument_count>method->arity)
         return DIAMOND_VM_ARITY_ERROR;
-    const size_t argument_count=argument==nullptr?1:2;
-    DiamondValue args[2]={DIAMOND_OBJECT((DiamondObject *)receiver)};
+    size_t argument_count=argument==nullptr?1:2;
+    DiamondValue args[2+DIAMOND_MAX_BOUND_VALUES]={DIAMOND_OBJECT((DiamondObject *)receiver)};
     if(argument!=nullptr)args[1]=*argument;
-    const DiamondFunction *fn=owner->functions[method->function_index];
+    for(size_t i=0;i<method->bound_value_count;i++)
+        args[argument_count+i]=method->bound_values[i];
+    argument_count+=method->bound_value_count;
+    /* See DIAMOND_OP_INVOKE_TYPED's own comment on function_chunk -- a
+     * ClassName.compile_method-installed operator method's bytecode
+     * lives in its own chunk, not `owner`. */
+    const DiamondChunk *function_chunk=
+        method->source_chunk!=nullptr?method->source_chunk:owner;
+    const DiamondFunction *fn=function_chunk->functions[method->function_index];
     const DiamondChunk child={.name=fn->name,.code=fn->code,
       .lines=fn->lines,.columns=fn->columns,.code_count=fn->code_count,
       .constants=fn->constants,.constant_count=fn->constant_count,
       .strings=fn->strings,.string_count=fn->string_count,
       .type_sets=fn->type_sets,.type_set_count=fn->type_set_count,
-      .functions=owner->functions,.function_count=owner->function_count,
-      .classes=owner->classes,.class_count=owner->class_count,
-      .interfaces=owner->interfaces,.interface_count=owner->interface_count,
+      .functions=function_chunk->functions,.function_count=function_chunk->function_count,
+      .classes=function_chunk->classes,.class_count=function_chunk->class_count,
+      .interfaces=function_chunk->interfaces,.interface_count=function_chunk->interface_count,
       .parameter_type_sets=fn->parameter_type_sets,
       .type_variable_count=fn->type_variable_count,
       .parameter_offset=fn->owner_class==UINT8_MAX?0:1,
@@ -5060,6 +5364,10 @@ static bool value_matches_member(const DiamondChunk *chunk,DiamondValue value,
     if(!value_matches_type(chunk,value,member.id))return false;
     if(member.id==DIAMOND_TYPE_CALLABLE) {
         const DiamondClosure *closure=(const DiamondClosure *)value.as.object;
+        /* A compile_method result is scoped to define_method, not a
+         * general typed Callable -- see DIAMOND_OP_CALL_CLOSURE's own
+         * comment; its function_index means nothing against `chunk`. */
+        if(closure->foreign_chunk!=nullptr)return false;
         if(closure->function_index>=chunk->function_count)return false;
         const DiamondFunction *function=chunk->functions[closure->function_index];
         if(member.callable_arity!=UINT8_MAX&&
@@ -5753,6 +6061,8 @@ static bool builder_format_value(StringBuilder *builder,DiamondValue value) {
 static DiamondVmStatus stringify_value(DiamondVm *vm,const DiamondChunk *chunk,
                                         size_t depth,DiamondValue value,
                                         DiamondValue *out) {
+    /* See invoke_operator_method's own comment on this same pattern. */
+    (void)chunk;
     if(value.kind==DIAMOND_VALUE_OBJECT&&
        value.as.object->kind==DIAMOND_OBJECT_STRING) {
         *out=value;return DIAMOND_VM_OK;
@@ -5760,26 +6070,33 @@ static DiamondVmStatus stringify_value(DiamondVm *vm,const DiamondChunk *chunk,
     if(value.kind==DIAMOND_VALUE_OBJECT&&
        value.as.object->kind==DIAMOND_OBJECT_INSTANCE) {
         const DiamondInstance *instance=(const DiamondInstance *)value.as.object;
-        const DiamondChunk *owner=instance->owner!=nullptr?instance->owner:chunk;
+        const DiamondChunk *owner=instance->owner!=nullptr?instance->owner:vm->root_chunk;
         const DiamondMethod *method=lookup_method(owner,instance->class,
             "to_s",sizeof("to_s")-1);
         if(method!=nullptr) {
             if(method->required_arity>0)return DIAMOND_VM_ARITY_ERROR;
-            const DiamondFunction *fn=owner->functions[method->function_index];
+            /* See DIAMOND_OP_INVOKE_TYPED's own comment on function_chunk. */
+            const DiamondChunk *function_chunk=
+                method->source_chunk!=nullptr?method->source_chunk:owner;
+            const DiamondFunction *fn=function_chunk->functions[method->function_index];
             const DiamondChunk child={.name=fn->name,.code=fn->code,
               .lines=fn->lines,.columns=fn->columns,.code_count=fn->code_count,
               .constants=fn->constants,.constant_count=fn->constant_count,
               .strings=fn->strings,.string_count=fn->string_count,
               .type_sets=fn->type_sets,.type_set_count=fn->type_set_count,
-              .functions=owner->functions,.function_count=owner->function_count,
-              .classes=owner->classes,.class_count=owner->class_count,
-              .interfaces=owner->interfaces,.interface_count=owner->interface_count,
+              .functions=function_chunk->functions,.function_count=function_chunk->function_count,
+              .classes=function_chunk->classes,.class_count=function_chunk->class_count,
+              .interfaces=function_chunk->interfaces,.interface_count=function_chunk->interface_count,
               .parameter_type_sets=fn->parameter_type_sets,
               .type_variable_count=fn->type_variable_count,
               .parameter_offset=fn->owner_class==UINT8_MAX?0:1,
               .register_count=fn->register_count};
+            DiamondValue args[1+DIAMOND_MAX_BOUND_VALUES]={value};
+            for(size_t i=0;i<method->bound_value_count;i++)
+                args[1+i]=method->bound_values[i];
             DiamondValue converted=DIAMOND_NIL;
-            DiamondVmStatus status=run_chunk(&child,vm,&value,1,
+            DiamondVmStatus status=run_chunk(&child,vm,args,
+                                              (size_t)1+method->bound_value_count,
                                               depth+1,nullptr,&converted);
             if(status!=DIAMOND_VM_OK)return status;
             if(converted.kind!=DIAMOND_VALUE_OBJECT||
@@ -6097,7 +6414,8 @@ static void infer_from_value(const DiamondChunk *chunk,DiamondValue value,
             }
         } else if(member.id==DIAMOND_TYPE_CALLABLE) {
             const DiamondClosure *closure=(const DiamondClosure *)value.as.object;
-            if(closure->function_index<chunk->function_count) {
+            /* See value_matches_member's own comment on foreign_chunk. */
+            if(closure->foreign_chunk==nullptr&&closure->function_index<chunk->function_count) {
                 const DiamondFunction *function=chunk->functions[closure->function_index];
                 if(member.callable_parameters_typed)
                     for(size_t parameter=0;parameter<member.callable_arity;parameter++) {
@@ -7653,10 +7971,12 @@ static DiamondVmStatus string_format_helper(DiamondVm *vm,const DiamondChunk *ch
  * allocation failure here just truncates the backtrace early rather than
  * failing the raise. */
 static void raise_capture_backtrace_helper(DiamondVm *vm,const DiamondChunk *chunk) {
+    /* See invoke_operator_method's own comment on this same pattern. */
+    (void)chunk;
     if(vm->exception.kind!=DIAMOND_VALUE_OBJECT||
        vm->exception.as.object->kind!=DIAMOND_OBJECT_INSTANCE)return;
     DiamondInstance *raised=(DiamondInstance *)vm->exception.as.object;
-    const DiamondChunk *owner=raised->owner!=nullptr?raised->owner:chunk;
+    const DiamondChunk *owner=raised->owner!=nullptr?raised->owner:vm->root_chunk;
     bool is_exception=false;const DiamondClass *ancestor=raised->class;
     while(ancestor!=nullptr) {
         if(ancestor==&owner->classes[DIAMOND_CLASS_EXCEPTION]){is_exception=true;break;}
@@ -9128,6 +9448,17 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                    registers[callable].as.object->kind!=DIAMOND_OBJECT_CLOSURE)
                     VM_RETURN(DIAMOND_VM_TYPE_ERROR);
                 DiamondClosure *called=(DiamondClosure *)registers[callable].as.object;
+                /* A ClassName.compile_method result is scoped to being
+                 * passed to define_method (see DIAMOND_OP_DEFINE_METHOD) --
+                 * its function_index is relative to its own foreign_chunk,
+                 * not the ambient one call_closure_helper below assumes,
+                 * so calling it directly is rejected rather than silently
+                 * running the wrong bytecode. */
+                if(called->foreign_chunk!=nullptr) {
+                    snprintf(vm->error,sizeof vm->error,
+                        "a compile_method callable can only be passed to define_method");
+                    VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                }
                 if(called->function_index>=chunk->function_count)VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
                 const DiamondFunction *fn=chunk->functions[called->function_index];
                 DiamondValue call_result=DIAMOND_NIL;
@@ -9152,21 +9483,29 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                         VM_RETURN(DIAMOND_VM_ARITY_ERROR);
                     DiamondValue args[17];args[0]=registers[dest];
                     for(size_t i=0;i<argc;i++)args[i+1]=registers[(size_t)base+i];
-                    const DiamondFunction *fn=chunk->functions[init->function_index];
+                    for(size_t i=0;i<init->bound_value_count;i++)
+                        args[argc+1+i]=init->bound_values[i];
+                    const size_t total_args=(size_t)argc+1+init->bound_value_count;
+                    /* See DIAMOND_OP_INVOKE_TYPED's own comment on
+                     * function_chunk -- #initialize itself could be a
+                     * ClassName.compile_method-installed method. */
+                    const DiamondChunk *function_chunk=
+                        init->source_chunk!=nullptr?init->source_chunk:chunk;
+                    const DiamondFunction *fn=function_chunk->functions[init->function_index];
                     DiamondChunk child={.name=fn->name,.code=fn->code,
                       .lines=fn->lines,.columns=fn->columns,.code_count=fn->code_count,
                       .constants=fn->constants,.constant_count=fn->constant_count,
                       .strings=fn->strings,.string_count=fn->string_count,
                       .type_sets=fn->type_sets,.type_set_count=fn->type_set_count,
-                      .functions=chunk->functions,.function_count=chunk->function_count,
-                      .classes=chunk->classes,.class_count=chunk->class_count,
-                      .interfaces=chunk->interfaces,.interface_count=chunk->interface_count,
+                      .functions=function_chunk->functions,.function_count=function_chunk->function_count,
+                      .classes=function_chunk->classes,.class_count=function_chunk->class_count,
+                      .interfaces=function_chunk->interfaces,.interface_count=function_chunk->interface_count,
                       .parameter_type_sets=fn->parameter_type_sets,
                       .type_variable_count=fn->type_variable_count,
                       .parameter_offset=fn->owner_class==UINT8_MAX?0:1,
                       .register_count=fn->register_count};
                     DiamondValue ignored=DIAMOND_NIL;
-                    DiamondVmStatus s=run_chunk(&child,vm,args,(size_t)argc+1,depth+1,nullptr,&ignored);
+                    DiamondVmStatus s=run_chunk(&child,vm,args,total_args,depth+1,nullptr,&ignored);
                     VM_PROPAGATE(s);
                 } else {
                     bool exception_class=false;const DiamondClass *ancestor=class;
@@ -9217,6 +9556,12 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                            registers[base].as.object->kind!=DIAMOND_OBJECT_CLOSURE)
                             VM_RETURN(DIAMOND_VM_TYPE_ERROR);
                         DiamondClosure *called=(DiamondClosure *)registers[base].as.object;
+                        /* See DIAMOND_OP_CALL_CLOSURE's own comment. */
+                        if(called->foreign_chunk!=nullptr) {
+                            snprintf(vm->error,sizeof vm->error,
+                                "a compile_method callable can only be passed to define_method");
+                            VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                        }
                         if(called->function_index>=chunk->function_count)
                             VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
                         const DiamondFunction *fn=chunk->functions[called->function_index];
@@ -11053,7 +11398,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 if(receiver_kind!=DIAMOND_OBJECT_INSTANCE)
                     VM_RETURN(DIAMOND_VM_TYPE_ERROR);
                 DiamondInstance *instance=(DiamondInstance *)registers[recv].as.object;
-                const DiamondChunk *owner=instance->owner!=nullptr?instance->owner:chunk;
+                const DiamondChunk *owner=instance->owner!=nullptr?instance->owner:vm->root_chunk;
                 /* tap/dup/respond_to? -- same three universal methods the
                  * non-Instance branch above already handles, but gated on
                  * `lookup_method` coming back empty first: unlike a native
@@ -11070,6 +11415,12 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                        registers[base].as.object->kind!=DIAMOND_OBJECT_CLOSURE)
                         VM_RETURN(DIAMOND_VM_TYPE_ERROR);
                     DiamondClosure *called=(DiamondClosure *)registers[base].as.object;
+                    /* See DIAMOND_OP_CALL_CLOSURE's own comment. */
+                    if(called->foreign_chunk!=nullptr) {
+                        snprintf(vm->error,sizeof vm->error,
+                            "a compile_method callable can only be passed to define_method");
+                        VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                    }
                     if(called->function_index>=chunk->function_count)
                         VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
                     const DiamondFunction *fn=chunk->functions[called->function_index];
@@ -11182,7 +11533,20 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     VM_RETURN(DIAMOND_VM_ARITY_ERROR);
                 DiamondValue args[17];args[0]=registers[recv];
                 for(size_t i=0;i<argc;i++)args[i+1]=registers[(size_t)base+i];
-                const DiamondFunction *fn=owner->functions[method->function_index];
+                /* Trailing parameters compile_method's own synthesized
+                 * source appended -- see DiamondMethod.bound_values's own
+                 * comment (src/vm.h). Not supplied by the caller, so not
+                 * part of argc above. */
+                for(size_t i=0;i<method->bound_value_count;i++)
+                    args[argc+1+i]=method->bound_values[i];
+                const size_t total_args=(size_t)argc+1+method->bound_value_count;
+                /* A ClassName.compile_method-installed method's bytecode
+                 * (and the class/function/interface tables it references
+                 * by index) lives in its own chunk, not `owner` -- see
+                 * DiamondMethod.source_chunk's own comment (src/vm.h). */
+                const DiamondChunk *function_chunk=
+                    method->source_chunk!=nullptr?method->source_chunk:owner;
+                const DiamondFunction *fn=function_chunk->functions[method->function_index];
                 if((DiamondOpCode)instruction==DIAMOND_OP_INVOKE_TYPED&&
                    type_argument_count!=fn->type_variable_count)
                     VM_RETURN(DIAMOND_VM_TYPE_ERROR);
@@ -11199,9 +11563,9 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                   .constants=fn->constants,.constant_count=fn->constant_count,
                   .strings=fn->strings,.string_count=fn->string_count,
                   .type_sets=fn->type_sets,.type_set_count=fn->type_set_count,
-                  .functions=owner->functions,.function_count=owner->function_count,
-                  .classes=owner->classes,.class_count=owner->class_count,
-                  .interfaces=owner->interfaces,.interface_count=owner->interface_count,
+                  .functions=function_chunk->functions,.function_count=function_chunk->function_count,
+                  .classes=function_chunk->classes,.class_count=function_chunk->class_count,
+                  .interfaces=function_chunk->interfaces,.interface_count=function_chunk->interface_count,
                   .parameter_type_sets=fn->parameter_type_sets,
                   .type_variable_count=fn->type_variable_count,
                   .parameter_offset=fn->owner_class==UINT8_MAX?0:1,
@@ -11209,7 +11573,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                       explicit_bindings,
                   .register_count=fn->register_count};
                 DiamondValue call_result=DIAMOND_NIL;
-                DiamondVmStatus s=run_chunk(&child,vm,args,(size_t)argc+1,depth+1,nullptr,&call_result);
+                DiamondVmStatus s=run_chunk(&child,vm,args,total_args,depth+1,nullptr,&call_result);
                 VM_PROPAGATE(s);
                 registers[dest]=call_result;
                 break;
@@ -11265,21 +11629,30 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     VM_RETURN(DIAMOND_VM_ARITY_ERROR);
                 DiamondValue args[17]; args[0]=registers[0];
                 for(size_t i=0;i<argc;i++) args[i+1]=registers[(size_t)base+i];
-                const DiamondFunction *fn=chunk->functions[method->function_index];
+                for(size_t i=0;i<method->bound_value_count;i++)
+                    args[argc+1+i]=method->bound_values[i];
+                const size_t total_args=(size_t)argc+1+method->bound_value_count;
+                /* See DIAMOND_OP_INVOKE_TYPED's own comment on
+                 * function_chunk -- the superclass method super() resolves
+                 * to could itself be a ClassName.compile_method-installed
+                 * one. */
+                const DiamondChunk *function_chunk=
+                    method->source_chunk!=nullptr?method->source_chunk:chunk;
+                const DiamondFunction *fn=function_chunk->functions[method->function_index];
                 DiamondChunk child={.name=fn->name,.code=fn->code,
                   .lines=fn->lines,.columns=fn->columns,.code_count=fn->code_count,
                   .constants=fn->constants,.constant_count=fn->constant_count,
                   .strings=fn->strings,.string_count=fn->string_count,
                   .type_sets=fn->type_sets,.type_set_count=fn->type_set_count,
-                  .functions=chunk->functions,.function_count=chunk->function_count,
-                  .classes=chunk->classes,.class_count=chunk->class_count,
-                  .interfaces=chunk->interfaces,.interface_count=chunk->interface_count,
+                  .functions=function_chunk->functions,.function_count=function_chunk->function_count,
+                  .classes=function_chunk->classes,.class_count=function_chunk->class_count,
+                  .interfaces=function_chunk->interfaces,.interface_count=function_chunk->interface_count,
                   .parameter_type_sets=fn->parameter_type_sets,
                   .type_variable_count=fn->type_variable_count,
                   .parameter_offset=fn->owner_class==UINT8_MAX?0:1,
                   .register_count=fn->register_count};
                 DiamondValue call_result=DIAMOND_NIL;
-                DiamondVmStatus status=run_chunk(&child,vm,args,(size_t)argc+1,
+                DiamondVmStatus status=run_chunk(&child,vm,args,total_args,
                                                   depth+1,nullptr,&call_result);
                 VM_PROPAGATE(status);
                 registers[dest]=call_result;
@@ -11900,6 +12273,17 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                              "redefine_method callable must not capture any variables");
                     VM_RETURN(DIAMOND_VM_TYPE_ERROR);
                 }
+                /* Unlike define_method, redefine_method doesn't accept a
+                 * compile_method result -- v1 scope, see docs/design.md.
+                 * Rejected explicitly here rather than left to fall
+                 * through to the owner_class check below, which would
+                 * still reject it, but for a confusing reason (comparing
+                 * against a same-named function from the wrong chunk). */
+                if(replacement->foreign_chunk!=nullptr) {
+                    snprintf(vm->error,sizeof vm->error,
+                        "a compile_method callable can only be passed to define_method");
+                    VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                }
                 if((size_t)replacement->function_index>=chunk->function_count)
                     VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
                 const DiamondFunction *new_function=chunk->functions[replacement->function_index];
@@ -11974,10 +12358,29 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                              "define_method callable must not capture any variables");
                     VM_RETURN(DIAMOND_VM_TYPE_ERROR);
                 }
-                if((size_t)replacement->function_index>=chunk->function_count)
+                /* A ClassName.compile_method result carries its own chunk
+                 * (function_index is meaningless against the ambient
+                 * `chunk` for one of those) and was already validated
+                 * against a specific class's field layout at compile
+                 * time -- intended_class, compared by pointer identity,
+                 * catches installing it onto a *different* class than
+                 * the one it was actually compiled for. An ordinary
+                 * closure (foreign_chunk==nullptr) keeps the original
+                 * same-chunk, same-owner_class checks unchanged. */
+                const DiamondChunk *function_chunk=
+                    replacement->foreign_chunk!=nullptr?replacement->foreign_chunk:chunk;
+                if((size_t)replacement->function_index>=function_chunk->function_count)
                     VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
-                const DiamondFunction *new_function=chunk->functions[replacement->function_index];
-                if(new_function->owner_class!=class_operand) {
+                const DiamondFunction *new_function=
+                    function_chunk->functions[replacement->function_index];
+                if(replacement->foreign_chunk!=nullptr) {
+                    if(replacement->intended_class!=class) {
+                        snprintf(vm->error,sizeof vm->error,
+                            "define_method callable was compiled for a different class than '%s'",
+                            class->name);
+                        VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                    }
+                } else if(new_function->owner_class!=class_operand) {
                     snprintf(vm->error,sizeof vm->error,
                              "define_method callable must be a method of '%s'",class->name);
                     VM_RETURN(DIAMOND_VM_TYPE_ERROR);
@@ -11987,11 +12390,61 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 memcpy(added->name,name_string->chars,name_string->length);
                 added->name[name_string->length]='\0';
                 added->function_index=replacement->function_index;
-                added->arity=(uint8_t)(new_function->arity-1);
-                added->required_arity=(uint8_t)(new_function->required_arity-1);
+                added->source_chunk=replacement->foreign_chunk;
+                /* bound_values are trailing parameters compile_method's own
+                 * synthesized source already appended (see
+                 * build_compiled_method_source) -- a caller of the
+                 * installed method never supplies them, so they're
+                 * excluded from the arity a caller is checked against;
+                 * dispatch appends them itself, see the
+                 * DIAMOND_OP_INVOKE_TYPED-family sites that read
+                 * method->bound_values. */
+                added->bound_values=replacement->bound_values;
+                added->bound_value_count=replacement->bound_value_count;
+                added->arity=(uint8_t)(new_function->arity-1-replacement->bound_value_count);
+                added->required_arity=
+                    (uint8_t)(new_function->required_arity-1-replacement->bound_value_count);
                 class->method_count++;
                 diamond_vm_invalidate_method_caches(vm);
                 registers[dest]=DIAMOND_NIL;break;
+            }
+            case DIAMOND_OP_COMPILE_METHOD: {
+                uint16_t dest=0,name_reg=0,params_reg=0,body_reg=0,bound_values_reg=0;
+                uint8_t class_operand=0;
+                READ_SHORT(dest);READ_BYTE(class_operand);READ_SHORT(name_reg);
+                READ_SHORT(params_reg);READ_SHORT(body_reg);READ_SHORT(bound_values_reg);
+                if((size_t)class_operand>=chunk->class_count)VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
+                if(registers[name_reg].kind!=DIAMOND_VALUE_OBJECT||
+                   registers[name_reg].as.object->kind!=DIAMOND_OBJECT_STRING) {
+                    snprintf(vm->error,sizeof vm->error,"compile_method name must be a String");
+                    VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                }
+                if(registers[params_reg].kind!=DIAMOND_VALUE_OBJECT||
+                   registers[params_reg].as.object->kind!=DIAMOND_OBJECT_ARRAY) {
+                    snprintf(vm->error,sizeof vm->error,
+                        "compile_method params must be an Array of Strings");
+                    VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                }
+                if(registers[body_reg].kind!=DIAMOND_VALUE_OBJECT||
+                   registers[body_reg].as.object->kind!=DIAMOND_OBJECT_STRING) {
+                    snprintf(vm->error,sizeof vm->error,"compile_method body_source must be a String");
+                    VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                }
+                if(registers[bound_values_reg].kind!=DIAMOND_VALUE_OBJECT||
+                   registers[bound_values_reg].as.object->kind!=DIAMOND_OBJECT_HASH) {
+                    snprintf(vm->error,sizeof vm->error,"compile_method bound_values must be a Hash");
+                    VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                }
+                const DiamondString *name_string=(const DiamondString *)registers[name_reg].as.object;
+                const DiamondArray *params_array=(const DiamondArray *)registers[params_reg].as.object;
+                const DiamondString *body_string=(const DiamondString *)registers[body_reg].as.object;
+                const DiamondHash *bound_values_hash=
+                    (const DiamondHash *)registers[bound_values_reg].as.object;
+                const DiamondClass *target_class=&chunk->classes[class_operand];
+                const DiamondVmStatus compile_status=compile_method_helper(vm,target_class,
+                    name_string,params_array,body_string,bound_values_hash,&registers[dest]);
+                VM_PROPAGATE(compile_status);
+                break;
             }
             case DIAMOND_OP_LOAD_CLASS: {
                 uint16_t dest=0;uint8_t class_operand=0;
@@ -12068,6 +12521,12 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     VM_RETURN(DIAMOND_VM_TYPE_ERROR);
                 }
                 const DiamondClosure *callable=(const DiamondClosure *)registers[callable_reg].as.object;
+                /* See DIAMOND_OP_CALL_CLOSURE's own comment. */
+                if(callable->foreign_chunk!=nullptr) {
+                    snprintf(vm->error,sizeof vm->error,
+                        "a compile_method callable can only be passed to define_method");
+                    VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                }
                 if((size_t)callable->function_index>=chunk->function_count)
                     VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
                 const DiamondFunction *target_fn=chunk->functions[callable->function_index];
@@ -12314,6 +12773,15 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 if(callable->capture_count!=0) {
                     snprintf(vm->error,sizeof vm->error,
                         "Thread.new's callable must not capture any local state");
+                    VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                }
+                /* See DIAMOND_OP_CALL_CLOSURE's own comment -- doubly true
+                 * here, since clone_program_from_chunk below clones only
+                 * the ambient chunk, never a compile_method result's own
+                 * foreign one. */
+                if(callable->foreign_chunk!=nullptr) {
+                    snprintf(vm->error,sizeof vm->error,
+                        "a compile_method callable can only be passed to define_method");
                     VM_RETURN(DIAMOND_VM_TYPE_ERROR);
                 }
                 if((size_t)callable->function_index>=chunk->function_count)
@@ -12933,6 +13401,7 @@ DiamondVmStatus diamond_vm_run(DiamondVm *vm, const DiamondChunk *chunk,
     vm->quickened_sites=0;
     vm->deoptimized_sites=0;
     vm->range_class_index=chunk->range_class_index;
+    vm->root_chunk=chunk;
     return run_chunk(chunk, vm, nullptr, 0, 0, nullptr, result);
 }
 

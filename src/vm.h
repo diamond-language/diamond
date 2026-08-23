@@ -232,6 +232,12 @@ typedef enum DiamondOpCode : uint8_t {
      * already linked for TLS. */
     DIAMOND_OP_SECURE_RANDOM_BYTES,
     DIAMOND_OP_SECURE_RANDOM_HEX,
+    /* ClassName.compile_method(name, params, body_source) -- compiles a
+     * new method body from a source string at runtime and returns a
+     * Callable, meant to be installed via the existing
+     * DIAMOND_OP_DEFINE_METHOD (ClassName.define_method(name, callable)).
+     * See docs/design.md's "Runtime method synthesis" section. */
+    DIAMOND_OP_COMPILE_METHOD,
     DIAMOND_OP_COUNT,
 } DiamondOpCode;
 
@@ -307,6 +313,8 @@ typedef struct DiamondTypeSet {
     uint8_t count;
 } DiamondTypeSet;
 
+typedef struct DiamondChunk DiamondChunk;
+
 typedef struct DiamondMethod {
     char name[DIAMOND_MAX_FUNCTION_NAME];
     uint16_t function_index;
@@ -315,6 +323,28 @@ typedef struct DiamondMethod {
     bool included;
     bool is_private;
     bool needs_receiver;
+    /* Non-null only for a method installed by ClassName.compile_method +
+     * .define_method (src/vm.c's DIAMOND_OP_COMPILE_METHOD/
+     * DIAMOND_OP_DEFINE_METHOD): function_index above is meaningful only
+     * relative to *this* chunk, not the chunk the receiving instance's
+     * own class lives in -- the same "function_index is only meaningful
+     * relative to whichever chunk owns it" fact DiamondInstance.owner
+     * already exists to handle for ProgramBuilder-adopted instances.
+     * nullptr (the default for every ordinary, source-declared method)
+     * means "use the receiver's own owner chunk / the ambient chunk,
+     * exactly as before" -- zero behavior change there. Kept alive
+     * forever via vm->adopted_programs, the same lifetime mechanism
+     * ProgramBuilder's own adopt mode already uses. */
+    const DiamondChunk *source_chunk;
+    /* compile_method's bound_values, copied from the installing
+     * DiamondClosure's own fields of the same name (see DiamondClosure's
+     * own comment, src/object.h) -- nullptr/0 for every ordinary method.
+     * arity/required_arity above already exclude these (a caller of the
+     * installed method never supplies them); dispatch appends
+     * bound_values[0..bound_value_count) after the caller's own explicit
+     * arguments before entering the function. */
+    const DiamondValue *bound_values;
+    uint8_t bound_value_count;
 } DiamondMethod;
 
 typedef struct DiamondInterfaceMethod {
@@ -506,7 +536,7 @@ typedef struct DiamondFunction {
     size_t scope_local_count;
 } DiamondFunction;
 
-typedef struct DiamondChunk {
+struct DiamondChunk {
     const char *name;
     const uint8_t *code;
     const uint32_t *lines;
@@ -540,7 +570,7 @@ typedef struct DiamondChunk {
      * existing -- recognizing a Range receiver for arr[range] slicing
      * without a native VM value kind for Range at all. */
     uint8_t range_class_index;
-} DiamondChunk;
+};
 
 typedef enum DiamondVmStatus : uint8_t {
     DIAMOND_VM_OK,
@@ -677,6 +707,24 @@ struct DiamondVm {
     size_t next_gc;
     void *frames;
     bool stress_gc;
+    /* Set once, in diamond_vm_run, to whichever chunk this vm was first
+     * invoked with -- the "home" chunk for every ordinary instance this
+     * vm ever allocates (DiamondInstance.owner==nullptr means "belongs to
+     * root_chunk", not "belongs to whatever chunk happens to be
+     * executing right now"). Before ClassName.compile_method existed,
+     * those two things were always the same chunk for the vm's entire
+     * run, so nothing needed this field: the ambient `chunk` parameter
+     * threaded through run_chunk's recursion was already an equally
+     * correct stand-in. compile_method changed that -- a method
+     * installed from it runs with a *different*, foreign chunk as its
+     * own ambient `chunk` (its own bytecode's class/function-index
+     * operands are only meaningful there), so a nested self.foo() call
+     * from inside that method's body, against a receiver whose real
+     * class lives in root_chunk, must fall back to root_chunk, not the
+     * foreign chunk that merely happens to be executing at that moment.
+     * See the DIAMOND_OP_INVOKE_TYPED-family dispatch sites (src/vm.c)
+     * that read this. */
+    const DiamondChunk *root_chunk;
     /* Direct GC-cost evidence (DIAMOND_TRACE_GC, src/run_source.c) --
      * collection count and total wall time spent inside
      * diamond_vm_collect, timed via CLOCK_MONOTONIC. Added so a future

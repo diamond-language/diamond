@@ -343,6 +343,45 @@ support Diamond does not currently have; `delegate_missing_to` additionally
 depends on a general missing-method protocol. Both remain separate future
 design questions.
 
+### Runtime method synthesis
+
+**Done, in scope**: `ClassName.compile_method(name, params, body_source,
+bound_values)` compiles a method body from a source string at runtime and
+returns a `Callable` for the existing `define_method` to install --
+closing the specific gap `active_record`'s own docs have called out
+repeatedly ("no `has_many :books`-style macro... blocked on a general
+metaprogramming/macro system"). See `docs/design.md`'s "Runtime method
+synthesis" section for the full mechanism (a throwaway, permanently-
+adopted satellite program per call, field-count-validated against the
+target class, `bound_values` for referencing values from classes the
+synthesized source has no way to name directly) and
+`packages/active_record/README.md`'s worked `has_many` example built on
+it. Confirmed directly, not assumed: passed the full test corpus and
+rack's own suite under `DIAMOND_STRESS_GC=1` (GC on every allocation)
+before treating this as safe, since it's the first feature that made
+`DiamondMethod`/`vm->adopted_programs` hold live, markable GC values at
+all.
+
+Two real architecture gaps surfaced and were fixed while building this,
+not just for this feature's own sake: `DiamondVm.root_chunk` (instance
+dispatch inside a compiled-method body now correctly falls back to the
+receiver's real home chunk, not whichever chunk happens to be ambient --
+previously those were always the same chunk, so nothing distinguished
+them) and the same seeding applied to `Thread.new`'s own trampoline
+(which calls `run_chunk` directly, bypassing `diamond_vm_run` where
+`root_chunk` is normally set).
+
+**Deliberately not in scope**: `self.` class-owned singleton methods
+(instance methods only); closures over the *calling* scope's own locals
+(only `bound_values`, fixed at `compile_method` time, and the target
+class's existing fields are visible -- this is not a general `eval` and
+was never meant to become one); bare parameter names only, matching
+`delegate`'s own existing scope cut. `method_missing` is a separate,
+smaller, already-scoped-out follow-up (a fallback at the existing
+dispatch-miss branch, `lookup_method`/`lookup_method_cached` already
+being the single choke point every call site shares) -- not attempted
+here.
+
 ### Native service depth
 
 The current native APIs intentionally expose useful, narrow slices. Possible
@@ -394,7 +433,12 @@ Smaller viable improvements include:
 - multi-platform portability work;
 - a hosted package registry without a package-identity/version model;
 - shared-heap threads;
-- a runtime `eval`/source compiler solely to emulate Ruby metaprogramming.
+- a general `eval(source) -> value` (compile and run arbitrary source as
+  its own isolated program) or anything closing over the *calling*
+  scope's own locals -- `ClassName.compile_method` (see "Runtime method
+  synthesis" above) is deliberately narrower than either: it only ever
+  attaches a new method to an already-loaded class, using `bound_values`
+  rather than real closure capture.
 
 ## Open design decisions
 

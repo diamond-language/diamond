@@ -18,6 +18,12 @@
 typedef struct ssl_st SSL;
 typedef struct ssl_ctx_st SSL_CTX;
 
+/* Forward-declared because object.h is included by vm.h (src/vm.h:5),
+ * not the other way around, so DiamondChunk's real definition isn't
+ * visible here yet -- only ever used as an opaque pointer in this file
+ * (DiamondClosure.foreign_chunk below), never dereferenced. */
+typedef struct DiamondChunk DiamondChunk;
+
 /* Forward-declared for the same reason SSL/SSL_CTX are above: only vm.c
  * calls real sqlite3 functions, so <sqlite3.h> stays out of this header.
  * Matches sqlite3.h's own `typedef struct sqlite3 sqlite3;` exactly. */
@@ -197,6 +203,41 @@ typedef struct DiamondClosure {
     uint16_t function_index;
     uint8_t capture_count;
     DiamondValue captures[16];
+    /* Non-null only for a value returned by ClassName.compile_method
+     * (src/vm.c's DIAMOND_OP_COMPILE_METHOD) -- function_index above is
+     * relative to *this* chunk, not whichever chunk is ambient when the
+     * closure is later consumed (e.g. by ClassName.define_method). A
+     * non-owning reference: lifetime is held by vm->adopted_programs
+     * (the same mechanism ProgramBuilder's own adopt mode already uses),
+     * not by this closure, so no GC-tracing change is needed here.
+     * nullptr for every ordinary closure Diamond source code creates. */
+    const DiamondChunk *foreign_chunk;
+    /* Non-null exactly when foreign_chunk is: the DiamondClass entry (in
+     * the *caller's* own chunk, i.e. an ordinary stable pointer, not a
+     * foreign one) compile_method captured its field snapshot from.
+     * define_method compares this by pointer identity against its own
+     * class_operand to reject installing a method compiled for one
+     * class onto a different one -- compile_method's own field-count
+     * validation only proves the body is safe for *this* class's field
+     * layout, not any other. */
+    const DiamondClass *intended_class;
+    /* compile_method's optional bound_values: Hash argument -- already-
+     * evaluated runtime values (e.g. Book.repository(), evaluated in the
+     * *caller's* own chunk, where "Book" actually resolves) spliced in as
+     * extra trailing parameters of the synthesized method, so body_source
+     * can reference them as ordinary local names without needing to name
+     * another class itself (which the synthesized source's own isolated
+     * compile can never resolve -- see docs/design.md's "Runtime method
+     * synthesis" section). Points into the owning DiamondAdoptedProgram's
+     * own bound_values array (src/vm.c) -- permanent, vm-lifetime storage
+     * this closure doesn't own, same non-owning-reference shape as
+     * foreign_chunk above, but unlike foreign_chunk this one *does* need
+     * GC tracing (diamond_vm_collect walks vm->adopted_programs directly
+     * for this, not through this closure -- see that function's own
+     * comment). bound_value_count is 0/nullptr for every ordinary
+     * closure and for a compile_method result with no bound_values. */
+    const DiamondValue *bound_values;
+    uint8_t bound_value_count;
 } DiamondClosure;
 
 typedef struct DiamondCell {

@@ -7,14 +7,18 @@ module ActiveRecord
 # constraints shaped it, verified directly rather than assumed, and worth
 # understanding before extending it:
 #
-# - Diamond classes have fixed, compile-time method tables -- there is no
-#   `define_method`/`method_missing`, and the one runtime mechanism that
-#   exists (`ClassName.redefine_method`) can only repoint an *existing*
-#   method slot, never add a new one (see docs/design.md). So there is no
-#   `has_many :books`-style macro that conjures a real `books` method out
-#   of thin air -- every method a model exposes, including association
-#   readers, is written as an ordinary `def` in that model, same as any
-#   other Diamond class.
+# - Diamond classes have fixed, compile-time method tables, and there is
+#   still no `has_many :books`-style *class-body macro* -- but
+#   `ClassName.compile_method` + `.define_method` (see docs/design.md's
+#   "Runtime method synthesis" section) can now synthesize a real method
+#   body from a runtime string and attach it to an already-loaded class,
+#   which `self.configure` can use to build an association reader
+#   without a hand-written `def` for each one (see this file's own
+#   `#has_many`/`#has_one`/`#belongs_to` for the thin wrapper such a
+#   synthesized body calls into, and README.md for a worked example).
+#   Every method a model exposes is still either a `def` written directly
+#   in that model, or explicitly synthesized this way in its own
+#   `self.configure` -- nothing conjures one implicitly from a symbol.
 # - Instance methods dispatch virtually (`self.foo()` called from a
 #   shared method correctly reaches a subclass's override -- confirmed
 #   directly), but `def self.x` class methods do not: `self` isn't even
