@@ -22,6 +22,53 @@ Raw SQL remains an explicit escape hatch, not the representation used by new
 features. Values are bind parameters by default. Identifiers are represented
 as nodes and quoted by the active visitor.
 
+## File layout
+
+**Done**: `lib/arel.di` (was one 3357-line file, ~45 classes/interfaces/
+functions, all wrapped in one `module Arel ... end`) is now split one file
+per class under `lib/arel/`, with a handful of shared files for the smaller
+AST-leaf node groups (`boolean_nodes.di` for `Not`/`Logical`/`Predicate`/
+`Membership`/`Between`, `ordering_nodes.di` for `Collation`/`Ordering`/
+`Alias`, `expression_nodes.di` for `Function`/`BinaryExpression`/`Literal`/
+`Cast`, `relation_nodes.di` for `Attribute`/`QualifiedStar`/`Table`/
+`RawSql`/`ExcludedAttribute`/`ConflictAttribute`, `join_nodes.di` for
+`Join`/`Exists`/`ScalarSubquery`/`Cte`), each of the larger classes in its
+own file (`visitor.di`, `sqlite_visitor.di`, `postgresql_visitor.di`,
+`mariadb_visitor.di`, `mysql_visitor.di`, `query.di`, `compound_query.di`,
+`cte_relation.di`, `insert.di`, `update.di`, `delete.di`, `inspector.di`),
+`write_support.di` for the small write-statement helper classes
+(`AssignmentValue`, `ConflictTarget`, `ConflictConstraintTarget`,
+`DefaultValues`, `ColumnDefault`) plus the `Arel.append_cte`/
+`Arel.render_insert_conflict` module methods they're used by, and
+`module_functions.di` for the rest of `Arel`'s own `self.x` convenience
+methods (`Arel.table`, `Arel.from`, ...). `lib/arel.di` is now a thin entry
+point, one `require` per file in the original top-to-bottom order --
+readable, and also the order that happens to already satisfy the two real
+constraints that exist here (unlike active_record's split, which had none):
+`sqlite_visitor`/`postgresql_visitor`/`mariadb_visitor`/`mysql_visitor` each
+inherit from `Visitor` and so need `visitor.di` required first, and
+`cte_relation.di`'s `CteRelation < Table` needs `relation_nodes.di` (where
+`Table` lives) required first -- reopening and the declaration-discovery
+pass make class/module cross-references order-independent, but not real
+inheritance. `support.di` (the four `Arel*Node`/`ArelInspectable` interfaces
+and the `arel_array`/`arel_quote_identifier`/`arel_quote_identifier_backtick`/
+`arel_cte_name` free functions, the only content that sits outside
+`module Arel` itself) is required before everything else for a different
+reason: those are bare top-level function calls, which -- unlike class
+references -- Diamond still only resolves in source order, not forward
+(`docs/roadmap.md`'s "Forward and mutual calls" section).
+
+One incidental fix made in passing: a large comment block documenting
+`Arel::MariaDBVisitor`'s design (backtick quoting, its upsert grammar,
+`RETURNING` only on `INSERT`/`DELETE`, ...) was sitting directly above
+`class Query` in the old single file rather than above `class
+MariaDBVisitor` itself, evidently orphaned from its class by an earlier
+edit. Moved to sit above `MariaDBVisitor` in `mariadb_visitor.di`, where it
+actually belongs -- verified every class/interface/`self.` method name in
+the original file appears exactly once across the new files (no drops, no
+duplicates) and the full `tests/cases` corpus (1048 cases) still passes
+before treating the split as done.
+
 ## Dialect grammar seams
 
 `Arel::Visitor` provides shared traversal, relation-scope validation, query
