@@ -3,7 +3,7 @@ set -euo pipefail
 
 # Requires the diamond binary on PATH, or DIAMOND_BIN pointing at one
 # (e.g. DIAMOND_BIN=../../build/diamond bash test.sh, or `make
-# test-drb-package` from the repo root, which sets this up already).
+# test-div-package` from the repo root, which sets this up already).
 #
 # Note: `diamond FILE`/`diamond -e CODE` always prints its program's own
 # final top-level expression value plus a trailing newline
@@ -29,9 +29,9 @@ assert_contains() {
 # --- end-to-end: locals, <%= %> escaping, <%== %> raw, <% %> control
 # flow, and quote/backslash/#{-containing literal text all survive the
 # round trip through the generated .di file's actual rendered output.
-# "hello.html.drb" compiles to a function named hello_html (see
-# function_name_for in lib/drb/compiler.di) ---
-cat >"$work/hello.html.drb" <<'DRBEOF'
+# "hello.html.div" compiles to a function named hello_html (see
+# function_name_for in lib/div/compiler.di) ---
+cat >"$work/hello.html.div" <<'DRBEOF'
 <%# locals: title, items %>
 <h1><%= title %></h1>
 <p>Raw: <%== "<b>bold</b>" %></p>
@@ -43,7 +43,7 @@ cat >"$work/hello.html.drb" <<'DRBEOF'
 </ul>
 DRBEOF
 
-"$diamond" bin/drbc.di "$work/hello.html.drb" "$work/hello.html.di" >/dev/null
+"$diamond" bin/divc.di "$work/hello.html.div" "$work/hello.html.di" >/dev/null
 
 cat >"$work/driver.di" <<DRIVEREOF
 require "$work/hello.html"
@@ -60,10 +60,10 @@ count=$((count + 1))
 
 # --- a template with no `locals:` directive compiles to a zero-arg
 # function ---
-cat >"$work/plain.html.drb" <<'DRBEOF'
+cat >"$work/plain.html.div" <<'DRBEOF'
 <p>static</p>
 DRBEOF
-"$diamond" bin/drbc.di "$work/plain.html.drb" "$work/plain.html.di" >/dev/null
+"$diamond" bin/divc.di "$work/plain.html.div" "$work/plain.html.di" >/dev/null
 cat >"$work/driver_plain.di" <<DRIVEREOF
 require "$work/plain.html"
 puts(plain_html())
@@ -75,12 +75,12 @@ count=$((count + 1))
 # --- literal text past the 255-byte string-literal cap (DIAMOND_MAX_
 # STRING_LENGTH, src/vm.h) is chunked correctly and reassembles exactly ---
 python3 -c "
-with open('$work/long.html.drb', 'w') as f:
+with open('$work/long.html.div', 'w') as f:
     f.write('<%# locals: %>\n')
     f.write('x' * 400)
     f.write('\n')
 "
-"$diamond" bin/drbc.di "$work/long.html.drb" "$work/long.html.di" >/dev/null
+"$diamond" bin/divc.di "$work/long.html.div" "$work/long.html.di" >/dev/null
 cat >"$work/driver_long.di" <<DRIVEREOF
 require "$work/long.html"
 out = long_html()
@@ -90,21 +90,21 @@ actual="$("$diamond" "$work/driver_long.di")"
 assert_contains "$actual" "len=402 stripped=400"
 count=$((count + 1))
 
-# --- Drb.escape_html (lib/drb/runtime.di) and a generated template's own
+# --- Div.escape_html (lib/div/runtime.di) and a generated template's own
 # per-file-named inlined escaping produce the same output for the same
 # input -- the two copies are meant to stay in behavioral sync (see
 # compiler.di's escape_helper_lines comment) ---
-cat >"$work/escape_check.html.drb" <<'DRBEOF'
+cat >"$work/escape_check.html.div" <<'DRBEOF'
 <%# locals: value %>
 <%= value %>
 DRBEOF
-"$diamond" bin/drbc.di "$work/escape_check.html.drb" "$work/escape_check.html.di" >/dev/null
+"$diamond" bin/divc.di "$work/escape_check.html.div" "$work/escape_check.html.di" >/dev/null
 cat >"$work/driver_escape.di" <<DRIVEREOF
 require "$work/escape_check.html"
-require "$(pwd)/lib/drb/runtime"
+require "$(pwd)/lib/div/runtime"
 sample = "<a href=\"x\">tom & jerry's</a>"
 from_template = escape_check_html(sample).strip()
-from_runtime = Drb.escape_html(sample)
+from_runtime = Div.escape_html(sample)
 puts("match=#{from_template == from_runtime} value=#{from_runtime}")
 DRIVEREOF
 actual="$("$diamond" "$work/driver_escape.di")"
@@ -115,16 +115,16 @@ count=$((count + 1))
 # collide, on either the render function name or the inlined escape
 # helper name -- the whole reason function_name_for derives both from
 # each input file's own basename rather than a fixed "render"/
-# "drb_escape_html" ---
-cat >"$work/greeting.html.drb" <<'DRBEOF'
+# "div_escape_html" ---
+cat >"$work/greeting.html.div" <<'DRBEOF'
 <%# locals: name %><%= name %>!
 DRBEOF
-"$diamond" bin/drbc.di "$work/greeting.html.drb" "$work/greeting.html.di" >/dev/null
-cat >"$work/page.html.drb" <<'DRBEOF'
+"$diamond" bin/divc.di "$work/greeting.html.div" "$work/greeting.html.di" >/dev/null
+cat >"$work/page.html.div" <<'DRBEOF'
 <%# locals: name %>
 <p>Hi, <%== greeting_html(name) %></p>
 DRBEOF
-"$diamond" bin/drbc.di "$work/page.html.drb" "$work/page.html.di" >/dev/null
+"$diamond" bin/divc.di "$work/page.html.div" "$work/page.html.di" >/dev/null
 cat >"$work/driver_partial.di" <<DRIVEREOF
 require "$work/greeting.html"
 require "$work/page.html"
@@ -134,4 +134,27 @@ actual="$("$diamond" "$work/driver_partial.di")"
 assert_contains "$actual" '<p>Hi, World!'
 count=$((count + 1))
 
-echo "$count drb tests passed"
+# --- layouts: no special mechanism, just an ordinary template whose
+# declared local holds the already-rendered (and already-escaped) child
+# output, embedded raw (see README's "Layouts") -- proves both the
+# wrapping markup and the child's own escaping survive the composition ---
+cat >"$work/child.html.div" <<'DRBEOF'
+<%# locals: name %><h1>Welcome, <%= name %></h1>
+DRBEOF
+"$diamond" bin/divc.di "$work/child.html.div" "$work/child.html.di" >/dev/null
+cat >"$work/layout.html.div" <<'DRBEOF'
+<%# locals: title, content %><html><head><title><%= title %></title></head><body><%== content %></body></html>
+DRBEOF
+"$diamond" bin/divc.di "$work/layout.html.div" "$work/layout.html.di" >/dev/null
+cat >"$work/driver_layout.di" <<DRIVEREOF
+require "$work/child.html"
+require "$work/layout.html"
+puts(layout_html("Home & <Away>", child_html("<script>World</script>")))
+DRIVEREOF
+actual="$("$diamond" "$work/driver_layout.di")"
+assert_contains "$actual" '<title>Home &amp; &lt;Away&gt;</title>'
+assert_contains "$actual" '<body><h1>Welcome, &lt;script&gt;World&lt;/script&gt;</h1>'
+assert_contains "$actual" '</body></html>'
+count=$((count + 1))
+
+echo "$count div tests passed"

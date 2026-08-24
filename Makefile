@@ -148,8 +148,8 @@ test-gremlin-package: $(TARGET)
 test-rack-package: $(TARGET)
 	DIAMOND_BIN=$(CURDIR)/$(BUILD_DIR)/diamond bash packages/rack/test.sh
 
-test-drb-package: $(TARGET)
-	DIAMOND_BIN=$(CURDIR)/$(BUILD_DIR)/diamond bash packages/drb/test.sh
+test-div-package: $(TARGET)
+	DIAMOND_BIN=$(CURDIR)/$(BUILD_DIR)/diamond bash packages/div/test.sh
 
 LSP_SOURCES := $(wildcard lsp/*.c)
 
@@ -223,7 +223,7 @@ test-all:
 	$(MAKE) test-http-package
 	$(MAKE) test-gremlin-package
 	$(MAKE) test-rack-package
-	$(MAKE) test-drb-package
+	$(MAKE) test-div-package
 	$(MAKE) test-lsp
 	$(MAKE) test-repl
 	$(MAKE) test-exit

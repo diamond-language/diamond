@@ -1,7 +1,7 @@
-# packages/drb
+# packages/div
 
 An ERB-style view template compiler for
-[Diamond](https://gitlab.com/dmn9180/diamond): `.html.drb` template
+[Diamond](https://gitlab.com/dmn9180/diamond): `.html.div` template
 source translates to an ordinary `.di` source file, which you `require`
 and call like any other compiled function. Integrates with
 [`packages/rack`](../rack/README.md) via one small response adapter
@@ -12,8 +12,8 @@ dependency-free per its own design.
 
 Diamond has no general `eval(source) -> value` (see
 [`docs/roadmap.md`](../../docs/roadmap.md)'s "Explicitly deferred").
-`drb` doesn't need one: `packages/drb/bin/drbc.di` translates a
-`.html.drb` file into a real `.di` source file once, ahead of time --
+`div` doesn't need one: `packages/div/bin/divc.di` translates a
+`.html.div` file into a real `.di` source file once, ahead of time --
 the output is an ordinary, `require`-able, cacheable compiled artifact,
 the same as every other Diamond source file, with zero runtime
 dependency on this package.
@@ -21,23 +21,23 @@ dependency on this package.
 ## Install
 
 Same story as `packages/http`/`packages/rack` -- copy this directory
-into another project as `cuts/drb/`, or give it its own git remote and
+into another project as `cuts/div/`, or give it its own git remote and
 depend on it via `facet` (see
 [`docs/packages.md`](../../docs/packages.md)).
 
 ## Compiling a template
 
 ```
-diamond packages/drb/bin/drbc.di views/index.html.drb
-# -> views/index.html.di (trailing ".drb" swapped for ".di")
+diamond packages/div/bin/divc.di views/index.html.div
+# -> views/index.html.di (trailing ".div" swapped for ".di")
 
-diamond packages/drb/bin/drbc.di views/index.html.drb views/index.html.di
+diamond packages/div/bin/divc.di views/index.html.div views/index.html.di
 # -> explicit output path
 ```
 
 The generated function is named after the *input file's own basename*,
-not a fixed `render` -- `views/index.html.drb` compiles to
-`def index_html(...)`, `views/greeting.html.drb` to
+not a fixed `render` -- `views/index.html.div` compiles to
+`def index_html(...)`, `views/greeting.html.div` to
 `def greeting_html(...)`. This matters the moment an app `require`s more
 than one compiled template together (a page requiring a partial, say):
 `require`'s compile-time expansion merges every required file into one
@@ -69,15 +69,13 @@ narrow scope cut, not a general namespacing system.
 | anything else | Literal text. |
 
 `<%= %>` escapes `&`, `<`, `>`, `"`, `'` (Rails' own default set) via an
-inlined `drb_escape_<function-name>` helper written into every generated
+inlined `div_escape_<function-name>` helper written into every generated
 file -- see "Why every generated file is self-contained" below.
 
 **Scope cuts, deliberate rather than accidental** (see
 [`ROADMAP.md`](ROADMAP.md) for the fuller reasoning):
 
 - No whitespace-trimming tags (`<%- -%>`).
-- No layout/`yield` mechanism -- see "Partials" below for why none is
-  needed for the common case.
 - Tag scanning stops at the first `%>` it finds after a `<%` -- code
   inside a tag that itself contains the literal substring `%>` (inside a
   nested string, say) will terminate that tag early.
@@ -89,8 +87,8 @@ needs no special mechanism at all -- `require` both compiled files and
 call one from the other:
 
 ```ruby
-# greeting.html.drb: <%# locals: name %><%= name %>!
-# page.html.drb:     <%# locals: name %><p>Hi, <%== greeting_html(name) %></p>
+# greeting.html.div: <%# locals: name %><%= name %>!
+# page.html.div:     <%# locals: name %><p>Hi, <%== greeting_html(name) %></p>
 
 require "./greeting.html"
 require "./page.html"
@@ -101,44 +99,73 @@ puts(page_html("World"))   # => <p>Hi, World!</p>
 output is already escaped by its own `<%= %>` tags; escaping it again
 would double-escape.
 
+## Layouts
+
+A layout is just an ordinary template too -- there's no `yield` keyword
+here (Diamond's own `yield` is a hard reserved word, already meaning
+"suspend the current Fiber," so it can't be reused as a placeholder
+name) and no special compiler support. The child template renders
+first, and its output is passed to the layout as an ordinary declared
+local, exactly like the `content`/child-rendering pattern under
+"Partials" above -- raw (`<%== %>`), for the same already-escaped
+reason:
+
+```ruby
+# layout.html.div:
+# <%# locals: title, content %>
+# <html><head><title><%= title %></title></head><body><%== content %></body></html>
+#
+# index.html.div:
+# <%# locals: name %>
+# <h1>Welcome, <%= name %></h1>
+
+require "./layout.html"
+require "./index.html"
+puts(layout_html("Home", index_html("World")))
+```
+
+`content` is only a naming convention here, not a reserved name --
+`<%# locals: %>` accepts any parameter names, so call it whatever reads
+best for a given layout.
+
 ## Why every generated file is self-contained
 
 Rather than `require`ing a shared runtime module for HTML-escaping, the
-translator writes a small `drb_escape_<function-name>` helper directly
-into every generated file (see `lib/drb/compiler.di`'s
+translator writes a small `div_escape_<function-name>` helper directly
+into every generated file (see `lib/div/compiler.di`'s
 `escape_helper_lines`). This keeps a compiled template independently
-`require`-able with zero runtime dependency on `packages/drb` --
+`require`-able with zero runtime dependency on `packages/div` --
 the translator is a build-time-only tool, not something your app needs
 installed to actually run. The escaping logic there is kept behaviorally
-identical to `Drb.escape_html` below; `test.sh` checks the two against
+identical to `Div.escape_html` below; `test.sh` checks the two against
 each other directly.
 
-## Runtime helpers (`lib/drb/runtime.di`)
+## Runtime helpers (`lib/div/runtime.di`)
 
 ```ruby
-require "path/to/drb/lib/drb/runtime"
+require "path/to/div/lib/div/runtime"
 
-Drb.escape_html(value)                    # same escaping <%= %> uses
-Drb.html_response(200, body)              # -> [200, {"Content-Type": "text/html"}, body]
-Drb.html_response(200, body, extra_headers)
+Div.escape_html(value)                    # same escaping <%= %> uses
+Div.html_response(200, body)              # -> [200, {"Content-Type": "text/html"}, body]
+Div.html_response(200, body, extra_headers)
 ```
 
-`Drb.html_response` is the whole extent of the Rack integration --
+`Div.html_response` is the whole extent of the Rack integration --
 `packages/rack`'s own `[status, headers, body]` convention, with
 `Content-Type: text/html` merged in:
 
 ```ruby
 require "path/to/rack/lib/rack"
-require "path/to/drb/lib/drb/runtime"
+require "path/to/div/lib/div/runtime"
 require "views/index.html"   # -> index_html(...)
 
 def app_handler(request, context)
-  Drb.html_response(200, index_html("Welcome", ["a", "b"]))
+  Div.html_response(200, index_html("Welcome", ["a", "b"]))
 end
 ```
 
 ## Tests
 
 ```
-make test-drb-package
+make test-div-package
 ```

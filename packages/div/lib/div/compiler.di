@@ -1,10 +1,10 @@
-# Translates `.html.drb` (ERB-style) template source into an ordinary `.di`
+# Translates `.html.div` (ERB-style) template source into an ordinary `.di`
 # source file -- a hand-rolled `index_of`/`slice` tag scanner, not Regexp
 # (Diamond's Regexp has no String integration -- no `=~`, no `.match`
 # against a String receiver -- so a scanner built on String's own
 # `index_of`/`slice` is the natural fit here, see docs/syntax.md).
 #
-# Tag syntax (see packages/drb/README.md for the full writeup):
+# Tag syntax (see packages/div/README.md for the full writeup):
 #   <%# locals: a, b %>   -- once per file, becomes the render function's
 #                            own param list
 #   <%# comment %>        -- dropped from output
@@ -19,7 +19,7 @@
 # one render function calling another already covers partials with no
 # special mechanism needed), and tag scanning stops at the first "%>" --
 # a tag whose own code contains that literal substring (inside a nested
-# string, say) will terminate early. See packages/drb/ROADMAP.md.
+# string, say) will terminate early. See packages/div/ROADMAP.md.
 #
 # Every top-level name a generated file defines is derived from the
 # input file's own basename (function_name_for below), not a fixed
@@ -31,7 +31,7 @@
 # common case (a page template requiring a partial). Two different
 # input files sharing a basename in different directories still collide
 # -- a deliberate, narrow v1 scope cut, not a general namespacing system.
-module Drb
+module Div
   module_function
 
   # DIAMOND_MAX_STRING_LENGTH is 255 bytes (src/vm.h) and escaping a raw
@@ -44,7 +44,7 @@ module Drb
 
   # Diamond identifiers can't contain "." or "-" -- the two characters
   # most likely to show up in a real template filename
-  # ("index.html.drb" via the stripped-".drb" base "index.html", or a
+  # ("index.html.div" via the stripped-".div" base "index.html", or a
   # hyphenated name). Anything else is passed through unchanged; a
   # filename using other non-identifier characters is a known, narrow
   # scope cut here, not a general sanitizer.
@@ -63,17 +63,17 @@ module Drb
     sb.to_s()
   end
 
-  # "views/index.html.drb" -> "index_html"; used both as the generated
+  # "views/index.html.div" -> "index_html"; used both as the generated
   # render function's own name and as a per-file suffix on the inlined
   # escape helper (see escape_helper_lines) so two templates required
   # together don't collide on either name.
   def function_name_for(path)
     parts = path.split("/")
     base = parts[parts.length() - 1]
-    if base.length() > 4 && base.slice(base.length() - 4, 4) == ".drb"
+    if base.length() > 4 && base.slice(base.length() - 4, 4) == ".div"
       base = base.slice(0, base.length() - 4)
     end
-    Drb.sanitize_identifier(base)
+    Div.sanitize_identifier(base)
   end
 
   # Scans `source` into an ordered Array of ["text", content] / ["tag",
@@ -97,7 +97,7 @@ module Drb
         remaining2 = source.slice(after_open, length - after_open)
         close_rel = remaining2.index_of("%>")
         if close_rel == nil
-          raise "drb: unterminated <% tag starting at offset #{tag_start}"
+          raise "div: unterminated <% tag starting at offset #{tag_start}"
         end
         tokens << ["tag", source.slice(after_open, close_rel)]
         pos = after_open + close_rel + 2
@@ -161,14 +161,14 @@ module Drb
   def emit_literal_chunks(text, lines)
     pos = 0
     length = text.length()
-    chunk_size = Drb.literal_chunk_size()
+    chunk_size = Div.literal_chunk_size()
     while pos < length
       chunk_len = length - pos
       if chunk_len > chunk_size
         chunk_len = chunk_size
       end
       chunk = text.slice(pos, chunk_len)
-      escaped = Drb.escape_di_string(chunk)
+      escaped = Div.escape_di_string(chunk)
       lines << "  sb.append(\"#{escaped}\")"
       pos = pos + chunk_len
     end
@@ -194,9 +194,9 @@ module Drb
     lines = []
     tokens.each() do |token|
       if token[0] == "text"
-        Drb.emit_literal_chunks(token[1], lines)
+        Div.emit_literal_chunks(token[1], lines)
       else
-        Drb.emit_tag(token[1], lines, escape_fn_name)
+        Div.emit_tag(token[1], lines, escape_fn_name)
       end
     end
     lines
@@ -205,7 +205,7 @@ module Drb
   # Source lines for the escape helper inlined into every generated file,
   # named `escape_fn_name` (see function_name_for's own comment on why
   # this can't be a fixed name) -- kept behaviorally identical to
-  # Drb.escape_html in lib/drb/runtime.di (see that file's own comment,
+  # Div.escape_html in lib/div/runtime.di (see that file's own comment,
   # and test.sh's cross-check). Inlined rather than `require`d so a
   # generated file has zero runtime dependency on this package -- the
   # translator is a build-time-only tool.
@@ -238,13 +238,13 @@ module Drb
   end
 
   def compile_source(source, function_name)
-    escape_fn_name = "drb_escape_html__#{function_name}"
-    tokens = Drb.scan(source)
-    locals = Drb.extract_locals(tokens)
-    body_lines = Drb.emit_body(tokens, escape_fn_name)
+    escape_fn_name = "div_escape_html__#{function_name}"
+    tokens = Div.scan(source)
+    locals = Div.extract_locals(tokens)
+    body_lines = Div.emit_body(tokens, escape_fn_name)
 
     out = []
-    Drb.escape_helper_lines(escape_fn_name).each() do |line|
+    Div.escape_helper_lines(escape_fn_name).each() do |line|
       out << line
     end
     out << ""
@@ -262,8 +262,8 @@ module Drb
     input = File.open(input_path, "r")
     source = input.read()
     input.close()
-    function_name = Drb.function_name_for(input_path)
-    generated = Drb.compile_source(source, function_name)
+    function_name = Div.function_name_for(input_path)
+    generated = Div.compile_source(source, function_name)
     output = File.open(output_path, "w")
     output.write(generated)
     output.close()
