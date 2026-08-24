@@ -1087,6 +1087,50 @@ declared via one of those forms inside a capturing loop, then itself
 captured later in the same body, remains unfixed. Confirmed as a real,
 documented remaining gap rather than assumed away.
 
+### `exit()`
+
+**Done, in scope.** `exit(code = 0)` (`DIAMOND_OP_EXIT`, parsed by
+`parse_exit_call` next to `parse_gets_call`/`parse_regexp_new_call` --
+same optional-argument-with-a-compile-time-0-default shape
+`Regexp.new(pattern, options = 0)` already uses) calls libc `exit()`
+directly from inside `exit_helper` (`src/vm.c`, next to
+`secure_random_bytes_helper`/`secure_random_hex_helper`) once `code` is
+confirmed to be an `Int` in `0..255` -- a non-`Int` raises `TypeError`,
+an out-of-range `Int` raises `ArgumentError` (`DIAMOND_VM_ARITY_ERROR`,
+the same status `SecureRandom.bytes`'s own count-range check already
+uses), both ordinary rescuable exceptions via the existing
+`VM_PROPAGATE` path. Only a valid code actually reaches `exit()` itself,
+which never returns -- the case block's `VM_PROPAGATE` is unreachable in
+that path, exercised only by the validation-failure returns.
+
+**Deliberately a hard exit, not a soft one.** Real Ruby's plain `exit`
+raises `SystemExit` -- an ordinary (if unusually-rescued-by-default)
+exception that unwinds the stack and runs every `ensure` block on the
+way out. This version skips all of that: `exit_helper` calls libc
+`exit()` straight from the opcode handler, so no Diamond-level unwind
+happens at all. That's a deliberate, smaller scope for a first version,
+not an oversight -- a soft variant would need a new
+rescuable-but-uncatchable-by-default exception class plus real
+unwind-and-run-ensure plumbing at every frame between the call site and
+the top, neither of which exists yet. Confirmed directly: an `ensure`
+block wrapping an `exit()` call does not run.
+
+**Whole-process, not whole-VM.** `Thread.new` spawns real OS threads
+that each get their own fully isolated `DiamondVm`/heap (docs/threads.md)
+but still share one OS process -- libc `exit()` called from any one of
+them ends the process outright, stopping every other thread too. This is
+the only sensible behavior for a single flat `exit()` with no notion of
+"which thread asked" in its own semantics; a scoped per-thread stop was
+never the goal here.
+
+`stdout`/`stderr` are flushed before the real `exit()` call -- Diamond's
+own `puts`/`print` go through ordinary buffered C stream writes
+(`DIAMOND_OP_PRINT`), and libc's `exit()` only flushes streams it still
+considers open and owns, which is expected to include process-standard
+`stdout`/`stderr` regardless, but the explicit `fflush` calls make that
+guarantee independent of libc/platform buffering-mode specifics rather
+than relying on it implicitly.
+
 ## Deliberate constraints
 
 - No Ruby compatibility guarantee.

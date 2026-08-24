@@ -2586,6 +2586,36 @@ static uint16_t parse_gets_call(Compiler *compiler) {
     return dest;
 }
 
+/* exit(code = 0) -- code is optional, defaulting to a compile-time 0
+ * constant (same shape as parse_regexp_new_call's own optional `options`
+ * default). The allocated `dest` register is never actually written by
+ * the VM (DIAMOND_OP_EXIT terminates the process outright on success) --
+ * it exists only so this remains an ordinary expression-producing call
+ * from the compiler's perspective, same as every other parse_*_call. */
+static uint16_t parse_exit_call(Compiler *compiler) {
+    advance_token(compiler); /* consume '(' */
+    skip_newlines(compiler);
+    uint16_t code_register;
+    if(compiler->current.kind==DIAMOND_TOKEN_RIGHT_PAREN) {
+        code_register=allocate_register(compiler);
+        const uint8_t zero=add_constant(compiler,DIAMOND_INT(0));
+        emit_instruction(compiler,DIAMOND_OP_CONSTANT,code_register,zero,0,2);
+    } else {
+        code_register=parse_expression(compiler);
+        skip_newlines(compiler);
+    }
+    if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
+        fail(compiler,compiler->current.span,"expected ')' after exit arguments");
+        return 0;
+    }
+    advance_token(compiler);
+    const uint16_t dest=allocate_register(compiler);
+    emit_opcode(compiler,DIAMOND_OP_EXIT);
+    emit_register(compiler,code_register);
+    compiler->known_types[dest]=DIAMOND_TYPE_NIL;
+    return dest;
+}
+
 /* debugger()/breakpoint() -- pauses execution, prints the current call
  * site and every currently-live local (name + value, read-only; no
  * expression evaluation against them, see docs/syntax.md for the scope
@@ -3034,6 +3064,10 @@ static uint16_t parse_name(Compiler *compiler) {
        compiler->current.kind==DIAMOND_TOKEN_LEFT_PAREN&&
        name_equals(compiler,"gets",name,false))
         return parse_gets_call(compiler);
+    if(find_local(compiler,name)<0&&find_function(compiler,name)<0&&
+       compiler->current.kind==DIAMOND_TOKEN_LEFT_PAREN&&
+       name_equals(compiler,"exit",name,false))
+        return parse_exit_call(compiler);
     if(find_local(compiler,name)<0&&find_function(compiler,name)<0&&
        compiler->current.kind==DIAMOND_TOKEN_LEFT_PAREN&&
        (name_equals(compiler,"debugger",name,false)||

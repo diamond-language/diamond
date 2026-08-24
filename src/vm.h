@@ -238,6 +238,14 @@ typedef enum DiamondOpCode : uint8_t {
      * DIAMOND_OP_DEFINE_METHOD (ClassName.define_method(name, callable)).
      * See docs/design.md's "Runtime method synthesis" section. */
     DIAMOND_OP_COMPILE_METHOD,
+    /* exit(code = 0) -- an immediate, whole-process libc exit(), not a
+     * raised/rescuable Diamond exception: no `ensure` block anywhere on
+     * the call stack runs, and (Thread.new spawning real OS threads
+     * sharing one process, per docs/threads.md) every other thread stops
+     * too. A validation failure (non-Int, or outside 0..255) still raises
+     * an ordinary rescuable TypeError/ArgumentError first -- only a valid
+     * code actually terminates. See docs/design.md's "exit()" section. */
+    DIAMOND_OP_EXIT,
     DIAMOND_OP_COUNT,
 } DiamondOpCode;
 

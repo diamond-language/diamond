@@ -4973,6 +4973,33 @@ static DiamondVmStatus secure_random_hex_helper(DiamondVm *vm,DiamondValue count
     return DIAMOND_VM_OK;
 }
 
+/* exit(code = 0) -- validation only returns; a valid code calls libc
+ * exit() directly and never returns at all. This is a hard, immediate,
+ * whole-process exit (like Ruby's Kernel#exit!, not Kernel#exit): no
+ * `ensure` block anywhere on the call stack runs, and every other
+ * Thread.new-spawned OS thread stops too, since they all share this one
+ * process (docs/threads.md). Deliberately not the softer,
+ * exception-based/`ensure`-respecting semantic real Ruby `exit` has --
+ * that would need a new rescuable-but-uncatchable-by-default exception
+ * class and real unwind-and-check-ensure plumbing at every call site on
+ * the stack, out of scope for this first version. stdout/stderr are
+ * flushed first since libc exit() only flushes streams it owns, and a
+ * DiamondVm's own stdout writes go through ordinary buffered fputs/puts
+ * (see DIAMOND_OP_PRINT) that could otherwise still be sitting
+ * unflushed in the C library's buffer. */
+static DiamondVmStatus exit_helper(DiamondVm *vm,DiamondValue code_value) {
+    if(code_value.kind!=DIAMOND_VALUE_INT)return DIAMOND_VM_TYPE_ERROR;
+    const int64_t code=code_value.as.integer;
+    if(code<0||code>255) {
+        (void)snprintf(vm->error,sizeof vm->error,
+            "exit code must be between 0 and 255");
+        return DIAMOND_VM_ARITY_ERROR;
+    }
+    fflush(stdout);
+    fflush(stderr);
+    exit((int)code);
+}
+
 /* Mirrors find_function's two filters (compiler.c) exactly, operating on
  * the runtime DiamondChunk instead of the compile-time DiamondProgram:
  * excludes class/module methods (owner_class!=UINT8_MAX) and nested
@@ -12005,6 +12032,16 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 const DiamondVmStatus hex_status=secure_random_hex_helper(vm,
                     registers[count_register],&registers[destination]);
                 VM_PROPAGATE(hex_status);
+                break;
+            }
+            case DIAMOND_OP_EXIT: {
+                uint16_t code_register=0;
+                READ_SHORT(code_register);
+                const DiamondVmStatus exit_status=exit_helper(vm,registers[code_register]);
+                /* exit_helper only returns at all on a validation
+                 * failure -- a valid code calls libc exit() and this
+                 * line is never reached. */
+                VM_PROPAGATE(exit_status);
                 break;
             }
             case DIAMOND_OP_DEBUGGER: {

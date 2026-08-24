@@ -162,6 +162,9 @@ test-lsp: $(BUILD_DIR)/diamond-lsp
 test-repl: debug
 	bash tests/repl_test.sh
 
+test-exit: debug
+	bash tests/exit_test.sh
+
 $(BUILD_DIR)/compile_fuzzer: fuzz/compile_fuzzer.c $(API_SOURCES) $(REGINOLD_LIB)
 	@mkdir -p $(BUILD_DIR)
 	$(CC_FUZZ) $(CPPFLAGS) $(CFLAGS_FUZZ) $(API_SOURCES) $< -lm $(REGINOLD_DIR)/libreginold.a -lsqlite3 -lpq -lmariadb -ldl -lpthread -lssl -lcrypto -lcrypt -o $@
@@ -219,6 +222,7 @@ test-all:
 	$(MAKE) test-rack-package
 	$(MAKE) test-lsp
 	$(MAKE) test-repl
+	$(MAKE) test-exit
 	$(MAKE) test-fuzz
 	$(MAKE) test-self-host-smoke
 

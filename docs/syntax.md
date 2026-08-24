@@ -1259,6 +1259,26 @@ read-only in effect, even though nothing stops the write syntax itself.
 Like every other built-in name, a local variable or user-defined
 function named `ARGV`/`ENV` shadows it.
 
+`exit(code = 0)` immediately terminates the whole process with the given
+status (0–255; anything else raises `ArgumentError`, a non-`Int` raises
+`TypeError`). This is a *hard* exit, not a raised/rescuable control-flow
+value like Ruby's plain `exit` — no `ensure` block anywhere on the call
+stack runs, and every other `Thread.new`-spawned OS thread stops too,
+since they all share this one process. A validation failure (bad code)
+is an ordinary catchable exception; only a valid code actually exits:
+
+```ruby
+begin
+  exit(-1)
+rescue error: ArgumentError
+  puts("bad exit code: #{error.message()}")
+end
+exit(1)   # this one actually terminates the process
+```
+
+Like every other built-in name, a local variable or user-defined
+function named `exit` shadows it.
+
 ## Debugging
 
 ```ruby
