@@ -10,14 +10,17 @@
 #
 # Require order below is not cosmetic. Two different rules are in play:
 #
-# - ClassName.method(...)/instance.method(...) calls (everything the
-#   controllers/the models do to reach each other, and every routes.di
-#   shim's own AuthorsController.foo(...)/BooksController.foo(...) call)
-#   resolve dynamically, not at compile time (docs/roadmap.md's "Forward
-#   and mutual calls": "receiver-based method calls resolve
-#   dynamically") -- so lib/authors_controller.di, lib/books_controller.di,
-#   lib/author.di, and lib/book.di can reference each other regardless of
-#   which one is required first.
+# - ClassName.method(...)/instance.method(...) calls, and a bare
+#   ClassName.method reference with no call (routes.di's own
+#   AuthorsController.show/.index/... -- see docs/syntax.md's "Bare
+#   singleton method references") -- everything the controllers/the
+#   models do to reach each other, and everything routes.di does to
+#   reach the controllers -- resolve via the same compile-time class
+#   method-table lookup either way (docs/roadmap.md's "Forward and
+#   mutual calls": "receiver-based method calls resolve dynamically"),
+#   so lib/authors_controller.di, lib/books_controller.di, lib/author.di,
+#   lib/book.di, and lib/routes.di can all reference each other
+#   regardless of which one is required first.
 # - A div-generated view function called by bare name (routes.di's
 #   home_action calling layout_html(...)/home_html(), and every
 #   controller action calling its own view, e.g. author_show_html(...))
@@ -25,11 +28,11 @@
 #   reference-safe (same section: "Bare calls resolve only previously
 #   declared top-level functions in file order") -- confirmed directly
 #   against a throwaway fixture before relying on it here. So every view
-#   must be required before routes.di and before whichever controller
-#   calls it, and author_books_table.html specifically before
-#   author_show.html. The same rule applies to routes.di's own
-#   build_router -- middleware.di's route() references it by bare name,
-#   so routes.di must be required before middleware.di too.
+#   must be required before home_action (routes.di) and before whichever
+#   controller calls it, and author_books_table.html specifically before
+#   author_show.html. The same bare-reference rule applies to routes.di's
+#   own build_router -- middleware.di's route() references it by bare
+#   name, so routes.di must be required before middleware.di too.
 require "../../packages/active_record/lib/active_record"
 require "../../packages/gremlin/lib/gremlin"
 require "../../packages/rack/lib/rack"

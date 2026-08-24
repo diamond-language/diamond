@@ -24,14 +24,10 @@ depend on it via `facet` (see
 ```ruby
 require "path/to/dials/lib/dials"
 
-def authors_index(request, context, params) = AuthorsController.index(request, context, params)
-def authors_show(request, context, params) = AuthorsController.show(request, context, params)
-def authors_create(request, context, params) = AuthorsController.create(request, context, params)
-
 router = Dials::Router.new()
-router.get("/authors", authors_index)
-router.get("/authors/:id", authors_show)
-router.post("/authors", authors_create)
+router.get("/authors", AuthorsController.index)
+router.get("/authors/:id", AuthorsController.show)
+router.post("/authors", AuthorsController.create)
 
 response = router.dispatch(request, context)
 ```
@@ -52,18 +48,21 @@ query-string params for a `GET`, form-body params for anything else
 README documents), with any path-captured `:name` values merged in
 *after* -- a path param always wins over a same-named query/body one.
 
-## Why controllers still need one small shim function per action
+## Controllers
 
-A class-owned `self.` method is not a referenceable value in
-Diamond -- `AuthorsController.show` (no call) is a parse error, only a
-bare *top-level* `def`'s name is. So a route's `handler` can never be a
-controller's `self.` method directly; it needs exactly one bare
-top-level function per action forwarding into it, as in the routing
-example above. This is not a limitation `dials` introduces -- it's a
-real, confirmed Diamond constraint (`ClassName.compile_method` can't
-help either: a synthesized method body can't name an external class it
-was never told about), and it's the same shim `packages/rack`'s own
-examples already need for their own terminal app handler.
+`AuthorsController.show` above, with no call, is a bare reference to a
+`self.` singleton method -- a `Callable` value Diamond synthesizes a
+small zero-capture wrapper for, matching the method's own parameter list
+exactly (see `docs/syntax.md`'s "Bare singleton method references").
+Registering a route no longer needs a hand-written shim function per
+action; pass the controller method directly.
+
+(Earlier versions of this package needed exactly one top-level shim
+function per action, since a `self.` method wasn't a referenceable value
+at all before this Diamond feature existed. A *variadic* or *generic*
+`self.` method still can't be referenced this way -- both are rejected
+with a clear compile error, not silently narrowed -- but no ordinary
+controller action is either.)
 
 A controller itself is an ordinary class with `self.` action methods,
 now taking a third `params` argument alongside the usual `request`/
@@ -103,8 +102,8 @@ require "path/to/dials/lib/dials"
 
 def build_router()
   router = Dials::Router.new()
-  router.get("/authors", authors_index)
-  router.get("/authors/:id", authors_show)
+  router.get("/authors", AuthorsController.index)
+  router.get("/authors/:id", AuthorsController.show)
   router
 end
 
@@ -118,8 +117,9 @@ end
 gremlin_serve(18080, app)
 ```
 
-`build_router()` stays a zero-capture top-level function (it only
-references other bare top-level functions, never a local), the same
+`build_router()` stays a zero-capture top-level function -- true of a
+bare singleton method reference too (`AuthorsController.index` bakes its
+target class as a compile-time constant, capturing nothing), the same
 constraint every other Thread.new-safe handler in this codebase already
 works within.
 

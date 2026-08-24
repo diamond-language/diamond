@@ -1581,6 +1581,156 @@ static uint16_t parse_call(Compiler *compiler, DiamondSpan name) {
  * the actual receiver rather than owner_class. A module call's slot stays
  * zero-inited (DIAMOND_VALUE_NIL) exactly as before -- modules have no
  * `self` story and nothing reads that slot as one. */
+/* Shared tail of an ordinary `Namespace.method(args)` call and a bare
+ * `Namespace.method` *reference* (parse_singleton_reference, below) --
+ * arity-checks `argument_count` against `method`'s own (with the same
+ * has_variadic upper-bound relaxation every other call site has),
+ * allocates the contiguous call-argument register range, loads the
+ * literal receiver class for a class singleton call, MOVEs each
+ * already-resolved argument register into place, and emits the CALL/
+ * CALL_TYPED instruction against method->function_index -- the one
+ * place `emit_function_index(method->function_index)` happens, so a
+ * synthesized reference wrapper's body is byte-for-byte the same shape
+ * an ordinary hand-written call site would compile to. */
+static uint16_t emit_singleton_call(Compiler *compiler,const DiamondMethod *method,
+        int receiver_class_index,const uint16_t *arguments,size_t argument_count,
+        DiamondSpan name,uint8_t type_argument_count,const uint8_t *type_arguments) {
+    if(argument_count<method->required_arity||
+       (argument_count>method->arity && !method->has_variadic)) {
+        fail(compiler,name,"wrong number of arguments");return 0;
+    }
+    const size_t call_count=argument_count+(method->needs_receiver?1:0);
+    const uint16_t base=allocate_register(compiler);
+    for(size_t index=1;index<call_count;index++)(void)allocate_register(compiler);
+    /* No NIL for `base` when needs_receiver and there's no literal class
+     * (a module call): sole writer, already zero-inited by run_chunk's
+     * [0, register_count) init. A class singleton call instead loads the
+     * literal receiver class right here, the one place this slot gets a
+     * real value instead of relying on zero-init. */
+    if(method->needs_receiver&&receiver_class_index>=0) {
+        emit_opcode(compiler,DIAMOND_OP_LOAD_CLASS);
+        emit_register(compiler,base);
+        emit_byte(compiler,(uint8_t)receiver_class_index);
+    }
+    for(size_t index=0;index<argument_count;index++)
+        emit_instruction(compiler,DIAMOND_OP_MOVE,
+                         (uint16_t)(base+index+(method->needs_receiver?1:0)),
+                         arguments[index],0,2);
+    const uint16_t destination=allocate_register(compiler);
+    emit_opcode(compiler,type_argument_count==0?DIAMOND_OP_CALL:
+                DIAMOND_OP_CALL_TYPED);
+    emit_register(compiler,destination);
+    emit_function_index(compiler,method->function_index);
+    emit_register(compiler,base);emit_byte(compiler,(uint8_t)call_count);
+    if(type_argument_count>0) {
+        emit_byte(compiler,(uint8_t)type_argument_count);
+        for(size_t index=0;index<type_argument_count;index++)
+            emit_byte(compiler,type_arguments[index]);
+    }
+    return destination;
+}
+
+/* `Namespace.method`, no call following -- a bare reference to a class/
+ * module singleton method as a value, not a call. Synthesizes a small
+ * hidden top-level function (owner_class=UINT8_MAX, nested=true -- not
+ * findable by bare name, only reachable via the DIAMOND_OP_CLOSURE this
+ * emits at the reference site) whose entire body forwards its own
+ * parameters into method via emit_singleton_call, the exact same call
+ * shape parse_singleton_call itself would compile -- so the resulting
+ * value is exactly as correct as any hand-written `Namespace.method
+ * (args)` call site already is (see docs/design.md's "Bare singleton
+ * method references" section for why: this call is already resolved
+ * fully at compile time, never re-dispatched at runtime, so a wrapper
+ * reusing this same compiled shape has nothing dynamic left to get
+ * wrong). Mirrors compile_block's own save/restore-outer-compiler-state
+ * shape (immediately above `compile_definition` further down), but
+ * skips everything block-specific: no real parameter list to parse (the
+ * wrapper's signature is copied from `method`'s own), no eager capture
+ * materialization (this closure captures nothing at all -- the target
+ * class/module is a compile-time constant baked directly into the
+ * synthesized body via emit_function_index, same as any ordinary call),
+ * no user-written body to compile_sequence.
+ *
+ * Deliberately rejected rather than attempted: a variadic method (would
+ * need forwarding a collected trailing Array back into the original
+ * call, i.e. call-site spread against a singleton call --
+ * DIAMOND_OP_CALL_SPREAD was scoped to bare top-level function calls
+ * only) and a generic one (a reference wrapper can't itself carry a
+ * type-argument binding); both produce a clear compile error instead of
+ * a silently-narrowed wrapper. Instance methods (`obj.method`, no call)
+ * are a different, separate case entirely -- out of scope here, see the
+ * same docs/design.md section. */
+static uint16_t parse_singleton_reference(Compiler *compiler,
+                                         const DiamondMethod *method,
+                                         DiamondSpan namespace_name,
+                                         int receiver_class_index) {
+    if(method->has_variadic) {
+        fail(compiler,namespace_name,
+             "cannot reference a variadic singleton method as a value");
+        return 0;
+    }
+    if(compiler->program->functions[method->function_index]->type_variable_count>0) {
+        fail(compiler,namespace_name,
+             "cannot reference a generic singleton method as a value");
+        return 0;
+    }
+    if(compiler->program->function_count==DIAMOND_MAX_FUNCTIONS) {
+        fail(compiler,namespace_name,"too many functions");
+        return 0;
+    }
+    DiamondFunction *function=diamond_program_add_function(compiler->program);
+    if(function==nullptr) {
+        fail(compiler,namespace_name,"out of memory");
+        return 0;
+    }
+    const size_t function_index=compiler->program->function_count-1;
+    function->owner_class=UINT8_MAX;
+    function->nested=true;
+    function->return_type_set=UINT8_MAX;
+    function->arity=method->arity;
+    function->required_arity=method->required_arity;
+    static const char reference_name[]="<method reference>";
+    for(size_t index=0;index<sizeof(reference_name);index++)
+        function->name[index]=reference_name[index];
+    function->declaration_line=(uint32_t)compiler->previous.span.line;
+    function->declaration_column=(uint32_t)compiler->previous.span.column;
+    function->declaration_start=compiler->previous.span.start;
+    for(size_t index=0;index<16;index++)
+        function->parameter_type_sets[index]=UINT8_MAX;
+
+    DiamondFunction *outer_function=compiler->function;
+    const uint16_t outer_next_register=compiler->next_register;
+    const size_t outer_local_count=compiler->local_count;
+    const bool outer_in_function=compiler->in_function;
+
+    compiler->function=function;
+    compiler->next_register=0;
+    compiler->local_count=0;
+    compiler->in_function=true;
+
+    uint16_t arguments[16];
+    for(size_t index=0;index<method->arity;index++) {
+        arguments[index]=allocate_register(compiler);
+    }
+    const uint16_t body_result=emit_singleton_call(compiler,method,
+        receiver_class_index,arguments,method->arity,namespace_name,0,nullptr);
+    emit_instruction(compiler,DIAMOND_OP_RETURN,body_result,0,0,1);
+
+    function->register_count=compiler->next_register;
+    function->body_end=compiler->previous.span.start+compiler->previous.span.length;
+
+    compiler->function=outer_function;
+    compiler->next_register=outer_next_register;
+    compiler->local_count=outer_local_count;
+    compiler->in_function=outer_in_function;
+
+    const uint16_t result=allocate_register(compiler);
+    emit_opcode(compiler,DIAMOND_OP_CLOSURE);emit_register(compiler,result);
+    emit_function_index(compiler,function_index);emit_byte(compiler,0);
+    compiler->known_types[result]=TYPE_UNKNOWN;
+    return result;
+}
+
 static uint16_t parse_singleton_call(Compiler *compiler,
                                     const DiamondMethod *method,
                                     DiamondSpan namespace_name,
@@ -1621,6 +1771,14 @@ static uint16_t parse_singleton_call(Compiler *compiler,
         }
     }
     if(compiler->current.kind!=DIAMOND_TOKEN_LEFT_PAREN) {
+        /* `Namespace.method`, no call following -- a bare reference to
+         * the method as a value (parse_singleton_reference, above)
+         * rather than a call, unless it was given generic type
+         * arguments (`Namespace.method[T]` with no call after): a
+         * reference wrapper can't itself be generic, so that combination
+         * stays a real error, not silently falling through. */
+        if(type_argument_count==0)
+            return parse_singleton_reference(compiler,method,namespace_name,receiver_class_index);
         fail(compiler,namespace_name,"expected '(' after singleton function");
         return 0;
     }

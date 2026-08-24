@@ -1316,6 +1316,96 @@ here; mixing a spread argument with ordinary positional/keyword
 arguments at the same call site; spreading into a generic function call
 (`foo[T](*array)`).
 
+### Bare singleton method references
+
+**Done, in scope.** `ClassName.method`/`ModuleName.method`, with no call
+following, is a `Callable` value -- motivated directly by
+`packages/dials`, which needed exactly one hand-written top-level shim
+function per controller action (`AuthorsController.show`, a `self.`
+method, was never a referenceable value on its own) to store a route
+handler.
+
+**Confirmed before designing, not assumed: `ClassName.method(...)` was
+already fully resolved at compile time**, never re-dispatched at
+runtime. Both call sites reaching `parse_singleton_call` (`src/
+compiler.c`) resolve `method` themselves, statically, before calling
+it -- the module path does a linear name search over the module's own
+`singleton_methods[]`; the class path walks the named class's own table
+then its superclass chain by name, both entirely at compile time --
+and `parse_singleton_call` bakes the resolved `method->function_index`
+directly into a `DIAMOND_OP_CALL`/`_TYPED` instruction. (`docs/
+roadmap.md`'s "receiver-based method calls resolve dynamically", in the
+"Forward and mutual calls" section, turns out to describe something
+else -- `DIAMOND_OP_INVOKE_SELF_METHOD`'s genuinely runtime-dynamic
+lookup for `self.foo(...)` written *inside* a class-owned method body,
+a different, unrelated mechanism -- not this one.) This is exactly why
+the feature needed no VM/opcode changes at all: a synthesized wrapper
+reusing this same already-static compiled shape is exactly as correct
+as any hand-written call site, with no dynamic-override behavior to
+approximate.
+
+**Mechanism**: `emit_singleton_call` (`src/compiler.c`) factors
+`parse_singleton_call`'s own call-emission tail (arity check with the
+existing `has_variadic` upper-bound relaxation, contiguous
+call-argument register allocation, `DIAMOND_OP_LOAD_CLASS` for a class
+receiver, the argument `MOVE` loop, `DIAMOND_OP_CALL`/`_TYPED` +
+`emit_function_index`) out into a shared helper, so it's the *one*
+place this call shape is emitted regardless of caller.
+`parse_singleton_reference` mirrors `compile_block`'s own save/restore-
+outer-compiler-state shape (already used for every `do |x| ... end`
+block) to compile a brand-new `DiamondFunction` procedurally instead of
+from parsed source: copies `method`'s own `arity`/`required_arity`/
+`parameter_type_sets` onto it (`owner_class=UINT8_MAX`, `nested=true`
+-- an ordinary, unfindable-by-bare-name function, the same shape a
+compiled block already is), allocates one register per parameter, calls
+`emit_singleton_call` with those parameter registers as the "arguments"
+(instead of parsed expressions), then restores compiler state and emits
+an ordinary zero-capture `DIAMOND_OP_CLOSURE` at the *original*
+reference site. Zero-capture is deliberate and automatic, not a
+constraint that needed separate enforcement: the target class/module is
+a compile-time constant already baked into the wrapper's own body
+(`emit_function_index`/`DIAMOND_OP_LOAD_CLASS`), so there is nothing
+from the enclosing scope for the wrapper to need in the first place --
+the same property that makes it safely `Thread.new`-passable without
+any of the capturing-closure restrictions an ordinary block has.
+
+**No deduplication.** Each reference site synthesizes its own wrapper
+function, even for two references to the same method -- confirmed
+directly (not assumed) that this is safe: `program->functions` is
+already a dynamically-growing array with no fixed cap remaining a
+concern, and two independent wrapper closures over the same target work
+correctly and independently (no shared mutable state between them).
+Deduplicating would need a `(class_index, method_name) ->
+function_index` cache threaded through the compiler for an unmeasured
+benefit -- matches this project's own "don't add complexity without a
+measured need" bar (the reverted generational-GC precedent); revisit
+only if function-table growth or duplicate-compilation cost ever shows
+up as an actual, measured problem.
+
+**Deliberately out of scope for this first version:** a *variadic*
+`self.`/module method can't be referenced as a bare value -- forwarding
+its collected trailing `Array` back into the original call needs
+call-site spread against a singleton call, and `DIAMOND_OP_CALL_SPREAD`
+(see "Call-site spread" above) was deliberately scoped to bare
+top-level function calls only; rejected with a clear compile error
+rather than silently generating a wrapper that drops the variadic
+capability. A *generic* method (`ClassName.method[T](...)`) can't be
+referenced as a bare value either, for the equivalent reason -- a
+reference wrapper can't itself carry a type-argument binding -- checked
+directly against the target function's own `type_variable_count`, not
+just against whether `[...]` was written at the reference site itself,
+so a generic method referenced with no explicit type arguments at all
+is still correctly rejected. **Instance methods** (`obj.method`, no
+call) remain out of scope entirely -- a genuinely different, separate
+mechanism (`DIAMOND_OP_INVOKE`, with the receiver read from a register
+at the call site, not baked in as a compile-time constant the way a
+class/module receiver already is): a bare `obj.method` reference would
+need the wrapper to *capture* the receiver, becoming a real capturing
+closure and losing the automatic `Thread.new`-safety this feature's
+zero-capture wrappers get for free. Not what motivated this feature
+(`packages/dials` only ever needed class/module-level references); a
+separate, larger design question if it's ever needed.
+
 ## Deliberate constraints
 
 - No Ruby compatibility guarantee.

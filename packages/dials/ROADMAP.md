@@ -30,19 +30,26 @@ Each of these was considered and explicitly deferred, not overlooked:
   ordinary class with `self.` action methods -- there's no shared state
   or template-method behavior `self.` dispatch (already dynamic per
   class) would benefit from inheriting, so this stays a documented
-  convention (README's "Why controllers still need one small shim
-  function per action"), not a type to subclass.
-- **Eliminating the one-shim-per-action requirement.** Confirmed
-  directly, not assumed, before accepting this as permanent v1 scope:
-  a class-owned `self.` method genuinely cannot be referenced as a bare
-  value in Diamond today (`AuthorsController.show` with no call is a
-  parse error), and `ClassName.compile_method` can't synthesize a
-  trampoline around it either -- a synthesized method body can't name an
-  external class it was never told about (that mechanism's own
-  documented limitation, `docs/design.md`'s "Runtime method synthesis"
-  section). No workaround exists within Diamond's current constraints;
-  revisit only if the language itself grows a way to reference a `self.`
-  method as a value.
+  convention (README's "Controllers"), not a type to subclass.
+
+## Resolved
+
+- **The one-shim-per-action requirement -- resolved in Diamond itself,
+  not worked around here.** This section used to say a class-owned
+  `self.` method could never be referenced as a bare value in Diamond,
+  confirmed directly at the time (`ClassName.compile_method` couldn't
+  synthesize a trampoline around one either, since a synthesized method
+  body can't name an external class it was never told about), and
+  concluded "revisit only if the language itself grows a way to
+  reference a `self.` method as a value." It did: `ClassName.method`/
+  `ModuleName.method` with no call is now a `Callable` value (see
+  `docs/design.md`'s "Bare singleton method references" and `docs/
+  syntax.md`'s section of the same name) -- turned out buildable with no
+  VM/opcode changes at all, since `ClassName.method(...)` was already
+  fully resolved at compile time, never runtime-dispatched, so a
+  synthesized wrapper reusing that same compiled shape had nothing
+  dynamic to get wrong. Routes here now pass `AuthorsController.show`
+  directly; see README's "Controllers".
 
 ## Open questions
 
