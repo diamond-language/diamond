@@ -157,4 +157,22 @@ assert_contains "$actual" '<body><h1>Welcome, &lt;script&gt;World&lt;/script&gt;
 assert_contains "$actual" '</body></html>'
 count=$((count + 1))
 
+# --- omitting the output path writes under a `.cache/` directory next
+# to the source, not beside it directly -- creating `.cache/` itself if
+# it doesn't already exist (see README's "Compiling a template") ---
+mkdir -p "$work/views"
+cat >"$work/views/cached.html.div" <<'DRBEOF'
+<%# locals: %><p>cached</p>
+DRBEOF
+"$diamond" bin/divc.di "$work/views/cached.html.div" >/dev/null
+[[ -f "$work/views/.cache/cached.html.di" ]]
+[[ ! -f "$work/views/cached.html.di" ]]
+cat >"$work/driver_cache.di" <<DRIVEREOF
+require "$work/views/.cache/cached.html"
+puts(cached_html())
+DRIVEREOF
+actual="$("$diamond" "$work/driver_cache.di")"
+assert_contains "$actual" '<p>cached</p>'
+count=$((count + 1))
+
 echo "$count div tests passed"

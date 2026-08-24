@@ -29,11 +29,22 @@ depend on it via `facet` (see
 
 ```
 diamond packages/div/bin/divc.di views/index.html.div
-# -> views/index.html.di (trailing ".div" swapped for ".di")
+# -> views/.cache/index.html.di (trailing ".div" swapped for ".di",
+#    written under a .cache/ directory next to the source rather than
+#    beside it -- .cache/ is created automatically if it doesn't exist)
 
 diamond packages/div/bin/divc.di views/index.html.div views/index.html.di
-# -> explicit output path
+# -> explicit output path, .cache/ convention bypassed entirely
 ```
+
+Compiled output never sits next to its own `.html.div` source by
+default -- a stray generated `.di` file there is easy to mistake for
+something hand-written. `require` from your own app code should point at
+the `.cache/` path (`require "./views/.cache/index.html"`, not
+`require "./views/index.html"`), and `.gitignore` the whole `.cache/`
+directory, not an individual-file pattern -- see the repo's own root
+`.gitignore` entry for `examples/library/views/.cache/` as a worked
+example.
 
 The generated function is named after the *input file's own basename*,
 not a fixed `render` -- `views/index.html.div` compiles to
@@ -90,8 +101,8 @@ call one from the other:
 # greeting.html.div: <%# locals: name %><%= name %>!
 # page.html.div:     <%# locals: name %><p>Hi, <%== greeting_html(name) %></p>
 
-require "./greeting.html"
-require "./page.html"
+require "./.cache/greeting.html"
+require "./.cache/page.html"
 puts(page_html("World"))   # => <p>Hi, World!</p>
 ```
 
@@ -119,8 +130,8 @@ reason:
 # <%# locals: name %>
 # <h1>Welcome, <%= name %></h1>
 
-require "./layout.html"
-require "./index.html"
+require "./.cache/layout.html"
+require "./.cache/index.html"
 puts(layout_html("Home", index_html("World")))
 ```
 
@@ -157,7 +168,7 @@ Div.html_response(200, body, extra_headers)
 ```ruby
 require "path/to/rack/lib/rack"
 require "path/to/div/lib/div/runtime"
-require "views/index.html"   # -> index_html(...)
+require "views/.cache/index.html"   # -> index_html(...)
 
 def app_handler(request, context)
   Div.html_response(200, index_html("Welcome", ["a", "b"]))

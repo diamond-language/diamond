@@ -51,6 +51,25 @@ Each of these was considered and explicitly deferred, not overlooked:
   surfaces" pattern (see `packages/arel/ROADMAP.md`'s "additional
   operators" decision).
 
+- **Compiled output moved under `.cache/`.** `divc.di` used to default to
+  writing `index.html.di` right next to `index.html.div`; it now writes
+  under a `.cache/` subdirectory next to the source instead
+  (`views/index.html.div` -> `views/.cache/index.html.di`), creating
+  `.cache/` itself (`Process.run(["mkdir","-p",...])`) if it doesn't
+  already exist -- self-sufficient regardless of what invokes it, not
+  dependent on a caller script remembering to `mkdir -p` first. Motivated
+  directly: a generated `.di` file sitting next to hand-written source is
+  easy to mistake for something hand-written, and scattered generated
+  files are harder to `.gitignore`/clean than one directory. An explicit
+  second CLI argument still bypasses this entirely, unchanged.
+  `examples/library/compile_views.sh` was also changed to wipe
+  `views/.cache/` and rebuild every view fresh on each run, rather than
+  only whatever changed -- the translator is fast enough that this costs
+  nothing noticeable, and it's the simplest way to guarantee there's
+  never a stale compiled file (from a renamed/deleted source, say)
+  silently still in use, without needing any mtime/staleness-tracking
+  logic at all.
+
 ## Open questions
 
 - **Cross-directory basename collisions.** Two input files sharing a
@@ -60,7 +79,12 @@ Each of these was considered and explicitly deferred, not overlooked:
   needs either a directory-derived prefix or a genuine namespacing
   mechanism -- neither implemented; revisit if this shows up in practice
   rather than solving it preemptively.
-- **A `facet`/Makefile build step.** Right now `divc.di` is invoked by
-  hand per file. A `make templates` -style batch-compile convenience (all
-  `**/*.html.div` under a directory) would be a natural small addition
-  once a real consuming app's workflow asks for it.
+- **A `facet`/Makefile build step -- partially resolved, not generalized.**
+  `examples/library/compile_views.sh` is exactly this convenience,
+  built once a real consuming app's workflow actually asked for it
+  (this package's own stated bar) -- but it's app-local: a flat,
+  non-recursive loop over one hardcoded `views/*.html.div`, not
+  something `packages/div` itself ships or that recurses through
+  subdirectories. A real `**/*.html.div`-style general-purpose version
+  (in this package, or a `facet`/Makefile target) is still undone;
+  revisit once a second consuming app's own workflow needs one too.
