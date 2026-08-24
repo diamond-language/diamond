@@ -33,14 +33,16 @@ Each of these was considered and explicitly deferred, not overlooked:
   otherwise: Diamond's own `yield` is a hard reserved keyword (already
   meaning "suspend the current Fiber," `DIAMOND_TOKEN_YIELD` in
   `src/lexer.c`), so it was never reusable as a placeholder name in the
-  first place, and (true when this was written; `def foo(*rest)`-style
-  variadic parameter *definitions* exist now, see docs/design.md's
-  "Splat/variadic parameters," but call-site *spread* -- expanding an
-  existing Array into positional arguments, the actual piece a generic
-  forwarding helper would need -- still doesn't) Diamond had no way to
-  forward an arbitrary caller-supplied argument list into another call,
-  ruling out a generic helper that forwards an arbitrary layout
-  parameter list. What's left is exactly a layout being an ordinary
+  first place, and (true when this was written; both `def foo(*rest)`
+  variadic parameter *definitions* and `foo(*array)` call-site *spread*
+  exist now, see docs/design.md's "Splat/variadic parameters" and
+  "Call-site spread" -- but spread's own first version only calls a
+  statically-named top-level function, not an arbitrary `Callable`
+  *value*, which is exactly what a generic "call whichever layout
+  function was passed in" helper would need) Diamond had no way to
+  forward an arbitrary caller-supplied argument list into a dynamically-
+  chosen call, ruling out a generic helper that forwards an arbitrary
+  layout parameter list. What's left is exactly a layout being an ordinary
   template with an ordinary declared local holding the already-rendered
   child output -- no new compiler/translator mechanism, just a naming
   convention. See README's "Layouts" section for the worked example.

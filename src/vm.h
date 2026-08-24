@@ -256,6 +256,17 @@ typedef enum DiamondOpCode : uint8_t {
      * up to `register_count` copied values now (see run_chunk's own
      * bounds fix, same section). */
     DIAMOND_OP_COLLECT_VARIADIC,
+    /* `foo(*array)` -- call-site spread, the caller-side counterpart to
+     * DIAMOND_OP_COLLECT_VARIADIC. Unlike DIAMOND_OP_CALL, there's no
+     * compile-time argument count operand at all: the Array's own
+     * runtime `count` becomes the call's argument_count, and its own
+     * backing storage (already a contiguous DiamondValue* -- an Array's
+     * normal in-memory shape) is passed straight to run_chunk as
+     * `arguments`, no copy needed. Deliberately narrow first slice: only
+     * a bare top-level function call, and only when the spread argument
+     * is the call's *sole* argument -- see docs/design.md's "Call-site
+     * spread" section. */
+    DIAMOND_OP_CALL_SPREAD,
     DIAMOND_OP_COUNT,
 } DiamondOpCode;
 

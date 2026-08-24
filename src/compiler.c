@@ -1413,6 +1413,38 @@ static uint16_t parse_call(Compiler *compiler, DiamondSpan name) {
     }
     advance_token(compiler);
     skip_newlines(compiler);
+    /* `foo(*array)` -- call-site spread. Only recognized when it's the
+     * very first token of the argument list and (checked below) the
+     * only argument -- `foo(1, *array)`/`foo(*array, 2)` aren't
+     * supported in this first slice, a deliberate scope cut matching
+     * this language's usual narrow-first-slice shape, not an oversight.
+     * Also not attempted alongside generic type arguments
+     * (`foo[T](*array)`) -- falls through to the ordinary parse below,
+     * which fails on the unexpected `*` with a real, if not maximally
+     * specific, parse error. */
+    if(type_argument_count==0&&compiler->current.kind==DIAMOND_TOKEN_STAR) {
+        advance_token(compiler); /* consume '*' */
+        skip_newlines(compiler);
+        const uint16_t array_register=parse_expression(compiler);
+        skip_newlines(compiler);
+        if(compiler->current.kind==DIAMOND_TOKEN_COMMA) {
+            fail(compiler,compiler->current.span,
+                 "a spread argument (*expr) must be the only call argument");
+            return 0;
+        }
+        if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
+            fail(compiler,compiler->current.span,
+                 "expected ')' after spread argument");
+            return 0;
+        }
+        advance_token(compiler);
+        const uint16_t destination=allocate_register(compiler);
+        emit_opcode(compiler,DIAMOND_OP_CALL_SPREAD);
+        emit_register(compiler,destination);
+        emit_function_index(compiler,(size_t)function_index);
+        emit_register(compiler,array_register);
+        return destination;
+    }
     /* Keyword arguments (direct top-level calls only -- see docs/roadmap.md):
      * each argument is placed into its declared positional slot rather than
      * appended, so a keyword can fill any parameter regardless of the order

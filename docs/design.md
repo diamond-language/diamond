@@ -1240,14 +1240,81 @@ annotations against each other (not a live value), and Diamond's type
 syntax has no way to spell "variadic" in a `Callable[N]` annotation at
 all -- so that comparison needed no change.
 
-**Deliberately out of scope for this first version:** call-site spread
-(`foo(*array)`); a type annotation on the variadic parameter itself
-(`*name: Array[Foo]`); keyword arguments after a variadic parameter (the
-parser rejects any parameter following one); `delegate`/`compile_method`
-growing their own splat-target support (both remain separately scoped,
-per their own existing documentation); a variadic parameter interacting
-with a keyword-argument call site targeting it by name specifically --
-untested, undocumented behavior, not a guaranteed-safe one.
+**Deliberately out of scope for this first version:** a type annotation
+on the variadic parameter itself (`*name: Array[Foo]`); keyword
+arguments after a variadic parameter (the parser rejects any parameter
+following one); `delegate`/`compile_method` growing their own
+splat-target support (both remain separately scoped, per their own
+existing documentation); a variadic parameter interacting with a
+keyword-argument call site targeting it by name specifically --
+untested, undocumented behavior, not a guaranteed-safe one. Call-site
+spread (`foo(*array)`) was the one item on this list added since -- see
+its own section immediately below.
+
+### Call-site spread
+
+**Done, in scope, deliberately narrow.** `foo(*array)` expands an
+`Array`'s elements into `foo`'s positional arguments at the call site --
+the caller-side counterpart to a variadic parameter *definition*, above.
+Scoped to a direct call to a top-level `def` only (`parse_call`, `src/
+compiler.c` -- the same restriction keyword arguments already have, for
+the same reason: it's the one call form the compiler resolves to one
+statically-known callee), and only when the spread argument is the
+call's *sole* argument -- `foo(1, *array)`/`foo(*array, 2)` aren't
+supported; recognized only when `*` is the very first token after `(`,
+so a mixed call falls through to the ordinary argument parser and fails
+there instead (a real parse error, just not this feature's own
+purpose-written one -- an accepted, deliberate scope cut, not an
+oversight).
+
+**Why this needed a genuinely new opcode, not a compiler trick.** Every
+ordinary call site bakes its argument count as a compile-time-constant
+bytecode operand (a `uint8_t`, read via `READ_BYTE` at every existing
+`CALL`/`INVOKE`-family opcode) -- fundamentally incompatible with a
+spread argument, whose length is a runtime value. `DIAMOND_OP_CALL_
+SPREAD` (`src/vm.c`) carries no argument-count operand at all: at
+runtime, it reads the spread value's own `DiamondArray.count` and passes
+that straight through to `run_chunk` as `argument_count`. The arity
+check (same relaxed-for-`has_variadic` shape as every other call site,
+see "Splat/variadic parameters" above) happens entirely at runtime here,
+unlike an ordinary call to a statically-known callee, which the compiler
+already validates ahead of time where it can.
+
+**No copy needed.** `run_chunk` takes `(const DiamondValue *arguments,
+size_t argument_count)` -- and a `DiamondArray`'s own backing storage
+(`values`/`count`, `src/object.h`) is already exactly that shape. `DIAMOND_
+OP_CALL_SPREAD` passes `spread->values`/`spread->count` straight through,
+no intermediate buffer, the same way an ordinary call already passes a
+live pointer straight from its *own* caller's registers
+(`&registers[argument_base]`) into a nested `run_chunk` frame without
+copying. GC safety follows the same existing invariant that pattern
+already relies on: the spread `Array` stays reachable for the whole
+call because it's still sitting in a live register (`registers[array_
+register]`) in the calling frame, the same as any other in-use register
+during a nested call -- not a fresh, as-yet-unrooted allocation needing
+`gc_protect` (contrast `method_missing_helper`'s own `args_array`, built
+fresh from raw arguments and explicitly protected until it's stored
+somewhere reachable).
+
+**A second, unrelated benefit, not the point of this feature but worth
+noting:** spread has no 16-argument-expression ceiling the way a literal
+call site does (`compiler.c`'s fixed 16-slot argument-parsing buffers,
+present at every call form) -- a spread `Array` can be any length
+`run_chunk`'s own bounds already tolerate (its `argument_count >
+DIAMOND_REGISTER_COUNT` sanity check, 4096, and the `has_variadic`-aware
+bounds fix from "Splat/variadic parameters" above), since nothing about
+spread parses one argument expression per element.
+
+**Deliberately out of scope for this first version:** method calls
+(`obj.method(*array)`), `self.`/module singleton calls, `ClassName.new
+(*array)`, and calling a `Callable` *value* directly (`callable(*array)`)
+-- all a real, separate extension of the same idea (each has its own
+call-compilation path in `compiler.c`, several of them already
+constrained by a fixed 17-`DiamondValue` stack buffer for the
+non-spread case, see "Splat/variadic parameters" above), not attempted
+here; mixing a spread argument with ordinary positional/keyword
+arguments at the same call site; spreading into a generic function call
+(`foo[T](*array)`).
 
 ## Deliberate constraints
 

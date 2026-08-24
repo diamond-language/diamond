@@ -476,18 +476,53 @@ feature like this (see `delegate`'s own "bare parameter names only"):
 - must be the *last* parameter, and at most one per parameter list;
 - bare name only — no `: Type` annotation, no `= default` (neither means
   anything for a collected `Array`);
-- a call site can still only ever supply at most 16 argument expressions
-  in total, variadic or not — a pre-existing limit on every call form
-  (`"too many call arguments"`), not something specific to this feature;
-- no call-site *spread* (`foo(*some_array)`, expanding an existing
-  `Array` into positional arguments) — a separate, caller-side feature,
-  not implemented here. Passing an `Array` as one ordinary argument, or
-  building the call some other way, is unaffected by this limitation.
+- a *literal* call site can still only ever supply at most 16 argument
+  expressions in total, variadic or not — a pre-existing limit on every
+  call form (`"too many call arguments"`), not something specific to
+  this feature. Call-site spread (below) isn't subject to it, since a
+  spread argument's length is a runtime value, not one argument
+  expression per element.
 
 A variadic parameter widens `Callable[N]` matching too: a variadic
 closure/function satisfies `Callable[N]` for any `N` at or above its own
 required-argument count, not just an exact match — see docs/design.md's
 "Splat/variadic parameters" section for the full mechanism.
+
+### Call-site spread
+
+```ruby
+def sum3(a, b, c)
+  a + b + c
+end
+args = [1, 2, 3]
+sum3(*args)          # => 6
+
+def sum(*nums)
+  total = 0
+  nums.each() do |n| total += n end
+  total
+end
+sum(*(1..50).to_a())  # => 1275, no 16-argument-expression limit here
+```
+
+`foo(*array)` expands an `Array`'s elements into `foo`'s positional
+arguments at the call site — the caller-side counterpart to a variadic
+*parameter* above. A first, deliberately narrow slice:
+
+- only a direct call to a top-level `def` (the same restriction keyword
+  arguments already have) — not a method call, a `self.`/module
+  singleton call, `ClassName.new`, or calling a `Callable` value
+  directly;
+- the spread argument must be the call's *only* argument — `foo(1,
+  *array)`/`foo(*array, 2)` aren't supported in this version;
+- arity is checked against the Array's actual length at *runtime*
+  (unlike an ordinary call, which the compiler validates against a
+  statically-known callee's arity where it can) — too few or too many
+  elements for a non-variadic target still raises `ArgumentError`, same
+  message as any other arity mismatch; a non-`Array` argument raises
+  `TypeError`.
+
+See docs/design.md's "Call-site spread" section for the full mechanism.
 
 ## Classes
 

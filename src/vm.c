@@ -9533,6 +9533,58 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 registers[destination]=call_result;
                 break;
             }
+            case DIAMOND_OP_CALL_SPREAD: {
+                uint16_t destination=0,function_index=0,array_register=0;
+                READ_SHORT(destination);READ_SHORT(function_index);
+                READ_SHORT(array_register);
+                if((size_t)function_index>=chunk->function_count)
+                    VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
+                if(registers[array_register].kind!=DIAMOND_VALUE_OBJECT||
+                   registers[array_register].as.object->kind!=DIAMOND_OBJECT_ARRAY) {
+                    snprintf(vm->error,sizeof vm->error,
+                        "spread argument (*expr) must be an Array");
+                    VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                }
+                const DiamondArray *spread=
+                    (const DiamondArray *)registers[array_register].as.object;
+                const DiamondFunction *function=chunk->functions[function_index];
+                if(spread->count<function->required_arity||
+                   (spread->count>function->arity && !function->has_variadic))
+                    VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                const DiamondChunk called_chunk={
+                    .name=function->name,.code=function->code,
+                    .lines=function->lines,.columns=function->columns,
+                    .code_count=function->code_count,
+                    .constants=function->constants,
+                    .constant_count=function->constant_count,
+                    .strings=function->strings,.string_count=function->string_count,
+                    .type_sets=function->type_sets,
+                    .type_set_count=function->type_set_count,
+                    .functions=chunk->functions,.function_count=chunk->function_count,
+                    .classes=chunk->classes,.class_count=chunk->class_count,
+                    .interfaces=chunk->interfaces,.interface_count=chunk->interface_count,
+                    .parameter_type_sets=function->parameter_type_sets,
+                    .type_variable_count=function->type_variable_count,
+                    .parameter_offset=function->owner_class==UINT8_MAX?0:1,
+                    .register_count=function->register_count,
+                    .has_variadic=function->has_variadic,
+                };
+                DiamondValue spread_result=DIAMOND_NIL;
+                /* spread->values is already a plain contiguous
+                 * DiamondValue* -- an Array's normal in-memory shape --
+                 * so it's passed straight to run_chunk as `arguments`,
+                 * no copy needed, the same way an ordinary call already
+                 * passes a live pointer into its own caller's registers
+                 * (&registers[argument_base] above) into a nested
+                 * run_chunk frame. `spread` itself stays reachable
+                 * throughout via registers[array_register], the same
+                 * live root any other in-use register already is. */
+                const DiamondVmStatus spread_status=run_chunk(&called_chunk,vm,
+                    spread->values,spread->count,depth+1,nullptr,&spread_result);
+                VM_PROPAGATE(spread_status);
+                registers[destination]=spread_result;
+                break;
+            }
             case DIAMOND_OP_CLOSURE: {
                 uint16_t dest=0;uint8_t count=0;uint16_t index=0;
                 READ_SHORT(dest);READ_SHORT(index);READ_BYTE(count);

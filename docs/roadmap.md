@@ -339,13 +339,18 @@ silent one. Revisit if self-hosting work ever resumes in earnest.
 
 Do not infer arity from an untyped target or add Rails-style name-only
 delegation in this slice. Arbitrary forwarding needs call-site *spread*
-(`foo(*array)`, expanding an existing Array into positional arguments) --
-still undone, and a separate concern from the variadic *parameter
-definitions* (`def foo(*rest)`) added since this section was first
-written (see docs/design.md's "Splat/variadic parameters"); `delegate`
-itself doesn't grow splat-target support in that slice either, so this
-line's own conclusion is unchanged, just no longer for the reason "no
-variadic support exists at all." `delegate_missing_to` additionally
+(`foo(*array)`, expanding an existing Array into positional arguments),
+a separate concern from the variadic *parameter definitions*
+(`def foo(*rest)`) added since this section was first written -- both
+now exist (see docs/design.md's "Splat/variadic parameters" and "Call-site
+spread"), but neither closes this gap for `delegate` specifically:
+`delegate`'s own generated call is `@ivar.name(params)`, a *method*
+call, and call-site spread's first version is deliberately scoped to a
+bare top-level `def` call only (`docs/design.md`'s own "Call-site
+spread" section lists a method call as explicitly out of scope) --
+`delegate` itself also doesn't grow splat-target support in this slice.
+This line's own conclusion is unchanged, just no longer for the reason
+"no variadic support exists at all." `delegate_missing_to` additionally
 depends on a general missing-method protocol. Both remain separate
 future design questions.
 
