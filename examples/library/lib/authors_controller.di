@@ -1,15 +1,16 @@
 class AuthorsController
-  def self.index(request, context)
+  def self.index(request, context, params)
     db = Database.get(context)
     authors = Author.all().order("name").to_a(db)
     Div.html_response(200, layout_html("Authors", authors_table_html(authors)))
   end
 
-  def self.show(request, context, id)
+  def self.show(request, context, params)
     db = Database.get(context)
+    id = params["id"].to_i()
     author = Author.find(db, id)
     if author == nil
-      return Response.not_found(request["path"])
+      return Dials::Response.not_found(request["path"])
     end
     content = author_show_html(id, author.name(), author.country(), author.books(db))
     Div.html_response(200, layout_html(author.name(), content))
@@ -26,7 +27,7 @@ class AuthorsController
     db = Database.get(context)
     author = if id == nil then Author.new({"name": "", "country": ""}) else Author.find(db, id) end
     if id != nil && author == nil
-      return Response.not_found(request["path"])
+      return Dials::Response.not_found(request["path"])
     end
     action = if id == nil then "/authors" else "/authors/#{id}" end
     title = if id == nil then "New author" else "Edit author" end
@@ -35,35 +36,35 @@ class AuthorsController
     Div.html_response(200, layout_html(title, content))
   end
 
-  def self.new_form(request, context) = AuthorsController.form(request, context, nil)
-  def self.edit(request, context, id) = AuthorsController.form(request, context, id)
+  def self.new_form(request, context, params) = AuthorsController.form(request, context, nil)
+  def self.edit(request, context, params) = AuthorsController.form(request, context, params["id"].to_i())
 
-  def self.create(request, context)
+  def self.create(request, context, params)
     db = Database.get(context)
-    form = Form.parse(request)
-    Author.create(db, {"name": form["name"], "country": form["country"]})
-    Response.redirect("/authors", "created")
+    Author.create(db, {"name": params["name"], "country": params["country"]})
+    Dials::Response.redirect("/authors", "created")
   end
 
-  def self.update(request, context, id)
+  def self.update(request, context, params)
     db = Database.get(context)
+    id = params["id"].to_i()
     author = Author.find(db, id)
     if author == nil
-      return Response.not_found(request["path"])
+      return Dials::Response.not_found(request["path"])
     end
-    form = Form.parse(request)
-    author.name = form["name"]
-    author.country = form["country"]
+    author.name = params["name"]
+    author.country = params["country"]
     author.save(db)
-    Response.redirect("/authors/#{id}", "updated")
+    Dials::Response.redirect("/authors/#{id}", "updated")
   end
 
-  def self.destroy(request, context, id)
+  def self.destroy(request, context, params)
     db = Database.get(context)
+    id = params["id"].to_i()
     author = Author.find(db, id)
     if author != nil
       author.destroy(db)
     end
-    Response.redirect("/authors", "deleted")
+    Dials::Response.redirect("/authors", "deleted")
   end
 end

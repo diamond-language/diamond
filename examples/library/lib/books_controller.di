@@ -7,25 +7,26 @@ class BooksController
     ActiveRecord::BelongsTo.new(Author.repository()).preload(db, author_ids)
   end
 
-  def self.index(request, context)
+  def self.index(request, context, params)
     db = Database.get(context)
     books = Book.all().order("year").to_a(db)
     content = books_table_html(books, BooksController.authors_by_id(db, books))
     Div.html_response(200, layout_html("Books", content))
   end
 
-  def self.available(request, context)
+  def self.available(request, context, params)
     db = Database.get(context)
     books = Book.where({"available": 1}).order("year").to_a(db)
     content = books_table_html(books, BooksController.authors_by_id(db, books))
     Div.html_response(200, layout_html("Available books", content))
   end
 
-  def self.show(request, context, id)
+  def self.show(request, context, params)
     db = Database.get(context)
+    id = params["id"].to_i()
     book = Book.find(db, id)
     if book == nil
-      return Response.not_found(request["path"])
+      return Dials::Response.not_found(request["path"])
     end
     # book.author(db) can be nil -- there's no cascading delete here (see
     # AuthorsController.destroy), so a book can outlive its author.
@@ -44,7 +45,7 @@ class BooksController
       Book.find(db, id)
     end
     if id != nil && book == nil
-      return Response.not_found(request["path"])
+      return Dials::Response.not_found(request["path"])
     end
     authors = Author.all().order("name").to_a(db)
     action = if id == nil then "/books" else "/books/#{id}" end
@@ -54,41 +55,43 @@ class BooksController
     Div.html_response(200, layout_html(title, content))
   end
 
-  def self.new_form(request, context) = BooksController.form(request, context, nil)
-  def self.edit(request, context, id) = BooksController.form(request, context, id)
+  def self.new_form(request, context, params) = BooksController.form(request, context, nil)
+  def self.edit(request, context, params) = BooksController.form(request, context, params["id"].to_i())
 
-  def self.attributes_from_form(form: Hash)
-    {"title": form["title"], "author_id": form["author_id"].to_i(),
-     "year": form["year"].to_i(), "available": form["available"].to_i()}
+  def self.attributes_from_form(params: Hash)
+    {"title": params["title"], "author_id": params["author_id"].to_i(),
+     "year": params["year"].to_i(), "available": params["available"].to_i()}
   end
 
-  def self.create(request, context)
+  def self.create(request, context, params)
     db = Database.get(context)
-    Book.create(db, BooksController.attributes_from_form(Form.parse(request)))
-    Response.redirect("/books", "created")
+    Book.create(db, BooksController.attributes_from_form(params))
+    Dials::Response.redirect("/books", "created")
   end
 
-  def self.update(request, context, id)
+  def self.update(request, context, params)
     db = Database.get(context)
+    id = params["id"].to_i()
     book = Book.find(db, id)
     if book == nil
-      return Response.not_found(request["path"])
+      return Dials::Response.not_found(request["path"])
     end
-    values = BooksController.attributes_from_form(Form.parse(request))
+    values = BooksController.attributes_from_form(params)
     book.title = values["title"]
     book.author_id = values["author_id"]
     book.year = values["year"]
     book.available = values["available"]
     book.save(db)
-    Response.redirect("/books/#{id}", "updated")
+    Dials::Response.redirect("/books/#{id}", "updated")
   end
 
-  def self.destroy(request, context, id)
+  def self.destroy(request, context, params)
     db = Database.get(context)
+    id = params["id"].to_i()
     book = Book.find(db, id)
     if book != nil
       book.destroy(db)
     end
-    Response.redirect("/books", "deleted")
+    Dials::Response.redirect("/books", "deleted")
   end
 end

@@ -3,10 +3,11 @@
 # Callables, and Diamond classes are compile-time metadata, not first-class
 # runtime values (docs/roadmap.md's "Classes as ordinary runtime objects"
 # section) -- there is no way to hand rack_compose a class or an instance
-# in place of a bare, zero-capture `def` reference. `route` is a one-line
-# shim into Router.dispatch, the same pattern rack's own
-# `rack_terminal_wrap` uses internally for an app handler.
-def route(request, context) = Router.dispatch(request, context)
+# in place of a bare, zero-capture `def` reference. `route`'s own
+# Dials::RouterHolder.get(build_router) is exactly RackChain's own
+# per-worker-memoized-singleton pattern, reused for the same reason
+# here -- see packages/dials/README.md's "Wiring into rack/gremlin".
+def route(request, context) = Dials::RouterHolder.get(build_router).dispatch(request, context)
 
 def logging_middleware(request, context, forward)
   response = forward(request, context)

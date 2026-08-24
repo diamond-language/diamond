@@ -6,6 +6,7 @@ An end-to-end smoke test wiring together everything in `packages/`:
 [`active_record`](../../packages/active_record/README.md) (`ActiveRecord::Model`
 layer) → [`gremlin`](../../packages/gremlin/README.md) (server) →
 [`rack`](../../packages/rack/README.md) (middleware) →
+[`dials`](../../packages/dials/README.md) (routing/controllers) →
 [`div`](../../packages/div/README.md) (view templates). Not a package
 itself -- just a small app proving the pieces actually compose.
 
@@ -26,12 +27,12 @@ setup_db.di                     creates and seeds library.db
 lib/
   database.di                   per-worker SQLite connection
   author.di, book.di            ActiveRecord::Model classes
-  response.di                   Response.text/.redirect/.not_found (HTML responses go through
-                                 Div.html_response directly -- see "Views" below)
-  form.di                       Form.decode/.parse -- request body/query parsing
-  authors_controller.di         AuthorsController -- one self. method per route action
+  authors_controller.di         AuthorsController -- one self. method per route action,
+                                 (request, context, params)
   books_controller.di           BooksController, same
-  router.di                     Router -- path parsing and dispatch
+  routes.di                     one bare top-level shim function per controller action, plus
+                                 build_router() -- see packages/dials/README.md's "Why
+                                 controllers still need one small shim function per action"
   middleware.di                 route/logging_middleware/timing_middleware/app -- still plain
                                  top-level functions, a real language constraint (see the
                                  comment at the top of that file), not a style choice
@@ -47,6 +48,21 @@ views/
 load-bearing (views before the controllers that call them, and
 `author_books_table.html` before `author_show.html`, which calls it as a
 partial).
+
+## Routing
+
+Requests are dispatched through a [`packages/dials`](../../packages/dials/README.md)
+`Dials::Router` (`lib/routes.di`'s `build_router()`), replacing what used
+to be a hand-written if/elsif chain (`Router.dispatch`). Path segments
+like `/authors/:id` capture into a `params` Hash merged with query/form
+params, so controller actions now take `(request, context, params)`
+instead of manually parsing an `id` out of the path themselves.
+Literal routes (`/authors/new`, `/books/available`) are registered
+*before* their same-shaped `:id`-capturing siblings on purpose -- first-
+match-wins semantics mean `:id` would otherwise swallow `"new"` as if it
+were an id. `Dials::Response` replaced this app's own former `Response`
+class verbatim (same three methods, just relocated to a real package);
+`Dials::Params.parse` similarly replaced `Form.parse`.
 
 ## Views
 

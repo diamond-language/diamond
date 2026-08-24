@@ -151,6 +151,9 @@ test-rack-package: $(TARGET)
 test-div-package: $(TARGET)
 	DIAMOND_BIN=$(CURDIR)/$(BUILD_DIR)/diamond bash packages/div/test.sh
 
+test-dials-package: $(TARGET)
+	DIAMOND_BIN=$(CURDIR)/$(BUILD_DIR)/diamond bash packages/dials/test.sh
+
 LSP_SOURCES := $(wildcard lsp/*.c)
 
 $(BUILD_DIR)/diamond-lsp: $(LSP_SOURCES) $(API_SOURCES) $(REGINOLD_LIB)
@@ -224,6 +227,7 @@ test-all:
 	$(MAKE) test-gremlin-package
 	$(MAKE) test-rack-package
 	$(MAKE) test-div-package
+	$(MAKE) test-dials-package
 	$(MAKE) test-lsp
 	$(MAKE) test-repl
 	$(MAKE) test-exit
