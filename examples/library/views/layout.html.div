@@ -1,0 +1,1 @@
+<%# locals: title, content %><!DOCTYPE html><html><head><title><%= title %></title></head><body><h1><%= title %></h1><p><a href="/">Home</a> | <a href="/authors">Authors</a> | <a href="/books">Books</a> | <a href="/books/available">Available books</a> | <a href="/authors/new">New author</a> | <a href="/books/new">New book</a></p><%== content %></body></html>

@@ -1,3 +1,4 @@
 /build/
 /examples/library/library.db
 /examples/library/server.log
+/examples/library/views/*.html.di

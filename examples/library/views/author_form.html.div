@@ -1,0 +1,1 @@
+<%# locals: action, name, country, submit %><form method="POST" action="<%= action %>"><p><label>Name: <input name="name" value="<%= name %>"></label></p><p><label>Country: <input name="country" value="<%= country %>"></label></p><p><button type="submit"><%= submit %></button></p></form>

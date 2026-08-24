@@ -1,0 +1,1 @@
+<%# locals: id, year, available, author, author_id %><p>Author: <% if author == nil %>unknown<% else %><a href="/authors/<%= author_id %>"><%= author.name() %></a><% end %></p><p>Published: <%= year %></p><p>Available: <%= available %></p><p><a href="/books/<%= id %>/edit">Edit book</a> | <form method="POST" action="/books/<%= id %>/delete"><button>Delete book</button></form></p>
