@@ -33,8 +33,12 @@ Each of these was considered and explicitly deferred, not overlooked:
   otherwise: Diamond's own `yield` is a hard reserved keyword (already
   meaning "suspend the current Fiber," `DIAMOND_TOKEN_YIELD` in
   `src/lexer.c`), so it was never reusable as a placeholder name in the
-  first place, and Diamond has no splat/variadic parameters (confirmed
-  via `docs/roadmap.md`'s "Explicit-arity method delegation" section),
+  first place, and (true when this was written; `def foo(*rest)`-style
+  variadic parameter *definitions* exist now, see docs/design.md's
+  "Splat/variadic parameters," but call-site *spread* -- expanding an
+  existing Array into positional arguments, the actual piece a generic
+  forwarding helper would need -- still doesn't) Diamond had no way to
+  forward an arbitrary caller-supplied argument list into another call,
   ruling out a generic helper that forwards an arbitrary layout
   parameter list. What's left is exactly a layout being an ordinary
   template with an ordinary declared local holding the already-rendered

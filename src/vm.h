@@ -246,6 +246,16 @@ typedef enum DiamondOpCode : uint8_t {
      * an ordinary rescuable TypeError/ArgumentError first -- only a valid
      * code actually terminates. See docs/design.md's "exit()" section. */
     DIAMOND_OP_EXIT,
+    /* Prologue of a `*name` (variadic) parameter's owning function/
+     * method/closure -- collects every argument beyond the fixed
+     * (non-variadic) parameter count into a fresh Array and stores it in
+     * the variadic parameter's own register. Reads the call's original,
+     * un-clamped `arguments`/`argument_count` (still live in run_chunk's
+     * own scope, see docs/design.md's "Splat/variadic parameters"
+     * section), not the callee's registers -- those only ever receive
+     * up to `register_count` copied values now (see run_chunk's own
+     * bounds fix, same section). */
+    DIAMOND_OP_COLLECT_VARIADIC,
     DIAMOND_OP_COUNT,
 } DiamondOpCode;
 
@@ -329,6 +339,11 @@ typedef struct DiamondMethod {
     uint16_t function_index;
     uint8_t arity;
     uint8_t required_arity;
+    /* Mirrors DiamondFunction.has_variadic (same meaning) -- duplicated
+     * here for the same reason arity/required_arity already are: fast
+     * dispatch-time arity checking without following function_index back
+     * to the full DiamondFunction first. */
+    bool has_variadic;
     bool included;
     bool is_private;
     bool needs_receiver;
@@ -517,6 +532,12 @@ typedef struct DiamondFunction {
     size_t type_set_count;
     uint8_t arity;
     uint8_t required_arity;
+    /* Set only by a trailing `*name` parameter -- when true, `arity - 1`
+     * is the count of ordinary (non-variadic) parameters, and the last
+     * parameter slot (parameter_names[arity-1]) holds an Array collecting
+     * every argument beyond that count rather than a single value. See
+     * docs/design.md's "Splat/variadic parameters" section. */
+    bool has_variadic;
     uint8_t owner_class;
     bool nested;
     uint8_t capture_count;
@@ -570,6 +591,14 @@ struct DiamondChunk {
     uint8_t parameter_offset;
     const DiamondTypeBinding *type_variable_bindings;
     uint16_t register_count;
+    /* Mirrors DiamondFunction/DiamondMethod.has_variadic for whichever
+     * function/method run_chunk is currently executing -- omitted (so
+     * false) at every DiamondChunk literal that isn't a real, possibly-
+     * variadic user function/method dispatch (Fiber/Thread bootstrap,
+     * ProgramBuilder-adopted programs, the top-level program entry,
+     * etc.), which is every construction site except the handful of
+     * actual call/invoke opcode handlers in src/vm.c. */
+    bool has_variadic;
     /* Index into `classes` of the class named "Range" (lib/core.di),
      * resolved once at the end of diamond_compile (by name, never
      * hardcoded -- confirmed directly that its index can shift with

@@ -1131,6 +1131,124 @@ considers open and owns, which is expected to include process-standard
 guarantee independent of libc/platform buffering-mode specifics rather
 than relying on it implicitly.
 
+### Splat/variadic parameters
+
+**Done, in scope.** `def foo(bar, baz, *other)` -- a trailing `*name`
+parameter collects every argument beyond the fixed (non-variadic) ones
+into an ordinary `Array`. Definition-side only: call-site *spread*
+(`foo(*array)`, expanding an existing `Array` into positional arguments)
+is a separate, caller-side feature, confirmed architecturally independent
+of this one (see below) and not implemented here. Motivated by
+`packages/div` and `delegate`/`compile_method`'s own documented "Diamond
+does not currently have variadic/splat call support" scope cuts
+(`docs/roadmap.md`); this closes that gap for parameter *definitions*,
+though `delegate`/`compile_method` themselves don't grow splat-target
+support in this slice.
+
+**Why call-site spread is a separate concern.** Every ordinary call is
+fixed-arity and contiguous-register at the call site: the compiler emits
+a compile-time-constant argument count, and `run_chunk` (`src/vm.c`)
+copies `arguments[0..argument_count)` straight into the callee's own low
+registers. A variadic parameter only touches the *definition* side of
+this -- the callee's own prologue, driven by the runtime `argument_count`
+it already receives (the same primitive `DIAMOND_OP_ARGUMENT_PROVIDED`,
+below, already exposes for ordinary default parameters). Spreading an
+`Array` into a caller's own argument registers is a completely different,
+untouched problem on the opposite side of the call.
+
+**Compiler** (`compile_definition`'s parameter loop, `src/compiler.c`):
+`*name` must be the last parameter, at most one per list, bare name only
+-- no type annotation, no default (neither means anything for a
+collected `Array`), matching `delegate`'s own "bare parameter names
+only" scope cut. Sets a new `has_variadic` flag on `DiamondFunction`
+(mirrored onto `DiamondMethod` and, per call site, the transient
+`DiamondChunk` view `run_chunk` actually operates on -- the same
+threading `arity`/`parameter_type_sets`/`register_count` already get),
+and increments `arity` for the variadic parameter's own register/name
+slot without incrementing `required_arity` -- zero trailing arguments is
+always valid.
+
+**A new opcode, `DIAMOND_OP_COLLECT_VARIADIC`**, emitted as the first
+instruction of a variadic function/method/closure's own prologue:
+operands are the destination register (the variadic parameter's own) and
+an immediate `fixed_count` byte, baked in at compile time. At runtime:
+`trailing = argument_count > fixed_count ? argument_count - fixed_count
+: 0`, then `allocate_array(vm, &arguments[fixed_count], trailing)` --
+reading the call's *original* `arguments` pointer (a `run_chunk`
+parameter, still in scope for the whole function, including this
+prologue instruction), not `registers[]`, which a non-variadic-sized
+buffer would otherwise have to hold every trailing value in individually.
+
+**A real, riding-along correctness fix, not incidental.** `run_chunk`
+previously copied exactly `argument_count` values into `registers[]`
+unconditionally (`for (index=0;index<argument_count;index++) registers
+[index]=arguments[index];`), safe only because arity was always checked
+*before* `run_chunk` was ever called, so `argument_count` could never
+exceed the callee's own register high-water mark in practice. A variadic
+call breaks that invariant on purpose (a caller may now legitimately
+pass more arguments than the callee has registers for) -- left
+unfixed, that copy loop would write straight past the end of the
+`registers[]` buffer, a real out-of-bounds write, not a hypothetical
+one. Fixed with two paired changes: the copy loop bounds at
+`min(argument_count, live_register_count)` instead of always
+`argument_count`, and the sibling `argument_count > live_register_count`
+rejection immediately above it only applies when `!chunk->has_variadic`
+(a variadic callee is allowed to receive more arguments than it has
+registers for -- the excess never lands in an individual register at
+all, only `DIAMOND_OP_COLLECT_VARIADIC`'s own `Array`). Verified this is
+reachable, not just theoretical, before treating it as done: a variadic
+function with a small `register_count` called with `argument_count`
+comfortably exceeding it (`tests/cases/variadic_parameters.di`'s
+"sixteen args at one call site" case) reproduces the out-of-bounds write
+on the unfixed code path.
+
+**Every fixed-arity call site needed the same paired update**: the
+upper-bound check (`argument_count > arity`) relaxed to skip when
+`has_variadic`, with the lower-bound check (`argument_count <
+required_arity`) unchanged -- at both the compile-time known-callee
+sites (`compiler.c`, where the callee is resolved statically) and every
+runtime dispatch site (`DIAMOND_OP_CALL`/`_TYPED`, instance-method
+`INVOKE`/`_MONO`/`_TYPED`, `self.`-singleton dispatch, `super`,
+`ClassName.new`'s `#initialize` call, closure-value calls, and
+`Thread.new`'s entry-point check). Several of these dispatch through a
+fixed 17-`DiamondValue` stack buffer (receiver + up to 16 explicit
+arguments) that was previously safe only as an indirect consequence of
+the *old*, non-relaxed arity check (a non-variadic callee's `arity` is
+already capped at 16 by `compile_definition`'s own parameter-count
+limit, so `argc` could never exceed 16 there either) -- confirmed two
+call sites (`DIAMOND_OP_INVOKE_SELF_METHOD`, `DIAMOND_OP_THREAD_NEW`)
+had no *explicit* 16-argument guard of their own before this change, so
+each needed one added directly, not just the arity relaxation, to stay
+safe now that a variadic callee's upper bound is no longer implicitly 16.
+
+**`redefine_method`**'s existing exact-arity-match check gained a third
+term, `has_variadic`, alongside `arity`/`required_arity` -- a variadic
+replacement can only repoint an existing variadic method with the
+identical fixed/required shape, not a non-variadic one (their `arity`
+values can never coincide anyway: a variadic method's `arity` always
+exceeds its `required_arity` by at least one, for the variadic slot
+itself, which a same-arity non-variadic replacement can't match).
+
+**`Callable[N]` type-checking** (`value_matches_member`, matching a real
+closure/function *value* against a declared `Callable[N]` type): the
+existing range check already tolerated optional/default parameters by
+accepting any `N` between `required_arity` and `arity`; extended so a
+variadic function's upper bound is simply unbounded -- `N >=
+required_arity` alone. The *other* Callable-checking function in this
+same area, `runtime_member_satisfies`, compares two *declared* type
+annotations against each other (not a live value), and Diamond's type
+syntax has no way to spell "variadic" in a `Callable[N]` annotation at
+all -- so that comparison needed no change.
+
+**Deliberately out of scope for this first version:** call-site spread
+(`foo(*array)`); a type annotation on the variadic parameter itself
+(`*name: Array[Foo]`); keyword arguments after a variadic parameter (the
+parser rejects any parameter following one); `delegate`/`compile_method`
+growing their own splat-target support (both remain separately scoped,
+per their own existing documentation); a variadic parameter interacting
+with a keyword-argument call site targeting it by name specifically --
+untested, undocumented behavior, not a guaranteed-safe one.
+
 ## Deliberate constraints
 
 - No Ruby compatibility guarantee.

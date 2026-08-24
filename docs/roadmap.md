@@ -338,10 +338,16 @@ are kept green), and nothing in the self-hosted parser's own source uses
 silent one. Revisit if self-hosting work ever resumes in earnest.
 
 Do not infer arity from an untyped target or add Rails-style name-only
-delegation in this slice. Arbitrary forwarding depends on variadic/splat call
-support Diamond does not currently have; `delegate_missing_to` additionally
-depends on a general missing-method protocol. Both remain separate future
-design questions.
+delegation in this slice. Arbitrary forwarding needs call-site *spread*
+(`foo(*array)`, expanding an existing Array into positional arguments) --
+still undone, and a separate concern from the variadic *parameter
+definitions* (`def foo(*rest)`) added since this section was first
+written (see docs/design.md's "Splat/variadic parameters"); `delegate`
+itself doesn't grow splat-target support in that slice either, so this
+line's own conclusion is unchanged, just no longer for the reason "no
+variadic support exists at all." `delegate_missing_to` additionally
+depends on a general missing-method protocol. Both remain separate
+future design questions.
 
 ### Runtime method synthesis
 

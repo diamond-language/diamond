@@ -448,6 +448,47 @@ calls, and `ClassName.new(x: 1)` constructor calls all stay
 positional-only for now, since none of those resolve to one fixed target
 at compile time.
 
+### Variadic parameters
+
+```ruby
+def sum(*nums)
+  total = 0
+  nums.each() do |n| total += n end
+  total
+end
+sum()           # => 0, nums == []
+sum(1, 2, 3)    # => 6, nums == [1, 2, 3]
+
+def announce(name, *titles)
+  "#{titles.join(" ")} #{name}".strip()
+end
+announce("Ahab")                 # => "Ahab"
+announce("Ahab", "Captain")      # => "Captain Ahab"
+```
+
+A trailing `*name` parameter collects every argument beyond the ordinary
+(non-variadic) ones into a plain `Array` — zero extra arguments collects
+an empty one. Works on a top-level `def`, an instance method, a `self.`
+singleton method, and a `closure name() ... end` alike. Deliberately
+scoped narrow, matching this language's usual first-slice shape for a
+feature like this (see `delegate`'s own "bare parameter names only"):
+
+- must be the *last* parameter, and at most one per parameter list;
+- bare name only — no `: Type` annotation, no `= default` (neither means
+  anything for a collected `Array`);
+- a call site can still only ever supply at most 16 argument expressions
+  in total, variadic or not — a pre-existing limit on every call form
+  (`"too many call arguments"`), not something specific to this feature;
+- no call-site *spread* (`foo(*some_array)`, expanding an existing
+  `Array` into positional arguments) — a separate, caller-side feature,
+  not implemented here. Passing an `Array` as one ordinary argument, or
+  building the call some other way, is unaffected by this limitation.
+
+A variadic parameter widens `Callable[N]` matching too: a variadic
+closure/function satisfies `Callable[N]` for any `N` at or above its own
+required-argument count, not just an exact match — see docs/design.md's
+"Splat/variadic parameters" section for the full mechanism.
+
 ## Classes
 
 ```ruby

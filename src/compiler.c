@@ -1511,7 +1511,8 @@ static uint16_t parse_call(Compiler *compiler, DiamondSpan name) {
             fail(compiler,name,"missing argument");
             return 0;
         }
-    if (argument_count < function->required_arity||argument_count > function->arity) {
+    if (argument_count < function->required_arity||
+        (argument_count > function->arity && !function->has_variadic)) {
         fail(compiler, name, "wrong number of arguments");
         return 0;
     }
@@ -1630,7 +1631,8 @@ static uint16_t parse_singleton_call(Compiler *compiler,
         }
         arguments[argument_count++]=compile_block(compiler);
     }
-    if(argument_count<method->required_arity||argument_count>method->arity) {
+    if(argument_count<method->required_arity||
+       (argument_count>method->arity && !method->has_variadic)) {
         fail(compiler,name,"wrong number of arguments");return 0;
     }
     const size_t call_count=argument_count+(method->needs_receiver?1:0);
@@ -5835,6 +5837,21 @@ static uint16_t compile_definition(Compiler *compiler, bool captures_self) {
     skip_newlines(compiler);
     if (compiler->current.kind != DIAMOND_TOKEN_RIGHT_PAREN) {
         do {
+            /* `*name` -- a trailing variadic parameter, bare name only
+             * (no type annotation, no default -- neither makes sense for
+             * a collected Array), and must be the last parameter (no
+             * comma may follow it). See docs/design.md's "Splat/variadic
+             * parameters" section. */
+            bool is_variadic=false;
+            if(compiler->current.kind==DIAMOND_TOKEN_STAR) {
+                if(function->has_variadic) {
+                    fail(compiler,compiler->current.span,
+                         "a function can only declare one variadic parameter");
+                    break;
+                }
+                is_variadic=true;
+                advance_token(compiler);
+            }
             if (compiler->current.kind != DIAMOND_TOKEN_IDENTIFIER) {
                 fail(compiler, compiler->current.span, "expected parameter name");
                 break;
@@ -5861,6 +5878,51 @@ static uint16_t compile_definition(Compiler *compiler, bool captures_self) {
             }
             function->arity++;
             advance_token(compiler);
+            if(is_variadic) {
+                if(compiler->current.kind==DIAMOND_TOKEN_COLON) {
+                    fail(compiler,compiler->current.span,
+                         "a variadic parameter cannot have a type annotation");
+                    break;
+                }
+                if(compiler->current.kind==DIAMOND_TOKEN_EQUAL) {
+                    fail(compiler,compiler->current.span,
+                         "a variadic parameter cannot have a default value");
+                    break;
+                }
+                function->has_variadic=true;
+                /* A captures_self closure (`closure name() ... end`) is
+                 * the one shape where this doesn't reduce to plain
+                 * `arity-1`: it reserves register 0 for a materialized
+                 * self, exactly like a real method, but (unlike a real
+                 * method) its own arity/required_arity are never inflated
+                 * to account for that slot -- call_closure_helper's own
+                 * needs_self_slot padding (src/vm.c) still shifts the
+                 * *runtime* argument_count/arguments by +1 for it
+                 * regardless, so the fixed_count operand here must add
+                 * that slot back to line up with what DIAMOND_OP_
+                 * COLLECT_VARIADIC actually sees at runtime -- confirmed
+                 * directly (a self-capturing variadic closure's collected
+                 * array was off by one, silently including its own first
+                 * real parameter, before this fix). Every other owner
+                 * shape (an ordinary method, whose arity already started
+                 * at 1 for its own real implicit receiver; a plain
+                 * top-level function or non-capturing nested def, which
+                 * has no implicit slot and no runtime padding either)
+                 * already has arity counted consistently with its own
+                 * runtime layout, so only this one shape needs the
+                 * adjustment. */
+                const uint8_t fixed_count=captures_self?
+                    function->arity:(uint8_t)(function->arity-1);
+                emit_instruction(compiler,DIAMOND_OP_COLLECT_VARIADIC,parameter,
+                                 fixed_count,0,2);
+                declared_parameter_count++;
+                skip_newlines(compiler);
+                if(compiler->current.kind==DIAMOND_TOKEN_COMMA) {
+                    fail(compiler,compiler->current.span,
+                         "a variadic parameter must be the last parameter");
+                }
+                break;
+            }
             int parameter_type=-1;DiamondSpan parameter_type_span={};
             if (compiler->current.kind == DIAMOND_TOKEN_COLON) {
                 advance_token(compiler);
@@ -6033,6 +6095,7 @@ static uint16_t compile_definition(Compiler *compiler, bool captures_self) {
             method->function_index=(uint16_t)function_index;
             method->arity=(uint8_t)(function->arity-1);
             method->required_arity=(uint8_t)(function->required_arity-1);
+            method->has_variadic=function->has_variadic;
             method->included=false;
             method->is_private=compiler->methods_private;
         }
@@ -6062,6 +6125,7 @@ static uint16_t compile_definition(Compiler *compiler, bool captures_self) {
              * reserve and fill that slot instead of leaving it zero-inited. */
             method->arity=(uint8_t)(function->arity-1);
             method->required_arity=(uint8_t)(function->required_arity-1);
+            method->has_variadic=function->has_variadic;
             method->needs_receiver=true;
         }
     } else if(compiler->current_module>=0&&!module_singleton&&
@@ -6083,6 +6147,7 @@ static uint16_t compile_definition(Compiler *compiler, bool captures_self) {
                 method->function_index=(uint16_t)function_index;
                 method->arity=(uint8_t)(function->arity-1);
                 method->required_arity=(uint8_t)(function->required_arity-1);
+                method->has_variadic=function->has_variadic;
                 method->included=false;
                 method->is_private=compiler->methods_private;
                 if(compiler->module_function_mode) {
@@ -6119,6 +6184,7 @@ static uint16_t compile_definition(Compiler *compiler, bool captures_self) {
             method->function_index=(uint16_t)function_index;
             method->arity=function->arity;
             method->required_arity=function->required_arity;
+            method->has_variadic=function->has_variadic;
         }
     }
     /* A class/module member def's "value" is never read: both call sites
