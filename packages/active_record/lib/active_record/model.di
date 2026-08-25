@@ -45,6 +45,14 @@ class Model
       index += 1
     end
     @attributes = copy
+    @association_cache = {}
+  end
+
+  def read_attribute(name) = @attributes["#{name}"]
+  def association_loaded?(name) -> Bool = @association_cache.keys().include?("#{name}")
+  def preloaded_association(name) = @association_cache["#{name}"]
+  def set_preloaded_association(name, value)
+    @association_cache["#{name}"] = value
   end
 
   # Every subclass must override both of these as instance methods (not

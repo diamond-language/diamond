@@ -61,10 +61,12 @@ class Repository
   attr_reader lock_column
   attr_reader column_names: Array
   attr_reader inheritance_column
+  attr_reader association_reflections: Array
 
   def initialize(table: Arel::Table, mapper: Callable[1], id_column: String = "id", visitor = nil,
                  validator = nil, before_save = nil, after_save = nil, lock_column = nil,
-                 column_names: Array = [], inheritance_column = nil)
+                 column_names: Array = [], inheritance_column = nil,
+                 association_reflections: Array = [])
     @table = table
     @mapper = mapper
     @id_column = id_column
@@ -75,10 +77,22 @@ class Repository
     @lock_column = lock_column
     @column_names = column_names
     @inheritance_column = inheritance_column
+    @association_reflections = association_reflections
   end
 
   def primary_key() = @id_column
   def has_column?(name) -> Bool = @column_names.include?("#{name}")
+  def reflect_on_association(name)
+    string_name = "#{name}"
+    index = 0
+    while index < @association_reflections.length()
+      if @association_reflections[index].name() == string_name
+        return @association_reflections[index]
+      end
+      index += 1
+    end
+    nil
+  end
 
   def validate!(attributes: Hash)
     if @validator == nil

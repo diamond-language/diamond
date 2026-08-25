@@ -28,18 +28,50 @@ class Author < ActiveRecord::Model
   end
 end
 
+class Book < ActiveRecord::Model
+  attr_accessor title: String, author_id: Int
+
+  def initialize(attributes: Hash = {})
+    super(attributes)
+    @title = attributes["title"]
+    @author_id = attributes["author_id"]
+  end
+
+  def to_attributes() = {"title": @title, "author_id": @author_id}
+  def repository() = @@repository
+
+  def self.repository() = @@repository
+  def self.configure(repository: ActiveRecord::Repository)
+    @@repository = repository
+  end
+end
+
 def build_author(row) = Author.new(row)
+def build_book(row) = Book.new(row)
 
 def run_tests()
   db = SQLite3.open(":memory:")
   db.execute("CREATE TABLE authors (id INTEGER PRIMARY KEY, name TEXT, country TEXT)")
+  db.execute("CREATE TABLE books (id INTEGER PRIMARY KEY, title TEXT, author_id INTEGER)")
+
+  Book.configure(ActiveRecord::Repository.new(
+    Arel.table("books"), build_book, "id", nil, nil, nil, nil, nil,
+    ["id", "title", "author_id"]))
   Author.configure(ActiveRecord::Repository.new(
     Arel.table("authors"), build_author, "id", nil, nil, nil, nil, nil,
-    ["id", "name", "country"]))
+    ["id", "name", "country"], nil, [ActiveRecord::AssociationReflection.new(
+      "books", "has_many", Book.repository(), "author_id", "id")]))
+  Book.configure(ActiveRecord::Repository.new(
+    Arel.table("books"), build_book, "id", nil, nil, nil, nil, nil,
+    ["id", "title", "author_id"], nil, [ActiveRecord::AssociationReflection.new(
+      "author", "belongs_to", Author.repository(), "author_id", "id")]))
 
   Author.create(db, {"name": "Ada", "country": "UK"})
   Author.create(db, {"name": "Grace", "country": "USA"})
   Author.create(db, {"name": "Marie", "country": "UK"})
+  Book.create(db, {"title": "Notes", "author_id": 1})
+  Book.create(db, {"title": "Engines", "author_id": 1})
+  Book.create(db, {"title": "Compilers", "author_id": 2})
 
   def name_column() = Arel.table("authors").column("name")
 
@@ -100,6 +132,37 @@ def run_tests()
     Minitest.assert_equal(true, selected.repository().has_column?("country"))
   end
 
+  def test_includes_batch_loads_has_many_into_the_model_cache(db)
+    base = Author.all()
+    included = base.includes("books")
+    authors = included.order(name_column().asc()).to_a(db)
+
+    Minitest.assert_equal(0, base.included_associations().length())
+    Minitest.assert_equal(1, included.included_associations().length())
+    Minitest.assert_equal(true, authors[0].association_loaded?("books"))
+    Minitest.assert_equal(2, authors[0].preloaded_association("books").length())
+    Minitest.assert_equal("Notes", authors[0].preloaded_association("books")[0].title())
+    Minitest.assert_equal(0, authors[2].preloaded_association("books").length())
+  end
+
+  def test_includes_batch_loads_belongs_to_into_the_model_cache(db)
+    books = Book.all().includes(["author"]).order(Arel.table("books").column("id")).to_a(db)
+    Minitest.assert_equal(true, books[0].association_loaded?("author"))
+    Minitest.assert_equal("Ada", books[0].preloaded_association("author").name())
+    Minitest.assert_equal("Grace", books[2].preloaded_association("author").name())
+  end
+
+  def test_includes_rejects_unknown_associations(db)
+    caught = false
+    begin
+      Author.all().includes("missing").to_a(db)
+    rescue error: ActiveRecord::AssociationNotFoundError
+      caught = true
+      Minitest.assert_equal(true, error.message().include?("missing"))
+    end
+    Minitest.assert_equal(true, caught)
+  end
+
   suite = Minitest.new()
   suite.test("Author.all() returns a Relation that executes on #to_a") do
     test_all_returns_a_relation_that_executes_on_to_a(db)
@@ -124,6 +187,15 @@ def run_tests()
   end
   suite.test("#select is lazy/immutable and preserves repository metadata") do
     test_select_is_lazy_immutable_and_keeps_repository_metadata(db)
+  end
+  suite.test("#includes batch-loads has_many into the model cache") do
+    test_includes_batch_loads_has_many_into_the_model_cache(db)
+  end
+  suite.test("#includes batch-loads belongs_to into the model cache") do
+    test_includes_batch_loads_belongs_to_into_the_model_cache(db)
+  end
+  suite.test("#includes rejects unknown associations") do
+    test_includes_rejects_unknown_associations(db)
   end
   suite.run!()
 

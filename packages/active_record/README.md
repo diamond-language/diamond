@@ -127,12 +127,11 @@ unordered set. `BelongsTo#preload` takes an `Array` of the *children's*
 own foreign-key values (matching `#get`'s own argument, not an owner id)
 and returns a `Hash` keyed the same way.
 
-There is no association caching or attachment to the owner objects
-themselves -- there's no model base class to attach a `.books`-style
-reader to (`mapper` builds whatever opaque class the caller wants), so
-`#preload` just returns the `Hash`; combining it with an already-loaded
-list of owners (by their own id) is the caller's own explicit step, the
-same "no object introspection" stance the rest of this package takes.
+These standalone association objects do not attach their preload result to
+opaque mapper output: `#preload` returns the `Hash`, and combining it with an
+already-loaded list is explicit. `ActiveRecord::Model` relations can instead
+use the reflection-backed `Relation#includes` API documented below, because
+that model base class provides a defined association cache contract.
 
 `ActiveRecord::Repository.new` also takes optional `validator`, `before_save`,
 and `after_save` arguments -- there is no `validates`-style class macro here
@@ -616,6 +615,31 @@ repo = ActiveRecord::Repository.new(
   ["id", "name", "country"])
 names_only = repo.relation().select([repo.table().column("id"), repo.table().column("name")])
 ```
+
+Repositories may also receive an eleventh `association_reflections` Array.
+Each `AssociationReflection` explicitly names the association macro, target
+repository, foreign key, and owner key. `Relation#includes` preserves
+immutability and performs one batched query per association when the relation
+is loaded; it never issues one query per owner:
+
+```diamond
+books_reflection = ActiveRecord::AssociationReflection.new(
+  "books", "has_many", Book.repository(), "author_id", "id")
+Author.configure(ActiveRecord::Repository.new(
+  Arel.table("authors"), build_author, "id", nil, nil, nil, nil, nil,
+  ["id", "name", "country"], nil, [books_reflection]))
+
+authors = Author.all().includes("books").to_a(db)
+authors[0].association_loaded?("books")       # => true
+authors[0].preloaded_association("books")     # => Array of Book models
+```
+
+The supported macros are `"belongs_to"`, `"has_one"`, and `"has_many"`.
+Singular associations cache a model or `nil`; collection associations cache
+an Array, including an empty Array when no rows match. `#includes` accepts one
+name or an Array and raises `ActiveRecord::AssociationNotFoundError` for an
+unregistered name. Reflection is explicit (`Repository#reflect_on_association`)
+rather than inferred from class or table names.
 
 `self.find_by(db, conditions)` is `where(conditions).first(db)` in one
 line -- a single matching instance, or `nil`, with the same "no implicit

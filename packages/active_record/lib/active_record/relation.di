@@ -16,15 +16,18 @@ class Relation
   attr_reader mapper: Callable[1]
   attr_reader visitor
   attr_reader repository
+  attr_reader included_associations: Array
 
-  def initialize(query, mapper: Callable[1], visitor = nil, repository = nil)
+  def initialize(query, mapper: Callable[1], visitor = nil, repository = nil,
+                 included_associations: Array = [])
     @query = query
     @mapper = mapper
     @visitor = visitor
     @repository = repository
+    @included_associations = included_associations
   end
 
-  def wrap(query) = Relation.new(query, @mapper, @visitor, @repository)
+  def wrap(query) = Relation.new(query, @mapper, @visitor, @repository, @included_associations)
 
   # Query#where already accepts a plain Hash and ANDs its keys together
   # via `eq` (see packages/arel/README.md's "Compatibility where"), so
@@ -45,6 +48,19 @@ class Relation
   # own #select already replaces rather than appends.
   def select(columns) = self.wrap(@query.select(columns))
   def reselect(columns) = self.select(columns)
+  def includes(associations)
+    additions = if associations is Array then associations else [associations] end
+    names = @included_associations
+    index = 0
+    while index < additions.length()
+      name = "#{additions[index]}"
+      unless names.include?(name)
+        names = names.concat([name])
+      end
+      index += 1
+    end
+    Relation.new(@query, @mapper, @visitor, @repository, names)
+  end
 
   def to_a(db)
     rows = @query.to_a(db, @visitor)
@@ -53,6 +69,21 @@ class Relation
     while index < rows.length()
       mapped.push(@mapper(rows[index]))
       index += 1
+    end
+    if @included_associations.length() > 0
+      if @repository == nil
+        raise RuntimeError.new("Relation#includes requires an originating repository")
+      end
+      index = 0
+      while index < @included_associations.length()
+        name = @included_associations[index]
+        reflection = @repository.reflect_on_association(name)
+        if reflection == nil
+          raise AssociationNotFoundError.new(name)
+        end
+        reflection.preload(db, mapped)
+        index += 1
+      end
     end
     mapped
   end

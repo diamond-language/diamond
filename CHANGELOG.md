@@ -2,6 +2,9 @@
 
 ## ActiveRecord 0.18.0
 
+- Added explicit repository association reflections, immutable lazy
+  `Relation#includes`, batched `belongs_to`/`has_one`/`has_many` loading, and
+  a model association cache. Unknown names raise `AssociationNotFoundError`.
 - Added immutable, lazy `Relation#select`/`#reselect` projection and public
   relation query/mapper/visitor/repository metadata for GraphSQL-style query
   planning.
