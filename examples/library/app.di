@@ -33,6 +33,14 @@
 #   author_show.html. The same bare-reference rule applies to routes.di's
 #   own build_router -- middleware.di's route() references it by bare
 #   name, so routes.di must be required before middleware.di too.
+#
+# Author.configure/Book.configure are *not* called here -- middleware.di's
+# app() calls them per-worker via ensure_models_configured(context), not
+# once at startup. @@repository is a class variable, and gremlin_serve's
+# spawned worker threads (threads > 1) each get their own independent
+# VM/heap, so a one-time top-level call here would only ever land on
+# whichever worker happens to run inline -- see middleware.di's own
+# comment on ensure_models_configured for how this was confirmed.
 require "../../packages/active_record/lib/active_record"
 require "../../packages/gremlin/lib/gremlin"
 require "../../packages/rack/lib/rack"
@@ -57,9 +65,6 @@ require "./lib/authors_controller"
 require "./lib/books_controller"
 require "./lib/routes"
 require "./lib/middleware"
-
-Author.configure(ActiveRecord::Repository.new(Arel.table("authors"), build_author, "id"))
-Book.configure(ActiveRecord::Repository.new(Arel.table("books"), build_book, "id"))
 
 puts("listening on http://127.0.0.1:18080 (Ctrl-C to stop)")
 gremlin_serve(18080, app)

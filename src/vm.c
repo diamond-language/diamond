@@ -1532,7 +1532,16 @@ static DiamondVmStatus tcp_listen_helper(DiamondVm *vm,int64_t port,
                  port_text,strerror(last_errno));
         return DIAMOND_VM_IO_ERROR;
     }
-    if(listen(listening_fd,16)!=0) {
+    /* SOMAXCONN, not a small fixed number: the kernel already clamps this
+     * against /proc/sys/net/core/somaxconn, so asking for more than the
+     * system allows is harmless, while asking for too little (16, this
+     * used to say) isn't -- a burst of concurrent connects past whatever
+     * the backlog holds gets refused/dropped at the SYN queue before
+     * accept() ever sees them, independent of how fast the accept loop
+     * itself runs. Confirmed as the dominant cause of connection-refused
+     * failures benchmarking packages/gremlin's reuse_port workers under
+     * concurrency well above the old value. */
+    if(listen(listening_fd,SOMAXCONN)!=0) {
         snprintf(vm->error,sizeof vm->error,"cannot listen on port %s: %s",
                  port_text,strerror(errno));
         close(listening_fd);

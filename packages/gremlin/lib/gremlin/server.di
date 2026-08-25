@@ -30,9 +30,25 @@ def gremlin_worker(port, handler)
   loop do
     read_list = [listener]
     write_list = []
+    # A connection only goes into write_list while its own #write is
+    # mid-flight (NonblockingConnection#want_write?) -- POLLOUT is
+    # almost always ready for an idle socket, so including every open
+    # connection unconditionally (as this used to) meant IO.poll's
+    # "block until something's ready" call never really blocked, busy-
+    # spinning resume_if_ready across every connection on every tick and
+    # starving the listener's own accept() processing under concurrent
+    # load. write_positions mirrors `connections` 1:1 (nil where that
+    # connection isn't in write_list this tick) so resume_if_ready below
+    # can still look up its writable result by position.
+    write_positions = []
     def collect_interest(entry)
       read_list.push(entry["conn"].socket())
-      write_list.push(entry["conn"].socket())
+      if entry["conn"].want_write?()
+        write_positions.push(write_list.length())
+        write_list.push(entry["conn"].socket())
+      else
+        write_positions.push(nil)
+      end
     end
     connections.each(collect_interest)
     ready = IO.poll(read_list, write_list, -1)
@@ -64,7 +80,8 @@ def gremlin_worker(port, handler)
     still_active = []
     def resume_if_ready(entry, position)
       readable = ready["readable"][position + 1]
-      writable = ready["writable"][position]
+      write_position = write_positions[position]
+      writable = if write_position == nil then false else ready["writable"][write_position] end
       if (readable || writable) && entry["fiber"].alive?()
         begin
           entry["fiber"].resume()

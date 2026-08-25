@@ -40,6 +40,26 @@ spawn's `DiamondThread` struct becomes valid enough for `free_thread` to
 clean up, decremented exactly once — inside `free_thread` itself — whether
 the thread was reaped by an explicit `.join()` or by the GC.
 
+**Gotcha: one-time setup code doesn't reach spawned threads.** Class
+variables (`@@foo`) are runtime state living in a class's heap-allocated
+storage, not part of the compile-time program tables cloning copies --
+so code that mutates one (`SomeModel.configure(...)`, say) *before*
+spawning threads only actually lands on whichever thread runs that code.
+A `gremlin_serve(handler, threads: N)` app (`packages/gremlin`) that
+calls one-time setup before `gremlin_serve` and expects every worker to
+see it will find only one of the N workers (whichever runs inline) does
+-- the other N-1, each spawned via `Thread.new` with a fresh independent
+heap, see the class variable at its default/uninitialized value. Caught
+this way, not assumed: benchmarking `examples/library`'s own
+`Author.configure`/`Book.configure` (called once before `gremlin_serve`)
+reproducibly threw on ~(N-1)/N of requests at `threads: N > 1` --
+`Author.repository()` reading `nil` on 3 of 4 worker threads. Fixed by
+moving the configure call behind a per-worker lazy guard, the same
+`context`-memoized shape `packages/dials`' `RouterHolder` and this
+example's own `Database.get` already use for other per-worker resources
+-- see `examples/library/lib/middleware.di`'s `ensure_models_configured`
+and `bench/library_http/RESULTS.md`'s "Findings" for the full story.
+
 ## Usage
 
 ```
