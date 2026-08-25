@@ -211,18 +211,23 @@ this package or any other) doesn't have to rediscover it:
   exactly this reason (an earlier draft used plain `def` plus a manual
   `executor = self` capture workaround -- unnecessary, removed once
   this was understood).
-- **A `module_function` module method genuinely can't call itself
-  recursively**, even spelled `ModuleName.method(...)` (the usual fix
-  for the sibling-call gotcha) -- fails at runtime with a plain "type
-  error." This one *is* real, unrelated to the `def`/`closure` finding
-  above (no nested function or `self` capture involved at all).
-  Confirmed with a throwaway factorial fixture. `execution/coercion.di`,
-  `execution/executor.di`, and `validation/validator.di` are all
-  written as classes with `self.` methods instead, since several of
-  their own methods genuinely recurse (nested list/non-null unwrapping,
-  nested input objects, nested selection sets). A class's own
-  `self.method(...)` recursing into itself via `self.` works fine, just
-  not via `ClassName.method(...)`.
+- **~~A `module_function` module method can't call itself recursively~~
+  -- fixed at the compiler level 2026-08-25.** Qualified self-recursion
+  (`ModuleName.method(...)` calling itself) used to fail at compile
+  time ("undefined module singleton function") -- the exported
+  descriptor only got registered after the whole body compiled,
+  confirmed with a throwaway factorial fixture. Fixed in `src/compiler.c`
+  by registering it as soon as the parameter list is known, before the
+  body compiles (see `tests/cases/module_function_self_recursion.di`).
+  Still NOT fixed, deliberately out of scope for that change: `self.
+  foo(...)` recursion (a separate runtime-dispatch mechanism), and
+  mutual recursion between two *different* module_function siblings
+  where the callee is defined later in the same module. This package's
+  own `execution/coercion.di`, `execution/executor.di`, and
+  `validation/validator.di` are still written as classes with `self.`
+  methods rather than `module_function` -- not reverted, since the
+  class-based style works unconditionally regardless of definition
+  order and isn't worth churning now that the narrower bug is fixed.
 - **~~Chained double-calls/double-subscripts don't parse~~ -- fixed at
   the compiler level, no longer a workaround-only issue.**
   `type.coerce_input()(value)` and `hash["a"]["b"] = value` both used
