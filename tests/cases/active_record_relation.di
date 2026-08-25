@@ -163,6 +163,19 @@ def run_tests()
     Minitest.assert_equal(true, caught)
   end
 
+  def test_scoped_preloader_filters_and_runs_nested_includes(db)
+    authors = Author.all().order(name_column().asc()).to_a(db)
+    scope = Book.where({"title": "Notes"}).includes("author")
+    ActiveRecord::Associations::Preloader.new(authors, "books", scope).call(db)
+
+    ada_books = authors[0].preloaded_association("books")
+    Minitest.assert_equal(1, ada_books.length())
+    Minitest.assert_equal("Notes", ada_books[0].title())
+    Minitest.assert_equal(true, ada_books[0].association_loaded?("author"))
+    Minitest.assert_equal("Ada", ada_books[0].preloaded_association("author").name())
+    Minitest.assert_equal(0, authors[1].preloaded_association("books").length())
+  end
+
   suite = Minitest.new()
   suite.test("Author.all() returns a Relation that executes on #to_a") do
     test_all_returns_a_relation_that_executes_on_to_a(db)
@@ -196,6 +209,9 @@ def run_tests()
   end
   suite.test("#includes rejects unknown associations") do
     test_includes_rejects_unknown_associations(db)
+  end
+  suite.test("scoped preloader filters and runs nested includes") do
+    test_scoped_preloader_filters_and_runs_nested_includes(db)
   end
   suite.run!()
 

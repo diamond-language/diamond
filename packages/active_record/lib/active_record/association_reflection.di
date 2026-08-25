@@ -28,7 +28,10 @@ class AssociationReflection
   def polymorphic?() -> Bool = false
   def through_reflection() = nil
 
-  def preload(db, records: Array)
+  # `scope`, when supplied, is a Relation for the target repository. This is
+  # the hook higher-level query planners use to project target columns and to
+  # carry nested includes while retaining one batched association query.
+  def preload(db, records: Array, scope = nil)
     if records.length() == 0
       return records
     end
@@ -50,14 +53,8 @@ class AssociationReflection
     if keys.length() > 0
       table = @target_repository.table()
       lookup_column = if self.belongs_to?() then @owner_key else @foreign_key end
-      rows = Arel.from(table).where(table.column(lookup_column).in_list(keys)).to_a(
-        db, @target_repository.visitor())
-      mapper = @target_repository.mapper()
-      index = 0
-      while index < rows.length()
-        targets.push(mapper(rows[index]))
-        index += 1
-      end
+      target_scope = if scope == nil then @target_repository.relation() else scope end
+      targets = target_scope.where(table.column(lookup_column).in_list(keys)).to_a(db)
     end
 
     index = 0

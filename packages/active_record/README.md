@@ -641,6 +641,22 @@ name or an Array and raises `ActiveRecord::AssociationNotFoundError` for an
 unregistered name. Reflection is explicit (`Repository#reflect_on_association`)
 rather than inferred from class or table names.
 
+For already-loaded owners, `ActiveRecord::Associations::Preloader` exposes the
+same batch attachment with an optional target relation. The relation can add
+filters, projections, ordering, and its own nested `includes`; this is the
+recursive hook used by GraphSQL-style lookahead planners:
+
+```diamond
+authors = Author.all().to_a(db)
+book_scope = Book.where({"published": true}).includes("publisher")
+ActiveRecord::Associations::Preloader.new(
+  authors, "books", book_scope).call(db)
+```
+
+The reflection adds its join-key `IN (...)` predicate to the supplied scope.
+Consequently, a projected scope must retain the association join column (for
+the example above, `books.author_id`) so results can be attached to owners.
+
 `self.find_by(db, conditions)` is `where(conditions).first(db)` in one
 line -- a single matching instance, or `nil`, with the same "no implicit
 `ORDER BY`" caveat as `#first` itself.

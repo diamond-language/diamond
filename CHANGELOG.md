@@ -1,5 +1,11 @@
 # Changelog
 
+## ActiveRecord 0.19.0
+
+- Added `ActiveRecord::Associations::Preloader` and scoped reflection loading.
+  A target relation may filter or project associated rows and carry nested
+  eager loads, enabling recursive GraphSQL-style query plans.
+
 ## ActiveRecord 0.18.0
 
 - Added explicit repository association reflections, immutable lazy
