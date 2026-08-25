@@ -43,18 +43,19 @@ end
 
 def load_worker(worker_id, iterations, base_url)
   stats = {}
+  require_status(timed_request(stats, "home", "GET", "#{base_url}/"), 200, "home")
+  require_status(timed_request(stats, "login_form", "GET", "#{base_url}/login"), 200, "login_form")
+  login = timed_request(stats, "login", "POST", "#{base_url}/login",
+                        {"Content-Type": "application/x-www-form-urlencoded"},
+                        "email=admin%40example.com&password=diamond123")
+  require_status(login, 302, "login")
+  cookie = cookie_from(login)
+  headers = {"Content-Type": "application/x-www-form-urlencoded", "Cookie": cookie}
+  csrf = nil
+
   iteration = 0
   while iteration < iterations
     suffix = "#{worker_id}-#{iteration}"
-
-    require_status(timed_request(stats, "home", "GET", "#{base_url}/"), 200, "home")
-    require_status(timed_request(stats, "login_form", "GET", "#{base_url}/login"), 200, "login_form")
-    login = timed_request(stats, "login", "POST", "#{base_url}/login",
-                          {"Content-Type": "application/x-www-form-urlencoded"},
-                          "email=admin%40example.com&password=diamond123")
-    require_status(login, 302, "login")
-    cookie = cookie_from(login)
-    headers = {"Content-Type": "application/x-www-form-urlencoded", "Cookie": cookie}
 
     new_project = timed_request(stats, "project_new", "GET", "#{base_url}/projects/new", {"Cookie": cookie})
     require_status(new_project, 200, "project_new")
@@ -86,10 +87,10 @@ def load_worker(worker_id, iterations, base_url)
                                  "csrf_token=#{csrf}"), 302, "task_delete")
     require_status(timed_request(stats, "project_delete", "POST", "#{base_url}/projects/#{project_id}/delete", headers,
                                  "csrf_token=#{csrf}"), 302, "project_delete")
-    require_status(timed_request(stats, "logout", "POST", "#{base_url}/logout", headers,
-                                 "csrf_token=#{csrf}"), 302, "logout")
     iteration += 1
   end
+  require_status(timed_request(stats, "logout", "POST", "#{base_url}/logout", headers,
+                               "csrf_token=#{csrf}"), 302, "logout")
   stats
 end
 

@@ -8,6 +8,8 @@
 - Added a configurable, multithreaded Diamond load driver exercising every
   project-board route through complete authenticated CRUD/CSRF journeys, plus
   a six-worker server harness and recorded full-stack results.
+- Separated bcrypt from steady-state CRUD by logging in once per load thread,
+  reusing its real session and CSRF state, and logging out after all iterations.
 
 ## Gremlin 0.2.0
 
