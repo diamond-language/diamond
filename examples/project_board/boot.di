@@ -4,6 +4,7 @@ require "../../packages/div/lib/div/runtime"
 require "../../packages/dials/lib/dials"
 require "../../packages/logger/lib/logger"
 
+require "./lib/config/environment"
 require "./lib/views/.cache/home.html"
 require "./lib/views/.cache/login_form.html"
 require "./lib/views/.cache/projects_table.html"

@@ -16,16 +16,17 @@ def build_query_logger(logger, context)
 end
 
 class Database
+  def self.path() = AppEnvironment.database_path()
   def self.get(context)
     db = context["db"]
     if db == nil
-      connection = SQLite3.open("project_board.db")
+      connection = SQLite3.open(Database.path())
       connection.execute("PRAGMA foreign_keys = ON")
       connection.execute("PRAGMA journal_mode = WAL")
       connection.execute("PRAGMA busy_timeout = 5000")
       db = ActiveRecord::InstrumentedConnection.new(connection, build_query_logger(AppLogger.get(context), context))
       context["db"] = db
-      AppLogger.get(context).info("database.connection.opened", {"adapter": "sqlite3", "foreign_keys": true, "journal_mode": "wal", "busy_timeout_ms": 5000})
+      AppLogger.get(context).info("database.connection.opened", {"adapter": "sqlite3", "database": Database.path(), "environment": AppEnvironment.name(), "foreign_keys": true, "journal_mode": "wal", "busy_timeout_ms": 5000})
     end
     db
   end

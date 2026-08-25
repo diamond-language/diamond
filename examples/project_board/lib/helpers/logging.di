@@ -4,7 +4,7 @@ class AppLogger
     if logger == nil
       level = context["log_level"]
       if level == nil
-        level = "debug"
+        level = AppEnvironment.log_level()
       end
       logger = Logger.new("project_board", level, nil, "json")
       context["logger"] = logger

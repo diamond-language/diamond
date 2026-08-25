@@ -48,6 +48,7 @@ require "../../packages/rack/lib/rack"
 require "../../packages/div/lib/div/runtime"
 require "../../packages/dials/lib/dials"
 
+require "./lib/config/environment"
 require "./lib/views/.cache/author_books_table.html"
 require "./lib/views/.cache/author_show.html"
 require "./lib/views/.cache/authors_table.html"
@@ -67,5 +68,5 @@ require "./lib/controllers/books_controller"
 require "./lib/routes"
 require "./lib/middleware"
 
-puts("listening on http://127.0.0.1:18080 (Ctrl-C to stop)")
+puts("listening on http://127.0.0.1:18080 in #{AppEnvironment.name()} using #{Database.path()} (Ctrl-C to stop)")
 gremlin_serve(18080, app)

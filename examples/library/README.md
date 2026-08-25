@@ -87,6 +87,17 @@ compensate for not having a real template engine, and `BooksController`'s
 own form already couldn't use it (its `<select>` didn't fit the generic
 shape), so nothing is lost by making both forms concrete.
 
+## Environments
+
+`DIAMOND_ENV` selects `development` (the default), `test`, or `production`.
+The existing `library.db` remains the development database; test and
+production use `library_test.db` and `library_production.db`. Set
+`DIAMOND_DATABASE_PATH` to override the selected path explicitly. The setup
+script recreates only the selected environment's database.
+
+Benchmarks always force `DIAMOND_ENV=test`, so they can reset their fixtures
+without touching development data.
+
 ## Run it
 
 ```sh
@@ -94,6 +105,12 @@ cd examples/library
 bash compile_views.sh              # compiles lib/views/*.html.div (once, or after editing a view)
 ../../build/diamond setup_db.di    # creates library.db, seeds it
 ../../build/diamond app.di         # starts the server on :18080
+```
+
+For production:
+
+```sh
+DIAMOND_ENV=production DIAMOND_DATABASE_PATH=/srv/diamond/library.db ../../build/diamond app.di
 ```
 
 Then, in another terminal:

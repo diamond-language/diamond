@@ -1,5 +1,9 @@
 require "./boot"
 
+if AppEnvironment.name() != "test"
+  raise "smoke_test.di requires DIAMOND_ENV=test"
+end
+
 def request(method, path, body = "", cookie = nil)
   headers = {}
   if cookie != nil

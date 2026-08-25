@@ -2,7 +2,7 @@
 # same one-instance-per-worker shape RackChain (packages/rack/lib/rack/rack_chain.di)
 # uses for the middleware chain itself.
 class Database
-  def self.path() = "library.db"
+  def self.path() = AppEnvironment.database_path()
   def self.get(context)
     db = context["db"]
     if db == nil

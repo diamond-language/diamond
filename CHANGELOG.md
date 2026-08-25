@@ -1,5 +1,15 @@
 # Changelog
 
+## Example application environments
+
+- Added explicit development, test, and production configuration to both
+  examples, with `DIAMOND_ENV` selection and `DIAMOND_DATABASE_PATH` overrides.
+- Preserved the existing database filenames for development while assigning
+  isolated test and production databases.
+- Pinned smoke tests and benchmarks to the test environment so destructive
+  fixture setup no longer wipes development data.
+- Added environment-aware project-board log levels through `LOG_LEVEL`.
+
 ## Example application layout
 
 - Reorganized the library and project-board examples into Rails-like

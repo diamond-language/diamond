@@ -1,12 +1,10 @@
-# Creates library.db (in this same directory) with two tables and a
+# Recreates the selected environment's database with two tables and a
 # small amount of seed data -- an end-to-end smoke test for the
 # SQLite3 driver, run once before app.di serves the data.
 
-def db_path()
-  "library.db"
-end
+require "./lib/config/environment"
 
-db = SQLite3.open(db_path())
+db = SQLite3.open(AppEnvironment.database_path())
 
 db.execute("DROP TABLE IF EXISTS books")
 db.execute("DROP TABLE IF EXISTS authors")
@@ -36,6 +34,6 @@ add_book(db, "The Aleph", borges, 1949, 0)
 
 author_count = db.query("SELECT COUNT(*) AS count FROM authors")[0]["count"]
 book_count = db.query("SELECT COUNT(*) AS count FROM books")[0]["count"]
-puts("seeded #{author_count} authors and #{book_count} books into #{db_path()}")
+puts("seeded #{author_count} authors and #{book_count} books into #{AppEnvironment.database_path()} (#{AppEnvironment.name()})")
 
 db.close()

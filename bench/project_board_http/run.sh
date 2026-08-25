@@ -30,8 +30,8 @@ cleanup() {
 }
 trap cleanup EXIT
 
-(cd "$app_dir" && "$diamond" setup_db.di >/dev/null)
-(cd "$app_dir" && "$diamond" "$bench_dir/server.di" "$server_threads" "$port") >"$server_log" 2>&1 &
+(cd "$app_dir" && DIAMOND_ENV=test "$diamond" setup_db.di >/dev/null)
+(cd "$app_dir" && DIAMOND_ENV=test "$diamond" "$bench_dir/server.di" "$server_threads" "$port") >"$server_log" 2>&1 &
 server_pid=$!
 if ! wait_for_port; then
     echo "project board benchmark server failed to start" >&2

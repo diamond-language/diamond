@@ -69,7 +69,7 @@ run_trial() {
     local route_name="$1" path="$2" threads="$3" port="$4" requests="$5" concurrency="$6"
     local out
     out="$(mktemp)"
-    (cd "$lib_dir" && "$diamond" -e "$(server_src "$port" "$threads")") >/dev/null 2>&1 &
+    (cd "$lib_dir" && DIAMOND_ENV=test "$diamond" -e "$(server_src "$port" "$threads")") >/dev/null 2>&1 &
     local pid=$!
     if ! wait_for_port "$port"; then
         echo "  ($route_name, threads=$threads) FAILED TO START"
@@ -91,8 +91,8 @@ run_trial() {
     rm -f "$out"
 }
 
-echo "seeding library.db (examples/library/setup_db.di)..."
-(cd "$lib_dir" && rm -f library.db && "$diamond" setup_db.di >/dev/null)
+echo "seeding library_test.db (examples/library/setup_db.di, DIAMOND_ENV=test)..."
+(cd "$lib_dir" && DIAMOND_ENV=test "$diamond" setup_db.di >/dev/null)
 
 echo "route           | threads | req/sec   | mean latency | p99 latency | failed"
 echo "----------------|---------|-----------|--------------|-------------|-------"
