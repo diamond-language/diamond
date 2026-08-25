@@ -526,14 +526,54 @@ puts(schema.execute(lines.join("\n"), {"skipName": true}))
 assert_contains "$actual" '{data: {a: {id: 1}, b: {id: 1}}}'
 count=$((count + 1))
 
-# --- an unknown field is a field-level error, not a crash ---
+# --- an unknown field is a request-level validation error (rejected
+# before any resolver runs, no "data" key at all), not a crash ---
 actual="$(run_case '
 t = GraphQL::ObjectType.new("Query")
 schema = GraphQL::Schema.new()
 schema.query(t)
 puts(schema.execute("{ nope }"))
 ')"
-assert_contains "$actual" 'field "nope" not found on type "Query"'
+assert_contains "$actual" 'field "nope" does not exist on type "Query"'
+count=$((count + 1))
+
+# --- validation: leaf-vs-composite selection-set mismatch, unknown
+# argument, undefined variable, and a variable/argument type
+# incompatibility -- all rejected before any resolver runs ---
+actual="$(run_file '
+def noop(o, a, c) = "x"
+t = GraphQL::ObjectType.new("Query")
+t.field("name", GraphQL::ScalarType.string(), noop)
+t.field("author", t, noop)
+t.field("greet", GraphQL::ScalarType.string(), noop, [GraphQL::Argument.new("who", GraphQL::ScalarType.string().non_null())])
+schema = GraphQL::Schema.new()
+schema.query(t)
+puts(schema.execute("{ name { x } }"))
+puts(schema.execute("{ author }"))
+puts(schema.execute("{ greet(who: \"x\", bogus: 1) }"))
+puts(schema.execute("{ greet(who: $x) }"))
+puts(schema.execute("query($x: Int!) { greet(who: $x) }", {"x": 5}))
+')"
+assert_contains "$actual" 'field "name" is a leaf type and cannot have a sub-selection'
+assert_contains "$actual" 'field "author" of composite type "Query" must have a sub-selection'
+assert_contains "$actual" 'unknown argument "bogus" on "greet"'
+assert_contains "$actual" 'undefined variable "$x"'
+assert_contains "$actual" 'variable "$x" of type "Int!" is not compatible with expected type "String!"'
+count=$((count + 1))
+
+# --- validation: duplicate operation names, and more than one
+# operation when one of them is anonymous ---
+actual="$(run_case '
+def noop(o, a, c) = "x"
+t = GraphQL::ObjectType.new("Query")
+t.field("name", GraphQL::ScalarType.string(), noop)
+schema = GraphQL::Schema.new()
+schema.query(t)
+puts(schema.execute("query A { name } query A { name }", {}, {}, nil, "A"))
+puts(schema.execute("{ name } query A { name }"))
+')"
+assert_contains "$actual" 'duplicate operation name "A"'
+assert_contains "$actual" "must have only one operation when it includes an anonymous operation"
 count=$((count + 1))
 
 echo "$count graphql tests passed"

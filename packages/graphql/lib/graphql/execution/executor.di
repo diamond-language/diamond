@@ -60,6 +60,17 @@ class Executor
       return {"errors": [{"message": e.message()}]}
     end
 
+    validation_errors = GraphQL::Validation::Validator.validate(document, @schema)
+    if validation_errors.length() > 0
+      errors = []
+      index = 0
+      while index < validation_errors.length()
+        errors.push({"message": validation_errors[index]})
+        index += 1
+      end
+      return {"errors": errors}
+    end
+
     begin
       operation = self.find_operation(document, operation_name)
     rescue e: GraphQL::RequestError
