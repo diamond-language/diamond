@@ -1,0 +1,12 @@
+require "../../packages/rack/lib/rack"
+require "../../packages/div/lib/div/runtime"
+require "../../packages/dials/lib/dials"
+require "../../packages/logger/lib/logger"
+
+require "./lib/config/environment"
+require "./lib/views/.cache/layout.html"
+require "./lib/views/.cache/home.html"
+require "./lib/helpers/logging"
+require "./lib/controllers/home_controller"
+require "./lib/routes"
+require "./lib/middleware"

@@ -1,5 +1,14 @@
 # Changelog
 
+## Applications
+
+- Added `applications/pheint.dia`, a runnable product-oriented Diamond
+  application skeleton with Rails-like source layout, development/test/
+  production configuration, Gremlin serving, Rack middleware, Dials routes,
+  Div views, strict NDJSON request logging, correlation IDs, sub-millisecond
+  timing, a JSON health endpoint, and direct-dispatch smoke coverage.
+- Added `make test-pheint-application`.
+
 ## Language
 
 - Corrected the runtime type-ID partition so the advertised class capacity no

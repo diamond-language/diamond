@@ -1,0 +1,4 @@
+<%# locals: environment %>
+<h1>pheint.dia</h1>
+<p>A new Diamond application is running.</p>
+<p>Environment: <strong><%= environment %></strong></p>
