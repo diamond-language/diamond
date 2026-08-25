@@ -977,32 +977,37 @@ static int find_class_name(const Compiler *compiler,const char *name) {
  * resolution, neither of which could previously represent an explicit
  * `A::B` path at all (find_class_name alone is exact-string-only; find_class
  * takes a single DiamondSpan token, one identifier, never a qualified
- * path). Tries the name as given first (handles a fully-qualified path like
- * `Shapes::Base`, or an ordinary un-nested class name), then -- unlike
- * find_class_name alone -- falls back to the same current-module-scope-
- * walking find_class/find_interface already do for bare `is`/`.new()`
- * references, so a bare sibling name (`Base` from code also lexically
- * inside `module Shapes`) still resolves for type annotations and `is`
- * checks the same way it already did for construction and inheritance. */
+ * path). Walks the current-module scope outward first, trying `name`
+ * qualified against each enclosing module in turn -- the same order
+ * find_class already uses for bare `.new()`/superclass references -- and
+ * only once none of those match falls back to `name` taken bare/as-given
+ * (handles a fully-qualified path like `Shapes::Base`, or an ordinary
+ * un-nested class name). Trying the bare name first (the previous order)
+ * meant a bare sibling reference (`Table` from code lexically inside
+ * `module Arel`) would resolve to an unrelated top-level class of the same
+ * name whenever the enclosing program happened to declare one, instead of
+ * the module's own `Arel::Table` -- silently wrong instead of merely
+ * unresolved, since both names exist and only one is intended. Fixed so a
+ * bare sibling name resolves for type annotations and `is` checks the same
+ * way it already does for construction and inheritance. */
 static int find_class_qualified_or_scoped(const Compiler *compiler,const char *name) {
-    const int direct=find_class_name(compiler,name);
-    if(direct>=0)return direct;
-    if(compiler->current_module<0)return -1;
-    char scope[DIAMOND_MAX_FUNCTION_NAME];
-    (void)snprintf(scope,sizeof scope,"%s",
-        compiler->program->modules[(size_t)compiler->current_module].name);
-    while(true) {
-        char qualified[DIAMOND_MAX_FUNCTION_NAME];
-        const int written=snprintf(qualified,sizeof qualified,"%s::%s",scope,name);
-        if(written>0&&(size_t)written<sizeof qualified) {
-            const int found=find_class_name(compiler,qualified);
-            if(found>=0)return found;
+    if(compiler->current_module>=0) {
+        char scope[DIAMOND_MAX_FUNCTION_NAME];
+        (void)snprintf(scope,sizeof scope,"%s",
+            compiler->program->modules[(size_t)compiler->current_module].name);
+        while(true) {
+            char qualified[DIAMOND_MAX_FUNCTION_NAME];
+            const int written=snprintf(qualified,sizeof qualified,"%s::%s",scope,name);
+            if(written>0&&(size_t)written<sizeof qualified) {
+                const int found=find_class_name(compiler,qualified);
+                if(found>=0)return found;
+            }
+            char *separator=strrchr(scope,':');
+            if(separator==nullptr)break;
+            separator[-1]='\0';
         }
-        char *separator=strrchr(scope,':');
-        if(separator==nullptr)break;
-        separator[-1]='\0';
     }
-    return -1;
+    return find_class_name(compiler,name);
 }
 
 static int find_interface_name(const Compiler *compiler,const char *name) {
