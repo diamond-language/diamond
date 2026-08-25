@@ -9,7 +9,7 @@ class TasksController
   def self.form(request, context, id)
     task = if id == nil then Task.new({"project_id": "", "title": "", "done": 0}) else Task.find(Database.get(context), id) end
     if task == nil then return Dials::Response.not_found(request["path"]) end
-    log_debug(request, context, "task form rendered task_id=#{id}")
+    log_debug(request, context, "task.form_rendered", {"task_id": id})
     TasksController.render_form(request, context, task, id, [], 200)
   end
   def self.new_form(request, context, params) = TasksController.form(request, context, nil)
@@ -20,10 +20,10 @@ class TasksController
     begin
       task.save(Database.get(context))
     rescue error: ActiveRecord::ValidationError
-      log_warn(request, context, "task create rejected validation_errors=#{error.errors().join("; ")}")
+      log_warn(request, context, "task.create_rejected", {"validation_errors": error.errors()})
       return TasksController.render_form(request, context, task, nil, error.errors(), 422)
     end
-    log_info(request, context, "task created task_id=#{task.id()} project_id=#{task.project_id()} user_id=#{context["current_user"].id()}")
+    log_info(request, context, "task.created", {"task_id": task.id(), "project_id": task.project_id(), "user_id": context["current_user"].id()})
     Dials::Response.redirect("/projects/#{task.project_id()}", "created")
   end
   def self.update(request, context, params)
@@ -36,10 +36,10 @@ class TasksController
     begin
       task.save(Database.get(context))
     rescue error: ActiveRecord::ValidationError
-      log_warn(request, context, "task update rejected task_id=#{task.id()} validation_errors=#{error.errors().join("; ")}")
+      log_warn(request, context, "task.update_rejected", {"task_id": task.id(), "validation_errors": error.errors()})
       return TasksController.render_form(request, context, task, task.id(), error.errors(), 422)
     end
-    log_info(request, context, "task updated task_id=#{task.id()} project_id=#{task.project_id()} user_id=#{context["current_user"].id()}")
+    log_info(request, context, "task.updated", {"task_id": task.id(), "project_id": task.project_id(), "user_id": context["current_user"].id()})
     Dials::Response.redirect("/projects/#{task.project_id()}", "updated")
   end
   def self.destroy(request, context, params)
@@ -47,9 +47,9 @@ class TasksController
     project_id = if task == nil then nil else task.project_id() end
     if task != nil
       task.destroy(Database.get(context))
-      log_info(request, context, "task deleted task_id=#{task.id()} project_id=#{project_id} user_id=#{context["current_user"].id()}")
+      log_info(request, context, "task.deleted", {"task_id": task.id(), "project_id": project_id, "user_id": context["current_user"].id()})
     else
-      log_warn(request, context, "task delete skipped reason=not_found task_id=#{params["id"]}")
+      log_warn(request, context, "task.delete_skipped", {"reason": "not_found", "task_id": params["id"]})
     end
     Dials::Response.redirect(if project_id == nil then "/projects" else "/projects/#{project_id}" end, "deleted")
   end

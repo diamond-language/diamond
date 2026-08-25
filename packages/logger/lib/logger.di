@@ -1,9 +1,9 @@
 # A small, leveled logger. Install via facet (see diamond.cut), then
 # `require_cut "logger"` to bring in the Logger class.
 #
-#   log = Logger.new("gremlin")
-#   log.info("listening on port 8080")
-#   log.error("unhandled error in request handler: #{error.message()}")
+#   log = Logger.new("gremlin", "info", nil, "json")
+#   log.info("server.listening", {"port": 8080})
+#   log.error("request.failed", {"error": error.message()})
 #   # => [2026-08-25 12:00:00] INFO gremlin: listening on port 8080
 #   # => [2026-08-25 12:00:01] ERROR gremlin: unhandled error in request handler: ...
 #
@@ -18,7 +18,9 @@
 # down verbosity without touching call sites. Every line is timestamped
 # (Time.now().strftime, local time) and tagged with the Logger's own
 # `tag` (the component name, e.g. "gremlin"), matching the prefix the
-# ad-hoc puts() calls this replaces already used by hand.
+# ad-hoc puts() calls this replaces already used by hand. Text output is
+# the backward-compatible default; JSON emits one object per line and
+# accepts structured fields on every level method.
 #
 # `output`, if given, is anything responding to `.write(value)` the
 # same way File/TCPSocket already do (docs/io.md) -- a real file to log
@@ -41,22 +43,31 @@ class Logger
     end
   end
 
-  def initialize(tag: String, level: String = "info", output = nil)
+  def initialize(tag: String, level: String = "info", output = nil, format: String = "text")
     @tag = tag
     @level = Logger.level_rank(level)
     @output = output
+    if format != "text" && format != "json"
+      raise ArgumentError.new("Logger: unknown format '#{format}' -- expected text or json")
+    end
+    @format = format
   end
 
-  def debug(message) = self.emit("DEBUG", 0, message)
-  def info(message) = self.emit("INFO", 1, message)
-  def warn(message) = self.emit("WARN", 2, message)
-  def error(message) = self.emit("ERROR", 3, message)
+  def debug(message, fields: Hash = {}) = self.emit("DEBUG", 0, message, fields)
+  def info(message, fields: Hash = {}) = self.emit("INFO", 1, message, fields)
+  def warn(message, fields: Hash = {}) = self.emit("WARN", 2, message, fields)
+  def error(message, fields: Hash = {}) = self.emit("ERROR", 3, message, fields)
 
   private
 
-  def emit(label: String, rank: Int, message)
+  def emit(label: String, rank: Int, message, fields: Hash)
     if rank >= @level
-      line = "[#{Time.now().strftime("%Y-%m-%d %H:%M:%S")}] #{label} #{@tag}: #{message}"
+      timestamp = Time.now().strftime("%Y-%m-%dT%H:%M:%S%z")
+      line = if @format == "json"
+        JSON.stringify(fields.merge({"timestamp": timestamp, "level": label.downcase(), "tag": @tag, "message": "#{message}"}))
+      else
+        "[#{Time.now().strftime("%Y-%m-%d %H:%M:%S")}] #{label} #{@tag}: #{message}"
+      end
       if @output == nil
         puts(line)
       else

@@ -22,29 +22,29 @@ end
 def current_user(request, context)
   token = cookie_value(request, "session_token")
   if token == nil
-    log_debug(request, context, "authentication cookie=absent")
+    log_debug(request, context, "authentication.cookie_absent")
     return nil
   end
   db = Database.get(context)
   session = Session.where({"token": token}).first(db)
   if session == nil
     context["clear_session_cookie"] = true
-    log_warn(request, context, "authentication session=not_found")
+    log_warn(request, context, "authentication.session_not_found")
     nil
   elsif session.expires_at() <= Time.now().to_i()
     session_id = session.id()
     session.destroy(db)
     context["clear_session_cookie"] = true
-    log_warn(request, context, "authentication session_id=#{session_id} session=expired")
+    log_warn(request, context, "authentication.session_expired", {"session_id": session_id})
     nil
   else
     user = session.user(db)
     if user == nil
-      log_warn(request, context, "authentication session_id=#{session.id()} user=not_found")
+      log_warn(request, context, "authentication.user_not_found", {"session_id": session.id()})
     else
       context["current_session"] = session
       context["csrf_token"] = session.csrf_token()
-      log_info(request, context, "authentication session_id=#{session.id()} user_id=#{user.id()}")
+      log_info(request, context, "authentication.succeeded", {"session_id": session.id(), "user_id": user.id()})
     end
     user
   end
@@ -56,13 +56,13 @@ def load_current_user_middleware(request, context, forward)
   context["clear_session_cookie"] = false
   user = current_user(request, context)
   context["current_user"] = user
-  log_debug(request, context, "authentication loaded authenticated=#{user != nil}")
+  log_debug(request, context, "authentication.loaded", {"authenticated": user != nil})
   response = forward(request, context)
   if context["clear_session_cookie"]
     headers = response[1]
     headers["Set-Cookie"] = expired_session_cookie()
     response[1] = headers
-    log_debug(request, context, "stale session cookie expired in response")
+    log_debug(request, context, "authentication.cookie_expired")
   end
   response
 end
@@ -86,19 +86,19 @@ def require_csrf(request, context, params)
   expected = context["csrf_token"]
   supplied = params["csrf_token"]
   if !secure_token_equal(expected, supplied)
-    log_warn(request, context, "authorization denied reason=invalid_csrf_token")
+    log_warn(request, context, "authorization.denied", {"reason": "invalid_csrf_token"})
     return Dials::Response.text(403, "invalid CSRF token")
   end
-  log_debug(request, context, "csrf token accepted")
+  log_debug(request, context, "authorization.csrf_accepted")
   nil
 end
 
 def require_authentication(request, context, params)
   user = context["current_user"]
   if user == nil
-    log_warn(request, context, "authorization denied reason=authentication_required")
+    log_warn(request, context, "authorization.denied", {"reason": "authentication_required"})
     return [302, {"Location": "/login"}, "authentication required"]
   end
-  log_debug(request, context, "authorization allowed user_id=#{user.id()}")
+  log_debug(request, context, "authorization.allowed", {"user_id": user.id()})
   nil
 end

@@ -43,7 +43,7 @@ log.error("connection failed: timeout")
 [2026-08-25 12:00:02] ERROR myapp: connection failed: timeout
 ```
 
-`Logger.new(tag, level = "info", output = nil)`:
+`Logger.new(tag, level = "info", output = nil, format = "text")`:
 
 - `tag` — the component name prefixed on every line (`"gremlin"`,
   `"myapp"`, ...), the same string the ad-hoc `puts("gremlin: ...")`
@@ -66,20 +66,36 @@ log.error("connection failed: timeout")
   file = File.open("myapp.log", "a")
   log = Logger.new("myapp", "info", file)
   ```
+- `format` — either the backward-compatible `"text"` default or `"json"`.
+  JSON mode emits newline-delimited JSON (one complete object per line),
+  ready for ingestion by a log viewer:
+
+  ```ruby
+  log = Logger.new("myapp", "info", nil, "json")
+  log.info("request.completed", {"request_id": "req-123", "status": 200, "duration_ms": 3.4})
+  ```
+
+  ```json
+  {"request_id":"req-123","status":200,"duration_ms":3.4,"timestamp":"2026-08-25T12:00:00-0700","level":"info","tag":"myapp","message":"request.completed"}
+  ```
+
+Every level method accepts an optional hash of structured fields. In JSON
+mode those fields are written at the top level, while `timestamp`, `level`,
+`tag`, and `message` are reserved logger metadata and cannot be overridden by
+caller fields. Values and messages are escaped through `JSON.stringify`.
 
 Every line is timestamped (`Time.now().strftime`, local time — see
-`docs/io.md`'s own "Time" section) and tagged, matching the format
-shown above exactly; there's no way to change the line format itself in
-this first version (see "What's deliberately out of scope" below).
+`docs/io.md`'s own "Time" section) and tagged. Text mode uses the format shown
+first; JSON timestamps use `%Y-%m-%dT%H:%M:%S%z`.
 
 ## What's deliberately out of scope
 
-- **A configurable line format.** The `[timestamp] LEVEL tag: message`
-  shape is fixed — no format-string/callback hook to customize it.
-  Revisit if a real consumer needs structured (e.g. JSON) output.
+- **Custom formatters.** The package supports its built-in text and JSON
+  formats, but no format-string/callback hook.
 - **Per-line/contextual tags beyond the Logger's own fixed `tag`.**
   Nothing like Rails' `Logger.tagged(...)` block-scoped tagging — one
-  `Logger` instance has exactly one tag, set once at construction.
+  `Logger` instance has exactly one tag, set once at construction. Arbitrary
+  structured fields are supported independently in JSON mode.
 - **Log rotation/multiple destinations at once.** `output` is a single
   writable, full stop — layer your own rotation/fan-out on top of a
   `File`/custom writer if you need it; this package only ever calls

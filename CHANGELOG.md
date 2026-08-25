@@ -1,5 +1,13 @@
 # Changelog
 
+## Logger 0.2.0
+
+- Added newline-delimited JSON output with structured fields on every level
+  method, JSON-safe escaping, and reserved logger metadata.
+- Kept the existing text format as the default for backward compatibility.
+- Converted the authenticated project board's application, authentication,
+  controller, and ActiveRecord/Arel instrumentation logs to structured JSON.
+
 ## ActiveRecord 0.17.0
 
 - Added `ActiveRecord::InstrumentedConnection`, a transparent database

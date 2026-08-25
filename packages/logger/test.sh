@@ -114,4 +114,34 @@ count=$((count + 1))
 assert_contains "$actual" "INFO myapp: to the writer"
 count=$((count + 1))
 
+# --- JSON format emits one parseable object with structured fields and
+# correct escaping; base metadata wins over conflicting caller fields ---
+actual="$(run_case '
+class CapturingWriter
+  def initialize()
+    @lines = []
+  end
+  def write(value) = @lines.push(value)
+  def lines() = @lines
+end
+writer = CapturingWriter.new()
+log = Logger.new("myapp", "debug", writer, "json")
+log.info("user signed in \"safely\"", {"user_id": 7, "ok": true, "level": "fake"})
+record = JSON.parse(writer.lines()[0])
+puts("#{record["level"]}|#{record["tag"]}|#{record["message"]}|#{record["user_id"]}|#{record["ok"]}|#{record["timestamp"].length() > 0}")
+')"
+assert_contains "$actual" 'info|myapp|user signed in "safely"|7|true|true'
+count=$((count + 1))
+
+# --- bad formats fail at construction rather than silently falling back ---
+actual="$(run_case '
+begin
+  Logger.new("myapp", "info", nil, "xml")
+rescue e: ArgumentError
+  puts(e.message())
+end
+')"
+assert_contains "$actual" "unknown format 'xml'"
+count=$((count + 1))
+
 echo "$count logger tests passed"

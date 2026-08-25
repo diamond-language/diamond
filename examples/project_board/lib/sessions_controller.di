@@ -2,7 +2,7 @@ class SessionsController
   def self.session_lifetime_seconds() = 28800
 
   def self.new_form(request, context, params)
-    log_debug(request, context, "login form rendered")
+    log_debug(request, context, "login.form_rendered")
     Div.html_response(200, layout_html("Sign in", login_form_html(nil), context["current_user"], context["csrf_token"]))
   end
 
@@ -10,7 +10,7 @@ class SessionsController
     db = Database.get(context)
     user = User.where({"email": params["email"]}).first(db)
     if user == nil || !user.authenticate(params["password"])
-      log_warn(request, context, "login failed email=#{params["email"]}")
+      log_warn(request, context, "login.failed", {"email": params["email"]})
       return Div.html_response(401, layout_html("Sign in", login_form_html("Invalid email or password"), nil, nil))
     end
     token = SecureRandom.hex(32)
@@ -19,7 +19,7 @@ class SessionsController
     expires_at = Time.now().to_i() + lifetime
     Session.create(db, {"user_id": user.id(), "token": token, "csrf_token": csrf_token, "expires_at": expires_at})
     context["csrf_token"] = csrf_token
-    log_info(request, context, "login succeeded user_id=#{user.id()} session=created lifetime_seconds=#{lifetime}")
+    log_info(request, context, "login.succeeded", {"user_id": user.id(), "lifetime_seconds": lifetime})
     [302, {"Location": "/projects", "Set-Cookie": "session_token=#{token}; Path=/; Max-Age=#{lifetime}; HttpOnly; SameSite=Lax"}, "signed in"]
   end
 
@@ -30,9 +30,9 @@ class SessionsController
       if session != nil
         session_id = session.id()
         session.destroy(Database.get(context))
-        log_info(request, context, "logout succeeded session_id=#{session_id}")
+        log_info(request, context, "logout.succeeded", {"session_id": session_id})
       else
-        log_warn(request, context, "logout session=not_found")
+        log_warn(request, context, "logout.session_not_found")
       end
     end
     [302, {"Location": "/", "Set-Cookie": expired_session_cookie()}, "signed out"]
