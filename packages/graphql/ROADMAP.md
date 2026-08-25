@@ -244,9 +244,13 @@ this package or any other) doesn't have to rediscover it:
   and having `compile_index_assignment` emit an ordinary read for every
   group but the last). Both ship on `main` with their own new
   `tests/cases/` coverage (`chained_call_expression.di`,
-  `chained_indexed_assignment.di`) -- this package's own workarounds
-  (an intermediate local before a second call) are no longer necessary
-  but were left in place rather than churned for marginal benefit.
+  `chained_indexed_assignment.di`). This package's own workarounds (an
+  intermediate local before a second call, in `execution/coercion.di`'s
+  `coerce_literal`/`coerce_runtime_value` and `execution/executor.di`'s
+  `complete_value`/`#execute_field`) were cleaned up in a later
+  language-limitation sweep -- `type.coerce_input()(value)` and
+  `schema_field.resolve()(object_value, args, context)` directly, no
+  intermediate `coercer`/`resolve` local.
 
 ## Open questions
 

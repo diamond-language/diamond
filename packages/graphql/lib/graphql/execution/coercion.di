@@ -10,15 +10,20 @@
 #
 # A class with `self.` methods, not a `module_function` module
 # (packages/div's own Div module was the template, but doesn't fit
-# here) -- several of these genuinely recurse (nested list/non-null
-# unwrapping, nested input objects), and a `module_function` method
-# calling itself -- even spelled out as `ModuleName.method(...)`, the
-# usual fix for the sibling-call gotcha -- fails at runtime with a
-# plain "type error", confirmed directly against a throwaway
-# `module_function`/factorial fixture before settling on a class here
-# instead. A class's own `self.` method CAN call itself, but only
-# spelled `self.method(...)`, not `ClassName.method(...)` -- confirmed
-# against the same fixture -- so every call below uses `self.`.
+# here) -- several of these genuinely recurse, and not just each one
+# calling itself: `coerce_literal` and `coerce_input_object_literal`
+# call each other (nested input objects contain nested literal values,
+# which can themselves be nested input objects), and `coerce_runtime_
+# value` has the equivalent shape. A `module_function` method calling
+# *itself* via a qualified call (`ModuleName.method(...)`) was fixed at
+# the compiler level 2026-08-24 (see ROADMAP.md's "Diamond-level
+# findings worth remembering"), but mutual recursion between two
+# *different* module_function siblings -- what this file actually
+# needs -- is explicitly still out of scope for that fix (whichever
+# sibling is defined first can't yet see the other's not-yet-registered
+# descriptor). A class's own `self.` method has no such ordering
+# requirement -- confirmed directly against a throwaway fixture -- so
+# every call below uses `self.`, not `ClassName.method(...)`.
 #
 # List/nested-value handling below uses explicit index loops rather
 # than `Array#map` -- not working around a bug (a plain nested `def`
@@ -127,8 +132,7 @@ class Coercion
       end
       self.coerce_input_object_literal(value, type, coerced_variables)
     else
-      coercer = type.coerce_input()
-      coercer(value)
+      type.coerce_input()(value)
     end
   end
 
@@ -209,8 +213,7 @@ class Coercion
       end
       result
     else
-      coercer = type.coerce_input()
-      coercer(value)
+      type.coerce_input()(value)
     end
   end
 

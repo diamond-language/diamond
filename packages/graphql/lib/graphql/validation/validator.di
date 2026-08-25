@@ -31,8 +31,14 @@
 #
 # A class with `self.` methods, not `module_function` -- same reasoning
 # as execution/coercion.di and execution/executor.di's own header
-# comments (several of these genuinely recurse, and only a class's own
-# `self.method(...)` self-call works, not a `module_function` module's).
+# comments: `#validate_selection_set` and `#validate_field` call each
+# other (a composite field's own selection set validates its child
+# fields, one of which can itself have a nested selection set), and a
+# `module_function` sibling calling a sibling defined later in the same
+# module still doesn't work (only straight self-recursion via
+# `ModuleName.method(...)` was fixed, 2026-08-24 -- see ROADMAP.md). A
+# class's own `self.method(...)` self/mutual call has no such ordering
+# requirement.
 module GraphQL
 module Validation
 

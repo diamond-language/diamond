@@ -11,9 +11,15 @@
 #
 # A class with `self.`/instance methods, not a `module_function`
 # module -- same reasoning as execution/coercion.di's own header
-# comment (a `module_function` method can't call itself, even spelled
-# `ModuleName.method(...)`; only a class's own `self.method(...)`-style
-# recursive self-call works, confirmed against a throwaway fixture).
+# comment: `#execute_field`, `#complete_value`, `#complete_list_value`,
+# and `#execute_selection_set` below all call each other, not just
+# themselves, and a `module_function` method calling a *different*
+# module_function sibling only works if that sibling is already defined
+# (fixed 2026-08-24 for straight self-recursion via
+# `ModuleName.method(...)`, still not for this mutual shape -- see
+# ROADMAP.md's "Diamond-level findings worth remembering"). A class's
+# own `self.method(...)` self/mutual call has no such ordering
+# requirement, confirmed against a throwaway fixture.
 # Errors, `path`, and every other piece of per-request state live on
 # `@errors`/instance state, so `Schema#execute` builds one fresh
 # `Executor` per call (see schema.di) -- no state to reset between
@@ -335,8 +341,7 @@ class Executor
         # whichever field resolved most recently, not its own.
         context["lookahead"] = GraphQL::Execution::Lookahead.new(
           self.merged_selection_set(fields), fragments, coerced_variables)
-        resolve = schema_field.resolve()
-        resolved_value = resolve(object_value, args, context)
+        resolved_value = schema_field.resolve()(object_value, args, context)
       rescue e: StandardError
         @errors.push({"message": e.message(), "path": path})
         if schema_field.type().kind() == "NON_NULL"
@@ -422,8 +427,7 @@ class Executor
       end
       result
     else
-      coercer = type.coerce_result()
-      coercer(result)
+      type.coerce_result()(result)
     end
   end
 
