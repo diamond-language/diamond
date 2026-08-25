@@ -4809,6 +4809,18 @@ static bool compound_assignment_ahead(const Compiler *compiler) {
     return compound_assignment_token(diamond_lexer_next(&lookahead).kind);
 }
 
+/* `x[a][b]... = value` -- any number of chained `[...]` groups before
+ * the `=`, not just one. Originally scanned only a single balanced
+ * `[...]` group before checking for `=`, so `x[a][b] = value` (a
+ * genuine, previously-undiscovered gap, not a deliberate cut) fell
+ * through to ordinary expression parsing instead -- `x[a][b]` compiled
+ * fine as a *read* (parse_precedence's own postfix-chaining loop
+ * already handles repeated `[...]`/`.` unconditionally), leaving the
+ * trailing `= value` as unconsumed tokens, surfacing as "expected
+ * newline after expression" at the statement level. After each closing
+ * `]`, peek one more token: another `[` means "keep scanning, this
+ * wasn't the last index"; anything else ends the scan the same way it
+ * always did. */
 static bool index_assignment_ahead(const Compiler *compiler) {
     if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER&&
        compiler->current.kind!=DIAMOND_TOKEN_INSTANCE_VARIABLE&&
@@ -4816,13 +4828,24 @@ static bool index_assignment_ahead(const Compiler *compiler) {
     DiamondLexer lookahead=compiler->lexer;
     DiamondToken token=diamond_lexer_next(&lookahead);
     if(token.kind!=DIAMOND_TOKEN_LEFT_BRACKET) return false;
-    size_t depth=1;
-    while(depth>0) {
-        token=diamond_lexer_next(&lookahead);
-        if(token.kind==DIAMOND_TOKEN_EOF || token.kind==DIAMOND_TOKEN_ERROR)
-            return false;
-        if(token.kind==DIAMOND_TOKEN_LEFT_BRACKET) depth++;
-        if(token.kind==DIAMOND_TOKEN_RIGHT_BRACKET) depth--;
+    bool more_groups=true;
+    while(more_groups) {
+        size_t depth=1;
+        while(depth>0) {
+            token=diamond_lexer_next(&lookahead);
+            if(token.kind==DIAMOND_TOKEN_EOF || token.kind==DIAMOND_TOKEN_ERROR)
+                return false;
+            if(token.kind==DIAMOND_TOKEN_LEFT_BRACKET) depth++;
+            if(token.kind==DIAMOND_TOKEN_RIGHT_BRACKET) depth--;
+        }
+        DiamondLexer probe=lookahead;
+        token=diamond_lexer_next(&probe);
+        if(token.kind==DIAMOND_TOKEN_LEFT_BRACKET) {
+            lookahead=probe;
+            more_groups=true;
+        } else {
+            more_groups=false;
+        }
     }
     return diamond_lexer_next(&lookahead).kind==DIAMOND_TOKEN_EQUAL;
 }
@@ -4981,12 +5004,30 @@ static uint16_t compile_index_assignment(Compiler *compiler) {
     }
     advance_token(compiler);
     advance_token(compiler);
-    const uint16_t index=parse_expression(compiler);
+    uint16_t index=parse_expression(compiler);
     if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_BRACKET) {
         fail(compiler,compiler->current.span,"expected ']' after assignment index");
         return 0;
     }
     advance_token(compiler);
+    /* `x[a][b]... = value`: every `[...]` group before the last one is
+     * an ordinary read (INDEX_GET) that produces the *next* receiver --
+     * only the final group before `=` becomes the actual assignment
+     * target (INDEX_SET). index_assignment_ahead's own lookahead already
+     * confirmed a chain shaped exactly like this exists, so this loop
+     * always terminates at a real `=`, never falls off the end. */
+    while(compiler->current.kind==DIAMOND_TOKEN_LEFT_BRACKET) {
+        const uint16_t loaded=allocate_register(compiler);
+        emit_instruction(compiler,DIAMOND_OP_INDEX_GET,loaded,receiver,index,3);
+        receiver=loaded;
+        advance_token(compiler);
+        index=parse_expression(compiler);
+        if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_BRACKET) {
+            fail(compiler,compiler->current.span,"expected ']' after assignment index");
+            return 0;
+        }
+        advance_token(compiler);
+    }
     if(compiler->current.kind!=DIAMOND_TOKEN_EQUAL) {
         fail(compiler,compiler->current.span,"expected '=' after indexed target");
         return 0;
