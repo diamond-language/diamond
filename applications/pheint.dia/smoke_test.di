@@ -105,9 +105,39 @@ invalid_player_signup = JSON.parse(app(smoke_request("POST", "/graphql", JSON.st
 if invalid_player_signup["errors"] == nil
   raise "invalid player signup was accepted"
 end
-if Account.all().count(PheintDatabase.get(context)) != 1 ||
-   Player.all().count(PheintDatabase.get(context)) != 1
+if Account.all().count(PheintDatabase.get(context)) != 2 ||
+   Player.all().count(PheintDatabase.get(context)) != 2
   raise "failed signup was not rolled back atomically"
+end
+
+demo = Account.where({"email": "demo@pheint.dia"}).first(PheintDatabase.get(context))
+if demo == nil || demo.player(PheintDatabase.get(context)).handle() != "demo"
+  raise "seeded account/player missing"
+end
+games = demo.games(PheintDatabase.get(context))
+if games.length() != 2 then raise "seeded games missing" end
+asteroid = Game.where({"title": "Asteroid Run"}).first(PheintDatabase.get(context))
+boards = asteroid.leaderboards(PheintDatabase.get(context))
+if boards.length() != 1 || boards[0].name() != "All-time high score"
+  raise "seeded leaderboard missing"
+end
+scores = boards[0].scores(PheintDatabase.get(context))
+if scores.length() != 1 || scores[0].value() != 128400 ||
+   scores[0].player(PheintDatabase.get(context)).handle() != "demo"
+  raise "seeded score/player association missing"
+end
+
+duplicate_score_rejected = false
+begin
+  Score.new({"leaderboard_id": boards[0].id(),
+    "player_id": demo.player(PheintDatabase.get(context)).id(),
+    "value": 1}).save(PheintDatabase.get(context))
+rescue error: StandardError
+  duplicate_score_rejected = true
+end
+if !duplicate_score_rejected ||
+   boards[0].scores(PheintDatabase.get(context)).length() != 1
+  raise "duplicate per-player leaderboard score was accepted"
 end
 
 missing = app(smoke_request("GET", "/missing"), context)

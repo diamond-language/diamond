@@ -48,9 +48,24 @@ Initialize the selected database with:
 ../../build/diamond setup_db.di
 ```
 
-This command recreates the selected database schema. Accounts store normalized
+This command recreates and seeds the selected database schema. Accounts store normalized
 email and a bcrypt password digest. Each account has one player with a unique
 handle, and authentication tokens are persisted as expiring sessions.
+
+The game domain is:
+
+- an account owns many games;
+- a game belongs to its owner and has a title, description, and many
+  leaderboards;
+- a leaderboard belongs to a game and has many scores;
+- a score belongs to a player and a leaderboard and stores an integer value;
+- `[leaderboard_id, player_id]` is unique, enforcing one score per user on
+  each leaderboard without duplicating the account ID on the score row.
+
+The seed creates `demo@pheint.dia` / `@demo`, two games (`Asteroid Run` and
+`Cipher Sprint`), leaderboards for both, and an initial Asteroid Run score.
+The development-only demo password is `diamond123`; test uses the same fixture
+at a reduced bcrypt cost, while non-test seeds use cost 12.
 
 ## Authentication
 

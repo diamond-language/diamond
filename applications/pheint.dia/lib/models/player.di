@@ -13,6 +13,7 @@ class Player < ActiveRecord::Model
   def self.configure(repository: ActiveRecord::Repository)
     @@repository = repository
   end
+  def scores(db) = self.has_many(Score.repository(), "player_id").all(db, self.id())
 end
 
 def build_player(row) = Player.new(row)

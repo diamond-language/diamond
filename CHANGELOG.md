@@ -16,6 +16,10 @@
   normalized email/handles, transactional account/player/session creation,
   bcrypt password verification, 256-bit bearer tokens, 30-day expiry,
   constant-work unknown-account login rejection, and correlated audit logs.
+- Added pheint.dia game, leaderboard, and score models with explicit ownership
+  and player associations, cascading foreign keys, validation, a database
+  uniqueness constraint on `[leaderboard_id, player_id]`, and representative
+  seeded game/leaderboard/score data.
 
 ## Language
 

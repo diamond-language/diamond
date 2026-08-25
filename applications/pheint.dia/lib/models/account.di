@@ -20,6 +20,7 @@ class Account < ActiveRecord::Model
       self.has_one(Player.repository(), "account_id").get(db, self.id())
     end
   end
+  def games(db) = self.has_many(Game.repository(), "owner_id").all(db, self.id())
 end
 
 def build_account(row) = Account.new(row)
