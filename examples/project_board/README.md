@@ -24,7 +24,7 @@ bash compile_views.sh
 ../../build/diamond app.di
 ```
 
-Run the direct-dispatch smoke test (public read, denied anonymous write, failed login, missing/forged CSRF rejection, validation failures without persistence, successful login/write/logout, rejected stale session, and expired-session deletion) with:
+Run the direct-dispatch smoke test (public reads and association rendering, denied anonymous writes, failed login, missing/forged CSRF rejection, validation failures without persistence, complete project/task create-update-delete flows, cascading project deletion, logout, rejected stale sessions, and expired-session deletion) with:
 
 ```sh
 ../../build/diamond setup_db.di

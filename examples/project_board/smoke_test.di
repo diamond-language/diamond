@@ -63,6 +63,55 @@ if invalid_task[0] != 422 || !invalid_task[2].include?("title is required") || !
 end
 if Task.all().count(Database.get(context)) != 2 then raise "invalid task was persisted" end
 
+def test_crud(context, cookie, csrf_token)
+  project = Project.where({"name": "Instrumented"}).first(Database.get(context))
+  if project == nil then raise "created project could not be reloaded" end
+
+  task_create = app(request_with_cookie("POST", "/tasks", "project_id=#{project.id()}&title=Write+tests&done=0&csrf_token=#{csrf_token}", cookie), context)
+  if task_create[0] != 302 || task_create[1]["Location"] != "/projects/#{project.id()}"
+    raise "task create failed"
+  end
+  task = Task.where({"title": "Write tests"}).first(Database.get(context))
+  if task == nil || task.project_id() != project.id() then raise "created task association was not persisted" end
+
+  task_update = app(request_with_cookie("POST", "/tasks/#{task.id()}", "project_id=#{project.id()}&title=Tests+written&done=1&csrf_token=#{csrf_token}", cookie), context)
+  if task_update[0] != 302 then raise "task update failed" end
+  updated_task = Task.find(Database.get(context), task.id())
+  if updated_task.title() != "Tests written" || !updated_task.done?() then raise "task update was not persisted" end
+
+  project_update = app(request_with_cookie("POST", "/projects/#{project.id()}", "name=Instrumented+board&description=Updated&csrf_token=#{csrf_token}", cookie), context)
+  if project_update[0] != 302 then raise "project update failed" end
+  updated_project = Project.find(Database.get(context), project.id())
+  if updated_project.name() != "Instrumented board" || updated_project.description() != "Updated"
+    raise "project update was not persisted"
+  end
+
+  public_show = app(request("GET", "/projects/#{project.id()}"), context)
+  if public_show[0] != 200 || !public_show[2].include?("Tests written") || !public_show[2].include?("done")
+    raise "public project association view failed"
+  end
+
+  task_delete = app(request_with_cookie("POST", "/tasks/#{task.id()}/delete", "csrf_token=#{csrf_token}", cookie), context)
+  if task_delete[0] != 302 || Task.find(Database.get(context), task.id()) != nil
+    raise "task delete failed"
+  end
+
+  cascade_create = app(request_with_cookie("POST", "/tasks", "project_id=#{project.id()}&title=Cascade+me&done=0&csrf_token=#{csrf_token}", cookie), context)
+  if cascade_create[0] != 302 then raise "cascade fixture task create failed" end
+  cascade_task = Task.where({"title": "Cascade me"}).first(Database.get(context))
+  if cascade_task == nil then raise "cascade fixture task was not persisted" end
+
+  project_delete = app(request_with_cookie("POST", "/projects/#{project.id()}/delete", "csrf_token=#{csrf_token}", cookie), context)
+  if project_delete[0] != 302 || Project.find(Database.get(context), project.id()) != nil
+    raise "project delete failed"
+  end
+  if Task.find(Database.get(context), cascade_task.id()) != nil
+    raise "project delete did not cascade to its task"
+  end
+end
+
+test_crud(context, cookie, csrf_token)
+
 logout_request = request_with_cookie("POST", "/logout", "csrf_token=#{csrf_token}", cookie)
 logout = app(logout_request, context)
 if logout[0] != 302 || logout[1]["Set-Cookie"] == nil then raise "logout failed" end
