@@ -41,13 +41,18 @@ field's resolver is an explicit, required `Callable` -- see `README.md`.
 
 Each of these was considered and explicitly deferred, not overlooked:
 
-- **`dataloader`** (N+1 batching via Fiber-based lazy resolution).
-  Execution here is plain synchronous Diamond calls; adding batching
-  would mean reworking the whole executor around a lazy/deferred value
-  concept graphql-ruby's own `execution/interpreter/runtime.rb` (1012
-  lines) exists to solve. Revisit if a real consumer hits N+1 query
-  problems in practice (`packages/active_record`'s own `has_many` is
-  the likely trigger).
+- **Global (cross-branch) dataloader coalescing.** `dataloader` itself
+  shipped (see "Resolved" below) -- what's still out of scope is
+  graphql-ruby's own *global* batching, which coalesces every pending
+  `.load()` call across the entire in-flight query tree regardless of
+  nesting depth or branch. This package only batches within one list's
+  own items. See `execution/dataloader.di`'s own header comment and the
+  "Resolved" entry below for the full reasoning.
+- **Lazy/deferred field values as a general concept** (a resolver
+  returning "a value that will be ready later" for reasons other than
+  dataloader batching, e.g. an async I/O call). `dataloader`'s own
+  batching is the one specific mechanism this package has; there's no
+  general laziness framework underneath it.
 - **`subscriptions`.** Needs a pubsub/transport layer this package has
   no opinion on yet.
 - **`pagination`/`relay`** (cursor-based connections). A real, common
@@ -143,6 +148,40 @@ Each of these was considered and explicitly deferred, not overlooked:
   set on `context["lookahead"]` immediately before every resolver call
   -- see `README.md`'s own "Lookahead" section for the API and the
   `... on Type`-filtering simplification recorded above.
+- **No N+1 batching at all.** Added: `execution/dataloader.di`'s
+  `GraphQL::Execution::Dataloader`/`Loader`, set on
+  `context["dataloader"]` once per request -- see `README.md`'s own
+  "Dataloader" section for the API. Ships as **local** batching (a
+  list's own items, via `#complete_list_value`) not graphql-ruby's own
+  **global** cross-branch coalescing -- a deliberate scope decision made
+  *before* writing any code (Diamond's bare `Fiber` primitive has no
+  scheduler/promise-type/fiber-pool, so fully general coalescing would
+  need every "wait for my children" point in the executor to bubble its
+  own "still stuck" state up through however many levels of Fiber
+  nesting sit above it, a project-sized undertaking on its own).
+  **A real design mistake was caught and fixed while building this**,
+  worth recording in detail: the first implementation *also*
+  fiber-wrapped `#execute_selection_set`'s own per-field loop (reasoning
+  it'd be "free" sibling-field batching on top of the list-item
+  batching) -- this actively broke list-item batching entirely, proven
+  by a test where 3 authors each loading `books` fired the batch
+  function 3 times instead of 1. Cause: a field's own fiber
+  (`booksFiber`) is a genuinely new Fiber; when its resolver's
+  `loader.load(...)` yields, that suspends `booksFiber` itself, not the
+  enclosing list-item's own fiber `#complete_list_value` is tracking --
+  so the `Dataloader#run` call spawned *inside* `#execute_selection_set`
+  saw its own tiny local group "stuck" and dispatched immediately, with
+  only that one item's key ever having registered, before
+  `#complete_list_value`'s own outer loop ever got a chance to resume
+  the next sibling author. Fixed by reverting
+  `#execute_selection_set` to a plain sequential loop (no fiber-
+  wrapping at that level at all) -- with no intervening fiber boundary,
+  `yield` inside `loader.load()` correctly propagates up through
+  however many *ordinary* (non-fiber) nested calls sit above it to
+  suspend the list-item's own outer fiber instead, which is what makes
+  cross-item coalescing work. This is also *why* sibling-field batching
+  isn't supported: it would need its own version of the same
+  bubbling-up machinery explicitly scoped out above.
 
 ## Diamond-level findings worth remembering
 
@@ -173,6 +212,24 @@ rediscover them:
   ("expected newline after expression") -- store the intermediate
   `Callable` in a local first (`coercer = type.coerce_input();
   coercer(value)`).
+- **A `def` nested inside an ordinary *instance* method does not
+  correctly capture the enclosing method's `self`** -- it reads back as
+  a bare `nil`, not a compile error, so this fails silently rather than
+  loudly. Distinct from the already-known "nested def inside a `self.`
+  (singleton) method breaks Callable arity for `Array#map`" bug above:
+  this one needs no `self.` involved at all, hits plain instance
+  methods (`Executor`'s own `#execute_selection_set`/
+  `#complete_list_value`, both ordinary instance methods), and the
+  failure mode is a silent wrong value instead of a clear error at the
+  call site. Confirmed directly with a throwaway fixture
+  (`self.double(x)` called from inside a `def` nested in an instance
+  method raised "type error"; printing `self` from inside that same
+  nested def printed `nil`). Workaround, used throughout
+  `execution/executor.di`'s own fiber-spawning code: capture `self`
+  into an ordinary local first (`executor = self`) before the nested
+  `def`, and reference that local instead of a bare `self` inside it --
+  ordinary local captures (non-`self` ones) are unaffected, confirmed
+  working repeatedly elsewhere in this same file.
 
 ## Open questions
 

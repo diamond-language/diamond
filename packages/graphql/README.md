@@ -171,6 +171,63 @@ selection nested only under `... on OtherType` on a polymorphic field
 still counts as "selected" here regardless of the runtime type (see
 `ROADMAP.md`).
 
+## Dataloader
+
+`context["dataloader"]` (a `GraphQL::Execution::Dataloader`, one per
+request) batches together every `.load()` call against the same named
+loader made while resolving a list's own items -- the classic N+1
+shape, N parents each independently resolving the same child field:
+
+```ruby
+module BookLoader
+  module_function
+  def batch(author_ids, context)
+    db = context["db"]
+    rows = Book.where({"author_id": author_ids}).to_a(db)
+    grouped = {}
+    index = 0
+    while index < rows.length()
+      row = rows[index]
+      list = grouped[row.author_id()]
+      grouped[row.author_id()] = if list == nil then [row] else list.push(row) end
+      index += 1
+    end
+    grouped
+  end
+end
+
+module AuthorResolvers
+  module_function
+  def books(object, args, context)
+    context["dataloader"].with("books_by_author", BookLoader.batch).load(object["id"])
+  end
+end
+```
+
+`batch_fn`'s own signature is `(keys, context) -> Hash` -- one query for
+every accumulated key, returning each key's own result (the grouping
+happens once, inside `batch`, not per-call in the resolver). Resolving
+a list of authors, each calling `.load(author_id)` inside its own
+`books` field, fires `BookLoader.batch` exactly **once**, with every
+author's own id already collected -- not once per author.
+
+`.with(name, batch_fn)` memoizes one `Loader` per `name` for the whole
+request (the *first* call for a given name wins; every later call with
+the same name, from anywhere else in the request, returns that same
+`Loader` and ignores its own `batch_fn` argument -- every call site for
+the "same" loader should pass an equivalent `batch_fn`). A `batch_fn`
+that raises surfaces as a normal, per-field `GraphQL::ExecutionError`
+for every item that was waiting on it -- not a hang, not an uncaught
+crash.
+
+**Deliberately LOCAL batching, not graphql-ruby's own GLOBAL
+coalescing across the entire query tree** -- see
+`execution/dataloader.di`'s own header comment and `ROADMAP.md` for the
+full reasoning. In short: only a list's own items batch together
+(`#complete_list_value`); two unrelated lists in different branches of
+one query, or a selection set's own sibling fields, do not coalesce
+with each other. This still solves the dominant real-world N+1 shape.
+
 ## Validation
 
 Every `Schema#execute` call validates the parsed document before

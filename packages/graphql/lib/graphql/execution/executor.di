@@ -51,6 +51,7 @@ class Executor
     @schema_meta_type = meta_types["__Schema"]
     @type_meta_type = meta_types["__Type"]
     @type_name_argument = [GraphQL::Argument.new("name", GraphQL::ScalarType.string().non_null())]
+    @dataloader = GraphQL::Execution::Dataloader.new()
   end
 
   # `raw_variables`/`context`/`root_value` all default to the "nothing
@@ -87,6 +88,7 @@ class Executor
     end
 
     fragments = self.index_fragments(document)
+    context["dataloader"] = @dataloader
 
     begin
       coerced_variables = GraphQL::Execution::Coercion.coerce_variable_definitions(
@@ -242,6 +244,31 @@ class Executor
     grouped
   end
 
+  # Deliberately NOT fiber-wrapped, unlike #complete_list_value below --
+  # confirmed directly (not assumed) that fiber-wrapping *this* loop
+  # too actively BREAKS cross-item batching rather than extending it.
+  # A field's own nested `def body` here would be a genuinely new Fiber
+  # (`booksFiber`, say); when its own resolver hits `loader.load(...)`
+  # and yields, that yield suspends *that* fresh fiber, not the
+  # enclosing list-item's own fiber #complete_list_value is tracking --
+  # so the `Dataloader#run` call spawned right here would see its own
+  # local group "stuck" and dispatch immediately, with only *this one
+  # item's* key ever having registered, before the outer
+  # #complete_list_value loop ever gets a chance to resume the next
+  # sibling item and let its own load() call join the same batch.
+  # Caught by writing exactly that test (3 authors, each resolving
+  # `books` via the same loader) and watching the batch function fire 3
+  # times instead of 1 -- with this loop plain and sequential instead,
+  # `yield` inside `loader.load()` correctly propagates up through
+  # however many *ordinary* (non-fiber) nested calls sit above it
+  # (`#execute_field`, this loop, `#complete_value`) to suspend the
+  # list-item's own outer fiber instead, which is exactly what makes
+  # cross-item coalescing work at all. See execution/dataloader.di's
+  # own header comment for why only the list-item granularity is
+  # batched, not sibling fields too -- this is why: sibling-field
+  # batching would need its own version of the same bubbling-up
+  # machinery this file's own header explicitly scoped out as a
+  # project-sized undertaking on its own.
   def execute_selection_set(selection_set, object_type, object_value, context, coerced_variables, fragments, path)
     grouped = self.collect_fields(selection_set, object_type, coerced_variables, fragments, [], {})
     result = {}
@@ -400,32 +427,63 @@ class Executor
     end
   end
 
+  # One Fiber per list item -- the classic N+1 shape this whole feature
+  # exists for (N parents in a list, each independently resolving the
+  # same child field/association), driven together by `@dataloader` so
+  # every item's own `.load()` call for that field coalesces into one
+  # batch dispatch instead of firing N separate ones. `output` is
+  # pre-sized with `nil` placeholders upfront so each fiber can write
+  # `output[index] = ...` directly (fibers don't necessarily finish in
+  # order, so `#push`ing from inside each one wouldn't preserve
+  # position) -- every existing line of resolution/error-handling logic
+  # below is unchanged from before this feature, just moved inside a
+  # per-item closure instead of a loop body. `executor = self`: see
+  # #execute_selection_set's own comment on why a nested `def` inside
+  # this (ordinary instance method) can't reference a bare `self`
+  # directly.
   def complete_list_value(type, fields, result, context, coerced_variables, fragments, path)
     unless result is Array
       raise GraphQL::ExecutionError.new("expected a list for \"#{type.name()}\"")
     end
+    executor = self
     item_type = type.of_type()
     output = []
     index = 0
     while index < result.length()
-      item_path = path.concat([index])
-      begin
-        output.push(self.complete_value(item_type, fields, result[index], context, coerced_variables, fragments, item_path))
-      rescue e: NullBubbleError
-        if item_type.kind() == "NON_NULL"
-          raise e
-        end
-        output.push(nil)
-      rescue e: StandardError
-        @errors.push({"message": e.message(), "path": item_path})
-        if item_type.kind() == "NON_NULL"
-          raise NullBubbleError.new(e.message())
-        end
-        output.push(nil)
-      end
+      output.push(nil)
       index += 1
     end
+    fibers = []
+    index = 0
+    while index < result.length()
+      item_index = index
+      item_value = result[index]
+      item_path = path.concat([index])
+      def body()
+        begin
+          output[item_index] = executor.complete_value(item_type, fields, item_value, context, coerced_variables, fragments, item_path)
+        rescue e: NullBubbleError
+          if item_type.kind() == "NON_NULL"
+            raise e
+          end
+          output[item_index] = nil
+        rescue e: StandardError
+          executor.record_error(e.message(), item_path)
+          if item_type.kind() == "NON_NULL"
+            raise NullBubbleError.new(e.message())
+          end
+          output[item_index] = nil
+        end
+      end
+      fibers.push(Fiber.new(body))
+      index += 1
+    end
+    @dataloader.run(fibers, context)
     output
+  end
+
+  def record_error(message, path)
+    @errors.push({"message": message, "path": path})
   end
 end
 

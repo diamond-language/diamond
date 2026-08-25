@@ -688,4 +688,118 @@ assert_contains "$actual" "{data: {author: {name: Ada}}}"
 assert_contains "$actual" "[[name], false]"
 count=$((count + 1))
 
+# --- dataloader: the core proof -- 3 authors each independently
+# resolving books via context["dataloader"].with(name, batch).load(id)
+# coalesce into exactly ONE batch dispatch, not 3 ---
+actual="$(run_file '
+module BookLoader
+  module_function
+  def batch(author_ids, context)
+    counter = context["batch_calls"]
+    counter[0] = counter[0] + 1
+    db = context["db"]
+    result = {}
+    index = 0
+    while index < author_ids.length()
+      aid = author_ids[index]
+      result[aid] = db[aid]
+      index += 1
+    end
+    result
+  end
+end
+module BookResolvers
+  module_function
+  def title(o, a, c) = o["title"]
+end
+module AuthorResolvers
+  module_function
+  def name(o, a, c) = o["name"]
+  def books(o, a, c)
+    loader = c["dataloader"].with("books_by_author", BookLoader.batch)
+    loader.load(o["id"])
+  end
+end
+module QueryResolvers
+  module_function
+  def authors(o, a, c) = c["all_authors"]
+end
+book_type = GraphQL::ObjectType.new("Book")
+book_type.field("title", GraphQL::ScalarType.string().non_null(), BookResolvers.title)
+author_type = GraphQL::ObjectType.new("Author")
+author_type.field("name", GraphQL::ScalarType.string(), AuthorResolvers.name)
+author_type.field("books", GraphQL::ListType.of(book_type), AuthorResolvers.books)
+t = GraphQL::ObjectType.new("Query")
+t.field("authors", GraphQL::ListType.of(author_type), QueryResolvers.authors)
+schema = GraphQL::Schema.new()
+schema.query(t)
+db = {"1": [{"title": "Book A"}], "2": [{"title": "Book B"}], "3": [{"title": "Book C"}]}
+all_authors = [{"id": "1", "name": "Ada"}, {"id": "2", "name": "Bob"}, {"id": "3", "name": "Cid"}]
+context = {"db": db, "all_authors": all_authors, "batch_calls": [0]}
+result = schema.execute("{ authors { name books { title } } }", {}, context)
+puts(result)
+puts(context["batch_calls"])
+')"
+assert_contains "$actual" "{name: Ada, books: [{title: Book A}]}"
+assert_contains "$actual" "{name: Bob, books: [{title: Book B}]}"
+assert_contains "$actual" "{name: Cid, books: [{title: Book C}]}"
+assert_contains "$actual" "[1]"
+count=$((count + 1))
+
+# --- dataloader: a batch function that raises surfaces as a normal
+# per-field error for every item waiting on it -- no hang, no crash ---
+actual="$(run_case '
+module BadLoader
+  module_function
+  def batch(ids, context)
+    raise GraphQL::ExecutionError.new("db unavailable")
+  end
+end
+module AuthorResolvers
+  module_function
+  def books(o, a, c)
+    loader = c["dataloader"].with("bad", BadLoader.batch)
+    loader.load(o["id"])
+  end
+end
+module QueryResolvers
+  module_function
+  def authors(o, a, c) = c["all_authors"]
+end
+def noop(o, a, c) = "x"
+book_type = GraphQL::ObjectType.new("Book")
+book_type.field("title", GraphQL::ScalarType.string(), noop)
+author_type = GraphQL::ObjectType.new("Author")
+author_type.field("books", GraphQL::ListType.of(book_type), AuthorResolvers.books)
+t = GraphQL::ObjectType.new("Query")
+t.field("authors", GraphQL::ListType.of(author_type), QueryResolvers.authors)
+schema = GraphQL::Schema.new()
+schema.query(t)
+context = {"all_authors": [{"id": "1"}, {"id": "2"}]}
+puts(schema.execute("{ authors { books { title } } }", {}, context))
+')"
+assert_contains "$actual" "{data: {authors: [{books: nil}, {books: nil}]}"
+assert_contains "$actual" "{message: db unavailable, path: [authors, 0, books]}"
+assert_contains "$actual" "{message: db unavailable, path: [authors, 1, books]}"
+count=$((count + 1))
+
+# --- dataloader: null propagation through a fiber-driven list item
+# still works correctly (a NON_NULL item field failing nulls the whole
+# list, exactly one error recorded) ---
+actual="$(run_case '
+def bad(o, a, c) = nil
+def ok(o, a, c) = "fine"
+def items_resolver(o, a, c) = [{}, {}]
+item_type = GraphQL::ObjectType.new("Item")
+item_type.field("value", GraphQL::ScalarType.string().non_null(), bad)
+t = GraphQL::ObjectType.new("Query")
+t.field("items", GraphQL::ListType.of(item_type.non_null()), items_resolver)
+t.field("sibling", GraphQL::ScalarType.string(), ok)
+schema = GraphQL::Schema.new()
+schema.query(t)
+puts(schema.execute("{ items { value } sibling }"))
+')"
+assert_contains "$actual" "{data: {items: nil, sibling: fine}, errors: [{message: cannot return null for a non-null field, path: [items, 0, value]}]}"
+count=$((count + 1))
+
 echo "$count graphql tests passed"
