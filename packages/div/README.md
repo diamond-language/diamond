@@ -43,7 +43,7 @@ something hand-written. `require` from your own app code should point at
 the `.cache/` path (`require "./views/.cache/index.html"`, not
 `require "./views/index.html"`), and `.gitignore` the whole `.cache/`
 directory, not an individual-file pattern -- see the repo's own root
-`.gitignore` entry for `examples/library/views/.cache/` as a worked
+`.gitignore` entry for `examples/library/lib/views/.cache/` as a worked
 example.
 
 For a clean recursive build of a complete template tree, use the shared

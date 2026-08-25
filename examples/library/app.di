@@ -5,7 +5,7 @@
 # routed through packages/dials. Run `bash compile_views.sh` once, then
 # `setup_db.di`, before running this file -- see README.md's "Run it".
 #
-# Split one file per concern under lib/ and views/, the same pattern
+# Split one file per concern under lib/{models,controllers,views}, the same pattern
 # packages/rack, packages/arel, and packages/active_record already use.
 #
 # Require order below is not cosmetic. Two different rules are in play:
@@ -18,8 +18,9 @@
 #   reach the controllers -- resolve via the same compile-time class
 #   method-table lookup either way (docs/roadmap.md's "Forward and
 #   mutual calls": "receiver-based method calls resolve dynamically"),
-#   so lib/authors_controller.di, lib/books_controller.di, lib/author.di,
-#   lib/book.di, and lib/routes.di can all reference each other
+#   so lib/controllers/authors_controller.di,
+#   lib/controllers/books_controller.di, lib/models/author.di,
+#   lib/models/book.di, and lib/routes.di can all reference each other
 #   regardless of which one is required first.
 # - A div-generated view function called by bare name (routes.di's
 #   home_action calling layout_html(...)/home_html(), and every
@@ -47,22 +48,22 @@ require "../../packages/rack/lib/rack"
 require "../../packages/div/lib/div/runtime"
 require "../../packages/dials/lib/dials"
 
-require "./views/.cache/author_books_table.html"
-require "./views/.cache/author_show.html"
-require "./views/.cache/authors_table.html"
-require "./views/.cache/books_table.html"
-require "./views/.cache/book_show.html"
-require "./views/.cache/author_form.html"
-require "./views/.cache/book_form.html"
-require "./views/.cache/home.html"
-require "./views/.cache/layout.html"
+require "./lib/views/.cache/author_books_table.html"
+require "./lib/views/.cache/author_show.html"
+require "./lib/views/.cache/authors_table.html"
+require "./lib/views/.cache/books_table.html"
+require "./lib/views/.cache/book_show.html"
+require "./lib/views/.cache/author_form.html"
+require "./lib/views/.cache/book_form.html"
+require "./lib/views/.cache/home.html"
+require "./lib/views/.cache/layout.html"
 
 require "./lib/database"
-require "./lib/author"
-require "./lib/book"
+require "./lib/models/author"
+require "./lib/models/book"
 
-require "./lib/authors_controller"
-require "./lib/books_controller"
+require "./lib/controllers/authors_controller"
+require "./lib/controllers/books_controller"
 require "./lib/routes"
 require "./lib/middleware"
 

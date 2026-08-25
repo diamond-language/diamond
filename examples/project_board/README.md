@@ -11,6 +11,12 @@ Rack middleware loads the current session into each request's context. Authoriza
 
 Projects and tasks use `ActiveRecord::Validators` at the repository boundary. Names, descriptions, and titles are required and length-limited; task status is constrained to its two valid values, and every task must reference an existing project. Controllers rescue `ActiveRecord::ValidationError` and return an HTTP 422 form preserving the submitted values and listing every error.
 
+The app follows a compact Rails-like layout under `lib/`: ActiveRecord
+classes live in `models/`, route actions in `controllers/`, Div templates in
+`views/`, and authentication/logging functions in `helpers/`. Database,
+routing, and middleware wiring remain directly under `lib/` as application
+infrastructure.
+
 Every request receives a random request ID and is logged at start and completion with status and duration. Durations are floating-point milliseconds derived from the monotonic clock, preserving sub-millisecond resolution. Debug logs cover controller reads and authorization decisions; info logs cover database/model initialization, successful authentication, sessions, and every mutation; warnings cover denied writes, failed logins, stale cookies, and missing delete targets. The entire operational output stream is newline-delimited JSON: application, server-error, setup, smoke-test, and query lines all have stable `timestamp`, `level`, `tag`, and `message` metadata plus event-specific top-level fields, so they can be indexed or presented by a future viewer without parsing human-formatted strings.
 
 The app's instrumented database adapter also captures every ActiveRecord/Arel query and write with a separate query ID, generated SQL, operation, row or affected count, and elapsed milliseconds. Queries executed during a request carry that request's ID, method, and path as ordinary JSON fields. SQL retains placeholders and logs only the number of bound parameters: passwords, password digests, session tokens, and other bound values are never logged.

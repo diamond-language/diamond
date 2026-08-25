@@ -1,5 +1,13 @@
 # Changelog
 
+## Example application layout
+
+- Reorganized the library and project-board examples into Rails-like
+  `lib/models`, `lib/controllers`, and `lib/views` directories, with project
+  board authentication/logging helpers under `lib/helpers`.
+- Updated template compilation, application boot files, benchmarks,
+  documentation, and generated-view ignore paths for the new structure.
+
 ## Log Viewer 0.1.0
 
 - Added `diamond-log`, a stdin/file NDJSON formatter that presents logger

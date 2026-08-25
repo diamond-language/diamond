@@ -1,8 +1,8 @@
 /build/
 /examples/library/library.db
 /examples/library/server.log
-/examples/library/views/.cache/
+/examples/library/lib/views/.cache/
 /examples/project_board/project_board.db
 /examples/project_board/project_board.db-shm
 /examples/project_board/project_board.db-wal
-/examples/project_board/views/.cache/
+/examples/project_board/lib/views/.cache/

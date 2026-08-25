@@ -22,25 +22,27 @@ Split one file per concern, the same pattern `packages/rack`,
 
 ```
 app.di                          entry point: ordered requires, then starts the server
-compile_views.sh                batch-compiles views/*.html.div -> .html.di (run first, see below)
+compile_views.sh                batch-compiles lib/views/*.html.div (run first)
 setup_db.di                     creates and seeds library.db
 lib/
   database.di                   per-worker SQLite connection
-  author.di, book.di            ActiveRecord::Model classes
-  authors_controller.di         AuthorsController -- one self. method per route action,
+  models/
+    author.di, book.di          ActiveRecord::Model classes
+  controllers/
+    authors_controller.di       AuthorsController -- one self. method per route action,
                                  (request, context, params)
-  books_controller.di           BooksController, same
+    books_controller.di         BooksController, same
+  views/
+    layout.html.div             page shell + nav, wraps every response
+    home.html.div, authors_table.html.div, books_table.html.div,
+    author_books_table.html.div, author_show.html.div, book_show.html.div,
+    author_form.html.div, book_form.html.div
   routes.di                     one bare top-level shim function per controller action, plus
                                  build_router() -- see packages/dials/README.md's "Why
                                  controllers still need one small shim function per action"
   middleware.di                 route/logging_middleware/timing_middleware/app -- still plain
                                  top-level functions, a real language constraint (see the
                                  comment at the top of that file), not a style choice
-views/
-  layout.html.div               page shell + nav, wraps every response
-  home.html.div, authors_table.html.div, books_table.html.div,
-  author_books_table.html.div, author_show.html.div, book_show.html.div,
-  author_form.html.div, book_form.html.div
 ```
 
 `app.di`'s own `require` block is ordered deliberately, not alphabetically
@@ -67,7 +69,7 @@ class verbatim (same three methods, just relocated to a real package);
 ## Views
 
 Every page renders through a [`packages/div`](../../packages/div/README.md)
-template: `views/*.html.div` source compiles to an ordinary `.di` function
+template: `lib/views/*.html.div` source compiles to an ordinary `.di` function
 (`author_show.html.div` -> `author_show_html(...)`), which a controller
 calls directly and wraps with `layout_html(title, content)`, then hands
 to `Div.html_response(200, ...)` for the actual `[status, headers, body]`
@@ -89,7 +91,7 @@ shape), so nothing is lost by making both forms concrete.
 
 ```sh
 cd examples/library
-bash compile_views.sh              # compiles views/*.html.div -> .html.di (once, or after editing a view)
+bash compile_views.sh              # compiles lib/views/*.html.div (once, or after editing a view)
 ../../build/diamond setup_db.di    # creates library.db, seeds it
 ../../build/diamond app.di         # starts the server on :18080
 ```
@@ -109,7 +111,7 @@ Or open `http://127.0.0.1:18080/` in a browser -- it's plain HTML.
 Every request is logged to stdout by the `rack` logging middleware
 (`GET /books -> 200`), and `library.db` is left on disk afterward
 (gitignored) -- rerun `setup_db.di` any time to reset it. The generated
-`views/*.html.di` files are gitignored too -- `compile_views.sh` re-runs
+`lib/views/.cache/*.html.di` files are gitignored too -- `compile_views.sh` re-runs
 in well under a second, so nothing is lost by not committing them.
 
 The navigation links expose `/authors/new` and `/books/new`. Existing records
