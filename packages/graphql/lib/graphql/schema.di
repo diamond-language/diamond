@@ -78,6 +78,12 @@ class Schema
       end
     elsif kind == "INTERFACE"
       self.visit_fields(named.fields(), visited)
+      implementors = named.implementors()
+      index = 0
+      while index < implementors.length()
+        self.visit(implementors[index], visited)
+        index += 1
+      end
     elsif kind == "UNION"
       possible = named.possible_types()
       index = 0
@@ -104,6 +110,18 @@ class Schema
   end
 
   def types() = self.type_map()
+
+  # `Schema.new().query(query_type).execute(query_string)` -- a fresh
+  # `GraphQL::Execution::Executor` per call (see executor.di's own
+  # header comment for why: no state to reset between requests, no
+  # shared mutable state to worry about). Returns `{"data": ...}`, or
+  # `{"data": ..., "errors": [...]}` when at least one field errored,
+  # or just `{"errors": [...]}` (no `"data"` key at all) for a
+  # request-level failure -- an unparseable document, an unknown
+  # operation, a variable/argument that doesn't coerce -- per spec.
+  def execute(query_string, raw_variables = {}, context = {}, root_value = nil, operation_name = nil)
+    GraphQL::Execution::Executor.new(self).execute(query_string, raw_variables, context, root_value, operation_name)
+  end
 end
 
 end

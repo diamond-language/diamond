@@ -22,6 +22,7 @@ class ObjectType < Type
 
   def implements(interface_type)
     @interfaces << interface_type
+    interface_type.register_implementor(self)
     self
   end
 

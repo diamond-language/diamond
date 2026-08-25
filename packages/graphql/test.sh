@@ -340,4 +340,200 @@ assert_contains "$actual" "Query"
 assert_contains "$actual" "ID"
 count=$((count + 1))
 
+# --- end-to-end: variables, arguments, nested object + list, aliases ---
+actual="$(run_file '
+module R
+  module_function
+  def author_id(o, a, c) = o["id"]
+  def author_name(o, a, c) = o["name"]
+  def author_books(o, a, c) = o["books"]
+  def book_title(o, a, c) = o["title"]
+  def query_author(o, a, c) = c["db"][a["id"]]
+end
+book_type = GraphQL::ObjectType.new("Book")
+book_type.field("title", GraphQL::ScalarType.string().non_null(), R.book_title)
+author_type = GraphQL::ObjectType.new("Author")
+author_type.field("id", GraphQL::ScalarType.id().non_null(), R.author_id)
+author_type.field("name", GraphQL::ScalarType.string().non_null(), R.author_name)
+author_type.field("books", GraphQL::ListType.of(book_type), R.author_books)
+query_type = GraphQL::ObjectType.new("Query")
+query_type.field("author", author_type, R.query_author, [GraphQL::Argument.new("id", GraphQL::ScalarType.id().non_null())])
+schema = GraphQL::Schema.new()
+schema.query(query_type)
+db = {"1": {"id": "1", "name": "Ada Lovelace", "books": [{"title": "Notes"}]}}
+lines = [
+  "query Q($id: ID!) {",
+  "  a: author(id: $id) { name books { title } }",
+  "}"
+]
+puts(schema.execute(lines.join("\n"), {"id": "1"}, {"db": db}))
+')"
+assert_contains "$actual" "Ada Lovelace"
+assert_contains "$actual" "Notes"
+count=$((count + 1))
+
+# --- null propagation: non-null field errors and nulls the response;
+# nullable field just nulls that one key, siblings unaffected ---
+actual="$(run_case '
+module R
+  module_function
+  def bad(o, a, c) = nil
+  def ok(o, a, c) = "fine"
+end
+t = GraphQL::ObjectType.new("Query")
+t.field("required", GraphQL::ScalarType.string().non_null(), R.bad)
+t.field("optional", GraphQL::ScalarType.string(), R.bad)
+t.field("sibling", GraphQL::ScalarType.string(), R.ok)
+schema = GraphQL::Schema.new()
+schema.query(t)
+puts(schema.execute("{ required sibling }"))
+puts(schema.execute("{ optional sibling }"))
+')"
+assert_contains "$actual" $'{data: nil, errors: [{message: cannot return null for a non-null field, path: [required]}]}\n{data: {optional: nil, sibling: fine}}'
+count=$((count + 1))
+
+# --- a resolver-raised GraphQL::ExecutionError surfaces its own
+# message as a field error; a missing required argument is a
+# request-level GraphQL::RequestError instead ---
+actual="$(run_file '
+module R
+  module_function
+  def boom(o, a, c)
+    raise GraphQL::ExecutionError.new("custom failure")
+  end
+  def echo(o, a, c) = a["x"]
+end
+t = GraphQL::ObjectType.new("Query")
+t.field("boom", GraphQL::ScalarType.string(), R.boom)
+t.field("echo", GraphQL::ScalarType.string().non_null(), R.echo, [GraphQL::Argument.new("x", GraphQL::ScalarType.string().non_null())])
+schema = GraphQL::Schema.new()
+schema.query(t)
+puts(schema.execute("{ boom }"))
+puts(schema.execute("{ echo }"))
+')"
+assert_contains "$actual" "custom failure"
+assert_contains "$actual" 'missing required argument "x"'
+count=$((count + 1))
+
+# --- union type: __typename + resolve_type + typed inline fragments ---
+actual="$(run_file '
+module R
+  module_function
+  def name(o, a, c) = o["name"]
+  def title(o, a, c) = o["title"]
+  def resolve_search_type(o, c)
+    if o.keys().include?("title") then "Book" else "Author" end
+  end
+  def search(o, a, c) = [{"name": "Ada"}, {"title": "Notes"}]
+end
+author_type = GraphQL::ObjectType.new("Author")
+author_type.field("name", GraphQL::ScalarType.string(), R.name)
+book_type = GraphQL::ObjectType.new("Book")
+book_type.field("title", GraphQL::ScalarType.string(), R.title)
+result_type = GraphQL::UnionType.new("SearchResult")
+result_type.possible_type(author_type)
+result_type.possible_type(book_type)
+result_type.resolve_type(R.resolve_search_type)
+t = GraphQL::ObjectType.new("Query")
+t.field("search", result_type.list(), R.search)
+schema = GraphQL::Schema.new()
+schema.query(t)
+lines = [
+  "{ search { __typename ... on Author { name } ... on Book { title } } }"
+]
+puts(schema.execute(lines.join("\n")))
+')"
+assert_contains "$actual" "Author"
+assert_contains "$actual" "Ada"
+assert_contains "$actual" "Book"
+assert_contains "$actual" "Notes"
+count=$((count + 1))
+
+# --- interface type: an object reachable only via implementing an
+# interface must still show up in Schema#type_map's own reachability
+# walk (a real bug this exact case caught) ---
+actual="$(run_file '
+module R
+  module_function
+  def id(o, a, c) = o["id"]
+  def resolve_node_type(o, c) = "Thing"
+  def node(o, a, c) = {"id": "1"}
+end
+node_iface = GraphQL::InterfaceType.new("Node")
+node_iface.field("id", GraphQL::ScalarType.id().non_null())
+node_iface.resolve_type(R.resolve_node_type)
+thing_type = GraphQL::ObjectType.new("Thing")
+thing_type.field("id", GraphQL::ScalarType.id().non_null(), R.id)
+thing_type.implements(node_iface)
+t = GraphQL::ObjectType.new("Query")
+t.field("node", node_iface, R.node)
+schema = GraphQL::Schema.new()
+schema.query(t)
+puts(schema.type_map().keys().include?("Thing"))
+puts(schema.execute("{ node { __typename id } }"))
+')"
+assert_contains "$actual" $'true\n{data: {node: {__typename: Thing, id: 1}}}'
+count=$((count + 1))
+
+# --- enum type: a resolver returning an unknown value is a field
+# error, not a silent pass-through ---
+actual="$(run_case '
+module R
+  module_function
+  def status(o, a, c) = "ACTIVE"
+  def bogus(o, a, c) = "NOPE"
+end
+status_type = GraphQL::EnumType.new("Status")
+status_type.value("ACTIVE")
+status_type.value("INACTIVE")
+t = GraphQL::ObjectType.new("Query")
+t.field("status", status_type, R.status)
+t.field("bogus", status_type, R.bogus)
+schema = GraphQL::Schema.new()
+schema.query(t)
+puts(schema.execute("{ status }"))
+puts(schema.execute("{ bogus }"))
+')"
+assert_contains "$actual" "ACTIVE"
+assert_contains "$actual" 'is not a valid value for enum "Status"'
+count=$((count + 1))
+
+# --- named fragment spread + @include/@skip directives (with a
+# variable-driven @skip) ---
+actual="$(run_file '
+module R
+  module_function
+  def id(o, a, c) = o["id"]
+  def name(o, a, c) = o["name"]
+  def query_author(o, a, c) = {"id": "1", "name": "Ada"}
+end
+author_type = GraphQL::ObjectType.new("Author")
+author_type.field("id", GraphQL::ScalarType.id().non_null(), R.id)
+author_type.field("name", GraphQL::ScalarType.string(), R.name)
+t = GraphQL::ObjectType.new("Query")
+t.field("author", author_type, R.query_author)
+schema = GraphQL::Schema.new()
+schema.query(t)
+lines = [
+  "query($skipName: Boolean!) {",
+  "  a: author { ...Fields }",
+  "  b: author { id name @skip(if: $skipName) }",
+  "}",
+  "fragment Fields on Author { id name @include(if: false) }"
+]
+puts(schema.execute(lines.join("\n"), {"skipName": true}))
+')"
+assert_contains "$actual" '{data: {a: {id: 1}, b: {id: 1}}}'
+count=$((count + 1))
+
+# --- an unknown field is a field-level error, not a crash ---
+actual="$(run_case '
+t = GraphQL::ObjectType.new("Query")
+schema = GraphQL::Schema.new()
+schema.query(t)
+puts(schema.execute("{ nope }"))
+')"
+assert_contains "$actual" 'field "nope" not found on type "Query"'
+count=$((count + 1))
+
 echo "$count graphql tests passed"
