@@ -52,6 +52,40 @@ This command recreates the selected database schema. Accounts store normalized
 email and a bcrypt password digest. Each account has one profile with a unique
 handle, and authentication tokens are persisted as expiring sessions.
 
+## Authentication
+
+The schema exposes the conventional authentication flow:
+
+```graphql
+mutation SignUp {
+  signUp(email: "ada@example.com", password: "correct horse", handle: "@ada") {
+    token
+    account { id email profile { id handle } }
+  }
+}
+
+mutation SignIn {
+  signIn(email: "ada@example.com", password: "correct horse") {
+    token
+    account { id email profile { handle } }
+  }
+}
+
+query CurrentAccount {
+  me { id email profile { handle } }
+}
+
+mutation SignOut { signOut }
+```
+
+Send the returned opaque token as `Authorization: Bearer <token>` for `me` and
+`signOut`. Sessions expire after 30 days and are deleted when an expired token
+is presented. Signup lowercases email and handle, accepts the handle with or
+without a leading `@`, and creates the account, profile, and initial session in
+one transaction. Failed profile/account validation rolls the entire signup
+back. Passwords must be 8–72 characters; only bcrypt digests are persisted,
+and neither password digests nor session records are exposed by the schema.
+
 Run the direct-dispatch smoke test with:
 
 ```sh

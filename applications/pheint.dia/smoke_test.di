@@ -8,6 +8,12 @@ def smoke_request(method, path, body = "")
   {"method": method, "path": path, "body": body, "headers": {}}
 end
 
+def authenticated_graphql(token, query)
+  {"method": "POST", "path": "/graphql",
+   "body": JSON.stringify({"query": query}),
+   "headers": {"authorization": "Bearer #{token}"}}
+end
+
 context = {"log_level": "off"}
 root = app(smoke_request("GET", "/"), context)
 if root[0] != 200 || root[1]["Content-Type"] != "application/json" ||
@@ -33,6 +39,75 @@ end
 invalid_graphql = app(smoke_request("POST", "/graphql", "not json"), context)
 if invalid_graphql[0] != 400 || !invalid_graphql[2].include?("valid JSON")
   raise "invalid GraphQL request was not rejected"
+end
+
+
+signup_query = [
+  "mutation {",
+  "  signUp(email: \" Alice@Example.COM \", password: \"correct horse\", handle: \"@Alice\") {",
+  "    token account { id email profile { handle } }",
+  "  }",
+  "}"
+].join("\n")
+signup = app(smoke_request("POST", "/graphql",
+  JSON.stringify({"query": signup_query})), context)
+signup_json = JSON.parse(signup[2])
+if signup[0] != 200 || signup_json["errors"] != nil
+  raise "signup failed"
+end
+signup_data = signup_json["data"]["signUp"]
+token = signup_data["token"]
+if token == nil || token.length() != 64 ||
+   signup_data["account"]["email"] != "alice@example.com" ||
+   signup_data["account"]["profile"]["handle"] != "alice"
+  raise "signup did not normalize identity or return auth payload"
+end
+
+anonymous_me = JSON.parse(app(smoke_request("POST", "/graphql",
+  JSON.stringify({"query": "{ me { email } }"})), context)[2])
+if anonymous_me["data"]["me"] != nil then raise "anonymous me was not nil" end
+
+authenticated_me = JSON.parse(app(authenticated_graphql(token,
+  "{ me { email profile { handle } } }"), context)[2])
+if authenticated_me["data"]["me"]["profile"]["handle"] != "alice"
+  raise "bearer token did not authenticate me"
+end
+
+signout = JSON.parse(app(authenticated_graphql(token,
+  "mutation { signOut }"), context)[2])
+if signout["data"]["signOut"] != true then raise "signout failed" end
+
+signed_out_me = JSON.parse(app(authenticated_graphql(token,
+  "{ me { email } }"), context)[2])
+if signed_out_me["data"]["me"] != nil then raise "signed-out token remained valid" end
+
+bad_signin = JSON.parse(app(smoke_request("POST", "/graphql", JSON.stringify({
+  "query": "mutation { signIn(email: \"alice@example.com\", password: \"wrongpass\") { token } }"
+})), context)[2])
+if bad_signin["errors"] == nil then raise "invalid signin was accepted" end
+
+signin = JSON.parse(app(smoke_request("POST", "/graphql", JSON.stringify({
+  "query": "mutation { signIn(email: \"ALICE@EXAMPLE.COM\", password: \"correct horse\") { token account { email } } }"
+})), context)[2])
+if signin["errors"] != nil || signin["data"]["signIn"]["token"] == nil
+  raise "valid signin failed"
+end
+
+
+duplicate_signup = JSON.parse(app(smoke_request("POST", "/graphql", JSON.stringify({
+  "query": "mutation { signUp(email: \"alice@example.com\", password: \"another pass\", handle: \"other\") { token } }"
+})), context)[2])
+if duplicate_signup["errors"] == nil then raise "duplicate email signup was accepted" end
+
+invalid_profile_signup = JSON.parse(app(smoke_request("POST", "/graphql", JSON.stringify({
+  "query": "mutation { signUp(email: \"other@example.com\", password: \"another pass\", handle: \"!\") { token } }"
+})), context)[2])
+if invalid_profile_signup["errors"] == nil
+  raise "invalid profile signup was accepted"
+end
+if Account.all().count(PheintDatabase.get(context)) != 1 ||
+   Profile.all().count(PheintDatabase.get(context)) != 1
+  raise "failed signup was not rolled back atomically"
 end
 
 missing = app(smoke_request("GET", "/missing"), context)

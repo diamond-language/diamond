@@ -25,6 +25,8 @@ end
 
 def app(request, context)
   ensure_pheint_models_configured(context)
-  chain = rack_compose([pheint_logging_middleware], pheint_route)
+  chain = rack_compose(
+    [pheint_logging_middleware, load_pheint_authentication_middleware],
+    pheint_route)
   rack_run_chain(chain, 0, request, context)
 end

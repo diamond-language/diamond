@@ -26,3 +26,9 @@ end
 def pheint_log_info(request, context, event, fields: Hash = {})
   PheintLogger.get(context).info(event, pheint_log_fields(request, fields))
 end
+
+def pheint_audit_info(context, event, fields: Hash = {})
+  correlation = context["log_context"]
+  correlation = {} if correlation == nil
+  PheintLogger.get(context).info(event, correlation.merge(fields))
+end

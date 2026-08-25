@@ -12,6 +12,10 @@
 - Added environment-isolated pheint.dia databases and instrumented
   ActiveRecord models for accounts, one-to-one profiles with unique handles,
   and expiring server-side authentication sessions.
+- Added GraphQL `signUp`, `signIn`, `signOut`, and `me` operations with
+  normalized email/handles, transactional account/profile/session creation,
+  bcrypt password verification, 256-bit bearer tokens, 30-day expiry,
+  constant-work unknown-account login rejection, and correlated audit logs.
 
 ## Language
 
