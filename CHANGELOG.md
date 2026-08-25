@@ -1,5 +1,12 @@
 # Changelog
 
+## GraphSQL 0.1.0
+
+- Started the Diamond port of GraphSQL 0.5.1 with explicit, inheritable
+  type-to-repository mappings for columns and associations, including GraphQL
+  field aliases and mapped association targets.
+- Added dedicated unknown-column and duplicate-aliased-association errors.
+
 ## ActiveRecord 0.19.0
 
 - Added `ActiveRecord::Associations::Preloader` with scalar/Array association
