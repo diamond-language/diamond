@@ -223,10 +223,25 @@ this package or any other) doesn't have to rediscover it:
   nested input objects, nested selection sets). A class's own
   `self.method(...)` recursing into itself via `self.` works fine, just
   not via `ClassName.method(...)`.
-- **Chained double-calls/double-subscripts don't parse**:
-  `type.coerce_input()(value)` and `hash["a"]["b"] = value` both fail
-  with "expected newline after expression" -- store the intermediate
-  value in a local first (`coercer = type.coerce_input(); coercer(value)`).
+- **~~Chained double-calls/double-subscripts don't parse~~ -- fixed at
+  the compiler level, no longer a workaround-only issue.**
+  `type.coerce_input()(value)` and `hash["a"]["b"] = value` both used
+  to fail with "expected newline after expression". Both were real,
+  previously-undiscovered gaps (not documented cuts) fixed directly in
+  `src/compiler.c`: `parse_precedence`'s own postfix-chaining loop only
+  ever checked for a following `.`/`[` after an expression, never a
+  bare `(` (fixed by reusing `parse_closure_call_arguments`, the
+  existing "call whatever Callable is in this register" helper already
+  used for a local/`@ivar`/`@@cvar` holding one); `index_assignment_ahead`
+  only ever scanned a single `[...]` group before checking for `=`, so
+  any chain longer than one level fell through to plain expression
+  parsing instead (fixed by scanning through consecutive `[...]` groups,
+  and having `compile_index_assignment` emit an ordinary read for every
+  group but the last). Both ship on `main` with their own new
+  `tests/cases/` coverage (`chained_call_expression.di`,
+  `chained_indexed_assignment.di`) -- this package's own workarounds
+  (an intermediate local before a second call) are no longer necessary
+  but were left in place rather than churned for marginal benefit.
 
 ## Open questions
 
