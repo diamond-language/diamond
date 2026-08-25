@@ -106,6 +106,17 @@ Each of these was considered and explicitly deferred, not overlooked:
   nested introspection field still gets rejected correctly, just as an
   execution-time field error via the executor's own defensive fallback
   rather than a validation-time one.
+- **`Lookahead`'s own fragment-type-condition filtering.** `.selects?`/
+  `.selection` consider every selection reachable through a fragment
+  spread or inline fragment unconditionally, regardless of its own
+  `... on SomeType` condition -- a selection nested only under a type
+  condition that wouldn't actually apply to the eventual runtime type
+  still counts as "selected." A real over-approximation, acceptable for
+  the primary use case (deciding whether to eager-load an association,
+  almost always against a single concrete object type with no type
+  condition in play at all); revisit if a polymorphic-field lookahead
+  need shows up in practice. See `execution/lookahead.di`'s own header
+  comment.
 
 ## Resolved
 
@@ -124,6 +135,14 @@ Each of these was considered and explicitly deferred, not overlooked:
   the schema happened to use `Boolean` anywhere reachable from the
   query/mutation roots. Fixed: `Coercion.resolve_type_reference` always
   recognizes the five built-in scalars regardless of schema reachability.
+- **No `Lookahead` support at all.** A real gap in the original v1
+  scoping conversation, not a deliberate exclusion -- surfaced when the
+  user asked for it directly, needed to avoid over-fetching in a
+  resolver mapping GraphQL queries onto minimal ActiveRecord queries.
+  Added: `execution/lookahead.di`'s `GraphQL::Execution::Lookahead`,
+  set on `context["lookahead"]` immediately before every resolver call
+  -- see `README.md`'s own "Lookahead" section for the API and the
+  `... on Type`-filtering simplification recorded above.
 
 ## Diamond-level findings worth remembering
 

@@ -18,6 +18,8 @@ require "./graphql/input_object_type"
 
 require "./graphql/errors"
 require "./graphql/execution/coercion"
+require "./graphql/execution/directives"
+require "./graphql/execution/lookahead"
 require "./graphql/validation/validator"
 require "./graphql/introspection"
 require "./graphql/execution/executor"

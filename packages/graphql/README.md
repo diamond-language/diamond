@@ -125,6 +125,52 @@ as that field's error; any other exception surfaces its own
 `.message()` the same way (still just that one field's result going
 `null`, siblings unaffected, unless the field itself is non-null).
 
+## Lookahead
+
+`context["lookahead"]` is set immediately before every resolver call --
+a `GraphQL::Execution::Lookahead` scoped to that field's own
+sub-selections, for deciding whether to do expensive work (an eager
+load, say) *before* doing it, not after:
+
+```ruby
+module AuthorResolvers
+  module_function
+  def books(object, args, context)
+    if context["lookahead"].selects?("title")
+      # the query actually asked for book titles -- eager-load them
+    else
+      # skip it, the query didn't ask
+    end
+    object.books()
+  end
+end
+```
+
+A resolver one level up can peek into a *not-yet-resolved* child
+field's own selections the same way, via `.selection(field_name)`
+(returns another `Lookahead`, empty -- so every `.selects?` under it is
+`false` -- if `field_name` wasn't selected at all):
+
+```ruby
+def author(object, args, context)
+  if context["lookahead"].selection("books").selects?("title")
+    # decide up front whether resolving `author` should also prefetch
+    # book titles in the same query, before `books`' own resolver runs
+  end
+  object
+end
+```
+
+`.selections()` returns every field name selected at this level, for a
+resolver that wants to see everything at once. Read `context["lookahead"]`
+synchronously, during your own resolver call -- it's the same shared
+`context` Hash mutated in place for every field, not a fresh copy per
+field (see `execution/executor.di`'s own header comment on why that's
+safe here). Deliberately simpler than graphql-ruby's own Lookahead: a
+selection nested only under `... on OtherType` on a polymorphic field
+still counts as "selected" here regardless of the runtime type (see
+`ROADMAP.md`).
+
 ## Validation
 
 Every `Schema#execute` call validates the parsed document before

@@ -636,4 +636,56 @@ assert_contains "$actual" 'defaultValue: "en"'
 assert_contains "$actual" "d: nil"
 count=$((count + 1))
 
+# --- lookahead: a parent resolver can peek at whether a not-yet-
+# resolved child field will itself select a given sub-field (the
+# eager-load-avoidance use case), via context["lookahead"] ---
+actual="$(run_file '
+module AuthorResolvers
+  module_function
+  def name(o, a, c) = o["name"]
+  def books(o, a, c)
+    if c["lookahead"].selects?("title")
+      c["log"].push("eager-loading titles")
+    else
+      c["log"].push("skipping title load")
+    end
+    o["books"]
+  end
+end
+module BookResolvers
+  module_function
+  def title(o, a, c) = o["title"]
+end
+module QueryResolvers
+  module_function
+  def author(o, a, c)
+    la = c["lookahead"]
+    c["log"].push(la.selections())
+    c["log"].push(la.selection("books").selects?("title"))
+    o
+  end
+end
+book_type = GraphQL::ObjectType.new("Book")
+book_type.field("title", GraphQL::ScalarType.string().non_null(), BookResolvers.title)
+author_type = GraphQL::ObjectType.new("Author")
+author_type.field("name", GraphQL::ScalarType.string(), AuthorResolvers.name)
+author_type.field("books", GraphQL::ListType.of(book_type), AuthorResolvers.books)
+t = GraphQL::ObjectType.new("Query")
+t.field("author", author_type, QueryResolvers.author)
+schema = GraphQL::Schema.new()
+schema.query(t)
+data = {"name": "Ada", "books": [{"title": "Notes"}]}
+log = []
+puts(schema.execute("{ author { name books { title } } }", {}, {"log": log}, data))
+puts(log)
+log2 = []
+puts(schema.execute("{ author { name } }", {}, {"log": log2}, data))
+puts(log2)
+')"
+assert_contains "$actual" "{data: {author: {name: Ada, books: [{title: Notes}]}}}"
+assert_contains "$actual" "[[name, books], true, eager-loading titles]"
+assert_contains "$actual" "{data: {author: {name: Ada}}}"
+assert_contains "$actual" "[[name], false]"
+count=$((count + 1))
+
 echo "$count graphql tests passed"

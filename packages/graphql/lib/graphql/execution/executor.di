@@ -167,37 +167,6 @@ class Executor
     end
   end
 
-  # true/false/nil (nil meaning: this directive wasn't present at all).
-  def directive_value(directives, directive_name, coerced_variables)
-    result = nil
-    index = 0
-    while index < directives.length()
-      directive = directives[index]
-      if directive.name() == directive_name
-        if_value = nil
-        arg_index = 0
-        while arg_index < directive.arguments().length()
-          if directive.arguments()[arg_index].name() == "if"
-            if_value = directive.arguments()[arg_index].value()
-          end
-          arg_index += 1
-        end
-        result = GraphQL::Execution::Coercion.coerce_literal(if_value, GraphQL::ScalarType.boolean(), coerced_variables)
-      end
-      index += 1
-    end
-    result
-  end
-
-  def selection_included?(directives, coerced_variables)
-    if self.directive_value(directives, "skip", coerced_variables) == true
-      return false
-    end
-    if self.directive_value(directives, "include", coerced_variables) == false
-      return false
-    end
-    true
-  end
 
   # Does `type_condition` (a fragment/inline-fragment's own `on Type`,
   # or nil for an untyped inline fragment) apply to a concrete
@@ -243,7 +212,7 @@ class Executor
     while index < selection_set.length()
       selection = selection_set[index]
       if selection is GraphQL::Language::Field
-        if self.selection_included?(selection.directives(), coerced_variables)
+        if GraphQL::Execution::Directives.included?(selection.directives(), coerced_variables)
           key = selection.response_key()
           if grouped.keys().include?(key)
             grouped[key].push(selection)
@@ -252,7 +221,7 @@ class Executor
           end
         end
       elsif selection is GraphQL::Language::FragmentSpread
-        if self.selection_included?(selection.directives(), coerced_variables) &&
+        if GraphQL::Execution::Directives.included?(selection.directives(), coerced_variables) &&
            !visited_fragments.include?(selection.name())
           visited_fragments.push(selection.name())
           fragment = fragments[selection.name()]
@@ -262,7 +231,7 @@ class Executor
           end
         end
       elsif selection is GraphQL::Language::InlineFragment
-        if self.selection_included?(selection.directives(), coerced_variables) &&
+        if GraphQL::Execution::Directives.included?(selection.directives(), coerced_variables) &&
            self.type_condition_applies?(selection.type_condition(), object_type)
           self.collect_fields(selection.selection_set(), object_type, coerced_variables,
             fragments, visited_fragments, grouped)
@@ -328,6 +297,17 @@ class Executor
       end
       begin
         args = GraphQL::Execution::Coercion.coerce_arguments(field_node.arguments(), schema_field.arguments(), coerced_variables)
+        # `context["lookahead"]` is set fresh, in place, immediately
+        # before every resolver call -- safe because execution is
+        # single-threaded and fully synchronous (each resolver call
+        # completes, including everything nested under it, before the
+        # next field's own call begins), not because `context` is
+        # copied per field. A resolver reading `context["lookahead"]`
+        # is expected to do so synchronously, during its own call --
+        # stashing `context` away and reading it back later would see
+        # whichever field resolved most recently, not its own.
+        context["lookahead"] = GraphQL::Execution::Lookahead.new(
+          self.merged_selection_set(fields), fragments, coerced_variables)
         resolve = schema_field.resolve()
         resolved_value = resolve(object_value, args, context)
       rescue e: StandardError
