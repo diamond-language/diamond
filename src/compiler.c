@@ -5730,7 +5730,7 @@ static uint16_t compile_definition(Compiler *compiler, bool captures_self) {
      * named "negate", an ordinary identifier, recognized by name at
      * NEGATE's dispatch point the same way "to_s" is recognized for
      * stringification, needing no parser accommodation at all. */
-    const bool operator_name =
+    bool operator_name =
         compiler->current.kind==DIAMOND_TOKEN_PLUS||
         compiler->current.kind==DIAMOND_TOKEN_MINUS||
         compiler->current.kind==DIAMOND_TOKEN_STAR||
@@ -5742,6 +5742,42 @@ static uint16_t compile_definition(Compiler *compiler, bool captures_self) {
         compiler->current.kind==DIAMOND_TOKEN_GREATER||
         compiler->current.kind==DIAMOND_TOKEN_GREATER_EQUAL||
         compiler->current.kind==DIAMOND_TOKEN_SPACESHIP;
+    /* `[]`/`[]=` -- the one operator-overload shape that isn't a single
+     * lexer token, so unlike every case above it needs its own
+     * multi-token lookahead/consumption here, not just a membership
+     * check. `[` has no other legal meaning in "expecting a method name"
+     * position (unlike right *after* a name, where DIAMOND_TOKEN_LEFT_
+     * BRACKET already means generic type parameters -- see the `def
+     * name[T](...)` handling below; that check runs strictly later, on
+     * whatever follows the name this block already consumed, so the two
+     * never conflict), so this can commit to consuming eagerly on `[`
+     * rather than needing to backtrack. Requires `[`/`]` (and `=`, for
+     * the setter) strictly adjacent -- no whitespace -- matching every
+     * other operator name here being a single, ungappable token; `def [
+     * ](i)` or `def [] =(i, v)` fall through to the ordinary "expected
+     * function name" error below, same as any other malformed name. */
+    bool is_index_operator=false;
+    DiamondSpan index_operator_name={};
+    if(compiler->current.kind==DIAMOND_TOKEN_LEFT_BRACKET) {
+        const DiamondSpan left=compiler->current.span;
+        DiamondLexer lookahead=compiler->lexer;
+        const DiamondToken right=diamond_lexer_next(&lookahead);
+        if(right.kind==DIAMOND_TOKEN_RIGHT_BRACKET&&
+           right.span.start==left.start+left.length) {
+            is_index_operator=true;
+            advance_token(compiler);
+            advance_token(compiler);
+            size_t total_length=right.span.start+right.span.length-left.start;
+            if(compiler->current.kind==DIAMOND_TOKEN_EQUAL&&
+               compiler->current.span.start==right.span.start+right.span.length) {
+                total_length+=compiler->current.span.length;
+                advance_token(compiler);
+            }
+            index_operator_name=(DiamondSpan){.start=left.start,
+                .length=total_length,.line=left.line,.column=left.column};
+            operator_name=true;
+        }
+    }
     if (compiler->current.kind != DIAMOND_TOKEN_IDENTIFIER && !operator_name) {
         fail(compiler, compiler->current.span, "expected function name after 'def'");
         return 0;
@@ -5767,7 +5803,7 @@ static uint16_t compile_definition(Compiler *compiler, bool captures_self) {
         fail(compiler, compiler->current.span, "too many functions");
         return 0;
     }
-    const DiamondSpan name = compiler->current.span;
+    const DiamondSpan name = is_index_operator?index_operator_name:compiler->current.span;
     if (name.length >= DIAMOND_MAX_FUNCTION_NAME) {
         fail(compiler, name, "function name is too long");
         return 0;
@@ -5875,7 +5911,11 @@ static uint16_t compile_definition(Compiler *compiler, bool captures_self) {
     function->declaration_line=(uint32_t)name.line;
     function->declaration_column=(uint32_t)name.column;
     function->declaration_start=name.start;
-    advance_token(compiler);
+    /* is_index_operator already consumed every token of its own name
+     * ("[]"/"[]=") above -- nothing left to advance past here, unlike
+     * every other name shape (a single token, always consumed by this
+     * one advance_token). */
+    if(!is_index_operator) advance_token(compiler);
     if(compiler->current.kind==DIAMOND_TOKEN_EQUAL) {
         DiamondLexer lookahead=compiler->lexer;
         if(diamond_lexer_next(&lookahead).kind==DIAMOND_TOKEN_LEFT_PAREN) {

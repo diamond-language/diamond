@@ -296,6 +296,28 @@ Areas still worth examining include:
   the array untouched otherwise. `Hash` is untouched (real Ruby doesn't
   support Range-based `Hash#[]` either). See `docs/syntax.md` for the
   full bounds/clamping rules;
+- **Done**: `[]`/`[]=` operator overloading. Previously a deliberate scope
+  cut (`docs/syntax.md` used to say outright "aren't overloadable") --
+  revisited once a real consumer (`packages/active_record`'s own
+  `DirtyAttributes`, which had been using `#get`/`#set` specifically to
+  work around this) made the gap concrete. Reuses the exact same
+  `invoke_operator_method` dispatch every other overloadable operator
+  already goes through (`src/vm.c`) -- generalized from a single
+  optional argument to up to two, since `[]=` needs both the index and
+  the value -- so inheritance/`super`/interface-satisfaction come for
+  free, the same as `+`/`==`/`<=>`/etc. already have. `compile_definition`
+  (`src/compiler.c`) gained the one new piece: `[]`/`[]=` aren't single
+  lexer tokens the way every other operator name is, so recognizing
+  `def [](i)`/`def []=(i, v)` needed its own adjacent-token lookahead,
+  requiring no whitespace between `[`/`]`/`=` (matching every other
+  operator name here being one ungappable token). No compiler changes
+  were needed for `x[i] += v` or chained `x[a][b] = v` at all --
+  confirmed directly, not assumed: `compile_index_assignment`/
+  `compile_index_compound_assignment` already emit plain `INDEX_GET`/
+  `INDEX_SET` regardless of receiver type, so both compose correctly the
+  instant the VM opcodes themselves know how to dispatch to an Instance.
+  `<<` deliberately did **not** move -- out of scope for this change, see
+  its own paragraph in `docs/syntax.md`;
 - protected visibility, if a real library design needs it;
 - enumerator/lazy iteration semantics versus the current eager collection APIs;
 - a principled protocol for native collection extension instead of expanding

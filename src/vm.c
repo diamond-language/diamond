@@ -4538,8 +4538,8 @@ static const DiamondMethod *lookup_method_cached(
 static DiamondVmStatus invoke_operator_method(DiamondVm *vm,
         const DiamondChunk *chunk,
         size_t depth, const uint8_t *site, const DiamondInstance *receiver,
-        const char *name, size_t name_length, const DiamondValue *argument,
-        DiamondValue *result, bool *found) {
+        const char *name, size_t name_length, const DiamondValue *arguments,
+        size_t explicit_argument_count, DiamondValue *result, bool *found) {
     /* No longer needed for the owner fallback below (vm->root_chunk
      * replaced it, see that field's own comment) -- kept as a parameter
      * so every call site doesn't need updating for what's otherwise an
@@ -4553,15 +4553,17 @@ static DiamondVmStatus invoke_operator_method(DiamondVm *vm,
     /* method->arity/required_arity are stored receiver-exclusive (see
      * compile_definition's `function->arity-1` when registering a class
      * method), matching how the real INVOKE site checks its own `argc`
-     * (also receiver-exclusive) against them -- only the explicit operand
-     * counts here, not the receiver. */
-    const size_t explicit_argument_count=argument==nullptr?0:1;
+     * (also receiver-exclusive) against them -- only the explicit
+     * operands count here, not the receiver. */
     if(explicit_argument_count<method->required_arity||
        (explicit_argument_count>method->arity && !method->has_variadic))
         return DIAMOND_VM_ARITY_ERROR;
-    size_t argument_count=argument==nullptr?1:2;
-    DiamondValue args[2+DIAMOND_MAX_BOUND_VALUES]={DIAMOND_OBJECT((DiamondObject *)receiver)};
-    if(argument!=nullptr)args[1]=*argument;
+    /* Sized for the receiver (1) + every operator this dispatches for
+     * today (at most 2 explicit arguments, "[]="'s index+value) + a
+     * ClassName.compile_method-installed method's own bound values. */
+    DiamondValue args[1+2+DIAMOND_MAX_BOUND_VALUES]={DIAMOND_OBJECT((DiamondObject *)receiver)};
+    for(size_t i=0;i<explicit_argument_count;i++)args[1+i]=arguments[i];
+    size_t argument_count=1+explicit_argument_count;
     for(size_t i=0;i<method->bound_value_count;i++)
         args[argument_count+i]=method->bound_values[i];
     argument_count+=method->bound_value_count;
@@ -4716,7 +4718,7 @@ static DiamondVmStatus add_fallback(DiamondVm *vm,const DiamondChunk *chunk,size
         bool found=false;DiamondValue op_result=DIAMOND_NIL;
         const uint8_t *site=chunk->code+instruction_offset;
         const DiamondVmStatus status=invoke_operator_method(vm,chunk,depth,site,
-            (const DiamondInstance *)left_value.as.object,"+",1,&right_value,
+            (const DiamondInstance *)left_value.as.object,"+",1,&right_value,1,
             &op_result,&found);
         if(found) {
             if(status!=DIAMOND_VM_OK)return status;
@@ -8924,7 +8926,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                         const uint8_t *site=chunk->code+instruction_offset;
                         const DiamondVmStatus status=invoke_operator_method(vm,chunk,
                             depth,site,(const DiamondInstance *)registers[left].as.object,
-                            name,strlen(name),&registers[right],&op_result,&found);
+                            name,strlen(name),&registers[right],1,&op_result,&found);
                         if(found) {
                             VM_PROPAGATE(status);
                             registers[destination]=op_result;
@@ -9094,7 +9096,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     const uint8_t *site=chunk->code+instruction_offset;
                     const DiamondVmStatus status=invoke_operator_method(vm,chunk,depth,
                         site,(const DiamondInstance *)registers[left].as.object,
-                        "%",1,&registers[right],&op_result,&found);
+                        "%",1,&registers[right],1,&op_result,&found);
                     if(found) {
                         VM_PROPAGATE(status);
                         registers[destination]=op_result;break;
@@ -9128,7 +9130,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     const uint8_t *site=chunk->code+instruction_offset;
                     const DiamondVmStatus status=invoke_operator_method(vm,chunk,depth,
                         site,(const DiamondInstance *)registers[operand].as.object,
-                        "negate",6,nullptr,&op_result,&found);
+                        "negate",6,nullptr,0,&op_result,&found);
                     if(found) {
                         VM_PROPAGATE(status);
                         registers[destination]=op_result;
@@ -9205,7 +9207,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     const uint8_t *site=chunk->code+instruction_offset;
                     const DiamondVmStatus status=invoke_operator_method(vm,chunk,depth,
                         site,(const DiamondInstance *)registers[left].as.object,
-                        "==",2,&registers[right],&op_result,&found);
+                        "==",2,&registers[right],1,&op_result,&found);
                     if(found) {
                         VM_PROPAGATE(status);
                         const bool overloaded_equal=is_truthy(op_result);
@@ -9331,7 +9333,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                         const uint8_t *site=chunk->code+instruction_offset;
                         const DiamondVmStatus status=invoke_operator_method(vm,chunk,
                             depth,site,(const DiamondInstance *)registers[left].as.object,
-                            name,strlen(name),&registers[right],&op_result,&found);
+                            name,strlen(name),&registers[right],1,&op_result,&found);
                         if(found) {
                             VM_PROPAGATE(status);
                             registers[destination]=DIAMOND_BOOL(is_truthy(op_result));
@@ -9409,7 +9411,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     const uint8_t *site=chunk->code+instruction_offset;
                     const DiamondVmStatus status=invoke_operator_method(vm,chunk,depth,
                         site,(const DiamondInstance *)registers[left].as.object,
-                        "<=>",3,&registers[right],&op_result,&found);
+                        "<=>",3,&registers[right],1,&op_result,&found);
                     if(found) {
                         VM_PROPAGATE(status);
                         registers[destination]=op_result;break;
@@ -12231,6 +12233,28 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     registers[destination]=DIAMOND_OBJECT(character);
                     break;
                 }
+                if(registers[receiver].as.object->kind==DIAMOND_OBJECT_INSTANCE) {
+                    /* `[]` overloading (docs/syntax.md's "Operator
+                     * overloading" section) -- receiver-based only, no
+                     * coercion, no Range/slice special-casing the way
+                     * Array gets below: whatever's between the brackets
+                     * (an Int, a Range instance, anything) is passed to
+                     * the receiver's own `[]` method verbatim, same rule
+                     * every other overloadable operator already follows.
+                     * Not found falls through to the same TypeError any
+                     * non-overloading Instance already got before this
+                     * feature existed. */
+                    bool found=false;DiamondValue op_result=DIAMOND_NIL;
+                    const uint8_t *site=chunk->code+instruction_offset;
+                    const DiamondVmStatus status=invoke_operator_method(vm,chunk,depth,
+                        site,(const DiamondInstance *)registers[receiver].as.object,
+                        "[]",2,&registers[index_register],1,&op_result,&found);
+                    if(found) {
+                        VM_PROPAGATE(status);
+                        registers[destination]=op_result;
+                        break;
+                    }
+                }
                 if(registers[receiver].as.object->kind!=DIAMOND_OBJECT_ARRAY)
                     VM_RETURN(DIAMOND_VM_TYPE_ERROR);
                 DiamondArray *array=(DiamondArray *)registers[receiver].as.object;
@@ -12278,6 +12302,30 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     snprintf(vm->error,sizeof vm->error,
                              "String does not support element assignment");
                     VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                }
+                if(registers[receiver].as.object->kind==DIAMOND_OBJECT_INSTANCE) {
+                    /* `[]=` overloading, mirroring DIAMOND_OP_INDEX_GET's
+                     * own `[]` branch above -- index then value, verbatim,
+                     * no coercion. `x[i] = v` already evaluates to `v`
+                     * itself (compile_index_assignment's own return
+                     * value, computed before this opcode ever runs, not
+                     * a destination register this opcode writes), so the
+                     * setter method's own return value is simply
+                     * discarded here, matching Ruby's own `[]=`
+                     * semantics -- only `status` matters, for error
+                     * propagation. Not found falls through to the same
+                     * TypeError any non-overloading Instance already got. */
+                    bool found=false;DiamondValue op_result=DIAMOND_NIL;
+                    const uint8_t *site=chunk->code+instruction_offset;
+                    const DiamondValue setter_arguments[2]=
+                        {registers[index_register],registers[source]};
+                    const DiamondVmStatus status=invoke_operator_method(vm,chunk,depth,
+                        site,(const DiamondInstance *)registers[receiver].as.object,
+                        "[]=",3,setter_arguments,2,&op_result,&found);
+                    if(found) {
+                        VM_PROPAGATE(status);
+                        break;
+                    }
                 }
                 if(registers[receiver].as.object->kind!=DIAMOND_OBJECT_ARRAY)
                     VM_RETURN(DIAMOND_VM_TYPE_ERROR);

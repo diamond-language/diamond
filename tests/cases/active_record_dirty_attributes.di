@@ -21,12 +21,12 @@ def run_tests()
     dirty = ActiveRecord::DirtyAttributes.new(original)
     Minitest.assert_equal(false, dirty.changed?())
 
-    dirty.set("country", "England")
+    dirty["country"] = "England"
     Minitest.assert_equal(true, dirty.changed?())
     Minitest.assert_equal(true, dirty.attribute_changed?("country"))
     Minitest.assert_equal(false, dirty.attribute_changed?("name"))
-    Minitest.assert_equal("England", dirty.get("country"))
-    Minitest.assert_equal("Ada", dirty.get("name"))
+    Minitest.assert_equal("England", dirty["country"])
+    Minitest.assert_equal("Ada", dirty["name"])
 
     changes = dirty.changes()
     Minitest.assert_equal(1, changes.keys().length())
@@ -43,8 +43,8 @@ def run_tests()
 
   def test_setting_back_to_the_original_value_is_not_a_change()
     dirty = ActiveRecord::DirtyAttributes.new({"country": "UK"})
-    dirty.set("country", "England")
-    dirty.set("country", "UK")
+    dirty["country"] = "England"
+    dirty["country"] = "UK"
     Minitest.assert_equal(false, dirty.changed?())
     Minitest.assert_equal(0, dirty.changes().keys().length())
   end
@@ -57,7 +57,7 @@ def run_tests()
 
     row = db.query("SELECT * FROM authors WHERE id = ?", [1])[0]
     dirty = ActiveRecord::DirtyAttributes.new(row)
-    dirty.set("country", "England")
+    dirty["country"] = "England"
     if dirty.changed?()
       repository.update(db, row["id"], dirty.changes())
     end

@@ -262,14 +262,14 @@ so `ActiveRecord::DirtyAttributes` tracks changes on a plain attributes
 ```diamond
 row = db.query("SELECT * FROM authors WHERE id = ?", [1])[0]
 dirty = ActiveRecord::DirtyAttributes.new(row)
-dirty.set("country", "England")
+dirty["country"] = "England"
 repository.update(db, row["id"], dirty.changes()) if dirty.changed?()
 ```
 
 Wrap a loaded row (or any `Hash` of known attribute values), mutate it
-through `#set(key, value)` (Diamond doesn't support overloading `[]`/`[]=`
-on a user-defined class, hence `#get`/`#set` rather than bracket syntax),
-then ask `#changed?`/`#attribute_changed?(key)`/`#changes` before deciding
+through ordinary bracket syntax (`[]`/`[]=` operator overloading -- see
+`docs/syntax.md`'s "Operator overloading" section), then ask
+`#changed?`/`#attribute_changed?(key)`/`#changes` before deciding
 to call `#update` -- `#changes` returns exactly the `Hash` `#update`
 already expects, and setting a value back to its original leaves it out
 of `#changes` too. `#to_h` returns the full current attribute state.

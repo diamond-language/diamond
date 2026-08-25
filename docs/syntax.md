@@ -890,8 +890,42 @@ of a class that doesn't define `==` still compare by identity, exactly as
 before this feature existed — defining `==` only changes behavior for
 classes that opt in.
 
-`[]`/`[]=` indexing and `<<` aren't overloadable. `<=>` **is** — see its
-own section below.
+`<<` isn't overloadable (see below for why). `[]`/`[]=` and `<=>` **are** —
+see their own sections below.
+
+### `[]`/`[]=` indexing
+
+```ruby
+class Box
+  def initialize()
+    @data = {}
+  end
+  def [](key) = @data[key]
+  def []=(key, value)
+    @data[key] = value
+  end
+end
+
+box = Box.new()
+box["a"] = 1
+box["a"]  # => 1
+```
+
+`x[i]` dispatches to `x`'s own `[]` method (one required parameter, the
+index); `x[i] = v` dispatches to `[]=` (two required parameters, index
+then value) — same mechanism as every other overloadable operator above,
+so inheritance/`super`/interface-satisfaction all work the same way.
+`x[i] += v` and chained `x[a][b] = v` need no special support: each is
+already just ordinary reads (`[]`) and one final write (`[]=`) under the
+hood, and both already dispatch through the receiver correctly. As with
+every other operator here, there's no coercion — whatever sits between
+the brackets (an `Int`, a `Range`, anything) is handed to `[]`/`[]=`
+verbatim, with none of `Array`'s own `Range`-based slicing behavior
+applied. `x[i] = v`'s own value as an expression is always `v` itself,
+regardless of what `[]=` returns — matching Ruby's own `[]=` semantics,
+and matching how `x[i] = v` already worked before this feature existed
+for `Array`/`Hash`. A class that defines neither still raises `TypeError`
+on `x[i]`/`x[i] = v`, exactly as before this feature existed.
 
 This mechanism (a user-defined class's own instance methods) is the
 only way *user code* opts into operator support. `Time`

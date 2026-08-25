@@ -5,20 +5,20 @@ module ActiveRecord
 # whatever class the caller wants, opaque to this package, the same
 # reason validator/before_save/after_save are ordinary functions rather
 # than a DSL). Wrap a loaded row (or any Hash of known attribute values),
-# mutate it through #set, then ask #changed?/#changes before deciding to
+# mutate it through `[]=`, then ask #changed?/#changes before deciding to
 # call Repository#update -- #changes returns exactly the Hash #update
 # already expects, with no repository integration needed:
 #
 #   row = db.query("SELECT * FROM authors WHERE id = ?", [1])[0]
 #   dirty = DirtyAttributes.new(row)
-#   dirty.set("country", "England")
+#   dirty["country"] = "England"
 #   repository.update(db, row["id"], dirty.changes()) if dirty.changed?()
 #
-# Diamond doesn't support overloading `[]`/`[]=` on a user-defined class,
-# hence #get/#set rather than bracket syntax. Comparison is `==`, so it's
-# value equality for the ordinary Int/Float/String/Bool/Nil attribute
-# values this is meant for, but identity equality if an attribute value
-# is itself an Array/Hash -- the same distinction Diamond's own `==`
+# `[]`/`[]=` overloading (docs/syntax.md's "Operator overloading"
+# section) -- ordinary bracket syntax, not a `#get`/`#set` pair. Comparison
+# is `==`, so it's value equality for the ordinary Int/Float/String/Bool/Nil
+# attribute values this is meant for, but identity equality if an attribute
+# value is itself an Array/Hash -- the same distinction Diamond's own `==`
 # already draws everywhere else.
 class DirtyAttributes
   def initialize(original: Hash)
@@ -33,9 +33,9 @@ class DirtyAttributes
     end
   end
 
-  def get(key) = @current[key]
+  def [](key) = @current[key]
 
-  def set(key, value)
+  def []=(key, value)
     @current[key] = value
   end
 
