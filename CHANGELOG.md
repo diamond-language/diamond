@@ -2,11 +2,12 @@
 
 ## Applications
 
-- Added `applications/pheint.dia`, a runnable product-oriented Diamond
-  application skeleton with Rails-like source layout, development/test/
-  production configuration, Gremlin serving, Rack middleware, Dials routes,
-  Div views, strict NDJSON request logging, correlation IDs, sub-millisecond
-  timing, a JSON health endpoint, and direct-dispatch smoke coverage.
+- Added `applications/pheint.dia`, a runnable product-oriented GraphQL-only
+  Diamond API for a separate React frontend, with Rails-like source layout,
+  development/test/production configuration, Gremlin serving, Rack
+  middleware, Dials routes, strict NDJSON request logging, correlation IDs,
+  sub-millisecond timing, JSON service/health endpoints, and direct-dispatch
+  smoke coverage.
 - Added `make test-pheint-application`.
 
 ## Language

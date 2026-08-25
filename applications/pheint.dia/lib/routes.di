@@ -1,7 +1,8 @@
 def build_pheint_router()
   router = Dials::Router.new()
-  router.get("/", HomeController.index)
-  router.get("/health", HomeController.health)
+  router.get("/", ApiController.index)
+  router.get("/health", ApiController.health)
+  router.post("/graphql", GraphqlController.execute)
   router
 end
 

@@ -1,16 +1,17 @@
 # pheint.dia
 
-A Diamond application built on Gremlin, Rack, Dials, Div, and the structured
-logger.
+A GraphQL-only Diamond API built on Gremlin, Rack, Dials, `graphql`, and the
+structured logger. The browser application will be a separate React frontend;
+this project does not render HTML or own frontend assets.
 
 ## Layout
 
 - `app.di` starts the HTTP server.
 - `boot.di` loads application dependencies and source files.
 - `lib/config` owns environment configuration.
-- `lib/controllers` contains request actions.
+- `lib/controllers` contains JSON and GraphQL request actions.
+- `lib/graphql` contains the schema and resolvers.
 - `lib/models` is reserved for the domain model.
-- `lib/views` contains Div templates.
 - `lib/helpers` contains shared application helpers.
 - `lib/routes.di` and `lib/middleware.di` wire the request pipeline.
 
@@ -18,7 +19,6 @@ logger.
 
 ```sh
 cd applications/pheint.dia
-bash compile_views.sh
 ../../build/diamond app.di
 ```
 
@@ -30,6 +30,13 @@ be formatted during development with `packages/log_viewer`:
 ```sh
 ../../build/diamond app.di | DIAMOND_BIN=../../build/diamond ../../packages/log_viewer/bin/diamond-log
 ```
+
+The API exposes:
+
+- `POST /graphql` with the standard JSON `query`, `variables`, and
+  `operationName` request fields;
+- `GET /health` for service health;
+- `GET /` for JSON service metadata.
 
 Run the direct-dispatch smoke test with:
 
