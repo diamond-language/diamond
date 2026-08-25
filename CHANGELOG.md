@@ -14,6 +14,9 @@
   type-to-repository mappings for columns and associations, including GraphQL
   field aliases and mapped association targets.
 - Added dedicated unknown-column and duplicate-aliased-association errors.
+- Added lookahead-driven projection, required column/association planning,
+  belongs-to and STI key retention, lazy plain eager loading, and recursive
+  scoped association preloading through `GraphSQL.resolve`.
 
 ## ActiveRecord 0.19.0
 
