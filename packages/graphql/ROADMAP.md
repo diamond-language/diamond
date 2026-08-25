@@ -185,14 +185,37 @@ Each of these was considered and explicitly deferred, not overlooked:
 
 ## Diamond-level findings worth remembering
 
-Not bugs in this package, but real, previously-undocumented Diamond
-compiler behavior this package's own build surfaced -- recorded here so
-a future session (in this package or any other) doesn't have to
-rediscover them:
+Not bugs in this package, but real Diamond compiler behavior this
+package's own build surfaced -- recorded here so a future session (in
+this package or any other) doesn't have to rediscover it:
 
-- **A `module_function` module method can't call itself recursively**,
-  even spelled `ModuleName.method(...)` (the usual fix for the
-  sibling-call gotcha) -- fails at runtime with a plain "type error."
+- **`def` vs `closure` for a nested function called directly --
+  two things this package originally misdiagnosed as compiler bugs
+  turned out to be exactly this, not bugs at all.** `docs/syntax.md`'s
+  own "closure name() ... end" section documents a plain nested `def`
+  as built for exactly one job -- "a detached patch, meant to be handed
+  to `define_method`/`redefine_method`"; called directly instead
+  (passed to `Array#map`, `Fiber.new`, or just invoked in place), its
+  own `self`/`@ivar` references "don't mean anything," and (this
+  package additionally found) its `Callable` arity can come out wrong
+  too when handed to something like `Array#map`. `closure name() ...
+  end` is the documented, correct form for a nested function that's
+  called immediately and needs `self` -- legal anywhere `self` already
+  exists (an instance method, or a class-owned `def self.x`, one level
+  deep). Confirmed directly, twice: swapping `def` for `closure` in the
+  exact same shape fixed both an `Array#map` arity mismatch ("expected
+  Callable[1], got Callable") *and* a `self` reference reading back
+  `nil` instead of the intended receiver, with no other code change
+  either time. `execution/executor.di`'s own `#complete_list_value`
+  uses `closure body() ... end` for its per-item fiber bodies for
+  exactly this reason (an earlier draft used plain `def` plus a manual
+  `executor = self` capture workaround -- unnecessary, removed once
+  this was understood).
+- **A `module_function` module method genuinely can't call itself
+  recursively**, even spelled `ModuleName.method(...)` (the usual fix
+  for the sibling-call gotcha) -- fails at runtime with a plain "type
+  error." This one *is* real, unrelated to the `def`/`closure` finding
+  above (no nested function or `self` capture involved at all).
   Confirmed with a throwaway factorial fixture. `execution/coercion.di`,
   `execution/executor.di`, and `validation/validator.di` are all
   written as classes with `self.` methods instead, since several of
@@ -200,36 +223,10 @@ rediscover them:
   nested input objects, nested selection sets). A class's own
   `self.method(...)` recursing into itself via `self.` works fine, just
   not via `ClassName.method(...)`.
-- **A closure `def` nested inside a `self.` method fails Callable
-  arity-checking when handed to `Array#map`** ("expected Callable[1],
-  got Callable"), even though the identical nested `def` works fine
-  inside a plain top-level function. A real, previously-undiscovered
-  compiler bug (distinct from the already-fixed self-capturing-
-  instance-closure arity bug from earlier this session) -- worked
-  around throughout this package with explicit index loops instead of
-  `.map(nested_def)`, not chased down further.
-- **Chained double-calls don't parse**: `type.coerce_input()(value)`
-  ("expected newline after expression") -- store the intermediate
-  `Callable` in a local first (`coercer = type.coerce_input();
-  coercer(value)`).
-- **A `def` nested inside an ordinary *instance* method does not
-  correctly capture the enclosing method's `self`** -- it reads back as
-  a bare `nil`, not a compile error, so this fails silently rather than
-  loudly. Distinct from the already-known "nested def inside a `self.`
-  (singleton) method breaks Callable arity for `Array#map`" bug above:
-  this one needs no `self.` involved at all, hits plain instance
-  methods (`Executor`'s own `#execute_selection_set`/
-  `#complete_list_value`, both ordinary instance methods), and the
-  failure mode is a silent wrong value instead of a clear error at the
-  call site. Confirmed directly with a throwaway fixture
-  (`self.double(x)` called from inside a `def` nested in an instance
-  method raised "type error"; printing `self` from inside that same
-  nested def printed `nil`). Workaround, used throughout
-  `execution/executor.di`'s own fiber-spawning code: capture `self`
-  into an ordinary local first (`executor = self`) before the nested
-  `def`, and reference that local instead of a bare `self` inside it --
-  ordinary local captures (non-`self` ones) are unaffected, confirmed
-  working repeatedly elsewhere in this same file.
+- **Chained double-calls/double-subscripts don't parse**:
+  `type.coerce_input()(value)` and `hash["a"]["b"] = value` both fail
+  with "expected newline after expression" -- store the intermediate
+  value in a local first (`coercer = type.coerce_input(); coercer(value)`).
 
 ## Open questions
 

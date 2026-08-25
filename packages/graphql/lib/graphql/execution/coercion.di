@@ -20,17 +20,20 @@
 # spelled `self.method(...)`, not `ClassName.method(...)` -- confirmed
 # against the same fixture -- so every call below uses `self.`.
 #
-# Also worth recording: a closure `def` nested *inside* a `self.`
-# method fails arity-checking when handed to `Array#map` ("expected
-# Callable[1], got Callable"), even though the exact same nested `def`
-# works fine inside a plain top-level function -- confirmed with a
-# throwaway fixture, looks like a real, previously-undiscovered
-# compiler bug in how a nested def's arity is computed inside a `self.`
-# method specifically (distinct from the already-known/fixed
-# self-capturing-instance-closure arity bug). Worked around below by
-# using explicit index loops instead of `.map(nested_def)` wherever
-# that pattern would otherwise apply -- not worth chasing the actual
-# compiler bug for this package alone.
+# List/nested-value handling below uses explicit index loops rather
+# than `Array#map` -- not working around a bug (a plain nested `def`
+# handed to `.map()` inside a `self.` method DOES fail Callable arity-
+# checking, but that turned out to be correct behavior for the wrong
+# syntax, not a compiler bug: `docs/syntax.md`'s "closure name() ...
+# end" section documents a plain nested `def` as "built for exactly
+# one job: a detached patch, meant to be handed to define_method/
+# redefine_method" -- called directly instead, via `.map()` or
+# otherwise, it's simply not the form for that; `closure name() ...
+# end` is. Confirmed directly: swapping `def` for `closure` in the
+# exact same `.map()` shape fixes the arity mismatch with no other
+# change). Plain loops here are just this package's own established
+# style (matching every other package in this repo), not a forced
+# workaround.
 module GraphQL
 module Execution
 class Coercion

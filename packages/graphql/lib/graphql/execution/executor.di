@@ -437,15 +437,24 @@ class Executor
   # order, so `#push`ing from inside each one wouldn't preserve
   # position) -- every existing line of resolution/error-handling logic
   # below is unchanged from before this feature, just moved inside a
-  # per-item closure instead of a loop body. `executor = self`: see
-  # #execute_selection_set's own comment on why a nested `def` inside
-  # this (ordinary instance method) can't reference a bare `self`
-  # directly.
+  # per-item closure instead of a loop body.
+  #
+  # `closure body()`, not a plain nested `def` -- confirmed directly
+  # against `docs/syntax.md`'s own "closure name() ... end" section:
+  # a plain nested `def` is "built for exactly one job: a detached
+  # patch, meant to be handed to define_method/redefine_method"; called
+  # directly instead, its own `self`/`@ivar` references "don't mean
+  # anything." `closure` is the documented form for a nested function
+  # that's called immediately and needs `self` -- which is exactly this
+  # case (`self.complete_value(...)`, `@errors.push(...)` below). Using
+  # plain `def` here originally was a real mistake, not a compiler bug
+  # -- it read `self` back as `nil` and (separately) broke Callable
+  # arity-checking when handed to `Array#map` elsewhere, both symptoms
+  # of the same misuse, both go away with `closure`.
   def complete_list_value(type, fields, result, context, coerced_variables, fragments, path)
     unless result is Array
       raise GraphQL::ExecutionError.new("expected a list for \"#{type.name()}\"")
     end
-    executor = self
     item_type = type.of_type()
     output = []
     index = 0
@@ -459,16 +468,16 @@ class Executor
       item_index = index
       item_value = result[index]
       item_path = path.concat([index])
-      def body()
+      closure body()
         begin
-          output[item_index] = executor.complete_value(item_type, fields, item_value, context, coerced_variables, fragments, item_path)
+          output[item_index] = self.complete_value(item_type, fields, item_value, context, coerced_variables, fragments, item_path)
         rescue e: NullBubbleError
           if item_type.kind() == "NON_NULL"
             raise e
           end
           output[item_index] = nil
         rescue e: StandardError
-          executor.record_error(e.message(), item_path)
+          @errors.push({"message": e.message(), "path": item_path})
           if item_type.kind() == "NON_NULL"
             raise NullBubbleError.new(e.message())
           end
@@ -480,10 +489,6 @@ class Executor
     end
     @dataloader.run(fibers, context)
     output
-  end
-
-  def record_error(message, path)
-    @errors.push({"message": message, "path": path})
   end
 end
 
