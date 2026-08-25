@@ -19,3 +19,21 @@ class Task < ActiveRecord::Model
 end
 
 def build_task(row) = Task.new(row)
+
+def build_task_validator(db)
+  def project_exists(attributes)
+    project_id = attributes["project_id"]
+    if project_id == nil || Project.find(db, project_id) == nil
+      ["project must exist"]
+    else
+      []
+    end
+  end
+
+  ActiveRecord::Validators.combine([
+    ActiveRecord::Validators.presence("title"),
+    ActiveRecord::Validators.length("title", 1, 200),
+    ActiveRecord::Validators.inclusion("done", [0, 1]),
+    project_exists,
+  ])
+end

@@ -9,6 +9,8 @@ Passwords are stored as bcrypt digests through `ActiveRecord::Model#secure_passw
 
 Rack middleware loads the current session into each request's context. Authorization is declared beside each protected route using Dials route filters: anonymous users may access `/`, project indexes, and project detail pages, while every new/edit/create/update/delete route short-circuits before its controller. The UI also hides write controls from anonymous visitors, but that is only presentation—the route filter is the security boundary.
 
+Projects and tasks use `ActiveRecord::Validators` at the repository boundary. Names, descriptions, and titles are required and length-limited; task status is constrained to its two valid values, and every task must reference an existing project. Controllers rescue `ActiveRecord::ValidationError` and return an HTTP 422 form preserving the submitted values and listing every error.
+
 Every request receives a random request ID and is logged at start and completion with status and duration. Debug logs cover controller reads and authorization decisions; info logs cover database/model initialization, successful authentication, sessions, and every mutation; warnings cover denied writes, failed logins, stale cookies, and missing delete targets.
 
 The app's instrumented database adapter also captures every ActiveRecord/Arel query and write with a separate query ID, generated SQL, operation, row or affected count, and elapsed milliseconds. SQL retains placeholders and logs only the number of bound parameters: passwords, password digests, session tokens, and other bound values are never logged.
@@ -22,7 +24,7 @@ bash compile_views.sh
 ../../build/diamond app.di
 ```
 
-Run the direct-dispatch smoke test (public read, denied anonymous write, failed login, missing/forged CSRF rejection, successful login/write/logout, rejected stale session, and expired-session deletion) with:
+Run the direct-dispatch smoke test (public read, denied anonymous write, failed login, missing/forged CSRF rejection, validation failures without persistence, successful login/write/logout, rejected stale session, and expired-session deletion) with:
 
 ```sh
 ../../build/diamond setup_db.di

@@ -17,3 +17,12 @@ class Project < ActiveRecord::Model
 end
 
 def build_project(row) = Project.new(row)
+
+def build_project_validator()
+  ActiveRecord::Validators.combine([
+    ActiveRecord::Validators.presence("name"),
+    ActiveRecord::Validators.length("name", 1, 100),
+    ActiveRecord::Validators.presence("description"),
+    ActiveRecord::Validators.length("description", 1, 1000),
+  ])
+end

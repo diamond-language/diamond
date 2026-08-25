@@ -43,6 +43,12 @@ forged_csrf = app(request_with_cookie("POST", "/projects", "name=Forged&descript
 if forged_csrf[0] != 403 then raise "write with forged CSRF token was not denied" end
 if Project.all().count(Database.get(context)) != 1 then raise "a rejected CSRF write changed the database" end
 
+invalid_project = app(request_with_cookie("POST", "/projects", "name=&description=&csrf_token=#{csrf_token}", cookie), context)
+if invalid_project[0] != 422 || !invalid_project[2].include?("name is required") || !invalid_project[2].include?("description is required")
+  raise "invalid project did not render validation errors"
+end
+if Project.all().count(Database.get(context)) != 1 then raise "invalid project was persisted" end
+
 created_request = request_with_cookie("POST", "/projects", "name=Instrumented&description=Authorized&csrf_token=#{csrf_token}", cookie)
 if created_request["headers"]["cookie"] == nil then raise "test cookie was not attached" end
 created = app(created_request, context)
@@ -50,6 +56,12 @@ if created[0] != 302 || created[1]["Location"] == "/login"
   raise "authenticated create failed"
 end
 if Project.all().count(Database.get(context)) != 2 then raise "authenticated create did not persist" end
+
+invalid_task = app(request_with_cookie("POST", "/tasks", "project_id=999&title=&done=3&csrf_token=#{csrf_token}", cookie), context)
+if invalid_task[0] != 422 || !invalid_task[2].include?("title is required") || !invalid_task[2].include?("project must exist")
+  raise "invalid task did not render validation errors"
+end
+if Task.all().count(Database.get(context)) != 2 then raise "invalid task was persisted" end
 
 logout_request = request_with_cookie("POST", "/logout", "csrf_token=#{csrf_token}", cookie)
 logout = app(logout_request, context)

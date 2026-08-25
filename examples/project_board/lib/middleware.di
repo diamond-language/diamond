@@ -4,8 +4,8 @@ def ensure_models_configured(context)
   if context["models_configured"] == nil
     User.configure(ActiveRecord::Repository.new(Arel.table("users"), build_user, "id"))
     Session.configure(ActiveRecord::Repository.new(Arel.table("sessions"), build_session, "id"))
-    Project.configure(ActiveRecord::Repository.new(Arel.table("projects"), build_project, "id"))
-    Task.configure(ActiveRecord::Repository.new(Arel.table("tasks"), build_task, "id"))
+    Project.configure(ActiveRecord::Repository.new(Arel.table("projects"), build_project, "id", nil, build_project_validator()))
+    Task.configure(ActiveRecord::Repository.new(Arel.table("tasks"), build_task, "id", nil, build_task_validator(Database.get(context))))
     context["models_configured"] = true
     AppLogger.get(context).info("model repositories configured")
   end

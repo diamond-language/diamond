@@ -1,4 +1,9 @@
-<%# locals: action, projects, selected_project_id, title, done, submit, csrf_token %>
+<%# locals: action, projects, selected_project_id, title, done, submit, csrf_token, errors %>
+<% if errors.length() > 0 %>
+<ul>
+  <% errors.each() do |error| %><li><%= error %></li><% end %>
+</ul>
+<% end %>
 <form method="POST" action="<%= action %>">
   <input type="hidden" name="csrf_token" value="<%= csrf_token %>">
   <p><label>Project <select name="project_id">
