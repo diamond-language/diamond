@@ -20,6 +20,9 @@
   and player associations, cascading foreign keys, validation, a database
   uniqueness constraint on `[leaderboard_id, player_id]`, and representative
   seeded game/leaderboard/score data.
+- Exposed the seeded game hierarchy through a public GraphQL `games` query,
+  using GraphSQL lookahead projection and recursive batch preloading for owner,
+  player, leaderboard, and score associations.
 
 ## Language
 

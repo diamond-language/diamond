@@ -110,6 +110,7 @@ if Account.all().count(PheintDatabase.get(context)) != 2 ||
   raise "failed signup was not rolled back atomically"
 end
 
+def test_seeded_game_domain(context)
 demo = Account.where({"email": "demo@pheint.dia"}).first(PheintDatabase.get(context))
 if demo == nil || demo.player(PheintDatabase.get(context)).handle() != "demo"
   raise "seeded account/player missing"
@@ -139,6 +140,29 @@ if !duplicate_score_rejected ||
    boards[0].scores(PheintDatabase.get(context)).length() != 1
   raise "duplicate per-player leaderboard score was accepted"
 end
+
+
+games_query = [
+  "{ games {",
+  "  title description",
+  "  owner { email player { handle } }",
+  "  leaderboards { name scores { value player { handle } } }",
+  "} }"
+].join("\n")
+games_response = JSON.parse(app(smoke_request("POST", "/graphql",
+  JSON.stringify({"query": games_query})), context)[2])
+if games_response["errors"] != nil || games_response["data"]["games"].length() != 2
+  raise "GraphQL games query failed"
+end
+graphql_game = games_response["data"]["games"][0]
+if graphql_game["owner"]["player"]["handle"] != "demo" ||
+   graphql_game["leaderboards"][0]["scores"][0]["value"] != 128400 ||
+   graphql_game["leaderboards"][0]["scores"][0]["player"]["handle"] != "demo"
+  raise "GraphQL game associations did not resolve"
+end
+end
+
+test_seeded_game_domain(context)
 
 missing = app(smoke_request("GET", "/missing"), context)
 if missing[0] != 404

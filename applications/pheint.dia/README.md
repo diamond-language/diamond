@@ -91,6 +91,20 @@ query CurrentAccount {
 }
 
 mutation SignOut { signOut }
+
+query Games {
+  games {
+    id
+    title
+    description
+    owner { id email player { handle } }
+    leaderboards {
+      id
+      name
+      scores { value player { handle } }
+    }
+  }
+}
 ```
 
 Send the returned opaque token as `Authorization: Bearer <token>` for `me` and
@@ -100,6 +114,10 @@ without a leading `@`, and creates the account, player, and initial session in
 one transaction. Failed player/account validation rolls the entire signup
 back. Passwords must be 8–72 characters; only bcrypt digests are persisted,
 and neither password digests nor session records are exposed by the schema.
+
+The public `games` query is planned through GraphSQL. Its lookahead selects
+only requested columns and recursively batch-loads requested owner,
+leaderboard, score, and player associations.
 
 Run the direct-dispatch smoke test with:
 

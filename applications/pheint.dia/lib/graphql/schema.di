@@ -4,6 +4,53 @@ module PheintPlayerResolvers
   def handle(player, args, context) = player.handle()
 end
 
+module PheintScoreResolvers
+  module_function
+  def id(score, args, context) = score.id()
+  def value(score, args, context) = score.value()
+  def player(score, args, context)
+    if score.association_loaded?("player")
+      score.preloaded_association("player")
+    else
+      score.player(context["db"])
+    end
+  end
+end
+
+module PheintLeaderboardResolvers
+  module_function
+  def id(leaderboard, args, context) = leaderboard.id()
+  def name(leaderboard, args, context) = leaderboard.name()
+  def scores(leaderboard, args, context)
+    if leaderboard.association_loaded?("scores")
+      leaderboard.preloaded_association("scores")
+    else
+      leaderboard.scores(context["db"])
+    end
+  end
+end
+
+module PheintGameResolvers
+  module_function
+  def id(game, args, context) = game.id()
+  def title(game, args, context) = game.title()
+  def description(game, args, context) = game.description()
+  def owner(game, args, context)
+    if game.association_loaded?("owner")
+      game.preloaded_association("owner")
+    else
+      game.owner(context["db"])
+    end
+  end
+  def leaderboards(game, args, context)
+    if game.association_loaded?("leaderboards")
+      game.preloaded_association("leaderboards")
+    else
+      game.leaderboards(context["db"])
+    end
+  end
+end
+
 module PheintAccountResolvers
   module_function
   def id(account, args, context) = account.id()
@@ -22,6 +69,11 @@ module PheintQueryResolvers
   def api_name(object, args, context) = "pheint.dia"
   def environment(object, args, context) = PheintEnvironment.name()
   def me(object, args, context) = context["current_account"]
+  def games(object, args, context)
+    planned = GraphSQL.resolve(Game.all(), context["db"], context["lookahead"],
+      PheintGraphSQLMappings.games())
+    if planned is ActiveRecord::Relation then planned.to_a(context["db"]) else planned end
+  end
 end
 
 module PheintMutationResolvers
@@ -101,6 +153,23 @@ class PheintSchema
       account_type.field("email", GraphQL::ScalarType.string().non_null(), PheintAccountResolvers.email)
       account_type.field("player", player_type.non_null(), PheintAccountResolvers.player)
 
+      score_type = GraphQL::ObjectType.new("Score")
+      score_type.field("id", GraphQL::ScalarType.id().non_null(), PheintScoreResolvers.id)
+      score_type.field("value", GraphQL::ScalarType.int().non_null(), PheintScoreResolvers.value)
+      score_type.field("player", player_type.non_null(), PheintScoreResolvers.player)
+
+      leaderboard_type = GraphQL::ObjectType.new("Leaderboard")
+      leaderboard_type.field("id", GraphQL::ScalarType.id().non_null(), PheintLeaderboardResolvers.id)
+      leaderboard_type.field("name", GraphQL::ScalarType.string().non_null(), PheintLeaderboardResolvers.name)
+      leaderboard_type.field("scores", GraphQL::ListType.of(score_type.non_null()).non_null(), PheintLeaderboardResolvers.scores)
+
+      game_type = GraphQL::ObjectType.new("Game")
+      game_type.field("id", GraphQL::ScalarType.id().non_null(), PheintGameResolvers.id)
+      game_type.field("title", GraphQL::ScalarType.string().non_null(), PheintGameResolvers.title)
+      game_type.field("description", GraphQL::ScalarType.string().non_null(), PheintGameResolvers.description)
+      game_type.field("owner", account_type.non_null(), PheintGameResolvers.owner)
+      game_type.field("leaderboards", GraphQL::ListType.of(leaderboard_type.non_null()).non_null(), PheintGameResolvers.leaderboards)
+
       auth_payload_type = GraphQL::ObjectType.new("AuthPayload")
       auth_payload_type.field("token", GraphQL::ScalarType.string().non_null(), PheintAuthPayloadResolvers.token)
       auth_payload_type.field("account", account_type.non_null(), PheintAuthPayloadResolvers.account)
@@ -109,6 +178,8 @@ class PheintSchema
       query.field("apiName", GraphQL::ScalarType.string().non_null(), PheintQueryResolvers.api_name)
       query.field("environment", GraphQL::ScalarType.string().non_null(), PheintQueryResolvers.environment)
       query.field("me", account_type, PheintQueryResolvers.me)
+      query.field("games", GraphQL::ListType.of(game_type.non_null()).non_null(),
+        PheintQueryResolvers.games)
 
       mutation = GraphQL::ObjectType.new("Mutation")
       mutation.field("signUp", auth_payload_type.non_null(), PheintMutationResolvers.sign_up, [
