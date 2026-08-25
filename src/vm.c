@@ -5749,8 +5749,23 @@ static bool catch_runtime_error(DiamondVm *vm,const DiamondChunk *chunk,
     DiamondString *text=allocate_string(vm,message,strlen(message));
     if(text==nullptr)return false;
     if(exception->field_count>0)exception->fields[0]=DIAMOND_OBJECT(text);
-    (void)snprintf(vm->error,sizeof vm->error,"uncaught exception: %s",
-                   exception->class->name);
+    /* Only fill in a generic header when vm->error is still empty (no
+     * RECORD_ERROR has run yet for this failure, e.g. the origin frame
+     * itself is the one with a handler) -- if it already holds the
+     * detailed message + origin "at file:line:col" that RECORD_ERROR
+     * wrote at the true raise site, leave it alone. Overwriting it
+     * unconditionally here used to discard that detail the moment an
+     * exception got caught by an *ensure* handler (which re-raises
+     * rather than truly handling it, see DIAMOND_OP_END_ENSURE): the
+     * final uncaught-exception message would then start over from
+     * wherever the ensure block re-raised, several frames away from
+     * the real cause, even though this exact detail survives intact on
+     * the exception instance's own .message field above. Leaving
+     * vm->error as-is here lets RECORD_ERROR keep appending later "at
+     * ..." frames onto the *original* message instead of a fresh one. */
+    if(vm->error[0]=='\0')
+        (void)snprintf(vm->error,sizeof vm->error,"uncaught exception: %s",
+                       exception->class->name);
     return catch_exception(vm,chunk,handlers,handler_count,pending,registers,ip);
 }
 

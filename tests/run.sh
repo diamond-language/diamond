@@ -369,6 +369,17 @@ grep -q 'at invoke:8:' "$error_file"
 grep -q 'at tests/cases/stack_trace.di:11:' "$error_file"
 rm -f "$error_file"
 
+error_file="$(mktemp)"
+if "$diamond" tests/cases/stack_trace_through_ensure.di >/dev/null 2>"$error_file"; then
+    echo "runtime stack trace through ensure unexpectedly succeeded" >&2
+    exit 1
+fi
+grep -q 'runtime error: division by zero' "$error_file"
+grep -q 'at divide:7:' "$error_file"
+grep -q 'at invoke:15:' "$error_file"
+grep -q 'at tests/cases/stack_trace_through_ensure.di:19:' "$error_file"
+rm -f "$error_file"
+
 actual="$("$diamond" --dump-bytecode -e '40 + 2')"
 grep -Eq '^[0-9]{4} +1:[0-9]+ +ADD' <<<"$actual"
 
