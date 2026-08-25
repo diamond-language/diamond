@@ -35,6 +35,6 @@ class SessionsController
         log_warn(request, context, "logout session=not_found")
       end
     end
-    [302, {"Location": "/", "Set-Cookie": "session_token=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax"}, "signed out"]
+    [302, {"Location": "/", "Set-Cookie": expired_session_cookie()}, "signed out"]
   end
 end

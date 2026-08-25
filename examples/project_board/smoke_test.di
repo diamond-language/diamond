@@ -72,6 +72,9 @@ denied_again = app(denied_again_request, context)
 if denied_again[0] != 302 || denied_again[1]["Location"] != "/login"
   raise "destroyed session still authorized a write"
 end
+if denied_again[1]["Set-Cookie"] == nil || !denied_again[1]["Set-Cookie"].include?("Max-Age=0")
+  raise "stale session cookie was not expired"
+end
 
 second_login = app(request("POST", "/login", "email=admin%40example.com&password=diamond123"), context)
 second_cookie = second_login[1]["Set-Cookie"]
@@ -85,6 +88,9 @@ Database.get(context).execute("UPDATE sessions SET expires_at = ? WHERE id = ?",
 expired_form = app(request_with_cookie("GET", "/projects/new", "", second_cookie), context)
 if expired_form[0] != 302 || expired_form[1]["Location"] != "/login"
   raise "expired session still authorized a protected form"
+end
+if expired_form[1]["Set-Cookie"] == nil || !expired_form[1]["Set-Cookie"].include?("Max-Age=0")
+  raise "expired session cookie was not cleared"
 end
 if Session.all().count(Database.get(context)) != 0 then raise "expired session was not deleted" end
 

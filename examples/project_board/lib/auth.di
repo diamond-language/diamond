@@ -1,3 +1,5 @@
+def expired_session_cookie() = "session_token=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax"
+
 def cookie_value(request, name)
   cookie = request["headers"]["cookie"]
   if cookie == nil
@@ -26,11 +28,13 @@ def current_user(request, context)
   db = Database.get(context)
   session = Session.where({"token": token}).first(db)
   if session == nil
+    context["clear_session_cookie"] = true
     log_warn(request, context, "authentication session=not_found")
     nil
   elsif session.expires_at() <= Time.now().to_i()
     session_id = session.id()
     session.destroy(db)
+    context["clear_session_cookie"] = true
     log_warn(request, context, "authentication session_id=#{session_id} session=expired")
     nil
   else
@@ -49,10 +53,18 @@ end
 def load_current_user_middleware(request, context, forward)
   context["current_session"] = nil
   context["csrf_token"] = nil
+  context["clear_session_cookie"] = false
   user = current_user(request, context)
   context["current_user"] = user
   log_debug(request, context, "authentication loaded authenticated=#{user != nil}")
-  forward(request, context)
+  response = forward(request, context)
+  if context["clear_session_cookie"]
+    headers = response[1]
+    headers["Set-Cookie"] = expired_session_cookie()
+    response[1] = headers
+    log_debug(request, context, "stale session cookie expired in response")
+  end
+  response
 end
 
 def secure_token_equal(left, right)
