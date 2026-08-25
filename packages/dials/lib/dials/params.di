@@ -6,14 +6,56 @@ module Dials
 # call it directly too if a handler wants query/body params without
 # going through the router at all.
 class Params
-  def self.decode(value: String) -> String
-    result = value
-    plus = result.index_of("+")
-    while plus != nil
-      result = result.slice(0, plus) + " " + result.slice(plus + 1, result.length())
-      plus = result.index_of("+")
+  # -1 for anything that isn't a hex digit -- Params.decode's own signal
+  # to treat a "%" that isn't actually followed by two hex digits as a
+  # literal character instead of raising. String has no ordering
+  # comparison (`<`/`>` raise TypeError -- see docs/syntax.md), so this
+  # compares `.ord()` values instead.
+  def self.hex_digit_value(ch: String) -> Int
+    code = ch.ord()
+    if code >= "0".ord() && code <= "9".ord()
+      code - "0".ord()
+    elsif code >= "a".ord() && code <= "f".ord()
+      code - "a".ord() + 10
+    elsif code >= "A".ord() && code <= "F".ord()
+      code - "A".ord() + 10
+    else
+      -1
     end
-    result
+  end
+
+  # application/x-www-form-urlencoded decoding: "+" is a space, and
+  # "%XX" is the byte whose value the two hex digits spell out (e.g. a
+  # comma, not in the unreserved character set, submits as "%2C") --
+  # both halves are required, not just the "+" one, or a field
+  # containing a reserved character (a comma, a space encoded as "%20"
+  # instead of "+", ...) comes back through #parse with the raw
+  # percent-encoding still in it instead of the real character.
+  def self.decode(value: String) -> String
+    sb = StringBuilder.new()
+    i = 0
+    length = value.length()
+    while i < length
+      ch = value[i]
+      if ch == "+"
+        sb.append(" ")
+        i += 1
+      elsif ch == "%" && i + 2 < length
+        high = Params.hex_digit_value(value[i + 1])
+        low = Params.hex_digit_value(value[i + 2])
+        if high >= 0 && low >= 0
+          sb.append(chr(high * 16 + low))
+          i += 3
+        else
+          sb.append(ch)
+          i += 1
+        end
+      else
+        sb.append(ch)
+        i += 1
+      end
+    end
+    sb.to_s()
   end
 
   def self.parse(request)

@@ -105,6 +105,18 @@ puts(router.dispatch({"path": "/authors", "method": "POST", "body": "name=Ada"},
 assert_contains "$actual" "name=Ada"
 count=$((count + 1))
 
+# --- POST body params are percent-decoded, not just "+"-decoded -- a
+# comma (not in the URL-safe set) submits as %2C; Params.decode used to
+# only handle "+" -> " ", leaving %XX sequences untouched ---
+actual="$(run_case '
+def create(request, context, params) = Dials::Response.text(201, "country=#{params["country"]}")
+router = Dials::Router.new()
+router.post("/authors", create)
+puts(router.dispatch({"path": "/authors", "method": "POST", "body": "country=Bahamas%2C+Some+Region"}, {}))
+')"
+assert_contains "$actual" "country=Bahamas, Some Region"
+count=$((count + 1))
+
 # --- Dials::Response.redirect / .not_found shapes ---
 actual="$(run_case '
 puts(Dials::Response.redirect("/authors", "moved"))
