@@ -7,12 +7,21 @@ module Associations
 # owner-key predicate itself.
 class Preloader
   attr_reader records: Array
-  attr_reader association: String
+  attr_reader associations: Array
   attr_reader scope
 
-  def initialize(records: Array, association, scope = nil)
+  def initialize(records: Array, associations, scope = nil)
     @records = records
-    @association = "#{association}"
+    values = if associations is Array then associations else [associations] end
+    @associations = []
+    index = 0
+    while index < values.length()
+      name = "#{values[index]}"
+      unless @associations.include?(name)
+        @associations.push(name)
+      end
+      index += 1
+    end
     @scope = scope
   end
 
@@ -21,11 +30,17 @@ class Preloader
       return @records
     end
     repository = @records[0].repository()
-    reflection = repository.reflect_on_association(@association)
-    if reflection == nil
-      raise AssociationNotFoundError.new(@association)
+    index = 0
+    while index < @associations.length()
+      name = @associations[index]
+      reflection = repository.reflect_on_association(name)
+      if reflection == nil
+        raise AssociationNotFoundError.new(name)
+      end
+      reflection.preload(db, @records, @scope)
+      index += 1
     end
-    reflection.preload(db, @records, @scope)
+    @records
   end
 end
 

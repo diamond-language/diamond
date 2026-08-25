@@ -650,12 +650,14 @@ recursive hook used by GraphSQL-style lookahead planners:
 authors = Author.all().to_a(db)
 book_scope = Book.where({"published": true}).includes("publisher")
 ActiveRecord::Associations::Preloader.new(
-  authors, "books", book_scope).call(db)
+  authors, ["books"], book_scope).call(db)
 ```
 
 The reflection adds its join-key `IN (...)` predicate to the supplied scope.
 Consequently, a projected scope must retain the association join column (for
 the example above, `books.author_id`) so results can be attached to owners.
+The association argument accepts one name or an Array; duplicate names are
+collapsed while preserving their first-seen order.
 
 `self.find_by(db, conditions)` is `where(conditions).first(db)` in one
 line -- a single matching instance, or `nil`, with the same "no implicit
