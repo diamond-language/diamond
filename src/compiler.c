@@ -4571,9 +4571,29 @@ static uint16_t parse_precedence(Compiler *compiler, Precedence precedence) {
     uint16_t left = parse_prefix(compiler);
     while (!compiler->failed &&
            (compiler->current.kind == DIAMOND_TOKEN_DOT ||
-            compiler->current.kind == DIAMOND_TOKEN_LEFT_BRACKET)) {
-        left = compiler->current.kind == DIAMOND_TOKEN_DOT
-            ? parse_invoke(compiler,left) : parse_index(compiler,left);
+            compiler->current.kind == DIAMOND_TOKEN_LEFT_BRACKET ||
+            compiler->current.kind == DIAMOND_TOKEN_LEFT_PAREN)) {
+        /* `expr(...)` directly after an already-fully-parsed expression
+         * (no `.method`/`[index]` in between) means "call the Callable
+         * value `left` itself" -- `type.coerce_input()(value)`,
+         * `(a)(b)`, `arr[0]()`, and so on. A previously-undiscovered
+         * gap, not a deliberate cut: nothing in this grammar has any
+         * other meaning for two adjacent expressions with no operator
+         * between them, so this can only ever turn a program that used
+         * to be a hard parse error ("expected newline after
+         * expression", since the leftover `(...)` had nowhere to go)
+         * into a working one -- it can't reinterpret anything that
+         * used to compile. parse_closure_call_arguments already exists
+         * for exactly this "call whatever's in this register" shape
+         * (shared with a local variable or `@ivar`/`@@cvar` holding a
+         * Callable, both followed by `(...)`); reusing it here just
+         * extends where its receiver register is allowed to come from. */
+        if(compiler->current.kind == DIAMOND_TOKEN_LEFT_PAREN) {
+            left = parse_closure_call_arguments(compiler,left);
+        } else {
+            left = compiler->current.kind == DIAMOND_TOKEN_DOT
+                ? parse_invoke(compiler,left) : parse_index(compiler,left);
+        }
     }
     while (!compiler->failed &&
            token_precedence(compiler->current.kind) >= precedence) {
