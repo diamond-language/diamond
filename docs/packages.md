@@ -51,7 +51,7 @@ keeps meaning exactly what it always meant.
 ```
 cuts/
   greeter/
-    cut.cut           # manifest (optional)
+    diamond.cut           # manifest (optional)
     lib/
       greeter.di       # public entry point, same name as the cut
       helpers.di        # implementation components
@@ -66,11 +66,11 @@ migrated yet.
 ## Manifests
 
 ```ruby
-# cuts/greeter/cut.cut
+# cuts/greeter/diamond.cut
 {"name": "greeter", "version": "0.1.0"}
 ```
 
-A cut may optionally include `cuts/<name>/cut.cut` — a fixed filename,
+A cut may optionally include `cuts/<name>/diamond.cut` — a fixed filename,
 not parameterized by the cut's own name, since the same file also has to
 work unmodified as the manifest sitting at a dependency's own repository
 root before `facet` ever installs it anywhere (see "`facet`" below). If
@@ -93,7 +93,7 @@ into itself to resolve a manifest's own dependencies. There's no
 sandboxing around manifest execution beyond that — same trust model the
 rest of the language already has for any program it runs.
 
-If no `cut.cut` exists at all, none of this applies — the cut resolves
+If no `diamond.cut` exists at all, none of this applies — the cut resolves
 exactly as it would with no manifest support at all.
 
 A manifest can be pretty-printed across multiple lines — a newline is
@@ -108,7 +108,7 @@ no formatter would actually produce.
 ### Dependencies
 
 ```ruby
-# cut.cut, at your project's own root
+# diamond.cut, at your project's own root
 {"name": "myapp", "version": "0.1.0", "dependencies": {"greeter": {"git": "https://example.com/user/greeter", "tag": "v1.0.0"}}}
 ```
 
@@ -129,7 +129,7 @@ that `require_cut` can find it.
 
 ## `facet`
 
-`facet install` reads `cut.cut` in the current directory, resolves
+`facet install` reads `diamond.cut` in the current directory, resolves
 every dependency (recursively — a dependency's own `dependencies` are
 followed too), fetches each one via `git clone`/`checkout` (never a
 shell — arguments go straight to `execvp`, so a URL or ref pulled from
@@ -138,10 +138,10 @@ result into `cuts/<name>/` with `.git/` stripped (the lockfile below is
 the source of truth for "what commit," not a live repository sitting
 inside `cuts/`). Because a resolved dependency's own cloned checkout is
 moved into place as-is (`rename`, not a re-copy that could rewrite
-anything), its manifest keeps the same fixed `cut.cut` filename it had at
+anything), its manifest keeps the same fixed `diamond.cut` filename it had at
 its own repository root — this is exactly why that filename isn't
 parameterized by the cut's own name. It writes `facet.lock` alongside
-`cut.cut` — a Diamond `Hash` literal, same as a manifest. `facet` itself
+`diamond.cut` — a Diamond `Hash` literal, same as a manifest. `facet` itself
 always writes it compact/single-line (it's machine-generated, not
 something you're meant to hand-edit), but reads one back the same way it
 reads any manifest, so a hand-edited lockfile can be pretty-printed too
@@ -156,13 +156,13 @@ a flat map of every resolved cut (the whole transitive set, already
 flattened) to its exact commit. Once `facet.lock` exists, `facet
 install` installs exactly what it says without re-resolving anything —
 the fast, reproducible path, unaffected by a tag or branch moving in
-the meantime. `facet update` always re-resolves from `cut.cut`
+the meantime. `facet update` always re-resolves from `diamond.cut`
 (picking up anything a tracked branch has moved to) and rewrites the
 lock.
 
 Because Diamond has no registry to query dependency metadata from,
 resolving *is* fetching: discovering a dependency's own transitive
-dependencies requires a clone of it to read its `cut.cut`. There is
+dependencies requires a clone of it to read its `diamond.cut`. There is
 therefore no separate "resolve, then fetch" phase.
 
 **Version conflicts are hard errors, not resolved.** If two different
@@ -177,13 +177,13 @@ no special handling — the second time the walk reaches an
 already-resolved name it just stops, the same check that would catch a
 genuine version conflict.
 
-A cloned dependency's own `cut.cut` must declare a `name` matching
+A cloned dependency's own `diamond.cut` must declare a `name` matching
 the dependency key it was fetched as — the same rule `require_cut` already
 enforces for hand-installed cuts (see above) — so a misconfigured
 or renamed dependency fails clearly at `facet install` time rather than
 surprising `require_cut` later.
 
-No `facet init` or `facet add <dep>` — `cut.cut` stays a plain,
+No `facet init` or `facet add <dep>` — `diamond.cut` stays a plain,
 hand-edited Diamond `Hash` literal; only the fetch/install/lock steps
 are automated.
 
@@ -196,7 +196,7 @@ lived as its own standalone sibling repo; it now lives at
 `packages/http` in this same repo instead, kept there (rather than
 folded back into `lib/`) for the same reason it was pulled out of
 `lib/` in the first place: it's a real, ordinary cut — its own
-`cut.cut`, its own `README.md`, its own `test.sh` — not something
+`diamond.cut`, its own `README.md`, its own `test.sh` — not something
 `require` finds automatically the way `lib/core.di`'s prelude is. It
 just happens to be developed alongside the runtime instead of in a
 separate git history, which buys nothing on its own once a cut has
@@ -242,7 +242,7 @@ the first place.
 - **A hosted registry/index**: `facet install greeter` by short name,
   search, or anything else that would need a service to query — cut
   identity is a git URL, full stop.
-- **`facet init`/`facet add`**: manifest-editing commands; `cut.cut`
+- **`facet init`/`facet add`**: manifest-editing commands; `diamond.cut`
   is hand-edited.
 
 Each of these is a plausible next slice, sized independently rather than

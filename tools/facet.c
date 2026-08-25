@@ -260,7 +260,7 @@ static bool git_rev_parse_head(const char *repository, char *out, size_t out_siz
 
 /* --- manifest/lockfile reading: both are just Diamond Hash literals,
  * compiled and run standalone exactly the way src/loader.c's
- * validate_cut_manifest already evaluates a cut's own <name>.cut -
+ * validate_cut_manifest already evaluates a cut's own diamond.cut -
  * duplicated here rather than shared, since this needs a different
  * error-reporting shape (stderr + exit code, not a Loader error
  * buffer) and facet.lock has no counterpart in the runtime at all. --- */
@@ -588,7 +588,7 @@ static bool resolve_dependency(const FacetDependency *dependency,
 
     char nested_manifest_path[FACET_MAX_PATH];
     written = snprintf(nested_manifest_path, sizeof nested_manifest_path,
-                       "%s/cut.cut", scratch_path);
+                       "%s/diamond.cut", scratch_path);
     if (written < 0 || (size_t)written >= sizeof nested_manifest_path) {
         (void)snprintf(error, error_size, "path too long while resolving '%s'",
                        dependency->name);
@@ -676,8 +676,8 @@ static bool install_resolution(const FacetResolution *resolution,
 
 static int run_install_or_update(bool force_resolve) {
     char error[512];
-    if (!file_exists("cut.cut")) {
-        fprintf(stderr, "facet: no cut.cut found in the current directory\n");
+    if (!file_exists("diamond.cut")) {
+        fprintf(stderr, "facet: no diamond.cut found in the current directory\n");
         return 66;
     }
     const char *scratch_root = "cuts/.facet-tmp";
@@ -692,7 +692,7 @@ static int run_install_or_update(bool force_resolve) {
         ok = parse_lockfile("facet.lock", &resolution, error, sizeof error);
     } else {
         FacetManifest manifest;
-        ok = parse_manifest("cut.cut", &manifest, error, sizeof error) &&
+        ok = parse_manifest("diamond.cut", &manifest, error, sizeof error) &&
              resolve_manifest_dependencies(&manifest, manifest.name, &resolution,
                                            scratch_root, error, sizeof error) &&
              write_lockfile("facet.lock", &resolution, error, sizeof error);

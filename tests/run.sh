@@ -822,16 +822,16 @@ mkdir -p "$manifest_dir/cuts/greeter/lib"
 printf 'def greet(name)\n  "hi, " + name\nend\n' >"$manifest_dir/cuts/greeter/lib/greeter.di"
 printf 'require_cut "greeter"\ngreet("world")\n' >"$manifest_dir/main.di"
 
-printf '{"name": "greeter", "version": "0.1.0"}\n' >"$manifest_dir/cuts/greeter/cut.cut"
+printf '{"name": "greeter", "version": "0.1.0"}\n' >"$manifest_dir/cuts/greeter/diamond.cut"
 actual="$(cd "$manifest_dir" && "$diamond_abs" main.di)"
 [[ "$actual" == "hi, world" ]]
-rm -f "$manifest_dir/cuts/greeter/cut.cut"
+rm -f "$manifest_dir/cuts/greeter/diamond.cut"
 
 actual="$(cd "$manifest_dir" && "$diamond_abs" main.di)"
 [[ "$actual" == "hi, world" ]]
 
 manifest_error="$(mktemp)"
-printf '{"name": "wrong_name"}\n' >"$manifest_dir/cuts/greeter/cut.cut"
+printf '{"name": "wrong_name"}\n' >"$manifest_dir/cuts/greeter/diamond.cut"
 if (cd "$manifest_dir" && "$diamond_abs" main.di) >/dev/null 2>"$manifest_error"; then
     echo "mismatched manifest name unexpectedly succeeded" >&2
     rm -rf "$manifest_dir" "$manifest_error"
@@ -839,7 +839,7 @@ if (cd "$manifest_dir" && "$diamond_abs" main.di) >/dev/null 2>"$manifest_error"
 fi
 grep -q "declares name 'wrong_name', expected 'greeter'" "$manifest_error"
 
-printf '42\n' >"$manifest_dir/cuts/greeter/cut.cut"
+printf '42\n' >"$manifest_dir/cuts/greeter/diamond.cut"
 if (cd "$manifest_dir" && "$diamond_abs" main.di) >/dev/null 2>"$manifest_error"; then
     echo "non-Hash manifest unexpectedly succeeded" >&2
     rm -rf "$manifest_dir" "$manifest_error"
@@ -847,7 +847,7 @@ if (cd "$manifest_dir" && "$diamond_abs" main.di) >/dev/null 2>"$manifest_error"
 fi
 grep -q "must evaluate to a Hash" "$manifest_error"
 
-printf '{"version": "0.1.0"}\n' >"$manifest_dir/cuts/greeter/cut.cut"
+printf '{"version": "0.1.0"}\n' >"$manifest_dir/cuts/greeter/diamond.cut"
 if (cd "$manifest_dir" && "$diamond_abs" main.di) >/dev/null 2>"$manifest_error"; then
     echo "manifest missing name key unexpectedly succeeded" >&2
     rm -rf "$manifest_dir" "$manifest_error"
@@ -855,7 +855,7 @@ if (cd "$manifest_dir" && "$diamond_abs" main.di) >/dev/null 2>"$manifest_error"
 fi
 grep -q "must have a String 'name' key" "$manifest_error"
 
-printf '{"name": "greeter", "version": 1}\n' >"$manifest_dir/cuts/greeter/cut.cut"
+printf '{"name": "greeter", "version": 1}\n' >"$manifest_dir/cuts/greeter/diamond.cut"
 if (cd "$manifest_dir" && "$diamond_abs" main.di) >/dev/null 2>"$manifest_error"; then
     echo "non-String version unexpectedly succeeded" >&2
     rm -rf "$manifest_dir" "$manifest_error"
@@ -863,7 +863,7 @@ if (cd "$manifest_dir" && "$diamond_abs" main.di) >/dev/null 2>"$manifest_error"
 fi
 grep -q "key 'version' must be a String" "$manifest_error"
 
-printf 'this is not valid Diamond syntax )))\n' >"$manifest_dir/cuts/greeter/cut.cut"
+printf 'this is not valid Diamond syntax )))\n' >"$manifest_dir/cuts/greeter/diamond.cut"
 if (cd "$manifest_dir" && "$diamond_abs" main.di) >/dev/null 2>"$manifest_error"; then
     echo "manifest with a compile error unexpectedly succeeded" >&2
     rm -rf "$manifest_dir" "$manifest_error"
@@ -871,7 +871,7 @@ if (cd "$manifest_dir" && "$diamond_abs" main.di) >/dev/null 2>"$manifest_error"
 fi
 grep -q "failed to compile at line" "$manifest_error"
 
-printf 'raise "manifest boom"\n' >"$manifest_dir/cuts/greeter/cut.cut"
+printf 'raise "manifest boom"\n' >"$manifest_dir/cuts/greeter/diamond.cut"
 if (cd "$manifest_dir" && "$diamond_abs" main.di) >/dev/null 2>"$manifest_error"; then
     echo "manifest that raises unexpectedly succeeded" >&2
     rm -rf "$manifest_dir" "$manifest_error"
@@ -880,7 +880,7 @@ fi
 grep -q "cut manifest '.*' failed: uncaught exception: manifest boom" "$manifest_error"
 rm -f "$manifest_error"
 
-printf '{"name": "greeter", "version": "0.1.0"}\n' >"$manifest_dir/cuts/greeter/cut.cut"
+printf '{"name": "greeter", "version": "0.1.0"}\n' >"$manifest_dir/cuts/greeter/diamond.cut"
 actual="$(cd "$manifest_dir" && DIAMOND_STRESS_GC=1 "$diamond_abs" main.di)"
 [[ "$actual" == "hi, world" ]]
 rm -rf "$manifest_dir"

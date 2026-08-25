@@ -14,7 +14,7 @@ Either copy this directory straight into another project as
 that:
 
 ```ruby
-# cut.cut, in your project
+# diamond.cut, in your project
 {"name": "myapp", "dependencies": {"http": {"git": "<url-of-a-remote-for-this-directory>", "tag": "v0.1.0"}}}
 ```
 

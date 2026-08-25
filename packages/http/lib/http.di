@@ -1,5 +1,5 @@
 # Minimal Rack-style HTTP/1.1 support for Diamond. Install via facet
-# (see cut.cut), then `require_cut "http"` to bring in http_serve
+# (see diamond.cut), then `require_cut "http"` to bring in http_serve
 # (server) and http_get/http_post/http_request (client).
 #
 # A server request is a Hash: {"method": ..., "path": ..., "headers": ...,

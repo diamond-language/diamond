@@ -93,7 +93,7 @@ static bool validate_cut_manifest(Loader *loader,const char *name,
     char *manifest_path=malloc(DIAMOND_MAX_SOURCE_PATH);
     if(manifest_path==nullptr)return true;
     const int written=snprintf(manifest_path,DIAMOND_MAX_SOURCE_PATH,
-        "cuts/%.*s/cut.cut",(int)name_length,name);
+        "cuts/%.*s/diamond.cut",(int)name_length,name);
     char canonical_manifest[DIAMOND_MAX_SOURCE_PATH];
     const bool has_manifest=written>0&&(size_t)written<DIAMOND_MAX_SOURCE_PATH&&
         realpath(manifest_path,canonical_manifest)!=nullptr;
