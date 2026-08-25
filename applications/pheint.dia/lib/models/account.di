@@ -13,11 +13,11 @@ class Account < ActiveRecord::Model
   def self.configure(repository: ActiveRecord::Repository)
     @@repository = repository
   end
-  def profile(db)
-    if self.association_loaded?("profile")
-      self.preloaded_association("profile")
+  def player(db)
+    if self.association_loaded?("player")
+      self.preloaded_association("player")
     else
-      self.has_one(Profile.repository(), "account_id").get(db, self.id())
+      self.has_one(Player.repository(), "account_id").get(db, self.id())
     end
   end
 end

@@ -46,20 +46,20 @@ def build_account_validator(db)
   ])
 end
 
-def build_profile_validator(db)
+def build_player_validator(db)
   ActiveRecord::Validators.combine([
     ActiveRecord::Validators.presence("handle"),
     ActiveRecord::Validators.length("handle", 3, 30),
     ActiveRecord::Validators.format("handle", Regexp.new("^[A-Za-z0-9_]+$")),
-    ActiveRecord::Validators.uniqueness(db, Arel.table("profiles"), "handle")
+    ActiveRecord::Validators.uniqueness(db, Arel.table("players"), "handle")
   ])
 end
 
 def ensure_pheint_models_configured(context)
   if context["models_configured"] == nil
     db = PheintDatabase.get(context)
-    Profile.configure(ActiveRecord::Repository.new(
-      Arel.table("profiles"), build_profile, "id", nil, build_profile_validator(db),
+    Player.configure(ActiveRecord::Repository.new(
+      Arel.table("players"), build_player, "id", nil, build_player_validator(db),
       nil, nil, nil, ["id", "account_id", "handle"]))
     Session.configure(ActiveRecord::Repository.new(
       Arel.table("sessions"), build_session, "id", nil, nil, nil, nil, nil,
@@ -68,12 +68,12 @@ def ensure_pheint_models_configured(context)
       Arel.table("accounts"), build_account, "id", nil, build_account_validator(db),
       nil, nil, nil, ["id", "email", "password_digest"], nil, [
         ActiveRecord::AssociationReflection.new(
-          "profile", "has_one", Profile.repository(), "account_id", "id"),
+          "player", "has_one", Player.repository(), "account_id", "id"),
         ActiveRecord::AssociationReflection.new(
           "sessions", "has_many", Session.repository(), "account_id", "id")
       ]))
-    Profile.configure(ActiveRecord::Repository.new(
-      Arel.table("profiles"), build_profile, "id", nil, build_profile_validator(db),
+    Player.configure(ActiveRecord::Repository.new(
+      Arel.table("players"), build_player, "id", nil, build_player_validator(db),
       nil, nil, nil, ["id", "account_id", "handle"], nil, [
         ActiveRecord::AssociationReflection.new(
           "account", "belongs_to", Account.repository(), "account_id", "id")

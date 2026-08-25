@@ -45,7 +45,7 @@ end
 signup_query = [
   "mutation {",
   "  signUp(email: \" Alice@Example.COM \", password: \"correct horse\", handle: \"@Alice\") {",
-  "    token account { id email profile { handle } }",
+  "    token account { id email player { handle } }",
   "  }",
   "}"
 ].join("\n")
@@ -59,7 +59,7 @@ signup_data = signup_json["data"]["signUp"]
 token = signup_data["token"]
 if token == nil || token.length() != 64 ||
    signup_data["account"]["email"] != "alice@example.com" ||
-   signup_data["account"]["profile"]["handle"] != "alice"
+   signup_data["account"]["player"]["handle"] != "alice"
   raise "signup did not normalize identity or return auth payload"
 end
 
@@ -68,8 +68,8 @@ anonymous_me = JSON.parse(app(smoke_request("POST", "/graphql",
 if anonymous_me["data"]["me"] != nil then raise "anonymous me was not nil" end
 
 authenticated_me = JSON.parse(app(authenticated_graphql(token,
-  "{ me { email profile { handle } } }"), context)[2])
-if authenticated_me["data"]["me"]["profile"]["handle"] != "alice"
+  "{ me { email player { handle } } }"), context)[2])
+if authenticated_me["data"]["me"]["player"]["handle"] != "alice"
   raise "bearer token did not authenticate me"
 end
 
@@ -99,14 +99,14 @@ duplicate_signup = JSON.parse(app(smoke_request("POST", "/graphql", JSON.stringi
 })), context)[2])
 if duplicate_signup["errors"] == nil then raise "duplicate email signup was accepted" end
 
-invalid_profile_signup = JSON.parse(app(smoke_request("POST", "/graphql", JSON.stringify({
+invalid_player_signup = JSON.parse(app(smoke_request("POST", "/graphql", JSON.stringify({
   "query": "mutation { signUp(email: \"other@example.com\", password: \"another pass\", handle: \"!\") { token } }"
 })), context)[2])
-if invalid_profile_signup["errors"] == nil
-  raise "invalid profile signup was accepted"
+if invalid_player_signup["errors"] == nil
+  raise "invalid player signup was accepted"
 end
 if Account.all().count(PheintDatabase.get(context)) != 1 ||
-   Profile.all().count(PheintDatabase.get(context)) != 1
+   Player.all().count(PheintDatabase.get(context)) != 1
   raise "failed signup was not rolled back atomically"
 end
 

@@ -11,7 +11,7 @@ this project does not render HTML or own frontend assets.
 - `lib/config` owns environment configuration.
 - `lib/controllers` contains JSON and GraphQL request actions.
 - `lib/graphql` contains the schema and resolvers.
-- `lib/models` contains `Account`, `Profile`, and server-side `Session` models.
+- `lib/models` contains `Account`, `Player`, and server-side `Session` models.
 - `lib/helpers` contains shared application helpers.
 - `lib/routes.di` and `lib/middleware.di` wire the request pipeline.
 
@@ -49,7 +49,7 @@ Initialize the selected database with:
 ```
 
 This command recreates the selected database schema. Accounts store normalized
-email and a bcrypt password digest. Each account has one profile with a unique
+email and a bcrypt password digest. Each account has one player with a unique
 handle, and authentication tokens are persisted as expiring sessions.
 
 ## Authentication
@@ -60,19 +60,19 @@ The schema exposes the conventional authentication flow:
 mutation SignUp {
   signUp(email: "ada@example.com", password: "correct horse", handle: "@ada") {
     token
-    account { id email profile { id handle } }
+    account { id email player { id handle } }
   }
 }
 
 mutation SignIn {
   signIn(email: "ada@example.com", password: "correct horse") {
     token
-    account { id email profile { handle } }
+    account { id email player { handle } }
   }
 }
 
 query CurrentAccount {
-  me { id email profile { handle } }
+  me { id email player { handle } }
 }
 
 mutation SignOut { signOut }
@@ -81,8 +81,8 @@ mutation SignOut { signOut }
 Send the returned opaque token as `Authorization: Bearer <token>` for `me` and
 `signOut`. Sessions expire after 30 days and are deleted when an expired token
 is presented. Signup lowercases email and handle, accepts the handle with or
-without a leading `@`, and creates the account, profile, and initial session in
-one transaction. Failed profile/account validation rolls the entire signup
+without a leading `@`, and creates the account, player, and initial session in
+one transaction. Failed player/account validation rolls the entire signup
 back. Passwords must be 8–72 characters; only bcrypt digests are persisted,
 and neither password digests nor session records are exposed by the schema.
 

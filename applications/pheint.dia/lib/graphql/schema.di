@@ -1,14 +1,14 @@
-module PheintProfileResolvers
+module PheintPlayerResolvers
   module_function
-  def id(profile, args, context) = profile.id()
-  def handle(profile, args, context) = profile.handle()
+  def id(player, args, context) = player.id()
+  def handle(player, args, context) = player.handle()
 end
 
 module PheintAccountResolvers
   module_function
   def id(account, args, context) = account.id()
   def email(account, args, context) = account.email()
-  def profile(account, args, context) = account.profile(context["db"])
+  def player(account, args, context) = account.player(context["db"])
 end
 
 module PheintAuthPayloadResolvers
@@ -37,21 +37,21 @@ module PheintMutationResolvers
     db = context["db"]
     account = Account.new({"email": email, "password_digest": nil})
     account.secure_password=(password)
-    profile = nil
+    player = nil
     session = nil
     begin
       ActiveRecord::Transaction.run(db) do
         account.save(db)
-        profile = Profile.new({"account_id": account.id(), "handle": handle})
-        profile.save(db)
+        player = Player.new({"account_id": account.id(), "handle": handle})
+        player.save(db)
         session = pheint_issue_session(db, account)
       end
     rescue error: ActiveRecord::ValidationError
       raise GraphQL::ExecutionError.new(error.errors().join(", "))
     end
-    account.set_preloaded_association("profile", profile)
+    account.set_preloaded_association("player", player)
     pheint_audit_info(context, "authentication.account_created", {
-      "account_id": account.id(), "profile_id": profile.id()})
+      "account_id": account.id(), "player_id": player.id()})
     {"token": session.token(), "account": account}
   end
 
@@ -92,14 +92,14 @@ end
 class PheintSchema
   def self.get()
     if @@schema == nil
-      profile_type = GraphQL::ObjectType.new("Profile")
-      profile_type.field("id", GraphQL::ScalarType.id().non_null(), PheintProfileResolvers.id)
-      profile_type.field("handle", GraphQL::ScalarType.string().non_null(), PheintProfileResolvers.handle)
+      player_type = GraphQL::ObjectType.new("Player")
+      player_type.field("id", GraphQL::ScalarType.id().non_null(), PheintPlayerResolvers.id)
+      player_type.field("handle", GraphQL::ScalarType.string().non_null(), PheintPlayerResolvers.handle)
 
       account_type = GraphQL::ObjectType.new("Account")
       account_type.field("id", GraphQL::ScalarType.id().non_null(), PheintAccountResolvers.id)
       account_type.field("email", GraphQL::ScalarType.string().non_null(), PheintAccountResolvers.email)
-      account_type.field("profile", profile_type.non_null(), PheintAccountResolvers.profile)
+      account_type.field("player", player_type.non_null(), PheintAccountResolvers.player)
 
       auth_payload_type = GraphQL::ObjectType.new("AuthPayload")
       auth_payload_type.field("token", GraphQL::ScalarType.string().non_null(), PheintAuthPayloadResolvers.token)

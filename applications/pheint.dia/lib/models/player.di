@@ -1,4 +1,4 @@
-class Profile < ActiveRecord::Model
+class Player < ActiveRecord::Model
   attr_accessor account_id: Int, handle: String
 
   def initialize(attributes: Hash = {})
@@ -15,4 +15,4 @@ class Profile < ActiveRecord::Model
   end
 end
 
-def build_profile(row) = Profile.new(row)
+def build_player(row) = Player.new(row)
