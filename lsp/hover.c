@@ -103,12 +103,23 @@ static char *format_function_signature(const DiamondChunk *chunk,
     fprintf(stream,"def %s(",function->name);
     for(size_t index=0;index<function->arity;index++) {
         if(index>0)fputs(", ",stream);
+        /* A trailing `*name` (splat/variadic) parameter is the last
+         * slot whenever function->has_variadic is set (src/vm.h's own
+         * comment on that field) -- it carries neither a type
+         * annotation nor a default (the parser rejects both, see
+         * compile_definition), and required_arity never counts it as
+         * required either, so without this check the generic "index >=
+         * required_arity" rule below would misprint it as an ordinary
+         * optional parameter (`rest = ...`) instead of `*rest`. */
+        const bool is_variadic_slot=function->has_variadic&&
+            index+1==function->arity;
+        if(is_variadic_slot)fputc('*',stream);
         fputs(function->parameter_names[index],stream);
-        if(function->parameter_type_sets[index]!=UINT8_MAX) {
+        if(!is_variadic_slot&&function->parameter_type_sets[index]!=UINT8_MAX) {
             fputs(": ",stream);
             diamond_print_type_set(stream,&function_chunk,function->parameter_type_sets[index]);
         }
-        if(index>=function->required_arity)fputs(" = ...",stream);
+        if(!is_variadic_slot&&index>=function->required_arity)fputs(" = ...",stream);
     }
     fputc(')',stream);
     if(function->return_type_set!=UINT8_MAX) {

@@ -171,6 +171,52 @@ search over a real (if scoped) lexical symbol table:
 - Any other request gets a JSON-RPC `MethodNotFound` (-32601) error;
   any other notification is silently ignored.
 
+## `.div` templates (diagnostics only)
+
+Any document whose path/uri ends in `.div` (`packages/div` — see its own
+README for the tag grammar) is not raw Diamond source, so it's never
+handed to `diamond_compile` as-is; `lsp/div.c`'s `div_translate` first
+turns it into an ordinary Diamond source buffer implementing the same
+tag semantics `packages/div/lib/div/compiler.di`'s own `Div.compile_source`
+does (a hand-ported C mirror, kept behaviorally in sync by hand — there's
+no shared implementation between the two, see that file's own header
+comment for the exact grammar and scope cuts), then compiles *that*
+through `diagnostics_compute`'s ordinary no-require-bundling path (a
+template never `require`s anything of its own). Any resulting diagnostic
+gets mapped back through a line-position table `div_translate` builds
+alongside the generated source (one entry per generated line, recording
+which `.div` source line/column it came from — `{0,0}` for a line with no
+single corresponding template position, e.g. the inlined escape-helper
+boilerplate, which falls back to anchoring at the template's own start)
+instead of through the segment-table machinery every other document's
+diagnostics use — there's no `require` bundle here to walk. A tag body
+that itself spans multiple lines (a multi-line `<% %>`/`<%= %>`/`<%== %>`)
+still maps each of its own physical lines individually, since the
+generated code is a verbatim copy of the tag's own text.
+
+Only diagnostics work for `.div` documents — hover, go-to-definition,
+document symbols, completion, and workspace symbol search all still
+treat them as ordinary (non-)Diamond source and behave accordingly
+(mostly: finding nothing, since the raw ERB-tag-mixed-HTML text they'd
+otherwise tokenize isn't valid Diamond syntax). Extending any of those to
+work *inside* a tag's own embedded expression would need the same kind of
+position-mapping div_translate already does for diagnostics, threaded
+through each of those handlers separately — a larger, currently
+unstarted slice.
+
+Each `.html.div` file is also translated and compiled **in isolation** —
+a call to another template's own generated function (a partial, e.g.
+`<%== author_books_table_html(books) %>`) reports "undefined function"
+here even though the real, divc-compiled output works fine once
+`require`d alongside its partial by the app that actually renders it
+(`require`'s flat top-level namespace is what makes that work at
+runtime — see `packages/div/README.md`). This is a real, known false
+positive, not a crash or a wrong location: the reported position still
+correctly lands on the unresolved call itself. Resolving it would mean
+teaching the LSP which other templates a given one is normally
+`require`d alongside, which nothing currently tracks (a `.div` file has
+no `require` line of its own to read that from).
+
 A document's text is compiled exactly the way `src/main.c`'s own
 `run_source` compiles a file natively: `require`d files resolved and
 bundled in via `diamond_load_program_with_override` (`src/loader.h`),

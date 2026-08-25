@@ -266,6 +266,25 @@ count=$((count + 1))
 send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$hover_uri"'"}}}'
 read_message >/dev/null
 
+# --- hover on a variadic (splat) function prints "*rest", not the
+# generic "rest = ..." optional-parameter form required_arity alone
+# would suggest (required_arity never counts the variadic slot as
+# required -- see hover.c's own comment on format_function_signature) ---
+
+variadic_hover_uri="file:///variadic_hover.di"
+send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$variadic_hover_uri"'","text":"def sum(first: Int, *rest)\n  first\nend"}}}'
+read_message >/dev/null
+
+send '{"jsonrpc":"2.0","id":100,"method":"textDocument/hover","params":{"textDocument":{"uri":"'"$variadic_hover_uri"'"},"position":{"line":0,"character":4}}}'
+response="$(read_message)"
+[[ "$response" == *'"id":100'* ]]
+count=$((count + 1))
+[[ "$response" == *'"value":"def sum(first: Int, *rest)"'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$variadic_hover_uri"'"}}}'
+read_message >/dev/null
+
 # --- go-to-definition on a symbol pulled in through require resolves to
 # a Location in *that* file, not the requesting document ---
 
@@ -518,6 +537,50 @@ count=$((count + 1))
 count=$((count + 1))
 
 send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$ws_alpha_uri"'"}}}'
+read_message >/dev/null
+
+# --- a div template (packages/div, any ".div" path) is translated on
+# the fly and diagnosed directly, instead of being run through the
+# compiler as raw text (which would just report the first "<%" as a
+# parse error) -- see lsp/div.c ---
+
+div_uri="file:///view.html.div"
+
+# a well-formed template compiles clean
+send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$div_uri"'","text":"<%# locals: name %><p>Hello <%= name %></p>"}}}'
+response="$(read_message)"
+[[ "$response" == *'"uri":"'"$div_uri"'"'* ]]
+count=$((count + 1))
+[[ "$response" == *'"diagnostics":[]'* ]]
+count=$((count + 1))
+
+# a broken expression inside <%= %> is reported against the template's
+# own single line, not some line deep in the generated boilerplate
+send '{"jsonrpc":"2.0","method":"textDocument/didChange","params":{"textDocument":{"uri":"'"$div_uri"'"},"contentChanges":[{"text":"<%# locals: name %><p>Hello <%= name + %></p>"}]}}'
+response="$(read_message)"
+[[ "$response" == *'"message":"expected expression"'* ]]
+count=$((count + 1))
+[[ "$response" == *'"line":0'* ]]
+count=$((count + 1))
+
+# an error on a <% %> tag's own *second* physical line maps to the
+# right line in the template, not the tag's own opening line
+send '{"jsonrpc":"2.0","method":"textDocument/didChange","params":{"textDocument":{"uri":"'"$div_uri"'"},"contentChanges":[{"text":"<p>one</p>\n<%\n  if\nend\n%>\n<p>two</p>"}]}}'
+response="$(read_message)"
+[[ "$response" == *'"message":"expected expression"'* ]]
+count=$((count + 1))
+[[ "$response" == *'"line":2'* ]]
+count=$((count + 1))
+
+# an unterminated <% tag is its own diagnostic, at the tag's own start
+send '{"jsonrpc":"2.0","method":"textDocument/didChange","params":{"textDocument":{"uri":"'"$div_uri"'"},"contentChanges":[{"text":"<p>hi</p><%= broken"}]}}'
+response="$(read_message)"
+[[ "$response" == *'"message":"unterminated <% tag"'* ]]
+count=$((count + 1))
+[[ "$response" == *'"line":0'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$div_uri"'"}}}'
 read_message >/dev/null
 
 # --- an unrecognized method gets a JSON-RPC MethodNotFound error ---

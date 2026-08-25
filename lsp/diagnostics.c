@@ -1,6 +1,7 @@
 #include "diagnostics.h"
 
 #include "compiler.h"
+#include "div.h"
 #include "loader.h"
 #include "prelude.h"
 
@@ -182,6 +183,82 @@ JsonValue *diagnostics_compute(const DocumentTable *documents,const char *uri,
 
     JsonValue *diagnostics=json_array();
     if(diagnostics==nullptr)return nullptr;
+
+    /* A div template (packages/div, any ".div" path) never `require`s
+     * anything of its own -- see lsp/div.h's own comment -- so it skips
+     * the require-bundling path entirely: translate its tag syntax into
+     * ordinary Diamond source with div_translate, compile *that* exactly
+     * the way the no-on-disk-location branch below compiles raw text
+     * (prelude + "#line 1" reset, diagnostic.span.line indexing directly
+     * into the user content with no segment-table indirection needed),
+     * then map any resulting diagnostic's line back through the position
+     * array div_translate returned instead of through diamond_resolve_
+     * diagnostic_location's bundle segments (there is no bundle here).
+     * No dependency tracking either (out_dependency_publish/
+     * out_dependency_paths stay untouched, same as every early-return
+     * path below already leaves them) -- a template has nothing to
+     * `require`, so nothing to publish or track. */
+    if(div_is_template_path(uri)) {
+        DivPosition *positions=nullptr;size_t position_count=0;
+        size_t error_line=1,error_column=1;const char *error_message=nullptr;
+        char *generated=div_translate(text,length,&positions,&position_count,
+            &error_line,&error_column,&error_message);
+        if(generated==nullptr) {
+            JsonValue *entry=build_diagnostic(error_line,error_column,1,error_message);
+            if(entry==nullptr||!json_array_push(diagnostics,entry)) {
+                json_free(entry);
+                json_free(diagnostics);
+                return nullptr;
+            }
+            return diagnostics;
+        }
+        const bool include_json=diamond_prelude_needs_json(generated);
+        const size_t prelude_length=diamond_prelude_length(include_json);
+        const size_t reset_length=sizeof(DIAMOND_USER_LINE_RESET)-1;
+        const size_t generated_length=strlen(generated);
+        char *combined=malloc(prelude_length+reset_length+generated_length+1);
+        if(combined==nullptr) {
+            free(generated);free(positions);
+            json_free(diagnostics);
+            return nullptr;
+        }
+        size_t combined_offset=diamond_prelude_write(combined,include_json);
+        memcpy(combined+combined_offset,DIAMOND_USER_LINE_RESET,reset_length);
+        combined_offset+=reset_length;
+        memcpy(combined+combined_offset,generated,generated_length+1);
+        free(generated);
+
+        DiamondDiagnostic diagnostic;
+        diamond_program_free(scratch);
+        const bool ok=diamond_compile(combined,scratch,&diagnostic);
+        free(combined);
+        if(!ok) {
+            /* positions[line-1].line==0 means this generated line is
+             * fixed boilerplate with no single corresponding template
+             * position (see DivPosition's own comment) -- anchor at the
+             * template's own start rather than reporting nothing, same
+             * fallback the require-resolution-failure path below uses. */
+            size_t template_line=1,template_column=1;
+            if(diagnostic.span.line>=1&&diagnostic.span.line<=position_count) {
+                const DivPosition mapped=positions[diagnostic.span.line-1];
+                if(mapped.line>0) {
+                    template_line=mapped.line;
+                    template_column=mapped.column+
+                        (diagnostic.span.column>0?diagnostic.span.column-1:0);
+                }
+            }
+            JsonValue *entry=build_diagnostic(template_line,template_column,
+                diagnostic.span.length,diagnostic.message);
+            if(entry==nullptr||!json_array_push(diagnostics,entry)) {
+                json_free(entry);
+                free(positions);
+                json_free(diagnostics);
+                return nullptr;
+            }
+        }
+        free(positions);
+        return diagnostics;
+    }
 
     /* No on-disk location (an untitled/unsaved buffer, or a non-file://
      * scheme): compile the document in isolation, same as before this
