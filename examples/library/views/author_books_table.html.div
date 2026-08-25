@@ -2,6 +2,6 @@
 <table border="1">
   <tr><th>Title</th><th>Year</th><th>Available</th></tr>
   <% books.each() do |book| %>
-  <tr><td><a href="/books/<%= book.id() %>"><%= book.title() %></a></td><td><%= book.year() %></td><td><%= if book.available?() then "yes" else "no" end %></td></tr>
+  <tr><td><a href="/books/<%= book.id() %>"><%= book.title() %></a></td><td><%= book.year() %></td><td><%= book.available?() ? "yes" : "no" %></td></tr>
   <% end %>
 </table>
