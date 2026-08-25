@@ -1,13 +1,17 @@
 require "../../http/lib/http"
+require "../../logger/lib/logger"
 
 # A small, fiber-based, Puma-like concurrent HTTP server for Diamond.
-# Pulls in packages/http's own http_parse_request/http_write_response by
-# relative path -- `require_cut "http"` is the mechanism for reaching an
-# installed cut, but it's anchored to the process's own working
-# directory and a fixed cuts/<name>/lib/<name>.di shape (see
-# docs/packages.md), neither of which describes packages/http sitting
-# two directories up in this repo's own tree; the relative path always
-# resolves correctly regardless of where gremlin itself ends up.
+# Pulls in packages/http's own http_parse_request/http_write_response
+# and packages/logger's own Logger (used by gremlin_worker to report an
+# otherwise-silently-swallowed unhandled error from a request handler)
+# by relative path -- `require_cut "http"`/`require_cut "logger"` is the
+# mechanism for reaching an installed cut, but it's anchored to the
+# process's own working directory and a fixed cuts/<name>/lib/<name>.di
+# shape (see docs/packages.md), neither of which describes packages/http
+# or packages/logger sitting two directories up in this repo's own
+# tree; the relative path always resolves correctly regardless of where
+# gremlin itself ends up.
 # `require_cut "gremlin"` (once installed as a cut) then brings in
 # gremlin_serve. Same Rack-style status/headers/body contract
 # as http_serve, plus one addition http_serve has no equivalent for: a
