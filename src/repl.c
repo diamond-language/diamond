@@ -561,7 +561,7 @@ int diamond_repl_run(void) {
         buffer_reset(&pending);
         bool have_candidate = false;
         DiamondProgram *program = nullptr;
-        const char *prompt = ">>> ";
+        const char *prompt = "{> ";
 
         for (;;) {
             ReplLineResult line_result;
