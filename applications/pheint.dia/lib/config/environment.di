@@ -26,4 +26,18 @@ module PheintEnvironment
       "debug"
     end
   end
+
+
+  def self.database_path()
+    override = ENV["DIAMOND_DATABASE_PATH"]
+    if override != nil && override != ""
+      override
+    elsif PheintEnvironment.name() == "test"
+      "pheint_test.db"
+    elsif PheintEnvironment.name() == "production"
+      "pheint_production.db"
+    else
+      "pheint_development.db"
+    end
+  end
 end

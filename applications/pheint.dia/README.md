@@ -11,7 +11,7 @@ this project does not render HTML or own frontend assets.
 - `lib/config` owns environment configuration.
 - `lib/controllers` contains JSON and GraphQL request actions.
 - `lib/graphql` contains the schema and resolvers.
-- `lib/models` is reserved for the domain model.
+- `lib/models` contains `Account`, `Profile`, and server-side `Session` models.
 - `lib/helpers` contains shared application helpers.
 - `lib/routes.di` and `lib/middleware.di` wire the request pipeline.
 
@@ -37,6 +37,20 @@ The API exposes:
   `operationName` request fields;
 - `GET /health` for service health;
 - `GET /` for JSON service metadata.
+
+## Database
+
+`DIAMOND_ENV` isolates `pheint_development.db`, `pheint_test.db`, and
+`pheint_production.db`; `DIAMOND_DATABASE_PATH` overrides the selected path.
+Initialize the selected database with:
+
+```sh
+../../build/diamond setup_db.di
+```
+
+This command recreates the selected database schema. Accounts store normalized
+email and a bcrypt password digest. Each account has one profile with a unique
+handle, and authentication tokens are persisted as expiring sessions.
 
 Run the direct-dispatch smoke test with:
 

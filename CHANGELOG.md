@@ -9,6 +9,9 @@
   sub-millisecond timing, JSON service/health endpoints, and direct-dispatch
   smoke coverage.
 - Added `make test-pheint-application`.
+- Added environment-isolated pheint.dia databases and instrumented
+  ActiveRecord models for accounts, one-to-one profiles with unique handles,
+  and expiring server-side authentication sessions.
 
 ## Language
 
