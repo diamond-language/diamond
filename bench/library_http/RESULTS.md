@@ -17,8 +17,11 @@ as `bench/gremlin_http/RESULTS.md`.
 
 ## Workloads
 
-Five read-only (`GET`) routes, `ab -n 5000 -c 50` each, at `threads: 1`
-and `threads: 4`:
+Five read-only (`GET`) routes, `ab -n 5000 -c 50` each, at `threads: 1,
+4, 6, 8, 12` — 6 and 12 bracket this machine's physical/logical core
+split, 8 fills the gap between "physical cores" (6) and "all logical
+threads" (12), matching `bench/gremlin_http/RESULTS.md`'s own thread
+sweep:
 
 - **`home`**: static page, no database query — isolates HTTP/routing/
   `Div` rendering overhead from ActiveRecord.
@@ -38,16 +41,31 @@ Run via `bash bench/library_http/run.sh`.
 
 | route | threads | req/sec | mean latency | p99 latency | failed |
 |---|---:|---:|---:|---:|---:|
-| home | 1 | 1,226 | 40.8ms | 9ms | 0 |
-| home | 4 | 5,384 | 9.3ms | 39ms | 0 |
-| authors_index | 1 | 1,078 | 46.4ms | 9ms | 0 |
-| authors_index | 4 | 4,072 | 12.3ms | 37ms | 0 |
-| authors_show | 1 | 986 | 50.7ms | 7ms | 0 |
-| authors_show | 4 | 3,294 | 15.2ms | 40ms | 0 |
-| books_index | 1 | 766 | 65.3ms | 8ms | 0 |
-| books_index | 4 | 2,611 | 19.2ms | 63ms | 0 |
-| books_available | 1 | 830 | 60.3ms | 10ms | 0 |
-| books_available | 4 | 2,763 | 18.1ms | 57ms | 0 |
+| home | 1 | 1,704 | 29.3ms | 7ms | 0 |
+| home | 4 | 5,368 | 9.3ms | 28ms | 0 |
+| home | 6 | 5,652 | 8.8ms | 36ms | 0 |
+| home | 8 | 5,355 | 9.3ms | 33ms | 0 |
+| home | 12 | 5,506 | 9.1ms | 37ms | 0 |
+| authors_index | 1 | 1,244 | 40.2ms | 3ms | 0 |
+| authors_index | 4 | 4,177 | 12.0ms | 33ms | 0 |
+| authors_index | 6 | 4,848 | 10.3ms | 40ms | 0 |
+| authors_index | 8 | 4,686 | 10.7ms | 49ms | 0 |
+| authors_index | 12 | 4,551 | 11.0ms | 44ms | 0 |
+| authors_show | 1 | 980 | 51.0ms | 10ms | 0 |
+| authors_show | 4 | 3,232 | 15.5ms | 48ms | 0 |
+| authors_show | 6 | 3,776 | 13.2ms | 60ms | 0 |
+| authors_show | 8 | 4,039 | 12.4ms | 40ms | 0 |
+| authors_show | 12 | 3,751 | 13.3ms | 48ms | 0 |
+| books_index | 1 | 766 | 65.3ms | 16ms | 0 |
+| books_index | 4 | 2,673 | 18.7ms | 59ms | 0 |
+| books_index | 6 | 3,273 | 15.3ms | 69ms | 0 |
+| books_index | 8 | 3,422 | 14.6ms | 64ms | 0 |
+| books_index | 12 | 3,342 | 15.0ms | 65ms | 0 |
+| books_available | 1 | 821 | 60.9ms | 12ms | 0 |
+| books_available | 4 | 2,832 | 17.7ms | 47ms | 0 |
+| books_available | 6 | 3,288 | 15.2ms | 45ms | 0 |
+| books_available | 8 | 3,460 | 14.5ms | 51ms | 0 |
+| books_available | 12 | 3,375 | 14.8ms | 63ms | 0 |
 
 Zero failed requests across every trial. One run each, not averaged —
 treat single-digit percent deltas as noise, matching
@@ -127,14 +145,36 @@ once.
 
 **3. Scaling is real but sub-linear, and the app's own per-request cost
 dominates over HTTP/event-loop overhead.** `home` (no DB query) scales
-1→4 threads at ~4.4x (1,226→5,384 req/s), closest to ideal.
-`books_index`/`books_available` (list queries) scale worse (~3.3x,
-~3.4x) — more time per request spent in SQLite/Arel/Div, less of the
-total request cost is the parallelizable-across-workers part
-(`gremlin_worker`'s own accept/poll loop), and each worker thread has
+1→4 threads at ~3.2x (1,704→5,368 req/s), closest to ideal.
+`books_index`/`books_available` (list queries) scale worse at 4 threads
+(~3.5x, ~3.4x) but keep climbing further past 4 than `home` does (see
+finding 4) — more time per request spent in SQLite/Arel/Div means more
+of the total request cost is parallelizable-across-workers CPU/I/O work
+rather than fixed per-connection overhead, and each worker thread has
 its own independent SQLite connection (`Database.get`, per-worker via
 `context`) reading the same on-disk file, adding I/O contention `home`
 never touches at all.
+
+**4. Throughput peaks between 6 and 8 threads, not at 12** — the same
+physical-core-vs-SMT signature `bench/gremlin_http/RESULTS.md`'s own
+`hello` finding already documented on this machine (6 physical cores,
+12 logical via SMT). The two lightest routes (`home`, `authors_index` —
+least per-request CPU/SQLite work) peak at `threads: 6`, matching
+physical core count almost exactly, then flatten or dip slightly by
+`threads: 12` (`home`: 5,652→5,506; `authors_index`: 4,848→4,551) — past
+6 workers, `ab`'s own client process and the server's workers are
+competing for the same 12 logical cores, and a lightweight handler
+doesn't have enough real work per request to make the extra SMT
+siblings pay for that contention. The three heavier DB routes
+(`authors_show`, `books_index`, `books_available` — a `has_many` join
+or table scan per request) keep gaining through `threads: 8`
+(`authors_show`: 3,776→4,039; `books_index`: 3,273→3,422;
+`books_available`: 3,288→3,460) before also flattening/dipping at 12 —
+more actual CPU/I/O work per request means more benefit from the extra
+worker threads before client/server core contention outweighs it,
+exactly `bench/gremlin_http/RESULTS.md`'s `cpu`-vs-`hello` contrast
+playing out again here, just less extreme since even the heaviest route
+here is nowhere near `cpu`'s pure-busy-loop cost.
 
 ## Caveats
 

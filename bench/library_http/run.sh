@@ -101,7 +101,7 @@ for route_name_path in "home:/" "authors_index:/authors" "authors_show:/authors/
                        "books_index:/books" "books_available:/books/available"; do
     route_name="${route_name_path%%:*}"
     path="${route_name_path#*:}"
-    for threads in 1 4; do
+    for threads in 1 4 6 8 12; do
         run_trial "$route_name" "$path" "$threads" "$port" 5000 50
         port=$((port + 1))
     done
