@@ -17,6 +17,8 @@
 - Added lookahead-driven projection, required column/association planning,
   belongs-to and STI key retention, lazy plain eager loading, and recursive
   scoped association preloading through `GraphSQL.resolve`.
+- Added `make test-graphsql-package`, including real GraphQL lookahead
+  integration and coverage for STI/required-column retention.
 
 ## ActiveRecord 0.19.0
 

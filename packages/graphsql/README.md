@@ -43,3 +43,5 @@ Unknown mapped or required columns raise `GraphSQL::UnknownColumnError` before
 SQL execution. Requesting two mapped GraphQL aliases for the same nested
 association raises `GraphSQL::AliasedAssociationError`, avoiding two
 incompatible column-limited scopes sharing one model association cache.
+
+Run the package coverage with `make test-graphsql-package`.

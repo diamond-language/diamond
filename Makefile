@@ -35,7 +35,7 @@ SOURCES := $(wildcard src/*.c)
 OBJECTS := $(SOURCES:src/%.c=$(BUILD_DIR)/%.o)
 DEPS := $(OBJECTS:.o=.d)
 
-.PHONY: all debug sanitize tsan release test test-release test-sanitize test-tsan test-api test-fibers test-fiber-run test-fiber-context test-vm-context test-yield test-continuation test-multi-yield test-scheduler test-scheduler-run-all test-fiber-gc-roots test-fiber-guards test-nested-yield-guard test-stack-overflow test-all test-facet facet test-http-package test-gremlin-package test-rack-package test-div-package test-dials-package test-graphql-package test-logger-package test-log-viewer-package test-lexer-diff test-parser-diff test-self-host test-self-host-smoke lsp test-lsp test-repl fuzz test-fuzz clean
+.PHONY: all debug sanitize tsan release test test-release test-sanitize test-tsan test-api test-fibers test-fiber-run test-fiber-context test-vm-context test-yield test-continuation test-multi-yield test-scheduler test-scheduler-run-all test-fiber-gc-roots test-fiber-guards test-nested-yield-guard test-stack-overflow test-all test-facet facet test-http-package test-gremlin-package test-rack-package test-div-package test-dials-package test-graphql-package test-graphsql-package test-logger-package test-log-viewer-package test-lexer-diff test-parser-diff test-self-host test-self-host-smoke lsp test-lsp test-repl fuzz test-fuzz clean
 
 all: debug
 
@@ -157,6 +157,9 @@ test-dials-package: $(TARGET)
 test-graphql-package: $(TARGET)
 	DIAMOND_BIN=$(CURDIR)/$(BUILD_DIR)/diamond bash packages/graphql/test.sh
 
+test-graphsql-package: $(TARGET)
+	DIAMOND_BIN=$(CURDIR)/$(BUILD_DIR)/diamond bash packages/graphsql/test.sh
+
 test-logger-package: $(TARGET)
 	DIAMOND_BIN=$(CURDIR)/$(BUILD_DIR)/diamond bash packages/logger/test.sh
 
@@ -238,6 +241,7 @@ test-all:
 	$(MAKE) test-div-package
 	$(MAKE) test-dials-package
 	$(MAKE) test-graphql-package
+	$(MAKE) test-graphsql-package
 	$(MAKE) test-logger-package
 	$(MAKE) test-log-viewer-package
 	$(MAKE) test-lsp

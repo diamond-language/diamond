@@ -118,6 +118,25 @@ def run_tests()
     Minitest.assert_equal("Ada", books[0].preloaded_association("author").name())
   end
 
+  def test_required_columns_and_sti_discriminator_are_retained(db)
+    repository = ActiveRecord::Repository.new(
+      Arel.table("sti_records"), map_graph_author, "id", nil, nil, nil, nil, nil,
+      ["id", "name", "kind", "source"], "kind")
+    mapping = GraphSQL::Mapping.new(repository, "StiRecord").column("name")
+    planned = GraphSQL.resolve(repository.relation(), db,
+      GraphLookahead.new({"name": GraphLookahead.new()}), mapping, [], ["source"])
+    Minitest.assert_equal(4, planned.query().projection_count())
+
+    caught = false
+    begin
+      GraphSQL.resolve(repository.relation(), db, GraphLookahead.new(),
+        mapping, [], ["missing"])
+    rescue error: GraphSQL::UnknownColumnError
+      caught = true
+    end
+    Minitest.assert_equal(true, caught)
+  end
+
   def test_duplicate_aliases_fail_loudly(db, author_mapping, book_mapping)
     aliased = GraphSQL::Mapping.new(GraphAuthor.repository(), "AliasedAuthor").column("name")
     aliased.association("books", "books", book_mapping)
@@ -146,6 +165,9 @@ def run_tests()
   end
   suite.test("required belongs_to keeps its foreign key and preloads") do
     test_required_belongs_to_keeps_foreign_key_and_preloads(db, book_mapping)
+  end
+  suite.test("required columns and STI discriminator are retained") do
+    test_required_columns_and_sti_discriminator_are_retained(db)
   end
   suite.test("duplicate association aliases fail loudly") do
     test_duplicate_aliases_fail_loudly(db, author_mapping, book_mapping)
