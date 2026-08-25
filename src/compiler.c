@@ -6217,6 +6217,69 @@ static uint16_t compile_definition(Compiler *compiler, bool captures_self) {
     if (!compiler->failed && compiler->current.kind != DIAMOND_TOKEN_RIGHT_PAREN) {
         fail(compiler, compiler->current.span, "expected ')' after parameters");
     }
+    /* A module_function-mode method's exported (qualified-call-reachable)
+     * singleton descriptor used to only get registered *after* this
+     * whole def's body finished compiling (see the module_function_mode
+     * block below, further down) -- so a self-referencing qualified call
+     * inside that same body (`ModuleName.method(...)` calling itself,
+     * directly or through a sibling also defined via module_function)
+     * could never find its own not-yet-registered descriptor: "undefined
+     * module singleton function" at compile time, confirmed as a real,
+     * previously-undiscovered gap, not a documented cut, building
+     * packages/graphql. Fixed by registering it *here* instead --
+     * function->name/arity/required_arity/has_variadic are all already
+     * final at this exact point (the parameter list, and only the
+     * parameter list, is what determines them), well before body
+     * compilation starts -- so a recursive qualified call inside the
+     * body can resolve normally. The module_function_mode block further
+     * down still runs (marking module->methods[]'s own instance-style
+     * entry private, same as always), it just skips re-adding to
+     * module->singleton_methods[] a second time when this flag is set. */
+    bool module_function_singleton_registered_early=false;
+    if(!compiler->failed && compiler->current_module>=0 && !module_singleton &&
+       at_top_level && compiler->module_function_mode) {
+        DiamondModule *early_module=
+            &compiler->program->modules[(size_t)compiler->current_module];
+        /* Deliberately NOT checking function->uses_instance_state here,
+         * unlike the later (already-existing) registration site that
+         * also checks it -- this flag only becomes accurate once the
+         * body has actually been compiled (it's set while compiling an
+         * `@ivar` access, which hasn't happened yet at this point in the
+         * def), so checking it now would just always read false
+         * regardless of what the body turns out to contain. The later
+         * site still runs this check for real, after the body compiles;
+         * if it turns out this method IS stateful, `fail` there marks
+         * the whole compilation failed the same as always, and it not
+         * mattering that a descriptor was already speculatively written
+         * into singleton_methods[] below -- a failed compilation never
+         * produces a runnable program either way. */
+        if(early_module->singleton_method_count==DIAMOND_MAX_METHODS) {
+            fail(compiler,name,"too many module singleton functions");
+        } else {
+            DiamondMethod exported={0};
+            for(size_t i=0;i<copy_length;i++)exported.name[i]=function->name[i];
+            exported.name[copy_length]='\0';
+            exported.function_index=(uint16_t)function_index;
+            /* function->arity/required_arity both carry an implicit +1
+             * here for the module-mixing receiver slot every direct
+             * module instance method reserves in register 0 (see this
+             * function's own direct_module_member seeding, well above
+             * the parameter loop) -- subtracted back out, exactly like
+             * the later (already-existing) registration site does when
+             * copying function's arity into module->methods[]'s own
+             * entry, so a qualified call's own arity check isn't off by
+             * one. */
+            exported.arity=(uint8_t)(function->arity-1);
+            exported.required_arity=(uint8_t)(function->required_arity-1);
+            exported.has_variadic=function->has_variadic;
+            exported.included=false;
+            exported.is_private=false;
+            exported.needs_receiver=true;
+            early_module->singleton_methods[
+                early_module->singleton_method_count++]=exported;
+            module_function_singleton_registered_early=true;
+        }
+    }
     if(!compiler->failed && !at_top_level) {
         for(size_t i=0;i<compiler->enclosing_local_count;i++) {
             if(find_local(compiler,compiler->enclosing_locals[i].name)>=0)continue;
@@ -6405,6 +6468,11 @@ static uint16_t compile_definition(Compiler *compiler, bool captures_self) {
                     if(function->uses_instance_state)
                         fail(compiler,name,
                             "stateful method cannot use module_function mode");
+                    else if(module_function_singleton_registered_early)
+                        /* Already added to singleton_methods[] above,
+                         * before the body compiled -- just the private-
+                         * marking side effect remains to do here. */
+                        method->is_private=true;
                     else if(module->singleton_method_count==DIAMOND_MAX_METHODS)
                         fail(compiler,name,"too many module singleton functions");
                     else {
