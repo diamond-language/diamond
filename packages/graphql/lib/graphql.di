@@ -2,9 +2,6 @@
 # and ROADMAP.md for scope. One file per logical grouping, reopening
 # the same `module GraphQL` (see packages/dials's own lib/dials.di for
 # this repo's established convention for that).
-#
-# TODO once the introspection phase lands:
-# require "./graphql/introspection"
 require "./graphql/language/lexer"
 require "./graphql/language/nodes"
 require "./graphql/language/parser"
@@ -22,6 +19,7 @@ require "./graphql/input_object_type"
 require "./graphql/errors"
 require "./graphql/execution/coercion"
 require "./graphql/validation/validator"
+require "./graphql/introspection"
 require "./graphql/execution/executor"
 
 # schema.di's own #execute references GraphQL::Execution::Executor by

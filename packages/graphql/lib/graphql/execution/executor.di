@@ -47,6 +47,10 @@ class Executor
     @schema = schema
     @type_map = schema.type_map()
     @errors = []
+    meta_types = GraphQL::Introspection.build_meta_types()
+    @schema_meta_type = meta_types["__Schema"]
+    @type_meta_type = meta_types["__Type"]
+    @type_name_argument = [GraphQL::Argument.new("name", GraphQL::ScalarType.string().non_null())]
   end
 
   # `raw_variables`/`context`/`root_value` all default to the "nothing
@@ -297,16 +301,45 @@ class Executor
     if field_name == "__typename"
       return object_type.name()
     end
-    schema_field = object_type.field_named(field_name)
-    if schema_field == nil
-      @errors.push({"message": "field \"#{field_name}\" not found on type \"#{object_type.name()}\"", "path": path})
-      return nil
+    # `__schema`/`__type` are meta-fields of the query root specifically
+    # (per spec), not available on every type the way `__typename` is --
+    # `object_type == @schema.query_type()` is a plain reference-equality
+    # check (confirmed directly: Diamond's default Instance `==` with no
+    # custom override does identity comparison), true only when this
+    # selection is a true top-level query field.
+    is_root = object_type == @schema.query_type()
+    if is_root && field_name == "__schema"
+      schema_field = GraphQL::Field.new("__schema", @schema_meta_type.non_null(), nil)
+      resolved_value = @schema
+    elsif is_root && field_name == "__type"
+      schema_field = GraphQL::Field.new("__type", @type_meta_type, nil, @type_name_argument)
+      begin
+        args = GraphQL::Execution::Coercion.coerce_arguments(field_node.arguments(), @type_name_argument, coerced_variables)
+      rescue e: StandardError
+        @errors.push({"message": e.message(), "path": path})
+        return nil
+      end
+      resolved_value = @type_map[args["name"]]
+    else
+      schema_field = object_type.field_named(field_name)
+      if schema_field == nil
+        @errors.push({"message": "field \"#{field_name}\" not found on type \"#{object_type.name()}\"", "path": path})
+        return nil
+      end
+      begin
+        args = GraphQL::Execution::Coercion.coerce_arguments(field_node.arguments(), schema_field.arguments(), coerced_variables)
+        resolve = schema_field.resolve()
+        resolved_value = resolve(object_value, args, context)
+      rescue e: StandardError
+        @errors.push({"message": e.message(), "path": path})
+        if schema_field.type().kind() == "NON_NULL"
+          raise NullBubbleError.new(e.message())
+        end
+        return nil
+      end
     end
     begin
-      args = GraphQL::Execution::Coercion.coerce_arguments(field_node.arguments(), schema_field.arguments(), coerced_variables)
-      resolve = schema_field.resolve()
-      raw_result = resolve(object_value, args, context)
-      self.complete_value(schema_field.type(), fields, raw_result, context, coerced_variables, fragments, path)
+      self.complete_value(schema_field.type(), fields, resolved_value, context, coerced_variables, fragments, path)
     rescue e: NullBubbleError
       if schema_field.type().kind() == "NON_NULL"
         raise e

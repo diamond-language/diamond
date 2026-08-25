@@ -576,4 +576,64 @@ assert_contains "$actual" 'duplicate operation name "A"'
 assert_contains "$actual" "must have only one operation when it includes an anonymous operation"
 count=$((count + 1))
 
+# --- introspection: __schema (queryType, the full reachable types
+# list) and __type(name:), including nested field/type-wrapper
+# traversal (NON_NULL/ofType) ---
+actual="$(run_file '
+def noop(o, a, c) = "x"
+author_type = GraphQL::ObjectType.new("Author")
+author_type.field("id", GraphQL::ScalarType.id().non_null(), noop)
+author_type.field("name", GraphQL::ScalarType.string(), noop)
+t = GraphQL::ObjectType.new("Query")
+t.field("author", author_type, noop)
+schema = GraphQL::Schema.new()
+schema.query(t)
+lines = [
+  "{",
+  "  __schema { queryType { name } types { name kind } }",
+  "  __type(name: \"Author\") { name kind fields { name type { kind ofType { name } } } }",
+  "}"
+]
+puts(schema.execute(lines.join("\n")))
+')"
+assert_contains "$actual" "queryType: {name: Query}"
+assert_contains "$actual" "{name: Author, kind: OBJECT}"
+assert_contains "$actual" "{kind: NON_NULL, ofType: {name: ID}}"
+count=$((count + 1))
+
+# --- introspection: enumValues (with description), possibleTypes via
+# an interface implementor, interfaces, and a default argument value
+# printed back as a GraphQL literal String; an unknown type name is
+# just nil, not an error ---
+actual="$(run_file '
+def noop(o, a, c) = "x"
+status_type = GraphQL::EnumType.new("Status")
+status_type.value("ACTIVE", "is active")
+node_iface = GraphQL::InterfaceType.new("Node")
+node_iface.field("id", GraphQL::ScalarType.id().non_null())
+thing_type = GraphQL::ObjectType.new("Thing")
+thing_type.field("id", GraphQL::ScalarType.id().non_null(), noop)
+thing_type.field("status", status_type, noop, [GraphQL::Argument.new("locale", GraphQL::ScalarType.string(), "en", true)])
+thing_type.implements(node_iface)
+t = GraphQL::ObjectType.new("Query")
+t.field("thing", thing_type, noop)
+schema = GraphQL::Schema.new()
+schema.query(t)
+lines = [
+  "{",
+  "  a: __type(name: \"Status\") { enumValues { name description } }",
+  "  b: __type(name: \"Node\") { possibleTypes { name } }",
+  "  c: __type(name: \"Thing\") { interfaces { name } fields { name args { defaultValue } } }",
+  "  d: __type(name: \"Nope\") { name }",
+  "}"
+]
+puts(schema.execute(lines.join("\n")))
+')"
+assert_contains "$actual" "{name: ACTIVE, description: is active}"
+assert_contains "$actual" "possibleTypes: [{name: Thing}]"
+assert_contains "$actual" "interfaces: [{name: Node}]"
+assert_contains "$actual" 'defaultValue: "en"'
+assert_contains "$actual" "d: nil"
+count=$((count + 1))
+
 echo "$count graphql tests passed"

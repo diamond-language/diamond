@@ -10,7 +10,17 @@
 # checking, and the spec's own "a nullable variable is still allowed
 # where non-null is expected if the location has a non-null default"
 # exception to type-compatibility (this file's own #type_compatible?
-# always requires the variable itself to be declared non-null).
+# always requires the variable itself to be declared non-null). Also
+# not validated: anything *inside* a `__schema`/`__type` selection --
+# #validate_field recognizes the two root introspection meta-fields
+# themselves (name/args/needs-a-sub-selection), but doesn't recurse
+# into their own sub-selections the way it does for an ordinary
+# composite field, since doing so would need this file to build its
+# own copy of introspection.di's meta-object-types just to validate
+# against (a lot of parameter-threading for a low-stakes edge case --
+# a typo'd nested introspection field still gets rejected correctly,
+# just as an execution-time field error via the executor's own
+# defensive fallback rather than a validation-time one).
 #
 # `Validator.validate(document, schema)` returns an Array of message
 # Strings (empty when the document is valid) -- collects every problem
@@ -141,7 +151,8 @@ class Validator
       errors.push("schema has no #{kind} type")
     else
       declared_variables = self.index_variable_definitions(operation, type_map, errors)
-      self.validate_selection_set(operation.selection_set(), root_type, type_map, fragments, declared_variables, errors, [])
+      self.validate_selection_set(operation.selection_set(), root_type, schema.query_type(), type_map, fragments,
+        declared_variables, errors, [])
     end
   end
 
@@ -173,12 +184,12 @@ class Validator
     end
   end
 
-  def self.validate_selection_set(selection_set, parent_type, type_map, fragments, declared_variables, errors, visited_fragments)
+  def self.validate_selection_set(selection_set, parent_type, query_type, type_map, fragments, declared_variables, errors, visited_fragments)
     index = 0
     while index < selection_set.length()
       selection = selection_set[index]
       if selection is GraphQL::Language::Field
-        self.validate_field(selection, parent_type, type_map, fragments, declared_variables, errors)
+        self.validate_field(selection, parent_type, query_type, type_map, fragments, declared_variables, errors)
       elsif selection is GraphQL::Language::FragmentSpread
         self.validate_directives(selection.directives(), declared_variables, errors)
         unless visited_fragments.include?(selection.name())
@@ -189,7 +200,7 @@ class Validator
           else
             fragment_type = type_map[fragment.type_condition()]
             unless fragment_type == nil
-              self.validate_selection_set(fragment.selection_set(), fragment_type, type_map, fragments,
+              self.validate_selection_set(fragment.selection_set(), fragment_type, query_type, type_map, fragments,
                 declared_variables, errors, visited_fragments)
             end
           end
@@ -205,15 +216,35 @@ class Validator
             target_type = named
           end
         end
-        self.validate_selection_set(selection.selection_set(), target_type, type_map, fragments,
+        self.validate_selection_set(selection.selection_set(), target_type, query_type, type_map, fragments,
           declared_variables, errors, visited_fragments)
       end
       index += 1
     end
   end
 
-  def self.validate_field(field_node, parent_type, type_map, fragments, declared_variables, errors)
+  def self.validate_field(field_node, parent_type, query_type, type_map, fragments, declared_variables, errors)
     if field_node.name() == "__typename"
+      return nil
+    end
+    # __schema/__type are meta-fields of the query root specifically
+    # (per spec), mirroring execution/executor.di's own identical
+    # special-case (a reference-equality check against the schema's own
+    # query_type, true only for a true top-level query field).
+    if parent_type == query_type && field_node.name() == "__schema"
+      self.validate_directives(field_node.directives(), declared_variables, errors)
+      unless field_node.selection_set() != nil
+        errors.push("field \"__schema\" of composite type \"__Schema\" must have a sub-selection")
+      end
+      return nil
+    end
+    if parent_type == query_type && field_node.name() == "__type"
+      self.validate_directives(field_node.directives(), declared_variables, errors)
+      self.validate_arguments(field_node.arguments(),
+        [GraphQL::Argument.new("name", GraphQL::ScalarType.string().non_null())], declared_variables, errors, "__type")
+      unless field_node.selection_set() != nil
+        errors.push("field \"__type\" of composite type \"__Type\" must have a sub-selection")
+      end
       return nil
     end
     unless parent_type.kind() == "OBJECT" || parent_type.kind() == "INTERFACE"
@@ -236,7 +267,7 @@ class Validator
     elsif !is_leaf && !has_selection
       errors.push("field \"#{field_node.name()}\" of composite type \"#{named_field_type.name()}\" must have a sub-selection")
     elsif has_selection
-      self.validate_selection_set(field_node.selection_set(), named_field_type, type_map, fragments,
+      self.validate_selection_set(field_node.selection_set(), named_field_type, query_type, type_map, fragments,
         declared_variables, errors, [])
     end
   end
