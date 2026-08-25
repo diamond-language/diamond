@@ -1,7 +1,11 @@
-def build_query_logger(logger)
+def build_query_logger(logger, context)
   def log_query(event)
     phase = event["phase"]
-    fields = event.merge({"orm": "active_record", "builder": "arel"})
+    correlation = context["log_context"]
+    if correlation == nil
+      correlation = {}
+    end
+    fields = event.merge(correlation).merge({"orm": "active_record", "builder": "arel"})
     if phase == "failed"
       logger.error("database.query.failed", fields)
     else
@@ -17,7 +21,7 @@ class Database
     if db == nil
       connection = SQLite3.open("project_board.db")
       connection.execute("PRAGMA foreign_keys = ON")
-      db = ActiveRecord::InstrumentedConnection.new(connection, build_query_logger(AppLogger.get(context)))
+      db = ActiveRecord::InstrumentedConnection.new(connection, build_query_logger(AppLogger.get(context), context))
       context["db"] = db
       AppLogger.get(context).info("database.connection.opened", {"adapter": "sqlite3", "foreign_keys": true})
     end

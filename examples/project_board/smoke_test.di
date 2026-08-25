@@ -143,4 +143,4 @@ if expired_form[1]["Set-Cookie"] == nil || !expired_form[1]["Set-Cookie"].includ
 end
 if Session.all().count(Database.get(context)) != 0 then raise "expired session was not deleted" end
 
-puts("project board smoke test passed")
+JSON.stringify({"timestamp": Time.now().strftime("%Y-%m-%dT%H:%M:%S%z"), "level": "info", "tag": "project_board_smoke_test", "message": "smoke_test.passed"})

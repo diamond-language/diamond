@@ -13,11 +13,13 @@ end
 
 def logging_middleware(request, context, forward)
   request["request_id"] = SecureRandom.hex(6)
+  context["log_context"] = request_log_fields(request)
   start = Time.monotonic()
   log_info(request, context, "request.started")
   response = forward(request, context)
-  elapsed_ms = to_i((Time.monotonic() - start) * 1000)
+  elapsed_ms = (Time.monotonic() - start) * 1000
   log_info(request, context, "request.completed", {"status": response[0], "duration_ms": elapsed_ms})
+  context["log_context"] = nil
   response
 end
 

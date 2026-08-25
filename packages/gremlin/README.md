@@ -42,6 +42,11 @@ empty and is this *worker's* own to keep mutating across requests (see
 load: `gremlin_serve` keeps accepting and progressing every other
 connection while any one of them is slow.
 
+Unhandled request-handler failures are emitted as newline-delimited JSON with
+the event name and error stored in separate fields. Gremlin diagnostics can
+therefore share an application's structured log stream without adding an
+unparseable text line.
+
 Pass `threads: N` to actually use more than one core:
 
 ```ruby

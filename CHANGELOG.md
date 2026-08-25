@@ -1,5 +1,10 @@
 # Changelog
 
+## Gremlin 0.2.0
+
+- Changed request-handler failure diagnostics to structured JSON so server
+  errors do not contaminate applications' NDJSON log streams.
+
 ## Logger 0.2.0
 
 - Added newline-delimited JSON output with structured fields on every level
@@ -7,6 +12,11 @@
 - Kept the existing text format as the default for backward compatibility.
 - Converted the authenticated project board's application, authentication,
   controller, and ActiveRecord/Arel instrumentation logs to structured JSON.
+- Made the project board output a strict NDJSON stream, including setup,
+  smoke-test, and Gremlin failure events, and propagated request correlation
+  fields into every query executed during that request.
+- Preserved floating-point monotonic-clock milliseconds for request and query
+  durations, including measurements below one millisecond.
 
 ## ActiveRecord 0.17.0
 

@@ -2,7 +2,9 @@ def gremlin_worker(port, handler)
   listener = TCPServer.listen_nonblocking(port, reuse_port: true)
   connections = []
   context = {}
-  log = Logger.new("gremlin")
+  # Server errors share stdout with application logs, so they use the same
+  # one-object-per-line contract instead of introducing a text-only line.
+  log = Logger.new("gremlin", "info", nil, "json")
 
   def spawn_connection(client_socket)
     conn = NonblockingConnection.new(client_socket)
@@ -18,7 +20,7 @@ def gremlin_worker(port, handler)
     begin
       fiber.resume()
     rescue error: StandardError
-      log.error("unhandled error in request handler: #{error.message()}")
+      log.error("request.handler_failed", {"error": error.message()})
       conn.close()
       return nil
     end
@@ -88,7 +90,7 @@ def gremlin_worker(port, handler)
         begin
           entry["fiber"].resume()
         rescue error: StandardError
-          log.error("unhandled error in request handler: #{error.message()}")
+          log.error("request.handler_failed", {"error": error.message()})
           entry["conn"].close()
         end
       end

@@ -19,6 +19,6 @@ project_id = db.last_insert_row_id()
 db.execute("INSERT INTO tasks (project_id, title, done) VALUES (?, ?, ?)", [project_id, "Document the example apps", 0])
 db.execute("INSERT INTO tasks (project_id, title, done) VALUES (?, ?, ?)", [project_id, "Ship authenticated CRUD", 1])
 
-puts("seeded project_board.db")
-puts("sign in with admin@example.com / diamond123")
+puts(JSON.stringify({"timestamp": Time.now().strftime("%Y-%m-%dT%H:%M:%S%z"), "level": "info", "tag": "project_board", "message": "database.seeded", "database": "project_board.db"}))
 db.close()
+JSON.stringify({"timestamp": Time.now().strftime("%Y-%m-%dT%H:%M:%S%z"), "level": "info", "tag": "project_board", "message": "seed.credentials_created", "email": "admin@example.com"})
