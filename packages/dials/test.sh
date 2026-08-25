@@ -126,4 +126,52 @@ assert_contains "$actual" '[302, {Location: /authors}, moved]'
 assert_contains "$actual" '[404, {Content-Type: text/plain}, not found: /nope]'
 count=$((count + 1))
 
+# --- route filters receive merged params and nil allows the action ---
+actual="$(run_case '
+def remember_id(request, context, params)
+  context["filtered_id"] = params["id"]
+  nil
+end
+def filtered_show(request, context, params) = Dials::Response.text(200, "filter=#{context["filtered_id"]} action=#{params["id"]}")
+router = Dials::Router.new()
+router.get("/authors/:id", filtered_show, [remember_id])
+puts(router.dispatch({"path": "/authors/42?id=wrong", "method": "GET", "body": ""}, {}))
+')"
+assert_contains "$actual" "filter=42 action=42"
+count=$((count + 1))
+
+# --- a filter response short-circuits later filters and the action ---
+actual="$(run_case '
+def deny(request, context, params)
+  context["first_filter"] = true
+  Dials::Response.redirect("/login", "authentication required")
+end
+def should_not_filter(request, context, params)
+  raise "later filter ran"
+end
+def should_not_run(request, context, params)
+  raise "action ran"
+end
+router = Dials::Router.new()
+router.post("/authors", should_not_run, [deny, should_not_filter])
+puts(router.dispatch({"path": "/authors", "method": "POST", "body": "name=Ada"}, {}))
+')"
+assert_contains "$actual" '[302, {Location: /login}, authentication required]'
+count=$((count + 1))
+
+# --- filters are scoped to their own route ---
+actual="$(run_case '
+def deny(request, context, params) = Dials::Response.text(403, "denied")
+def public_action(request, context, params) = Dials::Response.text(200, "public")
+def private_action(request, context, params) = Dials::Response.text(200, "private")
+router = Dials::Router.new()
+router.get("/public", public_action)
+router.get("/private", private_action, [deny])
+puts(router.dispatch({"path": "/public", "method": "GET", "body": ""}, {}))
+puts(router.dispatch({"path": "/private", "method": "GET", "body": ""}, {}))
+')"
+assert_contains "$actual" '[200, {Content-Type: text/plain}, public]'
+assert_contains "$actual" '[403, {Content-Type: text/plain}, denied]'
+count=$((count + 1))
+
 echo "$count dials tests passed"

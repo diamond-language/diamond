@@ -34,6 +34,15 @@ Each of these was considered and explicitly deferred, not overlooked:
 
 ## Resolved
 
+- **Route-level middleware/filters.** A real authentication consumer,
+  `examples/project_board`, made global middleware inspect a growing list
+  of methods and path strings to decide which routes were protected. Routes
+  now accept an ordered array of before filters: each receives the action's
+  `(request, context, params)`, returns `nil` to continue, or returns a
+  response to short-circuit. This keeps authorization policy beside the
+  route without synthesizing capturing `forward` closures in a router used
+  by threaded Gremlin workers. Whole-app around concerns remain Rack's job.
+
 - **The one-shim-per-action requirement -- resolved in Diamond itself,
   not worked around here.** This section used to say a class-owned
   `self.` method could never be referenced as a bare value in Diamond,
@@ -59,7 +68,3 @@ Each of these was considered and explicitly deferred, not overlooked:
   `examples/library`'s own controllers already do). Worth adding once
   building URLs by hand becomes a real, repeated pain point, not
   preemptively.
-- **Route-level middleware/filters** (an auth check scoped to one route
-  or group, say). `packages/rack`'s own middleware chain already covers
-  cross-cutting concerns for an entire app; nothing here composes with
-  it at a *per-route* granularity yet.

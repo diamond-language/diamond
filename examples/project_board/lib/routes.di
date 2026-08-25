@@ -1,0 +1,22 @@
+def home_action(request, context, params) = Div.html_response(200, layout_html("Project board", home_html(), context["current_user"], context["csrf_token"]))
+
+def build_router()
+  router = Dials::Router.new()
+  router.get("/", home_action)
+  router.get("/login", SessionsController.new_form)
+  router.post("/login", SessionsController.create)
+  router.post("/logout", SessionsController.destroy, [require_authentication, require_csrf])
+  router.get("/projects/new", ProjectsController.new_form, [require_authentication])
+  router.get("/projects", ProjectsController.index)
+  router.post("/projects", ProjectsController.create, [require_authentication, require_csrf])
+  router.get("/projects/:id/edit", ProjectsController.edit, [require_authentication])
+  router.post("/projects/:id/delete", ProjectsController.destroy, [require_authentication, require_csrf])
+  router.get("/projects/:id", ProjectsController.show)
+  router.post("/projects/:id", ProjectsController.update, [require_authentication, require_csrf])
+  router.get("/tasks/new", TasksController.new_form, [require_authentication])
+  router.post("/tasks", TasksController.create, [require_authentication, require_csrf])
+  router.get("/tasks/:id/edit", TasksController.edit, [require_authentication])
+  router.post("/tasks/:id/delete", TasksController.destroy, [require_authentication, require_csrf])
+  router.post("/tasks/:id", TasksController.update, [require_authentication, require_csrf])
+  router
+end

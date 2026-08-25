@@ -10,13 +10,13 @@ class Router
     @routes = []
   end
 
-  def get(pattern: String, handler: Callable[3])
-    @routes << {"verb": "GET", "segments": pattern.split("/"), "handler": handler}
+  def get(pattern: String, handler: Callable[3], filters: Array = [])
+    @routes << {"verb": "GET", "segments": pattern.split("/"), "handler": handler, "filters": filters}
     self
   end
 
-  def post(pattern: String, handler: Callable[3])
-    @routes << {"verb": "POST", "segments": pattern.split("/"), "handler": handler}
+  def post(pattern: String, handler: Callable[3], filters: Array = [])
+    @routes << {"verb": "POST", "segments": pattern.split("/"), "handler": handler, "filters": filters}
     self
   end
 
@@ -51,6 +51,7 @@ class Router
 
     matched_handler = nil
     matched_captures = nil
+    matched_filters = nil
     index = 0
     while index < @routes.length() && matched_handler == nil
       route = @routes[index]
@@ -59,6 +60,7 @@ class Router
         if captures != nil
           matched_handler = route["handler"]
           matched_captures = captures
+          matched_filters = route["filters"]
         end
       end
       index += 1
@@ -75,6 +77,15 @@ class Router
     while capture_index < matched_captures.length()
       params[matched_captures.key_at(capture_index)] = matched_captures.value_at(capture_index)
       capture_index += 1
+    end
+
+    filter_index = 0
+    while filter_index < matched_filters.length()
+      response = matched_filters[filter_index](request, context, params)
+      if response != nil
+        return response
+      end
+      filter_index += 1
     end
 
     matched_handler(request, context, params)

@@ -1,0 +1,16 @@
+<%# locals: id, description, tasks, signed_in, csrf_token %>
+<p><%= description %></p>
+<h2>Tasks</h2>
+<table border="1">
+  <tr><th>Task</th><th>Status</th><% if signed_in %><th>Actions</th><% end %></tr>
+  <% tasks.each() do |task| %>
+    <tr>
+      <td><%= task.title() %></td><td><%= if task.done?() then "done" else "open" end %></td>
+      <% if signed_in %><td><a href="/tasks/<%= task.id() %>/edit">Edit</a> <form method="POST" action="/tasks/<%= task.id() %>/delete" style="display:inline"><input type="hidden" name="csrf_token" value="<%= csrf_token %>"><button>Delete</button></form></td><% end %>
+    </tr>
+  <% end %>
+</table>
+<% if signed_in %>
+<p><a href="/projects/<%= id %>/edit">Edit project</a></p>
+<form method="POST" action="/projects/<%= id %>/delete"><input type="hidden" name="csrf_token" value="<%= csrf_token %>"><button>Delete project and its tasks</button></form>
+<% end %>

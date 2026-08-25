@@ -48,6 +48,34 @@ query-string params for a `GET`, form-body params for anything else
 README documents), with any path-captured `:name` values merged in
 *after* -- a path param always wins over a same-named query/body one.
 
+### Route filters
+
+An optional third argument to `.get`/`.post` is an ordered `Array` of
+route filters. Each filter is a `Callable[3]` receiving the same
+`(request, context, params)` values as the action. Return `nil` to allow
+dispatch to continue, or return a Rack-style response to stop immediately;
+later filters and the action are not called after a short circuit.
+
+```ruby
+def require_user(request, context, params)
+  if context["current_user"] == nil
+    Dials::Response.redirect("/login", "authentication required")
+  else
+    nil
+  end
+end
+
+router.get("/authors", AuthorsController.index)
+router.get("/authors/new", AuthorsController.new_form, [require_user])
+router.post("/authors", AuthorsController.create, [require_user])
+```
+
+Filters belong on the routes whose policy they enforce. Whole-application
+concerns such as request logging and loading a session into `context` still
+fit Rack middleware better. Filters are deliberately before-action hooks,
+not around middleware: they need no capturing `forward` closure, keeping a
+memoized router straightforward under `gremlin_serve(..., threads: N)`.
+
 ## Controllers
 
 `AuthorsController.show` above, with no call, is a bare reference to a

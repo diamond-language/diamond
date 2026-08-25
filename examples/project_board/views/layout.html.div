@@ -1,0 +1,19 @@
+<%# locals: title, content, current_user, csrf_token %>
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title><%= title %></title></head>
+<body>
+  <nav>
+    <a href="/">Home</a> | <a href="/projects">Projects</a>
+    <% if current_user == nil %>
+      | <a href="/login">Sign in</a>
+    <% else %>
+      | <a href="/projects/new">New project</a> | <a href="/tasks/new">New task</a>
+      | Signed in as <%= current_user.email() %>
+      <form method="POST" action="/logout" style="display:inline"><input type="hidden" name="csrf_token" value="<%= csrf_token %>"><button>Sign out</button></form>
+    <% end %>
+  </nav>
+  <h1><%= title %></h1>
+  <%== content %>
+</body>
+</html>

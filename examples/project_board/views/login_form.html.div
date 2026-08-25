@@ -1,0 +1,7 @@
+<%# locals: error %>
+<% if error != nil %><p><strong><%= error %></strong></p><% end %>
+<form method="POST" action="/login">
+  <p><label>Email <input type="email" name="email" required></label></p>
+  <p><label>Password <input type="password" name="password" required></label></p>
+  <button type="submit">Sign in</button>
+</form>

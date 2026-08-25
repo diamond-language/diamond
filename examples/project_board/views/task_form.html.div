@@ -1,0 +1,12 @@
+<%# locals: action, projects, selected_project_id, title, done, submit, csrf_token %>
+<form method="POST" action="<%= action %>">
+  <input type="hidden" name="csrf_token" value="<%= csrf_token %>">
+  <p><label>Project <select name="project_id">
+    <% projects.each() do |project| %>
+      <option value="<%= project.id() %>"<% if project.id() == selected_project_id %> selected<% end %>><%= project.name() %></option>
+    <% end %>
+  </select></label></p>
+  <p><label>Title <input name="title" value="<%= title %>" required></label></p>
+  <p><label>Status <select name="done"><option value="0"<% if done == 0 %> selected<% end %>>Open</option><option value="1"<% if done == 1 %> selected<% end %>>Done</option></select></label></p>
+  <button type="submit"><%= submit %></button>
+</form>

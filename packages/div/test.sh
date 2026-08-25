@@ -175,4 +175,23 @@ actual="$("$diamond" "$work/driver_cache.di")"
 assert_contains "$actual" '<p>cached</p>'
 count=$((count + 1))
 
+# --- package-owned batch compiler recursively discovers templates, handles
+# spaces in paths, and removes stale generated files before rebuilding ---
+mkdir -p "$work/batch/views/.cache" "$work/batch/views/nested folder/.cache"
+cat >"$work/batch/views/root.html.div" <<'DRBEOF'
+<p>root</p>
+DRBEOF
+cat >"$work/batch/views/nested folder/child.html.div" <<'DRBEOF'
+<p>child</p>
+DRBEOF
+touch "$work/batch/views/.cache/stale.html.di"
+touch "$work/batch/views/nested folder/.cache/stale.html.di"
+actual="$(DIAMOND_BIN="$diamond" bin/divc_all.sh "$work/batch/views")"
+assert_contains "$actual" "compiled 2 templates under"
+[[ -f "$work/batch/views/.cache/root.html.di" ]]
+[[ -f "$work/batch/views/nested folder/.cache/child.html.di" ]]
+[[ ! -f "$work/batch/views/.cache/stale.html.di" ]]
+[[ ! -f "$work/batch/views/nested folder/.cache/stale.html.di" ]]
+count=$((count + 1))
+
 echo "$count div tests passed"

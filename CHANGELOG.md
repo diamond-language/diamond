@@ -1,5 +1,26 @@
 # Changelog
 
+## Div 0.2.0
+
+- Added `bin/divc_all.sh`, a clean recursive batch compiler for template
+  trees. It handles spaces safely, removes stale `.cache` directories only
+  below the supplied tree, rejects `/`, and delegates translation to the
+  existing `divc.di` compiler.
+- Replaced the duplicated flat compile loops in `examples/library` and
+  `examples/project_board` with thin wrappers around the shared command.
+- Added package coverage for recursive discovery, nested output, path spaces,
+  and stale generated-file removal.
+
+## Dials 0.2.0
+
+- Added ordered route-level before filters to `Router#get`/`#post`. Each
+  filter receives `(request, context, params)`, returns `nil` to continue,
+  or returns a response to short-circuit later filters and the action.
+- Refactored `examples/project_board` to load identity in Rack middleware
+  while declaring authentication filters directly on every protected route.
+- Added coverage for merged path parameters, filter ordering and short
+  circuiting, and isolation between public and protected routes.
+
 ## Arel 0.34.0
 
 - Added `Arel::MariaDBVisitor`, Arel's third dialect, verified against a

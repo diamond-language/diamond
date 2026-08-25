@@ -1,0 +1,7 @@
+<%# locals: action, name, description, submit, csrf_token %>
+<form method="POST" action="<%= action %>">
+  <input type="hidden" name="csrf_token" value="<%= csrf_token %>">
+  <p><label>Name <input name="name" value="<%= name %>" required></label></p>
+  <p><label>Description <textarea name="description" required><%= description %></textarea></label></p>
+  <button type="submit"><%= submit %></button>
+</form>

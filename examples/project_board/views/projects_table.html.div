@@ -1,0 +1,7 @@
+<%# locals: projects %>
+<table border="1">
+  <tr><th>Project</th><th>Description</th></tr>
+  <% projects.each() do |project| %>
+    <tr><td><a href="/projects/<%= project.id() %>"><%= project.name() %></a></td><td><%= project.description() %></td></tr>
+  <% end %>
+</table>

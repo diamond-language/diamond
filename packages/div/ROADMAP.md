@@ -70,6 +70,15 @@ Each of these was considered and explicitly deferred, not overlooked:
   silently still in use, without needing any mtime/staleness-tracking
   logic at all.
 
+- **A reusable recursive batch build.** Once `examples/project_board`
+  became the second Div consumer, its copy of `examples/library`'s flat
+  compile loop met this roadmap's stated threshold for generalization.
+  `bin/divc_all.sh` now cleanly rebuilds every `*.html.div` below a supplied
+  template directory, recursively and with NUL-safe path handling. Both apps'
+  `compile_views.sh` files are thin delegates to it. This remains independent
+  of `facet`/Make because neither build system needs a new extension point to
+  provide the actual shared behavior.
+
 ## Open questions
 
 - **Cross-directory basename collisions.** Two input files sharing a
@@ -79,12 +88,3 @@ Each of these was considered and explicitly deferred, not overlooked:
   needs either a directory-derived prefix or a genuine namespacing
   mechanism -- neither implemented; revisit if this shows up in practice
   rather than solving it preemptively.
-- **A `facet`/Makefile build step -- partially resolved, not generalized.**
-  `examples/library/compile_views.sh` is exactly this convenience,
-  built once a real consuming app's workflow actually asked for it
-  (this package's own stated bar) -- but it's app-local: a flat,
-  non-recursive loop over one hardcoded `views/*.html.div`, not
-  something `packages/div` itself ships or that recurses through
-  subdirectories. A real `**/*.html.div`-style general-purpose version
-  (in this package, or a `facet`/Makefile target) is still undone;
-  revisit once a second consuming app's own workflow needs one too.

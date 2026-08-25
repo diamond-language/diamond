@@ -1,0 +1,79 @@
+require "./boot"
+
+def request(method, path, body = "", cookie = nil)
+  headers = {}
+  if cookie != nil
+    headers["cookie"] = cookie
+  end
+  {"method": method, "path": path, "body": body, "headers": headers}
+end
+
+def request_with_cookie(method, path, body, cookie)
+  {"method": method, "path": path, "body": body, "headers": {"cookie": cookie}}
+end
+
+context = {}
+
+public_response = app(request("GET", "/projects"), context)
+if public_response[0] != 200 then raise "public project index failed" end
+
+denied_response = app(request("POST", "/projects", "name=Denied&description=Nope"), context)
+if denied_response[0] != 302 || denied_response[1]["Location"] != "/login"
+  raise "anonymous write was not denied"
+end
+
+bad_login = app(request("POST", "/login", "email=admin%40example.com&password=wrong"), context)
+if bad_login[0] != 401 then raise "bad login was not rejected" end
+
+login = app(request("POST", "/login", "email=admin%40example.com&password=diamond123"), context)
+if login[0] != 302 || login[1]["Set-Cookie"] == nil then raise "login failed" end
+cookie = login[1]["Set-Cookie"]
+csrf_token = context["csrf_token"]
+if csrf_token == nil then raise "login did not issue a CSRF token" end
+
+form = app(request_with_cookie("GET", "/projects/new", "", cookie), context)
+if form[0] != 200 || !form[2].include?("name=\"csrf_token\"") || !form[2].include?(csrf_token)
+  raise "authenticated form did not render its CSRF token"
+end
+
+missing_csrf = app(request_with_cookie("POST", "/projects", "name=Missing&description=Denied", cookie), context)
+if missing_csrf[0] != 403 then raise "write without CSRF token was not denied" end
+
+forged_csrf = app(request_with_cookie("POST", "/projects", "name=Forged&description=Denied&csrf_token=wrong", cookie), context)
+if forged_csrf[0] != 403 then raise "write with forged CSRF token was not denied" end
+if Project.all().count(Database.get(context)) != 1 then raise "a rejected CSRF write changed the database" end
+
+created_request = request_with_cookie("POST", "/projects", "name=Instrumented&description=Authorized&csrf_token=#{csrf_token}", cookie)
+if created_request["headers"]["cookie"] == nil then raise "test cookie was not attached" end
+created = app(created_request, context)
+if created[0] != 302 || created[1]["Location"] == "/login"
+  raise "authenticated create failed"
+end
+if Project.all().count(Database.get(context)) != 2 then raise "authenticated create did not persist" end
+
+logout_request = request_with_cookie("POST", "/logout", "csrf_token=#{csrf_token}", cookie)
+logout = app(logout_request, context)
+if logout[0] != 302 || logout[1]["Set-Cookie"] == nil then raise "logout failed" end
+
+denied_again_request = request_with_cookie("POST", "/tasks", "project_id=1&title=Denied&done=0", cookie)
+denied_again = app(denied_again_request, context)
+if denied_again[0] != 302 || denied_again[1]["Location"] != "/login"
+  raise "destroyed session still authorized a write"
+end
+
+second_login = app(request("POST", "/login", "email=admin%40example.com&password=diamond123"), context)
+second_cookie = second_login[1]["Set-Cookie"]
+if second_login[0] != 302 || second_cookie == nil then raise "second login failed" end
+
+second_form = app(request_with_cookie("GET", "/projects/new", "", second_cookie), context)
+if second_form[0] != 200 || context["current_session"] == nil then raise "second session was not loaded" end
+session_id = context["current_session"].id()
+Database.get(context).execute("UPDATE sessions SET expires_at = ? WHERE id = ?", [Time.now().to_i() - 1, session_id])
+
+expired_form = app(request_with_cookie("GET", "/projects/new", "", second_cookie), context)
+if expired_form[0] != 302 || expired_form[1]["Location"] != "/login"
+  raise "expired session still authorized a protected form"
+end
+if Session.all().count(Database.get(context)) != 0 then raise "expired session was not deleted" end
+
+puts("project board smoke test passed")

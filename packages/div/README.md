@@ -46,6 +46,19 @@ directory, not an individual-file pattern -- see the repo's own root
 `.gitignore` entry for `examples/library/views/.cache/` as a worked
 example.
 
+For a clean recursive build of a complete template tree, use the shared
+batch driver:
+
+```sh
+DIAMOND_BIN=../../build/diamond packages/div/bin/divc_all.sh views
+```
+
+It removes `.cache` directories only within the supplied template tree,
+then compiles every `*.html.div` file through `divc.di`, including nested
+directories. This prevents generated files for renamed or deleted templates
+from lingering. Paths containing spaces are supported, and `/` is rejected
+as an input to prevent an accidentally broad clean.
+
 The generated function is named after the *input file's own basename*,
 not a fixed `render` -- `views/index.html.div` compiles to
 `def index_html(...)`, `views/greeting.html.div` to
