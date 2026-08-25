@@ -1,5 +1,13 @@
 # Changelog
 
+## ActiveRecord 0.18.0
+
+- Added immutable, lazy `Relation#select`/`#reselect` projection and public
+  relation query/mapper/visitor/repository metadata for GraphSQL-style query
+  planning.
+- Added opt-in repository column metadata, `primary_key`, `has_column?`, and
+  inheritance-column metadata without changing existing constructor calls.
+
 ## Example application environments
 
 - Added explicit development, test, and production configuration to both

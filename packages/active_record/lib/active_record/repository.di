@@ -59,9 +59,12 @@ class Repository
   attr_reader visitor
   attr_reader id_column: String
   attr_reader lock_column
+  attr_reader column_names: Array
+  attr_reader inheritance_column
 
   def initialize(table: Arel::Table, mapper: Callable[1], id_column: String = "id", visitor = nil,
-                 validator = nil, before_save = nil, after_save = nil, lock_column = nil)
+                 validator = nil, before_save = nil, after_save = nil, lock_column = nil,
+                 column_names: Array = [], inheritance_column = nil)
     @table = table
     @mapper = mapper
     @id_column = id_column
@@ -70,7 +73,12 @@ class Repository
     @before_save = before_save
     @after_save = after_save
     @lock_column = lock_column
+    @column_names = column_names
+    @inheritance_column = inheritance_column
   end
+
+  def primary_key() = @id_column
+  def has_column?(name) -> Bool = @column_names.include?("#{name}")
 
   def validate!(attributes: Hash)
     if @validator == nil
@@ -128,7 +136,7 @@ class Repository
   # see Relation below. Unlike #all/#where above (which hit the database
   # immediately), nothing here runs until a terminal call
   # (#to_a/#first/#count) on the Relation it returns.
-  def relation() = Relation.new(Arel.from(@table), @mapper, @visitor)
+  def relation() = Relation.new(Arel.from(@table), @mapper, @visitor, self)
 
   def create(db, attributes: Hash)
     self.validate!(attributes)

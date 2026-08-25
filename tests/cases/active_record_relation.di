@@ -33,7 +33,9 @@ def build_author(row) = Author.new(row)
 def run_tests()
   db = SQLite3.open(":memory:")
   db.execute("CREATE TABLE authors (id INTEGER PRIMARY KEY, name TEXT, country TEXT)")
-  Author.configure(ActiveRecord::Repository.new(Arel.table("authors"), build_author, "id"))
+  Author.configure(ActiveRecord::Repository.new(
+    Arel.table("authors"), build_author, "id", nil, nil, nil, nil, nil,
+    ["id", "name", "country"]))
 
   Author.create(db, {"name": "Ada", "country": "UK"})
   Author.create(db, {"name": "Grace", "country": "USA"})
@@ -85,6 +87,19 @@ def run_tests()
     Minitest.assert_equal(1, narrowed.to_a(db).length())
   end
 
+  def test_select_is_lazy_immutable_and_keeps_repository_metadata(db)
+    base = Author.all()
+    selected = base.select([Arel.table("authors").column("id"), Arel.table("authors").column("name")])
+    rows = selected.order(name_column().asc()).to_a(db)
+    Minitest.assert_equal(3, rows.length())
+    Minitest.assert_equal("Ada", rows[0].name())
+    Minitest.assert_equal(nil, rows[0].to_attributes()["country"])
+    Minitest.assert_equal(1, base.query().projection_count())
+    Minitest.assert_equal(2, selected.query().projection_count())
+    Minitest.assert_equal("id", selected.repository().primary_key())
+    Minitest.assert_equal(true, selected.repository().has_column?("country"))
+  end
+
   suite = Minitest.new()
   suite.test("Author.all() returns a Relation that executes on #to_a") do
     test_all_returns_a_relation_that_executes_on_to_a(db)
@@ -106,6 +121,9 @@ def run_tests()
   end
   suite.test("independent chains off the same base Relation don't leak") do
     test_independent_chains_off_the_same_base_relation_dont_leak(db)
+  end
+  suite.test("#select is lazy/immutable and preserves repository metadata") do
+    test_select_is_lazy_immutable_and_keeps_repository_metadata(db)
   end
   suite.run!()
 

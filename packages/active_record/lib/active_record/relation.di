@@ -12,23 +12,39 @@ module ActiveRecord
 # rows are mapped through the same @mapper Repository#all/#where already
 # use.
 class Relation
-  def initialize(query, mapper: Callable[1], visitor = nil)
+  attr_reader query: Arel::Query
+  attr_reader mapper: Callable[1]
+  attr_reader visitor
+  attr_reader repository
+
+  def initialize(query, mapper: Callable[1], visitor = nil, repository = nil)
     @query = query
     @mapper = mapper
     @visitor = visitor
+    @repository = repository
   end
+
+  def wrap(query) = Relation.new(query, @mapper, @visitor, @repository)
 
   # Query#where already accepts a plain Hash and ANDs its keys together
   # via `eq` (see packages/arel/README.md's "Compatibility where"), so
   # there is no predicate-building of this Relation's own -- unlike
   # Repository#where, which still hand-rolls that loop for its own
   # eager, non-Relation callers.
-  def where(conditions) = Relation.new(@query.where(conditions), @mapper, @visitor)
-  def order(column_or_columns) = Relation.new(@query.order(column_or_columns), @mapper, @visitor)
-  def take(n: Int) = Relation.new(@query.take(n), @mapper, @visitor)
+  def where(conditions) = self.wrap(@query.where(conditions))
+  def order(column_or_columns) = self.wrap(@query.order(column_or_columns))
+  def take(n: Int) = self.wrap(@query.take(n))
   def limit(n: Int) = self.take(n)
-  def skip(n: Int) = Relation.new(@query.skip(n), @mapper, @visitor)
+  def skip(n: Int) = self.wrap(@query.skip(n))
   def offset(n: Int) = self.skip(n)
+
+  # Explicit projection, matching Arel::Query#select. Callers pass an Array
+  # of column names/Arel expressions; the returned Relation is independent
+  # and remains lazy. `reselect` is the Rails spelling for replacing an
+  # existing projection and is intentionally identical here because Arel's
+  # own #select already replaces rather than appends.
+  def select(columns) = self.wrap(@query.select(columns))
+  def reselect(columns) = self.select(columns)
 
   def to_a(db)
     rows = @query.to_a(db, @visitor)

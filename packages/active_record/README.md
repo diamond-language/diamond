@@ -593,13 +593,29 @@ Author.all().count(db)                      # an Int
 `Repository` already builds internally (see `packages/arel/README.md` --
 `Arel::Query` is itself already immutable and chainable, so `Relation`
 adds no query-building logic of its own, just `#where`/`#order`/`#take`/
-`#limit`/`#skip`/`#offset` forwarding to it and mapping rows through this
+`#limit`/`#skip`/`#offset`/`#select` forwarding to it and mapping rows through this
 model's own row-mapper function at the three terminal calls, `#to_a(db)`/
 `#first(db)`/`#count(db)`). Deliberately, `#first(db)` does **not** add an
 implicit `ORDER BY` the way real ActiveRecord's does -- there is no schema
 inspection or naming convention here to build one from, so `#first`
 without a preceding `.order(...)` returns whatever row the database
 happens to return first.
+
+`#select(columns)` (and its identical Rails-named `#reselect` alias) replaces
+the projection on a new relation without loading it. Columns may be names or
+Arel expressions. A relation exposes its `query`, `mapper`, `visitor`, and
+originating `repository` for higher-level planners such as GraphSQL. Repository
+schema metadata stays explicit rather than introspected: pass a ninth
+`column_names` Array and optional tenth `inheritance_column` when constructing
+the repository, then read `#column_names`, `#primary_key`, `#has_column?`, and
+`#inheritance_column`:
+
+```diamond
+repo = ActiveRecord::Repository.new(
+  Arel.table("authors"), build_author, "id", nil, nil, nil, nil, nil,
+  ["id", "name", "country"])
+names_only = repo.relation().select([repo.table().column("id"), repo.table().column("name")])
+```
 
 `self.find_by(db, conditions)` is `where(conditions).first(db)` in one
 line -- a single matching instance, or `nil`, with the same "no implicit
