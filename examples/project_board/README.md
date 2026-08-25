@@ -15,6 +15,13 @@ Every request receives a random request ID and is logged at start and completion
 
 The app's instrumented database adapter also captures every ActiveRecord/Arel query and write with a separate query ID, generated SQL, operation, row or affected count, and elapsed milliseconds. Queries executed during a request carry that request's ID, method, and path as ordinary JSON fields. SQL retains placeholders and logs only the number of bound parameters: passwords, password digests, session tokens, and other bound values are never logged.
 
+Pipe the NDJSON stream through the optional log viewer for compact human
+output while developing:
+
+```sh
+../../build/diamond app.di | DIAMOND_BIN=../../build/diamond ../../packages/log_viewer/bin/diamond-log
+```
+
 ## Run
 
 ```sh

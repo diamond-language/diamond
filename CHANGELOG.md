@@ -1,5 +1,13 @@
 # Changelog
 
+## Log Viewer 0.1.0
+
+- Added `diamond-log`, a stdin/file NDJSON formatter that presents logger
+  metadata, request correlation, sub-millisecond timings, query details, and
+  arbitrary application fields in a compact human-readable line.
+- Invalid input remains visible with an `[unparsed]` marker; optional strict
+  mode exits nonzero after processing a damaged or mixed stream.
+
 ## Logger 0.3.0
 
 - Added an `off` level above `error`, allowing applications and benchmarks to
