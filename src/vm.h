@@ -24,7 +24,7 @@ enum {
     DIAMOND_MAX_FUNCTION_NAME = 64,
     DIAMOND_MAX_STRING_CONSTANTS = 256,
     DIAMOND_MAX_STRING_LENGTH = 255,
-    DIAMOND_MAX_CLASSES = 128,
+    DIAMOND_MAX_CLASSES = 180,
     DIAMOND_MAX_INTERFACES = 32,
     DIAMOND_MAX_MODULES = 32,
     DIAMOND_MAX_TYPE_SETS = 256,
@@ -290,8 +290,12 @@ typedef enum DiamondTypeId : uint8_t {
     DIAMOND_TYPE_SIZED,
     DIAMOND_TYPE_SYMBOL,
     DIAMOND_TYPE_CLASS_BASE,
-    DIAMOND_TYPE_VARIABLE_BASE = 96,
-    DIAMOND_TYPE_INTERFACE_BASE = 128,
+    /* Class ids occupy CLASS_BASE..CLASS_BASE+MAX_CLASSES-1 (10..189).
+     * Keep generic variables and interfaces above that full advertised
+     * range: the old 96/128 split caused programs with more than 86 classes
+     * to reinterpret ordinary class ids as generic/interface ids. */
+    DIAMOND_TYPE_VARIABLE_BASE = 192,
+    DIAMOND_TYPE_INTERFACE_BASE = 224,
 } DiamondTypeId;
 
 enum { DIAMOND_INLINE_CACHE_COUNT = 64 };

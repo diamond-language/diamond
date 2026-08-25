@@ -5882,7 +5882,7 @@ static uint16_t compile_definition(Compiler *compiler, bool captures_self) {
      * define_method. A third sentinel, distinct from UINT8_MAX (no
      * owner_class at all) and UINT8_MAX-1 (the existing module-method
      * sentinel, diamond_compile's own convention, comfortably above
-     * DIAMOND_MAX_CLASSES=128's real range either way), gives it (2)
+     * DIAMOND_MAX_CLASSES=180's real range either way), gives it (2)
      * while permanently failing (1)'s exact-match check.
      *
      * One more site needed a matching fix, not just this one:
