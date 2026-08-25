@@ -315,6 +315,30 @@ no cursor object or enumerator to hold open across calls.
 There is no schema inspection, naming convention, or object introspection,
 and no implicit query scope.
 
+## Query instrumentation
+
+`ActiveRecord::InstrumentedConnection` transparently decorates any supported
+database connection. A subscriber callback receives `started`, `completed`,
+and `failed` event Hashes for every `#query`/`#execute`, including a random
+query ID, operation, SQL, bind count, and elapsed milliseconds. Completion
+events add `rows` or `affected`; failure events add the exception message.
+
+```diamond
+def subscriber(event)
+  puts("#{event["query_id"]} #{event["phase"]} #{event["sql"]}")
+end
+
+raw = SQLite3.open("app.db")
+db = ActiveRecord::InstrumentedConnection.new(raw, subscriber)
+Author.all().to_a(db)
+```
+
+Bind values are deliberately absent from events, making the default shape
+safe for passwords, session tokens, and other secrets. The wrapper forwards
+`#last_insert_row_id` and `#close`, so repositories, models, and direct Arel
+execution use it without changes. It has no logger dependency: applications
+choose whether the subscriber writes logs, metrics, traces, or test events.
+
 ## Validators
 
 `Repository`'s own `validator` argument (above) is any ordinary

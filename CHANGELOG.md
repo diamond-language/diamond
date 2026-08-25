@@ -1,5 +1,16 @@
 # Changelog
 
+## ActiveRecord 0.17.0
+
+- Added `ActiveRecord::InstrumentedConnection`, a transparent database
+  decorator emitting subscriber events for started, completed, and failed
+  queries/writes with query IDs, SQL, bind counts, result counts, and timing.
+  Bind values are deliberately excluded.
+- Refactored `examples/project_board` to use the package component for its
+  ActiveRecord/Arel query logs instead of an app-local connection wrapper.
+- Added coverage for query/write success, failure events, timing, correlation
+  IDs, connection forwarding, and secret-bind omission.
+
 ## Div 0.2.0
 
 - Added `bin/divc_all.sh`, a clean recursive batch compiler for template

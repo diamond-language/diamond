@@ -15,6 +15,7 @@ require "../../arel/lib/arel"
 # purely for readability, not because it's required.
 require "./active_record/validation_error"
 require "./active_record/stale_object_error"
+require "./active_record/instrumented_connection"
 require "./active_record/repository"
 require "./active_record/relation"
 require "./active_record/dirty_attributes"

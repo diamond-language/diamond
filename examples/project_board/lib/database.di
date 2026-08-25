@@ -1,34 +1,17 @@
-class InstrumentedDatabase
-  def initialize(connection, logger)
-    @connection = connection
-    @logger = logger
+def build_query_logger(logger)
+  def log_query(event)
+    phase = event["phase"]
+    message = "orm=active_record builder=arel query_id=#{event["query_id"]} operation=#{event["operation"]} #{phase} sql=#{event["sql"]} bind_count=#{event["bind_count"]}"
+    if phase == "completed"
+      count = if event["operation"] == "query" then "rows=#{event["rows"]}" else "affected=#{event["affected"]}" end
+      logger.debug("#{message} #{count} duration_ms=#{event["duration_ms"]}")
+    elsif phase == "failed"
+      logger.error("#{message} duration_ms=#{event["duration_ms"]} error=#{event["error"]}")
+    else
+      logger.debug(message)
+    end
   end
-
-  def elapsed_ms(start)
-    milliseconds = (Time.monotonic() - start) * 1000
-    to_f(to_i(milliseconds * 100)) / 100.0
-  end
-
-  def query(sql: String, params: Array = [])
-    query_id = SecureRandom.hex(4)
-    @logger.debug("orm=active_record builder=arel query_id=#{query_id} operation=query started sql=#{sql} bind_count=#{params.length()}")
-    start = Time.monotonic()
-    rows = @connection.query(sql, params)
-    @logger.debug("orm=active_record builder=arel query_id=#{query_id} operation=query completed rows=#{rows.length()} duration_ms=#{self.elapsed_ms(start)}")
-    rows
-  end
-
-  def execute(sql: String, params: Array = [])
-    query_id = SecureRandom.hex(4)
-    @logger.debug("orm=active_record builder=arel query_id=#{query_id} operation=execute started sql=#{sql} bind_count=#{params.length()}")
-    start = Time.monotonic()
-    affected = @connection.execute(sql, params)
-    @logger.debug("orm=active_record builder=arel query_id=#{query_id} operation=execute completed affected=#{affected} duration_ms=#{self.elapsed_ms(start)}")
-    affected
-  end
-
-  def last_insert_row_id() = @connection.last_insert_row_id()
-  def close() = @connection.close()
+  log_query
 end
 
 class Database
@@ -37,7 +20,7 @@ class Database
     if db == nil
       connection = SQLite3.open("project_board.db")
       connection.execute("PRAGMA foreign_keys = ON")
-      db = InstrumentedDatabase.new(connection, AppLogger.get(context))
+      db = ActiveRecord::InstrumentedConnection.new(connection, build_query_logger(AppLogger.get(context)))
       context["db"] = db
       AppLogger.get(context).info("database connection opened foreign_keys=on")
     end
