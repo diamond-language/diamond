@@ -49,13 +49,14 @@ log.error("connection failed: timeout")
   `"myapp"`, ...), the same string the ad-hoc `puts("gremlin: ...")`
   calls this replaces already hand-wrote themselves.
 - `level` — the *minimum* level this instance actually emits at, one of
-  `"debug"`/`"info"`/`"warn"`/`"error"` (low to high severity; the
+  `"debug"`/`"info"`/`"warn"`/`"error"`/`"off"` (low to high severity; the
   default, `"info"`, silently drops `#debug` calls). Turn verbosity up
   or down without touching any call site:
 
   ```ruby
   log = Logger.new("myapp", "debug")   # everything, including #debug
   log = Logger.new("myapp", "warn")    # only #warn and #error
+  log = Logger.new("myapp", "off")     # keep call sites; emit nothing
   ```
 - `output` — anything responding to `.write(value)` the same way
   `File`/`TCPSocket` already do (see `docs/io.md`) — a real file to log

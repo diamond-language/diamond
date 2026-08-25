@@ -1,5 +1,14 @@
 # Changelog
 
+## Logger 0.3.0
+
+- Added an `off` level above `error`, allowing applications and benchmarks to
+  retain instrumentation call sites while the logger performs no formatting
+  or output.
+- Added a configurable, multithreaded Diamond load driver exercising every
+  project-board route through complete authenticated CRUD/CSRF journeys, plus
+  a six-worker server harness and recorded full-stack results.
+
 ## Gremlin 0.2.0
 
 - Changed request-handler failure diagnostics to structured JSON so server

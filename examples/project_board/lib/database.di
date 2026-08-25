@@ -21,9 +21,11 @@ class Database
     if db == nil
       connection = SQLite3.open("project_board.db")
       connection.execute("PRAGMA foreign_keys = ON")
+      connection.execute("PRAGMA journal_mode = WAL")
+      connection.execute("PRAGMA busy_timeout = 5000")
       db = ActiveRecord::InstrumentedConnection.new(connection, build_query_logger(AppLogger.get(context), context))
       context["db"] = db
-      AppLogger.get(context).info("database.connection.opened", {"adapter": "sqlite3", "foreign_keys": true})
+      AppLogger.get(context).info("database.connection.opened", {"adapter": "sqlite3", "foreign_keys": true, "journal_mode": "wal", "busy_timeout_ms": 5000})
     end
     db
   end

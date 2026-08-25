@@ -144,4 +144,25 @@ end
 assert_contains "$actual" "unknown format 'xml'"
 count=$((count + 1))
 
+# --- off is a level above every emitted severity, so callers retain their
+# instrumentation while serialization and output become a no-op ---
+actual="$(run_case '
+class CapturingWriter
+  def initialize()
+    @lines = []
+  end
+  def write(value) = @lines.push(value)
+  def lines() = @lines
+end
+writer = CapturingWriter.new()
+log = Logger.new("myapp", "off", writer, "json")
+log.debug("debug", {"duration_ms": 0.1})
+log.info("info")
+log.warn("warn")
+log.error("error")
+writer.lines().length()
+')"
+[[ "$actual" == "0" ]]
+count=$((count + 1))
+
 echo "$count logger tests passed"

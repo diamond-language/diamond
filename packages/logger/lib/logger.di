@@ -38,8 +38,10 @@ class Logger
       2
     elsif name == "error"
       3
+    elsif name == "off"
+      4
     else
-      raise ArgumentError.new("Logger: unknown level '#{name}' -- expected debug, info, warn, or error")
+      raise ArgumentError.new("Logger: unknown level '#{name}' -- expected debug, info, warn, error, or off")
     end
   end
 

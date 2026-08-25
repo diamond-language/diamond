@@ -2,7 +2,11 @@ class AppLogger
   def self.get(context)
     logger = context["logger"]
     if logger == nil
-      logger = Logger.new("project_board", "debug", nil, "json")
+      level = context["log_level"]
+      if level == nil
+        level = "debug"
+      end
+      logger = Logger.new("project_board", level, nil, "json")
       context["logger"] = logger
     end
     logger
