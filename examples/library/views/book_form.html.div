@@ -1,5 +1,12 @@
-<%# locals: action, authors, selected_author_id, book_title, year, available, submit %><form method="POST" action="<%= action %>"><p><label>Author: <select name="author_id">
-<% authors.each() do |author| %>
-<option value="<%= author.id() %>"<% if author.id() == selected_author_id %> selected<% end %>><%= author.name() %></option>
-<% end %>
-</select></label></p><p><label>Title: <input name="title" value="<%= book_title %>"></label></p><p><label>Year: <input name="year" value="<%= year %>"></label></p><p><label>Available (1 or 0): <input name="available" value="<%= available %>"></label></p><p><button type="submit"><%= submit %></button></p></form>
+<%# locals: action, authors, selected_author_id, book_title, year, available, submit %>
+<form method="POST" action="<%= action %>">
+  <p><label>Author: <select name="author_id">
+    <% authors.each() do |author| %>
+    <option value="<%= author.id() %>"<% if author.id() == selected_author_id %> selected<% end %>><%= author.name() %></option>
+    <% end %>
+  </select></label></p>
+  <p><label>Title: <input name="title" value="<%= book_title %>"></label></p>
+  <p><label>Year: <input name="year" value="<%= year %>"></label></p>
+  <p><label>Available (1 or 0): <input name="available" value="<%= available %>"></label></p>
+  <p><button type="submit"><%= submit %></button></p>
+</form>

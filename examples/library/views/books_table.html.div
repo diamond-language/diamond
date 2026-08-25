@@ -1,6 +1,8 @@
-<%# locals: books, authors_by_id %><table border="1"><tr><th>Title</th><th>Author</th><th>Year</th><th>Available</th></tr>
-<% books.each() do |book| %>
-<% author = authors_by_id[book.author_id()] %>
-<tr><td><a href="/books/<%= book.id() %>"><%= book.title() %></a></td><td><%= if author == nil then "" else author.name() end %></td><td><%= book.year() %></td><td><%= if book.available?() then "yes" else "no" end %></td></tr>
-<% end %>
+<%# locals: books, authors_by_id %>
+<table border="1">
+  <tr><th>Title</th><th>Author</th><th>Year</th><th>Available</th></tr>
+  <% books.each() do |book| %>
+  <% author = authors_by_id[book.author_id()] %>
+  <tr><td><a href="/books/<%= book.id() %>"><%= book.title() %></a></td><td><%= if author == nil then "" else author.name() end %></td><td><%= book.year() %></td><td><%= if book.available?() then "yes" else "no" end %></td></tr>
+  <% end %>
 </table>

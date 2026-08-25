@@ -1,1 +1,8 @@
-<%# locals: id, name, country, books %><p><%= name %> is from <%= country %>.</p><h2>Books</h2><%== author_books_table_html(books) %><p><a href="/authors/<%= id %>/edit">Edit author</a> | <form method="POST" action="/authors/<%= id %>/delete"><button>Delete author</button></form></p>
+<%# locals: id, name, country, books %>
+<p><%= name %> is from <%= country %>.</p>
+<h2>Books</h2>
+<%== author_books_table_html(books) %>
+<p>
+  <a href="/authors/<%= id %>/edit">Edit author</a> |
+  <form method="POST" action="/authors/<%= id %>/delete"><button>Delete author</button></form>
+</p>
