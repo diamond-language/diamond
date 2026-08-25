@@ -204,6 +204,25 @@ position-mapping div_translate already does for diagnostics, threaded
 through each of those handlers separately — a larger, currently
 unstarted slice.
 
+This is a server-side capability only — a client still has to actually
+send `.div` documents to the server for any of it to run.
+`editors/vscode`'s own extension originally only ever did that for the
+`diamond` language id, itself only ever assigned to `.di` files
+(`package.json`'s `languages` contribution) — a `.div`/`.html.div` file
+opened in the editor never got a `didOpen` at all, so this whole feature
+silently never fired for anyone using that extension specifically (the
+LSP itself, driven directly over stdio, always worked correctly; this
+was purely a client-side wiring gap, found shortly after the feature
+first shipped). Fixed by giving `.div` its own `diamond-template`
+language id (deliberately separate from `diamond`, and with no grammar
+of its own — registering it under `diamond` outright would also apply
+Diamond's own TextMate grammar to a template's HTML content, which
+isn't Diamond syntax) and having `extension.js`'s `didOpen`/`didChange`/
+`didClose` accept either language id, while every other provider
+(`hover`/`definition`/`documentSymbol`/`completion`/`workspace/symbol`)
+stays registered against `diamond` alone, matching the "diagnostics
+only" scope above exactly.
+
 Each `.html.div` file is also translated and compiled **in isolation** —
 a call to another template's own generated function (a partial, e.g.
 `<%== author_books_table_html(books) %>`) reports "undefined function"

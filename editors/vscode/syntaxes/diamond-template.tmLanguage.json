@@ -1,0 +1,32 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Diamond Template",
+  "scopeName": "text.html.div",
+  "fileTypes": ["div"],
+  "comment": "ERB-style embedding, matching packages/div's own tag grammar (see packages/div/lib/div/compiler.di's own header comment): everything outside <% %> is HTML, highlighted via VS Code's own built-in text.html.basic grammar (not bundled here -- referenced the same way EJS/ERB/Handlebars grammars already reference it); everything inside a tag is Diamond source, highlighted via source.diamond (editors/vscode/syntaxes/diamond.tmLanguage.json), the exact same grammar a .di file gets. A <%# ... %> comment/locals directive is its own, third case -- never HTML, never Diamond, just a comment.",
+  "patterns": [
+    { "include": "#tags" },
+    { "include": "text.html.basic" }
+  ],
+  "repository": {
+    "tags": {
+      "patterns": [
+        {
+          "name": "comment.block.div",
+          "begin": "<%#",
+          "beginCaptures": { "0": { "name": "punctuation.definition.comment.begin.div" } },
+          "end": "%>",
+          "endCaptures": { "0": { "name": "punctuation.definition.comment.end.div" } }
+        },
+        {
+          "name": "meta.embedded.block.diamond",
+          "begin": "<%={0,2}",
+          "beginCaptures": { "0": { "name": "punctuation.section.embedded.begin.div" } },
+          "end": "%>",
+          "endCaptures": { "0": { "name": "punctuation.section.embedded.end.div" } },
+          "patterns": [{ "include": "source.diamond" }]
+        }
+      ]
+    }
+  }
+}

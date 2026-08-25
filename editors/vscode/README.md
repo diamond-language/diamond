@@ -47,6 +47,22 @@ events are logged to the "Diamond Language Server" output channel. The
 `Diamond: Restart Language Server` command restarts it without reloading
 the whole window — useful after rebuilding `diamond-lsp`.
 
+## `.div` templates (`packages/div`)
+
+A `.div` file (see `packages/div/README.md` for the tag grammar) gets its
+own `diamond-template` language id, separate from `diamond` — highlighted
+via `syntaxes/diamond-template.tmLanguage.json`, an ERB-style embedded
+grammar: everything outside `<% %>` is plain HTML (VS Code's own built-in
+`text.html.basic` grammar, not bundled here), everything inside a tag is
+real Diamond source (the same `source.diamond` grammar a `.di` file gets),
+and `<%# ... %>` is a comment either way. Diagnostics work the same way
+they do for a `.di` file (`lsp/div.c` translates the template and maps
+errors back to their real template position — see `docs/lsp.md`'s own
+`.div` section for what is and isn't covered, e.g. a call to another
+template's own partial reports a false "undefined function"); hover,
+go-to-definition, completion, and workspace symbol search don't — those
+providers stay registered against `diamond` alone.
+
 ## Trying it locally
 
 VS Code loads any folder under its extensions directory that has a

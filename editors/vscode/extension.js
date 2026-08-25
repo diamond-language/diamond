@@ -139,12 +139,21 @@ function handlePublishDiagnostics(params) {
     diagnosticCollection.set(uri, diagnostics);
 }
 
+/* 'diamond' (.di) and 'diamond-template' (.div, packages/div -- see
+ * lsp/div.c) both get diagnostics; only 'diamond' additionally gets
+ * hover/definition/documentSymbol/completion, via those providers'
+ * own separate 'diamond'-only registrations below (docs/lsp.md's own
+ * ".div templates (diagnostics only)" section). */
+function isDiamondDocument(document) {
+    return document.languageId === 'diamond' || document.languageId === 'diamond-template';
+}
+
 function didOpen(document) {
-    if (document.languageId !== 'diamond' || !child) return;
+    if (!isDiamondDocument(document) || !child) return;
     sendNotification('textDocument/didOpen', {
         textDocument: {
             uri: document.uri.toString(),
-            languageId: 'diamond',
+            languageId: document.languageId,
             version: document.version,
             text: document.getText(),
         },
@@ -152,7 +161,7 @@ function didOpen(document) {
 }
 
 function didChange(document) {
-    if (document.languageId !== 'diamond' || !child) return;
+    if (!isDiamondDocument(document) || !child) return;
     /* Server only advertises Full sync -- send the whole current buffer
      * as the one entry Full sync expects, ignoring whatever incremental
      * ranges VS Code's own event carried. */
@@ -163,7 +172,7 @@ function didChange(document) {
 }
 
 function didClose(document) {
-    if (document.languageId !== 'diamond' || !child) return;
+    if (!isDiamondDocument(document) || !child) return;
     /* No client-side diagnosticCollection.delete() here: the server
      * itself publishes an empty diagnostics array for this uri on
      * didClose (its own documented way to clear a closed file's

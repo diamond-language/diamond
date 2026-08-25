@@ -2,13 +2,13 @@
   "name": "diamond-language",
   "displayName": "Diamond",
   "description": "Syntax highlighting and language server diagnostics/hover/go-to-definition/outline for the Diamond programming language",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "engines": {
     "vscode": "^1.75.0"
   },
   "categories": ["Programming Languages"],
   "main": "./extension.js",
-  "activationEvents": ["onLanguage:diamond"],
+  "activationEvents": ["onLanguage:diamond", "onLanguage:diamond-template"],
   "contributes": {
     "languages": [
       {
@@ -16,6 +16,11 @@
         "aliases": ["Diamond", "diamond"],
         "extensions": [".di"],
         "configuration": "./language-configuration.json"
+      },
+      {
+        "id": "diamond-template",
+        "aliases": ["Diamond Template"],
+        "extensions": [".div"]
       }
     ],
     "grammars": [
@@ -23,6 +28,14 @@
         "language": "diamond",
         "scopeName": "source.diamond",
         "path": "./syntaxes/diamond.tmLanguage.json"
+      },
+      {
+        "language": "diamond-template",
+        "scopeName": "text.html.div",
+        "path": "./syntaxes/diamond-template.tmLanguage.json",
+        "embeddedLanguages": {
+          "source.diamond": "diamond"
+        }
       }
     ],
     "configuration": {
