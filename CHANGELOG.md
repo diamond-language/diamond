@@ -30,7 +30,8 @@
   generic/keyword calls, callable references, and `require`-expanded files.
 - Corrected the runtime type-ID partition so the advertised class capacity no
   longer overlaps generic-variable and interface IDs, and raised the class
-  capacity from 128 to 180. Large package combinations such as GraphQL plus
+  capacity from 128 to 180. Updated the self-hosted compiler's mirrored
+  boundaries to match. Large package combinations such as GraphQL plus
   ActiveRecord now compile instead of misclassifying ordinary classes as
   unbound generics or exhausting class slots.
 

@@ -182,6 +182,9 @@ module Type
   SIZED = 8
   SYMBOL = 9
   CLASS_BASE = 10
+  # Keep the non-overlapping partitions in sync with DiamondTypeId in vm.h.
+  VARIABLE_BASE = 192
+  INTERFACE_BASE = 224
 end
 
 class Parser
@@ -586,7 +589,7 @@ class Parser
         else
           name = self.token_text(@current)
           type_id = self.resolve_type_name(name)
-          if type_id >= 96 && type_id < 128
+          if type_id >= Type::VARIABLE_BASE && type_id < Type::INTERFACE_BASE
             self.fail("generic type variables cannot filter rescue")
           end
           duplicate = false
@@ -1370,12 +1373,12 @@ class Parser
     return Type::CALLABLE if name == "Callable"
     variable = 0
     while variable < @current_type_variables.length()
-      return 96 + variable if @current_type_variables[variable] == name
+      return Type::VARIABLE_BASE + variable if @current_type_variables[variable] == name
       variable = variable + 1
     end
     interface_entry = self.find_interface(name)
     if interface_entry != nil
-      return 128 + interface_entry[1]
+      return Type::INTERFACE_BASE + interface_entry[1]
     end
     class_entry = self.find_class(name)
     if class_entry != nil
@@ -3598,7 +3601,10 @@ class Parser
       while seen_index < seen_types.length()
         if seen_types[seen_index] == types[type_index]
           self.fail("rescue type was already handled")
-        elsif seen_types[seen_index] >= Type::CLASS_BASE && seen_types[seen_index] < 96 && types[type_index] >= Type::CLASS_BASE && types[type_index] < 96
+        elsif seen_types[seen_index] >= Type::CLASS_BASE &&
+              seen_types[seen_index] < Type::VARIABLE_BASE &&
+              types[type_index] >= Type::CLASS_BASE &&
+              types[type_index] < Type::VARIABLE_BASE
           ancestor = seen_types[seen_index] - Type::CLASS_BASE
           child = types[type_index] - Type::CLASS_BASE
           while child != nil && child != ancestor
@@ -4101,7 +4107,7 @@ class Parser
         else
           type_name = self.token_text(@current)
           type_id = self.resolve_type_name(type_name)
-          if type_id >= 96 && type_id < 128
+          if type_id >= Type::VARIABLE_BASE && type_id < Type::INTERFACE_BASE
             self.fail("generic type variables cannot be used with 'is' before binding")
           end
           self.advance_token() unless @failed
