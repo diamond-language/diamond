@@ -2,12 +2,29 @@ module PheintPlayerResolvers
   module_function
   def id(player, args, context) = player.id()
   def handle(player, args, context) = player.handle()
+  def scores(player, args, context)
+    values = if player.association_loaded?("scores")
+      player.preloaded_association("scores")
+    else
+      player.scores(context["db"])
+    end
+    values.sort_by() do |score|
+      -score.value()
+    end
+  end
 end
 
 module PheintScoreResolvers
   module_function
   def id(score, args, context) = score.id()
   def value(score, args, context) = score.value()
+  def leaderboard(score, args, context)
+    if score.association_loaded?("leaderboard")
+      score.preloaded_association("leaderboard")
+    else
+      score.leaderboard(context["db"])
+    end
+  end
   def player(score, args, context)
     if score.association_loaded?("player")
       score.preloaded_association("player")
@@ -21,11 +38,21 @@ module PheintLeaderboardResolvers
   module_function
   def id(leaderboard, args, context) = leaderboard.id()
   def name(leaderboard, args, context) = leaderboard.name()
+  def game(leaderboard, args, context)
+    if leaderboard.association_loaded?("game")
+      leaderboard.preloaded_association("game")
+    else
+      leaderboard.game(context["db"])
+    end
+  end
   def scores(leaderboard, args, context)
-    if leaderboard.association_loaded?("scores")
+    values = if leaderboard.association_loaded?("scores")
       leaderboard.preloaded_association("scores")
     else
       leaderboard.scores(context["db"])
+    end
+    values.sort_by() do |score|
+      -score.value()
     end
   end
 end
@@ -69,6 +96,15 @@ module PheintQueryResolvers
   def api_name(object, args, context) = "pheint.dia"
   def environment(object, args, context) = PheintEnvironment.name()
   def me(object, args, context) = context["current_account"]
+  def player(object, args, context)
+    handle = pheint_normalize_handle(args["handle"])
+    Player.where({"handle": handle}).first(context["db"])
+  end
+  def leaderboard(object, args, context)
+    leaderboard_id = args["id"]
+    if leaderboard_id is String then leaderboard_id = leaderboard_id.to_i() end
+    Leaderboard.where({"id": leaderboard_id}).first(context["db"])
+  end
   def game(object, args, context)
     game_id = args["id"]
     if game_id is String then game_id = game_id.to_i() end
@@ -343,6 +379,13 @@ class PheintSchema
       game_type.field("owner", account_type.non_null(), PheintGameResolvers.owner)
       game_type.field("leaderboards", GraphQL::ListType.of(leaderboard_type.non_null()).non_null(), PheintGameResolvers.leaderboards)
 
+      player_type.field("scores", GraphQL::ListType.of(score_type.non_null()).non_null(),
+        PheintPlayerResolvers.scores)
+      score_type.field("leaderboard", leaderboard_type.non_null(),
+        PheintScoreResolvers.leaderboard)
+      leaderboard_type.field("game", game_type.non_null(),
+        PheintLeaderboardResolvers.game)
+
       auth_payload_type = GraphQL::ObjectType.new("AuthPayload")
       auth_payload_type.field("token", GraphQL::ScalarType.string().non_null(), PheintAuthPayloadResolvers.token)
       auth_payload_type.field("account", account_type.non_null(), PheintAuthPayloadResolvers.account)
@@ -351,6 +394,12 @@ class PheintSchema
       query.field("apiName", GraphQL::ScalarType.string().non_null(), PheintQueryResolvers.api_name)
       query.field("environment", GraphQL::ScalarType.string().non_null(), PheintQueryResolvers.environment)
       query.field("me", account_type, PheintQueryResolvers.me)
+      query.field("player", player_type, PheintQueryResolvers.player, [
+        GraphQL::Argument.new("handle", GraphQL::ScalarType.string().non_null())
+      ])
+      query.field("leaderboard", leaderboard_type, PheintQueryResolvers.leaderboard, [
+        GraphQL::Argument.new("id", GraphQL::ScalarType.id().non_null())
+      ])
       query.field("game", game_type, PheintQueryResolvers.game, [
         GraphQL::Argument.new("id", GraphQL::ScalarType.id().non_null())
       ])

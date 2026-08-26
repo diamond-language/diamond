@@ -153,6 +153,23 @@ query GameDetail {
 query MyGames {
   myGames { id title leaderboards { id name } }
 }
+
+query PlayerProfile {
+  player(handle: "@demo") {
+    id
+    handle
+    scores { value leaderboard { name game { id title } } }
+  }
+}
+
+query LeaderboardRankings {
+  leaderboard(id: 1) {
+    id
+    name
+    game { id title }
+    scores { value player { id handle } }
+  }
+}
 ```
 
 Send the returned opaque token as `Authorization: Bearer <token>` for `me`,
@@ -176,6 +193,11 @@ The public `game(id:)` and `games` queries and authenticated `myGames` query are
 planned through GraphSQL. Their lookaheads select only requested columns and
 recursively batch-load requested owner, leaderboard, score, and player
 associations. An unknown game ID returns `null`.
+
+Public `player(handle:)` profiles include score history, and
+`leaderboard(id:)` returns scores ordered from highest to lowest. Handles may
+be queried with or without their display `@`; unknown players and leaderboards
+return `null`.
 
 Run the direct-dispatch smoke test with:
 

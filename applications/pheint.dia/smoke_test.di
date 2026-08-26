@@ -229,6 +229,58 @@ end
 
 test_seeded_game_domain(context)
 
+def test_public_player_and_leaderboard_queries(context)
+  db = PheintDatabase.get(context)
+  asteroid = Game.where({"title": "Asteroid Run"}).first(db)
+  board = asteroid.leaderboards(db)[0]
+  alice = Account.where({"email": "alice@example.com"}).first(db).player(db)
+  Score.new({
+    "leaderboard_id": board.id(), "player_id": alice.id(), "value": 150000
+  }).save(db)
+
+  leaderboard_response = JSON.parse(app(smoke_request(
+    "POST", "/graphql", JSON.stringify({"query": [
+      "{ leaderboard(id: #{board.id()}) {",
+      "  name game { title } scores { value player { handle } }",
+      "} }"
+    ].join("\n")})), context)[2])
+  leaderboard = leaderboard_response["data"]["leaderboard"]
+  if leaderboard_response["errors"] != nil ||
+     leaderboard["game"]["title"] != "Asteroid Run" ||
+     leaderboard["scores"].length() != 2 ||
+     leaderboard["scores"][0]["value"] != 150000 ||
+     leaderboard["scores"][0]["player"]["handle"] != "alice" ||
+     leaderboard["scores"][1]["value"] != 128400
+    raise "leaderboard query did not return descending rankings"
+  end
+
+  player_response = JSON.parse(app(smoke_request(
+    "POST", "/graphql", JSON.stringify({"query": [
+      "{ player(handle: \"@demo\") {",
+      "  handle scores { value leaderboard { name game { title } } }",
+      "} }"
+    ].join("\n")})), context)[2])
+  player = player_response["data"]["player"]
+  if player_response["errors"] != nil || player["handle"] != "demo" ||
+     player["scores"].length() != 1 || player["scores"][0]["value"] != 128400 ||
+     player["scores"][0]["leaderboard"]["game"]["title"] != "Asteroid Run"
+    raise "player profile query did not resolve score history"
+  end
+
+  missing_player = JSON.parse(app(smoke_request("POST", "/graphql", JSON.stringify({
+    "query": "{ player(handle: \"missing\") { id } }"
+  })), context)[2])
+  missing_board = JSON.parse(app(smoke_request("POST", "/graphql", JSON.stringify({
+    "query": "{ leaderboard(id: 999999) { id } }"
+  })), context)[2])
+  if missing_player["errors"] != nil || missing_player["data"]["player"] != nil ||
+     missing_board["errors"] != nil || missing_board["data"]["leaderboard"] != nil
+    raise "missing public profile lookup did not resolve to null"
+  end
+end
+
+test_public_player_and_leaderboard_queries(context)
+
 def test_game_query(context)
   db = PheintDatabase.get(context)
   asteroid = Game.where({"title": "Asteroid Run"}).first(db)
@@ -243,8 +295,9 @@ def test_game_query(context)
   game = response["data"]["game"]
   if response["errors"] != nil || game["title"] != "Asteroid Run" ||
      game["owner"]["player"]["handle"] != "demo" ||
-     game["leaderboards"][0]["scores"][0]["value"] != 128400 ||
-     game["leaderboards"][0]["scores"][0]["player"]["handle"] != "demo"
+     game["leaderboards"][0]["scores"].length() != 2 ||
+     game["leaderboards"][0]["scores"][1]["value"] != 128400 ||
+     game["leaderboards"][0]["scores"][1]["player"]["handle"] != "demo"
     raise "single game query did not resolve its requested graph"
   end
 
