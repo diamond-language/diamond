@@ -13,7 +13,8 @@ class PheintGraphSQLMappings
       score.association("player", "player", player)
 
       leaderboard = GraphSQL::Mapping.new(Leaderboard.repository(), "Leaderboard")
-      leaderboard.column("id").column("name")
+      leaderboard.column("id").column("name").column(
+        "higher_is_better", "higherIsBetter")
       leaderboard.association("scores", "scores", score)
 
       game = GraphSQL::Mapping.new(Game.repository(), "Game")

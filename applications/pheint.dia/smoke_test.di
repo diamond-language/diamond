@@ -139,17 +139,17 @@ if created["errors"] != nil || created["data"]["submitScore"]["value"] != 90 ||
 end
 score_id = created["data"]["submitScore"]["id"]
 
-lower = JSON.parse(app(submit_score_request(
-  context, token, board.id(), 89), context)[2])
-if lower["errors"] == nil ||
-   !lower["errors"][0]["message"].include?("current best of 90")
-  raise "lower score submission was accepted"
+worse = JSON.parse(app(submit_score_request(
+  context, token, board.id(), 91), context)[2])
+if worse["errors"] == nil ||
+   !worse["errors"][0]["message"].include?("current best of 90")
+  raise "slower time submission was accepted"
 end
 alice = Account.where({"email": "alice@example.com"}).first(db)
 stored = Score.where({
   "leaderboard_id": board.id(), "player_id": alice.player(db).id()
 }).first(db)
-if stored.value() != 90 then raise "lower score changed stored best" end
+if stored.value() != 90 then raise "slower time changed stored best" end
 
 equal = JSON.parse(app(submit_score_request(
   context, token, board.id(), 90), context)[2])
@@ -157,12 +157,25 @@ if equal["errors"] != nil || equal["data"]["submitScore"]["id"] != score_id
   raise "equal score submission was not idempotent"
 end
 
-higher = JSON.parse(app(submit_score_request(
-  context, token, board.id(), 125), context)[2])
-if higher["errors"] != nil || higher["data"]["submitScore"]["id"] != score_id ||
-   higher["data"]["submitScore"]["value"] != 125 ||
+better = JSON.parse(app(submit_score_request(
+  context, token, board.id(), 80), context)[2])
+if better["errors"] != nil || better["data"]["submitScore"]["id"] != score_id ||
+   better["data"]["submitScore"]["value"] != 80 ||
    board.scores(db).length() != 1
-  raise "higher score did not update the existing score"
+  raise "faster time did not update the existing score"
+end
+
+asteroid = Game.where({"title": "Asteroid Run"}).first(db).leaderboards(db)[0]
+high_created = JSON.parse(app(submit_score_request(
+  context, token, asteroid.id(), 140000), context)[2])
+high_worse = JSON.parse(app(submit_score_request(
+  context, token, asteroid.id(), 130000), context)[2])
+high_better = JSON.parse(app(submit_score_request(
+  context, token, asteroid.id(), 150000), context)[2])
+if high_created["errors"] != nil || high_worse["errors"] == nil ||
+   high_better["errors"] != nil ||
+   high_better["data"]["submitScore"]["value"] != 150000
+  raise "higher-is-better score policy failed"
 end
 
 missing = JSON.parse(app(submit_score_request(
@@ -184,11 +197,16 @@ games = demo.games(PheintDatabase.get(context))
 if games.length() != 2 then raise "seeded games missing" end
 asteroid = Game.where({"title": "Asteroid Run"}).first(PheintDatabase.get(context))
 boards = asteroid.leaderboards(PheintDatabase.get(context))
-if boards.length() != 1 || boards[0].name() != "All-time high score"
+if boards.length() != 1 || boards[0].name() != "All-time high score" ||
+   boards[0].higher_is_better() != true
   raise "seeded leaderboard missing"
 end
+cipher = Game.where({"title": "Cipher Sprint"}).first(PheintDatabase.get(context))
+if cipher.leaderboards(PheintDatabase.get(context))[0].higher_is_better() != false
+  raise "lower-is-better leaderboard policy missing"
+end
 scores = boards[0].scores(PheintDatabase.get(context))
-if scores.length() != 1 || scores[0].value() != 128400 ||
+if scores.length() != 2 || scores[0].value() != 128400 ||
    scores[0].player(PheintDatabase.get(context)).handle() != "demo"
   raise "seeded score/player association missing"
 end
@@ -202,7 +220,7 @@ rescue error: StandardError
   duplicate_score_rejected = true
 end
 if !duplicate_score_rejected ||
-   boards[0].scores(PheintDatabase.get(context)).length() != 1
+   boards[0].scores(PheintDatabase.get(context)).length() != 2
   raise "duplicate per-player leaderboard score was accepted"
 end
 
@@ -221,8 +239,8 @@ if games_response["errors"] != nil || games_response["data"]["games"].length() !
 end
 graphql_game = games_response["data"]["games"][0]
 if graphql_game["owner"]["player"]["handle"] != "demo" ||
-   graphql_game["leaderboards"][0]["scores"][0]["value"] != 128400 ||
-   graphql_game["leaderboards"][0]["scores"][0]["player"]["handle"] != "demo"
+   graphql_game["leaderboards"][0]["scores"][1]["value"] != 128400 ||
+   graphql_game["leaderboards"][0]["scores"][1]["player"]["handle"] != "demo"
   raise "GraphQL game associations did not resolve"
 end
 end
@@ -233,19 +251,15 @@ def test_public_player_and_leaderboard_queries(context)
   db = PheintDatabase.get(context)
   asteroid = Game.where({"title": "Asteroid Run"}).first(db)
   board = asteroid.leaderboards(db)[0]
-  alice = Account.where({"email": "alice@example.com"}).first(db).player(db)
-  Score.new({
-    "leaderboard_id": board.id(), "player_id": alice.id(), "value": 150000
-  }).save(db)
-
   leaderboard_response = JSON.parse(app(smoke_request(
     "POST", "/graphql", JSON.stringify({"query": [
       "{ leaderboard(id: #{board.id()}) {",
-      "  name game { title } scores { value player { handle } }",
+      "  name higherIsBetter game { title } scores { value player { handle } }",
       "} }"
     ].join("\n")})), context)[2])
   leaderboard = leaderboard_response["data"]["leaderboard"]
   if leaderboard_response["errors"] != nil ||
+     leaderboard["higherIsBetter"] != true ||
      leaderboard["game"]["title"] != "Asteroid Run" ||
      leaderboard["scores"].length() != 2 ||
      leaderboard["scores"][0]["value"] != 150000 ||
@@ -492,9 +506,9 @@ end
 
 test_game_update(context, signin["data"]["signIn"]["token"])
 
-def update_leaderboard_request(token, leaderboard_id, name)
+def update_leaderboard_request(token, leaderboard_id, name, higher_is_better)
   authenticated_graphql(token,
-    "mutation { updateLeaderboard(id: #{leaderboard_id}, name: \"#{name}\") { id name } }")
+    "mutation { updateLeaderboard(id: #{leaderboard_id}, name: \"#{name}\", higherIsBetter: #{higher_is_better}) { id name higherIsBetter } }")
 end
 
 def delete_leaderboard_request(token, leaderboard_id)
@@ -509,7 +523,7 @@ def test_leaderboard_management(context, token)
   foreign_board = Leaderboard.where({"name": "All-time high score"}).first(db)
 
   forbidden_update = JSON.parse(app(update_leaderboard_request(
-    token, foreign_board.id(), "Stolen"), context)[2])
+    token, foreign_board.id(), "Stolen", true), context)[2])
   if forbidden_update["errors"] == nil ||
      !forbidden_update["errors"][0]["message"].include?("only the game owner") ||
      Leaderboard.find(db, foreign_board.id()).name() != "All-time high score"
@@ -517,16 +531,17 @@ def test_leaderboard_management(context, token)
   end
 
   invalid = JSON.parse(app(update_leaderboard_request(
-    token, owned_board.id(), ""), context)[2])
+    token, owned_board.id(), "", true), context)[2])
   if invalid["errors"] == nil ||
      Leaderboard.find(db, owned_board.id()).name() != "Fastest completion"
     raise "invalid leaderboard update was persisted"
   end
 
   updated = JSON.parse(app(update_leaderboard_request(
-    token, owned_board.id(), "Speed run"), context)[2])
+    token, owned_board.id(), "Speed run", false), context)[2])
   if updated["errors"] != nil ||
-     updated["data"]["updateLeaderboard"]["name"] != "Speed run"
+     updated["data"]["updateLeaderboard"]["name"] != "Speed run" ||
+     updated["data"]["updateLeaderboard"]["higherIsBetter"] != false
     raise "game owner could not update a leaderboard"
   end
 

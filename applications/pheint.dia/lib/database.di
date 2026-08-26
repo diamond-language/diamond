@@ -92,7 +92,7 @@ def ensure_pheint_models_configured(context)
     Leaderboard.configure(ActiveRecord::Repository.new(
       Arel.table("leaderboards"), build_leaderboard, "id", nil,
       build_leaderboard_validator(), nil, nil, nil,
-      ["id", "game_id", "name"]))
+      ["id", "game_id", "name", "higher_is_better"]))
     Score.configure(ActiveRecord::Repository.new(
       Arel.table("scores"), build_score, "id", nil, build_score_validator(),
       nil, nil, nil, ["id", "leaderboard_id", "player_id", "value"]))
@@ -125,7 +125,7 @@ def ensure_pheint_models_configured(context)
     Leaderboard.configure(ActiveRecord::Repository.new(
       Arel.table("leaderboards"), build_leaderboard, "id", nil,
       build_leaderboard_validator(), nil, nil, nil,
-      ["id", "game_id", "name"], nil, [
+      ["id", "game_id", "name", "higher_is_better"], nil, [
         ActiveRecord::AssociationReflection.new(
           "game", "belongs_to", Game.repository(), "game_id", "id"),
         ActiveRecord::AssociationReflection.new(

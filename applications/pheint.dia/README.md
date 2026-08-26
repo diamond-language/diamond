@@ -57,7 +57,8 @@ The game domain is:
 - an account owns many games;
 - a game belongs to its owner and has a title, description, and many
   leaderboards;
-- a leaderboard belongs to a game and has many scores;
+- a leaderboard belongs to a game, has many scores, and declares whether a
+  higher or lower value is better;
 - a score belongs to a player and a leaderboard and stores an integer value;
 - `[leaderboard_id, player_id]` is unique, enforcing one score per user on
   each leaderboard without duplicating the account ID on the score row.
@@ -105,6 +106,7 @@ mutation CreateGame {
     title: "Orbit Forge"
     description: "Build stations in a shifting orbit."
     leaderboardName: "Most stations"
+    leaderboardHigherIsBetter: true
   ) {
     id
     title
@@ -114,11 +116,15 @@ mutation CreateGame {
 }
 
 mutation CreateLeaderboard {
-  createLeaderboard(gameId: 1, name: "Fastest completion") { id name }
+  createLeaderboard(gameId: 1, name: "Fastest completion", higherIsBetter: false) {
+    id name higherIsBetter
+  }
 }
 
 mutation UpdateLeaderboard {
-  updateLeaderboard(id: 1, name: "Speed run") { id name }
+  updateLeaderboard(id: 1, name: "Speed run", higherIsBetter: false) {
+    id name higherIsBetter
+  }
 }
 
 mutation DeleteLeaderboard { deleteLeaderboard(id: 1) }
@@ -194,9 +200,9 @@ delete the game, or add further leaderboards. Deleting a game also removes its
 leaderboards and scores through database foreign-key cascades. Owners can
 rename or delete individual leaderboards as well; deleting one also removes
 its scores. Score submission creates a player's first score on a leaderboard
-and updates that same row when the new value is higher. An
-equal value is an idempotent success; a value below the player's current best
-is rejected without changing the stored score. Sessions expire after 30 days
+and updates that same row only when the new value improves it according to the
+leaderboard's `higherIsBetter` policy. An equal value is an idempotent success;
+a worse value is rejected without changing the stored score. Sessions expire after 30 days
 and are deleted when an expired token is presented. Signup lowercases email
 and handle, accepts the handle with or without a leading `@`, and creates the
 account, player, and initial session in one transaction. Failed player/account
@@ -215,14 +221,15 @@ recursively batch-load requested owner, leaderboard, score, and player
 associations. An unknown game ID returns `null`.
 
 Public `player(handle:)` profiles include score history, and
-`leaderboard(id:)` returns scores ordered from highest to lowest. Handles may
+`leaderboard(id:)` returns scores ordered best to worst according to its
+`higherIsBetter` policy. Handles may
 be queried with or without their display `@`; unknown players and leaderboards
 return `null`.
 
 `games`, `myGames`, and the `scores` fields on players and leaderboards accept
 `limit` and `offset`, defaulting to 20 and 0. Limits must be between 1 and 100,
 and offsets must be non-negative. Game pages use ascending IDs for stable
-ordering; score pages apply the offset after ordering values highest-first.
+ordering; leaderboard score pages apply the offset after policy-aware ranking.
 
 Run the direct-dispatch smoke test with:
 

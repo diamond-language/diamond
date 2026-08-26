@@ -12,7 +12,7 @@ db.execute("CREATE TABLE accounts (id INTEGER PRIMARY KEY, email TEXT NOT NULL U
 db.execute("CREATE TABLE players (id INTEGER PRIMARY KEY, account_id INTEGER NOT NULL UNIQUE, handle TEXT NOT NULL UNIQUE, FOREIGN KEY(account_id) REFERENCES accounts(id) ON DELETE CASCADE)")
 db.execute("CREATE TABLE sessions (id INTEGER PRIMARY KEY, account_id INTEGER NOT NULL, token TEXT NOT NULL UNIQUE, expires_at INTEGER NOT NULL, FOREIGN KEY(account_id) REFERENCES accounts(id) ON DELETE CASCADE)")
 db.execute("CREATE TABLE games (id INTEGER PRIMARY KEY, owner_id INTEGER NOT NULL, title TEXT NOT NULL, description TEXT NOT NULL, FOREIGN KEY(owner_id) REFERENCES accounts(id) ON DELETE CASCADE)")
-db.execute("CREATE TABLE leaderboards (id INTEGER PRIMARY KEY, game_id INTEGER NOT NULL, name TEXT NOT NULL, FOREIGN KEY(game_id) REFERENCES games(id) ON DELETE CASCADE)")
+db.execute("CREATE TABLE leaderboards (id INTEGER PRIMARY KEY, game_id INTEGER NOT NULL, name TEXT NOT NULL, higher_is_better INTEGER NOT NULL, FOREIGN KEY(game_id) REFERENCES games(id) ON DELETE CASCADE)")
 db.execute([
   "CREATE TABLE scores (id INTEGER PRIMARY KEY,",
   "leaderboard_id INTEGER NOT NULL, player_id INTEGER NOT NULL,",
@@ -38,16 +38,16 @@ player_id = db.last_insert_row_id()
 db.execute("INSERT INTO games (owner_id, title, description) VALUES (?, ?, ?)",
   [account_id, "Asteroid Run", "Pilot through an increasingly dense asteroid field."])
 asteroid_game_id = db.last_insert_row_id()
-db.execute("INSERT INTO leaderboards (game_id, name) VALUES (?, ?)",
-  [asteroid_game_id, "All-time high score"])
+db.execute("INSERT INTO leaderboards (game_id, name, higher_is_better) VALUES (?, ?, ?)",
+  [asteroid_game_id, "All-time high score", true])
 asteroid_board_id = db.last_insert_row_id()
 db.execute("INSERT INTO scores (leaderboard_id, player_id, value) VALUES (?, ?, ?)",
   [asteroid_board_id, player_id, 128400])
 db.execute("INSERT INTO games (owner_id, title, description) VALUES (?, ?, ?)",
   [account_id, "Cipher Sprint", "Solve a sequence of ciphers against the clock."])
 cipher_game_id = db.last_insert_row_id()
-db.execute("INSERT INTO leaderboards (game_id, name) VALUES (?, ?)",
-  [cipher_game_id, "Fastest solvers"])
+db.execute("INSERT INTO leaderboards (game_id, name, higher_is_better) VALUES (?, ?, ?)",
+  [cipher_game_id, "Fastest solvers", false])
 puts(JSON.stringify({
   "timestamp": Time.now().strftime("%Y-%m-%dT%H:%M:%S%z"),
   "level": "info", "tag": "pheint", "message": "database.initialized",

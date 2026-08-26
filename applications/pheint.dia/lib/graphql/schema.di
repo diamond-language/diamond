@@ -55,6 +55,7 @@ module PheintLeaderboardResolvers
   module_function
   def id(leaderboard, args, context) = leaderboard.id()
   def name(leaderboard, args, context) = leaderboard.name()
+  def higher_is_better(leaderboard, args, context) = leaderboard.higher_is_better()
   def game(leaderboard, args, context)
     if leaderboard.association_loaded?("game")
       leaderboard.preloaded_association("game")
@@ -68,8 +69,9 @@ module PheintLeaderboardResolvers
     else
       leaderboard.scores(context["db"])
     end
+    higher_is_better = leaderboard.higher_is_better()
     ordered = values.sort_by() do |score|
-      -score.value()
+      if higher_is_better then -score.value() else score.value() end
     end
     ordered.drop(pheint_page_offset(args)).take(pheint_page_limit(args))
   end
@@ -250,6 +252,7 @@ module PheintMutationResolvers
       raise GraphQL::ExecutionError.new("only the game owner can update its leaderboards")
     end
     leaderboard.name = args["name"]
+    leaderboard.higher_is_better = args["higherIsBetter"]
     begin
       leaderboard.save(db)
     rescue error: ActiveRecord::ValidationError
@@ -328,7 +331,10 @@ module PheintMutationResolvers
     if game.owner_id() != account.id()
       raise GraphQL::ExecutionError.new("only the game owner can create leaderboards")
     end
-    leaderboard = Leaderboard.new({"game_id": game.id(), "name": args["name"]})
+    leaderboard = Leaderboard.new({
+      "game_id": game.id(), "name": args["name"],
+      "higher_is_better": args["higherIsBetter"]
+    })
     begin
       leaderboard.save(db)
     rescue error: ActiveRecord::ValidationError
@@ -357,7 +363,8 @@ module PheintMutationResolvers
       ActiveRecord::Transaction.run(db) do
         game.save(db)
         leaderboard = Leaderboard.new({
-          "game_id": game.id(), "name": args["leaderboardName"]
+          "game_id": game.id(), "name": args["leaderboardName"],
+          "higher_is_better": args["leaderboardHigherIsBetter"]
         })
         leaderboard.save(db)
       end
@@ -391,18 +398,24 @@ module PheintMutationResolvers
     value = args["value"]
     # Keep the comparison and write in one SQLite statement. A separate
     # read followed by #save could let two simultaneous requests overwrite
-    # a higher value with a lower one between those operations.
+    # a better value with a worse one between those operations.
+    comparison = if leaderboard.higher_is_better() then ">=" else "<=" end
     db.execute([
       "INSERT INTO scores (leaderboard_id, player_id, value) VALUES (?, ?, ?)",
       "ON CONFLICT(leaderboard_id, player_id) DO UPDATE SET value = excluded.value",
-      "WHERE excluded.value >= scores.value"
+      "WHERE excluded.value #{comparison} scores.value"
     ].join(" "), [leaderboard.id(), player.id(), value])
     submitted_score = Score.where({
       "leaderboard_id": leaderboard.id(), "player_id": player.id()
     }).first(db)
-    if value < submitted_score.value()
+    worse = if leaderboard.higher_is_better()
+      value < submitted_score.value()
+    else
+      value > submitted_score.value()
+    end
+    if worse
       raise GraphQL::ExecutionError.new(
-        "score must be at least your current best of #{submitted_score.value()}")
+        "score did not improve your current best of #{submitted_score.value()}")
     end
     submitted_score.set_preloaded_association("player", player)
     pheint_audit_info(context, "score.submitted", {
@@ -476,6 +489,68 @@ module PheintMutationResolvers
 end
 
 class PheintSchema
+  def self.build_mutation(player_type, score_type, leaderboard_type, game_type,
+      auth_payload_type)
+    mutation = GraphQL::ObjectType.new("Mutation")
+    mutation.field("changePassword", GraphQL::ScalarType.boolean().non_null(),
+      PheintMutationResolvers.change_password, [
+        GraphQL::Argument.new("currentPassword", GraphQL::ScalarType.string().non_null()),
+        GraphQL::Argument.new("newPassword", GraphQL::ScalarType.string().non_null())
+      ])
+    mutation.field("updateHandle", player_type.non_null(),
+      PheintMutationResolvers.update_handle, [
+        GraphQL::Argument.new("handle", GraphQL::ScalarType.string().non_null())
+      ])
+    mutation.field("deleteLeaderboard", GraphQL::ScalarType.boolean().non_null(),
+      PheintMutationResolvers.delete_leaderboard, [
+        GraphQL::Argument.new("id", GraphQL::ScalarType.id().non_null())
+      ])
+    mutation.field("updateLeaderboard", leaderboard_type.non_null(),
+      PheintMutationResolvers.update_leaderboard, [
+        GraphQL::Argument.new("id", GraphQL::ScalarType.id().non_null()),
+        GraphQL::Argument.new("name", GraphQL::ScalarType.string().non_null()),
+        GraphQL::Argument.new("higherIsBetter", GraphQL::ScalarType.boolean().non_null())
+      ])
+    mutation.field("deleteGame", GraphQL::ScalarType.boolean().non_null(),
+      PheintMutationResolvers.delete_game, [
+        GraphQL::Argument.new("id", GraphQL::ScalarType.id().non_null())
+      ])
+    mutation.field("updateGame", game_type.non_null(), PheintMutationResolvers.update_game, [
+      GraphQL::Argument.new("id", GraphQL::ScalarType.id().non_null()),
+      GraphQL::Argument.new("title", GraphQL::ScalarType.string().non_null()),
+      GraphQL::Argument.new("description", GraphQL::ScalarType.string().non_null())
+    ])
+    mutation.field("createLeaderboard", leaderboard_type.non_null(),
+      PheintMutationResolvers.create_leaderboard, [
+        GraphQL::Argument.new("gameId", GraphQL::ScalarType.id().non_null()),
+        GraphQL::Argument.new("name", GraphQL::ScalarType.string().non_null()),
+        GraphQL::Argument.new("higherIsBetter", GraphQL::ScalarType.boolean(), true, true)
+      ])
+    mutation.field("createGame", game_type.non_null(), PheintMutationResolvers.create_game, [
+      GraphQL::Argument.new("title", GraphQL::ScalarType.string().non_null()),
+      GraphQL::Argument.new("description", GraphQL::ScalarType.string().non_null()),
+      GraphQL::Argument.new("leaderboardName", GraphQL::ScalarType.string().non_null()),
+      GraphQL::Argument.new(
+        "leaderboardHigherIsBetter", GraphQL::ScalarType.boolean(), true, true)
+    ])
+    mutation.field("submitScore", score_type.non_null(), PheintMutationResolvers.submit_score, [
+      GraphQL::Argument.new("leaderboardId", GraphQL::ScalarType.id().non_null()),
+      GraphQL::Argument.new("value", GraphQL::ScalarType.int().non_null())
+    ])
+    mutation.field("signUp", auth_payload_type.non_null(), PheintMutationResolvers.sign_up, [
+      GraphQL::Argument.new("email", GraphQL::ScalarType.string().non_null()),
+      GraphQL::Argument.new("password", GraphQL::ScalarType.string().non_null()),
+      GraphQL::Argument.new("handle", GraphQL::ScalarType.string().non_null())
+    ])
+    mutation.field("signIn", auth_payload_type.non_null(), PheintMutationResolvers.sign_in, [
+      GraphQL::Argument.new("email", GraphQL::ScalarType.string().non_null()),
+      GraphQL::Argument.new("password", GraphQL::ScalarType.string().non_null())
+    ])
+    mutation.field("signOut", GraphQL::ScalarType.boolean().non_null(),
+      PheintMutationResolvers.sign_out)
+    mutation
+  end
+
   def self.get()
     if @@schema == nil
       page_arguments = [
@@ -499,6 +574,8 @@ class PheintSchema
       leaderboard_type = GraphQL::ObjectType.new("Leaderboard")
       leaderboard_type.field("id", GraphQL::ScalarType.id().non_null(), PheintLeaderboardResolvers.id)
       leaderboard_type.field("name", GraphQL::ScalarType.string().non_null(), PheintLeaderboardResolvers.name)
+      leaderboard_type.field("higherIsBetter", GraphQL::ScalarType.boolean().non_null(),
+        PheintLeaderboardResolvers.higher_is_better)
       leaderboard_type.field("scores", GraphQL::ListType.of(score_type.non_null()).non_null(),
         PheintLeaderboardResolvers.scores, page_arguments)
 
@@ -538,58 +615,8 @@ class PheintSchema
       query.field("games", GraphQL::ListType.of(game_type.non_null()).non_null(),
         PheintQueryResolvers.games, page_arguments)
 
-      mutation = GraphQL::ObjectType.new("Mutation")
-      mutation.field("changePassword", GraphQL::ScalarType.boolean().non_null(),
-        PheintMutationResolvers.change_password, [
-          GraphQL::Argument.new("currentPassword", GraphQL::ScalarType.string().non_null()),
-          GraphQL::Argument.new("newPassword", GraphQL::ScalarType.string().non_null())
-        ])
-      mutation.field("updateHandle", player_type.non_null(),
-        PheintMutationResolvers.update_handle, [
-          GraphQL::Argument.new("handle", GraphQL::ScalarType.string().non_null())
-        ])
-      mutation.field("deleteLeaderboard", GraphQL::ScalarType.boolean().non_null(),
-        PheintMutationResolvers.delete_leaderboard, [
-          GraphQL::Argument.new("id", GraphQL::ScalarType.id().non_null())
-        ])
-      mutation.field("updateLeaderboard", leaderboard_type.non_null(),
-        PheintMutationResolvers.update_leaderboard, [
-          GraphQL::Argument.new("id", GraphQL::ScalarType.id().non_null()),
-          GraphQL::Argument.new("name", GraphQL::ScalarType.string().non_null())
-        ])
-      mutation.field("deleteGame", GraphQL::ScalarType.boolean().non_null(),
-        PheintMutationResolvers.delete_game, [
-          GraphQL::Argument.new("id", GraphQL::ScalarType.id().non_null())
-        ])
-      mutation.field("updateGame", game_type.non_null(), PheintMutationResolvers.update_game, [
-        GraphQL::Argument.new("id", GraphQL::ScalarType.id().non_null()),
-        GraphQL::Argument.new("title", GraphQL::ScalarType.string().non_null()),
-        GraphQL::Argument.new("description", GraphQL::ScalarType.string().non_null())
-      ])
-      mutation.field("createLeaderboard", leaderboard_type.non_null(),
-        PheintMutationResolvers.create_leaderboard, [
-          GraphQL::Argument.new("gameId", GraphQL::ScalarType.id().non_null()),
-          GraphQL::Argument.new("name", GraphQL::ScalarType.string().non_null())
-        ])
-      mutation.field("createGame", game_type.non_null(), PheintMutationResolvers.create_game, [
-        GraphQL::Argument.new("title", GraphQL::ScalarType.string().non_null()),
-        GraphQL::Argument.new("description", GraphQL::ScalarType.string().non_null()),
-        GraphQL::Argument.new("leaderboardName", GraphQL::ScalarType.string().non_null())
-      ])
-      mutation.field("submitScore", score_type.non_null(), PheintMutationResolvers.submit_score, [
-        GraphQL::Argument.new("leaderboardId", GraphQL::ScalarType.id().non_null()),
-        GraphQL::Argument.new("value", GraphQL::ScalarType.int().non_null())
-      ])
-      mutation.field("signUp", auth_payload_type.non_null(), PheintMutationResolvers.sign_up, [
-        GraphQL::Argument.new("email", GraphQL::ScalarType.string().non_null()),
-        GraphQL::Argument.new("password", GraphQL::ScalarType.string().non_null()),
-        GraphQL::Argument.new("handle", GraphQL::ScalarType.string().non_null())
-      ])
-      mutation.field("signIn", auth_payload_type.non_null(), PheintMutationResolvers.sign_in, [
-        GraphQL::Argument.new("email", GraphQL::ScalarType.string().non_null()),
-        GraphQL::Argument.new("password", GraphQL::ScalarType.string().non_null())
-      ])
-      mutation.field("signOut", GraphQL::ScalarType.boolean().non_null(), PheintMutationResolvers.sign_out)
+      mutation = PheintSchema.build_mutation(
+        player_type, score_type, leaderboard_type, game_type, auth_payload_type)
 
       @@schema = GraphQL::Schema.new().query(query).mutation(mutation)
     end

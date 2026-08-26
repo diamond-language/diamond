@@ -1,13 +1,17 @@
 class Leaderboard < ActiveRecord::Model
-  attr_accessor game_id: Int, name: String
+  attr_accessor game_id: Int, name: String, higher_is_better: Bool
 
   def initialize(attributes: Hash = {})
     super(attributes)
     @game_id = attributes["game_id"]
     @name = attributes["name"]
+    @higher_is_better = attributes["higher_is_better"]
   end
 
-  def to_attributes() = {"game_id": @game_id, "name": @name}
+  def to_attributes() = {
+    "game_id": @game_id, "name": @name,
+    "higher_is_better": @higher_is_better
+  }
   def repository() = @@repository
   def self.repository() = @@repository
   def self.configure(repository: ActiveRecord::Repository)
@@ -17,4 +21,7 @@ class Leaderboard < ActiveRecord::Model
   def scores(db) = self.has_many(Score.repository(), "leaderboard_id").all(db, self.id())
 end
 
-def build_leaderboard(row) = Leaderboard.new(row)
+def build_leaderboard(row)
+  row["higher_is_better"] = row["higher_is_better"] != 0
+  Leaderboard.new(row)
+end
