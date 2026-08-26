@@ -100,6 +100,33 @@ mutation SubmitScore {
   }
 }
 
+mutation CreateGame {
+  createGame(
+    title: "Orbit Forge"
+    description: "Build stations in a shifting orbit."
+    leaderboardName: "Most stations"
+  ) {
+    id
+    title
+    owner { player { handle } }
+    leaderboards { id name }
+  }
+}
+
+mutation CreateLeaderboard {
+  createLeaderboard(gameId: 1, name: "Fastest completion") { id name }
+}
+
+mutation UpdateGame {
+  updateGame(
+    id: 1
+    title: "Orbit Foundry"
+    description: "Build and defend orbital stations."
+  ) { id title description }
+}
+
+mutation DeleteGame { deleteGame(id: 1) }
+
 query Games {
   games {
     id
@@ -113,10 +140,28 @@ query Games {
     }
   }
 }
+
+query GameDetail {
+  game(id: 1) {
+    id
+    title
+    description
+    leaderboards { id name scores { value player { handle } } }
+  }
+}
+
+query MyGames {
+  myGames { id title leaderboards { id name } }
+}
 ```
 
-Send the returned opaque token as `Authorization: Bearer <token>` for `me` and
-`signOut`, and `submitScore`. Score submission creates a player's first score
+Send the returned opaque token as `Authorization: Bearer <token>` for `me`,
+`signOut`, `createGame`, `createLeaderboard`, and `submitScore`. Game creation
+assigns the signed-in account as owner and creates its initial leaderboard in
+the same transaction; validation failure rolls both back. Only that owner can
+update or delete the game, or add further leaderboards. Deleting a game also
+removes its leaderboards and scores through database foreign-key cascades.
+Score submission creates a player's first score
 on a leaderboard and updates that same row when the new value is higher. An
 equal value is an idempotent success; a value below the player's current best
 is rejected without changing the stored score. Sessions expire after 30 days
@@ -127,9 +172,10 @@ validation rolls the entire signup
 back. Passwords must be 8–72 characters; only bcrypt digests are persisted,
 and neither password digests nor session records are exposed by the schema.
 
-The public `games` query is planned through GraphSQL. Its lookahead selects
-only requested columns and recursively batch-loads requested owner,
-leaderboard, score, and player associations.
+The public `game(id:)` and `games` queries and authenticated `myGames` query are
+planned through GraphSQL. Their lookaheads select only requested columns and
+recursively batch-load requested owner, leaderboard, score, and player
+associations. An unknown game ID returns `null`.
 
 Run the direct-dispatch smoke test with:
 

@@ -69,6 +69,28 @@ module PheintQueryResolvers
   def api_name(object, args, context) = "pheint.dia"
   def environment(object, args, context) = PheintEnvironment.name()
   def me(object, args, context) = context["current_account"]
+  def game(object, args, context)
+    game_id = args["id"]
+    if game_id is String then game_id = game_id.to_i() end
+    planned = GraphSQL.resolve(Game.where({"id": game_id}), context["db"],
+      context["lookahead"], PheintGraphSQLMappings.games())
+    if planned is ActiveRecord::Relation
+      planned.first(context["db"])
+    elsif planned.length() == 0
+      nil
+    else
+      planned[0]
+    end
+  end
+  def my_games(object, args, context)
+    account = context["current_account"]
+    if account == nil
+      raise GraphQL::ExecutionError.new("authentication required")
+    end
+    planned = GraphSQL.resolve(Game.where({"owner_id": account.id()}),
+      context["db"], context["lookahead"], PheintGraphSQLMappings.games())
+    if planned is ActiveRecord::Relation then planned.to_a(context["db"]) else planned end
+  end
   def games(object, args, context)
     planned = GraphSQL.resolve(Game.all(), context["db"], context["lookahead"],
       PheintGraphSQLMappings.games())
@@ -78,6 +100,117 @@ end
 
 module PheintMutationResolvers
   module_function
+
+  def delete_game(object, args, context)
+    account = context["current_account"]
+    if account == nil
+      raise GraphQL::ExecutionError.new("authentication required")
+    end
+    db = context["db"]
+    game_id = args["id"]
+    if game_id is String then game_id = game_id.to_i() end
+    game = Game.where({"id": game_id}).first(db)
+    if game == nil
+      raise GraphQL::ExecutionError.new("game not found")
+    end
+    if game.owner_id() != account.id()
+      raise GraphQL::ExecutionError.new("only the game owner can delete it")
+    end
+    deleted_game_id = game.id()
+    game.destroy(db)
+    pheint_audit_info(context, "game.deleted", {
+      "account_id": account.id(), "game_id": deleted_game_id
+    })
+    true
+  end
+
+  def update_game(object, args, context)
+    account = context["current_account"]
+    if account == nil
+      raise GraphQL::ExecutionError.new("authentication required")
+    end
+    db = context["db"]
+    game_id = args["id"]
+    if game_id is String then game_id = game_id.to_i() end
+    game = Game.where({"id": game_id}).first(db)
+    if game == nil
+      raise GraphQL::ExecutionError.new("game not found")
+    end
+    if game.owner_id() != account.id()
+      raise GraphQL::ExecutionError.new("only the game owner can update it")
+    end
+    game.title = args["title"]
+    game.description = args["description"]
+    begin
+      game.save(db)
+    rescue error: ActiveRecord::ValidationError
+      raise GraphQL::ExecutionError.new(error.errors().join(", "))
+    end
+    pheint_audit_info(context, "game.updated", {
+      "account_id": account.id(), "game_id": game.id()
+    })
+    game
+  end
+
+  def create_leaderboard(object, args, context)
+    account = context["current_account"]
+    if account == nil
+      raise GraphQL::ExecutionError.new("authentication required")
+    end
+    db = context["db"]
+    game_id = args["gameId"]
+    if game_id is String then game_id = game_id.to_i() end
+    game = Game.where({"id": game_id}).first(db)
+    if game == nil
+      raise GraphQL::ExecutionError.new("game not found")
+    end
+    if game.owner_id() != account.id()
+      raise GraphQL::ExecutionError.new("only the game owner can create leaderboards")
+    end
+    leaderboard = Leaderboard.new({"game_id": game.id(), "name": args["name"]})
+    begin
+      leaderboard.save(db)
+    rescue error: ActiveRecord::ValidationError
+      raise GraphQL::ExecutionError.new(error.errors().join(", "))
+    end
+    pheint_audit_info(context, "leaderboard.created", {
+      "account_id": account.id(), "game_id": game.id(),
+      "leaderboard_id": leaderboard.id()
+    })
+    leaderboard
+  end
+
+  def create_game(object, args, context)
+    account = context["current_account"]
+    if account == nil
+      raise GraphQL::ExecutionError.new("authentication required")
+    end
+
+    db = context["db"]
+    game = Game.new({
+      "owner_id": account.id(), "title": args["title"],
+      "description": args["description"]
+    })
+    leaderboard = nil
+    begin
+      ActiveRecord::Transaction.run(db) do
+        game.save(db)
+        leaderboard = Leaderboard.new({
+          "game_id": game.id(), "name": args["leaderboardName"]
+        })
+        leaderboard.save(db)
+      end
+    rescue error: ActiveRecord::ValidationError
+      raise GraphQL::ExecutionError.new(error.errors().join(", "))
+    end
+    game.set_preloaded_association("owner", account)
+    game.set_preloaded_association("leaderboards", [leaderboard])
+    pheint_audit_info(context, "game.created", {
+      "account_id": account.id(), "game_id": game.id(),
+      "leaderboard_id": leaderboard.id()
+    })
+    game
+  end
 
   def submit_score(object, args, context)
     account = context["current_account"]
@@ -218,10 +351,34 @@ class PheintSchema
       query.field("apiName", GraphQL::ScalarType.string().non_null(), PheintQueryResolvers.api_name)
       query.field("environment", GraphQL::ScalarType.string().non_null(), PheintQueryResolvers.environment)
       query.field("me", account_type, PheintQueryResolvers.me)
+      query.field("game", game_type, PheintQueryResolvers.game, [
+        GraphQL::Argument.new("id", GraphQL::ScalarType.id().non_null())
+      ])
+      query.field("myGames", GraphQL::ListType.of(game_type.non_null()).non_null(),
+        PheintQueryResolvers.my_games)
       query.field("games", GraphQL::ListType.of(game_type.non_null()).non_null(),
         PheintQueryResolvers.games)
 
       mutation = GraphQL::ObjectType.new("Mutation")
+      mutation.field("deleteGame", GraphQL::ScalarType.boolean().non_null(),
+        PheintMutationResolvers.delete_game, [
+          GraphQL::Argument.new("id", GraphQL::ScalarType.id().non_null())
+        ])
+      mutation.field("updateGame", game_type.non_null(), PheintMutationResolvers.update_game, [
+        GraphQL::Argument.new("id", GraphQL::ScalarType.id().non_null()),
+        GraphQL::Argument.new("title", GraphQL::ScalarType.string().non_null()),
+        GraphQL::Argument.new("description", GraphQL::ScalarType.string().non_null())
+      ])
+      mutation.field("createLeaderboard", leaderboard_type.non_null(),
+        PheintMutationResolvers.create_leaderboard, [
+          GraphQL::Argument.new("gameId", GraphQL::ScalarType.id().non_null()),
+          GraphQL::Argument.new("name", GraphQL::ScalarType.string().non_null())
+        ])
+      mutation.field("createGame", game_type.non_null(), PheintMutationResolvers.create_game, [
+        GraphQL::Argument.new("title", GraphQL::ScalarType.string().non_null()),
+        GraphQL::Argument.new("description", GraphQL::ScalarType.string().non_null()),
+        GraphQL::Argument.new("leaderboardName", GraphQL::ScalarType.string().non_null())
+      ])
       mutation.field("submitScore", score_type.non_null(), PheintMutationResolvers.submit_score, [
         GraphQL::Argument.new("leaderboardId", GraphQL::ScalarType.id().non_null()),
         GraphQL::Argument.new("value", GraphQL::ScalarType.int().non_null())

@@ -229,6 +229,210 @@ end
 
 test_seeded_game_domain(context)
 
+def test_game_query(context)
+  db = PheintDatabase.get(context)
+  asteroid = Game.where({"title": "Asteroid Run"}).first(db)
+  response = JSON.parse(app(smoke_request("POST", "/graphql", JSON.stringify({
+    "query": [
+      "query { game(id: #{asteroid.id()}) {",
+      "  id title owner { player { handle } }",
+      "  leaderboards { name scores { value player { handle } } }",
+      "} }"
+    ].join("\n")
+  })), context)[2])
+  game = response["data"]["game"]
+  if response["errors"] != nil || game["title"] != "Asteroid Run" ||
+     game["owner"]["player"]["handle"] != "demo" ||
+     game["leaderboards"][0]["scores"][0]["value"] != 128400 ||
+     game["leaderboards"][0]["scores"][0]["player"]["handle"] != "demo"
+    raise "single game query did not resolve its requested graph"
+  end
+
+  missing = JSON.parse(app(smoke_request("POST", "/graphql", JSON.stringify({
+    "query": "{ game(id: 999999) { id } }"
+  })), context)[2])
+  if missing["errors"] != nil || missing["data"]["game"] != nil
+    raise "missing game did not resolve to null"
+  end
+end
+
+test_game_query(context)
+
+def create_game_request(token, title, description, leaderboard_name)
+  authenticated_graphql(token, [
+    "mutation { createGame(",
+    "  title: \"#{title}\", description: \"#{description}\",",
+    "  leaderboardName: \"#{leaderboard_name}\"",
+    ") { id title description owner { email } leaderboards { id name } } }"
+  ].join("\n"))
+end
+
+def test_game_creation(context, token)
+  db = PheintDatabase.get(context)
+  before_games = Game.all().count(db)
+  before_boards = Leaderboard.all().count(db)
+
+  anonymous = JSON.parse(app(smoke_request("POST", "/graphql", JSON.stringify({
+    "query": "mutation { createGame(title: \"Nope\", description: \"Nope\", leaderboardName: \"Nope\") { id } }"
+  })), context)[2])
+  if anonymous["errors"] == nil ||
+     !anonymous["errors"][0]["message"].include?("authentication required")
+    raise "anonymous game creation was accepted"
+  end
+
+  invalid = JSON.parse(app(create_game_request(
+    token, "Rollback Me", "A valid description", ""), context)[2])
+  if invalid["errors"] == nil || Game.all().count(db) != before_games ||
+     Leaderboard.all().count(db) != before_boards
+    raise "invalid initial leaderboard did not roll back game creation"
+  end
+
+  created = JSON.parse(app(create_game_request(
+    token, "Orbit Forge", "Build stations in a shifting orbit.", "Most stations"), context)[2])
+  game = created["data"]["createGame"]
+  if created["errors"] != nil || game["title"] != "Orbit Forge" ||
+     game["owner"]["email"] != "alice@example.com" ||
+     game["leaderboards"].length() != 1 ||
+     game["leaderboards"][0]["name"] != "Most stations" ||
+     Game.all().count(db) != before_games + 1 ||
+     Leaderboard.all().count(db) != before_boards + 1
+    raise "authenticated game creation failed"
+  end
+end
+
+test_game_creation(context, signin["data"]["signIn"]["token"])
+
+def create_leaderboard_request(token, game_id, name)
+  authenticated_graphql(token,
+    "mutation { createLeaderboard(gameId: #{game_id}, name: \"#{name}\") { id name } }")
+end
+
+def test_leaderboard_creation(context, token)
+  db = PheintDatabase.get(context)
+  owned = Game.where({"title": "Orbit Forge"}).first(db)
+  foreign = Game.where({"title": "Asteroid Run"}).first(db)
+  before_boards = Leaderboard.all().count(db)
+
+  forbidden = JSON.parse(app(create_leaderboard_request(
+    token, foreign.id(), "Cheaters"), context)[2])
+  if forbidden["errors"] == nil ||
+     !forbidden["errors"][0]["message"].include?("only the game owner") ||
+     Leaderboard.all().count(db) != before_boards
+    raise "non-owner created a leaderboard"
+  end
+
+  missing = JSON.parse(app(create_leaderboard_request(
+    token, 999999, "Missing"), context)[2])
+  if missing["errors"] == nil ||
+     !missing["errors"][0]["message"].include?("game not found")
+    raise "missing game accepted a leaderboard"
+  end
+
+  invalid = JSON.parse(app(create_leaderboard_request(
+    token, owned.id(), ""), context)[2])
+  if invalid["errors"] == nil || Leaderboard.all().count(db) != before_boards
+    raise "invalid leaderboard was persisted"
+  end
+
+  created = JSON.parse(app(create_leaderboard_request(
+    token, owned.id(), "Fastest completion"), context)[2])
+  if created["errors"] != nil ||
+     created["data"]["createLeaderboard"]["name"] != "Fastest completion" ||
+     Leaderboard.all().count(db) != before_boards + 1
+    raise "game owner could not create a leaderboard"
+  end
+end
+
+test_leaderboard_creation(context, signin["data"]["signIn"]["token"])
+
+def test_my_games_query(context, token)
+  anonymous = JSON.parse(app(smoke_request("POST", "/graphql", JSON.stringify({
+    "query": "{ myGames { id } }"
+  })), context)[2])
+  if anonymous["errors"] == nil ||
+     !anonymous["errors"][0]["message"].include?("authentication required")
+    raise "anonymous myGames query was accepted"
+  end
+
+  response = JSON.parse(app(authenticated_graphql(token,
+    "{ myGames { title leaderboards { name } } }"), context)[2])
+  games = response["data"]["myGames"]
+  if response["errors"] != nil || games.length() != 1 ||
+     games[0]["title"] != "Orbit Forge" || games[0]["leaderboards"].length() != 2
+    raise "myGames did not return only the authenticated owner's games"
+  end
+end
+
+test_my_games_query(context, signin["data"]["signIn"]["token"])
+
+def update_game_request(token, game_id, title, description)
+  authenticated_graphql(token, [
+    "mutation { updateGame(id: #{game_id}, title: \"#{title}\",",
+    "  description: \"#{description}\") { id title description } }"
+  ].join("\n"))
+end
+
+def test_game_update(context, token)
+  db = PheintDatabase.get(context)
+  owned = Game.where({"title": "Orbit Forge"}).first(db)
+  foreign = Game.where({"title": "Asteroid Run"}).first(db)
+
+  forbidden = JSON.parse(app(update_game_request(
+    token, foreign.id(), "Stolen", "Nope"), context)[2])
+  if forbidden["errors"] == nil ||
+     !forbidden["errors"][0]["message"].include?("only the game owner") ||
+     Game.find(db, foreign.id()).title() != "Asteroid Run"
+    raise "non-owner updated a game"
+  end
+
+  invalid = JSON.parse(app(update_game_request(
+    token, owned.id(), "", "Still valid"), context)[2])
+  if invalid["errors"] == nil || Game.find(db, owned.id()).title() != "Orbit Forge"
+    raise "invalid game update was persisted"
+  end
+
+  updated = JSON.parse(app(update_game_request(
+    token, owned.id(), "Orbit Foundry", "Build and defend orbital stations."), context)[2])
+  game = updated["data"]["updateGame"]
+  if updated["errors"] != nil || game["title"] != "Orbit Foundry" ||
+     game["description"] != "Build and defend orbital stations." ||
+     Game.find(db, owned.id()).title() != "Orbit Foundry"
+    raise "game owner could not update a game"
+  end
+end
+
+test_game_update(context, signin["data"]["signIn"]["token"])
+
+def delete_game_request(token, game_id)
+  authenticated_graphql(token, "mutation { deleteGame(id: #{game_id}) }")
+end
+
+def test_game_deletion(context, token)
+  db = PheintDatabase.get(context)
+  owned = Game.where({"title": "Orbit Foundry"}).first(db)
+  foreign = Game.where({"title": "Asteroid Run"}).first(db)
+  owned_board_count = owned.leaderboards(db).length()
+  before_games = Game.all().count(db)
+  before_boards = Leaderboard.all().count(db)
+
+  forbidden = JSON.parse(app(delete_game_request(token, foreign.id()), context)[2])
+  if forbidden["errors"] == nil ||
+     !forbidden["errors"][0]["message"].include?("only the game owner") ||
+     Game.find(db, foreign.id()) == nil
+    raise "non-owner deleted a game"
+  end
+
+  deleted = JSON.parse(app(delete_game_request(token, owned.id()), context)[2])
+  if deleted["errors"] != nil || deleted["data"]["deleteGame"] != true ||
+     Game.where({"id": owned.id()}).first(db) != nil ||
+     Game.all().count(db) != before_games - 1 ||
+     Leaderboard.all().count(db) != before_boards - owned_board_count
+    raise "game deletion did not cascade through leaderboards"
+  end
+end
+
+test_game_deletion(context, signin["data"]["signIn"]["token"])
+
 missing = app(smoke_request("GET", "/missing"), context)
 if missing[0] != 404
   raise "missing route smoke test failed"
