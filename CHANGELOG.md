@@ -28,6 +28,8 @@
 
 - Added forward and mutually recursive top-level function resolution, including
   generic/keyword calls, callable references, and `require`-expanded files.
+- Synced the self-hosted lexer and its differential token dumper with the
+  native `closure` and `delegate` keywords.
 - Corrected the runtime type-ID partition so the advertised class capacity no
   longer overlaps generic-variable and interface IDs, and raised the class
   capacity from 128 to 180. Updated the self-hosted compiler's mirrored

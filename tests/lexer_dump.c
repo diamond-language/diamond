@@ -80,6 +80,7 @@ static const char *kind_name(DiamondTokenKind kind) {
         case DIAMOND_TOKEN_FALSE: return "false";
         case DIAMOND_TOKEN_NIL: return "nil";
         case DIAMOND_TOKEN_DEF: return "def";
+        case DIAMOND_TOKEN_CLOSURE: return "closure";
         case DIAMOND_TOKEN_CLASS: return "class";
         case DIAMOND_TOKEN_INTERFACE: return "interface";
         case DIAMOND_TOKEN_MODULE: return "module";
@@ -93,6 +94,7 @@ static const char *kind_name(DiamondTokenKind kind) {
         case DIAMOND_TOKEN_ATTR: return "attr";
         case DIAMOND_TOKEN_MODULE_FUNCTION: return "module_function";
         case DIAMOND_TOKEN_ALIAS_METHOD: return "alias_method";
+        case DIAMOND_TOKEN_DELEGATE: return "delegate";
         case DIAMOND_TOKEN_SELF: return "self";
         case DIAMOND_TOKEN_SUPER: return "super";
         case DIAMOND_TOKEN_RETURN: return "return";
