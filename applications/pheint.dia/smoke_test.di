@@ -110,6 +110,71 @@ if Account.all().count(PheintDatabase.get(context)) != 2 ||
   raise "failed signup was not rolled back atomically"
 end
 
+def test_score_submission(context, token)
+db = PheintDatabase.get(context)
+cipher = Game.where({"title": "Cipher Sprint"}).first(db)
+board = cipher.leaderboards(db)[0]
+
+anonymous = JSON.parse(app(smoke_request("POST", "/graphql", JSON.stringify({
+  "query": "mutation { submitScore(leaderboardId: #{board.id()}, value: 90) { id } }"
+})), context)[2])
+if anonymous["errors"] == nil ||
+   !anonymous["errors"][0]["message"].include?("authentication required")
+  raise "anonymous score submission was accepted"
+end
+
+def submit_score_request(context, token, leaderboard_id, value)
+  authenticated_graphql(token, [
+    "mutation { submitScore(leaderboardId: #{leaderboard_id}, value: #{value}) {",
+    "  id value player { handle }",
+    "} }"
+  ].join("\n"))
+end
+
+created = JSON.parse(app(submit_score_request(
+  context, token, board.id(), 90), context)[2])
+if created["errors"] != nil || created["data"]["submitScore"]["value"] != 90 ||
+   created["data"]["submitScore"]["player"]["handle"] != "alice"
+  raise "first score submission failed"
+end
+score_id = created["data"]["submitScore"]["id"]
+
+lower = JSON.parse(app(submit_score_request(
+  context, token, board.id(), 89), context)[2])
+if lower["errors"] == nil ||
+   !lower["errors"][0]["message"].include?("current best of 90")
+  raise "lower score submission was accepted"
+end
+alice = Account.where({"email": "alice@example.com"}).first(db)
+stored = Score.where({
+  "leaderboard_id": board.id(), "player_id": alice.player(db).id()
+}).first(db)
+if stored.value() != 90 then raise "lower score changed stored best" end
+
+equal = JSON.parse(app(submit_score_request(
+  context, token, board.id(), 90), context)[2])
+if equal["errors"] != nil || equal["data"]["submitScore"]["id"] != score_id
+  raise "equal score submission was not idempotent"
+end
+
+higher = JSON.parse(app(submit_score_request(
+  context, token, board.id(), 125), context)[2])
+if higher["errors"] != nil || higher["data"]["submitScore"]["id"] != score_id ||
+   higher["data"]["submitScore"]["value"] != 125 ||
+   board.scores(db).length() != 1
+  raise "higher score did not update the existing score"
+end
+
+missing = JSON.parse(app(submit_score_request(
+  context, token, 999999, 125), context)[2])
+if missing["errors"] == nil ||
+   !missing["errors"][0]["message"].include?("leaderboard not found")
+  raise "missing leaderboard accepted a score"
+end
+end
+
+test_score_submission(context, signin["data"]["signIn"]["token"])
+
 def test_seeded_game_domain(context)
 demo = Account.where({"email": "demo@pheint.dia"}).first(PheintDatabase.get(context))
 if demo == nil || demo.player(PheintDatabase.get(context)).handle() != "demo"

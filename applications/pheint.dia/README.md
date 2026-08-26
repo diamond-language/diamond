@@ -92,6 +92,14 @@ query CurrentAccount {
 
 mutation SignOut { signOut }
 
+mutation SubmitScore {
+  submitScore(leaderboardId: 1, value: 140000) {
+    id
+    value
+    player { handle }
+  }
+}
+
 query Games {
   games {
     id
@@ -108,10 +116,14 @@ query Games {
 ```
 
 Send the returned opaque token as `Authorization: Bearer <token>` for `me` and
-`signOut`. Sessions expire after 30 days and are deleted when an expired token
-is presented. Signup lowercases email and handle, accepts the handle with or
-without a leading `@`, and creates the account, player, and initial session in
-one transaction. Failed player/account validation rolls the entire signup
+`signOut`, and `submitScore`. Score submission creates a player's first score
+on a leaderboard and updates that same row when the new value is higher. An
+equal value is an idempotent success; a value below the player's current best
+is rejected without changing the stored score. Sessions expire after 30 days
+and are deleted when an expired token is presented. Signup lowercases email
+and handle, accepts the handle with or without a leading `@`, and creates the
+account, player, and initial session in one transaction. Failed player/account
+validation rolls the entire signup
 back. Passwords must be 8–72 characters; only bcrypt digests are persisted,
 and neither password digests nor session records are exposed by the schema.
 

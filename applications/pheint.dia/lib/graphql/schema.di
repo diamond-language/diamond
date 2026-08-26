@@ -79,6 +79,46 @@ end
 module PheintMutationResolvers
   module_function
 
+  def submit_score(object, args, context)
+    account = context["current_account"]
+    if account == nil
+      raise GraphQL::ExecutionError.new("authentication required")
+    end
+
+    db = context["db"]
+    leaderboard_id = args["leaderboardId"]
+    if leaderboard_id is String then leaderboard_id = leaderboard_id.to_i() end
+    leaderboard = Leaderboard.where({"id": leaderboard_id}).first(db)
+    if leaderboard == nil
+      raise GraphQL::ExecutionError.new("leaderboard not found")
+    end
+
+    player = account.player(db)
+    value = args["value"]
+    # Keep the comparison and write in one SQLite statement. A separate
+    # read followed by #save could let two simultaneous requests overwrite
+    # a higher value with a lower one between those operations.
+    db.execute([
+      "INSERT INTO scores (leaderboard_id, player_id, value) VALUES (?, ?, ?)",
+      "ON CONFLICT(leaderboard_id, player_id) DO UPDATE SET value = excluded.value",
+      "WHERE excluded.value >= scores.value"
+    ].join(" "), [leaderboard.id(), player.id(), value])
+    submitted_score = Score.where({
+      "leaderboard_id": leaderboard.id(), "player_id": player.id()
+    }).first(db)
+    if value < submitted_score.value()
+      raise GraphQL::ExecutionError.new(
+        "score must be at least your current best of #{submitted_score.value()}")
+    end
+    submitted_score.set_preloaded_association("player", player)
+    pheint_audit_info(context, "score.submitted", {
+      "account_id": account.id(), "player_id": player.id(),
+      "leaderboard_id": leaderboard.id(), "score_id": submitted_score.id(),
+      "value": submitted_score.value()
+    })
+    submitted_score
+  end
+
   def sign_up(object, args, context)
     email = pheint_normalize_email(args["email"])
     handle = pheint_normalize_handle(args["handle"])
@@ -182,6 +222,10 @@ class PheintSchema
         PheintQueryResolvers.games)
 
       mutation = GraphQL::ObjectType.new("Mutation")
+      mutation.field("submitScore", score_type.non_null(), PheintMutationResolvers.submit_score, [
+        GraphQL::Argument.new("leaderboardId", GraphQL::ScalarType.id().non_null()),
+        GraphQL::Argument.new("value", GraphQL::ScalarType.int().non_null())
+      ])
       mutation.field("signUp", auth_payload_type.non_null(), PheintMutationResolvers.sign_up, [
         GraphQL::Argument.new("email", GraphQL::ScalarType.string().non_null()),
         GraphQL::Argument.new("password", GraphQL::ScalarType.string().non_null()),
