@@ -456,6 +456,66 @@ end
 
 test_game_update(context, signin["data"]["signIn"]["token"])
 
+def update_leaderboard_request(token, leaderboard_id, name)
+  authenticated_graphql(token,
+    "mutation { updateLeaderboard(id: #{leaderboard_id}, name: \"#{name}\") { id name } }")
+end
+
+def delete_leaderboard_request(token, leaderboard_id)
+  authenticated_graphql(token,
+    "mutation { deleteLeaderboard(id: #{leaderboard_id}) }")
+end
+
+def test_leaderboard_management(context, token)
+  db = PheintDatabase.get(context)
+  owned_game = Game.where({"title": "Orbit Foundry"}).first(db)
+  owned_board = Leaderboard.where({"name": "Fastest completion"}).first(db)
+  foreign_board = Leaderboard.where({"name": "All-time high score"}).first(db)
+
+  forbidden_update = JSON.parse(app(update_leaderboard_request(
+    token, foreign_board.id(), "Stolen"), context)[2])
+  if forbidden_update["errors"] == nil ||
+     !forbidden_update["errors"][0]["message"].include?("only the game owner") ||
+     Leaderboard.find(db, foreign_board.id()).name() != "All-time high score"
+    raise "non-owner updated a leaderboard"
+  end
+
+  invalid = JSON.parse(app(update_leaderboard_request(
+    token, owned_board.id(), ""), context)[2])
+  if invalid["errors"] == nil ||
+     Leaderboard.find(db, owned_board.id()).name() != "Fastest completion"
+    raise "invalid leaderboard update was persisted"
+  end
+
+  updated = JSON.parse(app(update_leaderboard_request(
+    token, owned_board.id(), "Speed run"), context)[2])
+  if updated["errors"] != nil ||
+     updated["data"]["updateLeaderboard"]["name"] != "Speed run"
+    raise "game owner could not update a leaderboard"
+  end
+
+  forbidden_delete = JSON.parse(app(delete_leaderboard_request(
+    token, foreign_board.id()), context)[2])
+  if forbidden_delete["errors"] == nil || Leaderboard.find(db, foreign_board.id()) == nil
+    raise "non-owner deleted a leaderboard"
+  end
+
+  Score.new({
+    "leaderboard_id": owned_board.id(),
+    "player_id": Account.where({"email": "alice@example.com"}).first(db).player(db).id(),
+    "value": 7
+  }).save(db)
+  deleted = JSON.parse(app(delete_leaderboard_request(token, owned_board.id()), context)[2])
+  if deleted["errors"] != nil || deleted["data"]["deleteLeaderboard"] != true ||
+     Leaderboard.where({"id": owned_board.id()}).first(db) != nil ||
+     Score.where({"leaderboard_id": owned_board.id()}).count(db) != 0 ||
+     owned_game.leaderboards(db).length() != 1
+    raise "leaderboard deletion did not cascade through scores"
+  end
+end
+
+test_leaderboard_management(context, signin["data"]["signIn"]["token"])
+
 def delete_game_request(token, game_id)
   authenticated_graphql(token, "mutation { deleteGame(id: #{game_id}) }")
 end

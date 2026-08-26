@@ -137,6 +137,60 @@ end
 module PheintMutationResolvers
   module_function
 
+  def delete_leaderboard(object, args, context)
+    account = context["current_account"]
+    if account == nil
+      raise GraphQL::ExecutionError.new("authentication required")
+    end
+    db = context["db"]
+    leaderboard_id = args["id"]
+    if leaderboard_id is String then leaderboard_id = leaderboard_id.to_i() end
+    leaderboard = Leaderboard.where({"id": leaderboard_id}).first(db)
+    if leaderboard == nil
+      raise GraphQL::ExecutionError.new("leaderboard not found")
+    end
+    game = leaderboard.game(db)
+    if game.owner_id() != account.id()
+      raise GraphQL::ExecutionError.new("only the game owner can delete its leaderboards")
+    end
+    deleted_leaderboard_id = leaderboard.id()
+    leaderboard.destroy(db)
+    pheint_audit_info(context, "leaderboard.deleted", {
+      "account_id": account.id(), "game_id": game.id(),
+      "leaderboard_id": deleted_leaderboard_id
+    })
+    true
+  end
+
+  def update_leaderboard(object, args, context)
+    account = context["current_account"]
+    if account == nil
+      raise GraphQL::ExecutionError.new("authentication required")
+    end
+    db = context["db"]
+    leaderboard_id = args["id"]
+    if leaderboard_id is String then leaderboard_id = leaderboard_id.to_i() end
+    leaderboard = Leaderboard.where({"id": leaderboard_id}).first(db)
+    if leaderboard == nil
+      raise GraphQL::ExecutionError.new("leaderboard not found")
+    end
+    game = leaderboard.game(db)
+    if game.owner_id() != account.id()
+      raise GraphQL::ExecutionError.new("only the game owner can update its leaderboards")
+    end
+    leaderboard.name = args["name"]
+    begin
+      leaderboard.save(db)
+    rescue error: ActiveRecord::ValidationError
+      raise GraphQL::ExecutionError.new(error.errors().join(", "))
+    end
+    pheint_audit_info(context, "leaderboard.updated", {
+      "account_id": account.id(), "game_id": game.id(),
+      "leaderboard_id": leaderboard.id()
+    })
+    leaderboard
+  end
+
   def delete_game(object, args, context)
     account = context["current_account"]
     if account == nil
@@ -409,6 +463,15 @@ class PheintSchema
         PheintQueryResolvers.games)
 
       mutation = GraphQL::ObjectType.new("Mutation")
+      mutation.field("deleteLeaderboard", GraphQL::ScalarType.boolean().non_null(),
+        PheintMutationResolvers.delete_leaderboard, [
+          GraphQL::Argument.new("id", GraphQL::ScalarType.id().non_null())
+        ])
+      mutation.field("updateLeaderboard", leaderboard_type.non_null(),
+        PheintMutationResolvers.update_leaderboard, [
+          GraphQL::Argument.new("id", GraphQL::ScalarType.id().non_null()),
+          GraphQL::Argument.new("name", GraphQL::ScalarType.string().non_null())
+        ])
       mutation.field("deleteGame", GraphQL::ScalarType.boolean().non_null(),
         PheintMutationResolvers.delete_game, [
           GraphQL::Argument.new("id", GraphQL::ScalarType.id().non_null())

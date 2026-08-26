@@ -117,6 +117,12 @@ mutation CreateLeaderboard {
   createLeaderboard(gameId: 1, name: "Fastest completion") { id name }
 }
 
+mutation UpdateLeaderboard {
+  updateLeaderboard(id: 1, name: "Speed run") { id name }
+}
+
+mutation DeleteLeaderboard { deleteLeaderboard(id: 1) }
+
 mutation UpdateGame {
   updateGame(
     id: 1
@@ -178,6 +184,8 @@ assigns the signed-in account as owner and creates its initial leaderboard in
 the same transaction; validation failure rolls both back. Only that owner can
 update or delete the game, or add further leaderboards. Deleting a game also
 removes its leaderboards and scores through database foreign-key cascades.
+Owners can rename or delete individual leaderboards as well; deleting one also
+removes its scores.
 Score submission creates a player's first score
 on a leaderboard and updates that same row when the new value is higher. An
 equal value is an idempotent success; a value below the player's current best
