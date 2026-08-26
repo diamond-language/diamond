@@ -1,3 +1,19 @@
+def pheint_page_limit(args)
+  limit = args["limit"]
+  if limit < 1 || limit > 100
+    raise GraphQL::ExecutionError.new("limit must be between 1 and 100")
+  end
+  limit
+end
+
+def pheint_page_offset(args)
+  offset = args["offset"]
+  if offset < 0
+    raise GraphQL::ExecutionError.new("offset must be non-negative")
+  end
+  offset
+end
+
 module PheintPlayerResolvers
   module_function
   def id(player, args, context) = player.id()
@@ -8,9 +24,10 @@ module PheintPlayerResolvers
     else
       player.scores(context["db"])
     end
-    values.sort_by() do |score|
+    ordered = values.sort_by() do |score|
       -score.value()
     end
+    ordered.drop(pheint_page_offset(args)).take(pheint_page_limit(args))
   end
 end
 
@@ -51,9 +68,10 @@ module PheintLeaderboardResolvers
     else
       leaderboard.scores(context["db"])
     end
-    values.sort_by() do |score|
+    ordered = values.sort_by() do |score|
       -score.value()
     end
+    ordered.drop(pheint_page_offset(args)).take(pheint_page_limit(args))
   end
 end
 
@@ -123,12 +141,17 @@ module PheintQueryResolvers
     if account == nil
       raise GraphQL::ExecutionError.new("authentication required")
     end
-    planned = GraphSQL.resolve(Game.where({"owner_id": account.id()}),
+    relation = Game.where({"owner_id": account.id()})
+    relation = relation.order(Arel.table("games").column("id").asc())
+    relation = relation.skip(pheint_page_offset(args)).limit(pheint_page_limit(args))
+    planned = GraphSQL.resolve(relation,
       context["db"], context["lookahead"], PheintGraphSQLMappings.games())
     if planned is ActiveRecord::Relation then planned.to_a(context["db"]) else planned end
   end
   def games(object, args, context)
-    planned = GraphSQL.resolve(Game.all(), context["db"], context["lookahead"],
+    relation = Game.all().order(Arel.table("games").column("id").asc())
+    relation = relation.skip(pheint_page_offset(args)).limit(pheint_page_limit(args))
+    planned = GraphSQL.resolve(relation, context["db"], context["lookahead"],
       PheintGraphSQLMappings.games())
     if planned is ActiveRecord::Relation then planned.to_a(context["db"]) else planned end
   end
@@ -455,6 +478,10 @@ end
 class PheintSchema
   def self.get()
     if @@schema == nil
+      page_arguments = [
+        GraphQL::Argument.new("limit", GraphQL::ScalarType.int(), 20, true),
+        GraphQL::Argument.new("offset", GraphQL::ScalarType.int(), 0, true)
+      ]
       player_type = GraphQL::ObjectType.new("Player")
       player_type.field("id", GraphQL::ScalarType.id().non_null(), PheintPlayerResolvers.id)
       player_type.field("handle", GraphQL::ScalarType.string().non_null(), PheintPlayerResolvers.handle)
@@ -472,7 +499,8 @@ class PheintSchema
       leaderboard_type = GraphQL::ObjectType.new("Leaderboard")
       leaderboard_type.field("id", GraphQL::ScalarType.id().non_null(), PheintLeaderboardResolvers.id)
       leaderboard_type.field("name", GraphQL::ScalarType.string().non_null(), PheintLeaderboardResolvers.name)
-      leaderboard_type.field("scores", GraphQL::ListType.of(score_type.non_null()).non_null(), PheintLeaderboardResolvers.scores)
+      leaderboard_type.field("scores", GraphQL::ListType.of(score_type.non_null()).non_null(),
+        PheintLeaderboardResolvers.scores, page_arguments)
 
       game_type = GraphQL::ObjectType.new("Game")
       game_type.field("id", GraphQL::ScalarType.id().non_null(), PheintGameResolvers.id)
@@ -482,7 +510,7 @@ class PheintSchema
       game_type.field("leaderboards", GraphQL::ListType.of(leaderboard_type.non_null()).non_null(), PheintGameResolvers.leaderboards)
 
       player_type.field("scores", GraphQL::ListType.of(score_type.non_null()).non_null(),
-        PheintPlayerResolvers.scores)
+        PheintPlayerResolvers.scores, page_arguments)
       score_type.field("leaderboard", leaderboard_type.non_null(),
         PheintScoreResolvers.leaderboard)
       leaderboard_type.field("game", game_type.non_null(),
@@ -506,9 +534,9 @@ class PheintSchema
         GraphQL::Argument.new("id", GraphQL::ScalarType.id().non_null())
       ])
       query.field("myGames", GraphQL::ListType.of(game_type.non_null()).non_null(),
-        PheintQueryResolvers.my_games)
+        PheintQueryResolvers.my_games, page_arguments)
       query.field("games", GraphQL::ListType.of(game_type.non_null()).non_null(),
-        PheintQueryResolvers.games)
+        PheintQueryResolvers.games, page_arguments)
 
       mutation = GraphQL::ObjectType.new("Mutation")
       mutation.field("changePassword", GraphQL::ScalarType.boolean().non_null(),

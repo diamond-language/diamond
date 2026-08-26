@@ -142,7 +142,7 @@ mutation ChangePassword {
 }
 
 query Games {
-  games {
+  games(limit: 20, offset: 0) {
     id
     title
     description
@@ -165,14 +165,14 @@ query GameDetail {
 }
 
 query MyGames {
-  myGames { id title leaderboards { id name } }
+  myGames(limit: 20, offset: 0) { id title leaderboards { id name } }
 }
 
 query PlayerProfile {
   player(handle: "@demo") {
     id
     handle
-    scores { value leaderboard { name game { id title } } }
+    scores(limit: 20, offset: 0) { value leaderboard { name game { id title } } }
   }
 }
 
@@ -181,7 +181,7 @@ query LeaderboardRankings {
     id
     name
     game { id title }
-    scores { value player { id handle } }
+    scores(limit: 20, offset: 0) { value player { id handle } }
   }
 }
 ```
@@ -218,6 +218,11 @@ Public `player(handle:)` profiles include score history, and
 `leaderboard(id:)` returns scores ordered from highest to lowest. Handles may
 be queried with or without their display `@`; unknown players and leaderboards
 return `null`.
+
+`games`, `myGames`, and the `scores` fields on players and leaderboards accept
+`limit` and `offset`, defaulting to 20 and 0. Limits must be between 1 and 100,
+and offsets must be non-negative. Game pages use ascending IDs for stable
+ordering; score pages apply the offset after ordering values highest-first.
 
 Run the direct-dispatch smoke test with:
 

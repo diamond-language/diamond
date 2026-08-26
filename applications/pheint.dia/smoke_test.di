@@ -281,6 +281,42 @@ end
 
 test_public_player_and_leaderboard_queries(context)
 
+def test_query_pagination(context)
+  games = JSON.parse(app(smoke_request("POST", "/graphql", JSON.stringify({
+    "query": "{ games(limit: 1, offset: 1) { title } }"
+  })), context)[2])
+  if games["errors"] != nil || games["data"]["games"].length() != 1 ||
+     games["data"]["games"][0]["title"] != "Cipher Sprint"
+    raise "game pagination was not stable"
+  end
+
+  db = PheintDatabase.get(context)
+  board = Game.where({"title": "Asteroid Run"}).first(db).leaderboards(db)[0]
+  rankings = JSON.parse(app(smoke_request("POST", "/graphql", JSON.stringify({
+    "query": "{ leaderboard(id: #{board.id()}) { scores(limit: 1, offset: 1) { value } } }"
+  })), context)[2])
+  if rankings["errors"] != nil ||
+     rankings["data"]["leaderboard"]["scores"].length() != 1 ||
+     rankings["data"]["leaderboard"]["scores"][0]["value"] != 128400
+    raise "ranking pagination did not run after descending ordering"
+  end
+
+  invalid_limit = JSON.parse(app(smoke_request("POST", "/graphql", JSON.stringify({
+    "query": "{ games(limit: 101) { id } }"
+  })), context)[2])
+  invalid_offset = JSON.parse(app(smoke_request("POST", "/graphql", JSON.stringify({
+    "query": "{ games(offset: -1) { id } }"
+  })), context)[2])
+  if invalid_limit["errors"] == nil ||
+     !invalid_limit["errors"][0]["message"].include?("limit must be") ||
+     invalid_offset["errors"] == nil ||
+     !invalid_offset["errors"][0]["message"].include?("offset must be")
+    raise "invalid pagination bounds were accepted"
+  end
+end
+
+test_query_pagination(context)
+
 def test_game_query(context)
   db = PheintDatabase.get(context)
   asteroid = Game.where({"title": "Asteroid Run"}).first(db)
