@@ -78,17 +78,33 @@ static char *read_file(const char *path) {
     return source;
 }
 
-static void print_usage(void) {
-    fputs("usage: diamond [-e CODE | FILE | --version] [ARGS...]\n"
+static void print_usage(FILE *stream) {
+    fputs("Usage: diamond [OPTIONS] [FILE [ARGS...]]\n"
+          "       diamond -e CODE [ARGS...]\n"
           "       diamond --dump-bytecode [-e CODE | FILE] [ARGS...]\n"
-          "       diamond                          (starts a REPL if stdin is a terminal)\n"
-          "ARGS, if given, are the script's own arguments -- see ARGV in docs/syntax.md.\n",
-          stderr);
+          "\n"
+          "Run a Diamond program, evaluate source, or start the REPL when no\n"
+          "arguments are given and standard input is a terminal.\n"
+          "\n"
+          "Options:\n"
+          "  -e CODE             evaluate CODE\n"
+          "  --dump-bytecode     print bytecode before running\n"
+          "  -h, --help          display this help and exit\n"
+          "  -v, --version       display version information and exit\n"
+          "\n"
+          "ARGS after FILE or CODE are available to the program through ARGV.\n",
+          stream);
 }
 
 int main(int argc, char **argv) {
-    if (argc == 2 && strcmp(argv[1], "--version") == 0) {
+    if (argc == 2 && (strcmp(argv[1], "-v") == 0 ||
+                      strcmp(argv[1], "--version") == 0)) {
         printf("diamond %s\n", DIAMOND_VERSION);
+        return 0;
+    }
+    if (argc == 2 && (strcmp(argv[1], "-h") == 0 ||
+                      strcmp(argv[1], "--help") == 0)) {
+        print_usage(stdout);
         return 0;
     }
     if (argc >= 3 && strcmp(argv[1], "-e") == 0) {
@@ -119,6 +135,6 @@ int main(int argc, char **argv) {
         return diamond_repl_run();
     }
 
-    print_usage();
+    print_usage(stderr);
     return 64;
 }

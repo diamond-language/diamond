@@ -11,6 +11,28 @@ actual="$($diamond --version)"
     exit 1
 }
 
+[[ "$($diamond -v)" == "diamond 0.1.0-dev" ]] || {
+    echo "unexpected short version output" >&2
+    exit 1
+}
+
+for help_flag in -h --help; do
+    help_output="$($diamond "$help_flag")"
+    [[ "$help_output" == *"Usage: diamond [OPTIONS] [FILE [ARGS...]]"* ]]
+    [[ "$help_output" == *"-h, --help"* ]]
+    [[ "$help_output" == *"-v, --version"* ]]
+done
+
+# Once program input has started, option-looking values belong to the script.
+actual="$($diamond -e 'ARGV' -h --version)"
+[[ "$actual" == "[-h, --version]" ]]
+
+script_flags="$(mktemp)"
+printf 'ARGV\n' >"$script_flags"
+actual="$($diamond "$script_flags" -h --version)"
+rm -f "$script_flags"
+[[ "$actual" == "[-h, --version]" ]]
+
 [[ "$("$diamond" -e $'20-2')" == 18 ]]
 [[ "$("$diamond" -e $'20*2')" == 40 ]]
 [[ "$("$diamond" -e $'20/2')" == 10 ]]
