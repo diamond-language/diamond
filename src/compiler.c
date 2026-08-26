@@ -131,7 +131,7 @@ typedef struct Compiler {
      * of whether that check applies at all this time. */
     bool sequence_diverges;
     /* True only during diamond_compile's first, throwaway pass over the
-     * source (see diamond_compile's own comment) -- purely to let a
+     * source (see diamond_compile's own comment) -- lets a
      * forward reference to a not-yet-declared class/module/interface
      * name (used as a value: construction, a singleton call, a type
      * annotation -- never a superclass/base-interface, which still needs
@@ -139,12 +139,15 @@ typedef struct Compiler {
      * by name) survive instead of aborting compilation, so this pass can
      * walk the *entire* source and fully register every declaration's
      * name/fields/methods regardless of textual order. This pass's own
-     * bytecode is discarded; only program->classes/interfaces/modules
-     * (and top-level function signatures) survive into the real second
-     * pass, which runs with discovery_pass false and behaves exactly as
+     * bytecode is discarded; declaration tables and function slots survive
+     * into the real second pass. Unknown bare calls/function values are also
+     * tolerated here so their later top-level declarations can be recorded.
+     * The real second pass runs with discovery_pass false and behaves as
      * a normal compile always has, except every declaration is already
      * known up front. */
     bool discovery_pass;
+    /* Real-pass cursor through discovery's pre-reserved function slots. */
+    size_t next_function_claim;
 } Compiler;
 
 static uint16_t parse_expression(Compiler *compiler);
@@ -843,6 +846,11 @@ static uint16_t parse_identifier(Compiler *compiler) {
             emit_byte(compiler, 0);
             return destination;
         }
+        if(compiler->discovery_pass) {
+            const uint16_t destination=allocate_register(compiler);
+            emit_instruction(compiler,DIAMOND_OP_NIL,destination,0,0,1);
+            return destination;
+        }
         fail(compiler, compiler->previous.span, "undefined local variable"); return 0;
     }
     if(!compiler->locals[(size_t)local].captured)
@@ -892,6 +900,22 @@ static bool name_equals(const Compiler *compiler, const char *candidate,
         if (candidate[index] != compiler->source[name.start + start + index]) return false;
     }
     return true;
+}
+
+static DiamondFunction *compiler_add_function(Compiler *compiler,
+                                               size_t *function_index) {
+    if(!compiler->discovery_pass&&
+       compiler->next_function_claim<compiler->program->function_count&&
+       compiler->program->functions[compiler->next_function_claim]
+           ->declared_by_discovery) {
+        *function_index=compiler->next_function_claim++;
+        DiamondFunction *function=compiler->program->functions[*function_index];
+        memset(function,0,sizeof *function);
+        return function;
+    }
+    DiamondFunction *function=diamond_program_add_function(compiler->program);
+    if(function!=nullptr)*function_index=compiler->program->function_count-1;
+    return function;
 }
 
 static int find_class(const Compiler *compiler, DiamondSpan name) {
@@ -1363,6 +1387,57 @@ static uint16_t parse_closure_call_arguments(Compiler *compiler, uint16_t callab
     return destination;
 }
 
+/* The discovery pass can encounter a call before its top-level function's
+ * signature has been seen. It only needs to keep walking far enough to record
+ * that later declaration; the real pass will validate the call against the
+ * copied signature. Parse the complete call shape here without emitting a
+ * callable function index that does not exist in this throwaway program yet. */
+static uint16_t parse_discovery_unknown_call(Compiler *compiler) {
+    if(compiler->current.kind==DIAMOND_TOKEN_LEFT_BRACKET) {
+        advance_token(compiler);skip_newlines(compiler);
+        while(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_BRACKET&&
+              !compiler->failed) {
+            (void)parse_type_annotation(compiler);skip_newlines(compiler);
+            if(compiler->current.kind!=DIAMOND_TOKEN_COMMA)break;
+            advance_token(compiler);skip_newlines(compiler);
+        }
+        if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_BRACKET) {
+            fail(compiler,compiler->current.span,
+                 "expected ']' after generic arguments");return 0;
+        }
+        advance_token(compiler);
+    }
+    if(compiler->current.kind!=DIAMOND_TOKEN_LEFT_PAREN) {
+        fail(compiler,compiler->current.span,"expected '(' after function name");
+        return 0;
+    }
+    advance_token(compiler);skip_newlines(compiler);
+    if(compiler->current.kind==DIAMOND_TOKEN_STAR) {
+        advance_token(compiler);skip_newlines(compiler);
+        (void)parse_expression(compiler);skip_newlines(compiler);
+    } else if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
+        do {
+            DiamondLexer lookahead=compiler->lexer;
+            if(compiler->current.kind==DIAMOND_TOKEN_IDENTIFIER&&
+               diamond_lexer_next(&lookahead).kind==DIAMOND_TOKEN_COLON) {
+                advance_token(compiler);advance_token(compiler);
+                skip_newlines(compiler);
+            }
+            (void)parse_expression(compiler);skip_newlines(compiler);
+            if(compiler->current.kind!=DIAMOND_TOKEN_COMMA)break;
+            advance_token(compiler);skip_newlines(compiler);
+        } while(!compiler->failed);
+    }
+    if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
+        fail(compiler,compiler->current.span,"expected ')' after arguments");
+        return 0;
+    }
+    advance_token(compiler);
+    const uint16_t destination=allocate_register(compiler);
+    emit_instruction(compiler,DIAMOND_OP_NIL,destination,0,0,1);
+    return destination;
+}
+
 static uint16_t parse_call(Compiler *compiler, DiamondSpan name) {
     const int callable_local=find_local(compiler,name);
     if(callable_local>=0&&compiler->current.kind==DIAMOND_TOKEN_LEFT_PAREN) {
@@ -1380,6 +1455,8 @@ static uint16_t parse_call(Compiler *compiler, DiamondSpan name) {
     }
     const int function_index = find_function(compiler, name);
     if (function_index < 0) {
+        if(compiler->discovery_pass)
+            return parse_discovery_unknown_call(compiler);
         fail(compiler, name, "undefined function");
         return 0;
     }
@@ -1683,12 +1760,12 @@ static uint16_t parse_singleton_reference(Compiler *compiler,
         fail(compiler,namespace_name,"too many functions");
         return 0;
     }
-    DiamondFunction *function=diamond_program_add_function(compiler->program);
+    size_t function_index=0;
+    DiamondFunction *function=compiler_add_function(compiler,&function_index);
     if(function==nullptr) {
         fail(compiler,namespace_name,"out of memory");
         return 0;
     }
-    const size_t function_index=compiler->program->function_count-1;
     function->owner_class=UINT8_MAX;
     function->nested=true;
     function->return_type_set=UINT8_MAX;
@@ -5485,7 +5562,8 @@ static uint16_t compile_block(Compiler *compiler) {
         fail(compiler, compiler->current.span, "too many functions");
         return 0;
     }
-    DiamondFunction *function=diamond_program_add_function(compiler->program);
+    size_t function_index=0;
+    DiamondFunction *function=compiler_add_function(compiler,&function_index);
     if(function==nullptr) {
         fail(compiler,compiler->current.span,"out of memory");
         return 0;
@@ -5493,7 +5571,6 @@ static uint16_t compile_block(Compiler *compiler) {
     function->return_type_set=UINT8_MAX;
     for(size_t index=0;index<16;index++)
         function->parameter_type_sets[index]=UINT8_MAX;
-    const size_t function_index = compiler->program->function_count - 1;
     function->owner_class=UINT8_MAX;
     function->nested=true;
     static const char block_name[]="<block>";
@@ -5799,22 +5876,24 @@ static uint16_t compile_definition(Compiler *compiler, bool captures_self) {
              "operator methods can only be defined inside a class or module");
         return 0;
     }
-    if (compiler->program->function_count == DIAMOND_MAX_FUNCTIONS) {
-        fail(compiler, compiler->current.span, "too many functions");
-        return 0;
-    }
     const DiamondSpan name = is_index_operator?index_operator_name:compiler->current.span;
     if (name.length >= DIAMOND_MAX_FUNCTION_NAME) {
         fail(compiler, name, "function name is too long");
         return 0;
     }
-    if(!compiler->program->allow_top_level_redefinition &&
-        compiler->current_class<0&&compiler->current_module<0&&
-        find_function(compiler, name) >= 0) {
+    const bool genuine_top_level=at_top_level&&compiler->current_class<0&&
+        compiler->current_module<0&&!module_singleton;
+    const bool claiming_discovered=!compiler->discovery_pass&&
+        compiler->next_function_claim<compiler->program->function_count&&
+        compiler->program->functions[compiler->next_function_claim]
+            ->declared_by_discovery;
+    if(!compiler->program->allow_top_level_redefinition&&genuine_top_level&&
+       find_function(compiler,name)>=0&&!claiming_discovered) {
         fail(compiler, name, "function is already defined");
         return 0;
     }
-    DiamondFunction *function=diamond_program_add_function(compiler->program);
+    size_t function_index=0;
+    DiamondFunction *function=compiler_add_function(compiler,&function_index);
     if(function==nullptr) {
         fail(compiler,name,"out of memory");
         return 0;
@@ -5822,7 +5901,6 @@ static uint16_t compile_definition(Compiler *compiler, bool captures_self) {
     function->return_type_set=UINT8_MAX;
     for(size_t index=0;index<16;index++)
         function->parameter_type_sets[index]=UINT8_MAX;
-    const size_t function_index = compiler->program->function_count - 1;
     /* current_class/current_module are compiler-wide "lexically inside a
      * class/module body" flags, true for a nested closure at any depth,
      * not just a direct member -- direct_class_member/direct_module_member
@@ -6663,13 +6741,14 @@ static void compile_attribute_named(Compiler *compiler,bool writer,bool predicat
         }
         method=&module->methods[module->method_count++];method->included=false;
     }
+    size_t allocated_function_index=0;
     DiamondFunction *function=
-        diamond_program_add_function(compiler->program);
+        compiler_add_function(compiler,&allocated_function_index);
     if(function==nullptr) {
         fail(compiler,name,"out of memory");
         return;
     }
-    const uint16_t function_index=(uint16_t)(compiler->program->function_count-1);
+    const uint16_t function_index=(uint16_t)allocated_function_index;
     (void)snprintf(function->name,sizeof function->name,"%s",method_name);
     function->owner_class=compiler->current_class>=0?
         (uint8_t)compiler->current_class:UINT8_MAX-1;
@@ -7132,13 +7211,15 @@ static void compile_delegate(Compiler *compiler) {
         {outer_known_types[index]=compiler->known_types[index];
          outer_known_type_sets[index]=compiler->known_type_sets[index];}
 
-    DiamondFunction *function=diamond_program_add_function(compiler->program);
+    size_t allocated_function_index=0;
+    DiamondFunction *function=
+        compiler_add_function(compiler,&allocated_function_index);
     if(function==nullptr) {
         fail(compiler,keyword,"out of memory");
         free(heap_outer_known_types);free(heap_outer_known_type_sets);
         return;
     }
-    const uint16_t function_index=(uint16_t)(compiler->program->function_count-1);
+    const uint16_t function_index=(uint16_t)allocated_function_index;
     (void)snprintf(function->name,sizeof function->name,"%s",stored_name);
     function->owner_class=in_class?(uint8_t)compiler->current_class:UINT8_MAX-1;
     function->declaration_line=(uint32_t)keyword.line;
@@ -8257,7 +8338,8 @@ size_t diamond_resolve_source_position(const char *path,const char *combined,
 
 /* The actual compile, run twice by diamond_compile below -- once
  * (discovery_pass=true) into a throwaway DiamondProgram purely to
- * register every class/module/interface's name/fields/methods
+ * register every class/module/interface's name/fields/methods and every
+ * compiler-created function slot
  * regardless of textual order, then again (discovery_pass=false) into
  * the real, caller-supplied program, now with every declaration already
  * known. `program` must already be freshly diamond_program_init'd (with
@@ -8367,6 +8449,23 @@ bool diamond_compile(const char *source, DiamondProgram *program,
     memcpy(program->modules, discovery->modules, sizeof program->modules);
     program->module_count = discovery->module_count;
 
+    /* Reserve every compiler-created function at its discovery-pass index.
+     * The real pass claims the slots in the same source order, preserving
+     * both early top-level calls and copied class/module method indices. */
+    if(!allow_top_level_redefinition) {
+        for(size_t index=0;index<discovery->function_count;index++) {
+            const DiamondFunction *discovered_function=discovery->functions[index];
+            DiamondFunction *reserved=diamond_program_add_function(program);
+            if(reserved==nullptr) {
+                diamond_program_free(discovery);free(discovery);
+                *diagnostic=(DiamondDiagnostic){.message="out of memory"};
+                return false;
+            }
+            memcpy(reserved,discovered_function,sizeof *reserved);
+            reserved->declared_by_discovery=true;
+        }
+    }
+
     /* Mark every *user* class/module entry just copied as "populated by
      * a pass other than the one about to run" -- compile_class/
      * compile_module only reset declared_by_discovery to false the
@@ -8390,7 +8489,9 @@ bool diamond_compile(const char *source, DiamondProgram *program,
     diamond_program_free(discovery);
     free(discovery);
 
-    return run_compile_pass(source, program, diagnostic, /*discovery_pass=*/false);
+    const bool compiled=run_compile_pass(
+        source,program,diagnostic,/*discovery_pass=*/false);
+    return compiled;
 }
 
 DiamondChunk diamond_program_chunk(const DiamondProgram *program) {

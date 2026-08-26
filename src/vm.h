@@ -567,6 +567,10 @@ typedef struct DiamondFunction {
     char type_variables[8][DIAMOND_MAX_FUNCTION_NAME];
     uint8_t type_variable_count;
     bool uses_instance_state;
+    /* A function slot copied from diamond_compile's discovery pass and not
+     * yet claimed by the real pass. Preserving every discovery-time index
+     * keeps early CALL operands and class/module method tables stable. */
+    bool declared_by_discovery;
     /* High-water mark of allocate_register() within this function body.
      * Safe as an exact zero-init/GC-scan bound only because register
      * allocation is monotonic per function body (never recycled). */

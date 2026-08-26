@@ -381,9 +381,8 @@ Detailed design documents:
 ## Current limitations
 
 - The language, bytecode, and embedding APIs are intentionally unstable.
-- The native compiler is single-pass. Bare forward or mutual calls between
-  later-declared top-level functions do not resolve; receiver-based method
-  dispatch is the usual workaround for mutually recursive methods.
+- The native compiler uses a declaration-discovery pass followed by real
+  bytecode generation; forward and mutually recursive top-level calls resolve.
 - Bytecode offsets, program tables, call depth, lexical captures, and other VM
   resources have fixed implementation limits.
 - The collector is stop-the-world mark/sweep. Direct benchmarks show that an

@@ -218,14 +218,16 @@ fields, and methods (including singleton methods) regardless of order,
 then a real second pass runs with everything already known, resuming
 work on each pre-registered slot (`declared_by_discovery` on
 `DiamondClass`/`DiamondModule`/`DiamondInterface`) instead of erroring on
-a rediscovered name. See `tests/cases/forward_declarations.di`. This is
+a rediscovered name. See `tests/cases/forward_declarations.di`. Top-level
+function slots are likewise reserved at their discovery-pass indices and
+claimed in the same order by the real pass, so calls and callable references
+can target later declarations without destabilizing class/module method
+indices. See `tests/cases/forward_top_level_calls.di`. This is
 *not* a general predeclaration/IR change -- there is still no retained
 AST, and a superclass/base-interface still needs to be declared first
 (that copies the referenced declaration's already-*fully-compiled* field
 table, not just its name -- seeing it registered isn't enough, see
-`tests/cases/forward_declaration_superclass_still_fails.di`). Top-level
-bare function forward/mutual calls are a related but separate, still-open
-case -- see "Forward and mutual calls" below.
+`tests/cases/forward_declaration_superclass_still_fails.di`).
 
 Resolved separately (built on the same `declared_by_discovery` machinery,
 but a genuinely different feature): a `class`/`module` can now be
@@ -575,24 +577,17 @@ Smaller viable improvements include:
 
 ## Open design decisions
 
-### Forward and mutual calls
+### Forward and mutual calls (resolved)
 
-Bare calls resolve only previously declared top-level functions in file order.
-Receiver-based method calls resolve dynamically and are the existing workaround
-for mutually recursive methods.
-
-Classes/modules/interfaces now go through exactly the declaration-discovery
-pass this section used to say fixing this would require -- see "Compiler
-representation" above. Top-level bare functions still don't: unlike a class
-(an embedded, fixed-size table entry that can be pre-registered by name and
-"claimed" later), `program->functions` is a flat, dynamically-growable array
-of `DiamondFunction*` shared by every function in the program, top-level or
-not, and a `CALL` site bakes in the callee's `function_index` directly, so a
-forward call would need that index *reserved* ahead of the callee's own real
-compilation, not just its name known -- the same "claim, don't duplicate"
-trick, but for a different, currently-unsplittable table. A real fix is more
-invasive than the class/module/interface case turned out to be, not just a
-smaller version of it.
+Bare top-level calls now resolve later declarations, including mutual
+recursion, generic/keyword calls, callable references, and calls crossing
+`require`-expanded files. The discovery pass tolerates an as-yet unknown bare
+call or function value and records all functions. Before the real pass, every
+function is copied into the same numeric slot with `declared_by_discovery`;
+compiler-created functions then claim and clear those slots in source order.
+This preserves the `function_index` baked into `CALL` instructions and the
+indices already stored in copied class/module method tables. The real pass
+still performs ordinary undefined-function, arity, keyword, and type checks.
 
 ### Classes as ordinary runtime objects
 
