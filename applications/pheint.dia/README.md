@@ -133,6 +133,14 @@ mutation UpdateGame {
 
 mutation DeleteGame { deleteGame(id: 1) }
 
+mutation UpdateHandle {
+  updateHandle(handle: "@ada_lovelace") { id handle }
+}
+
+mutation ChangePassword {
+  changePassword(currentPassword: "correct horse", newPassword: "new correct horse")
+}
+
 query Games {
   games {
     id
@@ -178,24 +186,28 @@ query LeaderboardRankings {
 }
 ```
 
-Send the returned opaque token as `Authorization: Bearer <token>` for `me`,
-`signOut`, `createGame`, `createLeaderboard`, and `submitScore`. Game creation
-assigns the signed-in account as owner and creates its initial leaderboard in
-the same transaction; validation failure rolls both back. Only that owner can
-update or delete the game, or add further leaderboards. Deleting a game also
-removes its leaderboards and scores through database foreign-key cascades.
-Owners can rename or delete individual leaderboards as well; deleting one also
-removes its scores.
-Score submission creates a player's first score
-on a leaderboard and updates that same row when the new value is higher. An
+Send the returned opaque token as `Authorization: Bearer <token>` for `me` and
+all mutations other than `signUp` and `signIn`. Game creation assigns the
+signed-in account as owner and creates its initial leaderboard in the same
+transaction; validation failure rolls both back. Only that owner can update or
+delete the game, or add further leaderboards. Deleting a game also removes its
+leaderboards and scores through database foreign-key cascades. Owners can
+rename or delete individual leaderboards as well; deleting one also removes
+its scores. Score submission creates a player's first score on a leaderboard
+and updates that same row when the new value is higher. An
 equal value is an idempotent success; a value below the player's current best
 is rejected without changing the stored score. Sessions expire after 30 days
 and are deleted when an expired token is presented. Signup lowercases email
 and handle, accepts the handle with or without a leading `@`, and creates the
 account, player, and initial session in one transaction. Failed player/account
-validation rolls the entire signup
-back. Passwords must be 8–72 characters; only bcrypt digests are persisted,
+validation rolls the entire signup back. Passwords must be 8–72 characters;
+only bcrypt digests are persisted,
 and neither password digests nor session records are exposed by the schema.
+Authenticated accounts can change their handle or password. Handle changes use
+the same normalization, format, length, and uniqueness rules as signup;
+password changes require the current password and retain the 8–72 character
+policy. A successful password change keeps the current session and revokes the
+account's other sessions.
 
 The public `game(id:)` and `games` queries and authenticated `myGames` query are
 planned through GraphSQL. Their lookaheads select only requested columns and

@@ -137,6 +137,54 @@ end
 module PheintMutationResolvers
   module_function
 
+  def change_password(object, args, context)
+    account = context["current_account"]
+    if account == nil
+      raise GraphQL::ExecutionError.new("authentication required")
+    end
+    unless account.authenticate(args["currentPassword"])
+      raise GraphQL::ExecutionError.new("current password is incorrect")
+    end
+    new_password = args["newPassword"]
+    if new_password.length() < 8 || new_password.length() > 72
+      raise GraphQL::ExecutionError.new("password must be between 8 and 72 characters")
+    end
+    cost = if PheintEnvironment.name() == "test" then 4 else 12 end
+    digest = BCrypt.hash(new_password, cost)
+    context["db"].execute("UPDATE accounts SET password_digest = ? WHERE id = ?",
+      [digest, account.id()])
+    account.password_digest = digest
+    current_session = context["current_session"]
+    context["db"].execute(
+      "DELETE FROM sessions WHERE account_id = ? AND id != ?",
+      [account.id(), current_session.id()])
+    pheint_audit_info(context, "authentication.password_changed", {
+      "account_id": account.id(), "session_id": current_session.id()
+    })
+    true
+  end
+
+  def update_handle(object, args, context)
+    account = context["current_account"]
+    if account == nil
+      raise GraphQL::ExecutionError.new("authentication required")
+    end
+    db = context["db"]
+    player = account.player(db)
+    handle = pheint_normalize_handle(args["handle"])
+    if handle == player.handle() then return player end
+    player.handle = handle
+    begin
+      player.save(db)
+    rescue error: ActiveRecord::ValidationError
+      raise GraphQL::ExecutionError.new(error.errors().join(", "))
+    end
+    pheint_audit_info(context, "player.handle_updated", {
+      "account_id": account.id(), "player_id": player.id()
+    })
+    player
+  end
+
   def delete_leaderboard(object, args, context)
     account = context["current_account"]
     if account == nil
@@ -463,6 +511,15 @@ class PheintSchema
         PheintQueryResolvers.games)
 
       mutation = GraphQL::ObjectType.new("Mutation")
+      mutation.field("changePassword", GraphQL::ScalarType.boolean().non_null(),
+        PheintMutationResolvers.change_password, [
+          GraphQL::Argument.new("currentPassword", GraphQL::ScalarType.string().non_null()),
+          GraphQL::Argument.new("newPassword", GraphQL::ScalarType.string().non_null())
+        ])
+      mutation.field("updateHandle", player_type.non_null(),
+        PheintMutationResolvers.update_handle, [
+          GraphQL::Argument.new("handle", GraphQL::ScalarType.string().non_null())
+        ])
       mutation.field("deleteLeaderboard", GraphQL::ScalarType.boolean().non_null(),
         PheintMutationResolvers.delete_leaderboard, [
           GraphQL::Argument.new("id", GraphQL::ScalarType.id().non_null())

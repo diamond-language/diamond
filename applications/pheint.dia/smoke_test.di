@@ -546,6 +546,90 @@ end
 
 test_game_deletion(context, signin["data"]["signIn"]["token"])
 
+def update_handle_request(token, handle)
+  authenticated_graphql(token,
+    "mutation { updateHandle(handle: \"#{handle}\") { id handle } }")
+end
+
+def change_password_request(token, current_password, new_password)
+  authenticated_graphql(token, [
+    "mutation { changePassword(",
+    "  currentPassword: \"#{current_password}\",",
+    "  newPassword: \"#{new_password}\"",
+    ") }"
+  ].join("\n"))
+end
+
+def test_account_settings(context, token)
+  db = PheintDatabase.get(context)
+  alice = Account.where({"email": "alice@example.com"}).first(db)
+  extra_signin = JSON.parse(app(smoke_request("POST", "/graphql", JSON.stringify({
+    "query": "mutation { signIn(email: \"alice@example.com\", password: \"correct horse\") { token } }"
+  })), context)[2])
+  extra_token = extra_signin["data"]["signIn"]["token"]
+
+  duplicate = JSON.parse(app(update_handle_request(token, "@demo"), context)[2])
+  if duplicate["errors"] == nil || alice.player(db).handle() != "alice"
+    raise "duplicate handle update was accepted"
+  end
+
+  invalid = JSON.parse(app(update_handle_request(token, "!"), context)[2])
+  if invalid["errors"] == nil || alice.player(db).handle() != "alice"
+    raise "invalid handle update was accepted"
+  end
+
+  updated = JSON.parse(app(update_handle_request(token, "@Alice_One"), context)[2])
+  if updated["errors"] != nil ||
+     updated["data"]["updateHandle"]["handle"] != "alice_one" ||
+     alice.player(db).handle() != "alice_one"
+    raise "handle update did not normalize and persist"
+  end
+
+  unchanged = JSON.parse(app(update_handle_request(token, "alice_one"), context)[2])
+  if unchanged["errors"] != nil ||
+     unchanged["data"]["updateHandle"]["handle"] != "alice_one"
+    raise "idempotent handle update failed"
+  end
+
+  wrong = JSON.parse(app(change_password_request(
+    token, "wrong password", "a replacement password"), context)[2])
+  short = JSON.parse(app(change_password_request(
+    token, "correct horse", "short"), context)[2])
+  if wrong["errors"] == nil || short["errors"] == nil ||
+     !alice.authenticate("correct horse")
+    raise "invalid password change altered the password"
+  end
+
+  changed = JSON.parse(app(change_password_request(
+    token, "correct horse", "a replacement password"), context)[2])
+  changed_account = Account.find(db, alice.id())
+  if changed["errors"] != nil || changed["data"]["changePassword"] != true ||
+     changed_account.authenticate("correct horse") ||
+     !changed_account.authenticate("a replacement password")
+    raise "password change did not replace the digest"
+  end
+  revoked = JSON.parse(app(authenticated_graphql(extra_token,
+    "{ me { id } }"), context)[2])
+  retained = JSON.parse(app(authenticated_graphql(token,
+    "{ me { id } }"), context)[2])
+  if revoked["data"]["me"] != nil || retained["data"]["me"] == nil
+    raise "password change did not revoke other sessions and retain the current one"
+  end
+
+  old_signin = JSON.parse(app(smoke_request("POST", "/graphql", JSON.stringify({
+    "query": "mutation { signIn(email: \"alice@example.com\", password: \"correct horse\") { token } }"
+  })), context)[2])
+  new_signin = JSON.parse(app(smoke_request("POST", "/graphql", JSON.stringify({
+    "query": "mutation { signIn(email: \"alice@example.com\", password: \"a replacement password\") { token } }"
+  })), context)[2])
+  if old_signin["errors"] == nil || new_signin["errors"] != nil ||
+     new_signin["data"]["signIn"]["token"] == nil
+    raise "signin did not adopt the changed password"
+  end
+end
+
+test_account_settings(context, signin["data"]["signIn"]["token"])
+
 missing = app(smoke_request("GET", "/missing"), context)
 if missing[0] != 404
   raise "missing route smoke test failed"
