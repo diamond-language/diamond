@@ -84,11 +84,11 @@ search over a real (if scoped) lexical symbol table:
     resolvable without real type inference: a literal class name
     (`Author.find`), `self` inside an instance method or a class-owned
     `def self.x` (wall 2's `DIAMOND_VALUE_CLASS`, `docs/design.md`), a
-    local variable last known (at its own declaration) to hold
+    local variable known at the cursor position to hold
     `ClassName.new(...)` — `DiamondScopeLocal.known_type` (`src/vm.h`),
-    a byte snapshot of the compiler's own `known_types[reg]` at the
-    exact moment `record_scope_locals` closes that local's scope, the
-    only new compiler-side state this needed — or a parameter (or a
+    compiler's own `known_types[reg]`, supplemented by ordered
+    `DiamondScopeTypeFact` assignment snapshots so reassignment changes
+    resolution only after that assignment — or a parameter (or a
     local initialized from one) given an explicit union annotation
     (`pet: Dog | Cat`) — `DiamondScopeLocal.known_type_set` (`src/vm.h`),
     the same snapshot idea applied to the compiler's own
@@ -115,8 +115,7 @@ search over a real (if scoped) lexical symbol table:
     a type-set match when both branches already agree on the exact same
     set index, `src/compiler.c`), so that shape still falls back to
     "not found" here, same as before this slice. An instance-variable
-    receiver, a chained call (`foo().bar()`), a local reassigned to a
-    different class after its own declaration, or any other receiver
+    receiver, a chained call (`foo().bar()`), or any other receiver
     this can't resolve also falls back to the ordinary "not found"
     result instead of a guess. All three also require the *document* to
     currently compile cleanly — otherwise they return `null`/empty
@@ -311,10 +310,8 @@ exit-without-shutdown edge cases.
 
 - **`receiver.method(...)` support beyond the resolvable receiver forms
   above** — an instance-variable receiver (`@item.foo()`), a receiver
-  that's itself a call's return value (`make_box().get()`), or a local
-  reassigned to a different class later in the same scope (`known_type`/
-  `known_type_set` reflect the type as of the local's own declaration,
-  not a later reassignment) all still fall back to "not found" rather
+  that's itself a call's return value (`make_box().get()`) still falls back to
+  "not found" rather
   than resolving. A union receiver *is* now resolved, but only for an
   explicit source-level `Dog | Cat` annotation — the compiler does not
   build one from a branching assignment

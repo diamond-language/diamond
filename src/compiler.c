@@ -5367,9 +5367,21 @@ static void record_scope_locals(Compiler *compiler,size_t start_index,
         recorded->name[length]='\0';
         recorded->valid_start=local->name.start;
         recorded->valid_end=valid_end;
+        recorded->reg=local->reg;
         recorded->known_type=compiler->known_types[local->reg];
         recorded->known_type_set=compiler->known_type_sets[local->reg];
     }
+}
+
+static void record_scope_type_fact(Compiler *compiler,uint16_t reg,
+        size_t effective_start) {
+    DiamondFunction *function=compiler->function;
+    if(function->scope_type_fact_count==DIAMOND_MAX_SCOPE_TYPE_FACTS)return;
+    DiamondScopeTypeFact *fact=
+        &function->scope_type_facts[function->scope_type_fact_count++];
+    *fact=(DiamondScopeTypeFact){.reg=reg,.effective_start=effective_start,
+        .known_type=compiler->known_types[reg],
+        .known_type_set=compiler->known_type_sets[reg]};
 }
 
 static uint16_t compile_begin(Compiler *compiler) {
@@ -5724,6 +5736,7 @@ static uint16_t compile_block(Compiler *compiler) {
                 const uint16_t parameter=allocate_register(compiler);
                 compiler->locals[compiler->local_count++]=(Local){
                     .name=compiler->current.span,.reg=parameter};
+                record_scope_type_fact(compiler,parameter,compiler->current.span.start);
                 const DiamondSpan parameter_name_span=compiler->current.span;
                 size_t parameter_name_length=parameter_name_span.length;
                 if(parameter_name_length>=DIAMOND_MAX_FUNCTION_NAME)
@@ -6381,6 +6394,8 @@ static uint16_t compile_definition(Compiler *compiler, bool captures_self) {
                 if(parameter_set->count==1)
                     compiler->known_types[parameter]=parameter_set->members[0].id;
             }
+            record_scope_type_fact(compiler,parameter,
+                                   compiler->locals[compiler->local_count-1].name.start);
             declared_parameter_count++;
             skip_newlines(compiler);
             if (compiler->current.kind != DIAMOND_TOKEN_COMMA) break;
@@ -7300,6 +7315,8 @@ static void compile_delegate(Compiler *compiler) {
         parameter_registers[index]=allocate_register(compiler);
         compiler->locals[compiler->local_count++]=(Local){
             .name=parameter_names[index],.reg=parameter_registers[index]};
+        record_scope_type_fact(compiler,parameter_registers[index],
+                               parameter_names[index].start);
         size_t name_length=parameter_names[index].length;
         if(name_length>=DIAMOND_MAX_FUNCTION_NAME)
             name_length=DIAMOND_MAX_FUNCTION_NAME-1;
@@ -7958,6 +7975,10 @@ static uint16_t compile_assignment_store(Compiler *compiler, DiamondSpan name,
                          compiler->locals[(size_t)local].reg,0,0,1);
         emit_instruction(compiler,DIAMOND_OP_SET_CELL,
                          compiler->locals[(size_t)local].reg,value,0,2);
+        const uint16_t local_register=compiler->locals[(size_t)local].reg;
+        compiler->known_types[local_register]=compiler->known_types[value];
+        compiler->known_type_sets[local_register]=compiler->known_type_sets[value];
+        record_scope_type_fact(compiler,local_register,compiler->current.span.start);
         return value;
     }
     if(local<0) {
@@ -7980,6 +8001,7 @@ static uint16_t compile_assignment_store(Compiler *compiler, DiamondSpan name,
     emit_instruction(compiler, DIAMOND_OP_MOVE, destination, value, 0, 2);
     compiler->known_types[destination]=compiler->known_types[value];
     compiler->known_type_sets[destination]=compiler->known_type_sets[value];
+    record_scope_type_fact(compiler,destination,compiler->current.span.start);
     return destination;
 }
 

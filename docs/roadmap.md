@@ -112,10 +112,7 @@ scope cuts in full.
 Remaining, still open:
 
 - an instance-variable receiver, a chained call's return value as a receiver,
-  a local reassigned to a different class later in the same scope
-  (`known_type`/`known_type_set` reflect first declaration, not a later
-  reassignment), or a branch-merged "union" the compiler doesn't actually
-  track as one;
+  or a branch-merged "union" the compiler doesn't actually track as one;
 - dependency-aware symbol information beyond one combined compilation;
 - incremental compilation only after there is a compiler architecture that can
   benefit from incremental document synchronization.

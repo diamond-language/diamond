@@ -157,6 +157,23 @@ static bool decode_class_type(const DiamondChunk *chunk,uint8_t known_type,size_
     return true;
 }
 
+static void local_type_at_offset(const DiamondFunction *owner,
+        const DiamondScopeLocal *local,size_t offset,uint8_t *known_type,
+        int16_t *known_type_set) {
+    *known_type=local->known_type;
+    *known_type_set=local->known_type_set;
+    size_t latest=0;bool found=false;
+    for(size_t index=0;index<owner->scope_type_fact_count;index++) {
+        const DiamondScopeTypeFact *fact=&owner->scope_type_facts[index];
+        if(fact->reg!=local->reg||fact->effective_start>offset)continue;
+        if(!found||fact->effective_start>=latest) {
+            found=true;latest=fact->effective_start;
+            *known_type=fact->known_type;
+            *known_type_set=fact->known_type_set;
+        }
+    }
+}
+
 size_t receiver_resolve_classes(const DiamondProgram *program,
         const DiamondChunk *chunk,const char *source,size_t stop_offset,
         size_t *class_indices,size_t max_candidates,bool *is_singleton) {
@@ -186,8 +203,13 @@ size_t receiver_resolve_classes(const DiamondProgram *program,
             find_scope_local(program,chunk,name,length,context.name_span.start,&owner);
         if(local==nullptr)return 0;
         *is_singleton=false;
+        uint8_t known_type=local->known_type;
+        int16_t known_type_set=local->known_type_set;
+        if(owner!=nullptr)
+            local_type_at_offset(owner,local,context.name_span.start,
+                                 &known_type,&known_type_set);
         size_t single_class;
-        if(decode_class_type(chunk,local->known_type,&single_class)) {
+        if(decode_class_type(chunk,known_type,&single_class)) {
             class_indices[0]=single_class;
             return 1;
         }
@@ -196,9 +218,9 @@ size_t receiver_resolve_classes(const DiamondProgram *program,
          * means anything against the function that owns this scope
          * entry's own type_sets[] table (see find_scope_local's own
          * comment), never chunk-wide. */
-        if(local->known_type_set<0||owner==nullptr)return 0;
-        if((size_t)local->known_type_set>=owner->type_set_count)return 0;
-        const DiamondTypeSet *set=&owner->type_sets[(size_t)local->known_type_set];
+        if(known_type_set<0||owner==nullptr)return 0;
+        if((size_t)known_type_set>=owner->type_set_count)return 0;
+        const DiamondTypeSet *set=&owner->type_sets[(size_t)known_type_set];
         size_t found=0;
         for(size_t index=0;index<set->count&&found<max_candidates;index++) {
             size_t member_class;

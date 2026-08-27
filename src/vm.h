@@ -52,6 +52,10 @@ enum {
      * to DIAMOND_MAX_FUNCTIONS of them (see that constant's own
      * comment) -- every byte added here multiplies by both. */
     DIAMOND_MAX_SCOPE_LOCALS = 32,
+    /* Position-sensitive local type changes retained only for LSP receiver
+     * resolution. A pathological function may lose late facts, never fail
+     * compilation. */
+    DIAMOND_MAX_SCOPE_TYPE_FACTS = 128,
     /* How many locals (parameters plus ordinary declarations) can be in
      * scope at once at compile time, src/compiler.c's Compiler.locals[].
      * Lives here rather than staying compiler.c-local: DIAMOND_OP_DEBUGGER
@@ -489,16 +493,12 @@ typedef struct DiamondScopeLocal {
     char name[DIAMOND_MAX_FUNCTION_NAME];
     size_t valid_start;
     size_t valid_end;
-    /* Compiler's own known_types[reg] for this local's register at the
-     * moment its scope entry was snapshotted (record_scope_locals,
-     * src/compiler.c) -- the type as of first assignment, not
-     * re-checked after a later reassignment in the same scope. lsp/'s
-     * only reason for existing (receiver.method() resolution,
-     * docs/lsp.md), same caveat DiamondScopeLocal's own struct comment
-     * already carries for why nothing else in the VM reads this. */
+    uint16_t reg;
+    /* Fallback compiler type snapshot for this local. Position-sensitive
+     * assignment facts below take precedence for receiver resolution. */
     uint8_t known_type;
-    /* Compiler's own known_type_sets[reg] for this local's register at
-     * the same snapshot moment as known_type above -- meaningful only
+    /* Fallback compiler known_type_sets[reg] for this local's register --
+     * meaningful only
      * relative to the *owning function's own* type_sets[] table (a set
      * index means nothing against any other function's), unlike
      * known_type which is globally self-describing. -1 (matching the
@@ -513,6 +513,16 @@ typedef struct DiamondScopeLocal {
      * should hold something. lsp/receiver.c's only reason for existing. */
     int16_t known_type_set;
 } DiamondScopeLocal;
+
+typedef struct DiamondScopeTypeFact {
+    /* Register identity is stable because compiler allocation is monotonic;
+     * effective_start makes lookup choose the last assignment at or before
+     * the cursor without retaining an AST. */
+    uint16_t reg;
+    size_t effective_start;
+    uint8_t known_type;
+    int16_t known_type_set;
+} DiamondScopeTypeFact;
 
 typedef struct DiamondFunction {
     char name[DIAMOND_MAX_FUNCTION_NAME];
@@ -587,6 +597,8 @@ typedef struct DiamondFunction {
      * (compile_definition's own at_top_level check, src/compiler.c). */
     DiamondScopeLocal scope_locals[DIAMOND_MAX_SCOPE_LOCALS];
     size_t scope_local_count;
+    DiamondScopeTypeFact scope_type_facts[DIAMOND_MAX_SCOPE_TYPE_FACTS];
+    size_t scope_type_fact_count;
 } DiamondFunction;
 
 struct DiamondChunk {

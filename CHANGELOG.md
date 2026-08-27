@@ -36,6 +36,9 @@
   method references to be rejected as missing-parenthesis calls.
 - Added OpenSSL-backed `Digest.sha256` and `HMAC.sha256` over raw String bytes,
   returning deterministic lowercase hexadecimal digests.
+- Made LSP receiver completion, hover, and go-to-definition position-sensitive
+  across local reassignment, including transitions from explicit unions to a
+  concrete assigned class.
 - Corrected the runtime type-ID partition so the advertised class capacity no
   longer overlaps generic-variable and interface IDs, and raised the class
   capacity from 128 to 180. Updated the self-hosted compiler's mirrored

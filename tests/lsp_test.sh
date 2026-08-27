@@ -469,6 +469,69 @@ count=$((count + 1))
 send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$broken_hover_uri"'"}}}'
 read_message >/dev/null
 
+# --- receiver metadata is position-sensitive across local reassignment:
+# before the second assignment the local completes/resolves as Dog; after
+# it, as Cat. End-of-function type snapshots used to make both positions
+# incorrectly resolve as whichever class was assigned last. ---
+
+reassigned_uri="file:///reassigned_receiver.di"
+reassigned_source='class Dog\n  def bark()\n    1\n  end\nend\nclass Cat\n  def meow()\n    2\n  end\nend\ndef inspect()\n  pet = Dog.new()\n  pet.bark()\n  pet = Cat.new()\n  pet.meow()\nend\ndef inspect_union(pet: Dog | Cat)\n  pet.bark()\n  pet = Cat.new()\n  pet.meow()\nend'
+send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$reassigned_uri"'","text":"'"$reassigned_source"'"}}}'
+read_message >/dev/null
+
+send '{"jsonrpc":"2.0","id":110,"method":"textDocument/completion","params":{"textDocument":{"uri":"'"$reassigned_uri"'"},"position":{"line":12,"character":6}}}'
+response="$(read_message)"
+[[ "$response" == *'"label":"bark","kind":3'* ]]
+count=$((count + 1))
+[[ "$response" != *'"label":"meow","kind":3'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","id":111,"method":"textDocument/completion","params":{"textDocument":{"uri":"'"$reassigned_uri"'"},"position":{"line":14,"character":6}}}'
+response="$(read_message)"
+[[ "$response" == *'"label":"meow","kind":3'* ]]
+count=$((count + 1))
+[[ "$response" != *'"label":"bark","kind":3'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","id":112,"method":"textDocument/hover","params":{"textDocument":{"uri":"'"$reassigned_uri"'"},"position":{"line":12,"character":7}}}'
+response="$(read_message)"
+[[ "$response" == *'"value":"def bark()"'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","id":113,"method":"textDocument/hover","params":{"textDocument":{"uri":"'"$reassigned_uri"'"},"position":{"line":14,"character":7}}}'
+response="$(read_message)"
+[[ "$response" == *'"value":"def meow()"'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","id":116,"method":"textDocument/definition","params":{"textDocument":{"uri":"'"$reassigned_uri"'"},"position":{"line":12,"character":7}}}'
+response="$(read_message)"
+[[ "$response" == *'"start":{"line":1,"character":6}'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","id":117,"method":"textDocument/definition","params":{"textDocument":{"uri":"'"$reassigned_uri"'"},"position":{"line":14,"character":7}}}'
+response="$(read_message)"
+[[ "$response" == *'"start":{"line":6,"character":6}'* ]]
+count=$((count + 1))
+
+# An explicitly annotated union remains a union until reassignment, then
+# narrows to the concrete class assigned at that source position.
+send '{"jsonrpc":"2.0","id":114,"method":"textDocument/completion","params":{"textDocument":{"uri":"'"$reassigned_uri"'"},"position":{"line":17,"character":6}}}'
+response="$(read_message)"
+[[ "$response" == *'"label":"bark","kind":3'* ]]
+count=$((count + 1))
+[[ "$response" == *'"label":"meow","kind":3'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","id":115,"method":"textDocument/completion","params":{"textDocument":{"uri":"'"$reassigned_uri"'"},"position":{"line":19,"character":6}}}'
+response="$(read_message)"
+[[ "$response" == *'"label":"meow","kind":3'* ]]
+count=$((count + 1))
+[[ "$response" != *'"label":"bark","kind":3'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$reassigned_uri"'"}}}'
+read_message >/dev/null
+
 # --- workspace/symbol recursively walks the workspace root (given via
 # initialize's own workspaceFolders, above), skips dotdirs, and
 # case-insensitively substring-matches the query against every
