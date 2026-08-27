@@ -1253,14 +1253,17 @@ its own section immediately below.
 
 ### Call-site spread
 
-**Done, in scope, deliberately narrow.** `foo(*array)` and
-`receiver.method(*array)` expand an `Array`'s elements into positional
+**Done, in scope.** `foo(*array)`, `receiver.method(*array)`,
+`callable(*array)`, `ClassName.new(*array)`, and
+`Namespace.method(*array)` expand an Array's elements into positional
 arguments at the call site --
 the caller-side counterpart to a variadic parameter *definition*, above.
 The top-level form uses `DIAMOND_OP_CALL_SPREAD`; user-defined instance
 methods use `DIAMOND_OP_INVOKE_SPREAD`, retaining dynamic lookup,
 inheritance, visibility, `method_missing`, variadic arity, and runtime-defined
-method source chunks. Both accept only one spread expression, and only when it is the
+method source chunks. Callable, constructor, and singleton routes use their
+own opcode variants because their implicit receiver and closure conventions
+differ. Every form accepts one spread expression, and only when it is the
 call's *sole* argument -- `foo(1, *array)`/`foo(*array, 2)` aren't
 supported; recognized only when `*` is the very first token after `(`,
 so a mixed call falls through to the ordinary argument parser and fails
@@ -1312,15 +1315,9 @@ DIAMOND_REGISTER_COUNT` sanity check, 4096, and the `has_variadic`-aware
 bounds fix from "Splat/variadic parameters" above), since nothing about
 spread parses one argument expression per element.
 
-**Deliberately out of scope for this version:** native receiver methods,
-module/class singleton calls, `ClassName.new
-(*array)`, and calling a `Callable` *value* directly (`callable(*array)`)
--- all a real, separate extension of the same idea (each has its own
-call-compilation path in `compiler.c`, several of them already
-constrained by a fixed 17-`DiamondValue` stack buffer for the
-non-spread case, see "Splat/variadic parameters" above), not attempted
-here; mixing a spread argument with ordinary positional/keyword
-arguments at the same call site; spreading into an explicitly generic call
+**Deliberately out of scope:** native receiver methods; mixing a spread
+argument with ordinary positional/keyword arguments at the same call site;
+spreading into an explicitly generic call
 (`foo[T](*array)`).
 
 ### Bare singleton method references

@@ -1382,6 +1382,25 @@ static uint8_t module_field_name(Compiler *compiler,DiamondSpan name) {
 static uint16_t parse_closure_call_arguments(Compiler *compiler, uint16_t callable) {
     advance_token(compiler);
     skip_newlines(compiler);
+    if(compiler->current.kind==DIAMOND_TOKEN_STAR) {
+        advance_token(compiler);skip_newlines(compiler);
+        const uint16_t spread=parse_expression(compiler);skip_newlines(compiler);
+        if(compiler->current.kind==DIAMOND_TOKEN_COMMA) {
+            fail(compiler,compiler->current.span,
+                "a spread argument (*expr) must be the only Callable argument");
+            return 0;
+        }
+        if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
+            fail(compiler,compiler->current.span,
+                "expected ')' after spread argument");return 0;
+        }
+        advance_token(compiler);
+        const uint16_t destination=allocate_register(compiler);
+        emit_opcode(compiler,DIAMOND_OP_CALL_CLOSURE_SPREAD);
+        emit_register(compiler,destination);emit_register(compiler,callable);
+        emit_register(compiler,spread);
+        return destination;
+    }
     uint16_t arguments[16]; size_t argument_count=0;
     while(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN && !compiler->failed) {
         if(argument_count==16){fail(compiler,compiler->current.span,"too many call arguments");return 0;}
@@ -1881,6 +1900,34 @@ static uint16_t parse_singleton_call(Compiler *compiler,
     }
     advance_token(compiler);
     skip_newlines(compiler);
+    if(compiler->current.kind==DIAMOND_TOKEN_STAR) {
+        if(type_argument_count>0) {
+            fail(compiler,compiler->current.span,
+                "spread singleton calls do not support generic arguments");
+            return 0;
+        }
+        advance_token(compiler);skip_newlines(compiler);
+        const uint16_t spread=parse_expression(compiler);skip_newlines(compiler);
+        if(compiler->current.kind==DIAMOND_TOKEN_COMMA) {
+            fail(compiler,compiler->current.span,
+                "a spread argument (*expr) must be the only singleton argument");
+            return 0;
+        }
+        if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
+            fail(compiler,compiler->current.span,
+                "expected ')' after spread argument");return 0;
+        }
+        advance_token(compiler);
+        const uint16_t destination=allocate_register(compiler);
+        emit_opcode(compiler,DIAMOND_OP_CALL_SINGLETON_SPREAD);
+        emit_register(compiler,destination);
+        emit_function_index(compiler,method->function_index);
+        emit_register(compiler,spread);
+        emit_byte(compiler,receiver_class_index<0?UINT8_MAX:
+            (uint8_t)receiver_class_index);
+        emit_byte(compiler,method->needs_receiver?1:0);
+        return destination;
+    }
     uint16_t arguments[16];size_t argument_count=0;
     while(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN&&!compiler->failed) {
         if(argument_count==16) {
@@ -3509,6 +3556,28 @@ static uint16_t parse_name(Compiler *compiler) {
         }
         advance_token(compiler);
         skip_newlines(compiler);
+        if(compiler->current.kind==DIAMOND_TOKEN_STAR) {
+            advance_token(compiler);skip_newlines(compiler);
+            const uint16_t spread=parse_expression(compiler);skip_newlines(compiler);
+            if(compiler->current.kind==DIAMOND_TOKEN_COMMA) {
+                fail(compiler,compiler->current.span,
+                    "a spread argument (*expr) must be the only constructor argument");
+                return 0;
+            }
+            if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
+                fail(compiler,compiler->current.span,
+                    "expected ')' after spread argument");return 0;
+            }
+            advance_token(compiler);
+            const uint16_t destination=allocate_register(compiler);
+            emit_opcode(compiler,DIAMOND_OP_NEW_SPREAD);
+            emit_register(compiler,destination);
+            emit_byte(compiler,(uint8_t)class_index);
+            emit_register(compiler,spread);
+            compiler->known_types[destination]=
+                (uint8_t)(DIAMOND_TYPE_CLASS_BASE+class_index);
+            return destination;
+        }
         uint16_t args[16]; size_t count = 0;
         while (compiler->current.kind != DIAMOND_TOKEN_RIGHT_PAREN && !compiler->failed) {
             if (count == 16) { fail(compiler, compiler->current.span, "too many arguments"); break; }
@@ -8102,7 +8171,16 @@ static void compile_delegate(Compiler *compiler) {
     advance_token(compiler);
     skip_newlines(compiler);
     DiamondSpan parameter_names[16];size_t parameter_count=0;
+    bool variadic=false;
     while(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN&&!compiler->failed) {
+        if(compiler->current.kind==DIAMOND_TOKEN_STAR) {
+            if(parameter_count!=0) {
+                fail(compiler,compiler->current.span,
+                    "a variadic delegate cannot declare fixed parameters");
+                return;
+            }
+            variadic=true;advance_token(compiler);
+        }
         if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER) {
             fail(compiler,compiler->current.span,"expected parameter name");return;
         }
@@ -8112,6 +8190,10 @@ static void compile_delegate(Compiler *compiler) {
         parameter_names[parameter_count++]=compiler->current.span;
         advance_token(compiler);
         skip_newlines(compiler);
+        if(variadic&&compiler->current.kind==DIAMOND_TOKEN_COMMA) {
+            fail(compiler,compiler->current.span,
+                "a variadic delegate parameter must be last");return;
+        }
         if(compiler->current.kind!=DIAMOND_TOKEN_COMMA)break;
         advance_token(compiler);
         skip_newlines(compiler);
@@ -8263,7 +8345,11 @@ static void compile_delegate(Compiler *compiler) {
         function->parameter_names[index][name_length]='\0';
     }
     function->arity=(uint8_t)(function->arity+parameter_count);
-    function->required_arity=function->arity;
+    function->required_arity=variadic?1:function->arity;
+    function->has_variadic=variadic;
+    if(variadic)
+        emit_instruction(compiler,DIAMOND_OP_COLLECT_VARIADIC,
+            parameter_registers[0],1,0,2);
 
     uint16_t ivar_register;
     if(in_class) {
@@ -8277,8 +8363,11 @@ static void compile_delegate(Compiler *compiler) {
         emit_instruction(compiler,DIAMOND_OP_GET_IVAR_NAME,ivar_register,0,
                           field,3);
     }
-    const uint16_t result=emit_invoke_call(compiler,ivar_register,method_name,
-        false,nullptr,0,parameter_registers,parameter_count);
+    const uint16_t result=variadic?
+        emit_invoke_spread(compiler,ivar_register,method_name,
+            parameter_registers[0]):
+        emit_invoke_call(compiler,ivar_register,method_name,
+            false,nullptr,0,parameter_registers,parameter_count);
     emit_instruction(compiler,DIAMOND_OP_RETURN,result,0,0,1);
 
     function->capture_count=0;
@@ -8313,7 +8402,8 @@ static void compile_delegate(Compiler *compiler) {
     (void)snprintf(method->name,sizeof method->name,"%s",stored_name);
     method->function_index=function_index;
     method->arity=(uint8_t)parameter_count;
-    method->required_arity=(uint8_t)parameter_count;
+    method->required_arity=variadic?0:(uint8_t)parameter_count;
+    method->has_variadic=variadic;
     method->included=false;
     method->is_private=compiler->methods_private;
     method->is_protected=compiler->methods_protected;

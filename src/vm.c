@@ -6845,6 +6845,47 @@ static DiamondVmStatus call_closure_helper(DiamondVm *vm,const DiamondChunk *chu
     return run_chunk(&child,vm,arguments,argument_count,depth+1,called,result);
 }
 
+static DiamondVmStatus call_closure_spread_helper(DiamondVm *vm,
+        const DiamondChunk *chunk,const DiamondFunction *fn,
+        const DiamondClosure *called,const DiamondArray *spread,size_t depth,
+        DiamondValue *result) {
+    const bool needs_self_slot=fn->owner_class!=UINT8_MAX;
+    const bool self_via_capture=fn->owner_class==UINT8_MAX-2;
+    const size_t arity_count=self_via_capture?spread->count:
+        spread->count+(needs_self_slot?1:0);
+    if(arity_count<fn->required_arity||
+       (arity_count>fn->arity&&!fn->has_variadic))
+        return DIAMOND_VM_ARITY_ERROR;
+    const DiamondValue *arguments=spread->values;
+    size_t argument_count=spread->count;
+    DiamondValue *padded=nullptr;
+    if(needs_self_slot) {
+        if(spread->count>DIAMOND_REGISTER_COUNT-1)
+            return DIAMOND_VM_ARITY_ERROR;
+        padded=malloc((spread->count+1)*sizeof *padded);
+        if(padded==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+        padded[0]=DIAMOND_NIL;
+        for(size_t index=0;index<spread->count;index++)
+            padded[index+1]=spread->values[index];
+        arguments=padded;argument_count++;
+    }
+    const DiamondChunk child={.name=fn->name,.code=fn->code,.lines=fn->lines,
+      .columns=fn->columns,.code_count=fn->code_count,.constants=fn->constants,
+      .constant_count=fn->constant_count,.strings=fn->strings,
+      .string_count=fn->string_count,.type_sets=fn->type_sets,
+      .type_set_count=fn->type_set_count,.functions=chunk->functions,
+      .function_count=chunk->function_count,.classes=chunk->classes,
+      .class_count=chunk->class_count,.interfaces=chunk->interfaces,
+      .interface_count=chunk->interface_count,
+      .parameter_type_sets=fn->parameter_type_sets,
+      .type_variable_count=fn->type_variable_count,
+      .parameter_offset=fn->owner_class==UINT8_MAX?0:1,
+      .register_count=fn->register_count,.has_variadic=fn->has_variadic};
+    const DiamondVmStatus status=run_chunk(&child,vm,arguments,argument_count,
+        depth+1,called,result);
+    free(padded);return status;
+}
+
 /* Bind an Array of Diamond values positionally (1-indexed, sqlite3's own
  * convention for '?' placeholders) to `stmt`. A parameter-count mismatch
  * is DIAMOND_VM_ARITY_ERROR (surfaces as ArgumentError, the same class
@@ -9786,6 +9827,68 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 registers[destination]=spread_result;
                 break;
             }
+            case DIAMOND_OP_CALL_SINGLETON_SPREAD: {
+                uint16_t destination=0,function_index=0,spread_register=0;
+                uint8_t class_index=0,needs_receiver=0;
+                READ_SHORT(destination);READ_SHORT(function_index);
+                READ_SHORT(spread_register);READ_BYTE(class_index);
+                READ_BYTE(needs_receiver);
+                if((size_t)function_index>=chunk->function_count||
+                   needs_receiver>1||
+                   (class_index!=UINT8_MAX&&(size_t)class_index>=chunk->class_count))
+                    VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
+                if(registers[spread_register].kind!=DIAMOND_VALUE_OBJECT||
+                   registers[spread_register].as.object->kind!=DIAMOND_OBJECT_ARRAY) {
+                    snprintf(vm->error,sizeof vm->error,
+                        "spread argument (*expr) must be an Array");
+                    VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                }
+                const DiamondArray *spread=(const DiamondArray *)
+                    registers[spread_register].as.object;
+                const DiamondFunction *function=chunk->functions[function_index];
+                const size_t spread_argument_count=
+                    spread->count+(needs_receiver?1:0);
+                if(spread_argument_count<function->required_arity||
+                   (spread_argument_count>function->arity&&!function->has_variadic))
+                    VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                const DiamondValue *spread_arguments=spread->values;
+                DiamondValue *padded=nullptr;
+                if(needs_receiver) {
+                    if(spread->count>DIAMOND_REGISTER_COUNT-1)
+                        VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                    padded=malloc(spread_argument_count*sizeof *padded);
+                    if(padded==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                    padded[0]=class_index==UINT8_MAX?DIAMOND_NIL:
+                        DIAMOND_CLASS(class_index);
+                    for(size_t index=0;index<spread->count;index++)
+                        padded[index+1]=spread->values[index];
+                    spread_arguments=padded;
+                }
+                const DiamondChunk called_chunk={
+                    .name=function->name,.code=function->code,
+                    .lines=function->lines,.columns=function->columns,
+                    .code_count=function->code_count,
+                    .constants=function->constants,
+                    .constant_count=function->constant_count,
+                    .strings=function->strings,.string_count=function->string_count,
+                    .type_sets=function->type_sets,
+                    .type_set_count=function->type_set_count,
+                    .functions=chunk->functions,.function_count=chunk->function_count,
+                    .classes=chunk->classes,.class_count=chunk->class_count,
+                    .interfaces=chunk->interfaces,
+                    .interface_count=chunk->interface_count,
+                    .parameter_type_sets=function->parameter_type_sets,
+                    .type_variable_count=function->type_variable_count,
+                    .parameter_offset=function->owner_class==UINT8_MAX?0:1,
+                    .register_count=function->register_count,
+                    .has_variadic=function->has_variadic};
+                DiamondValue call_result=DIAMOND_NIL;
+                const DiamondVmStatus status=run_chunk(&called_chunk,vm,
+                    spread_arguments,spread_argument_count,depth+1,nullptr,
+                    &call_result);
+                free(padded);VM_PROPAGATE(status);
+                registers[destination]=call_result;break;
+            }
             case DIAMOND_OP_CLOSURE: {
                 uint16_t dest=0;uint8_t count=0;uint16_t index=0;
                 READ_SHORT(dest);READ_SHORT(index);READ_BYTE(count);
@@ -9866,6 +9969,38 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 VM_PROPAGATE(status);
                 registers[dest]=call_result;break;
             }
+            case DIAMOND_OP_CALL_CLOSURE_SPREAD: {
+                uint16_t dest=0,callable=0,spread_register=0;
+                READ_SHORT(dest);READ_SHORT(callable);READ_SHORT(spread_register);
+                if(registers[callable].kind!=DIAMOND_VALUE_OBJECT||
+                   registers[callable].as.object->kind!=DIAMOND_OBJECT_CLOSURE) {
+                    snprintf(vm->error,sizeof vm->error,
+                        "spread call receiver must be a Callable");
+                    VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                }
+                if(registers[spread_register].kind!=DIAMOND_VALUE_OBJECT||
+                   registers[spread_register].as.object->kind!=DIAMOND_OBJECT_ARRAY) {
+                    snprintf(vm->error,sizeof vm->error,
+                        "spread argument (*expr) must be an Array");
+                    VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                }
+                DiamondClosure *called=(DiamondClosure *)registers[callable].as.object;
+                if(called->foreign_chunk!=nullptr) {
+                    snprintf(vm->error,sizeof vm->error,
+                        "a compile_method callable can only be passed to define_method");
+                    VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                }
+                if(called->function_index>=chunk->function_count)
+                    VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
+                const DiamondFunction *fn=chunk->functions[called->function_index];
+                const DiamondArray *spread=(const DiamondArray *)
+                    registers[spread_register].as.object;
+                DiamondValue call_result=DIAMOND_NIL;
+                const DiamondVmStatus status=call_closure_spread_helper(vm,chunk,
+                    fn,called,spread,depth,&call_result);
+                VM_PROPAGATE(status);
+                registers[dest]=call_result;break;
+            }
             case DIAMOND_OP_NEW: {
                 uint16_t dest=0,base=0;uint8_t ci=0,argc=0;
                 READ_SHORT(dest);READ_BYTE(ci);READ_SHORT(base);READ_BYTE(argc);
@@ -9921,6 +10056,84 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                         if(argc>0)instance->fields[0]=registers[base];
                         if(argc>1)instance->fields[1]=registers[(size_t)base+1];
                     } else if(argc!=0)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                }
+                break;
+            }
+            case DIAMOND_OP_NEW_SPREAD: {
+                uint16_t dest=0,spread_register=0;uint8_t class_index=0;
+                READ_SHORT(dest);READ_BYTE(class_index);READ_SHORT(spread_register);
+                if((size_t)class_index>=chunk->class_count)
+                    VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
+                if(registers[spread_register].kind!=DIAMOND_VALUE_OBJECT||
+                   registers[spread_register].as.object->kind!=DIAMOND_OBJECT_ARRAY) {
+                    snprintf(vm->error,sizeof vm->error,
+                        "spread argument (*expr) must be an Array");
+                    VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                }
+                const DiamondArray *spread=(const DiamondArray *)
+                    registers[spread_register].as.object;
+                const DiamondClass *class=&chunk->classes[class_index];
+                DiamondInstance *instance=allocate_instance(vm,class,nullptr);
+                if(instance==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                registers[dest]=DIAMOND_OBJECT(instance);
+                const DiamondMethod *initialize=lookup_method(chunk,class,
+                    "initialize",sizeof("initialize")-1);
+                if(initialize!=nullptr) {
+                    if(spread->count<initialize->required_arity||
+                       (spread->count>initialize->arity&&
+                        !initialize->has_variadic))
+                        VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                    if(spread->count>(size_t)DIAMOND_REGISTER_COUNT-1-
+                            initialize->bound_value_count)
+                        VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                    const size_t total=spread->count+1+
+                        initialize->bound_value_count;
+                    DiamondValue *args=malloc(total*sizeof *args);
+                    if(args==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                    args[0]=registers[dest];
+                    for(size_t index=0;index<spread->count;index++)
+                        args[index+1]=spread->values[index];
+                    for(size_t index=0;index<initialize->bound_value_count;index++)
+                        args[spread->count+1+index]=initialize->bound_values[index];
+                    const DiamondChunk *function_chunk=initialize->source_chunk!=nullptr?
+                        initialize->source_chunk:chunk;
+                    const DiamondFunction *fn=
+                        function_chunk->functions[initialize->function_index];
+                    DiamondChunk child={.name=fn->name,.code=fn->code,
+                      .lines=fn->lines,.columns=fn->columns,
+                      .code_count=fn->code_count,.constants=fn->constants,
+                      .constant_count=fn->constant_count,.strings=fn->strings,
+                      .string_count=fn->string_count,.type_sets=fn->type_sets,
+                      .type_set_count=fn->type_set_count,
+                      .functions=function_chunk->functions,
+                      .function_count=function_chunk->function_count,
+                      .classes=function_chunk->classes,
+                      .class_count=function_chunk->class_count,
+                      .interfaces=function_chunk->interfaces,
+                      .interface_count=function_chunk->interface_count,
+                      .parameter_type_sets=fn->parameter_type_sets,
+                      .type_variable_count=fn->type_variable_count,
+                      .parameter_offset=fn->owner_class==UINT8_MAX?0:1,
+                      .register_count=fn->register_count,
+                      .has_variadic=fn->has_variadic};
+                    DiamondValue ignored=DIAMOND_NIL;
+                    const DiamondVmStatus status=run_chunk(&child,vm,args,total,
+                        depth+1,nullptr,&ignored);
+                    free(args);VM_PROPAGATE(status);
+                } else {
+                    bool exception_class=false;const DiamondClass *ancestor=class;
+                    while(ancestor!=nullptr) {
+                        if(ancestor==&chunk->classes[DIAMOND_CLASS_EXCEPTION]) {
+                            exception_class=true;break;
+                        }
+                        ancestor=ancestor->superclass==UINT8_MAX?nullptr:
+                            &chunk->classes[ancestor->superclass];
+                    }
+                    if(exception_class) {
+                        if(spread->count>2)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                        if(spread->count>0)instance->fields[0]=spread->values[0];
+                        if(spread->count>1)instance->fields[1]=spread->values[1];
+                    } else if(spread->count!=0)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
                 }
                 break;
             }

@@ -295,6 +295,12 @@ typedef enum DiamondOpCode : uint8_t {
     DIAMOND_OP_CHECK_HASH_KEY,
     /* `receiver.method(*array)` for user-defined instance methods. */
     DIAMOND_OP_INVOKE_SPREAD,
+    /* `callable(*array)` for closure values. */
+    DIAMOND_OP_CALL_CLOSURE_SPREAD,
+    /* `ClassName.new(*array)` for constructor calls. */
+    DIAMOND_OP_NEW_SPREAD,
+    /* `Namespace.singleton(*array)` with an optional class self slot. */
+    DIAMOND_OP_CALL_SINGLETON_SPREAD,
     DIAMOND_OP_COUNT,
 } DiamondOpCode;
 

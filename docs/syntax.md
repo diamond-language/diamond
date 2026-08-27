@@ -643,13 +643,14 @@ end
 sum(*(1..50).to_a())  # => 1275, no 16-argument-expression limit here
 ```
 
-`foo(*array)` and `receiver.method(*array)` expand an `Array`'s elements
+`foo(*array)`, `receiver.method(*array)`, `callable(*array)`,
+`ClassName.new(*array)`, and `Namespace.method(*array)` expand an Array's elements
 into positional arguments at the call site — the caller-side counterpart
 to a variadic *parameter* above. The supported slice is deliberately narrow:
 
-- direct top-level functions and user-defined instance methods are supported;
-  module/class singleton calls, `ClassName.new`, native collection/String
-  methods, and calling a `Callable` value directly remain separate call paths;
+- direct functions, user-defined instance methods, Callable values,
+  constructors, and module/class singleton methods are supported;
+- native collection/String receiver methods remain outside spread dispatch;
 - the spread argument must be the call's *only* argument — `foo(1,
   *array)`/`foo(*array, 2)` aren't supported in this version;
 - arity and method visibility are checked against the Array's actual length at *runtime*

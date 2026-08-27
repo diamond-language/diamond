@@ -483,6 +483,47 @@ static bool disassemble_chunk(FILE *stream, const char *name,
                 if((size_t)method_name>=chunk->string_count)valid=false;
                 offset+=8;break;
             }
+            case DIAMOND_OP_CALL_CLOSURE_SPREAD: {
+                if(!require_bytes(stream,chunk,offset,7)) {
+                    valid=false;offset=chunk->code_count;break;
+                }
+                fprintf(stream,"%-18s r%u, r%u, r%u\n","CALL_CLOSURE_SPREAD",
+                    checked_register(chunk,stream,read_operand(chunk,offset+1),&valid),
+                    checked_register(chunk,stream,read_operand(chunk,offset+3),&valid),
+                    checked_register(chunk,stream,read_operand(chunk,offset+5),&valid));
+                offset+=7;break;
+            }
+            case DIAMOND_OP_NEW_SPREAD: {
+                if(!require_bytes(stream,chunk,offset,6)) {
+                    valid=false;offset=chunk->code_count;break;
+                }
+                const uint8_t class_index=chunk->code[offset+3];
+                fprintf(stream,"%-18s r%u, c%u, r%u\n","NEW_SPREAD",
+                    checked_register(chunk,stream,read_operand(chunk,offset+1),&valid),
+                    class_index,
+                    checked_register(chunk,stream,read_operand(chunk,offset+4),&valid));
+                if((size_t)class_index>=chunk->class_count)valid=false;
+                offset+=6;break;
+            }
+            case DIAMOND_OP_CALL_SINGLETON_SPREAD: {
+                if(!require_bytes(stream,chunk,offset,9)) {
+                    valid=false;offset=chunk->code_count;break;
+                }
+                const size_t function_index=
+                    ((size_t)chunk->code[offset+3]<<8)|chunk->code[offset+4];
+                const uint8_t class_index=chunk->code[offset+7];
+                const uint8_t needs_receiver=chunk->code[offset+8];
+                fprintf(stream,"%-18s r%u, f%zu, r%u, c%u, self=%u\n",
+                    "CALL_SINGLETON_SPREAD",
+                    checked_register(chunk,stream,read_operand(chunk,offset+1),&valid),
+                    function_index,
+                    checked_register(chunk,stream,read_operand(chunk,offset+5),&valid),
+                    class_index,needs_receiver);
+                if(function_index>=chunk->function_count||needs_receiver>1||
+                   (class_index!=UINT8_MAX&&(size_t)class_index>=chunk->class_count))
+                    valid=false;
+                offset+=9;break;
+            }
             case DIAMOND_OP_CALL_TYPED: {
                 if(!require_bytes(stream,chunk,offset,9)) {
                     valid=false;offset=chunk->code_count;break;
