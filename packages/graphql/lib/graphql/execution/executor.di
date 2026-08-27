@@ -219,7 +219,8 @@ class Executor
     index = 0
     while index < selection_set.length()
       selection = selection_set[index]
-      if selection is GraphQL::Language::Field
+      case selection
+      when GraphQL::Language::Field
         if GraphQL::Execution::Directives.included?(selection.directives(), coerced_variables)
           key = selection.response_key()
           if grouped.include_key?(key)
@@ -228,7 +229,7 @@ class Executor
             grouped[key] = [selection]
           end
         end
-      elsif selection is GraphQL::Language::FragmentSpread
+      when GraphQL::Language::FragmentSpread
         if GraphQL::Execution::Directives.included?(selection.directives(), coerced_variables) &&
            !visited_fragments.include?(selection.name())
           visited_fragments.push(selection.name())
@@ -238,7 +239,7 @@ class Executor
               fragments, visited_fragments, grouped)
           end
         end
-      elsif selection is GraphQL::Language::InlineFragment
+      when GraphQL::Language::InlineFragment
         if GraphQL::Execution::Directives.included?(selection.directives(), coerced_variables) &&
            self.type_condition_applies?(selection.type_condition(), object_type)
           self.collect_fields(selection.selection_set(), object_type, coerced_variables,

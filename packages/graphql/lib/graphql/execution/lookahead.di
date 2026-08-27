@@ -41,11 +41,12 @@ class Lookahead
     index = 0
     while index < selection_set.length()
       selection = selection_set[index]
-      if selection is GraphQL::Language::Field
+      case selection
+      when GraphQL::Language::Field
         if GraphQL::Execution::Directives.included?(selection.directives(), @coerced_variables)
           result.push(selection)
         end
-      elsif selection is GraphQL::Language::FragmentSpread
+      when GraphQL::Language::FragmentSpread
         if GraphQL::Execution::Directives.included?(selection.directives(), @coerced_variables) &&
            !visited_fragments.include?(selection.name())
           visited_fragments.push(selection.name())
@@ -54,7 +55,7 @@ class Lookahead
             self.collect_fields(fragment.selection_set(), visited_fragments, result)
           end
         end
-      elsif selection is GraphQL::Language::InlineFragment
+      when GraphQL::Language::InlineFragment
         if GraphQL::Execution::Directives.included?(selection.directives(), @coerced_variables)
           self.collect_fields(selection.selection_set(), visited_fragments, result)
         end

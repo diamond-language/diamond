@@ -48,6 +48,16 @@ def array_each(values: Array, callback: Callable[1]) -> Array
   values
 end
 
+def array_each_until(values: Array, callback: Callable[1, Bool]) -> Array
+  index = 0
+  continuing = true
+  while index < values.length() && continuing
+    continuing = callback(values[index])
+    index += 1
+  end
+  values
+end
+
 def array_map(values: Array, callback: Callable[1]) -> Array
   result = []
   index = 0
@@ -196,6 +206,16 @@ def hash_each(values: Hash, callback: Callable[2]) -> Hash
   count = values.length()
   while index < count
     callback(values.key_at(index), values.value_at(index))
+    index += 1
+  end
+  values
+end
+
+def hash_each_until(values: Hash, callback: Callable[1, Bool]) -> Hash
+  index = 0
+  continuing = true
+  while index < values.length() && continuing
+    continuing = callback(values.value_at(index))
     index += 1
   end
   values
@@ -682,18 +702,10 @@ class LazyEnumerator
   def select(callback: Callable[1]) = self.append(:select, callback)
   def reject(callback: Callable[1]) = self.append(:reject, callback)
 
-  def each(callback: Callable[1])
-    values = if @source is Array
-      @source
-    elsif @source is Hash
-      @source.values()
-    else
-      @source.to_a()
-    end
+  def each_until(callback: Callable[1, Bool])
     operations = @operations
-    source_index = 0
-    while source_index < values.length()
-      value = values[source_index]
+    def process(source_value) -> Bool
+      value = source_value
       accepted = true
       index = 0
       while index < operations.length() && accepted
@@ -709,10 +721,74 @@ class LazyEnumerator
         end
         index += 1
       end
-      callback(value) if accepted
-      source_index += 1
+      if accepted
+        callback(value)
+      else
+        true
+      end
+    end
+    if @source is Array
+      array_each_until(@source, process)
+    elsif @source is Hash
+      hash_each_until(@source, process)
+    else
+      @source.each_until(process)
     end
     self
+  end
+
+  def each(callback: Callable[1])
+    def continue_each(value) -> Bool
+      callback(value)
+      true
+    end
+    self.each_until(continue_each)
+  end
+
+  def take(count: Int) -> Array
+    result = []
+    if count > 0
+      def take_value(value) -> Bool
+        result.push(value)
+        result.length() < count
+      end
+      self.each_until(take_value)
+    end
+    result
+  end
+
+  def find(callback: Callable[1])
+    result = nil
+    def find_value(value) -> Bool
+      if callback(value)
+        result = value
+        false
+      else
+        true
+      end
+    end
+    self.each_until(find_value)
+    result
+  end
+
+  def any?(callback: Callable[1]) -> Bool
+    found = false
+    def any_value(value) -> Bool
+      found = callback(value)
+      !found
+    end
+    self.each_until(any_value)
+    found
+  end
+
+  def all?(callback: Callable[1]) -> Bool
+    matched = true
+    def all_value(value) -> Bool
+      matched = callback(value)
+      matched
+    end
+    self.each_until(all_value)
+    matched
   end
 
   def to_a() -> Array
@@ -735,6 +811,14 @@ module Enumerable
   def count(callback: Callable[1]) -> Int = enumerable_count(self, callback)
   def any?(callback: Callable[1]) -> Bool = enumerable_any(self, callback)
   def all?(callback: Callable[1]) -> Bool = enumerable_all(self, callback)
+  def each_until(callback: Callable[1, Bool])
+    continuing = true
+    def visit(value)
+      continuing = callback(value) if continuing
+    end
+    self.each(visit)
+    self
+  end
   def map(callback: Callable[1]) -> Array = enumerable_map(self, callback)
   def reduce(initial, callback: Callable[2]) = enumerable_reduce(self, initial, callback)
 
@@ -839,6 +923,22 @@ class Range
     end
     while i < stop
       callback(i)
+      i += 1
+    end
+    self
+  end
+
+
+  def each_until(callback: Callable[1, Bool])
+    i = @start
+    stop = if @exclusive
+      @end
+    else
+      @end + 1
+    end
+    continuing = true
+    while i < stop && continuing
+      continuing = callback(i)
       i += 1
     end
     self

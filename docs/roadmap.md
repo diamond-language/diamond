@@ -363,19 +363,16 @@ Areas still worth examining include:
 - **Done**: source-level native collection extension bridges using
   `array_`/`hash_`/`enumerable_` naming conventions, eliminating VM edits for
   new collection methods while retaining native-operation precedence.
-- **Queued**: qualified class names in `case` and object patterns, such as
+- **Done**: qualified class names in `case` and object patterns, such as
   `when GraphQL::Language::Field` and
   `when GraphQL::Language::Field{name: name}`. Qualified names work in `is`
-  checks today, but pattern parsing currently treats the final constant as an
-  unresolved local. This blocked converting namespaced GraphQL type-dispatch
-  ladders during the package simplification pass; defer the refactor until the
-  pattern grammar resolves namespace paths consistently.
-- **Deferred**: short-circuit lazy operations (`take`, `find`, `any?`, and
-  similar terminals that should stop pulling the source). The first
-  `LazyEnumerator` deliberately supports deferred transforms and full-drain
-  terminals only; callback-driven `each` has no non-exceptional stop signal,
-  so claiming early termination would still traverse or materialize the
-  source. Add a real iteration-control protocol before exposing these methods.
+  checks. Both class-only matching and qualified object destructuring now use
+  the same namespace-aware class resolution, and the namespaced GraphQL
+  type-dispatch ladders have been converted to `case`.
+- **Done**: short-circuit lazy terminals (`take`, `find`, `any?`, and `all?`).
+  `each_until` is the non-exceptional iteration-control protocol. Arrays,
+  Hash values, and Ranges stop at the source; custom Enumerable sources can
+  override the default protocol to provide the same cooperative early stop.
 
 ### Explicit-arity method delegation
 

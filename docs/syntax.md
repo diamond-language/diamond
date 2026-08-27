@@ -1274,8 +1274,11 @@ Array's Enumerable-style methods: `.each`/`.select`/`.map`/`.reduce`/
 `.partition`/`.group_by`/`.zip(other)`/`.each_slice(n)`/`.each_cons(n)`/
 `.tally`. Calling `.lazy()` on an Array, Range, or other Enumerable
 returns a `LazyEnumerator`. Its `map`, `select`, and `reject` operations are
-composable and deferred until `each`, `to_a`, or `force`; chained transforms
-do not allocate intermediate Arrays. The remaining methods retain their eager
+composable and deferred until a terminal runs; chained transforms do not
+allocate intermediate Arrays. `each`, `to_a`, and `force` drain the pipeline.
+`take`, `find`, `any?`, and `all?` short-circuit through the cooperative
+`each_until` protocol; Arrays, Hash values, and Ranges stop pulling as soon as
+the terminal has its answer. The remaining methods retain their eager
 behavior. The last group returns its result directly —
 `.each_slice`/`.each_cons` collect every slice/window into an
 `Array[Array]` up front, `.partition` returns `[matching,

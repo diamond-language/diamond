@@ -4765,6 +4765,28 @@ static const DiamondMethod *case_pattern_reader(const Compiler *compiler,
     return nullptr;
 }
 
+static int probe_case_pattern_class(Compiler *compiler,
+        DiamondTokenKind *after_kind) {
+    if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER)return -1;
+    char name[DIAMOND_MAX_FUNCTION_NAME]={};
+    Compiler probe=*compiler;
+    if(!consume_qualified_name(&probe,name,sizeof name))return -1;
+    if(after_kind!=nullptr)*after_kind=probe.current.kind;
+    if(strstr(name,"::")==nullptr&&
+       (find_local(compiler,compiler->current.span)>=0||
+        find_function(compiler,compiler->current.span)>=0))return -1;
+    return find_class_qualified_or_scoped(compiler,name);
+}
+
+static uint16_t compile_case_pattern_class(Compiler *compiler,int class_index) {
+    char name[DIAMOND_MAX_FUNCTION_NAME]={};
+    const uint16_t result=allocate_register(compiler);
+    emit_opcode(compiler,DIAMOND_OP_LOAD_CLASS);
+    emit_register(compiler,result);emit_byte(compiler,(uint8_t)class_index);
+    (void)consume_qualified_name(compiler,name,sizeof name);
+    return result;
+}
+
 static uint8_t parse_case_array_node(Compiler *compiler,CaseArrayNode *nodes,
         size_t *node_count,size_t depth) {
     if(*node_count==64||depth>8) {
@@ -4883,16 +4905,22 @@ static uint8_t parse_case_array_node(Compiler *compiler,CaseArrayNode *nodes,
         advance_token(compiler);return index;
     }
     if(compiler->current.kind==DIAMOND_TOKEN_IDENTIFIER) {
-        const int object_class=find_class(compiler,compiler->current.span);
-        DiamondLexer object_lookahead=compiler->lexer;
-        const DiamondToken after_class=diamond_lexer_next(&object_lookahead);
-        if(object_class>=0&&after_class.kind==DIAMOND_TOKEN_LEFT_BRACE) {
+        char object_name[DIAMOND_MAX_FUNCTION_NAME]={};
+        Compiler object_probe=*compiler;
+        (void)consume_qualified_name(&object_probe,object_name,
+                                     sizeof object_name);
+        const int object_class=find_class_qualified_or_scoped(
+            compiler,object_name);
+        if(object_class>=0&&
+           object_probe.current.kind==DIAMOND_TOKEN_LEFT_BRACE) {
             node->kind=CASE_OBJECT_GROUP;
             node->value_register=allocate_register(compiler);
             emit_opcode(compiler,DIAMOND_OP_LOAD_CLASS);
             emit_register(compiler,node->value_register);
             emit_byte(compiler,(uint8_t)object_class);
-            advance_token(compiler);advance_token(compiler);skip_newlines(compiler);
+            (void)consume_qualified_name(compiler,object_name,
+                                         sizeof object_name);
+            advance_token(compiler);skip_newlines(compiler);
             while(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_BRACE&&
                   !compiler->failed) {
                 if(node->child_count==16) {
@@ -5004,19 +5032,12 @@ static uint8_t parse_case_array_node(Compiler *compiler,CaseArrayNode *nodes,
         }
     }
     node->kind=CASE_ARRAY_VALUE;
-    const int pattern_class=compiler->current.kind==DIAMOND_TOKEN_IDENTIFIER&&
-        find_local(compiler,compiler->current.span)<0&&
-        find_function(compiler,compiler->current.span)<0?
-        find_class(compiler,compiler->current.span):-1;
-    DiamondLexer lookahead=compiler->lexer;
-    const DiamondToken after=diamond_lexer_next(&lookahead);
-    if(pattern_class>=0&&after.kind!=DIAMOND_TOKEN_DOT&&
-       after.kind!=DIAMOND_TOKEN_DOUBLE_COLON) {
-        node->value_register=allocate_register(compiler);
-        emit_opcode(compiler,DIAMOND_OP_LOAD_CLASS);
-        emit_register(compiler,node->value_register);
-        emit_byte(compiler,(uint8_t)pattern_class);advance_token(compiler);
-    } else node->value_register=parse_expression(compiler);
+    DiamondTokenKind after=DIAMOND_TOKEN_ERROR;
+    const int pattern_class=probe_case_pattern_class(compiler,&after);
+    if(pattern_class>=0&&after!=DIAMOND_TOKEN_DOT&&
+       after!=DIAMOND_TOKEN_LEFT_BRACE)
+        node->value_register=compile_case_pattern_class(compiler,pattern_class);
+    else node->value_register=parse_expression(compiler);
     return index;
 }
 
@@ -5312,11 +5333,11 @@ static uint16_t parse_case_branches(Compiler *compiler, uint16_t subject,
     const uint16_t match_reg=allocate_register(compiler);
     CaseArrayNode array_nodes[64]={};uint8_t array_root=0;size_t node_count=0;
     CaseBinding bindings[64]={};size_t binding_count=0;
-    DiamondLexer pattern_head_lookahead=compiler->lexer;
-    const DiamondToken after_pattern_head=diamond_lexer_next(&pattern_head_lookahead);
+    DiamondTokenKind after_pattern_head=DIAMOND_TOKEN_ERROR;
+    const int pattern_head_class=
+        probe_case_pattern_class(compiler,&after_pattern_head);
     const bool object_pattern=compiler->current.kind==DIAMOND_TOKEN_IDENTIFIER&&
-        find_class(compiler,compiler->current.span)>=0&&
-        after_pattern_head.kind==DIAMOND_TOKEN_LEFT_BRACE;
+        pattern_head_class>=0&&after_pattern_head==DIAMOND_TOKEN_LEFT_BRACE;
     const bool array_pattern=!subjectless&&(
         compiler->current.kind==DIAMOND_TOKEN_LEFT_BRACKET||
         compiler->current.kind==DIAMOND_TOKEN_LEFT_BRACE||object_pattern);
@@ -5384,19 +5405,13 @@ static uint16_t parse_case_branches(Compiler *compiler, uint16_t subject,
             if(!first_value)
                 skip_jump=emit_jump(compiler,DIAMOND_OP_JUMP_IF_TRUE,match_reg);
             uint16_t value_reg;
-            const int pattern_class=compiler->current.kind==DIAMOND_TOKEN_IDENTIFIER&&
-                find_local(compiler,compiler->current.span)<0&&
-                find_function(compiler,compiler->current.span)<0?
-                find_class(compiler,compiler->current.span):-1;
-            DiamondLexer pattern_lookahead=compiler->lexer;
-            const DiamondToken after_pattern=diamond_lexer_next(&pattern_lookahead);
-            if(pattern_class>=0&&after_pattern.kind!=DIAMOND_TOKEN_DOT&&
-               after_pattern.kind!=DIAMOND_TOKEN_DOUBLE_COLON) {
-                value_reg=allocate_register(compiler);
-                emit_opcode(compiler,DIAMOND_OP_LOAD_CLASS);
-                emit_register(compiler,value_reg);emit_byte(compiler,(uint8_t)pattern_class);
-                advance_token(compiler);
-            } else value_reg=parse_expression(compiler);
+            DiamondTokenKind after_pattern=DIAMOND_TOKEN_ERROR;
+            const int pattern_class=
+                probe_case_pattern_class(compiler,&after_pattern);
+            if(pattern_class>=0&&after_pattern!=DIAMOND_TOKEN_DOT&&
+               after_pattern!=DIAMOND_TOKEN_LEFT_BRACE)
+                value_reg=compile_case_pattern_class(compiler,pattern_class);
+            else value_reg=parse_expression(compiler);
             const uint16_t eq_reg=allocate_register(compiler);
             if(subjectless) {
                 emit_instruction(compiler,DIAMOND_OP_NOT,eq_reg,value_reg,0,2);

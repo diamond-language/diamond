@@ -5177,6 +5177,17 @@ static const DiamondFunction *find_collection_extension(
             chunk,bridge,(size_t)written);
         if(specific!=nullptr)return specific;
     }
+    if(kind==DIAMOND_OBJECT_HASH) {
+        const bool shared=
+            (length==4&&memcmp(name,"lazy",4)==0)||
+            (length==6&&memcmp(name,"select",6)==0)||
+            (length==5&&memcmp(name,"count",5)==0)||
+            (length==3&&memcmp(name,"any",3)==0)||
+            (length==3&&memcmp(name,"all",3)==0)||
+            (length==6&&memcmp(name,"reduce",6)==0)||
+            (length==3&&memcmp(name,"map",3)==0);
+        if(!shared)return nullptr;
+    }
     written=snprintf(bridge,sizeof bridge,"enumerable_%.*s",(int)length,name);
     if(written<=0||(size_t)written>=sizeof bridge)return nullptr;
     return find_top_level_function(chunk,bridge,(size_t)written);
