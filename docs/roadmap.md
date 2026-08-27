@@ -136,6 +136,11 @@ features in one deliberate consolidation pass.
 
 While paused:
 
+- forward-reference gaps in the self-hosted frontend may require declaration
+  ordering that the native compiler does not. New prelude types should retain
+  bootstrap-compatible ordering for now; implementing parity immediately is
+  deferred so it can arrive with the planned consolidated language-feature
+  adoption rather than as another isolated compatibility patch;
 - `make test-all` runs only the two bootstrap smoke checks (self-parse,
   self-run) -- enough to know the self-hosted frontend hasn't gone
   completely stale, not full parity coverage;
@@ -358,6 +363,19 @@ Areas still worth examining include:
 - **Done**: source-level native collection extension bridges using
   `array_`/`hash_`/`enumerable_` naming conventions, eliminating VM edits for
   new collection methods while retaining native-operation precedence.
+- **Queued**: qualified class names in `case` and object patterns, such as
+  `when GraphQL::Language::Field` and
+  `when GraphQL::Language::Field{name: name}`. Qualified names work in `is`
+  checks today, but pattern parsing currently treats the final constant as an
+  unresolved local. This blocked converting namespaced GraphQL type-dispatch
+  ladders during the package simplification pass; defer the refactor until the
+  pattern grammar resolves namespace paths consistently.
+- **Deferred**: short-circuit lazy operations (`take`, `find`, `any?`, and
+  similar terminals that should stop pulling the source). The first
+  `LazyEnumerator` deliberately supports deferred transforms and full-drain
+  terminals only; callback-driven `each` has no non-exceptional stop signal,
+  so claiming early termination would still traverse or materialize the
+  source. Add a real iteration-control protocol before exposing these methods.
 
 ### Explicit-arity method delegation
 

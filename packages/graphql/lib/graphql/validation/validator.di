@@ -360,7 +360,7 @@ class Validator
   # compatible with `expected_type`.
   def self.validate_value_variables(value, expected_type, declared_variables, errors)
     if value is GraphQL::Language::Variable
-      unless declared_variables.keys().include?(value.name())
+      unless declared_variables.include_key?(value.name())
         errors.push("undefined variable \"$#{value.name()}\"")
         return nil
       end

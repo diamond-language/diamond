@@ -42,8 +42,8 @@ class InstrumentedConnection
     affected
   end
 
-  def last_insert_row_id() = @connection.last_insert_row_id()
-  def close() = @connection.close()
+  delegate last_insert_row_id(), to: @connection
+  delegate close(), to: @connection
 end
 
 end

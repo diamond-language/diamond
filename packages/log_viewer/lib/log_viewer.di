@@ -11,7 +11,7 @@ module LogViewer
   end
 
   def self.append_field(parts, record, key)
-    if record.keys().include?(key)
+    if record.include_key?(key)
       parts.push("#{key}=#{JSON.stringify(record[key])}")
     end
   end

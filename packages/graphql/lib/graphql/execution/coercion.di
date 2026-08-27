@@ -148,7 +148,7 @@ class Coercion
     index = 0
     while index < type.arguments().length()
       arg = type.arguments()[index]
-      if provided.keys().include?(arg.name())
+      if provided.include_key?(arg.name())
         result[arg.name()] = self.coerce_literal(provided[arg.name()], arg.type(), coerced_variables)
       elsif arg.has_default?()
         result[arg.name()] = arg.default_value()
@@ -202,7 +202,7 @@ class Coercion
       index = 0
       while index < type.arguments().length()
         arg = type.arguments()[index]
-        if value.keys().include?(arg.name())
+        if value.include_key?(arg.name())
           result[arg.name()] = self.coerce_runtime_value(value[arg.name()], arg.type())
         elsif arg.has_default?()
           result[arg.name()] = arg.default_value()
@@ -227,7 +227,7 @@ class Coercion
     while index < variable_definitions.length()
       vardef = variable_definitions[index]
       schema_type = self.resolve_type_reference(vardef.type(), type_map)
-      if raw_variables.keys().include?(vardef.name())
+      if raw_variables.include_key?(vardef.name())
         result[vardef.name()] = self.coerce_runtime_value(raw_variables[vardef.name()], schema_type)
       elsif vardef.default_value() != nil
         result[vardef.name()] = self.coerce_literal(vardef.default_value(), schema_type, {})
@@ -257,7 +257,7 @@ class Coercion
     index = 0
     while index < schema_arguments.length()
       arg = schema_arguments[index]
-      if provided.keys().include?(arg.name())
+      if provided.include_key?(arg.name())
         result[arg.name()] = self.coerce_literal(provided[arg.name()], arg.type(), coerced_variables)
       elsif arg.has_default?()
         result[arg.name()] = arg.default_value()

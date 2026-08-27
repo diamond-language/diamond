@@ -54,18 +54,18 @@ class Lexer
           pos += 1
         end
       elsif ch == "\""
-        result = self.scan_string(source, pos, line)
-        tokens.push(Token.new("STRING", result[0], line))
-        pos = result[1]
-        line = line + result[2]
+        [value, next_pos, line_delta] = self.scan_string(source, pos, line)
+        tokens.push(Token.new("STRING", value, line))
+        pos = next_pos
+        line = line + line_delta
       elsif self.is_name_start(ch)
-        result = self.scan_name(source, pos)
-        tokens.push(Token.new("NAME", result[0], line))
-        pos = result[1]
+        [value, next_pos] = self.scan_name(source, pos)
+        tokens.push(Token.new("NAME", value, line))
+        pos = next_pos
       elsif self.is_digit(ch) || (ch == "-" && pos + 1 < length && self.is_digit(source[pos + 1]))
-        result = self.scan_number(source, pos, line)
-        tokens.push(Token.new(result[0], result[1], line))
-        pos = result[2]
+        [kind, value, next_pos] = self.scan_number(source, pos, line)
+        tokens.push(Token.new(kind, value, line))
+        pos = next_pos
       elsif ch == "." && pos + 2 < length && source[pos + 1] == "." && source[pos + 2] == "."
         tokens.push(Token.new("PUNCT", "...", line))
         pos += 3

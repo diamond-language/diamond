@@ -81,6 +81,8 @@
   transforms plus `each`, `to_a`, and `force` terminals.
 - Added source-level Array/Hash extension bridges through `array_`, `hash_`,
   and `enumerable_` function naming conventions.
+- Simplified package and example code with destructuring, direct Hash key
+  probes, delegation, lazy collection pipelines, and explicit private helpers.
 - Corrected the runtime type-ID partition so the advertised class capacity no
   longer overlaps generic-variable and interface IDs, and raised the class
   capacity from 128 to 180. Updated the self-hosted compiler's mirrored

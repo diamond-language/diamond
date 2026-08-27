@@ -63,6 +63,8 @@ class Lookahead
     end
   end
 
+  private collect_fields
+
   # Every Field AST node at this level named `field_name` (almost
   # always 0 or 1, more than 1 only when fragments merge into the same
   # field with different sub-selections -- #selection below merges

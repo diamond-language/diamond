@@ -50,7 +50,7 @@ class Dataloader
   # loader name is expected to pass an equivalent batch_fn -- see
   # README.md's own "Dataloader" section.
   def with(name, batch_fn)
-    if @loaders.keys().include?(name)
+    if @loaders.include_key?(name)
       @loaders[name]
     else
       loader = Loader.new(batch_fn, self)
@@ -122,19 +122,19 @@ class Loader
   end
 
   def load(key)
-    if @cache.keys().include?(key)
+    if @cache.include_key?(key)
       return @cache[key]
     end
-    if @failed.keys().include?(key)
+    if @failed.include_key?(key)
       raise GraphQL::ExecutionError.new(@failed[key])
     end
     unless @pending.include?(key)
       @pending.push(key)
     end
-    while !@cache.keys().include?(key) && !@failed.keys().include?(key)
+    while !@cache.include_key?(key) && !@failed.include_key?(key)
       yield
     end
-    if @failed.keys().include?(key)
+    if @failed.include_key?(key)
       raise GraphQL::ExecutionError.new(@failed[key])
     end
     @cache[key]

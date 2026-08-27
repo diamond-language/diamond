@@ -46,9 +46,7 @@ def http_parse_request(conn)
 end
 
 def http_write_response(conn, response)
-  status = response[0]
-  headers = response[1]
-  body = response[2]
+  [status, headers, body] = response
   conn.write("HTTP/1.1 #{status} #{http_status_text(status)}\r\n")
   def write_header(name, value)
     conn.write("#{name}: #{value}\r\n")

@@ -59,7 +59,7 @@ def load_current_user_middleware(request, context, forward)
   log_debug(request, context, "authentication.loaded", {"authenticated": user != nil})
   response = forward(request, context)
   if context["clear_session_cookie"]
-    headers = response[1]
+    [status, headers, body] = response
     headers["Set-Cookie"] = expired_session_cookie()
     response[1] = headers
     log_debug(request, context, "authentication.cookie_expired")

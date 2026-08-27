@@ -222,7 +222,7 @@ class Executor
       if selection is GraphQL::Language::Field
         if GraphQL::Execution::Directives.included?(selection.directives(), coerced_variables)
           key = selection.response_key()
-          if grouped.keys().include?(key)
+          if grouped.include_key?(key)
             grouped[key].push(selection)
           else
             grouped[key] = [selection]
