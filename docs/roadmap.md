@@ -287,7 +287,7 @@ Areas still worth examining include:
 - **Done**: strict nested Array binding patterns in `case`/`when`, combining
   exact recursive shape checks, `_` wildcards, lowercase bindings, and the
   existing literal/Range/Regexp/class/custom-equality matchers without partial
-  binding on failed patterns. Object patterns remain a possible follow-up;
+  binding on failed patterns;
 - **Done**: nested strict Array destructuring assignment with bracketed
   patterns (`[head, [left, right]] = value`), including mixed local/instance/
   class-variable leaves and exact shape checks at every level;
@@ -298,6 +298,8 @@ Areas still worth examining include:
   existing local or captured values without rebinding them;
 - **Done**: required-key Hash binding patterns in `case`, including nested
   Array/Hash values, wildcards, pins, extra-key tolerance, and atomic bindings;
+- **Done**: class-guarded object binding patterns in `case`, extracting public
+  zero-argument readers into nested patterns with atomic binding commits;
 - **Done**: range-based Array slicing (`arr[1..3]` read,
   `arr[1..3] = [...]` write). `Range` has no native VM value kind at
   all -- it's a plain user-space class (`lib/core.di`) -- so

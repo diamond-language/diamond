@@ -4732,11 +4732,13 @@ typedef struct CaseFlowJoin {
 
 typedef enum CaseArrayNodeKind {CASE_ARRAY_GROUP,CASE_ARRAY_VALUE,
     CASE_ARRAY_BIND,CASE_ARRAY_WILDCARD,CASE_ARRAY_REST_BIND,
-    CASE_ARRAY_REST_WILDCARD,CASE_ARRAY_PIN,CASE_HASH_GROUP} CaseArrayNodeKind;
+    CASE_ARRAY_REST_WILDCARD,CASE_ARRAY_PIN,CASE_HASH_GROUP,
+    CASE_OBJECT_GROUP} CaseArrayNodeKind;
 
 typedef struct CaseArrayNode {
     CaseArrayNodeKind kind;
     DiamondSpan name;
+    DiamondSpan member_name;
     uint16_t value_register;
     uint16_t key_register;
     uint16_t subject_register;
@@ -4746,6 +4748,20 @@ typedef struct CaseArrayNode {
 
 static bool span_is_underscore(const Compiler *compiler,DiamondSpan span) {
     return span.length==1&&compiler->source[span.start]=='_';
+}
+
+static const DiamondMethod *case_pattern_reader(const Compiler *compiler,
+        uint8_t class_index,DiamondSpan name) {
+    const DiamondClass *class=&compiler->program->classes[class_index];
+    while(class!=nullptr) {
+        for(size_t method=class->method_count;method>0;method--) {
+            const DiamondMethod *candidate=&class->methods[method-1];
+            if(name_equals(compiler,candidate->name,name,false))return candidate;
+        }
+        class=class->superclass==UINT8_MAX?nullptr:
+            &compiler->program->classes[class->superclass];
+    }
+    return nullptr;
 }
 
 static uint8_t parse_case_array_node(Compiler *compiler,CaseArrayNode *nodes,
@@ -4821,6 +4837,69 @@ static uint8_t parse_case_array_node(Compiler *compiler,CaseArrayNode *nodes,
             return index;
         }
         advance_token(compiler);return index;
+    }
+    if(compiler->current.kind==DIAMOND_TOKEN_IDENTIFIER) {
+        const int object_class=find_class(compiler,compiler->current.span);
+        DiamondLexer object_lookahead=compiler->lexer;
+        const DiamondToken after_class=diamond_lexer_next(&object_lookahead);
+        if(object_class>=0&&after_class.kind==DIAMOND_TOKEN_LEFT_BRACE) {
+            node->kind=CASE_OBJECT_GROUP;
+            node->value_register=allocate_register(compiler);
+            emit_opcode(compiler,DIAMOND_OP_LOAD_CLASS);
+            emit_register(compiler,node->value_register);
+            emit_byte(compiler,(uint8_t)object_class);
+            advance_token(compiler);advance_token(compiler);skip_newlines(compiler);
+            while(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_BRACE&&
+                  !compiler->failed) {
+                if(node->child_count==16) {
+                    fail(compiler,compiler->current.span,
+                        "too many case object fields");return index;
+                }
+                if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER||
+                   compiler->source[compiler->current.span.start]<'a'||
+                   compiler->source[compiler->current.span.start]>'z') {
+                    fail(compiler,compiler->current.span,
+                        "expected lowercase reader in case object pattern");
+                    return index;
+                }
+                const DiamondSpan reader_name=compiler->current.span;
+                const DiamondMethod *reader=case_pattern_reader(
+                    compiler,(uint8_t)object_class,reader_name);
+                if(reader==nullptr||reader->is_private||reader->required_arity>0) {
+                    fail(compiler,reader_name,
+                        "case object pattern requires a public zero-argument reader");
+                    return index;
+                }
+                advance_token(compiler);
+                if(compiler->current.kind!=DIAMOND_TOKEN_COLON) {
+                    fail(compiler,compiler->current.span,
+                        "expected ':' after case object reader");return index;
+                }
+                advance_token(compiler);
+                const uint8_t child=parse_case_array_node(
+                    compiler,nodes,node_count,depth+1);
+                if(nodes[child].kind==CASE_ARRAY_REST_BIND||
+                   nodes[child].kind==CASE_ARRAY_REST_WILDCARD) {
+                    fail(compiler,nodes[child].name,
+                        "rest bindings are not supported in case object patterns");
+                    return index;
+                }
+                nodes[child].member_name=reader_name;
+                node->children[node->child_count++]=child;
+                skip_newlines(compiler);
+                if(compiler->current.kind==DIAMOND_TOKEN_RIGHT_BRACE)break;
+                if(compiler->current.kind!=DIAMOND_TOKEN_COMMA) {
+                    fail(compiler,compiler->current.span,
+                        "expected ',' in case object pattern");return index;
+                }
+                advance_token(compiler);skip_newlines(compiler);
+            }
+            if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_BRACE) {
+                fail(compiler,compiler->current.span,
+                    "expected '}' after case object pattern");return index;
+            }
+            advance_token(compiler);return index;
+        }
     }
     if(compiler->current.kind==DIAMOND_TOKEN_STAR) {
         advance_token(compiler);
@@ -4905,7 +4984,8 @@ static void emit_case_array_match(Compiler *compiler,CaseArrayNode *nodes,
        node->kind==CASE_ARRAY_REST_BIND||
        node->kind==CASE_ARRAY_REST_WILDCARD)return;
     const uint16_t test=allocate_register(compiler);
-    if(node->kind==CASE_ARRAY_VALUE||node->kind==CASE_ARRAY_PIN) {
+    if(node->kind==CASE_ARRAY_VALUE||node->kind==CASE_ARRAY_PIN||
+       node->kind==CASE_OBJECT_GROUP) {
         emit_instruction(compiler,DIAMOND_OP_CASE_MATCH,test,node->value_register,subject,3);
     } else if(node->kind==CASE_ARRAY_GROUP) {
         const bool has_rest=node->child_count>0&&
@@ -4921,7 +5001,8 @@ static void emit_case_array_match(Compiler *compiler,CaseArrayNode *nodes,
     emit_instruction(compiler,DIAMOND_OP_MOVE,match_reg,test,0,2);
     failure_jumps[(*failure_count)++]=
         emit_jump(compiler,DIAMOND_OP_JUMP_IF_FALSE,match_reg);
-    if(node->kind!=CASE_ARRAY_GROUP&&node->kind!=CASE_HASH_GROUP)return;
+    if(node->kind!=CASE_ARRAY_GROUP&&node->kind!=CASE_HASH_GROUP&&
+       node->kind!=CASE_OBJECT_GROUP)return;
     for(size_t child=0;child<node->child_count;child++) {
         CaseArrayNode *child_node=&nodes[node->children[child]];
         if(child_node->kind==CASE_ARRAY_REST_BIND||
@@ -4934,6 +5015,12 @@ static void emit_case_array_match(Compiler *compiler,CaseArrayNode *nodes,
                 child_node->subject_register=rest;
             }
             continue;
+        }
+        if(node->kind==CASE_OBJECT_GROUP) {
+            const uint16_t element=emit_invoke_call(compiler,subject,
+                child_node->member_name,false,nullptr,0,nullptr,0);
+            emit_case_array_match(compiler,nodes,node->children[child],element,
+                match_reg,failure_jumps,failure_count);continue;
         }
         uint16_t index_reg=child_node->key_register;
         if(node->kind==CASE_ARRAY_GROUP) {
@@ -4963,7 +5050,8 @@ static void bind_case_array_names(Compiler *compiler,const CaseArrayNode *nodes,
         (void)compile_assignment_store(compiler,node->name,false,false,
             node->subject_register);return;
     }
-    if(node->kind==CASE_ARRAY_GROUP||node->kind==CASE_HASH_GROUP)
+    if(node->kind==CASE_ARRAY_GROUP||node->kind==CASE_HASH_GROUP||
+       node->kind==CASE_OBJECT_GROUP)
         for(size_t child=0;child<node->child_count;child++)
             bind_case_array_names(compiler,nodes,node->children[child]);
 }
@@ -5085,8 +5173,13 @@ static uint16_t parse_case_branches(Compiler *compiler, uint16_t subject,
      * and ordinary/custom equality fallback in one runtime operation. */
     const uint16_t match_reg=allocate_register(compiler);
     CaseArrayNode array_nodes[64]={};uint8_t array_root=0;
+    DiamondLexer pattern_head_lookahead=compiler->lexer;
+    const DiamondToken after_pattern_head=diamond_lexer_next(&pattern_head_lookahead);
+    const bool object_pattern=compiler->current.kind==DIAMOND_TOKEN_IDENTIFIER&&
+        find_class(compiler,compiler->current.span)>=0&&
+        after_pattern_head.kind==DIAMOND_TOKEN_LEFT_BRACE;
     const bool array_pattern=compiler->current.kind==DIAMOND_TOKEN_LEFT_BRACKET||
-        compiler->current.kind==DIAMOND_TOKEN_LEFT_BRACE;
+        compiler->current.kind==DIAMOND_TOKEN_LEFT_BRACE||object_pattern;
     if(array_pattern) {
         size_t node_count=0;
         array_root=parse_case_array_node(compiler,array_nodes,&node_count,0);

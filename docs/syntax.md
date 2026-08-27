@@ -107,6 +107,23 @@ wildcards, and `^local` pins as Array patterns. Missing keys fail the pattern
 even when the requested value pattern would match `nil`. Empty `{}` matches any
 Hash. Bindings remain failure-atomic. Hash rest bindings are not yet supported.
 
+Object patterns guard by class and extract values through public readers:
+
+```ruby
+case event
+when ScoreEvent{player: Player{name: name}, points: ^expected_points}
+  record(name)
+else
+  reject(event)
+end
+```
+
+The subject must be an instance of the named class or a subclass. Each written
+reader must exist on that class, accept zero arguments, and be public; otherwise
+the pattern is rejected at compile time. Reader results support nested object,
+Array, and Hash patterns plus bindings, `_`, and `^local`. Empty `Class{}` is a
+class-only guard. Bindings commit only after every reader result matches.
+
 ## Ternary
 
 ```ruby
