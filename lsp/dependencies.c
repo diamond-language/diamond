@@ -68,21 +68,38 @@ static bool push_edge(DependencyTable *table,const char *uri,const char *path) {
 
 bool dependency_table_update(DependencyTable *table,const char *uri,
         const JsonValue *paths) {
-    dependency_table_remove_document(table,uri);
-    if(paths==nullptr||paths->kind!=JSON_ARRAY)return true;
+    DependencyTable replacement={0};
+    if(paths==nullptr||paths->kind!=JSON_ARRAY) {
+        dependency_table_remove_document(table,uri);
+        return true;
+    }
     for(size_t index=0;index<paths->as.array.count;index++) {
         const JsonValue *entry=paths->as.array.items[index];
         if(entry->kind!=JSON_STRING)continue;
         bool duplicate=false;
-        for(size_t existing=0;existing<table->count;existing++) {
-            if(strcmp(table->edges[existing].uri,uri)==0&&
-               strcmp(table->edges[existing].path,entry->as.string.chars)==0) {
+        for(size_t existing=0;existing<replacement.count;existing++) {
+            if(strcmp(replacement.edges[existing].path,entry->as.string.chars)==0) {
                 duplicate=true;break;
             }
         }
         if(duplicate)continue;
-        if(!push_edge(table,uri,entry->as.string.chars))return false;
+        if(!push_edge(&replacement,uri,entry->as.string.chars)) {
+            for(size_t free_index=0;free_index<replacement.count;free_index++) {
+                free(replacement.edges[free_index].uri);
+                free(replacement.edges[free_index].path);
+            }
+            free(replacement.edges);
+            return false;
+        }
     }
+    dependency_table_remove_document(table,uri);
+    for(size_t index=0;index<replacement.count;index++)
+        push_edge(table,replacement.edges[index].uri,replacement.edges[index].path);
+    for(size_t free_index=0;free_index<replacement.count;free_index++) {
+        free(replacement.edges[free_index].uri);
+        free(replacement.edges[free_index].path);
+    }
+    free(replacement.edges);
     return true;
 }
 
