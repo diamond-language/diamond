@@ -114,10 +114,15 @@ See `docs/lsp.md` and `lsp/receiver.c` for the mechanism and its scope cuts.
 
 Remaining, still open:
 
-- equivalent flow merging for loop exits;
 - dependency-aware symbol information beyond one combined compilation;
 - incremental compilation only after there is a compiler architecture that can
   benefit from incremental document synchronization.
+
+Loop exits now participate in the same conservative flow analysis as
+conditionals and `case`: `while`/`until` join the zero-iteration state, the
+completed-body state, and every `break`, while an unconditional `loop` joins
+its reachable `break` values and local states. This preserves class unions for
+receiver tooling and proves compatible loop-expression return annotations.
 
 ## Self-hosting: minimal-compat maintenance mode
 

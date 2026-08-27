@@ -233,6 +233,14 @@ joined_case_dump="$(sed -n '/^== joined_case ==$/,$p' <<<"$actual")"
 grep -q 'CASE_MATCH' <<<"$joined_case_dump"
 [[ "$(grep -c 'CHECK_TYPE' <<<"$joined_case_dump")" == "1" ]]
 
+actual="$("$diamond" --dump-bytecode -e $'class FlowDog\nend\nclass FlowCat\nend\ndef joined_while(flag: Bool) -> FlowDog | FlowCat\n value = FlowCat.new()\n while flag\n  value = FlowDog.new()\n  break\n end\n value\nend\njoined_while(false)')"
+joined_while_dump="$(sed -n '/^== joined_while ==$/,$p' <<<"$actual")"
+[[ "$(grep -c 'CHECK_TYPE' <<<"$joined_while_dump")" == "1" ]]
+
+actual="$("$diamond" --dump-bytecode -e $'class FlowDog\nend\nclass FlowCat\nend\ndef joined_break(flag: Bool) -> FlowDog | FlowCat\n loop\n  if flag\n   break FlowDog.new()\n  else\n   break FlowCat.new()\n  end\n end\nend\njoined_break(true)')"
+joined_break_dump="$(sed -n '/^== joined_break ==$/,$p' <<<"$actual")"
+[[ "$(grep -c 'CHECK_TYPE' <<<"$joined_break_dump")" == "1" ]]
+
 actual="$("$diamond" --dump-bytecode -e $'def lookup(values: Hash[String, Int]) -> Int\n value = values["answer"]\n if value == nil\n  0\n else\n  value\n end\nend\nlookup({"answer": 42})')"
 lookup_dump="$(sed -n '/^== lookup ==$/,$p' <<<"$actual")"
 [[ "$(grep -c 'CHECK_TYPE' <<<"$lookup_dump")" == "1" ]]

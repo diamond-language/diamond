@@ -625,11 +625,11 @@ read_message >/dev/null
 # and ternaries all expose both possible classes after the join. ---
 
 branch_uri="file:///branch_receiver.di"
-branch_source='class Dog\n  def bark()\n    1\n  end\nend\nclass Cat\n  def meow()\n    2\n  end\nend\ndef inspect_if(flag)\n  pet = if flag\n    Dog.new()\n  else\n    Cat.new()\n  end\n  pet.bark()\nend\ndef inspect_assign(flag)\n  pet = Dog.new()\n  if flag\n    pet = Dog.new()\n  else\n    pet = Cat.new()\n  end\n  pet.bark()\nend\ndef inspect_ternary(flag)\n  pet = flag ? Dog.new() : Cat.new()\n  pet.bark()\nend\ndef inspect_unless(flag)\n  pet = unless flag\n    Dog.new()\n  else\n    Cat.new()\n  end\n  pet.bark()\nend\ndef inspect_elsif(flag, other)\n  pet = if flag\n    Dog.new()\n  elsif other\n    Cat.new()\n  else\n    Dog.new()\n  end\n  pet.bark()\nend\ndef inspect_case(kind)\n  pet = case kind\n  when 1\n    Dog.new()\n  else\n    Cat.new()\n  end\n  pet.bark()\nend'
+branch_source='class Dog\n  def bark()\n    1\n  end\nend\nclass Cat\n  def meow()\n    2\n  end\nend\ndef inspect_if(flag)\n  pet = if flag\n    Dog.new()\n  else\n    Cat.new()\n  end\n  pet.bark()\nend\ndef inspect_assign(flag)\n  pet = Dog.new()\n  if flag\n    pet = Dog.new()\n  else\n    pet = Cat.new()\n  end\n  pet.bark()\nend\ndef inspect_ternary(flag)\n  pet = flag ? Dog.new() : Cat.new()\n  pet.bark()\nend\ndef inspect_unless(flag)\n  pet = unless flag\n    Dog.new()\n  else\n    Cat.new()\n  end\n  pet.bark()\nend\ndef inspect_elsif(flag, other)\n  pet = if flag\n    Dog.new()\n  elsif other\n    Cat.new()\n  else\n    Dog.new()\n  end\n  pet.bark()\nend\ndef inspect_case(kind)\n  pet = case kind\n  when 1\n    Dog.new()\n  else\n    Cat.new()\n  end\n  pet.bark()\nend\ndef inspect_while(flag)\n  pet = Cat.new()\n  while flag\n    pet = Dog.new()\n    break\n  end\n  pet.bark()\nend\ndef inspect_loop(flag)\n  pet = loop\n    if flag\n      break Dog.new()\n    else\n      break Cat.new()\n    end\n  end\n  pet.bark()\nend'
 send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$branch_uri"'","text":"'"$branch_source"'"}}}'
 read_message >/dev/null
 
-for request in '140 16' '141 25' '142 29' '143 37' '144 47' '145 56'; do
+for request in '140 16' '141 25' '142 29' '143 37' '144 47' '145 56' '146 64' '147 74'; do
   set -- $request
   send '{"jsonrpc":"2.0","id":'"$1"',"method":"textDocument/completion","params":{"textDocument":{"uri":"'"$branch_uri"'"},"position":{"line":'"$2"',"character":6}}}'
   response="$(read_message)"

@@ -37,6 +37,12 @@ typedef struct LoopContext {
     uint16_t result_register;
     size_t breaks[64];
     size_t break_count;
+    size_t flow_reg_count;
+    uint8_t *exit_types;
+    int16_t *exit_sets;
+    bool exit_initialized;
+    uint8_t result_type;
+    int16_t result_set;
 } LoopContext;
 
 enum { DIAMOND_MAX_NARROWING_FACTS = 8 };
@@ -4102,6 +4108,37 @@ static bool register_is_local(const Compiler *compiler,uint16_t reg) {
     return false;
 }
 
+static void merge_loop_exit(Compiler *compiler,LoopContext *loop,
+        uint8_t result_type,int16_t result_set) {
+    if(!loop->exit_initialized) {
+        for(size_t index=0;index<loop->flow_reg_count;index++) {
+            loop->exit_types[index]=compiler->known_types[index];
+            loop->exit_sets[index]=compiler->known_type_sets[index];
+        }
+        loop->result_type=result_type;loop->result_set=result_set;
+        loop->exit_initialized=true;return;
+    }
+    for(size_t index=0;index<loop->flow_reg_count;index++)
+        merge_flow_types(compiler,loop->exit_types[index],loop->exit_sets[index],
+            compiler->known_types[index],compiler->known_type_sets[index],
+            &loop->exit_types[index],&loop->exit_sets[index]);
+    merge_flow_types(compiler,loop->result_type,loop->result_set,
+        result_type,result_set,&loop->result_type,&loop->result_set);
+}
+
+static void finish_loop_flow(Compiler *compiler,LoopContext *loop,
+        size_t effective_start) {
+    if(!loop->exit_initialized)return;
+    for(size_t index=0;index<loop->flow_reg_count;index++) {
+        compiler->known_types[index]=loop->exit_types[index];
+        compiler->known_type_sets[index]=loop->exit_sets[index];
+        if(register_is_local(compiler,(uint16_t)index))
+            record_scope_type_fact(compiler,(uint16_t)index,effective_start);
+    }
+    compiler->known_types[loop->result_register]=loop->result_type;
+    compiler->known_type_sets[loop->result_register]=loop->result_set;
+}
+
 static uint16_t parse_index(Compiler *compiler,uint16_t receiver) {
     advance_token(compiler);
     const uint16_t index=parse_expression(compiler);
@@ -4348,15 +4385,33 @@ static uint16_t parse_while(Compiler *compiler,bool inverted) {
     }
     const size_t exit_jump = emit_jump(
         compiler, DIAMOND_OP_JUMP_IF_FALSE, branch_condition);
+    const size_t flow_reg_count=compiler->next_register;
+    uint8_t *exit_types=malloc(flow_reg_count*sizeof(uint8_t));
+    int16_t *exit_sets=malloc(flow_reg_count*sizeof(int16_t));
+    if(exit_types==nullptr||exit_sets==nullptr) {
+        free(exit_types);free(exit_sets);
+        fail(compiler,compiler->previous.span,"out of memory compiling loop flow");
+        compiler->loop_captures_pending=outer_loop_captures_pending;
+        return destination;
+    }
     LoopContext loop={
         .previous=compiler->current_loop,
         .continue_target=loop_start,
         .redo_target=compiler->function->code_count,
         .result_register=destination,
+        .flow_reg_count=flow_reg_count,
+        .exit_types=exit_types,
+        .exit_sets=exit_sets,
     };
+    /* The condition may be false before the first iteration, so the entry
+     * state and Nil result are always one real exit path. */
+    merge_loop_exit(compiler,&loop,DIAMOND_TYPE_NIL,-1);
     compiler->current_loop=&loop;
     (void)compile_sequence(compiler);
     compiler->current_loop=loop.previous;
+    /* A completed body reaches the condition again and may then exit. One
+     * conservative source-level join is sufficient for advisory metadata. */
+    merge_loop_exit(compiler,&loop,DIAMOND_TYPE_NIL,-1);
     compiler->loop_captures_pending=outer_loop_captures_pending;
     emit_absolute_jump(compiler, loop_start);
     patch_jump(compiler, exit_jump, compiler->function->code_count);
@@ -4365,9 +4420,18 @@ static uint16_t parse_while(Compiler *compiler,bool inverted) {
 
     if (compiler->current.kind != DIAMOND_TOKEN_END) {
         fail(compiler, compiler->current.span, "expected 'end' after while expression");
+        free(exit_types);free(exit_sets);
         return 0;
     }
+    const size_t join_offset=compiler->current.span.start;
     advance_token(compiler);
+    /* A break-free loop may have no reachable expression result at all
+     * (`while true` with only return/raise exits). Without constant-condition
+     * reachability analysis, keep that result unknown instead of claiming Nil
+     * and rejecting an otherwise valid enclosing return annotation. */
+    if(loop.break_count==0) {loop.result_type=TYPE_UNKNOWN;loop.result_set=-1;}
+    finish_loop_flow(compiler,&loop,join_offset);
+    free(exit_types);free(exit_sets);
     return destination;
 }
 
@@ -4381,9 +4445,19 @@ static uint16_t parse_loop(Compiler *compiler) {
         mark_locals_captured(compiler);
     }
     const size_t body_start=compiler->function->code_count;
+    const size_t flow_reg_count=compiler->next_register;
+    uint8_t *exit_types=malloc(flow_reg_count*sizeof(uint8_t));
+    int16_t *exit_sets=malloc(flow_reg_count*sizeof(int16_t));
+    if(exit_types==nullptr||exit_sets==nullptr) {
+        free(exit_types);free(exit_sets);
+        fail(compiler,compiler->previous.span,"out of memory compiling loop flow");
+        compiler->loop_captures_pending=outer_loop_captures_pending;
+        return destination;
+    }
     LoopContext loop={.previous=compiler->current_loop,
         .continue_target=body_start,.redo_target=body_start,
-        .result_register=destination};
+        .result_register=destination,.flow_reg_count=flow_reg_count,
+        .exit_types=exit_types,.exit_sets=exit_sets};
     compiler->current_loop=&loop;
     (void)compile_sequence(compiler);
     compiler->current_loop=loop.previous;
@@ -4393,9 +4467,13 @@ static uint16_t parse_loop(Compiler *compiler) {
         patch_jump(compiler,loop.breaks[index],compiler->function->code_count);
     if(compiler->current.kind!=DIAMOND_TOKEN_END) {
         fail(compiler,compiler->current.span,"expected 'end' after loop");
+        free(exit_types);free(exit_sets);
         return destination;
     }
-    advance_token(compiler);return destination;
+    const size_t join_offset=compiler->current.span.start;
+    advance_token(compiler);
+    finish_loop_flow(compiler,&loop,join_offset);
+    free(exit_types);free(exit_sets);return destination;
 }
 
 static uint16_t parse_prefix(Compiler *compiler) {
@@ -5729,11 +5807,15 @@ static uint16_t compile_loop_control(Compiler *compiler) {
             fail(compiler,keyword,"too many break statements in loop");
             return 0;
         }
+        uint8_t break_type=DIAMOND_TYPE_NIL;int16_t break_set=-1;
         if(actual_value) {
             const uint16_t value=parse_expression(compiler);
             emit_instruction(compiler,DIAMOND_OP_MOVE,
                              compiler->current_loop->result_register,value,0,2);
+            break_type=compiler->known_types[value];
+            break_set=compiler->known_type_sets[value];
         }
+        merge_loop_exit(compiler,compiler->current_loop,break_type,break_set);
         compiler->current_loop->breaks[compiler->current_loop->break_count++]=
             emit_jump(compiler,DIAMOND_OP_JUMP,0);
     } else if(kind==DIAMOND_TOKEN_NEXT) {
