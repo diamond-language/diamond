@@ -5105,20 +5105,6 @@ static void emit_case_array_match(Compiler *compiler,CaseArrayNode *nodes,
     }
 }
 
-static void bind_case_array_names(Compiler *compiler,const CaseArrayNode *nodes,
-        uint8_t node_index) {
-    const CaseArrayNode *node=&nodes[node_index];
-    if(node->kind==CASE_ARRAY_BIND||node->kind==CASE_ARRAY_REST_BIND||
-       node->kind==CASE_HASH_REST_BIND) {
-        (void)compile_assignment_store(compiler,node->name,false,false,
-            node->subject_register);return;
-    }
-    if(node->kind==CASE_ARRAY_GROUP||node->kind==CASE_HASH_GROUP||
-       node->kind==CASE_OBJECT_GROUP)
-        for(size_t child=0;child<node->child_count;child++)
-            bind_case_array_names(compiler,nodes,node->children[child]);
-}
-
 static bool validate_case_array_bindings(Compiler *compiler,
         const CaseArrayNode *nodes,size_t node_count) {
     for(size_t left=0;left<node_count;left++) {
@@ -5138,25 +5124,68 @@ static bool validate_case_array_bindings(Compiler *compiler,
     return true;
 }
 
+typedef struct CaseBinding {
+    DiamondSpan name;
+    uint16_t reg;
+} CaseBinding;
+
+static size_t collect_case_bindings(const CaseArrayNode *nodes,size_t node_count,
+        size_t *indices) {
+    size_t count=0;
+    for(size_t node=0;node<node_count;node++)
+        if(nodes[node].kind==CASE_ARRAY_BIND||
+           nodes[node].kind==CASE_ARRAY_REST_BIND||
+           nodes[node].kind==CASE_HASH_REST_BIND)indices[count++]=node;
+    return count;
+}
+
+static bool align_case_alternative_bindings(Compiler *compiler,
+        const CaseArrayNode *nodes,const size_t *indices,size_t count,
+        CaseBinding *bindings,size_t binding_count,size_t *aligned) {
+    if(count!=binding_count) {
+        fail(compiler,compiler->previous.span,
+            "case pattern alternatives must bind the same names");return false;
+    }
+    for(size_t binding=0;binding<binding_count;binding++) {
+        bool found=false;
+        for(size_t candidate=0;candidate<count;candidate++)
+            if(spans_equal(compiler,bindings[binding].name,
+                           nodes[indices[candidate]].name)) {
+                aligned[binding]=indices[candidate];found=true;break;
+            }
+        if(!found) {
+            fail(compiler,compiler->previous.span,
+                "case pattern alternatives must bind the same names");
+            return false;
+        }
+    }
+    return true;
+}
+
 /* Makes provisional pattern bindings visible while compiling a guard without
  * emitting any stores. Their registers already hold extracted values, so a
  * guard reads them directly; restoring local_count removes the temporary name
  * overlay before the successful branch performs the real atomic commit. */
 static size_t push_case_guard_bindings(Compiler *compiler,
-        const CaseArrayNode *nodes,size_t node_count) {
+        const CaseBinding *bindings,size_t binding_count) {
     const size_t saved=compiler->local_count;
-    for(size_t node=0;node<node_count;node++) {
-        if(nodes[node].kind!=CASE_ARRAY_BIND&&
-           nodes[node].kind!=CASE_ARRAY_REST_BIND&&
-           nodes[node].kind!=CASE_HASH_REST_BIND)continue;
+    for(size_t binding=0;binding<binding_count;binding++) {
         if(compiler->local_count==DIAMOND_MAX_LOCALS) {
-            fail(compiler,nodes[node].name,"too many local variables in pattern guard");
+            fail(compiler,bindings[binding].name,
+                "too many local variables in pattern guard");
             break;
         }
         compiler->locals[compiler->local_count++]=(Local){
-            .name=nodes[node].name,.reg=nodes[node].subject_register};
+            .name=bindings[binding].name,.reg=bindings[binding].reg};
     }
     return saved;
+}
+
+static void commit_case_bindings(Compiler *compiler,
+        const CaseBinding *bindings,size_t binding_count) {
+    for(size_t binding=0;binding<binding_count;binding++)
+        (void)compile_assignment_store(compiler,bindings[binding].name,
+            false,false,bindings[binding].reg);
 }
 
 static void merge_case_branch(Compiler *compiler,CaseFlowJoin *join,
@@ -5259,6 +5288,7 @@ static uint16_t parse_case_branches(Compiler *compiler, uint16_t subject,
      * and ordinary/custom equality fallback in one runtime operation. */
     const uint16_t match_reg=allocate_register(compiler);
     CaseArrayNode array_nodes[64]={};uint8_t array_root=0;size_t node_count=0;
+    CaseBinding bindings[64]={};size_t binding_count=0;
     DiamondLexer pattern_head_lookahead=compiler->lexer;
     const DiamondToken after_pattern_head=diamond_lexer_next(&pattern_head_lookahead);
     const bool object_pattern=compiler->current.kind==DIAMOND_TOKEN_IDENTIFIER&&
@@ -5267,21 +5297,63 @@ static uint16_t parse_case_branches(Compiler *compiler, uint16_t subject,
     const bool array_pattern=compiler->current.kind==DIAMOND_TOKEN_LEFT_BRACKET||
         compiler->current.kind==DIAMOND_TOKEN_LEFT_BRACE||object_pattern;
     if(array_pattern) {
-        array_root=parse_case_array_node(compiler,array_nodes,&node_count,0);
-        if(compiler->failed||!validate_case_array_bindings(
-                compiler,array_nodes,node_count))return destination;
-        if(compiler->current.kind==DIAMOND_TOKEN_COMMA) {
-            fail(compiler,compiler->current.span,
-                "a collection binding pattern must be the only pattern in its when clause");
-            return destination;
+        size_t success_jumps[16];size_t success_count=0;bool first_pattern=true;
+        for(;;) {
+            if(success_count==16) {
+                fail(compiler,compiler->current.span,
+                    "too many case pattern alternatives");return destination;
+            }
+            memset(array_nodes,0,sizeof array_nodes);node_count=0;
+            array_root=parse_case_array_node(compiler,array_nodes,&node_count,0);
+            if(compiler->failed||!validate_case_array_bindings(
+                    compiler,array_nodes,node_count))return destination;
+            size_t indices[64],aligned[64];
+            const size_t alternative_binding_count=
+                collect_case_bindings(array_nodes,node_count,indices);
+            if(first_pattern) {
+                binding_count=alternative_binding_count;
+                for(size_t binding=0;binding<binding_count;binding++) {
+                    bindings[binding].name=array_nodes[indices[binding]].name;
+                    bindings[binding].reg=allocate_register(compiler);
+                    aligned[binding]=indices[binding];
+                    compiler->known_types[bindings[binding].reg]=
+                        compiler->known_types[array_nodes[aligned[binding]].subject_register];
+                    compiler->known_type_sets[bindings[binding].reg]=
+                        compiler->known_type_sets[array_nodes[aligned[binding]].subject_register];
+                }
+            } else if(!align_case_alternative_bindings(compiler,array_nodes,
+                    indices,alternative_binding_count,bindings,binding_count,
+                    aligned))return destination;
+            if(!first_pattern)
+                for(size_t binding=0;binding<binding_count;binding++) {
+                    const uint16_t source=
+                        array_nodes[aligned[binding]].subject_register;
+                    if(compiler->known_types[bindings[binding].reg]!=
+                           compiler->known_types[source]||
+                       compiler->known_type_sets[bindings[binding].reg]!=
+                           compiler->known_type_sets[source]) {
+                        compiler->known_types[bindings[binding].reg]=TYPE_UNKNOWN;
+                        compiler->known_type_sets[bindings[binding].reg]=-1;
+                    }
+                }
+            emit_instruction(compiler,DIAMOND_OP_BOOL,match_reg,true,0,2);
+            compiler->known_types[match_reg]=DIAMOND_TYPE_BOOL;
+            size_t failure_jumps[128];size_t failure_count=0;
+            emit_case_array_match(compiler,array_nodes,array_root,subject,match_reg,
+                failure_jumps,&failure_count);
+            for(size_t binding=0;binding<binding_count;binding++)
+                emit_instruction(compiler,DIAMOND_OP_MOVE,bindings[binding].reg,
+                    array_nodes[aligned[binding]].subject_register,0,2);
+            success_jumps[success_count++]=emit_jump(compiler,DIAMOND_OP_JUMP,0);
+            for(size_t failure=0;failure<failure_count;failure++)
+                patch_jump(compiler,failure_jumps[failure],
+                    compiler->function->code_count);
+            first_pattern=false;
+            if(compiler->current.kind!=DIAMOND_TOKEN_COMMA)break;
+            advance_token(compiler);skip_newlines(compiler);
         }
-        emit_instruction(compiler,DIAMOND_OP_BOOL,match_reg,true,0,2);
-        compiler->known_types[match_reg]=DIAMOND_TYPE_BOOL;
-        size_t failure_jumps[128];size_t failure_count=0;
-        emit_case_array_match(compiler,array_nodes,array_root,subject,match_reg,
-            failure_jumps,&failure_count);
-        for(size_t index=0;index<failure_count;index++)
-            patch_jump(compiler,failure_jumps[index],compiler->function->code_count);
+        for(size_t success=0;success<success_count;success++)
+            patch_jump(compiler,success_jumps[success],compiler->function->code_count);
     } else {
         bool first_value=true;size_t skip_jump=0;
         for(;;) {
@@ -5316,7 +5388,7 @@ static uint16_t parse_case_branches(Compiler *compiler, uint16_t subject,
             emit_jump(compiler,DIAMOND_OP_JUMP_IF_FALSE,match_reg);
         advance_token(compiler);
         const size_t saved_local_count=array_pattern?
-            push_case_guard_bindings(compiler,array_nodes,node_count):
+            push_case_guard_bindings(compiler,bindings,binding_count):
             compiler->local_count;
         const uint16_t guard=parse_expression(compiler);
         compiler->local_count=saved_local_count;
@@ -5328,7 +5400,7 @@ static uint16_t parse_case_branches(Compiler *compiler, uint16_t subject,
     if(!consume_conditional_start(compiler))return destination;
     const size_t false_jump=
         emit_jump(compiler,DIAMOND_OP_JUMP_IF_FALSE,match_reg);
-    if(array_pattern)bind_case_array_names(compiler,array_nodes,array_root);
+    if(array_pattern)commit_case_bindings(compiler,bindings,binding_count);
     const uint16_t body_result=compile_sequence(compiler);
     emit_instruction(compiler,DIAMOND_OP_MOVE,destination,body_result,0,2);
     merge_case_branch(compiler,join,flow_reg_count,body_result);

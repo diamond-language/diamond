@@ -1,0 +1,9 @@
+[score, 12]
+[score, 13]
+other
+[pair, 1, 2]
+[pair, 3, 4]
+[rest, a, [b]]
+[rest, a, {extra: b}]
+unchanged
+nil

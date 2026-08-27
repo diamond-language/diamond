@@ -143,6 +143,24 @@ The guard runs only after the structural pattern matches. A false guard falls
 through to the next `when` without overwriting existing locals or creating new
 binding values. Bindings commit immediately before the selected branch body.
 
+Comma-separated collection patterns may serve as alternatives when every
+alternative binds exactly the same set of names:
+
+```ruby
+case message
+when ["score", value], {"score": value} if value > minimum
+  accept(value)
+else
+  reject(message)
+end
+```
+
+Alternatives match from left to right and stop after the first structural
+match. Binding order may differ, but missing or additional binding names are a
+compile error. Values from the selected alternative flow through shared
+provisional registers, so one guard and one atomic commit path serve the whole
+clause. A false guard does not retry later alternatives.
+
 ## Ternary
 
 ```ruby
