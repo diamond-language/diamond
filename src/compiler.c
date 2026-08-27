@@ -3818,6 +3818,22 @@ static uint16_t parse_crypto_call(Compiler *compiler,bool keyed) {
     return parse_sha256_call(compiler,keyed);
 }
 
+static const DiamondFunction *constructor_signature(const Compiler *compiler,
+        int class_index) {
+    while(class_index>=0&&(size_t)class_index<compiler->program->class_count) {
+        const DiamondClass *class=&compiler->program->classes[(size_t)class_index];
+        for(size_t index=0;index<class->method_count;index++) {
+            const DiamondMethod *method=&class->methods[index];
+            if(strcmp(method->name,"initialize")!=0)continue;
+            if(method->function_index>=compiler->program->function_count)
+                return nullptr;
+            return compiler->program->functions[method->function_index];
+        }
+        class_index=class->superclass==UINT8_MAX?-1:(int)class->superclass;
+    }
+    return nullptr;
+}
+
 static uint16_t parse_name(Compiler *compiler) {
     const DiamondSpan name = compiler->previous.span;
     int class_index=find_class(compiler,name);
@@ -4070,6 +4086,8 @@ static uint16_t parse_name(Compiler *compiler) {
             return parse_singleton_call(compiler,method,name,class_index);
         }
         advance_token(compiler);
+        const DiamondFunction *initializer=
+            constructor_signature(compiler,class_index);
         if (compiler->current.kind != DIAMOND_TOKEN_LEFT_PAREN) {
             fail(compiler, compiler->current.span, "expected '(' after 'new'");
             return 0;
@@ -4089,7 +4107,10 @@ static uint16_t parse_name(Compiler *compiler) {
                         keyword_values[index],0,2);
                     keyword_values[index]=snapshot;
                 }
-                block=compile_block(compiler);has_block=true;
+                block=compile_contextual_block(compiler,initializer,
+                    initializer==nullptr||initializer->arity<=1?0:
+                        initializer->arity-2);
+                has_block=true;
             }
             const uint16_t destination=allocate_register(compiler);
             emit_opcode(compiler,DIAMOND_OP_NEW_KEYWORDS);
@@ -4110,7 +4131,14 @@ static uint16_t parse_name(Compiler *compiler) {
             uint16_t spread=parse_spread_argument_array(compiler,nullptr,
                 nullptr,nullptr,nullptr);
             if(compiler->current.kind==DIAMOND_TOKEN_DO) {
-                const uint16_t block=compile_block(compiler);
+                const uint16_t spread_snapshot=allocate_register(compiler);
+                emit_instruction(compiler,DIAMOND_OP_MOVE,spread_snapshot,
+                    spread,0,2);
+                spread=spread_snapshot;
+                const uint16_t block=compile_contextual_block(compiler,
+                    initializer,
+                    initializer==nullptr||initializer->arity<=1?0:
+                        initializer->arity-2);
                 spread=emit_build_spread_arguments(compiler,nullptr,0,spread,
                     &block,1,false);
             }
@@ -4146,7 +4174,9 @@ static uint16_t parse_name(Compiler *compiler) {
                 emit_instruction(compiler,DIAMOND_OP_MOVE,snapshot,args[index],0,2);
                 args[index]=snapshot;
             }
-            args[count++]=compile_block(compiler);
+            args[count++]=compile_contextual_block(compiler,initializer,
+                initializer==nullptr||initializer->arity<=1?0:
+                    initializer->arity-2);
         }
         const uint16_t base = allocate_register(compiler);
         for (size_t i = 1; i < count; i++) (void)allocate_register(compiler);
