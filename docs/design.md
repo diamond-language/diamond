@@ -475,7 +475,9 @@ contract disables context for the block without changing runtime dispatch.
 When contracts are not identical, the compiler may still select one declared
 nested Callable that structurally satisfies every arm using the same
 contravariant-parameter and covariant-return rules as runtime Callable checks.
-If no declared candidate satisfies all arms, context remains disabled.
+If no declared candidate satisfies all arms, each input graph is joined into a
+union that can accept every arm. Failure to represent that union disables input
+context conservatively.
 
 Synthetic fixed-arity wrappers do not reimplement a target method's default
 expressions. Instead, `ARGUMENT_PROVIDED` branches forward only the prefix that
@@ -488,11 +490,11 @@ prefix plus the already collected rest tail, so the target still owns default
 evaluation without losing variadic arguments.
 
 If no complete nested Callable arm can provide union block context, the compiler
-attempts a narrower synthesis step for inputs only. For each block parameter it
-selects an existing declared input graph that accepts every arm's input under
-contravariance. It never invents a nominal or collection union and does not
-publish a synthetic return promise; the block body's actual return metadata
-continues to drive runtime Callable validation.
+attempts a narrower synthesis step for inputs. For each block parameter it
+selects an existing declared graph accepted by every arm under contravariance,
+or joins the arms into a new union graph. It does not synthesize a return
+intersection; the block body's actual return metadata continues to drive
+runtime Callable validation when no existing safe subtype is available.
 
 Generic functions and methods may be specialized explicitly with syntax such
 as `empty[Int]()` or `factory.empty[String]()`. The call instruction carries

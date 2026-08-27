@@ -9,6 +9,9 @@ end
 def apply_map(callbacks: Hash[String, Callable[[Int], Int]]) -> Int
   callbacks["chosen"](42)
 end
+def apply_nested_map(callbacks: Array[Hash[String, Callable[[Int], Int]]]) -> Int
+  callbacks[0]["chosen"](42)
+end
 def apply_spread(first: Callable[[Int], Int], second: Callable[[Int], Int]) -> Int
   first(20) + second(22)
 end
@@ -57,6 +60,8 @@ puts(apply_all([ContextualReferenceBox.identity]))
 puts(apply_all([box.identity]))
 puts(apply_map({"chosen": ContextualReferenceBox.identity}))
 puts(apply_map({"chosen": box.identity}))
+puts(apply_nested_map([{"chosen": ContextualReferenceBox.identity}]))
+puts(apply_nested_map([{"chosen": box.identity}]))
 puts(apply_spread(*[ContextualReferenceBox.identity, box.identity]))
 puts(ContextualReferenceBox.accept_spread(
   *[ContextualReferenceBox.identity, box.identity]

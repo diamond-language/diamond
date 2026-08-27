@@ -354,13 +354,12 @@ strictly expression-scoped expected-type channel. Bare singleton and bound
 instance references solve their generic bindings from the expected Callable's
 parameter and return graph, then synthesize the same typed wrappers explicit
 bindings use. References without a complete, unambiguous context retain the
-existing explicit-binding requirement. General synthesis of a new common
-Callable contract remains separate. The current variance path selects existing
-declared graphs for each input and return, then falls back when no safe graph
-exists. Synthesizing genuinely new union or intersection contracts remains
-open.
+existing explicit-binding requirement. Callable-union block context first
+selects existing safe graphs, then constructs input unions when sibling input
+types have no declared common graph. Synthetic return intersections remain
+open; return context therefore still requires an existing declared subtype.
 
-Expected collection graphs now flow one level into Array and Hash literals.
+Expected collection graphs now recurse through nested Array and Hash literals.
 Array elements and Hash keys/values compile against their respective declared
 graphs, allowing bare generic singleton and bound-instance references inside a
 directly consumed collection to resolve without explicit bindings. Homogeneous

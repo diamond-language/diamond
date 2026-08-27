@@ -790,23 +790,28 @@ read_message >/dev/null
 # --- local Callable hover retains bound-reference parameter/return graphs ---
 
 callable_local_uri="file:///callable_local_hover.di"
-callable_local_source='class HoverOps\n  def increment(value: Int) -> Int = value + 1\n  def wrap[T](value: T) -> Array[T] = [value]\nend\ndef inspect()\n  ops = HoverOps.new()\n  increment = ops.increment\n  wrapped = ops.wrap[String]\n  increment(1)\n  wrapped\n  items = [1, 2]\n  items\nend'
+callable_local_source='class HoverOps\n  def increment(value: Int) -> Int = value + 1\n  def wrap[T](value: T) -> Array[T] = [value]\nend\nclass HoverRed\nend\nclass HoverBlue\nend\ndef inspect(value: HoverRed | HoverBlue)\n  ops = HoverOps.new()\n  increment = ops.increment\n  wrapped = ops.wrap[String]\n  increment(1)\n  wrapped\n  items = [1, 2]\n  items\n  union_value = value\n  union_value\nend'
 send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$callable_local_uri"'","text":"'"$callable_local_source"'"}}}'
 read_message >/dev/null
 
-send '{"jsonrpc":"2.0","id":170,"method":"textDocument/hover","params":{"textDocument":{"uri":"'"$callable_local_uri"'"},"position":{"line":8,"character":4}}}'
+send '{"jsonrpc":"2.0","id":170,"method":"textDocument/hover","params":{"textDocument":{"uri":"'"$callable_local_uri"'"},"position":{"line":12,"character":4}}}'
 response="$(read_message)"
 [[ "$response" == *'"value":"Callable[[Int], Int]"'* ]]
 count=$((count + 1))
 
-send '{"jsonrpc":"2.0","id":171,"method":"textDocument/hover","params":{"textDocument":{"uri":"'"$callable_local_uri"'"},"position":{"line":9,"character":4}}}'
+send '{"jsonrpc":"2.0","id":171,"method":"textDocument/hover","params":{"textDocument":{"uri":"'"$callable_local_uri"'"},"position":{"line":13,"character":4}}}'
 response="$(read_message)"
 [[ "$response" == *'"value":"Callable[[String], Array[String]]"'* ]]
 count=$((count + 1))
 
-send '{"jsonrpc":"2.0","id":172,"method":"textDocument/hover","params":{"textDocument":{"uri":"'"$callable_local_uri"'"},"position":{"line":11,"character":3}}}'
+send '{"jsonrpc":"2.0","id":172,"method":"textDocument/hover","params":{"textDocument":{"uri":"'"$callable_local_uri"'"},"position":{"line":15,"character":3}}}'
 response="$(read_message)"
 [[ "$response" == *'"value":"Array[Int]"'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","id":173,"method":"textDocument/hover","params":{"textDocument":{"uri":"'"$callable_local_uri"'"},"position":{"line":17,"character":7}}}'
+response="$(read_message)"
+[[ "$response" == *'"value":"HoverRed | HoverBlue"'* ]]
 count=$((count + 1))
 
 send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$callable_local_uri"'"}}}'

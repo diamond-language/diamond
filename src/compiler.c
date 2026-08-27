@@ -692,31 +692,41 @@ static int32_t array_element_type_set(const Compiler *compiler,uint16_t reg) {
     return (int32_t)set->members[0].argument_set;
 }
 
-static uint16_t clone_type_set_into_current(Compiler *compiler,
+static uint16_t clone_type_set_into_current_impl(Compiler *compiler,
         const DiamondTypeSet *source_sets,size_t source_count,
-        uint16_t source_index) {
+        uint16_t source_index,bool source_is_current) {
     if(source_index==DIAMOND_NO_TYPE_SET||source_index>=source_count)
         return DIAMOND_NO_TYPE_SET;
+    DiamondTypeSet cloned=source_is_current?
+        compiler->function->type_sets[source_index]:source_sets[source_index];
     if(!reserve_type_sets(compiler,1))return DIAMOND_NO_TYPE_SET;
     const size_t destination_index=compiler->function->type_set_count++;
-    DiamondTypeSet cloned=source_sets[source_index];
     for(size_t member_index=0;member_index<cloned.count;member_index++) {
         DiamondTypeMember *member=&cloned.members[member_index];
-        member->argument_set=clone_type_set_into_current(compiler,source_sets,
-            source_count,member->argument_set);
-        member->second_argument_set=clone_type_set_into_current(compiler,
-            source_sets,source_count,member->second_argument_set);
-        member->callable_return_set=clone_type_set_into_current(compiler,
-            source_sets,source_count,member->callable_return_set);
+        member->argument_set=clone_type_set_into_current_impl(compiler,
+            source_sets,source_count,member->argument_set,source_is_current);
+        member->second_argument_set=clone_type_set_into_current_impl(compiler,
+            source_sets,source_count,member->second_argument_set,
+            source_is_current);
+        member->callable_return_set=clone_type_set_into_current_impl(compiler,
+            source_sets,source_count,member->callable_return_set,
+            source_is_current);
         if(member->callable_parameters_typed)
             for(size_t parameter=0;parameter<member->callable_arity;parameter++)
                 member->callable_parameter_sets[parameter]=
-                    clone_type_set_into_current(compiler,source_sets,
-                        source_count,
-                        member->callable_parameter_sets[parameter]);
+                    clone_type_set_into_current_impl(compiler,source_sets,
+                        source_count,member->callable_parameter_sets[parameter],
+                        source_is_current);
     }
     compiler->function->type_sets[destination_index]=cloned;
     return (uint16_t)destination_index;
+}
+
+static uint16_t clone_type_set_into_current(Compiler *compiler,
+        const DiamondTypeSet *source_sets,size_t source_count,
+        uint16_t source_index) {
+    return clone_type_set_into_current_impl(compiler,source_sets,source_count,
+        source_index,source_sets==compiler->function->type_sets);
 }
 
 static uint16_t clone_substituted_type_set(Compiler *compiler,
@@ -2578,6 +2588,19 @@ static uint16_t compile_callable_value_block(Compiler *compiler,
                         }
                     }
                     if(accepts_all)selected=candidate_set;
+                }
+                if(selected==DIAMOND_NO_TYPE_SET) {
+                    int32_t joined=-1;
+                    for(size_t arm=0;arm<block_set_count;arm++) {
+                        const uint16_t arm_set=compiler->function->type_sets[
+                            block_sets[arm]].members[0].
+                                callable_parameter_sets[parameter];
+                        if(arm_set==DIAMOND_NO_TYPE_SET) {joined=-1;break;}
+                        joined=joined<0?(int32_t)arm_set:
+                            join_type_set_indices(compiler,joined,arm_set);
+                        if(joined<0)break;
+                    }
+                    if(joined>=0)selected=(uint16_t)joined;
                 }
                 if(selected==DIAMOND_NO_TYPE_SET)synthesized_context=false;
                 else synthesized.callable_parameter_sets[parameter]=selected;

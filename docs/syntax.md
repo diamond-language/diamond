@@ -608,8 +608,8 @@ a statically resolved Callable parameter, Diamond can infer those bindings from
 the parameter's expected Callable graph. This works for positional and keyword
 arguments on functions, singleton methods, instance methods, and constructors.
 An unresolved standalone reference still requires explicit bindings.
-The same context flows through elements of a directly expected `Array[T]` and
-the keys and values of an expected `Hash[K, V]`. A literal such as
+The same context recurses through elements of an expected `Array[T]` and the
+keys and values of an expected `Hash[K, V]`. A literal such as
 `[Tools.identity]` can therefore satisfy `Array[Callable[[Int], Int]]` without
 spelling `[Int]` on the reference. A spread Array receives this context when all
 remaining positional parameters declare the same type; heterogeneous spread
@@ -628,9 +628,11 @@ returns. Bound references preserve omitted optional arguments, so defaults are
 still evaluated by the original method rather than replaced with `nil`.
 This also applies when optional fixed arguments precede `*rest`. If no complete
 Callable arm supplies union-block context, Diamond may synthesize parameter
-context from existing declared input types that safely accept every arm. Return
-context likewise uses an existing declared subtype only when it satisfies every
-arm. Otherwise the block's return type is determined by its body.
+context from existing declared input types that safely accept every arm. If no
+such input graph exists, it constructs a union of the arms' input graphs.
+Return context uses an existing declared subtype only when it satisfies every
+arm; synthetic return intersections are not inferred. Otherwise the block's
+return type is determined by its body.
 
 Callable values accept the same trailing `do ... end` block as named function
 and method calls, including calls with a spread Array. The block is appended as
