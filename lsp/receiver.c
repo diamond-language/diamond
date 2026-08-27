@@ -8,6 +8,7 @@
 typedef enum ReceiverKind {
     RECEIVER_NONE,
     RECEIVER_SELF,
+    RECEIVER_INSTANCE_VARIABLE,
     /* Either a literal class name or a local variable -- classify_receiver
      * can't tell which without consulting chunk->classes, so resolution
      * disambiguates once it has the receiver's own text. */
@@ -39,9 +40,8 @@ typedef struct ReceiverContext {
  *       end, i.e. hover/definition's identifier-span case)
  *   ... DOT IDENTIFIER <stop>       -- `receiver.partial|` (completion,
  *       stop_offset lands after the partial method name)
- * Anything else (no DOT at all, a chained call's `)` before the DOT, an
- * instance-variable receiver -- lexed as its own distinct token kind,
- * never IDENTIFIER) yields RECEIVER_NONE. */
+ * Anything else (no DOT at all or a chained call's `)` before the DOT)
+ * yields RECEIVER_NONE. */
 static ReceiverContext classify_receiver(const char *source,size_t stop_offset) {
     DiamondLexer lexer;
     diamond_lexer_init(&lexer,source);
@@ -65,6 +65,9 @@ static ReceiverContext classify_receiver(const char *source,size_t stop_offset) 
     }
     if(receiver_token.kind==DIAMOND_TOKEN_SELF)
         return (ReceiverContext){.kind=RECEIVER_SELF,.self_offset=receiver_token.span.start};
+    if(receiver_token.kind==DIAMOND_TOKEN_INSTANCE_VARIABLE)
+        return (ReceiverContext){.kind=RECEIVER_INSTANCE_VARIABLE,
+            .self_offset=receiver_token.span.start,.name_span=receiver_token.span};
     if(receiver_token.kind==DIAMOND_TOKEN_IDENTIFIER)
         return (ReceiverContext){.kind=RECEIVER_NAME,.name_span=receiver_token.span};
     return (ReceiverContext){.kind=RECEIVER_NONE};
@@ -185,6 +188,23 @@ size_t receiver_resolve_classes(const DiamondProgram *program,
         class_indices[0]=enclosing->owner_class;
         *is_singleton=function_is_singleton_of(chunk,&chunk->classes[enclosing->owner_class],enclosing);
         return 1;
+    }
+    if(context.kind==RECEIVER_INSTANCE_VARIABLE) {
+        const DiamondFunction *enclosing=
+            find_enclosing_function(program,chunk,context.self_offset);
+        if(enclosing==nullptr||enclosing->owner_class>=chunk->class_count)return 0;
+        const DiamondClass *class=&chunk->classes[enclosing->owner_class];
+        const char *name=source+context.name_span.start+1;
+        const size_t length=context.name_span.length-1;
+        for(size_t field=0;field<class->field_count;field++) {
+            if(strlen(class->fields[field])!=length||
+               memcmp(class->fields[field],name,length)!=0)continue;
+            if(class->field_type_status[field]!=1)return 0;
+            class_indices[0]=class->field_known_class[field];
+            *is_singleton=false;
+            return class_indices[0]<chunk->class_count?1:0;
+        }
+        return 0;
     }
     if(context.kind==RECEIVER_NAME) {
         char name[DIAMOND_MAX_FUNCTION_NAME];

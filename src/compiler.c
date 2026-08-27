@@ -7427,6 +7427,8 @@ static uint16_t compile_class(Compiler *compiler) {
             memset(class->methods,0,sizeof class->methods);
             memset(class->singleton_methods,0,sizeof class->singleton_methods);
             memset(class->fields,0,sizeof class->fields);
+            memset(class->field_type_status,0,sizeof class->field_type_status);
+            memset(class->field_known_class,0,sizeof class->field_known_class);
             memset(class->class_variables,0,sizeof class->class_variables);
             class->method_count=0;
             class->singleton_method_count=0;
@@ -7475,9 +7477,12 @@ static uint16_t compile_class(Compiler *compiler) {
             class->superclass=(uint8_t)parent;
             const DiamondClass *parent_class=&compiler->program->classes[(size_t)parent];
             class->field_count=parent_class->field_count;
-            for(size_t field=0;field<parent_class->field_count;field++)
+            for(size_t field=0;field<parent_class->field_count;field++) {
                 for(size_t ch=0;ch<DIAMOND_MAX_FUNCTION_NAME;ch++)
                     class->fields[field][ch]=parent_class->fields[field][ch];
+                class->field_type_status[field]=parent_class->field_type_status[field];
+                class->field_known_class[field]=parent_class->field_known_class[field];
+            }
         } else if(class->superclass!=(uint8_t)parent) {
             fail(compiler,superclass_span,
                  "superclass mismatch for reopened class");return 0;
@@ -7957,6 +7962,24 @@ static uint16_t compile_assignment_store(Compiler *compiler, DiamondSpan name,
             const int field=field_index(compiler,name,true);
             emit_instruction(compiler,DIAMOND_OP_SET_IVAR,0,(uint8_t)field,
                              value,3);
+            if(field>=0) {
+                DiamondClass *class=
+                    &compiler->program->classes[(size_t)compiler->current_class];
+                const uint8_t known=compiler->known_types[value];
+                const bool concrete=known>=DIAMOND_TYPE_CLASS_BASE&&
+                    known<DIAMOND_TYPE_VARIABLE_BASE&&
+                    (size_t)(known-DIAMOND_TYPE_CLASS_BASE)<
+                        compiler->program->class_count;
+                const uint8_t class_index=concrete?
+                    (uint8_t)(known-DIAMOND_TYPE_CLASS_BASE):0;
+                if(class->field_type_status[(size_t)field]==0&&concrete) {
+                    class->field_type_status[(size_t)field]=1;
+                    class->field_known_class[(size_t)field]=class_index;
+                } else if(!concrete||
+                          class->field_known_class[(size_t)field]!=class_index) {
+                    class->field_type_status[(size_t)field]=2;
+                }
+            }
         }
         return value;
     }

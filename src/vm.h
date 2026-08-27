@@ -463,6 +463,10 @@ struct DiamondClass {
     size_t singleton_method_count;
     char fields[DIAMOND_MAX_FIELDS][DIAMOND_MAX_FUNCTION_NAME];
     size_t field_count;
+    /* LSP-only conservative receiver metadata: 0 unseen, 1 every compiled
+     * assignment agreed on field_known_class, 2 unknown/conflicting. */
+    uint8_t field_type_status[DIAMOND_MAX_FIELDS];
+    uint8_t field_known_class[DIAMOND_MAX_FIELDS];
     DiamondShape shapes[DIAMOND_MAX_FIELDS + 1];
     /* Class variable *names* only -- compile-time, pointer-free metadata
      * exactly like `fields` above, so it costs nothing extra in

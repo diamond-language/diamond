@@ -475,7 +475,7 @@ read_message >/dev/null
 # incorrectly resolve as whichever class was assigned last. ---
 
 reassigned_uri="file:///reassigned_receiver.di"
-reassigned_source='class Dog\n  def bark()\n    1\n  end\nend\nclass Cat\n  def meow()\n    2\n  end\nend\ndef inspect()\n  pet = Dog.new()\n  pet.bark()\n  pet = Cat.new()\n  pet.meow()\nend\ndef inspect_union(pet: Dog | Cat)\n  pet.bark()\n  pet = Cat.new()\n  pet.meow()\nend'
+reassigned_source='class Dog\n  def bark()\n    1\n  end\nend\nclass Cat\n  def meow()\n    2\n  end\nend\ndef inspect()\n  pet = Dog.new()\n  pet.bark()\n  pet = Cat.new()\n  pet.meow()\nend\ndef inspect_union(pet: Dog | Cat)\n  pet.bark()\n  pet = Cat.new()\n  pet.meow()\nend\nclass Kennel\n  def initialize()\n    @pet = Dog.new()\n  end\n  def speak()\n    @pet.bark()\n  end\nend\nclass Mixed\n  def initialize(flag)\n    if flag\n      @pet = Dog.new()\n    else\n      @pet = Cat.new()\n    end\n  end\n  def speak()\n    @pet.bark()\n  end\nend'
 send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$reassigned_uri"'","text":"'"$reassigned_source"'"}}}'
 read_message >/dev/null
 
@@ -491,6 +491,32 @@ response="$(read_message)"
 [[ "$response" == *'"label":"meow","kind":3'* ]]
 count=$((count + 1))
 [[ "$response" != *'"label":"bark","kind":3'* ]]
+count=$((count + 1))
+
+# A class instance variable resolves across methods when every assignment
+# agrees on one concrete class. Conflicting assignments stay unresolved.
+send '{"jsonrpc":"2.0","id":118,"method":"textDocument/completion","params":{"textDocument":{"uri":"'"$reassigned_uri"'"},"position":{"line":26,"character":9}}}'
+response="$(read_message)"
+[[ "$response" == *'"label":"bark","kind":3'* ]]
+count=$((count + 1))
+[[ "$response" != *'"label":"meow","kind":3'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","id":119,"method":"textDocument/hover","params":{"textDocument":{"uri":"'"$reassigned_uri"'"},"position":{"line":26,"character":10}}}'
+response="$(read_message)"
+[[ "$response" == *'"value":"def bark()"'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","id":120,"method":"textDocument/definition","params":{"textDocument":{"uri":"'"$reassigned_uri"'"},"position":{"line":26,"character":10}}}'
+response="$(read_message)"
+[[ "$response" == *'"start":{"line":1,"character":6}'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","id":121,"method":"textDocument/completion","params":{"textDocument":{"uri":"'"$reassigned_uri"'"},"position":{"line":38,"character":9}}}'
+response="$(read_message)"
+[[ "$response" != *'"label":"bark","kind":3'* ]]
+count=$((count + 1))
+[[ "$response" != *'"label":"meow","kind":3'* ]]
 count=$((count + 1))
 
 send '{"jsonrpc":"2.0","id":112,"method":"textDocument/hover","params":{"textDocument":{"uri":"'"$reassigned_uri"'"},"position":{"line":12,"character":7}}}'
