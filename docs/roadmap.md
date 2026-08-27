@@ -508,15 +508,16 @@ parameters to contribute bindings too. Fixed constructor
 calls infer the generic bindings declared by `initialize` through the same
 path. Homogeneously typed spread Arrays provide bindings for top-level,
 singleton, instance-method, and constructor calls, including merged fixed
-arguments that retain the same element contract. Union receivers
+arguments that retain the same element contract.
 Keyword arguments at statically resolved calls bind against their declared
 parameter slots for top-level, singleton, instance-method, and constructor
 calls. Union receivers participate when every member resolves either to the
 same inherited implementation or to divergent implementations with structurally
-identical arity, generic, name, and parameter contracts. Differently
-parameterized members sharing one outer type, incompatible overrides, and
-genuinely unresolved generic contexts remain future extensions to the same
-conservative mechanism.
+identical arity, generic, name, and parameter contracts. Unions may retain
+multiple members with the same outer Array, Hash, or Callable identity when
+their nested contracts differ; exact structural duplicates remain errors.
+Incompatible overrides and genuinely unresolved generic contexts remain future
+extensions to the same conservative mechanism.
 Typed top-level function references and class/module singleton references now
 publish structural Callable signatures into local type facts, so later fixed,
 spread, and keyword Callable-value calls retain block context through aliases.

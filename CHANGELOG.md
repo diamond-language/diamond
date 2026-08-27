@@ -39,6 +39,9 @@
 - Extended union-receiver block context across divergent method implementations
   when their arity, generic layout, parameter names, and recursive parameter
   contracts are structurally identical.
+- Added same-outer-type parameterized unions such as
+  `Array[Int] | Array[String]`, including inferred collection and control-flow
+  joins, recursive runtime checks, and structural duplicate rejection.
 - Added explicit block-parameter metadata and LSP hover rendering for
   `*arguments, &block: Callable[N]` plus the `block_given?()` intrinsic.
 - Propagated annotated Callable return sets through `yield` and inferred

@@ -614,7 +614,6 @@ static int32_t join_type_set_indices(Compiler *compiler,int32_t left,
             if(type_members_equal(joined.members[target],member)) {
                 duplicate=true;break;
             }
-            if(joined.members[target].id==member.id)return -1;
         }
         if(duplicate)continue;
         if(joined.count==DIAMOND_MAX_UNION_TYPES)return -1;
@@ -1408,6 +1407,11 @@ static int resolve_type_name(Compiler *compiler,const char *name,
     return DIAMOND_TYPE_NIL;
 }
 
+static bool type_members_structurally_equal(const DiamondTypeMember *left,
+        const DiamondTypeSet *left_sets,size_t left_count,
+        const DiamondTypeMember *right,const DiamondTypeSet *right_sets,
+        size_t right_count,size_t depth);
+
 static int parse_type_annotation(Compiler *compiler) {
     if(!reserve_type_sets(compiler,1))return 0;
     const size_t set_index=compiler->function->type_set_count++;
@@ -1424,11 +1428,6 @@ static int parse_type_annotation(Compiler *compiler) {
         }
         const uint8_t type=(uint8_t)resolve_type_name(
             compiler,type_name_buffer,member_span);
-        for(size_t index=0;index<set->count;index++) {
-            if(set->members[index].id==type) {
-                fail(compiler,compiler->current.span,"duplicate type in union");break;
-            }
-        }
         if(set->count==DIAMOND_MAX_UNION_TYPES) {
             fail(compiler,compiler->current.span,"too many types in union");break;
         }
@@ -1517,6 +1516,16 @@ static int parse_type_annotation(Compiler *compiler) {
             .callable_parameters_typed=callable_parameters_typed};
         for(size_t index=0;index<16;index++)
             parsed.callable_parameter_sets[index]=callable_parameter_sets[index];
+        set=&compiler->function->type_sets[set_index];
+        for(size_t index=0;index<set->count;index++)
+            if(type_members_structurally_equal(&set->members[index],
+                    compiler->function->type_sets,
+                    compiler->function->type_set_count,&parsed,
+                    compiler->function->type_sets,
+                    compiler->function->type_set_count,0)) {
+                fail(compiler,member_span,"duplicate type in union");break;
+            }
+        if(compiler->failed)break;
         set->members[set->count++]=parsed;
         if(compiler->current.kind!=DIAMOND_TOKEN_PIPE)break;
         advance_token(compiler);
@@ -5616,11 +5625,7 @@ static DiamondTypeMember plain_type_member(uint8_t type) {
 
 static bool append_merged_member(DiamondTypeSet *merged,DiamondTypeMember member) {
     for(size_t index=0;index<merged->count;index++) {
-        if(merged->members[index].id!=member.id)continue;
-        /* The annotation representation cannot express two differently
-         * parameterized versions of the same outer type in one union.
-         * Refuse to claim either one when control flow produces that shape. */
-        return type_members_equal(merged->members[index],member);
+        if(type_members_equal(merged->members[index],member))return true;
     }
     if(merged->count==DIAMOND_MAX_UNION_TYPES)return false;
     merged->members[merged->count++]=member;return true;

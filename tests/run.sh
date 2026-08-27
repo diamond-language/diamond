@@ -2323,6 +2323,19 @@ actual="$($diamond --dump-bytecode tests/cases/divergent_union_block_context.di)
 union_block_dump="$(sed -n '/^== <block> ==$/,$p' <<<"$actual")"
 [[ "$(grep -c 'ADD_INT' <<<"$union_block_dump")" == "1" ]]
 
+actual="$($diamond --dump-bytecode -e $'def nested_union() -> Array[Array[Int] | Array[String]]\n [[1], ["one"]]\nend\nnested_union()')"
+nested_union_dump="$(sed -n '/^== nested_union ==$/,$p' <<<"$actual")"
+[[ "$(grep -c 'CHECK_TYPE' <<<"$nested_union_dump")" == "0" ]]
+
+error_file="$(mktemp)"
+if "$diamond" -e 'def duplicate(value: Array[Int] | Array[Int]) = value' \
+        >/dev/null 2>"$error_file"; then
+    echo "duplicate parameterized union member unexpectedly compiled" >&2
+    exit 1
+fi
+grep -q 'duplicate type in union' "$error_file"
+rm -f "$error_file"
+
 actual="$($diamond --dump-bytecode -e $'def test(a: Int | String, b: Int | String) -> String\n unless a is Int || b is Int\n  a\n else\n  "one-or-both"\n end\nend')"
 test_dump="$(sed -n '/^== test ==$/,$p' <<<"$actual")"
 [[ "$(grep -c 'CHECK_TYPE' <<<"$test_dump")" == "2" ]]

@@ -1224,9 +1224,10 @@ declared parameter slot and infer from its value before compiling the trailing
 block. Explicit generic arguments remain authoritative and bypass inference.
 Array and Hash literals record recursive inferred type sets, so matching nested
 collection parameters can derive the same bindings. Distinguishable mixed
-members form an inferred union. Two differently parameterized members with the
-same outer type remain unknown because the annotation graph cannot represent
-that union without conflating their nested contracts.
+members form an inferred union. Differently parameterized members with the same
+outer type remain separate union alternatives. Recursive subtype checks match
+each source alternative against a compatible target alternative without
+conflating their nested contracts. Exact structural duplicates are rejected.
 This context is consumed at the block boundary and does not leak into nested
 blocks.
 Union receivers participate when every member resolves to the same inherited
