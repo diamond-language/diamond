@@ -69,6 +69,8 @@
   bindings inside guards while preserving mutation-free failure fallthrough.
 - Added comma-separated collection-pattern alternatives with consistent
   binding-set validation, ordered short-circuiting, shared guards, and commits.
+- Added subjectless boolean `case`, with truthiness-based `when` expressions,
+  short-circuit alternatives, guards, and ordinary collection-literal semantics.
 - Corrected the runtime type-ID partition so the advertised class capacity no
   longer overlaps generic-variable and interface IDs, and raised the class
   capacity from 128 to 180. Updated the self-hosted compiler's mirrored

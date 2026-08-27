@@ -5242,7 +5242,8 @@ static void finish_case_flow(Compiler *compiler,CaseFlowJoin *join,
  * unions parse_if uses; a missing else contributes the entry state and Nil. */
 static uint16_t parse_case_branches(Compiler *compiler, uint16_t subject,
         size_t flow_reg_count, const uint8_t *entry_types,
-        const int16_t *entry_sets, uint16_t destination,CaseFlowJoin *join) {
+        const int16_t *entry_sets, uint16_t destination,CaseFlowJoin *join,
+        bool subjectless) {
     for(size_t index=0;index<flow_reg_count;index++) {
         compiler->known_types[index]=entry_types[index];
         compiler->known_type_sets[index]=entry_sets[index];
@@ -5294,8 +5295,9 @@ static uint16_t parse_case_branches(Compiler *compiler, uint16_t subject,
     const bool object_pattern=compiler->current.kind==DIAMOND_TOKEN_IDENTIFIER&&
         find_class(compiler,compiler->current.span)>=0&&
         after_pattern_head.kind==DIAMOND_TOKEN_LEFT_BRACE;
-    const bool array_pattern=compiler->current.kind==DIAMOND_TOKEN_LEFT_BRACKET||
-        compiler->current.kind==DIAMOND_TOKEN_LEFT_BRACE||object_pattern;
+    const bool array_pattern=!subjectless&&(
+        compiler->current.kind==DIAMOND_TOKEN_LEFT_BRACKET||
+        compiler->current.kind==DIAMOND_TOKEN_LEFT_BRACE||object_pattern);
     if(array_pattern) {
         size_t success_jumps[16];size_t success_count=0;bool first_pattern=true;
         for(;;) {
@@ -5374,7 +5376,12 @@ static uint16_t parse_case_branches(Compiler *compiler, uint16_t subject,
                 advance_token(compiler);
             } else value_reg=parse_expression(compiler);
             const uint16_t eq_reg=allocate_register(compiler);
-            emit_instruction(compiler,DIAMOND_OP_CASE_MATCH,eq_reg,value_reg,subject,3);
+            if(subjectless) {
+                emit_instruction(compiler,DIAMOND_OP_NOT,eq_reg,value_reg,0,2);
+                emit_instruction(compiler,DIAMOND_OP_NOT,eq_reg,eq_reg,0,2);
+            } else
+                emit_instruction(compiler,DIAMOND_OP_CASE_MATCH,eq_reg,
+                    value_reg,subject,3);
             compiler->known_types[eq_reg]=DIAMOND_TYPE_BOOL;
             emit_instruction(compiler,DIAMOND_OP_MOVE,match_reg,eq_reg,0,2);
             if(!first_value)patch_jump(compiler,skip_jump,compiler->function->code_count);
@@ -5407,25 +5414,31 @@ static uint16_t parse_case_branches(Compiler *compiler, uint16_t subject,
     const size_t end_jump=emit_jump(compiler,DIAMOND_OP_JUMP,0);
     patch_jump(compiler,false_jump,compiler->function->code_count);
     const uint16_t result=parse_case_branches(
-        compiler,subject,flow_reg_count,entry_types,entry_sets,destination,join);
+        compiler,subject,flow_reg_count,entry_types,entry_sets,destination,join,
+        subjectless);
     patch_jump(compiler,end_jump,compiler->function->code_count);
     return result;
 }
 
-/* `case SUBJECT \n when V1, V2 \n ... [else ...] end`, an expression
- * like `if`. Desugars to the same MOVE-into-destination-then-jump-to-end
- * shape parse_if already uses. Scalar/value patterns use CASE_MATCH; nested
+/* Subject-bearing and subjectless `case` are both expressions. Subject-bearing
+ * scalar/value patterns use CASE_MATCH; subjectless when values are tested for
+ * truthiness. Both forms share the same branch/result flow-join machinery.
+ * Like `if`, each desugars to the same MOVE-into-destination-then-jump-to-end
+ * shape parse_if already uses. Nested
  * Array/Hash binding patterns combine non-raising shape/key checks, INDEX_GET,
- * and CASE_MATCH, then commit their bindings only on the successful path.
- *
- * The remaining deliberate scope cut is the subject-less boolean form
- * (`case \n when a > b \n ...`, testing each `when`'s value
- * for truthiness instead of equality against a case subject) -- `case`
- * without a subject fails as "expected expression" today, a clear
- * error rather than silently misparsing. */
+ * and CASE_MATCH, then commit their bindings only on the successful path. */
 static uint16_t parse_case(Compiler *compiler) {
-    const uint16_t subject=parse_expression(compiler);
-    skip_newlines(compiler);
+    const bool subjectless=compiler->current.kind==DIAMOND_TOKEN_NEWLINE;
+    uint16_t subject=0;
+    if(subjectless) {
+        subject=allocate_register(compiler);
+        emit_instruction(compiler,DIAMOND_OP_BOOL,subject,true,0,2);
+        compiler->known_types[subject]=DIAMOND_TYPE_BOOL;
+        skip_newlines(compiler);
+    } else {
+        subject=parse_expression(compiler);
+        skip_newlines(compiler);
+    }
     const uint16_t destination=allocate_register(compiler);
     const size_t flow_reg_count=compiler->next_register;
     /* Same inline-then-heap fallback as parse_if's before_types/
@@ -5465,7 +5478,8 @@ static uint16_t parse_case(Compiler *compiler) {
     CaseFlowJoin join={.types=join_types,.sets=join_sets,.varied=varied,
         .result_type=TYPE_UNKNOWN,.result_set=-1};
     const uint16_t result=parse_case_branches(
-        compiler,subject,flow_reg_count,entry_types,entry_sets,destination,&join);
+        compiler,subject,flow_reg_count,entry_types,entry_sets,destination,&join,
+        subjectless);
     free(heap_types);free(heap_sets);free(heap_varied);
     return result;
 }

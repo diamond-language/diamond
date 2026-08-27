@@ -161,6 +161,24 @@ compile error. Values from the selected alternative flow through shared
 provisional registers, so one guard and one atomic commit path serve the whole
 clause. A false guard does not retry later alternatives.
 
+Omitting the `case` subject creates a boolean case:
+
+```ruby
+case
+when score >= 90
+  "excellent"
+when score >= 70, override?
+  "passing"
+else
+  "retry"
+end
+```
+
+Each `when` expression is tested directly for truthiness. Comma-separated
+expressions short-circuit from left to right, and ordinary `if` guards remain
+available. Array and Hash spellings in a subjectless clause are ordinary
+literals, not binding patterns; pattern bindings require a case subject.
+
 ## Ternary
 
 ```ruby

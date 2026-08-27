@@ -306,6 +306,8 @@ Areas still worth examining include:
   visibility, match-first evaluation, and mutation-free guard fallthrough;
 - **Done**: comma-separated binding-pattern alternatives with identical-name
   validation, ordered short-circuit matching, shared guards, and atomic commits;
+- **Done**: subjectless boolean `case`, with truthiness-based clauses,
+  short-circuit alternatives, guards, and the existing conservative flow joins;
 - **Done**: range-based Array slicing (`arr[1..3]` read,
   `arr[1..3] = [...]` write). `Range` has no native VM value kind at
   all -- it's a plain user-space class (`lib/core.di`) -- so
