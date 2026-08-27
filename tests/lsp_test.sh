@@ -832,6 +832,21 @@ count=$((count + 1))
 send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$union_block_uri"'"}}}'
 read_message >/dev/null
 
+# --- divergent union-receiver returns hover as their safe joined graph ---
+
+union_return_uri="file:///union_return_hover.di"
+union_return_source='class ReturnLeft\n  def value() -> Int = 42\nend\nclass ReturnRight\n  def value() -> String = \"forty-two\"\nend\ndef inspect(receiver: ReturnLeft | ReturnRight)\n  joined = receiver.value()\n  joined\nend'
+send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$union_return_uri"'","text":"'"$union_return_source"'"}}}'
+read_message >/dev/null
+
+send '{"jsonrpc":"2.0","id":175,"method":"textDocument/hover","params":{"textDocument":{"uri":"'"$union_return_uri"'"},"position":{"line":8,"character":4}}}'
+response="$(read_message)"
+[[ "$response" == *'"value":"Int | String"'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$union_return_uri"'"}}}'
+read_message >/dev/null
+
 # --- an unrecognized method gets a JSON-RPC MethodNotFound error ---
 
 send '{"jsonrpc":"2.0","id":2,"method":"textDocument/bogusMethod","params":{}}'

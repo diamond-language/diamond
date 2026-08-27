@@ -32,6 +32,10 @@
 - Preserved complete contextual block-parameter graphs inside anonymous block
   bodies, allowing union receiver calls to retain shared declared return types
   and specialized bytecode.
+- Joined divergent declared return graphs across union-receiver methods instead
+  of discarding them, across positional, keyword, spread, and trailing-block
+  calls. Indexing unions of typed Arrays and Hashes now joins their element or
+  nullable value graphs recursively.
 - Recursed expected collection contracts through nested Array and Hash literals
   so contextual generic method references resolve at arbitrary literal depth.
 - Stabilized recursive type-graph cloning when the current function's type-set

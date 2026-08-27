@@ -597,7 +597,9 @@ typed collection carry their result facts into the following expression too.
 Inference recurses through typed Callable parameter and return contracts, even
 when the Callable is nested in an Array or Hash. A union-receiver call retains
 its generic result only when all candidate implementations declare matching
-signatures and structurally identical return graphs.
+signatures. Structurally identical returns reuse one graph; divergent declared
+returns form a safe union. Indexing a union of typed Arrays joins its element
+graphs, while indexing a typed Hash union joins its value graphs with `Nil`.
 
 A fixed-arity bound method reference such as `object.convert` retains its
 declared parameter and return contract. Explicit generic references such as

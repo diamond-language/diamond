@@ -5547,6 +5547,62 @@ static const DiamondFunction *instance_call_signature(
     return shared;
 }
 
+static void publish_union_instance_return_type(Compiler *compiler,uint16_t reg,
+        int32_t receiver_set_index,DiamondSpan name,const uint16_t *bindings,
+        size_t binding_count) {
+    if(receiver_set_index<0||
+       (size_t)receiver_set_index>=compiler->function->type_set_count)return;
+    const DiamondTypeSet *receiver_set=
+        &compiler->function->type_sets[(size_t)receiver_set_index];
+    if(receiver_set->count<2)return;
+    uint8_t members[DIAMOND_MAX_UNION_TYPES];
+    const size_t member_count=receiver_set->count;
+    for(size_t index=0;index<member_count;index++) {
+        members[index]=receiver_set->members[index].id;
+        if(members[index]<DIAMOND_TYPE_CLASS_BASE||
+           members[index]>=DIAMOND_TYPE_INTERFACE_BASE)return;
+    }
+    const size_t original_count=compiler->function->type_set_count;
+    int32_t joined=-1;
+    for(size_t index=0;index<member_count;index++) {
+        const DiamondFunction *target=class_instance_signature(compiler,
+            members[index],name);
+        if(target==nullptr||target->return_type_set==DIAMOND_NO_TYPE_SET) {
+            compiler->function->type_set_count=original_count;return;
+        }
+        uint16_t current;
+        if(target->type_variable_count>0) {
+            bool resolved=true;
+            current=clone_substituted_type_set(compiler,target,
+                target->return_type_set,bindings,binding_count,&resolved);
+            if(!resolved) {
+                compiler->function->type_set_count=original_count;return;
+            }
+        } else current=clone_type_set_into_current(compiler,target->type_sets,
+            target->type_set_count,target->return_type_set);
+        if(current==DIAMOND_NO_TYPE_SET) {
+            compiler->function->type_set_count=original_count;return;
+        }
+        joined=joined<0?(int32_t)current:
+            join_type_set_indices(compiler,joined,(int32_t)current);
+        if(joined<0) {
+            compiler->function->type_set_count=original_count;return;
+        }
+    }
+    publish_known_type_set(compiler,reg,(uint16_t)joined);
+}
+
+static void publish_instance_return_type(Compiler *compiler,uint16_t reg,
+        int32_t receiver_set_index,DiamondSpan name,
+        const DiamondFunction *matching_target,const uint16_t *bindings,
+        size_t binding_count) {
+    if(matching_target!=nullptr)
+        publish_declared_return_type(compiler,reg,matching_target,bindings,
+            binding_count);
+    else publish_union_instance_return_type(compiler,reg,receiver_set_index,
+        name,bindings,binding_count);
+}
+
 /* `receiver.method` -- a capturing, variadic Callable whose single captured
  * value is the receiver and whose collected positional arguments are forwarded
  * through the ordinary dynamic INVOKE_SPREAD matrix. */
@@ -5716,6 +5772,7 @@ static uint16_t parse_bound_method_reference(Compiler *compiler,uint16_t receive
 }
 
 static uint16_t parse_invoke(Compiler *compiler, uint16_t receiver) {
+    const int32_t receiver_set_index=compiler->known_type_sets[receiver];
     advance_token(compiler);
     if (compiler->current.kind != DIAMOND_TOKEN_IDENTIFIER) {
         fail(compiler, compiler->current.span, "expected method name after '.'"); return 0;
@@ -5809,8 +5866,8 @@ static uint16_t parse_invoke(Compiler *compiler, uint16_t receiver) {
         const uint16_t result=emit_invoke_keywords(compiler,receiver,name,positional,
             keyword_names,keyword_values,keyword_count,type_arguments,
             type_argument_count,has_block,block);
-        publish_declared_return_type(compiler,result,return_target,
-            resolved_arguments,resolved_count);
+        publish_instance_return_type(compiler,result,receiver_set_index,name,
+            return_target,resolved_arguments,resolved_count);
         return result;
     }
     if(call_arguments_have_spread(compiler)) {
@@ -5853,8 +5910,9 @@ static uint16_t parse_invoke(Compiler *compiler, uint16_t receiver) {
                 const uint16_t result=emit_invoke_keywords(compiler,receiver,name,spread,
                     nullptr,nullptr,0,type_arguments,type_argument_count,true,
                     block);
-                publish_declared_return_type(compiler,result,return_target,
-                    resolved_arguments,resolved_count);
+                publish_instance_return_type(compiler,result,
+                    receiver_set_index,name,return_target,resolved_arguments,
+                    resolved_count);
                 return result;
             }
             spread=emit_build_spread_arguments(compiler,nullptr,0,spread,
@@ -5862,8 +5920,8 @@ static uint16_t parse_invoke(Compiler *compiler, uint16_t receiver) {
         }
         const uint16_t result=emit_invoke_typed_spread(compiler,receiver,name,
             spread,type_arguments,type_argument_count);
-        publish_declared_return_type(compiler,result,return_target,
-            resolved_arguments,resolved_count);
+        publish_instance_return_type(compiler,result,receiver_set_index,name,
+            return_target,resolved_arguments,resolved_count);
         return result;
     }
     uint16_t args[16]; size_t count = 0;
@@ -5930,16 +5988,16 @@ static uint16_t parse_invoke(Compiler *compiler, uint16_t receiver) {
             const uint16_t positional=emit_argument_array(compiler,args,count);
             const uint16_t result=emit_invoke_keywords(compiler,receiver,name,positional,
                 nullptr,nullptr,0,type_arguments,type_argument_count,true,block);
-            publish_declared_return_type(compiler,result,return_target,
-                resolved_arguments,resolved_count);
+            publish_instance_return_type(compiler,result,receiver_set_index,
+                name,return_target,resolved_arguments,resolved_count);
             return result;
         }
         args[count++]=block;
     }
     const uint16_t result=emit_invoke_call(compiler,receiver,name,writer_name,
         type_arguments,type_argument_count,args,count);
-    publish_declared_return_type(compiler,result,return_target,
-        resolved_arguments,resolved_count);
+    publish_instance_return_type(compiler,result,receiver_set_index,name,
+        return_target,resolved_arguments,resolved_count);
     return result;
 }
 
@@ -6400,19 +6458,35 @@ static uint16_t parse_index(Compiler *compiler,uint16_t receiver) {
     const int32_t receiver_set=compiler->known_type_sets[receiver];
     if(receiver_set>=0) {
         const DiamondTypeSet *set=&compiler->function->type_sets[(size_t)receiver_set];
-        if(set->count==1) {
-            const DiamondTypeMember member=set->members[0];
-            if(member.id==DIAMOND_TYPE_ARRAY&&member.argument_set!=DIAMOND_NO_TYPE_SET)
-                publish_known_type_set(compiler,destination,member.argument_set);
-            else if(member.id==DIAMOND_TYPE_HASH&&
-                    member.second_argument_set!=DIAMOND_NO_TYPE_SET) {
-                const int32_t value_set=type_set_with_nil(compiler,
-                    member.second_argument_set);
-                if(value_set>=0)
-                    publish_known_type_set(compiler,destination,
-                        (uint16_t)value_set);
+        uint16_t indexed_sets[DIAMOND_MAX_UNION_TYPES];
+        uint8_t collection_type=TYPE_UNKNOWN;
+        const size_t member_count=set->count;
+        bool compatible=member_count>0;
+        for(size_t member_index=0;member_index<member_count;member_index++) {
+            const DiamondTypeMember member=set->members[member_index];
+            if(member.id!=DIAMOND_TYPE_ARRAY&&member.id!=DIAMOND_TYPE_HASH) {
+                compatible=false;break;
+            }
+            if(collection_type==TYPE_UNKNOWN)collection_type=member.id;
+            else if(collection_type!=member.id) {compatible=false;break;}
+            indexed_sets[member_index]=member.id==DIAMOND_TYPE_ARRAY?
+                member.argument_set:member.second_argument_set;
+            if(indexed_sets[member_index]==DIAMOND_NO_TYPE_SET) {
+                compatible=false;break;
             }
         }
+        int32_t indexed=-1;
+        for(size_t member_index=0;compatible&&member_index<member_count;
+            member_index++) {
+            indexed=indexed<0?(int32_t)indexed_sets[member_index]:
+                join_type_set_indices(compiler,indexed,
+                    (int32_t)indexed_sets[member_index]);
+            if(indexed<0)compatible=false;
+        }
+        if(compatible&&collection_type==DIAMOND_TYPE_HASH)
+            indexed=type_set_with_nil(compiler,(uint16_t)indexed);
+        if(compatible&&indexed>=0)
+            publish_known_type_set(compiler,destination,(uint16_t)indexed);
     }
     return destination;
 }

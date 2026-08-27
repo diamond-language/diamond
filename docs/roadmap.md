@@ -361,6 +361,9 @@ open; return context therefore still requires an existing declared subtype.
 Anonymous blocks clone those complete parameter graphs into their own function
 metadata, so synthesized-union calls retain structurally shared method returns
 instead of falling back to dynamic result facts.
+Union-receiver calls with compatible signatures but divergent declared returns
+now publish a joined result graph across fixed, keyword, spread, and block call
+forms. Array and Hash unions preserve those joins through indexing.
 
 Expected collection graphs now recurse through nested Array and Hash literals.
 Array elements and Hash keys/values compile against their respective declared

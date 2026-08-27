@@ -2344,6 +2344,10 @@ actual="$($diamond --dump-bytecode -e $'def union_value() -> Int | String\n [1, 
 union_function_dump="$(sed -n '/^== union_value ==$/,$p' <<<"$actual")"
 [[ "$(grep -c 'CHECK_TYPE' <<<"$union_function_dump")" == "0" ]]
 
+actual="$($diamond --dump-bytecode tests/cases/union_receiver_return_join.di)"
+union_receiver_join_dump="$(sed -n '/^== tests\/cases\/union_receiver_return_join.di ==$/,/^== abs ==$/p' <<<"$actual")"
+[[ "$(grep -c 'CHECK_TYPE' <<<"$union_receiver_join_dump")" == "0" ]]
+
 actual="$($diamond --dump-bytecode tests/cases/divergent_union_block_context.di)"
 union_block_dump="$(sed -n '/^== <block> ==$/,$p' <<<"$actual")"
 [[ "$(grep -c 'ADD_INT' <<<"$union_block_dump")" == "1" ]]

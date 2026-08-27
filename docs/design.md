@@ -483,6 +483,12 @@ block's function table. Body-local receiver dispatch can therefore compare all
 union members and publish a shared return graph without retaining pointers into
 the enclosing function's reallocatable type-set table.
 
+Ordinary union-receiver dispatch also resolves every class arm for result
+metadata. Equal declared returns retain one structural graph; divergent returns
+are cloned, concretely substituted when generic, and folded through the same
+bounded union join used by control-flow inference. Runtime dispatch remains one
+ordinary invoke instruction.
+
 Synthetic fixed-arity wrappers do not reimplement a target method's default
 expressions. Instead, `ARGUMENT_PROVIDED` branches forward only the prefix that
 the caller supplied. The target therefore observes the original argument count
