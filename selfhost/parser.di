@@ -139,7 +139,8 @@ module Opcode
   # probe technique as SHIFT_LEFT, not counted by hand.
   MODULO = 103
   # Appended immediately after MODULO. Later native-only tail opcodes,
-  # including CASE_MATCH/CASE_ARRAY_SHAPE/ARRAY_REST, do not shift this
+  # including CASE_MATCH/CASE_ARRAY_SHAPE/ARRAY_REST and the case Hash
+  # predicates, do not shift this
   # value. Still confirmed with the same throwaway C probe technique as
   # SHIFT_LEFT/MODULO above rather than trusting the arithmetic alone.
   COMPARE = 104

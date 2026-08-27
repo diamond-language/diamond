@@ -4732,12 +4732,13 @@ typedef struct CaseFlowJoin {
 
 typedef enum CaseArrayNodeKind {CASE_ARRAY_GROUP,CASE_ARRAY_VALUE,
     CASE_ARRAY_BIND,CASE_ARRAY_WILDCARD,CASE_ARRAY_REST_BIND,
-    CASE_ARRAY_REST_WILDCARD,CASE_ARRAY_PIN} CaseArrayNodeKind;
+    CASE_ARRAY_REST_WILDCARD,CASE_ARRAY_PIN,CASE_HASH_GROUP} CaseArrayNodeKind;
 
 typedef struct CaseArrayNode {
     CaseArrayNodeKind kind;
     DiamondSpan name;
     uint16_t value_register;
+    uint16_t key_register;
     uint16_t subject_register;
     uint8_t children[16];
     uint8_t child_count;
@@ -4780,6 +4781,43 @@ static uint8_t parse_case_array_node(Compiler *compiler,CaseArrayNode *nodes,
         }
         if(node->child_count==0) {
             fail(compiler,compiler->current.span,"case Array pattern cannot be empty");
+            return index;
+        }
+        advance_token(compiler);return index;
+    }
+    if(compiler->current.kind==DIAMOND_TOKEN_LEFT_BRACE) {
+        node->kind=CASE_HASH_GROUP;advance_token(compiler);skip_newlines(compiler);
+        while(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_BRACE&&!compiler->failed) {
+            if(node->child_count==16) {
+                fail(compiler,compiler->current.span,"too many case Hash entries");
+                return index;
+            }
+            const uint16_t key=parse_expression(compiler);
+            if(compiler->current.kind!=DIAMOND_TOKEN_COLON) {
+                fail(compiler,compiler->current.span,
+                    "expected ':' after case Hash pattern key");return index;
+            }
+            advance_token(compiler);
+            const uint8_t child=parse_case_array_node(
+                compiler,nodes,node_count,depth+1);
+            if(nodes[child].kind==CASE_ARRAY_REST_BIND||
+               nodes[child].kind==CASE_ARRAY_REST_WILDCARD) {
+                fail(compiler,nodes[child].name,
+                    "rest bindings are not supported in case Hash patterns");
+                return index;
+            }
+            nodes[child].key_register=key;
+            node->children[node->child_count++]=child;
+            skip_newlines(compiler);
+            if(compiler->current.kind==DIAMOND_TOKEN_RIGHT_BRACE)break;
+            if(compiler->current.kind!=DIAMOND_TOKEN_COMMA) {
+                fail(compiler,compiler->current.span,
+                    "expected ',' in case Hash pattern");return index;
+            }
+            advance_token(compiler);skip_newlines(compiler);
+        }
+        if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_BRACE) {
+            fail(compiler,compiler->current.span,"expected '}' after case Hash pattern");
             return index;
         }
         advance_token(compiler);return index;
@@ -4869,19 +4907,21 @@ static void emit_case_array_match(Compiler *compiler,CaseArrayNode *nodes,
     const uint16_t test=allocate_register(compiler);
     if(node->kind==CASE_ARRAY_VALUE||node->kind==CASE_ARRAY_PIN) {
         emit_instruction(compiler,DIAMOND_OP_CASE_MATCH,test,node->value_register,subject,3);
-    } else {
+    } else if(node->kind==CASE_ARRAY_GROUP) {
         const bool has_rest=node->child_count>0&&
             (nodes[node->children[node->child_count-1]].kind==CASE_ARRAY_REST_BIND||
              nodes[node->children[node->child_count-1]].kind==CASE_ARRAY_REST_WILDCARD);
         const uint16_t fixed_count=(uint16_t)(node->child_count-(has_rest?1u:0u));
         emit_instruction(compiler,DIAMOND_OP_CASE_ARRAY_SHAPE,test,subject,
             fixed_count|(has_rest?0x8000u:0u),3);
+    } else {
+        emit_instruction(compiler,DIAMOND_OP_CASE_HASH_SHAPE,test,subject,0,2);
     }
     compiler->known_types[test]=DIAMOND_TYPE_BOOL;
     emit_instruction(compiler,DIAMOND_OP_MOVE,match_reg,test,0,2);
     failure_jumps[(*failure_count)++]=
         emit_jump(compiler,DIAMOND_OP_JUMP_IF_FALSE,match_reg);
-    if(node->kind!=CASE_ARRAY_GROUP)return;
+    if(node->kind!=CASE_ARRAY_GROUP&&node->kind!=CASE_HASH_GROUP)return;
     for(size_t child=0;child<node->child_count;child++) {
         CaseArrayNode *child_node=&nodes[node->children[child]];
         if(child_node->kind==CASE_ARRAY_REST_BIND||
@@ -4895,9 +4935,20 @@ static void emit_case_array_match(Compiler *compiler,CaseArrayNode *nodes,
             }
             continue;
         }
-        const uint8_t constant=add_constant(compiler,DIAMOND_INT((int64_t)child));
-        const uint16_t index_reg=allocate_register(compiler);
-        emit_instruction(compiler,DIAMOND_OP_CONSTANT,index_reg,constant,0,2);
+        uint16_t index_reg=child_node->key_register;
+        if(node->kind==CASE_ARRAY_GROUP) {
+            const uint8_t constant=add_constant(compiler,DIAMOND_INT((int64_t)child));
+            index_reg=allocate_register(compiler);
+            emit_instruction(compiler,DIAMOND_OP_CONSTANT,index_reg,constant,0,2);
+        } else {
+            const uint16_t present=allocate_register(compiler);
+            emit_instruction(compiler,DIAMOND_OP_CASE_HASH_HAS,present,subject,
+                index_reg,3);
+            compiler->known_types[present]=DIAMOND_TYPE_BOOL;
+            emit_instruction(compiler,DIAMOND_OP_MOVE,match_reg,present,0,2);
+            failure_jumps[(*failure_count)++]=
+                emit_jump(compiler,DIAMOND_OP_JUMP_IF_FALSE,match_reg);
+        }
         const uint16_t element=allocate_register(compiler);
         emit_instruction(compiler,DIAMOND_OP_INDEX_GET,element,subject,index_reg,3);
         emit_case_array_match(compiler,nodes,node->children[child],element,
@@ -4912,7 +4963,7 @@ static void bind_case_array_names(Compiler *compiler,const CaseArrayNode *nodes,
         (void)compile_assignment_store(compiler,node->name,false,false,
             node->subject_register);return;
     }
-    if(node->kind==CASE_ARRAY_GROUP)
+    if(node->kind==CASE_ARRAY_GROUP||node->kind==CASE_HASH_GROUP)
         for(size_t child=0;child<node->child_count;child++)
             bind_case_array_names(compiler,nodes,node->children[child]);
 }
@@ -4926,7 +4977,7 @@ static bool validate_case_array_bindings(Compiler *compiler,
             if((nodes[right].kind==CASE_ARRAY_BIND||
                 nodes[right].kind==CASE_ARRAY_REST_BIND)&&
                spans_equal(compiler,nodes[left].name,nodes[right].name)) {
-                fail(compiler,nodes[right].name,"duplicate binding in case Array pattern");
+                fail(compiler,nodes[right].name,"duplicate binding in case collection pattern");
                 return false;
             }
         }
@@ -5034,7 +5085,8 @@ static uint16_t parse_case_branches(Compiler *compiler, uint16_t subject,
      * and ordinary/custom equality fallback in one runtime operation. */
     const uint16_t match_reg=allocate_register(compiler);
     CaseArrayNode array_nodes[64]={};uint8_t array_root=0;
-    const bool array_pattern=compiler->current.kind==DIAMOND_TOKEN_LEFT_BRACKET;
+    const bool array_pattern=compiler->current.kind==DIAMOND_TOKEN_LEFT_BRACKET||
+        compiler->current.kind==DIAMOND_TOKEN_LEFT_BRACE;
     if(array_pattern) {
         size_t node_count=0;
         array_root=parse_case_array_node(compiler,array_nodes,&node_count,0);
@@ -5042,12 +5094,12 @@ static uint16_t parse_case_branches(Compiler *compiler, uint16_t subject,
                 compiler,array_nodes,node_count))return destination;
         if(compiler->current.kind==DIAMOND_TOKEN_COMMA) {
             fail(compiler,compiler->current.span,
-                "an Array binding pattern must be the only pattern in its when clause");
+                "a collection binding pattern must be the only pattern in its when clause");
             return destination;
         }
         emit_instruction(compiler,DIAMOND_OP_BOOL,match_reg,true,0,2);
         compiler->known_types[match_reg]=DIAMOND_TYPE_BOOL;
-        size_t failure_jumps[64];size_t failure_count=0;
+        size_t failure_jumps[128];size_t failure_count=0;
         emit_case_array_match(compiler,array_nodes,array_root,subject,match_reg,
             failure_jumps,&failure_count);
         for(size_t index=0;index<failure_count;index++)
@@ -5099,8 +5151,8 @@ static uint16_t parse_case_branches(Compiler *compiler, uint16_t subject,
 /* `case SUBJECT \n when V1, V2 \n ... [else ...] end`, an expression
  * like `if`. Desugars to the same MOVE-into-destination-then-jump-to-end
  * shape parse_if already uses. Scalar/value patterns use CASE_MATCH; nested
- * Array binding patterns combine CASE_ARRAY_SHAPE, INDEX_GET, and CASE_MATCH,
- * then commit their bindings only on the successful path.
+ * Array/Hash binding patterns combine non-raising shape/key checks, INDEX_GET,
+ * and CASE_MATCH, then commit their bindings only on the successful path.
  *
  * The remaining deliberate scope cut is the subject-less boolean form
  * (`case \n when a > b \n ...`, testing each `when`'s value

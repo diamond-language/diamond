@@ -90,6 +90,23 @@ matches, so a failed later element cannot partially overwrite locals. An Array
 binding pattern must be the sole pattern in its `when` clause; comma-separated
 alternatives remain available for non-binding patterns.
 
+Hash patterns require each written key while allowing additional keys:
+
+```ruby
+case event
+when {"kind": ^expected_kind, "payload": {"score": score}}
+  record(score)
+else
+  reject(event)
+end
+```
+
+Keys are ordinary expressions and use normal Hash key equality. Values support
+the same literals, nested Array or Hash patterns, lowercase bindings, `_`
+wildcards, and `^local` pins as Array patterns. Missing keys fail the pattern
+even when the requested value pattern would match `nil`. Empty `{}` matches any
+Hash. Bindings remain failure-atomic. Hash rest bindings are not yet supported.
+
 ## Ternary
 
 ```ruby

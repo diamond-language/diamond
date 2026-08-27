@@ -12209,6 +12209,24 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 if(rest==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
                 registers[destination]=DIAMOND_OBJECT(rest);break;
             }
+            case DIAMOND_OP_CASE_HASH_SHAPE: {
+                uint16_t destination=0,source=0;
+                READ_SHORT(destination);READ_SHORT(source);
+                registers[destination]=DIAMOND_BOOL(
+                    registers[source].kind==DIAMOND_VALUE_OBJECT&&
+                    registers[source].as.object->kind==DIAMOND_OBJECT_HASH);
+                break;
+            }
+            case DIAMOND_OP_CASE_HASH_HAS: {
+                uint16_t destination=0,source=0,key=0;
+                READ_SHORT(destination);READ_SHORT(source);READ_SHORT(key);
+                bool present=false;
+                if(registers[source].kind==DIAMOND_VALUE_OBJECT&&
+                   registers[source].as.object->kind==DIAMOND_OBJECT_HASH)
+                    present=hash_find((DiamondHash *)registers[source].as.object,
+                        registers[key])>=0;
+                registers[destination]=DIAMOND_BOOL(present);break;
+            }
             /* A duration-only clock: seconds since some unspecified,
              * process-local reference point (CLOCK_MONOTONIC), never
              * meaningful as a calendar timestamp or across processes --

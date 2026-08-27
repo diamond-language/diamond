@@ -283,6 +283,9 @@ typedef enum DiamondOpCode : uint8_t {
     DIAMOND_OP_CASE_ARRAY_SHAPE,
     /* Copies Array elements from a fixed start index into a fresh Array. */
     DIAMOND_OP_ARRAY_REST,
+    /* Non-raising Hash type and required-key predicates for case patterns. */
+    DIAMOND_OP_CASE_HASH_SHAPE,
+    DIAMOND_OP_CASE_HASH_HAS,
     DIAMOND_OP_COUNT,
 } DiamondOpCode;
 
