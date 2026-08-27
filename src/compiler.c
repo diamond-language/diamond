@@ -2104,6 +2104,33 @@ static uint16_t parse_singleton_call(Compiler *compiler,
     }
     advance_token(compiler);
     skip_newlines(compiler);
+    if(call_arguments_have_keyword(compiler)) {
+        DiamondSpan keyword_names[16];uint16_t keyword_values[16];
+        size_t keyword_count=0;
+        const uint16_t positional=parse_dynamic_keyword_arguments(compiler,
+            keyword_names,keyword_values,&keyword_count);
+        const uint16_t destination=allocate_register(compiler);
+        emit_opcode(compiler,type_argument_count==0?
+            DIAMOND_OP_CALL_SINGLETON_KEYWORDS:
+            DIAMOND_OP_CALL_TYPED_SINGLETON_KEYWORDS);
+        emit_register(compiler,destination);
+        emit_function_index(compiler,method->function_index);
+        emit_register(compiler,positional);
+        emit_byte(compiler,receiver_class_index<0?UINT8_MAX:
+            (uint8_t)receiver_class_index);
+        emit_byte(compiler,method->needs_receiver?1:0);
+        emit_byte(compiler,(uint8_t)keyword_count);
+        for(size_t index=0;index<keyword_count;index++) {
+            emit_byte(compiler,add_name_string(compiler,keyword_names[index]));
+            emit_register(compiler,keyword_values[index]);
+        }
+        if(type_argument_count>0) {
+            emit_byte(compiler,(uint8_t)type_argument_count);
+            for(size_t index=0;index<type_argument_count;index++)
+                emit_byte(compiler,type_arguments[index]);
+        }
+        return destination;
+    }
     if(call_arguments_have_spread(compiler)) {
         const uint16_t spread=parse_spread_argument_array(compiler,nullptr,
             nullptr,nullptr,nullptr);
@@ -3752,6 +3779,25 @@ static uint16_t parse_name(Compiler *compiler) {
         }
         advance_token(compiler);
         skip_newlines(compiler);
+        if(call_arguments_have_keyword(compiler)) {
+            DiamondSpan keyword_names[16];uint16_t keyword_values[16];
+            size_t keyword_count=0;
+            const uint16_t positional=parse_dynamic_keyword_arguments(compiler,
+                keyword_names,keyword_values,&keyword_count);
+            const uint16_t destination=allocate_register(compiler);
+            emit_opcode(compiler,DIAMOND_OP_NEW_KEYWORDS);
+            emit_register(compiler,destination);
+            emit_byte(compiler,(uint8_t)class_index);
+            emit_register(compiler,positional);
+            emit_byte(compiler,(uint8_t)keyword_count);
+            for(size_t index=0;index<keyword_count;index++) {
+                emit_byte(compiler,add_name_string(compiler,keyword_names[index]));
+                emit_register(compiler,keyword_values[index]);
+            }
+            compiler->known_types[destination]=
+                (uint8_t)(DIAMOND_TYPE_CLASS_BASE+class_index);
+            return destination;
+        }
         if(call_arguments_have_spread(compiler)) {
             const uint16_t spread=parse_spread_argument_array(compiler,nullptr,
                 nullptr,nullptr,nullptr);

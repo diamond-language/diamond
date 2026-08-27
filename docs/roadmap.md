@@ -375,8 +375,13 @@ Areas still worth examining include:
   override the default protocol to provide the same cooperative early stop.
 - **Done**: generalized spread calls, including fixed prefix/suffix arguments,
   Callable values, constructors, class/module singleton methods, explicit
-  generic bindings, fixed-plus-rest delegation, and runtime keyword-slot
-  merging for direct top-level calls.
+  generic bindings, fixed-plus-rest delegation, and runtime keyword binding
+  for functions, user-defined methods, Callable values, constructors, and
+  class/module singleton methods.
+- **Deferred**: keywords for native C-backed receiver methods. Their specialized
+  `INVOKE` branches encode arity but no stable parameter-name signature table.
+  Add one shared native signature registry before enabling this syntax; ad hoc
+  names in individual branches would expose undocumented VM internals.
 - **Done**: spread calls on native receivers. Native String/Array/Hash/resource
   methods remain specialized branches inside `INVOKE`; the spread opcode
   constructs a compact synthetic call frame and re-enters that one dispatch

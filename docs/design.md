@@ -1328,9 +1328,11 @@ resolves each keyword name to its declared parameter slot and emits
 slot/register pairs. At runtime the spread fills the leading positional slots;
 the opcode rejects collisions, rejects unfilled gaps below the highest supplied
 slot, merges the keyword values into a temporary argument vector, and then uses
-the same `run_chunk` path as every other direct call. This remains top-level
-only because methods, Callable values, constructors, and singleton calls do not
-support keyword arguments independently of spread.
+the same `run_chunk` path as every other direct call. Instance methods,
+Callable values, constructors, and singleton methods retain keyword names in
+bytecode until runtime target selection, then use the same binder on public
+parameter slots before adding any hidden receiver. Native C-backed methods
+remain positional until their dispatch matrix exposes stable name signatures.
 
 ### Bare singleton method references
 

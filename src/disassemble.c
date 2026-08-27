@@ -650,6 +650,24 @@ static bool disassemble_chunk(FILE *stream, const char *name,
                 if((size_t)class_index>=chunk->class_count)valid=false;
                 offset+=6;break;
             }
+            case DIAMOND_OP_NEW_KEYWORDS: {
+                if(!require_bytes(stream,chunk,offset,7)) {valid=false;offset=chunk->code_count;break;}
+                const uint8_t class_index=chunk->code[offset+3];
+                const uint8_t keyword_count=chunk->code[offset+6];
+                const size_t total=7+(size_t)keyword_count*3;
+                if(keyword_count==0||keyword_count>16||
+                   !require_bytes(stream,chunk,offset,total)) {valid=false;offset=chunk->code_count;break;}
+                fprintf(stream,"%-18s r%u, c%u, r%u, %u keywords\n","NEW_KEYWORDS",
+                    checked_register(chunk,stream,read_operand(chunk,offset+1),&valid),class_index,
+                    checked_register(chunk,stream,read_operand(chunk,offset+4),&valid),keyword_count);
+                if((size_t)class_index>=chunk->class_count)valid=false;
+                for(size_t index=0;index<keyword_count;index++) {
+                    const size_t entry=offset+7+index*3;
+                    if((size_t)chunk->code[entry]>=chunk->string_count)valid=false;
+                    (void)checked_register(chunk,stream,read_operand(chunk,entry+1),&valid);
+                }
+                offset+=total;break;
+            }
             case DIAMOND_OP_CALL_SINGLETON_SPREAD: {
                 if(!require_bytes(stream,chunk,offset,9)) {
                     valid=false;offset=chunk->code_count;break;
@@ -694,6 +712,34 @@ static bool disassemble_chunk(FILE *stream, const char *name,
                     if((size_t)chunk->code[offset+10+index]>=chunk->type_set_count)
                         valid=false;
                 offset+=(size_t)10+type_count;break;
+            }
+            case DIAMOND_OP_CALL_SINGLETON_KEYWORDS:
+            case DIAMOND_OP_CALL_TYPED_SINGLETON_KEYWORDS: {
+                if(!require_bytes(stream,chunk,offset,10)) {valid=false;offset=chunk->code_count;break;}
+                const size_t function_index=read_operand(chunk,offset+3);
+                const uint8_t keyword_count=chunk->code[offset+9];
+                const size_t keyword_end=10+(size_t)keyword_count*3;
+                const bool typed=(DiamondOpCode)opcode==DIAMOND_OP_CALL_TYPED_SINGLETON_KEYWORDS;
+                if(keyword_count==0||keyword_count>16||
+                   !require_bytes(stream,chunk,offset,keyword_end+(typed?1:0))) {
+                    valid=false;offset=chunk->code_count;break;
+                }
+                fprintf(stream,"%-18s r%u, f%zu, r%u, %u keywords\n",
+                    typed?"CALL_TYPED_SINGLE_KW":"CALL_SINGLETON_KW",
+                    checked_register(chunk,stream,read_operand(chunk,offset+1),&valid),
+                    function_index,
+                    checked_register(chunk,stream,read_operand(chunk,offset+5),&valid),keyword_count);
+                if(function_index>=chunk->function_count)valid=false;
+                for(size_t index=0;index<keyword_count;index++) {
+                    const size_t entry=offset+10+index*3;
+                    if((size_t)chunk->code[entry]>=chunk->string_count)valid=false;
+                    (void)checked_register(chunk,stream,read_operand(chunk,entry+1),&valid);
+                }
+                if(!typed) {offset+=keyword_end;break;}
+                const uint8_t type_count=chunk->code[offset+keyword_end];
+                if(type_count>8||!require_bytes(stream,chunk,offset,
+                        keyword_end+1+(size_t)type_count)) {valid=false;offset=chunk->code_count;break;}
+                offset+=keyword_end+1+(size_t)type_count;break;
             }
             case DIAMOND_OP_BUILD_SPREAD_ARGS: {
                 if(!require_bytes(stream,chunk,offset,11)) {

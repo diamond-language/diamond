@@ -9981,6 +9981,84 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                         VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
                 break;
             }
+            case DIAMOND_OP_CALL_SINGLETON_KEYWORDS:
+            case DIAMOND_OP_CALL_TYPED_SINGLETON_KEYWORDS: {
+                uint16_t destination=0,function_index=0,positional_register=0;
+                uint8_t class_index=0,needs_receiver=0,keyword_count=0;
+                uint8_t keyword_names[16],type_count=0,type_arguments[8];
+                uint16_t keyword_registers[16];
+                READ_SHORT(destination);READ_SHORT(function_index);
+                READ_SHORT(positional_register);READ_BYTE(class_index);
+                READ_BYTE(needs_receiver);READ_BYTE(keyword_count);
+                if(keyword_count==0||keyword_count>16)
+                    VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
+                for(size_t index=0;index<keyword_count;index++) {
+                    READ_BYTE(keyword_names[index]);READ_SHORT(keyword_registers[index]);
+                }
+                if((DiamondOpCode)instruction==
+                        DIAMOND_OP_CALL_TYPED_SINGLETON_KEYWORDS) {
+                    READ_BYTE(type_count);if(type_count>8)
+                        VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
+                    for(size_t index=0;index<type_count;index++)READ_BYTE(type_arguments[index]);
+                }
+                if((size_t)function_index>=chunk->function_count||needs_receiver>1||
+                   (class_index!=UINT8_MAX&&(size_t)class_index>=chunk->class_count)||
+                   registers[positional_register].kind!=DIAMOND_VALUE_OBJECT||
+                   registers[positional_register].as.object->kind!=DIAMOND_OBJECT_ARRAY)
+                    VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
+                const DiamondFunction *function=chunk->functions[function_index];
+                if(function->arity<(uint8_t)needs_receiver||
+                   (type_count>0&&type_count!=function->type_variable_count))
+                    VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                DiamondValue *merged=nullptr;size_t merged_count=0;
+                DiamondVmStatus status=merge_keyword_arguments(vm,chunk,function,
+                    (const DiamondArray *)registers[positional_register].as.object,
+                    keyword_names,keyword_registers,keyword_count,registers,
+                    function->arity-needs_receiver,&merged,&merged_count);
+                VM_PROPAGATE(status);
+                const size_t total=merged_count+needs_receiver;
+                if(total<function->required_arity||
+                   (total>function->arity&&!function->has_variadic)) {
+                    free(merged);VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                }
+                DiamondValue *singleton_arguments=malloc(total*
+                    sizeof *singleton_arguments);
+                if(singleton_arguments==nullptr&&total>0) {free(merged);
+                    VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);}
+                if(needs_receiver)singleton_arguments[0]=class_index==UINT8_MAX?
+                    DIAMOND_NIL:DIAMOND_CLASS(class_index);
+                for(size_t index=0;index<merged_count;index++)
+                    singleton_arguments[index+needs_receiver]=merged[index];
+                free(merged);
+                DiamondTypeBinding singleton_bindings[8]={0};
+                for(size_t index=0;index<type_count;index++) {
+                    if((size_t)type_arguments[index]>=chunk->type_set_count) {
+                        free(singleton_arguments);VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);}
+                    (void)binding_node(&singleton_bindings[index]);
+                    bind_context_set(&singleton_bindings[index],0,chunk,chunk->type_sets,
+                        type_arguments[index]);
+                }
+                DiamondChunk child={.name=function->name,.code=function->code,
+                    .lines=function->lines,.columns=function->columns,
+                    .code_count=function->code_count,.constants=function->constants,
+                    .constant_count=function->constant_count,.strings=function->strings,
+                    .string_count=function->string_count,.type_sets=function->type_sets,
+                    .type_set_count=function->type_set_count,.functions=chunk->functions,
+                    .function_count=chunk->function_count,.classes=chunk->classes,
+                    .class_count=chunk->class_count,.interfaces=chunk->interfaces,
+                    .interface_count=chunk->interface_count,
+                    .parameter_type_sets=function->parameter_type_sets,
+                    .type_variable_count=function->type_variable_count,
+                    .parameter_offset=function->owner_class==UINT8_MAX?0:1,
+                    .type_variable_bindings=type_count==0?nullptr:singleton_bindings,
+                    .register_count=function->register_count,
+                    .has_variadic=function->has_variadic};
+                DiamondValue singleton_result=DIAMOND_NIL;
+                status=run_chunk(&child,vm,singleton_arguments,total,depth+1,
+                    nullptr,&singleton_result);
+                free(singleton_arguments);VM_PROPAGATE(status);
+                registers[destination]=singleton_result;break;
+            }
             case DIAMOND_OP_CALL_SINGLETON_SPREAD:
             case DIAMOND_OP_CALL_TYPED_SINGLETON_SPREAD: {
                 uint16_t destination=0,function_index=0,spread_register=0;
@@ -10267,6 +10345,54 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     } else if(argc!=0)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
                 }
                 break;
+            }
+            case DIAMOND_OP_NEW_KEYWORDS: {
+                uint16_t destination=0,positional_register=0;
+                uint8_t class_index=0,keyword_count=0,keyword_names[16];
+                uint16_t keyword_registers[16];
+                READ_SHORT(destination);READ_BYTE(class_index);
+                READ_SHORT(positional_register);READ_BYTE(keyword_count);
+                if((size_t)class_index>=chunk->class_count||keyword_count==0||
+                   keyword_count>16||
+                   registers[positional_register].kind!=DIAMOND_VALUE_OBJECT||
+                   registers[positional_register].as.object->kind!=DIAMOND_OBJECT_ARRAY)
+                    VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
+                for(size_t index=0;index<keyword_count;index++) {
+                    READ_BYTE(keyword_names[index]);READ_SHORT(keyword_registers[index]);
+                }
+                const DiamondClass *class=&chunk->classes[class_index];
+                const DiamondMethod *initialize=lookup_method(chunk,class,
+                    "initialize",sizeof("initialize")-1);
+                if(initialize==nullptr) {snprintf(vm->error,sizeof vm->error,
+                    "no parameter with this name");VM_RETURN(DIAMOND_VM_ARITY_ERROR);}
+                const DiamondChunk *function_chunk=initialize->source_chunk!=nullptr?
+                    initialize->source_chunk:chunk;
+                const DiamondFunction *fn=
+                    function_chunk->functions[initialize->function_index];
+                DiamondValue *merged=nullptr;size_t merged_count=0;
+                const DiamondVmStatus merge_status=merge_keyword_arguments(vm,chunk,
+                    fn,(const DiamondArray *)registers[positional_register].as.object,
+                    keyword_names,keyword_registers,keyword_count,registers,
+                    initialize->arity,&merged,&merged_count);
+                VM_PROPAGATE(merge_status);
+                DiamondArray *merged_array=allocate_array(vm,merged,merged_count);
+                free(merged);if(merged_array==nullptr)
+                    VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                const size_t protected_count=vm->gc_protected_count;
+                if(!gc_protect(vm,DIAMOND_OBJECT(merged_array)))
+                    VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                uint8_t code[9]={DIAMOND_OP_NEW_SPREAD,0,1,class_index,0,0,
+                    DIAMOND_OP_RETURN,0,1};uint32_t locations[9]={0};
+                DiamondChunk synthetic=*chunk;synthetic.name="<keyword new>";
+                synthetic.code=code;synthetic.lines=locations;
+                synthetic.columns=locations;synthetic.code_count=9;
+                synthetic.register_count=2;
+                const DiamondValue argument=DIAMOND_OBJECT(merged_array);
+                DiamondValue constructor_result=DIAMOND_NIL;
+                const DiamondVmStatus status=run_chunk(&synthetic,vm,&argument,1,
+                    depth+1,nullptr,&constructor_result);
+                gc_unprotect(vm,protected_count);VM_PROPAGATE(status);
+                registers[destination]=constructor_result;break;
             }
             case DIAMOND_OP_NEW_SPREAD: {
                 uint16_t dest=0,spread_register=0;uint8_t class_index=0;
