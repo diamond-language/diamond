@@ -1210,8 +1210,12 @@ For statically resolved top-level, singleton, instance-method, and constructor
 calls, a one-member typed Callable parameter also seeds concrete types onto
 matching anonymous-block parameter registers. Typed Callable values propagate
 the nested Callable in their final parameter slot. Explicit generic call-site
-bindings substitute concrete type variables before the block compiles. This
-context is consumed at the block boundary and does not leak into nested blocks.
+bindings substitute concrete type variables before the block compiles. Without
+explicit bindings, statically resolved top-level, singleton, and instance-method
+calls derive direct type-variable bindings from concrete positional arguments.
+Nested collection shapes remain deliberately unknown until structural
+compile-time inference is available. This context is consumed at the block
+boundary and does not leak into nested blocks.
 Union receivers participate when every member resolves to the exact same
 inherited implementation; divergent overrides and genuinely unresolved generic
 contexts remain unknown.

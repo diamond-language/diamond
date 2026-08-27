@@ -6,6 +6,10 @@ puts(generic_apply[Int](6) do |value|
   value * 7
 end)
 
+puts(generic_apply(7) do |value|
+  value * 6
+end)
+
 puts(generic_apply[Int](*[8]) do |value|
   value * 8
 end)
@@ -24,6 +28,14 @@ puts(GenericBlockOps.apply[String]("singleton") do |value|
   value + " generic"
 end)
 
+puts(GenericBlockOps.apply("implicit singleton") do |value|
+  value + " generic"
+end)
+
 puts(GenericBlockOps.new().apply[Int](10) do |value|
   value + 5
+end)
+
+puts(GenericBlockOps.new().apply(20) do |value|
+  value + 2
 end)

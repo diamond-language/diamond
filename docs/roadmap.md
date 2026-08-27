@@ -499,8 +499,11 @@ flow into anonymous blocks at statically resolved top-level, singleton,
 instance-method, and constructor call sites. Typed Callable values propagate
 their final nested Callable parameter through fixed, spread, and keyword calls.
 Explicit generic bindings substitute concrete block parameter types at function
-and method call sites. Union receivers participate when every member resolves
-to the exact same inherited implementation. Divergent overrides and genuinely
+and method call sites. When bindings are omitted, direct one-member generic
+parameters now infer them from concrete positional arguments for statically
+resolved top-level, singleton, and instance-method calls. Union receivers
+participate when every member resolves to the exact same inherited
+implementation. Nested collection bindings, divergent overrides, and genuinely
 unresolved generic contexts remain future extensions to the same conservative
 mechanism.
 Typed top-level function references and class/module singleton references now

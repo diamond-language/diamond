@@ -574,6 +574,29 @@ static bool reserve_type_sets(Compiler *compiler,size_t additional) {
     return false;
 }
 
+static uint16_t concrete_type_set(Compiler *compiler,uint8_t type) {
+    for(size_t index=0;index<compiler->function->type_set_count;index++) {
+        const DiamondTypeSet *set=&compiler->function->type_sets[index];
+        if(set->count==1&&set->members[0].id==type&&
+           set->members[0].argument_set==DIAMOND_NO_TYPE_SET&&
+           set->members[0].second_argument_set==DIAMOND_NO_TYPE_SET)
+            return (uint16_t)index;
+    }
+    if(!reserve_type_sets(compiler,1))return DIAMOND_NO_TYPE_SET;
+    const size_t index=compiler->function->type_set_count++;
+    DiamondTypeSet *set=&compiler->function->type_sets[index];
+    set->count=1;set->inferred=true;
+    set->members[0]=(DiamondTypeMember){.id=type,
+        .argument_set=DIAMOND_NO_TYPE_SET,
+        .second_argument_set=DIAMOND_NO_TYPE_SET,
+        .callable_arity=UINT8_MAX,
+        .callable_return_set=DIAMOND_NO_TYPE_SET,
+        .callable_parameters_typed=false};
+    for(size_t parameter=0;parameter<16;parameter++)
+        set->members[0].callable_parameter_sets[parameter]=DIAMOND_NO_TYPE_SET;
+    return (uint16_t)index;
+}
+
 static uint16_t clone_type_set_into_current(Compiler *compiler,
         const DiamondTypeSet *source_sets,size_t source_count,
         uint16_t source_index) {
@@ -2009,6 +2032,28 @@ static uint16_t compile_contextual_typed_block(Compiler *compiler,
     return block;
 }
 
+static size_t infer_contextual_type_arguments(Compiler *compiler,
+        const DiamondFunction *target,const uint16_t *arguments,
+        size_t argument_count,uint16_t *bindings) {
+    for(size_t index=0;index<8;index++)bindings[index]=DIAMOND_NO_TYPE_SET;
+    if(target==nullptr)return 0;
+    for(size_t parameter=0;parameter<argument_count&&parameter<16;parameter++) {
+        const uint16_t parameter_set=target->parameter_type_sets[parameter];
+        if(parameter_set==DIAMOND_NO_TYPE_SET||
+           parameter_set>=target->type_set_count)continue;
+        const DiamondTypeSet *expected=&target->type_sets[parameter_set];
+        if(expected->count!=1)continue;
+        const uint8_t id=expected->members[0].id;
+        if(id<DIAMOND_TYPE_VARIABLE_BASE||id>=DIAMOND_TYPE_INTERFACE_BASE)
+            continue;
+        const size_t variable=(size_t)(id-DIAMOND_TYPE_VARIABLE_BASE);
+        const uint8_t known=compiler->known_types[arguments[parameter]];
+        if(variable<8&&known!=TYPE_UNKNOWN&&known<DIAMOND_TYPE_VARIABLE_BASE)
+            bindings[variable]=concrete_type_set(compiler,known);
+    }
+    return target->type_variable_count;
+}
+
 static uint16_t compile_callable_value_block(Compiler *compiler,
         int32_t callable_set_index) {
     compiler->has_contextual_block_types=false;
@@ -2231,6 +2276,33 @@ static uint16_t parse_call(Compiler *compiler, DiamondSpan name) {
         if(argument_count==16) {
             fail(compiler,compiler->current.span,"too many arguments");return 0;
         }
+        uint16_t inferred_arguments[8];
+        for(size_t index=0;index<8;index++)
+            inferred_arguments[index]=DIAMOND_NO_TYPE_SET;
+        if(type_argument_count==0&&function->type_variable_count>0)
+            for(size_t parameter=0;parameter<argument_count&&
+                parameter<function->arity;parameter++) {
+                if(!slot_filled[parameter])continue;
+                const uint16_t parameter_set=
+                    function->parameter_type_sets[parameter];
+                if(parameter_set==DIAMOND_NO_TYPE_SET||
+                   parameter_set>=function->type_set_count)continue;
+                const DiamondTypeSet *expected=&function->type_sets[parameter_set];
+                if(expected->count!=1)continue;
+                const uint8_t id=expected->members[0].id;
+                if(id<DIAMOND_TYPE_VARIABLE_BASE||
+                   id>=DIAMOND_TYPE_INTERFACE_BASE)continue;
+                const size_t variable=(size_t)(id-DIAMOND_TYPE_VARIABLE_BASE);
+                const uint8_t known=compiler->known_types[
+                    slot_registers[parameter]];
+                if(variable<8&&known!=TYPE_UNKNOWN&&
+                   known<DIAMOND_TYPE_VARIABLE_BASE)
+                    inferred_arguments[variable]=concrete_type_set(compiler,known);
+            }
+        const uint16_t *contextual_arguments=type_argument_count>0?
+            type_arguments:inferred_arguments;
+        const size_t contextual_argument_count=type_argument_count>0?
+            type_argument_count:function->type_variable_count;
         /* Same register-aliasing hazard parse_invoke's own DIAMOND_TOKEN_DO
          * branch guards against (see its comment): every slot filled above
          * may still be a bare alias of a local the block below is about to
@@ -2244,7 +2316,7 @@ static uint16_t parse_call(Compiler *compiler, DiamondSpan name) {
         }
         const uint16_t block=compile_contextual_typed_block(compiler,
             function,function->arity==0?0:function->arity-1,
-            type_arguments,type_argument_count);
+            contextual_arguments,contextual_argument_count);
         const size_t block_slot=function->arity==0?0:function->arity-1;
         bool contiguous=true;
         for(size_t index=0;index<argument_count;index++)
@@ -2663,16 +2735,22 @@ static uint16_t parse_singleton_call(Compiler *compiler,
         if(argument_count==16) {
             fail(compiler,compiler->current.span,"too many call arguments");return 0;
         }
+        uint16_t inferred_arguments[8];
+        const size_t inferred_count=type_argument_count==0?
+            infer_contextual_type_arguments(compiler,function,arguments,
+                argument_count,inferred_arguments):0;
+        const uint16_t *contextual_arguments=type_argument_count>0?
+            type_arguments:inferred_arguments;
+        const size_t contextual_count=type_argument_count>0?
+            type_argument_count:inferred_count;
         for(size_t index=0;index<argument_count;index++) {
             const uint16_t snapshot=allocate_register(compiler);
             emit_instruction(compiler,DIAMOND_OP_MOVE,snapshot,arguments[index],0,2);
             arguments[index]=snapshot;
         }
-        const DiamondFunction *target=
-            compiler->program->functions[method->function_index];
         const uint16_t block=compile_contextual_typed_block(compiler,
-            target,method->arity==0?0:method->arity-1,
-            type_arguments,type_argument_count);
+            function,method->arity==0?0:method->arity-1,
+            contextual_arguments,contextual_count);
         const size_t block_slot=method->arity==0?0:method->arity-1;
         if(argument_count<block_slot) {
             const uint16_t positional=
@@ -4876,6 +4954,14 @@ static uint16_t parse_invoke(Compiler *compiler, uint16_t receiver) {
          * every argument into fresh temps first: a temp is never a
          * registered local, so BOX_LOCAL's locals-table lookup can never
          * retarget it. */
+        uint16_t inferred_arguments[8];
+        const size_t inferred_count=type_argument_count==0?
+            infer_contextual_type_arguments(compiler,contextual_target,args,
+                count,inferred_arguments):0;
+        const uint16_t *contextual_arguments=type_argument_count>0?
+            type_arguments:inferred_arguments;
+        const size_t contextual_count=type_argument_count>0?
+            type_argument_count:inferred_count;
         const uint16_t receiver_snapshot=allocate_register(compiler);
         emit_instruction(compiler,DIAMOND_OP_MOVE,receiver_snapshot,receiver,0,2);
         receiver=receiver_snapshot;
@@ -4887,7 +4973,8 @@ static uint16_t parse_invoke(Compiler *compiler, uint16_t receiver) {
         const uint16_t block=compile_contextual_typed_block(compiler,
             contextual_target,
             contextual_target==nullptr||contextual_target->arity<=1?0:
-                contextual_target->arity-2,type_arguments,type_argument_count);
+                contextual_target->arity-2,contextual_arguments,
+            contextual_count);
         const size_t block_slot=
             contextual_target==nullptr||contextual_target->arity<=1?0:
                 (size_t)contextual_target->arity-2;
