@@ -81,11 +81,14 @@ zero or more remaining elements and receives them as a fresh Array; `*_`
 accepts and discards the remainder. Rest bindings must be last. Nested
 entries use the same literal, Range, Regexp, class/subclass, and custom-equality
 matching described above. A lowercase bare name binds that element for the
-branch; `_` ignores it. Bindings are written only after the complete pattern
+branch; `_` ignores it. Prefix an existing lowercase local with `^` to compare
+the element against its current value instead of rebinding it, as in
+`[^expected_kind, payload]`. Pins work at any nested level and may reference a
+captured local. An undefined or non-lowercase pin is a compile error. Bindings
+are written only after the complete pattern
 matches, so a failed later element cannot partially overwrite locals. An Array
 binding pattern must be the sole pattern in its `when` clause; comma-separated
-alternatives remain available for non-binding patterns. There is not yet a pin
-operator for comparing against an existing lowercase local inside a pattern.
+alternatives remain available for non-binding patterns.
 
 ## Ternary
 

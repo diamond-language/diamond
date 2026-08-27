@@ -356,6 +356,8 @@ DiamondToken diamond_lexer_next(DiamondLexer *lexer) {
         case '%':
             return token(lexer, match(lexer,'=') ? DIAMOND_TOKEN_PERCENT_EQUAL
                                                   : DIAMOND_TOKEN_PERCENT);
+        case '^':
+            return token(lexer, DIAMOND_TOKEN_CARET);
         case '\n':
             return token(lexer, DIAMOND_TOKEN_NEWLINE);
         case ';':

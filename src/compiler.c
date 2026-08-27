@@ -4732,7 +4732,7 @@ typedef struct CaseFlowJoin {
 
 typedef enum CaseArrayNodeKind {CASE_ARRAY_GROUP,CASE_ARRAY_VALUE,
     CASE_ARRAY_BIND,CASE_ARRAY_WILDCARD,CASE_ARRAY_REST_BIND,
-    CASE_ARRAY_REST_WILDCARD} CaseArrayNodeKind;
+    CASE_ARRAY_REST_WILDCARD,CASE_ARRAY_PIN} CaseArrayNodeKind;
 
 typedef struct CaseArrayNode {
     CaseArrayNodeKind kind;
@@ -4805,6 +4805,33 @@ static uint8_t parse_case_array_node(Compiler *compiler,CaseArrayNode *nodes,
         }
         advance_token(compiler);return index;
     }
+    if(compiler->current.kind==DIAMOND_TOKEN_CARET) {
+        advance_token(compiler);
+        if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER) {
+            fail(compiler,compiler->current.span,
+                "expected lowercase local after '^' in case Array pattern");
+            return index;
+        }
+        node->name=compiler->current.span;
+        const char first=compiler->source[node->name.start];
+        if(first<'a'||first>'z'||span_is_underscore(compiler,node->name)) {
+            fail(compiler,node->name,
+                "pin in case Array pattern must name a lowercase local");
+            return index;
+        }
+        bool found=find_local(compiler,node->name)>=0;
+        for(size_t local=compiler->enclosing_local_count;local>0&&!found;local--)
+            found=spans_equal(compiler,
+                compiler->enclosing_locals[local-1].name,node->name);
+        if(!found) {
+            fail(compiler,node->name,
+                "pin references undefined local variable");return index;
+        }
+        node->kind=CASE_ARRAY_PIN;
+        advance_token(compiler);
+        node->value_register=parse_identifier(compiler);
+        return index;
+    }
     if(compiler->current.kind==DIAMOND_TOKEN_IDENTIFIER) {
         const char first=compiler->source[compiler->current.span.start];
         if(span_is_underscore(compiler,compiler->current.span)) {
@@ -4840,7 +4867,7 @@ static void emit_case_array_match(Compiler *compiler,CaseArrayNode *nodes,
        node->kind==CASE_ARRAY_REST_BIND||
        node->kind==CASE_ARRAY_REST_WILDCARD)return;
     const uint16_t test=allocate_register(compiler);
-    if(node->kind==CASE_ARRAY_VALUE) {
+    if(node->kind==CASE_ARRAY_VALUE||node->kind==CASE_ARRAY_PIN) {
         emit_instruction(compiler,DIAMOND_OP_CASE_MATCH,test,node->value_register,subject,3);
     } else {
         const bool has_rest=node->child_count>0&&

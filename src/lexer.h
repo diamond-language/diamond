@@ -59,6 +59,8 @@ typedef enum DiamondTokenKind {
     DIAMOND_TOKEN_STAR,
     DIAMOND_TOKEN_SLASH,
     DIAMOND_TOKEN_PERCENT,
+    /* Pattern pin (`^name`), accepted only inside case Array patterns. */
+    DIAMOND_TOKEN_CARET,
     /* Compound assignment (`x += 1`, ...) -- pure syntax sugar, expanded
      * entirely at parse time into the same opcode sequence the plain
      * `x = x + 1` spelling would already produce (see compile_compound_

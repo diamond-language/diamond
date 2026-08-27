@@ -57,6 +57,8 @@
   bindings, `_` wildcards, recursive value patterns, and failure-atomic binding.
 - Added trailing Array rest patterns (`[head, *tail]`) to destructuring
   assignment and `case`, including nested patterns and `*_` remainder discard.
+- Added `^local` pins to nested `case` Array patterns, including captured-local
+  comparisons and compile-time rejection of undefined pin targets.
 - Corrected the runtime type-ID partition so the advertised class capacity no
   longer overlaps generic-variable and interface IDs, and raised the class
   capacity from 128 to 180. Updated the self-hosted compiler's mirrored

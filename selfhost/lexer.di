@@ -206,6 +206,7 @@ class Lexer
       return self.make_token(:percent_equal) if self.match?("=".ord())
       return self.make_token(:percent)
     end
+    return self.make_token(:caret) if code == "^".ord()
     return self.make_token(:newline) if code == "\n".ord()
     return self.make_token(:newline) if code == ";".ord()
     if code == "=".ord()
