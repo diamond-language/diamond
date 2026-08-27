@@ -354,7 +354,10 @@ strictly expression-scoped expected-type channel. Bare singleton and bound
 instance references solve their generic bindings from the expected Callable's
 parameter and return graph, then synthesize the same typed wrappers explicit
 bindings use. References without a complete, unambiguous context retain the
-existing explicit-binding requirement. Callable-union block context first
+existing explicit-binding requirement. Declared return graphs now provide that
+context to endless bodies, explicit `return` values, and final expressions in
+multi-line functions, including references nested in collection literals.
+Callable-union block context first
 selects existing safe graphs, then constructs input unions when sibling input
 types have no declared common graph. Synthetic return intersections remain
 open; return context therefore still requires an existing declared subtype.

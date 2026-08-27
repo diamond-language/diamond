@@ -36,6 +36,10 @@
   of discarding them, across positional, keyword, spread, and trailing-block
   calls. Indexing unions of typed Arrays and Hashes now joins their element or
   nullable value graphs recursively.
+- Extended expected Callable context from declared function returns into
+  endless bodies, explicit returns, and final multi-line expressions. Bare
+  generic top-level, singleton, and bound references now infer bindings there,
+  including recursively nested collection literals.
 - Recursed expected collection contracts through nested Array and Hash literals
   so contextual generic method references resolve at arbitrary literal depth.
 - Stabilized recursive type-graph cloning when the current function's type-set

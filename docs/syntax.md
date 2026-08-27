@@ -609,7 +609,10 @@ When a bare generic singleton or bound instance reference is passed directly to
 a statically resolved Callable parameter, Diamond can infer those bindings from
 the parameter's expected Callable graph. This works for positional and keyword
 arguments on functions, singleton methods, instance methods, and constructors.
-An unresolved standalone reference still requires explicit bindings.
+A declared function return supplies the same context to an endless body, an
+explicit `return` value, or the final expression of a multi-line body. Earlier
+statements do not inherit the final return expectation. A standalone reference
+without either call-site or return context still requires explicit bindings.
 The same context recurses through elements of an expected `Array[T]` and the
 keys and values of an expected `Hash[K, V]`. A literal such as
 `[Tools.identity]` can therefore satisfy `Array[Callable[[Int], Int]]` without

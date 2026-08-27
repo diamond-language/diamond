@@ -8538,7 +8538,10 @@ static uint16_t compile_return(Compiler *compiler) {
         /* Sole writer; run_chunk's zero-init already covers this. */
         compiler->known_types[value]=DIAMOND_TYPE_NIL;
     } else {
-        value=parse_expression(compiler);
+        value=compiler->current_return_type>=0?
+            parse_with_expected_set(compiler,
+                (uint16_t)compiler->current_return_type):
+            parse_expression(compiler);
     }
     if(compiler->current_return_type>=0)
         emit_type_check(compiler,value,(uint8_t)compiler->current_return_type,
@@ -9951,7 +9954,9 @@ static uint16_t compile_definition(Compiler *compiler, bool captures_self) {
         const size_t condition_jump=has_postfix
             ? emit_jump(compiler,DIAMOND_OP_JUMP,0):SIZE_MAX;
         const size_t body_start=compiler->function->code_count;
-        body_result=parse_expression(compiler);
+        body_result=return_type>=0?
+            parse_with_expected_set(compiler,(uint16_t)return_type):
+            parse_expression(compiler);
         if(has_postfix) {
             if(compiler->current.kind!=postfix) {
                 fail(compiler,compiler->current.span,"expected postfix condition");
@@ -12091,6 +12096,35 @@ static bool at_block_end(const Compiler *compiler) {
            compiler->current.kind == DIAMOND_TOKEN_END;
 }
 
+static bool expression_finishes_block(const Compiler *compiler) {
+    DiamondLexer lookahead=compiler->lexer;
+    size_t nesting=0;
+    DiamondToken token=compiler->current;
+    for(;;) {
+        if(token.kind==DIAMOND_TOKEN_EOF)return true;
+        if(token.kind==DIAMOND_TOKEN_LEFT_PAREN||
+           token.kind==DIAMOND_TOKEN_LEFT_BRACKET||
+           token.kind==DIAMOND_TOKEN_LEFT_BRACE)nesting++;
+        else if(token.kind==DIAMOND_TOKEN_RIGHT_PAREN||
+                token.kind==DIAMOND_TOKEN_RIGHT_BRACKET||
+                token.kind==DIAMOND_TOKEN_RIGHT_BRACE) {
+            if(nesting>0)nesting--;
+        } else if(token.kind==DIAMOND_TOKEN_NEWLINE&&nesting==0) {
+            do token=diamond_lexer_next(&lookahead);
+            while(token.kind==DIAMOND_TOKEN_NEWLINE);
+            return token.kind==DIAMOND_TOKEN_EOF||
+                   token.kind==DIAMOND_TOKEN_ELSE||
+                   token.kind==DIAMOND_TOKEN_ELSIF||
+                   token.kind==DIAMOND_TOKEN_WHEN||
+                   token.kind==DIAMOND_TOKEN_RESCUE||
+                   token.kind==DIAMOND_TOKEN_ENSURE||
+                   token.kind==DIAMOND_TOKEN_END;
+        }
+        token=diamond_lexer_next(&lookahead);
+        if(token.kind==DIAMOND_TOKEN_ERROR)return false;
+    }
+}
+
 static uint16_t compile_sequence(Compiler *compiler) {
     skip_newlines(compiler);
     uint16_t result = allocate_register(compiler);
@@ -12153,10 +12187,14 @@ static uint16_t compile_sequence(Compiler *compiler) {
                 result=compile_multi_assignment(compiler);
             else if(compound_assignment_ahead(compiler))
                 result=compile_compound_assignment(compiler);
-            else
-                result = assignment_ahead(compiler)
-                    ? compile_assignment(compiler)
-                    : parse_expression(compiler);
+            else if(assignment_ahead(compiler))
+                result=compile_assignment(compiler);
+            else if(!has_postfix&&
+                    compiler->function->return_type_set!=DIAMOND_NO_TYPE_SET&&
+                    expression_finishes_block(compiler))
+                result=parse_with_expected_set(compiler,
+                    compiler->function->return_type_set);
+            else result=parse_expression(compiler);
         }
         if (has_postfix) {
             if (compiler->current.kind != postfix) {

@@ -1313,6 +1313,13 @@ members form an inferred union. Differently parameterized members with the same
 outer type remain separate union alternatives. Recursive subtype checks match
 each source alternative against a compatible target alternative without
 conflating their nested contracts. Exact structural duplicates are rejected.
+
+The expected-type channel also enters expressions owned by a declared function
+return: endless bodies, explicit return operands, and the lexically final
+expression of a multi-line body. Final-expression detection uses a lexer copy
+and balanced delimiters, so the expectation never contaminates preceding
+statements. Nested Array and Hash literals continue distributing the contract
+until a generic method-reference leaf can solve its bindings.
 This context is consumed at the block boundary and does not leak into nested
 blocks.
 Union receivers participate when every member resolves to the same inherited
