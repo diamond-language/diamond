@@ -511,10 +511,12 @@ singleton, instance-method, and constructor calls, including merged fixed
 arguments that retain the same element contract. Union receivers
 Keyword arguments at statically resolved calls bind against their declared
 parameter slots for top-level, singleton, instance-method, and constructor
-calls. Union receivers participate when every member resolves to the exact same inherited
-implementation. Differently parameterized members sharing one outer type,
-divergent overrides, and genuinely unresolved generic contexts remain future
-extensions to the same conservative mechanism.
+calls. Union receivers participate when every member resolves either to the
+same inherited implementation or to divergent implementations with structurally
+identical arity, generic, name, and parameter contracts. Differently
+parameterized members sharing one outer type, incompatible overrides, and
+genuinely unresolved generic contexts remain future extensions to the same
+conservative mechanism.
 Typed top-level function references and class/module singleton references now
 publish structural Callable signatures into local type facts, so later fixed,
 spread, and keyword Callable-value calls retain block context through aliases.

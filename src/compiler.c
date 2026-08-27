@@ -4911,6 +4911,83 @@ static const DiamondFunction *class_instance_signature(
     return nullptr;
 }
 
+static bool type_sets_structurally_equal(const DiamondTypeSet *left_sets,
+        size_t left_count,uint16_t left_index,
+        const DiamondTypeSet *right_sets,size_t right_count,
+        uint16_t right_index,size_t depth);
+
+static bool type_members_structurally_equal(const DiamondTypeMember *left,
+        const DiamondTypeSet *left_sets,size_t left_count,
+        const DiamondTypeMember *right,const DiamondTypeSet *right_sets,
+        size_t right_count,size_t depth) {
+    if(left->id!=right->id||left->callable_arity!=right->callable_arity||
+       left->callable_parameters_typed!=right->callable_parameters_typed)
+        return false;
+    if((left->argument_set==DIAMOND_NO_TYPE_SET)!=
+       (right->argument_set==DIAMOND_NO_TYPE_SET)||
+       (left->second_argument_set==DIAMOND_NO_TYPE_SET)!=
+       (right->second_argument_set==DIAMOND_NO_TYPE_SET)||
+       (left->callable_return_set==DIAMOND_NO_TYPE_SET)!=
+       (right->callable_return_set==DIAMOND_NO_TYPE_SET))return false;
+    if(left->argument_set!=DIAMOND_NO_TYPE_SET&&
+       !type_sets_structurally_equal(left_sets,left_count,left->argument_set,
+           right_sets,right_count,right->argument_set,depth+1))return false;
+    if(left->second_argument_set!=DIAMOND_NO_TYPE_SET&&
+       !type_sets_structurally_equal(left_sets,left_count,
+           left->second_argument_set,right_sets,right_count,
+           right->second_argument_set,depth+1))return false;
+    if(left->callable_return_set!=DIAMOND_NO_TYPE_SET&&
+       !type_sets_structurally_equal(left_sets,left_count,
+           left->callable_return_set,right_sets,right_count,
+           right->callable_return_set,depth+1))return false;
+    if(left->callable_parameters_typed)
+        for(size_t parameter=0;parameter<left->callable_arity;parameter++)
+            if(!type_sets_structurally_equal(left_sets,left_count,
+                    left->callable_parameter_sets[parameter],right_sets,
+                    right_count,right->callable_parameter_sets[parameter],
+                    depth+1))return false;
+    return true;
+}
+
+static bool type_sets_structurally_equal(const DiamondTypeSet *left_sets,
+        size_t left_count,uint16_t left_index,
+        const DiamondTypeSet *right_sets,size_t right_count,
+        uint16_t right_index,size_t depth) {
+    if(depth>32||left_index>=left_count||right_index>=right_count)return false;
+    const DiamondTypeSet *left=&left_sets[left_index];
+    const DiamondTypeSet *right=&right_sets[right_index];
+    if(left->count!=right->count)return false;
+    for(size_t left_member=0;left_member<left->count;left_member++) {
+        bool found=false;
+        for(size_t right_member=0;right_member<right->count;right_member++)
+            if(type_members_structurally_equal(&left->members[left_member],
+                    left_sets,left_count,&right->members[right_member],
+                    right_sets,right_count,depth)) {found=true;break;}
+        if(!found)return false;
+    }
+    return true;
+}
+
+static bool contextual_signatures_equal(const DiamondFunction *left,
+        const DiamondFunction *right) {
+    if(left->arity!=right->arity||left->required_arity!=right->required_arity||
+       left->has_variadic!=right->has_variadic||
+       left->type_variable_count!=right->type_variable_count)return false;
+    for(size_t parameter=0;parameter<left->arity&&parameter<16;parameter++) {
+        if(strcmp(left->parameter_names[parameter],
+                  right->parameter_names[parameter])!=0)return false;
+        const uint16_t left_set=left->parameter_type_sets[parameter];
+        const uint16_t right_set=right->parameter_type_sets[parameter];
+        if((left_set==DIAMOND_NO_TYPE_SET)!=(right_set==DIAMOND_NO_TYPE_SET))
+            return false;
+        if(left_set!=DIAMOND_NO_TYPE_SET&&
+           !type_sets_structurally_equal(left->type_sets,left->type_set_count,
+               left_set,right->type_sets,right->type_set_count,right_set,0))
+            return false;
+    }
+    return true;
+}
+
 static const DiamondFunction *instance_call_signature(
         const Compiler *compiler,uint16_t receiver,DiamondSpan name) {
     const uint8_t type=compiler->known_types[receiver];
@@ -4931,7 +5008,8 @@ static const DiamondFunction *instance_call_signature(
             class_instance_signature(compiler,member,name);
         if(candidate==nullptr)return nullptr;
         if(shared==nullptr)shared=candidate;
-        else if(shared!=candidate)return nullptr;
+        else if(shared!=candidate&&
+                !contextual_signatures_equal(shared,candidate))return nullptr;
     }
     return shared;
 }

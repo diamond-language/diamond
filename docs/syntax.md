@@ -578,6 +578,9 @@ singleton methods, instance methods, and constructors.
 Keyword values likewise infer generic bindings from their named parameter slot
 for statically resolved functions, singleton methods, instance methods, and
 constructors. Explicit generic arguments take precedence.
+For a union receiver, independently overridden methods still provide block
+context when their complete parameter contracts are structurally identical.
+Any incompatible override keeps the block untyped.
 
 Callable values accept the same trailing `do ... end` block as named function
 and method calls, including calls with a spread Array. The block is appended as

@@ -1229,9 +1229,11 @@ same outer type remain unknown because the annotation graph cannot represent
 that union without conflating their nested contracts.
 This context is consumed at the block boundary and does not leak into nested
 blocks.
-Union receivers participate when every member resolves to the exact same
-inherited implementation; divergent overrides and genuinely unresolved generic
-contexts remain unknown.
+Union receivers participate when every member resolves to the same inherited
+implementation. Divergent implementations also participate when their arity,
+generic-variable layout, parameter names, and recursive parameter type graphs
+are structurally identical. Incompatible overrides and genuinely unresolved
+generic contexts remain unknown.
 Bare typed function references and singleton-method reference wrappers clone
 their public parameter and return sets into the caller's type-set table. Local
 aliases therefore preserve enough structural Callable information to seed a
