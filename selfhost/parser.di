@@ -3459,7 +3459,7 @@ class Parser
     end
     self.emit_register(destination)
     self.emit_register(receiver)
-    self.emit_byte(method_name_index)
+    self.emit_register(method_name_index)
     self.emit_register(argument_base)
     self.emit_byte(argument_count)
     if type_arguments.length() > 0
@@ -4277,7 +4277,7 @@ class Parser
     self.emit_byte(Opcode::SUPER)
     self.emit_register(destination)
     self.emit_byte(@current_class_index)
-    self.emit_byte(method_name_index)
+    self.emit_register(method_name_index)
     self.emit_register(parsed[0])
     self.emit_byte(parsed[1])
     destination

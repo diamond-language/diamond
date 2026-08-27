@@ -236,16 +236,17 @@ Resolved next for literal constants: `DIAMOND_OP_CONSTANT` already decoded a
 reserved a fixed 256-value table. Constant storage now grows geometrically to
 the real 65,535-entry operand boundary, including ProgramBuilder emission,
 discovery reservations, thread clones, and teardown. This removes another
-roughly 4 KiB of unconditional storage per function. String/name and type-set
-indices remain at 256: several invocation and annotation opcodes still encode
-those as raw bytes, so widening either requires a separate bytecode migration.
+roughly 4 KiB of unconditional storage per function. Type-set indices remain at
+256 because annotation opcodes still encode them as raw bytes; widening those
+requires a separate bytecode migration.
 
-String/name storage is now dynamic in preparation for that migration. The
-wire-format limit remains 256 for now, but an empty or small function no longer
-reserves all 256 `DiamondStringConstant` records (roughly 64 KiB) up front.
-Compiler literals/names, synthetic module attributes, ProgramBuilder emission,
-discovery reservations, thread clones, and teardown share the same ownership
-model. Widening the opcode fields remains the distinct next step.
+Resolved for string/name operands: storage grows dynamically and the bytecode
+wire format now carries unsigned 16-bit indices through literals, symbols,
+method dispatch, spread and keyword calls, `super`, debugger metadata, and VM
+synthetic call frames. ProgramBuilder emission, discovery reservations, thread
+clones, the disassembler, and the self-hosted parser share the same layout.
+Functions can therefore address up to 65,535 string/name entries without
+restoring the former roughly 64 KiB unconditional allocation per function.
 
 Resolved: a class/module/interface (and a type annotation naming one) can
 now be referenced before its own declaration is textually reached later in

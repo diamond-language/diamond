@@ -541,7 +541,7 @@ static uint16_t add_constant(Compiler *compiler, DiamondValue value) {
     return (uint16_t)index;
 }
 
-static uint8_t add_string_range(Compiler *compiler,size_t start,size_t length,
+static uint16_t add_string_range(Compiler *compiler,size_t start,size_t length,
                                 DiamondSpan span) {
     if (compiler->function->string_count == DIAMOND_MAX_STRING_CONSTANTS) {
         fail(compiler, span, "function has too many string literals");
@@ -580,14 +580,14 @@ static uint8_t add_string_range(Compiler *compiler,size_t start,size_t length,
         string->chars[string->length++] = character;
     }
     string->chars[string->length] = '\0';
-    return (uint8_t)compiler->function->string_count++;
+    return (uint16_t)compiler->function->string_count++;
 }
 
-static uint8_t add_string(Compiler *compiler,DiamondSpan span) {
+static uint16_t add_string(Compiler *compiler,DiamondSpan span) {
     return add_string_range(compiler,span.start+1,span.length-2,span);
 }
 
-static uint8_t add_name_string(Compiler *compiler, DiamondSpan span) {
+static uint16_t add_name_string(Compiler *compiler, DiamondSpan span) {
     if (compiler->function->string_count == DIAMOND_MAX_STRING_CONSTANTS ||
         span.length > DIAMOND_MAX_STRING_LENGTH) {
         fail(compiler, span, "too many or oversized names in function");
@@ -605,7 +605,7 @@ static uint8_t add_name_string(Compiler *compiler, DiamondSpan span) {
         string->chars[i] = compiler->source[span.start + i];
     string->length = span.length;
     string->chars[span.length] = '\0';
-    return (uint8_t)compiler->function->string_count++;
+    return (uint16_t)compiler->function->string_count++;
 }
 
 /* Hand-rolled rather than routed through emit_instruction: the jump-target
@@ -777,7 +777,7 @@ static uint16_t parse_float(Compiler *compiler) {
 static uint16_t parse_string(Compiler *compiler) {
     const DiamondSpan span=compiler->previous.span;
     const size_t end=span.start+span.length-1;
-    size_t piece=span.start+1;uint16_t result=UINT8_MAX;
+    size_t piece=span.start+1;uint16_t result=UINT16_MAX;
     while(piece<end&&!compiler->failed) {
         size_t index=piece;
         while(index+1<end) {
@@ -787,9 +787,9 @@ static uint16_t parse_string(Compiler *compiler) {
         }
         if(index+1>=end)index=end;
         const uint16_t literal_register=allocate_register(compiler);
-        const uint8_t literal=add_string_range(compiler,piece,index-piece,span);
+        const uint16_t literal=add_string_range(compiler,piece,index-piece,span);
         emit_instruction(compiler,DIAMOND_OP_STRING,literal_register,literal,0,2);
-        if(result==UINT8_MAX)result=literal_register;
+        if(result==UINT16_MAX)result=literal_register;
         else {
             const uint16_t joined=allocate_register(compiler);
             emit_instruction(compiler,DIAMOND_OP_ADD,joined,result,literal_register,3);
@@ -816,9 +816,9 @@ static uint16_t parse_string(Compiler *compiler) {
         emit_instruction(compiler,DIAMOND_OP_ADD,joined,result,converted,3);
         result=joined;piece=close+1;
     }
-    if(result==UINT8_MAX) {
+    if(result==UINT16_MAX) {
         result=allocate_register(compiler);
-        const uint8_t string=add_string(compiler,span);
+        const uint16_t string=add_string(compiler,span);
         emit_instruction(compiler,DIAMOND_OP_STRING,result,string,0,2);
     }
     compiler->known_types[result]=DIAMOND_TYPE_STRING;return result;
@@ -829,7 +829,7 @@ static uint16_t parse_symbol(Compiler *compiler) {
     const DiamondSpan name_span={.start=span.start+1,.length=span.length-1,
         .line=span.line,.column=span.column+1};
     const uint16_t destination=allocate_register(compiler);
-    const uint8_t name=add_name_string(compiler,name_span);
+    const uint16_t name=add_name_string(compiler,name_span);
     emit_instruction(compiler,DIAMOND_OP_SYMBOL,destination,name,0,2);
     compiler->known_types[destination]=DIAMOND_TYPE_SYMBOL;
     return destination;
@@ -1384,7 +1384,7 @@ static int class_variable_index(Compiler *compiler, DiamondSpan name, bool creat
     return (int)class->class_variable_count++;
 }
 
-static uint8_t module_field_name(Compiler *compiler,DiamondSpan name) {
+static uint16_t module_field_name(Compiler *compiler,DiamondSpan name) {
     compiler->function->uses_instance_state=true;
     DiamondModule *module=
         &compiler->program->modules[(size_t)compiler->current_module];
@@ -1617,7 +1617,7 @@ static uint16_t parse_closure_call_arguments(Compiler *compiler, uint16_t callab
         emit_register(compiler,destination);emit_register(compiler,callable);
         emit_register(compiler,positional);emit_byte(compiler,(uint8_t)keyword_count);
         for(size_t index=0;index<keyword_count;index++) {
-            emit_byte(compiler,add_name_string(compiler,keyword_names[index]));
+            emit_register(compiler,add_name_string(compiler,keyword_names[index]));
             emit_register(compiler,keyword_values[index]);
         }
         return destination;
@@ -2177,7 +2177,7 @@ static uint16_t parse_singleton_call(Compiler *compiler,
         emit_byte(compiler,method->needs_receiver?1:0);
         emit_byte(compiler,(uint8_t)keyword_count);
         for(size_t index=0;index<keyword_count;index++) {
-            emit_byte(compiler,add_name_string(compiler,keyword_names[index]));
+            emit_register(compiler,add_name_string(compiler,keyword_names[index]));
             emit_register(compiler,keyword_values[index]);
         }
         if(type_argument_count>0) {
@@ -3260,8 +3260,8 @@ static uint16_t parse_debugger_call(Compiler *compiler) {
     emit_register(compiler,dest);
     emit_byte(compiler,(uint8_t)compiler->local_count);
     for(size_t index=0;index<compiler->local_count;index++) {
-        const uint8_t name_index=add_name_string(compiler,compiler->locals[index].name);
-        emit_byte(compiler,name_index);
+        const uint16_t name_index=add_name_string(compiler,compiler->locals[index].name);
+        emit_register(compiler,name_index);
         emit_register(compiler,compiler->locals[index].reg);
     }
     return dest;
@@ -3847,7 +3847,7 @@ static uint16_t parse_name(Compiler *compiler) {
             emit_register(compiler,positional);
             emit_byte(compiler,(uint8_t)keyword_count);
             for(size_t index=0;index<keyword_count;index++) {
-                emit_byte(compiler,add_name_string(compiler,keyword_names[index]));
+                emit_register(compiler,add_name_string(compiler,keyword_names[index]));
                 emit_register(compiler,keyword_values[index]);
             }
             compiler->known_types[destination]=
@@ -3946,7 +3946,7 @@ static uint16_t emit_invoke_call(Compiler *compiler, uint16_t receiver,
     for (size_t i=0;i<count;i++) emit_instruction(compiler, DIAMOND_OP_MOVE,
         (uint16_t)(base+i), args[i], 0, 2);
     const uint16_t dest=allocate_register(compiler);
-    const uint8_t method=add_name_string(compiler,method_name);
+    const uint16_t method=add_name_string(compiler,method_name);
     if(writer_name&&!compiler->failed) {
         DiamondStringConstant *string=&compiler->function->strings[method];
         if(string->length==DIAMOND_MAX_STRING_LENGTH)
@@ -3958,7 +3958,7 @@ static uint16_t emit_invoke_call(Compiler *compiler, uint16_t receiver,
     }
     emit_opcode(compiler,type_argument_count==0?
         DIAMOND_OP_INVOKE:DIAMOND_OP_INVOKE_TYPED);emit_register(compiler,dest);
-    emit_register(compiler,receiver); emit_byte(compiler,method); emit_register(compiler,base);
+    emit_register(compiler,receiver);emit_register(compiler,method);emit_register(compiler,base);
     emit_byte(compiler,(uint8_t)count);
     if(type_argument_count>0) {
         emit_byte(compiler,(uint8_t)type_argument_count);
@@ -3972,11 +3972,11 @@ static uint16_t emit_invoke_typed_spread(Compiler *compiler,uint16_t receiver,
         DiamondSpan method_name,uint16_t spread,const uint8_t *type_arguments,
         size_t type_argument_count) {
     const uint16_t destination=allocate_register(compiler);
-    const uint8_t method=add_name_string(compiler,method_name);
+    const uint16_t method=add_name_string(compiler,method_name);
     emit_opcode(compiler,type_argument_count==0?DIAMOND_OP_INVOKE_SPREAD:
         DIAMOND_OP_INVOKE_TYPED_SPREAD);
     emit_register(compiler,destination);emit_register(compiler,receiver);
-    emit_byte(compiler,method);emit_register(compiler,spread);
+    emit_register(compiler,method);emit_register(compiler,spread);
     if(type_argument_count>0) {
         emit_byte(compiler,(uint8_t)type_argument_count);
         for(size_t index=0;index<type_argument_count;index++)
@@ -4000,10 +4000,10 @@ static uint16_t emit_invoke_keywords(Compiler *compiler,uint16_t receiver,
     emit_opcode(compiler,type_argument_count==0?DIAMOND_OP_INVOKE_KEYWORDS:
         DIAMOND_OP_INVOKE_TYPED_KEYWORDS);
     emit_register(compiler,destination);emit_register(compiler,receiver);
-    emit_byte(compiler,add_name_string(compiler,method_name));
+    emit_register(compiler,add_name_string(compiler,method_name));
     emit_register(compiler,positional);emit_byte(compiler,(uint8_t)keyword_count);
     for(size_t index=0;index<keyword_count;index++) {
-        emit_byte(compiler,add_name_string(compiler,keyword_names[index]));
+        emit_register(compiler,add_name_string(compiler,keyword_names[index]));
         emit_register(compiler,keyword_values[index]);
     }
     if(type_argument_count>0) {
@@ -4312,7 +4312,7 @@ static uint16_t parse_self_class_method_call(Compiler *compiler) {
     for(size_t i=0;i<count;i++)
         emit_instruction(compiler,DIAMOND_OP_MOVE,(uint16_t)(base+i),args[i],0,2);
     const uint16_t dest=allocate_register(compiler);
-    const uint8_t method=add_name_string(compiler,name);
+    const uint16_t method=add_name_string(compiler,name);
     if(writer_name&&!compiler->failed) {
         DiamondStringConstant *string=&compiler->function->strings[method];
         if(string->length==DIAMOND_MAX_STRING_LENGTH)
@@ -4324,7 +4324,7 @@ static uint16_t parse_self_class_method_call(Compiler *compiler) {
     }
     emit_opcode(compiler,DIAMOND_OP_INVOKE_SELF_METHOD);
     emit_register(compiler,dest);
-    emit_byte(compiler,method);
+    emit_register(compiler,method);
     emit_register(compiler,base);
     emit_byte(compiler,(uint8_t)count);
     return dest;
@@ -4374,11 +4374,11 @@ static uint16_t parse_super(Compiler *compiler) {
                          arguments[index], 0, 2);
     }
     const uint16_t destination = allocate_register(compiler);
-    const uint8_t method = add_name_string(compiler, compiler->current_method);
+    const uint16_t method = add_name_string(compiler, compiler->current_method);
     emit_opcode(compiler, DIAMOND_OP_SUPER);
     emit_register(compiler,destination);
     emit_byte(compiler, (uint8_t)compiler->current_class);
-    emit_byte(compiler, method);
+    emit_register(compiler,method);
     emit_register(compiler,base);
     emit_byte(compiler, (uint8_t)count);
     return destination;
@@ -5022,7 +5022,7 @@ static uint16_t parse_prefix(Compiler *compiler) {
         case DIAMOND_TOKEN_INSTANCE_VARIABLE: {
             const uint16_t destination = allocate_register(compiler);
             if(compiler->current_module>=0&&compiler->current_class<0) {
-                const uint8_t field=module_field_name(
+                const uint16_t field=module_field_name(
                     compiler,compiler->previous.span);
                 emit_instruction(compiler,DIAMOND_OP_GET_IVAR_NAME,destination,0,
                                  field,3);
@@ -6574,7 +6574,7 @@ static uint16_t compile_index_assignment(Compiler *compiler) {
     if(compiler->current.kind==DIAMOND_TOKEN_INSTANCE_VARIABLE) {
         receiver=allocate_register(compiler);
         if(compiler->current_module>=0&&compiler->current_class<0) {
-            const uint8_t field=module_field_name(compiler,name);
+            const uint16_t field=module_field_name(compiler,name);
             emit_instruction(compiler,DIAMOND_OP_GET_IVAR_NAME,receiver,0,field,3);
         } else {
             const int field=field_index(compiler,name,true);
@@ -6654,7 +6654,7 @@ static uint16_t compile_index_compound_assignment(Compiler *compiler) {
     if(compiler->current.kind==DIAMOND_TOKEN_INSTANCE_VARIABLE) {
         receiver=allocate_register(compiler);
         if(compiler->current_module>=0&&compiler->current_class<0) {
-            const uint8_t field=module_field_name(compiler,name);
+            const uint16_t field=module_field_name(compiler,name);
             emit_instruction(compiler,DIAMOND_OP_GET_IVAR_NAME,receiver,0,field,3);
         } else {
             const int field=field_index(compiler,name,true);
@@ -8807,7 +8807,7 @@ static void compile_delegate(Compiler *compiler) {
         emit_instruction(compiler,DIAMOND_OP_GET_IVAR,ivar_register,0,
                           (uint8_t)field,3);
     } else {
-        const uint8_t field=module_field_name(compiler,target);
+        const uint16_t field=module_field_name(compiler,target);
         ivar_register=allocate_register(compiler);
         emit_instruction(compiler,DIAMOND_OP_GET_IVAR_NAME,ivar_register,0,
                           field,3);
@@ -9449,7 +9449,7 @@ static uint16_t compile_assignment_store(Compiler *compiler, DiamondSpan name,
         bool instance_variable, bool class_variable, uint16_t value) {
     if (instance_variable) {
         if(compiler->current_module>=0&&compiler->current_class<0) {
-            const uint8_t field=module_field_name(compiler,name);
+            const uint16_t field=module_field_name(compiler,name);
             emit_instruction(compiler,DIAMOND_OP_SET_IVAR_NAME,0,field,value,3);
         } else {
             const int field=field_index(compiler,name,true);
@@ -9655,7 +9655,7 @@ static uint16_t load_destructure_target(Compiler *compiler,DiamondSpan name,
     if(kind==DIAMOND_TOKEN_INSTANCE_VARIABLE) {
         const uint16_t receiver=allocate_register(compiler);
         if(compiler->current_module>=0&&compiler->current_class<0) {
-            const uint8_t field=module_field_name(compiler,name);
+            const uint16_t field=module_field_name(compiler,name);
             emit_instruction(compiler,DIAMOND_OP_GET_IVAR_NAME,receiver,0,field,3);
         } else {
             const int field=field_index(compiler,name,true);

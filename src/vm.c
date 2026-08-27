@@ -8607,7 +8607,7 @@ static DiamondVmStatus process_result_dispatch_helper(DiamondVm *vm,
  * to_s. */
 static DiamondVmStatus debugger_helper(DiamondVm *vm,const DiamondChunk *chunk,
         size_t depth,size_t instruction_offset,DiamondValue *registers,
-        const uint8_t *name_indices,const uint16_t *local_registers,uint8_t local_count) {
+        const uint16_t *name_indices,const uint16_t *local_registers,uint8_t local_count) {
     const char *frame_name=chunk->name!=nullptr?chunk->name:"<chunk>";
     const bool in_bounds=instruction_offset<chunk->code_count;
     const uint32_t line=in_bounds&&chunk->lines!=nullptr?
@@ -8695,7 +8695,7 @@ static const NativeKeywordSignature *native_keyword_signature(
 
 static DiamondVmStatus merge_native_keyword_arguments(DiamondVm *vm,
         const DiamondChunk *caller,const NativeKeywordSignature *signature,
-        const DiamondArray *positional,const uint8_t *keyword_names,
+        const DiamondArray *positional,const uint16_t *keyword_names,
         const uint16_t *keyword_registers,size_t keyword_count,
         const DiamondValue *registers,DiamondValue **merged,size_t *merged_count) {
     if(positional->count>signature->parameter_count)return DIAMOND_VM_ARITY_ERROR;
@@ -8731,7 +8731,7 @@ static DiamondVmStatus merge_native_keyword_arguments(DiamondVm *vm,
 
 static DiamondVmStatus merge_keyword_arguments(DiamondVm *vm,
         const DiamondChunk *caller,const DiamondFunction *function,
-        const DiamondArray *positional,const uint8_t *keyword_names,
+        const DiamondArray *positional,const uint16_t *keyword_names,
         const uint16_t *keyword_registers,size_t keyword_count,
         const DiamondValue *registers,size_t public_arity,
         DiamondValue **merged,size_t *merged_count) {
@@ -10114,7 +10114,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
             case DIAMOND_OP_CALL_TYPED_SINGLETON_KEYWORDS: {
                 uint16_t destination=0,function_index=0,positional_register=0;
                 uint8_t class_index=0,needs_receiver=0,keyword_count=0;
-                uint8_t keyword_names[16],type_count=0,type_arguments[8];
+                uint16_t keyword_names[16];uint8_t type_count=0,type_arguments[8];
                 uint16_t keyword_registers[16];
                 READ_SHORT(destination);READ_SHORT(function_index);
                 READ_SHORT(positional_register);READ_BYTE(class_index);
@@ -10122,7 +10122,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 if(keyword_count==0||keyword_count>16)
                     VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
                 for(size_t index=0;index<keyword_count;index++) {
-                    READ_BYTE(keyword_names[index]);READ_SHORT(keyword_registers[index]);
+                    READ_SHORT(keyword_names[index]);READ_SHORT(keyword_registers[index]);
                 }
                 if((DiamondOpCode)instruction==
                         DIAMOND_OP_CALL_TYPED_SINGLETON_KEYWORDS) {
@@ -10354,14 +10354,14 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
             }
             case DIAMOND_OP_CALL_CLOSURE_KEYWORDS: {
                 uint16_t dest=0,callable=0,positional_register=0;
-                uint8_t keyword_count=0,keyword_names[16];
+                uint8_t keyword_count=0;uint16_t keyword_names[16];
                 uint16_t keyword_registers[16];
                 READ_SHORT(dest);READ_SHORT(callable);READ_SHORT(positional_register);
                 READ_BYTE(keyword_count);
                 if(keyword_count==0||keyword_count>16)
                     VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
                 for(size_t index=0;index<keyword_count;index++) {
-                    READ_BYTE(keyword_names[index]);READ_SHORT(keyword_registers[index]);
+                    READ_SHORT(keyword_names[index]);READ_SHORT(keyword_registers[index]);
                 }
                 if(registers[callable].kind!=DIAMOND_VALUE_OBJECT||
                    registers[callable].as.object->kind!=DIAMOND_OBJECT_CLOSURE||
@@ -10477,7 +10477,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
             }
             case DIAMOND_OP_NEW_KEYWORDS: {
                 uint16_t destination=0,positional_register=0;
-                uint8_t class_index=0,keyword_count=0,keyword_names[16];
+                uint8_t class_index=0,keyword_count=0;uint16_t keyword_names[16];
                 uint16_t keyword_registers[16];
                 READ_SHORT(destination);READ_BYTE(class_index);
                 READ_SHORT(positional_register);READ_BYTE(keyword_count);
@@ -10487,7 +10487,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                    registers[positional_register].as.object->kind!=DIAMOND_OBJECT_ARRAY)
                     VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
                 for(size_t index=0;index<keyword_count;index++) {
-                    READ_BYTE(keyword_names[index]);READ_SHORT(keyword_registers[index]);
+                    READ_SHORT(keyword_names[index]);READ_SHORT(keyword_registers[index]);
                 }
                 const DiamondClass *class=&chunk->classes[class_index];
                 const DiamondMethod *initialize=lookup_method(chunk,class,
@@ -10604,15 +10604,15 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
             case DIAMOND_OP_INVOKE_KEYWORDS:
             case DIAMOND_OP_INVOKE_TYPED_KEYWORDS: {
                 uint16_t dest=0,recv=0,positional_register=0;
-                uint8_t method_name_index=0,keyword_count=0,keyword_names[16];
+                uint16_t method_name_index=0,keyword_names[16];uint8_t keyword_count=0;
                 uint16_t keyword_registers[16];
-                READ_SHORT(dest);READ_SHORT(recv);READ_BYTE(method_name_index);
+                READ_SHORT(dest);READ_SHORT(recv);READ_SHORT(method_name_index);
                 READ_SHORT(positional_register);READ_BYTE(keyword_count);
                 if(keyword_count==0||keyword_count>16||
                    (size_t)method_name_index>=chunk->string_count)
                     VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
                 for(size_t index=0;index<keyword_count;index++) {
-                    READ_BYTE(keyword_names[index]);READ_SHORT(keyword_registers[index]);
+                    READ_SHORT(keyword_names[index]);READ_SHORT(keyword_registers[index]);
                 }
                 uint8_t type_count=0,type_arguments[8];
                 if((DiamondOpCode)instruction==DIAMOND_OP_INVOKE_TYPED_KEYWORDS) {
@@ -10647,7 +10647,8 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     if(!gc_protect(vm,DIAMOND_OBJECT(native_array)))
                         VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
                     uint8_t native_code[12]={DIAMOND_OP_INVOKE_SPREAD,
-                        0,2,0,0,method_name_index,0,1,
+                        0,2,0,0,(uint8_t)(method_name_index>>8),
+                        (uint8_t)method_name_index,0,1,
                         DIAMOND_OP_RETURN,0,2};
                     uint32_t native_locations[12]={0};
                     DiamondChunk native_chunk=*chunk;
@@ -10655,7 +10656,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     native_chunk.code=native_code;
                     native_chunk.lines=native_locations;
                     native_chunk.columns=native_locations;
-                    native_chunk.code_count=11;native_chunk.register_count=3;
+                    native_chunk.code_count=12;native_chunk.register_count=3;
                     DiamondValue native_arguments[2]={registers[recv],
                         DIAMOND_OBJECT(native_array)};
                     DiamondValue native_result=DIAMOND_NIL;
@@ -10688,19 +10689,19 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 const size_t protected_count=vm->gc_protected_count;
                 if(!gc_protect(vm,DIAMOND_OBJECT(merged_array)))
                     VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
-                uint8_t code[20]={0};size_t code_count=0;
+                uint8_t code[24]={0};size_t code_count=0;
 #define KEYWORD_SHORT(value) do {code[code_count++]=(uint8_t)((value)>>8); \
     code[code_count++]=(uint8_t)(value);} while(false)
                 code[code_count++]=(uint8_t)(type_count==0?
                     DIAMOND_OP_INVOKE_SPREAD:DIAMOND_OP_INVOKE_TYPED_SPREAD);
-                KEYWORD_SHORT(2);KEYWORD_SHORT(0);code[code_count++]=method_name_index;
+                KEYWORD_SHORT(2);KEYWORD_SHORT(0);KEYWORD_SHORT(method_name_index);
                 KEYWORD_SHORT(1);
                 if(type_count>0) {code[code_count++]=type_count;
                     for(size_t index=0;index<type_count;index++)
                         code[code_count++]=type_arguments[index];}
                 code[code_count++]=DIAMOND_OP_RETURN;KEYWORD_SHORT(2);
 #undef KEYWORD_SHORT
-                uint32_t locations[20]={0};
+                uint32_t locations[24]={0};
                 DiamondChunk synthetic=*chunk;synthetic.name="<keyword invoke>";
                 synthetic.code=code;synthetic.lines=locations;
                 synthetic.columns=locations;synthetic.code_count=code_count;
@@ -10714,8 +10715,8 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
             }
             case DIAMOND_OP_INVOKE_SPREAD:
             case DIAMOND_OP_INVOKE_TYPED_SPREAD: {
-                uint16_t dest=0,recv=0,spread_register=0;uint8_t name=0;
-                READ_SHORT(dest);READ_SHORT(recv);READ_BYTE(name);
+                uint16_t dest=0,recv=0,spread_register=0,name=0;
+                READ_SHORT(dest);READ_SHORT(recv);READ_SHORT(name);
                 READ_SHORT(spread_register);
                 uint8_t type_argument_count=0,type_arguments[8];
                 if((DiamondOpCode)instruction==DIAMOND_OP_INVOKE_TYPED_SPREAD) {
@@ -10750,7 +10751,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     native_arguments[0]=registers[recv];
                     for(size_t index=0;index<spread->count;index++)
                         native_arguments[index+1]=spread->values[index];
-                    uint8_t synthetic_code[21]={0};size_t code_index=0;
+                    uint8_t synthetic_code[24]={0};size_t code_index=0;
                     const uint16_t destination=(uint16_t)(spread->count+1);
 #define SYNTHETIC_SHORT(value) do { \
     synthetic_code[code_index++]=(uint8_t)((value)>>8); \
@@ -10761,7 +10762,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                         DIAMOND_OP_INVOKE_TYPED);
                     SYNTHETIC_SHORT(destination);
                     SYNTHETIC_SHORT(0);
-                    synthetic_code[code_index++]=name;
+                    SYNTHETIC_SHORT(name);
                     SYNTHETIC_SHORT(1);
                     synthetic_code[code_index++]=(uint8_t)spread->count;
                     if(type_argument_count>0) {
@@ -10772,8 +10773,8 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     synthetic_code[code_index++]=DIAMOND_OP_RETURN;
                     SYNTHETIC_SHORT(destination);
 #undef SYNTHETIC_SHORT
-                    uint32_t synthetic_lines[21]={0};
-                    uint32_t synthetic_columns[21]={0};
+                    uint32_t synthetic_lines[24]={0};
+                    uint32_t synthetic_columns[24]={0};
                     DiamondChunk synthetic={.name="<native spread>",
                         .code=synthetic_code,.lines=synthetic_lines,
                         .columns=synthetic_columns,.code_count=code_index,
@@ -10901,8 +10902,8 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
             case DIAMOND_OP_INVOKE:
             case DIAMOND_OP_INVOKE_MONO:
             case DIAMOND_OP_INVOKE_TYPED: {
-                uint16_t dest=0,recv=0,base=0;uint8_t name=0,argc=0;
-                READ_SHORT(dest);READ_SHORT(recv);READ_BYTE(name);READ_SHORT(base);READ_BYTE(argc);
+                uint16_t dest=0,recv=0,base=0,name=0;uint8_t argc=0;
+                READ_SHORT(dest);READ_SHORT(recv);READ_SHORT(name);READ_SHORT(base);READ_BYTE(argc);
                 uint8_t type_argument_count=0,type_arguments[8];
                 if((DiamondOpCode)instruction==DIAMOND_OP_INVOKE_TYPED) {
                     READ_BYTE(type_argument_count);
@@ -12992,8 +12993,8 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 break;
             }
             case DIAMOND_OP_SUPER: {
-                uint16_t dest=0,base=0;uint8_t owner_index=0,name=0,argc=0;
-                READ_SHORT(dest); READ_BYTE(owner_index); READ_BYTE(name);
+                uint16_t dest=0,base=0,name=0;uint8_t owner_index=0,argc=0;
+                READ_SHORT(dest);READ_BYTE(owner_index);READ_SHORT(name);
                 READ_SHORT(base); READ_BYTE(argc);
                 if(argc>16 || (size_t)owner_index>=chunk->class_count ||
                    (size_t)name>=chunk->string_count ||
@@ -13472,10 +13473,10 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
             case DIAMOND_OP_DEBUGGER: {
                 uint16_t destination=0;uint8_t local_count=0;
                 READ_SHORT(destination);READ_BYTE(local_count);
-                uint8_t name_indices[DIAMOND_MAX_LOCALS];
+                uint16_t name_indices[DIAMOND_MAX_LOCALS];
                 uint16_t local_registers[DIAMOND_MAX_LOCALS];
                 for(size_t index=0;index<local_count;index++) {
-                    READ_BYTE(name_indices[index]);
+                    READ_SHORT(name_indices[index]);
                     READ_SHORT(local_registers[index]);
                 }
                 const DiamondVmStatus debugger_status=debugger_helper(vm,chunk,depth,
@@ -14073,8 +14074,8 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
              * is the entire point: an inherited method reaches whichever
              * subclass actually received the original external call. */
             case DIAMOND_OP_INVOKE_SELF_METHOD: {
-                uint16_t dest=0,base=0;uint8_t name_index=0;uint8_t argc=0;
-                READ_SHORT(dest);READ_BYTE(name_index);READ_SHORT(base);READ_BYTE(argc);
+                uint16_t dest=0,base=0,name_index=0;uint8_t argc=0;
+                READ_SHORT(dest);READ_SHORT(name_index);READ_SHORT(base);READ_BYTE(argc);
                 if(registers[0].kind!=DIAMOND_VALUE_CLASS)
                     VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
                 const uint8_t class_operand=registers[0].as.class_index;
