@@ -541,6 +541,27 @@ static uint16_t add_constant(Compiler *compiler, DiamondValue value) {
     return (uint16_t)index;
 }
 
+static bool grow_type_sets(DiamondFunction *function,size_t additional) {
+    if(additional>DIAMOND_MAX_TYPE_SETS-function->type_set_count)return false;
+    const size_t needed=function->type_set_count+additional;
+    if(needed<=function->type_set_capacity)return true;
+    size_t capacity=function->type_set_capacity==0?8:
+        function->type_set_capacity*2;
+    if(capacity<needed)capacity=needed;
+    if(capacity>DIAMOND_MAX_TYPE_SETS)capacity=DIAMOND_MAX_TYPE_SETS;
+    return diamond_function_reserve_type_sets(function,capacity);
+}
+
+static bool reserve_type_sets(Compiler *compiler,size_t additional) {
+    if(additional>DIAMOND_MAX_TYPE_SETS-compiler->function->type_set_count) {
+        fail(compiler,compiler->current.span,"function has too many type annotations");
+        return false;
+    }
+    if(grow_type_sets(compiler->function,additional))return true;
+    fail(compiler,compiler->current.span,"out of memory");
+    return false;
+}
+
 static uint16_t add_string_range(Compiler *compiler,size_t start,size_t length,
                                 DiamondSpan span) {
     if (compiler->function->string_count == DIAMOND_MAX_STRING_CONSTANTS) {
@@ -959,6 +980,7 @@ static DiamondFunction *compiler_add_function(Compiler *compiler,
         free(function->code);free(function->lines);free(function->columns);
         free(function->constants);
         free(function->strings);
+        free(function->type_sets);
         memset(function,0,sizeof *function);
         return function;
     }
@@ -1196,10 +1218,7 @@ static int resolve_type_name(Compiler *compiler,const char *name,
 }
 
 static int parse_type_annotation(Compiler *compiler) {
-    if(compiler->function->type_set_count==DIAMOND_MAX_TYPE_SETS) {
-        fail(compiler,compiler->current.span,"function has too many type annotations");
-        return 0;
-    }
+    if(!reserve_type_sets(compiler,1))return 0;
     const size_t set_index=compiler->function->type_set_count++;
     DiamondTypeSet *set=&compiler->function->type_sets[set_index];
     while(!compiler->failed) {
@@ -2038,6 +2057,9 @@ static uint16_t parse_singleton_reference(Compiler *compiler,
     function->required_arity=method->required_arity;
     function->has_variadic=method->has_variadic;
     function->type_set_count=compiler->function->type_set_count;
+    if(!diamond_function_reserve_type_sets(function,function->type_set_count)) {
+        fail(compiler,namespace_name,"out of memory");return 0;
+    }
     memcpy(function->type_sets,compiler->function->type_sets,
         function->type_set_count*sizeof function->type_sets[0]);
     static const char reference_name[]="<method reference>";
@@ -4078,6 +4100,9 @@ static uint16_t parse_bound_method_reference(Compiler *compiler,uint16_t receive
     wrapper->arity=1;wrapper->required_arity=0;wrapper->has_variadic=true;
     wrapper->return_type_set=UINT8_MAX;
     wrapper->type_set_count=compiler->function->type_set_count;
+    if(!diamond_function_reserve_type_sets(wrapper,wrapper->type_set_count)) {
+        fail(compiler,method_name,"out of memory");return 0;
+    }
     memcpy(wrapper->type_sets,compiler->function->type_sets,
         wrapper->type_set_count*sizeof wrapper->type_sets[0]);
     (void)snprintf(wrapper->parameter_names[0],DIAMOND_MAX_FUNCTION_NAME,
@@ -4474,7 +4499,7 @@ static int16_t type_set_with_nil(Compiler *compiler,uint8_t source_index) {
     for(size_t index=0;index<source.count;index++)
         if(source.members[index].id==DIAMOND_TYPE_NIL)return (int16_t)source_index;
     if(source.count==DIAMOND_MAX_UNION_TYPES||
-       compiler->function->type_set_count==DIAMOND_MAX_TYPE_SETS)return -1;
+       !grow_type_sets(compiler->function,1))return -1;
     const size_t result=compiler->function->type_set_count++;
     compiler->function->type_sets[result]=source;
     DiamondTypeSet *set=&compiler->function->type_sets[result];
@@ -4494,7 +4519,7 @@ static bool split_nil_type_set(Compiler *compiler,uint8_t source_index,
         else narrowed.members[narrowed.count++]=source.members[index];
     }
     if(!found_nil||narrowed.count==0||
-       compiler->function->type_set_count+2>DIAMOND_MAX_TYPE_SETS)return false;
+       !grow_type_sets(compiler->function,2))return false;
     *without_nil=(int16_t)compiler->function->type_set_count;
     compiler->function->type_sets[compiler->function->type_set_count++]=narrowed;
     *only_nil=(int16_t)compiler->function->type_set_count;
@@ -4518,7 +4543,7 @@ static bool split_type_set(Compiler *compiler,uint8_t source_index,
         else no.members[no.count++]=member;
     }
     if(yes.count==0||no.count==0||
-       compiler->function->type_set_count+2>DIAMOND_MAX_TYPE_SETS)return false;
+       !grow_type_sets(compiler->function,2))return false;
     *matching=(int16_t)compiler->function->type_set_count;
     compiler->function->type_sets[compiler->function->type_set_count++]=yes;
     *remaining=(int16_t)compiler->function->type_set_count;
@@ -4621,7 +4646,7 @@ static void merge_flow_types(Compiler *compiler,uint8_t left_type,int16_t left_s
         *result_type=merged.count==1?merged.members[0].id:TYPE_UNKNOWN;
         return;
     }
-    if(compiler->function->type_set_count==DIAMOND_MAX_TYPE_SETS)return;
+    if(!grow_type_sets(compiler->function,1))return;
     const size_t index=compiler->function->type_set_count++;
     compiler->function->type_sets[index]=merged;
     *result_set=(int16_t)index;
@@ -8275,6 +8300,9 @@ static void compile_attribute_named(Compiler *compiler,bool writer,bool predicat
     for(size_t index=0;index<16;index++)function->parameter_type_sets[index]=UINT8_MAX;
     if(type_set>=0) {
         function->type_set_count=compiler->function->type_set_count;
+        if(!diamond_function_reserve_type_sets(function,function->type_set_count)) {
+            fail(compiler,name,"out of memory");return;
+        }
         memcpy(function->type_sets,compiler->function->type_sets,
                function->type_set_count*sizeof(DiamondTypeSet));
         if(writer)function->parameter_type_sets[0]=(uint8_t)type_set;
@@ -9593,10 +9621,7 @@ static uint8_t array_type_set_index(Compiler *compiler) {
            set->members[0].argument_set==UINT8_MAX)
             return (uint8_t)index;
     }
-    if(compiler->function->type_set_count==DIAMOND_MAX_TYPE_SETS) {
-        fail(compiler,compiler->previous.span,"function has too many type annotations");
-        return 0;
-    }
+    if(!reserve_type_sets(compiler,1))return 0;
     const size_t set_index=compiler->function->type_set_count++;
     DiamondTypeSet *set=&compiler->function->type_sets[set_index];
     set->count=1;
@@ -9616,10 +9641,7 @@ static uint8_t hash_type_set_index(Compiler *compiler) {
            set->members[0].argument_set==UINT8_MAX)
             return (uint8_t)index;
     }
-    if(compiler->function->type_set_count==DIAMOND_MAX_TYPE_SETS) {
-        fail(compiler,compiler->previous.span,"function has too many type annotations");
-        return 0;
-    }
+    if(!reserve_type_sets(compiler,1))return 0;
     const size_t set_index=compiler->function->type_set_count++;
     DiamondTypeSet *set=&compiler->function->type_sets[set_index];
     set->count=1;
@@ -10189,6 +10211,19 @@ bool diamond_function_reserve_strings(DiamondFunction *function,size_t capacity)
     return true;
 }
 
+bool diamond_function_reserve_type_sets(DiamondFunction *function,size_t capacity) {
+    if(capacity<=function->type_set_capacity)return true;
+    if(capacity>DIAMOND_MAX_TYPE_SETS)return false;
+    const size_t previous_capacity=function->type_set_capacity;
+    DiamondTypeSet *type_sets=realloc(function->type_sets,
+        capacity*sizeof *type_sets);
+    if(type_sets==nullptr)return false;
+    memset(type_sets+previous_capacity,0,
+        (capacity-previous_capacity)*sizeof *type_sets);
+    function->type_sets=type_sets;function->type_set_capacity=capacity;
+    return true;
+}
+
 bool diamond_function_copy(DiamondFunction *destination,
                            const DiamondFunction *source) {
     *destination=*source;
@@ -10196,6 +10231,7 @@ bool diamond_function_copy(DiamondFunction *destination,
     destination->columns=nullptr;destination->code_capacity=0;
     destination->constants=nullptr;destination->constant_capacity=0;
     destination->strings=nullptr;destination->string_capacity=0;
+    destination->type_sets=nullptr;destination->type_set_capacity=0;
     if(source->code_count>0) {
         destination->code=malloc(source->code_count*sizeof *destination->code);
         destination->lines=malloc(source->code_count*sizeof *destination->lines);
@@ -10207,16 +10243,22 @@ bool diamond_function_copy(DiamondFunction *destination,
     if(source->string_count>0)
         destination->strings=malloc(
             source->string_count*sizeof *destination->strings);
+    if(source->type_set_count>0)
+        destination->type_sets=malloc(
+            source->type_set_count*sizeof *destination->type_sets);
     if((source->code_count>0&&(destination->code==nullptr||
        destination->lines==nullptr||destination->columns==nullptr))||
        (source->constant_count>0&&destination->constants==nullptr)||
-       (source->string_count>0&&destination->strings==nullptr)) {
+       (source->string_count>0&&destination->strings==nullptr)||
+       (source->type_set_count>0&&destination->type_sets==nullptr)) {
         free(destination->code);free(destination->lines);
         free(destination->columns);free(destination->constants);
         free(destination->strings);
+        free(destination->type_sets);
         destination->code=nullptr;destination->lines=nullptr;
         destination->columns=nullptr;destination->constants=nullptr;
         destination->strings=nullptr;destination->code_count=0;
+        destination->type_sets=nullptr;
         destination->constant_count=0;destination->string_count=0;
         return false;
     }
@@ -10234,9 +10276,13 @@ bool diamond_function_copy(DiamondFunction *destination,
     if(source->string_count>0)
         memcpy(destination->strings,source->strings,
             source->string_count*sizeof *destination->strings);
+    if(source->type_set_count>0)
+        memcpy(destination->type_sets,source->type_sets,
+            source->type_set_count*sizeof *destination->type_sets);
     destination->code_capacity=source->code_count;
     destination->constant_capacity=source->constant_count;
     destination->string_capacity=source->string_count;
+    destination->type_set_capacity=source->type_set_count;
     return true;
 }
 
@@ -10245,6 +10291,7 @@ void diamond_program_free(DiamondProgram *program) {
     free(program->entry.code);free(program->entry.lines);
     free(program->entry.columns);free(program->entry.constants);
     free(program->entry.strings);
+    free(program->entry.type_sets);
     program->entry.code=nullptr;program->entry.lines=nullptr;
     program->entry.columns=nullptr;program->entry.code_count=0;
     program->entry.code_capacity=0;
@@ -10252,12 +10299,15 @@ void diamond_program_free(DiamondProgram *program) {
     program->entry.constant_capacity=0;
     program->entry.strings=nullptr;program->entry.string_count=0;
     program->entry.string_capacity=0;
+    program->entry.type_sets=nullptr;program->entry.type_set_count=0;
+    program->entry.type_set_capacity=0;
     for(size_t index=0;index<program->function_count;index++) {
         free(program->functions[index]->code);
         free(program->functions[index]->lines);
         free(program->functions[index]->columns);
         free(program->functions[index]->constants);
         free(program->functions[index]->strings);
+        free(program->functions[index]->type_sets);
         free(program->functions[index]);
     }
     free(program->functions);
@@ -10549,6 +10599,9 @@ bool diamond_compile(const char *source, DiamondProgram *program,
 
     const bool compiled=run_compile_pass(
         source,program,diagnostic,/*discovery_pass=*/false);
+    if(compiled)
+        for(size_t index=0;index<program->interface_count;index++)
+            program->interfaces[index].type_sets=program->entry.type_sets;
     return compiled;
 }
 

@@ -238,7 +238,9 @@ the real 65,535-entry operand boundary, including ProgramBuilder emission,
 discovery reservations, thread clones, and teardown. This removes another
 roughly 4 KiB of unconditional storage per function. Type-set indices remain at
 256 because annotation opcodes still encode them as raw bytes; widening those
-requires a separate bytecode migration.
+requires a separate bytecode migration. Their backing tables now grow
+geometrically in preparation for that migration, with deep-copy ownership for
+thread programs and interface metadata rebound after entry-table relocation.
 
 Resolved for string/name operands: storage grows dynamically and the bytecode
 wire format now carries unsigned 16-bit indices through literals, symbols,

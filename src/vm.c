@@ -4028,6 +4028,13 @@ static DiamondVmStatus program_builder_invoke_helper(DiamondVm *vm,
                 "function has too many type annotations");
             return DIAMOND_VM_TYPE_ERROR;
         }
+        if(target->type_set_count==target->type_set_capacity) {
+            size_t capacity=target->type_set_capacity==0?8:
+                target->type_set_capacity*2;
+            if(capacity>DIAMOND_MAX_TYPE_SETS)capacity=DIAMOND_MAX_TYPE_SETS;
+            if(!diamond_function_reserve_type_sets(target,capacity))
+                return DIAMOND_VM_OUT_OF_MEMORY;
+        }
         const int64_t new_index=(int64_t)target->type_set_count;
         DiamondTypeSet *set=&target->type_sets[target->type_set_count++];
         *set=(DiamondTypeSet){.count=(uint8_t)type_ids->count};
