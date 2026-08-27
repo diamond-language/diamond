@@ -1,0 +1,7 @@
+[accepted, 12, {source: arena}]
+[exact, 10]
+other
+[second, unchanged, 5]
+structural miss
+scalar guard
+nil

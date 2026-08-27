@@ -127,6 +127,22 @@ the pattern is rejected at compile time. Reader results support nested object,
 Array, and Hash patterns plus bindings, `_`, and `^local`. Empty `Class{}` is a
 class-only guard. Bindings commit only after every reader result matches.
 
+Any `when` pattern can carry an `if` guard:
+
+```ruby
+case event
+when {"score": score, **metadata} if score > minimum && metadata.length() > 0
+  accept(score, metadata)
+else
+  reject(event)
+end
+```
+
+Collection bindings are visible inside the guard, but remain provisional.
+The guard runs only after the structural pattern matches. A false guard falls
+through to the next `when` without overwriting existing locals or creating new
+binding values. Bindings commit immediately before the selected branch body.
+
 ## Ternary
 
 ```ruby

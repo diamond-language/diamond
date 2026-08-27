@@ -302,6 +302,8 @@ Areas still worth examining include:
   unmatched-entry Hashes, nested extraction, and final-position enforcement;
 - **Done**: class-guarded object binding patterns in `case`, extracting public
   zero-argument readers into nested patterns with atomic binding commits;
+- **Done**: `when pattern if condition` guards, with provisional binding
+  visibility, match-first evaluation, and mutation-free guard fallthrough;
 - **Done**: range-based Array slicing (`arr[1..3]` read,
   `arr[1..3] = [...]` write). `Range` has no native VM value kind at
   all -- it's a plain user-space class (`lib/core.di`) -- so

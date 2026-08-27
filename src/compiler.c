@@ -5138,6 +5138,27 @@ static bool validate_case_array_bindings(Compiler *compiler,
     return true;
 }
 
+/* Makes provisional pattern bindings visible while compiling a guard without
+ * emitting any stores. Their registers already hold extracted values, so a
+ * guard reads them directly; restoring local_count removes the temporary name
+ * overlay before the successful branch performs the real atomic commit. */
+static size_t push_case_guard_bindings(Compiler *compiler,
+        const CaseArrayNode *nodes,size_t node_count) {
+    const size_t saved=compiler->local_count;
+    for(size_t node=0;node<node_count;node++) {
+        if(nodes[node].kind!=CASE_ARRAY_BIND&&
+           nodes[node].kind!=CASE_ARRAY_REST_BIND&&
+           nodes[node].kind!=CASE_HASH_REST_BIND)continue;
+        if(compiler->local_count==DIAMOND_MAX_LOCALS) {
+            fail(compiler,nodes[node].name,"too many local variables in pattern guard");
+            break;
+        }
+        compiler->locals[compiler->local_count++]=(Local){
+            .name=nodes[node].name,.reg=nodes[node].subject_register};
+    }
+    return saved;
+}
+
 static void merge_case_branch(Compiler *compiler,CaseFlowJoin *join,
         size_t flow_reg_count,uint16_t branch_result) {
     const uint8_t branch_result_type=compiler->known_types[branch_result];
@@ -5237,7 +5258,7 @@ static uint16_t parse_case_branches(Compiler *compiler, uint16_t subject,
      * implements Range inclusion, Regexp search, class/subclass matching,
      * and ordinary/custom equality fallback in one runtime operation. */
     const uint16_t match_reg=allocate_register(compiler);
-    CaseArrayNode array_nodes[64]={};uint8_t array_root=0;
+    CaseArrayNode array_nodes[64]={};uint8_t array_root=0;size_t node_count=0;
     DiamondLexer pattern_head_lookahead=compiler->lexer;
     const DiamondToken after_pattern_head=diamond_lexer_next(&pattern_head_lookahead);
     const bool object_pattern=compiler->current.kind==DIAMOND_TOKEN_IDENTIFIER&&
@@ -5246,7 +5267,6 @@ static uint16_t parse_case_branches(Compiler *compiler, uint16_t subject,
     const bool array_pattern=compiler->current.kind==DIAMOND_TOKEN_LEFT_BRACKET||
         compiler->current.kind==DIAMOND_TOKEN_LEFT_BRACE||object_pattern;
     if(array_pattern) {
-        size_t node_count=0;
         array_root=parse_case_array_node(compiler,array_nodes,&node_count,0);
         if(compiler->failed||!validate_case_array_bindings(
                 compiler,array_nodes,node_count))return destination;
@@ -5290,6 +5310,20 @@ static uint16_t parse_case_branches(Compiler *compiler, uint16_t subject,
             if(compiler->current.kind!=DIAMOND_TOKEN_COMMA)break;
             advance_token(compiler);skip_newlines(compiler);
         }
+    }
+    if(compiler->current.kind==DIAMOND_TOKEN_IF) {
+        const size_t skip_guard=
+            emit_jump(compiler,DIAMOND_OP_JUMP_IF_FALSE,match_reg);
+        advance_token(compiler);
+        const size_t saved_local_count=array_pattern?
+            push_case_guard_bindings(compiler,array_nodes,node_count):
+            compiler->local_count;
+        const uint16_t guard=parse_expression(compiler);
+        compiler->local_count=saved_local_count;
+        compiler->narrowing=(Narrowing){};
+        emit_instruction(compiler,DIAMOND_OP_NOT,match_reg,guard,0,2);
+        emit_instruction(compiler,DIAMOND_OP_NOT,match_reg,match_reg,0,2);
+        patch_jump(compiler,skip_guard,compiler->function->code_count);
     }
     if(!consume_conditional_start(compiler))return destination;
     const size_t false_jump=

@@ -65,6 +65,8 @@
   readers with nested collection matching, pins, wildcards, and atomic commits.
 - Added trailing `**remaining` Hash rest patterns to `case`, including nested
   extraction, fresh unmatched-entry Hashes, and allocation-free `**_` discard.
+- Added `if` guards to `case` patterns, exposing provisional collection
+  bindings inside guards while preserving mutation-free failure fallthrough.
 - Corrected the runtime type-ID partition so the advertised class capacity no
   longer overlaps generic-variable and interface IDs, and raised the class
   capacity from 128 to 180. Updated the self-hosted compiler's mirrored
