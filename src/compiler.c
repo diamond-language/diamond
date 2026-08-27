@@ -7949,6 +7949,7 @@ static uint16_t compile_definition(Compiler *compiler, bool captures_self) {
     size_t declared_parameter_count=0;bool saw_default=false;
     bool has_block_parameter=false;
     uint16_t variadic_parameter=0,variadic_fixed_count=0;
+    int block_parameter_type=-1;DiamondSpan block_parameter_type_span={};
     skip_newlines(compiler);
     if (compiler->current.kind != DIAMOND_TOKEN_RIGHT_PAREN) {
         do {
@@ -8053,10 +8054,6 @@ static uint16_t compile_definition(Compiler *compiler, bool captures_self) {
                 }
                 break;
             }
-            if(is_block_parameter&&compiler->current.kind==DIAMOND_TOKEN_COLON) {
-                fail(compiler,compiler->current.span,
-                     "a block parameter cannot have a type annotation");break;
-            }
             if(is_block_parameter&&compiler->current.kind==DIAMOND_TOKEN_EQUAL) {
                 fail(compiler,compiler->current.span,
                      "a block parameter cannot have a default value");break;
@@ -8070,6 +8067,10 @@ static uint16_t compile_definition(Compiler *compiler, bool captures_self) {
                 if(declared_parameter_count<16)
                     function->parameter_type_sets[declared_parameter_count]=
                         (uint8_t)type;
+                if(is_block_parameter) {
+                    block_parameter_type=type;
+                    block_parameter_type_span=parameter_type_span;
+                }
             }
             if(compiler->current.kind==DIAMOND_TOKEN_EQUAL) {
                 saw_default=true;advance_token(compiler);
@@ -8085,7 +8086,7 @@ static uint16_t compile_definition(Compiler *compiler, bool captures_self) {
                      "required parameter cannot follow a default parameter");
             } else if(!is_block_parameter)
                 function->required_arity++;
-            if(parameter_type>=0) {
+            if(parameter_type>=0&&!is_block_parameter) {
                 emit_type_check(compiler,parameter,(uint16_t)parameter_type,
                                 parameter_type_span);
                 compiler->known_type_sets[parameter]=(int32_t)parameter_type;
@@ -8111,6 +8112,17 @@ static uint16_t compile_definition(Compiler *compiler, bool captures_self) {
     if(function->has_variadic&&!compiler->failed)
         emit_instruction(compiler,DIAMOND_OP_COLLECT_VARIADIC,
             variadic_parameter,variadic_fixed_count,has_block_parameter?1:0,3);
+    if(block_parameter_type>=0&&!compiler->failed) {
+        const uint16_t absent=allocate_register(compiler);
+        emit_instruction(compiler,DIAMOND_OP_NIL,absent,0,0,1);
+        const uint16_t missing=allocate_register(compiler);
+        emit_instruction(compiler,DIAMOND_OP_EQUAL,missing,
+            compiler->current_block_register,absent,3);
+        const size_t skip=emit_jump(compiler,DIAMOND_OP_JUMP_IF_TRUE,missing);
+        emit_type_check(compiler,compiler->current_block_register,
+            (uint16_t)block_parameter_type,block_parameter_type_span);
+        patch_jump(compiler,skip,compiler->function->code_count);
+    }
     if (!compiler->failed && compiler->current.kind != DIAMOND_TOKEN_RIGHT_PAREN) {
         fail(compiler, compiler->current.span, "expected ')' after parameters");
     }

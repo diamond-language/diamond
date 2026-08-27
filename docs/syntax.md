@@ -555,6 +555,9 @@ Inside that lexical body, `yield(args...)` invokes the bound Callable and
 `block_given?()` reports whether a block was supplied. `yield` accepts zero or
 more arguments. Calling it without guarding an absent optional block is a
 normal non-Callable type error.
+The parameter may carry a Callable annotation, such as
+`&block: Callable[2]`. Absence remains valid; a supplied block must satisfy the
+declared Callable shape.
 
 Callable values accept the same trailing `do ... end` block as named function
 and method calls, including calls with a spread Array. The block is appended as

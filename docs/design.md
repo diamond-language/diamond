@@ -1198,6 +1198,10 @@ leak across a function boundary. Where no `&block` is declared, the existing
 state, with an omitted value materialized as nil. Named-block yield emits a
 Callable type check before dispatch, producing `expected Callable, got Nil`
 instead of a generic call failure when an optional block was not supplied.
+An explicit `&block: Callable[N]` annotation is stored in ordinary parameter
+metadata, but its entry check is emitted after variadic collection and skipped
+when the block register is nil. This keeps the parameter optional while
+validating every supplied closure against the declared arity.
 Callable-value and constructor calls attach trailing source blocks through the
 same final-positional-argument convention as named calls. Fixed calls snapshot
 pre-block argument registers before eager capture can box them; spread calls

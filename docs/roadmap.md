@@ -489,6 +489,9 @@ any lexical context. Callable values also accept trailing source blocks for
 fixed and spread calls. Constructor calls now do the same for `initialize`;
 keyword Callable, dynamic-method, and constructor calls now reconcile the
 trailing block against the target's final public parameter slot as well.
+Explicit optional block parameters now accept `Callable` annotations. Their
+checks run only for supplied blocks and after `*arguments` collection when both
+features share one signature.
 The forwarded call always uses the same name declared
 (`delegate foo(), to: @bar` always calls `@bar.foo()`, never a renamed
 target) -- both deliberate scope cuts, not oversights.

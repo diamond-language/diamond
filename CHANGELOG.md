@@ -26,6 +26,8 @@
 
 ## Language
 
+- Added optional `&block: Callable[N]` annotations with nil-safe entry checks
+  and supplied-block arity validation, including variadic signatures.
 - Added trailing blocks to keyword Callable, dynamic-method, and constructor
   calls with runtime slot reconciliation and duplicate-value detection.
 - Added explicit `Fiber.yield(value)`/`Fiber.yield()` suspension, trailing
