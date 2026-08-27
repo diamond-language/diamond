@@ -64,7 +64,7 @@ expression, where each `when`'s own value is tested for truthiness
 instead of compared against a subject) — `case` always requires a
 subject in Diamond today.
 
-Array patterns can match an exact nested shape and bind lowercase names:
+Array patterns can match a nested shape and bind lowercase names:
 
 ```ruby
 case event
@@ -75,7 +75,10 @@ else
 end
 ```
 
-Every bracketed level must be an Array of exactly the written length. Nested
+Every bracketed level must be an Array of exactly the written length unless it
+ends in a rest binding such as `[head, *tail]`. A trailing rest binding accepts
+zero or more remaining elements and receives them as a fresh Array; `*_`
+accepts and discards the remainder. Rest bindings must be last. Nested
 entries use the same literal, Range, Regexp, class/subclass, and custom-equality
 matching described above. A lowercase bare name binds that element for the
 branch; `_` ignores it. Bindings are written only after the complete pattern
@@ -181,6 +184,7 @@ end
 
 lowest, highest = min_max([3, 1, 4, 1, 5])
 [name, [x, y]] = ["origin", [0, 0]]
+[head, *tail] = [1, 2, 3] # tail is [2, 3]
 ```
 
 `t1, t2, ... = expr` unpacks a single `Array`-valued expression across
@@ -207,10 +211,13 @@ outermost legacy form, so `head, [left, right] = value` is equivalent.
 Leaves retain the same local/`@ivar`/`@@cvar` behavior at any depth.
 The complete nested shape is validated before any leaf is assigned, so a
 rescued inner type/length failure cannot leave earlier targets half-updated.
+Any bracketed level may end with one trailing rest target (`[head, *tail]`).
+It requires only the fixed prefix and assigns a fresh Array containing every
+remaining element, including an empty Array when there is no remainder.
 
 Not supported (yet): indexed (`arr[i]`) or chained (`obj.field`) targets,
 a comma-separated *literal* right-hand side (`a, b = 1, 2` — write `a, b
-= [1, 2]` instead), and rest/splat patterns.
+= [1, 2]` instead), and non-final rest patterns.
 
 ## Numbers
 

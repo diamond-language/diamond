@@ -12161,6 +12161,8 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
             case DIAMOND_OP_CHECK_DESTRUCTURE_COUNT: {
                 uint16_t array_reg=0,expected=0;
                 READ_SHORT(array_reg); READ_SHORT(expected);
+                const bool minimum=(expected&0x8000u)!=0;
+                expected&=0x7fffu;
                 if(registers[array_reg].kind!=DIAMOND_VALUE_OBJECT||
                    registers[array_reg].as.object->kind!=DIAMOND_OBJECT_ARRAY) {
                     char actual[80];
@@ -12169,8 +12171,9 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     VM_RETURN(DIAMOND_VM_TYPE_ERROR);
                 }
                 const DiamondArray *array=(const DiamondArray *)registers[array_reg].as.object;
-                if(array->count!=expected) {
+                if((minimum&&array->count<expected)||(!minimum&&array->count!=expected)) {
                     snprintf(vm->error,sizeof vm->error,
+                        minimum?"destructuring assignment expected at least %u element(s), got %zu":
                         "destructuring assignment expected %u element(s), got %zu",
                         (unsigned)expected,array->count);
                     VM_RETURN(DIAMOND_VM_ARITY_ERROR);
@@ -12180,14 +12183,31 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
             case DIAMOND_OP_CASE_ARRAY_SHAPE: {
                 uint16_t destination=0,array_reg=0,expected=0;
                 READ_SHORT(destination);READ_SHORT(array_reg);READ_SHORT(expected);
+                const bool minimum=(expected&0x8000u)!=0;
+                expected&=0x7fffu;
                 bool matches=false;
                 if(registers[array_reg].kind==DIAMOND_VALUE_OBJECT&&
                    registers[array_reg].as.object->kind==DIAMOND_OBJECT_ARRAY) {
                     const DiamondArray *array=
                         (const DiamondArray *)registers[array_reg].as.object;
-                    matches=array->count==expected;
+                    matches=minimum?array->count>=expected:array->count==expected;
                 }
                 registers[destination]=DIAMOND_BOOL(matches);break;
+            }
+            case DIAMOND_OP_ARRAY_REST: {
+                uint16_t destination=0,array_reg=0,start=0;
+                READ_SHORT(destination);READ_SHORT(array_reg);READ_SHORT(start);
+                if(registers[array_reg].kind!=DIAMOND_VALUE_OBJECT||
+                   registers[array_reg].as.object->kind!=DIAMOND_OBJECT_ARRAY)
+                    VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
+                const DiamondArray *source=
+                    (const DiamondArray *)registers[array_reg].as.object;
+                if(start>source->count)VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
+                const DiamondValue *rest_values=start==source->count?
+                    nullptr:source->values+start;
+                DiamondArray *rest=allocate_array(vm,rest_values,source->count-start);
+                if(rest==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                registers[destination]=DIAMOND_OBJECT(rest);break;
             }
             /* A duration-only clock: seconds since some unspecified,
              * process-local reference point (CLOCK_MONOTONIC), never

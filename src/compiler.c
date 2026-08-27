@@ -4731,7 +4731,8 @@ typedef struct CaseFlowJoin {
 } CaseFlowJoin;
 
 typedef enum CaseArrayNodeKind {CASE_ARRAY_GROUP,CASE_ARRAY_VALUE,
-    CASE_ARRAY_BIND,CASE_ARRAY_WILDCARD} CaseArrayNodeKind;
+    CASE_ARRAY_BIND,CASE_ARRAY_WILDCARD,CASE_ARRAY_REST_BIND,
+    CASE_ARRAY_REST_WILDCARD} CaseArrayNodeKind;
 
 typedef struct CaseArrayNode {
     CaseArrayNodeKind kind;
@@ -4762,6 +4763,14 @@ static uint8_t parse_case_array_node(Compiler *compiler,CaseArrayNode *nodes,
             }
             node->children[node->child_count++]=
                 parse_case_array_node(compiler,nodes,node_count,depth+1);
+            const CaseArrayNodeKind child_kind=
+                nodes[node->children[node->child_count-1]].kind;
+            if((child_kind==CASE_ARRAY_REST_BIND||
+                child_kind==CASE_ARRAY_REST_WILDCARD)&&
+               compiler->current.kind!=DIAMOND_TOKEN_RIGHT_BRACKET) {
+                fail(compiler,compiler->current.span,
+                    "rest binding must be last in case Array pattern");return index;
+            }
             if(compiler->current.kind==DIAMOND_TOKEN_RIGHT_BRACKET)break;
             if(compiler->current.kind!=DIAMOND_TOKEN_COMMA) {
                 fail(compiler,compiler->current.span,"expected ',' in case Array pattern");
@@ -4772,6 +4781,27 @@ static uint8_t parse_case_array_node(Compiler *compiler,CaseArrayNode *nodes,
         if(node->child_count==0) {
             fail(compiler,compiler->current.span,"case Array pattern cannot be empty");
             return index;
+        }
+        advance_token(compiler);return index;
+    }
+    if(compiler->current.kind==DIAMOND_TOKEN_STAR) {
+        advance_token(compiler);
+        if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER) {
+            fail(compiler,compiler->current.span,
+                "expected lowercase binding or '_' after '*' in case Array pattern");
+            return index;
+        }
+        node->name=compiler->current.span;
+        if(span_is_underscore(compiler,node->name))
+            node->kind=CASE_ARRAY_REST_WILDCARD;
+        else {
+            const char first=compiler->source[node->name.start];
+            if(first<'a'||first>'z') {
+                fail(compiler,node->name,
+                    "rest binding in case Array pattern must be lowercase");
+                return index;
+            }
+            node->kind=CASE_ARRAY_REST_BIND;
         }
         advance_token(compiler);return index;
     }
@@ -4806,13 +4836,19 @@ static void emit_case_array_match(Compiler *compiler,CaseArrayNode *nodes,
         uint8_t node_index,uint16_t subject,uint16_t match_reg,
         size_t *failure_jumps,size_t *failure_count) {
     CaseArrayNode *node=&nodes[node_index];node->subject_register=subject;
-    if(node->kind==CASE_ARRAY_BIND||node->kind==CASE_ARRAY_WILDCARD)return;
+    if(node->kind==CASE_ARRAY_BIND||node->kind==CASE_ARRAY_WILDCARD||
+       node->kind==CASE_ARRAY_REST_BIND||
+       node->kind==CASE_ARRAY_REST_WILDCARD)return;
     const uint16_t test=allocate_register(compiler);
     if(node->kind==CASE_ARRAY_VALUE) {
         emit_instruction(compiler,DIAMOND_OP_CASE_MATCH,test,node->value_register,subject,3);
     } else {
+        const bool has_rest=node->child_count>0&&
+            (nodes[node->children[node->child_count-1]].kind==CASE_ARRAY_REST_BIND||
+             nodes[node->children[node->child_count-1]].kind==CASE_ARRAY_REST_WILDCARD);
+        const uint16_t fixed_count=(uint16_t)(node->child_count-(has_rest?1u:0u));
         emit_instruction(compiler,DIAMOND_OP_CASE_ARRAY_SHAPE,test,subject,
-            node->child_count,3);
+            fixed_count|(has_rest?0x8000u:0u),3);
     }
     compiler->known_types[test]=DIAMOND_TYPE_BOOL;
     emit_instruction(compiler,DIAMOND_OP_MOVE,match_reg,test,0,2);
@@ -4820,6 +4856,18 @@ static void emit_case_array_match(Compiler *compiler,CaseArrayNode *nodes,
         emit_jump(compiler,DIAMOND_OP_JUMP_IF_FALSE,match_reg);
     if(node->kind!=CASE_ARRAY_GROUP)return;
     for(size_t child=0;child<node->child_count;child++) {
+        CaseArrayNode *child_node=&nodes[node->children[child]];
+        if(child_node->kind==CASE_ARRAY_REST_BIND||
+           child_node->kind==CASE_ARRAY_REST_WILDCARD) {
+            if(child_node->kind==CASE_ARRAY_REST_BIND) {
+                const uint16_t rest=allocate_register(compiler);
+                emit_instruction(compiler,DIAMOND_OP_ARRAY_REST,rest,subject,
+                    (uint16_t)child,3);
+                compiler->known_types[rest]=DIAMOND_TYPE_ARRAY;
+                child_node->subject_register=rest;
+            }
+            continue;
+        }
         const uint8_t constant=add_constant(compiler,DIAMOND_INT((int64_t)child));
         const uint16_t index_reg=allocate_register(compiler);
         emit_instruction(compiler,DIAMOND_OP_CONSTANT,index_reg,constant,0,2);
@@ -4833,7 +4881,7 @@ static void emit_case_array_match(Compiler *compiler,CaseArrayNode *nodes,
 static void bind_case_array_names(Compiler *compiler,const CaseArrayNode *nodes,
         uint8_t node_index) {
     const CaseArrayNode *node=&nodes[node_index];
-    if(node->kind==CASE_ARRAY_BIND) {
+    if(node->kind==CASE_ARRAY_BIND||node->kind==CASE_ARRAY_REST_BIND) {
         (void)compile_assignment_store(compiler,node->name,false,false,
             node->subject_register);return;
     }
@@ -4845,9 +4893,11 @@ static void bind_case_array_names(Compiler *compiler,const CaseArrayNode *nodes,
 static bool validate_case_array_bindings(Compiler *compiler,
         const CaseArrayNode *nodes,size_t node_count) {
     for(size_t left=0;left<node_count;left++) {
-        if(nodes[left].kind!=CASE_ARRAY_BIND)continue;
+        if(nodes[left].kind!=CASE_ARRAY_BIND&&
+           nodes[left].kind!=CASE_ARRAY_REST_BIND)continue;
         for(size_t right=left+1;right<node_count;right++) {
-            if(nodes[right].kind==CASE_ARRAY_BIND&&
+            if((nodes[right].kind==CASE_ARRAY_BIND||
+                nodes[right].kind==CASE_ARRAY_REST_BIND)&&
                spans_equal(compiler,nodes[left].name,nodes[right].name)) {
                 fail(compiler,nodes[right].name,"duplicate binding in case Array pattern");
                 return false;
@@ -5413,6 +5463,11 @@ static bool destructuring_target_kind(DiamondTokenKind kind) {
 static bool scan_destructuring_pattern(DiamondLexer *lexer,DiamondToken token,
         DiamondToken *after,size_t depth) {
     if(depth>8)return false;
+    if(token.kind==DIAMOND_TOKEN_STAR) {
+        token=diamond_lexer_next(lexer);
+        if(!destructuring_target_kind(token.kind))return false;
+        *after=diamond_lexer_next(lexer);return true;
+    }
     if(destructuring_target_kind(token.kind)) {
         *after=diamond_lexer_next(lexer);return true;
     }
@@ -8522,6 +8577,7 @@ static uint8_t array_type_set_index(Compiler *compiler) {
 
 typedef struct DestructureNode {
     bool leaf;
+    bool rest;
     DiamondSpan name;
     bool instance_variable;
     bool class_variable;
@@ -8538,6 +8594,13 @@ static uint8_t parse_destructure_node(Compiler *compiler,DestructureNode *nodes,
     const uint8_t node_index=(uint8_t)(*node_count);
     DestructureNode *node=&nodes[(*node_count)++];
     *node=(DestructureNode){};
+    if(compiler->current.kind==DIAMOND_TOKEN_STAR) {
+        node->rest=true;advance_token(compiler);
+        if(!destructuring_target_kind(compiler->current.kind)) {
+            fail(compiler,compiler->current.span,"expected target after '*' in destructuring pattern");
+            return node_index;
+        }
+    }
     if(destructuring_target_kind(compiler->current.kind)) {
         node->leaf=true;node->name=compiler->current.span;
         node->instance_variable=compiler->current.kind==DIAMOND_TOKEN_INSTANCE_VARIABLE;
@@ -8555,6 +8618,11 @@ static uint8_t parse_destructure_node(Compiler *compiler,DestructureNode *nodes,
         }
         node->children[node->child_count++]=
             parse_destructure_node(compiler,nodes,node_count,depth+1);
+        if(nodes[node->children[node->child_count-1]].rest&&
+           compiler->current.kind!=DIAMOND_TOKEN_RIGHT_BRACKET) {
+            fail(compiler,compiler->current.span,
+                "rest target must be last in destructuring pattern");return node_index;
+        }
         if(compiler->current.kind==DIAMOND_TOKEN_RIGHT_BRACKET)break;
         if(compiler->current.kind!=DIAMOND_TOKEN_COMMA) {
             fail(compiler,compiler->current.span,"expected ',' in destructuring pattern");
@@ -8576,9 +8644,20 @@ static void emit_destructure_extract(Compiler *compiler,
     node_values[node_index]=value;
     if(node->leaf)return;
     emit_instruction(compiler,DIAMOND_OP_CHECK_TYPE,value,array_set,0,2);
+    const bool has_rest=node->child_count>0&&
+        nodes[node->children[node->child_count-1]].rest;
+    const uint16_t fixed_count=(uint16_t)(node->child_count-(has_rest?1u:0u));
     emit_instruction(compiler,DIAMOND_OP_CHECK_DESTRUCTURE_COUNT,value,
-        node->child_count,0,2);
+        fixed_count|(has_rest?0x8000u:0u),0,2);
     for(size_t index=0;index<node->child_count;index++) {
+        if(nodes[node->children[index]].rest) {
+            const uint16_t rest=allocate_register(compiler);
+            emit_instruction(compiler,DIAMOND_OP_ARRAY_REST,rest,value,
+                (uint16_t)index,3);
+            compiler->known_types[rest]=DIAMOND_TYPE_ARRAY;
+            emit_destructure_extract(compiler,nodes,node->children[index],rest,
+                array_set,node_values);continue;
+        }
         const uint8_t index_constant=add_constant(compiler,DIAMOND_INT((int64_t)index));
         const uint16_t index_register=allocate_register(compiler);
         emit_instruction(compiler,DIAMOND_OP_CONSTANT,index_register,index_constant,0,2);
@@ -8618,6 +8697,11 @@ static uint16_t compile_multi_assignment(Compiler *compiler) {
             }
             root_node->children[root_node->child_count++]=
                 parse_destructure_node(compiler,nodes,&node_count,0);
+            if(nodes[root_node->children[root_node->child_count-1]].rest&&
+               compiler->current.kind==DIAMOND_TOKEN_COMMA) {
+                fail(compiler,compiler->current.span,
+                    "rest target must be last in destructuring pattern");return 0;
+            }
             if(compiler->current.kind!=DIAMOND_TOKEN_COMMA)break;
             advance_token(compiler);
         }

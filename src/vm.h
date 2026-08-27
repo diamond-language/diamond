@@ -281,6 +281,8 @@ typedef enum DiamondOpCode : uint8_t {
     DIAMOND_OP_CASE_MATCH,
     /* Non-raising exact Array shape predicate used by binding patterns. */
     DIAMOND_OP_CASE_ARRAY_SHAPE,
+    /* Copies Array elements from a fixed start index into a fresh Array. */
+    DIAMOND_OP_ARRAY_REST,
     DIAMOND_OP_COUNT,
 } DiamondOpCode;
 

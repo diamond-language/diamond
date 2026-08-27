@@ -805,7 +805,7 @@ static bool disassemble_chunk(FILE *stream, const char *name,
                 if(!require_bytes(stream,chunk,offset,5)){valid=false;offset=chunk->code_count;break;}
                 fprintf(stream,"%-18s r%u, %u\n","CHECK_DESTRUCTURE_COUNT",
                     checked_register(chunk,stream,read_operand(chunk,offset+1),&valid),
-                    read_operand(chunk,offset+3));
+                    read_operand(chunk,offset+3)&0x7fffu);
                 offset+=5;break;
             case DIAMOND_OP_TIME_MONOTONIC:
                 offset=one_register(stream,chunk,"TIME_MONOTONIC",offset, &valid);break;
@@ -873,8 +873,14 @@ static bool disassemble_chunk(FILE *stream, const char *name,
                 fprintf(stream,"%-18s r%u, r%u, %u elements\n","CASE_ARRAY_SHAPE",
                     checked_register(chunk,stream,read_operand(chunk,offset+1),&valid),
                     checked_register(chunk,stream,read_operand(chunk,offset+3),&valid),
-                    read_operand(chunk,offset+5));
+                    read_operand(chunk,offset+5)&0x7fffu);
                 offset+=7;break;
+            case DIAMOND_OP_ARRAY_REST:
+                if(!require_bytes(stream,chunk,offset,7)){valid=false;offset=chunk->code_count;break;}
+                fprintf(stream,"%-18s r%u, r%u, start=%u\n","ARRAY_REST",
+                    checked_register(chunk,stream,read_operand(chunk,offset+1),&valid),
+                    checked_register(chunk,stream,read_operand(chunk,offset+3),&valid),
+                    read_operand(chunk,offset+5));offset+=7;break;
             case DIAMOND_OP_POSTGRES_OPEN:
                 offset=two_registers(stream,chunk,"POSTGRES_OPEN",offset, &valid);break;
             case DIAMOND_OP_MYSQL_OPEN:

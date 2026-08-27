@@ -55,6 +55,8 @@
   arity checks at every level and local, instance, or class-variable leaves.
 - Added exact nested Array patterns to `case`/`when`, with lowercase element
   bindings, `_` wildcards, recursive value patterns, and failure-atomic binding.
+- Added trailing Array rest patterns (`[head, *tail]`) to destructuring
+  assignment and `case`, including nested patterns and `*_` remainder discard.
 - Corrected the runtime type-ID partition so the advertised class capacity no
   longer overlaps generic-variable and interface IDs, and raised the class
   capacity from 128 to 180. Updated the self-hosted compiler's mirrored
