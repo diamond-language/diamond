@@ -558,6 +558,68 @@ count=$((count + 1))
 send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$reassigned_uri"'"}}}'
 read_message >/dev/null
 
+# --- explicitly typed call results can themselves be receivers, recursively.
+# Cover top-level functions, singleton factories, constructors, several links,
+# and a union return. An inferred/unannotated function remains conservative. ---
+
+chained_uri="file:///chained_receiver.di"
+chained_source='class Leaf\n  def ping() -> Int\n    1\n  end\nend\nclass Branch\n  def leaf() -> Leaf\n    Leaf.new()\n  end\nend\nclass AlternateBranch\n  def leaf() -> Leaf\n    Leaf.new()\n  end\nend\nclass Factory\n  def self.build() -> Branch\n    Branch.new()\n  end\nend\ndef make_branch() -> Branch\n  Branch.new()\nend\ndef choose_branch(flag) -> Branch | AlternateBranch\n  if flag\n    Branch.new()\n  else\n    AlternateBranch.new()\n  end\nend\ndef infer_branch()\n  Branch.new()\nend\ndef inspect()\n  make_branch().leaf().ping()\n  Factory.build().leaf().ping()\n  Branch.new().leaf().ping()\n  choose_branch(true).leaf().ping()\n  infer_branch().leaf()\n  maybe_branch(true).leaf()\nend\ndef maybe_branch(flag) -> Branch | Nil\n  flag ? Branch.new() : nil\nend'
+send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$chained_uri"'","text":"'"$chained_source"'"}}}'
+read_message >/dev/null
+
+# Top-level function return, first and second hop.
+send '{"jsonrpc":"2.0","id":130,"method":"textDocument/completion","params":{"textDocument":{"uri":"'"$chained_uri"'"},"position":{"line":34,"character":16}}}'
+response="$(read_message)"
+[[ "$response" == *'"label":"leaf","kind":3'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","id":131,"method":"textDocument/completion","params":{"textDocument":{"uri":"'"$chained_uri"'"},"position":{"line":34,"character":23}}}'
+response="$(read_message)"
+[[ "$response" == *'"label":"ping","kind":3'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","id":132,"method":"textDocument/hover","params":{"textDocument":{"uri":"'"$chained_uri"'"},"position":{"line":34,"character":24}}}'
+response="$(read_message)"
+[[ "$response" == *'"value":"def ping() -> Int"'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","id":133,"method":"textDocument/definition","params":{"textDocument":{"uri":"'"$chained_uri"'"},"position":{"line":34,"character":24}}}'
+response="$(read_message)"
+[[ "$response" == *'"start":{"line":1,"character":6}'* ]]
+count=$((count + 1))
+
+# Singleton method return, direct constructor, and explicit union return.
+send '{"jsonrpc":"2.0","id":134,"method":"textDocument/completion","params":{"textDocument":{"uri":"'"$chained_uri"'"},"position":{"line":35,"character":25}}}'
+response="$(read_message)"
+[[ "$response" == *'"label":"ping","kind":3'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","id":135,"method":"textDocument/completion","params":{"textDocument":{"uri":"'"$chained_uri"'"},"position":{"line":36,"character":22}}}'
+response="$(read_message)"
+[[ "$response" == *'"label":"ping","kind":3'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","id":136,"method":"textDocument/completion","params":{"textDocument":{"uri":"'"$chained_uri"'"},"position":{"line":37,"character":29}}}'
+response="$(read_message)"
+[[ "$response" == *'"label":"ping","kind":3'* ]]
+count=$((count + 1))
+
+# No source annotation means no call-result type claim, even when the body
+# happens to return a constructor at runtime.
+send '{"jsonrpc":"2.0","id":137,"method":"textDocument/completion","params":{"textDocument":{"uri":"'"$chained_uri"'"},"position":{"line":38,"character":17}}}'
+response="$(read_message)"
+[[ "$response" != *'"label":"leaf","kind":3'* ]]
+count=$((count + 1))
+
+# A non-class arm in a declared union is equally unsafe for method lookup.
+send '{"jsonrpc":"2.0","id":138,"method":"textDocument/completion","params":{"textDocument":{"uri":"'"$chained_uri"'"},"position":{"line":39,"character":21}}}'
+response="$(read_message)"
+[[ "$response" != *'"label":"leaf","kind":3'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$chained_uri"'"}}}'
+read_message >/dev/null
+
 # --- workspace/symbol recursively walks the workspace root (given via
 # initialize's own workspaceFolders, above), skips dotdirs, and
 # case-insensitively substring-matches the query against every

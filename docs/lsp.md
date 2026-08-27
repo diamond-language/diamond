@@ -117,10 +117,16 @@ search over a real (if scoped) lexical symbol table:
     "not found" here, same as before this slice. A class instance-variable
     receiver also resolves when every assignment to that field agrees on one
     concrete class; conflicting or unknown assignments deliberately erase the
-    candidate rather than guessing. A chained call (`foo().bar()`) or any
-    other receiver this can't resolve also falls back to the ordinary "not found"
-    result instead of a guess. All three also require the *document* to
-    currently compile cleanly — otherwise they return `null`/empty
+    candidate rather than guessing. Call results can be receivers recursively:
+    `Branch.new().leaf().ping()`, a top-level `make_branch().leaf()`, and a
+    singleton factory such as `Factory.build().leaf()` resolve through each
+    link's explicit class or class-union return annotation
+    (`DiamondFunction.return_type_set`). `Class.new()` is the one intrinsic
+    return rule. Every arm of a union receiver must define a link with a usable
+    annotated class return, so one uncertain arm makes the rest of the chain
+    unresolved. Unannotated results and any other receiver this can't resolve
+    fall back to the ordinary "not found" result instead of a guess. All three
+    require the *document* to currently compile cleanly — otherwise they return `null`/empty
     rather than a stale result; the document's own diagnostics already
     say why.
 - `textDocument/completion` (`lsp/completion.c`) suggests every
@@ -311,11 +317,10 @@ exit-without-shutdown edge cases.
 ## What's deliberately out of scope so far
 
 - **`receiver.method(...)` support beyond the resolvable receiver forms
-  above** — a receiver that's itself a call's return value
-  (`make_box().get()`) still falls back to
-  "not found" rather
-  than resolving. A union receiver *is* now resolved, but only for an
-  explicit source-level `Dog | Cat` annotation — the compiler does not
+  above** — typed function and method call results now compose recursively,
+  but an unannotated/dynamic result still deliberately falls back to ordinary
+  name-based behavior rather than guessing. A union receiver is resolved only
+  for an explicit source-level `Dog | Cat` annotation — the compiler does not
   build one from a branching assignment
   (`x = cond ? Dog.new() : Cat.new()`), so that shape stays unresolved
   too; see the hover/definition/documentSymbol bullet above for why.

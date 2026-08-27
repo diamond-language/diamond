@@ -106,13 +106,15 @@ set index (`src/compiler.c`), so that shape still isn't resolvable here; the
 only real source of a multi-class union is an explicit source-level
 annotation. Class instance-variable receivers resolve too when all assignments
 to the field agree on one concrete class; an unknown or conflicting assignment
-conservatively disables the result. See `docs/lsp.md` and `lsp/receiver.c` for
-the mechanism and its scope cuts in full.
+conservatively disables the result. Explicitly typed call results now compose
+recursively as receivers as well: constructors, top-level factories, singleton
+factories, instance methods, and class-union returns can all feed the next link
+in a chain. An unannotated return or one unusable union arm stops resolution.
+See `docs/lsp.md` and `lsp/receiver.c` for the mechanism and its scope cuts.
 
 Remaining, still open:
 
-- a chained call's return value as a receiver, or a branch-merged "union" the
-  compiler doesn't actually track as one;
+- branch-merged "union" information the compiler doesn't actually track;
 - dependency-aware symbol information beyond one combined compilation;
 - incremental compilation only after there is a compiler architecture that can
   benefit from incremental document synchronization.

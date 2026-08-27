@@ -3,75 +3,8 @@
 #include "lexer.h"
 
 #include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
-
-typedef enum ReceiverKind {
-    RECEIVER_NONE,
-    RECEIVER_SELF,
-    RECEIVER_INSTANCE_VARIABLE,
-    /* Either a literal class name or a local variable -- classify_receiver
-     * can't tell which without consulting chunk->classes, so resolution
-     * disambiguates once it has the receiver's own text. */
-    RECEIVER_NAME,
-} ReceiverKind;
-
-typedef struct ReceiverContext {
-    ReceiverKind kind;
-    /* Valid only for RECEIVER_SELF: the `self` token's own byte offset,
-     * used to find which function's body it's lexically inside. */
-    size_t self_offset;
-    /* Valid only for RECEIVER_NAME: the receiver identifier's own span. */
-    DiamondSpan name_span;
-} ReceiverContext;
-
-/* Re-lexes `source` from its start up to (not including) `stop_offset`,
- * keeping the last three tokens seen, to classify what immediately
- * precedes that offset as a receiver expression. Re-lexing rather than
- * scanning backward directly: DiamondLexer (src/lexer.h) only exposes
- * diamond_lexer_init/diamond_lexer_next, no reverse-direction API.
- *
- * Two shapes are recognized, covering both "cursor sits on the method
- * name itself" (hover/definition, stop_offset == that identifier's own
- * span.start) and "cursor sits right after `receiver.`, method name
- * partially typed or not yet typed at all" (completion, stop_offset ==
- * the raw cursor offset):
- *   ... DOT <stop>                  -- `receiver.|` or `receiver.<name>|`
- *       (only reachable when stop_offset lands exactly on the dot's own
- *       end, i.e. hover/definition's identifier-span case)
- *   ... DOT IDENTIFIER <stop>       -- `receiver.partial|` (completion,
- *       stop_offset lands after the partial method name)
- * Anything else (no DOT at all or a chained call's `)` before the DOT)
- * yields RECEIVER_NONE. */
-static ReceiverContext classify_receiver(const char *source,size_t stop_offset) {
-    DiamondLexer lexer;
-    diamond_lexer_init(&lexer,source);
-    DiamondToken history[3]={
-        {.kind=DIAMOND_TOKEN_EOF},{.kind=DIAMOND_TOKEN_EOF},{.kind=DIAMOND_TOKEN_EOF}};
-    while(true) {
-        const DiamondToken current=diamond_lexer_next(&lexer);
-        if(current.kind==DIAMOND_TOKEN_EOF||current.span.start>=stop_offset)break;
-        history[0]=history[1];history[1]=history[2];history[2]=current;
-    }
-    const DiamondToken last=history[2];
-    const DiamondToken second_last=history[1];
-    const DiamondToken third_last=history[0];
-    DiamondToken receiver_token={.kind=DIAMOND_TOKEN_EOF};
-    if(last.kind==DIAMOND_TOKEN_DOT) {
-        receiver_token=second_last;
-    } else if(last.kind==DIAMOND_TOKEN_IDENTIFIER&&second_last.kind==DIAMOND_TOKEN_DOT) {
-        receiver_token=third_last;
-    } else {
-        return (ReceiverContext){.kind=RECEIVER_NONE};
-    }
-    if(receiver_token.kind==DIAMOND_TOKEN_SELF)
-        return (ReceiverContext){.kind=RECEIVER_SELF,.self_offset=receiver_token.span.start};
-    if(receiver_token.kind==DIAMOND_TOKEN_INSTANCE_VARIABLE)
-        return (ReceiverContext){.kind=RECEIVER_INSTANCE_VARIABLE,
-            .self_offset=receiver_token.span.start,.name_span=receiver_token.span};
-    if(receiver_token.kind==DIAMOND_TOKEN_IDENTIFIER)
-        return (ReceiverContext){.kind=RECEIVER_NAME,.name_span=receiver_token.span};
-    return (ReceiverContext){.kind=RECEIVER_NONE};
-}
 
 /* True iff `function` is one of `class`'s own singleton methods (as
  * opposed to one of its ordinary instance methods, or a function
@@ -177,79 +110,194 @@ static void local_type_at_offset(const DiamondFunction *owner,
     }
 }
 
+const DiamondMethod *receiver_lookup_method(const DiamondChunk *chunk,
+        size_t class_index,bool is_singleton,const char *name,size_t name_length);
+
+static size_t append_class(size_t *classes,size_t count,size_t capacity,size_t value) {
+    for(size_t index=0;index<count;index++)if(classes[index]==value)return count;
+    if(count<capacity)classes[count++]=value;
+    return count;
+}
+
+static size_t function_return_classes(const DiamondChunk *chunk,
+        const DiamondFunction *function,size_t *classes,size_t capacity) {
+    if(function->return_type_set==UINT8_MAX||
+       function->return_type_set>=function->type_set_count)return 0;
+    const DiamondTypeSet *set=&function->type_sets[function->return_type_set];
+    size_t count=0;
+    for(size_t index=0;index<set->count;index++) {
+        size_t class_index;
+        if(!decode_class_type(chunk,set->members[index].id,&class_index))return 0;
+        count=append_class(classes,count,capacity,class_index);
+    }
+    return count;
+}
+
+static size_t resolve_expression(const DiamondProgram *program,const DiamondChunk *chunk,
+        const char *source,const DiamondToken *tokens,size_t start,size_t end,
+        size_t *classes,size_t capacity,bool *is_singleton,unsigned depth);
+
+static size_t resolve_name(const DiamondProgram *program,const DiamondChunk *chunk,
+        const char *source,DiamondToken token,size_t *classes,size_t capacity,
+        bool *is_singleton) {
+    char name[DIAMOND_MAX_FUNCTION_NAME];
+    size_t length=token.span.length;
+    if(length>=sizeof name)length=sizeof name-1;
+    memcpy(name,source+token.span.start,length);name[length]='\0';
+    for(size_t index=0;index<chunk->class_count;index++) {
+        if(strcmp(chunk->classes[index].name,name)==0) {
+            classes[0]=index;*is_singleton=true;return 1;
+        }
+    }
+    const DiamondFunction *owner=nullptr;
+    const DiamondScopeLocal *local=find_scope_local(program,chunk,name,length,
+        token.span.start,&owner);
+    if(local==nullptr)return 0;
+    *is_singleton=false;
+    uint8_t known_type=local->known_type;int16_t known_type_set=local->known_type_set;
+    local_type_at_offset(owner,local,token.span.start,&known_type,&known_type_set);
+    size_t class_index;
+    if(decode_class_type(chunk,known_type,&class_index)) {
+        classes[0]=class_index;return 1;
+    }
+    if(known_type_set<0||(size_t)known_type_set>=owner->type_set_count)return 0;
+    const DiamondTypeSet *set=&owner->type_sets[(size_t)known_type_set];
+    size_t count=0;
+    for(size_t index=0;index<set->count;index++)
+        if(decode_class_type(chunk,set->members[index].id,&class_index))
+            count=append_class(classes,count,capacity,class_index);
+    return count;
+}
+
+/* Resolves a call expression whose final token is `)`. Argument contents do
+ * not affect its result type, so only the matching `(` and callee are needed.
+ * A method must resolve for every possible receiver class: silently keeping
+ * just one arm of a union would make a later completion look safer than the
+ * source annotation says it is. */
+static size_t resolve_call(const DiamondProgram *program,const DiamondChunk *chunk,
+        const char *source,const DiamondToken *tokens,size_t start,size_t end,
+        size_t *classes,size_t capacity,bool *is_singleton,unsigned depth) {
+    size_t nesting=0,left=end;
+    for(size_t index=end+1;index>start;index--) {
+        const DiamondTokenKind kind=tokens[index-1].kind;
+        if(kind==DIAMOND_TOKEN_RIGHT_PAREN)nesting++;
+        else if(kind==DIAMOND_TOKEN_LEFT_PAREN&&--nesting==0) {left=index-1;break;}
+    }
+    if(left==start||tokens[left-1].kind!=DIAMOND_TOKEN_IDENTIFIER)return 0;
+    const DiamondToken callee=tokens[left-1];
+    const char *name=source+callee.span.start;const size_t name_length=callee.span.length;
+    if(left-1==start) {
+        for(size_t index=chunk->function_count;index>0;index--) {
+            const DiamondFunction *function=chunk->functions[index-1];
+            if(function->owner_class==UINT8_MAX&&!function->nested&&
+               strlen(function->name)==name_length&&memcmp(function->name,name,name_length)==0) {
+                *is_singleton=false;
+                return function_return_classes(chunk,function,classes,capacity);
+            }
+        }
+        return 0;
+    }
+    if(tokens[left-2].kind!=DIAMOND_TOKEN_DOT||left<3)return 0;
+    size_t receiver_classes[DIAMOND_MAX_UNION_TYPES];bool receiver_singleton=false;
+    const size_t receiver_count=resolve_expression(program,chunk,source,tokens,start,left-3,
+        receiver_classes,DIAMOND_MAX_UNION_TYPES,&receiver_singleton,depth+1);
+    if(receiver_count==0)return 0;
+    if(name_length==3&&memcmp(name,"new",3)==0&&receiver_singleton) {
+        size_t count=0;
+        for(size_t index=0;index<receiver_count;index++)
+            count=append_class(classes,count,capacity,receiver_classes[index]);
+        *is_singleton=false;return count;
+    }
+    size_t count=0;
+    for(size_t index=0;index<receiver_count;index++) {
+        const DiamondMethod *method=receiver_lookup_method(chunk,receiver_classes[index],
+            receiver_singleton,name,name_length);
+        if(method==nullptr||method->function_index>=chunk->function_count)return 0;
+        size_t returned[DIAMOND_MAX_UNION_TYPES];
+        const size_t returned_count=function_return_classes(chunk,
+            chunk->functions[method->function_index],returned,DIAMOND_MAX_UNION_TYPES);
+        if(returned_count==0)return 0;
+        for(size_t member=0;member<returned_count;member++)
+            count=append_class(classes,count,capacity,returned[member]);
+    }
+    *is_singleton=false;return count;
+}
+
+static size_t resolve_expression(const DiamondProgram *program,const DiamondChunk *chunk,
+        const char *source,const DiamondToken *tokens,size_t start,size_t end,
+        size_t *classes,size_t capacity,bool *is_singleton,unsigned depth) {
+    if(start>end||capacity==0||depth>32)return 0;
+    if(start==end) {
+        const DiamondToken token=tokens[start];
+        if(token.kind==DIAMOND_TOKEN_IDENTIFIER)
+            return resolve_name(program,chunk,source,token,classes,capacity,is_singleton);
+        if(token.kind==DIAMOND_TOKEN_SELF) {
+            const DiamondFunction *function=find_enclosing_function(program,chunk,token.span.start);
+            if(function==nullptr||function->owner_class>=chunk->class_count)return 0;
+            classes[0]=function->owner_class;
+            *is_singleton=function_is_singleton_of(chunk,&chunk->classes[function->owner_class],function);
+            return 1;
+        }
+        if(token.kind==DIAMOND_TOKEN_INSTANCE_VARIABLE) {
+            const DiamondFunction *function=find_enclosing_function(program,chunk,token.span.start);
+            if(function==nullptr||function->owner_class>=chunk->class_count)return 0;
+            const DiamondClass *class=&chunk->classes[function->owner_class];
+            const char *name=source+token.span.start+1;const size_t length=token.span.length-1;
+            for(size_t field=0;field<class->field_count;field++) {
+                if(strlen(class->fields[field])==length&&memcmp(class->fields[field],name,length)==0&&
+                   class->field_type_status[field]==1&&class->field_known_class[field]<chunk->class_count) {
+                    classes[0]=class->field_known_class[field];*is_singleton=false;return 1;
+                }
+            }
+        }
+        return 0;
+    }
+    if(tokens[end].kind==DIAMOND_TOKEN_RIGHT_PAREN)
+        return resolve_call(program,chunk,source,tokens,start,end,classes,capacity,is_singleton,depth);
+    return 0;
+}
+
 size_t receiver_resolve_classes(const DiamondProgram *program,
         const DiamondChunk *chunk,const char *source,size_t stop_offset,
         size_t *class_indices,size_t max_candidates,bool *is_singleton) {
     if(max_candidates==0)return 0;
-    const ReceiverContext context=classify_receiver(source,stop_offset);
-    if(context.kind==RECEIVER_SELF) {
-        const DiamondFunction *enclosing=find_enclosing_function(program,chunk,context.self_offset);
-        if(enclosing==nullptr||enclosing->owner_class==UINT8_MAX)return 0;
-        class_indices[0]=enclosing->owner_class;
-        *is_singleton=function_is_singleton_of(chunk,&chunk->classes[enclosing->owner_class],enclosing);
-        return 1;
+    DiamondLexer lexer;diamond_lexer_init(&lexer,source);
+    size_t count=0,capacity=32;
+    DiamondToken *tokens=malloc(capacity*sizeof *tokens);
+    if(tokens==nullptr)return 0;
+    while(true) {
+        const DiamondToken token=diamond_lexer_next(&lexer);
+        if(token.kind==DIAMOND_TOKEN_EOF||token.span.start>=stop_offset)break;
+        if(token.kind==DIAMOND_TOKEN_NEWLINE)continue;
+        if(count==capacity) {
+            capacity*=2;
+            DiamondToken *grown=realloc(tokens,capacity*sizeof *tokens);
+            if(grown==nullptr) {free(tokens);return 0;}
+            tokens=grown;
+        }
+        tokens[count++]=token;
     }
-    if(context.kind==RECEIVER_INSTANCE_VARIABLE) {
-        const DiamondFunction *enclosing=
-            find_enclosing_function(program,chunk,context.self_offset);
-        if(enclosing==nullptr||enclosing->owner_class>=chunk->class_count)return 0;
-        const DiamondClass *class=&chunk->classes[enclosing->owner_class];
-        const char *name=source+context.name_span.start+1;
-        const size_t length=context.name_span.length-1;
-        for(size_t field=0;field<class->field_count;field++) {
-            if(strlen(class->fields[field])!=length||
-               memcmp(class->fields[field],name,length)!=0)continue;
-            if(class->field_type_status[field]!=1)return 0;
-            class_indices[0]=class->field_known_class[field];
-            *is_singleton=false;
-            return class_indices[0]<chunk->class_count?1:0;
-        }
-        return 0;
+    size_t dot=count;
+    if(count>0&&tokens[count-1].kind==DIAMOND_TOKEN_DOT)dot=count-1;
+    else if(count>1&&tokens[count-1].kind==DIAMOND_TOKEN_IDENTIFIER&&
+            tokens[count-2].kind==DIAMOND_TOKEN_DOT)dot=count-2;
+    if(dot==0||dot==count) {free(tokens);return 0;}
+    /* Walk backward to the start of the receiver's current expression. A
+     * newline was discarded above, so the last statement boundary is the
+     * nearest token that cannot participate in a postfix call chain. */
+    size_t start=dot-1,nesting=0;
+    for(size_t index=dot;index>0;index--) {
+        const DiamondTokenKind kind=tokens[index-1].kind;
+        if(kind==DIAMOND_TOKEN_RIGHT_PAREN)nesting++;
+        else if(kind==DIAMOND_TOKEN_LEFT_PAREN&&nesting>0)nesting--;
+        start=index-1;
+        if(nesting==0&&index>1&&tokens[index-2].kind!=DIAMOND_TOKEN_DOT&&
+           kind!=DIAMOND_TOKEN_RIGHT_PAREN&&kind!=DIAMOND_TOKEN_LEFT_PAREN&&
+           kind!=DIAMOND_TOKEN_DOT)break;
     }
-    if(context.kind==RECEIVER_NAME) {
-        char name[DIAMOND_MAX_FUNCTION_NAME];
-        size_t length=context.name_span.length;
-        if(length>=sizeof name)length=sizeof name-1;
-        memcpy(name,source+context.name_span.start,length);
-        name[length]='\0';
-        for(size_t index=0;index<chunk->class_count;index++) {
-            if(strcmp(chunk->classes[index].name,name)==0) {
-                class_indices[0]=index;*is_singleton=true;
-                return 1;
-            }
-        }
-        const DiamondFunction *owner=nullptr;
-        const DiamondScopeLocal *local=
-            find_scope_local(program,chunk,name,length,context.name_span.start,&owner);
-        if(local==nullptr)return 0;
-        *is_singleton=false;
-        uint8_t known_type=local->known_type;
-        int16_t known_type_set=local->known_type_set;
-        if(owner!=nullptr)
-            local_type_at_offset(owner,local,context.name_span.start,
-                                 &known_type,&known_type_set);
-        size_t single_class;
-        if(decode_class_type(chunk,known_type,&single_class)) {
-            class_indices[0]=single_class;
-            return 1;
-        }
-        /* Not a single definite class -- see whether it's an explicit
-         * union annotation (`x: Dog | Cat`) instead. known_type_set only
-         * means anything against the function that owns this scope
-         * entry's own type_sets[] table (see find_scope_local's own
-         * comment), never chunk-wide. */
-        if(known_type_set<0||owner==nullptr)return 0;
-        if((size_t)known_type_set>=owner->type_set_count)return 0;
-        const DiamondTypeSet *set=&owner->type_sets[(size_t)known_type_set];
-        size_t found=0;
-        for(size_t index=0;index<set->count&&found<max_candidates;index++) {
-            size_t member_class;
-            if(decode_class_type(chunk,set->members[index].id,&member_class))
-                class_indices[found++]=member_class;
-        }
-        return found;
-    }
-    return 0;
+    const size_t result=resolve_expression(program,chunk,source,tokens,start,dot-1,
+        class_indices,max_candidates,is_singleton,0);
+    free(tokens);return result;
 }
 
 const DiamondMethod *receiver_lookup_method(const DiamondChunk *chunk,

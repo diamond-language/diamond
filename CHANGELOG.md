@@ -41,6 +41,9 @@
   concrete assigned class.
 - Added conservative instance-variable receiver tooling across class methods
   when every assignment to the field agrees on one concrete class.
+- Added recursive LSP resolution through explicitly typed call results,
+  including constructors, top-level and singleton factories, instance methods,
+  and class-union returns, for completion, hover, and go-to-definition.
 - Corrected the runtime type-ID partition so the advertised class capacity no
   longer overlaps generic-variable and interface IDs, and raised the class
   capacity from 128 to 180. Updated the self-hosted compiler's mirrored
