@@ -817,6 +817,21 @@ count=$((count + 1))
 send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$callable_local_uri"'"}}}'
 read_message >/dev/null
 
+# --- synthesized Callable-union block parameters retain full union graphs ---
+
+union_block_uri="file:///union_block_hover.di"
+union_block_source='class LspRed\n  def score() -> Int = 40\nend\nclass LspBlue\n  def score() -> Int = 40\nend\ndef with_red(&block: Callable[[LspRed], Int]) -> Int = yield(LspRed.new())\ndef with_blue(&block: Callable[[LspBlue], Int]) -> Int = yield(LspBlue.new())\nchoice = if ARGV.length() == 0\n  with_red\nelse\n  with_blue\nend\nchoice() do |value|\n  value.score() + 2\nend'
+send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$union_block_uri"'","text":"'"$union_block_source"'"}}}'
+read_message >/dev/null
+
+send '{"jsonrpc":"2.0","id":174,"method":"textDocument/hover","params":{"textDocument":{"uri":"'"$union_block_uri"'"},"position":{"line":13,"character":14}}}'
+response="$(read_message)"
+[[ "$response" == *'"value":"LspRed | LspBlue"'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$union_block_uri"'"}}}'
+read_message >/dev/null
+
 # --- an unrecognized method gets a JSON-RPC MethodNotFound error ---
 
 send '{"jsonrpc":"2.0","id":2,"method":"textDocument/bogusMethod","params":{}}'

@@ -358,6 +358,9 @@ existing explicit-binding requirement. Callable-union block context first
 selects existing safe graphs, then constructs input unions when sibling input
 types have no declared common graph. Synthetic return intersections remain
 open; return context therefore still requires an existing declared subtype.
+Anonymous blocks clone those complete parameter graphs into their own function
+metadata, so synthesized-union calls retain structurally shared method returns
+instead of falling back to dynamic result facts.
 
 Expected collection graphs now recurse through nested Array and Hash literals.
 Array elements and Hash keys/values compile against their respective declared

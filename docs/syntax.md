@@ -633,6 +633,9 @@ such input graph exists, it constructs a union of the arms' input graphs.
 Return context uses an existing declared subtype only when it satisfies every
 arm; synthetic return intersections are not inferred. Otherwise the block's
 return type is determined by its body.
+The complete parameter graph is visible inside the anonymous block. Calling a
+method shared by every member of a synthesized union therefore retains a
+structurally identical declared return graph for chained expressions.
 
 Callable values accept the same trailing `do ... end` block as named function
 and method calls, including calls with a spread Array. The block is appended as

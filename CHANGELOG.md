@@ -29,6 +29,9 @@
 - Constructed safe input unions for Callable-union trailing blocks when no
   existing declared supertype can accept every arm, while retaining the
   conservative existing-subtype rule for return context.
+- Preserved complete contextual block-parameter graphs inside anonymous block
+  bodies, allowing union receiver calls to retain shared declared return types
+  and specialized bytecode.
 - Recursed expected collection contracts through nested Array and Hash literals
   so contextual generic method references resolve at arbitrary literal depth.
 - Stabilized recursive type-graph cloning when the current function's type-set

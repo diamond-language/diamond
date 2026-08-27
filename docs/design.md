@@ -478,6 +478,10 @@ contravariant-parameter and covariant-return rules as runtime Callable checks.
 If no declared candidate satisfies all arms, each input graph is joined into a
 union that can accept every arm. Failure to represent that union disables input
 context conservatively.
+Context transfer clones each complete parameter graph into the anonymous
+block's function table. Body-local receiver dispatch can therefore compare all
+union members and publish a shared return graph without retaining pointers into
+the enclosing function's reallocatable type-set table.
 
 Synthetic fixed-arity wrappers do not reimplement a target method's default
 expressions. Instead, `ARGUMENT_PROVIDED` branches forward only the prefix that

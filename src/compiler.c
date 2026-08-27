@@ -122,6 +122,7 @@ typedef struct Compiler {
     bool has_contextual_block_types;
     uint8_t contextual_block_arity;
     uint8_t contextual_block_types[16];
+    int32_t contextual_block_type_sets[16];
     int32_t contextual_block_return_set;
     int32_t expected_expression_type_set;
     int current_return_type;
@@ -2262,13 +2263,21 @@ static void prepare_contextual_block(Compiler *compiler,
     compiler->has_contextual_block_types=false;
     compiler->contextual_block_arity=0;
     compiler->contextual_block_return_set=-1;
+    uint16_t parameter_sets[16];
+    uint16_t return_set=DIAMOND_NO_TYPE_SET;
+    for(size_t index=0;index<16;index++) {
+        compiler->contextual_block_type_sets[index]=-1;
+        parameter_sets[index]=DIAMOND_NO_TYPE_SET;
+    }
     if(callable!=nullptr&&callable->id==DIAMOND_TYPE_CALLABLE&&
        callable->callable_parameters_typed&&callable->callable_arity<=16) {
         compiler->has_contextual_block_types=true;
         compiler->contextual_block_arity=callable->callable_arity;
+        return_set=callable->callable_return_set;
         for(size_t index=0;index<callable->callable_arity;index++) {
             compiler->contextual_block_types[index]=TYPE_UNKNOWN;
             const uint16_t parameter_set=callable->callable_parameter_sets[index];
+            parameter_sets[index]=parameter_set;
             if(parameter_set>=set_count)continue;
             const DiamondTypeSet *parameter=&sets[parameter_set];
             if(parameter->count==1&&
@@ -2276,12 +2285,17 @@ static void prepare_contextual_block(Compiler *compiler,
                 compiler->contextual_block_types[index]=parameter->members[0].id;
         }
     }
-    /* Clone last: `sets` can be the current function's own table, whose
-     * reserve may move while cloning. All reads through `callable` must be
-     * complete before that possible relocation. */
-    if(callable!=nullptr&&callable->id==DIAMOND_TYPE_CALLABLE&&
-       callable->callable_return_set!=DIAMOND_NO_TYPE_SET) {
-        const uint16_t return_set=callable->callable_return_set;
+    /* Clone last: `sets` and `callable` can point into the current function's
+     * table, whose reserve may move while cloning. Capture every source index
+     * before the first clone, then let the index-aware cloner reacquire it. */
+    for(size_t index=0;index<compiler->contextual_block_arity;index++)
+        if(parameter_sets[index]!=DIAMOND_NO_TYPE_SET) {
+            const uint16_t cloned=clone_type_set_into_current(compiler,sets,
+                set_count,parameter_sets[index]);
+            if(cloned!=DIAMOND_NO_TYPE_SET)
+                compiler->contextual_block_type_sets[index]=(int32_t)cloned;
+        }
+    if(return_set!=DIAMOND_NO_TYPE_SET) {
         const uint16_t cloned=clone_type_set_into_current(compiler,sets,
             set_count,return_set);
         if(cloned!=DIAMOND_NO_TYPE_SET)
@@ -2308,26 +2322,22 @@ static uint16_t compile_contextual_typed_block(Compiler *compiler,
                     callable->callable_return_set;
                 prepare_contextual_block(compiler,target->type_sets,
                     target->type_set_count,callable);
-                if(callable_typed)
+                if(callable_typed&&target->type_variable_count>0)
                     for(size_t index=0;index<callable->callable_arity;index++) {
                         const uint16_t parameter_set=
                             callable->callable_parameter_sets[index];
                         if(parameter_set>=target->type_set_count)continue;
-                        const DiamondTypeSet *parameter=
-                            &target->type_sets[parameter_set];
-                        if(parameter->count!=1)continue;
-                        const uint8_t id=parameter->members[0].id;
-                        if(id<DIAMOND_TYPE_VARIABLE_BASE||
-                           id>=DIAMOND_TYPE_INTERFACE_BASE)continue;
-                        const size_t variable=
-                            (size_t)(id-DIAMOND_TYPE_VARIABLE_BASE);
-                        if(variable>=type_argument_count)continue;
-                        const uint16_t binding=type_arguments[variable];
-                        if(binding>=compiler->function->type_set_count)continue;
-                        const DiamondTypeSet *bound=
-                            &compiler->function->type_sets[binding];
-                        if(bound->count==1&&
-                           bound->members[0].id<DIAMOND_TYPE_VARIABLE_BASE)
+                        bool resolved=true;
+                        const uint16_t substituted=clone_substituted_type_set(
+                            compiler,target,parameter_set,type_arguments,
+                            type_argument_count,&resolved);
+                        if(!resolved||substituted==DIAMOND_NO_TYPE_SET)continue;
+                        compiler->contextual_block_type_sets[index]=
+                            (int32_t)substituted;
+                        const DiamondTypeSet *bound=&compiler->function->
+                            type_sets[substituted];
+                        if(bound->count==1&&bound->members[0].id<
+                               DIAMOND_TYPE_VARIABLE_BASE)
                             compiler->contextual_block_types[index]=
                                 bound->members[0].id;
                     }
@@ -8836,8 +8846,11 @@ static uint16_t compile_block(Compiler *compiler) {
     const bool has_contextual_types=compiler->has_contextual_block_types;
     const uint8_t contextual_arity=compiler->contextual_block_arity;
     uint8_t contextual_types[16];
-    for(size_t index=0;index<contextual_arity;index++)
+    int32_t contextual_type_sets[16];
+    for(size_t index=0;index<contextual_arity;index++) {
         contextual_types[index]=compiler->contextual_block_types[index];
+        contextual_type_sets[index]=compiler->contextual_block_type_sets[index];
+    }
     const int32_t contextual_return_set=compiler->contextual_block_return_set;
     compiler->has_contextual_block_types=false;
     compiler->contextual_block_arity=0;
@@ -8970,6 +8983,18 @@ static uint16_t compile_block(Compiler *compiler) {
                 }
                 const uint16_t parameter=allocate_register(compiler);
                 if(has_contextual_types&&parameter_count<contextual_arity&&
+                   contextual_type_sets[parameter_count]>=0&&
+                   (size_t)contextual_type_sets[parameter_count]<
+                       outer_function->type_set_count) {
+                    const uint16_t cloned=clone_type_set_into_current(compiler,
+                        outer_function->type_sets,outer_function->type_set_count,
+                        (uint16_t)contextual_type_sets[parameter_count]);
+                    if(cloned!=DIAMOND_NO_TYPE_SET) {
+                        compiler->known_type_sets[parameter]=(int32_t)cloned;
+                        function->parameter_type_sets[parameter_count]=cloned;
+                    }
+                }
+                if(has_contextual_types&&parameter_count<contextual_arity&&
                    contextual_types[parameter_count]!=TYPE_UNKNOWN) {
                     compiler->known_types[parameter]=
                         contextual_types[parameter_count];
@@ -8978,7 +9003,8 @@ static uint16_t compile_block(Compiler *compiler) {
                      * Dynamic invocation validates typed Callable arguments
                      * from this metadata, so omitting it would compile a
                      * well-typed body and then reject its closure at runtime. */
-                    if(reserve_type_sets(compiler,1)) {
+                    if(function->parameter_type_sets[parameter_count]==
+                           DIAMOND_NO_TYPE_SET&&reserve_type_sets(compiler,1)) {
                         const size_t set_index=function->type_set_count++;
                         DiamondTypeSet *set=&function->type_sets[set_index];
                         set->count=1;set->inferred=true;
