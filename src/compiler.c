@@ -597,10 +597,43 @@ static uint16_t concrete_type_set(Compiler *compiler,uint8_t type) {
     return (uint16_t)index;
 }
 
-static int32_t homogeneous_value_type_set(Compiler *compiler,
+static bool type_members_equal(DiamondTypeMember left,DiamondTypeMember right);
+static bool type_sets_equal_unordered(DiamondTypeSet left,DiamondTypeSet right);
+
+static int32_t join_type_set_indices(Compiler *compiler,int32_t left,
+        int32_t right) {
+    if(left<0||right<0||(size_t)left>=compiler->function->type_set_count||
+       (size_t)right>=compiler->function->type_set_count)return -1;
+    if(left==right)return left;
+    DiamondTypeSet joined=compiler->function->type_sets[(size_t)left];
+    const DiamondTypeSet addition=compiler->function->type_sets[(size_t)right];
+    for(size_t source=0;source<addition.count;source++) {
+        const DiamondTypeMember member=addition.members[source];
+        bool duplicate=false;
+        for(size_t target=0;target<joined.count;target++) {
+            if(type_members_equal(joined.members[target],member)) {
+                duplicate=true;break;
+            }
+            if(joined.members[target].id==member.id)return -1;
+        }
+        if(duplicate)continue;
+        if(joined.count==DIAMOND_MAX_UNION_TYPES)return -1;
+        joined.members[joined.count++]=member;
+    }
+    joined.inferred=true;
+    for(size_t index=0;index<compiler->function->type_set_count;index++)
+        if(type_sets_equal_unordered(joined,
+                compiler->function->type_sets[index]))return (int32_t)index;
+    if(!reserve_type_sets(compiler,1))return -1;
+    const size_t index=compiler->function->type_set_count++;
+    compiler->function->type_sets[index]=joined;
+    return (int32_t)index;
+}
+
+static int32_t joined_value_type_set(Compiler *compiler,
         const uint16_t *values,size_t count) {
     if(count==0)return -1;
-    int32_t common=-1;
+    int32_t joined=-1;
     for(size_t index=0;index<count;index++) {
         int32_t current=compiler->known_type_sets[values[index]];
         if(current<0) {
@@ -610,10 +643,10 @@ static int32_t homogeneous_value_type_set(Compiler *compiler,
         }
         if(current<0||(size_t)current>=compiler->function->type_set_count)
             return -1;
-        if(common<0)common=current;
-        else if(common!=current)return -1;
+        joined=joined<0?current:join_type_set_indices(compiler,joined,current);
+        if(joined<0)return -1;
     }
-    return common;
+    return joined;
 }
 
 static void record_collection_type_set(Compiler *compiler,uint16_t reg,
@@ -4822,14 +4855,14 @@ static uint16_t emit_build_spread_arguments(Compiler *compiler,
     compiler->known_types[destination]=DIAMOND_TYPE_ARRAY;
     int32_t element_set=array_element_type_set(compiler,spread);
     if(prefix_count>0) {
-        const int32_t prefix_set=homogeneous_value_type_set(compiler,prefix,
+        const int32_t prefix_set=joined_value_type_set(compiler,prefix,
             prefix_count);
-        if(element_set<0||prefix_set!=element_set)element_set=-1;
+        element_set=join_type_set_indices(compiler,element_set,prefix_set);
     }
     if(suffix_count>0) {
-        const int32_t suffix_set=homogeneous_value_type_set(compiler,suffix,
+        const int32_t suffix_set=joined_value_type_set(compiler,suffix,
             suffix_count);
-        if(element_set<0||suffix_set!=element_set)element_set=-1;
+        element_set=join_type_set_indices(compiler,element_set,suffix_set);
     }
     record_collection_type_set(compiler,destination,DIAMOND_TYPE_ARRAY,
         element_set,-1);
@@ -5347,7 +5380,7 @@ static uint16_t parse_array(Compiler *compiler) {
     emit_instruction(compiler,DIAMOND_OP_ARRAY,destination,base,(uint8_t)count,3);
     compiler->known_types[destination]=DIAMOND_TYPE_ARRAY;
     record_collection_type_set(compiler,destination,DIAMOND_TYPE_ARRAY,
-        homogeneous_value_type_set(compiler,elements,count),-1);
+        joined_value_type_set(compiler,elements,count),-1);
     return destination;
 }
 
@@ -5391,8 +5424,8 @@ static uint16_t parse_hash(Compiler *compiler) {
     emit_instruction(compiler,DIAMOND_OP_HASH,destination,base,(uint8_t)count,3);
     compiler->known_types[destination]=DIAMOND_TYPE_HASH;
     record_collection_type_set(compiler,destination,DIAMOND_TYPE_HASH,
-        homogeneous_value_type_set(compiler,keys,count),
-        homogeneous_value_type_set(compiler,values,count));
+        joined_value_type_set(compiler,keys,count),
+        joined_value_type_set(compiler,values,count));
     return destination;
 }
 

@@ -29,8 +29,9 @@
 - Added conservative contextual typing for anonymous block parameters at
   statically resolved function, singleton, and instance-method calls with typed
   Callable slots, including direct generic bindings inferred from concrete
-  positional arguments and recursive bindings from homogeneous Array and Hash
-  literals. Fixed constructor calls now infer `initialize` bindings before
+  positional arguments and recursive bindings from Array and Hash literals.
+  Heterogeneous literal members now join into conservative inferred unions.
+  Fixed constructor calls now infer `initialize` bindings before
   compiling their trailing block. Homogeneous spread Arrays now provide the
   same bindings across function, singleton, instance-method, and constructor
   calls. Statically resolved keyword arguments now infer bindings from their

@@ -1222,9 +1222,11 @@ merged around the spread preserve that contract only when every value agrees.
 Statically resolved keyword calls map each supplied name back to the target's
 declared parameter slot and infer from its value before compiling the trailing
 block. Explicit generic arguments remain authoritative and bypass inference.
-Homogeneous Array and Hash literals record recursive inferred type sets, so
-matching nested collection parameters can derive the same bindings. Mixed
-element or entry types remain unknown rather than inventing an unsafe join.
+Array and Hash literals record recursive inferred type sets, so matching nested
+collection parameters can derive the same bindings. Distinguishable mixed
+members form an inferred union. Two differently parameterized members with the
+same outer type remain unknown because the annotation graph cannot represent
+that union without conflating their nested contracts.
 This context is consumed at the block boundary and does not leak into nested
 blocks.
 Union receivers participate when every member resolves to the exact same

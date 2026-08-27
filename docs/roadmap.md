@@ -501,9 +501,10 @@ their final nested Callable parameter through fixed, spread, and keyword calls.
 Explicit generic bindings substitute concrete block parameter types at function
 and method call sites. When bindings are omitted, direct one-member generic
 parameters now infer them from concrete positional arguments for statically
-resolved top-level, singleton, and instance-method calls. Homogeneous Array and
-Hash literals retain recursive compile-time contracts, allowing direct and
-nested collection parameters to contribute bindings too. Fixed constructor
+resolved top-level, singleton, and instance-method calls. Array and Hash
+literals retain recursive compile-time contracts and join distinguishable
+member types into conservative unions, allowing direct and nested collection
+parameters to contribute bindings too. Fixed constructor
 calls infer the generic bindings declared by `initialize` through the same
 path. Homogeneously typed spread Arrays provide bindings for top-level,
 singleton, instance-method, and constructor calls, including merged fixed
@@ -511,9 +512,9 @@ arguments that retain the same element contract. Union receivers
 Keyword arguments at statically resolved calls bind against their declared
 parameter slots for top-level, singleton, instance-method, and constructor
 calls. Union receivers participate when every member resolves to the exact same inherited
-implementation. Heterogeneous collection joins, divergent overrides, and
-genuinely unresolved generic contexts remain future extensions to the same
-conservative mechanism.
+implementation. Differently parameterized members sharing one outer type,
+divergent overrides, and genuinely unresolved generic contexts remain future
+extensions to the same conservative mechanism.
 Typed top-level function references and class/module singleton references now
 publish structural Callable signatures into local type facts, so later fixed,
 spread, and keyword Callable-value calls retain block context through aliases.

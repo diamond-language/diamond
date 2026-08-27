@@ -567,10 +567,10 @@ corresponding `do |...|` locals. Callable values with typed nested Callable
 parameters provide the same context. Explicit generic bindings are substituted
 before the block body is compiled. For statically resolved top-level,
 singleton, and instance-method calls, omitted bindings are inferred when a
-concrete positional argument maps directly to a generic parameter. Homogeneous
-Array and Hash literals also provide recursive bindings for nested collection
-parameters. Mixed literal types remain conservative and require explicit
-generic arguments. Fixed constructor calls infer `initialize` type variables
+concrete positional argument maps directly to a generic parameter. Array and
+Hash literals also provide recursive bindings for nested collection parameters.
+Mixed distinguishable members form unions; conflicting parameterizations of
+the same outer type remain unknown. Fixed constructor calls infer `initialize` type variables
 from their positional arguments in the same way.
 Spreading a homogeneously typed Array supplies its element contract to generic
 parameters before a trailing block is compiled. This applies to functions,
