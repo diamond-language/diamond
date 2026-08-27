@@ -1320,7 +1320,17 @@ small synthetic child chunk containing an ordinary `INVOKE` followed by
 re-enters the existing universal-method, built-in, and collection-extension
 matrix without duplicating any native branch. The caller's receiver and spread
 Array remain GC roots for the nested call; the temporary vector copies only
-`DiamondValue` handles. Mixing spread and keyword arguments remains unsupported.
+`DiamondValue` handles.
+
+Direct top-level calls can place keyword arguments after a spread. The compiler
+resolves each keyword name to its declared parameter slot and emits
+`DIAMOND_OP_CALL_KEYWORD_SPREAD` (or its typed variant) with compact
+slot/register pairs. At runtime the spread fills the leading positional slots;
+the opcode rejects collisions, rejects unfilled gaps below the highest supplied
+slot, merges the keyword values into a temporary argument vector, and then uses
+the same `run_chunk` path as every other direct call. This remains top-level
+only because methods, Callable values, constructors, and singleton calls do not
+support keyword arguments independently of spread.
 
 ### Bare singleton method references
 

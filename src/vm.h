@@ -309,6 +309,9 @@ typedef enum DiamondOpCode : uint8_t {
     DIAMOND_OP_INVOKE_TYPED_SPREAD,
     /* Explicit type bindings for `Namespace.method[T](*arguments)`. */
     DIAMOND_OP_CALL_TYPED_SINGLETON_SPREAD,
+    /* Top-level `function(*arguments, keyword: value)` runtime slot merge. */
+    DIAMOND_OP_CALL_KEYWORD_SPREAD,
+    DIAMOND_OP_CALL_TYPED_KEYWORD_SPREAD,
     DIAMOND_OP_COUNT,
 } DiamondOpCode;
 

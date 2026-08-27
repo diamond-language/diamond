@@ -9776,12 +9776,31 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 break;
             }
             case DIAMOND_OP_CALL_SPREAD:
-            case DIAMOND_OP_CALL_TYPED_SPREAD: {
+            case DIAMOND_OP_CALL_TYPED_SPREAD:
+            case DIAMOND_OP_CALL_KEYWORD_SPREAD:
+            case DIAMOND_OP_CALL_TYPED_KEYWORD_SPREAD: {
                 uint16_t destination=0,function_index=0,array_register=0;
                 READ_SHORT(destination);READ_SHORT(function_index);
                 READ_SHORT(array_register);
+                const bool has_keywords=(DiamondOpCode)instruction==
+                    DIAMOND_OP_CALL_KEYWORD_SPREAD||
+                    (DiamondOpCode)instruction==
+                    DIAMOND_OP_CALL_TYPED_KEYWORD_SPREAD;
+                uint8_t keyword_count=0,keyword_slots[16];
+                uint16_t keyword_registers[16];
+                if(has_keywords) {
+                    READ_BYTE(keyword_count);
+                    if(keyword_count==0||keyword_count>16)
+                        VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
+                    for(size_t index=0;index<keyword_count;index++) {
+                        READ_BYTE(keyword_slots[index]);
+                        READ_SHORT(keyword_registers[index]);
+                    }
+                }
                 uint8_t type_argument_count=0,type_arguments[8];
-                if((DiamondOpCode)instruction==DIAMOND_OP_CALL_TYPED_SPREAD) {
+                if((DiamondOpCode)instruction==DIAMOND_OP_CALL_TYPED_SPREAD||
+                   (DiamondOpCode)instruction==
+                    DIAMOND_OP_CALL_TYPED_KEYWORD_SPREAD) {
                     READ_BYTE(type_argument_count);
                     if(type_argument_count>8)VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
                     for(size_t index=0;index<type_argument_count;index++)
@@ -9798,6 +9817,10 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 const DiamondArray *spread=
                     (const DiamondArray *)registers[array_register].as.object;
                 const DiamondFunction *function=chunk->functions[function_index];
+                for(size_t index=0;index<keyword_count;index++)
+                    if(keyword_slots[index]>=function->arity||
+                       keyword_registers[index]>=DIAMOND_REGISTER_COUNT)
+                        VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
                 if(type_argument_count>0&&
                    type_argument_count!=function->type_variable_count)
                     VM_RETURN(DIAMOND_VM_TYPE_ERROR);
@@ -9809,9 +9832,44 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     bind_context_set(&explicit_bindings[index],0,chunk,
                         chunk->type_sets,type_arguments[index]);
                 }
-                if(spread->count<function->required_arity||
-                   (spread->count>function->arity && !function->has_variadic))
+                const DiamondValue *call_arguments=spread->values;
+                size_t call_argument_count=spread->count;
+                DiamondValue *merged_arguments=nullptr;
+                if(has_keywords) {
+                    bool filled[16]={0};
+                    if(spread->count>16)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                    for(size_t index=0;index<spread->count;index++)filled[index]=true;
+                    for(size_t index=0;index<keyword_count;index++) {
+                        const size_t slot=keyword_slots[index];
+                        if(filled[slot]) {
+                            snprintf(vm->error,sizeof vm->error,
+                                "multiple values for the same argument");
+                            VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                        }
+                        filled[slot]=true;
+                        if(slot+1>call_argument_count)call_argument_count=slot+1;
+                    }
+                    for(size_t index=0;index<call_argument_count;index++)
+                        if(!filled[index]) {
+                            snprintf(vm->error,sizeof vm->error,"missing argument");
+                            VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                        }
+                    merged_arguments=malloc(call_argument_count*
+                        sizeof *merged_arguments);
+                    if(merged_arguments==nullptr)
+                        VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                    for(size_t index=0;index<spread->count;index++)
+                        merged_arguments[index]=spread->values[index];
+                    for(size_t index=0;index<keyword_count;index++)
+                        merged_arguments[keyword_slots[index]]=
+                            registers[keyword_registers[index]];
+                    call_arguments=merged_arguments;
+                }
+                if(call_argument_count<function->required_arity||
+                   (call_argument_count>function->arity&&!function->has_variadic)) {
+                    free(merged_arguments);
                     VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                }
                 const DiamondChunk called_chunk={
                     .name=function->name,.code=function->code,
                     .lines=function->lines,.columns=function->columns,
@@ -9843,7 +9901,9 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                  * throughout via registers[array_register], the same
                  * live root any other in-use register already is. */
                 const DiamondVmStatus spread_status=run_chunk(&called_chunk,vm,
-                    spread->values,spread->count,depth+1,nullptr,&spread_result);
+                    call_arguments,call_argument_count,depth+1,nullptr,
+                    &spread_result);
+                free(merged_arguments);
                 VM_PROPAGATE(spread_status);
                 registers[destination]=spread_result;
                 break;

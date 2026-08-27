@@ -493,6 +493,45 @@ static bool disassemble_chunk(FILE *stream, const char *name,
                         valid=false;
                 offset+=(size_t)8+type_count;break;
             }
+            case DIAMOND_OP_CALL_KEYWORD_SPREAD:
+            case DIAMOND_OP_CALL_TYPED_KEYWORD_SPREAD: {
+                if(!require_bytes(stream,chunk,offset,8)) {
+                    valid=false;offset=chunk->code_count;break;
+                }
+                const size_t function_index=read_operand(chunk,offset+3);
+                const uint8_t keyword_count=chunk->code[offset+7];
+                const size_t keyword_end=8+(size_t)keyword_count*3;
+                const bool typed=(DiamondOpCode)opcode==
+                    DIAMOND_OP_CALL_TYPED_KEYWORD_SPREAD;
+                if(keyword_count==0||keyword_count>16||
+                   !require_bytes(stream,chunk,offset,keyword_end+(typed?1:0))) {
+                    valid=false;offset=chunk->code_count;break;
+                }
+                fprintf(stream,"%-18s r%u, f%zu, r%u, %u keywords\n",
+                    typed?"CALL_TYPED_KW_SPREAD":"CALL_KW_SPREAD",
+                    checked_register(chunk,stream,read_operand(chunk,offset+1),&valid),
+                    function_index,
+                    checked_register(chunk,stream,read_operand(chunk,offset+5),&valid),
+                    keyword_count);
+                if(function_index>=chunk->function_count)valid=false;
+                for(size_t index=0;index<keyword_count;index++) {
+                    const size_t entry=offset+8+index*3;
+                    const uint8_t slot=chunk->code[entry];
+                    const uint16_t value=checked_register(chunk,stream,
+                        read_operand(chunk,entry+1),&valid);
+                    fprintf(stream,"                     slot %u <- r%u\n",slot,value);
+                }
+                if(!typed) {offset+=keyword_end;break;}
+                const uint8_t type_count=chunk->code[offset+keyword_end];
+                if(type_count>8||!require_bytes(stream,chunk,offset,
+                        keyword_end+1+(size_t)type_count)) {
+                    valid=false;offset=chunk->code_count;break;
+                }
+                for(size_t index=0;index<type_count;index++)
+                    if((size_t)chunk->code[offset+keyword_end+1+index]>=
+                       chunk->type_set_count)valid=false;
+                offset+=keyword_end+1+(size_t)type_count;break;
+            }
             case DIAMOND_OP_INVOKE_SPREAD: {
                 if(!require_bytes(stream,chunk,offset,8)) {
                     valid=false;offset=chunk->code_count;break;

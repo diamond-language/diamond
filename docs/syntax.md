@@ -568,8 +568,10 @@ addition to) supplying them positionally. Positional arguments must come
 first; once a keyword argument appears, every argument after it must also
 be a keyword. A keyword argument can fill any parameter regardless of the
 order it's written at the call site — the compiler resolves each name to
-its declared position and reorders at compile time, so there's no runtime
-cost or new bytecode involved.
+its declared position. Ordinary calls reorder entirely at compile time.
+When a spread precedes keywords (`move(*coordinates, speed: 2)`), dedicated
+spread bytecode merges the Array's positional values with those declared
+slots at runtime, when the Array's length is known.
 
 Keyword arguments can't skip over an earlier defaulted parameter to reach
 a later one: `def f(a, b = 2, c = 3) ... end` called as `f(1, c: 5)` is a
@@ -653,7 +655,12 @@ to a variadic *parameter* above. The supported slice is deliberately narrow:
   are supported;
 - one spread argument can appear before, between, or after fixed positional
   arguments — `foo(1, *middle, 4)` preserves left-to-right order;
-- keyword arguments cannot be mixed with a spread argument;
+- direct top-level functions may place keywords after the spread and any
+  fixed positional suffix — `foo(1, *middle, last: 4)`; collisions and gaps
+  are diagnosed at runtime because the spread length is dynamic;
+- methods, Callable values, constructors, and singleton calls remain
+  positional-only, with or without spread, because keywords are not supported
+  on those call forms independently;
 - explicit generic bindings compose with spread for functions and user-defined
   instance/class/module methods (`identity[Int](*values)`);
 - arity and method visibility are checked against the Array's actual length at *runtime*
