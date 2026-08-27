@@ -202,6 +202,11 @@ typedef struct DiamondClosure {
     DiamondObject object;
     uint16_t function_index;
     uint8_t capture_count;
+    /* True for a source `do ... end` block, false for named closures and
+     * function references. Preserved across forwarding and Thread cloning so
+     * variadic prologues can distinguish an optional block from a final rest
+     * argument without overloading positional value kinds. */
+    bool is_block;
     DiamondValue captures[16];
     /* Non-null only for a value returned by ClassName.compile_method
      * (src/vm.c's DIAMOND_OP_COMPILE_METHOD) -- function_index above is

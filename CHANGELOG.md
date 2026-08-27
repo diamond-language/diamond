@@ -106,6 +106,9 @@
   ordinary functions and methods, including `target(*arguments, &block)`.
 - Made non-variadic named blocks default to `nil`, including generated delegate
   methods that omit the target's block argument when none was supplied.
+- Tagged source block closures independently from ordinary Callable values, so
+  optional `*arguments, &block` prologues no longer steal the final rest value;
+  variadic delegates also omit an absent block during target forwarding.
 - Added protected method visibility with peer/subclass receiver access and
   runtime rejection outside the declaring class hierarchy.
 - Added `LazyEnumerator` pipelines with deferred `map`, `select`, and `reject`

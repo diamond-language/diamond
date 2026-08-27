@@ -1182,10 +1182,11 @@ reading the call's *original* `arguments` pointer (a `run_chunk`
 parameter, still in scope for the whole function, including this
 prologue instruction), not `registers[]`, which a non-variadic-sized
 buffer would otherwise have to hold every trailing value in individually.
-Without a variadic parameter, `&block` is optional and its zero-initialized
-register reads as `nil` when absent. With `*arguments, &block`, the block is
-required: the positional runtime ABI has no separate block-presence bit, so an
-absent block would be indistinguishable from the final rest argument.
+`&block` is optional and its zero-initialized register reads as `nil` when
+absent. Source `do ... end` closures carry a dedicated block tag, preserved
+through forwarding and Thread cloning. A `*arguments, &block` prologue checks
+that tag before preserving the final positional value; without it, every value
+remains in the rest Array, including an ordinary final Callable.
 
 **A real, riding-along correctness fix, not incidental.** `run_chunk`
 previously copied exactly `argument_count` values into `registers[]`

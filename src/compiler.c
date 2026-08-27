@@ -7887,7 +7887,7 @@ static uint16_t compile_definition(Compiler *compiler, bool captures_self) {
             } else if(saw_default&&!is_block_parameter) {
                 fail(compiler,compiler->previous.span,
                      "required parameter cannot follow a default parameter");
-            } else if(!is_block_parameter||function->has_variadic)
+            } else if(!is_block_parameter)
                 function->required_arity++;
             if(parameter_type>=0) {
                 emit_type_check(compiler,parameter,(uint16_t)parameter_type,
@@ -8884,7 +8884,8 @@ static void compile_delegate(Compiler *compiler) {
         function->parameter_names[index][name_length]='\0';
     }
     function->arity=(uint8_t)(function->arity+parameter_count);
-    function->required_arity=variadic?(uint8_t)parameter_count:
+    function->required_arity=variadic?
+        (uint8_t)(parameter_count-(forwards_block?1u:0u)):
         (uint8_t)(function->arity-(forwards_block?1u:0u));
     function->has_variadic=variadic;
     if(variadic) {
@@ -8909,12 +8910,37 @@ static void compile_delegate(Compiler *compiler) {
     uint16_t result;
     if(variadic) {
         const size_t variadic_index=parameter_count-(forwards_block?2u:1u);
-        const uint16_t forwarded=emit_build_spread_arguments(compiler,
-            parameter_registers,variadic_index,
-            parameter_registers[variadic_index],
-            forwards_block?&parameter_registers[variadic_index+1]:nullptr,
-            forwards_block?1:0);
-        result=emit_invoke_spread(compiler,ivar_register,method_name,forwarded);
+        if(forwards_block) {
+            const uint16_t absent=allocate_register(compiler);
+            emit_instruction(compiler,DIAMOND_OP_NIL,absent,0,0,1);
+            const uint16_t missing=allocate_register(compiler);
+            emit_instruction(compiler,DIAMOND_OP_EQUAL,missing,
+                parameter_registers[variadic_index+1],absent,3);
+            const size_t with_block=
+                emit_jump(compiler,DIAMOND_OP_JUMP_IF_FALSE,missing);
+            const uint16_t without_args=emit_build_spread_arguments(compiler,
+                parameter_registers,variadic_index,
+                parameter_registers[variadic_index],nullptr,0);
+            const uint16_t without=emit_invoke_spread(compiler,ivar_register,
+                method_name,without_args);
+            result=allocate_register(compiler);
+            emit_instruction(compiler,DIAMOND_OP_MOVE,result,without,0,2);
+            const size_t finished=emit_jump(compiler,DIAMOND_OP_JUMP,0);
+            patch_jump(compiler,with_block,compiler->function->code_count);
+            const uint16_t with_args=emit_build_spread_arguments(compiler,
+                parameter_registers,variadic_index,
+                parameter_registers[variadic_index],
+                &parameter_registers[variadic_index+1],1);
+            const uint16_t with=emit_invoke_spread(compiler,ivar_register,
+                method_name,with_args);
+            emit_instruction(compiler,DIAMOND_OP_MOVE,result,with,0,2);
+            patch_jump(compiler,finished,compiler->function->code_count);
+        } else {
+            const uint16_t forwarded=emit_build_spread_arguments(compiler,
+                parameter_registers,variadic_index,
+                parameter_registers[variadic_index],nullptr,0);
+            result=emit_invoke_spread(compiler,ivar_register,method_name,forwarded);
+        }
     } else if(forwards_block) {
         const uint16_t absent=allocate_register(compiler);
         emit_instruction(compiler,DIAMOND_OP_NIL,absent,0,0,1);
@@ -8968,7 +8994,8 @@ static void compile_delegate(Compiler *compiler) {
     (void)snprintf(method->name,sizeof method->name,"%s",stored_name);
     method->function_index=function_index;
     method->arity=(uint8_t)parameter_count;
-    method->required_arity=variadic?(uint8_t)(parameter_count-1):
+    method->required_arity=variadic?
+        (uint8_t)(parameter_count-(forwards_block?2u:1u)):
         (uint8_t)(parameter_count-(forwards_block?1u:0u));
     method->has_variadic=variadic;
     method->included=false;

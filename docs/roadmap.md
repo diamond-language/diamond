@@ -473,9 +473,10 @@ parameters and that block.
 The same optional `&block` parameter and explicit forwarding marker are now
 available to ordinary functions and methods, including calls shaped as
 `target(*arguments, &block)`; blocks remain ordinary Callable values at runtime.
-When combined with a splat the block remains required, because an unmarked
-runtime positional tail cannot distinguish the last rest value from an absent
-block; non-variadic block parameters default cleanly to `nil`.
+Source block closures carry an independent block tag, so `*arguments, &block`
+can distinguish a supplied block from an ordinary final Callable or any other
+rest value. Variadic block parameters therefore default cleanly to `nil`, and
+generated delegates omit the block from target dispatch when it is absent.
 The forwarded call always uses the same name declared
 (`delegate foo(), to: @bar` always calls `@bar.foo()`, never a renamed
 target) -- both deliberate scope cuts, not oversights.

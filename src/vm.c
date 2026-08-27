@@ -2713,6 +2713,7 @@ static bool copy_value_into_vm(DiamondVm *dest_vm, DiamondValue value,
             DiamondClosure *copy=
                 allocate_closure(dest_vm,source->function_index,nullptr,0);
             if(copy==nullptr)return false;
+            copy->is_block=source->is_block;
             *out=DIAMOND_OBJECT(copy);return true;
         }
         default: return false;
@@ -9061,18 +9062,27 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                  * not `registers[]`, which only ever receives up to
                  * min(argument_count, live_register_count) copied values
                  * now (see run_chunk's own bounds fix above). */
-                if(preserved_count>argument_count||
+                if(preserved_count>1||
                    (size_t)destination+preserved_count>=chunk->register_count)
                     VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
-                const size_t available=argument_count-preserved_count;
+                size_t preserved=0;
+                if(preserved_count==1&&argument_count>fixed_count) {
+                    const DiamondValue candidate=arguments[argument_count-1];
+                    if(candidate.kind==DIAMOND_VALUE_OBJECT&&
+                       candidate.as.object->kind==DIAMOND_OBJECT_CLOSURE&&
+                       ((DiamondClosure *)candidate.as.object)->is_block)
+                        preserved=1;
+                }
+                const size_t available=argument_count-preserved;
                 const size_t trailing=available>fixed_count?
                     available-fixed_count:0;
                 DiamondArray *variadic_array=
                     allocate_array(vm,&arguments[fixed_count],trailing);
                 if(variadic_array==nullptr) VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
                 registers[destination]=DIAMOND_OBJECT(variadic_array);
-                for(size_t index=0;index<preserved_count;index++)
-                    registers[(size_t)destination+1+index]=arguments[available+index];
+                if(preserved_count==1)
+                    registers[(size_t)destination+1]=preserved==1?
+                        arguments[available]:DIAMOND_NIL;
                 break;
             }
             case DIAMOND_OP_TO_STRING: {
@@ -10305,6 +10315,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 for(size_t i=0;i<count;i++){uint16_t reg=0;READ_SHORT(reg);captures[i]=registers[reg];}
                 DiamondClosure *created=allocate_closure(vm,index,captures,count);
                 if(created==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                created->is_block=strcmp(chunk->functions[index]->name,"<block>")==0;
                 registers[dest]=DIAMOND_OBJECT(created);break;
             }
             case DIAMOND_OP_GET_CAPTURE: {
