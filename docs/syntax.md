@@ -588,9 +588,12 @@ A statically resolved call to a non-generic top-level, singleton, or instance
 method retains its declared return type at the call site. This includes nested
 type graphs: a result declared as `Array[Array[Int]]` can be indexed twice and
 used as an `Int` without losing the element contract. Fixed, spread, keyword,
-and trailing-block calls behave consistently. Generic return types are still
-instantiated by the call's explicit or inferred type arguments at runtime;
-compile-time propagation of those substituted result graphs remains separate.
+and trailing-block calls behave consistently. Generic return graphs are
+instantiated at compile time when explicit or inferred bindings resolve every
+type variable. Positional, keyword, and homogeneous spread arguments contribute
+bindings. Unresolved or conflicting bindings leave the result dynamically
+typed. Calling a value with a typed Callable return contract and indexing a
+typed collection carry their result facts into the following expression too.
 
 Callable values accept the same trailing `do ... end` block as named function
 and method calls, including calls with a spread Array. The block is appended as

@@ -713,22 +713,135 @@ static uint16_t clone_type_set_into_current(Compiler *compiler,
     return (uint16_t)destination_index;
 }
 
-static void publish_declared_return_type(Compiler *compiler,uint16_t reg,
-        const DiamondFunction *target) {
-    if(target==nullptr||target->type_variable_count>0||
-       target->return_type_set==DIAMOND_NO_TYPE_SET)return;
-    const uint16_t return_set=target==compiler->function?
-        target->return_type_set:clone_type_set_into_current(compiler,
-            target->type_sets,target->type_set_count,target->return_type_set);
-    if(return_set==DIAMOND_NO_TYPE_SET||
-       return_set>=compiler->function->type_set_count)return;
-    compiler->known_type_sets[reg]=(int32_t)return_set;
-    const DiamondTypeSet *set=&compiler->function->type_sets[return_set];
+static uint16_t clone_substituted_type_set(Compiler *compiler,
+        const DiamondFunction *target,uint16_t source_index,
+        const uint16_t *bindings,size_t binding_count,bool *resolved) {
+    if(source_index==DIAMOND_NO_TYPE_SET)return DIAMOND_NO_TYPE_SET;
+    if(source_index>=target->type_set_count) {
+        *resolved=false;return DIAMOND_NO_TYPE_SET;
+    }
+    const DiamondTypeSet source=target->type_sets[source_index];
+    if(source.count==1&&
+       source.members[0].id>=DIAMOND_TYPE_VARIABLE_BASE&&
+       source.members[0].id<DIAMOND_TYPE_INTERFACE_BASE) {
+        const size_t variable=(size_t)(source.members[0].id-
+            DIAMOND_TYPE_VARIABLE_BASE);
+        if(variable>=binding_count||bindings==nullptr||
+           bindings[variable]>=compiler->function->type_set_count) {
+            *resolved=false;return DIAMOND_NO_TYPE_SET;
+        }
+        return bindings[variable];
+    }
+    if(!reserve_type_sets(compiler,1)) {
+        *resolved=false;return DIAMOND_NO_TYPE_SET;
+    }
+    const size_t destination_index=compiler->function->type_set_count++;
+    DiamondTypeSet substituted={.inferred=source.inferred};
+    for(size_t member_index=0;member_index<source.count;member_index++) {
+        DiamondTypeMember source_member=source.members[member_index];
+        if(source_member.id>=DIAMOND_TYPE_VARIABLE_BASE&&
+           source_member.id<DIAMOND_TYPE_INTERFACE_BASE) {
+            const size_t variable=(size_t)(source_member.id-
+                DIAMOND_TYPE_VARIABLE_BASE);
+            if(variable>=binding_count||bindings==nullptr||
+               bindings[variable]>=compiler->function->type_set_count) {
+                *resolved=false;return DIAMOND_NO_TYPE_SET;
+            }
+            const DiamondTypeSet bound=
+                compiler->function->type_sets[bindings[variable]];
+            for(size_t bound_index=0;bound_index<bound.count;bound_index++) {
+                bool duplicate=false;
+                for(size_t known=0;known<substituted.count;known++)
+                    if(type_members_equal(substituted.members[known],
+                            bound.members[bound_index]))duplicate=true;
+                if(duplicate)continue;
+                if(substituted.count==DIAMOND_MAX_UNION_TYPES) {
+                    *resolved=false;return DIAMOND_NO_TYPE_SET;
+                }
+                substituted.members[substituted.count++]=
+                    bound.members[bound_index];
+            }
+            continue;
+        }
+        DiamondTypeMember member_value=source_member;
+        DiamondTypeMember *member=&member_value;
+        if(member->argument_set!=DIAMOND_NO_TYPE_SET)
+            member->argument_set=clone_substituted_type_set(compiler,target,
+                member->argument_set,bindings,binding_count,resolved);
+        if(member->second_argument_set!=DIAMOND_NO_TYPE_SET)
+            member->second_argument_set=clone_substituted_type_set(compiler,
+                target,member->second_argument_set,bindings,binding_count,
+                resolved);
+        if(member->callable_return_set!=DIAMOND_NO_TYPE_SET)
+            member->callable_return_set=clone_substituted_type_set(compiler,
+                target,member->callable_return_set,bindings,binding_count,
+                resolved);
+        if(member->callable_parameters_typed)
+            for(size_t parameter=0;parameter<member->callable_arity;parameter++)
+                if(member->callable_parameter_sets[parameter]!=
+                        DIAMOND_NO_TYPE_SET)
+                    member->callable_parameter_sets[parameter]=
+                        clone_substituted_type_set(compiler,target,
+                            member->callable_parameter_sets[parameter],bindings,
+                            binding_count,resolved);
+        if(!*resolved)return DIAMOND_NO_TYPE_SET;
+        if(substituted.count==DIAMOND_MAX_UNION_TYPES) {
+            *resolved=false;return DIAMOND_NO_TYPE_SET;
+        }
+        substituted.members[substituted.count++]=member_value;
+    }
+    compiler->function->type_sets[destination_index]=substituted;
+    return (uint16_t)destination_index;
+}
+
+static void publish_known_type_set(Compiler *compiler,uint16_t reg,
+        uint16_t set_index) {
+    if(set_index==DIAMOND_NO_TYPE_SET||
+       set_index>=compiler->function->type_set_count)return;
+    compiler->known_type_sets[reg]=(int32_t)set_index;
+    const DiamondTypeSet *set=&compiler->function->type_sets[set_index];
     if(set->count==0)return;
     const uint8_t outer=set->members[0].id;
     for(size_t index=1;index<set->count;index++)
         if(set->members[index].id!=outer)return;
     compiler->known_types[reg]=outer;
+}
+
+static void publish_callable_return_type(Compiler *compiler,uint16_t reg,
+        int32_t callable_set_index) {
+    if(callable_set_index<0||
+       (size_t)callable_set_index>=compiler->function->type_set_count)return;
+    const DiamondTypeSet *set=
+        &compiler->function->type_sets[(size_t)callable_set_index];
+    uint16_t return_set=DIAMOND_NO_TYPE_SET;
+    for(size_t index=0;index<set->count;index++) {
+        const DiamondTypeMember *member=&set->members[index];
+        if(member->id!=DIAMOND_TYPE_CALLABLE||
+           member->callable_return_set==DIAMOND_NO_TYPE_SET)return;
+        if(return_set==DIAMOND_NO_TYPE_SET)
+            return_set=member->callable_return_set;
+        else if(return_set!=member->callable_return_set)return;
+    }
+    publish_known_type_set(compiler,reg,return_set);
+}
+
+static void publish_declared_return_type(Compiler *compiler,uint16_t reg,
+        const DiamondFunction *target,const uint16_t *bindings,
+        size_t binding_count) {
+    if(target==nullptr||target->return_type_set==DIAMOND_NO_TYPE_SET)return;
+    uint16_t return_set;
+    if(target->type_variable_count>0) {
+        bool resolved=true;
+        const size_t original_count=compiler->function->type_set_count;
+        return_set=clone_substituted_type_set(compiler,target,
+            target->return_type_set,bindings,binding_count,&resolved);
+        if(!resolved) {
+            compiler->function->type_set_count=original_count;return;
+        }
+    } else return_set=target==compiler->function?
+        target->return_type_set:clone_type_set_into_current(compiler,
+            target->type_sets,target->type_set_count,target->return_type_set);
+    publish_known_type_set(compiler,reg,return_set);
 }
 
 static void publish_function_callable_type(Compiler *compiler,uint16_t reg,
@@ -1897,6 +2010,7 @@ static uint16_t parse_closure_call_arguments(Compiler *compiler, uint16_t callab
             emit_register(compiler,keyword_values[index]);
         }
         if(has_block)emit_register(compiler,block);
+        publish_callable_return_type(compiler,destination,callable_type_set);
         return destination;
     }
     if(call_arguments_have_spread(compiler)) {
@@ -1913,12 +2027,15 @@ static uint16_t parse_closure_call_arguments(Compiler *compiler, uint16_t callab
             emit_opcode(compiler,DIAMOND_OP_CALL_CLOSURE_KEYWORDS);
             emit_register(compiler,destination);emit_register(compiler,callable);
             emit_register(compiler,spread);emit_byte(compiler,0x80u);
-            emit_register(compiler,block);return destination;
+            emit_register(compiler,block);
+            publish_callable_return_type(compiler,destination,callable_type_set);
+            return destination;
         }
         const uint16_t destination=allocate_register(compiler);
         emit_opcode(compiler,DIAMOND_OP_CALL_CLOSURE_SPREAD);
         emit_register(compiler,destination);emit_register(compiler,callable);
         emit_register(compiler,spread);
+        publish_callable_return_type(compiler,destination,callable_type_set);
         return destination;
     }
     uint16_t arguments[16]; size_t argument_count=0;
@@ -1953,7 +2070,9 @@ static uint16_t parse_closure_call_arguments(Compiler *compiler, uint16_t callab
             emit_opcode(compiler,DIAMOND_OP_CALL_CLOSURE_KEYWORDS);
             emit_register(compiler,destination);emit_register(compiler,callable);
             emit_register(compiler,positional);emit_byte(compiler,0x80u);
-            emit_register(compiler,block);return destination;
+            emit_register(compiler,block);
+            publish_callable_return_type(compiler,destination,callable_type_set);
+            return destination;
         }
         arguments[argument_count++]=block;
     }
@@ -1963,6 +2082,7 @@ static uint16_t parse_closure_call_arguments(Compiler *compiler, uint16_t callab
     const uint16_t destination=allocate_register(compiler);
     emit_opcode(compiler,DIAMOND_OP_CALL_CLOSURE);emit_register(compiler,destination);
     emit_register(compiler,callable);emit_register(compiler,base);emit_byte(compiler,(uint8_t)argument_count);
+    publish_callable_return_type(compiler,destination,callable_type_set);
     return destination;
 }
 
@@ -2338,21 +2458,24 @@ static uint16_t parse_call(Compiler *compiler, DiamondSpan name) {
         size_t keyword_count=0;
         uint16_t array_register=parse_spread_argument_array(compiler,
             function,keyword_slots,keyword_registers,&keyword_count);
+        uint16_t inferred_arguments[8];
+        const size_t spread_parameter_count=
+            compiler->current.kind==DIAMOND_TOKEN_DO?
+                (function->arity==0?0:function->arity-1):function->arity;
+        const size_t inferred_count=type_argument_count==0?
+            infer_contextual_spread_arguments(compiler,function,
+                array_register,spread_parameter_count,
+                inferred_arguments):0;
+        if(type_argument_count==0)
+            for(size_t index=0;index<keyword_count;index++)
+                infer_contextual_argument(compiler,function,
+                    keyword_slots[index],keyword_registers[index],
+                    inferred_arguments);
+        const uint16_t *resolved_arguments=type_argument_count>0?
+            type_arguments:inferred_arguments;
+        const size_t resolved_count=type_argument_count>0?
+            type_argument_count:inferred_count;
         if(compiler->current.kind==DIAMOND_TOKEN_DO) {
-            uint16_t inferred_arguments[8];
-            const size_t inferred_count=type_argument_count==0?
-                infer_contextual_spread_arguments(compiler,function,
-                    array_register,function->arity==0?0:function->arity-1,
-                    inferred_arguments):0;
-            if(type_argument_count==0)
-                for(size_t index=0;index<keyword_count;index++)
-                    infer_contextual_argument(compiler,function,
-                        keyword_slots[index],keyword_registers[index],
-                        inferred_arguments);
-            const uint16_t *contextual_arguments=type_argument_count>0?
-                type_arguments:inferred_arguments;
-            const size_t contextual_count=type_argument_count>0?
-                type_argument_count:inferred_count;
             const uint16_t spread_snapshot=allocate_register(compiler);
             emit_instruction(compiler,DIAMOND_OP_MOVE,spread_snapshot,
                 array_register,0,2);
@@ -2365,7 +2488,7 @@ static uint16_t parse_call(Compiler *compiler, DiamondSpan name) {
             }
             const uint16_t block=compile_contextual_typed_block(compiler,
                 function,function->arity==0?0:function->arity-1,
-                contextual_arguments,contextual_count);
+                resolved_arguments,resolved_count);
             array_register=emit_build_spread_arguments(compiler,nullptr,0,
                 array_register,&block,1,false);
         }
@@ -2390,7 +2513,8 @@ static uint16_t parse_call(Compiler *compiler, DiamondSpan name) {
             for(size_t index=0;index<type_argument_count;index++)
                 emit_register(compiler,type_arguments[index]);
         }
-        publish_declared_return_type(compiler,destination,function);
+        publish_declared_return_type(compiler,destination,function,
+            resolved_arguments,resolved_count);
         return destination;
     }
     /* Keyword arguments (direct top-level calls only -- see docs/roadmap.md):
@@ -2454,6 +2578,20 @@ static uint16_t parse_call(Compiler *compiler, DiamondSpan name) {
     size_t argument_count=0;
     for(size_t index=0;index<16;index++)
         if(slot_filled[index])argument_count=index+1;
+    uint16_t inferred_arguments[8];
+    for(size_t index=0;index<8;index++)
+        inferred_arguments[index]=DIAMOND_NO_TYPE_SET;
+    if(type_argument_count==0&&function->type_variable_count>0)
+        for(size_t parameter=0;parameter<argument_count&&
+            parameter<function->arity;parameter++) {
+            if(!slot_filled[parameter])continue;
+            infer_contextual_argument(compiler,function,parameter,
+                slot_registers[parameter],inferred_arguments);
+        }
+    const uint16_t *resolved_arguments=type_argument_count>0?
+        type_arguments:inferred_arguments;
+    const size_t resolved_count=type_argument_count>0?
+        type_argument_count:function->type_variable_count;
     /* `function_name(args) do |x| ... end` -- same "block is the last
      * positional argument" desugaring parse_invoke's own DIAMOND_TOKEN_DO
      * check does; if a keyword argument already filled this slot too
@@ -2464,20 +2602,6 @@ static uint16_t parse_call(Compiler *compiler, DiamondSpan name) {
         if(argument_count==16) {
             fail(compiler,compiler->current.span,"too many arguments");return 0;
         }
-        uint16_t inferred_arguments[8];
-        for(size_t index=0;index<8;index++)
-            inferred_arguments[index]=DIAMOND_NO_TYPE_SET;
-        if(type_argument_count==0&&function->type_variable_count>0)
-            for(size_t parameter=0;parameter<argument_count&&
-                parameter<function->arity;parameter++) {
-                if(!slot_filled[parameter])continue;
-                infer_contextual_argument(compiler,function,parameter,
-                    slot_registers[parameter],inferred_arguments);
-            }
-        const uint16_t *contextual_arguments=type_argument_count>0?
-            type_arguments:inferred_arguments;
-        const size_t contextual_argument_count=type_argument_count>0?
-            type_argument_count:function->type_variable_count;
         /* Same register-aliasing hazard parse_invoke's own DIAMOND_TOKEN_DO
          * branch guards against (see its comment): every slot filled above
          * may still be a bare alias of a local the block below is about to
@@ -2491,7 +2615,7 @@ static uint16_t parse_call(Compiler *compiler, DiamondSpan name) {
         }
         const uint16_t block=compile_contextual_typed_block(compiler,
             function,function->arity==0?0:function->arity-1,
-            contextual_arguments,contextual_argument_count);
+            resolved_arguments,resolved_count);
         const size_t block_slot=function->arity==0?0:function->arity-1;
         bool contiguous=true;
         for(size_t index=0;index<argument_count;index++)
@@ -2507,7 +2631,8 @@ static uint16_t parse_call(Compiler *compiler, DiamondSpan name) {
             emit_register(compiler,destination);emit_register(compiler,callable);
             emit_register(compiler,positional);emit_byte(compiler,0x80u);
             emit_register(compiler,block);
-            publish_declared_return_type(compiler,destination,function);
+            publish_declared_return_type(compiler,destination,function,
+                resolved_arguments,resolved_count);
             return destination;
         }
         slot_registers[argument_count]=block;
@@ -2552,7 +2677,8 @@ static uint16_t parse_call(Compiler *compiler, DiamondSpan name) {
         for(size_t index=0;index<type_argument_count;index++)
             emit_register(compiler,type_arguments[index]);
     }
-    publish_declared_return_type(compiler,destination,function);
+    publish_declared_return_type(compiler,destination,function,
+        resolved_arguments,resolved_count);
     return destination;
 }
 
@@ -2613,7 +2739,8 @@ static uint16_t emit_singleton_call(Compiler *compiler,const DiamondMethod *meth
     }
     const DiamondFunction *target=
         compiler->program->functions[method->function_index];
-    publish_declared_return_type(compiler,destination,target);
+    publish_declared_return_type(compiler,destination,target,
+        type_arguments,type_argument_count);
     return destination;
 }
 
@@ -2804,19 +2931,18 @@ static uint16_t parse_singleton_call(Compiler *compiler,
         size_t keyword_count=0;
         const uint16_t positional=parse_dynamic_keyword_arguments(compiler,
             keyword_names,keyword_values,&keyword_count);
+        uint16_t inferred_arguments[8];
+        for(size_t index=0;index<8;index++)
+            inferred_arguments[index]=DIAMOND_NO_TYPE_SET;
+        if(type_argument_count==0)
+            infer_contextual_keyword_arguments(compiler,function,
+                keyword_names,keyword_values,keyword_count,inferred_arguments);
+        const uint16_t *resolved_arguments=type_argument_count>0?
+            type_arguments:inferred_arguments;
+        const size_t resolved_count=type_argument_count>0?
+            type_argument_count:function->type_variable_count;
         bool has_block=false;uint16_t block=0;
         if(compiler->current.kind==DIAMOND_TOKEN_DO) {
-            uint16_t inferred_arguments[8];
-            for(size_t index=0;index<8;index++)
-                inferred_arguments[index]=DIAMOND_NO_TYPE_SET;
-            if(type_argument_count==0)
-                infer_contextual_keyword_arguments(compiler,function,
-                    keyword_names,keyword_values,keyword_count,
-                    inferred_arguments);
-            const uint16_t *contextual_arguments=type_argument_count>0?
-                type_arguments:inferred_arguments;
-            const size_t contextual_count=type_argument_count>0?
-                type_argument_count:function->type_variable_count;
             for(size_t index=0;index<keyword_count;index++) {
                 const uint16_t snapshot=allocate_register(compiler);
                 emit_instruction(compiler,DIAMOND_OP_MOVE,snapshot,
@@ -2825,7 +2951,7 @@ static uint16_t parse_singleton_call(Compiler *compiler,
             }
             block=compile_contextual_typed_block(compiler,function,
                 method->arity==0?0:method->arity-1,
-                contextual_arguments,contextual_count);
+                resolved_arguments,resolved_count);
             has_block=true;
         }
         const uint16_t destination=allocate_register(compiler);
@@ -2849,29 +2975,33 @@ static uint16_t parse_singleton_call(Compiler *compiler,
             for(size_t index=0;index<type_argument_count;index++)
                 emit_register(compiler,type_arguments[index]);
         }
-        publish_declared_return_type(compiler,destination,function);
+        publish_declared_return_type(compiler,destination,function,
+            resolved_arguments,resolved_count);
         return destination;
     }
     if(call_arguments_have_spread(compiler)) {
         uint16_t spread=parse_spread_argument_array(compiler,nullptr,
             nullptr,nullptr,nullptr);
+        uint16_t inferred_arguments[8];
+        const size_t block_count=
+            compiler->current.kind==DIAMOND_TOKEN_DO?1u:0u;
+        const size_t spread_parameter_count=method->arity>block_count?
+            method->arity-block_count:0;
+        const size_t inferred_count=type_argument_count==0?
+            infer_contextual_spread_arguments(compiler,function,spread,
+                spread_parameter_count,inferred_arguments):0;
+        const uint16_t *resolved_arguments=type_argument_count>0?
+            type_arguments:inferred_arguments;
+        const size_t resolved_count=type_argument_count>0?
+            type_argument_count:inferred_count;
         if(compiler->current.kind==DIAMOND_TOKEN_DO) {
-            uint16_t inferred_arguments[8];
-            const size_t inferred_count=type_argument_count==0?
-                infer_contextual_spread_arguments(compiler,function,spread,
-                    method->arity==0?0:method->arity-1,
-                    inferred_arguments):0;
-            const uint16_t *contextual_arguments=type_argument_count>0?
-                type_arguments:inferred_arguments;
-            const size_t contextual_count=type_argument_count>0?
-                type_argument_count:inferred_count;
             const uint16_t spread_snapshot=allocate_register(compiler);
             emit_instruction(compiler,DIAMOND_OP_MOVE,spread_snapshot,
                 spread,0,2);
             spread=spread_snapshot;
             const uint16_t block=compile_contextual_typed_block(compiler,
                 function,method->arity==0?0:method->arity-1,
-                contextual_arguments,contextual_count);
+                resolved_arguments,resolved_count);
             const uint16_t destination=allocate_register(compiler);
             emit_opcode(compiler,type_argument_count==0?
                 DIAMOND_OP_CALL_SINGLETON_KEYWORDS:
@@ -2888,7 +3018,8 @@ static uint16_t parse_singleton_call(Compiler *compiler,
                 for(size_t index=0;index<type_argument_count;index++)
                     emit_register(compiler,type_arguments[index]);
             }
-            publish_declared_return_type(compiler,destination,function);
+            publish_declared_return_type(compiler,destination,function,
+                resolved_arguments,resolved_count);
             return destination;
         }
         const uint16_t destination=allocate_register(compiler);
@@ -2906,7 +3037,8 @@ static uint16_t parse_singleton_call(Compiler *compiler,
             for(size_t index=0;index<type_argument_count;index++)
                 emit_register(compiler,type_arguments[index]);
         }
-        publish_declared_return_type(compiler,destination,function);
+        publish_declared_return_type(compiler,destination,function,
+            resolved_arguments,resolved_count);
         return destination;
     }
     uint16_t arguments[16];size_t argument_count=0;
@@ -2924,6 +3056,14 @@ static uint16_t parse_singleton_call(Compiler *compiler,
         fail(compiler,compiler->current.span,"expected ')' after arguments");return 0;
     }
     advance_token(compiler);
+    uint16_t inferred_arguments[8];
+    const size_t inferred_count=type_argument_count==0?
+        infer_contextual_type_arguments(compiler,function,arguments,
+            argument_count,inferred_arguments):0;
+    const uint16_t *resolved_arguments=type_argument_count>0?
+        type_arguments:inferred_arguments;
+    const size_t resolved_count=type_argument_count>0?
+        type_argument_count:inferred_count;
     /* `Namespace.method(args) do |x| ... end` -- same trailing-block-as-
      * last-positional-argument desugaring parse_invoke's own DIAMOND_TOKEN_DO
      * handling does for instance-method calls (see its comment there for
@@ -2939,14 +3079,6 @@ static uint16_t parse_singleton_call(Compiler *compiler,
         if(argument_count==16) {
             fail(compiler,compiler->current.span,"too many call arguments");return 0;
         }
-        uint16_t inferred_arguments[8];
-        const size_t inferred_count=type_argument_count==0?
-            infer_contextual_type_arguments(compiler,function,arguments,
-                argument_count,inferred_arguments):0;
-        const uint16_t *contextual_arguments=type_argument_count>0?
-            type_arguments:inferred_arguments;
-        const size_t contextual_count=type_argument_count>0?
-            type_argument_count:inferred_count;
         for(size_t index=0;index<argument_count;index++) {
             const uint16_t snapshot=allocate_register(compiler);
             emit_instruction(compiler,DIAMOND_OP_MOVE,snapshot,arguments[index],0,2);
@@ -2954,7 +3086,7 @@ static uint16_t parse_singleton_call(Compiler *compiler,
         }
         const uint16_t block=compile_contextual_typed_block(compiler,
             function,method->arity==0?0:method->arity-1,
-            contextual_arguments,contextual_count);
+            resolved_arguments,resolved_count);
         const size_t block_slot=method->arity==0?0:method->arity-1;
         if(argument_count<block_slot) {
             const uint16_t positional=
@@ -2975,7 +3107,8 @@ static uint16_t parse_singleton_call(Compiler *compiler,
                 for(size_t index=0;index<type_argument_count;index++)
                     emit_register(compiler,type_arguments[index]);
             }
-            publish_declared_return_type(compiler,destination,function);
+            publish_declared_return_type(compiler,destination,function,
+                resolved_arguments,resolved_count);
             return destination;
         }
         arguments[argument_count++]=block;
@@ -3012,7 +3145,8 @@ static uint16_t parse_singleton_call(Compiler *compiler,
         for(size_t index=0;index<type_argument_count;index++)
             emit_register(compiler,type_arguments[index]);
     }
-    publish_declared_return_type(compiler,destination,function);
+    publish_declared_return_type(compiler,destination,function,
+        resolved_arguments,resolved_count);
     return destination;
 }
 
@@ -5179,20 +5313,19 @@ static uint16_t parse_invoke(Compiler *compiler, uint16_t receiver) {
         size_t keyword_count=0;
         const uint16_t positional=parse_dynamic_keyword_arguments(compiler,
             keyword_names,keyword_values,&keyword_count);
+        uint16_t inferred_arguments[8];
+        for(size_t index=0;index<8;index++)
+            inferred_arguments[index]=DIAMOND_NO_TYPE_SET;
+        if(type_argument_count==0)
+            infer_contextual_keyword_arguments(compiler,contextual_target,
+                keyword_names,keyword_values,keyword_count,inferred_arguments);
+        const uint16_t *resolved_arguments=type_argument_count>0?
+            type_arguments:inferred_arguments;
+        const size_t resolved_count=type_argument_count>0?
+            type_argument_count:contextual_target==nullptr?0:
+                contextual_target->type_variable_count;
         bool has_block=false;uint16_t block=0;
         if(compiler->current.kind==DIAMOND_TOKEN_DO) {
-            uint16_t inferred_arguments[8];
-            for(size_t index=0;index<8;index++)
-                inferred_arguments[index]=DIAMOND_NO_TYPE_SET;
-            if(type_argument_count==0)
-                infer_contextual_keyword_arguments(compiler,
-                    contextual_target,keyword_names,keyword_values,
-                    keyword_count,inferred_arguments);
-            const uint16_t *contextual_arguments=type_argument_count>0?
-                type_arguments:inferred_arguments;
-            const size_t contextual_count=type_argument_count>0?
-                type_argument_count:contextual_target==nullptr?0:
-                    contextual_target->type_variable_count;
             const uint16_t receiver_snapshot=allocate_register(compiler);
             emit_instruction(compiler,DIAMOND_OP_MOVE,receiver_snapshot,
                 receiver,0,2);receiver=receiver_snapshot;
@@ -5204,14 +5337,15 @@ static uint16_t parse_invoke(Compiler *compiler, uint16_t receiver) {
             }
             block=compile_contextual_typed_block(compiler,contextual_target,
                 contextual_target==nullptr||contextual_target->arity<=1?0:
-                    contextual_target->arity-2,contextual_arguments,
-                contextual_count);
+                    contextual_target->arity-2,resolved_arguments,
+                resolved_count);
             has_block=true;
         }
         const uint16_t result=emit_invoke_keywords(compiler,receiver,name,positional,
             keyword_names,keyword_values,keyword_count,type_arguments,
             type_argument_count,has_block,block);
-        publish_declared_return_type(compiler,result,contextual_target);
+        publish_declared_return_type(compiler,result,contextual_target,
+            resolved_arguments,resolved_count);
         return result;
     }
     if(call_arguments_have_spread(compiler)) {
@@ -5222,17 +5356,19 @@ static uint16_t parse_invoke(Compiler *compiler, uint16_t receiver) {
         }
         uint16_t spread=parse_spread_argument_array(compiler,nullptr,
             nullptr,nullptr,nullptr);
+        uint16_t inferred_arguments[8];
+        const size_t spread_parameter_count=contextual_target==nullptr?0:
+            contextual_target->arity>(compiler->current.kind==DIAMOND_TOKEN_DO?
+                2u:1u)?contextual_target->arity-
+                (compiler->current.kind==DIAMOND_TOKEN_DO?2u:1u):0;
+        const size_t inferred_count=type_argument_count==0?
+            infer_contextual_spread_arguments(compiler,contextual_target,
+                spread,spread_parameter_count,inferred_arguments):0;
+        const uint16_t *resolved_arguments=type_argument_count>0?
+            type_arguments:inferred_arguments;
+        const size_t resolved_count=type_argument_count>0?
+            type_argument_count:inferred_count;
         if(compiler->current.kind==DIAMOND_TOKEN_DO) {
-            uint16_t inferred_arguments[8];
-            const size_t inferred_count=type_argument_count==0?
-                infer_contextual_spread_arguments(compiler,contextual_target,
-                    spread,contextual_target==nullptr||
-                        contextual_target->arity<=1?0:
-                        contextual_target->arity-2,inferred_arguments):0;
-            const uint16_t *contextual_arguments=type_argument_count>0?
-                type_arguments:inferred_arguments;
-            const size_t contextual_count=type_argument_count>0?
-                type_argument_count:inferred_count;
             const uint16_t receiver_snapshot=allocate_register(compiler);
             emit_instruction(compiler,DIAMOND_OP_MOVE,receiver_snapshot,
                 receiver,0,2);
@@ -5243,14 +5379,15 @@ static uint16_t parse_invoke(Compiler *compiler, uint16_t receiver) {
             spread=spread_snapshot;
             const uint16_t block=compile_contextual_typed_block(compiler,
                 contextual_target,
-                contextual_target==nullptr||contextual_target->arity<=1?0:
-                    contextual_target->arity-2,contextual_arguments,
-                contextual_count);
+                    contextual_target==nullptr||contextual_target->arity<=1?0:
+                    contextual_target->arity-2,resolved_arguments,
+                resolved_count);
             if(contextual_target!=nullptr) {
                 const uint16_t result=emit_invoke_keywords(compiler,receiver,name,spread,
                     nullptr,nullptr,0,type_arguments,type_argument_count,true,
                     block);
-                publish_declared_return_type(compiler,result,contextual_target);
+                publish_declared_return_type(compiler,result,contextual_target,
+                    resolved_arguments,resolved_count);
                 return result;
             }
             spread=emit_build_spread_arguments(compiler,nullptr,0,spread,
@@ -5258,7 +5395,8 @@ static uint16_t parse_invoke(Compiler *compiler, uint16_t receiver) {
         }
         const uint16_t result=emit_invoke_typed_spread(compiler,receiver,name,
             spread,type_arguments,type_argument_count);
-        publish_declared_return_type(compiler,result,contextual_target);
+        publish_declared_return_type(compiler,result,contextual_target,
+            resolved_arguments,resolved_count);
         return result;
     }
     uint16_t args[16]; size_t count = 0;
@@ -5275,6 +5413,14 @@ static uint16_t parse_invoke(Compiler *compiler, uint16_t receiver) {
         fail(compiler, compiler->current.span, "expected ')' after arguments"); return 0;
     }
     advance_token(compiler);
+    uint16_t inferred_arguments[8];
+    const size_t inferred_count=type_argument_count==0?
+        infer_contextual_type_arguments(compiler,contextual_target,args,count,
+            inferred_arguments):0;
+    const uint16_t *resolved_arguments=type_argument_count>0?
+        type_arguments:inferred_arguments;
+    const size_t resolved_count=type_argument_count>0?
+        type_argument_count:inferred_count;
     /* `recv.method(args) do |x| ... end` -- the block becomes one more
      * (always last) positional argument, exactly as if it had been
      * written as a named closure and passed explicitly. See compile_
@@ -5296,14 +5442,6 @@ static uint16_t parse_invoke(Compiler *compiler, uint16_t receiver) {
          * every argument into fresh temps first: a temp is never a
          * registered local, so BOX_LOCAL's locals-table lookup can never
          * retarget it. */
-        uint16_t inferred_arguments[8];
-        const size_t inferred_count=type_argument_count==0?
-            infer_contextual_type_arguments(compiler,contextual_target,args,
-                count,inferred_arguments):0;
-        const uint16_t *contextual_arguments=type_argument_count>0?
-            type_arguments:inferred_arguments;
-        const size_t contextual_count=type_argument_count>0?
-            type_argument_count:inferred_count;
         const uint16_t receiver_snapshot=allocate_register(compiler);
         emit_instruction(compiler,DIAMOND_OP_MOVE,receiver_snapshot,receiver,0,2);
         receiver=receiver_snapshot;
@@ -5315,8 +5453,8 @@ static uint16_t parse_invoke(Compiler *compiler, uint16_t receiver) {
         const uint16_t block=compile_contextual_typed_block(compiler,
             contextual_target,
             contextual_target==nullptr||contextual_target->arity<=1?0:
-                contextual_target->arity-2,contextual_arguments,
-            contextual_count);
+                contextual_target->arity-2,resolved_arguments,
+            resolved_count);
         const size_t block_slot=
             contextual_target==nullptr||contextual_target->arity<=1?0:
                 (size_t)contextual_target->arity-2;
@@ -5324,14 +5462,16 @@ static uint16_t parse_invoke(Compiler *compiler, uint16_t receiver) {
             const uint16_t positional=emit_argument_array(compiler,args,count);
             const uint16_t result=emit_invoke_keywords(compiler,receiver,name,positional,
                 nullptr,nullptr,0,type_arguments,type_argument_count,true,block);
-            publish_declared_return_type(compiler,result,contextual_target);
+            publish_declared_return_type(compiler,result,contextual_target,
+                resolved_arguments,resolved_count);
             return result;
         }
         args[count++]=block;
     }
     const uint16_t result=emit_invoke_call(compiler,receiver,name,writer_name,
         type_arguments,type_argument_count,args,count);
-    publish_declared_return_type(compiler,result,contextual_target);
+    publish_declared_return_type(compiler,result,contextual_target,
+        resolved_arguments,resolved_count);
     return result;
 }
 
@@ -5763,11 +5903,15 @@ static uint16_t parse_index(Compiler *compiler,uint16_t receiver) {
         if(set->count==1) {
             const DiamondTypeMember member=set->members[0];
             if(member.id==DIAMOND_TYPE_ARRAY&&member.argument_set!=DIAMOND_NO_TYPE_SET)
-                compiler->known_type_sets[destination]=(int32_t)member.argument_set;
+                publish_known_type_set(compiler,destination,member.argument_set);
             else if(member.id==DIAMOND_TYPE_HASH&&
-                    member.second_argument_set!=DIAMOND_NO_TYPE_SET)
-                compiler->known_type_sets[destination]=type_set_with_nil(
-                    compiler,member.second_argument_set);
+                    member.second_argument_set!=DIAMOND_NO_TYPE_SET) {
+                const int32_t value_set=type_set_with_nil(compiler,
+                    member.second_argument_set);
+                if(value_set>=0)
+                    publish_known_type_set(compiler,destination,
+                        (uint16_t)value_set);
+            }
         }
     }
     return destination;

@@ -30,6 +30,12 @@
   top-level, singleton, and instance-method calls, including fixed, spread,
   keyword, and trailing-block forms. Nested collection results now retain their
   element contracts for indexing and specialized operations at the call site.
+- Instantiated generic return graphs from explicit and inferred call bindings
+  across resolved top-level, singleton, and instance dispatch, including
+  positional, keyword, spread, nested collection, and union results.
+- Propagated Array/Hash index result facts and typed Callable-value return facts
+  into downstream expressions, enabling chained generic results to select
+  primitive-specialized bytecode without redundant dynamic arithmetic.
 - Added conservative contextual typing for anonymous block parameters at
   statically resolved function, singleton, and instance-method calls with typed
   Callable slots, including direct generic bindings inferred from concrete

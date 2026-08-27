@@ -416,12 +416,21 @@ recursive union/subtype checks, eliminating redundant return guards while
 rejecting a hash lookup used where a non-nil value is required.
 
 Statically resolved top-level, singleton, and instance-method calls publish a
-non-generic target's declared return graph onto their destination register.
+target's declared return graph onto their destination register.
 The caller owns a structural clone of that graph, so nested Array, Hash,
 Callable, union, and nominal facts remain valid after the callee's metadata is
 released. Fixed, spread, keyword, and trailing-block emission paths all apply
-the same rule. Generic targets remain dependent on per-call substitutions and
-therefore require a separate instantiated-return step.
+the same rule. Generic targets substitute explicit or inferred per-call
+bindings while cloning the return graph. A type variable occupying a union arm
+expands to its bound members, with duplicate removal and the ordinary
+eight-member union ceiling. If any binding is unresolved or conflicting, the
+entire advisory result fact is discarded rather than publishing a graph
+containing callee-owned variables.
+
+Indexing publishes both the nested type set and its exact outer type when every
+member agrees. Invocation through a typed Callable value similarly publishes a
+common declared Callable return set. These propagation steps allow nested
+generic call/index/callback chains to retain primitive specialization facts.
 
 Runtime Array and Hash contracts are also inference sources. When a collection
 has no elements or entries to inspect, a later generic call imports the
