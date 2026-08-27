@@ -1138,10 +1138,10 @@ than relying on it implicitly.
 
 **Done, in scope.** `def foo(bar, baz, *other)` -- a trailing `*name`
 parameter collects every argument beyond the fixed (non-variadic) ones
-into an ordinary `Array`. Definition-side only: call-site *spread*
-(`foo(*array)`, expanding an existing `Array` into positional arguments)
-is a separate, caller-side feature, confirmed architecturally independent
-of this one (see below) and not implemented here. Motivated by
+into an ordinary `Array`. A final required `&block` parameter may follow it;
+the prologue preserves that closure in its own register rather than collecting
+it into the Array. Call-site *spread* (`foo(*array)`) remains the architecturally
+separate caller-side counterpart described below. Motivated by
 `packages/div` and `delegate`/`compile_method`'s own documented "Diamond
 does not currently have variadic/splat call support" scope cuts
 (`docs/roadmap.md`); this closes that gap for parameter *definitions*,
@@ -1160,7 +1160,8 @@ below, already exposes for ordinary default parameters). Spreading an
 untouched problem on the opposite side of the call.
 
 **Compiler** (`compile_definition`'s parameter loop, `src/compiler.c`):
-`*name` must be the last parameter, at most one per list, bare name only
+`*name` must be the last parameter unless followed by `&block`, at most one per
+list, bare name only
 -- no type annotation, no default (neither means anything for a
 collected `Array`), matching `delegate`'s own "bare parameter names
 only" scope cut. Sets a new `has_variadic` flag on `DiamondFunction`
@@ -1173,10 +1174,10 @@ always valid.
 
 **A new opcode, `DIAMOND_OP_COLLECT_VARIADIC`**, emitted as the first
 instruction of a variadic function/method/closure's own prologue:
-operands are the destination register (the variadic parameter's own) and
-an immediate `fixed_count` byte, baked in at compile time. At runtime:
-`trailing = argument_count > fixed_count ? argument_count - fixed_count
-: 0`, then `allocate_array(vm, &arguments[fixed_count], trailing)` --
+operands are the destination register, an immediate `fixed_count`, and a
+preserved trailing count. At runtime the preserved values are excluded from
+the collected range and copied into registers following the variadic slot;
+the remaining values become the Array via `allocate_array` --
 reading the call's *original* `arguments` pointer (a `run_chunk`
 parameter, still in scope for the whole function, including this
 prologue instruction), not `registers[]`, which a non-variadic-sized
@@ -1270,6 +1271,10 @@ differ. `DIAMOND_OP_BUILD_SPREAD_ARGS` assembles a fixed prefix, one runtime
 Array, and a fixed suffix into the contiguous Array consumed by those call
 opcodes, preserving source order without imposing the ordinary sixteen-
 expression limit on the spread contents.
+
+An ampersand is a forwarding marker over an existing Callable register, so
+`target(*arguments, &block)` uses the same fixed-suffix spread assembly without
+introducing a second runtime representation for blocks.
 
 **Why this needed a genuinely new opcode, not a compiler trick.** Every
 ordinary call site bakes its argument count as a compile-time-constant

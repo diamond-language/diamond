@@ -1169,6 +1169,8 @@ class Parser
     if @current.kind() != :right_paren
       more = true
       while more && !@failed
+        block_parameter = @current.kind() == :ampersand
+        self.advance_token() if block_parameter
         if @current.kind() != :identifier
           self.fail("expected parameter name")
           more = false
@@ -1193,6 +1195,9 @@ class Parser
           end
           defaults.push(default_position)
           self.skip_newlines()
+          if block_parameter && @current.kind() == :comma
+            self.fail("a block parameter must be the last parameter")
+          end
           if !@failed && @current.kind() == :comma
             self.advance_token()
             self.skip_newlines()
@@ -4225,6 +4230,7 @@ class Parser
       self.set_type_fact(destination, Type::BOOL)
       return destination
     end
+    return self.parse_precedence(Precedence::PREFIX) if kind == :ampersand
     return self.parse_case() if kind == :case
     return self.parse_if(false) if kind == :if
     return self.parse_if(true) if kind == :unless

@@ -102,6 +102,8 @@
   `delegate transform(value, &block), to: @target` syntax.
 - Extended variadic collection with preserved trailing slots, enabling
   delegates such as `delegate emit(prefix, *values, &block), to: @target`.
+- Added required `&block` parameters and explicit `&block` call forwarding to
+  ordinary functions and methods, including `target(*arguments, &block)`.
 - Added protected method visibility with peer/subclass receiver access and
   runtime rejection outside the declaring class hierarchy.
 - Added `LazyEnumerator` pipelines with deferred `map`, `select`, and `reject`

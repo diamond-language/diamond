@@ -5124,6 +5124,11 @@ static uint16_t parse_prefix(Compiler *compiler) {
             compiler->known_types[destination]=DIAMOND_TYPE_BOOL;
             return destination;
         }
+        case DIAMOND_TOKEN_AMPERSAND:
+            /* A block is already represented as an ordinary Callable value.
+             * `&block` therefore marks forwarding intent syntactically while
+             * preserving the closure register unchanged. */
+            return parse_precedence(compiler,PREC_PREFIX);
         case DIAMOND_TOKEN_CASE:
             return parse_case(compiler);
         case DIAMOND_TOKEN_IF:
@@ -7750,6 +7755,8 @@ static uint16_t compile_definition(Compiler *compiler, bool captures_self) {
     const uint16_t parameter_base=compiler->next_register;
     for(size_t index=0;index<parameter_count;index++)(void)allocate_register(compiler);
     size_t declared_parameter_count=0;bool saw_default=false;
+    bool has_block_parameter=false;
+    uint16_t variadic_parameter=0,variadic_fixed_count=0;
     skip_newlines(compiler);
     if (compiler->current.kind != DIAMOND_TOKEN_RIGHT_PAREN) {
         do {
@@ -7759,6 +7766,15 @@ static uint16_t compile_definition(Compiler *compiler, bool captures_self) {
              * comma may follow it). See docs/design.md's "Splat/variadic
              * parameters" section. */
             bool is_variadic=false;
+            bool is_block_parameter=false;
+            if(compiler->current.kind==DIAMOND_TOKEN_AMPERSAND) {
+                if(has_block_parameter) {
+                    fail(compiler,compiler->current.span,
+                         "a function can only declare one block parameter");break;
+                }
+                is_block_parameter=true;has_block_parameter=true;
+                advance_token(compiler);
+            }
             if(compiler->current.kind==DIAMOND_TOKEN_STAR) {
                 if(function->has_variadic) {
                     fail(compiler,compiler->current.span,
@@ -7829,15 +7845,25 @@ static uint16_t compile_definition(Compiler *compiler, bool captures_self) {
                  * adjustment. */
                 const uint8_t fixed_count=captures_self?
                     function->arity:(uint8_t)(function->arity-1);
-                emit_instruction(compiler,DIAMOND_OP_COLLECT_VARIADIC,parameter,
-                                 fixed_count,0,3);
+                variadic_parameter=parameter;variadic_fixed_count=fixed_count;
                 declared_parameter_count++;
                 skip_newlines(compiler);
                 if(compiler->current.kind==DIAMOND_TOKEN_COMMA) {
-                    fail(compiler,compiler->current.span,
-                         "a variadic parameter must be the last parameter");
+                    advance_token(compiler);skip_newlines(compiler);
+                    if(compiler->current.kind!=DIAMOND_TOKEN_AMPERSAND)
+                        fail(compiler,compiler->current.span,
+                            "only a block parameter may follow a variadic parameter");
+                    else continue;
                 }
                 break;
+            }
+            if(is_block_parameter&&compiler->current.kind==DIAMOND_TOKEN_COLON) {
+                fail(compiler,compiler->current.span,
+                     "a block parameter cannot have a type annotation");break;
+            }
+            if(is_block_parameter&&compiler->current.kind==DIAMOND_TOKEN_EQUAL) {
+                fail(compiler,compiler->current.span,
+                     "a block parameter cannot have a default value");break;
             }
             int parameter_type=-1;DiamondSpan parameter_type_span={};
             if (compiler->current.kind == DIAMOND_TOKEN_COLON) {
@@ -7875,12 +7901,19 @@ static uint16_t compile_definition(Compiler *compiler, bool captures_self) {
                                    compiler->locals[compiler->local_count-1].name.start);
             declared_parameter_count++;
             skip_newlines(compiler);
+            if(is_block_parameter&&compiler->current.kind==DIAMOND_TOKEN_COMMA) {
+                fail(compiler,compiler->current.span,
+                     "a block parameter must be the last parameter");break;
+            }
             if (compiler->current.kind != DIAMOND_TOKEN_COMMA) break;
             advance_token(compiler);
             skip_newlines(compiler);
             if(compiler->current.kind==DIAMOND_TOKEN_RIGHT_PAREN) break;
         } while (!compiler->failed);
     }
+    if(function->has_variadic&&!compiler->failed)
+        emit_instruction(compiler,DIAMOND_OP_COLLECT_VARIADIC,
+            variadic_parameter,variadic_fixed_count,has_block_parameter?1:0,3);
     if (!compiler->failed && compiler->current.kind != DIAMOND_TOKEN_RIGHT_PAREN) {
         fail(compiler, compiler->current.span, "expected ')' after parameters");
     }

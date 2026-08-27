@@ -470,6 +470,9 @@ trailing block through Diamond's ordinary last-Callable-argument convention.
 Splat and block forwarding can be combined: the variadic prologue preserves
 the final block slot while collecting only the arguments between fixed
 parameters and that block.
+The same required `&block` parameter and explicit forwarding marker are now
+available to ordinary functions and methods, including calls shaped as
+`target(*arguments, &block)`; blocks remain ordinary Callable values at runtime.
 The forwarded call always uses the same name declared
 (`delegate foo(), to: @bar` always calls `@bar.foo()`, never a renamed
 target) -- both deliberate scope cuts, not oversights.
