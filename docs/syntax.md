@@ -622,8 +622,9 @@ returns. Bound references preserve omitted optional arguments, so defaults are
 still evaluated by the original method rather than replaced with `nil`.
 This also applies when optional fixed arguments precede `*rest`. If no complete
 Callable arm supplies union-block context, Diamond may synthesize parameter
-context from existing declared input types that safely accept every arm. The
-block's return type is still determined by its body.
+context from existing declared input types that safely accept every arm. Return
+context likewise uses an existing declared subtype only when it satisfies every
+arm. Otherwise the block's return type is determined by its body.
 
 Callable values accept the same trailing `do ... end` block as named function
 and method calls, including calls with a spread Array. The block is appended as

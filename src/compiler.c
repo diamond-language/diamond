@@ -2545,6 +2545,29 @@ static uint16_t compile_callable_value_block(Compiler *compiler,
                 if(selected==DIAMOND_NO_TYPE_SET)synthesized_context=false;
                 else synthesized.callable_parameter_sets[parameter]=selected;
             }
+            /* Callable returns are covariant. Select an existing declared
+             * return graph only when it can satisfy every arm; unlike input
+             * synthesis above, this therefore chooses a shared subtype. */
+            for(size_t candidate=0;candidate<block_set_count&&
+                synthesized.callable_return_set==DIAMOND_NO_TYPE_SET;
+                candidate++) {
+                const uint16_t candidate_set=compiler->function->type_sets[
+                    block_sets[candidate]].members[0].callable_return_set;
+                if(candidate_set==DIAMOND_NO_TYPE_SET)continue;
+                bool satisfies_all=true;
+                for(size_t arm=0;arm<block_set_count;arm++) {
+                    const uint16_t arm_set=compiler->function->type_sets[
+                        block_sets[arm]].members[0].callable_return_set;
+                    if(arm_set==DIAMOND_NO_TYPE_SET||
+                       !type_sets_satisfy_across(compiler,
+                           compiler->function->type_sets,candidate_set,
+                           compiler->function->type_sets,arm_set)) {
+                        satisfies_all=false;break;
+                    }
+                }
+                if(satisfies_all)
+                    synthesized.callable_return_set=candidate_set;
+            }
         }
         if(compatible&&shared_block_set!=DIAMOND_NO_TYPE_SET) {
             const DiamondTypeSet *set=

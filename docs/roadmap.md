@@ -335,8 +335,9 @@ leaving default evaluation in the original method.
 Optional fixed prefixes on variadic bound wrappers now use the same true-count
 forwarding while preserving the collected rest tail. When no whole Callable arm
 is safe for union block context, the compiler can synthesize input context by
-selecting existing declared supertypes accepted by every arm; it deliberately
-does not synthesize a return contract.
+selecting existing declared supertypes accepted by every arm. It also selects
+an existing declared return subtype when that graph satisfies every arm,
+preserving Callable covariance without constructing an unsound union.
 
 Declared Callable return graphs now flow into attached anonymous blocks as an
 expected result contract. The block publishes that graph as its own signature
@@ -354,10 +355,10 @@ instance references solve their generic bindings from the expected Callable's
 parameter and return graph, then synthesize the same typed wrappers explicit
 bindings use. References without a complete, unambiguous context retain the
 existing explicit-binding requirement. General synthesis of a new common
-Callable contract remains separate;
-the current variance path selects existing declared graphs for each input and
-falls back when no safe input exists. Synthesizing genuinely new union or
-intersection contracts remains open.
+Callable contract remains separate. The current variance path selects existing
+declared graphs for each input and return, then falls back when no safe graph
+exists. Synthesizing genuinely new union or intersection contracts remains
+open.
 
 ### Ruby-like ergonomics without Ruby compatibility
 
