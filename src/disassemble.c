@@ -545,6 +545,42 @@ static bool disassemble_chunk(FILE *stream, const char *name,
                 if((size_t)method_name>=chunk->string_count)valid=false;
                 offset+=8;break;
             }
+            case DIAMOND_OP_INVOKE_KEYWORDS:
+            case DIAMOND_OP_INVOKE_TYPED_KEYWORDS: {
+                if(!require_bytes(stream,chunk,offset,9)) {
+                    valid=false;offset=chunk->code_count;break;
+                }
+                const uint8_t method_name=chunk->code[offset+5];
+                const uint8_t keyword_count=chunk->code[offset+8];
+                const size_t keyword_end=9+(size_t)keyword_count*3;
+                const bool typed=(DiamondOpCode)opcode==
+                    DIAMOND_OP_INVOKE_TYPED_KEYWORDS;
+                if(keyword_count==0||keyword_count>16||
+                   !require_bytes(stream,chunk,offset,keyword_end+(typed?1:0))) {
+                    valid=false;offset=chunk->code_count;break;
+                }
+                fprintf(stream,"%-18s r%u, r%u, s%u, r%u, %u keywords\n",
+                    typed?"INVOKE_TYPED_KW":"INVOKE_KEYWORDS",
+                    checked_register(chunk,stream,read_operand(chunk,offset+1),&valid),
+                    checked_register(chunk,stream,read_operand(chunk,offset+3),&valid),
+                    method_name,
+                    checked_register(chunk,stream,read_operand(chunk,offset+6),&valid),
+                    keyword_count);
+                if((size_t)method_name>=chunk->string_count)valid=false;
+                for(size_t index=0;index<keyword_count;index++) {
+                    const size_t entry=offset+9+index*3;
+                    if((size_t)chunk->code[entry]>=chunk->string_count)valid=false;
+                    (void)checked_register(chunk,stream,
+                        read_operand(chunk,entry+1),&valid);
+                }
+                if(!typed) {offset+=keyword_end;break;}
+                const uint8_t type_count=chunk->code[offset+keyword_end];
+                if(type_count>8||!require_bytes(stream,chunk,offset,
+                        keyword_end+1+(size_t)type_count)) {
+                    valid=false;offset=chunk->code_count;break;
+                }
+                offset+=keyword_end+1+(size_t)type_count;break;
+            }
             case DIAMOND_OP_INVOKE_TYPED_SPREAD: {
                 if(!require_bytes(stream,chunk,offset,9)) {
                     valid=false;offset=chunk->code_count;break;
@@ -577,6 +613,30 @@ static bool disassemble_chunk(FILE *stream, const char *name,
                     checked_register(chunk,stream,read_operand(chunk,offset+3),&valid),
                     checked_register(chunk,stream,read_operand(chunk,offset+5),&valid));
                 offset+=7;break;
+            }
+            case DIAMOND_OP_CALL_CLOSURE_KEYWORDS: {
+                if(!require_bytes(stream,chunk,offset,8)) {
+                    valid=false;offset=chunk->code_count;break;
+                }
+                const uint8_t keyword_count=chunk->code[offset+7];
+                const size_t total=8+(size_t)keyword_count*3;
+                if(keyword_count==0||keyword_count>16||
+                   !require_bytes(stream,chunk,offset,total)) {
+                    valid=false;offset=chunk->code_count;break;
+                }
+                fprintf(stream,"%-18s r%u, r%u, r%u, %u keywords\n",
+                    "CALL_CLOSURE_KW",
+                    checked_register(chunk,stream,read_operand(chunk,offset+1),&valid),
+                    checked_register(chunk,stream,read_operand(chunk,offset+3),&valid),
+                    checked_register(chunk,stream,read_operand(chunk,offset+5),&valid),
+                    keyword_count);
+                for(size_t index=0;index<keyword_count;index++) {
+                    const size_t entry=offset+8+index*3;
+                    if((size_t)chunk->code[entry]>=chunk->string_count)valid=false;
+                    (void)checked_register(chunk,stream,
+                        read_operand(chunk,entry+1),&valid);
+                }
+                offset+=total;break;
             }
             case DIAMOND_OP_NEW_SPREAD: {
                 if(!require_bytes(stream,chunk,offset,6)) {

@@ -8600,6 +8600,45 @@ static DiamondVmStatus debugger_helper(DiamondVm *vm,const DiamondChunk *chunk,
     return DIAMOND_VM_OK;
 }
 
+static DiamondVmStatus merge_keyword_arguments(DiamondVm *vm,
+        const DiamondChunk *caller,const DiamondFunction *function,
+        const DiamondArray *positional,const uint8_t *keyword_names,
+        const uint16_t *keyword_registers,size_t keyword_count,
+        const DiamondValue *registers,size_t public_arity,
+        DiamondValue **merged,size_t *merged_count) {
+    if(positional->count>16||public_arity>16)return DIAMOND_VM_ARITY_ERROR;
+    bool filled[16]={0};size_t count=positional->count;
+    for(size_t index=0;index<count;index++)filled[index]=true;
+    size_t slots[16];
+    for(size_t keyword=0;keyword<keyword_count;keyword++) {
+        if((size_t)keyword_names[keyword]>=caller->string_count)
+            return DIAMOND_VM_INVALID_BYTECODE;
+        const DiamondStringConstant *name=&caller->strings[keyword_names[keyword]];
+        size_t slot=SIZE_MAX;
+        for(size_t index=0;index<public_arity;index++)
+            if(strlen(function->parameter_names[index])==name->length&&
+               memcmp(function->parameter_names[index],name->chars,name->length)==0) {
+                slot=index;break;
+            }
+        if(slot==SIZE_MAX) {snprintf(vm->error,sizeof vm->error,
+            "no parameter with this name");return DIAMOND_VM_ARITY_ERROR;}
+        if(filled[slot]) {snprintf(vm->error,sizeof vm->error,
+            "multiple values for the same argument");return DIAMOND_VM_ARITY_ERROR;}
+        slots[keyword]=slot;filled[slot]=true;if(slot+1>count)count=slot+1;
+    }
+    for(size_t index=0;index<count;index++)if(!filled[index]) {
+        snprintf(vm->error,sizeof vm->error,"missing argument");
+        return DIAMOND_VM_ARITY_ERROR;
+    }
+    DiamondValue *values=malloc(count*sizeof *values);
+    if(values==nullptr&&count>0)return DIAMOND_VM_OUT_OF_MEMORY;
+    for(size_t index=0;index<positional->count;index++)
+        values[index]=positional->values[index];
+    for(size_t keyword=0;keyword<keyword_count;keyword++)
+        values[slots[keyword]]=registers[keyword_registers[keyword]];
+    *merged=values;*merged_count=count;return DIAMOND_VM_OK;
+}
+
 static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                                  DiamondVm *vm,
                                  const DiamondValue *arguments,
@@ -10106,6 +10145,39 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 VM_PROPAGATE(status);
                 registers[dest]=call_result;break;
             }
+            case DIAMOND_OP_CALL_CLOSURE_KEYWORDS: {
+                uint16_t dest=0,callable=0,positional_register=0;
+                uint8_t keyword_count=0,keyword_names[16];
+                uint16_t keyword_registers[16];
+                READ_SHORT(dest);READ_SHORT(callable);READ_SHORT(positional_register);
+                READ_BYTE(keyword_count);
+                if(keyword_count==0||keyword_count>16)
+                    VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
+                for(size_t index=0;index<keyword_count;index++) {
+                    READ_BYTE(keyword_names[index]);READ_SHORT(keyword_registers[index]);
+                }
+                if(registers[callable].kind!=DIAMOND_VALUE_OBJECT||
+                   registers[callable].as.object->kind!=DIAMOND_OBJECT_CLOSURE||
+                   registers[positional_register].kind!=DIAMOND_VALUE_OBJECT||
+                   registers[positional_register].as.object->kind!=DIAMOND_OBJECT_ARRAY)
+                    VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                DiamondClosure *called=(DiamondClosure *)registers[callable].as.object;
+                if(called->foreign_chunk!=nullptr||
+                   called->function_index>=chunk->function_count)
+                    VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                const DiamondFunction *fn=chunk->functions[called->function_index];
+                DiamondValue *merged=nullptr;size_t merged_count=0;
+                const DiamondVmStatus merge_status=merge_keyword_arguments(vm,chunk,
+                    fn,(const DiamondArray *)registers[positional_register].as.object,
+                    keyword_names,keyword_registers,keyword_count,registers,
+                    fn->arity,&merged,&merged_count);
+                VM_PROPAGATE(merge_status);
+                DiamondArray merged_array={.count=merged_count,.values=merged};
+                DiamondValue call_result=DIAMOND_NIL;
+                const DiamondVmStatus status=call_closure_spread_helper(vm,chunk,
+                    fn,called,&merged_array,depth,&call_result);
+                free(merged);VM_PROPAGATE(status);registers[dest]=call_result;break;
+            }
             case DIAMOND_OP_CALL_CLOSURE_SPREAD: {
                 uint16_t dest=0,callable=0,spread_register=0;
                 READ_SHORT(dest);READ_SHORT(callable);READ_SHORT(spread_register);
@@ -10273,6 +10345,82 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     } else if(spread->count!=0)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
                 }
                 break;
+            }
+            case DIAMOND_OP_INVOKE_KEYWORDS:
+            case DIAMOND_OP_INVOKE_TYPED_KEYWORDS: {
+                uint16_t dest=0,recv=0,positional_register=0;
+                uint8_t method_name_index=0,keyword_count=0,keyword_names[16];
+                uint16_t keyword_registers[16];
+                READ_SHORT(dest);READ_SHORT(recv);READ_BYTE(method_name_index);
+                READ_SHORT(positional_register);READ_BYTE(keyword_count);
+                if(keyword_count==0||keyword_count>16||
+                   (size_t)method_name_index>=chunk->string_count)
+                    VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
+                for(size_t index=0;index<keyword_count;index++) {
+                    READ_BYTE(keyword_names[index]);READ_SHORT(keyword_registers[index]);
+                }
+                uint8_t type_count=0,type_arguments[8];
+                if((DiamondOpCode)instruction==DIAMOND_OP_INVOKE_TYPED_KEYWORDS) {
+                    READ_BYTE(type_count);if(type_count>8)
+                        VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
+                    for(size_t index=0;index<type_count;index++)READ_BYTE(type_arguments[index]);
+                }
+                if(registers[positional_register].kind!=DIAMOND_VALUE_OBJECT||
+                   registers[positional_register].as.object->kind!=DIAMOND_OBJECT_ARRAY)
+                    VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                if(registers[recv].kind!=DIAMOND_VALUE_OBJECT||
+                   registers[recv].as.object->kind!=DIAMOND_OBJECT_INSTANCE) {
+                    snprintf(vm->error,sizeof vm->error,
+                        "keyword arguments require a user-defined method");
+                    VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                }
+                DiamondInstance *instance=(DiamondInstance *)registers[recv].as.object;
+                const DiamondChunk *owner=instance->owner!=nullptr?
+                    instance->owner:vm->root_chunk;
+                const DiamondStringConstant *method_name=
+                    &chunk->strings[method_name_index];
+                const DiamondMethod *method=lookup_method(owner,instance->class,
+                    method_name->chars,method_name->length);
+                if(method==nullptr)VM_RETURN(DIAMOND_VM_NO_METHOD_ERROR);
+                const DiamondChunk *function_chunk=method->source_chunk!=nullptr?
+                    method->source_chunk:owner;
+                const DiamondFunction *fn=
+                    function_chunk->functions[method->function_index];
+                DiamondValue *merged=nullptr;size_t merged_count=0;
+                const DiamondVmStatus merge_status=merge_keyword_arguments(vm,chunk,
+                    fn,(const DiamondArray *)registers[positional_register].as.object,
+                    keyword_names,keyword_registers,keyword_count,registers,
+                    method->arity,&merged,&merged_count);
+                VM_PROPAGATE(merge_status);
+                DiamondArray *merged_array=allocate_array(vm,merged,merged_count);
+                free(merged);if(merged_array==nullptr)
+                    VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                const size_t protected_count=vm->gc_protected_count;
+                if(!gc_protect(vm,DIAMOND_OBJECT(merged_array)))
+                    VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                uint8_t code[20]={0};size_t code_count=0;
+#define KEYWORD_SHORT(value) do {code[code_count++]=(uint8_t)((value)>>8); \
+    code[code_count++]=(uint8_t)(value);} while(false)
+                code[code_count++]=(uint8_t)(type_count==0?
+                    DIAMOND_OP_INVOKE_SPREAD:DIAMOND_OP_INVOKE_TYPED_SPREAD);
+                KEYWORD_SHORT(2);KEYWORD_SHORT(0);code[code_count++]=method_name_index;
+                KEYWORD_SHORT(1);
+                if(type_count>0) {code[code_count++]=type_count;
+                    for(size_t index=0;index<type_count;index++)
+                        code[code_count++]=type_arguments[index];}
+                code[code_count++]=DIAMOND_OP_RETURN;KEYWORD_SHORT(2);
+#undef KEYWORD_SHORT
+                uint32_t locations[20]={0};
+                DiamondChunk synthetic=*chunk;synthetic.name="<keyword invoke>";
+                synthetic.code=code;synthetic.lines=locations;
+                synthetic.columns=locations;synthetic.code_count=code_count;
+                synthetic.register_count=3;
+                DiamondValue synthetic_arguments[2]={registers[recv],
+                    DIAMOND_OBJECT(merged_array)};DiamondValue call_result=DIAMOND_NIL;
+                const DiamondVmStatus status=run_chunk(&synthetic,vm,
+                    synthetic_arguments,2,depth+1,nullptr,&call_result);
+                gc_unprotect(vm,protected_count);VM_PROPAGATE(status);
+                registers[dest]=call_result;break;
             }
             case DIAMOND_OP_INVOKE_SPREAD:
             case DIAMOND_OP_INVOKE_TYPED_SPREAD: {

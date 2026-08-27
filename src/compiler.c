@@ -1374,6 +1374,96 @@ static uint16_t emit_build_spread_arguments(Compiler *compiler,
         const uint16_t *prefix,size_t prefix_count,uint16_t spread,
         const uint16_t *suffix,size_t suffix_count);
 
+static bool call_arguments_have_keyword(Compiler *compiler) {
+    Compiler probe=*compiler;size_t nesting=0;bool argument_start=true;
+    while(!probe.failed) {
+        const DiamondTokenKind kind=probe.current.kind;
+        if(nesting==0&&kind==DIAMOND_TOKEN_RIGHT_PAREN)return false;
+        if(nesting==0&&argument_start&&kind==DIAMOND_TOKEN_IDENTIFIER) {
+            DiamondLexer lookahead=probe.lexer;
+            if(diamond_lexer_next(&lookahead).kind==DIAMOND_TOKEN_COLON)
+                return true;
+        }
+        if(kind==DIAMOND_TOKEN_LEFT_PAREN||kind==DIAMOND_TOKEN_LEFT_BRACKET||
+           kind==DIAMOND_TOKEN_LEFT_BRACE)nesting++;
+        else if(kind==DIAMOND_TOKEN_RIGHT_PAREN||
+                kind==DIAMOND_TOKEN_RIGHT_BRACKET||
+                kind==DIAMOND_TOKEN_RIGHT_BRACE) {if(nesting>0)nesting--;}
+        argument_start=nesting==0&&kind==DIAMOND_TOKEN_COMMA;
+        if(kind!=DIAMOND_TOKEN_NEWLINE&&kind!=DIAMOND_TOKEN_COMMA)
+            argument_start=false;
+        advance_token(&probe);
+    }
+    return false;
+}
+
+static uint16_t emit_argument_array(Compiler *compiler,const uint16_t *values,
+        size_t count) {
+    const uint16_t base=allocate_register(compiler);
+    for(size_t index=1;index<count;index++)(void)allocate_register(compiler);
+    for(size_t index=0;index<count;index++)emit_instruction(compiler,
+        DIAMOND_OP_MOVE,(uint16_t)(base+index),values[index],0,2);
+    const uint16_t result=allocate_register(compiler);
+    emit_instruction(compiler,DIAMOND_OP_ARRAY,result,base,(uint16_t)count,3);
+    compiler->known_types[result]=DIAMOND_TYPE_ARRAY;return result;
+}
+
+/* Dynamic keyword targets retain names until runtime lookup identifies the
+ * concrete DiamondFunction. Positional values are normalized to one Array,
+ * whether or not the source used `*`. */
+static uint16_t parse_dynamic_keyword_arguments(Compiler *compiler,
+        DiamondSpan *keyword_names,uint16_t *keyword_values,
+        size_t *keyword_count) {
+    uint16_t fixed[16];size_t fixed_count=0,spread_index=0;
+    uint16_t spread=0;bool saw_spread=false,seen_keyword=false;
+    *keyword_count=0;
+    while(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN&&!compiler->failed) {
+        DiamondLexer lookahead=compiler->lexer;
+        const bool keyword=compiler->current.kind==DIAMOND_TOKEN_IDENTIFIER&&
+            diamond_lexer_next(&lookahead).kind==DIAMOND_TOKEN_COLON;
+        if(keyword) {
+            seen_keyword=true;
+            if(*keyword_count==16) {
+                fail(compiler,compiler->current.span,"too many keyword arguments");return 0;
+            }
+            const DiamondSpan name=compiler->current.span;
+            for(size_t index=0;index<*keyword_count;index++)
+                if(keyword_names[index].length==name.length&&
+                   memcmp(compiler->source+keyword_names[index].start,
+                          compiler->source+name.start,name.length)==0) {
+                    fail(compiler,name,"multiple values for the same argument");return 0;
+                }
+            keyword_names[*keyword_count]=name;
+            advance_token(compiler);advance_token(compiler);
+            keyword_values[(*keyword_count)++]=parse_expression(compiler);
+        } else if(compiler->current.kind==DIAMOND_TOKEN_STAR) {
+            if(seen_keyword) {fail(compiler,compiler->current.span,
+                "positional argument cannot follow a keyword argument");return 0;}
+            if(saw_spread) {fail(compiler,compiler->current.span,
+                "a call can contain only one spread argument");return 0;}
+            saw_spread=true;spread_index=fixed_count;
+            advance_token(compiler);skip_newlines(compiler);
+            spread=parse_expression(compiler);
+        } else {
+            if(seen_keyword) {fail(compiler,compiler->current.span,
+                "positional argument cannot follow a keyword argument");return 0;}
+            if(fixed_count==16) {fail(compiler,compiler->current.span,
+                "too many fixed call arguments");return 0;}
+            fixed[fixed_count++]=parse_expression(compiler);
+        }
+        skip_newlines(compiler);
+        if(compiler->current.kind!=DIAMOND_TOKEN_COMMA)break;
+        advance_token(compiler);skip_newlines(compiler);
+    }
+    if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
+        fail(compiler,compiler->current.span,"expected ')' after arguments");return 0;
+    }
+    advance_token(compiler);
+    if(!saw_spread)return emit_argument_array(compiler,fixed,fixed_count);
+    return emit_build_spread_arguments(compiler,fixed,spread_index,spread,
+        fixed+spread_index,fixed_count-spread_index);
+}
+
 static bool call_arguments_have_spread(Compiler *compiler) {
     Compiler probe=*compiler;
     size_t nesting=0;bool argument_start=true;
@@ -1483,6 +1573,21 @@ static uint16_t parse_spread_argument_array(Compiler *compiler,
 static uint16_t parse_closure_call_arguments(Compiler *compiler, uint16_t callable) {
     advance_token(compiler);
     skip_newlines(compiler);
+    if(call_arguments_have_keyword(compiler)) {
+        DiamondSpan keyword_names[16];uint16_t keyword_values[16];
+        size_t keyword_count=0;
+        const uint16_t positional=parse_dynamic_keyword_arguments(compiler,
+            keyword_names,keyword_values,&keyword_count);
+        const uint16_t destination=allocate_register(compiler);
+        emit_opcode(compiler,DIAMOND_OP_CALL_CLOSURE_KEYWORDS);
+        emit_register(compiler,destination);emit_register(compiler,callable);
+        emit_register(compiler,positional);emit_byte(compiler,(uint8_t)keyword_count);
+        for(size_t index=0;index<keyword_count;index++) {
+            emit_byte(compiler,add_name_string(compiler,keyword_names[index]));
+            emit_register(compiler,keyword_values[index]);
+        }
+        return destination;
+    }
     if(call_arguments_have_spread(compiler)) {
         const uint16_t spread=parse_spread_argument_array(compiler,nullptr,
             nullptr,nullptr,nullptr);
@@ -3784,6 +3889,29 @@ static uint16_t emit_invoke_spread(Compiler *compiler,uint16_t receiver,
         nullptr,0);
 }
 
+static uint16_t emit_invoke_keywords(Compiler *compiler,uint16_t receiver,
+        DiamondSpan method_name,uint16_t positional,
+        const DiamondSpan *keyword_names,const uint16_t *keyword_values,
+        size_t keyword_count,const uint8_t *type_arguments,
+        size_t type_argument_count) {
+    const uint16_t destination=allocate_register(compiler);
+    emit_opcode(compiler,type_argument_count==0?DIAMOND_OP_INVOKE_KEYWORDS:
+        DIAMOND_OP_INVOKE_TYPED_KEYWORDS);
+    emit_register(compiler,destination);emit_register(compiler,receiver);
+    emit_byte(compiler,add_name_string(compiler,method_name));
+    emit_register(compiler,positional);emit_byte(compiler,(uint8_t)keyword_count);
+    for(size_t index=0;index<keyword_count;index++) {
+        emit_byte(compiler,add_name_string(compiler,keyword_names[index]));
+        emit_register(compiler,keyword_values[index]);
+    }
+    if(type_argument_count>0) {
+        emit_byte(compiler,(uint8_t)type_argument_count);
+        for(size_t index=0;index<type_argument_count;index++)
+            emit_byte(compiler,type_arguments[index]);
+    }
+    return destination;
+}
+
 static uint16_t emit_build_spread_arguments(Compiler *compiler,
         const uint16_t *prefix,size_t prefix_count,uint16_t spread,
         const uint16_t *suffix,size_t suffix_count) {
@@ -3884,6 +4012,20 @@ static uint16_t parse_invoke(Compiler *compiler, uint16_t receiver) {
     }
     advance_token(compiler);
     skip_newlines(compiler);
+    if(call_arguments_have_keyword(compiler)) {
+        if(writer_name) {fail(compiler,compiler->current.span,
+            "keyword method calls do not support writers");return 0;}
+        DiamondSpan keyword_names[16];uint16_t keyword_values[16];
+        size_t keyword_count=0;
+        const uint16_t positional=parse_dynamic_keyword_arguments(compiler,
+            keyword_names,keyword_values,&keyword_count);
+        if(compiler->current.kind==DIAMOND_TOKEN_DO) {fail(compiler,
+            compiler->current.span,
+            "a keyword method call cannot also take a block");return 0;}
+        return emit_invoke_keywords(compiler,receiver,name,positional,
+            keyword_names,keyword_values,keyword_count,type_arguments,
+            type_argument_count);
+    }
     if(call_arguments_have_spread(compiler)) {
         if(writer_name) {
             fail(compiler,compiler->current.span,
