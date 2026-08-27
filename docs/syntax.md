@@ -649,8 +649,8 @@ into positional arguments at the call site — the caller-side counterpart
 to a variadic *parameter* above. The supported slice is deliberately narrow:
 
 - direct functions, user-defined instance methods, Callable values,
-  constructors, and module/class singleton methods are supported;
-- native collection/String receiver methods remain outside spread dispatch;
+  constructors, module/class singleton methods, and native receiver methods
+  are supported;
 - one spread argument can appear before, between, or after fixed positional
   arguments — `foo(1, *middle, 4)` preserves left-to-right order;
 - keyword arguments cannot be mixed with a spread argument;
@@ -662,6 +662,7 @@ to a variadic *parameter* above. The supported slice is deliberately narrow:
   elements for a non-variadic target still raises `ArgumentError`, same
   message as any other arity mismatch; a non-`Array` argument raises
   `TypeError`.
+- native receiver spreads share ordinary native invocation's 16-argument bound;
 
 See docs/design.md's "Call-site spread" section for the full mechanism.
 

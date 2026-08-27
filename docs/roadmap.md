@@ -376,13 +376,12 @@ Areas still worth examining include:
 - **Done**: generalized spread calls, including fixed prefix/suffix arguments,
   Callable values, constructors, class/module singleton methods, explicit
   generic bindings, and fixed-plus-rest delegation.
-- **Deferred**: spread calls on native receivers. Native String/Array/Hash/IO
-  methods are specialized branches inside `INVOKE`, not uniform method
-  descriptors. Supporting runtime argument Arrays there requires first
-  extracting native dispatch behind one argument-vector interface; duplicating
-  that large matrix in the spread opcode would create two divergent native
-  method implementations. Ordinary native calls and source-level collection
-  extension methods remain available.
+- **Done**: spread calls on native receivers. Native String/Array/Hash/resource
+  methods remain specialized branches inside `INVOKE`; the spread opcode
+  constructs a compact synthetic call frame and re-enters that one dispatch
+  matrix. This avoids a divergent copy while preserving universal-method,
+  built-in, and source-level collection-extension precedence. Native receiver
+  spreads inherit ordinary native invocation's existing 16-argument bound.
 
 ### Explicit-arity method delegation
 

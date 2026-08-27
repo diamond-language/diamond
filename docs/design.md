@@ -1304,19 +1304,23 @@ receiver, spread Array, and method descriptor remain the owning GC roots for
 the complete nested call.
 
 **A second, unrelated benefit, not the point of this feature but worth
-noting:** spread has no 16-argument-expression ceiling the way a literal
-call site does (`compiler.c`'s fixed 16-slot argument-parsing buffers,
-present at every call form) -- a spread `Array` can be any length
+noting:** source-defined spread targets have no 16-argument-expression ceiling
+the way a literal call site does (`compiler.c`'s fixed 16-slot argument-parsing
+buffers, present at every call form) -- a spread `Array` can be any length
 `run_chunk`'s own bounds already tolerate (its `argument_count >
-DIAMOND_REGISTER_COUNT` sanity check, 4096, and the `has_variadic`-aware
-bounds fix from "Splat/variadic parameters" above), since nothing about
-spread parses one argument expression per element.
+DIAMOND_REGISTER_COUNT` sanity check, 4096, and the `has_variadic`-aware bounds
+fix from "Splat/variadic parameters" above), since nothing about spread parses
+one argument expression per element. Native receiver spreads deliberately
+inherit ordinary `INVOKE`'s existing 16-argument runtime bound.
 
 Typed spread variants carry explicit type-set bindings for generic functions,
-instance methods, and singleton methods. Native receiver methods remain out of
-scope because they dispatch through specialized inline VM branches rather than
-uniform `DiamondMethod` descriptors. Mixing spread and keyword arguments also
-remains unsupported.
+instance methods, and singleton methods. Native receivers dispatch through a
+small synthetic child chunk containing an ordinary `INVOKE` followed by
+`RETURN`. Its registers contain the receiver and expanded Array values, so it
+re-enters the existing universal-method, built-in, and collection-extension
+matrix without duplicating any native branch. The caller's receiver and spread
+Array remain GC roots for the nested call; the temporary vector copies only
+`DiamondValue` handles. Mixing spread and keyword arguments remains unsupported.
 
 ### Bare singleton method references
 

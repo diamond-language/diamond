@@ -10234,18 +10234,76 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                         "spread argument (*expr) must be an Array");
                     VM_RETURN(DIAMOND_VM_TYPE_ERROR);
                 }
+                const DiamondArray *spread=(const DiamondArray *)
+                    registers[spread_register].as.object;
                 if(registers[recv].kind!=DIAMOND_VALUE_OBJECT||
                    registers[recv].as.object->kind!=DIAMOND_OBJECT_INSTANCE) {
-                    snprintf(vm->error,sizeof vm->error,
-                        "spread method calls require a class instance receiver");
-                    VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                    /* Native receivers already share one deliberately ordered
+                     * INVOKE matrix below (universal methods, built-ins, then
+                     * collection extensions). Re-enter that matrix through a
+                     * verifier-safe synthetic frame instead of cloning its
+                     * many receiver branches here. The ordinary INVOKE format
+                     * has an 8-bit count and currently caps calls at 16 args. */
+                    if(spread->count>16)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                    DiamondValue *native_arguments=malloc((spread->count+1)*
+                        sizeof *native_arguments);
+                    if(native_arguments==nullptr)
+                        VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                    native_arguments[0]=registers[recv];
+                    for(size_t index=0;index<spread->count;index++)
+                        native_arguments[index+1]=spread->values[index];
+                    uint8_t synthetic_code[21]={0};size_t code_index=0;
+                    const uint16_t destination=(uint16_t)(spread->count+1);
+#define SYNTHETIC_SHORT(value) do { \
+    synthetic_code[code_index++]=(uint8_t)((value)>>8); \
+    synthetic_code[code_index++]=(uint8_t)(value); \
+} while(false)
+                    synthetic_code[code_index++]=(uint8_t)(
+                        type_argument_count==0?DIAMOND_OP_INVOKE:
+                        DIAMOND_OP_INVOKE_TYPED);
+                    SYNTHETIC_SHORT(destination);
+                    SYNTHETIC_SHORT(0);
+                    synthetic_code[code_index++]=name;
+                    SYNTHETIC_SHORT(1);
+                    synthetic_code[code_index++]=(uint8_t)spread->count;
+                    if(type_argument_count>0) {
+                        synthetic_code[code_index++]=type_argument_count;
+                        for(size_t index=0;index<type_argument_count;index++)
+                            synthetic_code[code_index++]=type_arguments[index];
+                    }
+                    synthetic_code[code_index++]=DIAMOND_OP_RETURN;
+                    SYNTHETIC_SHORT(destination);
+#undef SYNTHETIC_SHORT
+                    uint32_t synthetic_lines[21]={0};
+                    uint32_t synthetic_columns[21]={0};
+                    DiamondChunk synthetic={.name="<native spread>",
+                        .code=synthetic_code,.lines=synthetic_lines,
+                        .columns=synthetic_columns,.code_count=code_index,
+                        .constants=chunk->constants,
+                        .constant_count=chunk->constant_count,
+                        .strings=chunk->strings,.string_count=chunk->string_count,
+                        .type_sets=chunk->type_sets,
+                        .type_set_count=chunk->type_set_count,
+                        .functions=chunk->functions,
+                        .function_count=chunk->function_count,
+                        .classes=chunk->classes,.class_count=chunk->class_count,
+                        .interfaces=chunk->interfaces,
+                        .interface_count=chunk->interface_count,
+                        .modules=chunk->modules,.module_count=chunk->module_count,
+                        .type_variable_bindings=chunk->type_variable_bindings,
+                        .register_count=(uint16_t)(spread->count+2),
+                        .range_class_index=chunk->range_class_index};
+                    DiamondValue native_result=DIAMOND_NIL;
+                    const DiamondVmStatus native_status=run_chunk(&synthetic,vm,
+                        native_arguments,spread->count+1,depth+1,nullptr,
+                        &native_result);
+                    free(native_arguments);VM_PROPAGATE(native_status);
+                    registers[dest]=native_result;break;
                 }
                 DiamondInstance *instance=(DiamondInstance *)registers[recv].as.object;
                 const DiamondChunk *owner=
                     instance->owner!=nullptr?instance->owner:vm->root_chunk;
                 const DiamondStringConstant *method_name=&chunk->strings[name];
-                const DiamondArray *spread=(const DiamondArray *)
-                    registers[spread_register].as.object;
                 const DiamondMethod *method=lookup_method(owner,instance->class,
                     method_name->chars,method_name->length);
                 if(method==nullptr) {
