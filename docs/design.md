@@ -1215,6 +1215,10 @@ explicit bindings, statically resolved top-level, singleton, and instance-method
 calls derive direct type-variable bindings from concrete positional arguments.
 Fixed constructor calls apply the same inference to `initialize` before their
 trailing block is compiled.
+Spread calls inspect a statically known homogeneous Array element contract and
+apply it to each positional parameter before the block slot. This operates for
+top-level, singleton, instance-method, and constructor calls. Fixed arguments
+merged around the spread preserve that contract only when every value agrees.
 Homogeneous Array and Hash literals record recursive inferred type sets, so
 matching nested collection parameters can derive the same bindings. Mixed
 element or entry types remain unknown rather than inventing an unsafe join.

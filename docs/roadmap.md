@@ -505,7 +505,9 @@ resolved top-level, singleton, and instance-method calls. Homogeneous Array and
 Hash literals retain recursive compile-time contracts, allowing direct and
 nested collection parameters to contribute bindings too. Fixed constructor
 calls infer the generic bindings declared by `initialize` through the same
-path. Union receivers
+path. Homogeneously typed spread Arrays provide bindings for top-level,
+singleton, instance-method, and constructor calls, including merged fixed
+arguments that retain the same element contract. Union receivers
 participate when every member resolves to the exact same inherited
 implementation. Heterogeneous collection joins, divergent overrides, and
 genuinely unresolved generic contexts remain future extensions to the same

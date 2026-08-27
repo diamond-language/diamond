@@ -572,6 +572,9 @@ Array and Hash literals also provide recursive bindings for nested collection
 parameters. Mixed literal types remain conservative and require explicit
 generic arguments. Fixed constructor calls infer `initialize` type variables
 from their positional arguments in the same way.
+Spreading a homogeneously typed Array supplies its element contract to generic
+parameters before a trailing block is compiled. This applies to functions,
+singleton methods, instance methods, and constructors.
 
 Callable values accept the same trailing `do ... end` block as named function
 and method calls, including calls with a spread Array. The block is appended as

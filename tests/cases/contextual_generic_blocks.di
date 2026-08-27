@@ -38,6 +38,10 @@ puts(generic_apply[Int](*[8]) do |value|
   value * 8
 end)
 
+puts(generic_apply(*[9]) do |value|
+  value * 7
+end)
+
 class GenericBlockOps
   def self.apply[T](value: T, &block: Callable[[T], T]) -> T
     yield(value)
@@ -66,6 +70,10 @@ puts(GenericBlockOps.apply("implicit singleton") do |value|
   value + " generic"
 end)
 
+puts(GenericBlockOps.apply(*[20]) do |value|
+  value + 1
+end)
+
 puts(GenericBlockOps.new().apply[Int](10) do |value|
   value + 5
 end)
@@ -74,7 +82,16 @@ puts(GenericBlockOps.new().apply(20) do |value|
   value + 2
 end)
 
+puts(GenericBlockOps.new().apply(*[30]) do |value|
+  value + 3
+end)
+
 box = GenericBlockBox.new(30) do |value|
   value + 12
 end
 puts(box.value())
+
+spread_box = GenericBlockBox.new(*[40]) do |value|
+  value + 2
+end
+puts(spread_box.value())

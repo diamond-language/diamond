@@ -2307,6 +2307,10 @@ actual="$($diamond --dump-bytecode -e $'class GenericBox\n def initialize[T](val
 constructor_block_dump="$(sed -n '/^== <block> ==$/,$p' <<<"$actual")"
 grep -q 'ADD_INT' <<<"$constructor_block_dump"
 
+actual="$($diamond --dump-bytecode -e $'def apply_spread[T](value: T, &block: Callable[[T], T]) -> T\n yield(value)\nend\napply_spread(*[20]) do |value|\n value + 1\nend')"
+spread_block_dump="$(sed -n '/^== <block> ==$/,$p' <<<"$actual")"
+grep -q 'ADD_INT' <<<"$spread_block_dump"
+
 actual="$($diamond --dump-bytecode -e $'def test(a: Int | String, b: Int | String) -> String\n unless a is Int || b is Int\n  a\n else\n  "one-or-both"\n end\nend')"
 test_dump="$(sed -n '/^== test ==$/,$p' <<<"$actual")"
 [[ "$(grep -c 'CHECK_TYPE' <<<"$test_dump")" == "2" ]]
