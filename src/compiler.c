@@ -574,6 +574,66 @@ static bool reserve_type_sets(Compiler *compiler,size_t additional) {
     return false;
 }
 
+static uint16_t clone_type_set_into_current(Compiler *compiler,
+        const DiamondTypeSet *source_sets,size_t source_count,
+        uint16_t source_index) {
+    if(source_index==DIAMOND_NO_TYPE_SET||source_index>=source_count)
+        return DIAMOND_NO_TYPE_SET;
+    if(!reserve_type_sets(compiler,1))return DIAMOND_NO_TYPE_SET;
+    const size_t destination_index=compiler->function->type_set_count++;
+    DiamondTypeSet cloned=source_sets[source_index];
+    for(size_t member_index=0;member_index<cloned.count;member_index++) {
+        DiamondTypeMember *member=&cloned.members[member_index];
+        member->argument_set=clone_type_set_into_current(compiler,source_sets,
+            source_count,member->argument_set);
+        member->second_argument_set=clone_type_set_into_current(compiler,
+            source_sets,source_count,member->second_argument_set);
+        member->callable_return_set=clone_type_set_into_current(compiler,
+            source_sets,source_count,member->callable_return_set);
+        if(member->callable_parameters_typed)
+            for(size_t parameter=0;parameter<member->callable_arity;parameter++)
+                member->callable_parameter_sets[parameter]=
+                    clone_type_set_into_current(compiler,source_sets,
+                        source_count,
+                        member->callable_parameter_sets[parameter]);
+    }
+    compiler->function->type_sets[destination_index]=cloned;
+    return (uint16_t)destination_index;
+}
+
+static void publish_function_callable_type(Compiler *compiler,uint16_t reg,
+        const DiamondFunction *target) {
+    compiler->known_types[reg]=DIAMOND_TYPE_CALLABLE;
+    /* Cloning from the function currently being compiled could reallocate
+     * its type-set table while that same table is the clone source. A
+     * recursive self-reference remains a known Callable, but conservatively
+     * omits structural signature facts until its declaration is complete. */
+    if(target==compiler->function)return;
+    DiamondTypeMember callable={.id=DIAMOND_TYPE_CALLABLE,
+        .argument_set=DIAMOND_NO_TYPE_SET,
+        .second_argument_set=DIAMOND_NO_TYPE_SET,
+        .callable_arity=target->arity,
+        .callable_return_set=DIAMOND_NO_TYPE_SET,
+        .callable_parameters_typed=true};
+    for(size_t parameter=0;parameter<16;parameter++)
+        callable.callable_parameter_sets[parameter]=DIAMOND_NO_TYPE_SET;
+    for(size_t parameter=0;parameter<target->arity;parameter++) {
+        if(target->parameter_type_sets[parameter]==DIAMOND_NO_TYPE_SET) {
+            callable.callable_parameters_typed=false;break;
+        }
+        callable.callable_parameter_sets[parameter]=
+            clone_type_set_into_current(compiler,target->type_sets,
+                target->type_set_count,target->parameter_type_sets[parameter]);
+    }
+    callable.callable_return_set=clone_type_set_into_current(compiler,
+        target->type_sets,target->type_set_count,target->return_type_set);
+    if(!reserve_type_sets(compiler,1))return;
+    const size_t set_index=compiler->function->type_set_count++;
+    DiamondTypeSet *set=&compiler->function->type_sets[set_index];
+    set->count=1;set->inferred=true;set->members[0]=callable;
+    compiler->known_type_sets[reg]=(int32_t)set_index;
+}
+
 static uint16_t add_string_range(Compiler *compiler,size_t start,size_t length,
                                 DiamondSpan span) {
     if (compiler->function->string_count == DIAMOND_MAX_STRING_CONSTANTS) {
@@ -923,6 +983,8 @@ static uint16_t parse_identifier(Compiler *compiler) {
             emit_register(compiler,destination);
             emit_function_index(compiler, (size_t)function_index);
             emit_byte(compiler, 0);
+            publish_function_callable_type(compiler,destination,
+                compiler->program->functions[(size_t)function_index]);
             return destination;
         }
         if(compiler->discovery_pass) {
