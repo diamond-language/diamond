@@ -1263,13 +1263,10 @@ methods use `DIAMOND_OP_INVOKE_SPREAD`, retaining dynamic lookup,
 inheritance, visibility, `method_missing`, variadic arity, and runtime-defined
 method source chunks. Callable, constructor, and singleton routes use their
 own opcode variants because their implicit receiver and closure conventions
-differ. Every form accepts one spread expression, and only when it is the
-call's *sole* argument -- `foo(1, *array)`/`foo(*array, 2)` aren't
-supported; recognized only when `*` is the very first token after `(`,
-so a mixed call falls through to the ordinary argument parser and fails
-there instead (a real parse error, just not this feature's own
-purpose-written one -- an accepted, deliberate scope cut, not an
-oversight).
+differ. `DIAMOND_OP_BUILD_SPREAD_ARGS` assembles a fixed prefix, one runtime
+Array, and a fixed suffix into the contiguous Array consumed by those call
+opcodes, preserving source order without imposing the ordinary sixteen-
+expression limit on the spread contents.
 
 **Why this needed a genuinely new opcode, not a compiler trick.** Every
 ordinary call site bakes its argument count as a compile-time-constant
@@ -1316,8 +1313,7 @@ bounds fix from "Splat/variadic parameters" above), since nothing about
 spread parses one argument expression per element.
 
 **Deliberately out of scope:** native receiver methods; mixing a spread
-argument with ordinary positional/keyword arguments at the same call site;
-spreading into an explicitly generic call
+argument with keyword arguments; spreading into an explicitly generic call
 (`foo[T](*array)`).
 
 ### Bare singleton method references

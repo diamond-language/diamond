@@ -651,8 +651,9 @@ to a variadic *parameter* above. The supported slice is deliberately narrow:
 - direct functions, user-defined instance methods, Callable values,
   constructors, and module/class singleton methods are supported;
 - native collection/String receiver methods remain outside spread dispatch;
-- the spread argument must be the call's *only* argument — `foo(1,
-  *array)`/`foo(*array, 2)` aren't supported in this version;
+- one spread argument can appear before, between, or after fixed positional
+  arguments — `foo(1, *middle, 4)` preserves left-to-right order;
+- keyword arguments cannot be mixed with a spread argument;
 - arity and method visibility are checked against the Array's actual length at *runtime*
   (unlike an ordinary call, which the compiler validates against a
   statically-known callee's arity where it can) — too few or too many

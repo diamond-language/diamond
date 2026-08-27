@@ -524,6 +524,22 @@ static bool disassemble_chunk(FILE *stream, const char *name,
                     valid=false;
                 offset+=9;break;
             }
+            case DIAMOND_OP_BUILD_SPREAD_ARGS: {
+                if(!require_bytes(stream,chunk,offset,11)) {
+                    valid=false;offset=chunk->code_count;break;
+                }
+                const uint8_t prefix_count=chunk->code[offset+5];
+                const uint8_t suffix_count=chunk->code[offset+10];
+                fprintf(stream,"%-18s r%u, r%u/%u, *r%u, r%u/%u\n",
+                    "BUILD_SPREAD_ARGS",
+                    checked_register(chunk,stream,read_operand(chunk,offset+1),&valid),
+                    checked_register_range(chunk,stream,read_operand(chunk,offset+3),
+                        prefix_count,&valid),prefix_count,
+                    checked_register(chunk,stream,read_operand(chunk,offset+6),&valid),
+                    checked_register_range(chunk,stream,read_operand(chunk,offset+8),
+                        suffix_count,&valid),suffix_count);
+                offset+=11;break;
+            }
             case DIAMOND_OP_CALL_TYPED: {
                 if(!require_bytes(stream,chunk,offset,9)) {
                     valid=false;offset=chunk->code_count;break;

@@ -9827,6 +9827,40 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 registers[destination]=spread_result;
                 break;
             }
+            case DIAMOND_OP_BUILD_SPREAD_ARGS: {
+                uint16_t destination=0,prefix_base=0,spread_register=0,
+                    suffix_base=0;
+                uint8_t prefix_count=0,suffix_count=0;
+                READ_SHORT(destination);READ_SHORT(prefix_base);
+                READ_BYTE(prefix_count);READ_SHORT(spread_register);
+                READ_SHORT(suffix_base);READ_BYTE(suffix_count);
+                if((size_t)prefix_base+prefix_count>DIAMOND_REGISTER_COUNT||
+                   (size_t)suffix_base+suffix_count>DIAMOND_REGISTER_COUNT)
+                    VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
+                if(registers[spread_register].kind!=DIAMOND_VALUE_OBJECT||
+                   registers[spread_register].as.object->kind!=DIAMOND_OBJECT_ARRAY) {
+                    snprintf(vm->error,sizeof vm->error,
+                        "spread argument (*expr) must be an Array");
+                    VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                }
+                const DiamondArray *spread=(const DiamondArray *)
+                    registers[spread_register].as.object;
+                DiamondArray *combined=allocate_array(vm,nullptr,0);
+                if(combined==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                registers[destination]=DIAMOND_OBJECT(combined);
+                for(size_t index=0;index<prefix_count;index++)
+                    if(!array_push(vm,combined,
+                            registers[(size_t)prefix_base+index]))
+                        VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                for(size_t index=0;index<spread->count;index++)
+                    if(!array_push(vm,combined,spread->values[index]))
+                        VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                for(size_t index=0;index<suffix_count;index++)
+                    if(!array_push(vm,combined,
+                            registers[(size_t)suffix_base+index]))
+                        VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                break;
+            }
             case DIAMOND_OP_CALL_SINGLETON_SPREAD: {
                 uint16_t destination=0,function_index=0,spread_register=0;
                 uint8_t class_index=0,needs_receiver=0;

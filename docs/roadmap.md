@@ -397,9 +397,10 @@ generated method participates in inheritance/override/`super`,
 `respond_to?`, and `redefine_method`/method-cache invalidation exactly
 like a hand-written one would (`tests/cases/method_delegation.di`),
 since it *is* one -- not a parallel dispatch model. Parameters are bare
-names only (no type annotations or defaults). A sole `*arguments` parameter
-provides variadic forwarding through instance-method spread; fixed-plus-rest
-delegate signatures and block forwarding remain separate work. The forwarded call always uses the same name declared
+names only (no type annotations or defaults). A trailing `*arguments`
+parameter provides variadic forwarding through mixed instance-method spread,
+including fixed-plus-rest signatures; block forwarding remains separate work.
+The forwarded call always uses the same name declared
 (`delegate foo(), to: @bar` always calls `@bar.foo()`, never a renamed
 target) -- both deliberate scope cuts, not oversights.
 
@@ -414,7 +415,8 @@ silent one. Revisit if self-hosting work ever resumes in earnest.
 Do not infer arity from an untyped target or add Rails-style name-only
 delegation in this slice. `delegate foo(*arguments), to: @target` now emits
 an ordinary variadic method whose collected Array is forwarded through
-`DIAMOND_OP_INVOKE_SPREAD`. `delegate_missing_to` additionally
+`DIAMOND_OP_BUILD_SPREAD_ARGS` and `DIAMOND_OP_INVOKE_SPREAD`.
+`delegate_missing_to` additionally
 depends on a general missing-method protocol. Both remain separate
 future design questions.
 

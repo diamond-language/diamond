@@ -1370,6 +1370,70 @@ static uint8_t module_field_name(Compiler *compiler,DiamondSpan name) {
     return add_string_range(compiler,name.start+1,length,name);
 }
 
+static uint16_t emit_build_spread_arguments(Compiler *compiler,
+        const uint16_t *prefix,size_t prefix_count,uint16_t spread,
+        const uint16_t *suffix,size_t suffix_count);
+
+static bool call_arguments_have_spread(Compiler *compiler) {
+    Compiler probe=*compiler;
+    size_t nesting=0;bool argument_start=true;
+    while(!probe.failed) {
+        const DiamondTokenKind kind=probe.current.kind;
+        if(nesting==0&&kind==DIAMOND_TOKEN_RIGHT_PAREN)return false;
+        if(nesting==0&&argument_start&&kind==DIAMOND_TOKEN_STAR)return true;
+        if(kind==DIAMOND_TOKEN_LEFT_PAREN||kind==DIAMOND_TOKEN_LEFT_BRACKET||
+           kind==DIAMOND_TOKEN_LEFT_BRACE)nesting++;
+        else if(kind==DIAMOND_TOKEN_RIGHT_PAREN||
+                kind==DIAMOND_TOKEN_RIGHT_BRACKET||
+                kind==DIAMOND_TOKEN_RIGHT_BRACE) {
+            if(nesting>0)nesting--;
+        }
+        argument_start=nesting==0&&kind==DIAMOND_TOKEN_COMMA;
+        if(kind!=DIAMOND_TOKEN_NEWLINE&&kind!=DIAMOND_TOKEN_COMMA)
+            argument_start=false;
+        advance_token(&probe);
+    }
+    return false;
+}
+
+/* Parses the argument-list interior with exactly one `*expression`; current
+ * is the first argument and the closing ')' is consumed. */
+static uint16_t parse_spread_argument_array(Compiler *compiler) {
+    uint16_t fixed[16];size_t fixed_count=0,spread_index=0;
+    uint16_t spread=0;bool saw_spread=false;
+    while(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN&&!compiler->failed) {
+        if(compiler->current.kind==DIAMOND_TOKEN_STAR) {
+            if(saw_spread) {
+                fail(compiler,compiler->current.span,
+                    "a call can contain only one spread argument");return 0;
+            }
+            saw_spread=true;spread_index=fixed_count;
+            advance_token(compiler);skip_newlines(compiler);
+            spread=parse_expression(compiler);
+        } else {
+            if(fixed_count==16) {
+                fail(compiler,compiler->current.span,"too many fixed call arguments");
+                return 0;
+            }
+            fixed[fixed_count++]=parse_expression(compiler);
+        }
+        skip_newlines(compiler);
+        if(compiler->current.kind!=DIAMOND_TOKEN_COMMA)break;
+        advance_token(compiler);skip_newlines(compiler);
+    }
+    if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
+        fail(compiler,compiler->current.span,"expected ')' after arguments");
+        return 0;
+    }
+    advance_token(compiler);
+    if(!saw_spread) {
+        fail(compiler,compiler->previous.span,"expected spread argument");return 0;
+    }
+    if(fixed_count==0)return spread;
+    return emit_build_spread_arguments(compiler,fixed,spread_index,spread,
+        fixed+spread_index,fixed_count-spread_index);
+}
+
 /* Parses `(arg, arg, ...)` (the `(` itself still current) and emits a
  * DIAMOND_OP_CALL_CLOSURE against `callable` -- shared between a local
  * variable holding a Callable followed by `(...)` (parse_call's own
@@ -1382,19 +1446,8 @@ static uint8_t module_field_name(Compiler *compiler,DiamondSpan name) {
 static uint16_t parse_closure_call_arguments(Compiler *compiler, uint16_t callable) {
     advance_token(compiler);
     skip_newlines(compiler);
-    if(compiler->current.kind==DIAMOND_TOKEN_STAR) {
-        advance_token(compiler);skip_newlines(compiler);
-        const uint16_t spread=parse_expression(compiler);skip_newlines(compiler);
-        if(compiler->current.kind==DIAMOND_TOKEN_COMMA) {
-            fail(compiler,compiler->current.span,
-                "a spread argument (*expr) must be the only Callable argument");
-            return 0;
-        }
-        if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
-            fail(compiler,compiler->current.span,
-                "expected ')' after spread argument");return 0;
-        }
-        advance_token(compiler);
+    if(call_arguments_have_spread(compiler)) {
+        const uint16_t spread=parse_spread_argument_array(compiler);
         const uint16_t destination=allocate_register(compiler);
         emit_opcode(compiler,DIAMOND_OP_CALL_CLOSURE_SPREAD);
         emit_register(compiler,destination);emit_register(compiler,callable);
@@ -1446,7 +1499,7 @@ static uint16_t parse_discovery_unknown_call(Compiler *compiler) {
         return 0;
     }
     advance_token(compiler);skip_newlines(compiler);
-    if(compiler->current.kind==DIAMOND_TOKEN_STAR) {
+    if(call_arguments_have_spread(compiler)) {
         advance_token(compiler);skip_newlines(compiler);
         (void)parse_expression(compiler);skip_newlines(compiler);
     } else if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
@@ -1529,31 +1582,8 @@ static uint16_t parse_call(Compiler *compiler, DiamondSpan name) {
     }
     advance_token(compiler);
     skip_newlines(compiler);
-    /* `foo(*array)` -- call-site spread. Only recognized when it's the
-     * very first token of the argument list and (checked below) the
-     * only argument -- `foo(1, *array)`/`foo(*array, 2)` aren't
-     * supported in this first slice, a deliberate scope cut matching
-     * this language's usual narrow-first-slice shape, not an oversight.
-     * Also not attempted alongside generic type arguments
-     * (`foo[T](*array)`) -- falls through to the ordinary parse below,
-     * which fails on the unexpected `*` with a real, if not maximally
-     * specific, parse error. */
-    if(type_argument_count==0&&compiler->current.kind==DIAMOND_TOKEN_STAR) {
-        advance_token(compiler); /* consume '*' */
-        skip_newlines(compiler);
-        const uint16_t array_register=parse_expression(compiler);
-        skip_newlines(compiler);
-        if(compiler->current.kind==DIAMOND_TOKEN_COMMA) {
-            fail(compiler,compiler->current.span,
-                 "a spread argument (*expr) must be the only call argument");
-            return 0;
-        }
-        if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
-            fail(compiler,compiler->current.span,
-                 "expected ')' after spread argument");
-            return 0;
-        }
-        advance_token(compiler);
+    if(type_argument_count==0&&call_arguments_have_spread(compiler)) {
+        const uint16_t array_register=parse_spread_argument_array(compiler);
         const uint16_t destination=allocate_register(compiler);
         emit_opcode(compiler,DIAMOND_OP_CALL_SPREAD);
         emit_register(compiler,destination);
@@ -1900,24 +1930,13 @@ static uint16_t parse_singleton_call(Compiler *compiler,
     }
     advance_token(compiler);
     skip_newlines(compiler);
-    if(compiler->current.kind==DIAMOND_TOKEN_STAR) {
+    if(call_arguments_have_spread(compiler)) {
         if(type_argument_count>0) {
             fail(compiler,compiler->current.span,
                 "spread singleton calls do not support generic arguments");
             return 0;
         }
-        advance_token(compiler);skip_newlines(compiler);
-        const uint16_t spread=parse_expression(compiler);skip_newlines(compiler);
-        if(compiler->current.kind==DIAMOND_TOKEN_COMMA) {
-            fail(compiler,compiler->current.span,
-                "a spread argument (*expr) must be the only singleton argument");
-            return 0;
-        }
-        if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
-            fail(compiler,compiler->current.span,
-                "expected ')' after spread argument");return 0;
-        }
-        advance_token(compiler);
+        const uint16_t spread=parse_spread_argument_array(compiler);
         const uint16_t destination=allocate_register(compiler);
         emit_opcode(compiler,DIAMOND_OP_CALL_SINGLETON_SPREAD);
         emit_register(compiler,destination);
@@ -3556,19 +3575,8 @@ static uint16_t parse_name(Compiler *compiler) {
         }
         advance_token(compiler);
         skip_newlines(compiler);
-        if(compiler->current.kind==DIAMOND_TOKEN_STAR) {
-            advance_token(compiler);skip_newlines(compiler);
-            const uint16_t spread=parse_expression(compiler);skip_newlines(compiler);
-            if(compiler->current.kind==DIAMOND_TOKEN_COMMA) {
-                fail(compiler,compiler->current.span,
-                    "a spread argument (*expr) must be the only constructor argument");
-                return 0;
-            }
-            if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
-                fail(compiler,compiler->current.span,
-                    "expected ')' after spread argument");return 0;
-            }
-            advance_token(compiler);
+        if(call_arguments_have_spread(compiler)) {
+            const uint16_t spread=parse_spread_argument_array(compiler);
             const uint16_t destination=allocate_register(compiler);
             emit_opcode(compiler,DIAMOND_OP_NEW_SPREAD);
             emit_register(compiler,destination);
@@ -3690,6 +3698,36 @@ static uint16_t emit_invoke_spread(Compiler *compiler,uint16_t receiver,
     return destination;
 }
 
+static uint16_t emit_build_spread_arguments(Compiler *compiler,
+        const uint16_t *prefix,size_t prefix_count,uint16_t spread,
+        const uint16_t *suffix,size_t suffix_count) {
+    uint16_t prefix_base=spread,suffix_base=spread;
+    if(prefix_count>0) {
+        prefix_base=allocate_register(compiler);
+        for(size_t index=1;index<prefix_count;index++)
+            (void)allocate_register(compiler);
+        for(size_t index=0;index<prefix_count;index++)
+            emit_instruction(compiler,DIAMOND_OP_MOVE,
+                (uint16_t)(prefix_base+index),prefix[index],0,2);
+    }
+    if(suffix_count>0) {
+        suffix_base=allocate_register(compiler);
+        for(size_t index=1;index<suffix_count;index++)
+            (void)allocate_register(compiler);
+        for(size_t index=0;index<suffix_count;index++)
+            emit_instruction(compiler,DIAMOND_OP_MOVE,
+                (uint16_t)(suffix_base+index),suffix[index],0,2);
+    }
+    const uint16_t destination=allocate_register(compiler);
+    emit_opcode(compiler,DIAMOND_OP_BUILD_SPREAD_ARGS);
+    emit_register(compiler,destination);
+    emit_register(compiler,prefix_base);emit_byte(compiler,(uint8_t)prefix_count);
+    emit_register(compiler,spread);
+    emit_register(compiler,suffix_base);emit_byte(compiler,(uint8_t)suffix_count);
+    compiler->known_types[destination]=DIAMOND_TYPE_ARRAY;
+    return destination;
+}
+
 /* Only consulted when a writer-call's '=' is immediately followed by
  * '[' -- disambiguates the existing (real, if never yet exercised)
  * explicit generic writer call recv.attr=[T](value) from the new bare
@@ -3760,25 +3798,13 @@ static uint16_t parse_invoke(Compiler *compiler, uint16_t receiver) {
     }
     advance_token(compiler);
     skip_newlines(compiler);
-    if(compiler->current.kind==DIAMOND_TOKEN_STAR) {
+    if(call_arguments_have_spread(compiler)) {
         if(writer_name||type_argument_count>0) {
             fail(compiler,compiler->current.span,
                 "spread method calls do not support writers or generic arguments");
             return 0;
         }
-        advance_token(compiler);skip_newlines(compiler);
-        const uint16_t spread=parse_expression(compiler);
-        skip_newlines(compiler);
-        if(compiler->current.kind==DIAMOND_TOKEN_COMMA) {
-            fail(compiler,compiler->current.span,
-                "a spread argument (*expr) must be the only method argument");
-            return 0;
-        }
-        if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
-            fail(compiler,compiler->current.span,
-                "expected ')' after spread argument");return 0;
-        }
-        advance_token(compiler);
+        const uint16_t spread=parse_spread_argument_array(compiler);
         if(compiler->current.kind==DIAMOND_TOKEN_DO) {
             fail(compiler,compiler->current.span,
                 "a spread method call cannot also take a block");return 0;
@@ -8174,11 +8200,6 @@ static void compile_delegate(Compiler *compiler) {
     bool variadic=false;
     while(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN&&!compiler->failed) {
         if(compiler->current.kind==DIAMOND_TOKEN_STAR) {
-            if(parameter_count!=0) {
-                fail(compiler,compiler->current.span,
-                    "a variadic delegate cannot declare fixed parameters");
-                return;
-            }
             variadic=true;advance_token(compiler);
         }
         if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER) {
@@ -8345,11 +8366,11 @@ static void compile_delegate(Compiler *compiler) {
         function->parameter_names[index][name_length]='\0';
     }
     function->arity=(uint8_t)(function->arity+parameter_count);
-    function->required_arity=variadic?1:function->arity;
+    function->required_arity=variadic?(uint8_t)parameter_count:function->arity;
     function->has_variadic=variadic;
     if(variadic)
         emit_instruction(compiler,DIAMOND_OP_COLLECT_VARIADIC,
-            parameter_registers[0],1,0,2);
+            parameter_registers[parameter_count-1],(uint8_t)parameter_count,0,2);
 
     uint16_t ivar_register;
     if(in_class) {
@@ -8363,11 +8384,14 @@ static void compile_delegate(Compiler *compiler) {
         emit_instruction(compiler,DIAMOND_OP_GET_IVAR_NAME,ivar_register,0,
                           field,3);
     }
-    const uint16_t result=variadic?
-        emit_invoke_spread(compiler,ivar_register,method_name,
-            parameter_registers[0]):
-        emit_invoke_call(compiler,ivar_register,method_name,
-            false,nullptr,0,parameter_registers,parameter_count);
+    uint16_t result;
+    if(variadic) {
+        const uint16_t forwarded=emit_build_spread_arguments(compiler,
+            parameter_registers,parameter_count-1,
+            parameter_registers[parameter_count-1],nullptr,0);
+        result=emit_invoke_spread(compiler,ivar_register,method_name,forwarded);
+    } else result=emit_invoke_call(compiler,ivar_register,method_name,
+        false,nullptr,0,parameter_registers,parameter_count);
     emit_instruction(compiler,DIAMOND_OP_RETURN,result,0,0,1);
 
     function->capture_count=0;
@@ -8402,7 +8426,8 @@ static void compile_delegate(Compiler *compiler) {
     (void)snprintf(method->name,sizeof method->name,"%s",stored_name);
     method->function_index=function_index;
     method->arity=(uint8_t)parameter_count;
-    method->required_arity=variadic?0:(uint8_t)parameter_count;
+    method->required_arity=variadic?(uint8_t)(parameter_count-1):
+        (uint8_t)parameter_count;
     method->has_variadic=variadic;
     method->included=false;
     method->is_private=compiler->methods_private;
