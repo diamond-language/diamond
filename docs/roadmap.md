@@ -499,8 +499,10 @@ flow into anonymous blocks at statically resolved top-level, singleton,
 instance-method, and constructor call sites. Typed Callable values propagate
 their final nested Callable parameter through fixed, spread, and keyword calls.
 Explicit generic bindings substitute concrete block parameter types at function
-and method call sites. Union receivers and genuinely unresolved generic
-contexts remain future extensions to the same conservative mechanism.
+and method call sites. Union receivers participate when every member resolves
+to the exact same inherited implementation. Divergent overrides and genuinely
+unresolved generic contexts remain future extensions to the same conservative
+mechanism.
 Compiled functions now retain whether their final parameter used `&`, allowing
 LSP hover to distinguish optional blocks from defaults and locate a preceding
 variadic slot correctly. Hover also recognizes `block_given?()` as a Boolean

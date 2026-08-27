@@ -1211,8 +1211,10 @@ calls, a one-member typed Callable parameter also seeds concrete types onto
 matching anonymous-block parameter registers. Typed Callable values propagate
 the nested Callable in their final parameter slot. Explicit generic call-site
 bindings substitute concrete type variables before the block compiles. This
-context is consumed at the block boundary and does not leak into nested blocks;
-union receivers and genuinely unresolved generic contexts remain unknown.
+context is consumed at the block boundary and does not leak into nested blocks.
+Union receivers participate when every member resolves to the exact same
+inherited implementation; divergent overrides and genuinely unresolved generic
+contexts remain unknown.
 Callable-value and constructor calls attach trailing source blocks through the
 same final-positional-argument convention as named calls. Fixed calls snapshot
 pre-block argument registers before eager capture can box them; spread calls
