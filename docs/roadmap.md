@@ -127,12 +127,12 @@ receiver tooling and proves compatible loop-expression return annotations.
 ## Self-hosting: minimal-compat maintenance mode
 
 The Diamond compiler can compile and run itself (self-parse and self-run
-bootstrap, `tests/self_host_smoke.sh`), but growing full parity was premature:
-the native language itself isn't stable enough yet for keeping a second,
-hand-ported frontend in lockstep to be worth its ongoing cost. Self-hosting
-work is paused here, not abandoned -- revisit once the native surface (syntax,
-diagnostics, opcode set) has settled enough that parity effort mostly stays
-spent rather than being repeatedly re-paid.
+bootstrap, `tests/self_host_smoke.sh`), but full parity is intentionally
+deferred. The native language is still gaining features, so maintaining a
+second hand-ported frontend in lockstep would repeatedly duplicate work.
+Self-hosting will resume after the native surface has settled, allowing the
+self-hosted compiler to adopt the accumulated syntax, diagnostic, and opcode
+features in one deliberate consolidation pass.
 
 While paused:
 
