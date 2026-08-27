@@ -317,9 +317,10 @@ tolerated. `**remaining` receives a fresh Hash containing only extra entries.
 Nested Array and Hash patterns validate before any leaf store, so failures are
 failure-atomic.
 
-Not supported (yet): indexed (`arr[i]`) or chained (`obj.field`) targets,
-a comma-separated *literal* right-hand side (`a, b = 1, 2` — write `a, b
-= [1, 2]` instead).
+Comma-separated literal right-hand sides are supported: `a, b = 1, 2` is
+equivalent to destructuring `[1, 2]`, with each expression evaluated once from
+left to right. Not supported yet: indexed (`arr[i]`) or chained (`obj.field`)
+targets.
 
 ## Numbers
 

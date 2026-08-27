@@ -9820,7 +9820,18 @@ static uint16_t compile_multi_assignment(Compiler *compiler) {
         return 0;
     }
     advance_token(compiler);
-    const uint16_t value=parse_expression(compiler);
+    uint16_t rhs_values[16];size_t rhs_count=0;
+    rhs_values[rhs_count++]=parse_expression(compiler);
+    while(compiler->current.kind==DIAMOND_TOKEN_COMMA&&!compiler->failed) {
+        if(rhs_count==16) {
+            fail(compiler,compiler->current.span,
+                "too many destructuring right-hand values");return 0;
+        }
+        advance_token(compiler);skip_newlines(compiler);
+        rhs_values[rhs_count++]=parse_expression(compiler);
+    }
+    const uint16_t value=rhs_count==1?rhs_values[0]:
+        emit_argument_array(compiler,rhs_values,rhs_count);
     const uint8_t array_set = array_type_set_index(compiler);
     const uint8_t hash_set = hash_type_set_index(compiler);
     uint16_t node_values[64]={};

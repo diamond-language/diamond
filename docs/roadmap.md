@@ -396,6 +396,9 @@ Areas still worth examining include:
   Zero-capture wrappers forward collected rest arguments through singleton
   spread and bake explicit type bindings into typed call instructions; unbound
   generic references remain a compile error by design.
+- **Done**: comma-separated literal destructuring right-hand sides. Values are
+  evaluated left to right, assembled into one Array, and then use the existing
+  recursive, failure-atomic shape validation and store pass.
 
 ### Explicit-arity method delegation
 
