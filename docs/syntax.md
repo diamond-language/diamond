@@ -319,8 +319,11 @@ failure-atomic.
 
 Comma-separated literal right-hand sides are supported: `a, b = 1, 2` is
 equivalent to destructuring `[1, 2]`, with each expression evaluated once from
-left to right. Not supported yet: indexed (`arr[i]`) or chained (`obj.field`)
-targets.
+left to right. Indexed leaves are supported at any depth, including chained
+indices: `[head, matrix[row][column]] = value`. Receivers and indices are
+evaluated left to right, while the final indexed writes remain delayed until
+the complete pattern validates. Chained member (`obj.field`) targets are not
+supported yet.
 
 ## Numbers
 

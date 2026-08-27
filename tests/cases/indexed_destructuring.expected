@@ -1,0 +1,9 @@
+head
+0,9
+0,7
+8,0
+11
+12
+destructuring assignment expected 2 element(s), got 1
+0
+nil

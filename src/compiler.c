@@ -6343,16 +6343,34 @@ static bool destructuring_target_kind(DiamondTokenKind kind) {
            kind==DIAMOND_TOKEN_CLASS_VARIABLE;
 }
 
+static DiamondToken scan_destructuring_target_suffix(DiamondLexer *lexer,
+        DiamondToken token) {
+    while(token.kind==DIAMOND_TOKEN_LEFT_BRACKET) {
+        size_t depth=1;
+        while(depth>0) {
+            token=diamond_lexer_next(lexer);
+            if(token.kind==DIAMOND_TOKEN_EOF||token.kind==DIAMOND_TOKEN_ERROR)
+                return token;
+            if(token.kind==DIAMOND_TOKEN_LEFT_BRACKET)depth++;
+            if(token.kind==DIAMOND_TOKEN_RIGHT_BRACKET)depth--;
+        }
+        token=diamond_lexer_next(lexer);
+    }
+    return token;
+}
+
 static bool scan_destructuring_pattern(DiamondLexer *lexer,DiamondToken token,
         DiamondToken *after,size_t depth) {
     if(depth>8)return false;
     if(token.kind==DIAMOND_TOKEN_STAR) {
         token=diamond_lexer_next(lexer);
         if(!destructuring_target_kind(token.kind))return false;
-        *after=diamond_lexer_next(lexer);return true;
+        *after=scan_destructuring_target_suffix(lexer,diamond_lexer_next(lexer));
+        return true;
     }
     if(destructuring_target_kind(token.kind)) {
-        *after=diamond_lexer_next(lexer);return true;
+        *after=scan_destructuring_target_suffix(lexer,diamond_lexer_next(lexer));
+        return true;
     }
     if(token.kind==DIAMOND_TOKEN_LEFT_BRACE) {
         token=diamond_lexer_next(lexer);
@@ -6363,7 +6381,8 @@ static bool scan_destructuring_pattern(DiamondLexer *lexer,DiamondToken token,
                 if(token.kind!=DIAMOND_TOKEN_STAR)return false;
                 token=diamond_lexer_next(lexer);
                 if(!destructuring_target_kind(token.kind))return false;
-                token=diamond_lexer_next(lexer);
+                token=scan_destructuring_target_suffix(
+                    lexer,diamond_lexer_next(lexer));
                 if(token.kind==DIAMOND_TOKEN_RIGHT_BRACE) {
                     *after=diamond_lexer_next(lexer);return true;
                 }
@@ -6421,7 +6440,8 @@ static bool multi_assignment_ahead(const Compiler *compiler) {
             token.kind==DIAMOND_TOKEN_EQUAL;
     }
     if(!destructuring_target_kind(token.kind))return false;
-    token=diamond_lexer_next(&lookahead);
+    token=scan_destructuring_target_suffix(
+        &lookahead,diamond_lexer_next(&lookahead));
     if(token.kind!=DIAMOND_TOKEN_COMMA)return false;
     do {
         token=diamond_lexer_next(&lookahead);
@@ -9571,10 +9591,47 @@ typedef struct DestructureNode {
     DiamondSpan name;
     bool instance_variable;
     bool class_variable;
+    bool indexed;
+    uint16_t target_receiver;
+    uint16_t target_index;
     uint8_t children[16];
     uint8_t child_count;
     uint16_t key_register;
 } DestructureNode;
+
+static uint16_t load_destructure_target(Compiler *compiler,DiamondSpan name,
+        DiamondTokenKind kind) {
+    if(kind==DIAMOND_TOKEN_INSTANCE_VARIABLE) {
+        const uint16_t receiver=allocate_register(compiler);
+        if(compiler->current_module>=0&&compiler->current_class<0) {
+            const uint8_t field=module_field_name(compiler,name);
+            emit_instruction(compiler,DIAMOND_OP_GET_IVAR_NAME,receiver,0,field,3);
+        } else {
+            const int field=field_index(compiler,name,true);
+            emit_instruction(compiler,DIAMOND_OP_GET_IVAR,receiver,0,(uint8_t)field,3);
+        }
+        return receiver;
+    }
+    if(kind==DIAMOND_TOKEN_CLASS_VARIABLE) {
+        const uint16_t receiver=allocate_register(compiler);
+        const int slot=class_variable_index(compiler,name,true);
+        emit_instruction(compiler,DIAMOND_OP_GET_CVAR,receiver,
+            (uint8_t)compiler->current_class,(uint8_t)slot,3);
+        return receiver;
+    }
+    const int local=find_local(compiler,name);
+    if(local<0) {
+        fail(compiler,name,"undefined local variable");return 0;
+    }
+    uint16_t receiver=compiler->locals[(size_t)local].reg;
+    if(compiler->locals[(size_t)local].captured) {
+        emit_instruction(compiler,DIAMOND_OP_BOX_LOCAL,receiver,0,0,1);
+        const uint16_t loaded=allocate_register(compiler);
+        emit_instruction(compiler,DIAMOND_OP_GET_CELL,loaded,receiver,0,2);
+        receiver=loaded;
+    }
+    return receiver;
+}
 
 static uint8_t parse_destructure_node(Compiler *compiler,DestructureNode *nodes,
         size_t *node_count,size_t depth) {
@@ -9593,10 +9650,36 @@ static uint8_t parse_destructure_node(Compiler *compiler,DestructureNode *nodes,
         }
     }
     if(destructuring_target_kind(compiler->current.kind)) {
+        const DiamondTokenKind target_kind=compiler->current.kind;
         node->leaf=true;node->name=compiler->current.span;
-        node->instance_variable=compiler->current.kind==DIAMOND_TOKEN_INSTANCE_VARIABLE;
-        node->class_variable=compiler->current.kind==DIAMOND_TOKEN_CLASS_VARIABLE;
-        advance_token(compiler);return node_index;
+        node->instance_variable=target_kind==DIAMOND_TOKEN_INSTANCE_VARIABLE;
+        node->class_variable=target_kind==DIAMOND_TOKEN_CLASS_VARIABLE;
+        advance_token(compiler);
+        if(compiler->current.kind==DIAMOND_TOKEN_LEFT_BRACKET) {
+            node->indexed=true;
+            uint16_t receiver=load_destructure_target(
+                compiler,node->name,target_kind);
+            while(compiler->current.kind==DIAMOND_TOKEN_LEFT_BRACKET) {
+                advance_token(compiler);
+                const uint16_t index=parse_expression(compiler);
+                if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_BRACKET) {
+                    fail(compiler,compiler->current.span,
+                        "expected ']' after destructuring target index");
+                    return node_index;
+                }
+                advance_token(compiler);
+                if(compiler->current.kind==DIAMOND_TOKEN_LEFT_BRACKET) {
+                    const uint16_t loaded=allocate_register(compiler);
+                    emit_instruction(compiler,DIAMOND_OP_INDEX_GET,
+                        loaded,receiver,index,3);
+                    receiver=loaded;
+                } else {
+                    node->target_receiver=receiver;
+                    node->target_index=index;
+                }
+            }
+        }
+        return node_index;
     }
     if(compiler->current.kind==DIAMOND_TOKEN_LEFT_BRACE) {
         node->hash=true;advance_token(compiler);skip_newlines(compiler);
@@ -9773,8 +9856,15 @@ static void emit_destructure_extract(Compiler *compiler,
 static uint16_t emit_destructure_stores(Compiler *compiler,
         const DestructureNode *nodes,uint8_t node_index,const uint16_t *node_values) {
     const DestructureNode *node=&nodes[node_index];
-    if(node->leaf)return compile_assignment_store(compiler,node->name,
-        node->instance_variable,node->class_variable,node_values[node_index]);
+    if(node->leaf) {
+        if(node->indexed) {
+            emit_instruction(compiler,DIAMOND_OP_INDEX_SET,node->target_receiver,
+                node->target_index,node_values[node_index],3);
+            return node_values[node_index];
+        }
+        return compile_assignment_store(compiler,node->name,
+            node->instance_variable,node->class_variable,node_values[node_index]);
+    }
     uint16_t last=node_values[node_index];
     for(size_t index=0;index<node->child_count;index++)
         last=emit_destructure_stores(compiler,nodes,node->children[index],node_values);

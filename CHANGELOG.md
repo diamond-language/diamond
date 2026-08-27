@@ -75,6 +75,8 @@
   including suffix matching, nested patterns, empty spans, and `*_` discard.
 - Added required-key Hash destructuring assignment with nested targets,
   `**remaining` capture, and failure-atomic stores.
+- Added indexed destructuring leaves, including chained indices and delayed
+  writes that preserve failure atomicity across nested Array and Hash patterns.
 - Added protected method visibility with peer/subclass receiver access and
   runtime rejection outside the declaring class hierarchy.
 - Added `LazyEnumerator` pipelines with deferred `map`, `select`, and `reject`
