@@ -67,7 +67,7 @@ int main(void) {
     if (diamond_vm_run(&vm,&chunk,&result)!=DIAMOND_VM_TYPE_ERROR)return 6;
     child->superclass=UINT8_MAX;
     diamond_vm_invalidate_method_caches(&vm);
-    if (diamond_vm_run(&vm,&chunk,&result)!=DIAMOND_VM_TYPE_ERROR)return 8;
+    if(diamond_vm_run(&vm,&chunk,&result)!=DIAMOND_VM_NO_METHOD_ERROR)return 8;
     child->superclass=(uint8_t)(klass-program.classes);
     klass->methods[0].function_index=original_value_function;
     klass->methods[1].is_private=false;
