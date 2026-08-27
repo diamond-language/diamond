@@ -4435,11 +4435,8 @@ static bool writer_generic_arguments_ahead(const Compiler *compiler) {
  * Runtime dispatch remains fully dynamic: this is a conservative type hint
  * used solely while compiling a trailing block.  A receiver without one
  * concrete known class simply receives the existing untyped block path. */
-static const DiamondFunction *instance_call_signature(
-        const Compiler *compiler,uint16_t receiver,DiamondSpan name) {
-    const uint8_t type=compiler->known_types[receiver];
-    if(type<DIAMOND_TYPE_CLASS_BASE||type>=DIAMOND_TYPE_INTERFACE_BASE)
-        return nullptr;
+static const DiamondFunction *class_instance_signature(
+        const Compiler *compiler,uint8_t type,DiamondSpan name) {
     size_t class_index=(size_t)(type-DIAMOND_TYPE_CLASS_BASE);
     while(class_index<compiler->program->class_count) {
         const DiamondClass *class=&compiler->program->classes[class_index];
@@ -4454,6 +4451,31 @@ static const DiamondFunction *instance_call_signature(
         class_index=class->superclass;
     }
     return nullptr;
+}
+
+static const DiamondFunction *instance_call_signature(
+        const Compiler *compiler,uint16_t receiver,DiamondSpan name) {
+    const uint8_t type=compiler->known_types[receiver];
+    if(type>=DIAMOND_TYPE_CLASS_BASE&&type<DIAMOND_TYPE_INTERFACE_BASE)
+        return class_instance_signature(compiler,type,name);
+    const int32_t set_index=compiler->known_type_sets[receiver];
+    if(set_index<0||(size_t)set_index>=compiler->function->type_set_count)
+        return nullptr;
+    const DiamondTypeSet *set=
+        &compiler->function->type_sets[(size_t)set_index];
+    const DiamondFunction *shared=nullptr;
+    if(set->count==0)return nullptr;
+    for(size_t index=0;index<set->count;index++) {
+        const uint8_t member=set->members[index].id;
+        if(member<DIAMOND_TYPE_CLASS_BASE||
+           member>=DIAMOND_TYPE_INTERFACE_BASE)return nullptr;
+        const DiamondFunction *candidate=
+            class_instance_signature(compiler,member,name);
+        if(candidate==nullptr)return nullptr;
+        if(shared==nullptr)shared=candidate;
+        else if(shared!=candidate)return nullptr;
+    }
+    return shared;
 }
 
 /* `receiver.method` -- a capturing, variadic Callable whose single captured
