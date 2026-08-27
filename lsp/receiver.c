@@ -121,7 +121,7 @@ static size_t append_class(size_t *classes,size_t count,size_t capacity,size_t v
 
 static size_t function_return_classes(const DiamondChunk *chunk,
         const DiamondFunction *function,size_t *classes,size_t capacity) {
-    if(function->return_type_set==UINT8_MAX||
+    if(function->return_type_set==DIAMOND_NO_TYPE_SET||
        function->return_type_set>=function->type_set_count)return 0;
     const DiamondTypeSet *set=&function->type_sets[function->return_type_set];
     size_t count=0;

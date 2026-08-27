@@ -96,6 +96,8 @@
   every explicitly typed call operand to 16 bits across the compiler, VM,
   disassembler, ProgramBuilder, self-hosted parser, LSP, and thread clones.
   Compiler flow facts now retain high indices without signed 16-bit truncation.
+- Replaced the legacy `0xff` missing-type-set marker with the dedicated 16-bit
+  `0xffff` sentinel, recovering type-set slot 255 for ordinary annotations.
 - Added protected method visibility with peer/subclass receiver access and
   runtime rejection outside the declaring class hierarchy.
 - Added `LazyEnumerator` pipelines with deferred `map`, `select`, and `reject`

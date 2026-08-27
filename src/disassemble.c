@@ -159,10 +159,10 @@ static bool print_type_set(FILE *stream,const DiamondChunk *chunk,
         else if((size_t)(type-DIAMOND_TYPE_CLASS_BASE)<chunk->class_count)
             fputs(chunk->classes[type-DIAMOND_TYPE_CLASS_BASE].name,stream);
         else {fputs("<invalid type>",stream);valid=false;}
-        if(member.argument_set!=UINT8_MAX) {
+        if(member.argument_set!=DIAMOND_NO_TYPE_SET) {
             fputc('[',stream);
             valid=print_type_set(stream,chunk,member.argument_set)&&valid;
-            if(member.second_argument_set!=UINT8_MAX) {
+            if(member.second_argument_set!=DIAMOND_NO_TYPE_SET) {
                 fputs(", ",stream);
                 valid=print_type_set(stream,chunk,member.second_argument_set)&&valid;
             }
@@ -179,7 +179,7 @@ static bool print_type_set(FILE *stream,const DiamondChunk *chunk,
                 }
                 fputc(']',stream);
             } else fprintf(stream,"%u",member.callable_arity);
-            if(member.callable_return_set!=UINT8_MAX) {
+            if(member.callable_return_set!=DIAMOND_NO_TYPE_SET) {
                 fputs(", ",stream);
                 valid=print_type_set(stream,chunk,member.callable_return_set)&&valid;
             }

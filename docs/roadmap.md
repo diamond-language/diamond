@@ -242,9 +242,10 @@ Resolved for type sets: graph links, function and interface contracts, runtime
 collection constraints, compiler flow facts, ProgramBuilder metadata, and all
 explicitly typed call operands now carry 16-bit indices. The compiler, VM,
 disassembler, self-hosted parser, LSP, and thread-clone paths share that wire
-format. Slot 255 remains deliberately reserved as the legacy `0xff` "no nested
-set" sentinel, so real annotations occupy indices 0-254 and 256-65,534. Type
-tables grow geometrically, interface metadata is rebound after entry-table
+format. The dedicated `0xffff` "no type set" sentinel replaces the legacy
+`0xff` marker, recovering slot 255; real annotations occupy every index from
+0 through 65,534. Type tables grow geometrically, interface metadata is rebound
+after entry-table
 relocation, and thread clones own a separate entry type graph rather than
 retaining pointers into the parent program.
 

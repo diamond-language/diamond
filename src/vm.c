@@ -3038,9 +3038,9 @@ static DiamondVmStatus program_builder_invoke_helper(DiamondVm *vm,
         function->owner_class=UINT8_MAX;
         function->arity=(uint8_t)arity_value;
         function->required_arity=(uint8_t)required_value;
-        function->return_type_set=UINT8_MAX;
+        function->return_type_set=DIAMOND_NO_TYPE_SET;
         for(size_t index=0;index<16;index++)
-            function->parameter_type_sets[index]=UINT8_MAX;
+            function->parameter_type_sets[index]=DIAMOND_NO_TYPE_SET;
         const int64_t new_index=(int64_t)built->function_count-1;
         *result=DIAMOND_INT(new_index);return DIAMOND_VM_OK;
     }
@@ -4039,13 +4039,6 @@ static DiamondVmStatus program_builder_invoke_helper(DiamondVm *vm,
                 "function has too many type annotations");
             return DIAMOND_VM_TYPE_ERROR;
         }
-        if(target->type_set_count==UINT8_MAX) {
-            if(target->type_set_capacity<=target->type_set_count&&
-               !diamond_function_reserve_type_sets(target,
-                    target->type_set_count+2))return DIAMOND_VM_OUT_OF_MEMORY;
-            target->type_sets[target->type_set_count]=(DiamondTypeSet){};
-            target->type_set_count++;
-        }
         if(target->type_set_count==target->type_set_capacity) {
             size_t capacity=target->type_set_capacity==0?8:
                 target->type_set_capacity*2;
@@ -4067,15 +4060,15 @@ static DiamondVmStatus program_builder_invoke_helper(DiamondVm *vm,
                 (const DiamondArray *)descriptor->values[5].as.object;
             set->members[member]=(DiamondTypeMember){
                 .id=(uint8_t)descriptor->values[0].as.integer,
-                .argument_set=argument_set<0?UINT8_MAX:(uint16_t)argument_set,
-                .second_argument_set=second_argument_set<0?UINT8_MAX:
+                .argument_set=argument_set<0?DIAMOND_NO_TYPE_SET:(uint16_t)argument_set,
+                .second_argument_set=second_argument_set<0?DIAMOND_NO_TYPE_SET:
                     (uint16_t)second_argument_set,
                 .callable_arity=callable_arity<0?UINT8_MAX:(uint8_t)callable_arity,
-                .callable_return_set=callable_return<0?UINT8_MAX:
+                .callable_return_set=callable_return<0?DIAMOND_NO_TYPE_SET:
                     (uint16_t)callable_return,
                 .callable_parameters_typed=callable_parameters->count>0};
             for(size_t index=0;index<16;index++)
-                set->members[member].callable_parameter_sets[index]=UINT8_MAX;
+                set->members[member].callable_parameter_sets[index]=DIAMOND_NO_TYPE_SET;
             for(size_t index=0;index<callable_parameters->count;index++)
                 set->members[member].callable_parameter_sets[index]=
                     (uint8_t)callable_parameters->values[index].as.integer;
@@ -4223,16 +4216,16 @@ static DiamondVmStatus program_builder_invoke_helper(DiamondVm *vm,
         if(interface->method_count==DIAMOND_MAX_METHODS)return DIAMOND_VM_TYPE_ERROR;
         DiamondInterfaceMethod *method=&interface->methods[interface->method_count++];
         *method=(DiamondInterfaceMethod){.arity=(uint8_t)arity,
-            .return_type_set=return_set<0?UINT8_MAX:(uint16_t)return_set};
+            .return_type_set=return_set<0?DIAMOND_NO_TYPE_SET:(uint16_t)return_set};
         memcpy(method->name,name->chars,name->length);
         method->name[name->length]='\0';
-        for(size_t index=0;index<16;index++)method->parameter_type_sets[index]=UINT8_MAX;
+        for(size_t index=0;index<16;index++)method->parameter_type_sets[index]=DIAMOND_NO_TYPE_SET;
         for(size_t index=0;index<sets->count;index++) {
             if(sets->values[index].kind!=DIAMOND_VALUE_INT)return DIAMOND_VM_TYPE_ERROR;
             const int64_t set=sets->values[index].as.integer;
             if(set>=0&&(uint64_t)set>=built->entry.type_set_count)
                 return DIAMOND_VM_TYPE_ERROR;
-            method->parameter_type_sets[index]=set<0?UINT8_MAX:(uint16_t)set;
+            method->parameter_type_sets[index]=set<0?DIAMOND_NO_TYPE_SET:(uint16_t)set;
         }
         *result=DIAMOND_NIL;return DIAMOND_VM_OK;
     }
@@ -5458,11 +5451,11 @@ static bool value_matches_type(const DiamondChunk *chunk, DiamondValue value,
                 uint8_t native_return=UINT8_MAX;
                 if(!diamond_native_method_satisfies(builtin,method->name,
                     method->arity,&native_return))return false;
-                if(method->return_type_set!=UINT8_MAX) {
+                if(method->return_type_set!=DIAMOND_NO_TYPE_SET) {
                     if(native_return==UINT8_MAX)return false;
                     const DiamondTypeSet native={.members={{.id=native_return,
-                        .argument_set=UINT8_MAX,.second_argument_set=UINT8_MAX,
-                        .callable_arity=UINT8_MAX,.callable_return_set=UINT8_MAX}},.count=1};
+                        .argument_set=DIAMOND_NO_TYPE_SET,.second_argument_set=DIAMOND_NO_TYPE_SET,
+                        .callable_arity=UINT8_MAX,.callable_return_set=DIAMOND_NO_TYPE_SET}},.count=1};
                     if(!runtime_set_satisfies(chunk,&native,0,interface->type_sets,
                         method->return_type_set))return false;
                 }
@@ -5488,15 +5481,15 @@ static bool value_matches_type(const DiamondChunk *chunk, DiamondValue value,
                         for(size_t parameter=0;parameter<wanted->arity;parameter++) {
                             const uint16_t required_set=wanted->parameter_type_sets[parameter];
                             const uint16_t actual_set=implementation->parameter_type_sets[parameter];
-                            if(required_set==UINT8_MAX) {
-                                if(actual_set!=UINT8_MAX)found=false;
-                            } else if(actual_set!=UINT8_MAX&&
+                            if(required_set==DIAMOND_NO_TYPE_SET) {
+                                if(actual_set!=DIAMOND_NO_TYPE_SET)found=false;
+                            } else if(actual_set!=DIAMOND_NO_TYPE_SET&&
                                 !runtime_set_satisfies(chunk,interface->type_sets,
                                     required_set,implementation->type_sets,
                                     actual_set))found=false;
                         }
-                        if(wanted->return_type_set!=UINT8_MAX&&
-                           (implementation->return_type_set==UINT8_MAX||
+                        if(wanted->return_type_set!=DIAMOND_NO_TYPE_SET&&
+                           (implementation->return_type_set==DIAMOND_NO_TYPE_SET||
                             !runtime_set_satisfies(chunk,implementation->type_sets,
                                 implementation->return_type_set,interface->type_sets,
                                 wanted->return_type_set)))found=false;
@@ -5584,11 +5577,11 @@ static bool runtime_type_id_satisfies(const DiamondChunk *chunk,uint8_t known,
                 uint8_t native_return=UINT8_MAX;
                 if(!diamond_native_method_satisfies(known,method->name,
                     method->arity,&native_return))return false;
-                if(method->return_type_set!=UINT8_MAX) {
+                if(method->return_type_set!=DIAMOND_NO_TYPE_SET) {
                     if(native_return==UINT8_MAX)return false;
                     const DiamondTypeSet native={.members={{.id=native_return,
-                        .argument_set=UINT8_MAX,.second_argument_set=UINT8_MAX,
-                        .callable_arity=UINT8_MAX,.callable_return_set=UINT8_MAX}},.count=1};
+                        .argument_set=DIAMOND_NO_TYPE_SET,.second_argument_set=DIAMOND_NO_TYPE_SET,
+                        .callable_arity=UINT8_MAX,.callable_return_set=DIAMOND_NO_TYPE_SET}},.count=1};
                     if(!runtime_set_satisfies(chunk,&native,0,interface->type_sets,
                         method->return_type_set))return false;
                 }
@@ -5614,14 +5607,14 @@ static bool runtime_type_id_satisfies(const DiamondChunk *chunk,uint8_t known,
                         for(size_t parameter=0;parameter<wanted->arity;parameter++) {
                             const uint16_t required_set=wanted->parameter_type_sets[parameter];
                             const uint16_t actual_set=implementation->parameter_type_sets[parameter];
-                            if(required_set==UINT8_MAX) {
-                                if(actual_set!=UINT8_MAX)found=false;
-                            } else if(actual_set!=UINT8_MAX&&
+                            if(required_set==DIAMOND_NO_TYPE_SET) {
+                                if(actual_set!=DIAMOND_NO_TYPE_SET)found=false;
+                            } else if(actual_set!=DIAMOND_NO_TYPE_SET&&
                                 !runtime_set_satisfies(chunk,interface->type_sets,required_set,
                                     implementation->type_sets,actual_set))found=false;
                         }
-                        if(wanted->return_type_set!=UINT8_MAX&&
-                           (implementation->return_type_set==UINT8_MAX||
+                        if(wanted->return_type_set!=DIAMOND_NO_TYPE_SET&&
+                           (implementation->return_type_set==DIAMOND_NO_TYPE_SET||
                             !runtime_set_satisfies(chunk,implementation->type_sets,
                                 implementation->return_type_set,interface->type_sets,
                                 wanted->return_type_set)))found=false;
@@ -5659,22 +5652,22 @@ static bool runtime_member_satisfies(const DiamondChunk *chunk,
             for(size_t parameter=0;parameter<expected.callable_arity;parameter++) {
                 const uint16_t wanted=expected.callable_parameter_sets[parameter];
                 const uint16_t actual=known.callable_parameter_sets[parameter];
-                if(actual!=UINT8_MAX&&
+                if(actual!=DIAMOND_NO_TYPE_SET&&
                    !runtime_set_satisfies(chunk,expected_sets,wanted,
                                            known_sets,actual))return false;
             }
-        return expected.callable_return_set==UINT8_MAX||
-            (known.callable_return_set!=UINT8_MAX&&
+        return expected.callable_return_set==DIAMOND_NO_TYPE_SET||
+            (known.callable_return_set!=DIAMOND_NO_TYPE_SET&&
              runtime_set_satisfies(chunk,known_sets,known.callable_return_set,
                                    expected_sets,expected.callable_return_set));
     }
-    if(expected.argument_set==UINT8_MAX)return true;
-    if(known.argument_set==UINT8_MAX||
+    if(expected.argument_set==DIAMOND_NO_TYPE_SET)return true;
+    if(known.argument_set==DIAMOND_NO_TYPE_SET||
        !runtime_set_satisfies(chunk,known_sets,known.argument_set,
                               expected_sets,expected.argument_set))return false;
     if(expected.id!=DIAMOND_TYPE_HASH)return true;
-    return known.second_argument_set!=UINT8_MAX&&
-        expected.second_argument_set!=UINT8_MAX&&
+    return known.second_argument_set!=DIAMOND_NO_TYPE_SET&&
+        expected.second_argument_set!=DIAMOND_NO_TYPE_SET&&
         runtime_set_satisfies(chunk,known_sets,known.second_argument_set,
                               expected_sets,expected.second_argument_set);
 }
@@ -5714,20 +5707,20 @@ static bool value_matches_member(const DiamondChunk *chunk,DiamondValue value,
         if(member.callable_parameters_typed)
             for(size_t parameter=0;parameter<member.callable_arity;parameter++) {
                 const uint16_t actual=function->parameter_type_sets[parameter];
-                if(actual!=UINT8_MAX&&
+                if(actual!=DIAMOND_NO_TYPE_SET&&
                    !runtime_set_satisfies(chunk,chunk->type_sets,
                        member.callable_parameter_sets[parameter],
                        function->type_sets,actual))return false;
             }
-        return member.callable_return_set==UINT8_MAX||
+        return member.callable_return_set==DIAMOND_NO_TYPE_SET||
             ((size_t)member.callable_return_set<chunk->type_set_count&&
-             function->return_type_set!=UINT8_MAX&&
+             function->return_type_set!=DIAMOND_NO_TYPE_SET&&
              (size_t)function->return_type_set<function->type_set_count&&
              runtime_set_satisfies(chunk,function->type_sets,
                 function->return_type_set,chunk->type_sets,
                 member.callable_return_set));
     }
-    if(member.argument_set==UINT8_MAX)return true;
+    if(member.argument_set==DIAMOND_NO_TYPE_SET)return true;
     if((size_t)member.argument_set>=chunk->type_set_count)return false;
     if(member.id==DIAMOND_TYPE_ARRAY) {
         DiamondArray *array=(DiamondArray *)value.as.object;
@@ -5761,7 +5754,7 @@ static bool value_matches_member(const DiamondChunk *chunk,DiamondValue value,
         }
         return true;
     }
-    if(member.id!=DIAMOND_TYPE_HASH||member.second_argument_set==UINT8_MAX||
+    if(member.id!=DIAMOND_TYPE_HASH||member.second_argument_set==DIAMOND_NO_TYPE_SET||
        (size_t)member.second_argument_set>=chunk->type_set_count)return false;
     DiamondHash *hash=(DiamondHash *)value.as.object;
     for(size_t index=0;index<hash->count;index++)
@@ -6043,14 +6036,14 @@ static void format_type_set_index(char *buffer,size_t capacity,
             index==0?"":" | ",type_name(chunk,set->members[index].id));
         if(written<0)return;
         used+=(size_t)written;
-        if(set->members[index].argument_set!=UINT8_MAX&&used<capacity) {
+        if(set->members[index].argument_set!=DIAMOND_NO_TYPE_SET&&used<capacity) {
             const int open=snprintf(buffer+used,capacity-used,"[");
             if(open<0)return;
             used+=(size_t)open;
             char nested[80];format_type_set_index(nested,sizeof nested,chunk,
                 set->members[index].argument_set);
             char second[80]="";
-            if(set->members[index].second_argument_set!=UINT8_MAX)
+            if(set->members[index].second_argument_set!=DIAMOND_NO_TYPE_SET)
                 format_type_set_index(second,sizeof second,chunk,
                     set->members[index].second_argument_set);
             const int close=snprintf(buffer+used,capacity-used,"%s%s%s]",nested,
@@ -6081,7 +6074,7 @@ static void format_type_set_index(char *buffer,size_t capacity,
                     used+=(size_t)close;
                 }
             }
-            if(member.callable_return_set!=UINT8_MAX&&used<capacity) {
+            if(member.callable_return_set!=DIAMOND_NO_TYPE_SET&&used<capacity) {
                 char returns[80];
                 format_type_set_index(returns,sizeof returns,chunk,
                     member.callable_return_set);
@@ -6574,12 +6567,12 @@ static void bind_known_set(DiamondTypeBinding *binding,uint8_t node,
         const DiamondTypeMember known=set->members[index];
         DiamondBoundTypeMember *member=binding_member(binding,node,known.id);
         if(member==nullptr)continue;
-        if(known.argument_set!=UINT8_MAX) {
+        if(known.argument_set!=DIAMOND_NO_TYPE_SET) {
             if(member->argument_node==UINT8_MAX)member->argument_node=binding_node(binding);
             if(member->argument_node!=UINT8_MAX)
                 bind_known_set(binding,member->argument_node,sets,known.argument_set);
         }
-        if(known.second_argument_set!=UINT8_MAX) {
+        if(known.second_argument_set!=DIAMOND_NO_TYPE_SET) {
             if(member->second_argument_node==UINT8_MAX)
                 member->second_argument_node=binding_node(binding);
             if(member->second_argument_node!=UINT8_MAX)
@@ -6631,14 +6624,14 @@ static void bind_context_set(DiamondTypeBinding *binding,uint8_t node,
         }
         DiamondBoundTypeMember *member=binding_member(binding,node,known.id);
         if(member==nullptr)continue;
-        if(known.argument_set!=UINT8_MAX) {
+        if(known.argument_set!=DIAMOND_NO_TYPE_SET) {
             if(member->argument_node==UINT8_MAX)
                 member->argument_node=binding_node(binding);
             if(member->argument_node!=UINT8_MAX)
                 bind_context_set(binding,member->argument_node,context,sets,
                                  known.argument_set);
         }
-        if(known.second_argument_set!=UINT8_MAX) {
+        if(known.second_argument_set!=DIAMOND_NO_TYPE_SET) {
             if(member->second_argument_node==UINT8_MAX)
                 member->second_argument_node=binding_node(binding);
             if(member->second_argument_node!=UINT8_MAX)
@@ -6669,11 +6662,11 @@ static void infer_from_context_set(const DiamondChunk *known_context,
         for(size_t source=0;source<known->count;source++) {
             const DiamondTypeMember actual=known->members[source];
             if(actual.id!=wanted.id)continue;
-            if(wanted.argument_set!=UINT8_MAX&&actual.argument_set!=UINT8_MAX)
+            if(wanted.argument_set!=DIAMOND_NO_TYPE_SET&&actual.argument_set!=DIAMOND_NO_TYPE_SET)
                 infer_from_context_set(known_context,known_sets,
                     actual.argument_set,expected_sets,wanted.argument_set,bindings);
-            if(wanted.second_argument_set!=UINT8_MAX&&
-               actual.second_argument_set!=UINT8_MAX)
+            if(wanted.second_argument_set!=DIAMOND_NO_TYPE_SET&&
+               actual.second_argument_set!=DIAMOND_NO_TYPE_SET)
                 infer_from_context_set(known_context,known_sets,
                     actual.second_argument_set,expected_sets,
                     wanted.second_argument_set,bindings);
@@ -6700,11 +6693,11 @@ static void infer_from_known_set(const DiamondChunk *chunk,
             for(size_t source=0;source<known->count;source++) {
                 const DiamondTypeMember actual=known->members[source];
                 if(actual.id!=wanted.id)continue;
-                if(wanted.argument_set!=UINT8_MAX&&actual.argument_set!=UINT8_MAX)
+                if(wanted.argument_set!=DIAMOND_NO_TYPE_SET&&actual.argument_set!=DIAMOND_NO_TYPE_SET)
                     infer_from_known_set(chunk,known_sets,actual.argument_set,
                         expected_sets,wanted.argument_set,bindings);
-                if(wanted.second_argument_set!=UINT8_MAX&&
-                   actual.second_argument_set!=UINT8_MAX)
+                if(wanted.second_argument_set!=DIAMOND_NO_TYPE_SET&&
+                   actual.second_argument_set!=DIAMOND_NO_TYPE_SET)
                     infer_from_known_set(chunk,known_sets,actual.second_argument_set,
                         expected_sets,wanted.second_argument_set,bindings);
             }
@@ -6726,7 +6719,7 @@ static void infer_from_value(const DiamondChunk *chunk,DiamondValue value,
             bind_value_graph(chunk,&bindings[variable],0,value);continue;
         }
         if(!value_matches_type(chunk,value,member.id))continue;
-        if(member.id==DIAMOND_TYPE_ARRAY&&member.argument_set!=UINT8_MAX) {
+        if(member.id==DIAMOND_TYPE_ARRAY&&member.argument_set!=DIAMOND_NO_TYPE_SET) {
             const DiamondArray *array=(const DiamondArray *)value.as.object;
             for(size_t constraint=0;constraint<array->constraint_count;constraint++) {
                 const typeof(array->constraints[0]) *known=
@@ -6743,8 +6736,8 @@ static void infer_from_value(const DiamondChunk *chunk,DiamondValue value,
             for(size_t item=0;item<array->count;item++)
                 infer_from_value(chunk,array->values[item],sets,
                                  member.argument_set,bindings);
-        } else if(member.id==DIAMOND_TYPE_HASH&&member.argument_set!=UINT8_MAX&&
-                  member.second_argument_set!=UINT8_MAX) {
+        } else if(member.id==DIAMOND_TYPE_HASH&&member.argument_set!=DIAMOND_NO_TYPE_SET&&
+                  member.second_argument_set!=DIAMOND_NO_TYPE_SET) {
             const DiamondHash *hash=(const DiamondHash *)value.as.object;
             for(size_t constraint=0;constraint<hash->constraint_count;constraint++) {
                 const typeof(hash->constraints[0]) *known=
@@ -6774,12 +6767,12 @@ static void infer_from_value(const DiamondChunk *chunk,DiamondValue value,
                 if(member.callable_parameters_typed)
                     for(size_t parameter=0;parameter<member.callable_arity;parameter++) {
                         const uint16_t actual=function->parameter_type_sets[parameter];
-                        if(actual!=UINT8_MAX)
+                        if(actual!=DIAMOND_NO_TYPE_SET)
                             infer_from_known_set(chunk,function->type_sets,actual,
                                 sets,member.callable_parameter_sets[parameter],bindings);
                     }
-                if(function->return_type_set!=UINT8_MAX)
-                    if(member.callable_return_set!=UINT8_MAX)
+                if(function->return_type_set!=DIAMOND_NO_TYPE_SET)
+                    if(member.callable_return_set!=DIAMOND_NO_TYPE_SET)
                     infer_from_known_set(chunk,function->type_sets,
                         function->return_type_set,sets,member.callable_return_set,
                         bindings);
@@ -8817,7 +8810,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
         for(size_t parameter=0;
             parameter+chunk->parameter_offset<argument_count;parameter++) {
             const uint16_t set=chunk->parameter_type_sets[parameter];
-            if(set!=UINT8_MAX&&set<chunk->type_set_count)
+            if(set!=DIAMOND_NO_TYPE_SET&&set<chunk->type_set_count)
                 infer_from_value(chunk,arguments[parameter+chunk->parameter_offset],
                                  chunk->type_sets,set,bindings);
         }

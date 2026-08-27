@@ -73,7 +73,7 @@ static JsonValue *hover_result(const char *text) {
 
 /* `def name(p0: T0, p1: T1 = ..., ...) -> Return`, matching what a
  * reader would type to declare `function` themselves. An untyped
- * parameter (`parameter_type_sets[i]==UINT8_MAX`, gradual typing's own
+ * parameter (`parameter_type_sets[i]==DIAMOND_NO_TYPE_SET`, gradual typing's own
  * "no annotation" sentinel) or return simply omits its `: T`/`-> T`,
  * the same way the real declaration would have. Default-value
  * expressions aren't reconstructed -- the compiler doesn't keep source
@@ -115,14 +115,15 @@ static char *format_function_signature(const DiamondChunk *chunk,
             index+1==function->arity;
         if(is_variadic_slot)fputc('*',stream);
         fputs(function->parameter_names[index],stream);
-        if(!is_variadic_slot&&function->parameter_type_sets[index]!=UINT8_MAX) {
+        if(!is_variadic_slot&&
+           function->parameter_type_sets[index]!=DIAMOND_NO_TYPE_SET) {
             fputs(": ",stream);
             diamond_print_type_set(stream,&function_chunk,function->parameter_type_sets[index]);
         }
         if(!is_variadic_slot&&index>=function->required_arity)fputs(" = ...",stream);
     }
     fputc(')',stream);
-    if(function->return_type_set!=UINT8_MAX) {
+    if(function->return_type_set!=DIAMOND_NO_TYPE_SET) {
         fputs(" -> ",stream);
         diamond_print_type_set(stream,&function_chunk,function->return_type_set);
     }

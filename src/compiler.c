@@ -292,11 +292,11 @@ static bool known_type_satisfies_one(const Compiler *compiler, uint8_t known,
                 uint8_t native_return=UINT8_MAX;
                 if(!diamond_native_method_satisfies(known,method->name,
                     method->arity,&native_return))return false;
-                if(method->return_type_set!=UINT8_MAX) {
+                if(method->return_type_set!=DIAMOND_NO_TYPE_SET) {
                     if(native_return==UINT8_MAX)return false;
                     const DiamondTypeSet native={.members={{.id=native_return,
-                        .argument_set=UINT8_MAX,.second_argument_set=UINT8_MAX,
-                        .callable_arity=UINT8_MAX,.callable_return_set=UINT8_MAX}},.count=1};
+                        .argument_set=DIAMOND_NO_TYPE_SET,.second_argument_set=DIAMOND_NO_TYPE_SET,
+                        .callable_arity=UINT8_MAX,.callable_return_set=DIAMOND_NO_TYPE_SET}},.count=1};
                     if(!type_sets_satisfy_across(compiler,&native,0,
                         compiler->program->entry.type_sets,
                         method->return_type_set))return false;
@@ -325,15 +325,15 @@ static bool known_type_satisfies_one(const Compiler *compiler, uint8_t known,
                         for(size_t parameter=0;parameter<wanted->arity;parameter++) {
                             const uint16_t required_set=wanted->parameter_type_sets[parameter];
                             const uint16_t actual_set=implementation->parameter_type_sets[parameter];
-                            if(required_set==UINT8_MAX) {
-                                if(actual_set!=UINT8_MAX)found=false;
-                            } else if(actual_set!=UINT8_MAX&&
+                            if(required_set==DIAMOND_NO_TYPE_SET) {
+                                if(actual_set!=DIAMOND_NO_TYPE_SET)found=false;
+                            } else if(actual_set!=DIAMOND_NO_TYPE_SET&&
                                 !type_sets_satisfy_across(compiler,
                                     compiler->program->entry.type_sets,required_set,
                                     implementation->type_sets,actual_set))found=false;
                         }
-                        if(wanted->return_type_set!=UINT8_MAX&&
-                           (implementation->return_type_set==UINT8_MAX||
+                        if(wanted->return_type_set!=DIAMOND_NO_TYPE_SET&&
+                           (implementation->return_type_set==DIAMOND_NO_TYPE_SET||
                             !type_sets_satisfy_across(compiler,
                                 implementation->type_sets,
                                 implementation->return_type_set,
@@ -404,24 +404,24 @@ static bool type_members_satisfy_across(const Compiler *compiler,
         if(expected.callable_parameters_typed)
             for(size_t parameter=0;parameter<expected.callable_arity;parameter++) {
                 const uint16_t wanted=expected.callable_parameter_sets[parameter];
-                if(wanted==UINT8_MAX)continue;
+                if(wanted==DIAMOND_NO_TYPE_SET)continue;
                 const uint16_t actual=known.callable_parameter_sets[parameter];
-                if(actual!=UINT8_MAX&&
+                if(actual!=DIAMOND_NO_TYPE_SET&&
                    !type_sets_satisfy_across(compiler,expected_sets,wanted,
                                               known_sets,actual))return false;
             }
-        return expected.callable_return_set==UINT8_MAX||
-            (known.callable_return_set!=UINT8_MAX&&
+        return expected.callable_return_set==DIAMOND_NO_TYPE_SET||
+            (known.callable_return_set!=DIAMOND_NO_TYPE_SET&&
              type_sets_satisfy_across(compiler,known_sets,
                  known.callable_return_set,expected_sets,
                  expected.callable_return_set));
     }
-    if(expected.argument_set==UINT8_MAX)return true;
-    if(known.argument_set==UINT8_MAX||
+    if(expected.argument_set==DIAMOND_NO_TYPE_SET)return true;
+    if(known.argument_set==DIAMOND_NO_TYPE_SET||
        !type_sets_satisfy_across(compiler,known_sets,known.argument_set,
                                  expected_sets,expected.argument_set))return false;
     if(expected.id!=DIAMOND_TYPE_HASH)return true;
-    return known.second_argument_set!=UINT8_MAX&&
+    return known.second_argument_set!=DIAMOND_NO_TYPE_SET&&
         type_sets_satisfy_across(compiler,known_sets,known.second_argument_set,
                                  expected_sets,expected.second_argument_set);
 }
@@ -451,23 +451,23 @@ static bool type_member_satisfies(const Compiler *compiler,
         if(expected.callable_parameters_typed)
             for(size_t parameter=0;parameter<expected.callable_arity;parameter++) {
                 const uint16_t wanted=expected.callable_parameter_sets[parameter];
-                if(wanted==UINT8_MAX)continue;
+                if(wanted==DIAMOND_NO_TYPE_SET)continue;
                 const uint16_t actual=known.callable_parameter_sets[parameter];
-                if(actual!=UINT8_MAX&&
+                if(actual!=DIAMOND_NO_TYPE_SET&&
                    !type_set_satisfies(compiler,wanted,actual))return false;
             }
-        return expected.callable_return_set==UINT8_MAX||
-            (known.callable_return_set!=UINT8_MAX&&
+        return expected.callable_return_set==DIAMOND_NO_TYPE_SET||
+            (known.callable_return_set!=DIAMOND_NO_TYPE_SET&&
              type_set_satisfies(compiler,known.callable_return_set,
                                 expected.callable_return_set));
     }
-    if(expected.argument_set==UINT8_MAX)return true;
-    if(known.argument_set==UINT8_MAX||
+    if(expected.argument_set==DIAMOND_NO_TYPE_SET)return true;
+    if(known.argument_set==DIAMOND_NO_TYPE_SET||
        !type_set_satisfies(compiler,known.argument_set,expected.argument_set))
         return false;
     if(expected.id!=DIAMOND_TYPE_HASH)return true;
-    return known.second_argument_set!=UINT8_MAX&&
-        expected.second_argument_set!=UINT8_MAX&&
+    return known.second_argument_set!=DIAMOND_NO_TYPE_SET&&
+        expected.second_argument_set!=DIAMOND_NO_TYPE_SET&&
         type_set_satisfies(compiler,known.second_argument_set,
                            expected.second_argument_set);
 }
@@ -478,11 +478,11 @@ static bool type_set_contains_variable(const Compiler *compiler,uint16_t set_ind
         const DiamondTypeMember member=set->members[index];
         if(member.id>=DIAMOND_TYPE_VARIABLE_BASE&&
            member.id<DIAMOND_TYPE_INTERFACE_BASE)return true;
-        if(member.argument_set!=UINT8_MAX&&
+        if(member.argument_set!=DIAMOND_NO_TYPE_SET&&
            type_set_contains_variable(compiler,member.argument_set))return true;
-        if(member.second_argument_set!=UINT8_MAX&&
+        if(member.second_argument_set!=DIAMOND_NO_TYPE_SET&&
            type_set_contains_variable(compiler,member.second_argument_set))return true;
-        if(member.callable_return_set!=UINT8_MAX&&
+        if(member.callable_return_set!=DIAMOND_NO_TYPE_SET&&
            type_set_contains_variable(compiler,member.callable_return_set))return true;
         if(member.callable_parameters_typed)
             for(size_t parameter=0;parameter<member.callable_arity;parameter++)
@@ -515,7 +515,7 @@ static void emit_type_check(Compiler *compiler, uint16_t reg, uint16_t set_index
     const DiamondTypeSet *set=&compiler->function->type_sets[set_index];
     for(size_t index=0;index<set->count;index++) {
         if(!known_type_satisfies_one(compiler,known,set->members[index].id))continue;
-        if(set->members[index].argument_set!=UINT8_MAX)
+        if(set->members[index].argument_set!=DIAMOND_NO_TYPE_SET)
             emit_instruction(compiler,DIAMOND_OP_CHECK_TYPE,reg,set_index,0,2);
         return;
     }
@@ -542,21 +542,15 @@ static uint16_t add_constant(Compiler *compiler, DiamondValue value) {
 }
 
 static bool grow_type_sets(DiamondFunction *function,size_t additional) {
-    const bool reserve_legacy_sentinel=function->type_set_count==UINT8_MAX;
-    const size_t reserved=reserve_legacy_sentinel?1u:0u;
-    if(additional+reserved>DIAMOND_MAX_TYPE_SETS-function->type_set_count)
+    if(additional>DIAMOND_MAX_TYPE_SETS-function->type_set_count)
         return false;
-    const size_t needed=function->type_set_count+additional+reserved;
+    const size_t needed=function->type_set_count+additional;
     if(needed>function->type_set_capacity) {
         size_t capacity=function->type_set_capacity==0?8:
             function->type_set_capacity*2;
         if(capacity<needed)capacity=needed;
         if(capacity>DIAMOND_MAX_TYPE_SETS)capacity=DIAMOND_MAX_TYPE_SETS;
         if(!diamond_function_reserve_type_sets(function,capacity))return false;
-    }
-    if(reserve_legacy_sentinel) {
-        function->type_sets[function->type_set_count]=(DiamondTypeSet){};
-        function->type_set_count++;
     }
     return true;
 }
@@ -1250,12 +1244,12 @@ static int parse_type_annotation(Compiler *compiler) {
         if(set->count==DIAMOND_MAX_UNION_TYPES) {
             fail(compiler,compiler->current.span,"too many types in union");break;
         }
-        uint16_t argument_set=UINT8_MAX,second_argument_set=UINT8_MAX;
+        uint16_t argument_set=DIAMOND_NO_TYPE_SET,second_argument_set=DIAMOND_NO_TYPE_SET;
         uint8_t callable_arity=UINT8_MAX;
-        uint16_t callable_return_set=UINT8_MAX;
+        uint16_t callable_return_set=DIAMOND_NO_TYPE_SET;
         bool callable_parameters_typed=false;
         uint16_t callable_parameter_sets[16];
-        for(size_t index=0;index<16;index++)callable_parameter_sets[index]=UINT8_MAX;
+        for(size_t index=0;index<16;index++)callable_parameter_sets[index]=DIAMOND_NO_TYPE_SET;
         if(compiler->current.kind==DIAMOND_TOKEN_LEFT_BRACKET) {
             if(type==DIAMOND_TYPE_CALLABLE) {
                 advance_token(compiler);
@@ -2061,7 +2055,7 @@ static uint16_t parse_singleton_reference(Compiler *compiler,
     }
     function->owner_class=UINT8_MAX;
     function->nested=true;
-    function->return_type_set=UINT8_MAX;
+    function->return_type_set=DIAMOND_NO_TYPE_SET;
     function->arity=method->arity;
     function->required_arity=method->required_arity;
     function->has_variadic=method->has_variadic;
@@ -2078,7 +2072,7 @@ static uint16_t parse_singleton_reference(Compiler *compiler,
     function->declaration_column=(uint32_t)compiler->previous.span.column;
     function->declaration_start=compiler->previous.span.start;
     for(size_t index=0;index<16;index++) {
-        function->parameter_type_sets[index]=UINT8_MAX;
+        function->parameter_type_sets[index]=DIAMOND_NO_TYPE_SET;
         (void)snprintf(function->parameter_names[index],
             DIAMOND_MAX_FUNCTION_NAME,"%s",target->parameter_names[index]);
     }
@@ -4107,7 +4101,7 @@ static uint16_t parse_bound_method_reference(Compiler *compiler,uint16_t receive
     (void)snprintf(wrapper->name,sizeof wrapper->name,"<bound method>");
     wrapper->owner_class=UINT8_MAX;wrapper->nested=true;
     wrapper->arity=1;wrapper->required_arity=0;wrapper->has_variadic=true;
-    wrapper->return_type_set=UINT8_MAX;
+    wrapper->return_type_set=DIAMOND_NO_TYPE_SET;
     wrapper->type_set_count=compiler->function->type_set_count;
     if(!diamond_function_reserve_type_sets(wrapper,wrapper->type_set_count)) {
         fail(compiler,method_name,"out of memory");return 0;
@@ -4116,7 +4110,7 @@ static uint16_t parse_bound_method_reference(Compiler *compiler,uint16_t receive
         wrapper->type_set_count*sizeof wrapper->type_sets[0]);
     (void)snprintf(wrapper->parameter_names[0],DIAMOND_MAX_FUNCTION_NAME,
         "arguments");
-    for(size_t index=0;index<16;index++)wrapper->parameter_type_sets[index]=UINT8_MAX;
+    for(size_t index=0;index<16;index++)wrapper->parameter_type_sets[index]=DIAMOND_NO_TYPE_SET;
 
     const uint16_t captured=allocate_register(compiler);
     emit_instruction(compiler,DIAMOND_OP_MOVE,captured,receiver,0,2);
@@ -4515,9 +4509,9 @@ static int32_t type_set_with_nil(Compiler *compiler,uint16_t source_index) {
     compiler->function->type_sets[result]=source;
     DiamondTypeSet *set=&compiler->function->type_sets[result];
     set->members[set->count++]=(DiamondTypeMember){
-        .id=DIAMOND_TYPE_NIL,.argument_set=UINT8_MAX,
-        .second_argument_set=UINT8_MAX,.callable_arity=UINT8_MAX,
-        .callable_return_set=UINT8_MAX};
+        .id=DIAMOND_TYPE_NIL,.argument_set=DIAMOND_NO_TYPE_SET,
+        .second_argument_set=DIAMOND_NO_TYPE_SET,.callable_arity=UINT8_MAX,
+        .callable_return_set=DIAMOND_NO_TYPE_SET};
     return (int32_t)result;
 }
 
@@ -4537,8 +4531,8 @@ static bool split_nil_type_set(Compiler *compiler,uint16_t source_index,
     DiamondTypeSet *nil_set=&compiler->function->type_sets[
         compiler->function->type_set_count++];
     *nil_set=(DiamondTypeSet){.members={{.id=DIAMOND_TYPE_NIL,
-        .argument_set=UINT8_MAX,.second_argument_set=UINT8_MAX,
-        .callable_arity=UINT8_MAX,.callable_return_set=UINT8_MAX}},.count=1};
+        .argument_set=DIAMOND_NO_TYPE_SET,.second_argument_set=DIAMOND_NO_TYPE_SET,
+        .callable_arity=UINT8_MAX,.callable_return_set=DIAMOND_NO_TYPE_SET}},.count=1};
     return true;
 }
 
@@ -4607,9 +4601,9 @@ static bool type_sets_equal_unordered(DiamondTypeSet left,DiamondTypeSet right) 
 }
 
 static DiamondTypeMember plain_type_member(uint8_t type) {
-    return (DiamondTypeMember){.id=type,.argument_set=UINT8_MAX,
-        .second_argument_set=UINT8_MAX,.callable_arity=UINT8_MAX,
-        .callable_return_set=UINT8_MAX};
+    return (DiamondTypeMember){.id=type,.argument_set=DIAMOND_NO_TYPE_SET,
+        .second_argument_set=DIAMOND_NO_TYPE_SET,.callable_arity=UINT8_MAX,
+        .callable_return_set=DIAMOND_NO_TYPE_SET};
 }
 
 static bool append_merged_member(DiamondTypeSet *merged,DiamondTypeMember member) {
@@ -4715,10 +4709,10 @@ static uint16_t parse_index(Compiler *compiler,uint16_t receiver) {
         const DiamondTypeSet *set=&compiler->function->type_sets[(size_t)receiver_set];
         if(set->count==1) {
             const DiamondTypeMember member=set->members[0];
-            if(member.id==DIAMOND_TYPE_ARRAY&&member.argument_set!=UINT8_MAX)
+            if(member.id==DIAMOND_TYPE_ARRAY&&member.argument_set!=DIAMOND_NO_TYPE_SET)
                 compiler->known_type_sets[destination]=(int32_t)member.argument_set;
             else if(member.id==DIAMOND_TYPE_HASH&&
-                    member.second_argument_set!=UINT8_MAX)
+                    member.second_argument_set!=DIAMOND_NO_TYPE_SET)
                 compiler->known_type_sets[destination]=type_set_with_nil(
                     compiler,member.second_argument_set);
         }
@@ -7115,9 +7109,9 @@ static uint16_t compile_block(Compiler *compiler) {
         fail(compiler,compiler->current.span,"out of memory");
         return 0;
     }
-    function->return_type_set=UINT8_MAX;
+    function->return_type_set=DIAMOND_NO_TYPE_SET;
     for(size_t index=0;index<16;index++)
-        function->parameter_type_sets[index]=UINT8_MAX;
+        function->parameter_type_sets[index]=DIAMOND_NO_TYPE_SET;
     function->owner_class=UINT8_MAX;
     function->nested=true;
     static const char block_name[]="<block>";
@@ -7446,9 +7440,9 @@ static uint16_t compile_definition(Compiler *compiler, bool captures_self) {
         fail(compiler,name,"out of memory");
         return 0;
     }
-    function->return_type_set=UINT8_MAX;
+    function->return_type_set=DIAMOND_NO_TYPE_SET;
     for(size_t index=0;index<16;index++)
-        function->parameter_type_sets[index]=UINT8_MAX;
+        function->parameter_type_sets[index]=DIAMOND_NO_TYPE_SET;
     /* current_class/current_module are compiler-wide "lexically inside a
      * class/module body" flags, true for a nested closure at any depth,
      * not just a direct member -- direct_class_member/direct_module_member
@@ -8307,8 +8301,8 @@ static void compile_attribute_named(Compiler *compiler,bool writer,bool predicat
     function->owner_class=compiler->current_class>=0?
         (uint8_t)compiler->current_class:UINT8_MAX-1;
     function->arity=writer?2:1;function->required_arity=function->arity;
-    function->return_type_set=UINT8_MAX;
-    for(size_t index=0;index<16;index++)function->parameter_type_sets[index]=UINT8_MAX;
+    function->return_type_set=DIAMOND_NO_TYPE_SET;
+    for(size_t index=0;index<16;index++)function->parameter_type_sets[index]=DIAMOND_NO_TYPE_SET;
     if(type_set>=0) {
         function->type_set_count=compiler->function->type_set_count;
         if(!diamond_function_reserve_type_sets(function,function->type_set_count)) {
@@ -8801,8 +8795,8 @@ static void compile_delegate(Compiler *compiler) {
     function->declaration_line=(uint32_t)keyword.line;
     function->declaration_column=(uint32_t)keyword.column;
     function->declaration_start=keyword.start;
-    function->return_type_set=UINT8_MAX;
-    for(size_t index=0;index<16;index++)function->parameter_type_sets[index]=UINT8_MAX;
+    function->return_type_set=DIAMOND_NO_TYPE_SET;
+    for(size_t index=0;index<16;index++)function->parameter_type_sets[index]=DIAMOND_NO_TYPE_SET;
 
     compiler->function=function;
     compiler->local_count=0;
@@ -9431,9 +9425,9 @@ static uint16_t compile_interface(Compiler *compiler) {
             }
         if(compiler->failed)break;
         DiamondInterfaceMethod *method=&interface->methods[interface->method_count++];
-        method->return_type_set=UINT8_MAX;
+        method->return_type_set=DIAMOND_NO_TYPE_SET;
         for(size_t index=0;index<16;index++)
-            method->parameter_type_sets[index]=UINT8_MAX;
+            method->parameter_type_sets[index]=DIAMOND_NO_TYPE_SET;
         if(compiler->current.span.length>=DIAMOND_MAX_FUNCTION_NAME) {
             fail(compiler,compiler->current.span,"interface method name is too long");break;
         }
@@ -9631,7 +9625,7 @@ static uint16_t array_type_set_index(Compiler *compiler) {
     for(size_t index=0;index<compiler->function->type_set_count;index++) {
         const DiamondTypeSet *set=&compiler->function->type_sets[index];
         if(set->count==1&&set->members[0].id==DIAMOND_TYPE_ARRAY&&
-           set->members[0].argument_set==UINT8_MAX)
+           set->members[0].argument_set==DIAMOND_NO_TYPE_SET)
             return (uint16_t)index;
     }
     if(!reserve_type_sets(compiler,1))return 0;
@@ -9639,11 +9633,11 @@ static uint16_t array_type_set_index(Compiler *compiler) {
     DiamondTypeSet *set=&compiler->function->type_sets[set_index];
     set->count=1;
     set->members[0]=(DiamondTypeMember){.id=DIAMOND_TYPE_ARRAY,
-        .argument_set=UINT8_MAX,.second_argument_set=UINT8_MAX,
-        .callable_arity=UINT8_MAX,.callable_return_set=UINT8_MAX,
+        .argument_set=DIAMOND_NO_TYPE_SET,.second_argument_set=DIAMOND_NO_TYPE_SET,
+        .callable_arity=UINT8_MAX,.callable_return_set=DIAMOND_NO_TYPE_SET,
         .callable_parameters_typed=false};
     for(size_t member_index=0;member_index<16;member_index++)
-        set->members[0].callable_parameter_sets[member_index]=UINT8_MAX;
+        set->members[0].callable_parameter_sets[member_index]=DIAMOND_NO_TYPE_SET;
     return (uint16_t)set_index;
 }
 
@@ -9651,7 +9645,7 @@ static uint16_t hash_type_set_index(Compiler *compiler) {
     for(size_t index=0;index<compiler->function->type_set_count;index++) {
         const DiamondTypeSet *set=&compiler->function->type_sets[index];
         if(set->count==1&&set->members[0].id==DIAMOND_TYPE_HASH&&
-           set->members[0].argument_set==UINT8_MAX)
+           set->members[0].argument_set==DIAMOND_NO_TYPE_SET)
             return (uint16_t)index;
     }
     if(!reserve_type_sets(compiler,1))return 0;
@@ -9659,11 +9653,11 @@ static uint16_t hash_type_set_index(Compiler *compiler) {
     DiamondTypeSet *set=&compiler->function->type_sets[set_index];
     set->count=1;
     set->members[0]=(DiamondTypeMember){.id=DIAMOND_TYPE_HASH,
-        .argument_set=UINT8_MAX,.second_argument_set=UINT8_MAX,
-        .callable_arity=UINT8_MAX,.callable_return_set=UINT8_MAX,
+        .argument_set=DIAMOND_NO_TYPE_SET,.second_argument_set=DIAMOND_NO_TYPE_SET,
+        .callable_arity=UINT8_MAX,.callable_return_set=DIAMOND_NO_TYPE_SET,
         .callable_parameters_typed=false};
     for(size_t member_index=0;member_index<16;member_index++)
-        set->members[0].callable_parameter_sets[member_index]=UINT8_MAX;
+        set->members[0].callable_parameter_sets[member_index]=DIAMOND_NO_TYPE_SET;
     return (uint16_t)set_index;
 }
 
