@@ -85,6 +85,9 @@ void diamond_value_fprint(FILE *stream, DiamondValue value) {
         case DIAMOND_VALUE_FLOAT:
             fprint_float(stream, value.as.real);
             break;
+        case DIAMOND_VALUE_UNDEFINED:
+            fputs("<undefined>",stream);
+            break;
         case DIAMOND_VALUE_CLASS:
             /* No chunk/program context reaches this low-level, value-only
              * print path, so this can't resolve class_index back to the

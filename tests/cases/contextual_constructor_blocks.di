@@ -1,5 +1,5 @@
 class ContextBuilder
-  def initialize(prefix, &block: Callable[[String], String])
+  def initialize(prefix = "fixed", &block: Callable[[String], String])
     @value = yield(prefix)
   end
 
@@ -11,7 +11,7 @@ end
 class InheritedContextBuilder < ContextBuilder
 end
 
-fixed = ContextBuilder.new("fixed") do |value|
+fixed = ContextBuilder.new() do |value|
   value + " constructor"
 end
 puts(fixed.value())

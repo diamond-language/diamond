@@ -10,6 +10,8 @@ typedef enum DiamondValueKind : uint8_t {
     DIAMOND_VALUE_INT,
     DIAMOND_VALUE_FLOAT,
     DIAMOND_VALUE_OBJECT,
+    /* Internal sparse-call sentinel; consumed at frame entry. */
+    DIAMOND_VALUE_UNDEFINED,
     /* A compile-time class index (into the ambient chunk's `classes[]`),
      * not a heap object -- carries no pointer, so GC's mark_value already
      * skips it exactly like INT/FLOAT/BOOL/NIL, and it costs no struct
@@ -38,6 +40,7 @@ typedef struct DiamondValue {
 } DiamondValue;
 
 #define DIAMOND_NIL ((DiamondValue){.kind = DIAMOND_VALUE_NIL})
+#define DIAMOND_UNDEFINED ((DiamondValue){.kind = DIAMOND_VALUE_UNDEFINED})
 #define DIAMOND_BOOL(value_) \
     ((DiamondValue){.kind = DIAMOND_VALUE_BOOL, .as.boolean = (value_)})
 #define DIAMOND_INT(value_) \

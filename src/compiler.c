@@ -1007,6 +1007,10 @@ static uint16_t parse_identifier(Compiler *compiler) {
     const uint16_t destination=allocate_register(compiler);
     emit_instruction(compiler,DIAMOND_OP_GET_CELL,destination,
                      compiler->locals[(size_t)local].reg,0,2);
+    compiler->known_types[destination]=
+        compiler->known_types[compiler->locals[(size_t)local].reg];
+    compiler->known_type_sets[destination]=
+        compiler->known_type_sets[compiler->locals[(size_t)local].reg];
     return destination;
 }
 
@@ -1712,6 +1716,16 @@ static uint16_t compile_callable_value_block(Compiler *compiler,
  * a stored-callback-field pattern that's otherwise completely ordinary. */
 static uint16_t parse_closure_call_arguments(Compiler *compiler, uint16_t callable) {
     const int32_t callable_type_set=compiler->known_type_sets[callable];
+    size_t contextual_block_slot=SIZE_MAX;
+    if(callable_type_set>=0&&
+       (size_t)callable_type_set<compiler->function->type_set_count) {
+        const DiamondTypeSet *set=
+            &compiler->function->type_sets[(size_t)callable_type_set];
+        if(set->count==1&&set->members[0].id==DIAMOND_TYPE_CALLABLE&&
+           set->members[0].callable_parameters_typed&&
+           set->members[0].callable_arity>0)
+            contextual_block_slot=set->members[0].callable_arity-1;
+    }
     advance_token(compiler);
     skip_newlines(compiler);
     if(call_arguments_have_keyword(compiler)) {
@@ -1755,8 +1769,11 @@ static uint16_t parse_closure_call_arguments(Compiler *compiler, uint16_t callab
             callable=callable_snapshot;
             const uint16_t block=
                 compile_callable_value_block(compiler,callable_type_set);
-            spread=emit_build_spread_arguments(compiler,nullptr,0,spread,
-                &block,1,false);
+            const uint16_t destination=allocate_register(compiler);
+            emit_opcode(compiler,DIAMOND_OP_CALL_CLOSURE_KEYWORDS);
+            emit_register(compiler,destination);emit_register(compiler,callable);
+            emit_register(compiler,spread);emit_byte(compiler,0x80u);
+            emit_register(compiler,block);return destination;
         }
         const uint16_t destination=allocate_register(compiler);
         emit_opcode(compiler,DIAMOND_OP_CALL_CLOSURE_SPREAD);
@@ -1787,8 +1804,18 @@ static uint16_t parse_closure_call_arguments(Compiler *compiler, uint16_t callab
             emit_instruction(compiler,DIAMOND_OP_MOVE,snapshot,arguments[index],0,2);
             arguments[index]=snapshot;
         }
-        arguments[argument_count++]=
+        const uint16_t block=
             compile_callable_value_block(compiler,callable_type_set);
+        if(argument_count<contextual_block_slot) {
+            const uint16_t positional=
+                emit_argument_array(compiler,arguments,argument_count);
+            const uint16_t destination=allocate_register(compiler);
+            emit_opcode(compiler,DIAMOND_OP_CALL_CLOSURE_KEYWORDS);
+            emit_register(compiler,destination);emit_register(compiler,callable);
+            emit_register(compiler,positional);emit_byte(compiler,0x80u);
+            emit_register(compiler,block);return destination;
+        }
+        arguments[argument_count++]=block;
     }
     const uint16_t base=allocate_register(compiler);
     for(size_t i=1;i<argument_count;i++)(void)allocate_register(compiler);
@@ -2215,9 +2242,26 @@ static uint16_t parse_call(Compiler *compiler, DiamondSpan name) {
             emit_instruction(compiler,DIAMOND_OP_MOVE,snapshot,slot_registers[index],0,2);
             slot_registers[index]=snapshot;
         }
-        slot_registers[argument_count]=compile_contextual_typed_block(compiler,
+        const uint16_t block=compile_contextual_typed_block(compiler,
             function,function->arity==0?0:function->arity-1,
             type_arguments,type_argument_count);
+        const size_t block_slot=function->arity==0?0:function->arity-1;
+        bool contiguous=true;
+        for(size_t index=0;index<argument_count;index++)
+            if(!slot_filled[index])contiguous=false;
+        if(type_argument_count==0&&contiguous&&argument_count<block_slot) {
+            const uint16_t callable=allocate_register(compiler);
+            emit_opcode(compiler,DIAMOND_OP_CLOSURE);emit_register(compiler,callable);
+            emit_function_index(compiler,(size_t)function_index);emit_byte(compiler,0);
+            const uint16_t positional=emit_argument_array(compiler,slot_registers,
+                argument_count);
+            const uint16_t destination=allocate_register(compiler);
+            emit_opcode(compiler,DIAMOND_OP_CALL_CLOSURE_KEYWORDS);
+            emit_register(compiler,destination);emit_register(compiler,callable);
+            emit_register(compiler,positional);emit_byte(compiler,0x80u);
+            emit_register(compiler,block);return destination;
+        }
+        slot_registers[argument_count]=block;
         slot_filled[argument_count]=true;
         argument_count++;
     }
@@ -4270,8 +4314,15 @@ static uint16_t parse_name(Compiler *compiler) {
                     initializer,
                     initializer==nullptr||initializer->arity<=1?0:
                         initializer->arity-2);
-                spread=emit_build_spread_arguments(compiler,nullptr,0,spread,
-                    &block,1,false);
+                const uint16_t destination=allocate_register(compiler);
+                emit_opcode(compiler,DIAMOND_OP_NEW_KEYWORDS);
+                emit_register(compiler,destination);
+                emit_byte(compiler,(uint8_t)class_index);
+                emit_register(compiler,spread);emit_byte(compiler,0x80u);
+                emit_register(compiler,block);
+                compiler->known_types[destination]=
+                    (uint8_t)(DIAMOND_TYPE_CLASS_BASE+class_index);
+                return destination;
             }
             const uint16_t destination=allocate_register(compiler);
             emit_opcode(compiler,DIAMOND_OP_NEW_SPREAD);
@@ -4305,9 +4356,24 @@ static uint16_t parse_name(Compiler *compiler) {
                 emit_instruction(compiler,DIAMOND_OP_MOVE,snapshot,args[index],0,2);
                 args[index]=snapshot;
             }
-            args[count++]=compile_contextual_block(compiler,initializer,
+            const uint16_t block=compile_contextual_block(compiler,initializer,
                 initializer==nullptr||initializer->arity<=1?0:
                     initializer->arity-2);
+            const size_t block_slot=initializer==nullptr||initializer->arity<=1?
+                0:(size_t)initializer->arity-2;
+            if(count<block_slot) {
+                const uint16_t positional=emit_argument_array(compiler,args,count);
+                const uint16_t destination=allocate_register(compiler);
+                emit_opcode(compiler,DIAMOND_OP_NEW_KEYWORDS);
+                emit_register(compiler,destination);
+                emit_byte(compiler,(uint8_t)class_index);
+                emit_register(compiler,positional);emit_byte(compiler,0x80u);
+                emit_register(compiler,block);
+                compiler->known_types[destination]=
+                    (uint8_t)(DIAMOND_TYPE_CLASS_BASE+class_index);
+                return destination;
+            }
+            args[count++]=block;
         }
         const uint16_t base = allocate_register(compiler);
         for (size_t i = 1; i < count; i++) (void)allocate_register(compiler);
@@ -4712,6 +4778,11 @@ static uint16_t parse_invoke(Compiler *compiler, uint16_t receiver) {
                 contextual_target==nullptr||contextual_target->arity<=1?0:
                     contextual_target->arity-2,type_arguments,
                 type_argument_count);
+            if(contextual_target!=nullptr) {
+                return emit_invoke_keywords(compiler,receiver,name,spread,
+                    nullptr,nullptr,0,type_arguments,type_argument_count,true,
+                    block);
+            }
             spread=emit_build_spread_arguments(compiler,nullptr,0,spread,
                 &block,1,false);
         }
@@ -4761,9 +4832,19 @@ static uint16_t parse_invoke(Compiler *compiler, uint16_t receiver) {
             emit_instruction(compiler,DIAMOND_OP_MOVE,snapshot,args[i],0,2);
             args[i]=snapshot;
         }
-        args[count++]=compile_contextual_typed_block(compiler,contextual_target,
+        const uint16_t block=compile_contextual_typed_block(compiler,
+            contextual_target,
             contextual_target==nullptr||contextual_target->arity<=1?0:
                 contextual_target->arity-2,type_arguments,type_argument_count);
+        const size_t block_slot=
+            contextual_target==nullptr||contextual_target->arity<=1?0:
+                (size_t)contextual_target->arity-2;
+        if(contextual_target!=nullptr&&count<block_slot) {
+            const uint16_t positional=emit_argument_array(compiler,args,count);
+            return emit_invoke_keywords(compiler,receiver,name,positional,
+                nullptr,nullptr,0,type_arguments,type_argument_count,true,block);
+        }
+        args[count++]=block;
     }
     return emit_invoke_call(compiler,receiver,name,writer_name,
         type_arguments,type_argument_count,args,count);

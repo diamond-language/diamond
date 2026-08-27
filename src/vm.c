@@ -4303,6 +4303,8 @@ static bool values_equal(DiamondValue left, DiamondValue right) {
     switch (left.kind) {
         case DIAMOND_VALUE_NIL:
             return true;
+        case DIAMOND_VALUE_UNDEFINED:
+            return true;
         case DIAMOND_VALUE_BOOL:
             return left.as.boolean == right.as.boolean;
         case DIAMOND_VALUE_INT:
@@ -4369,6 +4371,7 @@ static uint64_t hash_bytes(const char *data,size_t length) {
 static uint64_t hash_value(DiamondValue value) {
     switch(value.kind) {
         case DIAMOND_VALUE_NIL:return hash_mix64(0);
+        case DIAMOND_VALUE_UNDEFINED:return hash_mix64(UINT64_MAX);
         case DIAMOND_VALUE_BOOL:return hash_mix64(value.as.boolean?1:2);
         case DIAMOND_VALUE_INT:return hash_mix64((uint64_t)value.as.integer);
         case DIAMOND_VALUE_CLASS:return hash_mix64((uint64_t)value.as.class_index);
@@ -8785,12 +8788,17 @@ static DiamondVmStatus merge_keyword_arguments(DiamondVm *vm,
         filled[block_slot]=true;
         if(block_slot+1>count)count=block_slot+1;
     }
-    for(size_t index=0;index<count;index++)if(!filled[index]) {
+    const size_t parameter_offset=function->owner_class==UINT8_MAX?0:1;
+    const size_t required_public=function->required_arity>parameter_offset?
+        function->required_arity-parameter_offset:0;
+    for(size_t index=0;index<count;index++)if(!filled[index]&&
+        index<required_public) {
         snprintf(vm->error,sizeof vm->error,"missing argument");
         return DIAMOND_VM_ARITY_ERROR;
     }
     DiamondValue *values=malloc(count*sizeof *values);
     if(values==nullptr&&count>0)return DIAMOND_VM_OUT_OF_MEMORY;
+    for(size_t index=0;index<count;index++)values[index]=DIAMOND_UNDEFINED;
     for(size_t index=0;index<positional->count;index++)
         values[index]=positional->values[index];
     for(size_t keyword=0;keyword<keyword_count;keyword++)
@@ -8822,6 +8830,8 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
         execution=*chunk;
         for(size_t parameter=0;
             parameter+chunk->parameter_offset<argument_count;parameter++) {
+            if(arguments[parameter+chunk->parameter_offset].kind==
+               DIAMOND_VALUE_UNDEFINED)continue;
             const uint16_t set=chunk->parameter_type_sets[parameter];
             if(set!=DIAMOND_NO_TYPE_SET&&set<chunk->type_set_count)
                 infer_from_value(chunk,arguments[parameter+chunk->parameter_offset],
@@ -8884,7 +8894,8 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
     const size_t copied_argument_count=
         argument_count<live_register_count?argument_count:live_register_count;
     for (size_t index = 0; index < copied_argument_count; index++) {
-        registers[index] = arguments[index];
+        if(arguments[index].kind!=DIAMOND_VALUE_UNDEFINED)
+            registers[index] = arguments[index];
     }
     PendingUnwind pending={};
     size_t ip = 0;
@@ -9062,7 +9073,8 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
             case DIAMOND_OP_ARGUMENT_PROVIDED: {
                 uint16_t destination=0,index=0;
                 READ_SHORT(destination);READ_SHORT(index);
-                registers[destination]=DIAMOND_BOOL(index<argument_count);
+                registers[destination]=DIAMOND_BOOL(index<argument_count&&
+                    arguments[index].kind!=DIAMOND_VALUE_UNDEFINED);
                 break;
             }
             case DIAMOND_OP_COLLECT_VARIADIC: {
@@ -10417,7 +10429,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 READ_BYTE(keyword_count);
                 const bool has_block=(keyword_count&0x80u)!=0;
                 keyword_count&=0x7fu;
-                if(keyword_count==0||keyword_count>16)
+                if((keyword_count==0&&!has_block)||keyword_count>16)
                     VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
                 for(size_t index=0;index<keyword_count;index++) {
                     READ_SHORT(keyword_names[index]);READ_SHORT(keyword_registers[index]);
@@ -10547,7 +10559,8 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 READ_SHORT(positional_register);READ_BYTE(keyword_count);
                 const bool has_block=(keyword_count&0x80u)!=0;
                 keyword_count&=0x7fu;
-                if((size_t)class_index>=chunk->class_count||keyword_count==0||
+                if((size_t)class_index>=chunk->class_count||
+                   (keyword_count==0&&!has_block)||
                    keyword_count>16||
                    registers[positional_register].kind!=DIAMOND_VALUE_OBJECT||
                    registers[positional_register].as.object->kind!=DIAMOND_OBJECT_ARRAY)
@@ -10681,7 +10694,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 READ_SHORT(positional_register);READ_BYTE(keyword_count);
                 const bool has_block=(keyword_count&0x80u)!=0;
                 keyword_count&=0x7fu;
-                if(keyword_count==0||keyword_count>16||
+                if((keyword_count==0&&!has_block)||keyword_count>16||
                    (size_t)method_name_index>=chunk->string_count)
                     VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
                 for(size_t index=0;index<keyword_count;index++) {

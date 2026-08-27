@@ -1219,6 +1219,10 @@ Bare typed function references and singleton-method reference wrappers clone
 their public parameter and return sets into the caller's type-set table. Local
 aliases therefore preserve enough structural Callable information to seed a
 later trailing block without retaining pointers into another function's table.
+Sparse block calls use `DIAMOND_VALUE_UNDEFINED` only while transporting merged
+arguments into a frame. Frame initialization does not copy that sentinel, and
+`ARGUMENT_PROVIDED` treats it as absent. Explicit `nil` remains a provided value,
+preserving the distinction required by default parameter prologues.
 Callable-value and constructor calls attach trailing source blocks through the
 same final-positional-argument convention as named calls. Fixed calls snapshot
 pre-block argument registers before eager capture can box them; spread calls

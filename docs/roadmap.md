@@ -506,11 +506,12 @@ mechanism.
 Typed top-level function references and class/module singleton references now
 publish structural Callable signatures into local type facts, so later fixed,
 spread, and keyword Callable-value calls retain block context through aliases.
-One trailing-block call gap remains: omitting a defaulted positional parameter
-immediately before `&block` cannot yet be represented by the contiguous call
-frame. Closing it requires either an explicit provided-argument mask in
-`run_chunk` or extending the keyword-call opcodes to carry a block with zero
-named keywords; passing the defaulted value explicitly already works.
+Trailing blocks may now bypass defaulted positional parameters immediately
+before `&block`. Zero-keyword block calls reuse the keyword-normalization path,
+which inserts an internal undefined sentinel for each omitted optional slot.
+`run_chunk` leaves that register nil while `ARGUMENT_PROVIDED` reports false,
+so the callee's existing default-value prologue runs without exposing a new
+source-language value.
 Compiled functions now retain whether their final parameter used `&`, allowing
 LSP hover to distinguish optional blocks from defaults and locate a preceding
 variadic slot correctly. Hover also recognizes `block_given?()` as a Boolean

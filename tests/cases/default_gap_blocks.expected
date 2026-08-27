@@ -1,0 +1,5 @@
+function block
+method block
+callable block
+method spread block
+nil
