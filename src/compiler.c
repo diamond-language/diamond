@@ -122,6 +122,7 @@ typedef struct Compiler {
     bool has_contextual_block_types;
     uint8_t contextual_block_arity;
     uint8_t contextual_block_types[16];
+    int32_t contextual_block_return_set;
     int current_return_type;
     DiamondSpan current_return_type_span;
     LoopContext *current_loop;
@@ -2199,6 +2200,7 @@ static void prepare_contextual_block(Compiler *compiler,
         const DiamondTypeMember *callable) {
     compiler->has_contextual_block_types=false;
     compiler->contextual_block_arity=0;
+    compiler->contextual_block_return_set=-1;
     if(callable!=nullptr&&callable->id==DIAMOND_TYPE_CALLABLE&&
        callable->callable_parameters_typed&&callable->callable_arity<=16) {
         compiler->has_contextual_block_types=true;
@@ -2213,6 +2215,17 @@ static void prepare_contextual_block(Compiler *compiler,
                 compiler->contextual_block_types[index]=parameter->members[0].id;
         }
     }
+    /* Clone last: `sets` can be the current function's own table, whose
+     * reserve may move while cloning. All reads through `callable` must be
+     * complete before that possible relocation. */
+    if(callable!=nullptr&&callable->id==DIAMOND_TYPE_CALLABLE&&
+       callable->callable_return_set!=DIAMOND_NO_TYPE_SET) {
+        const uint16_t return_set=callable->callable_return_set;
+        const uint16_t cloned=clone_type_set_into_current(compiler,sets,
+            set_count,return_set);
+        if(cloned!=DIAMOND_NO_TYPE_SET)
+            compiler->contextual_block_return_set=(int32_t)cloned;
+    }
 }
 
 static uint16_t compile_contextual_typed_block(Compiler *compiler,
@@ -2220,16 +2233,21 @@ static uint16_t compile_contextual_typed_block(Compiler *compiler,
         const uint16_t *type_arguments,size_t type_argument_count) {
     compiler->has_contextual_block_types=false;
     compiler->contextual_block_arity=0;
+    compiler->contextual_block_return_set=-1;
     if(target!=nullptr&&parameter_index<16) {
         const uint16_t set_index=target->parameter_type_sets[parameter_index];
         if(set_index!=DIAMOND_NO_TYPE_SET&&set_index<target->type_set_count) {
             const DiamondTypeSet *set=&target->type_sets[set_index];
             if(set->count==1) {
                 const DiamondTypeMember *callable=&set->members[0];
+                const bool callable_typed=
+                    callable->id==DIAMOND_TYPE_CALLABLE&&
+                    callable->callable_parameters_typed;
+                const uint16_t callable_return_set=
+                    callable->callable_return_set;
                 prepare_contextual_block(compiler,target->type_sets,
                     target->type_set_count,callable);
-                if(callable->id==DIAMOND_TYPE_CALLABLE&&
-                   callable->callable_parameters_typed)
+                if(callable_typed)
                     for(size_t index=0;index<callable->callable_arity;index++) {
                         const uint16_t parameter_set=
                             callable->callable_parameter_sets[index];
@@ -2252,12 +2270,27 @@ static uint16_t compile_contextual_typed_block(Compiler *compiler,
                             compiler->contextual_block_types[index]=
                                 bound->members[0].id;
                     }
+                if(callable_typed&&callable_return_set!=DIAMOND_NO_TYPE_SET) {
+                    /* The first clone preserves non-generic contracts. A
+                     * generic return must instead be rebuilt against this
+                     * call site's concrete bindings; never publish an
+                     * unbound type variable on the anonymous closure. */
+                    compiler->contextual_block_return_set=-1;
+                    bool resolved=true;
+                    const uint16_t substituted=clone_substituted_type_set(
+                        compiler,target,callable_return_set,
+                        type_arguments,type_argument_count,&resolved);
+                    if(resolved&&substituted!=DIAMOND_NO_TYPE_SET)
+                        compiler->contextual_block_return_set=
+                            (int32_t)substituted;
+                }
             }
         }
     }
     const uint16_t block=compile_block(compiler);
     compiler->has_contextual_block_types=false;
     compiler->contextual_block_arity=0;
+    compiler->contextual_block_return_set=-1;
     return block;
 }
 
@@ -2387,6 +2420,7 @@ static uint16_t compile_callable_value_block(Compiler *compiler,
         int32_t callable_set_index) {
     compiler->has_contextual_block_types=false;
     compiler->contextual_block_arity=0;
+    compiler->contextual_block_return_set=-1;
     if(callable_set_index>=0&&
        (size_t)callable_set_index<compiler->function->type_set_count) {
         const DiamondTypeSet *outer=
@@ -2487,6 +2521,7 @@ static uint16_t compile_callable_value_block(Compiler *compiler,
     const uint16_t block=compile_block(compiler);
     compiler->has_contextual_block_types=false;
     compiler->contextual_block_arity=0;
+    compiler->contextual_block_return_set=-1;
     return block;
 }
 
@@ -8598,8 +8633,10 @@ static uint16_t compile_block(Compiler *compiler) {
     uint8_t contextual_types[16];
     for(size_t index=0;index<contextual_arity;index++)
         contextual_types[index]=compiler->contextual_block_types[index];
+    const int32_t contextual_return_set=compiler->contextual_block_return_set;
     compiler->has_contextual_block_types=false;
     compiler->contextual_block_arity=0;
+    compiler->contextual_block_return_set=-1;
     advance_token(compiler);
     if (compiler->program->function_count == DIAMOND_MAX_FUNCTIONS) {
         fail(compiler, compiler->current.span, "too many functions");
@@ -8677,6 +8714,12 @@ static uint16_t compile_block(Compiler *compiler) {
          outer_known_type_sets[index]=compiler->known_type_sets[index];}
 
     compiler->function = function;
+    uint16_t declared_return_set=DIAMOND_NO_TYPE_SET;
+    if(contextual_return_set>=0&&
+       (size_t)contextual_return_set<outer_function->type_set_count)
+        declared_return_set=clone_type_set_into_current(compiler,
+            outer_function->type_sets,outer_function->type_set_count,
+            (uint16_t)contextual_return_set);
     compiler->has_current_block=false;
     compiler->current_block_register=0;
     compiler->current_block_type_set=DIAMOND_NO_TYPE_SET;
@@ -8797,7 +8840,11 @@ static uint16_t compile_block(Compiler *compiler) {
     compiler->in_function=true;
     const uint16_t body_result=compiler->failed?0:compile_sequence(compiler);
     if(!compiler->failed) {
-        if(compiler->known_type_sets[body_result]>=0) {
+        if(declared_return_set!=DIAMOND_NO_TYPE_SET) {
+            emit_type_check(compiler,body_result,declared_return_set,
+                compiler->previous.span);
+            function->return_type_set=declared_return_set;
+        } else if(compiler->known_type_sets[body_result]>=0) {
             function->return_type_set=
                 (uint16_t)compiler->known_type_sets[body_result];
         } else if(compiler->known_types[body_result]!=TYPE_UNKNOWN&&
@@ -12156,6 +12203,7 @@ static bool run_compile_pass(const char *source, DiamondProgram *program,
         .function = &program->entry,
         .current_class = -1,
         .current_module = -1,
+        .contextual_block_return_set = -1,
         .current_return_type = -1,
         .current_exception = -1,
         .current_retry_target = SIZE_MAX,

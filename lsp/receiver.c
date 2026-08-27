@@ -110,6 +110,25 @@ static void local_type_at_offset(const DiamondFunction *owner,
     }
 }
 
+bool receiver_resolve_local_type_set(const DiamondProgram *program,
+        const DiamondChunk *chunk,const char *name,size_t name_length,
+        size_t offset,const DiamondFunction **owner,uint16_t *set_index) {
+    const DiamondScopeLocal *local=find_scope_local(program,chunk,name,
+        name_length,offset,owner);
+    if(local==nullptr||*owner==nullptr)return false;
+    uint8_t known_type;int32_t known_type_set;
+    local_type_at_offset(*owner,local,offset,&known_type,&known_type_set);
+    (void)known_type;
+    if(known_type_set<0||(size_t)known_type_set>=(*owner)->type_set_count)
+        return false;
+    const DiamondTypeSet *set=&(*owner)->type_sets[(size_t)known_type_set];
+    if(set->count==0)return false;
+    for(size_t index=0;index<set->count;index++)
+        if(set->members[index].id!=DIAMOND_TYPE_CALLABLE)return false;
+    *set_index=(uint16_t)known_type_set;
+    return true;
+}
+
 const DiamondMethod *receiver_lookup_method(const DiamondChunk *chunk,
         size_t class_index,bool is_singleton,const char *name,size_t name_length);
 

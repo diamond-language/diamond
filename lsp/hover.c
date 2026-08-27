@@ -71,6 +71,22 @@ static JsonValue *hover_result(const char *text) {
     return result;
 }
 
+static char *format_local_type_set(const DiamondChunk *chunk,
+        const DiamondFunction *owner,uint16_t set_index) {
+    const DiamondChunk local_chunk={
+        .type_sets=owner->type_sets,.type_set_count=owner->type_set_count,
+        .functions=chunk->functions,.function_count=chunk->function_count,
+        .classes=chunk->classes,.class_count=chunk->class_count,
+        .interfaces=chunk->interfaces,.interface_count=chunk->interface_count,
+    };
+    char *buffer=nullptr;size_t length=0;
+    FILE *stream=open_memstream(&buffer,&length);
+    if(stream==nullptr)return nullptr;
+    diamond_print_type_set(stream,&local_chunk,set_index);
+    fclose(stream);
+    return buffer;
+}
+
 /* `def name(p0: T0, p1: T1 = ..., ...) -> Return`, matching what a
  * reader would type to declare `function` themselves. An untyped
  * parameter (`parameter_type_sets[i]==DIAMOND_NO_TYPE_SET`, gradual typing's own
@@ -296,6 +312,14 @@ JsonValue *hover_compute(const DocumentTable *documents,const char *uri,
         ? diamond_resolve_source_position(path,combined,&bundle,user_offset,
               identifier_line,identifier_column)
         : user_offset+raw_offset_for(text,length,identifier_line,identifier_column);
+    const DiamondFunction *local_owner=nullptr;uint16_t local_set=0;
+    if(identifier_offset!=SIZE_MAX&&receiver_resolve_local_type_set(scratch,
+            &chunk,name,name_length,identifier_offset,&local_owner,&local_set)) {
+        char *type=format_local_type_set(&chunk,local_owner,local_set);
+        free(combined);free(path);diamond_source_bundle_free(&bundle);
+        if(type==nullptr)return nullptr;
+        JsonValue *result=hover_result(type);free(type);return result;
+    }
     size_t class_indices[DIAMOND_MAX_UNION_TYPES];bool is_singleton;
     if(identifier_offset!=SIZE_MAX) {
         const size_t candidate_count=receiver_resolve_classes(scratch,&chunk,combined,

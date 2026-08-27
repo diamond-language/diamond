@@ -338,6 +338,14 @@ is safe for union block context, the compiler can synthesize input context by
 selecting existing declared supertypes accepted by every arm; it deliberately
 does not synthesize a return contract.
 
+Declared Callable return graphs now flow into attached anonymous blocks as an
+expected result contract. The block publishes that graph as its own signature
+and checks its final value at the return boundary, including concretely
+substituted generic returns and otherwise-untyped empty collection literals.
+The LSP also renders position-sensitive structural types for lexical locals, so
+hovering a stored bound method reference exposes its full Callable parameter and
+return graph.
+
 Context-driven generic method-reference inference remains open. Today a bare
 generic reference is compiled before a later call or parameter contract is
 known, and the no-AST single-pass compiler has no expected-type channel flowing
