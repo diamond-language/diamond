@@ -495,9 +495,12 @@ features share one signature.
 Typed `yield` expressions now propagate the annotated Callable return set.
 Anonymous blocks infer a concrete return set from a statically known final
 expression. Concrete parameter types from one-member Callable annotations now
-flow into anonymous blocks at statically resolved top-level and singleton call
-sites. Dynamic receiver, union, and unresolved generic contexts remain future
-extensions to the same conservative mechanism.
+flow into anonymous blocks at statically resolved top-level, singleton,
+instance-method, and constructor call sites. Typed Callable values propagate
+their final nested Callable parameter through fixed, spread, and keyword calls.
+Explicit generic bindings substitute concrete block parameter types at function
+and method call sites. Union receivers and genuinely unresolved generic
+contexts remain future extensions to the same conservative mechanism.
 Compiled functions now retain whether their final parameter used `&`, allowing
 LSP hover to distinguish optional blocks from defaults and locate a preceding
 variadic slot correctly. Hover also recognizes `block_given?()` as a Boolean
