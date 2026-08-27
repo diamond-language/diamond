@@ -317,9 +317,15 @@ Callables nested in collections. Union receivers publish generic results only
 when every implementation shares a structurally identical generic signature
 and return contract.
 
-The next type-flow slices are typed return metadata for bound-method reference
-wrappers, and conservative inference across callable unions whose equivalent
-contracts are stored at different nested graph indices.
+Fixed-arity bound instance methods and explicitly bound generic instance or
+singleton references now carry wrapper-owned parameter and return graphs.
+Callable unions publish their result when independently stored return graphs are
+structurally equivalent.
+
+The next type-flow slices are typed variadic bound-method wrappers, inference of
+generic method-reference bindings from a later Callable contract, and structural
+agreement for Callable unions whose parameter graphs differ only by valid
+variance rather than exact equivalence.
 
 ### Ruby-like ergonomics without Ruby compatibility
 

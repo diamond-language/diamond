@@ -42,6 +42,13 @@
 - Propagated substituted generic returns across union receivers only when every
   implementation has a structurally matching signature and return contract;
   divergent returns conservatively retain dynamic dispatch facts.
+- Added typed fixed-arity instance-bound method wrappers, preserving declared
+  parameters and returns through direct invocation and higher-order generic
+  inference. Explicit generic bindings are substituted into instance and
+  singleton method-reference wrapper contracts.
+- Propagated return facts through Callable unions whose members have
+  structurally equivalent return graphs, while retaining dynamic results for
+  genuinely divergent Callable returns.
 - Added conservative contextual typing for anonymous block parameters at
   statically resolved function, singleton, and instance-method calls with typed
   Callable slots, including direct generic bindings inferred from concrete

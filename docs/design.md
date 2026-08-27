@@ -450,6 +450,18 @@ adds a stricter condition: every return graph must match structurally as well.
 This permits one substituted generic result fact for compatible implementations
 without assigning the first implementation's return to a divergent dispatch.
 
+A statically resolved fixed-arity instance method reference synthesizes a
+fixed-arity wrapper rather than an untyped variadic forwarding closure. Its
+user-visible parameter graphs omit the implicit receiver slot, and its return
+graph is cloned into wrapper-owned metadata. Explicit bindings on a generic
+method reference are substituted before that clone. Dynamic and variadic bound
+targets retain the conservative variadic wrapper.
+
+Singleton method-reference wrappers apply the same return substitution and now
+advertise their own instantiated signature rather than the generic target's
+unbound graph. Calling a union of Callable values publishes a return fact only
+when every Callable member declares a structurally equivalent return graph.
+
 Generic functions and methods may be specialized explicitly with syntax such
 as `empty[Int]()` or `factory.empty[String]()`. The call instruction carries
 the caller's type-set graphs into the callee, resolving outer generic variables

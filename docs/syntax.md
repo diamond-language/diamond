@@ -599,6 +599,13 @@ when the Callable is nested in an Array or Hash. A union-receiver call retains
 its generic result only when all candidate implementations declare matching
 signatures and structurally identical return graphs.
 
+A fixed-arity bound method reference such as `object.convert` retains its
+declared parameter and return contract. Explicit generic references such as
+`object.wrap[Int]` and `Factory.wrap[Int]` retain the substituted contract, so
+their results compose with indexing, Callable arguments, and later calls.
+Variadic or dynamically unresolved bound methods remain conservatively untyped.
+Callable unions retain a return fact when all arms agree structurally.
+
 Callable values accept the same trailing `do ... end` block as named function
 and method calls, including calls with a spread Array. The block is appended as
 the final positional argument.

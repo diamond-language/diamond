@@ -824,7 +824,13 @@ static void publish_callable_return_type(Compiler *compiler,uint16_t reg,
            member->callable_return_set==DIAMOND_NO_TYPE_SET)return;
         if(return_set==DIAMOND_NO_TYPE_SET)
             return_set=member->callable_return_set;
-        else if(return_set!=member->callable_return_set)return;
+        else if(return_set!=member->callable_return_set&&
+                !type_sets_structurally_equal(
+                    compiler->function->type_sets,
+                    compiler->function->type_set_count,return_set,
+                    compiler->function->type_sets,
+                    compiler->function->type_set_count,
+                    member->callable_return_set,0))return;
     }
     publish_known_type_set(compiler,reg,return_set);
 }
@@ -2811,6 +2817,32 @@ static uint16_t parse_singleton_reference(Compiler *compiler,
              "generic singleton method reference requires explicit bindings");
         return 0;
     }
+    uint16_t parameter_sets[16];
+    for(size_t index=0;index<16;index++)
+        parameter_sets[index]=DIAMOND_NO_TYPE_SET;
+    uint16_t return_set=DIAMOND_NO_TYPE_SET;
+    bool resolved=true;
+    const size_t original_type_set_count=compiler->function->type_set_count;
+    for(size_t parameter=0;parameter<method->arity&&parameter<16;parameter++) {
+        const uint16_t source=target->parameter_type_sets[parameter];
+        if(source==DIAMOND_NO_TYPE_SET)continue;
+        parameter_sets[parameter]=target->type_variable_count>0?
+            clone_substituted_type_set(compiler,target,source,type_arguments,
+                type_argument_count,&resolved):clone_type_set_into_current(
+                compiler,target->type_sets,target->type_set_count,source);
+    }
+    if(target->return_type_set!=DIAMOND_NO_TYPE_SET)
+        return_set=target->type_variable_count>0?
+            clone_substituted_type_set(compiler,target,target->return_type_set,
+                type_arguments,type_argument_count,&resolved):
+            clone_type_set_into_current(compiler,target->type_sets,
+                target->type_set_count,target->return_type_set);
+    if(!resolved) {
+        compiler->function->type_set_count=original_type_set_count;
+        fail(compiler,namespace_name,
+            "could not resolve generic method reference contract");
+        return 0;
+    }
     if(compiler->program->function_count==DIAMOND_MAX_FUNCTIONS) {
         fail(compiler,namespace_name,"too many functions");
         return 0;
@@ -2823,7 +2855,7 @@ static uint16_t parse_singleton_reference(Compiler *compiler,
     }
     function->owner_class=UINT8_MAX;
     function->nested=true;
-    function->return_type_set=DIAMOND_NO_TYPE_SET;
+    function->return_type_set=return_set;
     function->arity=method->arity;
     function->required_arity=method->required_arity;
     function->has_variadic=method->has_variadic;
@@ -2840,7 +2872,7 @@ static uint16_t parse_singleton_reference(Compiler *compiler,
     function->declaration_column=(uint32_t)compiler->previous.span.column;
     function->declaration_start=compiler->previous.span.start;
     for(size_t index=0;index<16;index++) {
-        function->parameter_type_sets[index]=DIAMOND_NO_TYPE_SET;
+        function->parameter_type_sets[index]=parameter_sets[index];
         (void)snprintf(function->parameter_names[index],
             DIAMOND_MAX_FUNCTION_NAME,"%s",target->parameter_names[index]);
     }
@@ -2898,10 +2930,7 @@ static uint16_t parse_singleton_reference(Compiler *compiler,
     const uint16_t result=allocate_register(compiler);
     emit_opcode(compiler,DIAMOND_OP_CLOSURE);emit_register(compiler,result);
     emit_function_index(compiler,function_index);emit_byte(compiler,0);
-    DiamondFunction signature=*target;
-    signature.arity=method->arity;
-    signature.required_arity=method->required_arity;
-    publish_function_callable_type(compiler,result,&signature);
+    publish_function_callable_type(compiler,result,function);
     return result;
 }
 
@@ -5236,13 +5265,53 @@ static const DiamondFunction *instance_call_signature(
 static uint16_t parse_bound_method_reference(Compiler *compiler,uint16_t receiver,
         DiamondSpan method_name,const uint16_t *type_arguments,
         size_t type_argument_count) {
+    const DiamondFunction *target=
+        instance_call_signature(compiler,receiver,method_name,true);
+    const bool typed_wrapper=target!=nullptr&&!target->has_variadic&&
+        target->arity>0&&
+        (target->type_variable_count==0||
+         type_argument_count==target->type_variable_count);
+    uint16_t parameter_sets[16];
+    for(size_t index=0;index<16;index++)
+        parameter_sets[index]=DIAMOND_NO_TYPE_SET;
+    uint16_t return_set=DIAMOND_NO_TYPE_SET;
+    if(typed_wrapper) {
+        bool resolved=true;
+        const size_t original_count=compiler->function->type_set_count;
+        for(size_t parameter=0;parameter+1<target->arity&&parameter<16;
+            parameter++) {
+            const uint16_t source=target->parameter_type_sets[parameter];
+            if(source==DIAMOND_NO_TYPE_SET)continue;
+            parameter_sets[parameter]=target->type_variable_count>0?
+                clone_substituted_type_set(compiler,target,source,
+                    type_arguments,type_argument_count,&resolved):
+                clone_type_set_into_current(compiler,target->type_sets,
+                    target->type_set_count,source);
+        }
+        if(target->return_type_set!=DIAMOND_NO_TYPE_SET)
+            return_set=target->type_variable_count>0?
+                clone_substituted_type_set(compiler,target,
+                    target->return_type_set,type_arguments,type_argument_count,
+                    &resolved):clone_type_set_into_current(compiler,
+                    target->type_sets,target->type_set_count,
+                    target->return_type_set);
+        if(!resolved) {
+            compiler->function->type_set_count=original_count;
+            return_set=DIAMOND_NO_TYPE_SET;
+            for(size_t index=0;index<16;index++)
+                parameter_sets[index]=DIAMOND_NO_TYPE_SET;
+        }
+    }
     size_t function_index=0;
     DiamondFunction *wrapper=compiler_add_function(compiler,&function_index);
     if(wrapper==nullptr) {fail(compiler,method_name,"out of memory");return 0;}
     (void)snprintf(wrapper->name,sizeof wrapper->name,"<bound method>");
     wrapper->owner_class=UINT8_MAX;wrapper->nested=true;
-    wrapper->arity=1;wrapper->required_arity=0;wrapper->has_variadic=true;
-    wrapper->return_type_set=DIAMOND_NO_TYPE_SET;
+    wrapper->arity=typed_wrapper?(uint8_t)(target->arity-1):1;
+    wrapper->required_arity=typed_wrapper?
+        (uint8_t)(target->required_arity>0?target->required_arity-1:0):0;
+    wrapper->has_variadic=!typed_wrapper;
+    wrapper->return_type_set=return_set;
     wrapper->type_set_count=compiler->function->type_set_count;
     if(!diamond_function_reserve_type_sets(wrapper,wrapper->type_set_count)) {
         fail(compiler,method_name,"out of memory");return 0;
@@ -5250,9 +5319,16 @@ static uint16_t parse_bound_method_reference(Compiler *compiler,uint16_t receive
     if(wrapper->type_set_count>0)
         memcpy(wrapper->type_sets,compiler->function->type_sets,
             wrapper->type_set_count*sizeof wrapper->type_sets[0]);
-    (void)snprintf(wrapper->parameter_names[0],DIAMOND_MAX_FUNCTION_NAME,
-        "arguments");
-    for(size_t index=0;index<16;index++)wrapper->parameter_type_sets[index]=DIAMOND_NO_TYPE_SET;
+    for(size_t index=0;index<16;index++) {
+        wrapper->parameter_type_sets[index]=parameter_sets[index];
+        if(typed_wrapper&&index<wrapper->arity)
+            (void)snprintf(wrapper->parameter_names[index],
+                DIAMOND_MAX_FUNCTION_NAME,"%s",
+                target->parameter_names[index]);
+    }
+    if(!typed_wrapper)
+        (void)snprintf(wrapper->parameter_names[0],DIAMOND_MAX_FUNCTION_NAME,
+            "arguments");
 
     const uint16_t captured=allocate_register(compiler);
     emit_instruction(compiler,DIAMOND_OP_MOVE,captured,receiver,0,2);
@@ -5273,12 +5349,19 @@ static uint16_t parse_bound_method_reference(Compiler *compiler,uint16_t receive
         outer_next_register*sizeof *outer_type_sets);
     compiler->function=wrapper;compiler->next_register=0;
     compiler->local_count=0;compiler->in_function=true;
-    const uint16_t arguments=allocate_register(compiler);
-    emit_instruction(compiler,DIAMOND_OP_COLLECT_VARIADIC,arguments,0,0,3);
+    uint16_t arguments[16];
+    const size_t argument_count=typed_wrapper?wrapper->arity:1;
+    for(size_t index=0;index<argument_count;index++)
+        arguments[index]=allocate_register(compiler);
+    if(!typed_wrapper)
+        emit_instruction(compiler,DIAMOND_OP_COLLECT_VARIADIC,arguments[0],0,0,3);
     const uint16_t bound_receiver=allocate_register(compiler);
     emit_instruction(compiler,DIAMOND_OP_GET_CAPTURE,bound_receiver,0,0,2);
-    const uint16_t body=emit_invoke_typed_spread(compiler,bound_receiver,
-        method_name,arguments,type_arguments,type_argument_count);
+    const uint16_t body=typed_wrapper?
+        emit_invoke_call(compiler,bound_receiver,method_name,false,
+            type_arguments,type_argument_count,arguments,argument_count):
+        emit_invoke_typed_spread(compiler,bound_receiver,method_name,
+            arguments[0],type_arguments,type_argument_count);
     emit_instruction(compiler,DIAMOND_OP_RETURN,body,0,0,1);
     wrapper->register_count=compiler->next_register;
 
@@ -5291,7 +5374,9 @@ static uint16_t parse_bound_method_reference(Compiler *compiler,uint16_t receive
     const uint16_t result=allocate_register(compiler);
     emit_opcode(compiler,DIAMOND_OP_CLOSURE);emit_register(compiler,result);
     emit_function_index(compiler,function_index);emit_byte(compiler,1);
-    emit_register(compiler,captured);compiler->known_types[result]=TYPE_UNKNOWN;
+    emit_register(compiler,captured);
+    if(typed_wrapper)publish_function_callable_type(compiler,result,wrapper);
+    else compiler->known_types[result]=TYPE_UNKNOWN;
     return result;
 }
 
