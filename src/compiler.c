@@ -195,6 +195,16 @@ static bool emit_byte(Compiler *compiler, uint8_t byte) {
         fail(compiler, compiler->previous.span, "program produces too much bytecode");
         return false;
     }
+    if(compiler->function->code_count==compiler->function->code_capacity) {
+        size_t capacity=compiler->function->code_capacity==0?256:
+            compiler->function->code_capacity*2;
+        if(capacity>DIAMOND_MAX_CODE)capacity=DIAMOND_MAX_CODE;
+        if(!diamond_function_reserve_code(compiler->function,capacity)) {
+            fail(compiler,compiler->previous.span,
+                "out of memory growing function bytecode");
+            return false;
+        }
+    }
     compiler->function->code[compiler->function->code_count++] = byte;
     return true;
 }
@@ -925,6 +935,7 @@ static DiamondFunction *compiler_add_function(Compiler *compiler,
            ->declared_by_discovery) {
         *function_index=compiler->next_function_claim++;
         DiamondFunction *function=compiler->program->functions[*function_index];
+        free(function->code);free(function->lines);free(function->columns);
         memset(function,0,sizeof *function);
         return function;
     }
@@ -8255,6 +8266,9 @@ static void compile_attribute_named(Compiler *compiler,bool writer,bool predicat
      * operand here (a register number or the attribute's own field/type-
      * set index) is always well under 256, so each pair is just an
      * explicit 0 high byte followed by the real value. */
+    if(!diamond_function_reserve_code(function,32)) {
+        fail(compiler,name,"out of memory compiling attribute");return;
+    }
     size_t code=0;
     if(writer&&type_set>=0) {
         function->code[code++]=DIAMOND_OP_CHECK_TYPE;
@@ -10105,10 +10119,66 @@ DiamondFunction *diamond_program_add_function(DiamondProgram *program) {
     return function;
 }
 
+bool diamond_function_reserve_code(DiamondFunction *function,size_t capacity) {
+    if(capacity<=function->code_capacity)return true;
+    if(capacity>DIAMOND_MAX_CODE)return false;
+    uint8_t *code=malloc(capacity*sizeof *code);
+    uint32_t *lines=calloc(capacity,sizeof *lines);
+    uint32_t *columns=calloc(capacity,sizeof *columns);
+    if(code==nullptr||lines==nullptr||columns==nullptr) {
+        free(code);free(lines);free(columns);return false;
+    }
+    if(function->code_count>0) {
+        memcpy(code,function->code,function->code_count*sizeof *code);
+        memcpy(lines,function->lines,function->code_count*sizeof *lines);
+        memcpy(columns,function->columns,function->code_count*sizeof *columns);
+    }
+    free(function->code);free(function->lines);free(function->columns);
+    function->code=code;function->lines=lines;function->columns=columns;
+    function->code_capacity=capacity;
+    return true;
+}
+
+bool diamond_function_copy(DiamondFunction *destination,
+                           const DiamondFunction *source) {
+    *destination=*source;
+    destination->code=nullptr;destination->lines=nullptr;
+    destination->columns=nullptr;destination->code_capacity=0;
+    if(source->code_count==0)return true;
+    destination->code=malloc(source->code_count*sizeof *destination->code);
+    destination->lines=malloc(source->code_count*sizeof *destination->lines);
+    destination->columns=malloc(source->code_count*sizeof *destination->columns);
+    if(destination->code==nullptr||destination->lines==nullptr||
+       destination->columns==nullptr) {
+        free(destination->code);free(destination->lines);
+        free(destination->columns);
+        destination->code=nullptr;destination->lines=nullptr;
+        destination->columns=nullptr;destination->code_count=0;
+        return false;
+    }
+    memcpy(destination->code,source->code,
+        source->code_count*sizeof *destination->code);
+    memcpy(destination->lines,source->lines,
+        source->code_count*sizeof *destination->lines);
+    memcpy(destination->columns,source->columns,
+        source->code_count*sizeof *destination->columns);
+    destination->code_capacity=source->code_count;
+    return true;
+}
+
 void diamond_program_free(DiamondProgram *program) {
     if(program==nullptr)return;
-    for(size_t index=0;index<program->function_count;index++)
+    free(program->entry.code);free(program->entry.lines);
+    free(program->entry.columns);
+    program->entry.code=nullptr;program->entry.lines=nullptr;
+    program->entry.columns=nullptr;program->entry.code_count=0;
+    program->entry.code_capacity=0;
+    for(size_t index=0;index<program->function_count;index++) {
+        free(program->functions[index]->code);
+        free(program->functions[index]->lines);
+        free(program->functions[index]->columns);
         free(program->functions[index]);
+    }
     free(program->functions);
     program->functions=nullptr;
     program->function_count=0;
@@ -10317,6 +10387,7 @@ static bool run_compile_pass(const char *source, DiamondProgram *program,
 bool diamond_compile(const char *source, DiamondProgram *program,
                      DiamondDiagnostic *diagnostic) {
     const bool allow_top_level_redefinition = program->allow_top_level_redefinition;
+    diamond_program_free(program);
 
     DiamondProgram *discovery = calloc(1, sizeof *discovery);
     diamond_program_init(discovery);
@@ -10363,7 +10434,11 @@ bool diamond_compile(const char *source, DiamondProgram *program,
                 *diagnostic=(DiamondDiagnostic){.message="out of memory"};
                 return false;
             }
-            memcpy(reserved,discovered_function,sizeof *reserved);
+            if(!diamond_function_copy(reserved,discovered_function)) {
+                diamond_program_free(discovery);free(discovery);
+                *diagnostic=(DiamondDiagnostic){.message="out of memory"};
+                return false;
+            }
             reserved->declared_by_discovery=true;
         }
     }

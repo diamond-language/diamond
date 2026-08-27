@@ -9,7 +9,10 @@
 #include <ucontext.h>
 
 enum {
-    DIAMOND_MAX_CODE = 4096,
+    /* Absolute 16-bit jump-target boundary. Function bytecode/source maps
+     * grow dynamically up to this limit instead of reserving the entire
+     * range in every DiamondFunction. */
+    DIAMOND_MAX_CODE = UINT16_MAX,
     /* Capped at 256, not raised further like DIAMOND_MAX_FUNCTIONS below:
      * constant/string/type-set/method indices are single bytes throughout
      * the bytecode format and structs (CONSTANT opcode operands,
@@ -598,10 +601,11 @@ typedef struct DiamondFunction {
      * lexically falls inside, to resolve `self.foo(...)`'s receiver
      * class via that function's own owner_class. */
     size_t body_end;
-    uint8_t code[DIAMOND_MAX_CODE];
-    uint32_t lines[DIAMOND_MAX_CODE];
-    uint32_t columns[DIAMOND_MAX_CODE];
+    uint8_t *code;
+    uint32_t *lines;
+    uint32_t *columns;
     size_t code_count;
+    size_t code_capacity;
     DiamondValue constants[DIAMOND_MAX_CONSTANTS];
     size_t constant_count;
     DiamondStringConstant strings[DIAMOND_MAX_STRING_CONSTANTS];
@@ -879,8 +883,9 @@ struct DiamondVm {
     size_t method_cache_probes;
     size_t monomorphic_threshold;
     size_t direct_dispatch_rewrites;
-    const uint8_t *rewritten_sites[DIAMOND_MAX_CODE];
+    const uint8_t **rewritten_sites;
     size_t rewritten_site_count;
+    size_t rewritten_site_capacity;
     size_t field_cache_hits;
     size_t field_cache_misses;
     size_t shape_transitions;

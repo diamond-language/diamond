@@ -606,6 +606,7 @@ void diamond_vm_free(DiamondVm *vm) {
     free_adopted_programs(vm->adopted_programs);
     free(vm->class_variables);
     free(vm->gc_protected);
+    free(vm->rewritten_sites);
     *vm = (DiamondVm){};
 }
 
@@ -1122,7 +1123,9 @@ static DiamondProgram *clone_program_from_chunk(const DiamondChunk *chunk) {
         if(function==nullptr) {
             diamond_program_free(clone);free(clone);return nullptr;
         }
-        memcpy(function,chunk->functions[index],sizeof *function);
+        if(!diamond_function_copy(function,chunk->functions[index])) {
+            diamond_program_free(clone);free(clone);return nullptr;
+        }
     }
     memcpy(clone->classes,chunk->classes,sizeof clone->classes);
     clone->class_count=chunk->class_count;
@@ -2708,7 +2711,7 @@ static bool copy_value_into_vm(DiamondVm *dest_vm, DiamondValue value,
 /* ProgramBuilder#run's real body, factored out of run_chunk's own opcode
  * switch for the same stack-frame-isolation reason as regexp_new_helper
  * above -- but far more load-bearing here: a bare local DiamondVm is
- * ~50KB (method/field caches, rewritten_sites[DIAMOND_MAX_CODE], opcode
+ * ~20KB (method/field caches, opcode
  * counters, namespace constants), not the ~100 bytes regexp_new_helper's
  * own locals needed. At -O0, every local anywhere in run_chunk's switch
  * contributes to its one shared stack frame regardless of which case
@@ -3050,6 +3053,16 @@ static DiamondVmStatus program_builder_invoke_helper(DiamondVm *vm,
             snprintf(vm->error,sizeof vm->error,
                 "function produces too much bytecode");
             return DIAMOND_VM_TYPE_ERROR;
+        }
+        if(target->code_count==target->code_capacity) {
+            size_t capacity=target->code_capacity==0?256:
+                target->code_capacity*2;
+            if(capacity>DIAMOND_MAX_CODE)capacity=DIAMOND_MAX_CODE;
+            if(!diamond_function_reserve_code(target,capacity)) {
+                snprintf(vm->error,sizeof vm->error,
+                    "ProgramBuilder#emit_byte could not grow bytecode");
+                return DIAMOND_VM_OUT_OF_MEMORY;
+            }
         }
         target->code[target->code_count]=(uint8_t)byte_value;
         target->lines[target->code_count]=builder->source_line;
@@ -5193,11 +5206,21 @@ static const DiamondFunction *find_collection_extension(
     return find_top_level_function(chunk,bridge,(size_t)written);
 }
 
-static void record_rewritten_site(DiamondVm *vm, const uint8_t *site) {
-    if (vm->rewritten_site_count >= DIAMOND_MAX_CODE)return;
+static bool record_rewritten_site(DiamondVm *vm, const uint8_t *site) {
     for (size_t index=0;index<vm->rewritten_site_count;index++)
-        if (vm->rewritten_sites[index]==site)return;
+        if (vm->rewritten_sites[index]==site)return true;
+    if(vm->rewritten_site_count==vm->rewritten_site_capacity) {
+        if(vm->rewritten_site_count==DIAMOND_MAX_CODE)return false;
+        size_t capacity=vm->rewritten_site_capacity==0?64:
+            vm->rewritten_site_capacity*2;
+        if(capacity>DIAMOND_MAX_CODE)capacity=DIAMOND_MAX_CODE;
+        const uint8_t **sites=realloc(vm->rewritten_sites,
+            capacity*sizeof *sites);
+        if(sites==nullptr)return false;
+        vm->rewritten_sites=sites;vm->rewritten_site_capacity=capacity;
+    }
     vm->rewritten_sites[vm->rewritten_site_count++]=site;
+    return true;
 }
 
 static DiamondFieldCacheEntry *lookup_field_cached(
@@ -12856,10 +12879,11 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     if ((DiamondOpCode)instruction==DIAMOND_OP_INVOKE &&
                         cache->entry_count==1 &&
                         cache->hits>=vm->monomorphic_threshold) {
-                        uint8_t *code=(uint8_t *)(void *)chunk->code;
-                        code[instruction_offset]=(uint8_t)DIAMOND_OP_INVOKE_MONO;
-                        record_rewritten_site(vm,site);
-                        vm->direct_dispatch_rewrites++;
+                        if(record_rewritten_site(vm,site)) {
+                            uint8_t *code=(uint8_t *)(void *)chunk->code;
+                            code[instruction_offset]=(uint8_t)DIAMOND_OP_INVOKE_MONO;
+                            vm->direct_dispatch_rewrites++;
+                        }
                     }
                 }
                 if(method==nullptr) {

@@ -217,6 +217,22 @@ Open questions:
 - which fixed table/offset limits should be widened, removed, or kept as
   deliberate implementation boundaries;
 
+Resolved for per-function bytecode: the former 4,096-byte ceiling was only a
+fixed-array storage choice, while every jump target was already encoded as an
+unsigned 16-bit absolute offset. `DiamondFunction` now grows its bytecode and
+line/column maps geometrically, up to the real 65,535-byte wire-format boundary.
+Discovery-pass reservations and thread-local program clones deep-copy these
+buffers, and program teardown owns them explicitly. This also removes roughly
+36 KiB of unconditional storage from every small function record; functions
+pay only for the bytecode capacity they actually reach. The remaining
+constant/string/type-set ceilings stay at 256 because their bytecode indices
+are genuinely one byte wide.
+
+The VM's quickening rewrite-site ledger now grows dynamically as well. Keeping
+that ledger indexed by the enlarged bytecode maximum would otherwise have
+added roughly 480 KiB to every VM, including stack-resident and nested VMs.
+If ledger growth fails, the candidate call site simply remains unquickened.
+
 Resolved: a class/module/interface (and a type annotation naming one) can
 now be referenced before its own declaration is textually reached later in
 the same source -- `diamond_compile` (`src/compiler.c`) runs the whole

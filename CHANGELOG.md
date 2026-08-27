@@ -79,6 +79,9 @@
   writes that preserve failure atomicity across nested Array and Hash patterns.
 - Added member-writer destructuring leaves with mixed member/index paths,
   zero-argument intermediate readers, and delayed failure-atomic writer calls.
+- Replaced fixed 4 KiB per-function bytecode and source-map arrays with
+  dynamically grown buffers up to the existing 16-bit jump boundary, including
+  deep-copy ownership for compiler discovery and isolated thread programs.
 - Added protected method visibility with peer/subclass receiver access and
   runtime rejection outside the declaring class hierarchy.
 - Added `LazyEnumerator` pipelines with deferred `map`, `select`, and `reject`
