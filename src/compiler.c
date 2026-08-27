@@ -2362,8 +2362,18 @@ static uint16_t parse_singleton_call(Compiler *compiler,
         return destination;
     }
     if(call_arguments_have_spread(compiler)) {
-        const uint16_t spread=parse_spread_argument_array(compiler,nullptr,
+        uint16_t spread=parse_spread_argument_array(compiler,nullptr,
             nullptr,nullptr,nullptr);
+        if(compiler->current.kind==DIAMOND_TOKEN_DO) {
+            const uint16_t spread_snapshot=allocate_register(compiler);
+            emit_instruction(compiler,DIAMOND_OP_MOVE,spread_snapshot,
+                spread,0,2);
+            spread=spread_snapshot;
+            const uint16_t block=compile_contextual_block(compiler,function,
+                method->arity==0?0:method->arity-1);
+            spread=emit_build_spread_arguments(compiler,nullptr,0,spread,
+                &block,1,false);
+        }
         const uint16_t destination=allocate_register(compiler);
         emit_opcode(compiler,type_argument_count==0?
             DIAMOND_OP_CALL_SINGLETON_SPREAD:

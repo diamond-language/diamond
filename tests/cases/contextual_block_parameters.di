@@ -33,6 +33,10 @@ puts(ContextOps.calculate() do |value|
   value + 1
 end)
 
+puts(ContextOps.calculate(*[]) do |value|
+  value + 2
+end)
+
 puts(ContextBase.new().transform() do |value|
   value + "!"
 end)
