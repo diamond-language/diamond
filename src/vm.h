@@ -303,7 +303,8 @@ typedef enum DiamondOpCode : uint8_t {
     DIAMOND_OP_NEW_SPREAD,
     /* `Namespace.singleton(*array)` with an optional class self slot. */
     DIAMOND_OP_CALL_SINGLETON_SPREAD,
-    /* Builds one argument Array from fixed prefix, spread, and suffix values. */
+    /* Builds one argument Array from fixed prefix, spread, and suffix values.
+     * The suffix-count high bit omits a final explicit `&nil` block. */
     DIAMOND_OP_BUILD_SPREAD_ARGS,
     /* Explicit type bindings for `function[T](*arguments)`. */
     DIAMOND_OP_CALL_TYPED_SPREAD,

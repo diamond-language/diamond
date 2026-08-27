@@ -477,6 +477,9 @@ Source block closures carry an independent block tag, so `*arguments, &block`
 can distinguish a supplied block from an ordinary final Callable or any other
 rest value. Variadic block parameters therefore default cleanly to `nil`, and
 generated delegates omit the block from target dispatch when it is absent.
+Ordinary function, method, and Callable spread calls now preserve the explicit
+forwarding marker as well: `target(*arguments, &block)` omits a nil block while
+leaving ordinary trailing nil and Callable values untouched.
 The forwarded call always uses the same name declared
 (`delegate foo(), to: @bar` always calls `@bar.foo()`, never a renamed
 target) -- both deliberate scope cuts, not oversights.

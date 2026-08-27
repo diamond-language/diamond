@@ -1428,7 +1428,7 @@ static uint16_t module_field_name(Compiler *compiler,DiamondSpan name) {
 
 static uint16_t emit_build_spread_arguments(Compiler *compiler,
         const uint16_t *prefix,size_t prefix_count,uint16_t spread,
-        const uint16_t *suffix,size_t suffix_count);
+        const uint16_t *suffix,size_t suffix_count,bool optional_block);
 
 static bool call_arguments_have_keyword(Compiler *compiler) {
     Compiler probe=*compiler;size_t nesting=0;bool argument_start=true;
@@ -1517,7 +1517,7 @@ static uint16_t parse_dynamic_keyword_arguments(Compiler *compiler,
     advance_token(compiler);
     if(!saw_spread)return emit_argument_array(compiler,fixed,fixed_count);
     return emit_build_spread_arguments(compiler,fixed,spread_index,spread,
-        fixed+spread_index,fixed_count-spread_index);
+        fixed+spread_index,fixed_count-spread_index,false);
 }
 
 static bool call_arguments_have_spread(Compiler *compiler) {
@@ -1549,6 +1549,7 @@ static uint16_t parse_spread_argument_array(Compiler *compiler,
         uint16_t *keyword_registers,size_t *keyword_count) {
     uint16_t fixed[16];size_t fixed_count=0,spread_index=0;
     uint16_t spread=0;bool saw_spread=false,seen_keyword=false;
+    bool optional_block=false;
     if(keyword_count!=nullptr)*keyword_count=0;
     while(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN&&!compiler->failed) {
         DiamondLexer keyword_lookahead=compiler->lexer;
@@ -1598,7 +1599,16 @@ static uint16_t parse_spread_argument_array(Compiler *compiler,
                 fail(compiler,compiler->current.span,"too many fixed call arguments");
                 return 0;
             }
+            const bool forwarded_block=
+                compiler->current.kind==DIAMOND_TOKEN_AMPERSAND;
             fixed[fixed_count++]=parse_expression(compiler);
+            if(forwarded_block) {
+                optional_block=true;
+                if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
+                    fail(compiler,compiler->current.span,
+                        "a forwarded block argument must be last");return 0;
+                }
+            }
         }
         skip_newlines(compiler);
         if(compiler->current.kind!=DIAMOND_TOKEN_COMMA)break;
@@ -1614,7 +1624,7 @@ static uint16_t parse_spread_argument_array(Compiler *compiler,
     }
     if(fixed_count==0)return spread;
     return emit_build_spread_arguments(compiler,fixed,spread_index,spread,
-        fixed+spread_index,fixed_count-spread_index);
+        fixed+spread_index,fixed_count-spread_index,optional_block);
 }
 
 /* Parses `(arg, arg, ...)` (the `(` itself still current) and emits a
@@ -2098,7 +2108,7 @@ static uint16_t parse_singleton_reference(Compiler *compiler,
             arguments[fixed_count],(uint16_t)fixed_count,0,3);
         uint16_t spread=arguments[fixed_count];
         if(fixed_count>0)spread=emit_build_spread_arguments(compiler,arguments,
-            fixed_count,spread,nullptr,0);
+            fixed_count,spread,nullptr,0,false);
         body_result=allocate_register(compiler);
         emit_opcode(compiler,type_argument_count==0?
             DIAMOND_OP_CALL_SINGLETON_SPREAD:
@@ -4041,7 +4051,7 @@ static uint16_t emit_invoke_keywords(Compiler *compiler,uint16_t receiver,
 
 static uint16_t emit_build_spread_arguments(Compiler *compiler,
         const uint16_t *prefix,size_t prefix_count,uint16_t spread,
-        const uint16_t *suffix,size_t suffix_count) {
+        const uint16_t *suffix,size_t suffix_count,bool optional_block) {
     uint16_t prefix_base=spread,suffix_base=spread;
     if(prefix_count>0) {
         prefix_base=allocate_register(compiler);
@@ -4064,7 +4074,8 @@ static uint16_t emit_build_spread_arguments(Compiler *compiler,
     emit_register(compiler,destination);
     emit_register(compiler,prefix_base);emit_byte(compiler,(uint8_t)prefix_count);
     emit_register(compiler,spread);
-    emit_register(compiler,suffix_base);emit_byte(compiler,(uint8_t)suffix_count);
+    emit_register(compiler,suffix_base);
+    emit_byte(compiler,(uint8_t)(suffix_count|(optional_block?0x80u:0u)));
     compiler->known_types[destination]=DIAMOND_TYPE_ARRAY;
     return destination;
 }
@@ -4106,8 +4117,9 @@ static uint16_t parse_bound_method_reference(Compiler *compiler,uint16_t receive
     if(!diamond_function_reserve_type_sets(wrapper,wrapper->type_set_count)) {
         fail(compiler,method_name,"out of memory");return 0;
     }
-    memcpy(wrapper->type_sets,compiler->function->type_sets,
-        wrapper->type_set_count*sizeof wrapper->type_sets[0]);
+    if(wrapper->type_set_count>0)
+        memcpy(wrapper->type_sets,compiler->function->type_sets,
+            wrapper->type_set_count*sizeof wrapper->type_sets[0]);
     (void)snprintf(wrapper->parameter_names[0],DIAMOND_MAX_FUNCTION_NAME,
         "arguments");
     for(size_t index=0;index<16;index++)wrapper->parameter_type_sets[index]=DIAMOND_NO_TYPE_SET;
@@ -8920,7 +8932,7 @@ static void compile_delegate(Compiler *compiler) {
                 emit_jump(compiler,DIAMOND_OP_JUMP_IF_FALSE,missing);
             const uint16_t without_args=emit_build_spread_arguments(compiler,
                 parameter_registers,variadic_index,
-                parameter_registers[variadic_index],nullptr,0);
+                parameter_registers[variadic_index],nullptr,0,false);
             const uint16_t without=emit_invoke_spread(compiler,ivar_register,
                 method_name,without_args);
             result=allocate_register(compiler);
@@ -8930,7 +8942,7 @@ static void compile_delegate(Compiler *compiler) {
             const uint16_t with_args=emit_build_spread_arguments(compiler,
                 parameter_registers,variadic_index,
                 parameter_registers[variadic_index],
-                &parameter_registers[variadic_index+1],1);
+                &parameter_registers[variadic_index+1],1,false);
             const uint16_t with=emit_invoke_spread(compiler,ivar_register,
                 method_name,with_args);
             emit_instruction(compiler,DIAMOND_OP_MOVE,result,with,0,2);
@@ -8938,7 +8950,7 @@ static void compile_delegate(Compiler *compiler) {
         } else {
             const uint16_t forwarded=emit_build_spread_arguments(compiler,
                 parameter_registers,variadic_index,
-                parameter_registers[variadic_index],nullptr,0);
+                parameter_registers[variadic_index],nullptr,0,false);
             result=emit_invoke_spread(compiler,ivar_register,method_name,forwarded);
         }
     } else if(forwards_block) {

@@ -1279,7 +1279,12 @@ expression limit on the spread contents.
 
 An ampersand is a forwarding marker over an existing Callable register, so
 `target(*arguments, &block)` uses the same fixed-suffix spread assembly without
-introducing a second runtime representation for blocks.
+introducing a second runtime representation for blocks. The high bit of
+`DIAMOND_OP_BUILD_SPREAD_ARGS`'s suffix count records that the final suffix was
+written with `&`: a `nil` value is omitted, while any supplied block or
+ordinary Callable is appended unchanged. The marker therefore affects only an
+explicit forwarding position and cannot erase an ordinary trailing `nil` from
+the rest Array.
 
 **Why this needed a genuinely new opcode, not a compiler trick.** Every
 ordinary call site bakes its argument count as a compile-time-constant

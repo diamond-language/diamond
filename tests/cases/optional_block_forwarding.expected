@@ -1,0 +1,16 @@
+[1, 2]
+true
+[3, 4]
+false
+function-block
+[5, 6]
+true
+[7]
+false
+method-block
+[8, 9]
+true
+[10]
+false
+callable-block
+nil

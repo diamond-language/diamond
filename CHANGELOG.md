@@ -26,6 +26,8 @@
 
 ## Language
 
+- Made explicit `target(*arguments, &block)` forwarding omit an absent block
+  instead of appending `nil`, across functions, methods, and Callable values.
 - Added forward and mutually recursive top-level function resolution, including
   generic/keyword calls, callable references, and `require`-expanded files.
 - Synced the self-hosted lexer and its differential token dumper with the

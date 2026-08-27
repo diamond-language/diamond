@@ -10118,6 +10118,10 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 READ_SHORT(destination);READ_SHORT(prefix_base);
                 READ_BYTE(prefix_count);READ_SHORT(spread_register);
                 READ_SHORT(suffix_base);READ_BYTE(suffix_count);
+                const bool optional_block=(suffix_count&0x80u)!=0;
+                suffix_count&=0x7fu;
+                if(optional_block&&suffix_count==0)
+                    VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
                 if((size_t)prefix_base+prefix_count>DIAMOND_REGISTER_COUNT||
                    (size_t)suffix_base+suffix_count>DIAMOND_REGISTER_COUNT)
                     VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
@@ -10139,10 +10143,15 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 for(size_t index=0;index<spread->count;index++)
                     if(!array_push(vm,combined,spread->values[index]))
                         VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
-                for(size_t index=0;index<suffix_count;index++)
+                for(size_t index=0;index<suffix_count;index++) {
+                    if(optional_block&&index+1==suffix_count&&
+                       registers[(size_t)suffix_base+index].kind==
+                           DIAMOND_VALUE_NIL)
+                        continue;
                     if(!array_push(vm,combined,
                             registers[(size_t)suffix_base+index]))
                         VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                }
                 break;
             }
             case DIAMOND_OP_CALL_SINGLETON_KEYWORDS:
