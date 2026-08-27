@@ -73,6 +73,8 @@
   short-circuit alternatives, guards, and ordinary collection-literal semantics.
 - Extended Array rest patterns to middle positions in destructuring and `case`,
   including suffix matching, nested patterns, empty spans, and `*_` discard.
+- Added required-key Hash destructuring assignment with nested targets,
+  `**remaining` capture, and failure-atomic stores.
 - Corrected the runtime type-ID partition so the advertised class capacity no
   longer overlaps generic-variable and interface IDs, and raised the class
   capacity from 128 to 180. Updated the self-hosted compiler's mirrored

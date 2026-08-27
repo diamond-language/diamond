@@ -310,6 +310,13 @@ It requires the fixed prefix and suffix, then assigns a fresh Array containing
 the intervening elements, including an empty Array when the two fixed regions
 touch. The unbracketed outer form supports the same middle-rest placement.
 
+Hash patterns use required keys and may capture unmatched entries:
+`{"name": name, "meta": {"id": id}, **remaining} = value`. The right-hand
+side must be a `Hash`; each written key must be present, while extra keys are
+tolerated. `**remaining` receives a fresh Hash containing only extra entries.
+Nested Array and Hash patterns validate before any leaf store, so failures are
+failure-atomic.
+
 Not supported (yet): indexed (`arr[i]`) or chained (`obj.field`) targets,
 a comma-separated *literal* right-hand side (`a, b = 1, 2` — write `a, b
 = [1, 2]` instead).

@@ -905,6 +905,8 @@ static bool disassemble_chunk(FILE *stream, const char *name,
                     checked_register(chunk,stream,read_operand(chunk,offset+1),&valid),
                     checked_register(chunk,stream,read_operand(chunk,offset+3),&valid),
                     read_operand(chunk,offset+5));offset+=7;break;
+            case DIAMOND_OP_CHECK_HASH_KEY:
+                offset=two_registers(stream,chunk,"CHECK_HASH_KEY",offset,&valid);break;
             case DIAMOND_OP_POSTGRES_OPEN:
                 offset=two_registers(stream,chunk,"POSTGRES_OPEN",offset, &valid);break;
             case DIAMOND_OP_MYSQL_OPEN:

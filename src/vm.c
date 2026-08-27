@@ -12282,6 +12282,20 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
                 registers[destination]=source->values[source->count-reverse];break;
             }
+            case DIAMOND_OP_CHECK_HASH_KEY: {
+                uint16_t source_reg=0,key_reg=0;
+                READ_SHORT(source_reg);READ_SHORT(key_reg);
+                if(registers[source_reg].kind!=DIAMOND_VALUE_OBJECT||
+                   registers[source_reg].as.object->kind!=DIAMOND_OBJECT_HASH)
+                    VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
+                if(hash_find((DiamondHash *)registers[source_reg].as.object,
+                             registers[key_reg])<0) {
+                    snprintf(vm->error,sizeof vm->error,
+                        "destructuring assignment missing required Hash key");
+                    VM_RETURN(DIAMOND_VM_INDEX_ERROR);
+                }
+                break;
+            }
             /* A duration-only clock: seconds since some unspecified,
              * process-local reference point (CLOCK_MONOTONIC), never
              * meaningful as a calendar timestamp or across processes --

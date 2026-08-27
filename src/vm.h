@@ -291,6 +291,8 @@ typedef enum DiamondOpCode : uint8_t {
     /* Middle-rest Array extraction and suffix-relative pattern indexing. */
     DIAMOND_OP_ARRAY_MIDDLE,
     DIAMOND_OP_ARRAY_SUFFIX,
+    /* Raising required-key check for Hash destructuring assignment. */
+    DIAMOND_OP_CHECK_HASH_KEY,
     DIAMOND_OP_COUNT,
 } DiamondOpCode;
 

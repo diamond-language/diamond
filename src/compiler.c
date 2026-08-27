@@ -5849,6 +5849,48 @@ static bool scan_destructuring_pattern(DiamondLexer *lexer,DiamondToken token,
     if(destructuring_target_kind(token.kind)) {
         *after=diamond_lexer_next(lexer);return true;
     }
+    if(token.kind==DIAMOND_TOKEN_LEFT_BRACE) {
+        token=diamond_lexer_next(lexer);
+        if(token.kind==DIAMOND_TOKEN_RIGHT_BRACE)return false;
+        for(;;) {
+            if(token.kind==DIAMOND_TOKEN_STAR) {
+                token=diamond_lexer_next(lexer);
+                if(token.kind!=DIAMOND_TOKEN_STAR)return false;
+                token=diamond_lexer_next(lexer);
+                if(!destructuring_target_kind(token.kind))return false;
+                token=diamond_lexer_next(lexer);
+                if(token.kind==DIAMOND_TOKEN_RIGHT_BRACE) {
+                    *after=diamond_lexer_next(lexer);return true;
+                }
+                if(token.kind!=DIAMOND_TOKEN_COMMA)return false;
+                token=diamond_lexer_next(lexer);
+                continue;
+            }
+            size_t nesting=0;
+            for(;;) {
+                if(token.kind==DIAMOND_TOKEN_EOF||token.kind==DIAMOND_TOKEN_ERROR||
+                   token.kind==DIAMOND_TOKEN_NEWLINE)return false;
+                if(token.kind==DIAMOND_TOKEN_COLON&&nesting==0)break;
+                if(token.kind==DIAMOND_TOKEN_LEFT_PAREN||
+                   token.kind==DIAMOND_TOKEN_LEFT_BRACKET||
+                   token.kind==DIAMOND_TOKEN_LEFT_BRACE)nesting++;
+                if(token.kind==DIAMOND_TOKEN_RIGHT_PAREN||
+                   token.kind==DIAMOND_TOKEN_RIGHT_BRACKET||
+                   token.kind==DIAMOND_TOKEN_RIGHT_BRACE) {
+                    if(nesting==0)return false;
+                    nesting--;
+                }
+                token=diamond_lexer_next(lexer);
+            }
+            token=diamond_lexer_next(lexer);
+            if(!scan_destructuring_pattern(lexer,token,&token,depth+1))return false;
+            if(token.kind==DIAMOND_TOKEN_RIGHT_BRACE) {
+                *after=diamond_lexer_next(lexer);return true;
+            }
+            if(token.kind!=DIAMOND_TOKEN_COMMA)return false;
+            token=diamond_lexer_next(lexer);
+        }
+    }
     if(token.kind!=DIAMOND_TOKEN_LEFT_BRACKET)return false;
     token=diamond_lexer_next(lexer);
     if(token.kind==DIAMOND_TOKEN_RIGHT_BRACKET)return false;
@@ -5869,7 +5911,7 @@ static bool scan_destructuring_pattern(DiamondLexer *lexer,DiamondToken token,
 static bool multi_assignment_ahead(const Compiler *compiler) {
     DiamondLexer lookahead = compiler->lexer;
     DiamondToken token=compiler->current;
-    if(token.kind==DIAMOND_TOKEN_LEFT_BRACKET) {
+    if(token.kind==DIAMOND_TOKEN_LEFT_BRACKET||token.kind==DIAMOND_TOKEN_LEFT_BRACE) {
         return scan_destructuring_pattern(&lookahead,token,&token,0)&&
             token.kind==DIAMOND_TOKEN_EQUAL;
     }
@@ -8953,14 +8995,40 @@ static uint8_t array_type_set_index(Compiler *compiler) {
     return (uint8_t)set_index;
 }
 
+static uint8_t hash_type_set_index(Compiler *compiler) {
+    for(size_t index=0;index<compiler->function->type_set_count;index++) {
+        const DiamondTypeSet *set=&compiler->function->type_sets[index];
+        if(set->count==1&&set->members[0].id==DIAMOND_TYPE_HASH&&
+           set->members[0].argument_set==UINT8_MAX)
+            return (uint8_t)index;
+    }
+    if(compiler->function->type_set_count==DIAMOND_MAX_TYPE_SETS) {
+        fail(compiler,compiler->previous.span,"function has too many type annotations");
+        return 0;
+    }
+    const size_t set_index=compiler->function->type_set_count++;
+    DiamondTypeSet *set=&compiler->function->type_sets[set_index];
+    set->count=1;
+    set->members[0]=(DiamondTypeMember){.id=DIAMOND_TYPE_HASH,
+        .argument_set=UINT8_MAX,.second_argument_set=UINT8_MAX,
+        .callable_arity=UINT8_MAX,.callable_return_set=UINT8_MAX,
+        .callable_parameters_typed=false};
+    for(size_t member_index=0;member_index<16;member_index++)
+        set->members[0].callable_parameter_sets[member_index]=UINT8_MAX;
+    return (uint8_t)set_index;
+}
+
 typedef struct DestructureNode {
     bool leaf;
     bool rest;
+    bool hash;
+    bool hash_rest;
     DiamondSpan name;
     bool instance_variable;
     bool class_variable;
     uint8_t children[16];
     uint8_t child_count;
+    uint16_t key_register;
 } DestructureNode;
 
 static uint8_t parse_destructure_node(Compiler *compiler,DestructureNode *nodes,
@@ -8983,6 +9051,66 @@ static uint8_t parse_destructure_node(Compiler *compiler,DestructureNode *nodes,
         node->leaf=true;node->name=compiler->current.span;
         node->instance_variable=compiler->current.kind==DIAMOND_TOKEN_INSTANCE_VARIABLE;
         node->class_variable=compiler->current.kind==DIAMOND_TOKEN_CLASS_VARIABLE;
+        advance_token(compiler);return node_index;
+    }
+    if(compiler->current.kind==DIAMOND_TOKEN_LEFT_BRACE) {
+        node->hash=true;advance_token(compiler);skip_newlines(compiler);
+        while(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_BRACE&&!compiler->failed) {
+            if(node->child_count==16) {
+                fail(compiler,compiler->current.span,"too many Hash destructuring targets");
+                return node_index;
+            }
+            DiamondLexer rest_lookahead=compiler->lexer;
+            const DiamondToken second_star=diamond_lexer_next(&rest_lookahead);
+            if(compiler->current.kind==DIAMOND_TOKEN_STAR&&
+               second_star.kind==DIAMOND_TOKEN_STAR) {
+                advance_token(compiler);advance_token(compiler);
+                const uint8_t child=parse_destructure_node(
+                    compiler,nodes,node_count,depth+1);
+                if(!nodes[child].leaf) {
+                    fail(compiler,compiler->previous.span,
+                        "Hash rest target must be a variable");return node_index;
+                }
+                nodes[child].hash_rest=true;
+                node->children[node->child_count++]=child;
+                skip_newlines(compiler);
+                if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_BRACE) {
+                    fail(compiler,compiler->current.span,
+                        "Hash rest target must be last");return node_index;
+                }
+                break;
+            }
+            const uint16_t key=parse_expression(compiler);
+            if(compiler->current.kind!=DIAMOND_TOKEN_COLON) {
+                fail(compiler,compiler->current.span,
+                    "expected ':' after Hash destructuring key");return node_index;
+            }
+            advance_token(compiler);
+            const uint8_t child=parse_destructure_node(
+                compiler,nodes,node_count,depth+1);
+            if(nodes[child].rest||nodes[child].hash_rest) {
+                fail(compiler,nodes[child].name,
+                    "rest target is not valid as a Hash entry target");
+                return node_index;
+            }
+            nodes[child].key_register=key;
+            node->children[node->child_count++]=child;
+            skip_newlines(compiler);
+            if(compiler->current.kind==DIAMOND_TOKEN_RIGHT_BRACE)break;
+            if(compiler->current.kind!=DIAMOND_TOKEN_COMMA) {
+                fail(compiler,compiler->current.span,
+                    "expected ',' in Hash destructuring pattern");return node_index;
+            }
+            advance_token(compiler);skip_newlines(compiler);
+        }
+        if(node->child_count==0) {
+            fail(compiler,compiler->current.span,
+                "Hash destructuring pattern cannot be empty");return node_index;
+        }
+        if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_BRACE) {
+            fail(compiler,compiler->current.span,
+                "expected '}' after Hash destructuring pattern");return node_index;
+        }
         advance_token(compiler);return node_index;
     }
     if(compiler->current.kind!=DIAMOND_TOKEN_LEFT_BRACKET) {
@@ -9021,10 +9149,47 @@ static uint8_t parse_destructure_node(Compiler *compiler,DestructureNode *nodes,
 
 static void emit_destructure_extract(Compiler *compiler,
         const DestructureNode *nodes,uint8_t node_index,uint16_t value,
-        uint8_t array_set,uint16_t *node_values) {
+        uint8_t array_set,uint8_t hash_set,uint16_t *node_values) {
     const DestructureNode *node=&nodes[node_index];
     node_values[node_index]=value;
     if(node->leaf)return;
+    if(node->hash) {
+        emit_instruction(compiler,DIAMOND_OP_CHECK_TYPE,value,hash_set,0,2);
+        size_t fixed_count=0;
+        for(size_t child=0;child<node->child_count;child++)
+            if(!nodes[node->children[child]].hash_rest)fixed_count++;
+        for(size_t child=0;child<node->child_count;child++) {
+            const DestructureNode *child_node=&nodes[node->children[child]];
+            if(child_node->hash_rest) {
+                const uint16_t key_base=allocate_register(compiler);
+                for(size_t key=1;key<fixed_count;key++)(void)allocate_register(compiler);
+                size_t key_index=0;
+                for(size_t fixed=0;fixed<node->child_count;fixed++) {
+                    const DestructureNode *fixed_node=&nodes[node->children[fixed]];
+                    if(fixed_node->hash_rest)continue;
+                    emit_instruction(compiler,DIAMOND_OP_MOVE,
+                        (uint16_t)(key_base+key_index++),fixed_node->key_register,0,2);
+                }
+                const uint16_t excluded=allocate_register(compiler);
+                emit_instruction(compiler,DIAMOND_OP_ARRAY,excluded,key_base,
+                    (uint16_t)fixed_count,3);
+                compiler->known_types[excluded]=DIAMOND_TYPE_ARRAY;
+                const uint16_t rest=allocate_register(compiler);
+                emit_instruction(compiler,DIAMOND_OP_HASH_REST,rest,value,excluded,3);
+                compiler->known_types[rest]=DIAMOND_TYPE_HASH;
+                node_values[node->children[child]]=rest;
+                continue;
+            }
+            emit_instruction(compiler,DIAMOND_OP_CHECK_HASH_KEY,value,
+                child_node->key_register,0,2);
+            const uint16_t element=allocate_register(compiler);
+            emit_instruction(compiler,DIAMOND_OP_INDEX_GET,element,value,
+                child_node->key_register,3);
+            emit_destructure_extract(compiler,nodes,node->children[child],element,
+                array_set,hash_set,node_values);
+        }
+        return;
+    }
     emit_instruction(compiler,DIAMOND_OP_CHECK_TYPE,value,array_set,0,2);
     size_t rest_index=SIZE_MAX;
     for(size_t child=0;child<node->child_count;child++)
@@ -9041,14 +9206,14 @@ static void emit_destructure_extract(Compiler *compiler,
                 (uint16_t)((index<<8)|suffix),3);
             compiler->known_types[rest]=DIAMOND_TYPE_ARRAY;
             emit_destructure_extract(compiler,nodes,node->children[index],rest,
-                array_set,node_values);continue;
+                array_set,hash_set,node_values);continue;
         }
         if(has_rest&&index>rest_index) {
             const uint16_t element=allocate_register(compiler);
             emit_instruction(compiler,DIAMOND_OP_ARRAY_SUFFIX,element,value,
                 (uint16_t)(node->child_count-index),3);
             emit_destructure_extract(compiler,nodes,node->children[index],element,
-                array_set,node_values);continue;
+                array_set,hash_set,node_values);continue;
         }
         const uint8_t index_constant=add_constant(compiler,DIAMOND_INT((int64_t)index));
         const uint16_t index_register=allocate_register(compiler);
@@ -9056,7 +9221,7 @@ static void emit_destructure_extract(Compiler *compiler,
         const uint16_t element=allocate_register(compiler);
         emit_instruction(compiler,DIAMOND_OP_INDEX_GET,element,value,index_register,3);
         emit_destructure_extract(compiler,nodes,node->children[index],element,
-            array_set,node_values);
+            array_set,hash_set,node_values);
     }
 }
 
@@ -9077,7 +9242,8 @@ static uint16_t emit_destructure_stores(Compiler *compiler,
 static uint16_t compile_multi_assignment(Compiler *compiler) {
     DestructureNode nodes[64]={};size_t node_count=0;
     const uint8_t root=(uint8_t)node_count++;
-    if(compiler->current.kind==DIAMOND_TOKEN_LEFT_BRACKET) {
+    if(compiler->current.kind==DIAMOND_TOKEN_LEFT_BRACKET||
+       compiler->current.kind==DIAMOND_TOKEN_LEFT_BRACE) {
         node_count=0;
         (void)parse_destructure_node(compiler,nodes,&node_count,0);
     } else {
@@ -9111,8 +9277,9 @@ static uint16_t compile_multi_assignment(Compiler *compiler) {
     advance_token(compiler);
     const uint16_t value=parse_expression(compiler);
     const uint8_t array_set = array_type_set_index(compiler);
+    const uint8_t hash_set = hash_type_set_index(compiler);
     uint16_t node_values[64]={};
-    emit_destructure_extract(compiler,nodes,root,value,array_set,node_values);
+    emit_destructure_extract(compiler,nodes,root,value,array_set,hash_set,node_values);
     return emit_destructure_stores(compiler,nodes,root,node_values);
 }
 
