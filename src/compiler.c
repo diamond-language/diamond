@@ -1582,13 +1582,19 @@ static uint16_t parse_call(Compiler *compiler, DiamondSpan name) {
     }
     advance_token(compiler);
     skip_newlines(compiler);
-    if(type_argument_count==0&&call_arguments_have_spread(compiler)) {
+    if(call_arguments_have_spread(compiler)) {
         const uint16_t array_register=parse_spread_argument_array(compiler);
         const uint16_t destination=allocate_register(compiler);
-        emit_opcode(compiler,DIAMOND_OP_CALL_SPREAD);
+        emit_opcode(compiler,type_argument_count==0?DIAMOND_OP_CALL_SPREAD:
+            DIAMOND_OP_CALL_TYPED_SPREAD);
         emit_register(compiler,destination);
         emit_function_index(compiler,(size_t)function_index);
         emit_register(compiler,array_register);
+        if(type_argument_count>0) {
+            emit_byte(compiler,(uint8_t)type_argument_count);
+            for(size_t index=0;index<type_argument_count;index++)
+                emit_byte(compiler,type_arguments[index]);
+        }
         return destination;
     }
     /* Keyword arguments (direct top-level calls only -- see docs/roadmap.md):
@@ -1931,20 +1937,22 @@ static uint16_t parse_singleton_call(Compiler *compiler,
     advance_token(compiler);
     skip_newlines(compiler);
     if(call_arguments_have_spread(compiler)) {
-        if(type_argument_count>0) {
-            fail(compiler,compiler->current.span,
-                "spread singleton calls do not support generic arguments");
-            return 0;
-        }
         const uint16_t spread=parse_spread_argument_array(compiler);
         const uint16_t destination=allocate_register(compiler);
-        emit_opcode(compiler,DIAMOND_OP_CALL_SINGLETON_SPREAD);
+        emit_opcode(compiler,type_argument_count==0?
+            DIAMOND_OP_CALL_SINGLETON_SPREAD:
+            DIAMOND_OP_CALL_TYPED_SINGLETON_SPREAD);
         emit_register(compiler,destination);
         emit_function_index(compiler,method->function_index);
         emit_register(compiler,spread);
         emit_byte(compiler,receiver_class_index<0?UINT8_MAX:
             (uint8_t)receiver_class_index);
         emit_byte(compiler,method->needs_receiver?1:0);
+        if(type_argument_count>0) {
+            emit_byte(compiler,(uint8_t)type_argument_count);
+            for(size_t index=0;index<type_argument_count;index++)
+                emit_byte(compiler,type_arguments[index]);
+        }
         return destination;
     }
     uint16_t arguments[16];size_t argument_count=0;
@@ -3688,14 +3696,27 @@ static uint16_t emit_invoke_call(Compiler *compiler, uint16_t receiver,
     return dest;
 }
 
-static uint16_t emit_invoke_spread(Compiler *compiler,uint16_t receiver,
-        DiamondSpan method_name,uint16_t spread) {
+static uint16_t emit_invoke_typed_spread(Compiler *compiler,uint16_t receiver,
+        DiamondSpan method_name,uint16_t spread,const uint8_t *type_arguments,
+        size_t type_argument_count) {
     const uint16_t destination=allocate_register(compiler);
     const uint8_t method=add_name_string(compiler,method_name);
-    emit_opcode(compiler,DIAMOND_OP_INVOKE_SPREAD);
+    emit_opcode(compiler,type_argument_count==0?DIAMOND_OP_INVOKE_SPREAD:
+        DIAMOND_OP_INVOKE_TYPED_SPREAD);
     emit_register(compiler,destination);emit_register(compiler,receiver);
     emit_byte(compiler,method);emit_register(compiler,spread);
+    if(type_argument_count>0) {
+        emit_byte(compiler,(uint8_t)type_argument_count);
+        for(size_t index=0;index<type_argument_count;index++)
+            emit_byte(compiler,type_arguments[index]);
+    }
     return destination;
+}
+
+static uint16_t emit_invoke_spread(Compiler *compiler,uint16_t receiver,
+        DiamondSpan method_name,uint16_t spread) {
+    return emit_invoke_typed_spread(compiler,receiver,method_name,spread,
+        nullptr,0);
 }
 
 static uint16_t emit_build_spread_arguments(Compiler *compiler,
@@ -3799,9 +3820,9 @@ static uint16_t parse_invoke(Compiler *compiler, uint16_t receiver) {
     advance_token(compiler);
     skip_newlines(compiler);
     if(call_arguments_have_spread(compiler)) {
-        if(writer_name||type_argument_count>0) {
+        if(writer_name) {
             fail(compiler,compiler->current.span,
-                "spread method calls do not support writers or generic arguments");
+                "spread method calls do not support writers");
             return 0;
         }
         const uint16_t spread=parse_spread_argument_array(compiler);
@@ -3809,7 +3830,8 @@ static uint16_t parse_invoke(Compiler *compiler, uint16_t receiver) {
             fail(compiler,compiler->current.span,
                 "a spread method call cannot also take a block");return 0;
         }
-        return emit_invoke_spread(compiler,receiver,name,spread);
+        return emit_invoke_typed_spread(compiler,receiver,name,spread,
+            type_arguments,type_argument_count);
     }
     uint16_t args[16]; size_t count = 0;
     while (compiler->current.kind != DIAMOND_TOKEN_RIGHT_PAREN && !compiler->failed) {

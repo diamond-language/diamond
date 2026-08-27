@@ -654,6 +654,8 @@ to a variadic *parameter* above. The supported slice is deliberately narrow:
 - one spread argument can appear before, between, or after fixed positional
   arguments — `foo(1, *middle, 4)` preserves left-to-right order;
 - keyword arguments cannot be mixed with a spread argument;
+- explicit generic bindings compose with spread for functions and user-defined
+  instance/class/module methods (`identity[Int](*values)`);
 - arity and method visibility are checked against the Array's actual length at *runtime*
   (unlike an ordinary call, which the compiler validates against a
   statically-known callee's arity where it can) — too few or too many

@@ -303,6 +303,12 @@ typedef enum DiamondOpCode : uint8_t {
     DIAMOND_OP_CALL_SINGLETON_SPREAD,
     /* Builds one argument Array from fixed prefix, spread, and suffix values. */
     DIAMOND_OP_BUILD_SPREAD_ARGS,
+    /* Explicit type bindings for `function[T](*arguments)`. */
+    DIAMOND_OP_CALL_TYPED_SPREAD,
+    /* Explicit type bindings for `receiver.method[T](*arguments)`. */
+    DIAMOND_OP_INVOKE_TYPED_SPREAD,
+    /* Explicit type bindings for `Namespace.method[T](*arguments)`. */
+    DIAMOND_OP_CALL_TYPED_SINGLETON_SPREAD,
     DIAMOND_OP_COUNT,
 } DiamondOpCode;
 

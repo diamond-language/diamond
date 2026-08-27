@@ -373,6 +373,16 @@ Areas still worth examining include:
   `each_until` is the non-exceptional iteration-control protocol. Arrays,
   Hash values, and Ranges stop at the source; custom Enumerable sources can
   override the default protocol to provide the same cooperative early stop.
+- **Done**: generalized spread calls, including fixed prefix/suffix arguments,
+  Callable values, constructors, class/module singleton methods, explicit
+  generic bindings, and fixed-plus-rest delegation.
+- **Deferred**: spread calls on native receivers. Native String/Array/Hash/IO
+  methods are specialized branches inside `INVOKE`, not uniform method
+  descriptors. Supporting runtime argument Arrays there requires first
+  extracting native dispatch behind one argument-vector interface; duplicating
+  that large matrix in the spread opcode would create two divergent native
+  method implementations. Ordinary native calls and source-level collection
+  extension methods remain available.
 
 ### Explicit-arity method delegation
 

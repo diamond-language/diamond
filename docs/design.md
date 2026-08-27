@@ -1312,9 +1312,11 @@ DIAMOND_REGISTER_COUNT` sanity check, 4096, and the `has_variadic`-aware
 bounds fix from "Splat/variadic parameters" above), since nothing about
 spread parses one argument expression per element.
 
-**Deliberately out of scope:** native receiver methods; mixing a spread
-argument with keyword arguments; spreading into an explicitly generic call
-(`foo[T](*array)`).
+Typed spread variants carry explicit type-set bindings for generic functions,
+instance methods, and singleton methods. Native receiver methods remain out of
+scope because they dispatch through specialized inline VM branches rather than
+uniform `DiamondMethod` descriptors. Mixing spread and keyword arguments also
+remains unsupported.
 
 ### Bare singleton method references
 
