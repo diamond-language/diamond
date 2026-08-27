@@ -11,6 +11,14 @@ end
 
 def with_dog(&block: Callable[[ContextDog], Int]) -> Int = yield(ContextDog.new())
 def with_animal(&block: Callable[[ContextAnimal], Int]) -> Int = yield(ContextAnimal.new())
+def dog_object_contract(&block: Callable[[ContextDog], ContextDog]) -> Int
+  yield(ContextDog.new())
+  40
+end
+def animal_object_contract(&block: Callable[[ContextAnimal], ContextAnimal]) -> Int
+  yield(ContextAnimal.new())
+  40
+end
 
 agreed = if ARGV.length() == 0
   block_left
@@ -39,3 +47,13 @@ end
 puts(variant() do |value|
   value.score() + 2
 end)
+
+synthesized = if ARGV.length() == 0
+  dog_object_contract
+else
+  animal_object_contract
+end
+puts(synthesized() do |value|
+  value.score() + 2
+  ContextDog.new()
+end + 2)

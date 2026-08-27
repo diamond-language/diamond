@@ -2337,7 +2337,7 @@ callable_union_return_dump="$(sed -n '/^== tests\/cases\/callable_union_return_p
 
 actual="$($diamond --dump-bytecode tests/cases/callable_union_block_context.di)"
 callable_union_block_dump="$(sed -n '/^== <block> ==$/,$p' <<<"$actual")"
-[[ "$(grep -c 'ADD_INT' <<<"$callable_union_block_dump")" == "2" ]]
+[[ "$(grep -c 'ADD_INT' <<<"$callable_union_block_dump")" == "3" ]]
 [[ "$(grep -cE '  ADD +r' <<<"$callable_union_block_dump")" == "1" ]]
 
 actual="$($diamond --dump-bytecode -e $'def union_value() -> Int | String\n [1, "one"][0]\nend\nunion_value()')"

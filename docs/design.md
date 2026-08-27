@@ -482,6 +482,17 @@ expressions. Instead, `ARGUMENT_PROVIDED` branches forward only the prefix that
 the caller supplied. The target therefore observes the original argument count
 and evaluates its own defaults. Keyword calls use that same count after mapping
 names into wrapper parameter slots.
+Variadic wrappers apply the same omission logic to optional fixed-prefix slots.
+Each absent-prefix branch rebuilds the spread vector from only the supplied
+prefix plus the already collected rest tail, so the target still owns default
+evaluation without losing variadic arguments.
+
+If no complete nested Callable arm can provide union block context, the compiler
+attempts a narrower synthesis step for inputs only. For each block parameter it
+selects an existing declared input graph that accepts every arm's input under
+contravariance. It never invents a nominal or collection union and does not
+publish a synthetic return promise; the block body's actual return metadata
+continues to drive runtime Callable validation.
 
 Generic functions and methods may be specialized explicitly with syntax such
 as `empty[Int]()` or `factory.empty[String]()`. The call instruction carries

@@ -332,14 +332,21 @@ satisfy every arm under parameter contravariance and return covariance. Bound
 wrappers preserve omitted optional arguments through argument-count branches,
 leaving default evaluation in the original method.
 
+Optional fixed prefixes on variadic bound wrappers now use the same true-count
+forwarding while preserving the collected rest tail. When no whole Callable arm
+is safe for union block context, the compiler can synthesize input context by
+selecting existing declared supertypes accepted by every arm; it deliberately
+does not synthesize a return contract.
+
 Context-driven generic method-reference inference remains open. Today a bare
 generic reference is compiled before a later call or parameter contract is
 known, and the no-AST single-pass compiler has no expected-type channel flowing
 back into that earlier expression. Implementing it requires an explicit
 bidirectional context mechanism rather than guessing bindings from a future
 consumer. General synthesis of a new common Callable contract remains separate;
-the current variance path deliberately selects an existing declared candidate
-and falls back when no arm is safe for all others.
+the current variance path selects existing declared graphs for each input and
+falls back when no safe input exists. Synthesizing genuinely new union or
+intersection contracts remains open.
 
 ### Ruby-like ergonomics without Ruby compatibility
 

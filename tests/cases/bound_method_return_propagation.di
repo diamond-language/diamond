@@ -5,6 +5,7 @@ class BoundReturnBox
   def wrap[T](value: T) -> Array[T] = [value]
   def sum(head: Int, *rest) -> Int = head + rest[0]
   def offset(value: Int, amount: Int = 0) -> Int = value + amount
+  def label(prefix: String = "default", *rest) -> String = prefix + ":" + rest.join(",")
   def self.wrap[T](value: T) -> Array[T] = [value]
 end
 
@@ -26,3 +27,7 @@ puts(sum(40, 2) + 0)
 offset = box.offset
 puts(offset(value: 39, amount: 3) + 0)
 puts(offset(value: 42) + 0)
+
+label = box.label
+puts(label())
+puts(label("set", "x"))

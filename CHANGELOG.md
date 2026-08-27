@@ -61,6 +61,12 @@
 - Made bound wrappers preserve omitted optional arguments so the underlying
   method evaluates its own defaults, with regression diagnostics for unknown
   keywords and missing required arguments.
+- Preserved omitted optional fixed-prefix arguments on variadic bound wrappers
+  while retaining their collected rest tail.
+- Added conservative common input-contract synthesis for Callable-union blocks
+  when no complete declared arm satisfies every other arm: each synthesized
+  parameter selects an existing declared supertype accepted by all contracts,
+  while return typing remains inferred from the block body.
 - Added conservative contextual typing for anonymous block parameters at
   statically resolved function, singleton, and instance-method calls with typed
   Callable slots, including direct generic bindings inferred from concrete
