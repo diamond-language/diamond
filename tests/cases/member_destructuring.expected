@@ -1,0 +1,8 @@
+alice
+10
+bob
+20
+destructuring assignment expected 2 element(s), got 1
+alice
+10
+nil

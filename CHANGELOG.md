@@ -77,6 +77,8 @@
   `**remaining` capture, and failure-atomic stores.
 - Added indexed destructuring leaves, including chained indices and delayed
   writes that preserve failure atomicity across nested Array and Hash patterns.
+- Added member-writer destructuring leaves with mixed member/index paths,
+  zero-argument intermediate readers, and delayed failure-atomic writer calls.
 - Added protected method visibility with peer/subclass receiver access and
   runtime rejection outside the declaring class hierarchy.
 - Added `LazyEnumerator` pipelines with deferred `map`, `select`, and `reject`

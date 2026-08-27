@@ -322,8 +322,10 @@ equivalent to destructuring `[1, 2]`, with each expression evaluated once from
 left to right. Indexed leaves are supported at any depth, including chained
 indices: `[head, matrix[row][column]] = value`. Receivers and indices are
 evaluated left to right, while the final indexed writes remain delayed until
-the complete pattern validates. Chained member (`obj.field`) targets are not
-supported yet.
+the complete pattern validates. Member-writer leaves are also supported:
+`[record.name, grid[row].score] = value`. Intermediate members in a target path
+are invoked as zero-argument readers; the final member is invoked as its writer.
+All final writer calls remain delayed until validation succeeds.
 
 ## Numbers
 

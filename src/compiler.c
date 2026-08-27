@@ -6345,18 +6345,27 @@ static bool destructuring_target_kind(DiamondTokenKind kind) {
 
 static DiamondToken scan_destructuring_target_suffix(DiamondLexer *lexer,
         DiamondToken token) {
-    while(token.kind==DIAMOND_TOKEN_LEFT_BRACKET) {
-        size_t depth=1;
-        while(depth>0) {
+    for(;;) {
+        if(token.kind==DIAMOND_TOKEN_DOT) {
             token=diamond_lexer_next(lexer);
-            if(token.kind==DIAMOND_TOKEN_EOF||token.kind==DIAMOND_TOKEN_ERROR)
-                return token;
-            if(token.kind==DIAMOND_TOKEN_LEFT_BRACKET)depth++;
-            if(token.kind==DIAMOND_TOKEN_RIGHT_BRACKET)depth--;
+            if(token.kind!=DIAMOND_TOKEN_IDENTIFIER)return token;
+            token=diamond_lexer_next(lexer);
+            continue;
         }
-        token=diamond_lexer_next(lexer);
+        if(token.kind==DIAMOND_TOKEN_LEFT_BRACKET) {
+            size_t depth=1;
+            while(depth>0) {
+                token=diamond_lexer_next(lexer);
+                if(token.kind==DIAMOND_TOKEN_EOF||token.kind==DIAMOND_TOKEN_ERROR)
+                    return token;
+                if(token.kind==DIAMOND_TOKEN_LEFT_BRACKET)depth++;
+                if(token.kind==DIAMOND_TOKEN_RIGHT_BRACKET)depth--;
+            }
+            token=diamond_lexer_next(lexer);
+            continue;
+        }
+        return token;
     }
-    return token;
 }
 
 static bool scan_destructuring_pattern(DiamondLexer *lexer,DiamondToken token,
@@ -9592,8 +9601,10 @@ typedef struct DestructureNode {
     bool instance_variable;
     bool class_variable;
     bool indexed;
+    bool member;
     uint16_t target_receiver;
     uint16_t target_index;
+    DiamondSpan target_member;
     uint8_t children[16];
     uint8_t child_count;
     uint16_t key_register;
@@ -9655,27 +9666,50 @@ static uint8_t parse_destructure_node(Compiler *compiler,DestructureNode *nodes,
         node->instance_variable=target_kind==DIAMOND_TOKEN_INSTANCE_VARIABLE;
         node->class_variable=target_kind==DIAMOND_TOKEN_CLASS_VARIABLE;
         advance_token(compiler);
-        if(compiler->current.kind==DIAMOND_TOKEN_LEFT_BRACKET) {
-            node->indexed=true;
+        if(compiler->current.kind==DIAMOND_TOKEN_LEFT_BRACKET||
+           compiler->current.kind==DIAMOND_TOKEN_DOT) {
             uint16_t receiver=load_destructure_target(
                 compiler,node->name,target_kind);
-            while(compiler->current.kind==DIAMOND_TOKEN_LEFT_BRACKET) {
-                advance_token(compiler);
-                const uint16_t index=parse_expression(compiler);
-                if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_BRACKET) {
-                    fail(compiler,compiler->current.span,
-                        "expected ']' after destructuring target index");
-                    return node_index;
-                }
-                advance_token(compiler);
+            while(compiler->current.kind==DIAMOND_TOKEN_LEFT_BRACKET||
+                  compiler->current.kind==DIAMOND_TOKEN_DOT) {
                 if(compiler->current.kind==DIAMOND_TOKEN_LEFT_BRACKET) {
-                    const uint16_t loaded=allocate_register(compiler);
-                    emit_instruction(compiler,DIAMOND_OP_INDEX_GET,
-                        loaded,receiver,index,3);
-                    receiver=loaded;
+                    advance_token(compiler);
+                    const uint16_t index=parse_expression(compiler);
+                    if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_BRACKET) {
+                        fail(compiler,compiler->current.span,
+                            "expected ']' after destructuring target index");
+                        return node_index;
+                    }
+                    advance_token(compiler);
+                    if(compiler->current.kind==DIAMOND_TOKEN_LEFT_BRACKET||
+                       compiler->current.kind==DIAMOND_TOKEN_DOT) {
+                        const uint16_t loaded=allocate_register(compiler);
+                        emit_instruction(compiler,DIAMOND_OP_INDEX_GET,
+                            loaded,receiver,index,3);
+                        receiver=loaded;
+                    } else {
+                        node->indexed=true;
+                        node->target_receiver=receiver;
+                        node->target_index=index;
+                    }
                 } else {
-                    node->target_receiver=receiver;
-                    node->target_index=index;
+                    advance_token(compiler);
+                    if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER) {
+                        fail(compiler,compiler->current.span,
+                            "expected member after '.' in destructuring target");
+                        return node_index;
+                    }
+                    const DiamondSpan member=compiler->current.span;
+                    advance_token(compiler);
+                    if(compiler->current.kind==DIAMOND_TOKEN_LEFT_BRACKET||
+                       compiler->current.kind==DIAMOND_TOKEN_DOT)
+                        receiver=emit_invoke_call(compiler,receiver,member,false,
+                            nullptr,0,nullptr,0);
+                    else {
+                        node->member=true;
+                        node->target_receiver=receiver;
+                        node->target_member=member;
+                    }
                 }
             }
         }
@@ -9861,6 +9895,12 @@ static uint16_t emit_destructure_stores(Compiler *compiler,
             emit_instruction(compiler,DIAMOND_OP_INDEX_SET,node->target_receiver,
                 node->target_index,node_values[node_index],3);
             return node_values[node_index];
+        }
+        if(node->member) {
+            const uint16_t value=node_values[node_index];
+            (void)emit_invoke_call(compiler,node->target_receiver,
+                node->target_member,true,nullptr,0,&value,1);
+            return value;
         }
         return compile_assignment_store(compiler,node->name,
             node->instance_variable,node->class_variable,node_values[node_index]);
