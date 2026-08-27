@@ -480,6 +480,10 @@ generated delegates omit the block from target dispatch when it is absent.
 Ordinary function, method, and Callable spread calls now preserve the explicit
 forwarding marker as well: `target(*arguments, &block)` omits a nil block while
 leaving ordinary trailing nil and Callable values untouched.
+Functions and methods declaring `&block` now gain lexical `yield(args...)`
+invocation and `block_given?()` presence checks. The same token retains its
+fiber-suspension meaning in bodies without an explicit block parameter, keeping
+the two runtime mechanisms separate without a compatibility break.
 The forwarded call always uses the same name declared
 (`delegate foo(), to: @bar` always calls `@bar.foo()`, never a renamed
 target) -- both deliberate scope cuts, not oversights.

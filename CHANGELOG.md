@@ -26,6 +26,8 @@
 
 ## Language
 
+- Added lexical block `yield(...)` and `block_given?()` for functions and
+  methods declaring `&block`, while preserving fiber yield elsewhere.
 - Made explicit `target(*arguments, &block)` forwarding omit an absent block
   instead of appending `nil`, across functions, methods, and Callable values.
 - Added forward and mutually recursive top-level function resolution, including

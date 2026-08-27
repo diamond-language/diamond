@@ -1188,6 +1188,13 @@ through forwarding and Thread cloning. A `*arguments, &block` prologue checks
 that tag before preserving the final positional value; without it, every value
 remains in the rest Array, including an ordinary final Callable.
 
+The compiler also records the current explicit block register lexically.
+Within that function or method, `yield(args...)` lowers through the ordinary
+closure-call opcodes and `block_given?()` lowers to a nil comparison. Nested
+definitions and anonymous blocks reset this state, so block ownership cannot
+leak across a function boundary. Where no `&block` is declared, the existing
+`DIAMOND_OP_YIELD` fiber suspension path remains unchanged.
+
 **A real, riding-along correctness fix, not incidental.** `run_chunk`
 previously copied exactly `argument_count` values into `registers[]`
 unconditionally (`for (index=0;index<argument_count;index++) registers

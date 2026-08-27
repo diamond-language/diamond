@@ -550,6 +550,12 @@ all for a zero-arity block. A block captures every local visible at the
 point it's written, the same eager, unconditional capture nested `def`s
 use — not just the ones its body actually references.
 
+A function or method can bind its optional trailing block with `&block`.
+Inside that lexical body, `yield(args...)` invokes the bound Callable and
+`block_given?()` reports whether a block was supplied. `yield` accepts zero or
+more arguments. Calling it without guarding an absent optional block is a
+normal non-Callable type error.
+
 Not supported (both explicitly out of scope, not just unimplemented):
 calling a closure *value* with a trailing block
 (`some_callable(args) do ... end`) and `ClassName.new(args) do ... end`
@@ -1547,7 +1553,8 @@ f.status()       # "runnable" / "suspended" / "completed" / "failed"
 f.alive?()
 ```
 
-Inside the callable's body, `yield(value)` suspends and sends `value` out
+Inside a callable body that does not declare an `&block` parameter,
+`yield(value)` suspends and sends `value` out
 to whoever resumes; the next `.resume(v)` delivers `v` back in as
 `yield`'s own expression result. `Fiber.new`'s argument must be a
 zero-argument callable (captures are fine — only nested `def`s produce a

@@ -113,6 +113,11 @@ typedef struct Compiler {
     uint8_t known_types[DIAMOND_REGISTER_COUNT];
     int32_t known_type_sets[DIAMOND_REGISTER_COUNT];
     bool in_function;
+    /* The explicit `&name` parameter for the function currently being
+     * compiled. In that lexical context `yield(...)` invokes this Callable;
+     * without one, yield retains its fiber-suspension meaning. */
+    bool has_current_block;
+    uint16_t current_block_register;
     int current_return_type;
     DiamondSpan current_return_type_span;
     LoopContext *current_loop;
@@ -1746,6 +1751,19 @@ static uint16_t parse_discovery_unknown_call(Compiler *compiler) {
     return destination;
 }
 
+static uint16_t load_current_block(Compiler *compiler) {
+    uint16_t block=compiler->current_block_register;
+    for(size_t index=0;index<compiler->local_count;index++) {
+        if(compiler->locals[index].reg!=block||
+           !compiler->locals[index].captured)continue;
+        emit_instruction(compiler,DIAMOND_OP_BOX_LOCAL,block,0,0,1);
+        const uint16_t loaded=allocate_register(compiler);
+        emit_instruction(compiler,DIAMOND_OP_GET_CELL,loaded,block,0,2);
+        return loaded;
+    }
+    return block;
+}
+
 static uint16_t parse_call(Compiler *compiler, DiamondSpan name) {
     const int callable_local=find_local(compiler,name);
     if(callable_local>=0&&compiler->current.kind==DIAMOND_TOKEN_LEFT_PAREN) {
@@ -1760,6 +1778,28 @@ static uint16_t parse_call(Compiler *compiler, DiamondSpan name) {
             callable=loaded;
         }
         return parse_closure_call_arguments(compiler, callable);
+    }
+    if(name_equals(compiler,"block_given?",name,false)) {
+        advance_token(compiler);skip_newlines(compiler);
+        if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
+            fail(compiler,compiler->current.span,
+                "block_given? does not accept arguments");return 0;
+        }
+        advance_token(compiler);
+        const uint16_t destination=allocate_register(compiler);
+        if(!compiler->has_current_block) {
+            emit_instruction(compiler,DIAMOND_OP_BOOL,destination,false,0,2);
+        } else {
+            const uint16_t block=load_current_block(compiler);
+            const uint16_t absent=allocate_register(compiler);
+            emit_instruction(compiler,DIAMOND_OP_NIL,absent,0,0,1);
+            const uint16_t missing=allocate_register(compiler);
+            emit_instruction(compiler,DIAMOND_OP_EQUAL,missing,
+                block,absent,3);
+            emit_instruction(compiler,DIAMOND_OP_NOT,destination,missing,0,2);
+        }
+        compiler->known_types[destination]=DIAMOND_TYPE_BOOL;
+        return destination;
     }
     const int function_index = find_function(compiler, name);
     if (function_index < 0) {
@@ -6789,6 +6829,18 @@ static uint16_t compile_return(Compiler *compiler) {
 }
 
 static uint16_t compile_yield(Compiler *compiler) {
+    if(compiler->has_current_block) {
+        const uint16_t block=load_current_block(compiler);
+        if(compiler->current.kind==DIAMOND_TOKEN_LEFT_PAREN)
+            return parse_closure_call_arguments(compiler,block);
+        const uint16_t base=allocate_register(compiler);
+        const uint16_t destination=allocate_register(compiler);
+        emit_opcode(compiler,DIAMOND_OP_CALL_CLOSURE);
+        emit_register(compiler,destination);
+        emit_register(compiler,block);
+        emit_register(compiler,base);emit_byte(compiler,0);
+        return destination;
+    }
     uint16_t source;
     if (compiler->current.kind == DIAMOND_TOKEN_LEFT_PAREN) {
         advance_token(compiler);
@@ -7149,6 +7201,9 @@ static uint16_t compile_block(Compiler *compiler) {
     const bool outer_in_method = compiler->in_method;
     const bool outer_in_singleton_method = compiler->in_singleton_method;
     const bool outer_in_function=compiler->in_function;
+    const bool outer_has_current_block=compiler->has_current_block;
+    const uint16_t outer_current_block_register=
+        compiler->current_block_register;
     const int outer_return_type=compiler->current_return_type;
     const DiamondSpan outer_return_type_span=compiler->current_return_type_span;
     const int outer_exception=compiler->current_exception;
@@ -7187,6 +7242,8 @@ static uint16_t compile_block(Compiler *compiler) {
          outer_known_type_sets[index]=compiler->known_type_sets[index];}
 
     compiler->function = function;
+    compiler->has_current_block=false;
+    compiler->current_block_register=0;
     compiler->current_loop=nullptr;
     compiler->current_exception=-1;
     compiler->current_retry_target=SIZE_MAX;
@@ -7306,6 +7363,8 @@ static uint16_t compile_block(Compiler *compiler) {
     compiler->in_method = outer_in_method;
     compiler->in_singleton_method = outer_in_singleton_method;
     compiler->in_function=outer_in_function;
+    compiler->has_current_block=outer_has_current_block;
+    compiler->current_block_register=outer_current_block_register;
     compiler->current_return_type=outer_return_type;
     compiler->current_return_type_span=outer_return_type_span;
     compiler->current_exception=outer_exception;
@@ -7613,6 +7672,9 @@ static uint16_t compile_definition(Compiler *compiler, bool captures_self) {
     const bool outer_in_method = compiler->in_method;
     const bool outer_in_singleton_method = compiler->in_singleton_method;
     const bool outer_in_function=compiler->in_function;
+    const bool outer_has_current_block=compiler->has_current_block;
+    const uint16_t outer_current_block_register=
+        compiler->current_block_register;
     const int outer_return_type=compiler->current_return_type;
     const DiamondSpan outer_return_type_span=compiler->current_return_type_span;
     const int outer_exception=compiler->current_exception;
@@ -7673,6 +7735,8 @@ static uint16_t compile_definition(Compiler *compiler, bool captures_self) {
         emit_instruction(compiler,DIAMOND_OP_BOX_LOCAL,self_copy_register,0,0,1);
     }
     compiler->function = function;
+    compiler->has_current_block=false;
+    compiler->current_block_register=0;
     /* A captures_self closure nested *directly* inside a `def self.x`
      * method also needs in_singleton_method true, for exactly the same
      * reason nested_in_singleton_method's own existing arm below does:
@@ -7808,6 +7872,10 @@ static uint16_t compile_definition(Compiler *compiler, bool captures_self) {
                 fail(compiler,compiler->current.span,"too many local variables");break;
             }
             const uint16_t parameter=(uint16_t)(parameter_base+declared_parameter_count);
+            if(is_block_parameter) {
+                compiler->has_current_block=true;
+                compiler->current_block_register=parameter;
+            }
             compiler->locals[compiler->local_count++]=(Local){
                 .name=compiler->current.span,.reg=parameter};
             if(declared_parameter_count<16) {
@@ -8090,6 +8158,8 @@ static uint16_t compile_definition(Compiler *compiler, bool captures_self) {
     compiler->in_method = outer_in_method;
     compiler->in_singleton_method = outer_in_singleton_method;
     compiler->in_function=outer_in_function;
+    compiler->has_current_block=outer_has_current_block;
+    compiler->current_block_register=outer_current_block_register;
     compiler->current_return_type=outer_return_type;
     compiler->current_return_type_span=outer_return_type_span;
     compiler->current_exception=outer_exception;
