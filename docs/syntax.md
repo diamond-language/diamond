@@ -643,17 +643,16 @@ end
 sum(*(1..50).to_a())  # => 1275, no 16-argument-expression limit here
 ```
 
-`foo(*array)` expands an `Array`'s elements into `foo`'s positional
-arguments at the call site — the caller-side counterpart to a variadic
-*parameter* above. A first, deliberately narrow slice:
+`foo(*array)` and `receiver.method(*array)` expand an `Array`'s elements
+into positional arguments at the call site — the caller-side counterpart
+to a variadic *parameter* above. The supported slice is deliberately narrow:
 
-- only a direct call to a top-level `def` (the same restriction keyword
-  arguments already have) — not a method call, a `self.`/module
-  singleton call, `ClassName.new`, or calling a `Callable` value
-  directly;
+- direct top-level functions and user-defined instance methods are supported;
+  module/class singleton calls, `ClassName.new`, native collection/String
+  methods, and calling a `Callable` value directly remain separate call paths;
 - the spread argument must be the call's *only* argument — `foo(1,
   *array)`/`foo(*array, 2)` aren't supported in this version;
-- arity is checked against the Array's actual length at *runtime*
+- arity and method visibility are checked against the Array's actual length at *runtime*
   (unlike an ordinary call, which the compiler validates against a
   statically-known callee's arity where it can) — too few or too many
   elements for a non-variadic target still raises `ArgumentError`, same

@@ -293,6 +293,8 @@ typedef enum DiamondOpCode : uint8_t {
     DIAMOND_OP_ARRAY_SUFFIX,
     /* Raising required-key check for Hash destructuring assignment. */
     DIAMOND_OP_CHECK_HASH_KEY,
+    /* `receiver.method(*array)` for user-defined instance methods. */
+    DIAMOND_OP_INVOKE_SPREAD,
     DIAMOND_OP_COUNT,
 } DiamondOpCode;
 

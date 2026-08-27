@@ -470,6 +470,19 @@ static bool disassemble_chunk(FILE *stream, const char *name,
                 offset+=7;
                 break;
             }
+            case DIAMOND_OP_INVOKE_SPREAD: {
+                if(!require_bytes(stream,chunk,offset,8)) {
+                    valid=false;offset=chunk->code_count;break;
+                }
+                const uint8_t method_name=chunk->code[offset+5];
+                fprintf(stream,"%-18s r%u, r%u, s%u, r%u\n","INVOKE_SPREAD",
+                    checked_register(chunk,stream,read_operand(chunk,offset+1),&valid),
+                    checked_register(chunk,stream,read_operand(chunk,offset+3),&valid),
+                    method_name,
+                    checked_register(chunk,stream,read_operand(chunk,offset+6),&valid));
+                if((size_t)method_name>=chunk->string_count)valid=false;
+                offset+=8;break;
+            }
             case DIAMOND_OP_CALL_TYPED: {
                 if(!require_bytes(stream,chunk,offset,9)) {
                     valid=false;offset=chunk->code_count;break;

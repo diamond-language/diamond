@@ -1253,13 +1253,14 @@ its own section immediately below.
 
 ### Call-site spread
 
-**Done, in scope, deliberately narrow.** `foo(*array)` expands an
-`Array`'s elements into `foo`'s positional arguments at the call site --
+**Done, in scope, deliberately narrow.** `foo(*array)` and
+`receiver.method(*array)` expand an `Array`'s elements into positional
+arguments at the call site --
 the caller-side counterpart to a variadic parameter *definition*, above.
-Scoped to a direct call to a top-level `def` only (`parse_call`, `src/
-compiler.c` -- the same restriction keyword arguments already have, for
-the same reason: it's the one call form the compiler resolves to one
-statically-known callee), and only when the spread argument is the
+The top-level form uses `DIAMOND_OP_CALL_SPREAD`; user-defined instance
+methods use `DIAMOND_OP_INVOKE_SPREAD`, retaining dynamic lookup,
+inheritance, visibility, `method_missing`, variadic arity, and runtime-defined
+method source chunks. Both accept only one spread expression, and only when it is the
 call's *sole* argument -- `foo(1, *array)`/`foo(*array, 2)` aren't
 supported; recognized only when `*` is the very first token after `(`,
 so a mixed call falls through to the ordinary argument parser and fails
@@ -1296,6 +1297,12 @@ during a nested call -- not a fresh, as-yet-unrooted allocation needing
 fresh from raw arguments and explicitly protected until it's stored
 somewhere reachable).
 
+Instance invocation needs one temporary C argument vector because the
+implicit receiver must precede the spread elements and runtime-compiled
+methods may append bound values. It copies values, not Diamond objects; the
+receiver, spread Array, and method descriptor remain the owning GC roots for
+the complete nested call.
+
 **A second, unrelated benefit, not the point of this feature but worth
 noting:** spread has no 16-argument-expression ceiling the way a literal
 call site does (`compiler.c`'s fixed 16-slot argument-parsing buffers,
@@ -1305,15 +1312,15 @@ DIAMOND_REGISTER_COUNT` sanity check, 4096, and the `has_variadic`-aware
 bounds fix from "Splat/variadic parameters" above), since nothing about
 spread parses one argument expression per element.
 
-**Deliberately out of scope for this first version:** method calls
-(`obj.method(*array)`), `self.`/module singleton calls, `ClassName.new
+**Deliberately out of scope for this version:** native receiver methods,
+module/class singleton calls, `ClassName.new
 (*array)`, and calling a `Callable` *value* directly (`callable(*array)`)
 -- all a real, separate extension of the same idea (each has its own
 call-compilation path in `compiler.c`, several of them already
 constrained by a fixed 17-`DiamondValue` stack buffer for the
 non-spread case, see "Splat/variadic parameters" above), not attempted
 here; mixing a spread argument with ordinary positional/keyword
-arguments at the same call site; spreading into a generic function call
+arguments at the same call site; spreading into an explicitly generic call
 (`foo[T](*array)`).
 
 ### Bare singleton method references

@@ -418,10 +418,10 @@ a separate concern from the variadic *parameter definitions*
 now exist (see docs/design.md's "Splat/variadic parameters" and "Call-site
 spread"), but neither closes this gap for `delegate` specifically:
 `delegate`'s own generated call is `@ivar.name(params)`, a *method*
-call, and call-site spread's first version is deliberately scoped to a
-bare top-level `def` call only (`docs/design.md`'s own "Call-site
-spread" section lists a method call as explicitly out of scope) --
-`delegate` itself also doesn't grow splat-target support in this slice.
+call. User-defined instance method spread is now supported by
+`DIAMOND_OP_INVOKE_SPREAD`, removing that runtime limitation, but
+`delegate` syntax and its generated forwarding signature still do not accept
+a splat target in this slice.
 This line's own conclusion is unchanged, just no longer for the reason
 "no variadic support exists at all." `delegate_missing_to` additionally
 depends on a general missing-method protocol. Both remain separate

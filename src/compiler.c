@@ -3611,6 +3611,16 @@ static uint16_t emit_invoke_call(Compiler *compiler, uint16_t receiver,
     return dest;
 }
 
+static uint16_t emit_invoke_spread(Compiler *compiler,uint16_t receiver,
+        DiamondSpan method_name,uint16_t spread) {
+    const uint16_t destination=allocate_register(compiler);
+    const uint8_t method=add_name_string(compiler,method_name);
+    emit_opcode(compiler,DIAMOND_OP_INVOKE_SPREAD);
+    emit_register(compiler,destination);emit_register(compiler,receiver);
+    emit_byte(compiler,method);emit_register(compiler,spread);
+    return destination;
+}
+
 /* Only consulted when a writer-call's '=' is immediately followed by
  * '[' -- disambiguates the existing (real, if never yet exercised)
  * explicit generic writer call recv.attr=[T](value) from the new bare
@@ -3681,6 +3691,31 @@ static uint16_t parse_invoke(Compiler *compiler, uint16_t receiver) {
     }
     advance_token(compiler);
     skip_newlines(compiler);
+    if(compiler->current.kind==DIAMOND_TOKEN_STAR) {
+        if(writer_name||type_argument_count>0) {
+            fail(compiler,compiler->current.span,
+                "spread method calls do not support writers or generic arguments");
+            return 0;
+        }
+        advance_token(compiler);skip_newlines(compiler);
+        const uint16_t spread=parse_expression(compiler);
+        skip_newlines(compiler);
+        if(compiler->current.kind==DIAMOND_TOKEN_COMMA) {
+            fail(compiler,compiler->current.span,
+                "a spread argument (*expr) must be the only method argument");
+            return 0;
+        }
+        if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
+            fail(compiler,compiler->current.span,
+                "expected ')' after spread argument");return 0;
+        }
+        advance_token(compiler);
+        if(compiler->current.kind==DIAMOND_TOKEN_DO) {
+            fail(compiler,compiler->current.span,
+                "a spread method call cannot also take a block");return 0;
+        }
+        return emit_invoke_spread(compiler,receiver,name,spread);
+    }
     uint16_t args[16]; size_t count = 0;
     while (compiler->current.kind != DIAMOND_TOKEN_RIGHT_PAREN && !compiler->failed) {
         if (count == 16) { fail(compiler, compiler->current.span, "too many arguments"); break; }
