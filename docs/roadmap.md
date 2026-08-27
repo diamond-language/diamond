@@ -224,14 +224,21 @@ line/column maps geometrically, up to the real 65,535-byte wire-format boundary.
 Discovery-pass reservations and thread-local program clones deep-copy these
 buffers, and program teardown owns them explicitly. This also removes roughly
 36 KiB of unconditional storage from every small function record; functions
-pay only for the bytecode capacity they actually reach. The remaining
-constant/string/type-set ceilings stay at 256 because their bytecode indices
-are genuinely one byte wide.
+pay only for the bytecode capacity they actually reach.
 
 The VM's quickening rewrite-site ledger now grows dynamically as well. Keeping
 that ledger indexed by the enlarged bytecode maximum would otherwise have
 added roughly 480 KiB to every VM, including stack-resident and nested VMs.
 If ledger growth fails, the candidate call site simply remains unquickened.
+
+Resolved next for literal constants: `DIAMOND_OP_CONSTANT` already decoded a
+16-bit index, but `add_constant` narrowed it to `uint8_t` and every function
+reserved a fixed 256-value table. Constant storage now grows geometrically to
+the real 65,535-entry operand boundary, including ProgramBuilder emission,
+discovery reservations, thread clones, and teardown. This removes another
+roughly 4 KiB of unconditional storage per function. String/name and type-set
+indices remain at 256: several invocation and annotation opcodes still encode
+those as raw bytes, so widening either requires a separate bytecode migration.
 
 Resolved: a class/module/interface (and a type annotation naming one) can
 now be referenced before its own declaration is textually reached later in

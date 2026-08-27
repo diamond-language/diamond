@@ -522,14 +522,23 @@ static void emit_type_check(Compiler *compiler, uint16_t reg, uint8_t set_index,
     fail(compiler,span,"expression cannot satisfy type annotation");
 }
 
-static uint8_t add_constant(Compiler *compiler, DiamondValue value) {
+static uint16_t add_constant(Compiler *compiler, DiamondValue value) {
     if (compiler->function->constant_count == DIAMOND_MAX_CONSTANTS) {
         fail(compiler, compiler->previous.span, "program has too many constants");
         return 0;
     }
+    if(compiler->function->constant_count==compiler->function->constant_capacity) {
+        size_t capacity=compiler->function->constant_capacity==0?32:
+            compiler->function->constant_capacity*2;
+        if(capacity>DIAMOND_MAX_CONSTANTS)capacity=DIAMOND_MAX_CONSTANTS;
+        if(!diamond_function_reserve_constants(compiler->function,capacity)) {
+            fail(compiler,compiler->previous.span,
+                "out of memory growing function constants");return 0;
+        }
+    }
     const size_t index = compiler->function->constant_count++;
     compiler->function->constants[index] = value;
-    return (uint8_t)index;
+    return (uint16_t)index;
 }
 
 static uint8_t add_string_range(Compiler *compiler,size_t start,size_t length,
@@ -718,7 +727,7 @@ static uint16_t parse_integer(Compiler *compiler) {
         value = value * 10 + digit;
     }
     const uint16_t destination = allocate_register(compiler);
-    const uint8_t constant = add_constant(compiler, DIAMOND_INT(value));
+    const uint16_t constant = add_constant(compiler, DIAMOND_INT(value));
     emit_instruction(compiler, DIAMOND_OP_CONSTANT, destination, constant, 0, 2);
     compiler->known_types[destination]=DIAMOND_TYPE_INT;
     return destination;
@@ -747,7 +756,7 @@ static uint16_t parse_float(Compiler *compiler) {
         return 0;
     }
     const uint16_t destination = allocate_register(compiler);
-    const uint8_t constant = add_constant(compiler, DIAMOND_FLOAT(value));
+    const uint16_t constant = add_constant(compiler, DIAMOND_FLOAT(value));
     emit_instruction(compiler, DIAMOND_OP_CONSTANT, destination, constant, 0, 2);
     compiler->known_types[destination]=DIAMOND_TYPE_FLOAT;
     return destination;
@@ -936,6 +945,7 @@ static DiamondFunction *compiler_add_function(Compiler *compiler,
         *function_index=compiler->next_function_claim++;
         DiamondFunction *function=compiler->program->functions[*function_index];
         free(function->code);free(function->lines);free(function->columns);
+        free(function->constants);
         memset(function,0,sizeof *function);
         return function;
     }
@@ -2674,7 +2684,7 @@ static uint16_t parse_regexp_new_call(Compiler *compiler) {
         skip_newlines(compiler);
     } else {
         options_register=allocate_register(compiler);
-        const uint8_t zero=add_constant(compiler,DIAMOND_INT(0));
+        const uint16_t zero=add_constant(compiler,DIAMOND_INT(0));
         emit_instruction(compiler,DIAMOND_OP_CONSTANT,options_register,zero,0,2);
     }
     if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
@@ -3190,7 +3200,7 @@ static uint16_t parse_exit_call(Compiler *compiler) {
     uint16_t code_register;
     if(compiler->current.kind==DIAMOND_TOKEN_RIGHT_PAREN) {
         code_register=allocate_register(compiler);
-        const uint8_t zero=add_constant(compiler,DIAMOND_INT(0));
+        const uint16_t zero=add_constant(compiler,DIAMOND_INT(0));
         emit_instruction(compiler,DIAMOND_OP_CONSTANT,code_register,zero,0,2);
     } else {
         code_register=parse_expression(compiler);
@@ -5629,7 +5639,7 @@ static void emit_case_array_match(Compiler *compiler,CaseArrayNode *nodes,
         }
         uint16_t index_reg=child_node->key_register;
         if(node->kind==CASE_ARRAY_GROUP) {
-            const uint8_t constant=add_constant(compiler,DIAMOND_INT((int64_t)child));
+            const uint16_t constant=add_constant(compiler,DIAMOND_INT((int64_t)child));
             index_reg=allocate_register(compiler);
             emit_instruction(compiler,DIAMOND_OP_CONSTANT,index_reg,constant,0,2);
         } else {
@@ -9891,7 +9901,7 @@ static void emit_destructure_extract(Compiler *compiler,
             emit_destructure_extract(compiler,nodes,node->children[index],element,
                 array_set,hash_set,node_values);continue;
         }
-        const uint8_t index_constant=add_constant(compiler,DIAMOND_INT((int64_t)index));
+        const uint16_t index_constant=add_constant(compiler,DIAMOND_INT((int64_t)index));
         const uint16_t index_register=allocate_register(compiler);
         emit_instruction(compiler,DIAMOND_OP_CONSTANT,index_register,index_constant,0,2);
         const uint16_t element=allocate_register(compiler);
@@ -10139,44 +10149,71 @@ bool diamond_function_reserve_code(DiamondFunction *function,size_t capacity) {
     return true;
 }
 
+bool diamond_function_reserve_constants(DiamondFunction *function,
+                                         size_t capacity) {
+    if(capacity<=function->constant_capacity)return true;
+    if(capacity>DIAMOND_MAX_CONSTANTS)return false;
+    DiamondValue *constants=realloc(function->constants,
+        capacity*sizeof *constants);
+    if(constants==nullptr)return false;
+    function->constants=constants;function->constant_capacity=capacity;
+    return true;
+}
+
 bool diamond_function_copy(DiamondFunction *destination,
                            const DiamondFunction *source) {
     *destination=*source;
     destination->code=nullptr;destination->lines=nullptr;
     destination->columns=nullptr;destination->code_capacity=0;
-    if(source->code_count==0)return true;
-    destination->code=malloc(source->code_count*sizeof *destination->code);
-    destination->lines=malloc(source->code_count*sizeof *destination->lines);
-    destination->columns=malloc(source->code_count*sizeof *destination->columns);
-    if(destination->code==nullptr||destination->lines==nullptr||
-       destination->columns==nullptr) {
+    destination->constants=nullptr;destination->constant_capacity=0;
+    if(source->code_count>0) {
+        destination->code=malloc(source->code_count*sizeof *destination->code);
+        destination->lines=malloc(source->code_count*sizeof *destination->lines);
+        destination->columns=malloc(source->code_count*sizeof *destination->columns);
+    }
+    if(source->constant_count>0)
+        destination->constants=malloc(
+            source->constant_count*sizeof *destination->constants);
+    if((source->code_count>0&&(destination->code==nullptr||
+       destination->lines==nullptr||destination->columns==nullptr))||
+       (source->constant_count>0&&destination->constants==nullptr)) {
         free(destination->code);free(destination->lines);
-        free(destination->columns);
+        free(destination->columns);free(destination->constants);
         destination->code=nullptr;destination->lines=nullptr;
-        destination->columns=nullptr;destination->code_count=0;
+        destination->columns=nullptr;destination->constants=nullptr;
+        destination->code_count=0;destination->constant_count=0;
         return false;
     }
-    memcpy(destination->code,source->code,
-        source->code_count*sizeof *destination->code);
-    memcpy(destination->lines,source->lines,
-        source->code_count*sizeof *destination->lines);
-    memcpy(destination->columns,source->columns,
-        source->code_count*sizeof *destination->columns);
+    if(source->code_count>0) {
+        memcpy(destination->code,source->code,
+            source->code_count*sizeof *destination->code);
+        memcpy(destination->lines,source->lines,
+            source->code_count*sizeof *destination->lines);
+        memcpy(destination->columns,source->columns,
+            source->code_count*sizeof *destination->columns);
+    }
+    if(source->constant_count>0)
+        memcpy(destination->constants,source->constants,
+            source->constant_count*sizeof *destination->constants);
     destination->code_capacity=source->code_count;
+    destination->constant_capacity=source->constant_count;
     return true;
 }
 
 void diamond_program_free(DiamondProgram *program) {
     if(program==nullptr)return;
     free(program->entry.code);free(program->entry.lines);
-    free(program->entry.columns);
+    free(program->entry.columns);free(program->entry.constants);
     program->entry.code=nullptr;program->entry.lines=nullptr;
     program->entry.columns=nullptr;program->entry.code_count=0;
     program->entry.code_capacity=0;
+    program->entry.constants=nullptr;program->entry.constant_count=0;
+    program->entry.constant_capacity=0;
     for(size_t index=0;index<program->function_count;index++) {
         free(program->functions[index]->code);
         free(program->functions[index]->lines);
         free(program->functions[index]->columns);
+        free(program->functions[index]->constants);
         free(program->functions[index]);
     }
     free(program->functions);

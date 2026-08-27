@@ -82,6 +82,9 @@
 - Replaced fixed 4 KiB per-function bytecode and source-map arrays with
   dynamically grown buffers up to the existing 16-bit jump boundary, including
   deep-copy ownership for compiler discovery and isolated thread programs.
+- Widened per-function literal constants from 256 to the existing 16-bit
+  `CONSTANT` operand boundary, with dynamic storage and ProgramBuilder/thread
+  clone ownership.
 - Added protected method visibility with peer/subclass receiver access and
   runtime rejection outside the declaring class hierarchy.
 - Added `LazyEnumerator` pipelines with deferred `map`, `select`, and `reject`

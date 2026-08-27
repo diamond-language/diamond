@@ -3118,6 +3118,16 @@ static DiamondVmStatus program_builder_invoke_helper(DiamondVm *vm,
                 "function has too many constants");
             return DIAMOND_VM_TYPE_ERROR;
         }
+        if(target->constant_count==target->constant_capacity) {
+            size_t capacity=target->constant_capacity==0?32:
+                target->constant_capacity*2;
+            if(capacity>DIAMOND_MAX_CONSTANTS)capacity=DIAMOND_MAX_CONSTANTS;
+            if(!diamond_function_reserve_constants(target,capacity)) {
+                snprintf(vm->error,sizeof vm->error,
+                    "ProgramBuilder#add_constant could not grow constants");
+                return DIAMOND_VM_OUT_OF_MEMORY;
+            }
+        }
         const int64_t new_index=(int64_t)target->constant_count;
         target->constants[target->constant_count++]=value;
         *result=DIAMOND_INT(new_index);return DIAMOND_VM_OK;

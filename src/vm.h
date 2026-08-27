@@ -13,13 +13,8 @@ enum {
      * grow dynamically up to this limit instead of reserving the entire
      * range in every DiamondFunction. */
     DIAMOND_MAX_CODE = UINT16_MAX,
-    /* Capped at 256, not raised further like DIAMOND_MAX_FUNCTIONS below:
-     * constant/string/type-set/method indices are single bytes throughout
-     * the bytecode format and structs (CONSTANT opcode operands,
-     * DiamondClass.methods indices, etc.) -- (uint8_t)index silently wraps
-     * past 256, so this is a hard architectural ceiling, not just a
-     * struct-sizing choice. See docs/roadmap.md. */
-    DIAMOND_MAX_CONSTANTS = 256,
+    /* CONSTANT already carries a 16-bit operand. Storage grows dynamically. */
+    DIAMOND_MAX_CONSTANTS = UINT16_MAX,
     /* Function indices are 16-bit bytecode operands. Function records and the
      * pointer table that indexes them grow dynamically; this constant is the
      * wire-format boundary, not a preallocated storage size. */
@@ -606,8 +601,9 @@ typedef struct DiamondFunction {
     uint32_t *columns;
     size_t code_count;
     size_t code_capacity;
-    DiamondValue constants[DIAMOND_MAX_CONSTANTS];
+    DiamondValue *constants;
     size_t constant_count;
+    size_t constant_capacity;
     DiamondStringConstant strings[DIAMOND_MAX_STRING_CONSTANTS];
     size_t string_count;
     DiamondTypeSet type_sets[DIAMOND_MAX_TYPE_SETS];
