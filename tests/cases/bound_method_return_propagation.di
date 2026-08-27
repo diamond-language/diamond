@@ -25,3 +25,4 @@ puts(sum(40, 2) + 0)
 
 offset = box.offset
 puts(offset(value: 39, amount: 3) + 0)
+puts(offset(value: 42) + 0)

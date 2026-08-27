@@ -2391,7 +2391,8 @@ static uint16_t compile_callable_value_block(Compiler *compiler,
        (size_t)callable_set_index<compiler->function->type_set_count) {
         const DiamondTypeSet *outer=
             &compiler->function->type_sets[(size_t)callable_set_index];
-        uint16_t shared_block_set=DIAMOND_NO_TYPE_SET;
+        uint16_t block_sets[DIAMOND_MAX_UNION_TYPES];
+        size_t block_set_count=0;
         bool compatible=outer->count>0;
         for(size_t index=0;index<outer->count&&compatible;index++) {
             const DiamondTypeMember *callable=&outer->members[index];
@@ -2407,13 +2408,23 @@ static uint16_t compile_callable_value_block(Compiler *compiler,
             if(set->count!=1||set->members[0].id!=DIAMOND_TYPE_CALLABLE) {
                 compatible=false;break;
             }
-            if(shared_block_set==DIAMOND_NO_TYPE_SET)shared_block_set=block_set;
-            else if(!type_sets_structurally_equal(
-                    compiler->function->type_sets,
-                    compiler->function->type_set_count,shared_block_set,
-                    compiler->function->type_sets,
-                    compiler->function->type_set_count,block_set,0))
-                compatible=false;
+            block_sets[block_set_count++]=block_set;
+        }
+        uint16_t shared_block_set=DIAMOND_NO_TYPE_SET;
+        for(size_t candidate=0;candidate<block_set_count&&
+            shared_block_set==DIAMOND_NO_TYPE_SET;candidate++) {
+            const DiamondTypeMember actual=compiler->function->type_sets[
+                block_sets[candidate]].members[0];
+            bool satisfies_all=true;
+            for(size_t expected=0;expected<block_set_count;expected++)
+                if(!type_members_satisfy_across(compiler,
+                        compiler->function->type_sets,actual,
+                        compiler->function->type_sets,
+                        compiler->function->type_sets[
+                            block_sets[expected]].members[0])) {
+                    satisfies_all=false;break;
+                }
+            if(satisfies_all)shared_block_set=block_sets[candidate];
         }
         if(compatible&&shared_block_set!=DIAMOND_NO_TYPE_SET) {
             const DiamondTypeSet *set=
@@ -5378,7 +5389,23 @@ static uint16_t parse_bound_method_reference(Compiler *compiler,uint16_t receive
     const uint16_t bound_receiver=allocate_register(compiler);
     emit_instruction(compiler,DIAMOND_OP_GET_CAPTURE,bound_receiver,0,0,2);
     uint16_t body;
-    if(wrapper->has_variadic) {
+    if(typed_wrapper&&!wrapper->has_variadic&&
+       wrapper->required_arity<wrapper->arity) {
+        for(size_t count=wrapper->required_arity;count<wrapper->arity;count++) {
+            const uint16_t provided=allocate_register(compiler);
+            emit_instruction(compiler,DIAMOND_OP_ARGUMENT_PROVIDED,provided,
+                (uint16_t)count,0,2);
+            const size_t next=emit_jump(compiler,DIAMOND_OP_JUMP_IF_TRUE,
+                provided);
+            const uint16_t partial=emit_invoke_call(compiler,bound_receiver,
+                method_name,false,type_arguments,type_argument_count,
+                arguments,count);
+            emit_instruction(compiler,DIAMOND_OP_RETURN,partial,0,0,1);
+            patch_jump(compiler,next,compiler->function->code_count);
+        }
+        body=emit_invoke_call(compiler,bound_receiver,method_name,false,
+            type_arguments,type_argument_count,arguments,argument_count);
+    } else if(wrapper->has_variadic) {
         const size_t fixed_count=wrapper->arity-1;
         uint16_t spread=arguments[fixed_count];
         if(fixed_count>0)spread=emit_build_spread_arguments(compiler,arguments,

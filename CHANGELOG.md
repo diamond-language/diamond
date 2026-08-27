@@ -55,6 +55,12 @@
 - Added contextual typing for trailing blocks passed through Callable unions
   when every union member's final nested Callable contract agrees structurally;
   divergent block contracts remain conservative and untyped.
+- Extended Callable-union block context to variance-compatible nested
+  contracts by selecting a candidate that satisfies every arm under existing
+  parameter-contravariance and return-covariance rules.
+- Made bound wrappers preserve omitted optional arguments so the underlying
+  method evaluates its own defaults, with regression diagnostics for unknown
+  keywords and missing required arguments.
 - Added conservative contextual typing for anonymous block parameters at
   statically resolved function, singleton, and instance-method calls with typed
   Callable slots, including direct generic bindings inferred from concrete

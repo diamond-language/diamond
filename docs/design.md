@@ -472,6 +472,16 @@ When a Callable union is invoked with a trailing block, each outer Callable's
 final parameter is inspected. Structurally identical nested Callable contracts
 provide one shared block context. A missing, non-Callable, or divergent nested
 contract disables context for the block without changing runtime dispatch.
+When contracts are not identical, the compiler may still select one declared
+nested Callable that structurally satisfies every arm using the same
+contravariant-parameter and covariant-return rules as runtime Callable checks.
+If no declared candidate satisfies all arms, context remains disabled.
+
+Synthetic fixed-arity wrappers do not reimplement a target method's default
+expressions. Instead, `ARGUMENT_PROVIDED` branches forward only the prefix that
+the caller supplied. The target therefore observes the original argument count
+and evaluates its own defaults. Keyword calls use that same count after mapping
+names into wrapper parameter slots.
 
 Generic functions and methods may be specialized explicitly with syntax such
 as `empty[Int]()` or `factory.empty[String]()`. The call instruction carries

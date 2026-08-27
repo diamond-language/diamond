@@ -611,6 +611,10 @@ return type. Bound Callable values also accept keyword arguments using the
 original method parameter names. A trailing block passed to a Callable union is
 contextually typed when every arm declares the same nested Callable contract;
 otherwise its parameters remain dynamically typed.
+Compatible variance is accepted: one nested Callable contract may supply block
+context when it can satisfy every arm through contravariant inputs and covariant
+returns. Bound references preserve omitted optional arguments, so defaults are
+still evaluated by the original method rather than replaced with `nil`.
 
 Callable values accept the same trailing `do ... end` block as named function
 and method calls, including calls with a spread Array. The block is appended as

@@ -327,13 +327,19 @@ and bound Callable keyword calls use the original method parameter names.
 Callable unions provide trailing-block context when their nested contracts agree
 structurally.
 
+Callable-union context now also accepts a declared nested contract that can
+satisfy every arm under parameter contravariance and return covariance. Bound
+wrappers preserve omitted optional arguments through argument-count branches,
+leaving default evaluation in the original method.
+
 Context-driven generic method-reference inference remains open. Today a bare
 generic reference is compiled before a later call or parameter contract is
 known, and the no-AST single-pass compiler has no expected-type channel flowing
 back into that earlier expression. Implementing it requires an explicit
 bidirectional context mechanism rather than guessing bindings from a future
-consumer. Callable-union variance compatibility also remains separate from
-exact structural agreement.
+consumer. General synthesis of a new common Callable contract remains separate;
+the current variance path deliberately selects an existing declared candidate
+and falls back when no arm is safe for all others.
 
 ### Ruby-like ergonomics without Ruby compatibility
 
