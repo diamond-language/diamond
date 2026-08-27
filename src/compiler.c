@@ -4008,6 +4008,65 @@ static bool writer_generic_arguments_ahead(const Compiler *compiler) {
     return diamond_lexer_next(&lookahead).kind == DIAMOND_TOKEN_LEFT_PAREN;
 }
 
+/* `receiver.method` -- a capturing, variadic Callable whose single captured
+ * value is the receiver and whose collected positional arguments are forwarded
+ * through the ordinary dynamic INVOKE_SPREAD matrix. */
+static uint16_t parse_bound_method_reference(Compiler *compiler,uint16_t receiver,
+        DiamondSpan method_name,const uint8_t *type_arguments,
+        size_t type_argument_count) {
+    size_t function_index=0;
+    DiamondFunction *wrapper=compiler_add_function(compiler,&function_index);
+    if(wrapper==nullptr) {fail(compiler,method_name,"out of memory");return 0;}
+    (void)snprintf(wrapper->name,sizeof wrapper->name,"<bound method>");
+    wrapper->owner_class=UINT8_MAX;wrapper->nested=true;
+    wrapper->arity=1;wrapper->required_arity=0;wrapper->has_variadic=true;
+    wrapper->return_type_set=UINT8_MAX;
+    wrapper->type_set_count=compiler->function->type_set_count;
+    memcpy(wrapper->type_sets,compiler->function->type_sets,
+        wrapper->type_set_count*sizeof wrapper->type_sets[0]);
+    (void)snprintf(wrapper->parameter_names[0],DIAMOND_MAX_FUNCTION_NAME,
+        "arguments");
+    for(size_t index=0;index<16;index++)wrapper->parameter_type_sets[index]=UINT8_MAX;
+
+    const uint16_t captured=allocate_register(compiler);
+    emit_instruction(compiler,DIAMOND_OP_MOVE,captured,receiver,0,2);
+    emit_instruction(compiler,DIAMOND_OP_BOX_LOCAL,captured,0,0,1);
+
+    DiamondFunction *outer_function=compiler->function;
+    const uint16_t outer_next_register=compiler->next_register;
+    const size_t outer_local_count=compiler->local_count;
+    const bool outer_in_function=compiler->in_function;
+    uint8_t *outer_types=malloc(outer_next_register*sizeof *outer_types);
+    uint8_t *outer_type_sets=malloc(outer_next_register*sizeof *outer_type_sets);
+    if((outer_types==nullptr||outer_type_sets==nullptr)&&outer_next_register>0) {
+        free(outer_types);free(outer_type_sets);
+        fail(compiler,method_name,"out of memory");return 0;
+    }
+    memcpy(outer_types,compiler->known_types,outer_next_register);
+    memcpy(outer_type_sets,compiler->known_type_sets,outer_next_register);
+    compiler->function=wrapper;compiler->next_register=0;
+    compiler->local_count=0;compiler->in_function=true;
+    const uint16_t arguments=allocate_register(compiler);
+    emit_instruction(compiler,DIAMOND_OP_COLLECT_VARIADIC,arguments,0,0,2);
+    const uint16_t bound_receiver=allocate_register(compiler);
+    emit_instruction(compiler,DIAMOND_OP_GET_CAPTURE,bound_receiver,0,0,2);
+    const uint16_t body=emit_invoke_typed_spread(compiler,bound_receiver,
+        method_name,arguments,type_arguments,type_argument_count);
+    emit_instruction(compiler,DIAMOND_OP_RETURN,body,0,0,1);
+    wrapper->register_count=compiler->next_register;
+
+    compiler->function=outer_function;compiler->next_register=outer_next_register;
+    compiler->local_count=outer_local_count;compiler->in_function=outer_in_function;
+    memcpy(compiler->known_types,outer_types,outer_next_register);
+    memcpy(compiler->known_type_sets,outer_type_sets,outer_next_register);
+    free(outer_types);free(outer_type_sets);
+    const uint16_t result=allocate_register(compiler);
+    emit_opcode(compiler,DIAMOND_OP_CLOSURE);emit_register(compiler,result);
+    emit_function_index(compiler,function_index);emit_byte(compiler,1);
+    emit_register(compiler,captured);compiler->known_types[result]=TYPE_UNKNOWN;
+    return result;
+}
+
 static uint16_t parse_invoke(Compiler *compiler, uint16_t receiver) {
     advance_token(compiler);
     if (compiler->current.kind != DIAMOND_TOKEN_IDENTIFIER) {
@@ -4053,8 +4112,10 @@ static uint16_t parse_invoke(Compiler *compiler, uint16_t receiver) {
             type_arguments, type_argument_count, &value, 1);
     }
     if (compiler->current.kind != DIAMOND_TOKEN_LEFT_PAREN) {
-        fail(compiler, compiler->current.span,
-             "member access requires a method call with '()'"); return 0;
+        if(!writer_name)return parse_bound_method_reference(compiler,receiver,name,
+            type_arguments,type_argument_count);
+        fail(compiler,compiler->current.span,
+            "member access requires a method call with '()'");return 0;
     }
     advance_token(compiler);
     skip_newlines(compiler);

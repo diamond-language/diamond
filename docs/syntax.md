@@ -888,8 +888,7 @@ handler(request, context, params)  # invoked later, elsewhere
 `Callable` value referencing that singleton method -- a small,
 zero-capture wrapper matching the method's own parameter list exactly
 (same arity, same required/optional split). Works for a class `self.`
-method and a module singleton function alike; not for an instance
-method (`obj.method` with no call stays unsupported).
+method and a module singleton function alike.
 
 Two shapes can't be referenced this way, both rejected with a clear
 compile error rather than silently narrowed: a **variadic** method
@@ -897,6 +896,17 @@ compile error rather than silently narrowed: a **variadic** method
 trailing `Array` back into the original call from a plain wrapper -- and
 a **generic** method (`def self.foo[T](x: T)`) -- a reference wrapper
 can't itself carry a type-argument binding.
+
+### Bound instance-method references
+
+`receiver.method`, with no `(...)`, captures the evaluated receiver once and
+returns a variadic Callable. Calling it later performs ordinary dynamic method
+lookup and forwards all positional arguments, so overrides, inheritance,
+visibility, `method_missing`, variadic methods, and native receivers behave as
+they do at a direct call site. Explicit bindings are retained:
+`converter.identity[Int]` produces a bound generic-method Callable. Bound
+method Callables are capturing closures and therefore retain the ordinary
+capturing-Callable restrictions for `Thread.new`.
 
 ### Class variables
 

@@ -1402,7 +1402,7 @@ measured need" bar (the reverted generational-GC precedent); revisit
 only if function-table growth or duplicate-compilation cost ever shows
 up as an actual, measured problem.
 
-**Deliberately out of scope for this first version:** a *variadic*
+**Still deliberately out of scope for singleton references:** a *variadic*
 `self.`/module method can't be referenced as a bare value -- forwarding
 its collected trailing `Array` back into the original call needs
 call-site spread against a singleton call, and `DIAMOND_OP_CALL_SPREAD`
@@ -1415,16 +1415,17 @@ reference wrapper can't itself carry a type-argument binding -- checked
 directly against the target function's own `type_variable_count`, not
 just against whether `[...]` was written at the reference site itself,
 so a generic method referenced with no explicit type arguments at all
-is still correctly rejected. **Instance methods** (`obj.method`, no
-call) remain out of scope entirely -- a genuinely different, separate
-mechanism (`DIAMOND_OP_INVOKE`, with the receiver read from a register
-at the call site, not baked in as a compile-time constant the way a
-class/module receiver already is): a bare `obj.method` reference would
-need the wrapper to *capture* the receiver, becoming a real capturing
-closure and losing the automatic `Thread.new`-safety this feature's
-zero-capture wrappers get for free. Not what motivated this feature
-(`packages/dials` only ever needed class/module-level references); a
-separate, larger design question if it's ever needed.
+is still correctly rejected.
+
+Instance references are now a separate implemented mechanism. `obj.method`
+synthesizes a variadic wrapper which captures a one-time snapshot of `obj`,
+collects every invocation argument, and forwards through
+`DIAMOND_OP_INVOKE_SPREAD`. `obj.method[T]` bakes the explicit type-set bindings
+into `DIAMOND_OP_INVOKE_TYPED_SPREAD`. Lookup remains deferred until invocation,
+preserving overrides and `method_missing`; native receivers use the same path.
+The receiver is stored in the closure's ordinary Cell capture, making the
+Callable GC-safe but intentionally subject to the existing restriction against
+sending capturing closures to `Thread.new`.
 
 ## Deliberate constraints
 

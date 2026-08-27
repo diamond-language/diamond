@@ -388,6 +388,10 @@ Areas still worth examining include:
   matrix. This avoids a divergent copy while preserving universal-method,
   built-in, and source-level collection-extension precedence. Native receiver
   spreads inherit ordinary native invocation's existing 16-argument bound.
+- **Done**: bound instance-method references. `receiver.method` captures the
+  receiver once in a variadic Callable and forwards through dynamic spread
+  invocation; explicit generic bindings, native receivers, inheritance,
+  visibility, and `method_missing` share their ordinary dispatch behavior.
 
 ### Explicit-arity method delegation
 
