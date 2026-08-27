@@ -2311,6 +2311,10 @@ actual="$($diamond --dump-bytecode -e $'def apply_spread[T](value: T, &block: Ca
 spread_block_dump="$(sed -n '/^== <block> ==$/,$p' <<<"$actual")"
 grep -q 'ADD_INT' <<<"$spread_block_dump"
 
+actual="$($diamond --dump-bytecode -e $'class KeywordGeneric\n def initialize[T](value: T, &block: Callable[[T], T])\n  yield(value)\n end\n def self.apply[T](value: T, &block: Callable[[T], T]) -> T\n  yield(value)\n end\n def apply[T](value: T, &block: Callable[[T], T]) -> T\n  yield(value)\n end\nend\nKeywordGeneric.apply(value: 1) do |value|\n value + 1\nend\nobject = KeywordGeneric.new(value: 3) do |value|\n value + 1\nend\nobject.apply(value: 2) do |value|\n value + 1\nend')"
+keyword_block_dump="$(sed -n '/^== <block> ==$/,$p' <<<"$actual")"
+[[ "$(grep -c 'ADD_INT' <<<"$keyword_block_dump")" == "3" ]]
+
 actual="$($diamond --dump-bytecode -e $'def test(a: Int | String, b: Int | String) -> String\n unless a is Int || b is Int\n  a\n else\n  "one-or-both"\n end\nend')"
 test_dump="$(sed -n '/^== test ==$/,$p' <<<"$actual")"
 [[ "$(grep -c 'CHECK_TYPE' <<<"$test_dump")" == "2" ]]

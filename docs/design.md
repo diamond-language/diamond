@@ -1219,6 +1219,9 @@ Spread calls inspect a statically known homogeneous Array element contract and
 apply it to each positional parameter before the block slot. This operates for
 top-level, singleton, instance-method, and constructor calls. Fixed arguments
 merged around the spread preserve that contract only when every value agrees.
+Statically resolved keyword calls map each supplied name back to the target's
+declared parameter slot and infer from its value before compiling the trailing
+block. Explicit generic arguments remain authoritative and bypass inference.
 Homogeneous Array and Hash literals record recursive inferred type sets, so
 matching nested collection parameters can derive the same bindings. Mixed
 element or entry types remain unknown rather than inventing an unsafe join.

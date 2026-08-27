@@ -22,6 +22,10 @@ puts(generic_apply(7) do |value|
   value * 6
 end)
 
+puts(generic_apply(value: 10) do |value|
+  value + 2
+end)
+
 puts(generic_array_apply([9]) do |value|
   value + 3
 end)
@@ -74,6 +78,10 @@ puts(GenericBlockOps.apply(*[20]) do |value|
   value + 1
 end)
 
+puts(GenericBlockOps.apply(value: 40) do |value|
+  value + 2
+end)
+
 puts(GenericBlockOps.new().apply[Int](10) do |value|
   value + 5
 end)
@@ -86,6 +94,10 @@ puts(GenericBlockOps.new().apply(*[30]) do |value|
   value + 3
 end)
 
+puts(GenericBlockOps.new().apply(value: 50) do |value|
+  value + 4
+end)
+
 box = GenericBlockBox.new(30) do |value|
   value + 12
 end
@@ -95,3 +107,8 @@ spread_box = GenericBlockBox.new(*[40]) do |value|
   value + 2
 end
 puts(spread_box.value())
+
+keyword_box = GenericBlockBox.new(value: 60) do |value|
+  value + 5
+end
+puts(keyword_box.value())

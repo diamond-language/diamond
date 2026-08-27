@@ -508,7 +508,9 @@ calls infer the generic bindings declared by `initialize` through the same
 path. Homogeneously typed spread Arrays provide bindings for top-level,
 singleton, instance-method, and constructor calls, including merged fixed
 arguments that retain the same element contract. Union receivers
-participate when every member resolves to the exact same inherited
+Keyword arguments at statically resolved calls bind against their declared
+parameter slots for top-level, singleton, instance-method, and constructor
+calls. Union receivers participate when every member resolves to the exact same inherited
 implementation. Heterogeneous collection joins, divergent overrides, and
 genuinely unresolved generic contexts remain future extensions to the same
 conservative mechanism.

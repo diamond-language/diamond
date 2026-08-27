@@ -33,7 +33,8 @@
   literals. Fixed constructor calls now infer `initialize` bindings before
   compiling their trailing block. Homogeneous spread Arrays now provide the
   same bindings across function, singleton, instance-method, and constructor
-  calls.
+  calls. Statically resolved keyword arguments now infer bindings from their
+  declared parameter slots across the same call forms.
 - Added explicit block-parameter metadata and LSP hover rendering for
   `*arguments, &block: Callable[N]` plus the `block_given?()` intrinsic.
 - Propagated annotated Callable return sets through `yield` and inferred

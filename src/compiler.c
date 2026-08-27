@@ -2025,24 +2025,6 @@ static void prepare_contextual_block(Compiler *compiler,
     }
 }
 
-static uint16_t compile_contextual_block(Compiler *compiler,
-        const DiamondFunction *target,size_t parameter_index) {
-    compiler->has_contextual_block_types=false;
-    compiler->contextual_block_arity=0;
-    if(target!=nullptr&&parameter_index<16) {
-        const uint16_t set_index=target->parameter_type_sets[parameter_index];
-        if(set_index!=DIAMOND_NO_TYPE_SET&&set_index<target->type_set_count) {
-            const DiamondTypeSet *set=&target->type_sets[set_index];
-            if(set->count==1)prepare_contextual_block(compiler,
-                target->type_sets,target->type_set_count,&set->members[0]);
-        }
-    }
-    const uint16_t block=compile_block(compiler);
-    compiler->has_contextual_block_types=false;
-    compiler->contextual_block_arity=0;
-    return block;
-}
-
 static uint16_t compile_contextual_typed_block(Compiler *compiler,
         const DiamondFunction *target,size_t parameter_index,
         const uint16_t *type_arguments,size_t type_argument_count) {
@@ -2170,6 +2152,21 @@ static size_t infer_contextual_spread_arguments(Compiler *compiler,
     return target->type_variable_count;
 }
 
+static void infer_contextual_keyword_arguments(Compiler *compiler,
+        const DiamondFunction *target,const DiamondSpan *names,
+        const uint16_t *values,size_t count,uint16_t *bindings) {
+    if(target==nullptr)return;
+    for(size_t keyword=0;keyword<count;keyword++)
+        for(size_t parameter=0;parameter<target->arity&&parameter<16;
+            parameter++)
+            if(name_equals(compiler,target->parameter_names[parameter],
+                    names[keyword],false)) {
+                infer_contextual_argument(compiler,target,parameter,
+                    values[keyword],bindings);
+                break;
+            }
+}
+
 static uint16_t compile_callable_value_block(Compiler *compiler,
         int32_t callable_set_index) {
     compiler->has_contextual_block_types=false;
@@ -2287,6 +2284,11 @@ static uint16_t parse_call(Compiler *compiler, DiamondSpan name) {
                 infer_contextual_spread_arguments(compiler,function,
                     array_register,function->arity==0?0:function->arity-1,
                     inferred_arguments):0;
+            if(type_argument_count==0)
+                for(size_t index=0;index<keyword_count;index++)
+                    infer_contextual_argument(compiler,function,
+                        keyword_slots[index],keyword_registers[index],
+                        inferred_arguments);
             const uint16_t *contextual_arguments=type_argument_count>0?
                 type_arguments:inferred_arguments;
             const size_t contextual_count=type_argument_count>0?
@@ -2737,6 +2739,17 @@ static uint16_t parse_singleton_call(Compiler *compiler,
             keyword_names,keyword_values,&keyword_count);
         bool has_block=false;uint16_t block=0;
         if(compiler->current.kind==DIAMOND_TOKEN_DO) {
+            uint16_t inferred_arguments[8];
+            for(size_t index=0;index<8;index++)
+                inferred_arguments[index]=DIAMOND_NO_TYPE_SET;
+            if(type_argument_count==0)
+                infer_contextual_keyword_arguments(compiler,function,
+                    keyword_names,keyword_values,keyword_count,
+                    inferred_arguments);
+            const uint16_t *contextual_arguments=type_argument_count>0?
+                type_arguments:inferred_arguments;
+            const size_t contextual_count=type_argument_count>0?
+                type_argument_count:function->type_variable_count;
             for(size_t index=0;index<keyword_count;index++) {
                 const uint16_t snapshot=allocate_register(compiler);
                 emit_instruction(compiler,DIAMOND_OP_MOVE,snapshot,
@@ -2745,7 +2758,7 @@ static uint16_t parse_singleton_call(Compiler *compiler,
             }
             block=compile_contextual_typed_block(compiler,function,
                 method->arity==0?0:method->arity-1,
-                type_arguments,type_argument_count);
+                contextual_arguments,contextual_count);
             has_block=true;
         }
         const uint16_t destination=allocate_register(compiler);
@@ -4527,15 +4540,22 @@ static uint16_t parse_name(Compiler *compiler) {
                 keyword_names,keyword_values,&keyword_count);
             bool has_block=false;uint16_t block=0;
             if(compiler->current.kind==DIAMOND_TOKEN_DO) {
+                uint16_t inferred_arguments[8];
+                for(size_t index=0;index<8;index++)
+                    inferred_arguments[index]=DIAMOND_NO_TYPE_SET;
+                infer_contextual_keyword_arguments(compiler,initializer,
+                    keyword_names,keyword_values,keyword_count,
+                    inferred_arguments);
                 for(size_t index=0;index<keyword_count;index++) {
                     const uint16_t snapshot=allocate_register(compiler);
                     emit_instruction(compiler,DIAMOND_OP_MOVE,snapshot,
                         keyword_values[index],0,2);
                     keyword_values[index]=snapshot;
                 }
-                block=compile_contextual_block(compiler,initializer,
+                block=compile_contextual_typed_block(compiler,initializer,
                     initializer==nullptr||initializer->arity<=1?0:
-                        initializer->arity-2);
+                        initializer->arity-2,inferred_arguments,
+                    initializer==nullptr?0:initializer->type_variable_count);
                 has_block=true;
             }
             const uint16_t destination=allocate_register(compiler);
@@ -5011,6 +5031,18 @@ static uint16_t parse_invoke(Compiler *compiler, uint16_t receiver) {
             keyword_names,keyword_values,&keyword_count);
         bool has_block=false;uint16_t block=0;
         if(compiler->current.kind==DIAMOND_TOKEN_DO) {
+            uint16_t inferred_arguments[8];
+            for(size_t index=0;index<8;index++)
+                inferred_arguments[index]=DIAMOND_NO_TYPE_SET;
+            if(type_argument_count==0)
+                infer_contextual_keyword_arguments(compiler,
+                    contextual_target,keyword_names,keyword_values,
+                    keyword_count,inferred_arguments);
+            const uint16_t *contextual_arguments=type_argument_count>0?
+                type_arguments:inferred_arguments;
+            const size_t contextual_count=type_argument_count>0?
+                type_argument_count:contextual_target==nullptr?0:
+                    contextual_target->type_variable_count;
             const uint16_t receiver_snapshot=allocate_register(compiler);
             emit_instruction(compiler,DIAMOND_OP_MOVE,receiver_snapshot,
                 receiver,0,2);receiver=receiver_snapshot;
@@ -5022,8 +5054,8 @@ static uint16_t parse_invoke(Compiler *compiler, uint16_t receiver) {
             }
             block=compile_contextual_typed_block(compiler,contextual_target,
                 contextual_target==nullptr||contextual_target->arity<=1?0:
-                    contextual_target->arity-2,type_arguments,
-                type_argument_count);
+                    contextual_target->arity-2,contextual_arguments,
+                contextual_count);
             has_block=true;
         }
         return emit_invoke_keywords(compiler,receiver,name,positional,

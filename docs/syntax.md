@@ -575,6 +575,9 @@ from their positional arguments in the same way.
 Spreading a homogeneously typed Array supplies its element contract to generic
 parameters before a trailing block is compiled. This applies to functions,
 singleton methods, instance methods, and constructors.
+Keyword values likewise infer generic bindings from their named parameter slot
+for statically resolved functions, singleton methods, instance methods, and
+constructors. Explicit generic arguments take precedence.
 
 Callable values accept the same trailing `do ... end` block as named function
 and method calls, including calls with a spread Array. The block is appended as
