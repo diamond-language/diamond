@@ -1,6 +1,7 @@
 def nested[T](value: T) -> Array[Array[T]] = [[value]]
 def optional[T](value: T) -> T | Nil = value
 def keep[T](callback: Callable[[T], T]) -> Callable[[T], T] = callback
+def choose[T](callbacks: Array[Callable[[T], T]]) -> Callable[[T], T] = callbacks[0]
 def plus_one(value: Int) -> Int = value + 1
 
 class ReturnGeneric
@@ -23,4 +24,5 @@ if maybe is Int
   puts(maybe + 9)
 end
 
-puts(keep[Int](plus_one)(40) + 1)
+puts(keep(plus_one)(40) + 1)
+puts(choose([plus_one])(40) + 1)

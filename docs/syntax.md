@@ -594,6 +594,10 @@ type variable. Positional, keyword, and homogeneous spread arguments contribute
 bindings. Unresolved or conflicting bindings leave the result dynamically
 typed. Calling a value with a typed Callable return contract and indexing a
 typed collection carry their result facts into the following expression too.
+Inference recurses through typed Callable parameter and return contracts, even
+when the Callable is nested in an Array or Hash. A union-receiver call retains
+its generic result only when all candidate implementations declare matching
+signatures and structurally identical return graphs.
 
 Callable values accept the same trailing `do ... end` block as named function
 and method calls, including calls with a spread Array. The block is appended as

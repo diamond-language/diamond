@@ -36,6 +36,12 @@
 - Propagated Array/Hash index result facts and typed Callable-value return facts
   into downstream expressions, enabling chained generic results to select
   primitive-specialized bytecode without redundant dynamic arithmetic.
+- Extended generic inference recursively through typed Callable parameters and
+  returns, including Callables nested inside collection contracts. Structurally
+  equal facts at different caller type-set indices now produce one binding.
+- Propagated substituted generic returns across union receivers only when every
+  implementation has a structurally matching signature and return contract;
+  divergent returns conservatively retain dynamic dispatch facts.
 - Added conservative contextual typing for anonymous block parameters at
   statically resolved function, singleton, and instance-method calls with typed
   Callable slots, including direct generic bindings inferred from concrete

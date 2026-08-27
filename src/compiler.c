@@ -599,6 +599,10 @@ static uint16_t concrete_type_set(Compiler *compiler,uint8_t type) {
 
 static bool type_members_equal(DiamondTypeMember left,DiamondTypeMember right);
 static bool type_sets_equal_unordered(DiamondTypeSet left,DiamondTypeSet right);
+static bool type_sets_structurally_equal(const DiamondTypeSet *left_sets,
+        size_t left_count,uint16_t left_index,
+        const DiamondTypeSet *right_sets,size_t right_count,
+        uint16_t right_index,size_t depth);
 
 static int32_t join_type_set_indices(Compiler *compiler,int32_t left,
         int32_t right) {
@@ -2267,7 +2271,12 @@ static void infer_contextual_type_set(Compiler *compiler,
             if(variable<8) {
                 if(bindings[variable]==DIAMOND_NO_TYPE_SET)
                     bindings[variable]=actual_index;
-                else if(bindings[variable]!=actual_index)
+                else if(bindings[variable]!=actual_index&&
+                        !type_sets_structurally_equal(
+                            compiler->function->type_sets,
+                            compiler->function->type_set_count,
+                            bindings[variable],compiler->function->type_sets,
+                            compiler->function->type_set_count,actual_index,0))
                     bindings[variable]=(uint16_t)(DIAMOND_NO_TYPE_SET-1u);
             }
             continue;
@@ -2284,6 +2293,27 @@ static void infer_contextual_type_set(Compiler *compiler,
                 infer_contextual_type_set(compiler,target,
                     wanted.second_argument_set,known.second_argument_set,
                     bindings);
+            if(wanted.id==DIAMOND_TYPE_CALLABLE&&
+               wanted.callable_parameters_typed&&
+               known.callable_parameters_typed&&
+               wanted.callable_arity==known.callable_arity) {
+                for(size_t parameter=0;parameter<wanted.callable_arity;
+                    parameter++) {
+                    const uint16_t wanted_parameter=
+                        wanted.callable_parameter_sets[parameter];
+                    const uint16_t known_parameter=
+                        known.callable_parameter_sets[parameter];
+                    if(wanted_parameter!=DIAMOND_NO_TYPE_SET&&
+                       known_parameter!=DIAMOND_NO_TYPE_SET)
+                        infer_contextual_type_set(compiler,target,
+                            wanted_parameter,known_parameter,bindings);
+                }
+                if(wanted.callable_return_set!=DIAMOND_NO_TYPE_SET&&
+                   known.callable_return_set!=DIAMOND_NO_TYPE_SET)
+                    infer_contextual_type_set(compiler,target,
+                        wanted.callable_return_set,
+                        known.callable_return_set,bindings);
+            }
         }
     }
 }
@@ -5161,8 +5191,19 @@ static bool contextual_signatures_equal(const DiamondFunction *left,
     return true;
 }
 
+static bool return_contracts_equal(const DiamondFunction *left,
+        const DiamondFunction *right) {
+    if((left->return_type_set==DIAMOND_NO_TYPE_SET)!=
+       (right->return_type_set==DIAMOND_NO_TYPE_SET))return false;
+    return left->return_type_set==DIAMOND_NO_TYPE_SET||
+        type_sets_structurally_equal(left->type_sets,left->type_set_count,
+            left->return_type_set,right->type_sets,right->type_set_count,
+            right->return_type_set,0);
+}
+
 static const DiamondFunction *instance_call_signature(
-        const Compiler *compiler,uint16_t receiver,DiamondSpan name) {
+        const Compiler *compiler,uint16_t receiver,DiamondSpan name,
+        bool require_matching_return) {
     const uint8_t type=compiler->known_types[receiver];
     if(type>=DIAMOND_TYPE_CLASS_BASE&&type<DIAMOND_TYPE_INTERFACE_BASE)
         return class_instance_signature(compiler,type,name);
@@ -5182,7 +5223,9 @@ static const DiamondFunction *instance_call_signature(
         if(candidate==nullptr)return nullptr;
         if(shared==nullptr)shared=candidate;
         else if(shared!=candidate&&
-                !contextual_signatures_equal(shared,candidate))return nullptr;
+                (!contextual_signatures_equal(shared,candidate)||
+                 (require_matching_return&&
+                  !return_contracts_equal(shared,candidate))))return nullptr;
     }
     return shared;
 }
@@ -5259,7 +5302,9 @@ static uint16_t parse_invoke(Compiler *compiler, uint16_t receiver) {
     }
     const DiamondSpan name = compiler->current.span;
     const DiamondFunction *contextual_target=
-        instance_call_signature(compiler,receiver,name);
+        instance_call_signature(compiler,receiver,name,false);
+    const DiamondFunction *return_target=
+        instance_call_signature(compiler,receiver,name,true);
     advance_token(compiler);
     bool writer_name=false;
     if(compiler->current.kind==DIAMOND_TOKEN_EQUAL) {
@@ -5344,7 +5389,7 @@ static uint16_t parse_invoke(Compiler *compiler, uint16_t receiver) {
         const uint16_t result=emit_invoke_keywords(compiler,receiver,name,positional,
             keyword_names,keyword_values,keyword_count,type_arguments,
             type_argument_count,has_block,block);
-        publish_declared_return_type(compiler,result,contextual_target,
+        publish_declared_return_type(compiler,result,return_target,
             resolved_arguments,resolved_count);
         return result;
     }
@@ -5386,7 +5431,7 @@ static uint16_t parse_invoke(Compiler *compiler, uint16_t receiver) {
                 const uint16_t result=emit_invoke_keywords(compiler,receiver,name,spread,
                     nullptr,nullptr,0,type_arguments,type_argument_count,true,
                     block);
-                publish_declared_return_type(compiler,result,contextual_target,
+                publish_declared_return_type(compiler,result,return_target,
                     resolved_arguments,resolved_count);
                 return result;
             }
@@ -5395,7 +5440,7 @@ static uint16_t parse_invoke(Compiler *compiler, uint16_t receiver) {
         }
         const uint16_t result=emit_invoke_typed_spread(compiler,receiver,name,
             spread,type_arguments,type_argument_count);
-        publish_declared_return_type(compiler,result,contextual_target,
+        publish_declared_return_type(compiler,result,return_target,
             resolved_arguments,resolved_count);
         return result;
     }
@@ -5462,7 +5507,7 @@ static uint16_t parse_invoke(Compiler *compiler, uint16_t receiver) {
             const uint16_t positional=emit_argument_array(compiler,args,count);
             const uint16_t result=emit_invoke_keywords(compiler,receiver,name,positional,
                 nullptr,nullptr,0,type_arguments,type_argument_count,true,block);
-            publish_declared_return_type(compiler,result,contextual_target,
+            publish_declared_return_type(compiler,result,return_target,
                 resolved_arguments,resolved_count);
             return result;
         }
@@ -5470,7 +5515,7 @@ static uint16_t parse_invoke(Compiler *compiler, uint16_t receiver) {
     }
     const uint16_t result=emit_invoke_call(compiler,receiver,name,writer_name,
         type_arguments,type_argument_count,args,count);
-    publish_declared_return_type(compiler,result,contextual_target,
+    publish_declared_return_type(compiler,result,return_target,
         resolved_arguments,resolved_count);
     return result;
 }

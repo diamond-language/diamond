@@ -2317,8 +2317,13 @@ keyword_block_dump="$(sed -n '/^== <block> ==$/,$p' <<<"$actual")"
 
 actual="$($diamond --dump-bytecode tests/cases/generic_return_propagation.di)"
 generic_return_dump="$(sed -n '/^== tests\/cases\/generic_return_propagation.di ==$/,/^== abs ==$/p' <<<"$actual")"
-[[ "$(grep -c 'ADD_INT' <<<"$generic_return_dump")" == "9" ]]
+[[ "$(grep -c 'ADD_INT' <<<"$generic_return_dump")" == "10" ]]
 [[ "$(grep -cE '  ADD +r' <<<"$generic_return_dump")" == "0" ]]
+
+actual="$($diamond --dump-bytecode tests/cases/generic_union_return_propagation.di)"
+generic_union_return_dump="$(sed -n '/^== tests\/cases\/generic_union_return_propagation.di ==$/,/^== abs ==$/p' <<<"$actual")"
+[[ "$(grep -c 'ADD_INT' <<<"$generic_union_return_dump")" == "1" ]]
+[[ "$(grep -cE '  ADD +r' <<<"$generic_union_return_dump")" == "1" ]]
 
 actual="$($diamond --dump-bytecode -e $'def union_value() -> Int | String\n [1, "one"][0]\nend\nunion_value()')"
 union_function_dump="$(sed -n '/^== union_value ==$/,$p' <<<"$actual")"

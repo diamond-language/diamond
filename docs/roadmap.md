@@ -312,10 +312,14 @@ substitute explicit or inferred positional, keyword, and homogeneous-spread
 bindings into caller-owned graphs; nested indexing, generic unions, and typed
 Callable-value results continue that flow through chained expressions.
 
-The next type-flow slices are inference through Callable parameter/return graphs
-(current inference recurses through Array and Hash only), and conservative
-generic-return agreement across union receivers whose implementations share a
-structurally identical generic signature and substituted result contract.
+Inference now recurses through Callable parameter/return graphs, including
+Callables nested in collections. Union receivers publish generic results only
+when every implementation shares a structurally identical generic signature
+and return contract.
+
+The next type-flow slices are typed return metadata for bound-method reference
+wrappers, and conservative inference across callable unions whose equivalent
+contracts are stored at different nested graph indices.
 
 ### Ruby-like ergonomics without Ruby compatibility
 

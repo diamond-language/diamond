@@ -438,6 +438,18 @@ contract's element, key, and value graphs—including substitutions captured by
 an earlier generic frame. This preserves nested types across chains of generic
 calls without requiring a sentinel value in an otherwise empty collection.
 
+Inference also descends through fully typed Callable graphs. Generic variables
+in Callable parameter and return positions bind from the supplied callable's
+structural signature, including when that Callable is nested inside Array or
+Hash contracts. Separately allocated but structurally equal caller type sets
+count as the same binding; a genuine disagreement remains unresolved.
+
+For a union receiver, block context still requires structurally matching
+parameter signatures across every implementation. Publishing the call result
+adds a stricter condition: every return graph must match structurally as well.
+This permits one substituted generic result fact for compatible implementations
+without assigning the first implementation's return to a divergent dispatch.
+
 Generic functions and methods may be specialized explicitly with syntax such
 as `empty[Int]()` or `factory.empty[String]()`. The call instruction carries
 the caller's type-set graphs into the callee, resolving outer generic variables
