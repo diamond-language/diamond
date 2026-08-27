@@ -301,6 +301,7 @@ class Lexer
     return :module if self.text_equals?("module")
     return :include if self.text_equals?("include")
     return :private if self.text_equals?("private")
+    return :protected if self.text_equals?("protected")
     return :public if self.text_equals?("public")
     return :attr_reader if self.text_equals?("attr_reader")
     return :attr_writer if self.text_equals?("attr_writer")

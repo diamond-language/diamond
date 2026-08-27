@@ -3368,6 +3368,7 @@ static DiamondVmStatus program_builder_invoke_helper(DiamondVm *vm,
         method->arity=(uint8_t)arity_value;
         method->required_arity=(uint8_t)required_value;
         method->is_private=registers[(size_t)base+5].as.boolean;
+        method->is_protected=false;
         /* declare_function always leaves owner_class at UINT8_MAX (not a
          * method) since it runs before the caller knows whether this
          * function will end up registered as one -- diamond_compile's own
@@ -3422,6 +3423,7 @@ static DiamondVmStatus program_builder_invoke_helper(DiamondVm *vm,
         method->arity=(uint8_t)arity;
         method->required_arity=(uint8_t)required;
         method->is_private=registers[(size_t)base+5].as.boolean;
+        method->is_protected=false;
         /* Same owner_class fix as declare_method just above, using
          * diamond_compile's own module-method sentinel (UINT8_MAX-1,
          * distinct from UINT8_MAX's "not a method at all" so the private-
@@ -3646,6 +3648,7 @@ static DiamondVmStatus program_builder_invoke_helper(DiamondVm *vm,
             return DIAMOND_VM_TYPE_ERROR;
         }
         found->is_private=registers[(size_t)base+2].as.boolean;
+        found->is_protected=false;
         *result=DIAMOND_NIL;return DIAMOND_VM_OK;
     }
     if(set_class_method_visibility_method) {
@@ -3670,6 +3673,7 @@ static DiamondVmStatus program_builder_invoke_helper(DiamondVm *vm,
             return DIAMOND_VM_TYPE_ERROR;
         }
         found->is_private=registers[(size_t)base+2].as.boolean;
+        found->is_protected=false;
         *result=DIAMOND_NIL;return DIAMOND_VM_OK;
     }
     if(alias_class_method_method) {
@@ -3803,9 +3807,9 @@ static DiamondVmStatus program_builder_invoke_helper(DiamondVm *vm,
             }
         if(module->singleton_method_count==DIAMOND_MAX_METHODS)
             return DIAMOND_VM_TYPE_ERROR;
-        source->is_private=true;
+        source->is_private=true;source->is_protected=false;
         DiamondMethod exported=*source;
-        exported.is_private=false;
+        exported.is_private=false;exported.is_protected=false;
         exported.needs_receiver=true;
         module->singleton_methods[module->singleton_method_count++]=exported;
         *result=DIAMOND_NIL;return DIAMOND_VM_OK;
@@ -4455,6 +4459,27 @@ static const DiamondMethod *lookup_method(const DiamondChunk *chunk,
             ? nullptr : &chunk->classes[current->superclass];
     }
     return nullptr;
+}
+
+static const DiamondClass *method_declaring_class(const DiamondChunk *chunk,
+        const DiamondClass *receiver_class,const DiamondMethod *method) {
+    const DiamondClass *current=receiver_class;
+    while(current!=nullptr) {
+        for(size_t index=0;index<current->method_count;index++)
+            if(method==&current->methods[index])return current;
+        current=current->superclass==UINT8_MAX?nullptr:
+            &chunk->classes[current->superclass];
+    }
+    return nullptr;
+}
+
+static bool class_is_a(const DiamondChunk *chunk,const DiamondClass *class,
+        const DiamondClass *ancestor) {
+    for(const DiamondClass *current=class;current!=nullptr;
+        current=current->superclass==UINT8_MAX?nullptr:
+            &chunk->classes[current->superclass])
+        if(current==ancestor)return true;
+    return false;
 }
 
 /* lookup_method's exact algorithm, over singleton_methods[] instead of
@@ -11886,6 +11911,22 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                         "private method '%.*s' called with an explicit receiver",
                         (int)method_name->length,method_name->chars);
                     VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                }
+                if(method->is_protected) {
+                    const DiamondClass *declaring=method_declaring_class(
+                        owner,instance->class,method);
+                    const bool has_method_self=chunk->parameter_offset==1&&
+                        registers[0].kind==DIAMOND_VALUE_OBJECT&&
+                        registers[0].as.object->kind==DIAMOND_OBJECT_INSTANCE;
+                    const DiamondClass *caller_class=has_method_self?
+                        ((DiamondInstance *)registers[0].as.object)->class:nullptr;
+                    if(declaring==nullptr||caller_class==nullptr||
+                       !class_is_a(owner,caller_class,declaring)) {
+                        snprintf(vm->error,sizeof vm->error,
+                            "protected method '%.*s' called outside its class hierarchy",
+                            (int)method_name->length,method_name->chars);
+                        VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                    }
                 }
                 if(argc<method->required_arity||
                    (argc>method->arity && !method->has_variadic))

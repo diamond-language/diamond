@@ -87,6 +87,7 @@ static const char *kind_name(DiamondTokenKind kind) {
         case DIAMOND_TOKEN_MODULE: return "module";
         case DIAMOND_TOKEN_INCLUDE: return "include";
         case DIAMOND_TOKEN_PRIVATE: return "private";
+        case DIAMOND_TOKEN_PROTECTED: return "protected";
         case DIAMOND_TOKEN_PUBLIC: return "public";
         case DIAMOND_TOKEN_ATTR_READER: return "attr_reader";
         case DIAMOND_TOKEN_ATTR_WRITER: return "attr_writer";

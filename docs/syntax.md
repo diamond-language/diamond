@@ -936,6 +936,16 @@ consistent, not a special case, but worth knowing going in if the goal
 is one counter shared across all workers rather than one counter per
 worker.
 
+### Method visibility
+
+`public`, `protected`, and `private` change the visibility of following
+methods in a class or module. They also accept existing method names, such as
+`protected compare, token`. Public methods are callable everywhere. Protected
+methods may use an explicit receiver only while executing an instance method
+inside the declaring class hierarchy. Private methods remain restricted to
+the current implicit/self receiver. `respond_to?` reports public and protected
+methods, but not private methods.
+
 ### tap / dup / respond_to?
 
 ```ruby

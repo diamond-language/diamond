@@ -351,7 +351,8 @@ Areas still worth examining include:
   instant the VM opcodes themselves know how to dispatch to an Instance.
   `<<` deliberately did **not** move -- out of scope for this change, see
   its own paragraph in `docs/syntax.md`;
-- protected visibility, if a real library design needs it;
+- **Done**: protected method visibility, including default and named forms,
+  explicit peer receivers, inheritance, and unrelated-caller rejection;
 - enumerator/lazy iteration semantics versus the current eager collection APIs;
 - a principled protocol for native collection extension instead of expanding
   VM name-forwarding tables indefinitely.

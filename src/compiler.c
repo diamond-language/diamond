@@ -82,6 +82,7 @@ typedef struct Compiler {
     int current_class;
     int current_module;
     bool methods_private;
+    bool methods_protected;
     bool module_function_mode;
     DiamondSpan current_method;
     bool in_method;
@@ -7342,7 +7343,7 @@ static uint16_t compile_definition(Compiler *compiler, bool captures_self) {
             exported.required_arity=(uint8_t)(function->required_arity-1);
             exported.has_variadic=function->has_variadic;
             exported.included=false;
-            exported.is_private=false;
+            exported.is_private=false;exported.is_protected=false;
             exported.needs_receiver=true;
             early_module->singleton_methods[
                 early_module->singleton_method_count++]=exported;
@@ -7481,6 +7482,7 @@ static uint16_t compile_definition(Compiler *compiler, bool captures_self) {
             method->has_variadic=function->has_variadic;
             method->included=false;
             method->is_private=compiler->methods_private;
+            method->is_protected=compiler->methods_protected;
         }
     } else if(compiler->current_class>=0&&module_singleton&&
               !compiler->failed&&at_top_level) {
@@ -7533,21 +7535,24 @@ static uint16_t compile_definition(Compiler *compiler, bool captures_self) {
                 method->has_variadic=function->has_variadic;
                 method->included=false;
                 method->is_private=compiler->methods_private;
+                method->is_protected=compiler->methods_protected;
                 if(compiler->module_function_mode) {
                     if(function->uses_instance_state)
                         fail(compiler,name,
                             "stateful method cannot use module_function mode");
-                    else if(module_function_singleton_registered_early)
+                    else if(module_function_singleton_registered_early) {
                         /* Already added to singleton_methods[] above,
                          * before the body compiled -- just the private-
                          * marking side effect remains to do here. */
-                        method->is_private=true;
+                        method->is_private=true;method->is_protected=false;
+                    }
                     else if(module->singleton_method_count==DIAMOND_MAX_METHODS)
                         fail(compiler,name,"too many module singleton functions");
                     else {
-                        method->is_private=true;
+                        method->is_private=true;method->is_protected=false;
                         DiamondMethod exported=*method;
-                        exported.is_private=false;exported.needs_receiver=true;
+                        exported.is_private=false;exported.is_protected=false;
+                        exported.needs_receiver=true;
                         module->singleton_methods[
                             module->singleton_method_count++]=exported;
                     }
@@ -7751,6 +7756,7 @@ static void compile_attribute_named(Compiler *compiler,bool writer,bool predicat
     (void)snprintf(method->name,sizeof method->name,"%s",method_name);
     method->function_index=function_index;method->arity=writer?1:0;
     method->required_arity=method->arity;method->is_private=compiler->methods_private;
+    method->is_protected=compiler->methods_protected;
 }
 
 static void compile_attribute(Compiler *compiler,bool reader,bool writer,
@@ -7789,7 +7795,7 @@ static void compile_attribute(Compiler *compiler,bool reader,bool writer,
     }
 }
 
-static void compile_visibility(Compiler *compiler,bool is_private) {
+static void compile_visibility(Compiler *compiler,bool is_private,bool is_protected) {
     advance_token(compiler);
     const bool parenthesized=compiler->current.kind==DIAMOND_TOKEN_LEFT_PAREN;
     if(parenthesized) {advance_token(compiler);skip_newlines(compiler);}
@@ -7798,7 +7804,8 @@ static void compile_visibility(Compiler *compiler,bool is_private) {
             fail(compiler,compiler->current.span,
                  "expected method name in visibility list");return;
         }
-        compiler->methods_private=is_private;return;
+        compiler->methods_private=is_private;
+        compiler->methods_protected=is_protected;return;
     }
     while(!compiler->failed) {
         const DiamondSpan name=compiler->current.span;
@@ -7834,7 +7841,8 @@ static void compile_visibility(Compiler *compiler,bool is_private) {
         if(found==nullptr) {
             fail(compiler,name,"visibility target is not defined here");return;
         }
-        found->is_private=is_private;advance_token(compiler);
+        found->is_private=is_private;found->is_protected=is_protected;
+        advance_token(compiler);
         if(writer_name&&compiler->current.kind==DIAMOND_TOKEN_EQUAL)
             advance_token(compiler);
         /* Only skip newlines in the parenthesized form -- see the same
@@ -7902,9 +7910,9 @@ static void compile_module_function(Compiler *compiler) {
         if(module->singleton_method_count==DIAMOND_MAX_METHODS) {
             fail(compiler,name,"too many module singleton functions");return;
         }
-        source->is_private=true;
+        source->is_private=true;source->is_protected=false;
         DiamondMethod exported=*source;exported.needs_receiver=true;
-        exported.is_private=false;
+        exported.is_private=false;exported.is_protected=false;
         module->singleton_methods[module->singleton_method_count++]=exported;
         advance_token(compiler);
         if(writer_name&&compiler->current.kind==DIAMOND_TOKEN_EQUAL)
@@ -8258,6 +8266,7 @@ static void compile_delegate(Compiler *compiler) {
     method->required_arity=(uint8_t)parameter_count;
     method->included=false;
     method->is_private=compiler->methods_private;
+    method->is_protected=compiler->methods_protected;
 }
 
 static uint16_t compile_class(Compiler *compiler) {
@@ -8373,13 +8382,18 @@ static uint16_t compile_class(Compiler *compiler) {
     if(!consume_block_start(compiler)) return 0;
     const int outer=compiler->current_class; compiler->current_class=index;
     const bool outer_private=compiler->methods_private;
+    const bool outer_protected=compiler->methods_protected;
     compiler->methods_private=false;
+    compiler->methods_protected=false;
     while(!compiler->failed && compiler->current.kind!=DIAMOND_TOKEN_END) {
         if(compiler->current.kind==DIAMOND_TOKEN_PRIVATE||
+           compiler->current.kind==DIAMOND_TOKEN_PROTECTED||
            compiler->current.kind==DIAMOND_TOKEN_PUBLIC) {
             const bool private_visibility=
                 compiler->current.kind==DIAMOND_TOKEN_PRIVATE;
-            compile_visibility(compiler,private_visibility);
+            const bool protected_visibility=
+                compiler->current.kind==DIAMOND_TOKEN_PROTECTED;
+            compile_visibility(compiler,private_visibility,protected_visibility);
         } else if(compiler->current.kind==DIAMOND_TOKEN_MODULE_FUNCTION) {
             fail(compiler,compiler->current.span,
                  "module_function is only valid in modules");break;
@@ -8451,6 +8465,7 @@ static uint16_t compile_class(Compiler *compiler) {
     }
     compiler->current_class=outer;
     compiler->methods_private=outer_private;
+    compiler->methods_protected=outer_protected;
     if(compiler->current.kind==DIAMOND_TOKEN_END) advance_token(compiler);
     const uint16_t result=allocate_register(compiler);
     /* Sole writer; run_chunk's zero-init already covers this. */
@@ -8523,15 +8538,20 @@ static uint16_t compile_module(Compiler *compiler) {
     if(!consume_block_start(compiler))return 0;
     const int outer=compiler->current_module;compiler->current_module=index;
     const bool outer_private=compiler->methods_private;
+    const bool outer_protected=compiler->methods_protected;
     const bool outer_module_function=compiler->module_function_mode;
     compiler->methods_private=false;
+    compiler->methods_protected=false;
     compiler->module_function_mode=false;
     while(!compiler->failed&&compiler->current.kind!=DIAMOND_TOKEN_END) {
         if(compiler->current.kind==DIAMOND_TOKEN_PRIVATE||
+           compiler->current.kind==DIAMOND_TOKEN_PROTECTED||
            compiler->current.kind==DIAMOND_TOKEN_PUBLIC) {
             const bool private_visibility=
                 compiler->current.kind==DIAMOND_TOKEN_PRIVATE;
-            compile_visibility(compiler,private_visibility);
+            const bool protected_visibility=
+                compiler->current.kind==DIAMOND_TOKEN_PROTECTED;
+            compile_visibility(compiler,private_visibility,protected_visibility);
         } else if(compiler->current.kind==DIAMOND_TOKEN_MODULE_FUNCTION) {
             compile_module_function(compiler);
         } else if(compiler->current.kind==DIAMOND_TOKEN_ALIAS_METHOD) {
@@ -8642,6 +8662,7 @@ static uint16_t compile_module(Compiler *compiler) {
     }
     compiler->current_module=outer;
     compiler->methods_private=outer_private;
+    compiler->methods_protected=outer_protected;
     compiler->module_function_mode=outer_module_function;
     if(compiler->current.kind==DIAMOND_TOKEN_END)advance_token(compiler);
     const uint16_t result=allocate_register(compiler);

@@ -392,6 +392,7 @@ typedef struct DiamondMethod {
     bool has_variadic;
     bool included;
     bool is_private;
+    bool is_protected;
     bool needs_receiver;
     /* Non-null only for a method installed by ClassName.compile_method +
      * .define_method (src/vm.c's DIAMOND_OP_COMPILE_METHOD/
