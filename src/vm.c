@@ -1118,6 +1118,15 @@ static DiamondProgram *clone_program_from_chunk(const DiamondChunk *chunk) {
     DiamondProgram *clone=calloc(1,sizeof *clone);
     if(clone==nullptr)return nullptr;
     diamond_program_init(clone);
+    if(chunk->type_set_count>0) {
+        if(!diamond_function_reserve_type_sets(&clone->entry,
+                chunk->type_set_count)) {
+            diamond_program_free(clone);free(clone);return nullptr;
+        }
+        memcpy(clone->entry.type_sets,chunk->type_sets,
+            chunk->type_set_count*sizeof *clone->entry.type_sets);
+        clone->entry.type_set_count=chunk->type_set_count;
+    }
     for(size_t index=0;index<chunk->function_count;index++) {
         DiamondFunction *function=diamond_program_add_function(clone);
         if(function==nullptr) {
@@ -1131,6 +1140,8 @@ static DiamondProgram *clone_program_from_chunk(const DiamondChunk *chunk) {
     clone->class_count=chunk->class_count;
     memcpy(clone->interfaces,chunk->interfaces,sizeof clone->interfaces);
     clone->interface_count=chunk->interface_count;
+    for(size_t index=0;index<clone->interface_count;index++)
+        clone->interfaces[index].type_sets=clone->entry.type_sets;
     clone->range_class_index=chunk->range_class_index;
     return clone;
 }

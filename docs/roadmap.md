@@ -241,6 +241,8 @@ roughly 4 KiB of unconditional storage per function. Type-set indices remain at
 requires a separate bytecode migration. Their backing tables now grow
 geometrically in preparation for that migration, with deep-copy ownership for
 thread programs and interface metadata rebound after entry-table relocation.
+Thread clones also own a separate copy of the entry type graph, so their
+interface descriptors never retain a pointer into the parent program.
 
 Resolved for string/name operands: storage grows dynamically and the bytecode
 wire format now carries unsigned 16-bit indices through literals, symbols,

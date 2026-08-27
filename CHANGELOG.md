@@ -90,7 +90,8 @@
   widening string literals, dispatch names, keyword names, `super`, debugger
   metadata, and synthetic calls to the 16-bit bytecode boundary.
 - Replaced fixed per-function type-set tables with dynamically grown storage,
-  including deep-copy ownership and stable interface metadata rebinding.
+  including deep-copy ownership, stable interface metadata rebinding, and
+  isolated entry type sets for cloned thread programs.
 - Added protected method visibility with peer/subclass receiver access and
   runtime rejection outside the declaring class hierarchy.
 - Added `LazyEnumerator` pipelines with deferred `map`, `select`, and `reject`
