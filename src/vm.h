@@ -232,6 +232,10 @@ typedef enum DiamondOpCode : uint8_t {
      * already linked for TLS. */
     DIAMOND_OP_SECURE_RANDOM_BYTES,
     DIAMOND_OP_SECURE_RANDOM_HEX,
+    /* Digest.sha256(data) / HMAC.sha256(key, data) -- lowercase hex
+     * SHA-256 via the already-linked OpenSSL libcrypto. */
+    DIAMOND_OP_DIGEST_SHA256,
+    DIAMOND_OP_HMAC_SHA256,
     /* ClassName.compile_method(name, params, body_source) -- compiles a
      * new method body from a source string at runtime and returns a
      * Callable, meant to be installed via the existing

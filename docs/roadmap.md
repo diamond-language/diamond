@@ -541,10 +541,10 @@ class-level "stateless call" natives, the same shape as `Time`/`Process`
 "`has_secure_password`-style password hashing" section for the userspace
 helper built on top (`Model#secure_password=`/`#authenticate`, no macro --
 same explicit-wiring shape `has_many`/`has_one`/`belongs_to` already use).
-General digest hashing (SHA-256 etc.) and HMAC remain undone -- OpenSSL
-already provides both via the same linked `libcrypto`, so adding them
-later is a small, low-risk extension of this same pattern, not a new
-dependency decision.
+SHA-256 and HMAC-SHA-256 are now exposed as `Digest.sha256` and
+`HMAC.sha256`, returning lowercase hexadecimal strings and preserving raw
+String bytes. Additional algorithms remain demand-driven rather than becoming
+an open-ended crypto-wrapper surface.
 
 ### Package ecosystem
 

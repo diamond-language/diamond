@@ -3192,6 +3192,50 @@ static uint16_t parse_secure_random_call(Compiler *compiler) {
     return 0;
 }
 
+static uint16_t parse_sha256_call(Compiler *compiler,bool keyed) {
+    const char *owner=keyed?"HMAC.sha256":"Digest.sha256";
+    if(compiler->current.kind!=DIAMOND_TOKEN_LEFT_PAREN) {
+        fail(compiler,compiler->current.span,"expected '(' after sha256");
+        return 0;
+    }
+    advance_token(compiler);skip_newlines(compiler);
+    const uint16_t first=parse_expression(compiler);
+    uint16_t second=0;
+    if(keyed) {
+        skip_newlines(compiler);
+        if(compiler->current.kind!=DIAMOND_TOKEN_COMMA) {
+            fail(compiler,compiler->current.span,"expected ',' after HMAC.sha256 key");
+            return 0;
+        }
+        advance_token(compiler);skip_newlines(compiler);
+        second=parse_expression(compiler);
+    }
+    skip_newlines(compiler);
+    if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
+        (void)owner;
+        fail(compiler,compiler->current.span,"expected ')' after sha256 arguments");
+        return 0;
+    }
+    advance_token(compiler);
+    const uint16_t dest=allocate_register(compiler);
+    emit_opcode(compiler,keyed?DIAMOND_OP_HMAC_SHA256:DIAMOND_OP_DIGEST_SHA256);
+    emit_register(compiler,dest);emit_register(compiler,first);
+    if(keyed)emit_register(compiler,second);
+    compiler->known_types[dest]=DIAMOND_TYPE_STRING;
+    return dest;
+}
+
+static uint16_t parse_crypto_call(Compiler *compiler,bool keyed) {
+    advance_token(compiler); /* consume '.' */
+    if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER||
+       !name_equals(compiler,"sha256",compiler->current.span,false)) {
+        fail(compiler,compiler->current.span,"expected 'sha256' after crypto namespace");
+        return 0;
+    }
+    advance_token(compiler);
+    return parse_sha256_call(compiler,keyed);
+}
+
 static uint16_t parse_name(Compiler *compiler) {
     const DiamondSpan name = compiler->previous.span;
     int class_index=find_class(compiler,name);
@@ -3293,6 +3337,14 @@ static uint16_t parse_name(Compiler *compiler) {
        compiler->current.kind==DIAMOND_TOKEN_DOT&&
        name_equals(compiler,"SecureRandom",name,false))
         return parse_secure_random_call(compiler);
+    if(class_index<0&&find_local(compiler,name)<0&&find_function(compiler,name)<0&&
+       compiler->current.kind==DIAMOND_TOKEN_DOT&&
+       name_equals(compiler,"Digest",name,false))
+        return parse_crypto_call(compiler,false);
+    if(class_index<0&&find_local(compiler,name)<0&&find_function(compiler,name)<0&&
+       compiler->current.kind==DIAMOND_TOKEN_DOT&&
+       name_equals(compiler,"HMAC",name,false))
+        return parse_crypto_call(compiler,true);
     if(class_index<0&&find_local(compiler,name)<0&&find_function(compiler,name)<0&&
        compiler->current.kind==DIAMOND_TOKEN_DOT&&
        name_equals(compiler,"ProgramBuilder",name,false))

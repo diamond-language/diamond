@@ -25,6 +25,8 @@
 #include <netdb.h>
 #include <openssl/crypto.h>
 #include <openssl/err.h>
+#include <openssl/evp.h>
+#include <openssl/hmac.h>
 #include <openssl/rand.h>
 #include <openssl/ssl.h>
 #include <poll.h>
@@ -4980,6 +4982,45 @@ static DiamondVmStatus secure_random_hex_helper(DiamondVm *vm,DiamondValue count
     free(buffer);
     DiamondString *result=allocate_string(vm,hex,(size_t)count*2);
     free(hex);
+    if(result==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+    *out_result=DIAMOND_OBJECT(result);
+    return DIAMOND_VM_OK;
+}
+
+static DiamondVmStatus sha256_hex_helper(DiamondVm *vm,DiamondValue key_value,
+        DiamondValue data_value,bool keyed,DiamondValue *out_result) {
+    if(data_value.kind!=DIAMOND_VALUE_OBJECT||
+       data_value.as.object->kind!=DIAMOND_OBJECT_STRING||
+       (keyed&&(key_value.kind!=DIAMOND_VALUE_OBJECT||
+          key_value.as.object->kind!=DIAMOND_OBJECT_STRING)))
+        return DIAMOND_VM_TYPE_ERROR;
+    const DiamondString *data=(const DiamondString *)data_value.as.object;
+    unsigned char digest[EVP_MAX_MD_SIZE];
+    unsigned int digest_length=0;
+    if(keyed) {
+        const DiamondString *key=(const DiamondString *)key_value.as.object;
+        if(key->length>INT_MAX) {
+            (void)snprintf(vm->error,sizeof vm->error,"HMAC.sha256 key is too large");
+            return DIAMOND_VM_ARITY_ERROR;
+        }
+        if(HMAC(EVP_sha256(),key->chars,(int)key->length,
+                (const unsigned char *)data->chars,data->length,
+                digest,&digest_length)==nullptr) {
+            (void)snprintf(vm->error,sizeof vm->error,"HMAC.sha256 failed");
+            return DIAMOND_VM_PROGRAM_ERROR;
+        }
+    } else if(EVP_Digest(data->chars,data->length,digest,&digest_length,
+                         EVP_sha256(),nullptr)!=1) {
+        (void)snprintf(vm->error,sizeof vm->error,"Digest.sha256 failed");
+        return DIAMOND_VM_PROGRAM_ERROR;
+    }
+    char hex[64];
+    static const char digits[]="0123456789abcdef";
+    for(size_t index=0;index<digest_length;index++) {
+        hex[index*2]=digits[digest[index]>>4];
+        hex[index*2+1]=digits[digest[index]&0x0f];
+    }
+    DiamondString *result=allocate_string(vm,hex,(size_t)digest_length*2);
     if(result==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
     *out_result=DIAMOND_OBJECT(result);
     return DIAMOND_VM_OK;
@@ -12152,6 +12193,21 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     registers[count_register],&registers[destination]);
                 VM_PROPAGATE(hex_status);
                 break;
+            }
+            case DIAMOND_OP_DIGEST_SHA256: {
+                uint16_t destination=0,data_register=0;
+                READ_SHORT(destination);READ_SHORT(data_register);
+                const DiamondVmStatus digest_status=sha256_hex_helper(vm,
+                    DIAMOND_NIL,registers[data_register],false,&registers[destination]);
+                VM_PROPAGATE(digest_status);break;
+            }
+            case DIAMOND_OP_HMAC_SHA256: {
+                uint16_t destination=0,key_register=0,data_register=0;
+                READ_SHORT(destination);READ_SHORT(key_register);READ_SHORT(data_register);
+                const DiamondVmStatus hmac_status=sha256_hex_helper(vm,
+                    registers[key_register],registers[data_register],true,
+                    &registers[destination]);
+                VM_PROPAGATE(hmac_status);break;
             }
             case DIAMOND_OP_EXIT: {
                 uint16_t code_register=0;

@@ -829,6 +829,10 @@ static bool disassemble_chunk(FILE *stream, const char *name,
                 offset=two_registers(stream,chunk,"SECURE_RANDOM_BYTES",offset, &valid);break;
             case DIAMOND_OP_SECURE_RANDOM_HEX:
                 offset=two_registers(stream,chunk,"SECURE_RANDOM_HEX",offset, &valid);break;
+            case DIAMOND_OP_DIGEST_SHA256:
+                offset=two_registers(stream,chunk,"DIGEST_SHA256",offset,&valid);break;
+            case DIAMOND_OP_HMAC_SHA256:
+                offset=three_registers(stream,chunk,"HMAC_SHA256",offset,&valid);break;
             case DIAMOND_OP_EXIT:
                 offset=one_register(stream,chunk,"EXIT",offset, &valid);break;
             case DIAMOND_OP_DEBUGGER: {

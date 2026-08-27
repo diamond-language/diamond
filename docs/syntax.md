@@ -1320,6 +1320,17 @@ enough to overflow the underlying `int`-sized call into OpenSSL).
 Suited to session/remember-me/password-reset tokens and similar —
 `SecureRandom.hex(32)` for a 256-bit token as a 64-character hex string.
 
+`Digest.sha256(data: String) -> String` returns the lowercase hexadecimal
+SHA-256 digest of the string's raw bytes. `HMAC.sha256(key: String, data:
+String) -> String` returns the corresponding keyed HMAC, also as 64 lowercase
+hexadecimal characters. Both preserve embedded NUL bytes and are backed by
+OpenSSL's `libcrypto`:
+
+```ruby
+Digest.sha256("abc")
+HMAC.sha256("secret", "payload")
+```
+
 `array_sort(values: Array[Int])` returns a new sorted array (input
 untouched); `Int` is the only type with a native ordering comparison,
 so this is Int-only, checked up front (`expected Array[Int], got
