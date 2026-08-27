@@ -4286,6 +4286,31 @@ static bool writer_generic_arguments_ahead(const Compiler *compiler) {
     return diamond_lexer_next(&lookahead).kind == DIAMOND_TOKEN_LEFT_PAREN;
 }
 
+/* Resolve only the compile-time signature behind an ordinary virtual call.
+ * Runtime dispatch remains fully dynamic: this is a conservative type hint
+ * used solely while compiling a trailing block.  A receiver without one
+ * concrete known class simply receives the existing untyped block path. */
+static const DiamondFunction *instance_call_signature(
+        const Compiler *compiler,uint16_t receiver,DiamondSpan name) {
+    const uint8_t type=compiler->known_types[receiver];
+    if(type<DIAMOND_TYPE_CLASS_BASE||type>=DIAMOND_TYPE_INTERFACE_BASE)
+        return nullptr;
+    size_t class_index=(size_t)(type-DIAMOND_TYPE_CLASS_BASE);
+    while(class_index<compiler->program->class_count) {
+        const DiamondClass *class=&compiler->program->classes[class_index];
+        for(size_t index=0;index<class->method_count;index++) {
+            const DiamondMethod *method=&class->methods[index];
+            if(!singleton_call_name_equals(compiler,method->name,name))continue;
+            if(method->function_index>=compiler->program->function_count)
+                return nullptr;
+            return compiler->program->functions[method->function_index];
+        }
+        if(class->superclass==UINT8_MAX)break;
+        class_index=class->superclass;
+    }
+    return nullptr;
+}
+
 /* `receiver.method` -- a capturing, variadic Callable whose single captured
  * value is the receiver and whose collected positional arguments are forwarded
  * through the ordinary dynamic INVOKE_SPREAD matrix. */
@@ -4357,6 +4382,8 @@ static uint16_t parse_invoke(Compiler *compiler, uint16_t receiver) {
         fail(compiler, compiler->current.span, "expected method name after '.'"); return 0;
     }
     const DiamondSpan name = compiler->current.span;
+    const DiamondFunction *contextual_target=
+        instance_call_signature(compiler,receiver,name);
     advance_token(compiler);
     bool writer_name=false;
     if(compiler->current.kind==DIAMOND_TOKEN_EQUAL) {
@@ -4421,7 +4448,10 @@ static uint16_t parse_invoke(Compiler *compiler, uint16_t receiver) {
                     keyword_values[index],0,2);
                 keyword_values[index]=snapshot;
             }
-            block=compile_block(compiler);has_block=true;
+            block=compile_contextual_block(compiler,contextual_target,
+                contextual_target==nullptr||contextual_target->arity<=1?0:
+                    contextual_target->arity-2);
+            has_block=true;
         }
         return emit_invoke_keywords(compiler,receiver,name,positional,
             keyword_names,keyword_values,keyword_count,type_arguments,
@@ -4485,7 +4515,9 @@ static uint16_t parse_invoke(Compiler *compiler, uint16_t receiver) {
             emit_instruction(compiler,DIAMOND_OP_MOVE,snapshot,args[i],0,2);
             args[i]=snapshot;
         }
-        args[count++]=compile_block(compiler);
+        args[count++]=compile_contextual_block(compiler,contextual_target,
+            contextual_target==nullptr||contextual_target->arity<=1?0:
+                contextual_target->arity-2);
     }
     return emit_invoke_call(compiler,receiver,name,writer_name,
         type_arguments,type_argument_count,args,count);
@@ -7483,9 +7515,32 @@ static uint16_t compile_block(Compiler *compiler) {
                 }
                 const uint16_t parameter=allocate_register(compiler);
                 if(has_contextual_types&&parameter_count<contextual_arity&&
-                   contextual_types[parameter_count]!=TYPE_UNKNOWN)
+                   contextual_types[parameter_count]!=TYPE_UNKNOWN) {
                     compiler->known_types[parameter]=
                         contextual_types[parameter_count];
+                    /* The contextual type is part of the block's callable
+                     * signature as well as a body-local inference fact.
+                     * Dynamic invocation validates typed Callable arguments
+                     * from this metadata, so omitting it would compile a
+                     * well-typed body and then reject its closure at runtime. */
+                    if(reserve_type_sets(compiler,1)) {
+                        const size_t set_index=function->type_set_count++;
+                        DiamondTypeSet *set=&function->type_sets[set_index];
+                        set->count=1;set->inferred=true;
+                        set->members[0]=(DiamondTypeMember){
+                            .id=contextual_types[parameter_count],
+                            .argument_set=DIAMOND_NO_TYPE_SET,
+                            .second_argument_set=DIAMOND_NO_TYPE_SET,
+                            .callable_arity=UINT8_MAX,
+                            .callable_return_set=DIAMOND_NO_TYPE_SET,
+                            .callable_parameters_typed=false};
+                        for(size_t index=0;index<16;index++)
+                            set->members[0].callable_parameter_sets[index]=
+                                DIAMOND_NO_TYPE_SET;
+                        function->parameter_type_sets[parameter_count]=
+                            (uint16_t)set_index;
+                    }
+                }
                 compiler->locals[compiler->local_count++]=(Local){
                     .name=compiler->current.span,.reg=parameter};
                 record_scope_type_fact(compiler,parameter,compiler->current.span.start);

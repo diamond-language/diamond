@@ -12,6 +12,15 @@ class ContextOps
   end
 end
 
+class ContextBase
+  def transform(&block: Callable[[String], String]) -> String
+    yield("instance")
+  end
+end
+
+class ContextChild < ContextBase
+end
+
 puts(calculate() do |value|
   value * 7
 end)
@@ -22,4 +31,12 @@ end)
 
 puts(ContextOps.calculate() do |value|
   value + 1
+end)
+
+puts(ContextBase.new().transform() do |value|
+  value + "!"
+end)
+
+puts(ContextChild.new().transform() do |value|
+  value + " inherited"
 end)
