@@ -85,6 +85,9 @@
 - Widened per-function literal constants from 256 to the existing 16-bit
   `CONSTANT` operand boundary, with dynamic storage and ProgramBuilder/thread
   clone ownership.
+- Replaced fixed per-function string/name tables with dynamically grown storage,
+  removing roughly 64 KiB of unconditional allocation per function while
+  retaining the current one-byte dispatch-name wire boundary.
 - Added protected method visibility with peer/subclass receiver access and
   runtime rejection outside the declaring class hierarchy.
 - Added `LazyEnumerator` pipelines with deferred `map`, `select`, and `reject`

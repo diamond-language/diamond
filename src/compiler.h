@@ -59,6 +59,7 @@ void diamond_program_free(DiamondProgram *program);
 DiamondFunction *diamond_program_add_function(DiamondProgram *program);
 bool diamond_function_reserve_code(DiamondFunction *function,size_t capacity);
 bool diamond_function_reserve_constants(DiamondFunction *function,size_t capacity);
+bool diamond_function_reserve_strings(DiamondFunction *function,size_t capacity);
 bool diamond_function_copy(DiamondFunction *destination,
                            const DiamondFunction *source);
 bool diamond_compile(const char *source, DiamondProgram *program,

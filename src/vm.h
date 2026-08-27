@@ -604,8 +604,9 @@ typedef struct DiamondFunction {
     DiamondValue *constants;
     size_t constant_count;
     size_t constant_capacity;
-    DiamondStringConstant strings[DIAMOND_MAX_STRING_CONSTANTS];
+    DiamondStringConstant *strings;
     size_t string_count;
+    size_t string_capacity;
     DiamondTypeSet type_sets[DIAMOND_MAX_TYPE_SETS];
     size_t type_set_count;
     uint8_t arity;

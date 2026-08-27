@@ -547,6 +547,12 @@ static uint8_t add_string_range(Compiler *compiler,size_t start,size_t length,
         fail(compiler, span, "function has too many string literals");
         return 0;
     }
+    if(compiler->function->string_count==compiler->function->string_capacity&&
+       !diamond_function_reserve_strings(compiler->function,
+          compiler->function->string_capacity==0?16:
+          compiler->function->string_capacity*2)) {
+        fail(compiler,span,"out of memory growing function strings");return 0;
+    }
     DiamondStringConstant *string =
         &compiler->function->strings[compiler->function->string_count];
     for(size_t index=0;index<length;index++) {
@@ -586,6 +592,12 @@ static uint8_t add_name_string(Compiler *compiler, DiamondSpan span) {
         span.length > DIAMOND_MAX_STRING_LENGTH) {
         fail(compiler, span, "too many or oversized names in function");
         return 0;
+    }
+    if(compiler->function->string_count==compiler->function->string_capacity&&
+       !diamond_function_reserve_strings(compiler->function,
+          compiler->function->string_capacity==0?16:
+          compiler->function->string_capacity*2)) {
+        fail(compiler,span,"out of memory growing function strings");return 0;
     }
     DiamondStringConstant *string =
         &compiler->function->strings[compiler->function->string_count];
@@ -946,6 +958,7 @@ static DiamondFunction *compiler_add_function(Compiler *compiler,
         DiamondFunction *function=compiler->program->functions[*function_index];
         free(function->code);free(function->lines);free(function->columns);
         free(function->constants);
+        free(function->strings);
         memset(function,0,sizeof *function);
         return function;
     }
@@ -8287,6 +8300,9 @@ static void compile_attribute_named(Compiler *compiler,bool writer,bool predicat
     }
     if(compiler->current_module>=0&&compiler->current_class<0) {
         function->uses_instance_state=true;
+        if(!diamond_function_reserve_strings(function,1)) {
+            fail(compiler,name,"out of memory compiling module attribute");return;
+        }
         DiamondStringConstant *string=&function->strings[0];
         (void)snprintf(string->chars,sizeof string->chars,"%s",field_name);
         string->length=strlen(field_name);function->string_count=1;
@@ -10160,12 +10176,26 @@ bool diamond_function_reserve_constants(DiamondFunction *function,
     return true;
 }
 
+bool diamond_function_reserve_strings(DiamondFunction *function,size_t capacity) {
+    if(capacity<=function->string_capacity)return true;
+    if(capacity>DIAMOND_MAX_STRING_CONSTANTS)return false;
+    const size_t previous_capacity=function->string_capacity;
+    DiamondStringConstant *strings=realloc(function->strings,
+        capacity*sizeof *strings);
+    if(strings==nullptr)return false;
+    memset(strings+previous_capacity,0,
+        (capacity-previous_capacity)*sizeof *strings);
+    function->strings=strings;function->string_capacity=capacity;
+    return true;
+}
+
 bool diamond_function_copy(DiamondFunction *destination,
                            const DiamondFunction *source) {
     *destination=*source;
     destination->code=nullptr;destination->lines=nullptr;
     destination->columns=nullptr;destination->code_capacity=0;
     destination->constants=nullptr;destination->constant_capacity=0;
+    destination->strings=nullptr;destination->string_capacity=0;
     if(source->code_count>0) {
         destination->code=malloc(source->code_count*sizeof *destination->code);
         destination->lines=malloc(source->code_count*sizeof *destination->lines);
@@ -10174,14 +10204,20 @@ bool diamond_function_copy(DiamondFunction *destination,
     if(source->constant_count>0)
         destination->constants=malloc(
             source->constant_count*sizeof *destination->constants);
+    if(source->string_count>0)
+        destination->strings=malloc(
+            source->string_count*sizeof *destination->strings);
     if((source->code_count>0&&(destination->code==nullptr||
        destination->lines==nullptr||destination->columns==nullptr))||
-       (source->constant_count>0&&destination->constants==nullptr)) {
+       (source->constant_count>0&&destination->constants==nullptr)||
+       (source->string_count>0&&destination->strings==nullptr)) {
         free(destination->code);free(destination->lines);
         free(destination->columns);free(destination->constants);
+        free(destination->strings);
         destination->code=nullptr;destination->lines=nullptr;
         destination->columns=nullptr;destination->constants=nullptr;
-        destination->code_count=0;destination->constant_count=0;
+        destination->strings=nullptr;destination->code_count=0;
+        destination->constant_count=0;destination->string_count=0;
         return false;
     }
     if(source->code_count>0) {
@@ -10195,8 +10231,12 @@ bool diamond_function_copy(DiamondFunction *destination,
     if(source->constant_count>0)
         memcpy(destination->constants,source->constants,
             source->constant_count*sizeof *destination->constants);
+    if(source->string_count>0)
+        memcpy(destination->strings,source->strings,
+            source->string_count*sizeof *destination->strings);
     destination->code_capacity=source->code_count;
     destination->constant_capacity=source->constant_count;
+    destination->string_capacity=source->string_count;
     return true;
 }
 
@@ -10204,16 +10244,20 @@ void diamond_program_free(DiamondProgram *program) {
     if(program==nullptr)return;
     free(program->entry.code);free(program->entry.lines);
     free(program->entry.columns);free(program->entry.constants);
+    free(program->entry.strings);
     program->entry.code=nullptr;program->entry.lines=nullptr;
     program->entry.columns=nullptr;program->entry.code_count=0;
     program->entry.code_capacity=0;
     program->entry.constants=nullptr;program->entry.constant_count=0;
     program->entry.constant_capacity=0;
+    program->entry.strings=nullptr;program->entry.string_count=0;
+    program->entry.string_capacity=0;
     for(size_t index=0;index<program->function_count;index++) {
         free(program->functions[index]->code);
         free(program->functions[index]->lines);
         free(program->functions[index]->columns);
         free(program->functions[index]->constants);
+        free(program->functions[index]->strings);
         free(program->functions[index]);
     }
     free(program->functions);

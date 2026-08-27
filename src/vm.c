@@ -3155,6 +3155,13 @@ static DiamondVmStatus program_builder_invoke_helper(DiamondVm *vm,
                 "function has too many string constants");
             return DIAMOND_VM_TYPE_ERROR;
         }
+        if(target->string_count==target->string_capacity&&
+           !diamond_function_reserve_strings(target,
+              target->string_capacity==0?16:target->string_capacity*2)) {
+            snprintf(vm->error,sizeof vm->error,
+                "ProgramBuilder#add_string could not grow strings");
+            return DIAMOND_VM_OUT_OF_MEMORY;
+        }
         DiamondStringConstant *slot=&target->strings[target->string_count];
         memcpy(slot->chars,text->chars,text->length);
         slot->chars[text->length]='\0';

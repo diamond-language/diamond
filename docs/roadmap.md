@@ -240,6 +240,13 @@ roughly 4 KiB of unconditional storage per function. String/name and type-set
 indices remain at 256: several invocation and annotation opcodes still encode
 those as raw bytes, so widening either requires a separate bytecode migration.
 
+String/name storage is now dynamic in preparation for that migration. The
+wire-format limit remains 256 for now, but an empty or small function no longer
+reserves all 256 `DiamondStringConstant` records (roughly 64 KiB) up front.
+Compiler literals/names, synthetic module attributes, ProgramBuilder emission,
+discovery reservations, thread clones, and teardown share the same ownership
+model. Widening the opcode fields remains the distinct next step.
+
 Resolved: a class/module/interface (and a type annotation naming one) can
 now be referenced before its own declaration is textually reached later in
 the same source -- `diamond_compile` (`src/compiler.c`) runs the whole
