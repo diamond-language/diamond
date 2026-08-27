@@ -39,17 +39,17 @@ typedef struct LoopContext {
     size_t break_count;
     size_t flow_reg_count;
     uint8_t *exit_types;
-    int16_t *exit_sets;
+    int32_t *exit_sets;
     bool exit_initialized;
     uint8_t result_type;
-    int16_t result_set;
+    int32_t result_set;
 } LoopContext;
 
 enum { DIAMOND_MAX_NARROWING_FACTS = 8 };
 
 typedef struct NarrowingFact {
     uint16_t reg;
-    int16_t type_set;
+    int32_t type_set;
 } NarrowingFact;
 
 /* A pending narrowing, keyed by the register holding the boolean
@@ -111,7 +111,7 @@ typedef struct Compiler {
      * parse_loop's own comments). */
     bool loop_captures_pending;
     uint8_t known_types[DIAMOND_REGISTER_COUNT];
-    int16_t known_type_sets[DIAMOND_REGISTER_COUNT];
+    int32_t known_type_sets[DIAMOND_REGISTER_COUNT];
     bool in_function;
     int current_return_type;
     DiamondSpan current_return_type_span;
@@ -271,8 +271,8 @@ static uint16_t allocate_register(Compiler *compiler) {
 }
 
 static bool type_sets_satisfy_across(const Compiler *compiler,
-    const DiamondTypeSet *known_sets,uint8_t known_index,
-    const DiamondTypeSet *expected_sets,uint8_t expected_index);
+    const DiamondTypeSet *known_sets,uint16_t known_index,
+    const DiamondTypeSet *expected_sets,uint16_t expected_index);
 
 static bool known_type_satisfies_one(const Compiler *compiler, uint8_t known,
                                      uint8_t expected) {
@@ -323,8 +323,8 @@ static bool known_type_satisfies_one(const Compiler *compiler, uint8_t known,
                             compiler->program->functions[class->methods[method].function_index];
                         found=true;
                         for(size_t parameter=0;parameter<wanted->arity;parameter++) {
-                            const uint8_t required_set=wanted->parameter_type_sets[parameter];
-                            const uint8_t actual_set=implementation->parameter_type_sets[parameter];
+                            const uint16_t required_set=wanted->parameter_type_sets[parameter];
+                            const uint16_t actual_set=implementation->parameter_type_sets[parameter];
                             if(required_set==UINT8_MAX) {
                                 if(actual_set!=UINT8_MAX)found=false;
                             } else if(actual_set!=UINT8_MAX&&
@@ -380,8 +380,8 @@ static bool type_member_satisfies(const Compiler *compiler,
                                   DiamondTypeMember known,
                                   DiamondTypeMember expected);
 
-static bool type_set_satisfies(const Compiler *compiler,uint8_t known_index,
-                               uint8_t expected_index) {
+static bool type_set_satisfies(const Compiler *compiler,uint16_t known_index,
+                               uint16_t expected_index) {
     const DiamondTypeSet *known=&compiler->function->type_sets[known_index];
     const DiamondTypeSet *expected=&compiler->function->type_sets[expected_index];
     for(size_t source=0;source<known->count;source++) {
@@ -403,9 +403,9 @@ static bool type_members_satisfy_across(const Compiler *compiler,
            known.callable_arity!=expected.callable_arity)return false;
         if(expected.callable_parameters_typed)
             for(size_t parameter=0;parameter<expected.callable_arity;parameter++) {
-                const uint8_t wanted=expected.callable_parameter_sets[parameter];
+                const uint16_t wanted=expected.callable_parameter_sets[parameter];
                 if(wanted==UINT8_MAX)continue;
-                const uint8_t actual=known.callable_parameter_sets[parameter];
+                const uint16_t actual=known.callable_parameter_sets[parameter];
                 if(actual!=UINT8_MAX&&
                    !type_sets_satisfy_across(compiler,expected_sets,wanted,
                                               known_sets,actual))return false;
@@ -427,8 +427,8 @@ static bool type_members_satisfy_across(const Compiler *compiler,
 }
 
 static bool type_sets_satisfy_across(const Compiler *compiler,
-    const DiamondTypeSet *known_sets,uint8_t known_index,
-    const DiamondTypeSet *expected_sets,uint8_t expected_index) {
+    const DiamondTypeSet *known_sets,uint16_t known_index,
+    const DiamondTypeSet *expected_sets,uint16_t expected_index) {
     const DiamondTypeSet *known=&known_sets[known_index];
     const DiamondTypeSet *expected=&expected_sets[expected_index];
     for(size_t source=0;source<known->count;source++) {
@@ -450,9 +450,9 @@ static bool type_member_satisfies(const Compiler *compiler,
            known.callable_arity!=expected.callable_arity)return false;
         if(expected.callable_parameters_typed)
             for(size_t parameter=0;parameter<expected.callable_arity;parameter++) {
-                const uint8_t wanted=expected.callable_parameter_sets[parameter];
+                const uint16_t wanted=expected.callable_parameter_sets[parameter];
                 if(wanted==UINT8_MAX)continue;
-                const uint8_t actual=known.callable_parameter_sets[parameter];
+                const uint16_t actual=known.callable_parameter_sets[parameter];
                 if(actual!=UINT8_MAX&&
                    !type_set_satisfies(compiler,wanted,actual))return false;
             }
@@ -472,7 +472,7 @@ static bool type_member_satisfies(const Compiler *compiler,
                            expected.second_argument_set);
 }
 
-static bool type_set_contains_variable(const Compiler *compiler,uint8_t set_index) {
+static bool type_set_contains_variable(const Compiler *compiler,uint16_t set_index) {
     const DiamondTypeSet *set=&compiler->function->type_sets[set_index];
     for(size_t index=0;index<set->count;index++) {
         const DiamondTypeMember member=set->members[index];
@@ -492,14 +492,14 @@ static bool type_set_contains_variable(const Compiler *compiler,uint8_t set_inde
     return false;
 }
 
-static void emit_type_check(Compiler *compiler, uint16_t reg, uint8_t set_index,
+static void emit_type_check(Compiler *compiler, uint16_t reg, uint16_t set_index,
                             DiamondSpan span) {
     if(type_set_contains_variable(compiler,set_index)) {
         emit_instruction(compiler,DIAMOND_OP_CHECK_TYPE,reg,set_index,0,2);
         return;
     }
     if(compiler->known_type_sets[reg]>=0) {
-        const uint8_t known_set=(uint8_t)compiler->known_type_sets[reg];
+        const uint16_t known_set=(uint16_t)compiler->known_type_sets[reg];
         if(type_set_satisfies(compiler,known_set,set_index))return;
         if(compiler->function->type_sets[known_set].inferred) {
             emit_instruction(compiler,DIAMOND_OP_CHECK_TYPE,reg,set_index,0,2);
@@ -542,14 +542,23 @@ static uint16_t add_constant(Compiler *compiler, DiamondValue value) {
 }
 
 static bool grow_type_sets(DiamondFunction *function,size_t additional) {
-    if(additional>DIAMOND_MAX_TYPE_SETS-function->type_set_count)return false;
-    const size_t needed=function->type_set_count+additional;
-    if(needed<=function->type_set_capacity)return true;
-    size_t capacity=function->type_set_capacity==0?8:
-        function->type_set_capacity*2;
-    if(capacity<needed)capacity=needed;
-    if(capacity>DIAMOND_MAX_TYPE_SETS)capacity=DIAMOND_MAX_TYPE_SETS;
-    return diamond_function_reserve_type_sets(function,capacity);
+    const bool reserve_legacy_sentinel=function->type_set_count==UINT8_MAX;
+    const size_t reserved=reserve_legacy_sentinel?1u:0u;
+    if(additional+reserved>DIAMOND_MAX_TYPE_SETS-function->type_set_count)
+        return false;
+    const size_t needed=function->type_set_count+additional+reserved;
+    if(needed>function->type_set_capacity) {
+        size_t capacity=function->type_set_capacity==0?8:
+            function->type_set_capacity*2;
+        if(capacity<needed)capacity=needed;
+        if(capacity>DIAMOND_MAX_TYPE_SETS)capacity=DIAMOND_MAX_TYPE_SETS;
+        if(!diamond_function_reserve_type_sets(function,capacity))return false;
+    }
+    if(reserve_legacy_sentinel) {
+        function->type_sets[function->type_set_count]=(DiamondTypeSet){};
+        function->type_set_count++;
+    }
+    return true;
 }
 
 static bool reserve_type_sets(Compiler *compiler,size_t additional) {
@@ -1241,11 +1250,11 @@ static int parse_type_annotation(Compiler *compiler) {
         if(set->count==DIAMOND_MAX_UNION_TYPES) {
             fail(compiler,compiler->current.span,"too many types in union");break;
         }
-        uint8_t argument_set=UINT8_MAX,second_argument_set=UINT8_MAX;
+        uint16_t argument_set=UINT8_MAX,second_argument_set=UINT8_MAX;
         uint8_t callable_arity=UINT8_MAX;
-        uint8_t callable_return_set=UINT8_MAX;
+        uint16_t callable_return_set=UINT8_MAX;
         bool callable_parameters_typed=false;
-        uint8_t callable_parameter_sets[16];
+        uint16_t callable_parameter_sets[16];
         for(size_t index=0;index<16;index++)callable_parameter_sets[index]=UINT8_MAX;
         if(compiler->current.kind==DIAMOND_TOKEN_LEFT_BRACKET) {
             if(type==DIAMOND_TYPE_CALLABLE) {
@@ -1274,7 +1283,7 @@ static int parse_type_annotation(Compiler *compiler) {
                                  "Callable cannot exceed 16 parameters");break;
                         }
                         callable_parameter_sets[callable_arity++]=
-                            (uint8_t)parse_type_annotation(compiler);
+                            (uint16_t)parse_type_annotation(compiler);
                         skip_newlines(compiler);
                         if(compiler->current.kind!=DIAMOND_TOKEN_COMMA)break;
                         advance_token(compiler);
@@ -1291,12 +1300,12 @@ static int parse_type_annotation(Compiler *compiler) {
                 }
                 if(compiler->current.kind==DIAMOND_TOKEN_COMMA) {
                     advance_token(compiler);
-                    callable_return_set=(uint8_t)parse_type_annotation(compiler);
+                    callable_return_set=(uint16_t)parse_type_annotation(compiler);
                 }
             } else if(type==DIAMOND_TYPE_ARRAY||type==DIAMOND_TYPE_HASH) {
                 advance_token(compiler);
                 skip_newlines(compiler);
-                argument_set=(uint8_t)parse_type_annotation(compiler);
+                argument_set=(uint16_t)parse_type_annotation(compiler);
                 if(type==DIAMOND_TYPE_HASH) {
                     skip_newlines(compiler);
                     if(compiler->current.kind!=DIAMOND_TOKEN_COMMA) {
@@ -1305,7 +1314,7 @@ static int parse_type_annotation(Compiler *compiler) {
                     }
                     advance_token(compiler);
                     skip_newlines(compiler);
-                    second_argument_set=(uint8_t)parse_type_annotation(compiler);
+                    second_argument_set=(uint16_t)parse_type_annotation(compiler);
                 }
             } else {
                 fail(compiler,member_span,
@@ -1757,7 +1766,7 @@ static uint16_t parse_call(Compiler *compiler, DiamondSpan name) {
     }
     const DiamondFunction *function =
         compiler->program->functions[(size_t)function_index];
-    uint8_t type_arguments[8];
+    uint16_t type_arguments[8];
     size_t type_argument_count=0;
     if(compiler->current.kind==DIAMOND_TOKEN_LEFT_BRACKET) {
         advance_token(compiler);
@@ -1769,7 +1778,7 @@ static uint16_t parse_call(Compiler *compiler, DiamondSpan name) {
                 return 0;
             }
             type_arguments[type_argument_count++]=
-                (uint8_t)parse_type_annotation(compiler);
+                (uint16_t)parse_type_annotation(compiler);
             skip_newlines(compiler);
             if(compiler->current.kind!=DIAMOND_TOKEN_COMMA)break;
             advance_token(compiler);
@@ -1814,7 +1823,7 @@ static uint16_t parse_call(Compiler *compiler, DiamondSpan name) {
         if(type_argument_count>0) {
             emit_byte(compiler,(uint8_t)type_argument_count);
             for(size_t index=0;index<type_argument_count;index++)
-                emit_byte(compiler,type_arguments[index]);
+                emit_register(compiler,type_arguments[index]);
         }
         return destination;
     }
@@ -1940,7 +1949,7 @@ static uint16_t parse_call(Compiler *compiler, DiamondSpan name) {
     if(type_argument_count>0) {
         emit_byte(compiler,(uint8_t)type_argument_count);
         for(size_t index=0;index<type_argument_count;index++)
-            emit_byte(compiler,type_arguments[index]);
+            emit_register(compiler,type_arguments[index]);
     }
     return destination;
 }
@@ -1967,7 +1976,7 @@ static uint16_t parse_call(Compiler *compiler, DiamondSpan name) {
  * an ordinary hand-written call site would compile to. */
 static uint16_t emit_singleton_call(Compiler *compiler,const DiamondMethod *method,
         int receiver_class_index,const uint16_t *arguments,size_t argument_count,
-        DiamondSpan name,uint8_t type_argument_count,const uint8_t *type_arguments) {
+        DiamondSpan name,uint8_t type_argument_count,const uint16_t *type_arguments) {
     if(argument_count<method->required_arity||
        (argument_count>method->arity && !method->has_variadic)) {
         fail(compiler,name,"wrong number of arguments");return 0;
@@ -1998,7 +2007,7 @@ static uint16_t emit_singleton_call(Compiler *compiler,const DiamondMethod *meth
     if(type_argument_count>0) {
         emit_byte(compiler,(uint8_t)type_argument_count);
         for(size_t index=0;index<type_argument_count;index++)
-            emit_byte(compiler,type_arguments[index]);
+            emit_register(compiler,type_arguments[index]);
     }
     return destination;
 }
@@ -2031,7 +2040,7 @@ static uint16_t parse_singleton_reference(Compiler *compiler,
                                          const DiamondMethod *method,
                                          DiamondSpan namespace_name,
                                          int receiver_class_index,
-                                         const uint8_t *type_arguments,
+                                         const uint16_t *type_arguments,
                                          size_t type_argument_count) {
     const DiamondFunction *target=
         compiler->program->functions[method->function_index];
@@ -2109,7 +2118,7 @@ static uint16_t parse_singleton_reference(Compiler *compiler,
         if(type_argument_count>0) {
             emit_byte(compiler,(uint8_t)type_argument_count);
             for(size_t index=0;index<type_argument_count;index++)
-                emit_byte(compiler,type_arguments[index]);
+                emit_register(compiler,type_arguments[index]);
         }
     } else body_result=emit_singleton_call(compiler,method,
         receiver_class_index,arguments,method->arity,namespace_name,
@@ -2144,7 +2153,7 @@ static uint16_t parse_singleton_call(Compiler *compiler,
         compiler->program->functions[method->function_index];
     advance_token(compiler);
     if(compiler->current.kind==DIAMOND_TOKEN_EQUAL)advance_token(compiler);
-    uint8_t type_arguments[8];size_t type_argument_count=0;
+    uint16_t type_arguments[8];size_t type_argument_count=0;
     if(compiler->current.kind==DIAMOND_TOKEN_LEFT_BRACKET) {
         advance_token(compiler);
         skip_newlines(compiler);
@@ -2155,7 +2164,7 @@ static uint16_t parse_singleton_call(Compiler *compiler,
                 return 0;
             }
             type_arguments[type_argument_count++]=
-                (uint8_t)parse_type_annotation(compiler);
+                (uint16_t)parse_type_annotation(compiler);
             skip_newlines(compiler);
             if(compiler->current.kind!=DIAMOND_TOKEN_COMMA)break;
             advance_token(compiler);
@@ -2205,7 +2214,7 @@ static uint16_t parse_singleton_call(Compiler *compiler,
         if(type_argument_count>0) {
             emit_byte(compiler,(uint8_t)type_argument_count);
             for(size_t index=0;index<type_argument_count;index++)
-                emit_byte(compiler,type_arguments[index]);
+                emit_register(compiler,type_arguments[index]);
         }
         return destination;
     }
@@ -2225,7 +2234,7 @@ static uint16_t parse_singleton_call(Compiler *compiler,
         if(type_argument_count>0) {
             emit_byte(compiler,(uint8_t)type_argument_count);
             for(size_t index=0;index<type_argument_count;index++)
-                emit_byte(compiler,type_arguments[index]);
+                emit_register(compiler,type_arguments[index]);
         }
         return destination;
     }
@@ -2296,7 +2305,7 @@ static uint16_t parse_singleton_call(Compiler *compiler,
     if(type_argument_count>0) {
         emit_byte(compiler,(uint8_t)type_argument_count);
         for(size_t index=0;index<type_argument_count;index++)
-            emit_byte(compiler,type_arguments[index]);
+            emit_register(compiler,type_arguments[index]);
     }
     return destination;
 }
@@ -3961,7 +3970,7 @@ static uint16_t parse_name(Compiler *compiler) {
  * generics apply to its scope. */
 static uint16_t emit_invoke_call(Compiler *compiler, uint16_t receiver,
         DiamondSpan method_name, bool writer_name,
-        const uint8_t *type_arguments, size_t type_argument_count,
+        const uint16_t *type_arguments, size_t type_argument_count,
         const uint16_t *args, size_t count) {
     const uint16_t base = allocate_register(compiler);
     for (size_t i=1;i<count;i++) (void)allocate_register(compiler);
@@ -3985,13 +3994,13 @@ static uint16_t emit_invoke_call(Compiler *compiler, uint16_t receiver,
     if(type_argument_count>0) {
         emit_byte(compiler,(uint8_t)type_argument_count);
         for(size_t index=0;index<type_argument_count;index++)
-            emit_byte(compiler,type_arguments[index]);
+            emit_register(compiler,type_arguments[index]);
     }
     return dest;
 }
 
 static uint16_t emit_invoke_typed_spread(Compiler *compiler,uint16_t receiver,
-        DiamondSpan method_name,uint16_t spread,const uint8_t *type_arguments,
+        DiamondSpan method_name,uint16_t spread,const uint16_t *type_arguments,
         size_t type_argument_count) {
     const uint16_t destination=allocate_register(compiler);
     const uint16_t method=add_name_string(compiler,method_name);
@@ -4002,7 +4011,7 @@ static uint16_t emit_invoke_typed_spread(Compiler *compiler,uint16_t receiver,
     if(type_argument_count>0) {
         emit_byte(compiler,(uint8_t)type_argument_count);
         for(size_t index=0;index<type_argument_count;index++)
-            emit_byte(compiler,type_arguments[index]);
+            emit_register(compiler,type_arguments[index]);
     }
     return destination;
 }
@@ -4016,7 +4025,7 @@ static uint16_t emit_invoke_spread(Compiler *compiler,uint16_t receiver,
 static uint16_t emit_invoke_keywords(Compiler *compiler,uint16_t receiver,
         DiamondSpan method_name,uint16_t positional,
         const DiamondSpan *keyword_names,const uint16_t *keyword_values,
-        size_t keyword_count,const uint8_t *type_arguments,
+        size_t keyword_count,const uint16_t *type_arguments,
         size_t type_argument_count) {
     const uint16_t destination=allocate_register(compiler);
     emit_opcode(compiler,type_argument_count==0?DIAMOND_OP_INVOKE_KEYWORDS:
@@ -4031,7 +4040,7 @@ static uint16_t emit_invoke_keywords(Compiler *compiler,uint16_t receiver,
     if(type_argument_count>0) {
         emit_byte(compiler,(uint8_t)type_argument_count);
         for(size_t index=0;index<type_argument_count;index++)
-            emit_byte(compiler,type_arguments[index]);
+            emit_register(compiler,type_arguments[index]);
     }
     return destination;
 }
@@ -4090,7 +4099,7 @@ static bool writer_generic_arguments_ahead(const Compiler *compiler) {
  * value is the receiver and whose collected positional arguments are forwarded
  * through the ordinary dynamic INVOKE_SPREAD matrix. */
 static uint16_t parse_bound_method_reference(Compiler *compiler,uint16_t receiver,
-        DiamondSpan method_name,const uint8_t *type_arguments,
+        DiamondSpan method_name,const uint16_t *type_arguments,
         size_t type_argument_count) {
     size_t function_index=0;
     DiamondFunction *wrapper=compiler_add_function(compiler,&function_index);
@@ -4118,13 +4127,14 @@ static uint16_t parse_bound_method_reference(Compiler *compiler,uint16_t receive
     const size_t outer_local_count=compiler->local_count;
     const bool outer_in_function=compiler->in_function;
     uint8_t *outer_types=malloc(outer_next_register*sizeof *outer_types);
-    uint8_t *outer_type_sets=malloc(outer_next_register*sizeof *outer_type_sets);
+    int32_t *outer_type_sets=malloc(outer_next_register*sizeof *outer_type_sets);
     if((outer_types==nullptr||outer_type_sets==nullptr)&&outer_next_register>0) {
         free(outer_types);free(outer_type_sets);
         fail(compiler,method_name,"out of memory");return 0;
     }
     memcpy(outer_types,compiler->known_types,outer_next_register);
-    memcpy(outer_type_sets,compiler->known_type_sets,outer_next_register);
+    memcpy(outer_type_sets,compiler->known_type_sets,
+        outer_next_register*sizeof *outer_type_sets);
     compiler->function=wrapper;compiler->next_register=0;
     compiler->local_count=0;compiler->in_function=true;
     const uint16_t arguments=allocate_register(compiler);
@@ -4139,7 +4149,8 @@ static uint16_t parse_bound_method_reference(Compiler *compiler,uint16_t receive
     compiler->function=outer_function;compiler->next_register=outer_next_register;
     compiler->local_count=outer_local_count;compiler->in_function=outer_in_function;
     memcpy(compiler->known_types,outer_types,outer_next_register);
-    memcpy(compiler->known_type_sets,outer_type_sets,outer_next_register);
+    memcpy(compiler->known_type_sets,outer_type_sets,
+        outer_next_register*sizeof *outer_type_sets);
     free(outer_types);free(outer_type_sets);
     const uint16_t result=allocate_register(compiler);
     emit_opcode(compiler,DIAMOND_OP_CLOSURE);emit_register(compiler,result);
@@ -4159,7 +4170,7 @@ static uint16_t parse_invoke(Compiler *compiler, uint16_t receiver) {
     if(compiler->current.kind==DIAMOND_TOKEN_EQUAL) {
         writer_name=true;advance_token(compiler);
     }
-    uint8_t type_arguments[8];size_t type_argument_count=0;
+    uint16_t type_arguments[8];size_t type_argument_count=0;
     if(compiler->current.kind==DIAMOND_TOKEN_LEFT_BRACKET &&
        (!writer_name||writer_generic_arguments_ahead(compiler))) {
         advance_token(compiler);
@@ -4171,7 +4182,7 @@ static uint16_t parse_invoke(Compiler *compiler, uint16_t receiver) {
                 return 0;
             }
             type_arguments[type_argument_count++]=
-                (uint8_t)parse_type_annotation(compiler);
+                (uint16_t)parse_type_annotation(compiler);
             skip_newlines(compiler);
             if(compiler->current.kind!=DIAMOND_TOKEN_COMMA)break;
             advance_token(compiler);
@@ -4494,10 +4505,10 @@ static uint16_t parse_hash(Compiler *compiler) {
     return destination;
 }
 
-static int16_t type_set_with_nil(Compiler *compiler,uint8_t source_index) {
+static int32_t type_set_with_nil(Compiler *compiler,uint16_t source_index) {
     const DiamondTypeSet source=compiler->function->type_sets[source_index];
     for(size_t index=0;index<source.count;index++)
-        if(source.members[index].id==DIAMOND_TYPE_NIL)return (int16_t)source_index;
+        if(source.members[index].id==DIAMOND_TYPE_NIL)return (int32_t)source_index;
     if(source.count==DIAMOND_MAX_UNION_TYPES||
        !grow_type_sets(compiler->function,1))return -1;
     const size_t result=compiler->function->type_set_count++;
@@ -4507,11 +4518,11 @@ static int16_t type_set_with_nil(Compiler *compiler,uint8_t source_index) {
         .id=DIAMOND_TYPE_NIL,.argument_set=UINT8_MAX,
         .second_argument_set=UINT8_MAX,.callable_arity=UINT8_MAX,
         .callable_return_set=UINT8_MAX};
-    return (int16_t)result;
+    return (int32_t)result;
 }
 
-static bool split_nil_type_set(Compiler *compiler,uint8_t source_index,
-                               int16_t *without_nil,int16_t *only_nil) {
+static bool split_nil_type_set(Compiler *compiler,uint16_t source_index,
+                               int32_t *without_nil,int32_t *only_nil) {
     const DiamondTypeSet source=compiler->function->type_sets[source_index];
     DiamondTypeSet narrowed={};bool found_nil=false;
     for(size_t index=0;index<source.count;index++) {
@@ -4520,9 +4531,9 @@ static bool split_nil_type_set(Compiler *compiler,uint8_t source_index,
     }
     if(!found_nil||narrowed.count==0||
        !grow_type_sets(compiler->function,2))return false;
-    *without_nil=(int16_t)compiler->function->type_set_count;
+    *without_nil=(int32_t)compiler->function->type_set_count;
     compiler->function->type_sets[compiler->function->type_set_count++]=narrowed;
-    *only_nil=(int16_t)compiler->function->type_set_count;
+    *only_nil=(int32_t)compiler->function->type_set_count;
     DiamondTypeSet *nil_set=&compiler->function->type_sets[
         compiler->function->type_set_count++];
     *nil_set=(DiamondTypeSet){.members={{.id=DIAMOND_TYPE_NIL,
@@ -4531,9 +4542,9 @@ static bool split_nil_type_set(Compiler *compiler,uint8_t source_index,
     return true;
 }
 
-static bool split_type_set(Compiler *compiler,uint8_t source_index,
-                           uint8_t tested_type,int16_t *matching,
-                           int16_t *remaining) {
+static bool split_type_set(Compiler *compiler,uint16_t source_index,
+                           uint8_t tested_type,int32_t *matching,
+                           int32_t *remaining) {
     const DiamondTypeSet source=compiler->function->type_sets[source_index];
     DiamondTypeSet yes={},no={};
     for(size_t index=0;index<source.count;index++) {
@@ -4544,14 +4555,14 @@ static bool split_type_set(Compiler *compiler,uint8_t source_index,
     }
     if(yes.count==0||no.count==0||
        !grow_type_sets(compiler->function,2))return false;
-    *matching=(int16_t)compiler->function->type_set_count;
+    *matching=(int32_t)compiler->function->type_set_count;
     compiler->function->type_sets[compiler->function->type_set_count++]=yes;
-    *remaining=(int16_t)compiler->function->type_set_count;
+    *remaining=(int32_t)compiler->function->type_set_count;
     compiler->function->type_sets[compiler->function->type_set_count++]=no;
     return true;
 }
 
-static void apply_type_set_fact(Compiler *compiler,uint16_t reg,int16_t set_index) {
+static void apply_type_set_fact(Compiler *compiler,uint16_t reg,int32_t set_index) {
     compiler->known_type_sets[reg]=set_index;
     const DiamondTypeSet *set=&compiler->function->type_sets[(size_t)set_index];
     compiler->known_types[reg]=set->count==1?set->members[0].id:TYPE_UNKNOWN;
@@ -4614,7 +4625,7 @@ static bool append_merged_member(DiamondTypeSet *merged,DiamondTypeMember member
 }
 
 static bool append_flow_type(const Compiler *compiler,DiamondTypeSet *merged,
-        uint8_t known_type,int16_t known_set) {
+        uint8_t known_type,int32_t known_set) {
     if(known_set>=0) {
         if((size_t)known_set>=compiler->function->type_set_count)return false;
         const DiamondTypeSet set=compiler->function->type_sets[(size_t)known_set];
@@ -4629,8 +4640,8 @@ static bool append_flow_type(const Compiler *compiler,DiamondTypeSet *merged,
 /* Conservatively joins two control-flow type states. Unlike runtime type
  * annotations this metadata is advisory: an unrepresentable or exhausted
  * union simply becomes unknown and must never make compilation fail. */
-static void merge_flow_types(Compiler *compiler,uint8_t left_type,int16_t left_set,
-        uint8_t right_type,int16_t right_set,uint8_t *result_type,int16_t *result_set) {
+static void merge_flow_types(Compiler *compiler,uint8_t left_type,int32_t left_set,
+        uint8_t right_type,int32_t right_set,uint8_t *result_type,int32_t *result_set) {
     *result_type=TYPE_UNKNOWN;*result_set=-1;
     if(left_type==right_type&&left_set==right_set) {
         *result_type=left_type;*result_set=left_set;return;
@@ -4642,14 +4653,14 @@ static void merge_flow_types(Compiler *compiler,uint8_t left_type,int16_t left_s
     for(size_t index=0;index<compiler->function->type_set_count;index++) {
         if(!compiler->function->type_sets[index].inferred)continue;
         if(!type_sets_equal_unordered(merged,compiler->function->type_sets[index]))continue;
-        *result_set=(int16_t)index;
+        *result_set=(int32_t)index;
         *result_type=merged.count==1?merged.members[0].id:TYPE_UNKNOWN;
         return;
     }
     if(!grow_type_sets(compiler->function,1))return;
     const size_t index=compiler->function->type_set_count++;
     compiler->function->type_sets[index]=merged;
-    *result_set=(int16_t)index;
+    *result_set=(int32_t)index;
     *result_type=merged.count==1?merged.members[0].id:TYPE_UNKNOWN;
 }
 
@@ -4660,7 +4671,7 @@ static bool register_is_local(const Compiler *compiler,uint16_t reg) {
 }
 
 static void merge_loop_exit(Compiler *compiler,LoopContext *loop,
-        uint8_t result_type,int16_t result_set) {
+        uint8_t result_type,int32_t result_set) {
     if(!loop->exit_initialized) {
         for(size_t index=0;index<loop->flow_reg_count;index++) {
             loop->exit_types[index]=compiler->known_types[index];
@@ -4699,13 +4710,13 @@ static uint16_t parse_index(Compiler *compiler,uint16_t receiver) {
     advance_token(compiler);
     const uint16_t destination=allocate_register(compiler);
     emit_instruction(compiler,DIAMOND_OP_INDEX_GET,destination,receiver,index,3);
-    const int16_t receiver_set=compiler->known_type_sets[receiver];
+    const int32_t receiver_set=compiler->known_type_sets[receiver];
     if(receiver_set>=0) {
         const DiamondTypeSet *set=&compiler->function->type_sets[(size_t)receiver_set];
         if(set->count==1) {
             const DiamondTypeMember member=set->members[0];
             if(member.id==DIAMOND_TYPE_ARRAY&&member.argument_set!=UINT8_MAX)
-                compiler->known_type_sets[destination]=(int16_t)member.argument_set;
+                compiler->known_type_sets[destination]=(int32_t)member.argument_set;
             else if(member.id==DIAMOND_TYPE_HASH&&
                     member.second_argument_set!=UINT8_MAX)
                 compiler->known_type_sets[destination]=type_set_with_nil(
@@ -4771,14 +4782,14 @@ static uint16_t parse_if(Compiler *compiler,bool inverted) {
      * stack-buffer-overflow once a function had allocated more than 256
      * registers before reaching an if/unless -- not just theoretical,
      * reproduced with a 260-line register-churning program. */
-    uint8_t inline_before_types[256];int16_t inline_before_sets[256];
-    uint8_t inline_then_types[256];int16_t inline_then_sets[256];
+    uint8_t inline_before_types[256];int32_t inline_before_sets[256];
+    uint8_t inline_then_types[256];int32_t inline_then_sets[256];
     uint8_t *before_types=inline_before_types,*then_types=inline_then_types;
-    int16_t *before_sets=inline_before_sets,*then_sets=inline_then_sets;
-    uint8_t *heap_types=nullptr;int16_t *heap_sets=nullptr;
+    int32_t *before_sets=inline_before_sets,*then_sets=inline_then_sets;
+    uint8_t *heap_types=nullptr;int32_t *heap_sets=nullptr;
     if(flow_reg_count>256) {
         heap_types=malloc(flow_reg_count*2*sizeof(uint8_t));
-        heap_sets=malloc(flow_reg_count*2*sizeof(int16_t));
+        heap_sets=malloc(flow_reg_count*2*sizeof(int32_t));
         if(heap_types==nullptr||heap_sets==nullptr) {
             fail(compiler,compiler->previous.span,
                  "out of memory compiling if expression");
@@ -4798,7 +4809,7 @@ static uint16_t parse_if(Compiler *compiler,bool inverted) {
             inverted?narrowing.when_false_count:narrowing.when_true_count);
     const uint16_t then_result = compile_sequence(compiler);
     const uint8_t then_type=compiler->known_types[then_result];
-    const int16_t then_set=compiler->known_type_sets[then_result];
+    const int32_t then_set=compiler->known_type_sets[then_result];
     for(size_t index=0;index<flow_reg_count;index++) {
         then_types[index]=compiler->known_types[index];
         then_sets[index]=compiler->known_type_sets[index];
@@ -4816,21 +4827,21 @@ static uint16_t parse_if(Compiler *compiler,bool inverted) {
             inverted?narrowing.when_true:narrowing.when_false,
             inverted?narrowing.when_true_count:narrowing.when_false_count);
 
-    uint8_t false_result_type=DIAMOND_TYPE_NIL;int16_t false_result_set=-1;
+    uint8_t false_result_type=DIAMOND_TYPE_NIL;int32_t false_result_set=-1;
     bool end_consumed=false;
     if (compiler->current.kind == DIAMOND_TOKEN_ELSE) {
         advance_token(compiler);
         if(compiler->current.kind==DIAMOND_TOKEN_NEWLINE)skip_newlines(compiler);
         const uint16_t else_result = compile_sequence(compiler);
         const uint8_t else_type=compiler->known_types[else_result];
-        const int16_t else_set=compiler->known_type_sets[else_result];
+        const int32_t else_set=compiler->known_type_sets[else_result];
         emit_instruction(compiler, DIAMOND_OP_MOVE, destination, else_result, 0, 2);
         false_result_type=else_type;false_result_set=else_set;
     } else if(compiler->current.kind==DIAMOND_TOKEN_ELSIF) {
         advance_token(compiler);
         const uint16_t else_result=parse_if(compiler,false);
         const uint8_t else_type=compiler->known_types[else_result];
-        const int16_t else_set=compiler->known_type_sets[else_result];
+        const int32_t else_set=compiler->known_type_sets[else_result];
         emit_instruction(compiler,DIAMOND_OP_MOVE,destination,else_result,0,2);
         false_result_type=else_type;false_result_set=else_set;
         end_consumed=true;
@@ -4840,7 +4851,7 @@ static uint16_t parse_if(Compiler *compiler,bool inverted) {
 
     for(size_t index=0;index<flow_reg_count;index++) {
         const uint8_t false_type=compiler->known_types[index];
-        const int16_t false_set=compiler->known_type_sets[index];
+        const int32_t false_set=compiler->known_type_sets[index];
         merge_flow_types(compiler,then_types[index],then_sets[index],
             false_type,false_set,&compiler->known_types[index],
             &compiler->known_type_sets[index]);
@@ -4938,7 +4949,7 @@ static uint16_t parse_while(Compiler *compiler,bool inverted) {
         compiler, DIAMOND_OP_JUMP_IF_FALSE, branch_condition);
     const size_t flow_reg_count=compiler->next_register;
     uint8_t *exit_types=malloc(flow_reg_count*sizeof(uint8_t));
-    int16_t *exit_sets=malloc(flow_reg_count*sizeof(int16_t));
+    int32_t *exit_sets=malloc(flow_reg_count*sizeof(int32_t));
     if(exit_types==nullptr||exit_sets==nullptr) {
         free(exit_types);free(exit_sets);
         fail(compiler,compiler->previous.span,"out of memory compiling loop flow");
@@ -4998,7 +5009,7 @@ static uint16_t parse_loop(Compiler *compiler) {
     const size_t body_start=compiler->function->code_count;
     const size_t flow_reg_count=compiler->next_register;
     uint8_t *exit_types=malloc(flow_reg_count*sizeof(uint8_t));
-    int16_t *exit_sets=malloc(flow_reg_count*sizeof(int16_t));
+    int32_t *exit_sets=malloc(flow_reg_count*sizeof(int32_t));
     if(exit_types==nullptr||exit_sets==nullptr) {
         free(exit_types);free(exit_sets);
         fail(compiler,compiler->previous.span,"out of memory compiling loop flow");
@@ -5226,13 +5237,13 @@ static uint16_t compile_binary_op(Compiler *compiler, DiamondTokenKind operator,
             }
             if(compiler->known_types[nil_value]==DIAMOND_TYPE_NIL&&
                compiler->known_type_sets[narrowed]>=0) {
-                int16_t non_nil=-1,nil_only=-1;
+                int32_t non_nil=-1,nil_only=-1;
                 if(split_nil_type_set(compiler,
-                   (uint8_t)compiler->known_type_sets[narrowed],
+                   (uint16_t)compiler->known_type_sets[narrowed],
                    &non_nil,&nil_only)) {
-                    const int16_t when_true=operator==DIAMOND_TOKEN_BANG_EQUAL
+                    const int32_t when_true=operator==DIAMOND_TOKEN_BANG_EQUAL
                         ?non_nil:nil_only;
-                    const int16_t when_false=operator==DIAMOND_TOKEN_BANG_EQUAL
+                    const int32_t when_false=operator==DIAMOND_TOKEN_BANG_EQUAL
                         ?nil_only:non_nil;
                     compiler->narrowing=(Narrowing){.valid=true,
                         .condition=destination,
@@ -5272,11 +5283,11 @@ static uint16_t compile_binary_op(Compiler *compiler, DiamondTokenKind operator,
 
 typedef struct CaseFlowJoin {
     uint8_t *types;
-    int16_t *sets;
+    int32_t *sets;
     bool *varied;
     bool initialized;
     uint8_t result_type;
-    int16_t result_set;
+    int32_t result_set;
 } CaseFlowJoin;
 
 typedef enum CaseArrayNodeKind {CASE_ARRAY_GROUP,CASE_ARRAY_VALUE,
@@ -5782,7 +5793,7 @@ static void commit_case_bindings(Compiler *compiler,
 static void merge_case_branch(Compiler *compiler,CaseFlowJoin *join,
         size_t flow_reg_count,uint16_t branch_result) {
     const uint8_t branch_result_type=compiler->known_types[branch_result];
-    const int16_t branch_result_set=compiler->known_type_sets[branch_result];
+    const int32_t branch_result_set=compiler->known_type_sets[branch_result];
     if(!join->initialized) {
         for(size_t index=0;index<flow_reg_count;index++) {
             join->types[index]=compiler->known_types[index];
@@ -5833,7 +5844,7 @@ static void finish_case_flow(Compiler *compiler,CaseFlowJoin *join,
  * unions parse_if uses; a missing else contributes the entry state and Nil. */
 static uint16_t parse_case_branches(Compiler *compiler, uint16_t subject,
         size_t flow_reg_count, const uint8_t *entry_types,
-        const int16_t *entry_sets, uint16_t destination,CaseFlowJoin *join,
+        const int32_t *entry_sets, uint16_t destination,CaseFlowJoin *join,
         bool subjectless) {
     for(size_t index=0;index<flow_reg_count;index++) {
         compiler->known_types[index]=entry_types[index];
@@ -6031,15 +6042,15 @@ static uint16_t parse_case(Compiler *compiler) {
      * ASan-confirmed bug a fixed [256] array with no bounds check caused
      * here otherwise. */
     uint8_t inline_entry_types[256],inline_join_types[256];
-    int16_t inline_entry_sets[256],inline_join_sets[256];
+    int32_t inline_entry_sets[256],inline_join_sets[256];
     bool inline_varied[256]={};
-    uint8_t *entry_types=inline_entry_types;int16_t *entry_sets=inline_entry_sets;
-    uint8_t *join_types=inline_join_types;int16_t *join_sets=inline_join_sets;
+    uint8_t *entry_types=inline_entry_types;int32_t *entry_sets=inline_entry_sets;
+    uint8_t *join_types=inline_join_types;int32_t *join_sets=inline_join_sets;
     bool *varied=inline_varied;
-    uint8_t *heap_types=nullptr;int16_t *heap_sets=nullptr;bool *heap_varied=nullptr;
+    uint8_t *heap_types=nullptr;int32_t *heap_sets=nullptr;bool *heap_varied=nullptr;
     if(flow_reg_count>256) {
         heap_types=malloc(flow_reg_count*2*sizeof(uint8_t));
-        heap_sets=malloc(flow_reg_count*2*sizeof(int16_t));
+        heap_sets=malloc(flow_reg_count*2*sizeof(int32_t));
         heap_varied=calloc(flow_reg_count,sizeof(bool));
         if(heap_types==nullptr||heap_sets==nullptr||heap_varied==nullptr) {
             fail(compiler,compiler->previous.span,
@@ -6136,9 +6147,9 @@ static uint16_t parse_precedence(Compiler *compiler, Precedence precedence) {
                              tested_type,3);
             compiler->known_types[destination]=DIAMOND_TYPE_BOOL;
             if(compiler->known_type_sets[left]>=0) {
-                int16_t matching=-1,remaining=-1;
+                int32_t matching=-1,remaining=-1;
                 if(split_type_set(compiler,
-                   (uint8_t)compiler->known_type_sets[left],tested_type,
+                   (uint16_t)compiler->known_type_sets[left],tested_type,
                    &matching,&remaining))
                     compiler->narrowing=(Narrowing){.valid=true,
                         .condition=destination,
@@ -6274,7 +6285,7 @@ static uint16_t parse_ternary(Compiler *compiler) {
         apply_narrowing_facts(compiler,narrowing.when_true,narrowing.when_true_count);
     const uint16_t true_result=parse_expression(compiler);
     const uint8_t true_type=compiler->known_types[true_result];
-    const int16_t true_set=compiler->known_type_sets[true_result];
+    const int32_t true_set=compiler->known_type_sets[true_result];
     emit_instruction(compiler,DIAMOND_OP_MOVE,destination,true_result,0,2);
     const size_t end_jump=emit_jump(compiler,DIAMOND_OP_JUMP,0);
     patch_jump(compiler,false_jump,compiler->function->code_count);
@@ -6289,7 +6300,7 @@ static uint16_t parse_ternary(Compiler *compiler) {
     skip_newlines(compiler);
     const uint16_t false_result=parse_expression(compiler);
     const uint8_t false_type=compiler->known_types[false_result];
-    const int16_t false_set=compiler->known_type_sets[false_result];
+    const int32_t false_set=compiler->known_type_sets[false_result];
     emit_instruction(compiler,DIAMOND_OP_MOVE,destination,false_result,0,2);
     patch_jump(compiler,end_jump,compiler->function->code_count);
     merge_flow_types(compiler,true_type,true_set,false_type,false_set,
@@ -7048,7 +7059,7 @@ static uint16_t compile_loop_control(Compiler *compiler) {
             fail(compiler,keyword,"too many break statements in loop");
             return 0;
         }
-        uint8_t break_type=DIAMOND_TYPE_NIL;int16_t break_set=-1;
+        uint8_t break_type=DIAMOND_TYPE_NIL;int32_t break_set=-1;
         if(actual_value) {
             const uint16_t value=parse_expression(compiler);
             emit_instruction(compiler,DIAMOND_OP_MOVE,
@@ -7144,14 +7155,14 @@ static uint16_t compile_block(Compiler *compiler) {
      * (see either's comment) -- necessary here too, for the same reason:
      * a block can appear after arbitrarily many registers have already
      * been allocated in the enclosing function body. */
-    uint8_t inline_outer_known_types[256];int16_t inline_outer_known_type_sets[256];
+    uint8_t inline_outer_known_types[256];int32_t inline_outer_known_type_sets[256];
     uint8_t *outer_known_types=inline_outer_known_types;
-    int16_t *outer_known_type_sets=inline_outer_known_type_sets;
-    uint8_t *heap_outer_known_types=nullptr;int16_t *heap_outer_known_type_sets=nullptr;
+    int32_t *outer_known_type_sets=inline_outer_known_type_sets;
+    uint8_t *heap_outer_known_types=nullptr;int32_t *heap_outer_known_type_sets=nullptr;
     if(outer_next_register>256) {
         heap_outer_known_types=malloc((size_t)outer_next_register*sizeof(uint8_t));
         heap_outer_known_type_sets=
-            malloc((size_t)outer_next_register*sizeof(int16_t));
+            malloc((size_t)outer_next_register*sizeof(int32_t));
         if(heap_outer_known_types==nullptr||heap_outer_known_type_sets==nullptr) {
             fail(compiler,compiler->previous.span,"out of memory compiling block");
             free(heap_outer_known_types);free(heap_outer_known_type_sets);
@@ -7612,14 +7623,14 @@ static uint16_t compile_definition(Compiler *compiler, bool captures_self) {
      * entries [256, outer_next_register) holding whatever the nested def's
      * own (unrelated, register-index-0-based) body happened to write into
      * those same slots after this function returns. */
-    uint8_t inline_outer_known_types[256];int16_t inline_outer_known_type_sets[256];
+    uint8_t inline_outer_known_types[256];int32_t inline_outer_known_type_sets[256];
     uint8_t *outer_known_types=inline_outer_known_types;
-    int16_t *outer_known_type_sets=inline_outer_known_type_sets;
-    uint8_t *heap_outer_known_types=nullptr;int16_t *heap_outer_known_type_sets=nullptr;
+    int32_t *outer_known_type_sets=inline_outer_known_type_sets;
+    uint8_t *heap_outer_known_types=nullptr;int32_t *heap_outer_known_type_sets=nullptr;
     if(outer_next_register>256) {
         heap_outer_known_types=malloc((size_t)outer_next_register*sizeof(uint8_t));
         heap_outer_known_type_sets=
-            malloc((size_t)outer_next_register*sizeof(int16_t));
+            malloc((size_t)outer_next_register*sizeof(int32_t));
         if(heap_outer_known_types==nullptr||heap_outer_known_type_sets==nullptr) {
             fail(compiler,compiler->previous.span,
                  "out of memory compiling function definition");
@@ -7858,9 +7869,9 @@ static uint16_t compile_definition(Compiler *compiler, bool captures_self) {
                      "required parameter cannot follow a default parameter");
             } else function->required_arity++;
             if(parameter_type>=0) {
-                emit_type_check(compiler,parameter,(uint8_t)parameter_type,
+                emit_type_check(compiler,parameter,(uint16_t)parameter_type,
                                 parameter_type_span);
-                compiler->known_type_sets[parameter]=(int16_t)parameter_type;
+                compiler->known_type_sets[parameter]=(int32_t)parameter_type;
                 const DiamondTypeSet *parameter_set=
                     &function->type_sets[(size_t)parameter_type];
                 if(parameter_set->count==1)
@@ -8305,8 +8316,8 @@ static void compile_attribute_named(Compiler *compiler,bool writer,bool predicat
         }
         memcpy(function->type_sets,compiler->function->type_sets,
                function->type_set_count*sizeof(DiamondTypeSet));
-        if(writer)function->parameter_type_sets[0]=(uint8_t)type_set;
-        else function->return_type_set=(uint8_t)type_set;
+        if(writer)function->parameter_type_sets[0]=(uint16_t)type_set;
+        else function->return_type_set=(uint16_t)type_set;
     }
     /* GET_IVAR/SET_IVAR/GET_IVAR_NAME/SET_IVAR_NAME/CHECK_TYPE/RETURN are
      * all emitted elsewhere via emit_instruction, which widens *every*
@@ -8324,7 +8335,8 @@ static void compile_attribute_named(Compiler *compiler,bool writer,bool predicat
     if(writer&&type_set>=0) {
         function->code[code++]=DIAMOND_OP_CHECK_TYPE;
         function->code[code++]=0;function->code[code++]=1;
-        function->code[code++]=0;function->code[code++]=(uint8_t)type_set;
+        function->code[code++]=(uint8_t)((uint16_t)type_set>>8);
+        function->code[code++]=(uint8_t)type_set;
     }
     if(compiler->current_module>=0&&compiler->current_class<0) {
         function->uses_instance_state=true;
@@ -8349,7 +8361,8 @@ static void compile_attribute_named(Compiler *compiler,bool writer,bool predicat
     if(!writer&&type_set>=0) {
         function->code[code++]=DIAMOND_OP_CHECK_TYPE;
         function->code[code++]=0;function->code[code++]=1;
-        function->code[code++]=0;function->code[code++]=(uint8_t)type_set;
+        function->code[code++]=(uint8_t)((uint16_t)type_set>>8);
+        function->code[code++]=(uint8_t)type_set;
     }
     function->code[code++]=DIAMOND_OP_RETURN;
     function->code[code++]=0;function->code[code++]=1;
@@ -8754,14 +8767,14 @@ static void compile_delegate(Compiler *compiler) {
     const int outer_exception=compiler->current_exception;
     const size_t outer_retry_target=compiler->current_retry_target;
     LoopContext *outer_loop=compiler->current_loop;
-    uint8_t inline_outer_known_types[256];int16_t inline_outer_known_type_sets[256];
+    uint8_t inline_outer_known_types[256];int32_t inline_outer_known_type_sets[256];
     uint8_t *outer_known_types=inline_outer_known_types;
-    int16_t *outer_known_type_sets=inline_outer_known_type_sets;
-    uint8_t *heap_outer_known_types=nullptr;int16_t *heap_outer_known_type_sets=nullptr;
+    int32_t *outer_known_type_sets=inline_outer_known_type_sets;
+    uint8_t *heap_outer_known_types=nullptr;int32_t *heap_outer_known_type_sets=nullptr;
     if(outer_next_register>256) {
         heap_outer_known_types=malloc((size_t)outer_next_register*sizeof(uint8_t));
         heap_outer_known_type_sets=
-            malloc((size_t)outer_next_register*sizeof(int16_t));
+            malloc((size_t)outer_next_register*sizeof(int32_t));
         if(heap_outer_known_types==nullptr||heap_outer_known_type_sets==nullptr) {
             fail(compiler,keyword,"out of memory compiling delegate");
             free(heap_outer_known_types);free(heap_outer_known_type_sets);
@@ -9441,7 +9454,7 @@ static uint16_t compile_interface(Compiler *compiler) {
             if(compiler->current.kind==DIAMOND_TOKEN_COLON) {
                 advance_token(compiler);
                 method->parameter_type_sets[method->arity-1]=
-                    (uint8_t)parse_type_annotation(compiler);
+                    (uint16_t)parse_type_annotation(compiler);
             }
             skip_newlines(compiler);
             if(compiler->current.kind!=DIAMOND_TOKEN_COMMA)break;
@@ -9454,7 +9467,7 @@ static uint16_t compile_interface(Compiler *compiler) {
         advance_token(compiler);
         if(compiler->current.kind==DIAMOND_TOKEN_ARROW) {
             advance_token(compiler);
-            method->return_type_set=(uint8_t)parse_type_annotation(compiler);
+            method->return_type_set=(uint16_t)parse_type_annotation(compiler);
         }
         if(compiler->current.kind!=DIAMOND_TOKEN_NEWLINE&&
            compiler->current.kind!=DIAMOND_TOKEN_END) {
@@ -9614,12 +9627,12 @@ static uint16_t compile_compound_assignment(Compiler *compiler) {
  * here since there's no source text driving it. Reused across every
  * destructuring statement in the same function rather than burning a
  * fresh type-set slot per statement. */
-static uint8_t array_type_set_index(Compiler *compiler) {
+static uint16_t array_type_set_index(Compiler *compiler) {
     for(size_t index=0;index<compiler->function->type_set_count;index++) {
         const DiamondTypeSet *set=&compiler->function->type_sets[index];
         if(set->count==1&&set->members[0].id==DIAMOND_TYPE_ARRAY&&
            set->members[0].argument_set==UINT8_MAX)
-            return (uint8_t)index;
+            return (uint16_t)index;
     }
     if(!reserve_type_sets(compiler,1))return 0;
     const size_t set_index=compiler->function->type_set_count++;
@@ -9631,15 +9644,15 @@ static uint8_t array_type_set_index(Compiler *compiler) {
         .callable_parameters_typed=false};
     for(size_t member_index=0;member_index<16;member_index++)
         set->members[0].callable_parameter_sets[member_index]=UINT8_MAX;
-    return (uint8_t)set_index;
+    return (uint16_t)set_index;
 }
 
-static uint8_t hash_type_set_index(Compiler *compiler) {
+static uint16_t hash_type_set_index(Compiler *compiler) {
     for(size_t index=0;index<compiler->function->type_set_count;index++) {
         const DiamondTypeSet *set=&compiler->function->type_sets[index];
         if(set->count==1&&set->members[0].id==DIAMOND_TYPE_HASH&&
            set->members[0].argument_set==UINT8_MAX)
-            return (uint8_t)index;
+            return (uint16_t)index;
     }
     if(!reserve_type_sets(compiler,1))return 0;
     const size_t set_index=compiler->function->type_set_count++;
@@ -9651,7 +9664,7 @@ static uint8_t hash_type_set_index(Compiler *compiler) {
         .callable_parameters_typed=false};
     for(size_t member_index=0;member_index<16;member_index++)
         set->members[0].callable_parameter_sets[member_index]=UINT8_MAX;
-    return (uint8_t)set_index;
+    return (uint16_t)set_index;
 }
 
 typedef struct DestructureNode {
@@ -9873,7 +9886,7 @@ static uint8_t parse_destructure_node(Compiler *compiler,DestructureNode *nodes,
 
 static void emit_destructure_extract(Compiler *compiler,
         const DestructureNode *nodes,uint8_t node_index,uint16_t value,
-        uint8_t array_set,uint8_t hash_set,uint16_t *node_values) {
+        uint16_t array_set,uint16_t hash_set,uint16_t *node_values) {
     const DestructureNode *node=&nodes[node_index];
     node_values[node_index]=value;
     if(node->leaf)return;
@@ -10024,8 +10037,8 @@ static uint16_t compile_multi_assignment(Compiler *compiler) {
     }
     const uint16_t value=rhs_count==1?rhs_values[0]:
         emit_argument_array(compiler,rhs_values,rhs_count);
-    const uint8_t array_set = array_type_set_index(compiler);
-    const uint8_t hash_set = hash_type_set_index(compiler);
+    const uint16_t array_set = array_type_set_index(compiler);
+    const uint16_t hash_set = hash_type_set_index(compiler);
     uint16_t node_values[64]={};
     emit_destructure_extract(compiler,nodes,root,value,array_set,hash_set,node_values);
     return emit_destructure_stores(compiler,nodes,root,node_values);

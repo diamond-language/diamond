@@ -92,6 +92,10 @@
 - Replaced fixed per-function type-set tables with dynamically grown storage,
   including deep-copy ownership, stable interface metadata rebinding, and
   isolated entry type sets for cloned thread programs.
+- Widened type-set graph links, function contracts, runtime constraints, and
+  every explicitly typed call operand to 16 bits across the compiler, VM,
+  disassembler, ProgramBuilder, self-hosted parser, LSP, and thread clones.
+  Compiler flow facts now retain high indices without signed 16-bit truncation.
 - Added protected method visibility with peer/subclass receiver access and
   runtime rejection outside the declaring class hierarchy.
 - Added `LazyEnumerator` pipelines with deferred `map`, `select`, and `reject`

@@ -2968,7 +2968,7 @@ class Parser
       self.emit_byte(type_arguments.length())
       i = 0
       while i < type_arguments.length()
-        self.emit_byte(type_arguments[i])
+        self.emit_register(type_arguments[i])
         i = i + 1
       end
     end
@@ -3466,7 +3466,7 @@ class Parser
       self.emit_byte(type_arguments.length())
       i = 0
       while i < type_arguments.length()
-        self.emit_byte(type_arguments[i])
+        self.emit_register(type_arguments[i])
         i = i + 1
       end
     end
@@ -4588,7 +4588,7 @@ class Parser
       self.emit_byte(type_arguments.length())
       index = 0
       while index < type_arguments.length()
-        self.emit_byte(type_arguments[index])
+        self.emit_register(type_arguments[index])
         index = index + 1
       end
     end

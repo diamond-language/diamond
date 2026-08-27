@@ -236,13 +236,17 @@ Resolved next for literal constants: `DIAMOND_OP_CONSTANT` already decoded a
 reserved a fixed 256-value table. Constant storage now grows geometrically to
 the real 65,535-entry operand boundary, including ProgramBuilder emission,
 discovery reservations, thread clones, and teardown. This removes another
-roughly 4 KiB of unconditional storage per function. Type-set indices remain at
-256 because annotation opcodes still encode them as raw bytes; widening those
-requires a separate bytecode migration. Their backing tables now grow
-geometrically in preparation for that migration, with deep-copy ownership for
-thread programs and interface metadata rebound after entry-table relocation.
-Thread clones also own a separate copy of the entry type graph, so their
-interface descriptors never retain a pointer into the parent program.
+roughly 4 KiB of unconditional storage per function.
+
+Resolved for type sets: graph links, function and interface contracts, runtime
+collection constraints, compiler flow facts, ProgramBuilder metadata, and all
+explicitly typed call operands now carry 16-bit indices. The compiler, VM,
+disassembler, self-hosted parser, LSP, and thread-clone paths share that wire
+format. Slot 255 remains deliberately reserved as the legacy `0xff` "no nested
+set" sentinel, so real annotations occupy indices 0-254 and 256-65,534. Type
+tables grow geometrically, interface metadata is rebound after entry-table
+relocation, and thread clones own a separate entry type graph rather than
+retaining pointers into the parent program.
 
 Resolved for string/name operands: storage grows dynamically and the bytecode
 wire format now carries unsigned 16-bit indices through literals, symbols,

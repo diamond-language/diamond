@@ -4039,6 +4039,13 @@ static DiamondVmStatus program_builder_invoke_helper(DiamondVm *vm,
                 "function has too many type annotations");
             return DIAMOND_VM_TYPE_ERROR;
         }
+        if(target->type_set_count==UINT8_MAX) {
+            if(target->type_set_capacity<=target->type_set_count&&
+               !diamond_function_reserve_type_sets(target,
+                    target->type_set_count+2))return DIAMOND_VM_OUT_OF_MEMORY;
+            target->type_sets[target->type_set_count]=(DiamondTypeSet){};
+            target->type_set_count++;
+        }
         if(target->type_set_count==target->type_set_capacity) {
             size_t capacity=target->type_set_capacity==0?8:
                 target->type_set_capacity*2;
@@ -4060,12 +4067,12 @@ static DiamondVmStatus program_builder_invoke_helper(DiamondVm *vm,
                 (const DiamondArray *)descriptor->values[5].as.object;
             set->members[member]=(DiamondTypeMember){
                 .id=(uint8_t)descriptor->values[0].as.integer,
-                .argument_set=argument_set<0?UINT8_MAX:(uint8_t)argument_set,
+                .argument_set=argument_set<0?UINT8_MAX:(uint16_t)argument_set,
                 .second_argument_set=second_argument_set<0?UINT8_MAX:
-                    (uint8_t)second_argument_set,
+                    (uint16_t)second_argument_set,
                 .callable_arity=callable_arity<0?UINT8_MAX:(uint8_t)callable_arity,
                 .callable_return_set=callable_return<0?UINT8_MAX:
-                    (uint8_t)callable_return,
+                    (uint16_t)callable_return,
                 .callable_parameters_typed=callable_parameters->count>0};
             for(size_t index=0;index<16;index++)
                 set->members[member].callable_parameter_sets[index]=UINT8_MAX;
@@ -4094,7 +4101,7 @@ static DiamondVmStatus program_builder_invoke_helper(DiamondVm *vm,
                 "ProgramBuilder#set_parameter_type has an invalid index");
             return DIAMOND_VM_TYPE_ERROR;
         }
-        target->parameter_type_sets[(size_t)parameter]=(uint8_t)set;
+        target->parameter_type_sets[(size_t)parameter]=(uint16_t)set;
         *result=DIAMOND_NIL;return DIAMOND_VM_OK;
     }
     if(set_return_type_method) {
@@ -4113,7 +4120,7 @@ static DiamondVmStatus program_builder_invoke_helper(DiamondVm *vm,
                 "ProgramBuilder#set_return_type has an invalid index");
             return DIAMOND_VM_TYPE_ERROR;
         }
-        target->return_type_set=(uint8_t)set;
+        target->return_type_set=(uint16_t)set;
         *result=DIAMOND_NIL;return DIAMOND_VM_OK;
     }
     if(set_type_variables_method) {
@@ -4216,7 +4223,7 @@ static DiamondVmStatus program_builder_invoke_helper(DiamondVm *vm,
         if(interface->method_count==DIAMOND_MAX_METHODS)return DIAMOND_VM_TYPE_ERROR;
         DiamondInterfaceMethod *method=&interface->methods[interface->method_count++];
         *method=(DiamondInterfaceMethod){.arity=(uint8_t)arity,
-            .return_type_set=return_set<0?UINT8_MAX:(uint8_t)return_set};
+            .return_type_set=return_set<0?UINT8_MAX:(uint16_t)return_set};
         memcpy(method->name,name->chars,name->length);
         method->name[name->length]='\0';
         for(size_t index=0;index<16;index++)method->parameter_type_sets[index]=UINT8_MAX;
@@ -4225,7 +4232,7 @@ static DiamondVmStatus program_builder_invoke_helper(DiamondVm *vm,
             const int64_t set=sets->values[index].as.integer;
             if(set>=0&&(uint64_t)set>=built->entry.type_set_count)
                 return DIAMOND_VM_TYPE_ERROR;
-            method->parameter_type_sets[index]=set<0?UINT8_MAX:(uint8_t)set;
+            method->parameter_type_sets[index]=set<0?UINT8_MAX:(uint16_t)set;
         }
         *result=DIAMOND_NIL;return DIAMOND_VM_OK;
     }
@@ -5300,9 +5307,9 @@ static int named_field_index(const DiamondInstance *instance,
 
 static bool runtime_set_satisfies(const DiamondChunk *chunk,
                                   const DiamondTypeSet *known_sets,
-                                  uint8_t known_index,
+                                  uint16_t known_index,
                                   const DiamondTypeSet *expected_sets,
-                                  uint8_t expected_index);
+                                  uint16_t expected_index);
 
 static bool value_matches_type(const DiamondChunk *chunk,DiamondValue value,
                                uint8_t type);
@@ -5479,8 +5486,8 @@ static bool value_matches_type(const DiamondChunk *chunk, DiamondValue value,
                             chunk->functions[class->methods[method].function_index];
                         found=true;
                         for(size_t parameter=0;parameter<wanted->arity;parameter++) {
-                            const uint8_t required_set=wanted->parameter_type_sets[parameter];
-                            const uint8_t actual_set=implementation->parameter_type_sets[parameter];
+                            const uint16_t required_set=wanted->parameter_type_sets[parameter];
+                            const uint16_t actual_set=implementation->parameter_type_sets[parameter];
                             if(required_set==UINT8_MAX) {
                                 if(actual_set!=UINT8_MAX)found=false;
                             } else if(actual_set!=UINT8_MAX&&
@@ -5515,13 +5522,13 @@ static bool value_matches_type(const DiamondChunk *chunk, DiamondValue value,
 }
 
 static bool value_matches_set(const DiamondChunk *chunk,DiamondValue value,
-                              uint8_t set_index,bool attach);
+                              uint16_t set_index,bool attach);
 
 static bool runtime_set_satisfies(const DiamondChunk *chunk,
                                   const DiamondTypeSet *known_sets,
-                                  uint8_t known_index,
+                                  uint16_t known_index,
                                   const DiamondTypeSet *expected_sets,
-                                  uint8_t expected_index);
+                                  uint16_t expected_index);
 
 static bool runtime_type_id_satisfies(const DiamondChunk *chunk,uint8_t known,
                                       uint8_t expected) {
@@ -5605,8 +5612,8 @@ static bool runtime_type_id_satisfies(const DiamondChunk *chunk,uint8_t known,
                             chunk->functions[class->methods[method].function_index];
                         found=true;
                         for(size_t parameter=0;parameter<wanted->arity;parameter++) {
-                            const uint8_t required_set=wanted->parameter_type_sets[parameter];
-                            const uint8_t actual_set=implementation->parameter_type_sets[parameter];
+                            const uint16_t required_set=wanted->parameter_type_sets[parameter];
+                            const uint16_t actual_set=implementation->parameter_type_sets[parameter];
                             if(required_set==UINT8_MAX) {
                                 if(actual_set!=UINT8_MAX)found=false;
                             } else if(actual_set!=UINT8_MAX&&
@@ -5650,8 +5657,8 @@ static bool runtime_member_satisfies(const DiamondChunk *chunk,
            known.callable_arity!=expected.callable_arity)return false;
         if(expected.callable_parameters_typed)
             for(size_t parameter=0;parameter<expected.callable_arity;parameter++) {
-                const uint8_t wanted=expected.callable_parameter_sets[parameter];
-                const uint8_t actual=known.callable_parameter_sets[parameter];
+                const uint16_t wanted=expected.callable_parameter_sets[parameter];
+                const uint16_t actual=known.callable_parameter_sets[parameter];
                 if(actual!=UINT8_MAX&&
                    !runtime_set_satisfies(chunk,expected_sets,wanted,
                                            known_sets,actual))return false;
@@ -5674,9 +5681,9 @@ static bool runtime_member_satisfies(const DiamondChunk *chunk,
 
 static bool runtime_set_satisfies(const DiamondChunk *chunk,
                                   const DiamondTypeSet *known_sets,
-                                  uint8_t known_index,
+                                  uint16_t known_index,
                                   const DiamondTypeSet *expected_sets,
-                                  uint8_t expected_index) {
+                                  uint16_t expected_index) {
     const DiamondTypeSet *known=&known_sets[known_index];
     const DiamondTypeSet *expected=&expected_sets[expected_index];
     for(size_t source=0;source<known->count;source++) {
@@ -5706,7 +5713,7 @@ static bool value_matches_member(const DiamondChunk *chunk,DiamondValue value,
             return false;
         if(member.callable_parameters_typed)
             for(size_t parameter=0;parameter<member.callable_arity;parameter++) {
-                const uint8_t actual=function->parameter_type_sets[parameter];
+                const uint16_t actual=function->parameter_type_sets[parameter];
                 if(actual!=UINT8_MAX&&
                    !runtime_set_satisfies(chunk,chunk->type_sets,
                        member.callable_parameter_sets[parameter],
@@ -5794,7 +5801,7 @@ static bool value_matches_member(const DiamondChunk *chunk,DiamondValue value,
 }
 
 static bool value_matches_set(const DiamondChunk *chunk,DiamondValue value,
-                              uint8_t set_index,bool attach) {
+                              uint16_t set_index,bool attach) {
     if((size_t)set_index>=chunk->type_set_count)return false;
     const DiamondTypeSet *set=&chunk->type_sets[set_index];
     for(size_t index=0;index<set->count;index++)
@@ -6025,7 +6032,7 @@ static const char *type_name(const DiamondChunk *chunk,uint8_t type) {
 }
 
 static void format_type_set_index(char *buffer,size_t capacity,
-                                  const DiamondChunk *chunk,uint8_t set_index) {
+                                  const DiamondChunk *chunk,uint16_t set_index) {
     if((size_t)set_index>=chunk->type_set_count) {
         snprintf(buffer,capacity,"<invalid type set>");return;
     }
@@ -6561,7 +6568,7 @@ static void bind_value_graph(const DiamondChunk *chunk,DiamondTypeBinding *bindi
 }
 
 static void bind_known_set(DiamondTypeBinding *binding,uint8_t node,
-                           const DiamondTypeSet *sets,uint8_t set_index) {
+                           const DiamondTypeSet *sets,uint16_t set_index) {
     const DiamondTypeSet *set=&sets[set_index];
     for(size_t index=0;index<set->count;index++) {
         const DiamondTypeMember known=set->members[index];
@@ -6609,7 +6616,7 @@ static void bind_bound_node(DiamondTypeBinding *target,uint8_t target_node,
 }
 
 static void bind_context_set(DiamondTypeBinding *binding,uint8_t node,
-    const DiamondChunk *context,const DiamondTypeSet *sets,uint8_t set_index) {
+    const DiamondChunk *context,const DiamondTypeSet *sets,uint16_t set_index) {
     const DiamondTypeSet *set=&sets[set_index];
     for(size_t index=0;index<set->count;index++) {
         const DiamondTypeMember known=set->members[index];
@@ -6642,8 +6649,8 @@ static void bind_context_set(DiamondTypeBinding *binding,uint8_t node,
 }
 
 static void infer_from_context_set(const DiamondChunk *known_context,
-    const DiamondTypeSet *known_sets,uint8_t known_index,
-    const DiamondTypeSet *expected_sets,uint8_t expected_index,
+    const DiamondTypeSet *known_sets,uint16_t known_index,
+    const DiamondTypeSet *expected_sets,uint16_t expected_index,
     DiamondTypeBinding bindings[8]) {
     const DiamondTypeSet *known=&known_sets[known_index];
     const DiamondTypeSet *expected=&expected_sets[expected_index];
@@ -6675,8 +6682,8 @@ static void infer_from_context_set(const DiamondChunk *known_context,
 }
 
 static void infer_from_known_set(const DiamondChunk *chunk,
-    const DiamondTypeSet *known_sets,uint8_t known_index,
-    const DiamondTypeSet *expected_sets,uint8_t expected_index,
+    const DiamondTypeSet *known_sets,uint16_t known_index,
+    const DiamondTypeSet *expected_sets,uint16_t expected_index,
     DiamondTypeBinding bindings[8]) {
     const DiamondTypeSet *known=&known_sets[known_index];
     const DiamondTypeSet *expected=&expected_sets[expected_index];
@@ -6707,7 +6714,7 @@ static void infer_from_known_set(const DiamondChunk *chunk,
 }
 
 static void infer_from_value(const DiamondChunk *chunk,DiamondValue value,
-    const DiamondTypeSet *sets,uint8_t set_index,
+    const DiamondTypeSet *sets,uint16_t set_index,
     DiamondTypeBinding bindings[8]) {
     const DiamondTypeSet *set=&sets[set_index];
     for(size_t index=0;index<set->count;index++) {
@@ -6766,7 +6773,7 @@ static void infer_from_value(const DiamondChunk *chunk,DiamondValue value,
                 const DiamondFunction *function=chunk->functions[closure->function_index];
                 if(member.callable_parameters_typed)
                     for(size_t parameter=0;parameter<member.callable_arity;parameter++) {
-                        const uint8_t actual=function->parameter_type_sets[parameter];
+                        const uint16_t actual=function->parameter_type_sets[parameter];
                         if(actual!=UINT8_MAX)
                             infer_from_known_set(chunk,function->type_sets,actual,
                                 sets,member.callable_parameter_sets[parameter],bindings);
@@ -8809,7 +8816,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
         execution=*chunk;
         for(size_t parameter=0;
             parameter+chunk->parameter_offset<argument_count;parameter++) {
-            const uint8_t set=chunk->parameter_type_sets[parameter];
+            const uint16_t set=chunk->parameter_type_sets[parameter];
             if(set!=UINT8_MAX&&set<chunk->type_set_count)
                 infer_from_value(chunk,arguments[parameter+chunk->parameter_offset],
                                  chunk->type_sets,set,bindings);
@@ -9928,7 +9935,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
                 DiamondTypeBinding explicit_bindings[8]={};
                 for(size_t index=0;index<type_argument_count;index++) {
-                    uint8_t set_index=0;READ_BYTE(set_index);
+                    uint16_t set_index=0;READ_SHORT(set_index);
                     if((size_t)set_index>=chunk->type_set_count)
                         VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
                     (void)binding_node(&explicit_bindings[index]);
@@ -9983,14 +9990,14 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                         READ_SHORT(keyword_registers[index]);
                     }
                 }
-                uint8_t type_argument_count=0,type_arguments[8];
+                uint8_t type_argument_count=0;uint16_t type_arguments[8];
                 if((DiamondOpCode)instruction==DIAMOND_OP_CALL_TYPED_SPREAD||
                    (DiamondOpCode)instruction==
                     DIAMOND_OP_CALL_TYPED_KEYWORD_SPREAD) {
                     READ_BYTE(type_argument_count);
                     if(type_argument_count>8)VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
                     for(size_t index=0;index<type_argument_count;index++)
-                        READ_BYTE(type_arguments[index]);
+                        READ_SHORT(type_arguments[index]);
                 }
                 if((size_t)function_index>=chunk->function_count)
                     VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
@@ -10132,7 +10139,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
             case DIAMOND_OP_CALL_TYPED_SINGLETON_KEYWORDS: {
                 uint16_t destination=0,function_index=0,positional_register=0;
                 uint8_t class_index=0,needs_receiver=0,keyword_count=0;
-                uint16_t keyword_names[16];uint8_t type_count=0,type_arguments[8];
+                uint16_t keyword_names[16],type_arguments[8];uint8_t type_count=0;
                 uint16_t keyword_registers[16];
                 READ_SHORT(destination);READ_SHORT(function_index);
                 READ_SHORT(positional_register);READ_BYTE(class_index);
@@ -10146,7 +10153,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                         DIAMOND_OP_CALL_TYPED_SINGLETON_KEYWORDS) {
                     READ_BYTE(type_count);if(type_count>8)
                         VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
-                    for(size_t index=0;index<type_count;index++)READ_BYTE(type_arguments[index]);
+                    for(size_t index=0;index<type_count;index++)READ_SHORT(type_arguments[index]);
                 }
                 if((size_t)function_index>=chunk->function_count||needs_receiver>1||
                    (class_index!=UINT8_MAX&&(size_t)class_index>=chunk->class_count)||
@@ -10213,13 +10220,13 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 READ_SHORT(destination);READ_SHORT(function_index);
                 READ_SHORT(spread_register);READ_BYTE(class_index);
                 READ_BYTE(needs_receiver);
-                uint8_t type_argument_count=0,type_arguments[8];
+                uint8_t type_argument_count=0;uint16_t type_arguments[8];
                 if((DiamondOpCode)instruction==
                         DIAMOND_OP_CALL_TYPED_SINGLETON_SPREAD) {
                     READ_BYTE(type_argument_count);
                     if(type_argument_count>8)VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
                     for(size_t index=0;index<type_argument_count;index++)
-                        READ_BYTE(type_arguments[index]);
+                        READ_SHORT(type_arguments[index]);
                 }
                 if((size_t)function_index>=chunk->function_count||
                    needs_receiver>1||
@@ -10632,11 +10639,11 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 for(size_t index=0;index<keyword_count;index++) {
                     READ_SHORT(keyword_names[index]);READ_SHORT(keyword_registers[index]);
                 }
-                uint8_t type_count=0,type_arguments[8];
+                uint8_t type_count=0;uint16_t type_arguments[8];
                 if((DiamondOpCode)instruction==DIAMOND_OP_INVOKE_TYPED_KEYWORDS) {
                     READ_BYTE(type_count);if(type_count>8)
                         VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
-                    for(size_t index=0;index<type_count;index++)READ_BYTE(type_arguments[index]);
+                    for(size_t index=0;index<type_count;index++)READ_SHORT(type_arguments[index]);
                 }
                 if(registers[positional_register].kind!=DIAMOND_VALUE_OBJECT||
                    registers[positional_register].as.object->kind!=DIAMOND_OBJECT_ARRAY)
@@ -10707,7 +10714,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 const size_t protected_count=vm->gc_protected_count;
                 if(!gc_protect(vm,DIAMOND_OBJECT(merged_array)))
                     VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
-                uint8_t code[24]={0};size_t code_count=0;
+                uint8_t code[32]={0};size_t code_count=0;
 #define KEYWORD_SHORT(value) do {code[code_count++]=(uint8_t)((value)>>8); \
     code[code_count++]=(uint8_t)(value);} while(false)
                 code[code_count++]=(uint8_t)(type_count==0?
@@ -10716,10 +10723,10 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 KEYWORD_SHORT(1);
                 if(type_count>0) {code[code_count++]=type_count;
                     for(size_t index=0;index<type_count;index++)
-                        code[code_count++]=type_arguments[index];}
+                        KEYWORD_SHORT(type_arguments[index]);}
                 code[code_count++]=DIAMOND_OP_RETURN;KEYWORD_SHORT(2);
 #undef KEYWORD_SHORT
-                uint32_t locations[24]={0};
+                uint32_t locations[32]={0};
                 DiamondChunk synthetic=*chunk;synthetic.name="<keyword invoke>";
                 synthetic.code=code;synthetic.lines=locations;
                 synthetic.columns=locations;synthetic.code_count=code_count;
@@ -10736,12 +10743,12 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 uint16_t dest=0,recv=0,spread_register=0,name=0;
                 READ_SHORT(dest);READ_SHORT(recv);READ_SHORT(name);
                 READ_SHORT(spread_register);
-                uint8_t type_argument_count=0,type_arguments[8];
+                uint8_t type_argument_count=0;uint16_t type_arguments[8];
                 if((DiamondOpCode)instruction==DIAMOND_OP_INVOKE_TYPED_SPREAD) {
                     READ_BYTE(type_argument_count);
                     if(type_argument_count>8)VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
                     for(size_t index=0;index<type_argument_count;index++)
-                        READ_BYTE(type_arguments[index]);
+                        READ_SHORT(type_arguments[index]);
                 }
                 if((size_t)name>=chunk->string_count)
                     VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
@@ -10769,7 +10776,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     native_arguments[0]=registers[recv];
                     for(size_t index=0;index<spread->count;index++)
                         native_arguments[index+1]=spread->values[index];
-                    uint8_t synthetic_code[24]={0};size_t code_index=0;
+                    uint8_t synthetic_code[32]={0};size_t code_index=0;
                     const uint16_t destination=(uint16_t)(spread->count+1);
 #define SYNTHETIC_SHORT(value) do { \
     synthetic_code[code_index++]=(uint8_t)((value)>>8); \
@@ -10786,13 +10793,13 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     if(type_argument_count>0) {
                         synthetic_code[code_index++]=type_argument_count;
                         for(size_t index=0;index<type_argument_count;index++)
-                            synthetic_code[code_index++]=type_arguments[index];
+                            SYNTHETIC_SHORT(type_arguments[index]);
                     }
                     synthetic_code[code_index++]=DIAMOND_OP_RETURN;
                     SYNTHETIC_SHORT(destination);
 #undef SYNTHETIC_SHORT
-                    uint32_t synthetic_lines[24]={0};
-                    uint32_t synthetic_columns[24]={0};
+                    uint32_t synthetic_lines[32]={0};
+                    uint32_t synthetic_columns[32]={0};
                     DiamondChunk synthetic={.name="<native spread>",
                         .code=synthetic_code,.lines=synthetic_lines,
                         .columns=synthetic_columns,.code_count=code_index,
@@ -10922,12 +10929,12 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
             case DIAMOND_OP_INVOKE_TYPED: {
                 uint16_t dest=0,recv=0,base=0,name=0;uint8_t argc=0;
                 READ_SHORT(dest);READ_SHORT(recv);READ_SHORT(name);READ_SHORT(base);READ_BYTE(argc);
-                uint8_t type_argument_count=0,type_arguments[8];
+                uint8_t type_argument_count=0;uint16_t type_arguments[8];
                 if((DiamondOpCode)instruction==DIAMOND_OP_INVOKE_TYPED) {
                     READ_BYTE(type_argument_count);
                     if(type_argument_count>8)VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
                     for(size_t index=0;index<type_argument_count;index++)
-                        READ_BYTE(type_arguments[index]);
+                        READ_SHORT(type_arguments[index]);
                 }
                 if(argc>16) VM_RETURN(DIAMOND_VM_ARITY_ERROR);
                 if((size_t)name>=chunk->string_count) VM_RETURN(DIAMOND_VM_TYPE_ERROR);
@@ -13196,10 +13203,10 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 if(set_index>=chunk->type_set_count)
                     VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
                 const bool matches=value_matches_set(chunk,registers[source],
-                                                     (uint8_t)set_index,true);
+                    set_index,true);
                 if(!matches) {
                     char expected[80]; char actual[80];
-                    format_type_set_index(expected,sizeof expected,chunk,(uint8_t)set_index);
+                    format_type_set_index(expected,sizeof expected,chunk,set_index);
                     format_value_type(actual,sizeof actual,registers[source]);
                     snprintf(vm->error,sizeof vm->error,"expected %s, got %s",
                              expected,actual);

@@ -29,6 +29,6 @@ bool diamond_verify_bytecode(const DiamondChunk *chunk);
  * formatting logic. Returns false (having still written a best-effort
  * `<invalid ...>` placeholder) for a set index or member this chunk
  * doesn't actually have, same as every other disassembly helper here. */
-bool diamond_print_type_set(FILE *stream, const DiamondChunk *chunk, uint8_t set_index);
+bool diamond_print_type_set(FILE *stream, const DiamondChunk *chunk, uint16_t set_index);
 
 #endif

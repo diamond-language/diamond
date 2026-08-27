@@ -95,7 +95,7 @@ static bool decode_class_type(const DiamondChunk *chunk,uint8_t known_type,size_
 
 static void local_type_at_offset(const DiamondFunction *owner,
         const DiamondScopeLocal *local,size_t offset,uint8_t *known_type,
-        int16_t *known_type_set) {
+        int32_t *known_type_set) {
     *known_type=local->known_type;
     *known_type_set=local->known_type_set;
     size_t latest=0;bool found=false;
@@ -154,7 +154,7 @@ static size_t resolve_name(const DiamondProgram *program,const DiamondChunk *chu
         token.span.start,&owner);
     if(local==nullptr)return 0;
     *is_singleton=false;
-    uint8_t known_type=local->known_type;int16_t known_type_set=local->known_type_set;
+    uint8_t known_type=local->known_type;int32_t known_type_set=local->known_type_set;
     local_type_at_offset(owner,local,token.span.start,&known_type,&known_type_set);
     size_t class_index;
     if(decode_class_type(chunk,known_type,&class_index)) {

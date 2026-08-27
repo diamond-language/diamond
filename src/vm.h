@@ -25,7 +25,7 @@ enum {
     DIAMOND_MAX_CLASSES = 180,
     DIAMOND_MAX_INTERFACES = 32,
     DIAMOND_MAX_MODULES = 32,
-    DIAMOND_MAX_TYPE_SETS = 256,
+    DIAMOND_MAX_TYPE_SETS = UINT16_MAX,
     DIAMOND_MAX_UNION_TYPES = 8,
     DIAMOND_MAX_METHODS = 256,
     DIAMOND_MAX_FIELDS = 64,
@@ -385,12 +385,12 @@ typedef struct DiamondStringConstant {
 
 typedef struct DiamondTypeMember {
     uint8_t id;
-    uint8_t argument_set;
-    uint8_t second_argument_set;
+    uint16_t argument_set;
+    uint16_t second_argument_set;
     uint8_t callable_arity;
-    uint8_t callable_return_set;
+    uint16_t callable_return_set;
     bool callable_parameters_typed;
-    uint8_t callable_parameter_sets[16];
+    uint16_t callable_parameter_sets[16];
 } DiamondTypeMember;
 
 typedef struct DiamondTypeSet {
@@ -446,8 +446,8 @@ typedef struct DiamondMethod {
 typedef struct DiamondInterfaceMethod {
     char name[DIAMOND_MAX_FUNCTION_NAME];
     uint8_t arity;
-    uint8_t parameter_type_sets[16];
-    uint8_t return_type_set;
+    uint16_t parameter_type_sets[16];
+    uint16_t return_type_set;
 } DiamondInterfaceMethod;
 
 typedef struct DiamondInterface {
@@ -558,7 +558,7 @@ typedef struct DiamondScopeLocal {
      * ordinary single-class local. Besides explicit annotations, control-flow
      * joins can synthesize this set when all paths have representable known
      * types (`cond ? Dog.new() : Cat.new()`, for example). */
-    int16_t known_type_set;
+    int32_t known_type_set;
 } DiamondScopeLocal;
 
 typedef struct DiamondScopeTypeFact {
@@ -568,7 +568,7 @@ typedef struct DiamondScopeTypeFact {
     uint16_t reg;
     size_t effective_start;
     uint8_t known_type;
-    int16_t known_type_set;
+    int32_t known_type_set;
 } DiamondScopeTypeFact;
 
 typedef struct DiamondFunction {
@@ -621,8 +621,8 @@ typedef struct DiamondFunction {
     uint8_t owner_class;
     bool nested;
     uint8_t capture_count;
-    uint8_t return_type_set;
-    uint8_t parameter_type_sets[16];
+    uint16_t return_type_set;
+    uint16_t parameter_type_sets[16];
     /* Declared public parameter names. Dynamic keyword calls retain names in
      * bytecode and resolve them here after target selection. Hidden self
      * slots are deliberately excluded. */
@@ -670,7 +670,7 @@ struct DiamondChunk {
     size_t interface_count;
     const DiamondModule *modules;
     size_t module_count;
-    const uint8_t *parameter_type_sets;
+    const uint16_t *parameter_type_sets;
     uint8_t type_variable_count;
     uint8_t parameter_offset;
     const DiamondTypeBinding *type_variable_bindings;
