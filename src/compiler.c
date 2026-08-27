@@ -2444,7 +2444,10 @@ static uint16_t parse_singleton_reference(Compiler *compiler,
     const uint16_t result=allocate_register(compiler);
     emit_opcode(compiler,DIAMOND_OP_CLOSURE);emit_register(compiler,result);
     emit_function_index(compiler,function_index);emit_byte(compiler,0);
-    compiler->known_types[result]=TYPE_UNKNOWN;
+    DiamondFunction signature=*target;
+    signature.arity=method->arity;
+    signature.required_arity=method->required_arity;
+    publish_function_callable_type(compiler,result,&signature);
     return result;
 }
 
