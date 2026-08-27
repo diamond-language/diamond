@@ -561,6 +561,9 @@ declared Callable shape.
 If the Callable annotation includes a return type, that type becomes the
 compile-time type of `yield`. Anonymous blocks with a statically known final
 expression also advertise that return type to Callable validation.
+At statically resolved function and singleton calls, concrete parameter types
+inside `Callable[[...], Return]` are applied to corresponding `do |...|`
+locals, enabling ordinary arithmetic and method reasoning in the block.
 
 Callable values accept the same trailing `do ... end` block as named function
 and method calls, including calls with a spread Array. The block is appended as

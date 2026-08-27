@@ -1206,6 +1206,11 @@ When the annotation includes a Callable return type, `yield` carries that
 return set into the compiler's ordinary expression facts. Anonymous blocks now
 record a conservative return set when their final expression has one known
 concrete type, allowing structural Callable return checks without declarations.
+For statically resolved top-level and singleton calls, a one-member typed
+Callable parameter also seeds concrete types onto matching anonymous-block
+parameter registers. This context is consumed at the block boundary and does
+not leak into nested blocks; unions, unresolved generics, and dynamic receiver
+dispatch remain unknown rather than guessing.
 Callable-value and constructor calls attach trailing source blocks through the
 same final-positional-argument convention as named calls. Fixed calls snapshot
 pre-block argument registers before eager capture can box them; spread calls

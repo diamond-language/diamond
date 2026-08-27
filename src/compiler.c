@@ -119,6 +119,9 @@ typedef struct Compiler {
     bool has_current_block;
     uint16_t current_block_register;
     uint16_t current_block_type_set;
+    bool has_contextual_block_types;
+    uint8_t contextual_block_arity;
+    uint8_t contextual_block_types[16];
     int current_return_type;
     DiamondSpan current_return_type_span;
     LoopContext *current_loop;
@@ -1825,6 +1828,40 @@ static uint16_t callable_type_set_index(Compiler *compiler) {
     return (uint16_t)index;
 }
 
+static uint16_t compile_contextual_block(Compiler *compiler,
+        const DiamondFunction *target,size_t parameter_index) {
+    compiler->has_contextual_block_types=false;
+    compiler->contextual_block_arity=0;
+    if(target!=nullptr&&parameter_index<16) {
+        const uint16_t set_index=target->parameter_type_sets[parameter_index];
+        if(set_index!=DIAMOND_NO_TYPE_SET&&set_index<target->type_set_count) {
+            const DiamondTypeSet *set=&target->type_sets[set_index];
+            if(set->count==1&&set->members[0].id==DIAMOND_TYPE_CALLABLE&&
+               set->members[0].callable_parameters_typed&&
+               set->members[0].callable_arity<=16) {
+                const DiamondTypeMember *callable=&set->members[0];
+                compiler->has_contextual_block_types=true;
+                compiler->contextual_block_arity=callable->callable_arity;
+                for(size_t index=0;index<callable->callable_arity;index++) {
+                    compiler->contextual_block_types[index]=TYPE_UNKNOWN;
+                    const uint16_t parameter_set=
+                        callable->callable_parameter_sets[index];
+                    if(parameter_set>=target->type_set_count)continue;
+                    const DiamondTypeSet *parameter=&target->type_sets[parameter_set];
+                    if(parameter->count==1&&
+                       parameter->members[0].id<DIAMOND_TYPE_VARIABLE_BASE)
+                        compiler->contextual_block_types[index]=
+                            parameter->members[0].id;
+                }
+            }
+        }
+    }
+    const uint16_t block=compile_block(compiler);
+    compiler->has_contextual_block_types=false;
+    compiler->contextual_block_arity=0;
+    return block;
+}
+
 static uint16_t parse_call(Compiler *compiler, DiamondSpan name) {
     const int callable_local=find_local(compiler,name);
     if(callable_local>=0&&compiler->current.kind==DIAMOND_TOKEN_LEFT_PAREN) {
@@ -2014,7 +2051,8 @@ static uint16_t parse_call(Compiler *compiler, DiamondSpan name) {
             emit_instruction(compiler,DIAMOND_OP_MOVE,snapshot,slot_registers[index],0,2);
             slot_registers[index]=snapshot;
         }
-        slot_registers[argument_count]=compile_block(compiler);
+        slot_registers[argument_count]=compile_contextual_block(compiler,
+            function,function->arity==0?0:function->arity-1);
         slot_filled[argument_count]=true;
         argument_count++;
     }
@@ -2378,7 +2416,10 @@ static uint16_t parse_singleton_call(Compiler *compiler,
             emit_instruction(compiler,DIAMOND_OP_MOVE,snapshot,arguments[index],0,2);
             arguments[index]=snapshot;
         }
-        arguments[argument_count++]=compile_block(compiler);
+        const DiamondFunction *target=
+            compiler->program->functions[method->function_index];
+        arguments[argument_count++]=compile_contextual_block(compiler,target,
+            method->arity==0?0:method->arity-1);
     }
     if(argument_count<method->required_arity||
        (argument_count>method->arity && !method->has_variadic)) {
@@ -7313,6 +7354,13 @@ static uint16_t compile_loop_control(Compiler *compiler) {
  * + CLOSURE). No new DiamondOpCode. Caller has already confirmed
  * compiler->current.kind == DIAMOND_TOKEN_DO and not yet consumed it. */
 static uint16_t compile_block(Compiler *compiler) {
+    const bool has_contextual_types=compiler->has_contextual_block_types;
+    const uint8_t contextual_arity=compiler->contextual_block_arity;
+    uint8_t contextual_types[16];
+    for(size_t index=0;index<contextual_arity;index++)
+        contextual_types[index]=compiler->contextual_block_types[index];
+    compiler->has_contextual_block_types=false;
+    compiler->contextual_block_arity=0;
     advance_token(compiler);
     if (compiler->program->function_count == DIAMOND_MAX_FUNCTIONS) {
         fail(compiler, compiler->current.span, "too many functions");
@@ -7434,6 +7482,10 @@ static uint16_t compile_block(Compiler *compiler) {
                     fail(compiler,compiler->current.span,"too many local variables");break;
                 }
                 const uint16_t parameter=allocate_register(compiler);
+                if(has_contextual_types&&parameter_count<contextual_arity&&
+                   contextual_types[parameter_count]!=TYPE_UNKNOWN)
+                    compiler->known_types[parameter]=
+                        contextual_types[parameter_count];
                 compiler->locals[compiler->local_count++]=(Local){
                     .name=compiler->current.span,.reg=parameter};
                 record_scope_type_fact(compiler,parameter,compiler->current.span.start);
