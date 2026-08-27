@@ -2551,6 +2551,19 @@ static uint16_t parse_singleton_call(Compiler *compiler,
         size_t keyword_count=0;
         const uint16_t positional=parse_dynamic_keyword_arguments(compiler,
             keyword_names,keyword_values,&keyword_count);
+        bool has_block=false;uint16_t block=0;
+        if(compiler->current.kind==DIAMOND_TOKEN_DO) {
+            for(size_t index=0;index<keyword_count;index++) {
+                const uint16_t snapshot=allocate_register(compiler);
+                emit_instruction(compiler,DIAMOND_OP_MOVE,snapshot,
+                    keyword_values[index],0,2);
+                keyword_values[index]=snapshot;
+            }
+            block=compile_contextual_typed_block(compiler,function,
+                method->arity==0?0:method->arity-1,
+                type_arguments,type_argument_count);
+            has_block=true;
+        }
         const uint16_t destination=allocate_register(compiler);
         emit_opcode(compiler,type_argument_count==0?
             DIAMOND_OP_CALL_SINGLETON_KEYWORDS:
@@ -2561,11 +2574,12 @@ static uint16_t parse_singleton_call(Compiler *compiler,
         emit_byte(compiler,receiver_class_index<0?UINT8_MAX:
             (uint8_t)receiver_class_index);
         emit_byte(compiler,method->needs_receiver?1:0);
-        emit_byte(compiler,(uint8_t)keyword_count);
+        emit_byte(compiler,(uint8_t)(keyword_count|(has_block?0x80u:0u)));
         for(size_t index=0;index<keyword_count;index++) {
             emit_register(compiler,add_name_string(compiler,keyword_names[index]));
             emit_register(compiler,keyword_values[index]);
         }
+        if(has_block)emit_register(compiler,block);
         if(type_argument_count>0) {
             emit_byte(compiler,(uint8_t)type_argument_count);
             for(size_t index=0;index<type_argument_count;index++)
@@ -2584,8 +2598,23 @@ static uint16_t parse_singleton_call(Compiler *compiler,
             const uint16_t block=compile_contextual_typed_block(compiler,
                 function,method->arity==0?0:method->arity-1,
                 type_arguments,type_argument_count);
-            spread=emit_build_spread_arguments(compiler,nullptr,0,spread,
-                &block,1,false);
+            const uint16_t destination=allocate_register(compiler);
+            emit_opcode(compiler,type_argument_count==0?
+                DIAMOND_OP_CALL_SINGLETON_KEYWORDS:
+                DIAMOND_OP_CALL_TYPED_SINGLETON_KEYWORDS);
+            emit_register(compiler,destination);
+            emit_function_index(compiler,method->function_index);
+            emit_register(compiler,spread);
+            emit_byte(compiler,receiver_class_index<0?UINT8_MAX:
+                (uint8_t)receiver_class_index);
+            emit_byte(compiler,method->needs_receiver?1:0);
+            emit_byte(compiler,0x80u);emit_register(compiler,block);
+            if(type_argument_count>0) {
+                emit_byte(compiler,(uint8_t)type_argument_count);
+                for(size_t index=0;index<type_argument_count;index++)
+                    emit_register(compiler,type_arguments[index]);
+            }
+            return destination;
         }
         const uint16_t destination=allocate_register(compiler);
         emit_opcode(compiler,type_argument_count==0?
@@ -2641,9 +2670,32 @@ static uint16_t parse_singleton_call(Compiler *compiler,
         }
         const DiamondFunction *target=
             compiler->program->functions[method->function_index];
-        arguments[argument_count++]=compile_contextual_typed_block(compiler,
+        const uint16_t block=compile_contextual_typed_block(compiler,
             target,method->arity==0?0:method->arity-1,
             type_arguments,type_argument_count);
+        const size_t block_slot=method->arity==0?0:method->arity-1;
+        if(argument_count<block_slot) {
+            const uint16_t positional=
+                emit_argument_array(compiler,arguments,argument_count);
+            const uint16_t destination=allocate_register(compiler);
+            emit_opcode(compiler,type_argument_count==0?
+                DIAMOND_OP_CALL_SINGLETON_KEYWORDS:
+                DIAMOND_OP_CALL_TYPED_SINGLETON_KEYWORDS);
+            emit_register(compiler,destination);
+            emit_function_index(compiler,method->function_index);
+            emit_register(compiler,positional);
+            emit_byte(compiler,receiver_class_index<0?UINT8_MAX:
+                (uint8_t)receiver_class_index);
+            emit_byte(compiler,method->needs_receiver?1:0);
+            emit_byte(compiler,0x80u);emit_register(compiler,block);
+            if(type_argument_count>0) {
+                emit_byte(compiler,(uint8_t)type_argument_count);
+                for(size_t index=0;index<type_argument_count;index++)
+                    emit_register(compiler,type_arguments[index]);
+            }
+            return destination;
+        }
+        arguments[argument_count++]=block;
     }
     if(argument_count<method->required_arity||
        (argument_count>method->arity && !method->has_variadic)) {

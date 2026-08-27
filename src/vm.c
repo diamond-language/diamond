@@ -10187,11 +10187,17 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 READ_SHORT(destination);READ_SHORT(function_index);
                 READ_SHORT(positional_register);READ_BYTE(class_index);
                 READ_BYTE(needs_receiver);READ_BYTE(keyword_count);
-                if(keyword_count==0||keyword_count>16)
+                const bool has_block=(keyword_count&0x80u)!=0;
+                keyword_count&=0x7fu;
+                if((keyword_count==0&&!has_block)||keyword_count>16)
                     VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
                 for(size_t index=0;index<keyword_count;index++) {
                     READ_SHORT(keyword_names[index]);READ_SHORT(keyword_registers[index]);
                 }
+                uint16_t block_register=0;
+                if(has_block)READ_SHORT(block_register);
+                if(has_block&&block_register>=DIAMOND_REGISTER_COUNT)
+                    VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
                 if((DiamondOpCode)instruction==
                         DIAMOND_OP_CALL_TYPED_SINGLETON_KEYWORDS) {
                     READ_BYTE(type_count);if(type_count>8)
@@ -10211,7 +10217,9 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 DiamondVmStatus status=merge_keyword_arguments(vm,chunk,function,
                     (const DiamondArray *)registers[positional_register].as.object,
                     keyword_names,keyword_registers,keyword_count,registers,
-                    function->arity-needs_receiver,nullptr,&merged,&merged_count);
+                    function->arity-needs_receiver,
+                    has_block?&registers[block_register]:nullptr,
+                    &merged,&merged_count);
                 VM_PROPAGATE(status);
                 const size_t total=merged_count+needs_receiver;
                 if(total<function->required_arity||

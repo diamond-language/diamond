@@ -2,4 +2,7 @@ function block
 method block
 callable block
 method spread block
+singleton block
+singleton spread block
+singleton keyword block
 nil

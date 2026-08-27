@@ -37,3 +37,21 @@ puts(invoke_default_gap(default_gap_target))
 puts(receiver.transform(*[]) do |value|
   value + " spread block"
 end)
+
+class DefaultGapSingleton
+  def self.transform(prefix = "singleton", &block: Callable[[String], String])
+    yield(prefix)
+  end
+end
+
+puts(DefaultGapSingleton.transform() do |value|
+  value + " block"
+end)
+
+puts(DefaultGapSingleton.transform(*[]) do |value|
+  value + " spread block"
+end)
+
+puts(DefaultGapSingleton.transform(prefix: "singleton keyword") do |value|
+  value + " block"
+end)
