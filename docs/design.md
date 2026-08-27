@@ -530,9 +530,10 @@ compiler at a fresh function exactly the way `compile_definition` does for
 every other method, minus the closure-capture bookkeeping a class/module
 member never needs. The target must be a bare instance variable (auto-
 declared on first reference, the same as any other `@ivar`); parameters
-are bare names with no type annotations, defaults, or splat/block
-forwarding; the delegated call always reuses the declaring name (no
-renaming). Because the result is an ordinary method registered in the
+are bare names with no type annotations or defaults. Delegates accept either a
+trailing splat or a required trailing `&block`, but not both. The delegated
+call always reuses the declaring name (no renaming). Because the result is an
+ordinary method registered in the
 usual method table, it participates in inheritance, `super`,
 `respond_to?`, and `redefine_method` exactly like a hand-written one --
 deliberately, since a parallel dispatch mechanism was the one thing this

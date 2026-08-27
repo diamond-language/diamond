@@ -47,6 +47,7 @@ typedef enum DiamondTokenKind {
      * JUMP, the same shape parse_if's own then/else already uses. */
     DIAMOND_TOKEN_QUESTION,
     DIAMOND_TOKEN_PIPE,
+    DIAMOND_TOKEN_AMPERSAND,
     DIAMOND_TOKEN_BANG,
     DIAMOND_TOKEN_NOT,
     DIAMOND_TOKEN_AND_AND,

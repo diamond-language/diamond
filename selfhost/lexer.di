@@ -183,7 +183,7 @@ class Lexer
         return self.make_token(:and_and_equal) if self.match?("=".ord())
         return self.make_token(:and_and)
       end
-      return self.make_token(:error)
+      return self.make_token(:ampersand)
     end
     if code == "+".ord()
       return self.make_token(:plus_equal) if self.match?("=".ord())

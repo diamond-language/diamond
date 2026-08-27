@@ -340,7 +340,7 @@ DiamondToken diamond_lexer_next(DiamondLexer *lexer) {
             if(match(lexer,'&'))
                 return token(lexer,match(lexer,'=')?DIAMOND_TOKEN_AND_AND_EQUAL
                                                     :DIAMOND_TOKEN_AND_AND);
-            return token(lexer, DIAMOND_TOKEN_ERROR);
+            return token(lexer, DIAMOND_TOKEN_AMPERSAND);
         case '+':
             return token(lexer, match(lexer,'=') ? DIAMOND_TOKEN_PLUS_EQUAL
                                                   : DIAMOND_TOKEN_PLUS);

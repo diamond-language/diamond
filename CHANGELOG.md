@@ -98,6 +98,8 @@
   Compiler flow facts now retain high indices without signed 16-bit truncation.
 - Replaced the legacy `0xff` missing-type-set marker with the dedicated 16-bit
   `0xffff` sentinel, recovering type-set slot 255 for ordinary annotations.
+- Added required trailing-block forwarding to explicit-arity delegates with
+  `delegate transform(value, &block), to: @target` syntax.
 - Added protected method visibility with peer/subclass receiver access and
   runtime rejection outside the declaring class hierarchy.
 - Added `LazyEnumerator` pipelines with deferred `map`, `select`, and `reject`

@@ -462,10 +462,13 @@ compiler.c`'s `compile_delegate`, alongside `compile_attribute`/
 generated method participates in inheritance/override/`super`,
 `respond_to?`, and `redefine_method`/method-cache invalidation exactly
 like a hand-written one would (`tests/cases/method_delegation.di`),
-since it *is* one -- not a parallel dispatch model. Parameters are bare
-names only (no type annotations or defaults). A trailing `*arguments`
-parameter provides variadic forwarding through mixed instance-method spread,
-including fixed-plus-rest signatures; block forwarding remains separate work.
+since it *is* one -- not a parallel dispatch model. Parameters are bare names
+only (no type annotations or defaults). A trailing `*arguments` parameter
+provides variadic forwarding through mixed instance-method spread, including
+fixed-plus-rest signatures. A final `&block` parameter forwards a required
+trailing block through Diamond's ordinary last-Callable-argument convention.
+Splat and block forwarding cannot yet be combined because variadic collection
+currently consumes every trailing value.
 The forwarded call always uses the same name declared
 (`delegate foo(), to: @bar` always calls `@bar.foo()`, never a renamed
 target) -- both deliberate scope cuts, not oversights.

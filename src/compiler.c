@@ -8625,8 +8625,10 @@ static void compile_alias_method(Compiler *compiler) {
  * parallel runtime dispatch mechanism (docs/roadmap.md's "Explicit-arity
  * method delegation"). Deliberately scoped: the target must be a bare
  * instance variable (no arbitrary expression, no `to: some_method()`);
- * parameters are bare names only (no type annotations, no defaults, no
- * splat/block forwarding); the forwarded call always uses the same name
+ * parameters are bare names only (no type annotations or defaults). A final
+ * `&block` parameter forwards the trailing block closure through the ordinary
+ * last-Callable-argument convention. Splat and block forwarding cannot yet be
+ * combined; the forwarded call always uses the same name
  * declared here (no renaming). Valid in both class and module bodies,
  * mirroring compile_attribute_named's own class/module split just above
  * (field-index GET_IVAR for a class, name-keyed GET_IVAR_NAME for a
@@ -8661,8 +8663,21 @@ static void compile_delegate(Compiler *compiler) {
     skip_newlines(compiler);
     DiamondSpan parameter_names[16];size_t parameter_count=0;
     bool variadic=false;
+    bool forwards_block=false;
     while(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN&&!compiler->failed) {
+        bool block_parameter=false;
+        if(compiler->current.kind==DIAMOND_TOKEN_AMPERSAND) {
+            if(variadic) {
+                fail(compiler,compiler->current.span,
+                    "a delegate cannot combine splat and block forwarding");return;
+            }
+            block_parameter=true;forwards_block=true;advance_token(compiler);
+        }
         if(compiler->current.kind==DIAMOND_TOKEN_STAR) {
+            if(forwards_block) {
+                fail(compiler,compiler->current.span,
+                    "a delegate cannot combine splat and block forwarding");return;
+            }
             variadic=true;advance_token(compiler);
         }
         if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER) {
@@ -8674,9 +8689,10 @@ static void compile_delegate(Compiler *compiler) {
         parameter_names[parameter_count++]=compiler->current.span;
         advance_token(compiler);
         skip_newlines(compiler);
-        if(variadic&&compiler->current.kind==DIAMOND_TOKEN_COMMA) {
+        if((variadic||block_parameter)&&compiler->current.kind==DIAMOND_TOKEN_COMMA) {
             fail(compiler,compiler->current.span,
-                "a variadic delegate parameter must be last");return;
+                block_parameter?"a block delegate parameter must be last":
+                    "a variadic delegate parameter must be last");return;
         }
         if(compiler->current.kind!=DIAMOND_TOKEN_COMMA)break;
         advance_token(compiler);
