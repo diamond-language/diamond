@@ -2391,17 +2391,35 @@ static uint16_t compile_callable_value_block(Compiler *compiler,
        (size_t)callable_set_index<compiler->function->type_set_count) {
         const DiamondTypeSet *outer=
             &compiler->function->type_sets[(size_t)callable_set_index];
-        if(outer->count==1&&outer->members[0].id==DIAMOND_TYPE_CALLABLE&&
-           outer->members[0].callable_parameters_typed&&
-           outer->members[0].callable_arity>0) {
-            const uint16_t block_set=outer->members[0].callable_parameter_sets[
-                outer->members[0].callable_arity-1];
-            if(block_set<compiler->function->type_set_count) {
-                const DiamondTypeSet *set=&compiler->function->type_sets[block_set];
-                if(set->count==1)prepare_contextual_block(compiler,
-                    compiler->function->type_sets,
-                    compiler->function->type_set_count,&set->members[0]);
+        uint16_t shared_block_set=DIAMOND_NO_TYPE_SET;
+        bool compatible=outer->count>0;
+        for(size_t index=0;index<outer->count&&compatible;index++) {
+            const DiamondTypeMember *callable=&outer->members[index];
+            if(callable->id!=DIAMOND_TYPE_CALLABLE||
+               !callable->callable_parameters_typed||
+               callable->callable_arity==0) {compatible=false;break;}
+            const uint16_t block_set=callable->callable_parameter_sets[
+                callable->callable_arity-1];
+            if(block_set>=compiler->function->type_set_count) {
+                compatible=false;break;
             }
+            const DiamondTypeSet *set=&compiler->function->type_sets[block_set];
+            if(set->count!=1||set->members[0].id!=DIAMOND_TYPE_CALLABLE) {
+                compatible=false;break;
+            }
+            if(shared_block_set==DIAMOND_NO_TYPE_SET)shared_block_set=block_set;
+            else if(!type_sets_structurally_equal(
+                    compiler->function->type_sets,
+                    compiler->function->type_set_count,shared_block_set,
+                    compiler->function->type_sets,
+                    compiler->function->type_set_count,block_set,0))
+                compatible=false;
+        }
+        if(compatible&&shared_block_set!=DIAMOND_NO_TYPE_SET) {
+            const DiamondTypeSet *set=
+                &compiler->function->type_sets[shared_block_set];
+            prepare_contextual_block(compiler,compiler->function->type_sets,
+                compiler->function->type_set_count,&set->members[0]);
         }
     }
     const uint16_t block=compile_block(compiler);
@@ -5267,8 +5285,7 @@ static uint16_t parse_bound_method_reference(Compiler *compiler,uint16_t receive
         size_t type_argument_count) {
     const DiamondFunction *target=
         instance_call_signature(compiler,receiver,method_name,true);
-    const bool typed_wrapper=target!=nullptr&&!target->has_variadic&&
-        target->arity>0&&
+    const bool typed_wrapper=target!=nullptr&&target->arity>0&&
         (target->type_variable_count==0||
          type_argument_count==target->type_variable_count);
     uint16_t parameter_sets[16];
@@ -5310,7 +5327,7 @@ static uint16_t parse_bound_method_reference(Compiler *compiler,uint16_t receive
     wrapper->arity=typed_wrapper?(uint8_t)(target->arity-1):1;
     wrapper->required_arity=typed_wrapper?
         (uint8_t)(target->required_arity>0?target->required_arity-1:0):0;
-    wrapper->has_variadic=!typed_wrapper;
+    wrapper->has_variadic=typed_wrapper?target->has_variadic:true;
     wrapper->return_type_set=return_set;
     wrapper->type_set_count=compiler->function->type_set_count;
     if(!diamond_function_reserve_type_sets(wrapper,wrapper->type_set_count)) {
@@ -5353,15 +5370,23 @@ static uint16_t parse_bound_method_reference(Compiler *compiler,uint16_t receive
     const size_t argument_count=typed_wrapper?wrapper->arity:1;
     for(size_t index=0;index<argument_count;index++)
         arguments[index]=allocate_register(compiler);
-    if(!typed_wrapper)
-        emit_instruction(compiler,DIAMOND_OP_COLLECT_VARIADIC,arguments[0],0,0,3);
+    if(wrapper->has_variadic) {
+        const size_t fixed_count=wrapper->arity-1;
+        emit_instruction(compiler,DIAMOND_OP_COLLECT_VARIADIC,
+            arguments[fixed_count],(uint16_t)fixed_count,0,3);
+    }
     const uint16_t bound_receiver=allocate_register(compiler);
     emit_instruction(compiler,DIAMOND_OP_GET_CAPTURE,bound_receiver,0,0,2);
-    const uint16_t body=typed_wrapper?
-        emit_invoke_call(compiler,bound_receiver,method_name,false,
-            type_arguments,type_argument_count,arguments,argument_count):
-        emit_invoke_typed_spread(compiler,bound_receiver,method_name,
-            arguments[0],type_arguments,type_argument_count);
+    uint16_t body;
+    if(wrapper->has_variadic) {
+        const size_t fixed_count=wrapper->arity-1;
+        uint16_t spread=arguments[fixed_count];
+        if(fixed_count>0)spread=emit_build_spread_arguments(compiler,arguments,
+            fixed_count,spread,nullptr,0,false);
+        body=emit_invoke_typed_spread(compiler,bound_receiver,method_name,
+            spread,type_arguments,type_argument_count);
+    } else body=emit_invoke_call(compiler,bound_receiver,method_name,false,
+        type_arguments,type_argument_count,arguments,argument_count);
     emit_instruction(compiler,DIAMOND_OP_RETURN,body,0,0,1);
     wrapper->register_count=compiler->next_register;
 

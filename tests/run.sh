@@ -2327,13 +2327,18 @@ generic_union_return_dump="$(sed -n '/^== tests\/cases\/generic_union_return_pro
 
 actual="$($diamond --dump-bytecode tests/cases/bound_method_return_propagation.di)"
 bound_method_return_dump="$(sed -n '/^== tests\/cases\/bound_method_return_propagation.di ==$/,/^== abs ==$/p' <<<"$actual")"
-[[ "$(grep -c 'ADD_INT' <<<"$bound_method_return_dump")" == "4" ]]
+[[ "$(grep -c 'ADD_INT' <<<"$bound_method_return_dump")" == "6" ]]
 [[ "$(grep -cE '  ADD +r' <<<"$bound_method_return_dump")" == "0" ]]
 
 actual="$($diamond --dump-bytecode tests/cases/callable_union_return_propagation.di)"
 callable_union_return_dump="$(sed -n '/^== tests\/cases\/callable_union_return_propagation.di ==$/,/^== abs ==$/p' <<<"$actual")"
 [[ "$(grep -c 'ADD_INT' <<<"$callable_union_return_dump")" == "1" ]]
 [[ "$(grep -cE '  ADD +r' <<<"$callable_union_return_dump")" == "1" ]]
+
+actual="$($diamond --dump-bytecode tests/cases/callable_union_block_context.di)"
+callable_union_block_dump="$(sed -n '/^== <block> ==$/,$p' <<<"$actual")"
+[[ "$(grep -c 'ADD_INT' <<<"$callable_union_block_dump")" == "1" ]]
+[[ "$(grep -cE '  ADD +r' <<<"$callable_union_block_dump")" == "1" ]]
 
 actual="$($diamond --dump-bytecode -e $'def union_value() -> Int | String\n [1, "one"][0]\nend\nunion_value()')"
 union_function_dump="$(sed -n '/^== union_value ==$/,$p' <<<"$actual")"

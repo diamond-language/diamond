@@ -322,10 +322,18 @@ singleton references now carry wrapper-owned parameter and return graphs.
 Callable unions publish their result when independently stored return graphs are
 structurally equivalent.
 
-The next type-flow slices are typed variadic bound-method wrappers, inference of
-generic method-reference bindings from a later Callable contract, and structural
-agreement for Callable unions whose parameter graphs differ only by valid
-variance rather than exact equivalence.
+Variadic bound-method wrappers now preserve their fixed prefix and return graph,
+and bound Callable keyword calls use the original method parameter names.
+Callable unions provide trailing-block context when their nested contracts agree
+structurally.
+
+Context-driven generic method-reference inference remains open. Today a bare
+generic reference is compiled before a later call or parameter contract is
+known, and the no-AST single-pass compiler has no expected-type channel flowing
+back into that earlier expression. Implementing it requires an explicit
+bidirectional context mechanism rather than guessing bindings from a future
+consumer. Callable-union variance compatibility also remains separate from
+exact structural agreement.
 
 ### Ruby-like ergonomics without Ruby compatibility
 

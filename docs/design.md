@@ -454,13 +454,24 @@ A statically resolved fixed-arity instance method reference synthesizes a
 fixed-arity wrapper rather than an untyped variadic forwarding closure. Its
 user-visible parameter graphs omit the implicit receiver slot, and its return
 graph is cloned into wrapper-owned metadata. Explicit bindings on a generic
-method reference are substituted before that clone. Dynamic and variadic bound
-targets retain the conservative variadic wrapper.
+method reference are substituted before that clone. Dynamically unresolved
+targets retain the conservative untyped forwarding wrapper.
 
 Singleton method-reference wrappers apply the same return substitution and now
 advertise their own instantiated signature rather than the generic target's
 unbound graph. Calling a union of Callable values publishes a return fact only
 when every Callable member declares a structurally equivalent return graph.
+
+Resolved variadic bound methods retain their declared fixed prefix, variadic
+flag, parameter names, and return graph. The wrapper collects only its variadic
+tail, rebuilds one spread argument vector with the fixed prefix, and invokes the
+captured receiver through the ordinary spread path. Preserved parameter names
+also let Callable keyword dispatch map values into the wrapper's slots.
+
+When a Callable union is invoked with a trailing block, each outer Callable's
+final parameter is inspected. Structurally identical nested Callable contracts
+provide one shared block context. A missing, non-Callable, or divergent nested
+contract disables context for the block without changing runtime dispatch.
 
 Generic functions and methods may be specialized explicitly with syntax such
 as `empty[Int]()` or `factory.empty[String]()`. The call instruction carries
