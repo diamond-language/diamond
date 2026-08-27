@@ -164,6 +164,8 @@ static uint16_t compile_interface(Compiler *compiler);
 static int find_function(const Compiler *compiler, DiamondSpan name);
 static void record_scope_type_fact(Compiler *compiler,uint16_t reg,
         size_t effective_start);
+static uint16_t compile_assignment_store(Compiler *compiler,DiamondSpan name,
+        bool instance_variable,bool class_variable,uint16_t value);
 
 static void fail(Compiler *compiler, DiamondSpan span, const char *message) {
     if (!compiler->failed) {
@@ -4728,6 +4730,133 @@ typedef struct CaseFlowJoin {
     int16_t result_set;
 } CaseFlowJoin;
 
+typedef enum CaseArrayNodeKind {CASE_ARRAY_GROUP,CASE_ARRAY_VALUE,
+    CASE_ARRAY_BIND,CASE_ARRAY_WILDCARD} CaseArrayNodeKind;
+
+typedef struct CaseArrayNode {
+    CaseArrayNodeKind kind;
+    DiamondSpan name;
+    uint16_t value_register;
+    uint16_t subject_register;
+    uint8_t children[16];
+    uint8_t child_count;
+} CaseArrayNode;
+
+static bool span_is_underscore(const Compiler *compiler,DiamondSpan span) {
+    return span.length==1&&compiler->source[span.start]=='_';
+}
+
+static uint8_t parse_case_array_node(Compiler *compiler,CaseArrayNode *nodes,
+        size_t *node_count,size_t depth) {
+    if(*node_count==64||depth>8) {
+        fail(compiler,compiler->current.span,"case Array pattern is too complex");
+        return 0;
+    }
+    const uint8_t index=(uint8_t)(*node_count);
+    CaseArrayNode *node=&nodes[(*node_count)++];*node=(CaseArrayNode){};
+    if(compiler->current.kind==DIAMOND_TOKEN_LEFT_BRACKET) {
+        node->kind=CASE_ARRAY_GROUP;advance_token(compiler);
+        while(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_BRACKET&&!compiler->failed) {
+            if(node->child_count==16) {
+                fail(compiler,compiler->current.span,"too many case Array elements");return index;
+            }
+            node->children[node->child_count++]=
+                parse_case_array_node(compiler,nodes,node_count,depth+1);
+            if(compiler->current.kind==DIAMOND_TOKEN_RIGHT_BRACKET)break;
+            if(compiler->current.kind!=DIAMOND_TOKEN_COMMA) {
+                fail(compiler,compiler->current.span,"expected ',' in case Array pattern");
+                return index;
+            }
+            advance_token(compiler);
+        }
+        if(node->child_count==0) {
+            fail(compiler,compiler->current.span,"case Array pattern cannot be empty");
+            return index;
+        }
+        advance_token(compiler);return index;
+    }
+    if(compiler->current.kind==DIAMOND_TOKEN_IDENTIFIER) {
+        const char first=compiler->source[compiler->current.span.start];
+        if(span_is_underscore(compiler,compiler->current.span)) {
+            node->kind=CASE_ARRAY_WILDCARD;advance_token(compiler);return index;
+        }
+        if(first>='a'&&first<='z') {
+            node->kind=CASE_ARRAY_BIND;node->name=compiler->current.span;
+            advance_token(compiler);return index;
+        }
+    }
+    node->kind=CASE_ARRAY_VALUE;
+    const int pattern_class=compiler->current.kind==DIAMOND_TOKEN_IDENTIFIER&&
+        find_local(compiler,compiler->current.span)<0&&
+        find_function(compiler,compiler->current.span)<0?
+        find_class(compiler,compiler->current.span):-1;
+    DiamondLexer lookahead=compiler->lexer;
+    const DiamondToken after=diamond_lexer_next(&lookahead);
+    if(pattern_class>=0&&after.kind!=DIAMOND_TOKEN_DOT&&
+       after.kind!=DIAMOND_TOKEN_DOUBLE_COLON) {
+        node->value_register=allocate_register(compiler);
+        emit_opcode(compiler,DIAMOND_OP_LOAD_CLASS);
+        emit_register(compiler,node->value_register);
+        emit_byte(compiler,(uint8_t)pattern_class);advance_token(compiler);
+    } else node->value_register=parse_expression(compiler);
+    return index;
+}
+
+static void emit_case_array_match(Compiler *compiler,CaseArrayNode *nodes,
+        uint8_t node_index,uint16_t subject,uint16_t match_reg,
+        size_t *failure_jumps,size_t *failure_count) {
+    CaseArrayNode *node=&nodes[node_index];node->subject_register=subject;
+    if(node->kind==CASE_ARRAY_BIND||node->kind==CASE_ARRAY_WILDCARD)return;
+    const uint16_t test=allocate_register(compiler);
+    if(node->kind==CASE_ARRAY_VALUE) {
+        emit_instruction(compiler,DIAMOND_OP_CASE_MATCH,test,node->value_register,subject,3);
+    } else {
+        emit_instruction(compiler,DIAMOND_OP_CASE_ARRAY_SHAPE,test,subject,
+            node->child_count,3);
+    }
+    compiler->known_types[test]=DIAMOND_TYPE_BOOL;
+    emit_instruction(compiler,DIAMOND_OP_MOVE,match_reg,test,0,2);
+    failure_jumps[(*failure_count)++]=
+        emit_jump(compiler,DIAMOND_OP_JUMP_IF_FALSE,match_reg);
+    if(node->kind!=CASE_ARRAY_GROUP)return;
+    for(size_t child=0;child<node->child_count;child++) {
+        const uint8_t constant=add_constant(compiler,DIAMOND_INT((int64_t)child));
+        const uint16_t index_reg=allocate_register(compiler);
+        emit_instruction(compiler,DIAMOND_OP_CONSTANT,index_reg,constant,0,2);
+        const uint16_t element=allocate_register(compiler);
+        emit_instruction(compiler,DIAMOND_OP_INDEX_GET,element,subject,index_reg,3);
+        emit_case_array_match(compiler,nodes,node->children[child],element,
+            match_reg,failure_jumps,failure_count);
+    }
+}
+
+static void bind_case_array_names(Compiler *compiler,const CaseArrayNode *nodes,
+        uint8_t node_index) {
+    const CaseArrayNode *node=&nodes[node_index];
+    if(node->kind==CASE_ARRAY_BIND) {
+        (void)compile_assignment_store(compiler,node->name,false,false,
+            node->subject_register);return;
+    }
+    if(node->kind==CASE_ARRAY_GROUP)
+        for(size_t child=0;child<node->child_count;child++)
+            bind_case_array_names(compiler,nodes,node->children[child]);
+}
+
+static bool validate_case_array_bindings(Compiler *compiler,
+        const CaseArrayNode *nodes,size_t node_count) {
+    for(size_t left=0;left<node_count;left++) {
+        if(nodes[left].kind!=CASE_ARRAY_BIND)continue;
+        for(size_t right=left+1;right<node_count;right++) {
+            if(nodes[right].kind==CASE_ARRAY_BIND&&
+               spans_equal(compiler,nodes[left].name,nodes[right].name)) {
+                fail(compiler,nodes[right].name,"duplicate binding in case Array pattern");
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
 static void merge_case_branch(Compiler *compiler,CaseFlowJoin *join,
         size_t flow_reg_count,uint16_t branch_result) {
     const uint8_t branch_result_type=compiler->known_types[branch_result];
@@ -4827,38 +4956,58 @@ static uint16_t parse_case_branches(Compiler *compiler, uint16_t subject,
      * implements Range inclusion, Regexp search, class/subclass matching,
      * and ordinary/custom equality fallback in one runtime operation. */
     const uint16_t match_reg=allocate_register(compiler);
-    bool first_value=true;
-    size_t skip_jump=0;
-    for(;;) {
-        if(!first_value)
-            skip_jump=emit_jump(compiler,DIAMOND_OP_JUMP_IF_TRUE,match_reg);
-        uint16_t value_reg;
-        const int pattern_class=compiler->current.kind==DIAMOND_TOKEN_IDENTIFIER&&
-            find_local(compiler,compiler->current.span)<0&&
-            find_function(compiler,compiler->current.span)<0?
-            find_class(compiler,compiler->current.span):-1;
-        DiamondLexer pattern_lookahead=compiler->lexer;
-        const DiamondToken after_pattern=diamond_lexer_next(&pattern_lookahead);
-        if(pattern_class>=0&&after_pattern.kind!=DIAMOND_TOKEN_DOT&&
-           after_pattern.kind!=DIAMOND_TOKEN_DOUBLE_COLON) {
-            value_reg=allocate_register(compiler);
-            emit_opcode(compiler,DIAMOND_OP_LOAD_CLASS);
-            emit_register(compiler,value_reg);emit_byte(compiler,(uint8_t)pattern_class);
-            advance_token(compiler);
-        } else value_reg=parse_expression(compiler);
-        const uint16_t eq_reg=allocate_register(compiler);
-        emit_instruction(compiler,DIAMOND_OP_CASE_MATCH,eq_reg,value_reg,subject,3);
-        compiler->known_types[eq_reg]=DIAMOND_TYPE_BOOL;
-        emit_instruction(compiler,DIAMOND_OP_MOVE,match_reg,eq_reg,0,2);
-        if(!first_value)patch_jump(compiler,skip_jump,compiler->function->code_count);
-        first_value=false;
-        if(compiler->current.kind!=DIAMOND_TOKEN_COMMA)break;
-        advance_token(compiler);
-        skip_newlines(compiler);
+    CaseArrayNode array_nodes[64]={};uint8_t array_root=0;
+    const bool array_pattern=compiler->current.kind==DIAMOND_TOKEN_LEFT_BRACKET;
+    if(array_pattern) {
+        size_t node_count=0;
+        array_root=parse_case_array_node(compiler,array_nodes,&node_count,0);
+        if(compiler->failed||!validate_case_array_bindings(
+                compiler,array_nodes,node_count))return destination;
+        if(compiler->current.kind==DIAMOND_TOKEN_COMMA) {
+            fail(compiler,compiler->current.span,
+                "an Array binding pattern must be the only pattern in its when clause");
+            return destination;
+        }
+        emit_instruction(compiler,DIAMOND_OP_BOOL,match_reg,true,0,2);
+        compiler->known_types[match_reg]=DIAMOND_TYPE_BOOL;
+        size_t failure_jumps[64];size_t failure_count=0;
+        emit_case_array_match(compiler,array_nodes,array_root,subject,match_reg,
+            failure_jumps,&failure_count);
+        for(size_t index=0;index<failure_count;index++)
+            patch_jump(compiler,failure_jumps[index],compiler->function->code_count);
+    } else {
+        bool first_value=true;size_t skip_jump=0;
+        for(;;) {
+            if(!first_value)
+                skip_jump=emit_jump(compiler,DIAMOND_OP_JUMP_IF_TRUE,match_reg);
+            uint16_t value_reg;
+            const int pattern_class=compiler->current.kind==DIAMOND_TOKEN_IDENTIFIER&&
+                find_local(compiler,compiler->current.span)<0&&
+                find_function(compiler,compiler->current.span)<0?
+                find_class(compiler,compiler->current.span):-1;
+            DiamondLexer pattern_lookahead=compiler->lexer;
+            const DiamondToken after_pattern=diamond_lexer_next(&pattern_lookahead);
+            if(pattern_class>=0&&after_pattern.kind!=DIAMOND_TOKEN_DOT&&
+               after_pattern.kind!=DIAMOND_TOKEN_DOUBLE_COLON) {
+                value_reg=allocate_register(compiler);
+                emit_opcode(compiler,DIAMOND_OP_LOAD_CLASS);
+                emit_register(compiler,value_reg);emit_byte(compiler,(uint8_t)pattern_class);
+                advance_token(compiler);
+            } else value_reg=parse_expression(compiler);
+            const uint16_t eq_reg=allocate_register(compiler);
+            emit_instruction(compiler,DIAMOND_OP_CASE_MATCH,eq_reg,value_reg,subject,3);
+            compiler->known_types[eq_reg]=DIAMOND_TYPE_BOOL;
+            emit_instruction(compiler,DIAMOND_OP_MOVE,match_reg,eq_reg,0,2);
+            if(!first_value)patch_jump(compiler,skip_jump,compiler->function->code_count);
+            first_value=false;
+            if(compiler->current.kind!=DIAMOND_TOKEN_COMMA)break;
+            advance_token(compiler);skip_newlines(compiler);
+        }
     }
     if(!consume_conditional_start(compiler))return destination;
     const size_t false_jump=
         emit_jump(compiler,DIAMOND_OP_JUMP_IF_FALSE,match_reg);
+    if(array_pattern)bind_case_array_names(compiler,array_nodes,array_root);
     const uint16_t body_result=compile_sequence(compiler);
     emit_instruction(compiler,DIAMOND_OP_MOVE,destination,body_result,0,2);
     merge_case_branch(compiler,join,flow_reg_count,body_result);
@@ -4872,7 +5021,9 @@ static uint16_t parse_case_branches(Compiler *compiler, uint16_t subject,
 
 /* `case SUBJECT \n when V1, V2 \n ... [else ...] end`, an expression
  * like `if`. Desugars to the same MOVE-into-destination-then-jump-to-end
- * shape parse_if already uses, testing each pattern with CASE_MATCH.
+ * shape parse_if already uses. Scalar/value patterns use CASE_MATCH; nested
+ * Array binding patterns combine CASE_ARRAY_SHAPE, INDEX_GET, and CASE_MATCH,
+ * then commit their bindings only on the successful path.
  *
  * The remaining deliberate scope cut is the subject-less boolean form
  * (`case \n when a > b \n ...`, testing each `when`'s value

@@ -868,6 +868,13 @@ static bool disassemble_chunk(FILE *stream, const char *name,
                 offset=three_registers(stream,chunk,"COMPARE",offset, &valid);break;
             case DIAMOND_OP_CASE_MATCH:
                 offset=three_registers(stream,chunk,"CASE_MATCH",offset,&valid);break;
+            case DIAMOND_OP_CASE_ARRAY_SHAPE:
+                if(!require_bytes(stream,chunk,offset,7)){valid=false;offset=chunk->code_count;break;}
+                fprintf(stream,"%-18s r%u, r%u, %u elements\n","CASE_ARRAY_SHAPE",
+                    checked_register(chunk,stream,read_operand(chunk,offset+1),&valid),
+                    checked_register(chunk,stream,read_operand(chunk,offset+3),&valid),
+                    read_operand(chunk,offset+5));
+                offset+=7;break;
             case DIAMOND_OP_POSTGRES_OPEN:
                 offset=two_registers(stream,chunk,"POSTGRES_OPEN",offset, &valid);break;
             case DIAMOND_OP_MYSQL_OPEN:

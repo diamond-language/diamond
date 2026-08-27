@@ -284,7 +284,11 @@ evaluated at all when short-circuited) -- see
 
 Areas still worth examining include:
 
-- richer `case` binding patterns beyond Range/Regexp/class-aware matching;
+- **Done**: strict nested Array binding patterns in `case`/`when`, combining
+  exact recursive shape checks, `_` wildcards, lowercase bindings, and the
+  existing literal/Range/Regexp/class/custom-equality matchers without partial
+  binding on failed patterns. Hash/object patterns, rest patterns, and a pin
+  operator remain possible follow-ups;
 - **Done**: nested strict Array destructuring assignment with bracketed
   patterns (`[head, [left, right]] = value`), including mixed local/instance/
   class-variable leaves and exact shape checks at every level;

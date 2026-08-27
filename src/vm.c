@@ -12177,6 +12177,18 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 }
                 break;
             }
+            case DIAMOND_OP_CASE_ARRAY_SHAPE: {
+                uint16_t destination=0,array_reg=0,expected=0;
+                READ_SHORT(destination);READ_SHORT(array_reg);READ_SHORT(expected);
+                bool matches=false;
+                if(registers[array_reg].kind==DIAMOND_VALUE_OBJECT&&
+                   registers[array_reg].as.object->kind==DIAMOND_OBJECT_ARRAY) {
+                    const DiamondArray *array=
+                        (const DiamondArray *)registers[array_reg].as.object;
+                    matches=array->count==expected;
+                }
+                registers[destination]=DIAMOND_BOOL(matches);break;
+            }
             /* A duration-only clock: seconds since some unspecified,
              * process-local reference point (CLOCK_MONOTONIC), never
              * meaningful as a calendar timestamp or across processes --

@@ -279,6 +279,8 @@ typedef enum DiamondOpCode : uint8_t {
      * Regexp patterns search String subjects, class patterns accept instances
      * of that class/subclasses, and every other value retains `==` semantics. */
     DIAMOND_OP_CASE_MATCH,
+    /* Non-raising exact Array shape predicate used by binding patterns. */
+    DIAMOND_OP_CASE_ARRAY_SHAPE,
     DIAMOND_OP_COUNT,
 } DiamondOpCode;
 

@@ -64,6 +64,26 @@ expression, where each `when`'s own value is tested for truthiness
 instead of compared against a subject) — `case` always requires a
 subject in Diamond today.
 
+Array patterns can match an exact nested shape and bind lowercase names:
+
+```ruby
+case event
+when ["score", [1..100, points], Player, _]
+  record(points)
+else
+  reject(event)
+end
+```
+
+Every bracketed level must be an Array of exactly the written length. Nested
+entries use the same literal, Range, Regexp, class/subclass, and custom-equality
+matching described above. A lowercase bare name binds that element for the
+branch; `_` ignores it. Bindings are written only after the complete pattern
+matches, so a failed later element cannot partially overwrite locals. An Array
+binding pattern must be the sole pattern in its `when` clause; comma-separated
+alternatives remain available for non-binding patterns. There is not yet a pin
+operator for comparing against an existing lowercase local inside a pattern.
+
 ## Ternary
 
 ```ruby
