@@ -5161,6 +5161,27 @@ static const DiamondFunction *find_top_level_function(
     return nullptr;
 }
 
+/* Source-level extension protocol for native collections. `items.foo(x)`
+ * probes array_foo(items,x), then enumerable_foo(items,x); Hash uses the
+ * corresponding hash_ prefix. A trailing predicate '?' is omitted from the
+ * bridge name. Native methods handled directly by the VM still win first. */
+static const DiamondFunction *find_collection_extension(
+        const DiamondChunk *chunk,DiamondObjectKind kind,
+        const char *name,size_t length) {
+    if(length>0&&name[length-1]=='?')length--;
+    char bridge[DIAMOND_MAX_FUNCTION_NAME];
+    const char *prefix=kind==DIAMOND_OBJECT_ARRAY?"array_":"hash_";
+    int written=snprintf(bridge,sizeof bridge,"%s%.*s",prefix,(int)length,name);
+    if(written>0&&(size_t)written<sizeof bridge) {
+        const DiamondFunction *specific=find_top_level_function(
+            chunk,bridge,(size_t)written);
+        if(specific!=nullptr)return specific;
+    }
+    written=snprintf(bridge,sizeof bridge,"enumerable_%.*s",(int)length,name);
+    if(written<=0||(size_t)written>=sizeof bridge)return nullptr;
+    return find_top_level_function(chunk,bridge,(size_t)written);
+}
+
 static void record_rewritten_site(DiamondVm *vm, const uint8_t *site) {
     if (vm->rewritten_site_count >= DIAMOND_MAX_CODE)return;
     for (size_t index=0;index<vm->rewritten_site_count;index++)
@@ -10296,15 +10317,17 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                                 method_name->length==5&&
                                 memcmp(method_name->chars,"merge",5)==0)
                             target_name="hash_merge";
-                        if(target_name!=nullptr) {
-                            const DiamondFunction *target=
-                                find_top_level_function(chunk,target_name,strlen(target_name));
-                            if(target==nullptr) {
+                        const DiamondFunction *target=target_name!=nullptr?
+                            find_top_level_function(chunk,target_name,strlen(target_name)):
+                            find_collection_extension(chunk,receiver_kind,
+                                method_name->chars,method_name->length);
+                        if(target==nullptr&&target_name!=nullptr) {
                                 snprintf(vm->error,sizeof vm->error,
                                     "internal error: missing standard library function '%s'",
                                     target_name);
                                 VM_RETURN(DIAMOND_VM_TYPE_ERROR);
-                            }
+                        }
+                        if(target!=nullptr) {
                             const size_t total_argc=(size_t)argc+1;
                             if(total_argc<target->required_arity||total_argc>target->arity)
                                 VM_RETURN(DIAMOND_VM_ARITY_ERROR);

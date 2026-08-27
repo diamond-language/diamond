@@ -355,8 +355,9 @@ Areas still worth examining include:
   explicit peer receivers, inheritance, and unrelated-caller rejection;
 - **Done**: a first lazy Enumerator pipeline with deferred, composable
   `map`/`select`/`reject` transforms and `each`/`to_a`/`force` terminals;
-- a principled protocol for native collection extension instead of expanding
-  VM name-forwarding tables indefinitely.
+- **Done**: source-level native collection extension bridges using
+  `array_`/`hash_`/`enumerable_` naming conventions, eliminating VM edits for
+  new collection methods while retaining native-operation precedence.
 
 ### Explicit-arity method delegation
 

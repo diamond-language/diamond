@@ -79,6 +79,8 @@
   runtime rejection outside the declaring class hierarchy.
 - Added `LazyEnumerator` pipelines with deferred `map`, `select`, and `reject`
   transforms plus `each`, `to_a`, and `force` terminals.
+- Added source-level Array/Hash extension bridges through `array_`, `hash_`,
+  and `enumerable_` function naming conventions.
 - Corrected the runtime type-ID partition so the advertised class capacity no
   longer overlaps generic-variable and interface IDs, and raised the class
   capacity from 128 to 180. Updated the self-hosted compiler's mirrored

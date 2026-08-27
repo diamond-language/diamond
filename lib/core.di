@@ -685,6 +685,8 @@ class LazyEnumerator
   def each(callback: Callable[1])
     values = if @source is Array
       @source
+    elsif @source is Hash
+      @source.values()
     else
       @source.to_a()
     end

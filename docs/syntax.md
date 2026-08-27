@@ -1360,6 +1360,13 @@ functions in the prelude:
 [1, 2, 3].reduce(0, add)
 ```
 
+Native collections are extensible from Diamond source without VM changes.
+Defining `array_name(values, ...)`, `hash_name(values, ...)`, or the shared
+fallback `enumerable_name(values, ...)` exposes `.name(...)` on the matching
+receiver. A trailing predicate `?` is omitted from the bridge function name,
+so `array_large(values, minimum)` implements `values.large?(minimum)`.
+Built-in VM operations take precedence over extension bridges.
+
 Any user-defined class gets those same six methods, plus `to_a`, `sort`,
 `sort_by`, `min`, `max`, `min_by`, `max_by`, `reject`, `find`,
 `each_with_index`, `sum`, `take`, `drop`, `flat_map`, `partition`,
