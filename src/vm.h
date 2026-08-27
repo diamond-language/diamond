@@ -286,6 +286,8 @@ typedef enum DiamondOpCode : uint8_t {
     /* Non-raising Hash type and required-key predicates for case patterns. */
     DIAMOND_OP_CASE_HASH_SHAPE,
     DIAMOND_OP_CASE_HASH_HAS,
+    /* Copies Hash entries whose keys are absent from an exclusion Array. */
+    DIAMOND_OP_HASH_REST,
     DIAMOND_OP_COUNT,
 } DiamondOpCode;
 

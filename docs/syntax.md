@@ -105,7 +105,10 @@ Keys are ordinary expressions and use normal Hash key equality. Values support
 the same literals, nested Array or Hash patterns, lowercase bindings, `_`
 wildcards, and `^local` pins as Array patterns. Missing keys fail the pattern
 even when the requested value pattern would match `nil`. Empty `{}` matches any
-Hash. Bindings remain failure-atomic. Hash rest bindings are not yet supported.
+Hash. A trailing `**remaining` binding receives every unmatched entry in a
+fresh Hash; `**_` accepts and discards those entries without allocating a Hash.
+The rest binding must be last and works at nested levels. Bindings remain
+failure-atomic.
 
 Object patterns guard by class and extract values through public readers:
 

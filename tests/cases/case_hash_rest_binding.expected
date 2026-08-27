@@ -1,0 +1,7 @@
+[42, {unit: xp}, {source: arena, ranked: true}]
+{kind: score, payload: {points: 42, unit: xp}, source: arena, ranked: true}
+[7, {}, {}]
+heartbeat
+other
+{a: 1, b: 2}
+nil

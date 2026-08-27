@@ -12227,6 +12227,32 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                         registers[key])>=0;
                 registers[destination]=DIAMOND_BOOL(present);break;
             }
+            case DIAMOND_OP_HASH_REST: {
+                uint16_t destination=0,source_reg=0,excluded_reg=0;
+                READ_SHORT(destination);READ_SHORT(source_reg);READ_SHORT(excluded_reg);
+                if(registers[source_reg].kind!=DIAMOND_VALUE_OBJECT||
+                   registers[source_reg].as.object->kind!=DIAMOND_OBJECT_HASH||
+                   registers[excluded_reg].kind!=DIAMOND_VALUE_OBJECT||
+                   registers[excluded_reg].as.object->kind!=DIAMOND_OBJECT_ARRAY)
+                    VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
+                const DiamondHash *source=
+                    (const DiamondHash *)registers[source_reg].as.object;
+                const DiamondArray *excluded=
+                    (const DiamondArray *)registers[excluded_reg].as.object;
+                DiamondHash *rest=allocate_hash(vm);
+                if(rest==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                registers[destination]=DIAMOND_OBJECT(rest);
+                for(size_t entry=0;entry<source->count;entry++) {
+                    bool omit=false;
+                    for(size_t key=0;key<excluded->count;key++)
+                        if(values_equal(source->entries[entry].key,
+                                        excluded->values[key])) {omit=true;break;}
+                    if(!omit&&!hash_set(vm,rest,source->entries[entry].key,
+                        source->entries[entry].value))
+                        VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                }
+                break;
+            }
             /* A duration-only clock: seconds since some unspecified,
              * process-local reference point (CLOCK_MONOTONIC), never
              * meaningful as a calendar timestamp or across processes --

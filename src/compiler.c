@@ -4733,7 +4733,7 @@ typedef struct CaseFlowJoin {
 typedef enum CaseArrayNodeKind {CASE_ARRAY_GROUP,CASE_ARRAY_VALUE,
     CASE_ARRAY_BIND,CASE_ARRAY_WILDCARD,CASE_ARRAY_REST_BIND,
     CASE_ARRAY_REST_WILDCARD,CASE_ARRAY_PIN,CASE_HASH_GROUP,
-    CASE_OBJECT_GROUP} CaseArrayNodeKind;
+    CASE_OBJECT_GROUP,CASE_HASH_REST_BIND,CASE_HASH_REST_WILDCARD} CaseArrayNodeKind;
 
 typedef struct CaseArrayNode {
     CaseArrayNodeKind kind;
@@ -4808,6 +4808,43 @@ static uint8_t parse_case_array_node(Compiler *compiler,CaseArrayNode *nodes,
                 fail(compiler,compiler->current.span,"too many case Hash entries");
                 return index;
             }
+            DiamondLexer rest_lookahead=compiler->lexer;
+            const DiamondToken second_star=diamond_lexer_next(&rest_lookahead);
+            if(compiler->current.kind==DIAMOND_TOKEN_STAR&&
+               second_star.kind==DIAMOND_TOKEN_STAR) {
+                advance_token(compiler);advance_token(compiler);
+                if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER) {
+                    fail(compiler,compiler->current.span,
+                        "expected lowercase binding or '_' after '**' in case Hash pattern");
+                    return index;
+                }
+                const uint8_t child=(uint8_t)(*node_count);
+                if(*node_count==64) {
+                    fail(compiler,compiler->current.span,
+                        "case Hash pattern is too complex");return index;
+                }
+                CaseArrayNode *rest=&nodes[(*node_count)++];
+                *rest=(CaseArrayNode){.name=compiler->current.span};
+                if(span_is_underscore(compiler,rest->name))
+                    rest->kind=CASE_HASH_REST_WILDCARD;
+                else {
+                    const char first=compiler->source[rest->name.start];
+                    if(first<'a'||first>'z') {
+                        fail(compiler,rest->name,
+                            "rest binding in case Hash pattern must be lowercase");
+                        return index;
+                    }
+                    rest->kind=CASE_HASH_REST_BIND;
+                }
+                node->children[node->child_count++]=child;
+                advance_token(compiler);skip_newlines(compiler);
+                if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_BRACE) {
+                    fail(compiler,compiler->current.span,
+                        "rest binding must be last in case Hash pattern");
+                    return index;
+                }
+                break;
+            }
             const uint16_t key=parse_expression(compiler);
             if(compiler->current.kind!=DIAMOND_TOKEN_COLON) {
                 fail(compiler,compiler->current.span,
@@ -4817,7 +4854,9 @@ static uint8_t parse_case_array_node(Compiler *compiler,CaseArrayNode *nodes,
             const uint8_t child=parse_case_array_node(
                 compiler,nodes,node_count,depth+1);
             if(nodes[child].kind==CASE_ARRAY_REST_BIND||
-               nodes[child].kind==CASE_ARRAY_REST_WILDCARD) {
+               nodes[child].kind==CASE_ARRAY_REST_WILDCARD||
+               nodes[child].kind==CASE_HASH_REST_BIND||
+               nodes[child].kind==CASE_HASH_REST_WILDCARD) {
                 fail(compiler,nodes[child].name,
                     "rest bindings are not supported in case Hash patterns");
                 return index;
@@ -4982,7 +5021,9 @@ static void emit_case_array_match(Compiler *compiler,CaseArrayNode *nodes,
     CaseArrayNode *node=&nodes[node_index];node->subject_register=subject;
     if(node->kind==CASE_ARRAY_BIND||node->kind==CASE_ARRAY_WILDCARD||
        node->kind==CASE_ARRAY_REST_BIND||
-       node->kind==CASE_ARRAY_REST_WILDCARD)return;
+       node->kind==CASE_ARRAY_REST_WILDCARD||
+       node->kind==CASE_HASH_REST_BIND||
+       node->kind==CASE_HASH_REST_WILDCARD)return;
     const uint16_t test=allocate_register(compiler);
     if(node->kind==CASE_ARRAY_VALUE||node->kind==CASE_ARRAY_PIN||
        node->kind==CASE_OBJECT_GROUP) {
@@ -5005,6 +5046,27 @@ static void emit_case_array_match(Compiler *compiler,CaseArrayNode *nodes,
        node->kind!=CASE_OBJECT_GROUP)return;
     for(size_t child=0;child<node->child_count;child++) {
         CaseArrayNode *child_node=&nodes[node->children[child]];
+        if(child_node->kind==CASE_HASH_REST_BIND||
+           child_node->kind==CASE_HASH_REST_WILDCARD) {
+            if(child_node->kind==CASE_HASH_REST_BIND) {
+                const uint16_t key_base=allocate_register(compiler);
+                for(size_t key=1;key<child;key++)(void)allocate_register(compiler);
+                for(size_t key=0;key<child;key++)
+                    emit_instruction(compiler,DIAMOND_OP_MOVE,
+                        (uint16_t)(key_base+key),
+                        nodes[node->children[key]].key_register,0,2);
+                const uint16_t excluded=allocate_register(compiler);
+                emit_instruction(compiler,DIAMOND_OP_ARRAY,excluded,key_base,
+                    (uint16_t)child,3);
+                compiler->known_types[excluded]=DIAMOND_TYPE_ARRAY;
+                const uint16_t rest=allocate_register(compiler);
+                emit_instruction(compiler,DIAMOND_OP_HASH_REST,rest,subject,
+                    excluded,3);
+                compiler->known_types[rest]=DIAMOND_TYPE_HASH;
+                child_node->subject_register=rest;
+            }
+            continue;
+        }
         if(child_node->kind==CASE_ARRAY_REST_BIND||
            child_node->kind==CASE_ARRAY_REST_WILDCARD) {
             if(child_node->kind==CASE_ARRAY_REST_BIND) {
@@ -5046,7 +5108,8 @@ static void emit_case_array_match(Compiler *compiler,CaseArrayNode *nodes,
 static void bind_case_array_names(Compiler *compiler,const CaseArrayNode *nodes,
         uint8_t node_index) {
     const CaseArrayNode *node=&nodes[node_index];
-    if(node->kind==CASE_ARRAY_BIND||node->kind==CASE_ARRAY_REST_BIND) {
+    if(node->kind==CASE_ARRAY_BIND||node->kind==CASE_ARRAY_REST_BIND||
+       node->kind==CASE_HASH_REST_BIND) {
         (void)compile_assignment_store(compiler,node->name,false,false,
             node->subject_register);return;
     }
@@ -5060,10 +5123,12 @@ static bool validate_case_array_bindings(Compiler *compiler,
         const CaseArrayNode *nodes,size_t node_count) {
     for(size_t left=0;left<node_count;left++) {
         if(nodes[left].kind!=CASE_ARRAY_BIND&&
-           nodes[left].kind!=CASE_ARRAY_REST_BIND)continue;
+           nodes[left].kind!=CASE_ARRAY_REST_BIND&&
+           nodes[left].kind!=CASE_HASH_REST_BIND)continue;
         for(size_t right=left+1;right<node_count;right++) {
             if((nodes[right].kind==CASE_ARRAY_BIND||
-                nodes[right].kind==CASE_ARRAY_REST_BIND)&&
+                nodes[right].kind==CASE_ARRAY_REST_BIND||
+                nodes[right].kind==CASE_HASH_REST_BIND)&&
                spans_equal(compiler,nodes[left].name,nodes[right].name)) {
                 fail(compiler,nodes[right].name,"duplicate binding in case collection pattern");
                 return false;

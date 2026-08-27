@@ -885,6 +885,8 @@ static bool disassemble_chunk(FILE *stream, const char *name,
                 offset=two_registers(stream,chunk,"CASE_HASH_SHAPE",offset,&valid);break;
             case DIAMOND_OP_CASE_HASH_HAS:
                 offset=three_registers(stream,chunk,"CASE_HASH_HAS",offset,&valid);break;
+            case DIAMOND_OP_HASH_REST:
+                offset=three_registers(stream,chunk,"HASH_REST",offset,&valid);break;
             case DIAMOND_OP_POSTGRES_OPEN:
                 offset=two_registers(stream,chunk,"POSTGRES_OPEN",offset, &valid);break;
             case DIAMOND_OP_MYSQL_OPEN:

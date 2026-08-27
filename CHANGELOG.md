@@ -63,6 +63,8 @@
   lowercase bindings, wildcards, pins, extra-key tolerance, and atomic commits.
 - Added class-guarded object patterns to `case`, using public zero-argument
   readers with nested collection matching, pins, wildcards, and atomic commits.
+- Added trailing `**remaining` Hash rest patterns to `case`, including nested
+  extraction, fresh unmatched-entry Hashes, and allocation-free `**_` discard.
 - Corrected the runtime type-ID partition so the advertised class capacity no
   longer overlaps generic-variable and interface IDs, and raised the class
   capacity from 128 to 180. Updated the self-hosted compiler's mirrored

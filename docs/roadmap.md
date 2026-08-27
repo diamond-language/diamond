@@ -298,6 +298,8 @@ Areas still worth examining include:
   existing local or captured values without rebinding them;
 - **Done**: required-key Hash binding patterns in `case`, including nested
   Array/Hash values, wildcards, pins, extra-key tolerance, and atomic bindings;
+- **Done**: trailing Hash rest patterns (`**remaining` and `**_`) with fresh
+  unmatched-entry Hashes, nested extraction, and final-position enforcement;
 - **Done**: class-guarded object binding patterns in `case`, extracting public
   zero-argument readers into nested patterns with atomic binding commits;
 - **Done**: range-based Array slicing (`arr[1..3]` read,
