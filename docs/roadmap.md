@@ -378,10 +378,10 @@ Areas still worth examining include:
   generic bindings, fixed-plus-rest delegation, and runtime keyword binding
   for functions, user-defined methods, Callable values, constructors, and
   class/module singleton methods.
-- **Deferred**: keywords for native C-backed receiver methods. Their specialized
-  `INVOKE` branches encode arity but no stable parameter-name signature table.
-  Add one shared native signature registry before enabling this syntax; ad hoc
-  names in individual branches would expose undocumented VM internals.
+- **Done**: keywords for native C-backed receiver methods. One central native
+  signature registry supplies stable public parameter names; bound arguments
+  re-enter `INVOKE_SPREAD`, keeping arity, defaults, types, and method behavior
+  in the original native dispatch branches.
 - **Done**: spread calls on native receivers. Native String/Array/Hash/resource
   methods remain specialized branches inside `INVOKE`; the spread opcode
   constructs a compact synthetic call frame and re-enters that one dispatch

@@ -1331,8 +1331,10 @@ slot, merges the keyword values into a temporary argument vector, and then uses
 the same `run_chunk` path as every other direct call. Instance methods,
 Callable values, constructors, and singleton methods retain keyword names in
 bytecode until runtime target selection, then use the same binder on public
-parameter slots before adding any hidden receiver. Native C-backed methods
-remain positional until their dispatch matrix exposes stable name signatures.
+parameter slots before adding any hidden receiver. Native C-backed methods use
+`native_keyword_signatures` as their single public parameter-name registry;
+after binding, their arguments re-enter the existing `INVOKE_SPREAD` matrix,
+so native arity, defaults, types, and implementation remain single-sourced.
 
 ### Bare singleton method references
 

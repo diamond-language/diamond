@@ -8600,6 +8600,95 @@ static DiamondVmStatus debugger_helper(DiamondVm *vm,const DiamondChunk *chunk,
     return DIAMOND_VM_OK;
 }
 
+typedef struct NativeKeywordSignature {
+    const char *method;
+    const char *parameters[3];
+    uint8_t parameter_count;
+} NativeKeywordSignature;
+
+/* Stable public names for every parameter-bearing native receiver method.
+ * Arity/default enforcement deliberately remains in the existing INVOKE
+ * branches; this table only maps keyword names to their positional slots. */
+static const NativeKeywordSignature native_keyword_signatures[]={
+    {"tap",{"callback"},1},{"times",{"callback"},1},
+    {"upto",{"limit","callback"},2},{"downto",{"limit","callback"},2},
+    {"join",{"separator"},1},{"each",{"callback"},1},
+    {"select",{"callback"},1},{"count",{"callback"},1},
+    {"any?",{"callback"},1},{"all?",{"callback"},1},
+    {"reduce",{"initial","callback"},2},{"map",{"callback"},1},
+    {"reject",{"callback"},1},{"find",{"callback"},1},
+    {"each_with_index",{"callback"},1},{"sort_by",{"callback"},1},
+    {"min_by",{"callback"},1},{"max_by",{"callback"},1},
+    {"take",{"n"},1},{"drop",{"n"},1},{"flat_map",{"callback"},1},
+    {"partition",{"callback"},1},{"group_by",{"callback"},1},
+    {"zip",{"other"},1},{"each_slice",{"size"},1},
+    {"each_cons",{"size"},1},{"first_or",{"fallback"},1},
+    {"last_or",{"fallback"},1},{"include?",{"needle"},1},
+    {"concat",{"other"},1},{"delete_at",{"index"},1},
+    {"fetch",{"key","fallback"},2},{"include_key?",{"needle"},1},
+    {"map_values",{"callback"},1},{"merge",{"other"},1},
+    {"key_at",{"index"},1},{"value_at",{"index"},1},
+    {"index_of",{"needle"},1},{"slice",{"start","length"},2},
+    {"split",{"separator"},1},{"repeat",{"count"},1},
+    {"gsub",{"pattern","replacement"},2},{"sub",{"pattern","replacement"},2},
+    {"scan",{"pattern"},1},{"start_with?",{"prefix"},1},
+    {"end_with?",{"suffix"},1},{"ljust",{"width","padding"},2},
+    {"rjust",{"width","padding"},2},{"tr",{"from","to"},2},
+    {"format",{"values"},1},{"push",{"value"},1},
+    {"resume",{"value"},1},{"read",{"length"},1},
+    {"write",{"value"},1},{"send",{"value","host","port"},3},
+    {"receive",{"length"},1},{"match",{"value"},1},
+    {"match?",{"value"},1},{"respond_to?",{"name"},1}
+};
+
+static const NativeKeywordSignature *native_keyword_signature(
+        const DiamondStringConstant *method) {
+    for(size_t index=0;index<sizeof native_keyword_signatures/
+            sizeof native_keyword_signatures[0];index++) {
+        const NativeKeywordSignature *signature=&native_keyword_signatures[index];
+        if(strlen(signature->method)==method->length&&
+           memcmp(signature->method,method->chars,method->length)==0)
+            return signature;
+    }
+    return nullptr;
+}
+
+static DiamondVmStatus merge_native_keyword_arguments(DiamondVm *vm,
+        const DiamondChunk *caller,const NativeKeywordSignature *signature,
+        const DiamondArray *positional,const uint8_t *keyword_names,
+        const uint16_t *keyword_registers,size_t keyword_count,
+        const DiamondValue *registers,DiamondValue **merged,size_t *merged_count) {
+    if(positional->count>signature->parameter_count)return DIAMOND_VM_ARITY_ERROR;
+    bool filled[3]={0};size_t slots[16];size_t count=positional->count;
+    for(size_t index=0;index<count;index++)filled[index]=true;
+    for(size_t keyword=0;keyword<keyword_count;keyword++) {
+        if((size_t)keyword_names[keyword]>=caller->string_count)
+            return DIAMOND_VM_INVALID_BYTECODE;
+        const DiamondStringConstant *name=&caller->strings[keyword_names[keyword]];
+        size_t slot=SIZE_MAX;
+        for(size_t index=0;index<signature->parameter_count;index++)
+            if(strlen(signature->parameters[index])==name->length&&
+               memcmp(signature->parameters[index],name->chars,name->length)==0) {
+                slot=index;break;
+            }
+        if(slot==SIZE_MAX) {snprintf(vm->error,sizeof vm->error,
+            "no parameter with this name");return DIAMOND_VM_ARITY_ERROR;}
+        if(filled[slot]) {snprintf(vm->error,sizeof vm->error,
+            "multiple values for the same argument");return DIAMOND_VM_ARITY_ERROR;}
+        slots[keyword]=slot;filled[slot]=true;if(slot+1>count)count=slot+1;
+    }
+    for(size_t index=0;index<count;index++)if(!filled[index]) {
+        snprintf(vm->error,sizeof vm->error,"missing argument");
+        return DIAMOND_VM_ARITY_ERROR;
+    }
+    DiamondValue *values=malloc(count*sizeof *values);
+    if(values==nullptr&&count>0)return DIAMOND_VM_OUT_OF_MEMORY;
+    for(size_t index=0;index<positional->count;index++)values[index]=positional->values[index];
+    for(size_t keyword=0;keyword<keyword_count;keyword++)
+        values[slots[keyword]]=registers[keyword_registers[keyword]];
+    *merged=values;*merged_count=count;return DIAMOND_VM_OK;
+}
+
 static DiamondVmStatus merge_keyword_arguments(DiamondVm *vm,
         const DiamondChunk *caller,const DiamondFunction *function,
         const DiamondArray *positional,const uint8_t *keyword_names,
@@ -10496,9 +10585,44 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     VM_RETURN(DIAMOND_VM_TYPE_ERROR);
                 if(registers[recv].kind!=DIAMOND_VALUE_OBJECT||
                    registers[recv].as.object->kind!=DIAMOND_OBJECT_INSTANCE) {
-                    snprintf(vm->error,sizeof vm->error,
-                        "keyword arguments require a user-defined method");
-                    VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                    if(type_count!=0)VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                    const DiamondStringConstant *native_name=
+                        &chunk->strings[method_name_index];
+                    const NativeKeywordSignature *signature=
+                        native_keyword_signature(native_name);
+                    if(signature==nullptr) {snprintf(vm->error,sizeof vm->error,
+                        "no parameter with this name");
+                        VM_RETURN(DIAMOND_VM_ARITY_ERROR);}
+                    DiamondValue *native_merged=nullptr;size_t native_count=0;
+                    const DiamondVmStatus native_merge=merge_native_keyword_arguments(vm,
+                        chunk,signature,(const DiamondArray *)
+                        registers[positional_register].as.object,keyword_names,
+                        keyword_registers,keyword_count,registers,&native_merged,
+                        &native_count);
+                    VM_PROPAGATE(native_merge);
+                    DiamondArray *native_array=allocate_array(vm,native_merged,native_count);
+                    free(native_merged);if(native_array==nullptr)
+                        VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                    const size_t native_protected=vm->gc_protected_count;
+                    if(!gc_protect(vm,DIAMOND_OBJECT(native_array)))
+                        VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                    uint8_t native_code[12]={DIAMOND_OP_INVOKE_SPREAD,
+                        0,2,0,0,method_name_index,0,1,
+                        DIAMOND_OP_RETURN,0,2};
+                    uint32_t native_locations[12]={0};
+                    DiamondChunk native_chunk=*chunk;
+                    native_chunk.name="<native keyword invoke>";
+                    native_chunk.code=native_code;
+                    native_chunk.lines=native_locations;
+                    native_chunk.columns=native_locations;
+                    native_chunk.code_count=11;native_chunk.register_count=3;
+                    DiamondValue native_arguments[2]={registers[recv],
+                        DIAMOND_OBJECT(native_array)};
+                    DiamondValue native_result=DIAMOND_NIL;
+                    const DiamondVmStatus native_status=run_chunk(&native_chunk,vm,
+                        native_arguments,2,depth+1,nullptr,&native_result);
+                    gc_unprotect(vm,native_protected);VM_PROPAGATE(native_status);
+                    registers[dest]=native_result;break;
                 }
                 DiamondInstance *instance=(DiamondInstance *)registers[recv].as.object;
                 const DiamondChunk *owner=instance->owner!=nullptr?

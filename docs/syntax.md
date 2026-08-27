@@ -584,8 +584,8 @@ arguments you *do* supply, not skip an arbitrary one in the middle.
 Keyword arguments work for top-level functions, user-defined instance
 methods, Callable values, constructors with a Diamond-defined `initialize`,
 and class/module singleton methods. Dynamic calls retain keyword names until
-runtime target selection. Native C-backed receiver methods remain positional
-because their specialized branches expose no parameter-name signature table.
+runtime target selection. Native C-backed receiver methods use the central
+signature registry documented in `docs/design.md`.
 
 ### Variadic parameters
 
@@ -657,7 +657,7 @@ to a variadic *parameter* above. The supported slice is deliberately narrow:
 - all Diamond-defined targets may place keywords after the spread and any
   fixed positional suffix — `foo(1, *middle, last: 4)`; collisions and gaps
   are diagnosed at runtime because the spread length is dynamic;
-- native C-backed receiver methods remain positional-only;
+- native C-backed receiver methods use the same keyword-after-spread form;
 - explicit generic bindings compose with spread for functions and user-defined
   instance/class/module methods (`identity[Int](*values)`);
 - arity and method visibility are checked against the Array's actual length at *runtime*
