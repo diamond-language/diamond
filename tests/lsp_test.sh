@@ -285,6 +285,38 @@ count=$((count + 1))
 send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$variadic_hover_uri"'"}}}'
 read_message >/dev/null
 
+# --- hover preserves combined variadic and typed block parameter markers ---
+
+block_hover_uri="file:///block_hover.di"
+send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$block_hover_uri"'","text":"def dispatch(first: Int, *rest, &block: Callable[2])\n  first\nend"}}}'
+read_message >/dev/null
+
+send '{"jsonrpc":"2.0","id":101,"method":"textDocument/hover","params":{"textDocument":{"uri":"'"$block_hover_uri"'"},"position":{"line":0,"character":4}}}'
+response="$(read_message)"
+[[ "$response" == *'"id":101'* ]]
+count=$((count + 1))
+[[ "$response" == *'"value":"def dispatch(first: Int, *rest, &block: Callable[2])"'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$block_hover_uri"'"}}}'
+read_message >/dev/null
+
+# --- hover recognizes the lexical block-presence intrinsic ---
+
+block_given_uri="file:///block_given_hover.di"
+send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$block_given_uri"'","text":"def present(&block)\n  block_given?()\nend"}}}'
+read_message >/dev/null
+
+send '{"jsonrpc":"2.0","id":102,"method":"textDocument/hover","params":{"textDocument":{"uri":"'"$block_given_uri"'"},"position":{"line":1,"character":4}}}'
+response="$(read_message)"
+[[ "$response" == *'"id":102'* ]]
+count=$((count + 1))
+[[ "$response" == *'"value":"block_given?() -> Bool"'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$block_given_uri"'"}}}'
+read_message >/dev/null
+
 # --- go-to-definition on a symbol pulled in through require resolves to
 # a Location in *that* file, not the requesting document ---
 

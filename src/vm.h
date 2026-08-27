@@ -618,12 +618,12 @@ typedef struct DiamondFunction {
     size_t type_set_capacity;
     uint8_t arity;
     uint8_t required_arity;
-    /* Set only by a trailing `*name` parameter -- when true, `arity - 1`
-     * is the count of ordinary (non-variadic) parameters, and the last
-     * parameter slot (parameter_names[arity-1]) holds an Array collecting
-     * every argument beyond that count rather than a single value. See
-     * docs/design.md's "Splat/variadic parameters" section. */
+    /* Set only by a `*name` parameter. It occupies the final slot unless a
+     * trailing explicit block parameter follows it. */
     bool has_variadic;
+    /* The final public parameter was declared with `&name`. Tooling uses this
+     * to preserve source-level signature shape. */
+    bool has_block_parameter;
     uint8_t owner_class;
     bool nested;
     uint8_t capture_count;

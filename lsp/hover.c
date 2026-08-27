@@ -111,16 +111,20 @@ static char *format_function_signature(const DiamondChunk *chunk,
          * required either, so without this check the generic "index >=
          * required_arity" rule below would misprint it as an ordinary
          * optional parameter (`rest = ...`) instead of `*rest`. */
-        const bool is_variadic_slot=function->has_variadic&&
+        const bool is_block_slot=function->has_block_parameter&&
             index+1==function->arity;
+        const bool is_variadic_slot=function->has_variadic&&
+            index+(function->has_block_parameter?2u:1u)==function->arity;
         if(is_variadic_slot)fputc('*',stream);
+        if(is_block_slot)fputc('&',stream);
         fputs(function->parameter_names[index],stream);
         if(!is_variadic_slot&&
            function->parameter_type_sets[index]!=DIAMOND_NO_TYPE_SET) {
             fputs(": ",stream);
             diamond_print_type_set(stream,&function_chunk,function->parameter_type_sets[index]);
         }
-        if(!is_variadic_slot&&index>=function->required_arity)fputs(" = ...",stream);
+        if(!is_variadic_slot&&!is_block_slot&&
+           index>=function->required_arity)fputs(" = ...",stream);
     }
     fputc(')',stream);
     if(function->return_type_set!=DIAMOND_NO_TYPE_SET) {
@@ -242,6 +246,10 @@ JsonValue *hover_compute(const DocumentTable *documents,const char *uri,
     }
 
     const DiamondChunk chunk=diamond_program_chunk(scratch);
+    if(strcmp(name,"block_given?")==0) {
+        free(combined);free(path);diamond_source_bundle_free(&bundle);
+        return hover_result("block_given?() -> Bool");
+    }
     for(size_t index=0;index<chunk.function_count;index++) {
         const DiamondFunction *function=chunk.functions[index];
         if(function->owner_class==UINT8_MAX&&!function->nested&&

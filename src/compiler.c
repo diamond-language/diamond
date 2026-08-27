@@ -8170,6 +8170,7 @@ static uint16_t compile_definition(Compiler *compiler, bool captures_self) {
     if(function->has_variadic&&!compiler->failed)
         emit_instruction(compiler,DIAMOND_OP_COLLECT_VARIADIC,
             variadic_parameter,variadic_fixed_count,has_block_parameter?1:0,3);
+    function->has_block_parameter=has_block_parameter;
     if(block_parameter_type>=0&&!compiler->failed) {
         const uint16_t absent=allocate_register(compiler);
         emit_instruction(compiler,DIAMOND_OP_NIL,absent,0,0,1);
@@ -9157,6 +9158,7 @@ static void compile_delegate(Compiler *compiler) {
         (uint8_t)(parameter_count-(forwards_block?1u:0u)):
         (uint8_t)(function->arity-(forwards_block?1u:0u));
     function->has_variadic=variadic;
+    function->has_block_parameter=forwards_block;
     if(variadic) {
         const size_t variadic_index=parameter_count-(forwards_block?2u:1u);
         emit_instruction(compiler,DIAMOND_OP_COLLECT_VARIADIC,

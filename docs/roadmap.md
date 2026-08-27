@@ -495,6 +495,10 @@ features share one signature.
 Typed `yield` expressions now propagate the annotated Callable return set.
 Anonymous blocks infer a concrete return set from a statically known final
 expression; contextual typing of block parameters remains a separate upgrade.
+Compiled functions now retain whether their final parameter used `&`, allowing
+LSP hover to distinguish optional blocks from defaults and locate a preceding
+variadic slot correctly. Hover also recognizes `block_given?()` as a Boolean
+lexical intrinsic.
 The forwarded call always uses the same name declared
 (`delegate foo(), to: @bar` always calls `@bar.foo()`, never a renamed
 target) -- both deliberate scope cuts, not oversights.

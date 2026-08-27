@@ -26,6 +26,8 @@
 
 ## Language
 
+- Added explicit block-parameter metadata and LSP hover rendering for
+  `*arguments, &block: Callable[N]` plus the `block_given?()` intrinsic.
 - Propagated annotated Callable return sets through `yield` and inferred
   concrete anonymous-block return types for structural Callable checks.
 - Added optional `&block: Callable[N]` annotations with nil-safe entry checks
