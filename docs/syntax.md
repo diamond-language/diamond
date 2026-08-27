@@ -44,8 +44,8 @@ end
 classify(2)   # => "small"
 ```
 
-`case SUBJECT` tests `SUBJECT == value` against each `when`'s value(s) in
-turn, an expression like `if` — the matched branch's last line (or the
+`case SUBJECT` matches each `when` pattern against the subject in turn, an
+expression like `if` — the matched branch's last line (or the
 `else` branch, or `nil` if nothing matches and there's no `else`) is the
 whole expression's value. A `when` can list several comma-separated
 values (`when 1, 2, 3`); matching short-circuits left to right, so a
@@ -53,13 +53,13 @@ later value in the list is never even evaluated once an earlier one in
 the same `when` already matched. `when VALUE then BODY` works the same
 as `if COND then BODY`, for a one-line branch.
 
-Plain `==` only — not Ruby's `===`, so `when 1..5`/`when String`/`when
-/regex/` all just compare the subject against that Range/Class/Regexp
-*value* with `==` rather than testing membership, which is almost never
-what's wanted. A `===`-based dispatch (so `case`/`when` can pattern-match
-against a `Range`, class, or `Regexp`) is a deliberate v1 scope cut,
-worth its own follow-up once there's more than one type that would use
-it. There's also no subject-less boolean form (Ruby's `case` with no
+Matching follows `===`-style case semantics: a `Range` tests numeric
+inclusion, a `Regexp` searches a String subject, and a user class name matches
+instances of that class or its subclasses. Other patterns use equality, with
+the pattern as receiver, so a user instance can customize matching through
+`def ==(value)`. Native type names such as `String` are not class-pattern
+values because Diamond's native types are not reified classes. There is still
+no subject-less boolean form (Ruby's `case` with no
 expression, where each `when`'s own value is tested for truthiness
 instead of compared against a subject) — `case` always requires a
 subject in Diamond today.

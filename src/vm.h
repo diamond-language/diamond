@@ -275,6 +275,10 @@ typedef enum DiamondOpCode : uint8_t {
      * is the call's *sole* argument -- see docs/design.md's "Call-site
      * spread" section. */
     DIAMOND_OP_CALL_SPREAD,
+    /* `case subject; when pattern` matching. Range patterns test inclusion,
+     * Regexp patterns search String subjects, class patterns accept instances
+     * of that class/subclasses, and every other value retains `==` semantics. */
+    DIAMOND_OP_CASE_MATCH,
     DIAMOND_OP_COUNT,
 } DiamondOpCode;
 

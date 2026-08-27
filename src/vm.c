@@ -4590,6 +4590,73 @@ static DiamondVmStatus invoke_operator_method(DiamondVm *vm,
     return run_chunk(&child,vm,args,argument_count,depth+1,nullptr,result);
 }
 
+static bool case_numeric_compare(DiamondValue left,DiamondValue right,int *comparison) {
+    if(is_int_value(left)&&is_int_value(right)) {
+        DiamondIntView left_view,right_view;
+        diamond_int_view(left,&left_view);diamond_int_view(right,&right_view);
+        *comparison=diamond_bignum_compare(left_view,right_view);return true;
+    }
+    return false;
+}
+
+static DiamondVmStatus case_match_value(DiamondVm *vm,const DiamondChunk *chunk,
+        size_t depth,const uint8_t *site,DiamondValue pattern,DiamondValue subject,
+        bool *matched) {
+    *matched=false;
+    if(pattern.kind==DIAMOND_VALUE_CLASS) {
+        if(pattern.as.class_index>=chunk->class_count||
+           subject.kind!=DIAMOND_VALUE_OBJECT||
+           subject.as.object->kind!=DIAMOND_OBJECT_INSTANCE)return DIAMOND_VM_OK;
+        const DiamondInstance *instance=(const DiamondInstance *)subject.as.object;
+        const DiamondChunk *owner=instance->owner!=nullptr?instance->owner:vm->root_chunk;
+        if(owner==nullptr||owner->classes!=chunk->classes)return DIAMOND_VM_OK;
+        const DiamondClass *target=&chunk->classes[pattern.as.class_index];
+        const DiamondClass *current=instance->class;
+        while(current!=nullptr) {
+            if(current==target) {*matched=true;break;}
+            current=current->superclass==UINT8_MAX?nullptr:
+                &owner->classes[current->superclass];
+        }
+        return DIAMOND_VM_OK;
+    }
+    if(pattern.kind==DIAMOND_VALUE_OBJECT&&
+       pattern.as.object->kind==DIAMOND_OBJECT_REGEXP) {
+        if(subject.kind!=DIAMOND_VALUE_OBJECT||
+           subject.as.object->kind!=DIAMOND_OBJECT_STRING)return DIAMOND_VM_OK;
+        const reginold_status status=reginold_search(
+            ((const DiamondRegexp *)pattern.as.object)->handle,
+            ((const DiamondString *)subject.as.object)->chars,
+            ((const DiamondString *)subject.as.object)->length,0,nullptr);
+        if(status==REGINOLD_ERROR) {
+            snprintf(vm->error,sizeof vm->error,"regexp match failed");
+            return DIAMOND_VM_REGEXP_ERROR;
+        }
+        *matched=status==REGINOLD_OK;return DIAMOND_VM_OK;
+    }
+    if(vm->range_class_index!=UINT8_MAX&&pattern.kind==DIAMOND_VALUE_OBJECT&&
+       pattern.as.object->kind==DIAMOND_OBJECT_INSTANCE) {
+        const DiamondInstance *range=(const DiamondInstance *)pattern.as.object;
+        if(range->class==&chunk->classes[vm->range_class_index]&&range->field_count>=3) {
+            int from_start=0,from_end=0;
+            if(!case_numeric_compare(subject,range->fields[0],&from_start)||
+               !case_numeric_compare(subject,range->fields[1],&from_end))return DIAMOND_VM_OK;
+            const bool exclusive=range->fields[2].kind==DIAMOND_VALUE_BOOL&&
+                range->fields[2].as.boolean;
+            *matched=from_start>=0&&(exclusive?from_end<0:from_end<=0);
+            return DIAMOND_VM_OK;
+        }
+    }
+    if(pattern.kind==DIAMOND_VALUE_OBJECT&&
+       pattern.as.object->kind==DIAMOND_OBJECT_INSTANCE) {
+        bool found=false;DiamondValue result=DIAMOND_NIL;
+        const DiamondVmStatus status=invoke_operator_method(vm,chunk,depth,site,
+            (const DiamondInstance *)pattern.as.object,"==",2,&subject,1,
+            &result,&found);
+        if(found) {if(status!=DIAMOND_VM_OK)return status;*matched=is_truthy(result);return status;}
+    }
+    *matched=values_equal(pattern,subject);return DIAMOND_VM_OK;
+}
+
 /* ClassName#method_missing(name, args) -- called when ordinary instance
  * method dispatch (the main DIAMOND_OP_INVOKE-family site) fails to find
  * `attempted_name` on the receiver's own class. Mirrors
@@ -9459,6 +9526,16 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     }
                 }
                 registers[destination]=DIAMOND_NIL;break;
+            }
+            case DIAMOND_OP_CASE_MATCH: {
+                uint16_t destination=0,pattern=0,subject=0;
+                READ_SHORT(destination);READ_SHORT(pattern);READ_SHORT(subject);
+                bool matched=false;
+                const DiamondVmStatus status=case_match_value(vm,chunk,depth,
+                    chunk->code+instruction_offset,registers[pattern],
+                    registers[subject],&matched);
+                VM_PROPAGATE(status);
+                registers[destination]=DIAMOND_BOOL(matched);break;
             }
             case DIAMOND_OP_JUMP: {
                 uint8_t high = 0;

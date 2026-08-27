@@ -138,9 +138,9 @@ module Opcode
   # SHIFT_LEFT's own 8-opcode one. Confirmed with the same throwaway C
   # probe technique as SHIFT_LEFT, not counted by hand.
   MODULO = 103
-  # Appended immediately after MODULO (the enum's own last real opcode
-  # before its DIAMOND_OP_COUNT sentinel), so no gap to account for here
-  # -- still confirmed with the same throwaway C probe technique as
+  # Appended immediately after MODULO. Later native-only tail opcodes,
+  # including CASE_MATCH, do not shift this value. Still confirmed with
+  # the same throwaway C probe technique as
   # SHIFT_LEFT/MODULO above rather than trusting the arithmetic alone.
   COMPARE = 104
 end

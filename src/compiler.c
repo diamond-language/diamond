@@ -4641,6 +4641,50 @@ static uint16_t compile_binary_op(Compiler *compiler, DiamondTokenKind operator,
     return destination;
 }
 
+typedef struct CaseFlowJoin {
+    uint8_t *types;
+    int16_t *sets;
+    bool *varied;
+    bool initialized;
+    uint8_t result_type;
+    int16_t result_set;
+} CaseFlowJoin;
+
+static void merge_case_branch(Compiler *compiler,CaseFlowJoin *join,
+        size_t flow_reg_count,uint16_t branch_result) {
+    const uint8_t branch_result_type=compiler->known_types[branch_result];
+    const int16_t branch_result_set=compiler->known_type_sets[branch_result];
+    if(!join->initialized) {
+        for(size_t index=0;index<flow_reg_count;index++) {
+            join->types[index]=compiler->known_types[index];
+            join->sets[index]=compiler->known_type_sets[index];
+        }
+        join->result_type=branch_result_type;join->result_set=branch_result_set;
+        join->initialized=true;return;
+    }
+    for(size_t index=0;index<flow_reg_count;index++) {
+        if(join->types[index]!=compiler->known_types[index]||
+           join->sets[index]!=compiler->known_type_sets[index])join->varied[index]=true;
+        merge_flow_types(compiler,join->types[index],join->sets[index],
+            compiler->known_types[index],compiler->known_type_sets[index],
+            &join->types[index],&join->sets[index]);
+    }
+    merge_flow_types(compiler,join->result_type,join->result_set,
+        branch_result_type,branch_result_set,&join->result_type,&join->result_set);
+}
+
+static void finish_case_flow(Compiler *compiler,CaseFlowJoin *join,
+        size_t flow_reg_count,uint16_t destination,size_t effective_start) {
+    for(size_t index=0;index<flow_reg_count;index++) {
+        compiler->known_types[index]=join->types[index];
+        compiler->known_type_sets[index]=join->sets[index];
+        if(join->varied[index]&&register_is_local(compiler,(uint16_t)index))
+            record_scope_type_fact(compiler,(uint16_t)index,effective_start);
+    }
+    compiler->known_types[destination]=join->result_type;
+    compiler->known_type_sets[destination]=join->result_set;
+}
+
 /* Compiles one `when`/`else`/`end` branch of a case expression and
  * everything after it, recursively -- same shape as parse_if's own
  * elsif recursion, and for the same reason: each level's "jump past the
@@ -4655,15 +4699,12 @@ static uint16_t compile_binary_op(Compiler *compiler, DiamondTokenKind operator,
  * gets restored at the top of every call -- a when-clause's values and
  * body are compiled as though no earlier when-clause's (also-compiled,
  * possibly-speculative) body actually ran, mirroring why parse_if resets
- * to its own before_types before compiling the else branch. No attempt
- * is made to merge type facts across branches the way parse_if merges
- * then/else when they agree (deliberate v1 scope cut, see parse_case's
- * own comment) -- every branch, including the terminal one, compiles
- * against the same entry snapshot and leaves it restored on return, so
- * code after the whole case statement sees exactly the pre-case state. */
+ * to its own before_types before compiling the else branch. `join` then
+ * accumulates every branch's result and local state into the same advisory
+ * unions parse_if uses; a missing else contributes the entry state and Nil. */
 static uint16_t parse_case_branches(Compiler *compiler, uint16_t subject,
         size_t flow_reg_count, const uint8_t *entry_types,
-        const int16_t *entry_sets, uint16_t destination) {
+        const int16_t *entry_sets, uint16_t destination,CaseFlowJoin *join) {
     for(size_t index=0;index<flow_reg_count;index++) {
         compiler->known_types[index]=entry_types[index];
         compiler->known_type_sets[index]=entry_sets[index];
@@ -4673,21 +4714,25 @@ static uint16_t parse_case_branches(Compiler *compiler, uint16_t subject,
         if(compiler->current.kind==DIAMOND_TOKEN_NEWLINE)skip_newlines(compiler);
         const uint16_t body_result=compile_sequence(compiler);
         emit_instruction(compiler,DIAMOND_OP_MOVE,destination,body_result,0,2);
-        for(size_t index=0;index<flow_reg_count;index++) {
-            compiler->known_types[index]=entry_types[index];
-            compiler->known_type_sets[index]=entry_sets[index];
-        }
+        merge_case_branch(compiler,join,flow_reg_count,body_result);
         if(compiler->current.kind!=DIAMOND_TOKEN_END) {
             fail(compiler,compiler->current.span,
                  "expected 'end' after case expression");
             return destination;
         }
+        const size_t join_offset=compiler->current.span.start;
         advance_token(compiler);
+        finish_case_flow(compiler,join,flow_reg_count,destination,join_offset);
         return destination;
     }
     if(compiler->current.kind==DIAMOND_TOKEN_END) {
         emit_instruction(compiler,DIAMOND_OP_NIL,destination,0,0,1);
+        compiler->known_types[destination]=DIAMOND_TYPE_NIL;
+        compiler->known_type_sets[destination]=-1;
+        merge_case_branch(compiler,join,flow_reg_count,destination);
+        const size_t join_offset=compiler->current.span.start;
         advance_token(compiler);
+        finish_case_flow(compiler,join,flow_reg_count,destination,join_offset);
         return destination;
     }
     if(compiler->current.kind!=DIAMOND_TOKEN_WHEN) {
@@ -4697,22 +4742,35 @@ static uint16_t parse_case_branches(Compiler *compiler, uint16_t subject,
     }
     advance_token(compiler);
     /* One `when` clause can list several comma-separated values (`when
-     * 1, 2`) -- match_reg accumulates whether *any* of them equals the
+     * 1, 2`) -- match_reg accumulates whether *any* of them matches the
      * subject, short-circuiting like `||` does (skip evaluating/
      * comparing a later value once an earlier one already matched)
-     * rather than always evaluating every value in the list. Plain `==`
-     * only, not Ruby's `===` -- deliberate v1 scope cut, see parse_case's
-     * own comment on why (no operator to dispatch to yet, and Range
-     * inclusion/class/Regexp matching are each a separable follow-up). */
+     * rather than always evaluating every value in the list. CASE_MATCH
+     * implements Range inclusion, Regexp search, class/subclass matching,
+     * and ordinary/custom equality fallback in one runtime operation. */
     const uint16_t match_reg=allocate_register(compiler);
     bool first_value=true;
     size_t skip_jump=0;
     for(;;) {
         if(!first_value)
             skip_jump=emit_jump(compiler,DIAMOND_OP_JUMP_IF_TRUE,match_reg);
-        const uint16_t value_reg=parse_expression(compiler);
-        const uint16_t eq_reg=compile_binary_op(
-            compiler,DIAMOND_TOKEN_EQUAL_EQUAL,subject,value_reg);
+        uint16_t value_reg;
+        const int pattern_class=compiler->current.kind==DIAMOND_TOKEN_IDENTIFIER&&
+            find_local(compiler,compiler->current.span)<0&&
+            find_function(compiler,compiler->current.span)<0?
+            find_class(compiler,compiler->current.span):-1;
+        DiamondLexer pattern_lookahead=compiler->lexer;
+        const DiamondToken after_pattern=diamond_lexer_next(&pattern_lookahead);
+        if(pattern_class>=0&&after_pattern.kind!=DIAMOND_TOKEN_DOT&&
+           after_pattern.kind!=DIAMOND_TOKEN_DOUBLE_COLON) {
+            value_reg=allocate_register(compiler);
+            emit_opcode(compiler,DIAMOND_OP_LOAD_CLASS);
+            emit_register(compiler,value_reg);emit_byte(compiler,(uint8_t)pattern_class);
+            advance_token(compiler);
+        } else value_reg=parse_expression(compiler);
+        const uint16_t eq_reg=allocate_register(compiler);
+        emit_instruction(compiler,DIAMOND_OP_CASE_MATCH,eq_reg,value_reg,subject,3);
+        compiler->known_types[eq_reg]=DIAMOND_TYPE_BOOL;
         emit_instruction(compiler,DIAMOND_OP_MOVE,match_reg,eq_reg,0,2);
         if(!first_value)patch_jump(compiler,skip_jump,compiler->function->code_count);
         first_value=false;
@@ -4725,37 +4783,24 @@ static uint16_t parse_case_branches(Compiler *compiler, uint16_t subject,
         emit_jump(compiler,DIAMOND_OP_JUMP_IF_FALSE,match_reg);
     const uint16_t body_result=compile_sequence(compiler);
     emit_instruction(compiler,DIAMOND_OP_MOVE,destination,body_result,0,2);
+    merge_case_branch(compiler,join,flow_reg_count,body_result);
     const size_t end_jump=emit_jump(compiler,DIAMOND_OP_JUMP,0);
     patch_jump(compiler,false_jump,compiler->function->code_count);
     const uint16_t result=parse_case_branches(
-        compiler,subject,flow_reg_count,entry_types,entry_sets,destination);
+        compiler,subject,flow_reg_count,entry_types,entry_sets,destination,join);
     patch_jump(compiler,end_jump,compiler->function->code_count);
     return result;
 }
 
 /* `case SUBJECT \n when V1, V2 \n ... [else ...] end`, an expression
  * like `if`. Desugars to the same MOVE-into-destination-then-jump-to-end
- * shape parse_if already uses, testing `subject == value` for each
- * `when` value in turn via compile_binary_op (so `==`'s own Int-fast-
- * path/user-overload machinery already applies, for free). No new
- * DiamondOpCode needed, same principle Range/compound-assignment already
- * established -- this is pure desugaring over MOVE/JUMP_IF_TRUE/
- * JUMP_IF_FALSE/EQUAL.
+ * shape parse_if already uses, testing each pattern with CASE_MATCH.
  *
- * Deliberate v1 scope cuts, matching this session's established
- * "ship the common case, defer the rest to its own list item" pattern:
- * plain `==` comparison only, not Ruby's `===` (so `when 1..5`/`when
- * String`/`when /regex/` pattern-match forms all just fall through to an
- * ordinary `==` against a Range/Class/Regexp value, which is almost
- * never what's wanted -- worth a real `===`-dispatch follow-up once
- * there's more than one type that would use it); no subject-less
- * boolean form (`case \n when a > b \n ...`, testing each `when`'s value
+ * The remaining deliberate scope cut is the subject-less boolean form
+ * (`case \n when a > b \n ...`, testing each `when`'s value
  * for truthiness instead of equality against a case subject) -- `case`
  * without a subject fails as "expected expression" today, a clear
- * error rather than silently misparsing; and no branch-level type-fact
- * merging the way parse_if merges agreeing then/else types (see
- * parse_case_branches' own comment) -- the whole expression's result
- * stays TYPE_UNKNOWN. */
+ * error rather than silently misparsing. */
 static uint16_t parse_case(Compiler *compiler) {
     const uint16_t subject=parse_expression(compiler);
     skip_newlines(compiler);
@@ -4765,19 +4810,25 @@ static uint16_t parse_case(Compiler *compiler) {
      * then_types -- see that function's own comment for why, and for the
      * ASan-confirmed bug a fixed [256] array with no bounds check caused
      * here otherwise. */
-    uint8_t inline_entry_types[256];int16_t inline_entry_sets[256];
+    uint8_t inline_entry_types[256],inline_join_types[256];
+    int16_t inline_entry_sets[256],inline_join_sets[256];
+    bool inline_varied[256]={};
     uint8_t *entry_types=inline_entry_types;int16_t *entry_sets=inline_entry_sets;
-    uint8_t *heap_types=nullptr;int16_t *heap_sets=nullptr;
+    uint8_t *join_types=inline_join_types;int16_t *join_sets=inline_join_sets;
+    bool *varied=inline_varied;
+    uint8_t *heap_types=nullptr;int16_t *heap_sets=nullptr;bool *heap_varied=nullptr;
     if(flow_reg_count>256) {
-        heap_types=malloc(flow_reg_count*sizeof(uint8_t));
-        heap_sets=malloc(flow_reg_count*sizeof(int16_t));
-        if(heap_types==nullptr||heap_sets==nullptr) {
+        heap_types=malloc(flow_reg_count*2*sizeof(uint8_t));
+        heap_sets=malloc(flow_reg_count*2*sizeof(int16_t));
+        heap_varied=calloc(flow_reg_count,sizeof(bool));
+        if(heap_types==nullptr||heap_sets==nullptr||heap_varied==nullptr) {
             fail(compiler,compiler->previous.span,
                  "out of memory compiling case expression");
-            free(heap_types);free(heap_sets);
+            free(heap_types);free(heap_sets);free(heap_varied);
             return destination;
         }
-        entry_types=heap_types;entry_sets=heap_sets;
+        entry_types=heap_types;join_types=heap_types+flow_reg_count;
+        entry_sets=heap_sets;join_sets=heap_sets+flow_reg_count;varied=heap_varied;
     }
     for(size_t index=0;index<flow_reg_count;index++) {
         entry_types[index]=compiler->known_types[index];
@@ -4786,14 +4837,14 @@ static uint16_t parse_case(Compiler *compiler) {
     if(compiler->current.kind!=DIAMOND_TOKEN_WHEN) {
         fail(compiler,compiler->current.span,
              "expected 'when' after case expression");
-        free(heap_types);free(heap_sets);
+        free(heap_types);free(heap_sets);free(heap_varied);
         return destination;
     }
+    CaseFlowJoin join={.types=join_types,.sets=join_sets,.varied=varied,
+        .result_type=TYPE_UNKNOWN,.result_set=-1};
     const uint16_t result=parse_case_branches(
-        compiler,subject,flow_reg_count,entry_types,entry_sets,destination);
-    free(heap_types);free(heap_sets);
-    compiler->known_types[destination]=TYPE_UNKNOWN;
-    compiler->known_type_sets[destination]=-1;
+        compiler,subject,flow_reg_count,entry_types,entry_sets,destination,&join);
+    free(heap_types);free(heap_sets);free(heap_varied);
     return result;
 }
 

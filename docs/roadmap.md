@@ -114,7 +114,7 @@ See `docs/lsp.md` and `lsp/receiver.c` for the mechanism and its scope cuts.
 
 Remaining, still open:
 
-- equivalent flow merging for `case` branches and loop exits;
+- equivalent flow merging for loop exits;
 - dependency-aware symbol information beyond one combined compilation;
 - incremental compilation only after there is a compiler architecture that can
   benefit from incremental document synchronization.
@@ -279,7 +279,7 @@ evaluated at all when short-circuited) -- see
 
 Areas still worth examining include:
 
-- richer pattern matching beyond equality-based `case`/`when`;
+- richer destructuring patterns beyond Range/Regexp/class-aware `case`/`when`;
 - **Done**: range-based Array slicing (`arr[1..3]` read,
   `arr[1..3] = [...]` write). `Range` has no native VM value kind at
   all -- it's a plain user-space class (`lib/core.di`) -- so

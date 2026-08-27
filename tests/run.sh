@@ -228,6 +228,11 @@ actual="$("$diamond" --dump-bytecode -e $'class FlowDog\nend\nclass FlowCat\nend
 joined_ternary_dump="$(sed -n '/^== joined_ternary ==$/,$p' <<<"$actual")"
 [[ "$(grep -c 'CHECK_TYPE' <<<"$joined_ternary_dump")" == "1" ]]
 
+actual="$("$diamond" --dump-bytecode -e $'class FlowDog\nend\nclass FlowCat\nend\ndef joined_case(value: Int) -> FlowDog | FlowCat\n case value\n when 1\n  FlowDog.new()\n else\n  FlowCat.new()\n end\nend\njoined_case(1)')"
+joined_case_dump="$(sed -n '/^== joined_case ==$/,$p' <<<"$actual")"
+grep -q 'CASE_MATCH' <<<"$joined_case_dump"
+[[ "$(grep -c 'CHECK_TYPE' <<<"$joined_case_dump")" == "1" ]]
+
 actual="$("$diamond" --dump-bytecode -e $'def lookup(values: Hash[String, Int]) -> Int\n value = values["answer"]\n if value == nil\n  0\n else\n  value\n end\nend\nlookup({"answer": 42})')"
 lookup_dump="$(sed -n '/^== lookup ==$/,$p' <<<"$actual")"
 [[ "$(grep -c 'CHECK_TYPE' <<<"$lookup_dump")" == "1" ]]

@@ -866,6 +866,8 @@ static bool disassemble_chunk(FILE *stream, const char *name,
                 offset=three_registers(stream,chunk,"MODULO",offset, &valid);break;
             case DIAMOND_OP_COMPARE:
                 offset=three_registers(stream,chunk,"COMPARE",offset, &valid);break;
+            case DIAMOND_OP_CASE_MATCH:
+                offset=three_registers(stream,chunk,"CASE_MATCH",offset,&valid);break;
             case DIAMOND_OP_POSTGRES_OPEN:
                 offset=two_registers(stream,chunk,"POSTGRES_OPEN",offset, &valid);break;
             case DIAMOND_OP_MYSQL_OPEN:
