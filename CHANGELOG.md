@@ -26,6 +26,9 @@
 
 ## Language
 
+- Added explicit `Fiber.yield(value)`/`Fiber.yield()` suspension, trailing
+  blocks on Callable-value and constructor calls, and clear missing-block
+  yield diagnostics.
 - Added lexical block `yield(...)` and `block_given?()` for functions and
   methods declaring `&block`, while preserving fiber yield elsewhere.
 - Made explicit `target(*arguments, &block)` forwarding omit an absent block

@@ -1194,6 +1194,14 @@ closure-call opcodes and `block_given?()` lowers to a nil comparison. Nested
 definitions and anonymous blocks reset this state, so block ownership cannot
 leak across a function boundary. Where no `&block` is declared, the existing
 `DIAMOND_OP_YIELD` fiber suspension path remains unchanged.
+`Fiber.yield(value)` lowers directly to that opcode regardless of lexical block
+state, with an omitted value materialized as nil. Named-block yield emits a
+Callable type check before dispatch, producing `expected Callable, got Nil`
+instead of a generic call failure when an optional block was not supplied.
+Callable-value and constructor calls attach trailing source blocks through the
+same final-positional-argument convention as named calls. Fixed calls snapshot
+pre-block argument registers before eager capture can box them; spread calls
+append the compiled block through `DIAMOND_OP_BUILD_SPREAD_ARGS`.
 
 **A real, riding-along correctness fix, not incidental.** `run_chunk`
 previously copied exactly `argument_count` values into `registers[]`

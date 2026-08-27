@@ -121,16 +121,11 @@ through its own parked stack, while another fiber's turn triggers
 collection. Binding is optional and additive; a VM with no bound queue
 collects exactly as before.
 
-Diamond source emits this boundary with `yield` or `yield(value)` — now a
-primary expression, usable anywhere a value is expected (`x = yield(1) +
-1`), not only as a standalone statement. Bare `yield` yields `nil` out
-(unchanged from before); `yield(value)` yields `value` out. `Fiber.new(callable)`
-now constructs a fiber from Diamond source (see below), but there is not yet
-any way to resume one from Diamond source — no `.resume(value)` dispatch
-exists yet — so the expression's own result, what a later resume delivers
-back in, is only reachable via the C-level `diamond_fiber_resume(fiber,
-value)` API today, exercised by `tests/fiber_run.c`, ahead of the
-`.resume(value)` dispatch landing.
+Diamond source emits this boundary with legacy `yield`/`yield(value)` in a
+body without `&block`, or explicitly with `Fiber.yield()`/
+`Fiber.yield(value)` in any lexical context. Each is a primary expression:
+the yielded value reaches `.resume`, and that resume's next value becomes the
+expression result. The explicit form avoids ambiguity with named-block yield.
 
 The current C boundary is:
 

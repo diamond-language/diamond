@@ -1649,6 +1649,10 @@ static uint16_t parse_closure_call_arguments(Compiler *compiler, uint16_t callab
         size_t keyword_count=0;
         const uint16_t positional=parse_dynamic_keyword_arguments(compiler,
             keyword_names,keyword_values,&keyword_count);
+        if(compiler->current.kind==DIAMOND_TOKEN_DO) {
+            fail(compiler,compiler->current.span,
+                "a keyword Callable call cannot also take a block");return 0;
+        }
         const uint16_t destination=allocate_register(compiler);
         emit_opcode(compiler,DIAMOND_OP_CALL_CLOSURE_KEYWORDS);
         emit_register(compiler,destination);emit_register(compiler,callable);
@@ -1660,8 +1664,17 @@ static uint16_t parse_closure_call_arguments(Compiler *compiler, uint16_t callab
         return destination;
     }
     if(call_arguments_have_spread(compiler)) {
-        const uint16_t spread=parse_spread_argument_array(compiler,nullptr,
+        uint16_t spread=parse_spread_argument_array(compiler,nullptr,
             nullptr,nullptr,nullptr);
+        if(compiler->current.kind==DIAMOND_TOKEN_DO) {
+            const uint16_t callable_snapshot=allocate_register(compiler);
+            emit_instruction(compiler,DIAMOND_OP_MOVE,callable_snapshot,
+                callable,0,2);
+            callable=callable_snapshot;
+            const uint16_t block=compile_block(compiler);
+            spread=emit_build_spread_arguments(compiler,nullptr,0,spread,
+                &block,1,false);
+        }
         const uint16_t destination=allocate_register(compiler);
         emit_opcode(compiler,DIAMOND_OP_CALL_CLOSURE_SPREAD);
         emit_register(compiler,destination);emit_register(compiler,callable);
@@ -1679,6 +1692,20 @@ static uint16_t parse_closure_call_arguments(Compiler *compiler, uint16_t callab
     }
     if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN){fail(compiler,compiler->current.span,"expected ')' after arguments");return 0;}
     advance_token(compiler);
+    if(compiler->current.kind==DIAMOND_TOKEN_DO) {
+        if(argument_count==16) {
+            fail(compiler,compiler->current.span,"too many call arguments");return 0;
+        }
+        const uint16_t callable_snapshot=allocate_register(compiler);
+        emit_instruction(compiler,DIAMOND_OP_MOVE,callable_snapshot,callable,0,2);
+        callable=callable_snapshot;
+        for(size_t index=0;index<argument_count;index++) {
+            const uint16_t snapshot=allocate_register(compiler);
+            emit_instruction(compiler,DIAMOND_OP_MOVE,snapshot,arguments[index],0,2);
+            arguments[index]=snapshot;
+        }
+        arguments[argument_count++]=compile_block(compiler);
+    }
     const uint16_t base=allocate_register(compiler);
     for(size_t i=1;i<argument_count;i++)(void)allocate_register(compiler);
     for(size_t i=0;i<argument_count;i++)emit_instruction(compiler,DIAMOND_OP_MOVE,(uint16_t)(base+i),arguments[i],0,2);
@@ -1762,6 +1789,28 @@ static uint16_t load_current_block(Compiler *compiler) {
         return loaded;
     }
     return block;
+}
+
+static uint16_t callable_type_set_index(Compiler *compiler) {
+    for(size_t index=0;index<compiler->function->type_set_count;index++) {
+        const DiamondTypeSet *set=&compiler->function->type_sets[index];
+        if(set->count==1&&set->members[0].id==DIAMOND_TYPE_CALLABLE&&
+           set->members[0].callable_arity==UINT8_MAX)
+            return (uint16_t)index;
+    }
+    if(!reserve_type_sets(compiler,1))return 0;
+    const size_t index=compiler->function->type_set_count++;
+    DiamondTypeSet *set=&compiler->function->type_sets[index];
+    set->count=1;
+    set->members[0]=(DiamondTypeMember){.id=DIAMOND_TYPE_CALLABLE,
+        .argument_set=DIAMOND_NO_TYPE_SET,
+        .second_argument_set=DIAMOND_NO_TYPE_SET,
+        .callable_arity=UINT8_MAX,
+        .callable_return_set=DIAMOND_NO_TYPE_SET,
+        .callable_parameters_typed=false};
+    for(size_t parameter=0;parameter<16;parameter++)
+        set->members[0].callable_parameter_sets[parameter]=DIAMOND_NO_TYPE_SET;
+    return (uint16_t)index;
 }
 
 static uint16_t parse_call(Compiler *compiler, DiamondSpan name) {
@@ -2497,31 +2546,46 @@ static uint16_t parse_compile_method_call(Compiler *compiler, int class_index) {
     return dest;
 }
 
-static uint16_t parse_fiber_new_call(Compiler *compiler) {
+static uint16_t parse_fiber_call(Compiler *compiler) {
     advance_token(compiler); /* consume '.' */
-    if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER||
-       !name_equals(compiler,"new",compiler->current.span,false)) {
-        fail(compiler,compiler->current.span,"expected 'new' after 'Fiber'");
+    const bool creates=compiler->current.kind==DIAMOND_TOKEN_IDENTIFIER&&
+        name_equals(compiler,"new",compiler->current.span,false);
+    const bool yields=compiler->current.kind==DIAMOND_TOKEN_YIELD;
+    if(!creates&&!yields) {
+        fail(compiler,compiler->current.span,
+            "expected 'new' or 'yield' after 'Fiber'");
         return 0;
     }
-    advance_token(compiler); /* consume 'new' */
+    advance_token(compiler);
     if(compiler->current.kind!=DIAMOND_TOKEN_LEFT_PAREN) {
-        fail(compiler,compiler->current.span,"expected '(' after 'Fiber.new'");
+        fail(compiler,compiler->current.span,
+            creates?"expected '(' after 'Fiber.new'":
+                    "expected '(' after 'Fiber.yield'");
         return 0;
     }
     advance_token(compiler);
     skip_newlines(compiler);
-    const uint16_t callable_register=parse_expression(compiler);
+    uint16_t value=0;
+    if(compiler->current.kind==DIAMOND_TOKEN_RIGHT_PAREN) {
+        if(creates) {
+            fail(compiler,compiler->current.span,
+                "Fiber.new requires a Callable argument");return 0;
+        }
+        value=allocate_register(compiler);
+        emit_instruction(compiler,DIAMOND_OP_NIL,value,0,0,1);
+    } else value=parse_expression(compiler);
     skip_newlines(compiler);
     if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
-        fail(compiler,compiler->current.span,"expected ')' after Fiber.new argument");
+        fail(compiler,compiler->current.span,
+            creates?"expected ')' after Fiber.new argument":
+                    "Fiber.yield accepts at most one value");
         return 0;
     }
     advance_token(compiler);
     const uint16_t dest=allocate_register(compiler);
-    emit_opcode(compiler,DIAMOND_OP_FIBER_NEW);
+    emit_opcode(compiler,creates?DIAMOND_OP_FIBER_NEW:DIAMOND_OP_YIELD);
     emit_register(compiler,dest);
-    emit_register(compiler,callable_register);
+    emit_register(compiler,value);
     return dest;
 }
 
@@ -3716,7 +3780,7 @@ static uint16_t parse_name(Compiler *compiler) {
     if(class_index<0&&find_local(compiler,name)<0&&find_function(compiler,name)<0&&
        compiler->current.kind==DIAMOND_TOKEN_DOT&&
        name_equals(compiler,"Fiber",name,false))
-        return parse_fiber_new_call(compiler);
+        return parse_fiber_call(compiler);
     if(class_index<0&&find_local(compiler,name)<0&&find_function(compiler,name)<0&&
        compiler->current.kind==DIAMOND_TOKEN_DOT&&
        name_equals(compiler,"File",name,false))
@@ -3915,6 +3979,11 @@ static uint16_t parse_name(Compiler *compiler) {
             size_t keyword_count=0;
             const uint16_t positional=parse_dynamic_keyword_arguments(compiler,
                 keyword_names,keyword_values,&keyword_count);
+            if(compiler->current.kind==DIAMOND_TOKEN_DO) {
+                fail(compiler,compiler->current.span,
+                    "a keyword constructor call cannot also take a block");
+                return 0;
+            }
             const uint16_t destination=allocate_register(compiler);
             emit_opcode(compiler,DIAMOND_OP_NEW_KEYWORDS);
             emit_register(compiler,destination);
@@ -3930,8 +3999,13 @@ static uint16_t parse_name(Compiler *compiler) {
             return destination;
         }
         if(call_arguments_have_spread(compiler)) {
-            const uint16_t spread=parse_spread_argument_array(compiler,nullptr,
+            uint16_t spread=parse_spread_argument_array(compiler,nullptr,
                 nullptr,nullptr,nullptr);
+            if(compiler->current.kind==DIAMOND_TOKEN_DO) {
+                const uint16_t block=compile_block(compiler);
+                spread=emit_build_spread_arguments(compiler,nullptr,0,spread,
+                    &block,1,false);
+            }
             const uint16_t destination=allocate_register(compiler);
             emit_opcode(compiler,DIAMOND_OP_NEW_SPREAD);
             emit_register(compiler,destination);
@@ -3955,6 +4029,17 @@ static uint16_t parse_name(Compiler *compiler) {
             fail(compiler, compiler->current.span, "expected ')' after arguments"); return 0;
         }
         advance_token(compiler);
+        if(compiler->current.kind==DIAMOND_TOKEN_DO) {
+            if(count==16) {
+                fail(compiler,compiler->current.span,"too many arguments");return 0;
+            }
+            for(size_t index=0;index<count;index++) {
+                const uint16_t snapshot=allocate_register(compiler);
+                emit_instruction(compiler,DIAMOND_OP_MOVE,snapshot,args[index],0,2);
+                args[index]=snapshot;
+            }
+            args[count++]=compile_block(compiler);
+        }
         const uint16_t base = allocate_register(compiler);
         for (size_t i = 1; i < count; i++) (void)allocate_register(compiler);
         for (size_t i = 0; i < count; i++)
@@ -6831,6 +6916,8 @@ static uint16_t compile_return(Compiler *compiler) {
 static uint16_t compile_yield(Compiler *compiler) {
     if(compiler->has_current_block) {
         const uint16_t block=load_current_block(compiler);
+        emit_instruction(compiler,DIAMOND_OP_CHECK_TYPE,block,
+            callable_type_set_index(compiler),0,2);
         if(compiler->current.kind==DIAMOND_TOKEN_LEFT_PAREN)
             return parse_closure_call_arguments(compiler,block);
         const uint16_t base=allocate_register(compiler);

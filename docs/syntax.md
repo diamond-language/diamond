@@ -556,13 +556,14 @@ Inside that lexical body, `yield(args...)` invokes the bound Callable and
 more arguments. Calling it without guarding an absent optional block is a
 normal non-Callable type error.
 
-Not supported (both explicitly out of scope, not just unimplemented):
-calling a closure *value* with a trailing block
-(`some_callable(args) do ... end`) and `ClassName.new(args) do ... end`
-constructor blocks. Ruby's `Thing.new { |t| ... }` idiom usually relies
-on `initialize` yielding `self`, which Diamond has no equivalent of — a
-block passed to `.new` would just be one more constructor argument, not
-obviously useful without a declared parameter to bind it to.
+Callable values accept the same trailing `do ... end` block as named function
+and method calls, including calls with a spread Array. The block is appended as
+the final positional argument.
+
+Constructor calls accept the same trailing block for fixed and spread
+arguments. The block is the final argument to `initialize`, which must declare
+an `&block` parameter to bind it. Keyword constructor calls cannot also take a
+trailing block yet because keyword slot normalization remains a separate path.
 
 ### Keyword arguments
 
@@ -1559,6 +1560,8 @@ to whoever resumes; the next `.resume(v)` delivers `v` back in as
 `yield`'s own expression result. `Fiber.new`'s argument must be a
 zero-argument callable (captures are fine — only nested `def`s produce a
 referenceable one, per the closures section above).
+`Fiber.yield(value)` is the explicit equivalent and remains unambiguous inside
+a callable that also declares `&block`; `Fiber.yield()` sends `nil`.
 
 ## I/O
 
