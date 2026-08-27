@@ -1213,9 +1213,11 @@ the nested Callable in their final parameter slot. Explicit generic call-site
 bindings substitute concrete type variables before the block compiles. Without
 explicit bindings, statically resolved top-level, singleton, and instance-method
 calls derive direct type-variable bindings from concrete positional arguments.
-Nested collection shapes remain deliberately unknown until structural
-compile-time inference is available. This context is consumed at the block
-boundary and does not leak into nested blocks.
+Homogeneous Array and Hash literals record recursive inferred type sets, so
+matching nested collection parameters can derive the same bindings. Mixed
+element or entry types remain unknown rather than inventing an unsafe join.
+This context is consumed at the block boundary and does not leak into nested
+blocks.
 Union receivers participate when every member resolves to the exact same
 inherited implementation; divergent overrides and genuinely unresolved generic
 contexts remain unknown.

@@ -501,11 +501,13 @@ their final nested Callable parameter through fixed, spread, and keyword calls.
 Explicit generic bindings substitute concrete block parameter types at function
 and method call sites. When bindings are omitted, direct one-member generic
 parameters now infer them from concrete positional arguments for statically
-resolved top-level, singleton, and instance-method calls. Union receivers
+resolved top-level, singleton, and instance-method calls. Homogeneous Array and
+Hash literals retain recursive compile-time contracts, allowing direct and
+nested collection parameters to contribute bindings too. Union receivers
 participate when every member resolves to the exact same inherited
-implementation. Nested collection bindings, divergent overrides, and genuinely
-unresolved generic contexts remain future extensions to the same conservative
-mechanism.
+implementation. Heterogeneous collection joins, divergent overrides, and
+genuinely unresolved generic contexts remain future extensions to the same
+conservative mechanism.
 Typed top-level function references and class/module singleton references now
 publish structural Callable signatures into local type facts, so later fixed,
 spread, and keyword Callable-value calls retain block context through aliases.

@@ -567,8 +567,10 @@ corresponding `do |...|` locals. Callable values with typed nested Callable
 parameters provide the same context. Explicit generic bindings are substituted
 before the block body is compiled. For statically resolved top-level,
 singleton, and instance-method calls, omitted bindings are inferred when a
-concrete positional argument maps directly to a generic parameter. Nested
-collection bindings still require explicit generic arguments.
+concrete positional argument maps directly to a generic parameter. Homogeneous
+Array and Hash literals also provide recursive bindings for nested collection
+parameters. Mixed literal types remain conservative and require explicit
+generic arguments.
 
 Callable values accept the same trailing `do ... end` block as named function
 and method calls, including calls with a spread Array. The block is appended as

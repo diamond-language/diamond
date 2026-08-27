@@ -2299,6 +2299,10 @@ actual="$($diamond --dump-bytecode -e $'def test(x: Int | String, y: Int | Strin
 test_dump="$(sed -n '/^== test ==$/,$p' <<<"$actual")"
 grep -q 'ADD_INT' <<<"$test_dump"
 
+actual="$($diamond --dump-bytecode -e $'def apply_nested[T](values: Array[Array[T]], &block: Callable[[T], T]) -> T\n yield(values[0][0])\nend\napply_nested([[20], [21]]) do |value|\n value + 1\nend')"
+nested_block_dump="$(sed -n '/^== <block> ==$/,$p' <<<"$actual")"
+grep -q 'ADD_INT' <<<"$nested_block_dump"
+
 actual="$($diamond --dump-bytecode -e $'def test(a: Int | String, b: Int | String) -> String\n unless a is Int || b is Int\n  a\n else\n  "one-or-both"\n end\nend')"
 test_dump="$(sed -n '/^== test ==$/,$p' <<<"$actual")"
 [[ "$(grep -c 'CHECK_TYPE' <<<"$test_dump")" == "2" ]]

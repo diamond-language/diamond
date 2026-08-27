@@ -2,12 +2,36 @@ def generic_apply[T](value: T, &block: Callable[[T], T]) -> T
   yield(value)
 end
 
+def generic_array_apply[T](values: Array[T], &block: Callable[[T], T]) -> T
+  yield(values[0])
+end
+
+def generic_hash_apply[K, V](values: Hash[K, V], &block: Callable[[V], V]) -> V
+  yield(values["answer"])
+end
+
+def generic_nested_apply[T](values: Array[Array[T]], &block: Callable[[T], T]) -> T
+  yield(values[0][0])
+end
+
 puts(generic_apply[Int](6) do |value|
   value * 7
 end)
 
 puts(generic_apply(7) do |value|
   value * 6
+end)
+
+puts(generic_array_apply([9]) do |value|
+  value + 3
+end)
+
+puts(generic_hash_apply({"answer": 40}) do |value|
+  value + 2
+end)
+
+puts(generic_nested_apply([[5], [6]]) do |value|
+  value * 2
 end)
 
 puts(generic_apply[Int](*[8]) do |value|

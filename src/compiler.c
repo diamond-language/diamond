@@ -597,6 +597,54 @@ static uint16_t concrete_type_set(Compiler *compiler,uint8_t type) {
     return (uint16_t)index;
 }
 
+static int32_t homogeneous_value_type_set(Compiler *compiler,
+        const uint16_t *values,size_t count) {
+    if(count==0)return -1;
+    int32_t common=-1;
+    for(size_t index=0;index<count;index++) {
+        int32_t current=compiler->known_type_sets[values[index]];
+        if(current<0) {
+            const uint8_t type=compiler->known_types[values[index]];
+            if(type==TYPE_UNKNOWN||type>=DIAMOND_TYPE_VARIABLE_BASE)return -1;
+            current=(int32_t)concrete_type_set(compiler,type);
+        }
+        if(current<0||(size_t)current>=compiler->function->type_set_count)
+            return -1;
+        if(common<0)common=current;
+        else if(common!=current)return -1;
+    }
+    return common;
+}
+
+static void record_collection_type_set(Compiler *compiler,uint16_t reg,
+        uint8_t type,int32_t argument_set,int32_t second_argument_set) {
+    if(argument_set<0||
+       (type==DIAMOND_TYPE_HASH&&second_argument_set<0))return;
+    const uint16_t second=second_argument_set<0?DIAMOND_NO_TYPE_SET:
+        (uint16_t)second_argument_set;
+    for(size_t index=0;index<compiler->function->type_set_count;index++) {
+        const DiamondTypeSet *known=&compiler->function->type_sets[index];
+        if(known->count==1&&known->members[0].id==type&&
+           known->members[0].argument_set==(uint16_t)argument_set&&
+           known->members[0].second_argument_set==second) {
+            compiler->known_type_sets[reg]=(int32_t)index;return;
+        }
+    }
+    if(!reserve_type_sets(compiler,1))return;
+    const size_t index=compiler->function->type_set_count++;
+    DiamondTypeSet *set=&compiler->function->type_sets[index];
+    set->count=1;set->inferred=true;
+    set->members[0]=(DiamondTypeMember){.id=type,
+        .argument_set=(uint16_t)argument_set,
+        .second_argument_set=second,
+        .callable_arity=UINT8_MAX,
+        .callable_return_set=DIAMOND_NO_TYPE_SET,
+        .callable_parameters_typed=false};
+    for(size_t parameter=0;parameter<16;parameter++)
+        set->members[0].callable_parameter_sets[parameter]=DIAMOND_NO_TYPE_SET;
+    compiler->known_type_sets[reg]=(int32_t)index;
+}
+
 static uint16_t clone_type_set_into_current(Compiler *compiler,
         const DiamondTypeSet *source_sets,size_t source_count,
         uint16_t source_index) {
@@ -2032,25 +2080,68 @@ static uint16_t compile_contextual_typed_block(Compiler *compiler,
     return block;
 }
 
+static void infer_contextual_type_set(Compiler *compiler,
+        const DiamondFunction *target,uint16_t expected_index,
+        uint16_t actual_index,uint16_t *bindings) {
+    if(expected_index>=target->type_set_count||
+       actual_index>=compiler->function->type_set_count)return;
+    const DiamondTypeSet *expected=&target->type_sets[expected_index];
+    const DiamondTypeSet *actual=&compiler->function->type_sets[actual_index];
+    for(size_t wanted_index=0;wanted_index<expected->count;wanted_index++) {
+        const DiamondTypeMember wanted=expected->members[wanted_index];
+        if(wanted.id>=DIAMOND_TYPE_VARIABLE_BASE&&
+           wanted.id<DIAMOND_TYPE_INTERFACE_BASE) {
+            const size_t variable=
+                (size_t)(wanted.id-DIAMOND_TYPE_VARIABLE_BASE);
+            if(variable<8) {
+                if(bindings[variable]==DIAMOND_NO_TYPE_SET)
+                    bindings[variable]=actual_index;
+                else if(bindings[variable]!=actual_index)
+                    bindings[variable]=(uint16_t)(DIAMOND_NO_TYPE_SET-1u);
+            }
+            continue;
+        }
+        for(size_t known_index=0;known_index<actual->count;known_index++) {
+            const DiamondTypeMember known=actual->members[known_index];
+            if(known.id!=wanted.id)continue;
+            if(wanted.argument_set!=DIAMOND_NO_TYPE_SET&&
+               known.argument_set!=DIAMOND_NO_TYPE_SET)
+                infer_contextual_type_set(compiler,target,wanted.argument_set,
+                    known.argument_set,bindings);
+            if(wanted.second_argument_set!=DIAMOND_NO_TYPE_SET&&
+               known.second_argument_set!=DIAMOND_NO_TYPE_SET)
+                infer_contextual_type_set(compiler,target,
+                    wanted.second_argument_set,known.second_argument_set,
+                    bindings);
+        }
+    }
+}
+
+static void infer_contextual_argument(Compiler *compiler,
+        const DiamondFunction *target,size_t parameter,uint16_t argument,
+        uint16_t *bindings) {
+    if(parameter>=16)return;
+    const uint16_t expected=target->parameter_type_sets[parameter];
+    if(expected==DIAMOND_NO_TYPE_SET||expected>=target->type_set_count)return;
+    int32_t actual=compiler->known_type_sets[argument];
+    if(actual<0) {
+        const uint8_t known=compiler->known_types[argument];
+        if(known==TYPE_UNKNOWN||known>=DIAMOND_TYPE_VARIABLE_BASE)return;
+        actual=(int32_t)concrete_type_set(compiler,known);
+    }
+    if(actual>=0&&(size_t)actual<compiler->function->type_set_count)
+        infer_contextual_type_set(compiler,target,expected,(uint16_t)actual,
+            bindings);
+}
+
 static size_t infer_contextual_type_arguments(Compiler *compiler,
         const DiamondFunction *target,const uint16_t *arguments,
         size_t argument_count,uint16_t *bindings) {
     for(size_t index=0;index<8;index++)bindings[index]=DIAMOND_NO_TYPE_SET;
     if(target==nullptr)return 0;
-    for(size_t parameter=0;parameter<argument_count&&parameter<16;parameter++) {
-        const uint16_t parameter_set=target->parameter_type_sets[parameter];
-        if(parameter_set==DIAMOND_NO_TYPE_SET||
-           parameter_set>=target->type_set_count)continue;
-        const DiamondTypeSet *expected=&target->type_sets[parameter_set];
-        if(expected->count!=1)continue;
-        const uint8_t id=expected->members[0].id;
-        if(id<DIAMOND_TYPE_VARIABLE_BASE||id>=DIAMOND_TYPE_INTERFACE_BASE)
-            continue;
-        const size_t variable=(size_t)(id-DIAMOND_TYPE_VARIABLE_BASE);
-        const uint8_t known=compiler->known_types[arguments[parameter]];
-        if(variable<8&&known!=TYPE_UNKNOWN&&known<DIAMOND_TYPE_VARIABLE_BASE)
-            bindings[variable]=concrete_type_set(compiler,known);
-    }
+    for(size_t parameter=0;parameter<argument_count&&parameter<16;parameter++)
+        infer_contextual_argument(compiler,target,parameter,
+            arguments[parameter],bindings);
     return target->type_variable_count;
 }
 
@@ -2283,21 +2374,8 @@ static uint16_t parse_call(Compiler *compiler, DiamondSpan name) {
             for(size_t parameter=0;parameter<argument_count&&
                 parameter<function->arity;parameter++) {
                 if(!slot_filled[parameter])continue;
-                const uint16_t parameter_set=
-                    function->parameter_type_sets[parameter];
-                if(parameter_set==DIAMOND_NO_TYPE_SET||
-                   parameter_set>=function->type_set_count)continue;
-                const DiamondTypeSet *expected=&function->type_sets[parameter_set];
-                if(expected->count!=1)continue;
-                const uint8_t id=expected->members[0].id;
-                if(id<DIAMOND_TYPE_VARIABLE_BASE||
-                   id>=DIAMOND_TYPE_INTERFACE_BASE)continue;
-                const size_t variable=(size_t)(id-DIAMOND_TYPE_VARIABLE_BASE);
-                const uint8_t known=compiler->known_types[
-                    slot_registers[parameter]];
-                if(variable<8&&known!=TYPE_UNKNOWN&&
-                   known<DIAMOND_TYPE_VARIABLE_BASE)
-                    inferred_arguments[variable]=concrete_type_set(compiler,known);
+                infer_contextual_argument(compiler,function,parameter,
+                    slot_registers[parameter],inferred_arguments);
             }
         const uint16_t *contextual_arguments=type_argument_count>0?
             type_arguments:inferred_arguments;
@@ -5160,6 +5238,8 @@ static uint16_t parse_array(Compiler *compiler) {
     const uint16_t destination=allocate_register(compiler);
     emit_instruction(compiler,DIAMOND_OP_ARRAY,destination,base,(uint8_t)count,3);
     compiler->known_types[destination]=DIAMOND_TYPE_ARRAY;
+    record_collection_type_set(compiler,destination,DIAMOND_TYPE_ARRAY,
+        homogeneous_value_type_set(compiler,elements,count),-1);
     return destination;
 }
 
@@ -5202,6 +5282,9 @@ static uint16_t parse_hash(Compiler *compiler) {
     const uint16_t destination=allocate_register(compiler);
     emit_instruction(compiler,DIAMOND_OP_HASH,destination,base,(uint8_t)count,3);
     compiler->known_types[destination]=DIAMOND_TYPE_HASH;
+    record_collection_type_set(compiler,destination,DIAMOND_TYPE_HASH,
+        homogeneous_value_type_set(compiler,keys,count),
+        homogeneous_value_type_set(compiler,values,count));
     return destination;
 }
 

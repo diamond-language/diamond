@@ -29,7 +29,8 @@
 - Added conservative contextual typing for anonymous block parameters at
   statically resolved function, singleton, and instance-method calls with typed
   Callable slots, including direct generic bindings inferred from concrete
-  positional arguments.
+  positional arguments and recursive bindings from homogeneous Array and Hash
+  literals.
 - Added explicit block-parameter metadata and LSP hover rendering for
   `*arguments, &block: Callable[N]` plus the `block_given?()` intrinsic.
 - Propagated annotated Callable return sets through `yield` and inferred
