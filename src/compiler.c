@@ -713,6 +713,24 @@ static uint16_t clone_type_set_into_current(Compiler *compiler,
     return (uint16_t)destination_index;
 }
 
+static void publish_declared_return_type(Compiler *compiler,uint16_t reg,
+        const DiamondFunction *target) {
+    if(target==nullptr||target->type_variable_count>0||
+       target->return_type_set==DIAMOND_NO_TYPE_SET)return;
+    const uint16_t return_set=target==compiler->function?
+        target->return_type_set:clone_type_set_into_current(compiler,
+            target->type_sets,target->type_set_count,target->return_type_set);
+    if(return_set==DIAMOND_NO_TYPE_SET||
+       return_set>=compiler->function->type_set_count)return;
+    compiler->known_type_sets[reg]=(int32_t)return_set;
+    const DiamondTypeSet *set=&compiler->function->type_sets[return_set];
+    if(set->count==0)return;
+    const uint8_t outer=set->members[0].id;
+    for(size_t index=1;index<set->count;index++)
+        if(set->members[index].id!=outer)return;
+    compiler->known_types[reg]=outer;
+}
+
 static void publish_function_callable_type(Compiler *compiler,uint16_t reg,
         const DiamondFunction *target) {
     compiler->known_types[reg]=DIAMOND_TYPE_CALLABLE;
@@ -2372,6 +2390,7 @@ static uint16_t parse_call(Compiler *compiler, DiamondSpan name) {
             for(size_t index=0;index<type_argument_count;index++)
                 emit_register(compiler,type_arguments[index]);
         }
+        publish_declared_return_type(compiler,destination,function);
         return destination;
     }
     /* Keyword arguments (direct top-level calls only -- see docs/roadmap.md):
@@ -2487,7 +2506,9 @@ static uint16_t parse_call(Compiler *compiler, DiamondSpan name) {
             emit_opcode(compiler,DIAMOND_OP_CALL_CLOSURE_KEYWORDS);
             emit_register(compiler,destination);emit_register(compiler,callable);
             emit_register(compiler,positional);emit_byte(compiler,0x80u);
-            emit_register(compiler,block);return destination;
+            emit_register(compiler,block);
+            publish_declared_return_type(compiler,destination,function);
+            return destination;
         }
         slot_registers[argument_count]=block;
         slot_filled[argument_count]=true;
@@ -2531,6 +2552,7 @@ static uint16_t parse_call(Compiler *compiler, DiamondSpan name) {
         for(size_t index=0;index<type_argument_count;index++)
             emit_register(compiler,type_arguments[index]);
     }
+    publish_declared_return_type(compiler,destination,function);
     return destination;
 }
 
@@ -2589,6 +2611,9 @@ static uint16_t emit_singleton_call(Compiler *compiler,const DiamondMethod *meth
         for(size_t index=0;index<type_argument_count;index++)
             emit_register(compiler,type_arguments[index]);
     }
+    const DiamondFunction *target=
+        compiler->program->functions[method->function_index];
+    publish_declared_return_type(compiler,destination,target);
     return destination;
 }
 
@@ -2824,6 +2849,7 @@ static uint16_t parse_singleton_call(Compiler *compiler,
             for(size_t index=0;index<type_argument_count;index++)
                 emit_register(compiler,type_arguments[index]);
         }
+        publish_declared_return_type(compiler,destination,function);
         return destination;
     }
     if(call_arguments_have_spread(compiler)) {
@@ -2862,6 +2888,7 @@ static uint16_t parse_singleton_call(Compiler *compiler,
                 for(size_t index=0;index<type_argument_count;index++)
                     emit_register(compiler,type_arguments[index]);
             }
+            publish_declared_return_type(compiler,destination,function);
             return destination;
         }
         const uint16_t destination=allocate_register(compiler);
@@ -2879,6 +2906,7 @@ static uint16_t parse_singleton_call(Compiler *compiler,
             for(size_t index=0;index<type_argument_count;index++)
                 emit_register(compiler,type_arguments[index]);
         }
+        publish_declared_return_type(compiler,destination,function);
         return destination;
     }
     uint16_t arguments[16];size_t argument_count=0;
@@ -2947,6 +2975,7 @@ static uint16_t parse_singleton_call(Compiler *compiler,
                 for(size_t index=0;index<type_argument_count;index++)
                     emit_register(compiler,type_arguments[index]);
             }
+            publish_declared_return_type(compiler,destination,function);
             return destination;
         }
         arguments[argument_count++]=block;
@@ -2983,6 +3012,7 @@ static uint16_t parse_singleton_call(Compiler *compiler,
         for(size_t index=0;index<type_argument_count;index++)
             emit_register(compiler,type_arguments[index]);
     }
+    publish_declared_return_type(compiler,destination,function);
     return destination;
 }
 
@@ -5178,9 +5208,11 @@ static uint16_t parse_invoke(Compiler *compiler, uint16_t receiver) {
                 contextual_count);
             has_block=true;
         }
-        return emit_invoke_keywords(compiler,receiver,name,positional,
+        const uint16_t result=emit_invoke_keywords(compiler,receiver,name,positional,
             keyword_names,keyword_values,keyword_count,type_arguments,
             type_argument_count,has_block,block);
+        publish_declared_return_type(compiler,result,contextual_target);
+        return result;
     }
     if(call_arguments_have_spread(compiler)) {
         if(writer_name) {
@@ -5215,15 +5247,19 @@ static uint16_t parse_invoke(Compiler *compiler, uint16_t receiver) {
                     contextual_target->arity-2,contextual_arguments,
                 contextual_count);
             if(contextual_target!=nullptr) {
-                return emit_invoke_keywords(compiler,receiver,name,spread,
+                const uint16_t result=emit_invoke_keywords(compiler,receiver,name,spread,
                     nullptr,nullptr,0,type_arguments,type_argument_count,true,
                     block);
+                publish_declared_return_type(compiler,result,contextual_target);
+                return result;
             }
             spread=emit_build_spread_arguments(compiler,nullptr,0,spread,
                 &block,1,false);
         }
-        return emit_invoke_typed_spread(compiler,receiver,name,spread,
-            type_arguments,type_argument_count);
+        const uint16_t result=emit_invoke_typed_spread(compiler,receiver,name,
+            spread,type_arguments,type_argument_count);
+        publish_declared_return_type(compiler,result,contextual_target);
+        return result;
     }
     uint16_t args[16]; size_t count = 0;
     while (compiler->current.kind != DIAMOND_TOKEN_RIGHT_PAREN && !compiler->failed) {
@@ -5286,13 +5322,17 @@ static uint16_t parse_invoke(Compiler *compiler, uint16_t receiver) {
                 (size_t)contextual_target->arity-2;
         if(contextual_target!=nullptr&&count<block_slot) {
             const uint16_t positional=emit_argument_array(compiler,args,count);
-            return emit_invoke_keywords(compiler,receiver,name,positional,
+            const uint16_t result=emit_invoke_keywords(compiler,receiver,name,positional,
                 nullptr,nullptr,0,type_arguments,type_argument_count,true,block);
+            publish_declared_return_type(compiler,result,contextual_target);
+            return result;
         }
         args[count++]=block;
     }
-    return emit_invoke_call(compiler,receiver,name,writer_name,
+    const uint16_t result=emit_invoke_call(compiler,receiver,name,writer_name,
         type_arguments,type_argument_count,args,count);
+    publish_declared_return_type(compiler,result,contextual_target);
+    return result;
 }
 
 /* `self.method_name(...)` written inside a class-owned singleton method's

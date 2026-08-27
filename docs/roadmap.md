@@ -306,6 +306,13 @@ forward reference, in one test).
 
 ## Language and library directions
 
+Resolved calls now propagate declared non-generic return graphs through every
+statically known top-level, singleton, and instance dispatch form. The next
+type-flow slice is generic return instantiation: substitute explicit or inferred
+call bindings into the target's return graph before publishing it to the caller.
+This is not folded into the non-generic path because unresolved type variables
+must never escape a callee's graph or be mistaken for caller-owned variables.
+
 ### Ruby-like ergonomics without Ruby compatibility
 
 Continue adding familiar constructs only when they compose naturally with

@@ -584,6 +584,14 @@ For a union receiver, independently overridden methods still provide block
 context when their complete parameter contracts are structurally identical.
 Any incompatible override keeps the block untyped.
 
+A statically resolved call to a non-generic top-level, singleton, or instance
+method retains its declared return type at the call site. This includes nested
+type graphs: a result declared as `Array[Array[Int]]` can be indexed twice and
+used as an `Int` without losing the element contract. Fixed, spread, keyword,
+and trailing-block calls behave consistently. Generic return types are still
+instantiated by the call's explicit or inferred type arguments at runtime;
+compile-time propagation of those substituted result graphs remains separate.
+
 Callable values accept the same trailing `do ... end` block as named function
 and method calls, including calls with a spread Array. The block is appended as
 the final positional argument.

@@ -415,6 +415,14 @@ class fact. Indexing `Array[T]` produces `T`; indexing `Hash[K, V]` produces
 recursive union/subtype checks, eliminating redundant return guards while
 rejecting a hash lookup used where a non-nil value is required.
 
+Statically resolved top-level, singleton, and instance-method calls publish a
+non-generic target's declared return graph onto their destination register.
+The caller owns a structural clone of that graph, so nested Array, Hash,
+Callable, union, and nominal facts remain valid after the callee's metadata is
+released. Fixed, spread, keyword, and trailing-block emission paths all apply
+the same rule. Generic targets remain dependent on per-call substitutions and
+therefore require a separate instantiated-return step.
+
 Runtime Array and Hash contracts are also inference sources. When a collection
 has no elements or entries to inspect, a later generic call imports the
 contract's element, key, and value graphs—including substitutions captured by

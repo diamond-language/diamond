@@ -26,6 +26,10 @@
 
 ## Language
 
+- Propagated declared non-generic return type graphs across statically resolved
+  top-level, singleton, and instance-method calls, including fixed, spread,
+  keyword, and trailing-block forms. Nested collection results now retain their
+  element contracts for indexing and specialized operations at the call site.
 - Added conservative contextual typing for anonymous block parameters at
   statically resolved function, singleton, and instance-method calls with typed
   Callable slots, including direct generic bindings inferred from concrete
