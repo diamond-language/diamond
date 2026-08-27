@@ -73,6 +73,14 @@ bool dependency_table_update(DependencyTable *table,const char *uri,
     for(size_t index=0;index<paths->as.array.count;index++) {
         const JsonValue *entry=paths->as.array.items[index];
         if(entry->kind!=JSON_STRING)continue;
+        bool duplicate=false;
+        for(size_t existing=0;existing<table->count;existing++) {
+            if(strcmp(table->edges[existing].uri,uri)==0&&
+               strcmp(table->edges[existing].path,entry->as.string.chars)==0) {
+                duplicate=true;break;
+            }
+        }
+        if(duplicate)continue;
         if(!push_edge(table,uri,entry->as.string.chars))return false;
     }
     return true;
