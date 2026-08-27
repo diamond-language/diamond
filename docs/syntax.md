@@ -1272,8 +1272,11 @@ Array's Enumerable-style methods: `.each`/`.select`/`.map`/`.reduce`/
 `.sort`/`.sort_by`/`.min`/`.max`/`.min_by`/`.max_by`/`.reject`/`.find`/
 `.each_with_index`/`.sum`, and `.take(n)`/`.drop(n)`/`.flat_map`/
 `.partition`/`.group_by`/`.zip(other)`/`.each_slice(n)`/`.each_cons(n)`/
-`.tally`. The last group returns its result directly rather than
-through a block or an Enumerator (Diamond has neither) —
+`.tally`. Calling `.lazy()` on an Array, Range, or other Enumerable
+returns a `LazyEnumerator`. Its `map`, `select`, and `reject` operations are
+composable and deferred until `each`, `to_a`, or `force`; chained transforms
+do not allocate intermediate Arrays. The remaining methods retain their eager
+behavior. The last group returns its result directly —
 `.each_slice`/`.each_cons` collect every slice/window into an
 `Array[Array]` up front, `.partition` returns `[matching,
 non_matching]`, `.group_by` a `Hash` keyed on the block's own result,

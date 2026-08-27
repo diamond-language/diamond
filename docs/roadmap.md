@@ -353,7 +353,8 @@ Areas still worth examining include:
   its own paragraph in `docs/syntax.md`;
 - **Done**: protected method visibility, including default and named forms,
   explicit peer receivers, inheritance, and unrelated-caller rejection;
-- enumerator/lazy iteration semantics versus the current eager collection APIs;
+- **Done**: a first lazy Enumerator pipeline with deferred, composable
+  `map`/`select`/`reject` transforms and `each`/`to_a`/`force` terminals;
 - a principled protocol for native collection extension instead of expanding
   VM name-forwarding tables indefinitely.
 

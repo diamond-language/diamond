@@ -10126,6 +10126,10 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                         if(method_name->length==4&&memcmp(method_name->chars,"each",4)==0)
                             target_name=receiver_kind==DIAMOND_OBJECT_ARRAY?
                                 "array_each":"hash_each";
+                        else if(receiver_kind==DIAMOND_OBJECT_ARRAY&&
+                                method_name->length==4&&
+                                memcmp(method_name->chars,"lazy",4)==0)
+                            target_name="enumerable_lazy";
                         else if(method_name->length==6&&
                                 memcmp(method_name->chars,"select",6)==0)
                             target_name="enumerable_select";

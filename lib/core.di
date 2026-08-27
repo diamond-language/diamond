@@ -664,7 +664,71 @@ def array_tally(values: Array) -> Hash
   result
 end
 
+# A deliberately small, composable lazy pipeline. Declared before Enumerable
+# so the deferred self-hosted frontend does not need forward class resolution.
+class LazyEnumerator
+  def initialize(source, operations: Array)
+    @source = source
+    @operations = operations
+  end
+
+  def append(kind: Symbol, callback: Callable[1])
+    operations = @operations.dup()
+    operations.push([kind, callback])
+    LazyEnumerator.new(@source, operations)
+  end
+
+  def map(callback: Callable[1]) = self.append(:map, callback)
+  def select(callback: Callable[1]) = self.append(:select, callback)
+  def reject(callback: Callable[1]) = self.append(:reject, callback)
+
+  def each(callback: Callable[1])
+    values = if @source is Array
+      @source
+    else
+      @source.to_a()
+    end
+    operations = @operations
+    source_index = 0
+    while source_index < values.length()
+      value = values[source_index]
+      accepted = true
+      index = 0
+      while index < operations.length() && accepted
+        operation = operations[index]
+        kind = operation[0]
+        transform = operation[1]
+        if kind == :map
+          value = transform(value)
+        elsif kind == :select
+          accepted = false unless transform(value)
+        else
+          accepted = false if transform(value)
+        end
+        index += 1
+      end
+      callback(value) if accepted
+      source_index += 1
+    end
+    self
+  end
+
+  def to_a() -> Array
+    result = []
+    def collect(item)
+      result.push(item)
+    end
+    self.each(collect)
+    result
+  end
+
+  def force() -> Array = self.to_a()
+end
+
+def enumerable_lazy(value) = LazyEnumerator.new(value, [])
+
 module Enumerable
+  def lazy() = LazyEnumerator.new(self, [])
   def select(callback: Callable[1]) -> Array = enumerable_select(self, callback)
   def count(callback: Callable[1]) -> Int = enumerable_count(self, callback)
   def any?(callback: Callable[1]) -> Bool = enumerable_any(self, callback)
@@ -707,6 +771,7 @@ module Enumerable
   def each_cons(size: Int) -> Array = array_each_cons(self.to_a(), size)
   def tally() -> Hash = array_tally(self.to_a())
 end
+
 
 # `<`/`<=`/`>`/`>=`/`==` derived from a single `<=>` an including class
 # defines -- the same "several methods derived from one" relationship
@@ -777,4 +842,3 @@ class Range
     self
   end
 end
-
