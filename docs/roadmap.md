@@ -392,6 +392,10 @@ Areas still worth examining include:
   receiver once in a variadic Callable and forwards through dynamic spread
   invocation; explicit generic bindings, native receivers, inheritance,
   visibility, and `method_missing` share their ordinary dispatch behavior.
+- **Done**: variadic and explicitly generic singleton-method references.
+  Zero-capture wrappers forward collected rest arguments through singleton
+  spread and bake explicit type bindings into typed call instructions; unbound
+  generic references remain a compile error by design.
 
 ### Explicit-arity method delegation
 

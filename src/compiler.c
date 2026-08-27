@@ -1971,27 +1971,20 @@ static uint16_t emit_singleton_call(Compiler *compiler,const DiamondMethod *meth
  * synthesized body via emit_function_index, same as any ordinary call),
  * no user-written body to compile_sequence.
  *
- * Deliberately rejected rather than attempted: a variadic method (would
- * need forwarding a collected trailing Array back into the original
- * call, i.e. call-site spread against a singleton call --
- * DIAMOND_OP_CALL_SPREAD was scoped to bare top-level function calls
- * only) and a generic one (a reference wrapper can't itself carry a
- * type-argument binding); both produce a clear compile error instead of
- * a silently-narrowed wrapper. Instance methods (`obj.method`, no call)
- * are a different, separate case entirely -- out of scope here, see the
- * same docs/design.md section. */
+ * Variadic wrappers collect their trailing arguments and forward through
+ * CALL_SINGLETON_SPREAD; explicit generic bindings are baked into the wrapper's
+ * CALL_TYPED/CALL_TYPED_SINGLETON_SPREAD instruction. */
 static uint16_t parse_singleton_reference(Compiler *compiler,
                                          const DiamondMethod *method,
                                          DiamondSpan namespace_name,
-                                         int receiver_class_index) {
-    if(method->has_variadic) {
+                                         int receiver_class_index,
+                                         const uint8_t *type_arguments,
+                                         size_t type_argument_count) {
+    const DiamondFunction *target=
+        compiler->program->functions[method->function_index];
+    if(target->type_variable_count>0&&type_argument_count==0) {
         fail(compiler,namespace_name,
-             "cannot reference a variadic singleton method as a value");
-        return 0;
-    }
-    if(compiler->program->functions[method->function_index]->type_variable_count>0) {
-        fail(compiler,namespace_name,
-             "cannot reference a generic singleton method as a value");
+             "generic singleton method reference requires explicit bindings");
         return 0;
     }
     if(compiler->program->function_count==DIAMOND_MAX_FUNCTIONS) {
@@ -2009,14 +2002,21 @@ static uint16_t parse_singleton_reference(Compiler *compiler,
     function->return_type_set=UINT8_MAX;
     function->arity=method->arity;
     function->required_arity=method->required_arity;
+    function->has_variadic=method->has_variadic;
+    function->type_set_count=compiler->function->type_set_count;
+    memcpy(function->type_sets,compiler->function->type_sets,
+        function->type_set_count*sizeof function->type_sets[0]);
     static const char reference_name[]="<method reference>";
     for(size_t index=0;index<sizeof(reference_name);index++)
         function->name[index]=reference_name[index];
     function->declaration_line=(uint32_t)compiler->previous.span.line;
     function->declaration_column=(uint32_t)compiler->previous.span.column;
     function->declaration_start=compiler->previous.span.start;
-    for(size_t index=0;index<16;index++)
+    for(size_t index=0;index<16;index++) {
         function->parameter_type_sets[index]=UINT8_MAX;
+        (void)snprintf(function->parameter_names[index],
+            DIAMOND_MAX_FUNCTION_NAME,"%s",target->parameter_names[index]);
+    }
 
     DiamondFunction *outer_function=compiler->function;
     const uint16_t outer_next_register=compiler->next_register;
@@ -2032,8 +2032,32 @@ static uint16_t parse_singleton_reference(Compiler *compiler,
     for(size_t index=0;index<method->arity;index++) {
         arguments[index]=allocate_register(compiler);
     }
-    const uint16_t body_result=emit_singleton_call(compiler,method,
-        receiver_class_index,arguments,method->arity,namespace_name,0,nullptr);
+    uint16_t body_result=0;
+    if(method->has_variadic) {
+        const size_t fixed_count=method->arity-1;
+        emit_instruction(compiler,DIAMOND_OP_COLLECT_VARIADIC,
+            arguments[fixed_count],(uint16_t)fixed_count,0,2);
+        uint16_t spread=arguments[fixed_count];
+        if(fixed_count>0)spread=emit_build_spread_arguments(compiler,arguments,
+            fixed_count,spread,nullptr,0);
+        body_result=allocate_register(compiler);
+        emit_opcode(compiler,type_argument_count==0?
+            DIAMOND_OP_CALL_SINGLETON_SPREAD:
+            DIAMOND_OP_CALL_TYPED_SINGLETON_SPREAD);
+        emit_register(compiler,body_result);
+        emit_function_index(compiler,method->function_index);
+        emit_register(compiler,spread);
+        emit_byte(compiler,receiver_class_index<0?UINT8_MAX:
+            (uint8_t)receiver_class_index);
+        emit_byte(compiler,method->needs_receiver?1:0);
+        if(type_argument_count>0) {
+            emit_byte(compiler,(uint8_t)type_argument_count);
+            for(size_t index=0;index<type_argument_count;index++)
+                emit_byte(compiler,type_arguments[index]);
+        }
+    } else body_result=emit_singleton_call(compiler,method,
+        receiver_class_index,arguments,method->arity,namespace_name,
+        (uint8_t)type_argument_count,type_arguments);
     emit_instruction(compiler,DIAMOND_OP_RETURN,body_result,0,0,1);
 
     function->register_count=compiler->next_register;
@@ -2097,10 +2121,8 @@ static uint16_t parse_singleton_call(Compiler *compiler,
          * arguments (`Namespace.method[T]` with no call after): a
          * reference wrapper can't itself be generic, so that combination
          * stays a real error, not silently falling through. */
-        if(type_argument_count==0)
-            return parse_singleton_reference(compiler,method,namespace_name,receiver_class_index);
-        fail(compiler,namespace_name,"expected '(' after singleton function");
-        return 0;
+        return parse_singleton_reference(compiler,method,namespace_name,
+            receiver_class_index,type_arguments,type_argument_count);
     }
     advance_token(compiler);
     skip_newlines(compiler);

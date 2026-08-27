@@ -1402,20 +1402,13 @@ measured need" bar (the reverted generational-GC precedent); revisit
 only if function-table growth or duplicate-compilation cost ever shows
 up as an actual, measured problem.
 
-**Still deliberately out of scope for singleton references:** a *variadic*
-`self.`/module method can't be referenced as a bare value -- forwarding
-its collected trailing `Array` back into the original call needs
-call-site spread against a singleton call, and `DIAMOND_OP_CALL_SPREAD`
-(see "Call-site spread" above) was deliberately scoped to bare
-top-level function calls only; rejected with a clear compile error
-rather than silently generating a wrapper that drops the variadic
-capability. A *generic* method (`ClassName.method[T](...)`) can't be
-referenced as a bare value either, for the equivalent reason -- a
-reference wrapper can't itself carry a type-argument binding -- checked
-directly against the target function's own `type_variable_count`, not
-just against whether `[...]` was written at the reference site itself,
-so a generic method referenced with no explicit type arguments at all
-is still correctly rejected.
+Variadic singleton references synthesize a variadic wrapper with the same
+required arity. Its `COLLECT_VARIADIC` result is combined with any fixed prefix
+and forwarded through `CALL_SINGLETON_SPREAD`. Generic references require
+explicit bindings (`ClassName.method[Int]`); the wrapper copies the call-site
+type sets and emits the typed CALL or typed singleton-spread variant. A generic
+reference without bindings remains a compile error because the resulting
+Callable has no later syntax for supplying them.
 
 Instance references are now a separate implemented mechanism. `obj.method`
 synthesizes a variadic wrapper which captures a one-time snapshot of `obj`,

@@ -885,17 +885,13 @@ handler(request, context, params)  # invoked later, elsewhere
 ```
 
 `ClassName.method`/`ModuleName.method`, with no `(...)` following, is a
-`Callable` value referencing that singleton method -- a small,
-zero-capture wrapper matching the method's own parameter list exactly
-(same arity, same required/optional split). Works for a class `self.`
-method and a module singleton function alike.
-
-Two shapes can't be referenced this way, both rejected with a clear
-compile error rather than silently narrowed: a **variadic** method
-(`def self.foo(a, *rest)`) -- there's no way to forward a collected
-trailing `Array` back into the original call from a plain wrapper -- and
-a **generic** method (`def self.foo[T](x: T)`) -- a reference wrapper
-can't itself carry a type-argument binding.
+`Callable` value referencing that singleton method -- a small, zero-capture
+wrapper matching the method's required/optional and variadic arity. Works for
+a class `self.` method and a module singleton function alike. Variadic wrappers
+collect and forward through singleton spread. Generic references require
+explicit bindings at the reference site (`Tools.identity[Int]`); the wrapper
+bakes those bindings into its forwarded call. A bare reference to an unbound
+generic method is a compile error.
 
 ### Bound instance-method references
 
