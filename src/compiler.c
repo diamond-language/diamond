@@ -1895,11 +1895,43 @@ static bool call_arguments_have_spread(Compiler *compiler) {
     return false;
 }
 
+static int32_t homogeneous_spread_expectation(Compiler *compiler,
+        const DiamondFunction *target,size_t first,size_t parameter_count) {
+    if(target==nullptr||first>=parameter_count||parameter_count>target->arity)
+        return -1;
+    const uint16_t source=target->parameter_type_sets[first];
+    if(source==DIAMOND_NO_TYPE_SET||source>=target->type_set_count)return -1;
+    for(size_t parameter=first+1;parameter<parameter_count;parameter++) {
+        const uint16_t other=target->parameter_type_sets[parameter];
+        if(other==DIAMOND_NO_TYPE_SET||other>=target->type_set_count||
+           !type_sets_structurally_equal(target->type_sets,
+               target->type_set_count,source,target->type_sets,
+               target->type_set_count,other,0))return -1;
+    }
+    const uint16_t element=target==compiler->function?source:
+        clone_type_set_into_current(compiler,target->type_sets,
+            target->type_set_count,source);
+    if(element==DIAMOND_NO_TYPE_SET||!reserve_type_sets(compiler,1))return -1;
+    const size_t array_index=compiler->function->type_set_count++;
+    DiamondTypeSet *array=&compiler->function->type_sets[array_index];
+    array->count=1;array->inferred=true;
+    array->members[0]=(DiamondTypeMember){.id=DIAMOND_TYPE_ARRAY,
+        .argument_set=element,.second_argument_set=DIAMOND_NO_TYPE_SET,
+        .callable_arity=UINT8_MAX,
+        .callable_return_set=DIAMOND_NO_TYPE_SET,
+        .callable_parameters_typed=false};
+    for(size_t parameter=0;parameter<16;parameter++)
+        array->members[0].callable_parameter_sets[parameter]=
+            DIAMOND_NO_TYPE_SET;
+    return (int32_t)array_index;
+}
+
 /* Parses the argument-list interior with exactly one `*expression`; current
  * is the first argument and the closing ')' is consumed. */
 static uint16_t parse_spread_argument_array(Compiler *compiler,
         const DiamondFunction *keyword_function,uint8_t *keyword_slots,
-        uint16_t *keyword_registers,size_t *keyword_count) {
+        uint16_t *keyword_registers,size_t *keyword_count,
+        const DiamondFunction *expected_function,size_t expected_count) {
     uint16_t fixed[16];size_t fixed_count=0,spread_index=0;
     uint16_t spread=0;bool saw_spread=false,seen_keyword=false;
     bool optional_block=false;
@@ -1942,7 +1974,12 @@ static uint16_t parse_spread_argument_array(Compiler *compiler,
             }
             saw_spread=true;spread_index=fixed_count;
             advance_token(compiler);skip_newlines(compiler);
+            const int32_t outer_expected=compiler->expected_expression_type_set;
+            compiler->expected_expression_type_set=
+                homogeneous_spread_expectation(compiler,expected_function,
+                    fixed_count,expected_count);
             spread=parse_expression(compiler);
+            compiler->expected_expression_type_set=outer_expected;
         } else {
             if(seen_keyword) {
                 fail(compiler,compiler->current.span,
@@ -2040,7 +2077,7 @@ static uint16_t parse_closure_call_arguments(Compiler *compiler, uint16_t callab
     }
     if(call_arguments_have_spread(compiler)) {
         uint16_t spread=parse_spread_argument_array(compiler,nullptr,
-            nullptr,nullptr,nullptr);
+            nullptr,nullptr,nullptr,nullptr,0);
         if(compiler->current.kind==DIAMOND_TOKEN_DO) {
             const uint16_t callable_snapshot=allocate_register(compiler);
             emit_instruction(compiler,DIAMOND_OP_MOVE,callable_snapshot,
@@ -2668,7 +2705,8 @@ static uint16_t parse_call(Compiler *compiler, DiamondSpan name) {
         uint8_t keyword_slots[16];uint16_t keyword_registers[16];
         size_t keyword_count=0;
         uint16_t array_register=parse_spread_argument_array(compiler,
-            function,keyword_slots,keyword_registers,&keyword_count);
+            function,keyword_slots,keyword_registers,&keyword_count,
+            function,function->arity);
         uint16_t inferred_arguments[8];
         const size_t spread_parameter_count=
             compiler->current.kind==DIAMOND_TOKEN_DO?
@@ -3253,7 +3291,7 @@ static uint16_t parse_singleton_call(Compiler *compiler,
     }
     if(call_arguments_have_spread(compiler)) {
         uint16_t spread=parse_spread_argument_array(compiler,nullptr,
-            nullptr,nullptr,nullptr);
+            nullptr,nullptr,nullptr,function,method->arity);
         uint16_t inferred_arguments[8];
         const size_t block_count=
             compiler->current.kind==DIAMOND_TOKEN_DO?1u:0u;
@@ -5055,7 +5093,9 @@ static uint16_t parse_name(Compiler *compiler) {
         }
         if(call_arguments_have_spread(compiler)) {
             uint16_t spread=parse_spread_argument_array(compiler,nullptr,
-                nullptr,nullptr,nullptr);
+                nullptr,nullptr,nullptr,initializer,
+                initializer==nullptr||initializer->arity==0?0:
+                    initializer->arity-1);
             if(compiler->current.kind==DIAMOND_TOKEN_DO) {
                 uint16_t inferred_arguments[8];
                 const size_t inferred_count=infer_contextual_spread_arguments(
@@ -5747,7 +5787,9 @@ static uint16_t parse_invoke(Compiler *compiler, uint16_t receiver) {
             return 0;
         }
         uint16_t spread=parse_spread_argument_array(compiler,nullptr,
-            nullptr,nullptr,nullptr);
+            nullptr,nullptr,nullptr,contextual_target,
+            contextual_target==nullptr||contextual_target->arity==0?0:
+                contextual_target->arity-1);
         uint16_t inferred_arguments[8];
         const size_t spread_parameter_count=contextual_target==nullptr?0:
             contextual_target->arity>(compiler->current.kind==DIAMOND_TOKEN_DO?
@@ -6067,6 +6109,18 @@ static uint16_t parse_array(Compiler *compiler) {
 static uint16_t parse_hash(Compiler *compiler) {
     uint16_t keys[16],values[16];
     size_t count=0;
+    uint16_t expected_key=DIAMOND_NO_TYPE_SET;
+    uint16_t expected_value=DIAMOND_NO_TYPE_SET;
+    if(compiler->expected_expression_type_set>=0&&
+       (size_t)compiler->expected_expression_type_set<
+           compiler->function->type_set_count) {
+        const DiamondTypeSet *expected=&compiler->function->type_sets[
+            (size_t)compiler->expected_expression_type_set];
+        if(expected->count==1&&expected->members[0].id==DIAMOND_TYPE_HASH) {
+            expected_key=expected->members[0].argument_set;
+            expected_value=expected->members[0].second_argument_set;
+        }
+    }
     skip_newlines(compiler);
     if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_BRACE) {
         do {
@@ -6074,13 +6128,13 @@ static uint16_t parse_hash(Compiler *compiler) {
                 fail(compiler,compiler->current.span,"hash literal has too many entries");
                 return 0;
             }
-            keys[count]=parse_expression(compiler);
+            keys[count]=parse_with_expected_set(compiler,expected_key);
             if(compiler->current.kind!=DIAMOND_TOKEN_COLON) {
                 fail(compiler,compiler->current.span,"expected ':' after hash key");
                 return 0;
             }
             advance_token(compiler);
-            values[count]=parse_expression(compiler);
+            values[count]=parse_with_expected_set(compiler,expected_value);
             count++;
             skip_newlines(compiler);
             if(compiler->current.kind!=DIAMOND_TOKEN_COMMA) break;

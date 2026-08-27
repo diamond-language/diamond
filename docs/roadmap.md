@@ -360,11 +360,14 @@ declared graphs for each input and return, then falls back when no safe graph
 exists. Synthesizing genuinely new union or intersection contracts remains
 open.
 
-Expected collection graphs now flow one level into Array literals. Each element
-is compiled against the declared `Array[T]` element contract, allowing bare
-generic singleton and bound-instance references inside a directly consumed
-Callable Array to resolve without explicit bindings. The context is restored
-after every element and never changes the literal's independently inferred
+Expected collection graphs now flow one level into Array and Hash literals.
+Array elements and Hash keys/values compile against their respective declared
+graphs, allowing bare generic singleton and bound-instance references inside a
+directly consumed collection to resolve without explicit bindings. Homogeneous
+remaining positional contracts also form a temporary expected Array graph for
+spread literals across top-level, singleton, instance-method, and constructor
+calls. Heterogeneous spreads remain conservative. Context is restored after
+every nested expression and never changes the literal's independently inferred
 runtime constraint.
 
 ### Ruby-like ergonomics without Ruby compatibility
