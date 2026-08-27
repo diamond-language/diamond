@@ -99,13 +99,13 @@ local initialized from one) given an explicit `pet: Dog | Cat` annotation
 Resolves against every class-kind union member that defines the method: one
 signature when they agree, `ClassName#signature` per match when they don't,
 a `Location[]` from go-to-definition when there's more than one match.
-Confirmed directly (not assumed) that the compiler does **not** build a union type from a branching
-assignment like `x = cond ? Dog.new() : Cat.new()` -- `parse_if`'s merge only
-keeps a type-set match when both branches already agree on the exact same
-set index (`src/compiler.c`), so that shape still isn't resolvable here; the
-only real source of a multi-class union is an explicit source-level
-annotation. Class instance-variable receivers resolve too when all assignments
-to the field agree on one concrete class; an unknown or conflicting assignment
+The compiler now synthesizes advisory unions at representable `if`/`unless`
+and ternary joins, so a branching assignment such as
+`x = cond ? Dog.new() : Cat.new()` is resolvable alongside an explicit source
+annotation. These inferred sets can eliminate a compatible runtime type check,
+but deliberately retain the historical dynamic check when incompatible rather
+than changing old code into a compile error. Class instance-variable receivers
+resolve too when all assignments to the field agree on one concrete class; an unknown or conflicting assignment
 conservatively disables the result. Explicitly typed call results now compose
 recursively as receivers as well: constructors, top-level factories, singleton
 factories, instance methods, and class-union returns can all feed the next link
@@ -114,7 +114,7 @@ See `docs/lsp.md` and `lsp/receiver.c` for the mechanism and its scope cuts.
 
 Remaining, still open:
 
-- branch-merged "union" information the compiler doesn't actually track;
+- equivalent flow merging for `case` branches and loop exits;
 - dependency-aware symbol information beyond one combined compilation;
 - incremental compilation only after there is a compiler architecture that can
   benefit from incremental document synchronization.

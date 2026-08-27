@@ -156,6 +156,8 @@ static uint16_t compile_begin(Compiler *compiler);
 static uint16_t compile_yield(Compiler *compiler);
 static uint16_t compile_interface(Compiler *compiler);
 static int find_function(const Compiler *compiler, DiamondSpan name);
+static void record_scope_type_fact(Compiler *compiler,uint16_t reg,
+        size_t effective_start);
 
 static void fail(Compiler *compiler, DiamondSpan span, const char *message) {
     if (!compiler->failed) {
@@ -478,8 +480,12 @@ static void emit_type_check(Compiler *compiler, uint16_t reg, uint8_t set_index,
         return;
     }
     if(compiler->known_type_sets[reg]>=0) {
-        if(type_set_satisfies(compiler,
-           (uint8_t)compiler->known_type_sets[reg],set_index))return;
+        const uint8_t known_set=(uint8_t)compiler->known_type_sets[reg];
+        if(type_set_satisfies(compiler,known_set,set_index))return;
+        if(compiler->function->type_sets[known_set].inferred) {
+            emit_instruction(compiler,DIAMOND_OP_CHECK_TYPE,reg,set_index,0,2);
+            return;
+        }
         fail(compiler,span,"expression cannot satisfy type annotation");return;
     }
     const uint8_t known=compiler->known_types[reg];
@@ -4007,6 +4013,95 @@ static void append_narrowing_facts(NarrowingFact *destination,size_t *destinatio
         destination[(*destination_count)++]=source[index];
 }
 
+static bool type_members_equal(DiamondTypeMember left,DiamondTypeMember right) {
+    if(left.id!=right.id||left.argument_set!=right.argument_set||
+       left.second_argument_set!=right.second_argument_set||
+       left.callable_arity!=right.callable_arity||
+       left.callable_return_set!=right.callable_return_set||
+       left.callable_parameters_typed!=right.callable_parameters_typed)return false;
+    if(!left.callable_parameters_typed)return true;
+    for(size_t index=0;index<left.callable_arity;index++)
+        if(left.callable_parameter_sets[index]!=right.callable_parameter_sets[index])return false;
+    return true;
+}
+
+static bool type_sets_equal_unordered(DiamondTypeSet left,DiamondTypeSet right) {
+    if(left.count!=right.count)return false;
+    for(size_t left_index=0;left_index<left.count;left_index++) {
+        bool found=false;
+        for(size_t right_index=0;right_index<right.count;right_index++)
+            if(type_members_equal(left.members[left_index],right.members[right_index])) {
+                found=true;break;
+            }
+        if(!found)return false;
+    }
+    return true;
+}
+
+static DiamondTypeMember plain_type_member(uint8_t type) {
+    return (DiamondTypeMember){.id=type,.argument_set=UINT8_MAX,
+        .second_argument_set=UINT8_MAX,.callable_arity=UINT8_MAX,
+        .callable_return_set=UINT8_MAX};
+}
+
+static bool append_merged_member(DiamondTypeSet *merged,DiamondTypeMember member) {
+    for(size_t index=0;index<merged->count;index++) {
+        if(merged->members[index].id!=member.id)continue;
+        /* The annotation representation cannot express two differently
+         * parameterized versions of the same outer type in one union.
+         * Refuse to claim either one when control flow produces that shape. */
+        return type_members_equal(merged->members[index],member);
+    }
+    if(merged->count==DIAMOND_MAX_UNION_TYPES)return false;
+    merged->members[merged->count++]=member;return true;
+}
+
+static bool append_flow_type(const Compiler *compiler,DiamondTypeSet *merged,
+        uint8_t known_type,int16_t known_set) {
+    if(known_set>=0) {
+        if((size_t)known_set>=compiler->function->type_set_count)return false;
+        const DiamondTypeSet set=compiler->function->type_sets[(size_t)known_set];
+        for(size_t index=0;index<set.count;index++)
+            if(!append_merged_member(merged,set.members[index]))return false;
+        return set.count>0;
+    }
+    return known_type!=TYPE_UNKNOWN&&
+        append_merged_member(merged,plain_type_member(known_type));
+}
+
+/* Conservatively joins two control-flow type states. Unlike runtime type
+ * annotations this metadata is advisory: an unrepresentable or exhausted
+ * union simply becomes unknown and must never make compilation fail. */
+static void merge_flow_types(Compiler *compiler,uint8_t left_type,int16_t left_set,
+        uint8_t right_type,int16_t right_set,uint8_t *result_type,int16_t *result_set) {
+    *result_type=TYPE_UNKNOWN;*result_set=-1;
+    if(left_type==right_type&&left_set==right_set) {
+        *result_type=left_type;*result_set=left_set;return;
+    }
+    DiamondTypeSet merged={};
+    if(!append_flow_type(compiler,&merged,left_type,left_set)||
+       !append_flow_type(compiler,&merged,right_type,right_set))return;
+    merged.inferred=true;
+    for(size_t index=0;index<compiler->function->type_set_count;index++) {
+        if(!compiler->function->type_sets[index].inferred)continue;
+        if(!type_sets_equal_unordered(merged,compiler->function->type_sets[index]))continue;
+        *result_set=(int16_t)index;
+        *result_type=merged.count==1?merged.members[0].id:TYPE_UNKNOWN;
+        return;
+    }
+    if(compiler->function->type_set_count==DIAMOND_MAX_TYPE_SETS)return;
+    const size_t index=compiler->function->type_set_count++;
+    compiler->function->type_sets[index]=merged;
+    *result_set=(int16_t)index;
+    *result_type=merged.count==1?merged.members[0].id:TYPE_UNKNOWN;
+}
+
+static bool register_is_local(const Compiler *compiler,uint16_t reg) {
+    for(size_t index=0;index<compiler->local_count;index++)
+        if(compiler->locals[index].reg==reg)return true;
+    return false;
+}
+
 static uint16_t parse_index(Compiler *compiler,uint16_t receiver) {
     advance_token(compiler);
     const uint16_t index=parse_expression(compiler);
@@ -4133,7 +4228,7 @@ static uint16_t parse_if(Compiler *compiler,bool inverted) {
             inverted?narrowing.when_true:narrowing.when_false,
             inverted?narrowing.when_true_count:narrowing.when_false_count);
 
-    uint8_t result_type=TYPE_UNKNOWN;int16_t result_set=-1;
+    uint8_t false_result_type=DIAMOND_TYPE_NIL;int16_t false_result_set=-1;
     bool end_consumed=false;
     if (compiler->current.kind == DIAMOND_TOKEN_ELSE) {
         advance_token(compiler);
@@ -4142,33 +4237,34 @@ static uint16_t parse_if(Compiler *compiler,bool inverted) {
         const uint8_t else_type=compiler->known_types[else_result];
         const int16_t else_set=compiler->known_type_sets[else_result];
         emit_instruction(compiler, DIAMOND_OP_MOVE, destination, else_result, 0, 2);
-        if(then_type==else_type)result_type=then_type;
-        if(then_set==else_set)result_set=then_set;
+        false_result_type=else_type;false_result_set=else_set;
     } else if(compiler->current.kind==DIAMOND_TOKEN_ELSIF) {
         advance_token(compiler);
         const uint16_t else_result=parse_if(compiler,false);
         const uint8_t else_type=compiler->known_types[else_result];
         const int16_t else_set=compiler->known_type_sets[else_result];
         emit_instruction(compiler,DIAMOND_OP_MOVE,destination,else_result,0,2);
-        if(then_type==else_type)result_type=then_type;
-        if(then_set==else_set)result_set=then_set;
+        false_result_type=else_type;false_result_set=else_set;
         end_consumed=true;
     } else {
         emit_instruction(compiler, DIAMOND_OP_NIL, destination, 0, 0, 1);
-        if(then_type==DIAMOND_TYPE_NIL)result_type=DIAMOND_TYPE_NIL;
     }
 
     for(size_t index=0;index<flow_reg_count;index++) {
         const uint8_t false_type=compiler->known_types[index];
         const int16_t false_set=compiler->known_type_sets[index];
-        compiler->known_types[index]=then_types[index]==false_type
-            ?then_types[index]:TYPE_UNKNOWN;
-        compiler->known_type_sets[index]=then_sets[index]==false_set
-            ?then_sets[index]:-1;
+        merge_flow_types(compiler,then_types[index],then_sets[index],
+            false_type,false_set,&compiler->known_types[index],
+            &compiler->known_type_sets[index]);
+        if(register_is_local(compiler,(uint16_t)index)&&
+           (then_types[index]!=false_type||then_sets[index]!=false_set))
+            record_scope_type_fact(compiler,(uint16_t)index,
+                compiler->current.span.start);
     }
     free(heap_types);free(heap_sets);
-    compiler->known_types[destination]=result_type;
-    compiler->known_type_sets[destination]=result_set;
+    merge_flow_types(compiler,then_type,then_set,false_result_type,
+        false_result_set,&compiler->known_types[destination],
+        &compiler->known_type_sets[destination]);
 
     if (!end_consumed&&compiler->current.kind != DIAMOND_TOKEN_END) {
         fail(compiler, compiler->current.span, "expected 'end' after if expression");
@@ -4906,6 +5002,7 @@ static uint16_t parse_ternary(Compiler *compiler) {
         apply_narrowing_facts(compiler,narrowing.when_true,narrowing.when_true_count);
     const uint16_t true_result=parse_expression(compiler);
     const uint8_t true_type=compiler->known_types[true_result];
+    const int16_t true_set=compiler->known_type_sets[true_result];
     emit_instruction(compiler,DIAMOND_OP_MOVE,destination,true_result,0,2);
     const size_t end_jump=emit_jump(compiler,DIAMOND_OP_JUMP,0);
     patch_jump(compiler,false_jump,compiler->function->code_count);
@@ -4920,11 +5017,12 @@ static uint16_t parse_ternary(Compiler *compiler) {
     skip_newlines(compiler);
     const uint16_t false_result=parse_expression(compiler);
     const uint8_t false_type=compiler->known_types[false_result];
+    const int16_t false_set=compiler->known_type_sets[false_result];
     emit_instruction(compiler,DIAMOND_OP_MOVE,destination,false_result,0,2);
     patch_jump(compiler,end_jump,compiler->function->code_count);
-    compiler->known_types[destination]=
-        true_type==false_type?true_type:TYPE_UNKNOWN;
-    compiler->known_type_sets[destination]=-1;
+    merge_flow_types(compiler,true_type,true_set,false_type,false_set,
+        &compiler->known_types[destination],
+        &compiler->known_type_sets[destination]);
     return destination;
 }
 

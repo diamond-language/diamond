@@ -90,7 +90,9 @@ search over a real (if scoped) lexical symbol table:
     `DiamondScopeTypeFact` assignment snapshots so reassignment changes
     resolution only after that assignment — or a parameter (or a
     local initialized from one) given an explicit union annotation
-    (`pet: Dog | Cat`) — `DiamondScopeLocal.known_type_set` (`src/vm.h`),
+    (`pet: Dog | Cat`) or a representable control-flow join such as
+    `pet = flag ? Dog.new() : Cat.new()` — `DiamondScopeLocal.known_type_set`
+    (`src/vm.h`),
     the same snapshot idea applied to the compiler's own
     `known_type_sets[reg]`, decoded against the *owning function's own*
     `type_sets[]` table (a set index means nothing against any other
@@ -107,14 +109,13 @@ search over a real (if scoped) lexical symbol table:
     agrees on it textually, or `ClassName#signature` per match when they
     differ; go-to-definition returns a `Location[]` when there's more
     than one match (single `Location` otherwise, unchanged); completion
-    lists every candidate's own methods, undeduplicated. **A union type
-    only ever comes from an explicit source-level annotation** — the
-    compiler does not build one from a branching assignment
-    (`x = cond ? Dog.new() : Cat.new()` leaves `x` with no tracked type
-    at all, not a two-member union; `parse_if`'s merge logic only keeps
-    a type-set match when both branches already agree on the exact same
-    set index, `src/compiler.c`), so that shape still falls back to
-    "not found" here, same as before this slice. A class instance-variable
+    lists every candidate's own methods, undeduplicated. Unions can come from
+    explicit source annotations or from compiler-synthesized `if`/`unless` and
+    ternary joins when every path has a representable known type. Synthesized
+    sets remain advisory: they can prove a compatible annotation and eliminate
+    its runtime check, but an incompatible set retains the historical runtime
+    check rather than turning formerly dynamic code into a compile error. A
+    class instance-variable
     receiver also resolves when every assignment to that field agrees on one
     concrete class; conflicting or unknown assignments deliberately erase the
     candidate rather than guessing. Call results can be receivers recursively:
@@ -319,11 +320,10 @@ exit-without-shutdown edge cases.
 - **`receiver.method(...)` support beyond the resolvable receiver forms
   above** — typed function and method call results now compose recursively,
   but an unannotated/dynamic result still deliberately falls back to ordinary
-  name-based behavior rather than guessing. A union receiver is resolved only
-  for an explicit source-level `Dog | Cat` annotation — the compiler does not
-  build one from a branching assignment
-  (`x = cond ? Dog.new() : Cat.new()`), so that shape stays unresolved
-  too; see the hover/definition/documentSymbol bullet above for why.
+  name-based behavior rather than guessing. Union receivers cover explicit
+  annotations and representable `if`/`unless` or ternary control-flow joins;
+  unrepresentable joins (unknown paths or conflicting parameterized forms) stay
+  unresolved; see the hover/definition/documentSymbol bullet above for why.
 - **Workspace symbol results for a method name reached through
   `receiver.method(...)`, or for anything needing scope resolution
   beyond a single compiled program's own function/class/local tables.**

@@ -214,6 +214,20 @@ actual="$("$diamond" --dump-bytecode -e $'def present(value: String | Nil) -> St
 present_dump="$(sed -n '/^== present ==$/,$p' <<<"$actual")"
 [[ "$(grep -c 'CHECK_TYPE' <<<"$present_dump")" == "1" ]]
 
+# Control-flow joins synthesize reusable union metadata. Each function needs
+# only its Bool parameter check; its declared return union is already proven.
+actual="$("$diamond" --dump-bytecode -e $'class FlowDog\nend\nclass FlowCat\nend\ndef joined_if(flag: Bool) -> FlowDog | FlowCat\n value = if flag\n  FlowDog.new()\n else\n  FlowCat.new()\n end\n value\nend\njoined_if(true)')"
+joined_if_dump="$(sed -n '/^== joined_if ==$/,$p' <<<"$actual")"
+[[ "$(grep -c 'CHECK_TYPE' <<<"$joined_if_dump")" == "1" ]]
+
+actual="$("$diamond" --dump-bytecode -e $'class FlowDog\nend\nclass FlowCat\nend\ndef joined_assignment(flag: Bool) -> FlowDog | FlowCat\n value = FlowDog.new()\n if flag\n  value = FlowDog.new()\n else\n  value = FlowCat.new()\n end\n value\nend\njoined_assignment(false)')"
+joined_assignment_dump="$(sed -n '/^== joined_assignment ==$/,$p' <<<"$actual")"
+[[ "$(grep -c 'CHECK_TYPE' <<<"$joined_assignment_dump")" == "1" ]]
+
+actual="$("$diamond" --dump-bytecode -e $'class FlowDog\nend\nclass FlowCat\nend\ndef joined_ternary(flag: Bool) -> FlowDog | FlowCat\n flag ? FlowDog.new() : FlowCat.new()\nend\njoined_ternary(true)')"
+joined_ternary_dump="$(sed -n '/^== joined_ternary ==$/,$p' <<<"$actual")"
+[[ "$(grep -c 'CHECK_TYPE' <<<"$joined_ternary_dump")" == "1" ]]
+
 actual="$("$diamond" --dump-bytecode -e $'def lookup(values: Hash[String, Int]) -> Int\n value = values["answer"]\n if value == nil\n  0\n else\n  value\n end\nend\nlookup({"answer": 42})')"
 lookup_dump="$(sed -n '/^== lookup ==$/,$p' <<<"$actual")"
 [[ "$(grep -c 'CHECK_TYPE' <<<"$lookup_dump")" == "1" ]]

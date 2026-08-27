@@ -353,6 +353,11 @@ typedef struct DiamondTypeMember {
 typedef struct DiamondTypeSet {
     DiamondTypeMember members[DIAMOND_MAX_UNION_TYPES];
     uint8_t count;
+    /* True for advisory unions synthesized by compiler control-flow joins,
+     * rather than written as a source annotation. They can prove a compatible
+     * annotation but must retain the historical runtime-check fallback when
+     * they do not satisfy one; see emit_type_check. */
+    bool inferred;
 } DiamondTypeSet;
 
 typedef struct DiamondChunk DiamondChunk;
@@ -502,19 +507,13 @@ typedef struct DiamondScopeLocal {
      * assignment facts below take precedence for receiver resolution. */
     uint8_t known_type;
     /* Fallback compiler known_type_sets[reg] for this local's register --
-     * meaningful only
-     * relative to the *owning function's own* type_sets[] table (a set
-     * index means nothing against any other function's), unlike
+     * meaningful only relative to the *owning function's own* type_sets[]
+     * table (a set index means nothing against any other function's), unlike
      * known_type which is globally self-describing. -1 (matching the
      * compiler's own "no set" sentinel) when there isn't one -- e.g. an
-     * ordinary single-class local. Only ever real for a parameter (or a
-     * local initialized from one) given an explicit `x: Dog | Cat`
-     * union annotation: the compiler does not build a union type from a
-     * branching assignment like `cond ? Dog.new() : Cat.new()` today
-     * (parse_if's merge only keeps a type-set match when both branches
-     * already agree on the exact same set index, src/compiler.c), so
-     * this field stays -1 for that shape even though it reads like it
-     * should hold something. lsp/receiver.c's only reason for existing. */
+     * ordinary single-class local. Besides explicit annotations, control-flow
+     * joins can synthesize this set when all paths have representable known
+     * types (`cond ? Dog.new() : Cat.new()`, for example). */
     int16_t known_type_set;
 } DiamondScopeLocal;
 

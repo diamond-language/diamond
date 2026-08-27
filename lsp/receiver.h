@@ -12,15 +12,15 @@
  * class-owned `def self.x` (wall 2, DIAMOND_VALUE_CLASS), a local
  * variable whose known type at its declaration was `ClassName.new(...)`
  * (DiamondScopeLocal.known_type, src/vm.h), or a parameter (or a local
- * initialized from one) given an explicit union annotation
- * (`x: Dog | Cat`, DiamondScopeLocal.known_type_set), an instance variable
+ * initialized from one) given an explicit union annotation or representable
+ * `if`/`unless`/ternary join (`x: Dog | Cat`, or
+ * `x = flag ? Dog.new() : Cat.new()`, DiamondScopeLocal.known_type_set), an instance variable
  * whose assignments all agree on one class, or a call chain whose top-level
  * function/method links have explicit class return annotations. `Class.new()`
  * is intrinsically an instance of Class; all other links use the declared
  * DiamondFunction.return_type_set. Every class-kind union member is returned
- * as a candidate. Unknown/conflicting ivars, unannotated call returns, and a
- * "union" that only exists because of a branching assignment deliberately
- * return 0 so callers fall back to their existing non-receiver behavior.
+ * as a candidate. Unknown/conflicting ivars and unannotated call returns
+ * deliberately return 0 so callers fall back to their existing behavior.
  *
  * `source` is the raw, un-prelude-bundled open-document text (matching
  * what identifier_token_at already tokenizes in hover.c/definition.c).

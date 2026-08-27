@@ -44,6 +44,9 @@
 - Added recursive LSP resolution through explicitly typed call results,
   including constructors, top-level and singleton factories, instance methods,
   and class-union returns, for completion, hover, and go-to-definition.
+- Added conservative union metadata at `if`/`unless` and ternary control-flow
+  joins, enabling receiver tooling after branching assignments and removing
+  redundant compatible return checks without changing dynamic failure behavior.
 - Corrected the runtime type-ID partition so the advertised class capacity no
   longer overlaps generic-variable and interface IDs, and raised the class
   capacity from 128 to 180. Updated the self-hosted compiler's mirrored
