@@ -1028,6 +1028,7 @@ class Parser
     parameter_names = parsed_parameters[0]
     parameter_types = parsed_parameters[1]
     parameter_defaults = parsed_parameters[2]
+    has_block_parameter = parsed_parameters[3]
     return_type = nil
     if @current.kind() == :arrow
       self.advance_token()
@@ -1053,8 +1054,10 @@ class Parser
     else
       0
     end
+    required_arity = self.required_parameter_count(parameter_defaults) -
+      (if has_block_parameter then 1 else 0 end)
     function_index = @builder.declare_function(name, arity + self_offset,
-      self.required_parameter_count(parameter_defaults) + self_offset)
+      required_arity + self_offset)
     if self_offset == 1
       # 254 (UINT8_MAX-1) is the same module-method sentinel
       # declare_module_method's bridge handler uses -- distinct from 255
@@ -1071,7 +1074,7 @@ class Parser
     if at_top_level
       @functions.push([name, function_index, arity, parameter_names,
                        @current_type_variables.length(), return_type,
-                       self.required_parameter_count(parameter_defaults)])
+                       required_arity])
     end
     # Every entry currently in scope becomes a capture candidate,
     # unconditionally -- mirroring compiler.c's own eager design (not
@@ -1165,11 +1168,13 @@ class Parser
     names = []
     types = []
     defaults = []
+    has_block_parameter = false
     saw_default = false
     if @current.kind() != :right_paren
       more = true
       while more && !@failed
         block_parameter = @current.kind() == :ampersand
+        has_block_parameter = true if block_parameter
         self.advance_token() if block_parameter
         if @current.kind() != :identifier
           self.fail("expected parameter name")
@@ -1190,7 +1195,7 @@ class Parser
             default_position = [@current.start(), @current.line(), @current.column()]
             self.skip_default_expression()
             saw_default = true
-          elsif saw_default
+          elsif saw_default && !block_parameter
             self.fail("required parameter cannot follow a default parameter")
           end
           defaults.push(default_position)
@@ -1208,7 +1213,7 @@ class Parser
         end
       end
     end
-    [names, types, defaults]
+    [names, types, defaults, has_block_parameter]
   end
 
   def skip_default_expression()
@@ -2500,6 +2505,7 @@ class Parser
     parameter_names = parsed_parameters[0]
     parameter_types = parsed_parameters[1]
     parameter_defaults = parsed_parameters[2]
+    has_block_parameter = parsed_parameters[3]
     return_type = nil
     if @current.kind() == :arrow
       self.advance_token()
@@ -2508,7 +2514,8 @@ class Parser
     return if @failed
 
     arity = parameter_names.length()
-    required_arity = self.required_parameter_count(parameter_defaults)
+    required_arity = self.required_parameter_count(parameter_defaults) -
+      (if has_block_parameter then 1 else 0 end)
     self_offset = if module_singleton
       0
     else

@@ -465,14 +465,17 @@ like a hand-written one would (`tests/cases/method_delegation.di`),
 since it *is* one -- not a parallel dispatch model. Parameters are bare names
 only (no type annotations or defaults). A trailing `*arguments` parameter
 provides variadic forwarding through mixed instance-method spread, including
-fixed-plus-rest signatures. A final `&block` parameter forwards a required
+fixed-plus-rest signatures. A final `&block` parameter forwards an optional
 trailing block through Diamond's ordinary last-Callable-argument convention.
 Splat and block forwarding can be combined: the variadic prologue preserves
 the final block slot while collecting only the arguments between fixed
 parameters and that block.
-The same required `&block` parameter and explicit forwarding marker are now
+The same optional `&block` parameter and explicit forwarding marker are now
 available to ordinary functions and methods, including calls shaped as
 `target(*arguments, &block)`; blocks remain ordinary Callable values at runtime.
+When combined with a splat the block remains required, because an unmarked
+runtime positional tail cannot distinguish the last rest value from an absent
+block; non-variadic block parameters default cleanly to `nil`.
 The forwarded call always uses the same name declared
 (`delegate foo(), to: @bar` always calls `@bar.foo()`, never a renamed
 target) -- both deliberate scope cuts, not oversights.

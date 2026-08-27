@@ -98,12 +98,14 @@
   Compiler flow facts now retain high indices without signed 16-bit truncation.
 - Replaced the legacy `0xff` missing-type-set marker with the dedicated 16-bit
   `0xffff` sentinel, recovering type-set slot 255 for ordinary annotations.
-- Added required trailing-block forwarding to explicit-arity delegates with
+- Added trailing-block forwarding to explicit-arity delegates with
   `delegate transform(value, &block), to: @target` syntax.
 - Extended variadic collection with preserved trailing slots, enabling
   delegates such as `delegate emit(prefix, *values, &block), to: @target`.
-- Added required `&block` parameters and explicit `&block` call forwarding to
+- Added optional `&block` parameters and explicit `&block` call forwarding to
   ordinary functions and methods, including `target(*arguments, &block)`.
+- Made non-variadic named blocks default to `nil`, including generated delegate
+  methods that omit the target's block argument when none was supplied.
 - Added protected method visibility with peer/subclass receiver access and
   runtime rejection outside the declaring class hierarchy.
 - Added `LazyEnumerator` pipelines with deferred `map`, `select`, and `reject`

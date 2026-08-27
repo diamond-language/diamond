@@ -531,7 +531,7 @@ every other method, minus the closure-capture bookkeeping a class/module
 member never needs. The target must be a bare instance variable (auto-
 declared on first reference, the same as any other `@ivar`); parameters
 are bare names with no type annotations or defaults. Delegates accept a
-trailing splat, a required trailing `&block`, or both in that order. The
+trailing splat, an optional trailing `&block`, or both in that order. The
 variadic collector preserves the final block register rather than absorbing it
 into the rest Array. The delegated call always reuses the declaring name (no
 renaming). Because the result is an
@@ -1138,7 +1138,7 @@ than relying on it implicitly.
 
 **Done, in scope.** `def foo(bar, baz, *other)` -- a trailing `*name`
 parameter collects every argument beyond the fixed (non-variadic) ones
-into an ordinary `Array`. A final required `&block` parameter may follow it;
+into an ordinary `Array`. A final `&block` parameter may follow it;
 the prologue preserves that closure in its own register rather than collecting
 it into the Array. Call-site *spread* (`foo(*array)`) remains the architecturally
 separate caller-side counterpart described below. Motivated by
@@ -1182,6 +1182,10 @@ reading the call's *original* `arguments` pointer (a `run_chunk`
 parameter, still in scope for the whole function, including this
 prologue instruction), not `registers[]`, which a non-variadic-sized
 buffer would otherwise have to hold every trailing value in individually.
+Without a variadic parameter, `&block` is optional and its zero-initialized
+register reads as `nil` when absent. With `*arguments, &block`, the block is
+required: the positional runtime ABI has no separate block-presence bit, so an
+absent block would be indistinguishable from the final rest argument.
 
 **A real, riding-along correctness fix, not incidental.** `run_chunk`
 previously copied exactly `argument_count` values into `registers[]`
