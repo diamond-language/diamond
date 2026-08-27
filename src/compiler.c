@@ -1636,6 +1636,9 @@ static uint16_t parse_spread_argument_array(Compiler *compiler,
         fixed+spread_index,fixed_count-spread_index,optional_block);
 }
 
+static uint16_t compile_callable_value_block(Compiler *compiler,
+        int32_t callable_set_index);
+
 /* Parses `(arg, arg, ...)` (the `(` itself still current) and emits a
  * DIAMOND_OP_CALL_CLOSURE against `callable` -- shared between a local
  * variable holding a Callable followed by `(...)` (parse_call's own
@@ -1646,6 +1649,7 @@ static uint16_t parse_spread_argument_array(Compiler *compiler,
  * expression"), forcing an extra `cb = @cb; cb()` local-binding step for
  * a stored-callback-field pattern that's otherwise completely ordinary. */
 static uint16_t parse_closure_call_arguments(Compiler *compiler, uint16_t callable) {
+    const int32_t callable_type_set=compiler->known_type_sets[callable];
     advance_token(compiler);
     skip_newlines(compiler);
     if(call_arguments_have_keyword(compiler)) {
@@ -1664,7 +1668,8 @@ static uint16_t parse_closure_call_arguments(Compiler *compiler, uint16_t callab
                     keyword_values[index],0,2);
                 keyword_values[index]=snapshot;
             }
-            block=compile_block(compiler);has_block=true;
+            block=compile_callable_value_block(compiler,callable_type_set);
+            has_block=true;
         }
         const uint16_t destination=allocate_register(compiler);
         emit_opcode(compiler,DIAMOND_OP_CALL_CLOSURE_KEYWORDS);
@@ -1686,7 +1691,8 @@ static uint16_t parse_closure_call_arguments(Compiler *compiler, uint16_t callab
             emit_instruction(compiler,DIAMOND_OP_MOVE,callable_snapshot,
                 callable,0,2);
             callable=callable_snapshot;
-            const uint16_t block=compile_block(compiler);
+            const uint16_t block=
+                compile_callable_value_block(compiler,callable_type_set);
             spread=emit_build_spread_arguments(compiler,nullptr,0,spread,
                 &block,1,false);
         }
@@ -1719,7 +1725,8 @@ static uint16_t parse_closure_call_arguments(Compiler *compiler, uint16_t callab
             emit_instruction(compiler,DIAMOND_OP_MOVE,snapshot,arguments[index],0,2);
             arguments[index]=snapshot;
         }
-        arguments[argument_count++]=compile_block(compiler);
+        arguments[argument_count++]=
+            compile_callable_value_block(compiler,callable_type_set);
     }
     const uint16_t base=allocate_register(compiler);
     for(size_t i=1;i<argument_count;i++)(void)allocate_register(compiler);
@@ -1828,6 +1835,27 @@ static uint16_t callable_type_set_index(Compiler *compiler) {
     return (uint16_t)index;
 }
 
+static void prepare_contextual_block(Compiler *compiler,
+        const DiamondTypeSet *sets,size_t set_count,
+        const DiamondTypeMember *callable) {
+    compiler->has_contextual_block_types=false;
+    compiler->contextual_block_arity=0;
+    if(callable!=nullptr&&callable->id==DIAMOND_TYPE_CALLABLE&&
+       callable->callable_parameters_typed&&callable->callable_arity<=16) {
+        compiler->has_contextual_block_types=true;
+        compiler->contextual_block_arity=callable->callable_arity;
+        for(size_t index=0;index<callable->callable_arity;index++) {
+            compiler->contextual_block_types[index]=TYPE_UNKNOWN;
+            const uint16_t parameter_set=callable->callable_parameter_sets[index];
+            if(parameter_set>=set_count)continue;
+            const DiamondTypeSet *parameter=&sets[parameter_set];
+            if(parameter->count==1&&
+               parameter->members[0].id<DIAMOND_TYPE_VARIABLE_BASE)
+                compiler->contextual_block_types[index]=parameter->members[0].id;
+        }
+    }
+}
+
 static uint16_t compile_contextual_block(Compiler *compiler,
         const DiamondFunction *target,size_t parameter_index) {
     compiler->has_contextual_block_types=false;
@@ -1836,23 +1864,34 @@ static uint16_t compile_contextual_block(Compiler *compiler,
         const uint16_t set_index=target->parameter_type_sets[parameter_index];
         if(set_index!=DIAMOND_NO_TYPE_SET&&set_index<target->type_set_count) {
             const DiamondTypeSet *set=&target->type_sets[set_index];
-            if(set->count==1&&set->members[0].id==DIAMOND_TYPE_CALLABLE&&
-               set->members[0].callable_parameters_typed&&
-               set->members[0].callable_arity<=16) {
-                const DiamondTypeMember *callable=&set->members[0];
-                compiler->has_contextual_block_types=true;
-                compiler->contextual_block_arity=callable->callable_arity;
-                for(size_t index=0;index<callable->callable_arity;index++) {
-                    compiler->contextual_block_types[index]=TYPE_UNKNOWN;
-                    const uint16_t parameter_set=
-                        callable->callable_parameter_sets[index];
-                    if(parameter_set>=target->type_set_count)continue;
-                    const DiamondTypeSet *parameter=&target->type_sets[parameter_set];
-                    if(parameter->count==1&&
-                       parameter->members[0].id<DIAMOND_TYPE_VARIABLE_BASE)
-                        compiler->contextual_block_types[index]=
-                            parameter->members[0].id;
-                }
+            if(set->count==1)prepare_contextual_block(compiler,
+                target->type_sets,target->type_set_count,&set->members[0]);
+        }
+    }
+    const uint16_t block=compile_block(compiler);
+    compiler->has_contextual_block_types=false;
+    compiler->contextual_block_arity=0;
+    return block;
+}
+
+static uint16_t compile_callable_value_block(Compiler *compiler,
+        int32_t callable_set_index) {
+    compiler->has_contextual_block_types=false;
+    compiler->contextual_block_arity=0;
+    if(callable_set_index>=0&&
+       (size_t)callable_set_index<compiler->function->type_set_count) {
+        const DiamondTypeSet *outer=
+            &compiler->function->type_sets[(size_t)callable_set_index];
+        if(outer->count==1&&outer->members[0].id==DIAMOND_TYPE_CALLABLE&&
+           outer->members[0].callable_parameters_typed&&
+           outer->members[0].callable_arity>0) {
+            const uint16_t block_set=outer->members[0].callable_parameter_sets[
+                outer->members[0].callable_arity-1];
+            if(block_set<compiler->function->type_set_count) {
+                const DiamondTypeSet *set=&compiler->function->type_sets[block_set];
+                if(set->count==1)prepare_contextual_block(compiler,
+                    compiler->function->type_sets,
+                    compiler->function->type_set_count,&set->members[0]);
             }
         }
     }
