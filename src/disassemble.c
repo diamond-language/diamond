@@ -319,14 +319,14 @@ static bool disassemble_chunk(FILE *stream, const char *name,
                 offset+=5;
                 break;
             case DIAMOND_OP_COLLECT_VARIADIC:
-                /* Second operand is the fixed (non-variadic) parameter
-                 * count, not a register -- same shape/reasoning as
+                /* The final operands are fixed and preserved-trailing
+                 * parameter counts, not registers -- same reasoning as
                  * ARGUMENT_PROVIDED just above. */
-                if(!require_bytes(stream,chunk,offset,5)){valid=false;offset=chunk->code_count;break;}
-                fprintf(stream,"%-18s r%u, %u\n","COLLECT_VARIADIC",
+                if(!require_bytes(stream,chunk,offset,7)){valid=false;offset=chunk->code_count;break;}
+                fprintf(stream,"%-18s r%u, fixed=%u, trailing=%u\n","COLLECT_VARIADIC",
                     checked_register(chunk,stream,read_operand(chunk,offset+1),&valid),
-                    read_operand(chunk,offset+3));
-                offset+=5;
+                    read_operand(chunk,offset+3),read_operand(chunk,offset+5));
+                offset+=7;
                 break;
             case DIAMOND_OP_TO_STRING:
                 offset=two_registers(stream,chunk,"TO_STRING",offset, &valid);break;

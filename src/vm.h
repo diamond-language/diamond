@@ -256,7 +256,10 @@ typedef enum DiamondOpCode : uint8_t {
     /* Prologue of a `*name` (variadic) parameter's owning function/
      * method/closure -- collects every argument beyond the fixed
      * (non-variadic) parameter count into a fresh Array and stores it in
-     * the variadic parameter's own register. Reads the call's original,
+     * the variadic parameter's own register. Its third operand preserves
+     * that many trailing arguments in the registers immediately after the
+     * variadic slot, allowing `*arguments, &block` to keep the block out of
+     * the collected Array. Reads the call's original,
      * un-clamped `arguments`/`argument_count` (still live in run_chunk's
      * own scope, see docs/design.md's "Splat/variadic parameters"
      * section), not the callee's registers -- those only ever receive

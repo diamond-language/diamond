@@ -100,6 +100,8 @@
   `0xffff` sentinel, recovering type-set slot 255 for ordinary annotations.
 - Added required trailing-block forwarding to explicit-arity delegates with
   `delegate transform(value, &block), to: @target` syntax.
+- Extended variadic collection with preserved trailing slots, enabling
+  delegates such as `delegate emit(prefix, *values, &block), to: @target`.
 - Added protected method visibility with peer/subclass receiver access and
   runtime rejection outside the declaring class hierarchy.
 - Added `LazyEnumerator` pipelines with deferred `map`, `select`, and `reject`

@@ -467,8 +467,9 @@ only (no type annotations or defaults). A trailing `*arguments` parameter
 provides variadic forwarding through mixed instance-method spread, including
 fixed-plus-rest signatures. A final `&block` parameter forwards a required
 trailing block through Diamond's ordinary last-Callable-argument convention.
-Splat and block forwarding cannot yet be combined because variadic collection
-currently consumes every trailing value.
+Splat and block forwarding can be combined: the variadic prologue preserves
+the final block slot while collecting only the arguments between fixed
+parameters and that block.
 The forwarded call always uses the same name declared
 (`delegate foo(), to: @bar` always calls `@bar.foo()`, never a renamed
 target) -- both deliberate scope cuts, not oversights.

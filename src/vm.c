@@ -9053,19 +9053,26 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 break;
             }
             case DIAMOND_OP_COLLECT_VARIADIC: {
-                uint16_t destination=0,fixed_count=0;
+                uint16_t destination=0,fixed_count=0,preserved_count=0;
                 READ_SHORT(destination);READ_SHORT(fixed_count);
+                READ_SHORT(preserved_count);
                 /* Reads the call's original `arguments`/`argument_count`
                  * (run_chunk's own parameters, still in scope here) --
                  * not `registers[]`, which only ever receives up to
                  * min(argument_count, live_register_count) copied values
                  * now (see run_chunk's own bounds fix above). */
-                const size_t trailing=
-                    argument_count>fixed_count?argument_count-fixed_count:0;
+                if(preserved_count>argument_count||
+                   (size_t)destination+preserved_count>=chunk->register_count)
+                    VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
+                const size_t available=argument_count-preserved_count;
+                const size_t trailing=available>fixed_count?
+                    available-fixed_count:0;
                 DiamondArray *variadic_array=
                     allocate_array(vm,&arguments[fixed_count],trailing);
                 if(variadic_array==nullptr) VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
                 registers[destination]=DIAMOND_OBJECT(variadic_array);
+                for(size_t index=0;index<preserved_count;index++)
+                    registers[(size_t)destination+1+index]=arguments[available+index];
                 break;
             }
             case DIAMOND_OP_TO_STRING: {

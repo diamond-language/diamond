@@ -2095,7 +2095,7 @@ static uint16_t parse_singleton_reference(Compiler *compiler,
     if(method->has_variadic) {
         const size_t fixed_count=method->arity-1;
         emit_instruction(compiler,DIAMOND_OP_COLLECT_VARIADIC,
-            arguments[fixed_count],(uint16_t)fixed_count,0,2);
+            arguments[fixed_count],(uint16_t)fixed_count,0,3);
         uint16_t spread=arguments[fixed_count];
         if(fixed_count>0)spread=emit_build_spread_arguments(compiler,arguments,
             fixed_count,spread,nullptr,0);
@@ -4132,7 +4132,7 @@ static uint16_t parse_bound_method_reference(Compiler *compiler,uint16_t receive
     compiler->function=wrapper;compiler->next_register=0;
     compiler->local_count=0;compiler->in_function=true;
     const uint16_t arguments=allocate_register(compiler);
-    emit_instruction(compiler,DIAMOND_OP_COLLECT_VARIADIC,arguments,0,0,2);
+    emit_instruction(compiler,DIAMOND_OP_COLLECT_VARIADIC,arguments,0,0,3);
     const uint16_t bound_receiver=allocate_register(compiler);
     emit_instruction(compiler,DIAMOND_OP_GET_CAPTURE,bound_receiver,0,0,2);
     const uint16_t body=emit_invoke_typed_spread(compiler,bound_receiver,
@@ -7830,7 +7830,7 @@ static uint16_t compile_definition(Compiler *compiler, bool captures_self) {
                 const uint8_t fixed_count=captures_self?
                     function->arity:(uint8_t)(function->arity-1);
                 emit_instruction(compiler,DIAMOND_OP_COLLECT_VARIADIC,parameter,
-                                 fixed_count,0,2);
+                                 fixed_count,0,3);
                 declared_parameter_count++;
                 skip_newlines(compiler);
                 if(compiler->current.kind==DIAMOND_TOKEN_COMMA) {
@@ -8667,16 +8667,12 @@ static void compile_delegate(Compiler *compiler) {
     while(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN&&!compiler->failed) {
         bool block_parameter=false;
         if(compiler->current.kind==DIAMOND_TOKEN_AMPERSAND) {
-            if(variadic) {
-                fail(compiler,compiler->current.span,
-                    "a delegate cannot combine splat and block forwarding");return;
-            }
             block_parameter=true;forwards_block=true;advance_token(compiler);
         }
         if(compiler->current.kind==DIAMOND_TOKEN_STAR) {
-            if(forwards_block) {
+            if(forwards_block||variadic) {
                 fail(compiler,compiler->current.span,
-                    "a delegate cannot combine splat and block forwarding");return;
+                    "a delegate can only declare one variadic parameter");return;
             }
             variadic=true;advance_token(compiler);
         }
@@ -8689,10 +8685,19 @@ static void compile_delegate(Compiler *compiler) {
         parameter_names[parameter_count++]=compiler->current.span;
         advance_token(compiler);
         skip_newlines(compiler);
-        if((variadic||block_parameter)&&compiler->current.kind==DIAMOND_TOKEN_COMMA) {
+        if(block_parameter&&compiler->current.kind==DIAMOND_TOKEN_COMMA) {
             fail(compiler,compiler->current.span,
-                block_parameter?"a block delegate parameter must be last":
-                    "a variadic delegate parameter must be last");return;
+                "a block delegate parameter must be last");return;
+        }
+        if(variadic&&!block_parameter&&
+           compiler->current.kind==DIAMOND_TOKEN_COMMA) {
+            advance_token(compiler);skip_newlines(compiler);
+            if(compiler->current.kind!=DIAMOND_TOKEN_AMPERSAND) {
+                fail(compiler,compiler->current.span,
+                    "only a block parameter may follow a variadic delegate parameter");
+                return;
+            }
+            continue;
         }
         if(compiler->current.kind!=DIAMOND_TOKEN_COMMA)break;
         advance_token(compiler);
@@ -8847,9 +8852,12 @@ static void compile_delegate(Compiler *compiler) {
     function->arity=(uint8_t)(function->arity+parameter_count);
     function->required_arity=variadic?(uint8_t)parameter_count:function->arity;
     function->has_variadic=variadic;
-    if(variadic)
+    if(variadic) {
+        const size_t variadic_index=parameter_count-(forwards_block?2u:1u);
         emit_instruction(compiler,DIAMOND_OP_COLLECT_VARIADIC,
-            parameter_registers[parameter_count-1],(uint8_t)parameter_count,0,2);
+            parameter_registers[variadic_index],(uint16_t)(variadic_index+1),
+            forwards_block?1:0,3);
+    }
 
     uint16_t ivar_register;
     if(in_class) {
@@ -8865,9 +8873,12 @@ static void compile_delegate(Compiler *compiler) {
     }
     uint16_t result;
     if(variadic) {
+        const size_t variadic_index=parameter_count-(forwards_block?2u:1u);
         const uint16_t forwarded=emit_build_spread_arguments(compiler,
-            parameter_registers,parameter_count-1,
-            parameter_registers[parameter_count-1],nullptr,0);
+            parameter_registers,variadic_index,
+            parameter_registers[variadic_index],
+            forwards_block?&parameter_registers[variadic_index+1]:nullptr,
+            forwards_block?1:0);
         result=emit_invoke_spread(compiler,ivar_register,method_name,forwarded);
     } else result=emit_invoke_call(compiler,ivar_register,method_name,
         false,nullptr,0,parameter_registers,parameter_count);
