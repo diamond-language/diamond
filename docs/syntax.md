@@ -562,8 +562,8 @@ the final positional argument.
 
 Constructor calls accept the same trailing block for fixed and spread
 arguments. The block is the final argument to `initialize`, which must declare
-an `&block` parameter to bind it. Keyword constructor calls cannot also take a
-trailing block yet because keyword slot normalization remains a separate path.
+an `&block` parameter to bind it. Keyword constructor calls reconcile named
+parameters first and then place the block in `initialize`'s final slot.
 
 ### Keyword arguments
 

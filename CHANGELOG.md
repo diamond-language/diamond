@@ -26,6 +26,8 @@
 
 ## Language
 
+- Added trailing blocks to keyword Callable, dynamic-method, and constructor
+  calls with runtime slot reconciliation and duplicate-value detection.
 - Added explicit `Fiber.yield(value)`/`Fiber.yield()` suspension, trailing
   blocks on Callable-value and constructor calls, and clear missing-block
   yield diagnostics.

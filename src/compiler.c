@@ -1649,18 +1649,29 @@ static uint16_t parse_closure_call_arguments(Compiler *compiler, uint16_t callab
         size_t keyword_count=0;
         const uint16_t positional=parse_dynamic_keyword_arguments(compiler,
             keyword_names,keyword_values,&keyword_count);
+        bool has_block=false;uint16_t block=0;
         if(compiler->current.kind==DIAMOND_TOKEN_DO) {
-            fail(compiler,compiler->current.span,
-                "a keyword Callable call cannot also take a block");return 0;
+            const uint16_t callable_snapshot=allocate_register(compiler);
+            emit_instruction(compiler,DIAMOND_OP_MOVE,callable_snapshot,
+                callable,0,2);callable=callable_snapshot;
+            for(size_t index=0;index<keyword_count;index++) {
+                const uint16_t snapshot=allocate_register(compiler);
+                emit_instruction(compiler,DIAMOND_OP_MOVE,snapshot,
+                    keyword_values[index],0,2);
+                keyword_values[index]=snapshot;
+            }
+            block=compile_block(compiler);has_block=true;
         }
         const uint16_t destination=allocate_register(compiler);
         emit_opcode(compiler,DIAMOND_OP_CALL_CLOSURE_KEYWORDS);
         emit_register(compiler,destination);emit_register(compiler,callable);
-        emit_register(compiler,positional);emit_byte(compiler,(uint8_t)keyword_count);
+        emit_register(compiler,positional);
+        emit_byte(compiler,(uint8_t)(keyword_count|(has_block?0x80u:0u)));
         for(size_t index=0;index<keyword_count;index++) {
             emit_register(compiler,add_name_string(compiler,keyword_names[index]));
             emit_register(compiler,keyword_values[index]);
         }
+        if(has_block)emit_register(compiler,block);
         return destination;
     }
     if(call_arguments_have_spread(compiler)) {
@@ -3979,21 +3990,27 @@ static uint16_t parse_name(Compiler *compiler) {
             size_t keyword_count=0;
             const uint16_t positional=parse_dynamic_keyword_arguments(compiler,
                 keyword_names,keyword_values,&keyword_count);
+            bool has_block=false;uint16_t block=0;
             if(compiler->current.kind==DIAMOND_TOKEN_DO) {
-                fail(compiler,compiler->current.span,
-                    "a keyword constructor call cannot also take a block");
-                return 0;
+                for(size_t index=0;index<keyword_count;index++) {
+                    const uint16_t snapshot=allocate_register(compiler);
+                    emit_instruction(compiler,DIAMOND_OP_MOVE,snapshot,
+                        keyword_values[index],0,2);
+                    keyword_values[index]=snapshot;
+                }
+                block=compile_block(compiler);has_block=true;
             }
             const uint16_t destination=allocate_register(compiler);
             emit_opcode(compiler,DIAMOND_OP_NEW_KEYWORDS);
             emit_register(compiler,destination);
             emit_byte(compiler,(uint8_t)class_index);
             emit_register(compiler,positional);
-            emit_byte(compiler,(uint8_t)keyword_count);
+            emit_byte(compiler,(uint8_t)(keyword_count|(has_block?0x80u:0u)));
             for(size_t index=0;index<keyword_count;index++) {
                 emit_register(compiler,add_name_string(compiler,keyword_names[index]));
                 emit_register(compiler,keyword_values[index]);
             }
+            if(has_block)emit_register(compiler,block);
             compiler->known_types[destination]=
                 (uint8_t)(DIAMOND_TYPE_CLASS_BASE+class_index);
             return destination;
@@ -4155,17 +4172,19 @@ static uint16_t emit_invoke_keywords(Compiler *compiler,uint16_t receiver,
         DiamondSpan method_name,uint16_t positional,
         const DiamondSpan *keyword_names,const uint16_t *keyword_values,
         size_t keyword_count,const uint16_t *type_arguments,
-        size_t type_argument_count) {
+        size_t type_argument_count,bool has_block,uint16_t block) {
     const uint16_t destination=allocate_register(compiler);
     emit_opcode(compiler,type_argument_count==0?DIAMOND_OP_INVOKE_KEYWORDS:
         DIAMOND_OP_INVOKE_TYPED_KEYWORDS);
     emit_register(compiler,destination);emit_register(compiler,receiver);
     emit_register(compiler,add_name_string(compiler,method_name));
-    emit_register(compiler,positional);emit_byte(compiler,(uint8_t)keyword_count);
+    emit_register(compiler,positional);
+    emit_byte(compiler,(uint8_t)(keyword_count|(has_block?0x80u:0u)));
     for(size_t index=0;index<keyword_count;index++) {
         emit_register(compiler,add_name_string(compiler,keyword_names[index]));
         emit_register(compiler,keyword_values[index]);
     }
+    if(has_block)emit_register(compiler,block);
     if(type_argument_count>0) {
         emit_byte(compiler,(uint8_t)type_argument_count);
         for(size_t index=0;index<type_argument_count;index++)
@@ -4349,12 +4368,22 @@ static uint16_t parse_invoke(Compiler *compiler, uint16_t receiver) {
         size_t keyword_count=0;
         const uint16_t positional=parse_dynamic_keyword_arguments(compiler,
             keyword_names,keyword_values,&keyword_count);
-        if(compiler->current.kind==DIAMOND_TOKEN_DO) {fail(compiler,
-            compiler->current.span,
-            "a keyword method call cannot also take a block");return 0;}
+        bool has_block=false;uint16_t block=0;
+        if(compiler->current.kind==DIAMOND_TOKEN_DO) {
+            const uint16_t receiver_snapshot=allocate_register(compiler);
+            emit_instruction(compiler,DIAMOND_OP_MOVE,receiver_snapshot,
+                receiver,0,2);receiver=receiver_snapshot;
+            for(size_t index=0;index<keyword_count;index++) {
+                const uint16_t snapshot=allocate_register(compiler);
+                emit_instruction(compiler,DIAMOND_OP_MOVE,snapshot,
+                    keyword_values[index],0,2);
+                keyword_values[index]=snapshot;
+            }
+            block=compile_block(compiler);has_block=true;
+        }
         return emit_invoke_keywords(compiler,receiver,name,positional,
             keyword_names,keyword_values,keyword_count,type_arguments,
-            type_argument_count);
+            type_argument_count,has_block,block);
     }
     if(call_arguments_have_spread(compiler)) {
         if(writer_name) {

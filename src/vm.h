@@ -316,7 +316,8 @@ typedef enum DiamondOpCode : uint8_t {
     DIAMOND_OP_CALL_KEYWORD_SPREAD,
     DIAMOND_OP_CALL_TYPED_KEYWORD_SPREAD,
     /* Keyword-bearing user dispatches carry a positional Array plus
-     * name/register pairs resolved against the runtime target. */
+     * name/register pairs resolved against the runtime target. Their keyword
+     * count high bit adds one trailing block register. */
     DIAMOND_OP_INVOKE_KEYWORDS,
     DIAMOND_OP_INVOKE_TYPED_KEYWORDS,
     DIAMOND_OP_CALL_CLOSURE_KEYWORDS,

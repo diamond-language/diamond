@@ -1202,6 +1202,10 @@ Callable-value and constructor calls attach trailing source blocks through the
 same final-positional-argument convention as named calls. Fixed calls snapshot
 pre-block argument registers before eager capture can box them; spread calls
 append the compiled block through `DIAMOND_OP_BUILD_SPREAD_ARGS`.
+Keyword Callable, dynamic-method, and constructor opcodes reserve the high bit
+of their keyword-count byte to carry one trailing block register. Runtime
+normalization places that value in the target's final public parameter slot,
+after rejecting collisions with an explicitly supplied value for that slot.
 
 **A real, riding-along correctness fix, not incidental.** `run_chunk`
 previously copied exactly `argument_count` values into `registers[]`
