@@ -123,6 +123,7 @@ typedef struct Compiler {
     uint8_t contextual_block_arity;
     uint8_t contextual_block_types[16];
     int32_t contextual_block_return_set;
+    int32_t expected_expression_type_set;
     int current_return_type;
     DiamondSpan current_return_type_span;
     LoopContext *current_loop;
@@ -1803,12 +1804,15 @@ static uint16_t emit_argument_array(Compiler *compiler,const uint16_t *values,
     compiler->known_types[result]=DIAMOND_TYPE_ARRAY;return result;
 }
 
+static uint16_t parse_expected_argument(Compiler *compiler,
+        const DiamondFunction *target,size_t parameter);
+
 /* Dynamic keyword targets retain names until runtime lookup identifies the
  * concrete DiamondFunction. Positional values are normalized to one Array,
  * whether or not the source used `*`. */
 static uint16_t parse_dynamic_keyword_arguments(Compiler *compiler,
         DiamondSpan *keyword_names,uint16_t *keyword_values,
-        size_t *keyword_count) {
+        size_t *keyword_count,const DiamondFunction *target) {
     uint16_t fixed[16];size_t fixed_count=0,spread_index=0;
     uint16_t spread=0;bool saw_spread=false,seen_keyword=false;
     *keyword_count=0;
@@ -1830,7 +1834,15 @@ static uint16_t parse_dynamic_keyword_arguments(Compiler *compiler,
                 }
             keyword_names[*keyword_count]=name;
             advance_token(compiler);advance_token(compiler);
-            keyword_values[(*keyword_count)++]=parse_expression(compiler);
+            size_t parameter=SIZE_MAX;
+            if(target!=nullptr)
+                for(size_t index=0;index<target->arity&&index<16;index++)
+                    if(name_equals(compiler,target->parameter_names[index],
+                            name,false)) {parameter=index;break;}
+            keyword_values[*keyword_count]=parameter==SIZE_MAX?
+                parse_expression(compiler):
+                parse_expected_argument(compiler,target,parameter);
+            (*keyword_count)++;
         } else if(compiler->current.kind==DIAMOND_TOKEN_STAR) {
             if(seen_keyword) {fail(compiler,compiler->current.span,
                 "positional argument cannot follow a keyword argument");return 0;}
@@ -1844,7 +1856,9 @@ static uint16_t parse_dynamic_keyword_arguments(Compiler *compiler,
                 "positional argument cannot follow a keyword argument");return 0;}
             if(fixed_count==16) {fail(compiler,compiler->current.span,
                 "too many fixed call arguments");return 0;}
-            fixed[fixed_count++]=parse_expression(compiler);
+            fixed[fixed_count]=parse_expected_argument(compiler,target,
+                fixed_count);
+            fixed_count++;
         }
         skip_newlines(compiler);
         if(compiler->current.kind!=DIAMOND_TOKEN_COMMA)break;
@@ -1996,7 +2010,7 @@ static uint16_t parse_closure_call_arguments(Compiler *compiler, uint16_t callab
         DiamondSpan keyword_names[16];uint16_t keyword_values[16];
         size_t keyword_count=0;
         const uint16_t positional=parse_dynamic_keyword_arguments(compiler,
-            keyword_names,keyword_values,&keyword_count);
+            keyword_names,keyword_values,&keyword_count,nullptr);
         bool has_block=false;uint16_t block=0;
         if(compiler->current.kind==DIAMOND_TOKEN_DO) {
             const uint16_t callable_snapshot=allocate_register(compiler);
@@ -2374,6 +2388,29 @@ static void infer_contextual_argument(Compiler *compiler,
             bindings);
 }
 
+/* Parses one argument while exposing its declared parameter contract to the
+ * expression itself. This is deliberately a one-expression conduit: generic
+ * method references can consume it bidirectionally, while every nested or
+ * subsequent expression sees the prior context restored. */
+static uint16_t parse_expected_argument(Compiler *compiler,
+        const DiamondFunction *target,size_t parameter) {
+    const int32_t outer=compiler->expected_expression_type_set;
+    compiler->expected_expression_type_set=-1;
+    if(target!=nullptr&&parameter<target->arity) {
+        const uint16_t source=target->parameter_type_sets[parameter];
+        if(source!=DIAMOND_NO_TYPE_SET&&source<target->type_set_count) {
+            const uint16_t cloned=target==compiler->function?source:
+                clone_type_set_into_current(compiler,target->type_sets,
+                    target->type_set_count,source);
+            if(cloned!=DIAMOND_NO_TYPE_SET)
+                compiler->expected_expression_type_set=(int32_t)cloned;
+        }
+    }
+    const uint16_t result=parse_expression(compiler);
+    compiler->expected_expression_type_set=outer;
+    return result;
+}
+
 static size_t infer_contextual_type_arguments(Compiler *compiler,
         const DiamondFunction *target,const uint16_t *arguments,
         size_t argument_count,uint16_t *bindings) {
@@ -2712,7 +2749,7 @@ static uint16_t parse_call(Compiler *compiler, DiamondSpan name) {
                 fail(compiler,name,"multiple values for the same argument");
                 return 0;
             }
-            slot_registers[slot]=parse_expression(compiler);
+            slot_registers[slot]=parse_expected_argument(compiler,function,slot);
             slot_filled[slot]=true;
             skip_newlines(compiler);
             if (compiler->current.kind != DIAMOND_TOKEN_COMMA) break;
@@ -2895,6 +2932,37 @@ static uint16_t emit_singleton_call(Compiler *compiler,const DiamondMethod *meth
     return destination;
 }
 
+static bool infer_reference_type_arguments(Compiler *compiler,
+        const DiamondFunction *target,size_t parameter_offset,size_t arity,
+        uint16_t *bindings) {
+    if(target==nullptr||target->type_variable_count==0||
+       compiler->expected_expression_type_set<0||
+       (size_t)compiler->expected_expression_type_set>=
+           compiler->function->type_set_count)return false;
+    const DiamondTypeSet *expected=&compiler->function->type_sets[
+        (size_t)compiler->expected_expression_type_set];
+    if(expected->count!=1||expected->members[0].id!=DIAMOND_TYPE_CALLABLE||
+       !expected->members[0].callable_parameters_typed||
+       expected->members[0].callable_arity!=arity)return false;
+    const DiamondTypeMember callable=expected->members[0];
+    for(size_t index=0;index<8;index++)bindings[index]=DIAMOND_NO_TYPE_SET;
+    for(size_t parameter=0;parameter<arity;parameter++) {
+        const size_t target_parameter=parameter+parameter_offset;
+        if(target_parameter>=target->arity) return false;
+        const uint16_t wanted=target->parameter_type_sets[target_parameter];
+        const uint16_t actual=callable.callable_parameter_sets[parameter];
+        if(wanted!=DIAMOND_NO_TYPE_SET&&actual!=DIAMOND_NO_TYPE_SET)
+            infer_contextual_type_set(compiler,target,wanted,actual,bindings);
+    }
+    if(target->return_type_set!=DIAMOND_NO_TYPE_SET&&
+       callable.callable_return_set!=DIAMOND_NO_TYPE_SET)
+        infer_contextual_type_set(compiler,target,target->return_type_set,
+            callable.callable_return_set,bindings);
+    for(size_t index=0;index<target->type_variable_count;index++)
+        if(bindings[index]==DIAMOND_NO_TYPE_SET)return false;
+    return true;
+}
+
 /* `Namespace.method`, no call following -- a bare reference to a class/
  * module singleton method as a value, not a call. Synthesizes a small
  * hidden top-level function (owner_class=UINT8_MAX, nested=true -- not
@@ -2927,6 +2995,13 @@ static uint16_t parse_singleton_reference(Compiler *compiler,
                                          size_t type_argument_count) {
     const DiamondFunction *target=
         compiler->program->functions[method->function_index];
+    uint16_t inferred_arguments[8];
+    if(target->type_variable_count>0&&type_argument_count==0&&
+       infer_reference_type_arguments(compiler,target,0,method->arity,
+           inferred_arguments)) {
+        type_arguments=inferred_arguments;
+        type_argument_count=target->type_variable_count;
+    }
     if(target->type_variable_count>0&&type_argument_count==0) {
         fail(compiler,namespace_name,
              "generic singleton method reference requires explicit bindings");
@@ -3104,7 +3179,7 @@ static uint16_t parse_singleton_call(Compiler *compiler,
         DiamondSpan keyword_names[16];uint16_t keyword_values[16];
         size_t keyword_count=0;
         const uint16_t positional=parse_dynamic_keyword_arguments(compiler,
-            keyword_names,keyword_values,&keyword_count);
+            keyword_names,keyword_values,&keyword_count,function);
         uint16_t inferred_arguments[8];
         for(size_t index=0;index<8;index++)
             inferred_arguments[index]=DIAMOND_NO_TYPE_SET;
@@ -3220,7 +3295,9 @@ static uint16_t parse_singleton_call(Compiler *compiler,
         if(argument_count==16) {
             fail(compiler,compiler->current.span,"too many call arguments");return 0;
         }
-        arguments[argument_count++]=parse_expression(compiler);
+        arguments[argument_count]=parse_expected_argument(compiler,function,
+            argument_count);
+        argument_count++;
         skip_newlines(compiler);
         if(compiler->current.kind!=DIAMOND_TOKEN_COMMA)break;
         advance_token(compiler);
@@ -4917,7 +4994,7 @@ static uint16_t parse_name(Compiler *compiler) {
             DiamondSpan keyword_names[16];uint16_t keyword_values[16];
             size_t keyword_count=0;
             const uint16_t positional=parse_dynamic_keyword_arguments(compiler,
-                keyword_names,keyword_values,&keyword_count);
+                keyword_names,keyword_values,&keyword_count,initializer);
             bool has_block=false;uint16_t block=0;
             if(compiler->current.kind==DIAMOND_TOKEN_DO) {
                 uint16_t inferred_arguments[8];
@@ -5382,6 +5459,13 @@ static uint16_t parse_bound_method_reference(Compiler *compiler,uint16_t receive
         size_t type_argument_count) {
     const DiamondFunction *target=
         instance_call_signature(compiler,receiver,method_name,true);
+    uint16_t inferred_arguments[8];
+    if(target!=nullptr&&target->type_variable_count>0&&
+       type_argument_count==0&&infer_reference_type_arguments(compiler,target,
+           0,target->arity>0?target->arity-1:0,inferred_arguments)) {
+        type_arguments=inferred_arguments;
+        type_argument_count=target->type_variable_count;
+    }
     const bool typed_wrapper=target!=nullptr&&target->arity>0&&
         (target->type_variable_count==0||
          type_argument_count==target->type_variable_count);
@@ -5597,7 +5681,7 @@ static uint16_t parse_invoke(Compiler *compiler, uint16_t receiver) {
         DiamondSpan keyword_names[16];uint16_t keyword_values[16];
         size_t keyword_count=0;
         const uint16_t positional=parse_dynamic_keyword_arguments(compiler,
-            keyword_names,keyword_values,&keyword_count);
+            keyword_names,keyword_values,&keyword_count,contextual_target);
         uint16_t inferred_arguments[8];
         for(size_t index=0;index<8;index++)
             inferred_arguments[index]=DIAMOND_NO_TYPE_SET;
@@ -5687,7 +5771,8 @@ static uint16_t parse_invoke(Compiler *compiler, uint16_t receiver) {
     uint16_t args[16]; size_t count = 0;
     while (compiler->current.kind != DIAMOND_TOKEN_RIGHT_PAREN && !compiler->failed) {
         if (count == 16) { fail(compiler, compiler->current.span, "too many arguments"); break; }
-        args[count++] = parse_expression(compiler);
+        args[count]=parse_expected_argument(compiler,contextual_target,count);
+        count++;
         skip_newlines(compiler);
         if (compiler->current.kind != DIAMOND_TOKEN_COMMA) break;
         advance_token(compiler);
@@ -12204,6 +12289,7 @@ static bool run_compile_pass(const char *source, DiamondProgram *program,
         .current_class = -1,
         .current_module = -1,
         .contextual_block_return_set = -1,
+        .expected_expression_type_set = -1,
         .current_return_type = -1,
         .current_exception = -1,
         .current_retry_target = SIZE_MAX,

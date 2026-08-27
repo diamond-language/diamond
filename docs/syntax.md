@@ -603,6 +603,11 @@ A fixed-arity bound method reference such as `object.convert` retains its
 declared parameter and return contract. Explicit generic references such as
 `object.wrap[Int]` and `Factory.wrap[Int]` retain the substituted contract, so
 their results compose with indexing, Callable arguments, and later calls.
+When a bare generic singleton or bound instance reference is passed directly to
+a statically resolved Callable parameter, Diamond can infer those bindings from
+the parameter's expected Callable graph. This works for positional and keyword
+arguments on functions, singleton methods, instance methods, and constructors.
+An unresolved standalone reference still requires explicit bindings.
 Only dynamically unresolved bound methods remain conservatively untyped.
 Callable unions retain a return fact when all arms agree structurally.
 
@@ -965,10 +970,11 @@ handler(request, context, params)  # invoked later, elsewhere
 `Callable` value referencing that singleton method -- a small, zero-capture
 wrapper matching the method's required/optional and variadic arity. Works for
 a class `self.` method and a module singleton function alike. Variadic wrappers
-collect and forward through singleton spread. Generic references require
+collect and forward through singleton spread. Generic references accept
 explicit bindings at the reference site (`Tools.identity[Int]`); the wrapper
-bakes those bindings into its forwarded call. A bare reference to an unbound
-generic method is a compile error.
+bakes those bindings into its forwarded call. A direct, statically resolved
+Callable argument may instead provide those bindings contextually. Without
+either source, a bare unbound generic reference remains a compile error.
 
 ### Bound instance-method references
 

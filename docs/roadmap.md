@@ -346,12 +346,15 @@ The LSP also renders position-sensitive structural types for lexical locals, so
 hovering a stored bound method reference exposes its full Callable parameter and
 return graph.
 
-Context-driven generic method-reference inference remains open. Today a bare
-generic reference is compiled before a later call or parameter contract is
-known, and the no-AST single-pass compiler has no expected-type channel flowing
-back into that earlier expression. Implementing it requires an explicit
-bidirectional context mechanism rather than guessing bindings from a future
-consumer. General synthesis of a new common Callable contract remains separate;
+Context-driven generic method-reference inference is now implemented for
+statically resolved direct argument slots. Positional and keyword contracts on
+top-level, singleton, instance-method, and constructor calls flow through a
+strictly expression-scoped expected-type channel. Bare singleton and bound
+instance references solve their generic bindings from the expected Callable's
+parameter and return graph, then synthesize the same typed wrappers explicit
+bindings use. References without a complete, unambiguous context retain the
+existing explicit-binding requirement. General synthesis of a new common
+Callable contract remains separate;
 the current variance path selects existing declared graphs for each input and
 falls back when no safe input exists. Synthesizing genuinely new union or
 intersection contracts remains open.
