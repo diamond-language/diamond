@@ -1213,6 +1213,8 @@ the nested Callable in their final parameter slot. Explicit generic call-site
 bindings substitute concrete type variables before the block compiles. Without
 explicit bindings, statically resolved top-level, singleton, and instance-method
 calls derive direct type-variable bindings from concrete positional arguments.
+Fixed constructor calls apply the same inference to `initialize` before their
+trailing block is compiled.
 Homogeneous Array and Hash literals record recursive inferred type sets, so
 matching nested collection parameters can derive the same bindings. Mixed
 element or entry types remain unknown rather than inventing an unsafe join.

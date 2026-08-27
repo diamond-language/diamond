@@ -570,7 +570,8 @@ singleton, and instance-method calls, omitted bindings are inferred when a
 concrete positional argument maps directly to a generic parameter. Homogeneous
 Array and Hash literals also provide recursive bindings for nested collection
 parameters. Mixed literal types remain conservative and require explicit
-generic arguments.
+generic arguments. Fixed constructor calls infer `initialize` type variables
+from their positional arguments in the same way.
 
 Callable values accept the same trailing `do ... end` block as named function
 and method calls, including calls with a spread Array. The block is appended as

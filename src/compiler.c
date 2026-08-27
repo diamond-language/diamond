@@ -4559,14 +4559,18 @@ static uint16_t parse_name(Compiler *compiler) {
             if(count==16) {
                 fail(compiler,compiler->current.span,"too many arguments");return 0;
             }
+            uint16_t inferred_arguments[8];
+            const size_t inferred_count=infer_contextual_type_arguments(
+                compiler,initializer,args,count,inferred_arguments);
             for(size_t index=0;index<count;index++) {
                 const uint16_t snapshot=allocate_register(compiler);
                 emit_instruction(compiler,DIAMOND_OP_MOVE,snapshot,args[index],0,2);
                 args[index]=snapshot;
             }
-            const uint16_t block=compile_contextual_block(compiler,initializer,
+            const uint16_t block=compile_contextual_typed_block(compiler,
+                initializer,
                 initializer==nullptr||initializer->arity<=1?0:
-                    initializer->arity-2);
+                    initializer->arity-2,inferred_arguments,inferred_count);
             const size_t block_slot=initializer==nullptr||initializer->arity<=1?
                 0:(size_t)initializer->arity-2;
             if(count<block_slot) {

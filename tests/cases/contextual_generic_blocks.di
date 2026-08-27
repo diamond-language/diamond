@@ -48,6 +48,16 @@ class GenericBlockOps
   end
 end
 
+class GenericBlockBox
+  def initialize[T](value: T, &block: Callable[[T], T])
+    @value = yield(value)
+  end
+
+  def value()
+    @value
+  end
+end
+
 puts(GenericBlockOps.apply[String]("singleton") do |value|
   value + " generic"
 end)
@@ -63,3 +73,8 @@ end)
 puts(GenericBlockOps.new().apply(20) do |value|
   value + 2
 end)
+
+box = GenericBlockBox.new(30) do |value|
+  value + 12
+end
+puts(box.value())

@@ -2303,6 +2303,10 @@ actual="$($diamond --dump-bytecode -e $'def apply_nested[T](values: Array[Array[
 nested_block_dump="$(sed -n '/^== <block> ==$/,$p' <<<"$actual")"
 grep -q 'ADD_INT' <<<"$nested_block_dump"
 
+actual="$($diamond --dump-bytecode -e $'class GenericBox\n def initialize[T](value: T, &block: Callable[[T], T])\n  @value = yield(value)\n end\nend\nGenericBox.new(20) do |value|\n value + 1\nend')"
+constructor_block_dump="$(sed -n '/^== <block> ==$/,$p' <<<"$actual")"
+grep -q 'ADD_INT' <<<"$constructor_block_dump"
+
 actual="$($diamond --dump-bytecode -e $'def test(a: Int | String, b: Int | String) -> String\n unless a is Int || b is Int\n  a\n else\n  "one-or-both"\n end\nend')"
 test_dump="$(sed -n '/^== test ==$/,$p' <<<"$actual")"
 [[ "$(grep -c 'CHECK_TYPE' <<<"$test_dump")" == "2" ]]

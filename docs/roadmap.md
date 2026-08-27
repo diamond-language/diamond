@@ -503,7 +503,9 @@ and method call sites. When bindings are omitted, direct one-member generic
 parameters now infer them from concrete positional arguments for statically
 resolved top-level, singleton, and instance-method calls. Homogeneous Array and
 Hash literals retain recursive compile-time contracts, allowing direct and
-nested collection parameters to contribute bindings too. Union receivers
+nested collection parameters to contribute bindings too. Fixed constructor
+calls infer the generic bindings declared by `initialize` through the same
+path. Union receivers
 participate when every member resolves to the exact same inherited
 implementation. Heterogeneous collection joins, divergent overrides, and
 genuinely unresolved generic contexts remain future extensions to the same
