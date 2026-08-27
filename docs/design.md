@@ -1202,6 +1202,10 @@ An explicit `&block: Callable[N]` annotation is stored in ordinary parameter
 metadata, but its entry check is emitted after variadic collection and skipped
 when the block register is nil. This keeps the parameter optional while
 validating every supplied closure against the declared arity.
+When the annotation includes a Callable return type, `yield` carries that
+return set into the compiler's ordinary expression facts. Anonymous blocks now
+record a conservative return set when their final expression has one known
+concrete type, allowing structural Callable return checks without declarations.
 Callable-value and constructor calls attach trailing source blocks through the
 same final-positional-argument convention as named calls. Fixed calls snapshot
 pre-block argument registers before eager capture can box them; spread calls

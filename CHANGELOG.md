@@ -26,6 +26,8 @@
 
 ## Language
 
+- Propagated annotated Callable return sets through `yield` and inferred
+  concrete anonymous-block return types for structural Callable checks.
 - Added optional `&block: Callable[N]` annotations with nil-safe entry checks
   and supplied-block arity validation, including variadic signatures.
 - Added trailing blocks to keyword Callable, dynamic-method, and constructor

@@ -118,6 +118,7 @@ typedef struct Compiler {
      * without one, yield retains its fiber-suspension meaning. */
     bool has_current_block;
     uint16_t current_block_register;
+    uint16_t current_block_type_set;
     int current_return_type;
     DiamondSpan current_return_type_span;
     LoopContext *current_loop;
@@ -6947,14 +6948,43 @@ static uint16_t compile_yield(Compiler *compiler) {
         const uint16_t block=load_current_block(compiler);
         emit_instruction(compiler,DIAMOND_OP_CHECK_TYPE,block,
             callable_type_set_index(compiler),0,2);
-        if(compiler->current.kind==DIAMOND_TOKEN_LEFT_PAREN)
-            return parse_closure_call_arguments(compiler,block);
-        const uint16_t base=allocate_register(compiler);
-        const uint16_t destination=allocate_register(compiler);
-        emit_opcode(compiler,DIAMOND_OP_CALL_CLOSURE);
-        emit_register(compiler,destination);
-        emit_register(compiler,block);
-        emit_register(compiler,base);emit_byte(compiler,0);
+        uint16_t destination=0;
+        if(compiler->current.kind==DIAMOND_TOKEN_LEFT_PAREN) {
+            destination=parse_closure_call_arguments(compiler,block);
+        } else {
+            const uint16_t base=allocate_register(compiler);
+            destination=allocate_register(compiler);
+            emit_opcode(compiler,DIAMOND_OP_CALL_CLOSURE);
+            emit_register(compiler,destination);
+            emit_register(compiler,block);
+            emit_register(compiler,base);emit_byte(compiler,0);
+        }
+        const uint16_t block_set=compiler->current_block_type_set;
+        if(block_set!=DIAMOND_NO_TYPE_SET&&
+           block_set<compiler->function->type_set_count) {
+            const DiamondTypeSet *set=&compiler->function->type_sets[block_set];
+            uint16_t return_set=DIAMOND_NO_TYPE_SET;
+            bool consistent=set->count>0;
+            for(size_t index=0;index<set->count;index++) {
+                const DiamondTypeMember *member=&set->members[index];
+                if(member->id!=DIAMOND_TYPE_CALLABLE||
+                   member->callable_return_set==DIAMOND_NO_TYPE_SET) {
+                    consistent=false;break;
+                }
+                if(return_set==DIAMOND_NO_TYPE_SET)
+                    return_set=member->callable_return_set;
+                else if(return_set!=member->callable_return_set) {
+                    consistent=false;break;
+                }
+            }
+            if(consistent&&return_set<compiler->function->type_set_count) {
+                compiler->known_type_sets[destination]=(int32_t)return_set;
+                const DiamondTypeSet *returns=
+                    &compiler->function->type_sets[return_set];
+                if(returns->count==1)
+                    compiler->known_types[destination]=returns->members[0].id;
+            }
+        }
         return destination;
     }
     uint16_t source;
@@ -7320,6 +7350,8 @@ static uint16_t compile_block(Compiler *compiler) {
     const bool outer_has_current_block=compiler->has_current_block;
     const uint16_t outer_current_block_register=
         compiler->current_block_register;
+    const uint16_t outer_current_block_type_set=
+        compiler->current_block_type_set;
     const int outer_return_type=compiler->current_return_type;
     const DiamondSpan outer_return_type_span=compiler->current_return_type_span;
     const int outer_exception=compiler->current_exception;
@@ -7360,6 +7392,7 @@ static uint16_t compile_block(Compiler *compiler) {
     compiler->function = function;
     compiler->has_current_block=false;
     compiler->current_block_register=0;
+    compiler->current_block_type_set=DIAMOND_NO_TYPE_SET;
     compiler->current_loop=nullptr;
     compiler->current_exception=-1;
     compiler->current_retry_target=SIZE_MAX;
@@ -7450,6 +7483,26 @@ static uint16_t compile_block(Compiler *compiler) {
     compiler->in_function=true;
     const uint16_t body_result=compiler->failed?0:compile_sequence(compiler);
     if(!compiler->failed) {
+        if(compiler->known_type_sets[body_result]>=0) {
+            function->return_type_set=
+                (uint16_t)compiler->known_type_sets[body_result];
+        } else if(compiler->known_types[body_result]!=TYPE_UNKNOWN&&
+                  reserve_type_sets(compiler,1)) {
+            const size_t return_set=function->type_set_count++;
+            DiamondTypeSet *set=&function->type_sets[return_set];
+            set->count=1;set->inferred=true;
+            set->members[0]=(DiamondTypeMember){
+                .id=compiler->known_types[body_result],
+                .argument_set=DIAMOND_NO_TYPE_SET,
+                .second_argument_set=DIAMOND_NO_TYPE_SET,
+                .callable_arity=UINT8_MAX,
+                .callable_return_set=DIAMOND_NO_TYPE_SET,
+                .callable_parameters_typed=false};
+            for(size_t parameter=0;parameter<16;parameter++)
+                set->members[0].callable_parameter_sets[parameter]=
+                    DIAMOND_NO_TYPE_SET;
+            function->return_type_set=(uint16_t)return_set;
+        }
         emit_instruction(compiler,DIAMOND_OP_RETURN,body_result,0,0,1);
         if(compiler->current.kind!=DIAMOND_TOKEN_END) {
             fail(compiler,compiler->current.span,"expected 'end' after block body");
@@ -7481,6 +7534,7 @@ static uint16_t compile_block(Compiler *compiler) {
     compiler->in_function=outer_in_function;
     compiler->has_current_block=outer_has_current_block;
     compiler->current_block_register=outer_current_block_register;
+    compiler->current_block_type_set=outer_current_block_type_set;
     compiler->current_return_type=outer_return_type;
     compiler->current_return_type_span=outer_return_type_span;
     compiler->current_exception=outer_exception;
@@ -7791,6 +7845,8 @@ static uint16_t compile_definition(Compiler *compiler, bool captures_self) {
     const bool outer_has_current_block=compiler->has_current_block;
     const uint16_t outer_current_block_register=
         compiler->current_block_register;
+    const uint16_t outer_current_block_type_set=
+        compiler->current_block_type_set;
     const int outer_return_type=compiler->current_return_type;
     const DiamondSpan outer_return_type_span=compiler->current_return_type_span;
     const int outer_exception=compiler->current_exception;
@@ -7853,6 +7909,7 @@ static uint16_t compile_definition(Compiler *compiler, bool captures_self) {
     compiler->function = function;
     compiler->has_current_block=false;
     compiler->current_block_register=0;
+    compiler->current_block_type_set=DIAMOND_NO_TYPE_SET;
     /* A captures_self closure nested *directly* inside a `def self.x`
      * method also needs in_singleton_method true, for exactly the same
      * reason nested_in_singleton_method's own existing arm below does:
@@ -8070,6 +8127,7 @@ static uint16_t compile_definition(Compiler *compiler, bool captures_self) {
                 if(is_block_parameter) {
                     block_parameter_type=type;
                     block_parameter_type_span=parameter_type_span;
+                    compiler->current_block_type_set=(uint16_t)type;
                 }
             }
             if(compiler->current.kind==DIAMOND_TOKEN_EQUAL) {
@@ -8288,6 +8346,7 @@ static uint16_t compile_definition(Compiler *compiler, bool captures_self) {
     compiler->in_function=outer_in_function;
     compiler->has_current_block=outer_has_current_block;
     compiler->current_block_register=outer_current_block_register;
+    compiler->current_block_type_set=outer_current_block_type_set;
     compiler->current_return_type=outer_return_type;
     compiler->current_return_type_span=outer_return_type_span;
     compiler->current_exception=outer_exception;

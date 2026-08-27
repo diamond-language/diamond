@@ -558,6 +558,9 @@ normal non-Callable type error.
 The parameter may carry a Callable annotation, such as
 `&block: Callable[2]`. Absence remains valid; a supplied block must satisfy the
 declared Callable shape.
+If the Callable annotation includes a return type, that type becomes the
+compile-time type of `yield`. Anonymous blocks with a statically known final
+expression also advertise that return type to Callable validation.
 
 Callable values accept the same trailing `do ... end` block as named function
 and method calls, including calls with a spread Array. The block is appended as
