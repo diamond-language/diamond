@@ -3,4 +3,5 @@ diamond!
 10
 instance!
 instance inherited
+instance spread
 nil

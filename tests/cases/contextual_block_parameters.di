@@ -40,3 +40,8 @@ end)
 puts(ContextChild.new().transform() do |value|
   value + " inherited"
 end)
+
+arguments = []
+puts(ContextChild.new().transform(*arguments) do |value|
+  value + " spread"
+end)

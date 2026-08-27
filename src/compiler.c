@@ -4463,11 +4463,23 @@ static uint16_t parse_invoke(Compiler *compiler, uint16_t receiver) {
                 "spread method calls do not support writers");
             return 0;
         }
-        const uint16_t spread=parse_spread_argument_array(compiler,nullptr,
+        uint16_t spread=parse_spread_argument_array(compiler,nullptr,
             nullptr,nullptr,nullptr);
         if(compiler->current.kind==DIAMOND_TOKEN_DO) {
-            fail(compiler,compiler->current.span,
-                "a spread method call cannot also take a block");return 0;
+            const uint16_t receiver_snapshot=allocate_register(compiler);
+            emit_instruction(compiler,DIAMOND_OP_MOVE,receiver_snapshot,
+                receiver,0,2);
+            receiver=receiver_snapshot;
+            const uint16_t spread_snapshot=allocate_register(compiler);
+            emit_instruction(compiler,DIAMOND_OP_MOVE,spread_snapshot,
+                spread,0,2);
+            spread=spread_snapshot;
+            const uint16_t block=compile_contextual_block(compiler,
+                contextual_target,
+                contextual_target==nullptr||contextual_target->arity<=1?0:
+                    contextual_target->arity-2);
+            spread=emit_build_spread_arguments(compiler,nullptr,0,spread,
+                &block,1,false);
         }
         return emit_invoke_typed_spread(compiler,receiver,name,spread,
             type_arguments,type_argument_count);
