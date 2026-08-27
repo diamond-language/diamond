@@ -160,6 +160,7 @@ def min_max(values)
 end
 
 lowest, highest = min_max([3, 1, 4, 1, 5])
+[name, [x, y]] = ["origin", [0, 0]]
 ```
 
 `t1, t2, ... = expr` unpacks a single `Array`-valued expression across
@@ -179,9 +180,17 @@ Ruby's own lenient multiple assignment (which pads missing targets with
 language's existing preference for a clear, immediate error over quietly
 doing something the call site probably didn't intend.
 
+Bracketed patterns can nest to unpack structured Array results:
+`[head, [left, right]] = value`. Every bracketed level must independently
+be an Array of exactly the written length. Brackets are optional for the
+outermost legacy form, so `head, [left, right] = value` is equivalent.
+Leaves retain the same local/`@ivar`/`@@cvar` behavior at any depth.
+The complete nested shape is validated before any leaf is assigned, so a
+rescued inner type/length failure cannot leave earlier targets half-updated.
+
 Not supported (yet): indexed (`arr[i]`) or chained (`obj.field`) targets,
 a comma-separated *literal* right-hand side (`a, b = 1, 2` — write `a, b
-= [1, 2]` instead), and nested destructuring.
+= [1, 2]` instead), and rest/splat patterns.
 
 ## Numbers
 

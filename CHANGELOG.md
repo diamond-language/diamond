@@ -51,6 +51,8 @@
   `case`/`when`, plus conservative union joins for case results and locals.
 - Added conservative type joins across `while`, `until`, and unconditional
   loop exits, including local assignments and valued `break` expressions.
+- Added nested, bracketed Array destructuring assignment with strict type and
+  arity checks at every level and local, instance, or class-variable leaves.
 - Corrected the runtime type-ID partition so the advertised class capacity no
   longer overlaps generic-variable and interface IDs, and raised the class
   capacity from 128 to 180. Updated the self-hosted compiler's mirrored

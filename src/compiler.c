@@ -5259,22 +5259,44 @@ static bool destructuring_target_kind(DiamondTokenKind kind) {
            kind==DIAMOND_TOKEN_CLASS_VARIABLE;
 }
 
-/* Same clone-the-lexer-and-scan-forward technique as assignment_ahead/
- * index_assignment_ahead above. Requires at least one comma (a bare
- * `x = expr` must keep resolving through assignment_ahead unchanged) --
- * scans `target (COMMA target)+ EQUAL`, where a target is anything
- * assignment_ahead itself already accepts (plain local/@ivar/@@cvar). */
-static bool multi_assignment_ahead(const Compiler *compiler) {
-    if(!destructuring_target_kind(compiler->current.kind)) return false;
-    DiamondLexer lookahead = compiler->lexer;
-    size_t comma_count = 0;
-    for(;;) {
-        const DiamondToken token = diamond_lexer_next(&lookahead);
-        if(token.kind != DIAMOND_TOKEN_COMMA)
-            return comma_count > 0 && token.kind == DIAMOND_TOKEN_EQUAL;
-        comma_count++;
-        if(!destructuring_target_kind(diamond_lexer_next(&lookahead).kind)) return false;
+static bool scan_destructuring_pattern(DiamondLexer *lexer,DiamondToken token,
+        DiamondToken *after,size_t depth) {
+    if(depth>8)return false;
+    if(destructuring_target_kind(token.kind)) {
+        *after=diamond_lexer_next(lexer);return true;
     }
+    if(token.kind!=DIAMOND_TOKEN_LEFT_BRACKET)return false;
+    token=diamond_lexer_next(lexer);
+    if(token.kind==DIAMOND_TOKEN_RIGHT_BRACKET)return false;
+    for(;;) {
+        if(!scan_destructuring_pattern(lexer,token,&token,depth+1))return false;
+        if(token.kind==DIAMOND_TOKEN_RIGHT_BRACKET) {
+            *after=diamond_lexer_next(lexer);return true;
+        }
+        if(token.kind!=DIAMOND_TOKEN_COMMA)return false;
+        token=diamond_lexer_next(lexer);
+    }
+}
+
+/* Same clone-the-lexer-and-scan-forward technique as assignment_ahead/
+ * index_assignment_ahead above. Recognizes the historical comma-root form
+ * (`a, b =`) and bracketed recursive patterns (`[a, [b, c]] =`) without
+ * stealing an ordinary Array literal from expression parsing. */
+static bool multi_assignment_ahead(const Compiler *compiler) {
+    DiamondLexer lookahead = compiler->lexer;
+    DiamondToken token=compiler->current;
+    if(token.kind==DIAMOND_TOKEN_LEFT_BRACKET) {
+        return scan_destructuring_pattern(&lookahead,token,&token,0)&&
+            token.kind==DIAMOND_TOKEN_EQUAL;
+    }
+    if(!destructuring_target_kind(token.kind))return false;
+    token=diamond_lexer_next(&lookahead);
+    if(token.kind!=DIAMOND_TOKEN_COMMA)return false;
+    do {
+        token=diamond_lexer_next(&lookahead);
+        if(!scan_destructuring_pattern(&lookahead,token,&token,0))return false;
+    } while(token.kind==DIAMOND_TOKEN_COMMA);
+    return token.kind==DIAMOND_TOKEN_EQUAL;
 }
 
 static DiamondTokenKind postfix_modifier_ahead(const Compiler *compiler) {
@@ -8347,52 +8369,119 @@ static uint8_t array_type_set_index(Compiler *compiler) {
     return (uint8_t)set_index;
 }
 
-/* `t1, t2, ... = expr` -- targets already confirmed present by
- * multi_assignment_ahead. Evaluates expr once, requires it to be a
- * genuine Array of exactly the right length (a Hash would otherwise
- * "work" through INDEX_GET's own key-lookup semantics and silently do
- * the wrong thing -- see DIAMOND_OP_CHECK_DESTRUCTURE_COUNT's own
- * comment in vm.c), then stores each element into its target through
- * the same per-kind logic (local/@ivar/@@cvar) ordinary single-target
- * assignment already uses. */
-static uint16_t compile_multi_assignment(Compiler *compiler) {
-    enum { MAX_TARGETS = 16 };
-    DiamondSpan names[MAX_TARGETS];
-    bool instance_variable[MAX_TARGETS];
-    bool class_variable[MAX_TARGETS];
-    size_t target_count=0;
-    for(;;) {
-        if(target_count==MAX_TARGETS) {
-            fail(compiler,compiler->current.span,"too many destructuring targets");
-            return 0;
-        }
-        names[target_count]=compiler->current.span;
-        instance_variable[target_count]=
-            compiler->current.kind==DIAMOND_TOKEN_INSTANCE_VARIABLE;
-        class_variable[target_count]=
-            compiler->current.kind==DIAMOND_TOKEN_CLASS_VARIABLE;
-        target_count++;
-        advance_token(compiler);
-        if(compiler->current.kind!=DIAMOND_TOKEN_COMMA) break;
-        advance_token(compiler); /* consume ',' */
+typedef struct DestructureNode {
+    bool leaf;
+    DiamondSpan name;
+    bool instance_variable;
+    bool class_variable;
+    uint8_t children[16];
+    uint8_t child_count;
+} DestructureNode;
+
+static uint8_t parse_destructure_node(Compiler *compiler,DestructureNode *nodes,
+        size_t *node_count,size_t depth) {
+    if(*node_count==64||depth>8) {
+        fail(compiler,compiler->current.span,"destructuring pattern is too complex");
+        return 0;
     }
-    advance_token(compiler); /* consume '=' */
-    const uint16_t value = parse_expression(compiler);
-    const uint8_t array_set = array_type_set_index(compiler);
+    const uint8_t node_index=(uint8_t)(*node_count);
+    DestructureNode *node=&nodes[(*node_count)++];
+    *node=(DestructureNode){};
+    if(destructuring_target_kind(compiler->current.kind)) {
+        node->leaf=true;node->name=compiler->current.span;
+        node->instance_variable=compiler->current.kind==DIAMOND_TOKEN_INSTANCE_VARIABLE;
+        node->class_variable=compiler->current.kind==DIAMOND_TOKEN_CLASS_VARIABLE;
+        advance_token(compiler);return node_index;
+    }
+    if(compiler->current.kind!=DIAMOND_TOKEN_LEFT_BRACKET) {
+        fail(compiler,compiler->current.span,"expected destructuring target");return 0;
+    }
+    advance_token(compiler);
+    while(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_BRACKET&&!compiler->failed) {
+        if(node->child_count==16) {
+            fail(compiler,compiler->current.span,"too many destructuring targets");
+            return node_index;
+        }
+        node->children[node->child_count++]=
+            parse_destructure_node(compiler,nodes,node_count,depth+1);
+        if(compiler->current.kind==DIAMOND_TOKEN_RIGHT_BRACKET)break;
+        if(compiler->current.kind!=DIAMOND_TOKEN_COMMA) {
+            fail(compiler,compiler->current.span,"expected ',' in destructuring pattern");
+            return node_index;
+        }
+        advance_token(compiler);
+    }
+    if(node->child_count==0) {
+        fail(compiler,compiler->current.span,"destructuring pattern cannot be empty");
+        return node_index;
+    }
+    advance_token(compiler);return node_index;
+}
+
+static void emit_destructure_extract(Compiler *compiler,
+        const DestructureNode *nodes,uint8_t node_index,uint16_t value,
+        uint8_t array_set,uint16_t *node_values) {
+    const DestructureNode *node=&nodes[node_index];
+    node_values[node_index]=value;
+    if(node->leaf)return;
     emit_instruction(compiler,DIAMOND_OP_CHECK_TYPE,value,array_set,0,2);
     emit_instruction(compiler,DIAMOND_OP_CHECK_DESTRUCTURE_COUNT,value,
-        (uint16_t)target_count,0,2);
-    uint16_t last=value;
-    for(size_t index=0;index<target_count;index++) {
+        node->child_count,0,2);
+    for(size_t index=0;index<node->child_count;index++) {
         const uint8_t index_constant=add_constant(compiler,DIAMOND_INT((int64_t)index));
         const uint16_t index_register=allocate_register(compiler);
         emit_instruction(compiler,DIAMOND_OP_CONSTANT,index_register,index_constant,0,2);
         const uint16_t element=allocate_register(compiler);
         emit_instruction(compiler,DIAMOND_OP_INDEX_GET,element,value,index_register,3);
-        last=compile_assignment_store(compiler,names[index],instance_variable[index],
-            class_variable[index],element);
+        emit_destructure_extract(compiler,nodes,node->children[index],element,
+            array_set,node_values);
     }
+}
+
+static uint16_t emit_destructure_stores(Compiler *compiler,
+        const DestructureNode *nodes,uint8_t node_index,const uint16_t *node_values) {
+    const DestructureNode *node=&nodes[node_index];
+    if(node->leaf)return compile_assignment_store(compiler,node->name,
+        node->instance_variable,node->class_variable,node_values[node_index]);
+    uint16_t last=node_values[node_index];
+    for(size_t index=0;index<node->child_count;index++)
+        last=emit_destructure_stores(compiler,nodes,node->children[index],node_values);
     return last;
+}
+
+/* Existing `a, b = expr` plus bracketed/nested `[a, [b, c]] = expr`.
+ * The RHS is evaluated once; every group independently enforces an exact
+ * Array shape before its leaves use ordinary local/@ivar/@@cvar stores. */
+static uint16_t compile_multi_assignment(Compiler *compiler) {
+    DestructureNode nodes[64]={};size_t node_count=0;
+    const uint8_t root=(uint8_t)node_count++;
+    if(compiler->current.kind==DIAMOND_TOKEN_LEFT_BRACKET) {
+        node_count=0;
+        (void)parse_destructure_node(compiler,nodes,&node_count,0);
+    } else {
+        while(!compiler->failed) {
+            DestructureNode *root_node=&nodes[root];
+            if(root_node->child_count==16) {
+                fail(compiler,compiler->current.span,"too many destructuring targets");
+                return 0;
+            }
+            root_node->children[root_node->child_count++]=
+                parse_destructure_node(compiler,nodes,&node_count,0);
+            if(compiler->current.kind!=DIAMOND_TOKEN_COMMA)break;
+            advance_token(compiler);
+        }
+    }
+    if(compiler->failed)return 0;
+    if(compiler->current.kind!=DIAMOND_TOKEN_EQUAL) {
+        fail(compiler,compiler->current.span,"expected '=' after destructuring pattern");
+        return 0;
+    }
+    advance_token(compiler);
+    const uint16_t value=parse_expression(compiler);
+    const uint8_t array_set = array_type_set_index(compiler);
+    uint16_t node_values[64]={};
+    emit_destructure_extract(compiler,nodes,root,value,array_set,node_values);
+    return emit_destructure_stores(compiler,nodes,root,node_values);
 }
 
 static bool at_block_end(const Compiler *compiler) {

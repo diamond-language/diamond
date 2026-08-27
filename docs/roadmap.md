@@ -284,7 +284,10 @@ evaluated at all when short-circuited) -- see
 
 Areas still worth examining include:
 
-- richer destructuring patterns beyond Range/Regexp/class-aware `case`/`when`;
+- richer `case` binding patterns beyond Range/Regexp/class-aware matching;
+- **Done**: nested strict Array destructuring assignment with bracketed
+  patterns (`[head, [left, right]] = value`), including mixed local/instance/
+  class-variable leaves and exact shape checks at every level;
 - **Done**: range-based Array slicing (`arr[1..3]` read,
   `arr[1..3] = [...]` write). `Range` has no native VM value kind at
   all -- it's a plain user-space class (`lib/core.di`) -- so
