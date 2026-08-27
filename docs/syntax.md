@@ -608,6 +608,9 @@ a statically resolved Callable parameter, Diamond can infer those bindings from
 the parameter's expected Callable graph. This works for positional and keyword
 arguments on functions, singleton methods, instance methods, and constructors.
 An unresolved standalone reference still requires explicit bindings.
+The same context flows through elements of a directly expected `Array[T]`, so a
+literal such as `[Tools.identity]` can satisfy
+`Array[Callable[[Int], Int]]` without spelling `[Int]` on the reference.
 Only dynamically unresolved bound methods remain conservatively untyped.
 Callable unions retain a return fact when all arms agree structurally.
 

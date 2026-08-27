@@ -226,14 +226,13 @@ response="$(read_message)"
 [[ "$response" == *'"value":"class Base"'* ]]
 count=$((count + 1))
 
-# --- hover on a local variable returns null: no symbol table for those,
-# only declarations, not local references (see docs/lsp.md) ---
+# --- hover on a typed local exposes its position-sensitive structural fact ---
 
 send '{"jsonrpc":"2.0","id":7,"method":"textDocument/hover","params":{"textDocument":{"uri":"'"$hover_uri"'"},"position":{"line":1,"character":2}}}'
 response="$(read_message)"
 [[ "$response" == *'"id":7'* ]]
 count=$((count + 1))
-[[ "$response" == *'"result":null'* ]]
+[[ "$response" == *'"value":"Int"'* ]]
 count=$((count + 1))
 
 # --- go-to-definition resolves the same declaration kinds, to a
@@ -791,7 +790,7 @@ read_message >/dev/null
 # --- local Callable hover retains bound-reference parameter/return graphs ---
 
 callable_local_uri="file:///callable_local_hover.di"
-callable_local_source='class HoverOps\n  def increment(value: Int) -> Int = value + 1\n  def wrap[T](value: T) -> Array[T] = [value]\nend\ndef inspect()\n  ops = HoverOps.new()\n  increment = ops.increment\n  wrapped = ops.wrap[String]\n  increment(1)\n  wrapped\nend'
+callable_local_source='class HoverOps\n  def increment(value: Int) -> Int = value + 1\n  def wrap[T](value: T) -> Array[T] = [value]\nend\ndef inspect()\n  ops = HoverOps.new()\n  increment = ops.increment\n  wrapped = ops.wrap[String]\n  increment(1)\n  wrapped\n  items = [1, 2]\n  items\nend'
 send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$callable_local_uri"'","text":"'"$callable_local_source"'"}}}'
 read_message >/dev/null
 
@@ -803,6 +802,11 @@ count=$((count + 1))
 send '{"jsonrpc":"2.0","id":171,"method":"textDocument/hover","params":{"textDocument":{"uri":"'"$callable_local_uri"'"},"position":{"line":9,"character":4}}}'
 response="$(read_message)"
 [[ "$response" == *'"value":"Callable[[String], Array[String]]"'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","id":172,"method":"textDocument/hover","params":{"textDocument":{"uri":"'"$callable_local_uri"'"},"position":{"line":11,"character":3}}}'
+response="$(read_message)"
+[[ "$response" == *'"value":"Array[Int]"'* ]]
 count=$((count + 1))
 
 send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$callable_local_uri"'"}}}'

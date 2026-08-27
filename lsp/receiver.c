@@ -123,8 +123,6 @@ bool receiver_resolve_local_type_set(const DiamondProgram *program,
         return false;
     const DiamondTypeSet *set=&(*owner)->type_sets[(size_t)known_type_set];
     if(set->count==0)return false;
-    for(size_t index=0;index<set->count;index++)
-        if(set->members[index].id!=DIAMOND_TYPE_CALLABLE)return false;
     *set_index=(uint16_t)known_type_set;
     return true;
 }

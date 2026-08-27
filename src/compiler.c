@@ -6009,9 +6009,28 @@ static uint16_t parse_grouping(Compiler *compiler) {
     return result;
 }
 
+static uint16_t parse_with_expected_set(Compiler *compiler,
+        uint16_t expected_set) {
+    const int32_t outer=compiler->expected_expression_type_set;
+    compiler->expected_expression_type_set=expected_set==DIAMOND_NO_TYPE_SET?
+        -1:(int32_t)expected_set;
+    const uint16_t result=parse_expression(compiler);
+    compiler->expected_expression_type_set=outer;
+    return result;
+}
+
 static uint16_t parse_array(Compiler *compiler) {
     uint16_t elements[32];
     size_t count=0;
+    uint16_t expected_element=DIAMOND_NO_TYPE_SET;
+    if(compiler->expected_expression_type_set>=0&&
+       (size_t)compiler->expected_expression_type_set<
+           compiler->function->type_set_count) {
+        const DiamondTypeSet *expected=&compiler->function->type_sets[
+            (size_t)compiler->expected_expression_type_set];
+        if(expected->count==1&&expected->members[0].id==DIAMOND_TYPE_ARRAY)
+            expected_element=expected->members[0].argument_set;
+    }
     skip_newlines(compiler);
     if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_BRACKET) {
         do {
@@ -6019,7 +6038,8 @@ static uint16_t parse_array(Compiler *compiler) {
                 fail(compiler,compiler->current.span,"array literal has too many elements");
                 return 0;
             }
-            elements[count++]=parse_expression(compiler);
+            elements[count++]=parse_with_expected_set(compiler,
+                expected_element);
             skip_newlines(compiler);
             if(compiler->current.kind!=DIAMOND_TOKEN_COMMA) break;
             advance_token(compiler);

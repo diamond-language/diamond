@@ -47,9 +47,9 @@ size_t receiver_resolve_classes(const DiamondProgram *program,
         const DiamondChunk *chunk,const char *source,size_t stop_offset,
         size_t *class_indices,size_t max_candidates,bool *is_singleton);
 
-/* Resolves a lexical Callable local at `offset` and returns its position-
+/* Resolves a lexical local at `offset` and returns its position-
  * sensitive structural type-set fact. The returned owner keeps the set index
- * in its proper per-function table; false means there is no Callable fact. */
+ * in its proper per-function table; false means there is no structural fact. */
 bool receiver_resolve_local_type_set(const DiamondProgram *program,
         const DiamondChunk *chunk,const char *name,size_t name_length,
         size_t offset,const DiamondFunction **owner,uint16_t *set_index);

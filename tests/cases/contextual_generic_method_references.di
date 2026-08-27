@@ -3,6 +3,9 @@ def apply_int(callback: Callable[[Int], Int]) -> Int
 end
 
 def identity[T](value: T) -> T = value
+def apply_all(callbacks: Array[Callable[[Int], Int]]) -> Int
+  callbacks[0](42)
+end
 
 class ContextualReferenceBox
   def identity[T](value: T) -> T = value
@@ -30,3 +33,5 @@ puts(ContextualReferenceBox.accept(
 puts(box.accept(callback: box.identity) + 3)
 consumer = ContextualReferenceConsumer.new(callback: box.identity)
 puts(consumer.run() + 4)
+puts(apply_all([ContextualReferenceBox.identity]))
+puts(apply_all([box.identity]))

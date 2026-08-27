@@ -62,6 +62,9 @@ search over a real (if scoped) lexical symbol table:
     Superclass`, `module Name`, or `interface Name`, reusing
     `disassemble.c`'s own type-set formatting
     (`diamond_print_type_set`).
+    Lexical locals with compiler-recorded structural facts are also hoverable;
+    their position-sensitive type set is rendered from the owning function's
+    table, including Callable, collection, primitive, and union graphs.
   - Go-to-definition returns a `Location`. A match can legitimately live
     in a *different* file (something pulled in via `require`) — resolved
     to the right file and line through `diamond_resolve_diagnostic_

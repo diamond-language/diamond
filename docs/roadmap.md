@@ -344,8 +344,8 @@ expected result contract. The block publishes that graph as its own signature
 and checks its final value at the return boundary, including concretely
 substituted generic returns and otherwise-untyped empty collection literals.
 The LSP also renders position-sensitive structural types for lexical locals, so
-hovering a stored bound method reference exposes its full Callable parameter and
-return graph.
+hovering stored Callables, collection graphs, annotated primitives, and unions
+exposes the compiler's full fact at that source position.
 
 Context-driven generic method-reference inference is now implemented for
 statically resolved direct argument slots. Positional and keyword contracts on
@@ -359,6 +359,13 @@ Callable contract remains separate. The current variance path selects existing
 declared graphs for each input and return, then falls back when no safe graph
 exists. Synthesizing genuinely new union or intersection contracts remains
 open.
+
+Expected collection graphs now flow one level into Array literals. Each element
+is compiled against the declared `Array[T]` element contract, allowing bare
+generic singleton and bound-instance references inside a directly consumed
+Callable Array to resolve without explicit bindings. The context is restored
+after every element and never changes the literal's independently inferred
+runtime constraint.
 
 ### Ruby-like ergonomics without Ruby compatibility
 
