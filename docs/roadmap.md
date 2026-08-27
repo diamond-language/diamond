@@ -294,6 +294,8 @@ Areas still worth examining include:
 - **Done**: trailing rest patterns (`[head, *tail]`) for destructuring
   assignment and `case` Array patterns, including nested use, empty tails,
   `*_` discard, minimum-arity checks, and fresh remainder Arrays;
+- **Done**: middle Array rest patterns (`[head, *middle, tail]`) in assignment
+  and `case`, with suffix-relative extraction and nested/empty spans;
 - **Done**: `^local` pins in nested `case` Array patterns, comparing against
   existing local or captured values without rebinding them;
 - **Done**: required-key Hash binding patterns in `case`, including nested

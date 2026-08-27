@@ -288,6 +288,9 @@ typedef enum DiamondOpCode : uint8_t {
     DIAMOND_OP_CASE_HASH_HAS,
     /* Copies Hash entries whose keys are absent from an exclusion Array. */
     DIAMOND_OP_HASH_REST,
+    /* Middle-rest Array extraction and suffix-relative pattern indexing. */
+    DIAMOND_OP_ARRAY_MIDDLE,
+    DIAMOND_OP_ARRAY_SUFFIX,
     DIAMOND_OP_COUNT,
 } DiamondOpCode;
 

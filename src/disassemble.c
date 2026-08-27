@@ -887,6 +887,24 @@ static bool disassemble_chunk(FILE *stream, const char *name,
                 offset=three_registers(stream,chunk,"CASE_HASH_HAS",offset,&valid);break;
             case DIAMOND_OP_HASH_REST:
                 offset=three_registers(stream,chunk,"HASH_REST",offset,&valid);break;
+            case DIAMOND_OP_ARRAY_MIDDLE:
+                if(!require_bytes(stream,chunk,offset,7)){valid=false;offset=chunk->code_count;break;}
+                {
+                    const uint16_t bounds=read_operand(chunk,offset+5);
+                    fprintf(stream,"%-18s r%u, r%u, prefix=%u, suffix=%u\n",
+                        "ARRAY_MIDDLE",
+                        checked_register(chunk,stream,read_operand(chunk,offset+1),&valid),
+                        checked_register(chunk,stream,read_operand(chunk,offset+3),&valid),
+                        bounds>>8,bounds&0xffu);
+                    offset+=7;
+                }
+                break;
+            case DIAMOND_OP_ARRAY_SUFFIX:
+                if(!require_bytes(stream,chunk,offset,7)){valid=false;offset=chunk->code_count;break;}
+                fprintf(stream,"%-18s r%u, r%u, reverse=%u\n","ARRAY_SUFFIX",
+                    checked_register(chunk,stream,read_operand(chunk,offset+1),&valid),
+                    checked_register(chunk,stream,read_operand(chunk,offset+3),&valid),
+                    read_operand(chunk,offset+5));offset+=7;break;
             case DIAMOND_OP_POSTGRES_OPEN:
                 offset=two_registers(stream,chunk,"POSTGRES_OPEN",offset, &valid);break;
             case DIAMOND_OP_MYSQL_OPEN:

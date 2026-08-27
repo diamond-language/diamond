@@ -140,7 +140,8 @@ module Opcode
   MODULO = 103
   # Appended immediately after MODULO. Later native-only tail opcodes,
   # including CASE_MATCH/CASE_ARRAY_SHAPE/ARRAY_REST and the case Hash
-  # predicates, HASH_REST, and object-pattern support, do not shift this
+  # predicates, rest/suffix extraction, and object-pattern support, do not
+  # shift this
   # value. Still confirmed with the same throwaway C probe technique as
   # SHIFT_LEFT/MODULO above rather than trusting the arithmetic alone.
   COMPARE = 104

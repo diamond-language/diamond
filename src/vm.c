@@ -12253,6 +12253,35 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 }
                 break;
             }
+            case DIAMOND_OP_ARRAY_MIDDLE: {
+                uint16_t destination=0,source_reg=0,bounds=0;
+                READ_SHORT(destination);READ_SHORT(source_reg);READ_SHORT(bounds);
+                if(registers[source_reg].kind!=DIAMOND_VALUE_OBJECT||
+                   registers[source_reg].as.object->kind!=DIAMOND_OBJECT_ARRAY)
+                    VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
+                const DiamondArray *source=
+                    (const DiamondArray *)registers[source_reg].as.object;
+                const size_t prefix=(size_t)(bounds>>8);
+                const size_t suffix=(size_t)(bounds&0xffu);
+                if(prefix+suffix>source->count)VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
+                const size_t count=source->count-prefix-suffix;
+                const DiamondValue *values=count==0?nullptr:source->values+prefix;
+                DiamondArray *middle=allocate_array(vm,values,count);
+                if(middle==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                registers[destination]=DIAMOND_OBJECT(middle);break;
+            }
+            case DIAMOND_OP_ARRAY_SUFFIX: {
+                uint16_t destination=0,source_reg=0,reverse=0;
+                READ_SHORT(destination);READ_SHORT(source_reg);READ_SHORT(reverse);
+                if(registers[source_reg].kind!=DIAMOND_VALUE_OBJECT||
+                   registers[source_reg].as.object->kind!=DIAMOND_OBJECT_ARRAY)
+                    VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
+                const DiamondArray *source=
+                    (const DiamondArray *)registers[source_reg].as.object;
+                if(reverse==0||reverse>source->count)
+                    VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
+                registers[destination]=source->values[source->count-reverse];break;
+            }
             /* A duration-only clock: seconds since some unspecified,
              * process-local reference point (CLOCK_MONOTONIC), never
              * meaningful as a calendar timestamp or across processes --

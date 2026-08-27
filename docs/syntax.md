@@ -76,9 +76,11 @@ end
 ```
 
 Every bracketed level must be an Array of exactly the written length unless it
-ends in a rest binding such as `[head, *tail]`. A trailing rest binding accepts
-zero or more remaining elements and receives them as a fresh Array; `*_`
-accepts and discards the remainder. Rest bindings must be last. Nested
+contains one rest binding. A trailing `[head, *tail]` captures the remaining
+elements; a middle `[head, *middle, tail]` reserves the written suffix and
+captures everything between prefix and suffix. The rest binding accepts zero
+or more elements and receives them as a fresh Array; `*_` accepts and discards
+the same span. Only one rest binding is allowed per Array level. Nested
 entries use the same literal, Range, Regexp, class/subclass, and custom-equality
 matching described above. A lowercase bare name binds that element for the
 branch; `_` ignores it. Prefix an existing lowercase local with `^` to compare
@@ -303,13 +305,14 @@ outermost legacy form, so `head, [left, right] = value` is equivalent.
 Leaves retain the same local/`@ivar`/`@@cvar` behavior at any depth.
 The complete nested shape is validated before any leaf is assigned, so a
 rescued inner type/length failure cannot leave earlier targets half-updated.
-Any bracketed level may end with one trailing rest target (`[head, *tail]`).
-It requires only the fixed prefix and assigns a fresh Array containing every
-remaining element, including an empty Array when there is no remainder.
+Any bracketed level may contain one rest target (`[head, *middle, tail]`).
+It requires the fixed prefix and suffix, then assigns a fresh Array containing
+the intervening elements, including an empty Array when the two fixed regions
+touch. The unbracketed outer form supports the same middle-rest placement.
 
 Not supported (yet): indexed (`arr[i]`) or chained (`obj.field`) targets,
 a comma-separated *literal* right-hand side (`a, b = 1, 2` — write `a, b
-= [1, 2]` instead), and non-final rest patterns.
+= [1, 2]` instead).
 
 ## Numbers
 

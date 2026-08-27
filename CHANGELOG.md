@@ -71,6 +71,8 @@
   binding-set validation, ordered short-circuiting, shared guards, and commits.
 - Added subjectless boolean `case`, with truthiness-based `when` expressions,
   short-circuit alternatives, guards, and ordinary collection-literal semantics.
+- Extended Array rest patterns to middle positions in destructuring and `case`,
+  including suffix matching, nested patterns, empty spans, and `*_` discard.
 - Corrected the runtime type-ID partition so the advertised class capacity no
   longer overlaps generic-variable and interface IDs, and raised the class
   capacity from 128 to 180. Updated the self-hosted compiler's mirrored

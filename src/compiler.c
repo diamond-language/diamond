@@ -4774,6 +4774,7 @@ static uint8_t parse_case_array_node(Compiler *compiler,CaseArrayNode *nodes,
     CaseArrayNode *node=&nodes[(*node_count)++];*node=(CaseArrayNode){};
     if(compiler->current.kind==DIAMOND_TOKEN_LEFT_BRACKET) {
         node->kind=CASE_ARRAY_GROUP;advance_token(compiler);
+        bool rest_seen=false;
         while(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_BRACKET&&!compiler->failed) {
             if(node->child_count==16) {
                 fail(compiler,compiler->current.span,"too many case Array elements");return index;
@@ -4782,11 +4783,14 @@ static uint8_t parse_case_array_node(Compiler *compiler,CaseArrayNode *nodes,
                 parse_case_array_node(compiler,nodes,node_count,depth+1);
             const CaseArrayNodeKind child_kind=
                 nodes[node->children[node->child_count-1]].kind;
-            if((child_kind==CASE_ARRAY_REST_BIND||
-                child_kind==CASE_ARRAY_REST_WILDCARD)&&
-               compiler->current.kind!=DIAMOND_TOKEN_RIGHT_BRACKET) {
-                fail(compiler,compiler->current.span,
-                    "rest binding must be last in case Array pattern");return index;
+            if(child_kind==CASE_ARRAY_REST_BIND||
+               child_kind==CASE_ARRAY_REST_WILDCARD) {
+                if(rest_seen) {
+                    fail(compiler,nodes[node->children[node->child_count-1]].name,
+                        "case Array pattern may contain only one rest binding");
+                    return index;
+                }
+                rest_seen=true;
             }
             if(compiler->current.kind==DIAMOND_TOKEN_RIGHT_BRACKET)break;
             if(compiler->current.kind!=DIAMOND_TOKEN_COMMA) {
@@ -5029,9 +5033,11 @@ static void emit_case_array_match(Compiler *compiler,CaseArrayNode *nodes,
        node->kind==CASE_OBJECT_GROUP) {
         emit_instruction(compiler,DIAMOND_OP_CASE_MATCH,test,node->value_register,subject,3);
     } else if(node->kind==CASE_ARRAY_GROUP) {
-        const bool has_rest=node->child_count>0&&
-            (nodes[node->children[node->child_count-1]].kind==CASE_ARRAY_REST_BIND||
-             nodes[node->children[node->child_count-1]].kind==CASE_ARRAY_REST_WILDCARD);
+        bool has_rest=false;
+        for(size_t child=0;child<node->child_count;child++)
+            if(nodes[node->children[child]].kind==CASE_ARRAY_REST_BIND||
+               nodes[node->children[child]].kind==CASE_ARRAY_REST_WILDCARD)
+                has_rest=true;
         const uint16_t fixed_count=(uint16_t)(node->child_count-(has_rest?1u:0u));
         emit_instruction(compiler,DIAMOND_OP_CASE_ARRAY_SHAPE,test,subject,
             fixed_count|(has_rest?0x8000u:0u),3);
@@ -5044,6 +5050,12 @@ static void emit_case_array_match(Compiler *compiler,CaseArrayNode *nodes,
         emit_jump(compiler,DIAMOND_OP_JUMP_IF_FALSE,match_reg);
     if(node->kind!=CASE_ARRAY_GROUP&&node->kind!=CASE_HASH_GROUP&&
        node->kind!=CASE_OBJECT_GROUP)return;
+    size_t array_rest_index=SIZE_MAX;
+    if(node->kind==CASE_ARRAY_GROUP)
+        for(size_t child=0;child<node->child_count;child++)
+            if(nodes[node->children[child]].kind==CASE_ARRAY_REST_BIND||
+               nodes[node->children[child]].kind==CASE_ARRAY_REST_WILDCARD)
+                array_rest_index=child;
     for(size_t child=0;child<node->child_count;child++) {
         CaseArrayNode *child_node=&nodes[node->children[child]];
         if(child_node->kind==CASE_HASH_REST_BIND||
@@ -5071,8 +5083,9 @@ static void emit_case_array_match(Compiler *compiler,CaseArrayNode *nodes,
            child_node->kind==CASE_ARRAY_REST_WILDCARD) {
             if(child_node->kind==CASE_ARRAY_REST_BIND) {
                 const uint16_t rest=allocate_register(compiler);
-                emit_instruction(compiler,DIAMOND_OP_ARRAY_REST,rest,subject,
-                    (uint16_t)child,3);
+                const uint16_t suffix=(uint16_t)(node->child_count-child-1);
+                emit_instruction(compiler,DIAMOND_OP_ARRAY_MIDDLE,rest,subject,
+                    (uint16_t)((child<<8)|suffix),3);
                 compiler->known_types[rest]=DIAMOND_TYPE_ARRAY;
                 child_node->subject_register=rest;
             }
@@ -5081,6 +5094,14 @@ static void emit_case_array_match(Compiler *compiler,CaseArrayNode *nodes,
         if(node->kind==CASE_OBJECT_GROUP) {
             const uint16_t element=emit_invoke_call(compiler,subject,
                 child_node->member_name,false,nullptr,0,nullptr,0);
+            emit_case_array_match(compiler,nodes,node->children[child],element,
+                match_reg,failure_jumps,failure_count);continue;
+        }
+        if(node->kind==CASE_ARRAY_GROUP&&array_rest_index!=SIZE_MAX&&
+           child>array_rest_index) {
+            const uint16_t element=allocate_register(compiler);
+            emit_instruction(compiler,DIAMOND_OP_ARRAY_SUFFIX,element,subject,
+                (uint16_t)(node->child_count-child),3);
             emit_case_array_match(compiler,nodes,node->children[child],element,
                 match_reg,failure_jumps,failure_count);continue;
         }
@@ -8968,6 +8989,7 @@ static uint8_t parse_destructure_node(Compiler *compiler,DestructureNode *nodes,
         fail(compiler,compiler->current.span,"expected destructuring target");return 0;
     }
     advance_token(compiler);
+    bool rest_seen=false;
     while(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_BRACKET&&!compiler->failed) {
         if(node->child_count==16) {
             fail(compiler,compiler->current.span,"too many destructuring targets");
@@ -8975,10 +8997,13 @@ static uint8_t parse_destructure_node(Compiler *compiler,DestructureNode *nodes,
         }
         node->children[node->child_count++]=
             parse_destructure_node(compiler,nodes,node_count,depth+1);
-        if(nodes[node->children[node->child_count-1]].rest&&
-           compiler->current.kind!=DIAMOND_TOKEN_RIGHT_BRACKET) {
-            fail(compiler,compiler->current.span,
-                "rest target must be last in destructuring pattern");return node_index;
+        if(nodes[node->children[node->child_count-1]].rest) {
+            if(rest_seen) {
+                fail(compiler,nodes[node->children[node->child_count-1]].name,
+                    "destructuring pattern may contain only one rest target");
+                return node_index;
+            }
+            rest_seen=true;
         }
         if(compiler->current.kind==DIAMOND_TOKEN_RIGHT_BRACKET)break;
         if(compiler->current.kind!=DIAMOND_TOKEN_COMMA) {
@@ -9001,18 +9026,28 @@ static void emit_destructure_extract(Compiler *compiler,
     node_values[node_index]=value;
     if(node->leaf)return;
     emit_instruction(compiler,DIAMOND_OP_CHECK_TYPE,value,array_set,0,2);
-    const bool has_rest=node->child_count>0&&
-        nodes[node->children[node->child_count-1]].rest;
+    size_t rest_index=SIZE_MAX;
+    for(size_t child=0;child<node->child_count;child++)
+        if(nodes[node->children[child]].rest)rest_index=child;
+    const bool has_rest=rest_index!=SIZE_MAX;
     const uint16_t fixed_count=(uint16_t)(node->child_count-(has_rest?1u:0u));
     emit_instruction(compiler,DIAMOND_OP_CHECK_DESTRUCTURE_COUNT,value,
         fixed_count|(has_rest?0x8000u:0u),0,2);
     for(size_t index=0;index<node->child_count;index++) {
         if(nodes[node->children[index]].rest) {
             const uint16_t rest=allocate_register(compiler);
-            emit_instruction(compiler,DIAMOND_OP_ARRAY_REST,rest,value,
-                (uint16_t)index,3);
+            const uint16_t suffix=(uint16_t)(node->child_count-index-1);
+            emit_instruction(compiler,DIAMOND_OP_ARRAY_MIDDLE,rest,value,
+                (uint16_t)((index<<8)|suffix),3);
             compiler->known_types[rest]=DIAMOND_TYPE_ARRAY;
             emit_destructure_extract(compiler,nodes,node->children[index],rest,
+                array_set,node_values);continue;
+        }
+        if(has_rest&&index>rest_index) {
+            const uint16_t element=allocate_register(compiler);
+            emit_instruction(compiler,DIAMOND_OP_ARRAY_SUFFIX,element,value,
+                (uint16_t)(node->child_count-index),3);
+            emit_destructure_extract(compiler,nodes,node->children[index],element,
                 array_set,node_values);continue;
         }
         const uint8_t index_constant=add_constant(compiler,DIAMOND_INT((int64_t)index));
@@ -9046,6 +9081,7 @@ static uint16_t compile_multi_assignment(Compiler *compiler) {
         node_count=0;
         (void)parse_destructure_node(compiler,nodes,&node_count,0);
     } else {
+        bool rest_seen=false;
         while(!compiler->failed) {
             DestructureNode *root_node=&nodes[root];
             if(root_node->child_count==16) {
@@ -9054,10 +9090,14 @@ static uint16_t compile_multi_assignment(Compiler *compiler) {
             }
             root_node->children[root_node->child_count++]=
                 parse_destructure_node(compiler,nodes,&node_count,0);
-            if(nodes[root_node->children[root_node->child_count-1]].rest&&
-               compiler->current.kind==DIAMOND_TOKEN_COMMA) {
-                fail(compiler,compiler->current.span,
-                    "rest target must be last in destructuring pattern");return 0;
+            if(nodes[root_node->children[root_node->child_count-1]].rest) {
+                if(rest_seen) {
+                    fail(compiler,
+                        nodes[root_node->children[root_node->child_count-1]].name,
+                        "destructuring pattern may contain only one rest target");
+                    return 0;
+                }
+                rest_seen=true;
             }
             if(compiler->current.kind!=DIAMOND_TOKEN_COMMA)break;
             advance_token(compiler);
