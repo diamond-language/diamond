@@ -503,6 +503,14 @@ and method call sites. Union receivers participate when every member resolves
 to the exact same inherited implementation. Divergent overrides and genuinely
 unresolved generic contexts remain future extensions to the same conservative
 mechanism.
+Typed top-level function references and class/module singleton references now
+publish structural Callable signatures into local type facts, so later fixed,
+spread, and keyword Callable-value calls retain block context through aliases.
+One trailing-block call gap remains: omitting a defaulted positional parameter
+immediately before `&block` cannot yet be represented by the contiguous call
+frame. Closing it requires either an explicit provided-argument mask in
+`run_chunk` or extending the keyword-call opcodes to carry a block with zero
+named keywords; passing the defaulted value explicitly already works.
 Compiled functions now retain whether their final parameter used `&`, allowing
 LSP hover to distinguish optional blocks from defaults and locate a preceding
 variadic slot correctly. Hover also recognizes `block_given?()` as a Boolean

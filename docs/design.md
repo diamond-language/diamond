@@ -1215,6 +1215,10 @@ context is consumed at the block boundary and does not leak into nested blocks.
 Union receivers participate when every member resolves to the exact same
 inherited implementation; divergent overrides and genuinely unresolved generic
 contexts remain unknown.
+Bare typed function references and singleton-method reference wrappers clone
+their public parameter and return sets into the caller's type-set table. Local
+aliases therefore preserve enough structural Callable information to seed a
+later trailing block without retaining pointers into another function's table.
 Callable-value and constructor calls attach trailing source blocks through the
 same final-positional-argument convention as named calls. Fixed calls snapshot
 pre-block argument registers before eager capture can box them; spread calls
