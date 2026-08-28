@@ -72,6 +72,7 @@ int diamond_run_source_with_program(const char *name, const char *source,
     diamond_vm_init(&vm);
     diamond_vm_set_argv(&vm,script_argc,script_argv);
     vm.stress_gc = getenv("DIAMOND_STRESS_GC") != nullptr;
+    vm.stress_minor_gc = getenv("DIAMOND_STRESS_MINOR_GC") != nullptr;
     vm.quickening = getenv("DIAMOND_QUICKEN") != nullptr;
     const char *quickening_threshold = getenv("DIAMOND_QUICKEN_THRESHOLD");
     if (quickening_threshold != nullptr && quickening_threshold[0] != '\0') {
@@ -161,8 +162,9 @@ int diamond_run_source_with_program(const char *name, const char *source,
         fprintf(stderr,"quickened sites: %zu, deoptimized sites: %zu\n",
                 vm.quickened_sites,vm.deoptimized_sites);
     if (getenv("DIAMOND_TRACE_GC") != nullptr)
-        fprintf(stderr,"GC: %zu collections, %.6fs total\n",
-                vm.gc_collection_count,vm.gc_total_seconds);
+        fprintf(stderr,"GC: %zu major (%.6fs), %zu minor (%.6fs)\n",
+                vm.gc_major_collection_count,vm.gc_major_total_seconds,
+                vm.gc_minor_collection_count,vm.gc_minor_total_seconds);
     diamond_vm_free(&vm);
     free(combined);
     diamond_source_bundle_free(&bundle);

@@ -75,6 +75,25 @@ typedef struct DiamondObject {
     struct DiamondObject *next;
     DiamondObjectKind kind;
     bool marked;
+    /* Generation: false = nursery (vm->young_objects), true = tenured
+     * (vm->old_objects). Every allocate_* helper always allocates young;
+     * an object is promoted (list-spliced from young_objects onto
+     * old_objects, this bit flipped true) the moment it survives one
+     * minor collection -- no age counter, since promotion is free for a
+     * non-moving collector (see docs/design.md's "Generational garbage
+     * collection" section). */
+    bool old;
+    /* True once this (necessarily old) object is already present in
+     * vm->remembered_set -- an old object gaining a reference to a young
+     * one is exactly the case a minor collection's own root walk
+     * wouldn't otherwise see, so the write barrier (src/vm.c's
+     * gc_write_barrier) adds it to the remembered set and sets this the
+     * first time that happens, so later writes to the same object don't
+     * add duplicate entries. Sticky for the object's whole lifetime as
+     * an old object -- see gc_write_barrier's own comment for why this
+     * deliberately never gets cleared except when the object itself
+     * dies. Meaningless (always false) for a young object. */
+    bool remembered;
 } DiamondObject;
 
 typedef struct DiamondString {
@@ -174,6 +193,20 @@ typedef struct DiamondArray {
     } constraints[4];
     uint8_t constraint_count;
     DiamondValue *values;
+    /* Generational GC card table: one byte per DIAMOND_GC_CARD_SIZE-
+     * element card of `values`, set by the write barrier whenever an
+     * index inside that card is written while this array is old, and
+     * cleared again once a minor collection has scanned it. nullptr
+     * until this array's first index write after promotion (see
+     * mark_card_dirty, src/vm.c) -- most arrays are never promoted, and
+     * of those that are, most are never mutated again, so this stays
+     * unallocated in the common case. dirty_card_capacity is the number
+     * of bytes currently backing dirty_cards (grown in lockstep with
+     * `capacity` at allocate_array/array_push, but only once already
+     * allocated -- see grow_dirty_cards), not necessarily the number
+     * actually needed for the current `capacity` at every instant. */
+    uint8_t *dirty_cards;
+    size_t dirty_card_capacity;
 } DiamondArray;
 
 typedef struct DiamondHashEntry {
@@ -202,6 +235,13 @@ typedef struct DiamondHash {
         uint8_t type_variable_count;
     } constraints[4];
     uint8_t constraint_count;
+    /* Same scheme as DiamondArray's own dirty_cards -- one card per
+     * DIAMOND_GC_CARD_SIZE entries of `entries`, keyed by entry index
+     * (not bucket index -- hash_rehash only ever rebuilds `buckets`, it
+     * never moves `entries` around, so entry-index-to-card mapping stays
+     * valid across a rehash). See DiamondArray's own comment. */
+    uint8_t *dirty_cards;
+    size_t dirty_card_capacity;
 } DiamondHash;
 
 typedef struct DiamondClosure {

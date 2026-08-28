@@ -263,27 +263,29 @@ What's still genuinely true from before, not just carried over by habit:
 
 ## Runtime research
 
-### Bound garbage-collection pauses
+### Bound garbage-collection pauses (done)
 
-The collector is non-moving, stop-the-world mark/sweep. `bench/gc_churn`
-establishes that individual pause duration grows with the persistent live set,
-even though aggregate GC CPU share does not run away in the measured workloads.
+The collector is now generational and non-moving: a young/old split with a
+whole-object write barrier for `Instance`/`Cell`/`Fiber`/`Thread` and a
+card-marked (per-64-element-card) write barrier for `Array`/`Hash`. A first
+generational implementation (whole-object remembering everywhere) was
+built, stress/sanitizer tested, measured, and reverted -- its remembered-
+set granularity made large, continuously-mutated containers *slower* than
+the original single-generation collector. The second attempt fixed exactly
+that flaw with card marking; the design notes, failure analysis, and final
+measurements are in [gc-generational-design.md](gc-generational-design.md).
 
-A first generational implementation was built, stress/sanitizer tested, measured,
-and reverted. Its remembered-set and promotion machinery added complexity but
-did not improve the target workload enough to justify keeping it. The design
-notes and failure analysis are retained in
-[gc-generational-design.md](gc-generational-design.md).
+`bench/gc_churn`'s own sweep confirms the actual goal: total GC time is now
+roughly flat across a live-set-size sweep from 1,000 to 40,000 entries,
+rather than growing with the persistent live set the way a single
+generation's full-heap collection did.
 
-Any next attempt should begin with a revised invariant and benchmark target,
-not simply reapply the reverted design. Plausible directions include:
-
-- cheaper remembered-set maintenance with an explicitly proven major-GC
-  invariant;
-- incremental marking to bound pauses without a nursery;
-- arena or region allocation for compiler-lifetime objects;
-- reducing allocation volume in core-library hot paths before changing the
-  collector.
+Remaining, unmotivated-without-data follow-ups if a future workload calls
+for them: a 1-2 cycle survival threshold before promotion (every minor
+survivor is currently promoted immediately, which may be growing the old
+generation faster than necessary); incremental marking to bound *major*
+collection pauses too (still a full stop-the-world walk of both
+generations); arena or region allocation for compiler-lifetime objects.
 
 ### Native-code execution
 

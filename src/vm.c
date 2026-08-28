@@ -150,6 +150,13 @@ static void diamond_resume_target_bounds(const DiamondFiber *fiber,
 enum { DIAMOND_MAX_CALL_DEPTH = 95 };
 enum { DIAMOND_INLINE_REGISTER_COUNT = 256 };
 
+/* Card size for the generational GC's Array/Hash write barrier -- see
+ * mark_card_dirty's own comment (below, near gc_write_barrier) for why
+ * only these two kinds need index-granularity remembering. Declared
+ * this early because mark_remembered_set (just below) already needs it
+ * to size its own card-index arithmetic. */
+enum { DIAMOND_GC_CARD_SIZE = 64 };
+
 typedef enum HandlerKind : uint8_t { HANDLER_RESCUE, HANDLER_ENSURE } HandlerKind;
 
 typedef struct UnwindHandler {
@@ -237,8 +244,9 @@ typedef struct DiamondThread {
     pthread_mutex_t join_lock;
 } DiamondThread;
 
-static void mark_value(DiamondValue value);
-static void mark_frame_chain(void *frames);
+static void mark_value(DiamondValue value, bool minor);
+static void mark_object(DiamondObject *object, bool minor);
+static void mark_frame_chain(void *frames, bool minor);
 static bool gc_protect(DiamondVm *vm, DiamondValue value);
 static void gc_unprotect(DiamondVm *vm, size_t saved_count);
 static DiamondVmStatus run_chunk(const DiamondChunk *chunk, DiamondVm *vm,
@@ -253,26 +261,33 @@ static void free_adopted_programs(void *list);
 static void free_thread(DiamondThread *thread);
 static void populate_default_argv_env(DiamondVm *vm);
 
-static void mark_object(DiamondObject *object) {
-    if (object == nullptr || object->marked) return;
-    object->marked = true;
+/* The per-kind "walk this object's own direct children" switch,
+ * deliberately factored out of mark_object below (which adds the
+ * marked/dead-end guards around it) so mark_remembered_set can call
+ * this directly for a remembered root -- see that function's own
+ * comment on why it must bypass mark_object's guards specifically for
+ * a remembered object's own first level, without duplicating this
+ * per-kind logic a second time (every native object kind added over
+ * many sessions already has to be listed once here; a second copy
+ * would just be one more place for a future kind to be missed from). */
+static void mark_object_children(DiamondObject *object, bool minor) {
     if (object->kind == DIAMOND_OBJECT_INSTANCE) {
         DiamondInstance *instance=(DiamondInstance *)object;
-        for(size_t i=0;i<instance->field_count;i++) mark_value(instance->fields[i]);
+        for(size_t i=0;i<instance->field_count;i++) mark_value(instance->fields[i],minor);
     } else if(object->kind==DIAMOND_OBJECT_ARRAY) {
         DiamondArray *array=(DiamondArray *)object;
-        for(size_t i=0;i<array->count;i++) mark_value(array->values[i]);
+        for(size_t i=0;i<array->count;i++) mark_value(array->values[i],minor);
     } else if(object->kind==DIAMOND_OBJECT_HASH) {
         DiamondHash *hash=(DiamondHash *)object;
         for(size_t i=0;i<hash->count;i++) {
-            mark_value(hash->entries[i].key);
-            mark_value(hash->entries[i].value);
+            mark_value(hash->entries[i].key,minor);
+            mark_value(hash->entries[i].value,minor);
         }
     } else if(object->kind==DIAMOND_OBJECT_CLOSURE) {
         DiamondClosure *closure=(DiamondClosure *)object;
-        for(size_t i=0;i<closure->capture_count;i++)mark_value(closure->captures[i]);
+        for(size_t i=0;i<closure->capture_count;i++)mark_value(closure->captures[i],minor);
     } else if(object->kind==DIAMOND_OBJECT_CELL) {
-        mark_value(((DiamondCell *)object)->value);
+        mark_value(((DiamondCell *)object)->value,minor);
     } else if(object->kind==DIAMOND_OBJECT_FIBER) {
         DiamondFiber *fiber=((DiamondFiberHandle *)object)->fiber;
         if(fiber!=nullptr) {
@@ -293,11 +308,11 @@ static void mark_object(DiamondObject *object) {
              * fiber that just yielded and is waiting for its next turn, not
              * just DIAMOND_FIBER_SUSPENDED. */
             if(fiber->state!=DIAMOND_FIBER_RUNNING)
-                mark_frame_chain(fiber->native_frames);
-            mark_value(fiber->result);
-            mark_value(fiber->resume_value);
+                mark_frame_chain(fiber->native_frames,minor);
+            mark_value(fiber->result,minor);
+            mark_value(fiber->resume_value,minor);
             if(fiber->entry_closure!=nullptr)
-                mark_object((DiamondObject *)fiber->entry_closure);
+                mark_object((DiamondObject *)fiber->entry_closure,minor);
         }
     } else if(object->kind==DIAMOND_OBJECT_THREAD) {
         DiamondThread *thread=((DiamondThreadHandle *)object)->thread;
@@ -309,36 +324,127 @@ static void mark_object(DiamondObject *object) {
          * fresh ThreadError gets built and raised directly at join time
          * instead). See docs/threads.md. */
         if(thread!=nullptr&&thread->joined&&!thread->internal_failure)
-            mark_value(thread->result);
+            mark_value(thread->result,minor);
     } else if(object->kind==DIAMOND_OBJECT_PROCESS_RESULT) {
         DiamondProcessResult *result=(DiamondProcessResult *)object;
-        mark_value(result->stdout_value);
-        mark_value(result->stderr_value);
+        mark_value(result->stdout_value,minor);
+        mark_value(result->stderr_value,minor);
     }
 }
 
-static void mark_value(DiamondValue value) {
-    if (value.kind == DIAMOND_VALUE_OBJECT) mark_object(value.as.object);
+static void mark_object(DiamondObject *object, bool minor) {
+    if (object == nullptr) return;
+    /* A minor collection only traces into the young generation -- an
+     * old object reached *during trace* (as opposed to being a
+     * remembered-set root, which reaches mark_object_children directly
+     * instead of coming through here -- see mark_remembered_set) is a
+     * dead end: whatever young objects it points to are already
+     * covered by it being a member of the remembered set (or it has
+     * none, if nothing was written to it since promotion), so
+     * recursing into it here would just redo that same work with no
+     * correctness need. See docs/design.md's "Generational garbage
+     * collection" section. */
+    if (minor && object->old) return;
+    if (object->marked) return;
+    object->marked = true;
+    mark_object_children(object, minor);
 }
 
-static void mark_frame_chain(void *frames) {
+static void mark_value(DiamondValue value, bool minor) {
+    if (value.kind == DIAMOND_VALUE_OBJECT) mark_object(value.as.object, minor);
+}
+
+static void mark_frame_chain(void *frames, bool minor) {
     for (DiamondFrame *frame = frames; frame != nullptr;
          frame = frame->previous) {
         for (size_t index = 0; index < frame->register_count; index++) {
-            mark_value(frame->registers[index]);
+            mark_value(frame->registers[index], minor);
         }
         if(frame->pending!=nullptr && frame->pending->kind!=PENDING_NONE)
-            mark_value(frame->pending->value);
+            mark_value(frame->pending->value, minor);
     }
 }
 
-static void mark_fiber(const DiamondFiber *fiber) {
+static void mark_fiber(const DiamondFiber *fiber, bool minor) {
     if (fiber == nullptr) return;
     /* Same staleness hazard as mark_object's DIAMOND_OBJECT_FIBER case
      * above: native_frames is only untrustworthy while this exact fiber is
      * the one currently RUNNING. */
     if (fiber->state != DIAMOND_FIBER_RUNNING)
-        mark_frame_chain(fiber->native_frames);
+        mark_frame_chain(fiber->native_frames, minor);
+}
+
+/* Every entry in vm->remembered_set (see that field's own comment in
+ * vm.h) is an *old* object -- calls mark_object_children directly
+ * rather than mark_object, deliberately bypassing both of that
+ * function's guards for exactly this one call: the "dead end at an
+ * old object" rule exists to stop recursion reaching an old object
+ * *transitively* during trace, which must not also block scanning a
+ * remembered root's own children (the entire reason it's in the
+ * remembered set); and the "already marked" rule is meaningless here
+ * since a minor collection never sets `marked` on an old object at
+ * all (mark_object's own guard returns before ever reaching that
+ * line), so it would always read false anyway.
+ *
+ * Array/Hash are special-cased to scan only their dirty cards (see
+ * mark_card_dirty/gc_write_barrier_index above) instead of every
+ * element -- this is the actual Phase 4 fix: the first generational
+ * attempt remembered these two kinds at whole-container granularity,
+ * which meant re-walking a large, mostly-stable container on *every*
+ * minor collection it survived. A card is cleared once scanned (a
+ * later write re-dirties it for the next pass); dirty_cards==nullptr
+ * means no index write has happened since promotion (or since the last
+ * full scan created it), so there's nothing to walk. Falls back to a
+ * full mark_object_children scan if dirty_cards is somehow null on an
+ * object already in the remembered set (should never happen, since
+ * only gc_write_barrier_index/_range ever call remember() on these two
+ * kinds, and both always mark a card immediately after -- but a missed
+ * scan here would silently free a live young value, so this defaults
+ * to the safe side rather than skipping). */
+static void mark_remembered_set(DiamondVm *vm) {
+    for (size_t index = 0; index < vm->remembered_count; index++) {
+        DiamondObject *object = vm->remembered_set[index];
+        if (object->kind == DIAMOND_OBJECT_ARRAY) {
+            DiamondArray *array = (DiamondArray *)object;
+            if (array->dirty_cards == nullptr) {
+                mark_object_children(object, true);
+                continue;
+            }
+            const size_t card_count =
+                (array->capacity + DIAMOND_GC_CARD_SIZE - 1) / DIAMOND_GC_CARD_SIZE;
+            for (size_t card = 0;
+                 card < card_count && card < array->dirty_card_capacity; card++) {
+                if (!array->dirty_cards[card]) continue;
+                const size_t start = card * DIAMOND_GC_CARD_SIZE;
+                const size_t end = start + DIAMOND_GC_CARD_SIZE < array->count ?
+                    start + DIAMOND_GC_CARD_SIZE : array->count;
+                for (size_t i = start; i < end; i++) mark_value(array->values[i], true);
+                array->dirty_cards[card] = 0;
+            }
+        } else if (object->kind == DIAMOND_OBJECT_HASH) {
+            DiamondHash *hash = (DiamondHash *)object;
+            if (hash->dirty_cards == nullptr) {
+                mark_object_children(object, true);
+                continue;
+            }
+            const size_t card_count =
+                (hash->capacity + DIAMOND_GC_CARD_SIZE - 1) / DIAMOND_GC_CARD_SIZE;
+            for (size_t card = 0;
+                 card < card_count && card < hash->dirty_card_capacity; card++) {
+                if (!hash->dirty_cards[card]) continue;
+                const size_t start = card * DIAMOND_GC_CARD_SIZE;
+                const size_t end = start + DIAMOND_GC_CARD_SIZE < hash->count ?
+                    start + DIAMOND_GC_CARD_SIZE : hash->count;
+                for (size_t i = start; i < end; i++) {
+                    mark_value(hash->entries[i].key, true);
+                    mark_value(hash->entries[i].value, true);
+                }
+                hash->dirty_cards[card] = 0;
+            }
+        } else {
+            mark_object_children(object, true);
+        }
+    }
 }
 
 /* Defined near DiamondAdoptedProgram itself (this function is used
@@ -348,18 +454,25 @@ static void mark_fiber(const DiamondFiber *fiber) {
  * DiamondClosure.foreign_chunk, DiamondMethod.source_chunk -- is a
  * non-owning reference to something else's already-covered lifetime).
  * A no-op for a ProgramBuilder-only adoption (bound_value_count==0). */
-static void mark_adopted_programs(void *list);
+static void mark_adopted_programs(void *list, bool minor);
 
-static void diamond_vm_collect_impl(DiamondVm *vm) {
-    if(vm->has_exception)mark_value(vm->exception);
-    mark_adopted_programs(vm->adopted_programs);
-    mark_value(vm->argv_value);
-    mark_value(vm->env_value);
+/* The complete root set, minus the remembered set -- shared by both
+ * major (minor=false) and minor (minor=true) collection, since a
+ * minor collection's own roots are exactly this same walk plus every
+ * remembered-set entry (mark_remembered_set, appended at the end when
+ * minor is true). Every mark_* call below threads `minor` through so
+ * mark_object's own generational dead-end guard applies consistently
+ * regardless of which collection triggered this walk. */
+static void mark_roots(DiamondVm *vm, bool minor) {
+    if(vm->has_exception)mark_value(vm->exception,minor);
+    mark_adopted_programs(vm->adopted_programs,minor);
+    mark_value(vm->argv_value,minor);
+    mark_value(vm->env_value,minor);
     for(size_t index=0;index<vm->gc_protected_count;index++)
-        mark_value(vm->gc_protected[index]);
+        mark_value(vm->gc_protected[index],minor);
     for(size_t index=0;index<DIAMOND_MAX_NAMESPACE_CONSTANTS;index++)
         if(vm->namespace_constant_initialized[index])
-            mark_value(vm->namespace_constants[index]);
+            mark_value(vm->namespace_constants[index],minor);
     /* Never allocated (see class_variables' own comment in vm.h) until
      * the first SET_CVAR -- nothing to mark if no class variable has
      * ever been written on this VM. Once allocated, no initialized
@@ -370,21 +483,48 @@ static void diamond_vm_collect_impl(DiamondVm *vm) {
      * per-class counts here would. */
     if(vm->class_variables!=nullptr)
         for(size_t index=0;index<(size_t)DIAMOND_MAX_CLASSES*DIAMOND_MAX_FIELDS;index++)
-            mark_value(vm->class_variables[index]);
+            mark_value(vm->class_variables[index],minor);
     for(size_t index=0;index<DIAMOND_SIGNAL_COUNT;index++)
-        mark_value(vm->trapped_signal_handlers[index]);
-    mark_frame_chain(vm->frames);
+        mark_value(vm->trapped_signal_handlers[index],minor);
+    mark_frame_chain(vm->frames,minor);
     for (DiamondFiber *ancestor = vm->running_fiber; ancestor != nullptr;
          ancestor = ancestor->resumer_fiber)
-        mark_frame_chain(ancestor->resumer_frames);
+        mark_frame_chain(ancestor->resumer_frames,minor);
     if (vm->root_queue != nullptr)
         for (size_t index = 0; index < diamond_fiber_queue_count(vm->root_queue); index++)
-            mark_fiber(diamond_fiber_queue_at(vm->root_queue, index));
+            mark_fiber(diamond_fiber_queue_at(vm->root_queue, index),minor);
+    if (minor) mark_remembered_set(vm);
+}
 
-    DiamondObject **object = &vm->objects;
+/* Sweeps *list_head, freeing anything left unmarked exactly as the
+ * single-generation collector always did (the per-kind cleanup switch
+ * below is unchanged from before the generational split -- factored
+ * out here so major collection, over both young_objects and
+ * old_objects, and minor collection, over young_objects alone, share
+ * one copy instead of drifting two independent ones as new native
+ * object kinds keep getting added). A survivor (still marked) either
+ * stays in *list_head with its mark bit reset (promote_to==nullptr --
+ * major collection: it's already exactly where it belongs, in whichever
+ * generation it was already in), or is spliced onto *promote_to instead
+ * with `old` set true (promote_to!=nullptr -- minor collection
+ * promoting a young survivor: unlink from young_objects, relink onto
+ * old_objects, no copy -- see docs/design.md's "Generational garbage
+ * collection" section on why this is safe and needs no age counter for
+ * a non-moving collector). */
+static void sweep_list(DiamondVm *vm, DiamondObject **list_head,
+        DiamondObject **promote_to) {
+    DiamondObject **object = list_head;
     while (*object != nullptr) {
         if ((*object)->marked) {
             (*object)->marked = false;
+            if (promote_to != nullptr) {
+                DiamondObject *survivor = *object;
+                *object = survivor->next;
+                survivor->old = true;
+                survivor->next = *promote_to;
+                *promote_to = survivor;
+                continue;
+            }
             object = &(*object)->next;
             continue;
         }
@@ -402,14 +542,14 @@ static void diamond_vm_collect_impl(DiamondVm *vm) {
             size=sizeof(DiamondArray)+array->capacity*sizeof(DiamondValue);
             for(size_t index=0;index<array->constraint_count;index++)
                 free(array->constraints[index].type_variable_bindings);
-            free(array->values);
+            free(array->values);free(array->dirty_cards);
         } else if(unreached->kind==DIAMOND_OBJECT_HASH) {
             DiamondHash *hash=(DiamondHash *)unreached;
             size=sizeof(DiamondHash)+hash->capacity*sizeof(DiamondHashEntry)+
                 hash->bucket_capacity*sizeof(size_t);
             for(size_t index=0;index<hash->constraint_count;index++)
                 free(hash->constraints[index].type_variable_bindings);
-            free(hash->entries);free(hash->buckets);
+            free(hash->entries);free(hash->buckets);free(hash->dirty_cards);
         } else if(unreached->kind==DIAMOND_OBJECT_CLOSURE) {
             size=sizeof(DiamondClosure);
         } else if(unreached->kind==DIAMOND_OBJECT_FIBER) {
@@ -507,31 +647,226 @@ static void diamond_vm_collect_impl(DiamondVm *vm) {
         vm->bytes_allocated -= size;
         free(unreached);
     }
-    vm->next_gc = vm->bytes_allocated < 1024
-        ? 2048 : vm->bytes_allocated * 2;
 }
 
-/* Timing wrapper around diamond_vm_collect_impl -- see vm.h's own
- * comment on gc_collection_count/gc_total_seconds for why this exists
- * (DIAMOND_TRACE_GC, src/run_source.c). CLOCK_MONOTONIC, matching every
- * other wall-time measurement in this file (Time.monotonic(), the
- * TCP/TLS/UDP retry-loop deadline checks) -- immune to wall-clock
- * adjustments, which a long-running collection-heavy process is
- * exactly the kind of thing that could otherwise run across. */
+/* Adds `owner` to vm->remembered_set if it isn't already there -- see
+ * DiamondObject.remembered's own comment for why the caller
+ * (gc_write_barrier) only ever calls this once per object's lifetime as
+ * an old object. Grows like gc_protected (the closest existing
+ * precedent in this file) -- doubling capacity, never shrinks. Returns
+ * false only on allocation failure. */
+static bool remember(DiamondVm *vm, DiamondObject *owner) {
+    if (vm->remembered_count == vm->remembered_capacity) {
+        const size_t grown_capacity =
+            vm->remembered_capacity == 0 ? 16 : vm->remembered_capacity * 2;
+        DiamondObject **grown =
+            realloc(vm->remembered_set, grown_capacity * sizeof *grown);
+        if (grown == nullptr) return false;
+        vm->remembered_set = grown;
+        vm->remembered_capacity = grown_capacity;
+    }
+    vm->remembered_set[vm->remembered_count++] = owner;
+    return true;
+}
+
+/* The write barrier -- called at every mutation site that stores a
+ * value into an already-allocated container/object (see docs/gc-
+ * generational-design.md's own audited-sites list; re-verified fresh
+ * against current code rather than trusted, since that document's own
+ * line numbers are already stale -- src/vm.c's own call sites are the
+ * up-to-date authority). Only old->young writes matter: a minor
+ * collection's ordinary root walk already sees anything reachable
+ * *from* a young object directly (young_objects is swept every minor
+ * pass regardless), so this only needs to record the one case that
+ * walk wouldn't otherwise catch -- an *old* object gaining a pointer to
+ * a young one. Unconditional on the stored value's own generation (or
+ * even whether it's an object at all) -- a cheaper branch than checking,
+ * over-remembers old->old writes and non-object values, an accepted
+ * tradeoff matching the retained design's own reasoning. Returns false
+ * only when growing the remembered set failed (remember's own return
+ * value) -- callers propagate that as DIAMOND_VM_OUT_OF_MEMORY exactly
+ * like any other allocation failure at the same call site, rather than
+ * risk silently under-recording a live old->young edge. */
+static bool gc_write_barrier(DiamondVm *vm, DiamondObject *owner) {
+    if (owner->old && !owner->remembered) {
+        if (!remember(vm, owner)) return false;
+        owner->remembered = true;
+    }
+    return true;
+}
+
+/* Marks the card containing `index` dirty on an old Array or Hash,
+ * lazily allocating (or growing) the card table to cover the object's
+ * current capacity if needed -- most old Array/Hash objects are never
+ * index-written again after promotion, so this stays unallocated in the
+ * common case rather than being sized up front for every promotion.
+ * Only ever called (via gc_write_barrier_index/_range below) after the
+ * caller has already confirmed `owner` is old, so it doesn't re-check
+ * that itself. Deliberately not counted in vm->bytes_allocated (unlike
+ * values/entries/buckets, which every realloc site already tracks) --
+ * a handful of cards is negligible next to the container it shadows
+ * (~625 bytes for a 40,000-entry Hash), not worth a second accounting
+ * path for. Returns false only on allocation failure. */
+static bool mark_card_dirty(DiamondObject *owner, size_t index) {
+    uint8_t **dirty_cards;size_t *dirty_card_capacity,capacity;
+    if(owner->kind==DIAMOND_OBJECT_ARRAY) {
+        DiamondArray *array=(DiamondArray *)owner;
+        dirty_cards=&array->dirty_cards;
+        dirty_card_capacity=&array->dirty_card_capacity;
+        capacity=array->capacity;
+    } else {
+        DiamondHash *hash=(DiamondHash *)owner;
+        dirty_cards=&hash->dirty_cards;
+        dirty_card_capacity=&hash->dirty_card_capacity;
+        capacity=hash->capacity;
+    }
+    const size_t needed_cards=
+        (capacity+DIAMOND_GC_CARD_SIZE-1)/DIAMOND_GC_CARD_SIZE;
+    if(*dirty_cards==nullptr) {
+        const size_t initial=needed_cards==0?1:needed_cards;
+        uint8_t *fresh=calloc(initial,1);
+        if(fresh==nullptr)return false;
+        *dirty_cards=fresh;*dirty_card_capacity=initial;
+    } else if(needed_cards>*dirty_card_capacity) {
+        uint8_t *grown=realloc(*dirty_cards,needed_cards);
+        if(grown==nullptr)return false;
+        memset(grown+*dirty_card_capacity,0,needed_cards-*dirty_card_capacity);
+        *dirty_cards=grown;*dirty_card_capacity=needed_cards;
+    }
+    (*dirty_cards)[index/DIAMOND_GC_CARD_SIZE]=1;
+    return true;
+}
+
+/* gc_write_barrier's own Array/Hash-specific sibling: same old-object/
+ * remembered-set bookkeeping, plus marking the one card the write
+ * actually touched dirty (see mark_card_dirty above) so
+ * mark_remembered_set (below) can scan just that card on the next minor
+ * collection instead of the whole container. */
+static bool gc_write_barrier_index(DiamondVm *vm, DiamondObject *owner, size_t index) {
+    if (!owner->old) return true;
+    if (!owner->remembered) {
+        if (!remember(vm, owner)) return false;
+        owner->remembered = true;
+    }
+    return mark_card_dirty(owner, index);
+}
+
+/* gc_write_barrier_index's range-write sibling (DIAMOND_OP_INDEX_SET's
+ * Array range-assignment branch) -- dirties every card touched by
+ * [start, start+count). */
+static bool gc_write_barrier_range(DiamondVm *vm, DiamondObject *owner,
+        size_t start, size_t count) {
+    if (!owner->old) return true;
+    if (!owner->remembered) {
+        if (!remember(vm, owner)) return false;
+        owner->remembered = true;
+    }
+    if (count == 0) return true;
+    const size_t first_card = start / DIAMOND_GC_CARD_SIZE;
+    const size_t last_card = (start + count - 1) / DIAMOND_GC_CARD_SIZE;
+    for (size_t card = first_card; card <= last_card; card++)
+        if (!mark_card_dirty(owner, card * DIAMOND_GC_CARD_SIZE)) return false;
+    return true;
+}
+
+static void diamond_vm_collect_impl(DiamondVm *vm) {
+    mark_roots(vm, false);
+    /* Filter the remembered set by `marked` *before* sweeping below --
+     * an entry whose object didn't get marked by the full pass above is
+     * genuinely unreachable and about to be freed by the sweep; keeping
+     * it here would leave vm->remembered_set holding a dangling pointer
+     * once that happens. Confirmed as a real use-after-free during the
+     * first implementation attempt at this design, not just a
+     * theoretical concern -- see docs/gc-generational-design.md. A
+     * surviving old object's own `remembered` bit needs no change here:
+     * whatever young object it still points to was necessarily also
+     * marked by this same full, unrestricted major pass, so it survives
+     * the sweep below too. */
+    size_t kept_remembered = 0;
+    for (size_t index = 0; index < vm->remembered_count; index++)
+        if (vm->remembered_set[index]->marked)
+            vm->remembered_set[kept_remembered++] = vm->remembered_set[index];
+    vm->remembered_count = kept_remembered;
+    sweep_list(vm, &vm->young_objects, nullptr);
+    sweep_list(vm, &vm->old_objects, nullptr);
+    vm->next_gc = vm->bytes_allocated < 1024
+        ? 2048 : vm->bytes_allocated * 2;
+    vm->bytes_allocated_at_last_minor_gc = vm->bytes_allocated;
+}
+
+/* The minor collector: traces only into the young generation (roots
+ * plus the remembered set -- mark_roots(vm,true) covers both), sweeps
+ * only vm->young_objects, and promotes every survivor straight onto
+ * vm->old_objects (sweep_list's own promote_to parameter) rather than
+ * leaving it in place. Deliberately does *not* touch vm->remembered_set
+ * at all -- a minor collection never discovers a *dead* old object
+ * (old_objects is never swept here), so there is nothing to filter;
+ * only a major collection's full liveness pass over the old generation
+ * can determine that, which is exactly why the remembered-set filtering
+ * lives in diamond_vm_collect_impl instead. */
+static void diamond_vm_collect_minor_impl(DiamondVm *vm) {
+    mark_roots(vm, true);
+    sweep_list(vm, &vm->young_objects, &vm->old_objects);
+    vm->bytes_allocated_at_last_minor_gc = vm->bytes_allocated;
+}
+
+/* Timing wrapper around diamond_vm_collect_impl (the major collector)
+ * -- see vm.h's own comment on gc_major_collection_count/
+ * gc_major_total_seconds for why this exists (DIAMOND_TRACE_GC,
+ * src/run_source.c). CLOCK_MONOTONIC, matching every other wall-time
+ * measurement in this file (Time.monotonic(), the TCP/TLS/UDP retry-
+ * loop deadline checks) -- immune to wall-clock adjustments, which a
+ * long-running collection-heavy process is exactly the kind of thing
+ * that could otherwise run across. */
 void diamond_vm_collect(DiamondVm *vm) {
     struct timespec start={};
     clock_gettime(CLOCK_MONOTONIC,&start);
     diamond_vm_collect_impl(vm);
     struct timespec end={};
     clock_gettime(CLOCK_MONOTONIC,&end);
-    vm->gc_collection_count++;
-    vm->gc_total_seconds+=
+    vm->gc_major_collection_count++;
+    vm->gc_major_total_seconds+=
         (double)(end.tv_sec-start.tv_sec)+
         (double)(end.tv_nsec-start.tv_nsec)/1e9;
 }
 
+/* Same timing wrapper, over diamond_vm_collect_minor_impl instead --
+ * see vm.h's own comment on gc_minor_collection_count/
+ * gc_minor_total_seconds. Public (not static), matching
+ * diamond_vm_collect's own visibility, so a test can force a
+ * deterministic minor collection directly the same way several existing
+ * tests already call diamond_vm_collect (tests/fiber_run.c). */
+void diamond_vm_collect_minor(DiamondVm *vm) {
+    struct timespec start={};
+    clock_gettime(CLOCK_MONOTONIC,&start);
+    diamond_vm_collect_minor_impl(vm);
+    struct timespec end={};
+    clock_gettime(CLOCK_MONOTONIC,&end);
+    vm->gc_minor_collection_count++;
+    vm->gc_minor_total_seconds+=
+        (double)(end.tv_sec-start.tv_sec)+
+        (double)(end.tv_nsec-start.tv_nsec)/1e9;
+}
+
+/* The single collection-trigger check every allocate_* helper in this
+ * file makes before actually allocating -- originally factored out of
+ * 23 previously-duplicated inline copies (confirmed by direct grep, not
+ * assumed) so a generational collector's own cheaper, more-frequent
+ * minor-GC threshold would have exactly one place to be added, instead
+ * of needing to touch all 23 call sites again -- and now that place.
+ * Minor checked first (cheaper, fires far more often); major checked
+ * unconditionally after, in case a lot of the nursery just got promoted
+ * and total live bytes are already past next_gc too. */
+void maybe_collect(DiamondVm *vm) {
+    if(vm->stress_minor_gc||
+       vm->bytes_allocated-vm->bytes_allocated_at_last_minor_gc>=vm->minor_gc_threshold_bytes)
+        diamond_vm_collect_minor(vm);
+    if(vm->stress_gc||vm->bytes_allocated>=vm->next_gc)diamond_vm_collect(vm);
+}
+
 void diamond_vm_init(DiamondVm *vm) {
-    *vm = (DiamondVm){.next_gc = 2048,.range_class_index=UINT8_MAX};
+    *vm = (DiamondVm){.next_gc = 2048,.range_class_index=UINT8_MAX,
+        .minor_gc_threshold_bytes = 1048576};
     vm->quickening_threshold = 1;
     vm->monomorphic_threshold = 1;
     /* A write(2)/SSL_write to a TCP connection the peer has already reset
@@ -559,20 +894,19 @@ void diamond_vm_bind_fiber_queue(DiamondVm *vm, const DiamondFiberQueue *queue) 
     vm->root_queue=queue;
 }
 
-void diamond_vm_free(DiamondVm *vm) {
-    DiamondObject *object = vm->objects;
+static void free_object_list(DiamondObject *object) {
     while (object != nullptr) {
         DiamondObject *next = object->next;
         if(object->kind==DIAMOND_OBJECT_HASH) {
             DiamondHash *hash=(DiamondHash *)object;
             for(size_t index=0;index<hash->constraint_count;index++)
                 free(hash->constraints[index].type_variable_bindings);
-            free(hash->entries);free(hash->buckets);
+            free(hash->entries);free(hash->buckets);free(hash->dirty_cards);
         } else if(object->kind==DIAMOND_OBJECT_ARRAY) {
             DiamondArray *array=(DiamondArray *)object;
             for(size_t index=0;index<array->constraint_count;index++)
                 free(array->constraints[index].type_variable_bindings);
-            free(array->values);
+            free(array->values);free(array->dirty_cards);
         } else if(object->kind==DIAMOND_OBJECT_FIBER) {
             diamond_fiber_free(((DiamondFiberHandle *)object)->fiber);
         } else if(object->kind==DIAMOND_OBJECT_FILE) {
@@ -625,10 +959,16 @@ void diamond_vm_free(DiamondVm *vm) {
         free(object);
         object = next;
     }
+}
+
+void diamond_vm_free(DiamondVm *vm) {
+    free_object_list(vm->young_objects);
+    free_object_list(vm->old_objects);
     free_adopted_programs(vm->adopted_programs);
     free(vm->class_variables);
     free(vm->gc_protected);
     free(vm->rewritten_sites);
+    free(vm->remembered_set);
     *vm = (DiamondVm){};
 }
 
@@ -957,73 +1297,70 @@ DiamondFiberStatus diamond_fiber_scheduler_run_all(DiamondFiberQueue *queue) {
 
 static DiamondString *allocate_string(DiamondVm *vm, const char *chars,
                                       size_t length) {
-    if (vm->stress_gc || vm->bytes_allocated >= vm->next_gc) {
-        diamond_vm_collect(vm);
-    }
+    maybe_collect(vm);
     DiamondString *string = malloc(sizeof(DiamondString) + length + 1);
     if (string == nullptr) return nullptr;
     string->object = (DiamondObject){
-        .next = vm->objects,
+        .next = vm->young_objects,
         .kind = DIAMOND_OBJECT_STRING,
     };
     string->length = length;
     memcpy(string->chars, chars, length);
     string->chars[length] = '\0';
-    vm->objects = &string->object;
+    vm->young_objects = &string->object;
     vm->bytes_allocated += sizeof(DiamondString) + length + 1;
     return string;
 }
 
 static DiamondSymbol *allocate_symbol(DiamondVm *vm, const char *chars,
                                       size_t length) {
-    if (vm->stress_gc || vm->bytes_allocated >= vm->next_gc) {
-        diamond_vm_collect(vm);
-    }
+    maybe_collect(vm);
     DiamondSymbol *symbol = malloc(sizeof(DiamondSymbol) + length + 1);
     if (symbol == nullptr) return nullptr;
     symbol->object = (DiamondObject){
-        .next = vm->objects,
+        .next = vm->young_objects,
         .kind = DIAMOND_OBJECT_SYMBOL,
     };
     symbol->length = length;
     memcpy(symbol->chars, chars, length);
     symbol->chars[length] = '\0';
-    vm->objects = &symbol->object;
+    vm->young_objects = &symbol->object;
     vm->bytes_allocated += sizeof(DiamondSymbol) + length + 1;
     return symbol;
 }
 
 static DiamondInstance *allocate_instance(DiamondVm *vm,const DiamondClass *class,
                                           const DiamondChunk *chunk) {
-    if(vm->stress_gc||vm->bytes_allocated>=vm->next_gc) diamond_vm_collect(vm);
+    maybe_collect(vm);
     const size_t size=sizeof(DiamondInstance)+class->field_count*sizeof(DiamondValue);
     DiamondInstance *instance=malloc(size); if(instance==nullptr)return nullptr;
-    instance->object=(DiamondObject){.next=vm->objects,.kind=DIAMOND_OBJECT_INSTANCE};
+    instance->object=(DiamondObject){.next=vm->young_objects,.kind=DIAMOND_OBJECT_INSTANCE};
     instance->class=class; instance->shape=&class->shapes[0]; instance->owner=chunk;
     instance->field_count=class->field_count;
     for(size_t i=0;i<instance->field_count;i++) instance->fields[i]=DIAMOND_NIL;
-    vm->objects=&instance->object; vm->bytes_allocated+=size; return instance;
+    vm->young_objects=&instance->object; vm->bytes_allocated+=size; return instance;
 }
 
 static DiamondArray *allocate_array(DiamondVm *vm,const DiamondValue *values,
                                     size_t count) {
-    if(vm->stress_gc||vm->bytes_allocated>=vm->next_gc) diamond_vm_collect(vm);
+    maybe_collect(vm);
     const size_t capacity=count;
     const size_t size=sizeof(DiamondArray)+capacity*sizeof(DiamondValue);
     DiamondArray *array=malloc(sizeof(DiamondArray)); if(array==nullptr)return nullptr;
     array->values=capacity==0?nullptr:malloc(capacity*sizeof(DiamondValue));
     if(capacity>0&&array->values==nullptr){free(array);return nullptr;}
-    array->object=(DiamondObject){.next=vm->objects,.kind=DIAMOND_OBJECT_ARRAY};
+    array->object=(DiamondObject){.next=vm->young_objects,.kind=DIAMOND_OBJECT_ARRAY};
     array->count=count;array->capacity=capacity;array->constraint_count=0;
+    array->dirty_cards=nullptr;array->dirty_card_capacity=0;
     for(size_t i=0;i<count;i++) array->values[i]=values[i];
-    vm->objects=&array->object;vm->bytes_allocated+=size;return array;
+    vm->young_objects=&array->object;vm->bytes_allocated+=size;return array;
 }
 
 static DiamondHash *allocate_hash(DiamondVm *vm) {
-    if(vm->stress_gc||vm->bytes_allocated>=vm->next_gc) diamond_vm_collect(vm);
+    maybe_collect(vm);
     DiamondHash *hash=malloc(sizeof(DiamondHash)); if(hash==nullptr)return nullptr;
-    *hash=(DiamondHash){.object={.next=vm->objects,.kind=DIAMOND_OBJECT_HASH}};
-    vm->objects=&hash->object;vm->bytes_allocated+=sizeof(DiamondHash);return hash;
+    *hash=(DiamondHash){.object={.next=vm->young_objects,.kind=DIAMOND_OBJECT_HASH}};
+    vm->young_objects=&hash->object;vm->bytes_allocated+=sizeof(DiamondHash);return hash;
 }
 
 /* diamond_vm_init's own default for argv_value/env_value -- see that
@@ -1088,26 +1425,26 @@ void diamond_vm_set_argv(DiamondVm *vm, int argc, char *const *argv) {
 
 static DiamondClosure *allocate_closure(DiamondVm *vm,uint16_t function_index,
                                         const DiamondValue *captures,size_t count) {
-    if(vm->stress_gc||vm->bytes_allocated>=vm->next_gc)diamond_vm_collect(vm);
+    maybe_collect(vm);
     DiamondClosure *closure=malloc(sizeof(DiamondClosure));if(closure==nullptr)return nullptr;
-    *closure=(DiamondClosure){.object={.next=vm->objects,.kind=DIAMOND_OBJECT_CLOSURE},
+    *closure=(DiamondClosure){.object={.next=vm->young_objects,.kind=DIAMOND_OBJECT_CLOSURE},
       .function_index=function_index,.capture_count=(uint8_t)count};
     for(size_t i=0;i<count;i++)closure->captures[i]=captures[i];
-    vm->objects=&closure->object;vm->bytes_allocated+=sizeof(DiamondClosure);return closure;
+    vm->young_objects=&closure->object;vm->bytes_allocated+=sizeof(DiamondClosure);return closure;
 }
 
 static DiamondCell *allocate_cell(DiamondVm *vm,DiamondValue value) {
-    if(vm->stress_gc||vm->bytes_allocated>=vm->next_gc)diamond_vm_collect(vm);
+    maybe_collect(vm);
     DiamondCell *cell=malloc(sizeof(DiamondCell));if(cell==nullptr)return nullptr;
-    *cell=(DiamondCell){.object={.next=vm->objects,.kind=DIAMOND_OBJECT_CELL},.value=value};
-    vm->objects=&cell->object;vm->bytes_allocated+=sizeof(DiamondCell);return cell;
+    *cell=(DiamondCell){.object={.next=vm->young_objects,.kind=DIAMOND_OBJECT_CELL},.value=value};
+    vm->young_objects=&cell->object;vm->bytes_allocated+=sizeof(DiamondCell);return cell;
 }
 
 static DiamondFiberHandle *allocate_fiber_handle(DiamondVm *vm,DiamondFiber *fiber) {
-    if(vm->stress_gc||vm->bytes_allocated>=vm->next_gc)diamond_vm_collect(vm);
+    maybe_collect(vm);
     DiamondFiberHandle *handle=malloc(sizeof(DiamondFiberHandle));if(handle==nullptr)return nullptr;
-    *handle=(DiamondFiberHandle){.object={.next=vm->objects,.kind=DIAMOND_OBJECT_FIBER},.fiber=fiber};
-    vm->objects=&handle->object;vm->bytes_allocated+=sizeof(DiamondFiberHandle);return handle;
+    *handle=(DiamondFiberHandle){.object={.next=vm->young_objects,.kind=DIAMOND_OBJECT_FIBER},.fiber=fiber};
+    vm->young_objects=&handle->object;vm->bytes_allocated+=sizeof(DiamondFiberHandle);return handle;
 }
 
 /* A raw OS-thread limit, not a language-level tuning knob: real pthreads
@@ -1230,10 +1567,10 @@ static void *thread_entry_trampoline(void *argument) {
 }
 
 static DiamondThreadHandle *allocate_thread_handle(DiamondVm *vm,DiamondThread *thread) {
-    if(vm->stress_gc||vm->bytes_allocated>=vm->next_gc)diamond_vm_collect(vm);
+    maybe_collect(vm);
     DiamondThreadHandle *handle=malloc(sizeof(DiamondThreadHandle));if(handle==nullptr)return nullptr;
-    *handle=(DiamondThreadHandle){.object={.next=vm->objects,.kind=DIAMOND_OBJECT_THREAD},.thread=thread};
-    vm->objects=&handle->object;vm->bytes_allocated+=sizeof(DiamondThreadHandle);return handle;
+    *handle=(DiamondThreadHandle){.object={.next=vm->young_objects,.kind=DIAMOND_OBJECT_THREAD},.thread=thread};
+    vm->young_objects=&handle->object;vm->bytes_allocated+=sizeof(DiamondThreadHandle);return handle;
 }
 
 /* Shared teardown for a DiamondThread, called from both diamond_vm_collect's
@@ -1268,46 +1605,46 @@ static void free_thread(DiamondThread *thread) {
 }
 
 static DiamondFileHandle *allocate_file_handle(DiamondVm *vm,FILE *stream) {
-    if(vm->stress_gc||vm->bytes_allocated>=vm->next_gc)diamond_vm_collect(vm);
+    maybe_collect(vm);
     DiamondFileHandle *handle=malloc(sizeof(DiamondFileHandle));if(handle==nullptr)return nullptr;
-    *handle=(DiamondFileHandle){.object={.next=vm->objects,.kind=DIAMOND_OBJECT_FILE},.stream=stream};
-    vm->objects=&handle->object;vm->bytes_allocated+=sizeof(DiamondFileHandle);return handle;
+    *handle=(DiamondFileHandle){.object={.next=vm->young_objects,.kind=DIAMOND_OBJECT_FILE},.stream=stream};
+    vm->young_objects=&handle->object;vm->bytes_allocated+=sizeof(DiamondFileHandle);return handle;
 }
 
 static DiamondListenerHandle *allocate_listener_handle(DiamondVm *vm,int fd,
         bool nonblocking) {
-    if(vm->stress_gc||vm->bytes_allocated>=vm->next_gc)diamond_vm_collect(vm);
+    maybe_collect(vm);
     DiamondListenerHandle *handle=malloc(sizeof(DiamondListenerHandle));
     if(handle==nullptr)return nullptr;
-    *handle=(DiamondListenerHandle){.object={.next=vm->objects,.kind=DIAMOND_OBJECT_LISTENER},
+    *handle=(DiamondListenerHandle){.object={.next=vm->young_objects,.kind=DIAMOND_OBJECT_LISTENER},
         .fd=fd,.nonblocking=nonblocking};
-    vm->objects=&handle->object;vm->bytes_allocated+=sizeof(DiamondListenerHandle);return handle;
+    vm->young_objects=&handle->object;vm->bytes_allocated+=sizeof(DiamondListenerHandle);return handle;
 }
 
 static DiamondSocketHandle *allocate_socket_handle(DiamondVm *vm,int fd) {
-    if(vm->stress_gc||vm->bytes_allocated>=vm->next_gc)diamond_vm_collect(vm);
+    maybe_collect(vm);
     DiamondSocketHandle *handle=malloc(sizeof(DiamondSocketHandle));
     if(handle==nullptr)return nullptr;
-    *handle=(DiamondSocketHandle){.object={.next=vm->objects,.kind=DIAMOND_OBJECT_SOCKET},.fd=fd};
-    vm->objects=&handle->object;vm->bytes_allocated+=sizeof(DiamondSocketHandle);return handle;
+    *handle=(DiamondSocketHandle){.object={.next=vm->young_objects,.kind=DIAMOND_OBJECT_SOCKET},.fd=fd};
+    vm->young_objects=&handle->object;vm->bytes_allocated+=sizeof(DiamondSocketHandle);return handle;
 }
 
 static DiamondUdpSocketHandle *allocate_udp_socket_handle(DiamondVm *vm,int fd) {
-    if(vm->stress_gc||vm->bytes_allocated>=vm->next_gc)diamond_vm_collect(vm);
+    maybe_collect(vm);
     DiamondUdpSocketHandle *handle=malloc(sizeof(DiamondUdpSocketHandle));
     if(handle==nullptr)return nullptr;
     *handle=(DiamondUdpSocketHandle){
-        .object={.next=vm->objects,.kind=DIAMOND_OBJECT_UDP_SOCKET},.fd=fd};
-    vm->objects=&handle->object;vm->bytes_allocated+=sizeof(DiamondUdpSocketHandle);return handle;
+        .object={.next=vm->young_objects,.kind=DIAMOND_OBJECT_UDP_SOCKET},.fd=fd};
+    vm->young_objects=&handle->object;vm->bytes_allocated+=sizeof(DiamondUdpSocketHandle);return handle;
 }
 
 static DiamondTlsSocketHandle *allocate_tls_socket_handle(DiamondVm *vm,SSL *ssl,int fd) {
-    if(vm->stress_gc||vm->bytes_allocated>=vm->next_gc)diamond_vm_collect(vm);
+    maybe_collect(vm);
     DiamondTlsSocketHandle *handle=malloc(sizeof(DiamondTlsSocketHandle));
     if(handle==nullptr)return nullptr;
     *handle=(DiamondTlsSocketHandle){
-        .object={.next=vm->objects,.kind=DIAMOND_OBJECT_TLS_SOCKET},.ssl=ssl,.fd=fd};
-    vm->objects=&handle->object;vm->bytes_allocated+=sizeof(DiamondTlsSocketHandle);return handle;
+        .object={.next=vm->young_objects,.kind=DIAMOND_OBJECT_TLS_SOCKET},.ssl=ssl,.fd=fd};
+    vm->young_objects=&handle->object;vm->bytes_allocated+=sizeof(DiamondTlsSocketHandle);return handle;
 }
 
 /* Formats the current head of OpenSSL's thread-local error queue (and
@@ -1703,60 +2040,60 @@ static bool poll_register_fd(struct pollfd *fds,nfds_t *fd_count,size_t max_fds,
 }
 
 static DiamondRegexp *allocate_regexp_handle(DiamondVm *vm,reginold_regex *compiled) {
-    if(vm->stress_gc||vm->bytes_allocated>=vm->next_gc)diamond_vm_collect(vm);
+    maybe_collect(vm);
     DiamondRegexp *regexp=malloc(sizeof(DiamondRegexp));
     if(regexp==nullptr)return nullptr;
-    *regexp=(DiamondRegexp){.object={.next=vm->objects,.kind=DIAMOND_OBJECT_REGEXP},
+    *regexp=(DiamondRegexp){.object={.next=vm->young_objects,.kind=DIAMOND_OBJECT_REGEXP},
         .handle=compiled};
-    vm->objects=&regexp->object;vm->bytes_allocated+=sizeof(DiamondRegexp);return regexp;
+    vm->young_objects=&regexp->object;vm->bytes_allocated+=sizeof(DiamondRegexp);return regexp;
 }
 
 static DiamondSqlite3Handle *allocate_sqlite3_handle(DiamondVm *vm,sqlite3 *db) {
-    if(vm->stress_gc||vm->bytes_allocated>=vm->next_gc)diamond_vm_collect(vm);
+    maybe_collect(vm);
     DiamondSqlite3Handle *handle=malloc(sizeof(DiamondSqlite3Handle));
     if(handle==nullptr)return nullptr;
-    *handle=(DiamondSqlite3Handle){.object={.next=vm->objects,.kind=DIAMOND_OBJECT_SQLITE3},
+    *handle=(DiamondSqlite3Handle){.object={.next=vm->young_objects,.kind=DIAMOND_OBJECT_SQLITE3},
         .db=db};
-    vm->objects=&handle->object;vm->bytes_allocated+=sizeof(DiamondSqlite3Handle);return handle;
+    vm->young_objects=&handle->object;vm->bytes_allocated+=sizeof(DiamondSqlite3Handle);return handle;
 }
 
 static DiamondSqlite3StatementHandle *allocate_sqlite3_statement_handle(
         DiamondVm *vm,sqlite3_stmt *stmt) {
-    if(vm->stress_gc||vm->bytes_allocated>=vm->next_gc)diamond_vm_collect(vm);
+    maybe_collect(vm);
     DiamondSqlite3StatementHandle *handle=malloc(sizeof(DiamondSqlite3StatementHandle));
     if(handle==nullptr)return nullptr;
     *handle=(DiamondSqlite3StatementHandle){
-        .object={.next=vm->objects,.kind=DIAMOND_OBJECT_SQLITE3_STATEMENT},.stmt=stmt};
-    vm->objects=&handle->object;
+        .object={.next=vm->young_objects,.kind=DIAMOND_OBJECT_SQLITE3_STATEMENT},.stmt=stmt};
+    vm->young_objects=&handle->object;
     vm->bytes_allocated+=sizeof(DiamondSqlite3StatementHandle);
     return handle;
 }
 
 static DiamondPostgresHandle *allocate_postgres_handle(DiamondVm *vm,PGconn *conn) {
-    if(vm->stress_gc||vm->bytes_allocated>=vm->next_gc)diamond_vm_collect(vm);
+    maybe_collect(vm);
     DiamondPostgresHandle *handle=malloc(sizeof(DiamondPostgresHandle));
     if(handle==nullptr)return nullptr;
-    *handle=(DiamondPostgresHandle){.object={.next=vm->objects,.kind=DIAMOND_OBJECT_POSTGRES},
+    *handle=(DiamondPostgresHandle){.object={.next=vm->young_objects,.kind=DIAMOND_OBJECT_POSTGRES},
         .conn=conn};
-    vm->objects=&handle->object;vm->bytes_allocated+=sizeof(DiamondPostgresHandle);return handle;
+    vm->young_objects=&handle->object;vm->bytes_allocated+=sizeof(DiamondPostgresHandle);return handle;
 }
 
 static DiamondMysqlHandle *allocate_mysql_handle(DiamondVm *vm,MYSQL *conn) {
-    if(vm->stress_gc||vm->bytes_allocated>=vm->next_gc)diamond_vm_collect(vm);
+    maybe_collect(vm);
     DiamondMysqlHandle *handle=malloc(sizeof(DiamondMysqlHandle));
     if(handle==nullptr)return nullptr;
-    *handle=(DiamondMysqlHandle){.object={.next=vm->objects,.kind=DIAMOND_OBJECT_MYSQL},
+    *handle=(DiamondMysqlHandle){.object={.next=vm->young_objects,.kind=DIAMOND_OBJECT_MYSQL},
         .conn=conn};
-    vm->objects=&handle->object;vm->bytes_allocated+=sizeof(DiamondMysqlHandle);return handle;
+    vm->young_objects=&handle->object;vm->bytes_allocated+=sizeof(DiamondMysqlHandle);return handle;
 }
 
 static DiamondTime *allocate_time(DiamondVm *vm,double epoch,bool utc) {
-    if(vm->stress_gc||vm->bytes_allocated>=vm->next_gc)diamond_vm_collect(vm);
+    maybe_collect(vm);
     DiamondTime *time=malloc(sizeof(DiamondTime));
     if(time==nullptr)return nullptr;
-    *time=(DiamondTime){.object={.next=vm->objects,.kind=DIAMOND_OBJECT_TIME},
+    *time=(DiamondTime){.object={.next=vm->young_objects,.kind=DIAMOND_OBJECT_TIME},
         .epoch=epoch,.utc=utc};
-    vm->objects=&time->object;vm->bytes_allocated+=sizeof(DiamondTime);return time;
+    vm->young_objects=&time->object;vm->bytes_allocated+=sizeof(DiamondTime);return time;
 }
 
 /* Allocated (and rooted into the caller's dest register) before
@@ -1766,13 +2103,13 @@ static DiamondTime *allocate_time(DiamondVm *vm,double epoch,bool utc) {
  * draining a child process means several further allocations (the two
  * captured-output Strings) that can each trigger a GC. */
 static DiamondProcessResult *allocate_process_result(DiamondVm *vm) {
-    if(vm->stress_gc||vm->bytes_allocated>=vm->next_gc)diamond_vm_collect(vm);
+    maybe_collect(vm);
     DiamondProcessResult *result=malloc(sizeof(DiamondProcessResult));
     if(result==nullptr)return nullptr;
     *result=(DiamondProcessResult){
-        .object={.next=vm->objects,.kind=DIAMOND_OBJECT_PROCESS_RESULT},
+        .object={.next=vm->young_objects,.kind=DIAMOND_OBJECT_PROCESS_RESULT},
         .stdout_value=DIAMOND_NIL,.stderr_value=DIAMOND_NIL,.exit_code=0};
-    vm->objects=&result->object;
+    vm->young_objects=&result->object;
     vm->bytes_allocated+=sizeof(DiamondProcessResult);
     return result;
 }
@@ -1837,11 +2174,11 @@ static void free_adopted_programs(void *list) {
     }
 }
 
-static void mark_adopted_programs(void *list) {
+static void mark_adopted_programs(void *list, bool minor) {
     const DiamondAdoptedProgram *node=(const DiamondAdoptedProgram *)list;
     while(node!=nullptr) {
         for(uint8_t index=0;index<node->bound_value_count;index++)
-            mark_value(node->bound_values[index]);
+            mark_value(node->bound_values[index],minor);
         node=node->next;
     }
 }
@@ -2091,16 +2428,16 @@ static DiamondVmStatus compile_method_helper(DiamondVm *vm,const DiamondClass *t
 /* Account for the program container here; dynamically added function records
  * are accounted for by ProgramBuilder#declare_function. */
 static DiamondProgramBuilder *allocate_program_builder(DiamondVm *vm) {
-    if(vm->stress_gc||vm->bytes_allocated>=vm->next_gc)diamond_vm_collect(vm);
+    maybe_collect(vm);
     DiamondProgram *built=calloc(1,sizeof *built);
     if(built==nullptr)return nullptr;
     diamond_program_init(built);
     DiamondProgramBuilder *handle=malloc(sizeof(DiamondProgramBuilder));
     if(handle==nullptr){diamond_program_free(built);free(built);return nullptr;}
     *handle=(DiamondProgramBuilder){
-        .object={.next=vm->objects,.kind=DIAMOND_OBJECT_PROGRAM_BUILDER},
+        .object={.next=vm->young_objects,.kind=DIAMOND_OBJECT_PROGRAM_BUILDER},
         .program=built,.source_bundle=nullptr,.source_line=0,.source_column=0};
-    vm->objects=&handle->object;
+    vm->young_objects=&handle->object;
     vm->bytes_allocated+=sizeof(DiamondProgramBuilder)+sizeof(DiamondProgram);
     return handle;
 }
@@ -2690,6 +3027,16 @@ static bool copy_value_into_vm(DiamondVm *dest_vm, DiamondValue value,
                                        adopted_owner,&copy->fields[index])) {
                     gc_unprotect(dest_vm,mark);return false;
                 }
+                /* `copy` is only reachable through gc_protect (not a real
+                 * VM register), but that's still enough for a minor
+                 * collection triggered by a later iteration's own
+                 * recursive copy to see it as a root and promote it --
+                 * this raw field write bypasses DIAMOND_OP_SET_IVAR
+                 * entirely, so it needs its own barrier call each time,
+                 * same as the other raw-field-write sites. */
+                if(!gc_write_barrier(dest_vm,(DiamondObject *)copy)) {
+                    gc_unprotect(dest_vm,mark);return false;
+                }
             }
             /* allocate_instance always starts a fresh instance at
              * class->shapes[0] (nothing "materialized" yet, in the
@@ -2715,17 +3062,16 @@ static bool copy_value_into_vm(DiamondVm *dest_vm, DiamondValue value,
         }
         case DIAMOND_OBJECT_BIGNUM: {
             const DiamondBignum *source=(const DiamondBignum *)value.as.object;
-            if(dest_vm->stress_gc||dest_vm->bytes_allocated>=dest_vm->next_gc)
-                diamond_vm_collect(dest_vm);
+            maybe_collect(dest_vm);
             const size_t size=
                 sizeof(DiamondBignum)+source->limb_count*sizeof(uint32_t);
             DiamondBignum *copy=malloc(size);
             if(copy==nullptr)return false;
-            copy->object=(DiamondObject){.next=dest_vm->objects,
+            copy->object=(DiamondObject){.next=dest_vm->young_objects,
                 .kind=DIAMOND_OBJECT_BIGNUM};
             copy->negative=source->negative;copy->limb_count=source->limb_count;
             memcpy(copy->limbs,source->limbs,source->limb_count*sizeof(uint32_t));
-            dest_vm->objects=&copy->object;dest_vm->bytes_allocated+=size;
+            dest_vm->young_objects=&copy->object;dest_vm->bytes_allocated+=size;
             *out=DIAMOND_OBJECT(copy);return true;
         }
         case DIAMOND_OBJECT_CLOSURE: {
@@ -4561,7 +4907,10 @@ static ptrdiff_t hash_find(const DiamondHash *hash,DiamondValue key) {
 static bool hash_set(DiamondVm *vm,DiamondHash *hash,DiamondValue key,
                      DiamondValue value) {
     const ptrdiff_t existing=hash_find(hash,key);
-    if(existing>=0) {hash->entries[(size_t)existing].value=value;return true;}
+    if(existing>=0) {
+        hash->entries[(size_t)existing].value=value;
+        return gc_write_barrier_index(vm,(DiamondObject *)hash,(size_t)existing);
+    }
     if(hash->count==hash->capacity) {
         const size_t old_capacity=hash->capacity;
         const size_t capacity=old_capacity<8?8:old_capacity*2;
@@ -4585,7 +4934,7 @@ static bool hash_set(DiamondVm *vm,DiamondHash *hash,DiamondValue key,
     size_t slot=(size_t)(key_hash&(hash->bucket_capacity-1));
     while(hash->buckets[slot]!=SIZE_MAX)slot=(slot+1)&(hash->bucket_capacity-1);
     hash->buckets[slot]=new_index;
-    return true;
+    return gc_write_barrier_index(vm,(DiamondObject *)hash,new_index);
 }
 
 static bool is_truthy(DiamondValue value) {
@@ -5994,7 +6343,9 @@ static bool array_push(DiamondVm *vm,DiamondArray *array,DiamondValue value) {
         array->values=values;array->capacity=capacity;
         vm->bytes_allocated+=(capacity-old_capacity)*sizeof(DiamondValue);
     }
-    array->values[array->count++]=value;return true;
+    const size_t new_index=array->count;
+    array->values[array->count++]=value;
+    return gc_write_barrier_index(vm,(DiamondObject *)array,new_index);
 }
 
 static bool hash_entry_satisfies_constraints(DiamondHash *hash,
@@ -6075,7 +6426,16 @@ static bool catch_runtime_error(DiamondVm *vm,const DiamondChunk *chunk,
     vm->exception=DIAMOND_OBJECT(exception);vm->has_exception=true;
     DiamondString *text=allocate_string(vm,message,strlen(message));
     if(text==nullptr)return false;
-    if(exception->field_count>0)exception->fields[0]=DIAMOND_OBJECT(text);
+    if(exception->field_count>0) {
+        exception->fields[0]=DIAMOND_OBJECT(text);
+        /* allocate_string above can itself have triggered a minor
+         * collection that promoted `exception` (reachable via
+         * vm->exception, set just above) before this assignment ran --
+         * this raw field write bypasses DIAMOND_OP_SET_IVAR entirely, so
+         * it needs its own barrier call rather than relying on the
+         * opcode-level one. */
+        if(!gc_write_barrier(vm,(DiamondObject *)exception))return false;
+    }
     /* Only fill in a generic header when vm->error is still empty (no
      * RECORD_ERROR has run yet for this failure, e.g. the origin frame
      * itself is the one with a handler) -- if it already holds the
@@ -8838,6 +9198,12 @@ static void raise_capture_backtrace_helper(DiamondVm *vm,const DiamondChunk *chu
      * `backtrace` itself reachable before any allocation below can
      * trigger a GC -- same pattern String#split uses for its pieces. */
     raised->fields[2]=DIAMOND_OBJECT(backtrace);
+    /* allocate_array above can itself have triggered a minor collection
+     * that promoted `raised` (reachable via vm->exception) before this
+     * assignment ran -- this raw field write bypasses DIAMOND_OP_SET_IVAR
+     * entirely, so it needs its own barrier call rather than relying on
+     * the opcode-level one. */
+    if(!gc_write_barrier(vm,(DiamondObject *)raised))return;
     for(const DiamondFrame *frame=vm->frames;frame!=nullptr;frame=frame->previous) {
         if(frame->chunk==nullptr||frame->instruction_offset==nullptr)continue;
         const char *name=frame->chunk->name!=nullptr?frame->chunk->name:"<chunk>";
@@ -9025,11 +9391,19 @@ static DiamondVmStatus process_run_helper(DiamondVm *vm,
     free(stdout_builder.chars);
     if(stdout_string==nullptr){free(stderr_builder.chars);return DIAMOND_VM_OUT_OF_MEMORY;}
     result->stdout_value=DIAMOND_OBJECT(stdout_string);
+    /* result may have been promoted by a minor collection at any point
+     * while this whole (potentially slow) helper ran with it already
+     * rooted but its fields still nil -- these raw field writes bypass
+     * DIAMOND_OP_SET_IVAR entirely, so each needs its own barrier call. */
+    if(!gc_write_barrier(vm,(DiamondObject *)result)) {
+        free(stderr_builder.chars);return DIAMOND_VM_OUT_OF_MEMORY;
+    }
     DiamondString *stderr_string=allocate_string(vm,
         stderr_builder.chars?stderr_builder.chars:"",stderr_builder.length);
     free(stderr_builder.chars);
     if(stderr_string==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
     result->stderr_value=DIAMOND_OBJECT(stderr_string);
+    if(!gc_write_barrier(vm,(DiamondObject *)result))return DIAMOND_VM_OUT_OF_MEMORY;
     result->exit_code=exit_code;
     return DIAMOND_VM_OK;
 }
@@ -10834,7 +11208,10 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 DiamondValue captured=closure->captures[index];
                 if(captured.kind!=DIAMOND_VALUE_OBJECT||captured.as.object->kind!=DIAMOND_OBJECT_CELL)
                     VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
-                ((DiamondCell *)captured.as.object)->value=registers[source];break;
+                ((DiamondCell *)captured.as.object)->value=registers[source];
+                if(!gc_write_barrier(vm,captured.as.object))
+                    VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                break;
             }
             case DIAMOND_OP_BOX_LOCAL: {
                 uint16_t reg=0;READ_SHORT(reg);
@@ -10854,7 +11231,10 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 uint16_t cell_reg=0,source=0;READ_SHORT(cell_reg);READ_SHORT(source);
                 if(registers[cell_reg].kind!=DIAMOND_VALUE_OBJECT||
                    registers[cell_reg].as.object->kind!=DIAMOND_OBJECT_CELL)VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
-                ((DiamondCell *)registers[cell_reg].as.object)->value=registers[source];break;
+                ((DiamondCell *)registers[cell_reg].as.object)->value=registers[source];
+                if(!gc_write_barrier(vm,registers[cell_reg].as.object))
+                    VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                break;
             }
             case DIAMOND_OP_CALL_CLOSURE: {
                 uint16_t dest=0,callable=0,base=0;uint8_t argc=0;
@@ -12501,6 +12881,15 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     }
                     diamond_fiber_resume(target_fiber,resume_argument);
                     diamond_fiber_run(target_fiber);
+                    /* target_fiber->result/resume_value just mutated above,
+                     * but those live in the DiamondFiber payload struct, not
+                     * a DiamondObject header of their own -- the write
+                     * barrier has to reach back to the owning
+                     * DiamondFiberHandle (registers[recv]'s own object) for
+                     * a promoted fiber to stay correctly remembered. See
+                     * docs/gc-generational-design.md's "sharpest risk". */
+                    if(!gc_write_barrier(vm,registers[recv].as.object))
+                        VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
                     if(target_fiber->status!=DIAMOND_VM_OK&&
                        target_fiber->status!=DIAMOND_VM_YIELDED)
                         VM_PROPAGATE(target_fiber->status);
@@ -12552,6 +12941,17 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                                 VM_RETURN(DIAMOND_VM_TYPE_ERROR);
                             }
                             target_thread->result=copied;
+                            /* target_thread->result lives in the
+                             * DiamondThread payload struct, not a
+                             * DiamondObject header of its own -- the
+                             * barrier has to reach back to the owning
+                             * DiamondThreadHandle (registers[recv]'s own
+                             * object) for a promoted handle to stay
+                             * correctly remembered. */
+                            if(!gc_write_barrier(vm,registers[recv].as.object)) {
+                                pthread_mutex_unlock(&target_thread->join_lock);
+                                VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                            }
                         }
                         target_thread->joined=true;
                     }
@@ -12562,16 +12962,33 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                         DiamondInstance *thread_error=allocate_instance(vm,
                             &chunk->classes[DIAMOND_CLASS_THREAD_ERROR],nullptr);
                         if(thread_error==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                        /* Root immediately, before the allocate_string call
+                         * below can itself trigger a collection -- same
+                         * pattern raise_capture_backtrace_helper's own
+                         * comment documents: thread_error must be
+                         * reachable via vm->exception before any further
+                         * allocation, or a GC in between would sweep it as
+                         * unreferenced garbage. */
+                        vm->exception=DIAMOND_OBJECT(thread_error);
+                        vm->has_exception=true;
                         const char *message=
                             target_thread->child_vm->error[0]!='\0'?
                                 target_thread->child_vm->error:"thread failed";
                         DiamondString *message_string=
                             allocate_string(vm,message,strlen(message));
                         if(message_string==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
-                        if(thread_error->field_count>0)
+                        if(thread_error->field_count>0) {
                             thread_error->fields[0]=DIAMOND_OBJECT(message_string);
-                        vm->exception=DIAMOND_OBJECT(thread_error);
-                        vm->has_exception=true;
+                            /* allocate_string above can itself have
+                             * triggered a minor collection that promoted
+                             * thread_error (now reachable via
+                             * vm->exception) before this assignment ran --
+                             * this raw field write bypasses
+                             * DIAMOND_OP_SET_IVAR entirely, so it needs its
+                             * own barrier call. */
+                            if(!gc_write_barrier(vm,(DiamondObject *)thread_error))
+                                VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                        }
                         if(catch_exception(vm,chunk,handlers,&handler_count,
                                            &pending,registers,&ip))break;
                         snprintf(vm->error,sizeof vm->error,
@@ -13499,6 +13916,8 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                             self->fields[0]=registers[base];
                         if(argc>1&&self->field_count>1)
                             self->fields[1]=registers[(size_t)base+1];
+                        if(!gc_write_barrier(vm,(DiamondObject *)self))
+                            VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
                         registers[dest]=DIAMOND_NIL;
                         break;
                     }
@@ -13544,7 +13963,10 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     instance->shape=cached->output_shape;
                     vm->shape_transitions++;
                 }
-                instance->fields[field]=registers[source];break;
+                instance->fields[field]=registers[source];
+                if(!gc_write_barrier(vm,(DiamondObject *)instance))
+                    VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                break;
             }
             case DIAMOND_OP_GET_IVAR_NAME:
             case DIAMOND_OP_SET_IVAR_NAME: {
@@ -13573,6 +13995,8 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                         vm->shape_transitions++;
                     }
                     instance->fields[field]=registers[source];
+                    if(!gc_write_barrier(vm,(DiamondObject *)instance))
+                        VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
                 } else registers[first]=cached->materialized?
                     instance->fields[field]:DIAMOND_NIL;
                 break;
@@ -14111,6 +14535,9 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     }
                     for(size_t i=0;i<range_length;i++)
                         array->values[range_start+i]=replacement->values[i];
+                    if(!gc_write_barrier_range(vm,(DiamondObject *)array,
+                            range_start,range_length))
+                        VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
                     break;
                 }
                 if(registers[index_register].kind!=DIAMOND_VALUE_INT)
@@ -14128,6 +14555,8 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     VM_RETURN(DIAMOND_VM_TYPE_ERROR);
                 }
                 array->values[(size_t)index]=registers[source];
+                if(!gc_write_barrier_index(vm,(DiamondObject *)array,(size_t)index))
+                    VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
                 break;
             }
             case DIAMOND_OP_HASH: {
