@@ -2325,6 +2325,11 @@ heterogeneous_spread_generic_dump="$(sed -n '/^== tests\/cases\/heterogeneous_sp
 [[ "$(grep -c 'ADD_INT' <<<"$heterogeneous_spread_generic_dump")" == "9" ]]
 [[ "$(grep -cE '  ADD +r' <<<"$heterogeneous_spread_generic_dump")" == "0" ]]
 
+actual="$($diamond --dump-bytecode tests/cases/keyword_spread_context.di)"
+keyword_spread_context_dump="$(sed -n '/^== tests\/cases\/keyword_spread_context.di ==$/,/^== min ==$/p' <<<"$actual")"
+[[ "$(grep -c 'ADD_INT' <<<"$keyword_spread_context_dump")" == "3" ]]
+[[ "$(grep -cE '  ADD +r' <<<"$keyword_spread_context_dump")" == "0" ]]
+
 actual="$($diamond --dump-bytecode tests/cases/generic_union_return_propagation.di)"
 generic_union_return_dump="$(sed -n '/^== tests\/cases\/generic_union_return_propagation.di ==$/,/^== abs ==$/p' <<<"$actual")"
 [[ "$(grep -c 'ADD_INT' <<<"$generic_union_return_dump")" == "1" ]]

@@ -1317,6 +1317,11 @@ The same transient call-site record retains fixed registers and the spread
 insertion index. Prefix registers unify from the start of the parameter list;
 suffix registers unify backward from its effective end. Homogeneous dynamic
 spread inference is limited to the remaining middle interval.
+The dynamic keyword parser publishes the same transient positional record when
+it encounters a spread. Generic inference merges that record with keyword
+registers by slot. Top-level keyword-spread bytecode represents an attached
+block as an additional slot/value pair; method and constructor keyword opcodes
+retain their existing dedicated block operand.
 Statically resolved keyword calls map each supplied name back to the target's
 declared parameter slot and infer from its value before compiling the trailing
 block. Explicit generic arguments remain authoritative and bypass inference.

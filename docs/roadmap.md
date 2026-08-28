@@ -384,6 +384,9 @@ runtime constraint.
 Fixed arguments surrounding a spread now contribute their own generic bindings.
 For a dynamically sized homogeneous spread, element inference is bounded by the
 fixed prefix and suffix rather than being applied to the entire parameter list.
+Keyword-plus-spread calls now retain the same positional context and generic
+bindings across resolved dispatch forms. Keyword values merge by declared slot,
+and a trailing block occupies its own slot even when keywords leave a gap.
 
 ### Ruby-like ergonomics without Ruby compatibility
 

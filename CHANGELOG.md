@@ -50,6 +50,10 @@
 - Included fixed prefix and suffix registers in spread-call generic inference.
   Homogeneous dynamic spread inference now applies only to the positional range
   occupied by the spread, avoiding collisions with fixed-edge bindings.
+- Unified keyword-plus-spread contextual typing and generic inference across
+  resolved function, singleton, instance, and constructor calls. Top-level
+  keyword-spread calls with trailing blocks now encode the block in its declared
+  slot instead of colliding with a keyword-created positional gap.
 - Recursed expected collection contracts through nested Array and Hash literals
   so contextual generic method references resolve at arbitrary literal depth.
 - Stabilized recursive type-graph cloning when the current function's type-set

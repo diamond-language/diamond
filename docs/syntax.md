@@ -627,6 +627,10 @@ Those positions also participate in generic inference. For example,
 Fixed arguments before and after a spread bind their corresponding generic
 parameters as well. A homogeneous non-literal spread contributes only to the
 middle parameter range left between those fixed edges.
+Keywords may follow a spread. Positional spread elements and fixed edges infer
+against their positions, while each keyword infers against its named slot. A
+trailing block remains the final declared parameter rather than filling a gap
+left by a keyword.
 Only dynamically unresolved bound methods remain conservatively untyped.
 Callable unions retain a return fact when all arms agree structurally.
 

@@ -1827,6 +1827,8 @@ static uint16_t parse_expected_argument(Compiler *compiler,
 static uint16_t parse_array_literal(Compiler *compiler,
         const DiamondFunction *expected_function,size_t first_parameter,
         size_t parameter_count);
+static int32_t homogeneous_spread_expectation(Compiler *compiler,
+        const DiamondFunction *target,size_t first,size_t parameter_count);
 
 /* Dynamic keyword targets retain names until runtime lookup identifies the
  * concrete DiamondFunction. Positional values are normalized to one Array,
@@ -1836,6 +1838,13 @@ static uint16_t parse_dynamic_keyword_arguments(Compiler *compiler,
         size_t *keyword_count,const DiamondFunction *target) {
     uint16_t fixed[16];size_t fixed_count=0,spread_index=0;
     uint16_t spread=0;bool saw_spread=false,seen_keyword=false;
+    bool literal_positions=false;size_t literal_first=0,literal_count=0;
+    uint16_t literal_elements[32];
+    compiler->positional_spread_literal=false;
+    compiler->positional_spread_first=0;
+    compiler->positional_spread_count=0;
+    compiler->positional_spread_fixed_count=0;
+    compiler->positional_spread_index=0;
     *keyword_count=0;
     while(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN&&!compiler->failed) {
         DiamondLexer lookahead=compiler->lexer;
@@ -1871,7 +1880,26 @@ static uint16_t parse_dynamic_keyword_arguments(Compiler *compiler,
                 "a call can contain only one spread argument");return 0;}
             saw_spread=true;spread_index=fixed_count;
             advance_token(compiler);skip_newlines(compiler);
-            spread=parse_expression(compiler);
+            if(compiler->current.kind==DIAMOND_TOKEN_LEFT_BRACKET&&
+               target!=nullptr) {
+                advance_token(compiler);
+                spread=parse_array_literal(compiler,target,fixed_count,
+                    target->arity);
+                literal_positions=compiler->positional_spread_literal;
+                literal_first=compiler->positional_spread_first;
+                literal_count=compiler->positional_spread_count;
+                for(size_t index=0;index<literal_count;index++)
+                    literal_elements[index]=
+                        compiler->positional_spread_elements[index];
+            } else {
+                const int32_t outer_expected=
+                    compiler->expected_expression_type_set;
+                compiler->expected_expression_type_set=
+                    homogeneous_spread_expectation(compiler,target,
+                        fixed_count,target==nullptr?0:target->arity);
+                spread=parse_expression(compiler);
+                compiler->expected_expression_type_set=outer_expected;
+            }
         } else {
             if(seen_keyword) {fail(compiler,compiler->current.span,
                 "positional argument cannot follow a keyword argument");return 0;}
@@ -1889,7 +1917,22 @@ static uint16_t parse_dynamic_keyword_arguments(Compiler *compiler,
         fail(compiler,compiler->current.span,"expected ')' after arguments");return 0;
     }
     advance_token(compiler);
-    if(!saw_spread)return emit_argument_array(compiler,fixed,fixed_count);
+    if(!saw_spread) {
+        compiler->positional_spread_fixed_count=fixed_count;
+        compiler->positional_spread_index=fixed_count;
+        for(size_t index=0;index<fixed_count;index++)
+            compiler->positional_spread_fixed[index]=fixed[index];
+        return emit_argument_array(compiler,fixed,fixed_count);
+    }
+    compiler->positional_spread_literal=literal_positions;
+    compiler->positional_spread_first=literal_first;
+    compiler->positional_spread_count=literal_count;
+    for(size_t index=0;index<literal_count;index++)
+        compiler->positional_spread_elements[index]=literal_elements[index];
+    compiler->positional_spread_fixed_count=fixed_count;
+    compiler->positional_spread_index=spread_index;
+    for(size_t index=0;index<fixed_count;index++)
+        compiler->positional_spread_fixed[index]=fixed[index];
     return emit_build_spread_arguments(compiler,fixed,spread_index,spread,
         fixed+spread_index,fixed_count-spread_index,false);
 }
@@ -2531,10 +2574,14 @@ static size_t infer_contextual_spread_arguments(Compiler *compiler,
     const size_t fixed_count=compiler->positional_spread_fixed_count;
     const size_t suffix_count=fixed_count>prefix_count?
         fixed_count-prefix_count:0;
-    if(suffix_count<=parameter_count)
+    const size_t suffix_start=compiler->positional_spread_literal?
+        prefix_count+compiler->positional_spread_count:
+        parameter_count>=suffix_count?parameter_count-suffix_count:
+            parameter_count;
+    if(suffix_start+suffix_count<=parameter_count)
         for(size_t index=0;index<suffix_count;index++)
             infer_contextual_argument(compiler,target,
-                parameter_count-suffix_count+index,
+                suffix_start+index,
                 compiler->positional_spread_fixed[prefix_count+index],
                 bindings);
     if(compiler->positional_spread_literal) {
@@ -2836,8 +2883,16 @@ static uint16_t parse_call(Compiler *compiler, DiamondSpan name) {
             const uint16_t block=compile_contextual_typed_block(compiler,
                 function,function->arity==0?0:function->arity-1,
                 resolved_arguments,resolved_count);
-            array_register=emit_build_spread_arguments(compiler,nullptr,0,
-                array_register,&block,1,false);
+            if(keyword_count>0) {
+                if(keyword_count==16) {
+                    fail(compiler,compiler->previous.span,
+                        "too many keyword arguments");return 0;
+                }
+                keyword_slots[keyword_count]=(uint8_t)(function->arity-1);
+                keyword_registers[keyword_count]=block;
+                keyword_count++;
+            } else array_register=emit_build_spread_arguments(compiler,
+                nullptr,0,array_register,&block,1,false);
         }
         const uint16_t destination=allocate_register(compiler);
         emit_opcode(compiler,keyword_count==0?
@@ -3340,11 +3395,15 @@ static uint16_t parse_singleton_call(Compiler *compiler,
         const uint16_t positional=parse_dynamic_keyword_arguments(compiler,
             keyword_names,keyword_values,&keyword_count,function);
         uint16_t inferred_arguments[8];
-        for(size_t index=0;index<8;index++)
-            inferred_arguments[index]=DIAMOND_NO_TYPE_SET;
-        if(type_argument_count==0)
+        if(type_argument_count==0) {
+            const size_t block_count=
+                compiler->current.kind==DIAMOND_TOKEN_DO?1u:0u;
+            infer_contextual_spread_arguments(compiler,function,positional,
+                method->arity>block_count?method->arity-block_count:0,
+                inferred_arguments);
             infer_contextual_keyword_arguments(compiler,function,
                 keyword_names,keyword_values,keyword_count,inferred_arguments);
+        }
         const uint16_t *resolved_arguments=type_argument_count>0?
             type_arguments:inferred_arguments;
         const size_t resolved_count=type_argument_count>0?
@@ -5157,8 +5216,9 @@ static uint16_t parse_name(Compiler *compiler) {
             bool has_block=false;uint16_t block=0;
             if(compiler->current.kind==DIAMOND_TOKEN_DO) {
                 uint16_t inferred_arguments[8];
-                for(size_t index=0;index<8;index++)
-                    inferred_arguments[index]=DIAMOND_NO_TYPE_SET;
+                infer_contextual_spread_arguments(compiler,initializer,
+                    positional,initializer==nullptr||initializer->arity<=1?0:
+                        initializer->arity-2,inferred_arguments);
                 infer_contextual_keyword_arguments(compiler,initializer,
                     keyword_names,keyword_values,keyword_count,
                     inferred_arguments);
@@ -5901,11 +5961,17 @@ static uint16_t parse_invoke(Compiler *compiler, uint16_t receiver) {
         const uint16_t positional=parse_dynamic_keyword_arguments(compiler,
             keyword_names,keyword_values,&keyword_count,contextual_target);
         uint16_t inferred_arguments[8];
-        for(size_t index=0;index<8;index++)
-            inferred_arguments[index]=DIAMOND_NO_TYPE_SET;
-        if(type_argument_count==0)
+        if(type_argument_count==0) {
+            const size_t block_count=
+                compiler->current.kind==DIAMOND_TOKEN_DO?1u:0u;
+            const size_t parameter_count=contextual_target==nullptr?0:
+                contextual_target->arity>block_count?
+                    contextual_target->arity-block_count:0;
+            infer_contextual_spread_arguments(compiler,contextual_target,
+                positional,parameter_count,inferred_arguments);
             infer_contextual_keyword_arguments(compiler,contextual_target,
                 keyword_names,keyword_values,keyword_count,inferred_arguments);
+        }
         const uint16_t *resolved_arguments=type_argument_count>0?
             type_arguments:inferred_arguments;
         const size_t resolved_count=type_argument_count>0?
