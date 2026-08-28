@@ -847,6 +847,45 @@ count=$((count + 1))
 send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$union_return_uri"'"}}}'
 read_message >/dev/null
 
+# --- native collection relays retain joined union element graphs ---
+
+collection_relay_uri="file:///collection_relay_hover.di"
+collection_relay_source='def inspect(arrays: Array[Int] | Array[String], hashes: Hash[String, Int] | Hash[Symbol, String])
+  first = arrays.first()
+  first
+  reversed = arrays.reverse()
+  reversed
+  keys = hashes.keys()
+  keys
+  values = hashes.values()
+  values
+end'
+send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$collection_relay_uri"'","text":"'"$collection_relay_source"'"}}}'
+read_message >/dev/null
+
+send '{"jsonrpc":"2.0","id":179,"method":"textDocument/hover","params":{"textDocument":{"uri":"'"$collection_relay_uri"'"},"position":{"line":2,"character":4}}}'
+response="$(read_message)"
+[[ "$response" == *'"value":"Int | String"'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","id":180,"method":"textDocument/hover","params":{"textDocument":{"uri":"'"$collection_relay_uri"'"},"position":{"line":4,"character":5}}}'
+response="$(read_message)"
+[[ "$response" == *'"value":"Array[Int | String]"'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","id":181,"method":"textDocument/hover","params":{"textDocument":{"uri":"'"$collection_relay_uri"'"},"position":{"line":6,"character":3}}}'
+response="$(read_message)"
+[[ "$response" == *'"value":"Array[String | Symbol]"'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","id":182,"method":"textDocument/hover","params":{"textDocument":{"uri":"'"$collection_relay_uri"'"},"position":{"line":8,"character":5}}}'
+response="$(read_message)"
+[[ "$response" == *'"value":"Array[Int | String]"'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$collection_relay_uri"'"}}}'
+read_message >/dev/null
+
 # --- heterogeneous spread literals bind generic result positions ---
 
 spread_generic_uri="file:///spread_generic_hover.di"

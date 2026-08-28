@@ -5717,6 +5717,67 @@ static void publish_union_instance_return_type(Compiler *compiler,uint16_t reg,
     publish_known_type_set(compiler,reg,(uint16_t)joined);
 }
 
+/* Native Array/Hash extension dispatch is resolved by the VM rather than an
+ * instance signature, so its result cannot use the declared-return path above.
+ * Preserve the receiver's nested collection graphs for the small family whose
+ * result is structurally determined without inspecting arguments or blocks. */
+static void publish_collection_method_return_type(Compiler *compiler,
+        uint16_t reg,int32_t receiver_set_index,DiamondSpan name) {
+    if(receiver_set_index<0||
+       (size_t)receiver_set_index>=compiler->function->type_set_count)return;
+    const DiamondTypeSet receiver=
+        compiler->function->type_sets[(size_t)receiver_set_index];
+    if(receiver.count==0)return;
+    uint8_t collection_type=TYPE_UNKNOWN;
+    uint16_t first_arguments[DIAMOND_MAX_UNION_TYPES];
+    uint16_t second_arguments[DIAMOND_MAX_UNION_TYPES];
+    for(size_t index=0;index<receiver.count;index++) {
+        const DiamondTypeMember member=receiver.members[index];
+        if(member.id!=DIAMOND_TYPE_ARRAY&&member.id!=DIAMOND_TYPE_HASH)return;
+        if(collection_type==TYPE_UNKNOWN)collection_type=member.id;
+        else if(collection_type!=member.id)return;
+        if(member.argument_set==DIAMOND_NO_TYPE_SET)return;
+        first_arguments[index]=member.argument_set;
+        second_arguments[index]=member.second_argument_set;
+        if(member.id==DIAMOND_TYPE_HASH&&
+           member.second_argument_set==DIAMOND_NO_TYPE_SET)return;
+    }
+    int32_t first=-1,second=-1;
+    for(size_t index=0;index<receiver.count;index++) {
+        first=first<0?(int32_t)first_arguments[index]:
+            join_type_set_indices(compiler,first,(int32_t)first_arguments[index]);
+        if(first<0)return;
+        if(collection_type==DIAMOND_TYPE_HASH) {
+            second=second<0?(int32_t)second_arguments[index]:
+                join_type_set_indices(compiler,second,
+                    (int32_t)second_arguments[index]);
+            if(second<0)return;
+        }
+    }
+    if(collection_type==DIAMOND_TYPE_ARRAY) {
+        if(name_equals(compiler,"first",name,false)||
+           name_equals(compiler,"last",name,false)) {
+            publish_known_type_set(compiler,reg,(uint16_t)first);return;
+        }
+        if(name_equals(compiler,"reverse",name,false)||
+           name_equals(compiler,"uniq",name,false)||
+           name_equals(compiler,"compact",name,false)||
+           name_equals(compiler,"sort",name,false)||
+           name_equals(compiler,"sort_by",name,false)||
+           name_equals(compiler,"select",name,false)||
+           name_equals(compiler,"reject",name,false)||
+           name_equals(compiler,"take",name,false)||
+           name_equals(compiler,"drop",name,false))
+            record_collection_type_set(compiler,reg,DIAMOND_TYPE_ARRAY,
+                first,-1);
+        return;
+    }
+    if(name_equals(compiler,"keys",name,false))
+        record_collection_type_set(compiler,reg,DIAMOND_TYPE_ARRAY,first,-1);
+    else if(name_equals(compiler,"values",name,false))
+        record_collection_type_set(compiler,reg,DIAMOND_TYPE_ARRAY,second,-1);
+}
+
 static void publish_instance_return_type(Compiler *compiler,uint16_t reg,
         int32_t receiver_set_index,DiamondSpan name,
         const DiamondFunction *matching_target,const uint16_t *bindings,
@@ -5726,6 +5787,7 @@ static void publish_instance_return_type(Compiler *compiler,uint16_t reg,
             binding_count);
     else publish_union_instance_return_type(compiler,reg,receiver_set_index,
         name,bindings,binding_count);
+    publish_collection_method_return_type(compiler,reg,receiver_set_index,name);
 }
 
 /* `receiver.method` -- a capturing, variadic Callable whose single captured

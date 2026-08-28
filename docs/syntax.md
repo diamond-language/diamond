@@ -600,6 +600,11 @@ its generic result only when all candidate implementations declare matching
 signatures. Structurally identical returns reuse one graph; divergent declared
 returns form a safe union. Indexing a union of typed Arrays joins its element
 graphs, while indexing a typed Hash union joins its value graphs with `Nil`.
+Native collection relays preserve these facts too. Array `first` and `last`
+produce the joined element type; `reverse`, `uniq`, `compact`, `sort`,
+`sort_by`, `select`, `reject`, `take`, and `drop` preserve it inside an Array.
+Hash `keys` and `values` produce Arrays containing the joined key and value
+types respectively.
 
 A fixed-arity bound method reference such as `object.convert` retains its
 declared parameter and return contract. Explicit generic references such as

@@ -26,6 +26,10 @@
 
 ## Language
 
+- Propagated joined element graphs through native collection relays on typed
+  union receivers. `Array#first`, `last`, `reverse`, `uniq`, `compact`, `sort`,
+  `sort_by`, `select`, `reject`, `take`, and `drop` now retain their element
+  facts; `Hash#keys` and `values` produce arrays with joined key/value facts.
 - Constructed safe input unions for Callable-union trailing blocks when no
   existing declared supertype can accept every arm, while retaining the
   conservative existing-subtype rule for return context.

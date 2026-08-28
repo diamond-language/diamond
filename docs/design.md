@@ -415,6 +415,14 @@ class fact. Indexing `Array[T]` produces `T`; indexing `Hash[K, V]` produces
 recursive union/subtype checks, eliminating redundant return guards while
 rejecting a hash lookup used where a non-nil value is required.
 
+Native collection extensions have no instance signature for the ordinary
+declared-return path to inspect. The compiler therefore models methods whose
+result follows from the receiver alone. Array `first`/`last` publish the joined
+element graph; element-preserving filters, ordering operations, and slices
+publish `Array[joined elements]`; Hash `keys` and `values` publish arrays of the
+joined key or value graph. Argument- and callback-dependent transforms remain
+dynamic until call arguments can participate in the same native-method model.
+
 Statically resolved top-level, singleton, and instance-method calls publish a
 target's declared return graph onto their destination register.
 The caller owns a structural clone of that graph, so nested Array, Hash,
