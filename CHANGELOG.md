@@ -26,6 +26,10 @@
 
 ## Language
 
+- Seeded anonymous-block and nested-definition capture Cells with cloned outer
+  collection graphs, then conservatively propagated compiled mutation results
+  back into the enclosing function. Downstream typed calls now eliminate their
+  guards after Array/Hash mutations performed inside either closure form.
 - Propagated collection mutation facts back to directly referenced boxed local
   registers. Locals captured by nested closures now retain fixed/keyword
   `push` and indexed Array/Hash widening after the runtime receiver is loaded

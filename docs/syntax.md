@@ -621,6 +621,9 @@ If a write is dynamically typed or would exceed the eight-member union ceiling,
 the nested fact is discarded while the outer Array/Hash kind remains known.
 The same widening applies when a directly referenced local has been boxed by a
 nested closure; later reads of that captured local retain the updated graph.
+Mutations written inside anonymous blocks or nested definitions also widen the
+enclosing local conservatively, whether or not later control flow invokes the
+closure.
 
 A fixed-arity bound method reference such as `object.convert` retains its
 declared parameter and return contract. Explicit generic references such as

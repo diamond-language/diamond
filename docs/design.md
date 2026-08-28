@@ -349,6 +349,12 @@ retain the boxed source register alongside the temporary runtime value loaded
 from its Cell. Mutation facts are written back to that source register, so later
 reads and LSP positions observe the widened Array/Hash graph without changing
 Cell bytecode semantics.
+When compiling an anonymous block or nested definition, captured collection
+graphs are cloned into that function's private type-set table and attached to
+its materialized capture Cells. After the body is compiled, mutated graphs are
+cloned back into the outer function. Mutation widening always retains the old
+arms, so applying this possible post-state before a closure is invoked remains
+conservative when control flow later skips the invocation entirely.
 
 Functions and methods may declare scoped type variables after their names, as
 in `def pair[K, V](key: K, value: V) -> Hash[K, V]`. Each compiled function

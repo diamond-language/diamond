@@ -401,8 +401,14 @@ that the bounded union ceiling clears the nested fact.
 Direct boxed-local mutation propagation is now implemented. The parser retains
 the source Cell register for fixed/keyword `push`, indexed assignment, and
 compound indexed assignment, then records the widened graph there. Mutation
-performed inside a separately compiled closure and general alias identity remain
-the next ownership problems; neither can be inferred from one caller register.
+through a separately named alias remains an object-identity problem that cannot
+be inferred from one caller register.
+Mutation inside anonymous blocks and nested definitions now crosses compiler
+frame boundaries. Capture graphs are cloned into the nested table and widened
+post-states are cloned back, allowing downstream typed calls to elide guards.
+Nested-definition LSP hover exposes the result; anonymous-block outer hover
+timeline publication remains queued even though downstream compilation already
+consumes the propagated graph.
 
 Expected collection graphs now recurse through nested Array and Hash literals.
 Array elements and Hash keys/values compile against their respective declared

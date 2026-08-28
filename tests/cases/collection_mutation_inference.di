@@ -48,3 +48,34 @@ end
 captured_result = captured_mutation()
 puts(captured_result[0])
 puts(captured_result[1])
+
+def block_mutation()
+  items = []
+  entries = {}
+  [42].each() do |value|
+    items.push(value)
+    items.push(value: "block")
+    entries["answer"] = value
+    entries[:label] = "block"
+  end
+  [accept_items(items)[1], accept_hash(entries)[:label]]
+end
+block_result = block_mutation()
+puts(block_result[0])
+puts(block_result[1])
+
+def nested_mutation()
+  items = []
+  entries = {}
+  def mutate_captures()
+    items.push(42)
+    items.push(value: "nested")
+    entries["answer"] = 42
+    entries[:label] = "nested"
+  end
+  mutate_captures()
+  [accept_items(items)[1], accept_hash(entries)[:label]]
+end
+nested_result = nested_mutation()
+puts(nested_result[0])
+puts(nested_result[1])
