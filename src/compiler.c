@@ -5737,7 +5737,8 @@ typedef enum CollectionRelay {
     COLLECTION_RELAY_FETCH,
     COLLECTION_RELAY_MERGE,
     COLLECTION_RELAY_MAP_VALUES,
-    COLLECTION_RELAY_PUSH
+    COLLECTION_RELAY_PUSH,
+    COLLECTION_RELAY_SUM
 } CollectionRelay;
 
 typedef struct CollectionRelayContract {
@@ -5774,7 +5775,8 @@ static CollectionRelay collection_relay(const Compiler *compiler,
         {"group_by",COLLECTION_RELAY_GROUP_BY},{"zip",COLLECTION_RELAY_ZIP},
         {"tally",COLLECTION_RELAY_TALLY},{"fetch",COLLECTION_RELAY_FETCH},
         {"merge",COLLECTION_RELAY_MERGE},
-        {"map_values",COLLECTION_RELAY_MAP_VALUES},{"push",COLLECTION_RELAY_PUSH}
+        {"map_values",COLLECTION_RELAY_MAP_VALUES},{"push",COLLECTION_RELAY_PUSH},
+        {"sum",COLLECTION_RELAY_SUM}
     };
     for(size_t index=0;index<sizeof contracts/sizeof contracts[0];index++)
         if(name_equals(compiler,contracts[index].name,name,false))
@@ -5821,6 +5823,27 @@ static void publish_collection_method_return_type(Compiler *compiler,
         }
     }
     if(collection_type==DIAMOND_TYPE_ARRAY) {
+        if(relay==COLLECTION_RELAY_SUM) {
+            const DiamondTypeSet *elements=
+                &compiler->function->type_sets[(size_t)first];
+            bool has_float=false;
+            for(size_t index=0;index<elements->count;index++) {
+                const uint8_t type=elements->members[index].id;
+                if(type==DIAMOND_TYPE_FLOAT)has_float=true;
+                else if(type!=DIAMOND_TYPE_INT)return;
+            }
+            const uint16_t integer=concrete_type_set(compiler,DIAMOND_TYPE_INT);
+            if(integer==DIAMOND_NO_TYPE_SET)return;
+            int32_t result=(int32_t)integer;
+            if(has_float) {
+                const uint16_t floating=
+                    concrete_type_set(compiler,DIAMOND_TYPE_FLOAT);
+                if(floating==DIAMOND_NO_TYPE_SET)return;
+                result=join_type_set_indices(compiler,result,(int32_t)floating);
+            }
+            if(result>=0)publish_known_type_set(compiler,reg,(uint16_t)result);
+            return;
+        }
         if(relay==COLLECTION_RELAY_ELEMENT) {
             publish_known_type_set(compiler,reg,(uint16_t)first);return;
         }

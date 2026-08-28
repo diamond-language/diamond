@@ -381,9 +381,9 @@ roles without positional shape metadata.
 Scalar native relays are now modeled as well: extrema retain the element graph,
 search and destructive reads add `Nil`, and callback unions feed joined return
 graphs into transforms. `zip` now models short-input padding rather than
-publishing an unsafely non-null pair element. Aggregate arithmetic such as
-`sum` remains dynamic because its result follows repeated operator dispatch,
-not the collection element graph alone.
+publishing an unsafely non-null pair element. `sum` now models closed Int/Float
+graphs, including the empty-array integer-zero path; element graphs admitting
+overloaded dispatch remain dynamic.
 Collection mutation facts now widen across fixed/keyword `push`, indexed
 assignment, and compound indexed assignment. Empty local collections acquire
 their first nested graph from a known write, and direct lexical receivers expose
@@ -394,7 +394,7 @@ Unknown and over-capacity writes now degrade direct receiver facts to an
 unparameterized Array or Hash instead of retaining stale nested unions. The LSP
 reports no structural local hover after that invalidation. Alias-wide handling
 remains the separate object-identity problem described above.
-Native collection relay classification is now consolidated into one 36-method
+Native collection relay classification is now consolidated into one 37-method
 contract table. Receiver, argument, keyword, callback, and mutation phases share
 those categories. An explicit eight-to-nine-arm mutation regression verifies
 that the bounded union ceiling clears the nested fact.

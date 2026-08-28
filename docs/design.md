@@ -360,6 +360,11 @@ graphs from their receiver. Array callbacks receive the element graph,
 `each_with_index` adds an `Int` index, and Hash callbacks receive key/value
 graphs. This metadata affects compilation and tooling only; runtime dispatch
 and callback arity checks are unchanged.
+Numeric `Array#sum` inference models its concrete zero accumulator and repeated
+built-in addition. An Int-only element graph returns Int. A graph containing
+Float returns `Int | Float`, retaining both the empty result and non-empty
+promotion path. Any overloadable or otherwise dynamic element arm disables the
+relay.
 
 Functions and methods may declare scoped type variables after their names, as
 in `def pair[K, V](key: K, value: V) -> Hash[K, V]`. Each compiled function

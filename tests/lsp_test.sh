@@ -954,9 +954,20 @@ collection_scalar_source='def inspect(arrays: Array[Int] | Array[String], mapper
   zipped
   mapped = arrays.map(mapper)
   mapped
+  int_sum = [1, 2].sum()
+  int_sum
+  float_sum = [1.5, 2.5].sum()
+  float_sum
+  mixed_sum = [1, 2.5].sum()
+  mixed_sum
 end'
 send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$collection_scalar_uri"'","text":"'"$collection_scalar_source"'"}}}'
 read_message >/dev/null
+
+send '{"jsonrpc":"2.0","id":189,"method":"textDocument/hover","params":{"textDocument":{"uri":"'"$collection_scalar_uri"'"},"position":{"line":2,"character":3}}}'
+response="$(read_message)"
+[[ "$response" == *'"value":"Int | String"'* ]]
+count=$((count + 1))
 
 send '{"jsonrpc":"2.0","id":190,"method":"textDocument/hover","params":{"textDocument":{"uri":"'"$collection_scalar_uri"'"},"position":{"line":6,"character":3}}}'
 response="$(read_message)"
@@ -971,6 +982,21 @@ count=$((count + 1))
 send '{"jsonrpc":"2.0","id":192,"method":"textDocument/hover","params":{"textDocument":{"uri":"'"$collection_scalar_uri"'"},"position":{"line":10,"character":4}}}'
 response="$(read_message)"
 [[ "$response" == *'"value":"Array[String | Symbol]"'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","id":209,"method":"textDocument/hover","params":{"textDocument":{"uri":"'"$collection_scalar_uri"'"},"position":{"line":12,"character":4}}}'
+response="$(read_message)"
+[[ "$response" == *'"value":"Int"'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","id":210,"method":"textDocument/hover","params":{"textDocument":{"uri":"'"$collection_scalar_uri"'"},"position":{"line":14,"character":4}}}'
+response="$(read_message)"
+[[ "$response" == *'"value":"Int | Float"'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","id":211,"method":"textDocument/hover","params":{"textDocument":{"uri":"'"$collection_scalar_uri"'"},"position":{"line":16,"character":4}}}'
+response="$(read_message)"
+[[ "$response" == *'"value":"Int | Float"'* ]]
 count=$((count + 1))
 
 send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$collection_scalar_uri"'"}}}'

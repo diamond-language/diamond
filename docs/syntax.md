@@ -627,6 +627,9 @@ closure.
 Native collection blocks infer their parameter graphs from the receiver:
 Array element callbacks, `each_with_index` element/index callbacks, and Hash
 key/value callbacks expose those types to the body and editor hover.
+`Array#sum` retains an `Int` result for Int elements and `Int | Float` for
+numeric graphs containing Float. Other element graphs remain dynamic because
+their repeated `+` dispatch may be overloaded.
 
 A fixed-arity bound method reference such as `object.convert` retains its
 declared parameter and return contract. Explicit generic references such as

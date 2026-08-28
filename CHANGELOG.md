@@ -26,6 +26,9 @@
 
 ## Language
 
+- Inferred `Array#sum` results for closed numeric element graphs. Int-only
+  arrays remain `Int`; arrays admitting Float produce `Int | Float` to retain
+  the empty-array integer-zero path.
 - Derived native collection trailing-block parameter graphs from the receiver.
   Array callbacks receive element types, `each_with_index` receives an `Int`
   index, and Hash callbacks receive key/value types, including LSP hover facts.
