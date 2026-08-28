@@ -862,11 +862,61 @@ typedef struct DiamondFiberQueue {
 } DiamondFiberQueue;
 
 struct DiamondVm {
-    DiamondObject *objects;
+    /* The nursery -- every allocate_* helper always links a fresh object
+     * here (never onto old_objects directly). bytes_allocated/next_gc
+     * are unchanged in meaning from the pre-generational collector:
+     * total live bytes across *both* generations, driving the existing
+     * doubling major-collection threshold (major collection walks both
+     * lists, exactly as before this field split). */
+    DiamondObject *young_objects;
+    DiamondObject *old_objects;
     size_t bytes_allocated;
     size_t next_gc;
+    /* Nursery threshold: minor collection triggers once bytes_allocated
+     * has grown by at least this many bytes since the last minor-or-
+     * major collection (a snapshot/delta, not a separately-incremented
+     * running counter -- every allocate_* site already bumps
+     * bytes_allocated, and nothing but allocation ever *grows* it
+     * between collections, so the delta against a snapshot recorded at
+     * the end of the last collection is exactly "how much new stuff was
+     * allocated since then," with no need to touch every allocation
+     * site a second time). Fixed, not doubling like next_gc -- a
+     * nursery should stay small and cheap to keep minor collections
+     * frequent, unlike the major threshold, which deliberately grows
+     * with the live set to avoid re-collecting a large heap too often.
+     * Starting value chosen to be tuned against bench/gc_churn once
+     * card marking lands, not picked and left unmeasured. */
+    size_t bytes_allocated_at_last_minor_gc;
+    size_t minor_gc_threshold_bytes;
+    /* Every old object with at least one recorded old->young pointer
+     * (DiamondObject.remembered tracks membership to avoid duplicates --
+     * see that field's own comment). A minor collection's root set is
+     * the ordinary root walk *plus* every entry here; see
+     * gc_write_barrier and diamond_vm_collect_minor (src/vm.c). Grows
+     * like any other dynamic array in this codebase (gc_protected is
+     * the closest existing precedent) -- entries are removed only when
+     * their own object dies (filtered by `marked` during a major
+     * collection's sweep, *before* sweeping -- see that function's own
+     * comment on why the ordering matters), never just because nothing
+     * young is reachable through them *right now*: an old object that
+     * received an old->young write once might still transitively reach
+     * a young object through an unmarked-dirty part of itself, and
+     * re-deriving that safely is exactly what staying in the remembered
+     * set for the object's whole lifetime avoids needing to reason
+     * about. */
+    DiamondObject **remembered_set;
+    size_t remembered_count;
+    size_t remembered_capacity;
     void *frames;
     bool stress_gc;
+    /* DIAMOND_STRESS_MINOR_GC (src/run_source.c) -- forces a minor
+     * collection before every eligible allocation, the nursery-scoped
+     * counterpart to stress_gc above. Exists specifically to catch
+     * missing write-barrier sites: a young object reachable only
+     * through an old object's own unrecorded pointer looks fine under
+     * infrequent, ordinary collection timing and only reliably breaks
+     * under aggressive minor-collection pressure. */
+    bool stress_minor_gc;
     /* Set once, in diamond_vm_run, to whichever chunk this vm was first
      * invoked with -- the "home" chunk for every ordinary instance this
      * vm ever allocates (DiamondInstance.owner==nullptr means "belongs to
@@ -887,7 +937,11 @@ struct DiamondVm {
     const DiamondChunk *root_chunk;
     /* Direct GC-cost evidence (DIAMOND_TRACE_GC, src/run_source.c) --
      * collection count and total wall time spent inside
-     * diamond_vm_collect, timed via CLOCK_MONOTONIC. Added so a future
+     * diamond_vm_collect/diamond_vm_collect_minor, timed via
+     * CLOCK_MONOTONIC, split by generation (this is exactly the
+     * distinction bench/gc_churn's own measurements needed to show the
+     * generational collector's actual cost profile -- many cheap minor
+     * collections against few expensive major ones). Added so a future
      * investigation of docs/roadmap.md's "Generational or incremental
      * GC" item can measure real-walk cost directly instead of inferring
      * it from external RSS sampling under live network load, which
@@ -901,8 +955,10 @@ struct DiamondVm {
      * wired up to anything a live burn-in run can read; that's a
      * separate, not-yet-designed follow-up, not something this addition
      * attempts. */
-    size_t gc_collection_count;
-    double gc_total_seconds;
+    size_t gc_major_collection_count;
+    double gc_major_total_seconds;
+    size_t gc_minor_collection_count;
+    double gc_minor_total_seconds;
     DiamondMethodCache method_caches[DIAMOND_INLINE_CACHE_COUNT];
     DiamondFieldCache field_caches[DIAMOND_INLINE_CACHE_COUNT];
     size_t inline_cache_hits;
@@ -1041,6 +1097,7 @@ struct DiamondVm {
 void diamond_vm_init(DiamondVm *vm);
 void diamond_vm_free(DiamondVm *vm);
 void diamond_vm_collect(DiamondVm *vm);
+void diamond_vm_collect_minor(DiamondVm *vm);
 /* The collection-trigger check every allocate_* helper makes before
  * actually allocating (src/vm.c) -- declared here, not static, so
  * src/bignum.c's own bignum_alloc (a separate translation unit) can

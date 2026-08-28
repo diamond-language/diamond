@@ -187,11 +187,11 @@ static DiamondBignum *bignum_alloc(DiamondVm *vm, bool negative,
     DiamondBignum *bignum =
         malloc(sizeof(DiamondBignum) + limb_count * sizeof(uint32_t));
     if (bignum == nullptr) return nullptr;
-    bignum->object = (DiamondObject){.next = vm->objects, .kind = DIAMOND_OBJECT_BIGNUM};
+    bignum->object = (DiamondObject){.next = vm->young_objects, .kind = DIAMOND_OBJECT_BIGNUM};
     bignum->negative = negative;
     bignum->limb_count = limb_count;
     memcpy(bignum->limbs, limbs, limb_count * sizeof(uint32_t));
-    vm->objects = &bignum->object;
+    vm->young_objects = &bignum->object;
     vm->bytes_allocated += sizeof(DiamondBignum) + limb_count * sizeof(uint32_t);
     return bignum;
 }

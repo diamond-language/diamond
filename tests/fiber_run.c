@@ -392,7 +392,7 @@ int main(void) {
     DiamondVm sweep_vm;diamond_vm_init(&sweep_vm);
     /* diamond_vm_init no longer leaves a fresh vm's object list empty --
      * populate_default_argv_env (added by the ARGV/ENV commit) always
-     * seeds vm->objects with the real environment's Hash/Array/String
+     * seeds vm->young_objects with the real environment's Hash/Array/String
      * objects, all reachable via vm->env_value/argv_value roots. This
      * test only cares whether the *fiber handle itself* -- prepended in
      * front of that chain below, deliberately left unrooted -- gets
@@ -403,15 +403,15 @@ int main(void) {
      * population became unconditional, and silently broke this
      * assertion without anyone noticing until CI actually got far
      * enough to run this test again). */
-    DiamondObject *before_fiber=sweep_vm.objects;
+    DiamondObject *before_fiber=sweep_vm.young_objects;
     DiamondFiber *sweep_fiber=diamond_fiber_new(nullptr);
     DiamondFiberHandle *sweep_handle=malloc(sizeof *sweep_handle);
     if(sweep_fiber==nullptr||sweep_handle==nullptr)return 71;
-    *sweep_handle=(DiamondFiberHandle){.object={.next=sweep_vm.objects,.kind=DIAMOND_OBJECT_FIBER},
+    *sweep_handle=(DiamondFiberHandle){.object={.next=sweep_vm.young_objects,.kind=DIAMOND_OBJECT_FIBER},
         .fiber=sweep_fiber};
-    sweep_vm.objects=&sweep_handle->object;
+    sweep_vm.young_objects=&sweep_handle->object;
     diamond_vm_collect(&sweep_vm);
-    if(sweep_vm.objects!=before_fiber)return 72;
+    if(sweep_vm.young_objects!=before_fiber)return 72;
     diamond_vm_free(&sweep_vm);
 
     static const DiamondStringConstant survive_strings[]={{.chars="fiber-survives-gc",.length=18}};
@@ -428,22 +428,22 @@ int main(void) {
        diamond_fiber_resume(survive_fiber,DIAMOND_NIL)!=DIAMOND_FIBER_OK||
        diamond_fiber_run(survive_fiber)!=DIAMOND_FIBER_OK||
        survive_fiber->state!=DIAMOND_FIBER_SUSPENDED)return 73;
-    *survive_handle=(DiamondFiberHandle){.object={.next=survive_vm.objects,.kind=DIAMOND_OBJECT_FIBER},
+    *survive_handle=(DiamondFiberHandle){.object={.next=survive_vm.young_objects,.kind=DIAMOND_OBJECT_FIBER},
         .fiber=survive_fiber};
-    survive_vm.objects=&survive_handle->object;
+    survive_vm.young_objects=&survive_handle->object;
     survive_vm.has_exception=true;
     survive_vm.exception=(DiamondValue){.kind=DIAMOND_VALUE_OBJECT,.as.object=&survive_handle->object};
     diamond_vm_collect(&survive_vm);
     survive_vm.has_exception=false;
     bool handle_survived=false;
-    for(DiamondObject *object=survive_vm.objects;object!=nullptr;object=object->next)
+    for(DiamondObject *object=survive_vm.young_objects;object!=nullptr;object=object->next)
         if(object==&survive_handle->object)handle_survived=true;
     if(!handle_survived)return 74;
     DiamondValue survive_result=diamond_fiber_result(survive_fiber);
     if(survive_result.kind!=DIAMOND_VALUE_OBJECT)return 75;
     const DiamondString *survive_string=(const DiamondString *)survive_result.as.object;
     if(survive_string->length!=18||memcmp(survive_string->chars,"fiber-survives-gc",18)!=0)return 76;
-    /* survive_handle is still linked in survive_vm.objects (that's what this
+    /* survive_handle is still linked in survive_vm.young_objects (that's what this
      * test just confirmed) - diamond_vm_free now owns and frees any fiber
      * still reachable that way, so an explicit diamond_fiber_free here would
      * double-free survive_fiber. */
@@ -453,7 +453,7 @@ int main(void) {
     static const DiamondChunk stack_probe_chunk={.name="stack-probe",
         .code=stack_probe_code,.code_count=1};
     DiamondVm stack_probe_vm;diamond_vm_init(&stack_probe_vm);
-    DiamondObject *stack_probe_before_fiber=stack_probe_vm.objects;
+    DiamondObject *stack_probe_before_fiber=stack_probe_vm.young_objects;
     DiamondFiber *stack_probe_fiber=diamond_fiber_new(&stack_probe_chunk);
     DiamondFiberHandle *stack_probe_handle=malloc(sizeof *stack_probe_handle);
     if(stack_probe_fiber==nullptr||stack_probe_handle==nullptr||
@@ -463,12 +463,12 @@ int main(void) {
     unsigned char stack_probe_vec[1];
     if(mincore(stack_probe_addr,stack_probe_page,stack_probe_vec)!=0)return 78;
     *stack_probe_handle=(DiamondFiberHandle){
-        .object={.next=stack_probe_vm.objects,.kind=DIAMOND_OBJECT_FIBER},
+        .object={.next=stack_probe_vm.young_objects,.kind=DIAMOND_OBJECT_FIBER},
         .fiber=stack_probe_fiber};
-    stack_probe_vm.objects=&stack_probe_handle->object;
+    stack_probe_vm.young_objects=&stack_probe_handle->object;
     diamond_vm_collect(&stack_probe_vm);
     /* Same ARGV/ENV-populated-object-list correction as sweep_vm above. */
-    if(stack_probe_vm.objects!=stack_probe_before_fiber)return 79;
+    if(stack_probe_vm.young_objects!=stack_probe_before_fiber)return 79;
     errno=0;
     if(mincore(stack_probe_addr,stack_probe_page,stack_probe_vec)!=-1||errno!=ENOMEM)return 80;
     diamond_vm_free(&stack_probe_vm);
@@ -562,7 +562,7 @@ int main(void) {
     DiamondValue nested_fiber_new_final=diamond_fiber_result(nested_fiber_new_fiber);
     if(nested_fiber_new_final.kind!=DIAMOND_VALUE_INT||nested_fiber_new_final.as.integer!=12)return 92;
     /* nested_fiber_new_fiber is nested_fiber_new_handle->fiber, and that
-     * handle is still linked in nested_fiber_new_vm.objects - diamond_vm_free
+     * handle is still linked in nested_fiber_new_vm.young_objects - diamond_vm_free
      * now owns and frees it, so an explicit diamond_fiber_free here would
      * double-free it. */
     diamond_vm_free(&nested_fiber_new_vm);

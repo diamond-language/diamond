@@ -75,6 +75,25 @@ typedef struct DiamondObject {
     struct DiamondObject *next;
     DiamondObjectKind kind;
     bool marked;
+    /* Generation: false = nursery (vm->young_objects), true = tenured
+     * (vm->old_objects). Every allocate_* helper always allocates young;
+     * an object is promoted (list-spliced from young_objects onto
+     * old_objects, this bit flipped true) the moment it survives one
+     * minor collection -- no age counter, since promotion is free for a
+     * non-moving collector (see docs/design.md's "Generational garbage
+     * collection" section). */
+    bool old;
+    /* True once this (necessarily old) object is already present in
+     * vm->remembered_set -- an old object gaining a reference to a young
+     * one is exactly the case a minor collection's own root walk
+     * wouldn't otherwise see, so the write barrier (src/vm.c's
+     * gc_write_barrier) adds it to the remembered set and sets this the
+     * first time that happens, so later writes to the same object don't
+     * add duplicate entries. Sticky for the object's whole lifetime as
+     * an old object -- see gc_write_barrier's own comment for why this
+     * deliberately never gets cleared except when the object itself
+     * dies. Meaningless (always false) for a young object. */
+    bool remembered;
 } DiamondObject;
 
 typedef struct DiamondString {
