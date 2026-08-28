@@ -3,12 +3,23 @@
 
 #include "document.h"
 #include "json.h"
+#include "loader.h"
 
 #include <stddef.h>
 
-/* Computes a textDocument/completion result for a 0-based LSP `line`/
- * `character` position in `text` (the open document's current
- * contents). Two kinds of suggestion, unioned into one flat list:
+/* The real implementation behind completion_compute below, minus the
+ * two LSP-protocol-specific pieces (URI parsing, the DocumentTable-
+ * shaped require-resolution override) -- reusable by any caller that
+ * already has a plain source `path`/`text` and its own resolver, such
+ * as the REPL (src/repl.c), which has no URIs or open-document table
+ * at all and passes resolver=nullptr,resolver_data=nullptr (already a
+ * fully supported "fall back to disk" mode -- see
+ * DiamondSourceOverride, src/loader.h) and path=nullptr (a REPL
+ * session is never file-backed, the same "untitled document" mode
+ * completion_compute itself already has). Computes a
+ * textDocument/completion-shaped result for a 0-based `line`/
+ * `character` position in `text`. Two kinds of suggestion, unioned
+ * into one flat list:
  *
  *   - Every top-level function and class in the whole compiled
  *     program (not just this document's own -- lib/core.di's prelude
@@ -26,26 +37,47 @@
  *     nested inside it, including any closures it declares, the same
  *     way the compiler's own capture mechanism (compiler.c's
  *     enclosing_locals) actually resolves them.
+ *   - Every method (including inherited ones) on the class(es) a
+ *     `receiver.<partial>` expression resolves to, via
+ *     receiver_resolve_classes (lsp/receiver.h) -- the same machinery
+ *     hover/definition use, for the same statically-known-without-
+ *     real-type-inference receiver forms docs/lsp.md describes. A
+ *     receiver expression with nothing (or a partial name) typed after
+ *     the `.` doesn't compile on its own; callers that want this case
+ *     to work (any REPL/editor completion trigger, since that's the
+ *     common shape) need to substitute a syntactically-valid
+ *     placeholder identifier for the partial text before calling this,
+ *     confirmed directly against completion_compute itself: a document
+ *     ending in a bare `x.` returns json_null() unless it's first
+ *     rewritten to something like `x.__c` (querying at the original,
+ *     pre-substitution position still resolves `x`'s real methods
+ *     correctly, since receiver_resolve_classes only looks at tokens
+ *     strictly before the query offset).
  *
- * Deliberately does not: filter by whatever prefix is already typed
- * (every mainstream LSP client already narrows a full candidate list
- * live as the user keeps typing -- narrowing server-side would just
- * duplicate that for no benefit), suggest language keywords (`def`,
- * `if`, `end`, ...), or resolve a method name reached through
- * `receiver.method(...)` (same reason hover/definition/documentSymbol
- * don't -- needs type inference on `receiver` this project doesn't
- * have; see hover.h).
+ * Deliberately does not filter by whatever prefix is already typed --
+ * every caller (an LSP client, or the REPL) is expected to narrow the
+ * returned list itself, the same way completion_compute's own callers
+ * already do; narrowing server-side would just duplicate that for no
+ * benefit -- nor does it suggest language keywords (`def`, `if`,
+ * `end`, ...).
  *
- * Returns a flat `CompletionItem[]` JsonValue (`{"label","kind"}`
- * each -- `kind` is `CompletionItemKind`: 3 Function, 6 Variable, 7
- * Class), or `json_null()` when the document doesn't currently compile
- * cleanly (matching every other lsp/ feature's "no stale result"
- * rule), or nullptr only on allocation failure.
- *
- * `documents` (the server's open-document table) lets a `require`
- * resolving to another open document see its live buffer instead of
- * stale on-disk content, via document_resolve_source (lsp/document.h)
- * -- see docs/lsp.md. */
+ * Returns a flat `CompletionItem`-shaped JsonValue array
+ * (`{"label","kind"}` each -- `kind` is `CompletionItemKind`: 3
+ * Function, 6 Variable, 7 Class, 8 Interface, 9 Module), or
+ * `json_null()` when the buffer doesn't currently compile cleanly
+ * (matching every other lsp/ feature's "no stale result" rule), or
+ * nullptr only on allocation failure. */
+JsonValue *completion_compute_with_resolver(DiamondSourceOverride resolver,
+    void *resolver_data,const char *path,const char *text,size_t length,
+    size_t line,size_t character);
+
+/* The LSP-facing entry point: resolves `uri` to a plain path
+ * (diagnostics_uri_to_path) and supplies document_resolve_source
+ * (lsp/document.h) bound to `documents` (the server's open-document
+ * table, so a `require` resolving to another open document sees its
+ * live buffer instead of stale on-disk content -- see docs/lsp.md) as
+ * the resolver, then delegates to completion_compute_with_resolver
+ * above for everything else. */
 JsonValue *completion_compute(const DocumentTable *documents,const char *uri,
     const char *text,size_t length,size_t line,size_t character);
 

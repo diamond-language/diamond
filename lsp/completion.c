@@ -2,7 +2,6 @@
 
 #include "compile_buffer.h"
 #include "compiler.h"
-#include "diagnostics.h"
 #include "loader.h"
 #include "receiver.h"
 #include "vm.h"
@@ -80,14 +79,14 @@ static bool push_scope_locals(JsonValue *items,const DiamondFunction *function,
     return true;
 }
 
-JsonValue *completion_compute(const DocumentTable *documents,const char *uri,
-        const char *text,size_t length,size_t line,size_t character) {
-    char *path=diagnostics_uri_to_path(uri);
+JsonValue *completion_compute_with_resolver(DiamondSourceOverride resolver,
+        void *resolver_data,const char *path,const char *text,size_t length,
+        size_t line,size_t character) {
     DiamondSourceBundle bundle;
     size_t user_offset=0;
     char *combined=diamond_lsp_build_compile_buffer(path,text,length,
-        document_resolve_source,(void *)documents,&bundle,&user_offset);
-    if(combined==nullptr) {free(path);return json_null();}
+        resolver,resolver_data,&bundle,&user_offset);
+    if(combined==nullptr) {return json_null();}
 
     /* A fifth independent lazily-allocated scratch DiamondProgram --
      * see hover.c's own comment on why each lsp/ handler keeps a
@@ -96,7 +95,7 @@ JsonValue *completion_compute(const DocumentTable *documents,const char *uri,
     if(scratch==nullptr) {
         scratch=calloc(1,sizeof *scratch);
         if(scratch==nullptr) {
-            free(combined);free(path);diamond_source_bundle_free(&bundle);
+            free(combined);diamond_source_bundle_free(&bundle);
             return nullptr;
         }
     }
@@ -104,7 +103,7 @@ JsonValue *completion_compute(const DocumentTable *documents,const char *uri,
     diamond_program_free(scratch);
     const bool ok=diamond_compile(combined,scratch,&diagnostic);
     if(!ok) {
-        free(combined);free(path);diamond_source_bundle_free(&bundle);
+        free(combined);diamond_source_bundle_free(&bundle);
         return json_null();
     }
 
@@ -115,7 +114,7 @@ JsonValue *completion_compute(const DocumentTable *documents,const char *uri,
 
     JsonValue *items=json_array();
     if(items==nullptr) {
-        free(combined);free(path);diamond_source_bundle_free(&bundle);
+        free(combined);diamond_source_bundle_free(&bundle);
         return nullptr;
     }
     bool okay=true;
@@ -141,7 +140,7 @@ JsonValue *completion_compute(const DocumentTable *documents,const char *uri,
                 okay=push_class_methods(items,&chunk,class_indices[index],is_singleton);
         }
     }
-    free(combined);free(path);diamond_source_bundle_free(&bundle);
+    free(combined);diamond_source_bundle_free(&bundle);
     if(!okay) {json_free(items);return nullptr;}
     return items;
 }
