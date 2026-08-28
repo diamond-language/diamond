@@ -36,6 +36,7 @@ static const char *kind_name(DiamondTokenKind kind) {
         case DIAMOND_TOKEN_DOUBLE_COLON: return "double_colon";
         case DIAMOND_TOKEN_QUESTION: return "question";
         case DIAMOND_TOKEN_PIPE: return "pipe";
+        case DIAMOND_TOKEN_AMPERSAND: return "ampersand";
         case DIAMOND_TOKEN_BANG: return "bang";
         case DIAMOND_TOKEN_NOT: return "not";
         case DIAMOND_TOKEN_AND_AND: return "and_and";
