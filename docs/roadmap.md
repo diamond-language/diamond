@@ -378,6 +378,12 @@ operand graphs. Callback returns and receiver elements now construct `map`,
 and `map_values` output graphs. Dynamic spread calls remain queued because an
 arbitrary runtime Array cannot assign its elements to distinct native operand
 roles without positional shape metadata.
+Scalar native relays are now modeled as well: extrema retain the element graph,
+search and destructive reads add `Nil`, and callback unions feed joined return
+graphs into transforms. `zip` now models short-input padding rather than
+publishing an unsafely non-null pair element. Aggregate arithmetic such as
+`sum` remains dynamic because its result follows repeated operator dispatch,
+not the collection element graph alone.
 
 Expected collection graphs now recurse through nested Array and Hash literals.
 Array elements and Hash keys/values compile against their respective declared

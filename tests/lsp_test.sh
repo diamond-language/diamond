@@ -940,6 +940,42 @@ count=$((count + 1))
 send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$collection_transform_uri"'"}}}'
 read_message >/dev/null
 
+# --- scalar, nullable, padded, and Callable-union collection results ---
+
+collection_scalar_uri="file:///collection_scalar_hover.di"
+collection_scalar_source='def inspect(arrays: Array[Int] | Array[String], mapper: Callable[[Int | String], String] | Callable[[Int | String], Symbol])
+  minimum = arrays.min()
+  minimum
+  found = arrays.find() do |value|
+    value == value
+  end
+  found
+  zipped = arrays.zip([\"joined\"])
+  zipped
+  mapped = arrays.map(mapper)
+  mapped
+end'
+send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$collection_scalar_uri"'","text":"'"$collection_scalar_source"'"}}}'
+read_message >/dev/null
+
+send '{"jsonrpc":"2.0","id":190,"method":"textDocument/hover","params":{"textDocument":{"uri":"'"$collection_scalar_uri"'"},"position":{"line":6,"character":3}}}'
+response="$(read_message)"
+[[ "$response" == *'"value":"Int | String | Nil"'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","id":191,"method":"textDocument/hover","params":{"textDocument":{"uri":"'"$collection_scalar_uri"'"},"position":{"line":8,"character":4}}}'
+response="$(read_message)"
+[[ "$response" == *'"value":"Array[Array[Int | String | Nil]]"'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","id":192,"method":"textDocument/hover","params":{"textDocument":{"uri":"'"$collection_scalar_uri"'"},"position":{"line":10,"character":4}}}'
+response="$(read_message)"
+[[ "$response" == *'"value":"Array[String | Symbol]"'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$collection_scalar_uri"'"}}}'
+read_message >/dev/null
+
 # --- heterogeneous spread literals bind generic result positions ---
 
 spread_generic_uri="file:///spread_generic_hover.di"

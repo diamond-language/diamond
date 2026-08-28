@@ -609,6 +609,10 @@ Fallback reads, `concat`, and `merge` also join typed argument graphs for fixed
 and named-keyword calls. Typed callback returns determine `map`, `flat_map`,
 `group_by`, and `map_values` results. `partition`, `zip`, `each_slice`,
 `each_cons`, and `tally` retain their nested Array or Hash structure.
+`min`, `max`, `min_by`, and `max_by` produce the joined element type. `find`,
+`delete_at`, and `pop` add `Nil`. A zipped pair includes `Nil` in the other
+Array's position because shorter inputs are padded at runtime. Callable-union
+returns are joined before constructing mapped collection types.
 
 A fixed-arity bound method reference such as `object.convert` retains its
 declared parameter and return contract. Explicit generic references such as

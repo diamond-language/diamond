@@ -426,6 +426,11 @@ concatenation, and merge operands. Typed Callable returns construct `map`,
 `each_slice`, `each_cons`, and `tally` synthesize their nested output graphs.
 Fixed arguments, attached blocks, and fully named keyword calls participate;
 dynamically sized spread operands remain conservative.
+Element reductions (`min`, `max`, and their keyed forms) retain the receiver's
+joined element graph. Search and destructive reads (`find`, `delete_at`, and
+`pop`) add `Nil`; `zip` adds `Nil` specifically to the other Array's element
+graph because runtime padding applies only to that position. Callable unions
+join independently declared return graphs before constructing transform output.
 
 Statically resolved top-level, singleton, and instance-method calls publish a
 target's declared return graph onto their destination register.

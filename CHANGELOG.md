@@ -26,6 +26,11 @@
 
 ## Language
 
+- Preserved typed union element graphs through `min`, `max`, `min_by`,
+  `max_by`, and `each_with_index`, and published nullable element graphs for
+  `find`, `delete_at`, and `pop`. Callback unions now join their declared
+  returns for collection transforms. Corrected `zip` inference to include the
+  `Nil` padding produced when the other Array is shorter.
 - Added argument- and callback-aware native collection result inference.
   Fallback reads, concatenation, merge, mapping, grouping, zipping, nested
   slices, tallies, and Hash value transforms now construct caller-owned result
