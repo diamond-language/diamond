@@ -124,6 +124,43 @@ completed-body state, and every `break`, while an unconditional `loop` joins
 its reachable `break` values and local states. This preserves class unions for
 receiver tooling and proves compatible loop-expression return annotations.
 
+### REPL autocomplete
+
+Not started. `src/repl.c`'s interactive line editor is entirely hand-rolled
+(raw terminal mode, byte-by-byte key handling, its own `redraw_line` --
+no readline/linenoise), so it has no Tab-completion today.
+
+Investigated feasibility rather than assumed: `lsp/completion.c`'s
+`completion_compute` is a plain C function, not tied to the LSP's
+JSON-RPC transport -- it can be linked and called in-process from the
+REPL binary directly, no subprocess or protocol needed. It already
+covers top-level functions/classes/interfaces/modules, real lexical
+scope locals at a cursor position, and (contrary to a stale claim in
+its own header comment -- worth fixing separately) genuine
+receiver-aware `obj.<partial>` method completion via
+`receiver_resolve_classes`/`push_class_methods`, the same machinery
+`docs/lsp.md`'s "Improve receiver-aware language tooling" section above
+describes. The REPL already keeps an accumulated session-source buffer
+(see its own comment on `ReplBuffer`), which is exactly the "document"
+text `completion_compute` wants, so the data-flow side is a natural
+fit, not a new mechanism.
+
+The real remaining work is entirely REPL-side:
+
+- Tab-key handling and a candidate-list UI in `read_line_interactive`
+  -- single-match auto-insert is simple, but a multi-match menu needs
+  new terminal-drawing logic (rendering below the current line, then
+  restoring/redrawing the prompt line afterward) with nothing existing
+  to build on.
+- `completion_compute` returns nothing (`json_null()`) when the buffer
+  doesn't currently compile cleanly, which is the common case mid-typing
+  a REPL line (`obj.<TAB>` with no closing anything yet). Needs the
+  same trick `completion_compute`'s own doc comment already describes
+  for its LSP callers: strip the trailing partial identifier before
+  compiling, then prefix-filter the returned candidates client-side --
+  `completion_compute` deliberately doesn't do that filtering itself,
+  since every LSP client already does it.
+
 ## Self-hosting: minimal-compat maintenance mode
 
 The Diamond compiler can compile and run itself (self-parse and self-run
