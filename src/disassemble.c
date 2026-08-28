@@ -1112,7 +1112,7 @@ static bool disassemble_chunk(FILE *stream, const char *name,
                     checked_register(chunk,stream,read_operand(chunk,offset+5),&valid));
                 offset+=7;break;
             case DIAMOND_OP_SQLITE3_OPEN:
-                offset=two_registers(stream,chunk,"SQLITE3_OPEN",offset, &valid);break;
+                offset=three_registers(stream,chunk,"SQLITE3_OPEN",offset, &valid);break;
             case DIAMOND_OP_CHECK_DESTRUCTURE_COUNT:
                 if(!require_bytes(stream,chunk,offset,5)){valid=false;offset=chunk->code_count;break;}
                 fprintf(stream,"%-18s r%u, %u\n","CHECK_DESTRUCTURE_COUNT",

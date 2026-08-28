@@ -464,7 +464,24 @@ static void diamond_vm_collect_impl(DiamondVm *vm) {
         } else if(unreached->kind==DIAMOND_OBJECT_SQLITE3) {
             size=sizeof(DiamondSqlite3Handle);
             sqlite3 *db=((DiamondSqlite3Handle *)unreached)->db;
-            if(db!=nullptr)sqlite3_close(db);
+            /* _v2, not plain sqlite3_close: a Statement prepared from this
+             * connection (SQLite3#prepare) can outlive the connection's own
+             * Diamond-level reachability -- an independent GC object with no
+             * back-reference forcing sweep order between the two. Plain
+             * sqlite3_close fails (SQLITE_BUSY, unclosed) with any
+             * unfinalized statement still outstanding, and this call site
+             * never checked that return code, so it would silently leak the
+             * real OS-level connection. _v2 never fails: it closes
+             * immediately if nothing is outstanding, or defers the actual
+             * close until every associated statement is itself finalized
+             * (already guaranteed by the SQLITE3_STATEMENT branch just
+             * below, and by Statement#close) -- sqlite3's own documented
+             * idiom for exactly this ownership shape. */
+            if(db!=nullptr)sqlite3_close_v2(db);
+        } else if(unreached->kind==DIAMOND_OBJECT_SQLITE3_STATEMENT) {
+            size=sizeof(DiamondSqlite3StatementHandle);
+            sqlite3_stmt *stmt=((DiamondSqlite3StatementHandle *)unreached)->stmt;
+            if(stmt!=nullptr)sqlite3_finalize(stmt);
         } else if(unreached->kind==DIAMOND_OBJECT_POSTGRES) {
             size=sizeof(DiamondPostgresHandle);
             PGconn *conn=((DiamondPostgresHandle *)unreached)->conn;
@@ -592,7 +609,12 @@ void diamond_vm_free(DiamondVm *vm) {
             free_thread(((DiamondThreadHandle *)object)->thread);
         } else if(object->kind==DIAMOND_OBJECT_SQLITE3) {
             sqlite3 *db=((DiamondSqlite3Handle *)object)->db;
-            if(db!=nullptr)sqlite3_close(db);
+            /* _v2 -- see the matching branch in diamond_vm_collect_impl
+             * above for why. */
+            if(db!=nullptr)sqlite3_close_v2(db);
+        } else if(object->kind==DIAMOND_OBJECT_SQLITE3_STATEMENT) {
+            sqlite3_stmt *stmt=((DiamondSqlite3StatementHandle *)object)->stmt;
+            if(stmt!=nullptr)sqlite3_finalize(stmt);
         } else if(object->kind==DIAMOND_OBJECT_POSTGRES) {
             PGconn *conn=((DiamondPostgresHandle *)object)->conn;
             if(conn!=nullptr)PQfinish(conn);
@@ -1696,6 +1718,18 @@ static DiamondSqlite3Handle *allocate_sqlite3_handle(DiamondVm *vm,sqlite3 *db) 
     *handle=(DiamondSqlite3Handle){.object={.next=vm->objects,.kind=DIAMOND_OBJECT_SQLITE3},
         .db=db};
     vm->objects=&handle->object;vm->bytes_allocated+=sizeof(DiamondSqlite3Handle);return handle;
+}
+
+static DiamondSqlite3StatementHandle *allocate_sqlite3_statement_handle(
+        DiamondVm *vm,sqlite3_stmt *stmt) {
+    if(vm->stress_gc||vm->bytes_allocated>=vm->next_gc)diamond_vm_collect(vm);
+    DiamondSqlite3StatementHandle *handle=malloc(sizeof(DiamondSqlite3StatementHandle));
+    if(handle==nullptr)return nullptr;
+    *handle=(DiamondSqlite3StatementHandle){
+        .object={.next=vm->objects,.kind=DIAMOND_OBJECT_SQLITE3_STATEMENT},.stmt=stmt};
+    vm->objects=&handle->object;
+    vm->bytes_allocated+=sizeof(DiamondSqlite3StatementHandle);
+    return handle;
 }
 
 static DiamondPostgresHandle *allocate_postgres_handle(DiamondVm *vm,PGconn *conn) {
@@ -7055,17 +7089,50 @@ static DiamondVmStatus call_closure_spread_helper(DiamondVm *vm,
     free(padded);return status;
 }
 
+/* Binds one Diamond value at a 1-indexed sqlite3 parameter position.
+ * Factored out of the positional/named bind helpers below (identical
+ * type-to-bind-call mapping either way, just a different way of
+ * computing `position`). An unsupported Diamond value type is
+ * DIAMOND_VM_TYPE_ERROR (a Diamond-level call-shape mistake, not
+ * anything sqlite3 itself rejected); only a genuine sqlite3_bind_*
+ * failure (rare -- effectively just OOM) is DIAMOND_VM_SQLITE3_ERROR. */
+static DiamondVmStatus sqlite3_bind_one_value_helper(DiamondVm *vm,sqlite3_stmt *stmt,
+        int position,DiamondValue value) {
+    int rc=SQLITE_OK;
+    if(value.kind==DIAMOND_VALUE_NIL) {
+        rc=sqlite3_bind_null(stmt,position);
+    } else if(value.kind==DIAMOND_VALUE_INT) {
+        rc=sqlite3_bind_int64(stmt,position,value.as.integer);
+    } else if(value.kind==DIAMOND_VALUE_FLOAT) {
+        rc=sqlite3_bind_double(stmt,position,value.as.real);
+    } else if(value.kind==DIAMOND_VALUE_BOOL) {
+        rc=sqlite3_bind_int64(stmt,position,value.as.boolean?1:0);
+    } else if(value.kind==DIAMOND_VALUE_OBJECT&&
+              value.as.object->kind==DIAMOND_OBJECT_STRING) {
+        const DiamondString *string=(const DiamondString *)value.as.object;
+        rc=sqlite3_bind_text(stmt,position,string->chars,
+            (int)string->length,SQLITE_TRANSIENT);
+    } else {
+        snprintf(vm->error,sizeof vm->error,
+            "unsupported SQLite3 parameter type at position %d",position);
+        return DIAMOND_VM_TYPE_ERROR;
+    }
+    if(rc!=SQLITE_OK) {
+        snprintf(vm->error,sizeof vm->error,"%s",
+            sqlite3_errmsg(sqlite3_db_handle(stmt)));
+        return DIAMOND_VM_SQLITE3_ERROR;
+    }
+    return DIAMOND_VM_OK;
+}
+
 /* Bind an Array of Diamond values positionally (1-indexed, sqlite3's own
  * convention for '?' placeholders) to `stmt`. A parameter-count mismatch
  * is DIAMOND_VM_ARITY_ERROR (surfaces as ArgumentError, the same class
  * an ordinary wrong-argument-count call already gets) rather than
- * SQLite3Error, since it's a Diamond-level call-shape mistake, not
- * anything sqlite3 itself rejected; an unsupported Diamond value type is
- * DIAMOND_VM_TYPE_ERROR for the same reason. Only a genuine
- * sqlite3_bind_* failure (rare -- effectively just OOM) is
- * DIAMOND_VM_SQLITE3_ERROR. No Diamond allocation happens anywhere in
- * here, so there's no GC-rooting concern for `values`. */
-static DiamondVmStatus sqlite3_bind_params_helper(DiamondVm *vm,sqlite3_stmt *stmt,
+ * SQLite3Error, since it's a Diamond-level call-shape mistake. No Diamond
+ * allocation happens anywhere in here, so there's no GC-rooting concern
+ * for `values`. */
+static DiamondVmStatus sqlite3_bind_positional_params_helper(DiamondVm *vm,sqlite3_stmt *stmt,
         const DiamondValue *values,size_t count) {
     const int expected=sqlite3_bind_parameter_count(stmt);
     if(count!=(size_t)expected) {
@@ -7074,48 +7141,92 @@ static DiamondVmStatus sqlite3_bind_params_helper(DiamondVm *vm,sqlite3_stmt *st
         return DIAMOND_VM_ARITY_ERROR;
     }
     for(size_t index=0;index<count;index++) {
-        const DiamondValue value=values[index];
-        const int position=(int)index+1;
-        int rc=SQLITE_OK;
-        if(value.kind==DIAMOND_VALUE_NIL) {
-            rc=sqlite3_bind_null(stmt,position);
-        } else if(value.kind==DIAMOND_VALUE_INT) {
-            rc=sqlite3_bind_int64(stmt,position,value.as.integer);
-        } else if(value.kind==DIAMOND_VALUE_FLOAT) {
-            rc=sqlite3_bind_double(stmt,position,value.as.real);
-        } else if(value.kind==DIAMOND_VALUE_BOOL) {
-            rc=sqlite3_bind_int64(stmt,position,value.as.boolean?1:0);
-        } else if(value.kind==DIAMOND_VALUE_OBJECT&&
-                  value.as.object->kind==DIAMOND_OBJECT_STRING) {
-            const DiamondString *string=(const DiamondString *)value.as.object;
-            rc=sqlite3_bind_text(stmt,position,string->chars,
-                (int)string->length,SQLITE_TRANSIENT);
-        } else {
-            snprintf(vm->error,sizeof vm->error,
-                "unsupported SQLite3 parameter type at position %d",position);
-            return DIAMOND_VM_TYPE_ERROR;
-        }
-        if(rc!=SQLITE_OK) {
-            snprintf(vm->error,sizeof vm->error,"%s",
-                sqlite3_errmsg(sqlite3_db_handle(stmt)));
-            return DIAMOND_VM_SQLITE3_ERROR;
-        }
+        const DiamondVmStatus bind_status=
+            sqlite3_bind_one_value_helper(vm,stmt,(int)index+1,values[index]);
+        if(bind_status!=DIAMOND_VM_OK)return bind_status;
     }
     return DIAMOND_VM_OK;
 }
 
-/* Shared prepare+single-statement-guard+bind step behind #execute and
- * #query. sqlite3_prepare_v2 only compiles the first statement up to a
- * ';' and leaves *pzTail pointing at whatever follows -- silently
- * ignoring a second statement chained after it would be a real
- * correctness trap, so anything left in the tail besides trailing
- * whitespace is rejected outright rather than dropped. On any failure
- * path the statement is finalized here (never left for the caller to
- * clean up), so a caller only ever needs to finalize the stmt it
- * actually got back on DIAMOND_VM_OK. */
-static DiamondVmStatus sqlite3_prepare_helper(DiamondVm *vm,sqlite3 *db,
-        const DiamondString *sql,const DiamondValue *param_values,size_t param_count,
-        sqlite3_stmt **out_stmt) {
+/* Bind a Hash of Diamond values by name (sqlite3's `:name`/`@name`/`$name`
+ * placeholders -- only the `:name` spelling is supported at the Diamond
+ * level, matching the sigil-free key convention most host-language sqlite3
+ * drivers already use) to `stmt`. Same strictness as the positional path:
+ * the Hash's size must exactly match the statement's own declared
+ * parameter count, so a typo'd or missing key surfaces immediately as
+ * ArgumentError rather than silently binding NULL for whatever sqlite3
+ * itself leaves unbound. `hash->count`/`->entries[]` iterated the same
+ * dense 0..count-1 way every other native Hash-consuming helper in this
+ * file already does (see compile_method's own bound_values_hash walk). */
+static DiamondVmStatus sqlite3_bind_named_params_helper(DiamondVm *vm,sqlite3_stmt *stmt,
+        const DiamondHash *params) {
+    const int expected=sqlite3_bind_parameter_count(stmt);
+    if(params->count!=(size_t)expected) {
+        snprintf(vm->error,sizeof vm->error,
+            "SQLite3 statement expects %d bound parameter(s), got %zu",expected,params->count);
+        return DIAMOND_VM_ARITY_ERROR;
+    }
+    for(size_t index=0;index<params->count;index++) {
+        const DiamondValue key=params->entries[index].key;
+        if(key.kind!=DIAMOND_VALUE_OBJECT||key.as.object->kind!=DIAMOND_OBJECT_STRING) {
+            snprintf(vm->error,sizeof vm->error,
+                "SQLite3 named params Hash keys must be Strings");
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        const DiamondString *key_string=(const DiamondString *)key.as.object;
+        char *placeholder=malloc(key_string->length+2);
+        if(placeholder==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+        placeholder[0]=':';
+        memcpy(placeholder+1,key_string->chars,key_string->length);
+        placeholder[key_string->length+1]='\0';
+        const int position=sqlite3_bind_parameter_index(stmt,placeholder);
+        if(position==0) {
+            snprintf(vm->error,sizeof vm->error,
+                "SQLite3 statement has no parameter named '%s'",placeholder);
+            free(placeholder);
+            return DIAMOND_VM_ARITY_ERROR;
+        }
+        free(placeholder);
+        const DiamondVmStatus bind_status=
+            sqlite3_bind_one_value_helper(vm,stmt,position,params->entries[index].value);
+        if(bind_status!=DIAMOND_VM_OK)return bind_status;
+    }
+    return DIAMOND_VM_OK;
+}
+
+/* `params` is Nil (no bind parameters), an Array (positional `?` binds),
+ * or a Hash (named `:name` binds) -- anything else is a Diamond-level
+ * call-shape mistake, TypeError. Shared by both the one-shot #execute/
+ * #query prepare step and Statement#execute/#query's own reset-and-rebind
+ * step below. */
+static DiamondVmStatus sqlite3_bind_helper(DiamondVm *vm,sqlite3_stmt *stmt,
+        DiamondValue params) {
+    if(params.kind==DIAMOND_VALUE_NIL)
+        return sqlite3_bind_positional_params_helper(vm,stmt,nullptr,0);
+    if(params.kind==DIAMOND_VALUE_OBJECT&&params.as.object->kind==DIAMOND_OBJECT_ARRAY) {
+        const DiamondArray *array=(const DiamondArray *)params.as.object;
+        return sqlite3_bind_positional_params_helper(vm,stmt,array->values,array->count);
+    }
+    if(params.kind==DIAMOND_VALUE_OBJECT&&params.as.object->kind==DIAMOND_OBJECT_HASH)
+        return sqlite3_bind_named_params_helper(vm,stmt,(const DiamondHash *)params.as.object);
+    snprintf(vm->error,sizeof vm->error,"SQLite3 params argument must be an Array or a Hash");
+    return DIAMOND_VM_TYPE_ERROR;
+}
+
+/* Prepare+single-statement-guard, with no bind step -- shared by the
+ * one-shot path below (which binds immediately after) and SQLite3#prepare
+ * (which returns the unbound statement itself; binding happens once per
+ * later #execute/#query call, see sqlite3_statement_bind_and_reset_helper).
+ * sqlite3_prepare_v2 only compiles the first statement up to a ';' and
+ * leaves *pzTail pointing at whatever follows -- silently ignoring a
+ * second statement chained after it would be a real correctness trap, so
+ * anything left in the tail besides trailing whitespace is rejected
+ * outright rather than dropped. On any failure path the statement is
+ * finalized here (never left for the caller to clean up), so a caller
+ * only ever needs to finalize the stmt it actually got back on
+ * DIAMOND_VM_OK. */
+static DiamondVmStatus sqlite3_prepare_only_helper(DiamondVm *vm,sqlite3 *db,
+        const DiamondString *sql,sqlite3_stmt **out_stmt) {
     sqlite3_stmt *stmt=nullptr;
     const char *tail=nullptr;
     const int rc=sqlite3_prepare_v2(db,sql->chars,(int)sql->length,&stmt,&tail);
@@ -7132,11 +7243,20 @@ static DiamondVmStatus sqlite3_prepare_helper(DiamondVm *vm,sqlite3 *db,
     if(*cursor!='\0') {
         sqlite3_finalize(stmt);
         snprintf(vm->error,sizeof vm->error,
-            "SQLite3#execute/#query only support one statement per call");
+            "SQLite3#execute/#query/#prepare only support one statement per call");
         return DIAMOND_VM_SQLITE3_ERROR;
     }
-    const DiamondVmStatus bind_status=
-        sqlite3_bind_params_helper(vm,stmt,param_values,param_count);
+    *out_stmt=stmt;
+    return DIAMOND_VM_OK;
+}
+
+/* Prepare+bind in one step, behind the one-shot #execute/#query path. */
+static DiamondVmStatus sqlite3_prepare_helper(DiamondVm *vm,sqlite3 *db,
+        const DiamondString *sql,DiamondValue params,sqlite3_stmt **out_stmt) {
+    sqlite3_stmt *stmt=nullptr;
+    const DiamondVmStatus prepare_status=sqlite3_prepare_only_helper(vm,db,sql,&stmt);
+    if(prepare_status!=DIAMOND_VM_OK)return prepare_status;
+    const DiamondVmStatus bind_status=sqlite3_bind_helper(vm,stmt,params);
     if(bind_status!=DIAMOND_VM_OK) {
         sqlite3_finalize(stmt);
         return bind_status;
@@ -7145,23 +7265,33 @@ static DiamondVmStatus sqlite3_prepare_helper(DiamondVm *vm,sqlite3 *db,
     return DIAMOND_VM_OK;
 }
 
-static DiamondVmStatus sqlite3_execute_helper(DiamondVm *vm,DiamondSqlite3Handle *handle,
-        const DiamondString *sql,const DiamondValue *param_values,size_t param_count,
-        DiamondValue *result) {
-    sqlite3_stmt *stmt=nullptr;
-    const DiamondVmStatus prepare_status=
-        sqlite3_prepare_helper(vm,handle->db,sql,param_values,param_count,&stmt);
-    if(prepare_status!=DIAMOND_VM_OK)return prepare_status;
+/* Steps an already-prepared, already-bound statement to completion,
+ * discarding any rows -- the shared tail of #execute (one-shot, caller
+ * finalizes after) and Statement#execute (reusable, caller never
+ * finalizes). Returns the number of rows changed (sqlite3_changes),
+ * the useful return value for INSERT/UPDATE/DELETE/DDL. */
+static DiamondVmStatus sqlite3_run_to_completion_helper(DiamondVm *vm,sqlite3 *db,
+        sqlite3_stmt *stmt,DiamondValue *result) {
     int rc=sqlite3_step(stmt);
     while(rc==SQLITE_ROW)rc=sqlite3_step(stmt); /* discard any rows */
     if(rc!=SQLITE_DONE) {
-        snprintf(vm->error,sizeof vm->error,"%s",sqlite3_errmsg(handle->db));
-        sqlite3_finalize(stmt);
+        snprintf(vm->error,sizeof vm->error,"%s",sqlite3_errmsg(db));
         return DIAMOND_VM_SQLITE3_ERROR;
     }
-    sqlite3_finalize(stmt);
-    *result=DIAMOND_INT(sqlite3_changes(handle->db));
+    *result=DIAMOND_INT(sqlite3_changes(db));
     return DIAMOND_VM_OK;
+}
+
+static DiamondVmStatus sqlite3_execute_helper(DiamondVm *vm,DiamondSqlite3Handle *handle,
+        const DiamondString *sql,DiamondValue params,DiamondValue *result) {
+    sqlite3_stmt *stmt=nullptr;
+    const DiamondVmStatus prepare_status=
+        sqlite3_prepare_helper(vm,handle->db,sql,params,&stmt);
+    if(prepare_status!=DIAMOND_VM_OK)return prepare_status;
+    const DiamondVmStatus run_status=
+        sqlite3_run_to_completion_helper(vm,handle->db,stmt,result);
+    sqlite3_finalize(stmt);
+    return run_status;
 }
 
 /* SQLITE_TEXT/SQLITE_BLOB both go through allocate_string -- a Diamond
@@ -7214,71 +7344,106 @@ static bool sqlite3_column_value_helper(DiamondVm *vm,sqlite3_stmt *stmt,int col
  * reallocates the Array's own backing store via plain realloc, so this
  * costs nothing), so a row is reachable through the rooted Array for the
  * entire time its columns are being built up one allocation at a time. */
-static DiamondVmStatus sqlite3_query_helper(DiamondVm *vm,DiamondSqlite3Handle *handle,
-        const DiamondString *sql,const DiamondValue *param_values,size_t param_count,
-        DiamondValue *result) {
-    sqlite3_stmt *stmt=nullptr;
-    const DiamondVmStatus prepare_status=
-        sqlite3_prepare_helper(vm,handle->db,sql,param_values,param_count,&stmt);
-    if(prepare_status!=DIAMOND_VM_OK)return prepare_status;
+static DiamondVmStatus sqlite3_collect_rows_helper(DiamondVm *vm,sqlite3 *db,
+        sqlite3_stmt *stmt,DiamondValue *result) {
     DiamondArray *rows=allocate_array(vm,nullptr,0);
-    if(rows==nullptr) {
-        sqlite3_finalize(stmt);
-        return DIAMOND_VM_OUT_OF_MEMORY;
-    }
+    if(rows==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
     *result=DIAMOND_OBJECT(rows);
     const int column_count=sqlite3_column_count(stmt);
     for(;;) {
         const int rc=sqlite3_step(stmt);
         if(rc==SQLITE_DONE)break;
         if(rc!=SQLITE_ROW) {
-            snprintf(vm->error,sizeof vm->error,"%s",sqlite3_errmsg(handle->db));
-            sqlite3_finalize(stmt);
+            snprintf(vm->error,sizeof vm->error,"%s",sqlite3_errmsg(db));
             return DIAMOND_VM_SQLITE3_ERROR;
         }
         DiamondHash *row=allocate_hash(vm);
-        if(row==nullptr) {
-            sqlite3_finalize(stmt);
-            return DIAMOND_VM_OUT_OF_MEMORY;
-        }
-        if(!array_push(vm,rows,DIAMOND_OBJECT(row))) {
-            sqlite3_finalize(stmt);
-            return DIAMOND_VM_OUT_OF_MEMORY;
-        }
+        if(row==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+        if(!array_push(vm,rows,DIAMOND_OBJECT(row)))return DIAMOND_VM_OUT_OF_MEMORY;
         for(int column=0;column<column_count;column++) {
             const char *column_name=sqlite3_column_name(stmt,column);
             DiamondString *key=allocate_string(vm,column_name,strlen(column_name));
-            if(key==nullptr) {
-                sqlite3_finalize(stmt);
-                return DIAMOND_VM_OUT_OF_MEMORY;
-            }
-            if(!hash_set(vm,row,DIAMOND_OBJECT(key),DIAMOND_NIL)) {
-                sqlite3_finalize(stmt);
-                return DIAMOND_VM_OUT_OF_MEMORY;
-            }
+            if(key==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+            if(!hash_set(vm,row,DIAMOND_OBJECT(key),DIAMOND_NIL))return DIAMOND_VM_OUT_OF_MEMORY;
             DiamondValue column_value=DIAMOND_NIL;
-            if(!sqlite3_column_value_helper(vm,stmt,column,&column_value)) {
-                sqlite3_finalize(stmt);
+            if(!sqlite3_column_value_helper(vm,stmt,column,&column_value))
                 return DIAMOND_VM_OUT_OF_MEMORY;
-            }
-            if(!hash_set(vm,row,DIAMOND_OBJECT(key),column_value)) {
-                sqlite3_finalize(stmt);
+            if(!hash_set(vm,row,DIAMOND_OBJECT(key),column_value))
                 return DIAMOND_VM_OUT_OF_MEMORY;
-            }
         }
     }
-    sqlite3_finalize(stmt);
     return DIAMOND_VM_OK;
 }
 
-/* All of #execute/#query/#last_insert_row_id/#close's method-name
+/* Unlike every other helper in this file (regexp_new_helper,
+ * call_closure_helper, ...), `result` here MUST be a pointer into the
+ * caller's live `registers` array (i.e. the caller passes
+ * &registers[dest] directly, not an intermediate local later copied
+ * in) -- sqlite3_collect_rows_helper allocates repeatedly (one Hash per
+ * row, one String per key and per Text/Blob column) while building the
+ * result, and only an allocation already reachable from a genuine GC
+ * root survives a collection triggered by a *later* allocation in that
+ * same sequence. `*result` is written to hold the outer Array
+ * immediately, before any further allocation, exactly like
+ * DIAMOND_OP_IO_POLL/UDPSocket#receive's own Hash result (see their
+ * shared comment) -- and every row Hash is pushed onto that already-
+ * rooted Array *before* its own columns are filled in (array_push never
+ * itself allocates a Diamond object, only reallocates the Array's own
+ * backing store via plain realloc, so this costs nothing), so a row is
+ * reachable through the rooted Array for the entire time its columns are
+ * being built up one allocation at a time. */
+static DiamondVmStatus sqlite3_query_helper(DiamondVm *vm,DiamondSqlite3Handle *handle,
+        const DiamondString *sql,DiamondValue params,DiamondValue *result) {
+    sqlite3_stmt *stmt=nullptr;
+    const DiamondVmStatus prepare_status=
+        sqlite3_prepare_helper(vm,handle->db,sql,params,&stmt);
+    if(prepare_status!=DIAMOND_VM_OK)return prepare_status;
+    const DiamondVmStatus collect_status=
+        sqlite3_collect_rows_helper(vm,handle->db,stmt,result);
+    sqlite3_finalize(stmt);
+    return collect_status;
+}
+
+/* Statement#execute/#query share the same reset-and-rebind step: unlike
+ * the one-shot #execute/#query path, `stmt` is already prepared and must
+ * survive this call for reuse, so it's never finalized here -- only
+ * Statement#close and GC/VM teardown finalize it. sqlite3_reset rewinds
+ * the statement back to its first sqlite3_step-able state (required
+ * before rebinding -- sqlite3_bind_* on a statement mid-execution is
+ * itself an error) and sqlite3_clear_bindings drops any bind values
+ * from a previous call so an omitted/absent bind on this call can't
+ * accidentally reuse a stale value from the one before it. */
+static DiamondVmStatus sqlite3_statement_bind_and_reset_helper(DiamondVm *vm,
+        sqlite3_stmt *stmt,DiamondValue params) {
+    sqlite3_reset(stmt);
+    sqlite3_clear_bindings(stmt);
+    return sqlite3_bind_helper(vm,stmt,params);
+}
+
+static DiamondVmStatus sqlite3_statement_execute_helper(DiamondVm *vm,sqlite3 *db,
+        sqlite3_stmt *stmt,DiamondValue params,DiamondValue *result) {
+    const DiamondVmStatus bind_status=sqlite3_statement_bind_and_reset_helper(vm,stmt,params);
+    if(bind_status!=DIAMOND_VM_OK)return bind_status;
+    return sqlite3_run_to_completion_helper(vm,db,stmt,result);
+}
+
+/* Same &registers[dest]-must-be-a-real-GC-root requirement as
+ * sqlite3_query_helper above -- see its own comment. */
+static DiamondVmStatus sqlite3_statement_query_helper(DiamondVm *vm,sqlite3 *db,
+        sqlite3_stmt *stmt,DiamondValue params,DiamondValue *result) {
+    const DiamondVmStatus bind_status=sqlite3_statement_bind_and_reset_helper(vm,stmt,params);
+    if(bind_status!=DIAMOND_VM_OK)return bind_status;
+    return sqlite3_collect_rows_helper(vm,db,stmt,result);
+}
+
+/* All of #execute/#query/#prepare/#last_insert_row_id/#close's method-name
  * comparison and argument marshaling, factored out of the INVOKE case
  * body for the same reason get_cvar_helper/call_closure_helper/
  * regexp_new_helper already are: every local declared anywhere in
  * run_chunk's own switch adds to its one shared per-call stack frame at
  * -O0 regardless of which case actually runs (run_chunk recurses in C
- * for every Diamond-level call), and this dispatch alone -- four method-
- * name bools, a handle pointer, a sql pointer, a params pointer/count --
+ * for every Diamond-level call), and this dispatch alone -- five method-
+ * name bools, a handle pointer, a sql pointer, a params value --
  * was enough on its own to reopen the exact DIAMOND_MAX_CALL_DEPTH/ASan
  * margin regression documented elsewhere in this codebase (confirmed the
  * hard way: `depth(5000)` overflowed the real C stack under
@@ -7294,11 +7459,14 @@ static DiamondVmStatus sqlite3_dispatch_helper(DiamondVm *vm,DiamondSqlite3Handl
         memcmp(method_name->chars,"execute",7)==0;
     const bool query_method=method_name->length==5&&
         memcmp(method_name->chars,"query",5)==0;
+    const bool prepare_method=method_name->length==7&&
+        memcmp(method_name->chars,"prepare",7)==0;
     const bool last_insert_row_id_method=method_name->length==18&&
         memcmp(method_name->chars,"last_insert_row_id",18)==0;
     const bool close_method=method_name->length==5&&
         memcmp(method_name->chars,"close",5)==0;
-    if(!execute_method&&!query_method&&!last_insert_row_id_method&&!close_method) {
+    if(!execute_method&&!query_method&&!prepare_method&&
+       !last_insert_row_id_method&&!close_method) {
         snprintf(vm->error,sizeof vm->error,"undefined method '%.*s' for %s",
             (int)method_name->length,method_name->chars,"SQLite3");
         return DIAMOND_VM_TYPE_ERROR;
@@ -7306,7 +7474,9 @@ static DiamondVmStatus sqlite3_dispatch_helper(DiamondVm *vm,DiamondSqlite3Handl
     if(close_method) {
         if(argc!=0)return DIAMOND_VM_ARITY_ERROR;
         if(target_db->db!=nullptr) {
-            sqlite3_close(target_db->db);
+            /* _v2 -- see diamond_vm_collect_impl's matching SQLITE3 branch
+             * for why plain sqlite3_close is unsafe once Statements exist. */
+            sqlite3_close_v2(target_db->db);
             target_db->db=nullptr;
         }
         registers[dest]=DIAMOND_NIL;return DIAMOND_VM_OK;
@@ -7320,6 +7490,26 @@ static DiamondVmStatus sqlite3_dispatch_helper(DiamondVm *vm,DiamondSqlite3Handl
         registers[dest]=DIAMOND_INT(sqlite3_last_insert_rowid(target_db->db));
         return DIAMOND_VM_OK;
     }
+    if(prepare_method) {
+        if(argc!=1)return DIAMOND_VM_ARITY_ERROR;
+        if(registers[base].kind!=DIAMOND_VALUE_OBJECT||
+           registers[base].as.object->kind!=DIAMOND_OBJECT_STRING) {
+            snprintf(vm->error,sizeof vm->error,"SQLite3#prepare's sql argument must be a String");
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        const DiamondString *sql=(const DiamondString *)registers[base].as.object;
+        sqlite3_stmt *stmt=nullptr;
+        const DiamondVmStatus prepare_status=
+            sqlite3_prepare_only_helper(vm,target_db->db,sql,&stmt);
+        if(prepare_status!=DIAMOND_VM_OK)return prepare_status;
+        DiamondSqlite3StatementHandle *handle=allocate_sqlite3_statement_handle(vm,stmt);
+        if(handle==nullptr) {
+            sqlite3_finalize(stmt);
+            return DIAMOND_VM_OUT_OF_MEMORY;
+        }
+        registers[dest]=DIAMOND_OBJECT(handle);
+        return DIAMOND_VM_OK;
+    }
     /* execute/query share the same argument shape: (sql) or (sql, params). */
     if(argc!=1&&argc!=2)return DIAMOND_VM_ARITY_ERROR;
     if(registers[base].kind!=DIAMOND_VALUE_OBJECT||
@@ -7329,31 +7519,112 @@ static DiamondVmStatus sqlite3_dispatch_helper(DiamondVm *vm,DiamondSqlite3Handl
         return DIAMOND_VM_TYPE_ERROR;
     }
     const DiamondString *sql=(const DiamondString *)registers[base].as.object;
-    const DiamondValue *param_values=nullptr;
-    size_t param_count=0;
-    if(argc==2) {
-        if(registers[(size_t)base+1].kind!=DIAMOND_VALUE_OBJECT||
-           registers[(size_t)base+1].as.object->kind!=DIAMOND_OBJECT_ARRAY) {
-            snprintf(vm->error,sizeof vm->error,
-                "SQLite3#%.*s's params argument must be an Array",
-                (int)method_name->length,method_name->chars);
-            return DIAMOND_VM_TYPE_ERROR;
-        }
-        const DiamondArray *params=(const DiamondArray *)registers[(size_t)base+1].as.object;
-        param_values=params->values;
-        param_count=params->count;
-    }
+    const DiamondValue params=argc==2?registers[(size_t)base+1]:DIAMOND_NIL;
     if(execute_method) {
         DiamondValue execute_result=DIAMOND_NIL;
         const DiamondVmStatus execute_status=sqlite3_execute_helper(vm,
-            target_db,sql,param_values,param_count,&execute_result);
+            target_db,sql,params,&execute_result);
         if(execute_status!=DIAMOND_VM_OK)return execute_status;
         registers[dest]=execute_result;return DIAMOND_VM_OK;
     }
     /* query_method: sqlite3_query_helper writes directly into
      * registers[dest] (a real GC root), not a local -- see its own
      * comment. */
-    return sqlite3_query_helper(vm,target_db,sql,param_values,param_count,&registers[dest]);
+    return sqlite3_query_helper(vm,target_db,sql,params,&registers[dest]);
+}
+
+/* Statement#execute/#query/#close -- same three-way dispatch shape as
+ * SQLite3 itself, minus #prepare (a Statement isn't a connection) and
+ * #last_insert_row_id (still only meaningful on the connection). `params`
+ * is accepted the same way (Nil/Array/Hash) as the connection's own
+ * #execute/#query. */
+static DiamondVmStatus sqlite3_statement_dispatch_helper(DiamondVm *vm,
+        DiamondSqlite3StatementHandle *target_stmt,const DiamondStringConstant *method_name,
+        DiamondValue *registers,uint16_t base,uint8_t argc,uint16_t dest) {
+    const bool execute_method=method_name->length==7&&
+        memcmp(method_name->chars,"execute",7)==0;
+    const bool query_method=method_name->length==5&&
+        memcmp(method_name->chars,"query",5)==0;
+    const bool close_method=method_name->length==5&&
+        memcmp(method_name->chars,"close",5)==0;
+    if(!execute_method&&!query_method&&!close_method) {
+        snprintf(vm->error,sizeof vm->error,"undefined method '%.*s' for %s",
+            (int)method_name->length,method_name->chars,"SQLite3::Statement");
+        return DIAMOND_VM_TYPE_ERROR;
+    }
+    if(close_method) {
+        if(argc!=0)return DIAMOND_VM_ARITY_ERROR;
+        if(target_stmt->stmt!=nullptr) {
+            sqlite3_finalize(target_stmt->stmt);
+            target_stmt->stmt=nullptr;
+        }
+        registers[dest]=DIAMOND_NIL;return DIAMOND_VM_OK;
+    }
+    if(target_stmt->stmt==nullptr) {
+        snprintf(vm->error,sizeof vm->error,"SQLite3::Statement is closed");
+        return DIAMOND_VM_SQLITE3_ERROR;
+    }
+    /* execute/query share the same argument shape: () or (params). */
+    if(argc!=0&&argc!=1)return DIAMOND_VM_ARITY_ERROR;
+    const DiamondValue params=argc==1?registers[base]:DIAMOND_NIL;
+    sqlite3 *const db=sqlite3_db_handle(target_stmt->stmt);
+    if(execute_method) {
+        DiamondValue execute_result=DIAMOND_NIL;
+        const DiamondVmStatus execute_status=sqlite3_statement_execute_helper(vm,
+            db,target_stmt->stmt,params,&execute_result);
+        if(execute_status!=DIAMOND_VM_OK)return execute_status;
+        registers[dest]=execute_result;return DIAMOND_VM_OK;
+    }
+    /* query_method: sqlite3_statement_query_helper writes directly into
+     * registers[dest] (a real GC root), not a local -- see
+     * sqlite3_query_helper's own comment. */
+    return sqlite3_statement_query_helper(vm,db,target_stmt->stmt,params,&registers[dest]);
+}
+
+/* Behind DIAMOND_OP_SQLITE3_OPEN. `mode` is Nil (mode omitted -- falls
+ * back to plain sqlite3_open unchanged, exactly the pre-existing
+ * behavior, rather than routing the common no-mode-given call through
+ * _v2 for no behavioral reason) or a String: "r" (read-only, error if
+ * missing), "rw" (read-write, error if missing), or "rwc" (read-write,
+ * created if missing -- sqlite3_open's own default, spelled out
+ * explicitly). Anything else is a Diamond-level call-shape mistake,
+ * TypeError, checked here (runtime) rather than at parse time since
+ * `mode` is an arbitrary expression, not a literal. */
+static DiamondVmStatus sqlite3_open_helper(DiamondVm *vm,const DiamondString *path,
+        DiamondValue mode,sqlite3 **out_db) {
+    sqlite3 *db=nullptr;
+    int open_rc;
+    if(mode.kind==DIAMOND_VALUE_NIL) {
+        open_rc=sqlite3_open(path->chars,&db);
+    } else {
+        if(mode.kind!=DIAMOND_VALUE_OBJECT||mode.as.object->kind!=DIAMOND_OBJECT_STRING) {
+            snprintf(vm->error,sizeof vm->error,"SQLite3.open's mode argument must be a String");
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        const DiamondString *mode_string=(const DiamondString *)mode.as.object;
+        int flags;
+        if(mode_string->length==1&&mode_string->chars[0]=='r') {
+            flags=SQLITE_OPEN_READONLY;
+        } else if(mode_string->length==2&&memcmp(mode_string->chars,"rw",2)==0) {
+            flags=SQLITE_OPEN_READWRITE;
+        } else if(mode_string->length==3&&memcmp(mode_string->chars,"rwc",3)==0) {
+            flags=SQLITE_OPEN_READWRITE|SQLITE_OPEN_CREATE;
+        } else {
+            snprintf(vm->error,sizeof vm->error,
+                "SQLite3.open's mode must be \"r\", \"rw\", or \"rwc\", got \"%.*s\"",
+                (int)mode_string->length,mode_string->chars);
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        open_rc=sqlite3_open_v2(path->chars,&db,flags,nullptr);
+    }
+    if(open_rc!=SQLITE_OK) {
+        snprintf(vm->error,sizeof vm->error,"cannot open '%.*s': %s",
+                 (int)path->length,path->chars,sqlite3_errmsg(db));
+        sqlite3_close(db);
+        return DIAMOND_VM_SQLITE3_ERROR;
+    }
+    *out_db=db;
+    return DIAMOND_VM_OK;
 }
 
 /* Postgres OIDs for the column types this driver decodes into a native
@@ -12895,6 +13166,14 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     VM_PROPAGATE(dispatch_status);
                     break;
                 }
+                if(receiver_kind==DIAMOND_OBJECT_SQLITE3_STATEMENT) {
+                    if(type_argument_count!=0)VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                    const DiamondVmStatus dispatch_status=sqlite3_statement_dispatch_helper(vm,
+                        (DiamondSqlite3StatementHandle *)registers[recv].as.object,
+                        method_name,registers,base,argc,dest);
+                    VM_PROPAGATE(dispatch_status);
+                    break;
+                }
                 if(receiver_kind==DIAMOND_OBJECT_POSTGRES) {
                     if(type_argument_count!=0)VM_RETURN(DIAMOND_VM_TYPE_ERROR);
                     const DiamondVmStatus dispatch_status=postgres_dispatch_helper(vm,
@@ -14289,8 +14568,8 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 break;
             }
             case DIAMOND_OP_SQLITE3_OPEN: {
-                uint16_t dest=0,path_reg=0;
-                READ_SHORT(dest);READ_SHORT(path_reg);
+                uint16_t dest=0,path_reg=0,mode_reg=0;
+                READ_SHORT(dest);READ_SHORT(path_reg);READ_SHORT(mode_reg);
                 if(registers[path_reg].kind!=DIAMOND_VALUE_OBJECT||
                    registers[path_reg].as.object->kind!=DIAMOND_OBJECT_STRING) {
                     snprintf(vm->error,sizeof vm->error,
@@ -14299,13 +14578,9 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 }
                 const DiamondString *path=(const DiamondString *)registers[path_reg].as.object;
                 sqlite3 *db=nullptr;
-                const int open_rc=sqlite3_open(path->chars,&db);
-                if(open_rc!=SQLITE_OK) {
-                    snprintf(vm->error,sizeof vm->error,"cannot open '%.*s': %s",
-                             (int)path->length,path->chars,sqlite3_errmsg(db));
-                    sqlite3_close(db);
-                    VM_RETURN(DIAMOND_VM_SQLITE3_ERROR);
-                }
+                const DiamondVmStatus open_status=
+                    sqlite3_open_helper(vm,path,registers[mode_reg],&db);
+                VM_PROPAGATE(open_status);
                 DiamondSqlite3Handle *handle=allocate_sqlite3_handle(vm,db);
                 if(handle==nullptr) {
                     sqlite3_close(db);

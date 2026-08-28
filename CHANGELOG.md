@@ -26,6 +26,23 @@
 
 ## Language
 
+- Added reusable prepared SQLite statements, named binds, and connection-open
+  mode/flags. `db.prepare(sql)` compiles a statement once and returns a
+  `Statement` (a new `DIAMOND_OBJECT_SQLITE3_STATEMENT` heap kind) with its
+  own `#execute`/`#query`/`#close`, avoiding `sqlite3_prepare_v2`'s
+  parse/plan cost on every call for code that runs the same statement
+  repeatedly. `.execute`/`.query` (on both `SQLite3` and `Statement`) accept
+  a `Hash` for `:name`-style named binds alongside the existing positional
+  `Array`. `SQLite3.open(path, mode)` takes an optional `"r"`/`"rw"`/`"rwc"`
+  mode string, opening via `sqlite3_open_v2` instead of the bare
+  `sqlite3_open`. A `Statement`'s lifetime is independent of its owning
+  connection's own Diamond-level reachability, so `SQLite3#close` now closes
+  via `sqlite3_close_v2` rather than plain `sqlite3_close` -- the latter
+  would have silently leaked the real OS-level connection (never checking
+  its own `SQLITE_BUSY` return) the first time a `Statement` outlived its
+  connection, a scenario that couldn't previously arise since every prior
+  `#execute`/`#query` call always fully finalized its own one-shot statement
+  before returning. See docs/io.md's SQLite3 section.
 - Replaced the arbitrary 16-argument-per-call-site ceiling with the real
   wire-format limit: `DIAMOND_MAX_ARGUMENTS` (255) now bounds every call
   form (plain functions, instance methods, constructors, `super`, bound

@@ -897,7 +897,6 @@ collided with self capture" section for the full mechanism.
 The current native APIs intentionally expose useful, narrow slices. Possible
 extensions should be demand-driven:
 
-- prepared SQLite statements, transaction helpers, named binds, and open flags;
 - asynchronous subprocess handles with polling and termination;
 - TLS ALPN, client certificates, session resumption, and custom trust stores;
 - richer time parsing/timezone support;
@@ -920,6 +919,19 @@ SHA-256 and HMAC-SHA-256 are now exposed as `Digest.sha256` and
 `HMAC.sha256`, returning lowercase hexadecimal strings and preserving raw
 String bytes. Additional algorithms remain demand-driven rather than becoming
 an open-ended crypto-wrapper surface.
+
+**Done**: reusable prepared SQLite statements, named (`:name`) binds, and
+connection-open mode/flags -- `db.prepare(sql)` returns a `Statement`
+(`.execute`/`.query`/`.close`, a new `DIAMOND_OBJECT_SQLITE3_STATEMENT`
+heap kind, own lifetime independent of its owning `SQLite3` connection),
+`.execute`/`.query`/`Statement#execute`/`Statement#query` all accept a
+`Hash` for named binds alongside the existing positional `Array`, and
+`SQLite3.open(path, mode)` takes an optional `"r"`/`"rw"`/`"rwc"` mode
+string (`sqlite3_open_v2`). Transaction helpers turned out to already be
+fully solved at the userland level (`ActiveRecord::Transaction.run`/
+`.run_nested`, pure Diamond code over the existing `#execute`), so that
+slice needed no native work and was dropped from scope once discovered
+mid-investigation. See `docs/io.md`'s SQLite3 section for the full API.
 
 ### Package ecosystem
 

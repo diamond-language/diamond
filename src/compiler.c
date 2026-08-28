@@ -3926,6 +3926,16 @@ static uint16_t parse_file_open_call(Compiler *compiler) {
     return dest;
 }
 
+/* `SQLite3.open(path)` or `SQLite3.open(path, mode)`. `mode`, when given,
+ * is a String -- "r" (read-only, error if missing), "rw" (read-write, error
+ * if missing), or "rwc" (read-write, created if missing -- sqlite3_open's
+ * own default, spelled out explicitly rather than just being what you get
+ * from omitting the argument) -- validated and translated to sqlite3_open_v2
+ * flags at runtime (DIAMOND_OP_SQLITE3_OPEN), the same "string mode,
+ * runtime-validated" shape File.open's own mode argument already uses.
+ * Omitted mode compiles a NIL third register, the sentinel the VM checks to
+ * fall back to plain sqlite3_open unchanged -- mirrors parse_exit_call's own
+ * compile-time default-when-omitted pattern. */
 static uint16_t parse_sqlite3_open_call(Compiler *compiler) {
     advance_token(compiler); /* consume '.' */
     if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER||
@@ -3942,6 +3952,16 @@ static uint16_t parse_sqlite3_open_call(Compiler *compiler) {
     skip_newlines(compiler);
     const uint16_t path_register=parse_expression(compiler);
     skip_newlines(compiler);
+    uint16_t mode_register;
+    if(compiler->current.kind==DIAMOND_TOKEN_COMMA) {
+        advance_token(compiler);
+        skip_newlines(compiler);
+        mode_register=parse_expression(compiler);
+        skip_newlines(compiler);
+    } else {
+        mode_register=allocate_register(compiler);
+        emit_instruction(compiler,DIAMOND_OP_NIL,mode_register,0,0,1);
+    }
     if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
         fail(compiler,compiler->current.span,"expected ')' after SQLite3.open arguments");
         return 0;
@@ -3951,6 +3971,7 @@ static uint16_t parse_sqlite3_open_call(Compiler *compiler) {
     emit_opcode(compiler,DIAMOND_OP_SQLITE3_OPEN);
     emit_register(compiler,dest);
     emit_register(compiler,path_register);
+    emit_register(compiler,mode_register);
     return dest;
 }
 

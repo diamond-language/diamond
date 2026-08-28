@@ -29,6 +29,11 @@ typedef struct DiamondChunk DiamondChunk;
  * Matches sqlite3.h's own `typedef struct sqlite3 sqlite3;` exactly. */
 typedef struct sqlite3 sqlite3;
 
+/* Forward-declared for the same reason sqlite3 is above: a prepared
+ * statement handle, opaque here too. Matches sqlite3.h's own
+ * `typedef struct sqlite3_stmt sqlite3_stmt;` exactly. */
+typedef struct sqlite3_stmt sqlite3_stmt;
+
 /* Forward-declared for the same reason sqlite3 is above: only vm.c calls
  * real libpq functions, so <libpq-fe.h> stays out of this header. Matches
  * libpq-fe.h's own `typedef struct pg_conn PGconn;` exactly. */
@@ -59,6 +64,7 @@ typedef enum DiamondObjectKind : uint8_t {
     DIAMOND_OBJECT_PROGRAM_BUILDER,
     DIAMOND_OBJECT_THREAD,
     DIAMOND_OBJECT_SQLITE3,
+    DIAMOND_OBJECT_SQLITE3_STATEMENT,
     DIAMOND_OBJECT_POSTGRES,
     DIAMOND_OBJECT_MYSQL,
     DIAMOND_OBJECT_TIME,
@@ -358,6 +364,22 @@ typedef struct DiamondSqlite3Handle {
     DiamondObject object;
     sqlite3 *db;
 } DiamondSqlite3Handle;
+
+/* A reusable prepared statement, from `SQLite3#prepare`. Same idempotent-
+ * close sentinel discipline as DiamondSqlite3Handle: `stmt` is nulled by
+ * an explicit #close() and checked before any other operation; both GC
+ * sweep and VM teardown finalize a still-open statement as a safety net.
+ * Deliberately holds no back-reference to the owning DiamondSqlite3Handle
+ * -- sqlite3_db_handle(stmt) already recovers the owning `sqlite3*` for
+ * error messages, and a prepared statement's lifetime isn't tied to its
+ * connection's Diamond-level object staying reachable (matching sqlite3's
+ * own C-level contract: a statement is only actually invalidated when the
+ * connection is closed, at which point every operation on it below
+ * already checks the closed-connection sentinel via handle->db first). */
+typedef struct DiamondSqlite3StatementHandle {
+    DiamondObject object;
+    sqlite3_stmt *stmt;
+} DiamondSqlite3StatementHandle;
 
 /* Same shape and same idempotent-close reasoning as DiamondSqlite3Handle
  * immediately above, just wrapping a libpq PGconn* (via PQconnectdb)

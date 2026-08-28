@@ -533,22 +533,41 @@ named `TLSSocket` shadows the builtin entirely). `TLSSocket.connect`
 compiles to `DIAMOND_OP_TLS_CONNECT`; `TLSServer.listen` to
 `DIAMOND_OP_TLS_LISTEN`.
 
-## SQLite3: `SQLite3.open`/`.execute`/`.query`/`.last_insert_row_id`/`.close`
+## SQLite3: `SQLite3.open`/`.execute`/`.query`/`.prepare`/`.last_insert_row_id`/`.close`
 
 ```ruby
 db = SQLite3.open("data.db")
 db.execute("CREATE TABLE people (id INTEGER PRIMARY KEY, name TEXT, age INTEGER)")
 db.execute("INSERT INTO people (name, age) VALUES (?, ?)", ["Ada", 30])
+db.execute("INSERT INTO people (name, age) VALUES (:name, :age)", {"name": "Grace", "age": 40})
 id = db.last_insert_row_id()
 db.query("SELECT * FROM people WHERE age >= ?", [18])
-# => [{id: 1, name: Ada, age: 30}]
+# => [{id: 1, name: Ada, age: 30}, {id: 2, name: Grace, age: 40}]
+
+insert = db.prepare("INSERT INTO people (name, age) VALUES (?, ?)")
+insert.execute(["Linus", 50])
+insert.execute(["Ester", 60])
+insert.close()
+
+readonly = SQLite3.open("data.db", "r")
+readonly.query("SELECT * FROM people")
+readonly.close()
+
 db.close()
 ```
 
 `SQLite3.open(path)` opens (creating if missing, sqlite3's own default)
 via `sqlite3_open`, the system `libsqlite3` — a genuinely external C
 dependency, unlike `Regexp`'s in-repo `reginold`, linked as a plain
-`-lsqlite3` rather than a bundled static archive. A failed open raises a
+`-lsqlite3` rather than a bundled static archive. `SQLite3.open(path,
+mode)` opens via `sqlite3_open_v2` instead, with `mode` a `String`: `"r"`
+(read-only, error if missing), `"rw"` (read-write, error if missing), or
+`"rwc"` (read-write, created if missing — spelling out `sqlite3_open`'s
+own default explicitly). An unrecognized or non-`String` `mode` raises
+`TypeError` (a Diamond-level call-shape mistake, checked at runtime since
+`mode` is an arbitrary expression, not a compile-time literal) — this is
+the same "string mode, runtime-validated" shape `File.open`'s own `mode`
+argument already uses, not a new mechanism. A failed open raises a
 rescuable `SQLite3Error` — a dedicated exception class, not `IOError`,
 since a corrupt or unopenable database file is a sqlite-specific
 condition and every other failure this type can raise (a bad statement,
@@ -560,13 +579,28 @@ A `SQLite3` value is a new GC-managed heap object kind
 same shape as `File`'s `DiamondFileHandle` around a `FILE *`, including
 the same closed/open sentinel (`db` nulled by `#close()`, checked before
 any other operation) and the same "sweeping an unreached-but-still-open
-handle closes it as a safety net" GC behavior.
+handle closes it as a safety net" GC behavior. `#close()` closes via
+`sqlite3_close_v2`, not plain `sqlite3_close`: a `Statement` prepared
+from this connection (`#prepare`, below) is an independent GC object
+that can outlive the connection's own Diamond-level reachability, and
+plain `sqlite3_close` fails (leaving the real OS-level connection open
+and leaked, since this call site never checked its return code) with
+any unfinalized statement still outstanding. `_v2` never fails: it
+closes immediately if nothing is outstanding, or defers the actual close
+until every associated `Statement` is itself finalized — sqlite3's own
+documented idiom for exactly this ownership shape, and the reason a
+`Statement` can keep being used (see below) after its owning connection
+is already Diamond-level `#close()`d.
 
 `SQLite3.open` is recognized in the compiler the same way `File.open`
-is, compiling to a single `DIAMOND_OP_SQLITE3_OPEN dest, path`
-instruction. `.execute`/`.query`/`.last_insert_row_id`/`.close` are
-native `DIAMOND_OP_INVOKE` dispatch on a `DIAMOND_OBJECT_SQLITE3`
-receiver, the same mechanism `File`'s own methods use:
+is, compiling to a single `DIAMOND_OP_SQLITE3_OPEN dest, path, mode`
+instruction (`mode` a compile-time `NIL` when omitted from the call, the
+sentinel the VM reads as "use plain `sqlite3_open`, unchanged"; the same
+compile-time-default-when-omitted shape `exit()`'s optional argument
+already uses). `.execute`/`.query`/`.prepare`/`.last_insert_row_id`/
+`.close` are native `DIAMOND_OP_INVOKE` dispatch on a
+`DIAMOND_OBJECT_SQLITE3` receiver, the same mechanism `File`'s own
+methods use:
 
 - `.execute(sql)` / `.execute(sql, params)` prepares and runs one
   statement, discarding any rows it produces, and returns the number of
@@ -574,17 +608,30 @@ receiver, the same mechanism `File`'s own methods use:
   value for `INSERT`/`UPDATE`/`DELETE`/DDL.
 - `.query(sql)` / `.query(sql, params)` prepares and runs one statement,
   collecting every row into `Array[Hash]` (column name → typed value).
+- `.prepare(sql)` compiles `sql` once and returns a reusable `Statement`
+  (below), for running the same statement many times without repaying
+  `sqlite3_prepare_v2`'s parse/plan cost on every call — see "Statement"
+  below.
 - `.last_insert_row_id()` returns the `Int` rowid of the most recent
   successful `INSERT` on this connection (`sqlite3_last_insert_rowid`).
 - `.close()` is idempotent, exactly like `File#close`.
 
-`params`, when given, is an `Array` bound *positionally* to a
-statement's `?` placeholders (1-indexed, sqlite3's own convention) —
-this is the injection-safe way to include a value in a query; never
-interpolate a value directly into the SQL string. A parameter-count
-mismatch raises `ArgumentError`; an unsupported Diamond value in
-`params` (anything but `Int`/`Float`/`String`/`Bool`/`Nil`) raises
-`TypeError`. Bind/column type mapping:
+`params`, when given to `.execute`/`.query`, is either an `Array` bound
+*positionally* to a statement's `?` placeholders (1-indexed, sqlite3's
+own convention), or a `Hash` bound *by name* to `:name` placeholders
+(`sqlite3_bind_parameter_index`, looked up with the `:` sigil prepended
+to each Diamond `String` key — only the `:name` spelling is recognized
+at the Diamond level, not `@name`/`$name`, matching the bare-name-key
+convention most host-language sqlite3 drivers already use). Either form
+is the injection-safe way to include a value in a query; never
+interpolate a value directly into the SQL string. In both forms, a
+parameter-count mismatch raises `ArgumentError`; for named binds, a Hash
+key with no matching `:name` placeholder in the statement also raises
+`ArgumentError`, and a non-`String` Hash key raises `TypeError`. An
+unsupported Diamond value anywhere in `params` (anything but
+`Int`/`Float`/`String`/`Bool`/`Nil`) raises `TypeError`. Anything other
+than `Array`/`Hash`/omitted for `params` itself is `TypeError`. Bind/
+column type mapping:
 
 | Diamond → sqlite3 (`params`) | sqlite3 → Diamond (`query` results) |
 |---|---|
@@ -597,11 +644,39 @@ mismatch raises `ArgumentError`; an unsupported Diamond value in
 `sqlite3_prepare_v2` only compiles the first statement up to a `;` and
 leaves the rest unexecuted — silently dropping a second statement
 chained after the first would be a real correctness trap, so
-`.execute`/`.query` reject anything left over besides trailing
-whitespace with a clear `SQLite3Error` rather than ignoring it. Each
-call does its own prepare→bind→step→finalize; there is no persistent
-prepared-`Statement` object to explicitly reuse across calls (see "out
-of scope" below).
+`.execute`/`.query`/`.prepare` reject anything left over besides
+trailing whitespace with a clear `SQLite3Error` rather than ignoring it.
+`.execute`/`.query` each do their own prepare→bind→step→finalize.
+
+### `Statement`: `SQLite3#prepare`'s `.execute`/`.query`/`.close`
+
+`db.prepare(sql)` compiles `sql` once (`sqlite3_prepare_v2`, the same
+single-statement guard as `.execute`/`.query`) and returns a `Statement`
+— another new GC-managed heap object kind
+(`DIAMOND_OBJECT_SQLITE3_STATEMENT`), a thin wrapper around a
+`sqlite3_stmt *`, with the same closed/open sentinel and GC-sweep-closes-
+as-safety-net shape as `SQLite3` itself (`#close()`/GC sweep/VM teardown
+all `sqlite3_finalize`, idempotently).
+
+- `.execute(params = nil)` / `.query(params = nil)` — same argument
+  shape, return values, and bind semantics as the connection's own
+  `.execute`/`.query` above (positional `Array`, named `Hash`, or
+  omitted), except bound against the *already-prepared* statement rather
+  than compiling it fresh: `sqlite3_reset` + `sqlite3_clear_bindings`
+  rewind and clear any previous call's bind state first (so an omitted
+  bind on this call can't accidentally reuse a stale value bound on a
+  previous one), then the new `params` are bound and the statement is
+  stepped — never finalized, so it stays ready for the next call.
+- `.close()` is idempotent, exactly like `SQLite3#close`.
+
+A `Statement` holds no back-reference to its owning `SQLite3` connection
+value (`sqlite3_db_handle(stmt)` recovers the real `sqlite3*` for error
+messages when needed) — its lifetime is independent, per the `#close()`
+`_v2` note above: preparing a statement, letting the `SQLite3` connection
+value itself go out of Diamond-level scope (or explicitly `#close()`ing
+it) while the `Statement` is still reachable and in use, is well-defined
+and worked out via `sqlite3_close_v2`'s deferred-close semantics, not
+merely untested.
 
 ## PostgreSQL: `PostgreSQL.open`/`.execute`/`.query`/`.last_insert_row_id`/`.close`
 
@@ -946,17 +1021,13 @@ extension, not this one):
   negotiated beyond default TLS.
 - **File mode validation**: `File.open` passes `mode` straight through
   to `fopen` with no Diamond-level checking.
-- **Reusable prepared `Statement` objects**: `.execute`/`.query` each do
-  their own one-shot prepare→bind→step→finalize; there's no way to
-  prepare a statement once and bind/step it repeatedly across calls.
-- **Transactions as a dedicated API**: no `.transaction { ... }`-style
-  block helper — `db.execute("BEGIN")`/`"COMMIT"`/`"ROLLBACK"` already
-  work today through plain SQL, so this is a convenience layer to add
-  later, not missing functionality.
-- **Named (`:name`) bind placeholders, connection-open flags/mode**:
-  `SQLite3.open` takes only a path (sqlite3's own create-if-missing
-  default, no read-only/flags argument); `params` binds positionally
-  (`?`) only.
+- **Transactions as a dedicated *native* API**: no `.transaction { ... }`-
+  style block helper built into `SQLite3`/`PostgreSQL`/`MySQL` themselves
+  — `db.execute("BEGIN")`/`"COMMIT"`/`"ROLLBACK"` already work today
+  through plain SQL, and `packages/active_record`'s
+  `ActiveRecord::Transaction.run`/`.run_nested` already builds exactly
+  this convenience layer in pure Diamond code on top of it (including
+  `SAVEPOINT`-based nesting), so there's no native gap here to close.
 - **`Time.parse`, named timezones, a separate `Date`-only type**: no
   parsing a `Time` from a `String`, no picking a timezone other than
   the process's own local zone or UTC (Ruby itself needs the `tzinfo`
