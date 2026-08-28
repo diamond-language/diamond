@@ -5719,12 +5719,76 @@ static void publish_union_instance_return_type(Compiler *compiler,uint16_t reg,
 
 static int32_t type_set_with_nil(Compiler *compiler,uint16_t source_index);
 
+typedef enum CollectionRelay {
+    COLLECTION_RELAY_NONE,
+    COLLECTION_RELAY_ELEMENT,
+    COLLECTION_RELAY_NULLABLE_ELEMENT,
+    COLLECTION_RELAY_ARRAY_SAME,
+    COLLECTION_RELAY_KEYS,
+    COLLECTION_RELAY_VALUES,
+    COLLECTION_RELAY_FALLBACK,
+    COLLECTION_RELAY_CONCAT,
+    COLLECTION_RELAY_MAP,
+    COLLECTION_RELAY_FLAT_MAP,
+    COLLECTION_RELAY_NESTED_ARRAY,
+    COLLECTION_RELAY_GROUP_BY,
+    COLLECTION_RELAY_ZIP,
+    COLLECTION_RELAY_TALLY,
+    COLLECTION_RELAY_FETCH,
+    COLLECTION_RELAY_MERGE,
+    COLLECTION_RELAY_MAP_VALUES,
+    COLLECTION_RELAY_PUSH
+} CollectionRelay;
+
+typedef struct CollectionRelayContract {
+    const char *name;
+    CollectionRelay relay;
+} CollectionRelayContract;
+
+static CollectionRelay collection_relay(const Compiler *compiler,
+        DiamondSpan name) {
+    static const CollectionRelayContract contracts[]={
+        {"first",COLLECTION_RELAY_ELEMENT},{"last",COLLECTION_RELAY_ELEMENT},
+        {"min",COLLECTION_RELAY_ELEMENT},{"max",COLLECTION_RELAY_ELEMENT},
+        {"min_by",COLLECTION_RELAY_ELEMENT},{"max_by",COLLECTION_RELAY_ELEMENT},
+        {"find",COLLECTION_RELAY_NULLABLE_ELEMENT},
+        {"delete_at",COLLECTION_RELAY_NULLABLE_ELEMENT},
+        {"pop",COLLECTION_RELAY_NULLABLE_ELEMENT},
+        {"reverse",COLLECTION_RELAY_ARRAY_SAME},
+        {"uniq",COLLECTION_RELAY_ARRAY_SAME},
+        {"compact",COLLECTION_RELAY_ARRAY_SAME},
+        {"sort",COLLECTION_RELAY_ARRAY_SAME},
+        {"sort_by",COLLECTION_RELAY_ARRAY_SAME},
+        {"select",COLLECTION_RELAY_ARRAY_SAME},
+        {"reject",COLLECTION_RELAY_ARRAY_SAME},
+        {"each_with_index",COLLECTION_RELAY_ARRAY_SAME},
+        {"take",COLLECTION_RELAY_ARRAY_SAME},{"drop",COLLECTION_RELAY_ARRAY_SAME},
+        {"keys",COLLECTION_RELAY_KEYS},{"values",COLLECTION_RELAY_VALUES},
+        {"first_or",COLLECTION_RELAY_FALLBACK},
+        {"last_or",COLLECTION_RELAY_FALLBACK},
+        {"concat",COLLECTION_RELAY_CONCAT},{"map",COLLECTION_RELAY_MAP},
+        {"flat_map",COLLECTION_RELAY_FLAT_MAP},
+        {"partition",COLLECTION_RELAY_NESTED_ARRAY},
+        {"each_slice",COLLECTION_RELAY_NESTED_ARRAY},
+        {"each_cons",COLLECTION_RELAY_NESTED_ARRAY},
+        {"group_by",COLLECTION_RELAY_GROUP_BY},{"zip",COLLECTION_RELAY_ZIP},
+        {"tally",COLLECTION_RELAY_TALLY},{"fetch",COLLECTION_RELAY_FETCH},
+        {"merge",COLLECTION_RELAY_MERGE},
+        {"map_values",COLLECTION_RELAY_MAP_VALUES},{"push",COLLECTION_RELAY_PUSH}
+    };
+    for(size_t index=0;index<sizeof contracts/sizeof contracts[0];index++)
+        if(name_equals(compiler,contracts[index].name,name,false))
+            return contracts[index].relay;
+    return COLLECTION_RELAY_NONE;
+}
+
 /* Native Array/Hash extension dispatch is resolved by the VM rather than an
  * instance signature, so its result cannot use the declared-return path above.
  * Preserve the receiver's nested collection graphs for the small family whose
  * result is structurally determined without inspecting arguments or blocks. */
 static void publish_collection_method_return_type(Compiler *compiler,
         uint16_t reg,int32_t receiver_set_index,DiamondSpan name) {
+    const CollectionRelay relay=collection_relay(compiler,name);
     if(receiver_set_index<0||
        (size_t)receiver_set_index>=compiler->function->type_set_count)return;
     const DiamondTypeSet receiver=
@@ -5757,39 +5821,23 @@ static void publish_collection_method_return_type(Compiler *compiler,
         }
     }
     if(collection_type==DIAMOND_TYPE_ARRAY) {
-        if(name_equals(compiler,"first",name,false)||
-           name_equals(compiler,"last",name,false)||
-           name_equals(compiler,"min",name,false)||
-           name_equals(compiler,"max",name,false)||
-           name_equals(compiler,"min_by",name,false)||
-           name_equals(compiler,"max_by",name,false)) {
+        if(relay==COLLECTION_RELAY_ELEMENT) {
             publish_known_type_set(compiler,reg,(uint16_t)first);return;
         }
-        if(name_equals(compiler,"find",name,false)||
-           name_equals(compiler,"delete_at",name,false)||
-           name_equals(compiler,"pop",name,false)) {
+        if(relay==COLLECTION_RELAY_NULLABLE_ELEMENT) {
             const int32_t nullable=type_set_with_nil(compiler,(uint16_t)first);
             if(nullable>=0)publish_known_type_set(compiler,reg,
                 (uint16_t)nullable);
             return;
         }
-        if(name_equals(compiler,"reverse",name,false)||
-           name_equals(compiler,"uniq",name,false)||
-           name_equals(compiler,"compact",name,false)||
-           name_equals(compiler,"sort",name,false)||
-           name_equals(compiler,"sort_by",name,false)||
-           name_equals(compiler,"select",name,false)||
-           name_equals(compiler,"reject",name,false)||
-           name_equals(compiler,"each_with_index",name,false)||
-           name_equals(compiler,"take",name,false)||
-           name_equals(compiler,"drop",name,false))
+        if(relay==COLLECTION_RELAY_ARRAY_SAME)
             record_collection_type_set(compiler,reg,DIAMOND_TYPE_ARRAY,
                 first,-1);
         return;
     }
-    if(name_equals(compiler,"keys",name,false))
+    if(relay==COLLECTION_RELAY_KEYS)
         record_collection_type_set(compiler,reg,DIAMOND_TYPE_ARRAY,first,-1);
-    else if(name_equals(compiler,"values",name,false))
+    else if(relay==COLLECTION_RELAY_VALUES)
         record_collection_type_set(compiler,reg,DIAMOND_TYPE_ARRAY,second,-1);
 }
 
@@ -5850,18 +5898,16 @@ static void publish_nested_array_result(Compiler *compiler,uint16_t reg,
 static void publish_collection_argument_return_type(Compiler *compiler,
         uint16_t reg,int32_t receiver_set_index,DiamondSpan name,
         const uint16_t *arguments,size_t argument_count) {
+    const CollectionRelay relay=collection_relay(compiler,name);
     const int32_t array_elements=joined_collection_argument(compiler,
         receiver_set_index,DIAMOND_TYPE_ARRAY,false);
     if(array_elements>=0) {
-        if(argument_count==1&&
-           (name_equals(compiler,"first_or",name,false)||
-            name_equals(compiler,"last_or",name,false))) {
+        if(argument_count==1&&relay==COLLECTION_RELAY_FALLBACK) {
             const int32_t fallback=joined_value_type_set(compiler,arguments,1);
             const int32_t joined=join_type_set_indices(compiler,array_elements,
                 fallback);
             if(joined>=0)publish_known_type_set(compiler,reg,(uint16_t)joined);
-        } else if(argument_count==1&&
-                  name_equals(compiler,"concat",name,false)) {
+        } else if(argument_count==1&&relay==COLLECTION_RELAY_CONCAT) {
             const int32_t other=joined_collection_argument(compiler,
                 compiler->known_type_sets[arguments[0]],DIAMOND_TYPE_ARRAY,
                 false);
@@ -5869,25 +5915,19 @@ static void publish_collection_argument_return_type(Compiler *compiler,
                 other);
             if(joined>=0)record_collection_type_set(compiler,reg,
                 DIAMOND_TYPE_ARRAY,joined,-1);
-        } else if(argument_count==1&&
-                  name_equals(compiler,"map",name,false)) {
+        } else if(argument_count==1&&relay==COLLECTION_RELAY_MAP) {
             const int32_t mapped=joined_callable_return(compiler,arguments[0]);
             if(mapped>=0)record_collection_type_set(compiler,reg,
                 DIAMOND_TYPE_ARRAY,mapped,-1);
-        } else if(argument_count==1&&
-                  name_equals(compiler,"flat_map",name,false)) {
+        } else if(argument_count==1&&relay==COLLECTION_RELAY_FLAT_MAP) {
             const int32_t mapped=joined_callable_return(compiler,arguments[0]);
             const int32_t element=joined_collection_argument(compiler,mapped,
                 DIAMOND_TYPE_ARRAY,false);
             if(element>=0)record_collection_type_set(compiler,reg,
                 DIAMOND_TYPE_ARRAY,element,-1);
-        } else if(argument_count==1&&
-                  (name_equals(compiler,"partition",name,false)||
-                   name_equals(compiler,"each_slice",name,false)||
-                   name_equals(compiler,"each_cons",name,false))) {
+        } else if(argument_count==1&&relay==COLLECTION_RELAY_NESTED_ARRAY) {
             publish_nested_array_result(compiler,reg,array_elements);
-        } else if(argument_count==1&&
-                  name_equals(compiler,"group_by",name,false)) {
+        } else if(argument_count==1&&relay==COLLECTION_RELAY_GROUP_BY) {
             const int32_t key=joined_callable_return(compiler,arguments[0]);
             if(key>=0) {
                 record_collection_type_set(compiler,reg,DIAMOND_TYPE_ARRAY,
@@ -5896,8 +5936,7 @@ static void publish_collection_argument_return_type(Compiler *compiler,
                 if(grouped>=0)record_collection_type_set(compiler,reg,
                     DIAMOND_TYPE_HASH,key,grouped);
             }
-        } else if(argument_count==1&&
-                  name_equals(compiler,"zip",name,false)) {
+        } else if(argument_count==1&&relay==COLLECTION_RELAY_ZIP) {
             const int32_t other=joined_collection_argument(compiler,
                 compiler->known_type_sets[arguments[0]],DIAMOND_TYPE_ARRAY,
                 false);
@@ -5906,8 +5945,7 @@ static void publish_collection_argument_return_type(Compiler *compiler,
             const int32_t pair=join_type_set_indices(compiler,array_elements,
                 nullable_other);
             if(pair>=0)publish_nested_array_result(compiler,reg,pair);
-        } else if(argument_count==0&&
-                  name_equals(compiler,"tally",name,false)) {
+        } else if(argument_count==0&&relay==COLLECTION_RELAY_TALLY) {
             const uint16_t count=concrete_type_set(compiler,DIAMOND_TYPE_INT);
             if(count!=DIAMOND_NO_TYPE_SET)
                 record_collection_type_set(compiler,reg,DIAMOND_TYPE_HASH,
@@ -5920,11 +5958,11 @@ static void publish_collection_argument_return_type(Compiler *compiler,
     const int32_t hash_values=joined_collection_argument(compiler,
         receiver_set_index,DIAMOND_TYPE_HASH,true);
     if(hash_keys<0||hash_values<0)return;
-    if(argument_count==2&&name_equals(compiler,"fetch",name,false)) {
+    if(argument_count==2&&relay==COLLECTION_RELAY_FETCH) {
         const int32_t fallback=joined_value_type_set(compiler,&arguments[1],1);
         const int32_t joined=join_type_set_indices(compiler,hash_values,fallback);
         if(joined>=0)publish_known_type_set(compiler,reg,(uint16_t)joined);
-    } else if(argument_count==1&&name_equals(compiler,"merge",name,false)) {
+    } else if(argument_count==1&&relay==COLLECTION_RELAY_MERGE) {
         const int32_t other_set=compiler->known_type_sets[arguments[0]];
         const int32_t other_keys=joined_collection_argument(compiler,other_set,
             DIAMOND_TYPE_HASH,false);
@@ -5935,8 +5973,7 @@ static void publish_collection_argument_return_type(Compiler *compiler,
             other_values);
         if(keys>=0&&values>=0)record_collection_type_set(compiler,reg,
             DIAMOND_TYPE_HASH,keys,values);
-    } else if(argument_count==1&&
-              name_equals(compiler,"map_values",name,false)) {
+    } else if(argument_count==1&&relay==COLLECTION_RELAY_MAP_VALUES) {
         const int32_t mapped=joined_callable_return(compiler,arguments[0]);
         if(mapped>=0)record_collection_type_set(compiler,reg,
             DIAMOND_TYPE_HASH,hash_keys,mapped);
@@ -5953,15 +5990,15 @@ static int find_keyword_argument(const Compiler *compiler,const char *wanted,
 static void publish_collection_keyword_return_type(Compiler *compiler,
         uint16_t reg,int32_t receiver_set_index,DiamondSpan method_name,
         const DiamondSpan *names,const uint16_t *values,size_t count) {
+    const CollectionRelay relay=collection_relay(compiler,method_name);
     const char *wanted[2]={nullptr,nullptr};size_t wanted_count=0;
-    if(name_equals(compiler,"first_or",method_name,false)||
-       name_equals(compiler,"last_or",method_name,false)) {
+    if(relay==COLLECTION_RELAY_FALLBACK) {
         wanted[0]="fallback";wanted_count=1;
-    } else if(name_equals(compiler,"concat",method_name,false)) {
+    } else if(relay==COLLECTION_RELAY_CONCAT) {
         wanted[0]="other";wanted_count=1;
-    } else if(name_equals(compiler,"merge",method_name,false)) {
+    } else if(relay==COLLECTION_RELAY_MERGE) {
         wanted[0]="other";wanted_count=1;
-    } else if(name_equals(compiler,"fetch",method_name,false)) {
+    } else if(relay==COLLECTION_RELAY_FETCH) {
         wanted[0]="key";wanted[1]="fallback";wanted_count=2;
     } else return;
     uint16_t ordered[2];
@@ -6046,7 +6083,8 @@ static void update_collection_mutation_type(Compiler *compiler,uint16_t receiver
 static void publish_array_push_return_type(Compiler *compiler,uint16_t result,
         uint16_t receiver,DiamondSpan name,const uint16_t *arguments,
         size_t argument_count) {
-    if(argument_count!=1||!name_equals(compiler,"push",name,false))return;
+    if(argument_count!=1||
+       collection_relay(compiler,name)!=COLLECTION_RELAY_PUSH)return;
     update_collection_mutation_type(compiler,receiver,nullptr,0,arguments,1);
     const int32_t set=compiler->known_type_sets[receiver];
     if(set>=0)publish_known_type_set(compiler,result,(uint16_t)set);

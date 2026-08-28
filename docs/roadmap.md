@@ -394,6 +394,10 @@ Unknown and over-capacity writes now degrade direct receiver facts to an
 unparameterized Array or Hash instead of retaining stale nested unions. The LSP
 reports no structural local hover after that invalidation. Alias-wide handling
 remains the separate object-identity problem described above.
+Native collection relay classification is now consolidated into one 36-method
+contract table. Receiver, argument, keyword, callback, and mutation phases share
+those categories. An explicit eight-to-nine-arm mutation regression verifies
+that the bounded union ceiling clears the nested fact.
 
 Expected collection graphs now recurse through nested Array and Hash literals.
 Array elements and Hash keys/values compile against their respective declared

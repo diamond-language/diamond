@@ -1036,6 +1036,43 @@ count=$((count + 1))
 send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$collection_mutation_uri"'"}}}'
 read_message >/dev/null
 
+# --- a ninth mutation arm degrades instead of retaining eight stale arms ---
+
+collection_overflow_uri="file:///collection_overflow_hover.di"
+collection_overflow_source='class OverflowA
+end
+class OverflowB
+end
+class OverflowC
+end
+class OverflowD
+end
+class OverflowE
+end
+class OverflowF
+end
+class OverflowG
+end
+class OverflowH
+end
+class OverflowI
+end
+def inspect()
+  items = [OverflowA.new(), OverflowB.new(), OverflowC.new(), OverflowD.new(), OverflowE.new(), OverflowF.new(), OverflowG.new(), OverflowH.new()]
+  items.push(OverflowI.new())
+  items
+end'
+send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$collection_overflow_uri"'","text":"'"$collection_overflow_source"'"}}}'
+read_message >/dev/null
+
+send '{"jsonrpc":"2.0","id":199,"method":"textDocument/hover","params":{"textDocument":{"uri":"'"$collection_overflow_uri"'"},"position":{"line":21,"character":3}}}'
+response="$(read_message)"
+[[ "$response" == *'"result":null'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$collection_overflow_uri"'"}}}'
+read_message >/dev/null
+
 # --- heterogeneous spread literals bind generic result positions ---
 
 spread_generic_uri="file:///spread_generic_hover.di"

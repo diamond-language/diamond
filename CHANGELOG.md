@@ -26,6 +26,10 @@
 
 ## Language
 
+- Consolidated all 36 modeled Array/Hash inference relays into one native
+  collection contract table shared by receiver-, argument-, keyword-, and
+  mutation-dependent result logic. Added an explicit ninth-union-arm regression
+  proving mutation overflow degrades the nested fact.
 - Invalidated collection mutation facts when a written key/value is dynamic or
   a joined union exceeds the representable member ceiling. This replaces stale
   specialization metadata with a conservative outer Array/Hash fact and records

@@ -440,6 +440,11 @@ concatenation, and merge operands. Typed Callable returns construct `map`,
 `each_slice`, `each_cons`, and `tally` synthesize their nested output graphs.
 Fixed arguments, attached blocks, and fully named keyword calls participate;
 dynamically sized spread operands remain conservative.
+The modeled method names and their result-shape categories live in one bounded
+native collection relay table. Receiver-only, positional, keyword, callback,
+and mutation phases consume that classifier rather than independently matching
+method strings, keeping VM extension names and compiler graph behavior auditable
+as one matrix.
 Element reductions (`min`, `max`, and their keyed forms) retain the receiver's
 joined element graph. Search and destructive reads (`find`, `delete_at`, and
 `pop`) add `Nil`; `zip` adds `Nil` specifically to the other Array's element
