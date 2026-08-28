@@ -339,6 +339,11 @@ its first statically known write. Direct lexical receivers also record a new
 position-sensitive scope fact for LSP hover and later expressions. Mutations
 through an alias or a dynamically recovered nested receiver remain conservative;
 runtime persistent contracts continue to enforce annotated boundaries.
+If a written key or value has no structural fact, or joining it would exceed
+the bounded union capacity, the compiler retains only the receiver's outer
+Array/Hash kind. It must discard the nested graph: retaining the pre-mutation
+graph would be unsound for later specialization. The invalidation is itself a
+position-sensitive scope fact.
 
 Functions and methods may declare scoped type variables after their names, as
 in `def pair[K, V](key: K, value: V) -> Hash[K, V]`. Each compiled function

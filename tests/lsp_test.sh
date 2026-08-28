@@ -990,6 +990,15 @@ collection_mutation_source='def inspect()
   entries
   entries[:label] = \"forty-two\"
   entries
+end
+def dynamic(value) = value
+def inspect_unknown()
+  opaque = [42]
+  opaque.push(dynamic(\"dynamic\"))
+  opaque
+  entries = {\"answer\": 42}
+  entries[dynamic(:opaque)] = dynamic(true)
+  entries
 end'
 send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$collection_mutation_uri"'","text":"'"$collection_mutation_source"'"}}}'
 read_message >/dev/null
@@ -1012,6 +1021,16 @@ count=$((count + 1))
 send '{"jsonrpc":"2.0","id":196,"method":"textDocument/hover","params":{"textDocument":{"uri":"'"$collection_mutation_uri"'"},"position":{"line":10,"character":3}}}'
 response="$(read_message)"
 [[ "$response" == *'"value":"Hash[String | Symbol, Int | String]"'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","id":197,"method":"textDocument/hover","params":{"textDocument":{"uri":"'"$collection_mutation_uri"'"},"position":{"line":16,"character":3}}}'
+response="$(read_message)"
+[[ "$response" == *'"result":null'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","id":198,"method":"textDocument/hover","params":{"textDocument":{"uri":"'"$collection_mutation_uri"'"},"position":{"line":19,"character":3}}}'
+response="$(read_message)"
+[[ "$response" == *'"result":null'* ]]
 count=$((count + 1))
 
 send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$collection_mutation_uri"'"}}}'

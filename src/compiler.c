@@ -5984,31 +5984,55 @@ static void record_mutated_collection_fact(Compiler *compiler,uint16_t reg,
         }
 }
 
+static void clear_mutated_collection_fact(Compiler *compiler,uint16_t reg,
+        uint8_t collection_type) {
+    compiler->known_types[reg]=collection_type;
+    compiler->known_type_sets[reg]=-1;
+    for(size_t index=0;index<compiler->local_count;index++)
+        if(compiler->locals[index].reg==reg) {
+            record_scope_type_fact(compiler,reg,compiler->current.span.start);
+            break;
+        }
+}
+
 static void update_collection_mutation_type(Compiler *compiler,uint16_t receiver,
         const uint16_t *keys,size_t key_count,const uint16_t *values,
         size_t value_count) {
     if(value_count==0)return;
-    const int32_t added_values=joined_value_type_set(compiler,values,value_count);
-    if(added_values<0)return;
     const int32_t receiver_set=compiler->known_type_sets[receiver];
     const int32_t array_elements=joined_collection_argument(compiler,
         receiver_set,DIAMOND_TYPE_ARRAY,false);
-    if(array_elements>=0||compiler->known_types[receiver]==DIAMOND_TYPE_ARRAY) {
-        const int32_t joined=array_elements<0?added_values:
-            join_type_set_indices(compiler,array_elements,added_values);
-        if(joined>=0)record_mutated_collection_fact(compiler,receiver,
-            DIAMOND_TYPE_ARRAY,joined,-1);
-        return;
-    }
-    if(key_count==0)return;
-    const int32_t added_keys=joined_value_type_set(compiler,keys,key_count);
-    if(added_keys<0)return;
+    const bool array_receiver=array_elements>=0||
+        compiler->known_types[receiver]==DIAMOND_TYPE_ARRAY;
     const int32_t hash_keys=joined_collection_argument(compiler,receiver_set,
         DIAMOND_TYPE_HASH,false);
     const int32_t hash_values=joined_collection_argument(compiler,receiver_set,
         DIAMOND_TYPE_HASH,true);
-    if((hash_keys<0||hash_values<0)&&
-       compiler->known_types[receiver]!=DIAMOND_TYPE_HASH)return;
+    const bool hash_receiver=(hash_keys>=0&&hash_values>=0)||
+        compiler->known_types[receiver]==DIAMOND_TYPE_HASH;
+    const int32_t added_values=joined_value_type_set(compiler,values,value_count);
+    if(added_values<0) {
+        if(array_receiver)clear_mutated_collection_fact(compiler,receiver,
+            DIAMOND_TYPE_ARRAY);
+        else if(hash_receiver)clear_mutated_collection_fact(compiler,receiver,
+            DIAMOND_TYPE_HASH);
+        return;
+    }
+    if(array_receiver) {
+        const int32_t joined=array_elements<0?added_values:
+            join_type_set_indices(compiler,array_elements,added_values);
+        if(joined>=0)record_mutated_collection_fact(compiler,receiver,
+            DIAMOND_TYPE_ARRAY,joined,-1);
+        else clear_mutated_collection_fact(compiler,receiver,
+            DIAMOND_TYPE_ARRAY);
+        return;
+    }
+    if(!hash_receiver||key_count==0)return;
+    const int32_t added_keys=joined_value_type_set(compiler,keys,key_count);
+    if(added_keys<0) {
+        clear_mutated_collection_fact(compiler,receiver,DIAMOND_TYPE_HASH);
+        return;
+    }
     const int32_t joined_keys=hash_keys<0?added_keys:
         join_type_set_indices(compiler,hash_keys,added_keys);
     const int32_t joined_values=hash_values<0?added_values:
@@ -6016,6 +6040,7 @@ static void update_collection_mutation_type(Compiler *compiler,uint16_t receiver
     if(joined_keys>=0&&joined_values>=0)
         record_mutated_collection_fact(compiler,receiver,DIAMOND_TYPE_HASH,
             joined_keys,joined_values);
+    else clear_mutated_collection_fact(compiler,receiver,DIAMOND_TYPE_HASH);
 }
 
 static void publish_array_push_return_type(Compiler *compiler,uint16_t result,

@@ -1,5 +1,6 @@
 def accept_items(items: Array[Int | String]) = items
 def accept_hash(items: Hash[String | Symbol, Int | String]) = items
+def dynamic(value) = value
 
 items = []
 items.push(42)
@@ -23,3 +24,11 @@ entries["answer"] = 42
 entries[:label] = "forty-two"
 puts(accept_hash(entries)["answer"])
 puts(accept_hash(entries)[:label])
+
+opaque = [42]
+opaque.push(dynamic("dynamic"))
+puts(opaque[1])
+
+opaque_entries = {"answer": 42}
+opaque_entries[dynamic(:opaque)] = dynamic(true)
+puts(opaque_entries[:opaque])

@@ -390,6 +390,10 @@ their first nested graph from a known write, and direct lexical receivers expose
 each widened state positionally to the LSP. Alias-wide invalidation and nested
 receiver writeback remain queued because the compiler does not maintain an
 object-identity graph between registers.
+Unknown and over-capacity writes now degrade direct receiver facts to an
+unparameterized Array or Hash instead of retaining stale nested unions. The LSP
+reports no structural local hover after that invalidation. Alias-wide handling
+remains the separate object-identity problem described above.
 
 Expected collection graphs now recurse through nested Array and Hash literals.
 Array elements and Hash keys/values compile against their respective declared

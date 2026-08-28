@@ -26,6 +26,10 @@
 
 ## Language
 
+- Invalidated collection mutation facts when a written key/value is dynamic or
+  a joined union exceeds the representable member ceiling. This replaces stale
+  specialization metadata with a conservative outer Array/Hash fact and records
+  the invalidation position for LSP hover.
 - Added flow-sensitive collection mutation inference. Empty Arrays acquire an
   element graph from fixed or keyword `push`; Array and Hash indexed writes and
   compound writes widen existing graphs; mutation results and later local uses
