@@ -5,7 +5,11 @@ REGINOLD_LIB := $(REGINOLD_DIR)/libreginold.a
 # for MariaDB Connector/C (libmysqlclient-API-compatible) -- unlike
 # sqlite3.h/libpq-fe.h, mysql.h isn't installed directly under /usr/include,
 # so (unlike those two) an explicit -I is required to find it.
-CPPFLAGS := -Isrc -I$(REGINOLD_DIR) -I/usr/include/mysql -I/usr/include/mysql/mysql
+# -Ilsp: src/repl.c includes lsp/completion.h/json.h directly for
+# Tab-completion (see REPL_COMPLETION_SOURCES below) -- global rather
+# than scoped to just that one file's own compile step, since no
+# src/*.h/lsp/*.h basename collision exists to make that a risk.
+CPPFLAGS := -Isrc -Ilsp -I$(REGINOLD_DIR) -I/usr/include/mysql -I/usr/include/mysql/mysql
 CFLAGS_COMMON := -std=c23 -Wall -Wextra -Wpedantic -Wconversion -Wshadow \
 	-Wstrict-prototypes -Werror=implicit-function-declaration
 CFLAGS_DEBUG := -O0 -g3 -DDIAMOND_DEBUG
@@ -33,9 +37,27 @@ BUILD_DIR := build
 TARGET := $(BUILD_DIR)/diamond
 SOURCES := $(wildcard src/*.c)
 OBJECTS := $(SOURCES:src/%.c=$(BUILD_DIR)/%.o)
-DEPS := $(OBJECTS:.o=.d)
+# The REPL's Tab-completion (src/repl.c) reuses lsp/completion.c's
+# completion_compute_with_resolver directly (in-process, no LSP
+# transport) rather than re-implementing candidate-list logic -- these
+# are its own transitive dependencies (compile_buffer.c for the shared
+# "build the buffer diamond_compile expects" step, receiver.c for
+# receiver.method resolution, json.c for the CompletionItem-shaped
+# result), deliberately not the full $(LSP_SOURCES) below: no
+# document.c (the REPL has no open-document table -- see
+# completion_compute_with_resolver's own doc comment on passing
+# resolver=nullptr), no rpc.c/main.c (no JSON-RPC transport). A
+# separate lsp-%.o naming/object prefix, not the plain src/%.o pattern
+# rule below, purely to keep these visually and mechanically distinct
+# in $(BUILD_DIR) (a flat directory) from src/'s own objects -- no
+# actual basename collision exists today, but this stays true even if
+# one is ever introduced.
+REPL_COMPLETION_SOURCES := lsp/completion.c lsp/compile_buffer.c \
+	lsp/receiver.c lsp/json.c
+REPL_COMPLETION_OBJECTS := $(REPL_COMPLETION_SOURCES:lsp/%.c=$(BUILD_DIR)/lsp-%.o)
+DEPS := $(OBJECTS:.o=.d) $(REPL_COMPLETION_OBJECTS:.o=.d)
 
-.PHONY: all debug sanitize tsan release test test-release test-sanitize test-tsan test-api test-fibers test-fiber-run test-fiber-context test-vm-context test-yield test-continuation test-multi-yield test-scheduler test-scheduler-run-all test-fiber-gc-roots test-fiber-guards test-nested-yield-guard test-stack-overflow test-all test-facet facet test-http-package test-gremlin-package test-rack-package test-div-package test-dials-package test-graphql-package test-graphsql-package test-logger-package test-log-viewer-package test-pheint-application test-lexer-diff test-parser-diff test-self-host test-self-host-smoke lsp test-lsp test-repl fuzz test-fuzz clean
+.PHONY: all debug sanitize tsan release test test-release test-sanitize test-tsan test-api test-fibers test-fiber-run test-fiber-context test-vm-context test-yield test-continuation test-multi-yield test-scheduler test-scheduler-run-all test-fiber-gc-roots test-fiber-guards test-nested-yield-guard test-stack-overflow test-all test-facet facet test-http-package test-gremlin-package test-rack-package test-div-package test-dials-package test-graphql-package test-graphsql-package test-logger-package test-log-viewer-package test-pheint-application test-lexer-diff test-parser-diff test-self-host test-self-host-smoke lsp test-lsp test-repl test-repl-completion fuzz test-fuzz clean
 
 all: debug
 
@@ -56,10 +78,14 @@ release: clean $(TARGET) $(BUILD_DIR)/run_cases
 $(REGINOLD_LIB):
 	$(MAKE) -C $(REGINOLD_DIR) libreginold.a
 
-$(TARGET): $(OBJECTS) $(REGINOLD_LIB)
-	$(CC) $(OBJECTS) $(LDFLAGS) $(LDLIBS) -o $@
+$(TARGET): $(OBJECTS) $(REPL_COMPLETION_OBJECTS) $(REGINOLD_LIB)
+	$(CC) $(OBJECTS) $(REPL_COMPLETION_OBJECTS) $(LDFLAGS) $(LDLIBS) -o $@
 
 $(BUILD_DIR)/%.o: src/%.c
+	@mkdir -p $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c $< -o $@
+
+$(BUILD_DIR)/lsp-%.o: lsp/%.c
 	@mkdir -p $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c $< -o $@
 
@@ -85,7 +111,14 @@ test-sanitize: sanitize
 test-tsan: tsan
 	bash tests/tsan_test.sh
 
-API_SOURCES := $(filter-out src/main.c,$(SOURCES))
+# src/repl.c excluded for the same reason src/main.c already is: nothing
+# under $(API_SOURCES)'s own consumers (api_invalidation, fiber_states,
+# fiber_run, facet, the fuzz targets, run_cases) calls diamond_repl_run
+# -- confirmed directly, not assumed. Excluding it here also means none
+# of them need repl.c's own new lsp/ completion dependency
+# (REPL_COMPLETION_SOURCES below) pulled in just to satisfy a linker
+# that would otherwise see repl.c's unused-by-them references to it.
+API_SOURCES := $(filter-out src/main.c src/repl.c,$(SOURCES))
 
 $(BUILD_DIR)/api_invalidation: tests/api_invalidation.c $(API_SOURCES) $(REGINOLD_LIB)
 	@mkdir -p $(BUILD_DIR)
@@ -100,6 +133,15 @@ $(BUILD_DIR)/fiber_states: tests/fiber_states.c $(API_SOURCES) $(REGINOLD_LIB)
 
 test-fibers: $(BUILD_DIR)/fiber_states
 	$(BUILD_DIR)/fiber_states
+
+$(BUILD_DIR)/repl_completion_test: tests/repl_completion_test.c src/repl.c \
+		$(API_SOURCES) $(REPL_COMPLETION_SOURCES) $(REGINOLD_LIB)
+	@mkdir -p $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS_COMMON) $(CFLAGS_DEBUG) src/repl.c $(API_SOURCES) \
+		$(REPL_COMPLETION_SOURCES) $< $(LDLIBS) -o $@
+
+test-repl-completion: $(BUILD_DIR)/repl_completion_test
+	$(BUILD_DIR)/repl_completion_test
 
 test-fiber-guards: test-fibers
 
@@ -250,6 +292,7 @@ test-all:
 	$(MAKE) test-pheint-application
 	$(MAKE) test-lsp
 	$(MAKE) test-repl
+	$(MAKE) test-repl-completion
 	$(MAKE) test-exit
 	$(MAKE) test-fuzz
 	$(MAKE) test-self-host-smoke
