@@ -530,6 +530,18 @@ void diamond_vm_collect(DiamondVm *vm) {
         (double)(end.tv_nsec-start.tv_nsec)/1e9;
 }
 
+/* The single collection-trigger check every allocate_* helper in this
+ * file makes before actually allocating -- factored out of 23
+ * previously-duplicated inline copies (confirmed by direct grep, not
+ * assumed) so a generational collector's own cheaper, more-frequent
+ * minor-GC threshold has exactly one place to be added later, instead
+ * of needing to touch all 23 call sites again. Pure refactor for now --
+ * still only ever triggers today's single-generation diamond_vm_collect,
+ * no behavior change. */
+static void maybe_collect(DiamondVm *vm) {
+    if(vm->stress_gc||vm->bytes_allocated>=vm->next_gc)diamond_vm_collect(vm);
+}
+
 void diamond_vm_init(DiamondVm *vm) {
     *vm = (DiamondVm){.next_gc = 2048,.range_class_index=UINT8_MAX};
     vm->quickening_threshold = 1;
@@ -957,9 +969,7 @@ DiamondFiberStatus diamond_fiber_scheduler_run_all(DiamondFiberQueue *queue) {
 
 static DiamondString *allocate_string(DiamondVm *vm, const char *chars,
                                       size_t length) {
-    if (vm->stress_gc || vm->bytes_allocated >= vm->next_gc) {
-        diamond_vm_collect(vm);
-    }
+    maybe_collect(vm);
     DiamondString *string = malloc(sizeof(DiamondString) + length + 1);
     if (string == nullptr) return nullptr;
     string->object = (DiamondObject){
@@ -976,9 +986,7 @@ static DiamondString *allocate_string(DiamondVm *vm, const char *chars,
 
 static DiamondSymbol *allocate_symbol(DiamondVm *vm, const char *chars,
                                       size_t length) {
-    if (vm->stress_gc || vm->bytes_allocated >= vm->next_gc) {
-        diamond_vm_collect(vm);
-    }
+    maybe_collect(vm);
     DiamondSymbol *symbol = malloc(sizeof(DiamondSymbol) + length + 1);
     if (symbol == nullptr) return nullptr;
     symbol->object = (DiamondObject){
@@ -995,7 +1003,7 @@ static DiamondSymbol *allocate_symbol(DiamondVm *vm, const char *chars,
 
 static DiamondInstance *allocate_instance(DiamondVm *vm,const DiamondClass *class,
                                           const DiamondChunk *chunk) {
-    if(vm->stress_gc||vm->bytes_allocated>=vm->next_gc) diamond_vm_collect(vm);
+    maybe_collect(vm);
     const size_t size=sizeof(DiamondInstance)+class->field_count*sizeof(DiamondValue);
     DiamondInstance *instance=malloc(size); if(instance==nullptr)return nullptr;
     instance->object=(DiamondObject){.next=vm->objects,.kind=DIAMOND_OBJECT_INSTANCE};
@@ -1007,7 +1015,7 @@ static DiamondInstance *allocate_instance(DiamondVm *vm,const DiamondClass *clas
 
 static DiamondArray *allocate_array(DiamondVm *vm,const DiamondValue *values,
                                     size_t count) {
-    if(vm->stress_gc||vm->bytes_allocated>=vm->next_gc) diamond_vm_collect(vm);
+    maybe_collect(vm);
     const size_t capacity=count;
     const size_t size=sizeof(DiamondArray)+capacity*sizeof(DiamondValue);
     DiamondArray *array=malloc(sizeof(DiamondArray)); if(array==nullptr)return nullptr;
@@ -1020,7 +1028,7 @@ static DiamondArray *allocate_array(DiamondVm *vm,const DiamondValue *values,
 }
 
 static DiamondHash *allocate_hash(DiamondVm *vm) {
-    if(vm->stress_gc||vm->bytes_allocated>=vm->next_gc) diamond_vm_collect(vm);
+    maybe_collect(vm);
     DiamondHash *hash=malloc(sizeof(DiamondHash)); if(hash==nullptr)return nullptr;
     *hash=(DiamondHash){.object={.next=vm->objects,.kind=DIAMOND_OBJECT_HASH}};
     vm->objects=&hash->object;vm->bytes_allocated+=sizeof(DiamondHash);return hash;
@@ -1088,7 +1096,7 @@ void diamond_vm_set_argv(DiamondVm *vm, int argc, char *const *argv) {
 
 static DiamondClosure *allocate_closure(DiamondVm *vm,uint16_t function_index,
                                         const DiamondValue *captures,size_t count) {
-    if(vm->stress_gc||vm->bytes_allocated>=vm->next_gc)diamond_vm_collect(vm);
+    maybe_collect(vm);
     DiamondClosure *closure=malloc(sizeof(DiamondClosure));if(closure==nullptr)return nullptr;
     *closure=(DiamondClosure){.object={.next=vm->objects,.kind=DIAMOND_OBJECT_CLOSURE},
       .function_index=function_index,.capture_count=(uint8_t)count};
@@ -1097,14 +1105,14 @@ static DiamondClosure *allocate_closure(DiamondVm *vm,uint16_t function_index,
 }
 
 static DiamondCell *allocate_cell(DiamondVm *vm,DiamondValue value) {
-    if(vm->stress_gc||vm->bytes_allocated>=vm->next_gc)diamond_vm_collect(vm);
+    maybe_collect(vm);
     DiamondCell *cell=malloc(sizeof(DiamondCell));if(cell==nullptr)return nullptr;
     *cell=(DiamondCell){.object={.next=vm->objects,.kind=DIAMOND_OBJECT_CELL},.value=value};
     vm->objects=&cell->object;vm->bytes_allocated+=sizeof(DiamondCell);return cell;
 }
 
 static DiamondFiberHandle *allocate_fiber_handle(DiamondVm *vm,DiamondFiber *fiber) {
-    if(vm->stress_gc||vm->bytes_allocated>=vm->next_gc)diamond_vm_collect(vm);
+    maybe_collect(vm);
     DiamondFiberHandle *handle=malloc(sizeof(DiamondFiberHandle));if(handle==nullptr)return nullptr;
     *handle=(DiamondFiberHandle){.object={.next=vm->objects,.kind=DIAMOND_OBJECT_FIBER},.fiber=fiber};
     vm->objects=&handle->object;vm->bytes_allocated+=sizeof(DiamondFiberHandle);return handle;
@@ -1230,7 +1238,7 @@ static void *thread_entry_trampoline(void *argument) {
 }
 
 static DiamondThreadHandle *allocate_thread_handle(DiamondVm *vm,DiamondThread *thread) {
-    if(vm->stress_gc||vm->bytes_allocated>=vm->next_gc)diamond_vm_collect(vm);
+    maybe_collect(vm);
     DiamondThreadHandle *handle=malloc(sizeof(DiamondThreadHandle));if(handle==nullptr)return nullptr;
     *handle=(DiamondThreadHandle){.object={.next=vm->objects,.kind=DIAMOND_OBJECT_THREAD},.thread=thread};
     vm->objects=&handle->object;vm->bytes_allocated+=sizeof(DiamondThreadHandle);return handle;
@@ -1268,7 +1276,7 @@ static void free_thread(DiamondThread *thread) {
 }
 
 static DiamondFileHandle *allocate_file_handle(DiamondVm *vm,FILE *stream) {
-    if(vm->stress_gc||vm->bytes_allocated>=vm->next_gc)diamond_vm_collect(vm);
+    maybe_collect(vm);
     DiamondFileHandle *handle=malloc(sizeof(DiamondFileHandle));if(handle==nullptr)return nullptr;
     *handle=(DiamondFileHandle){.object={.next=vm->objects,.kind=DIAMOND_OBJECT_FILE},.stream=stream};
     vm->objects=&handle->object;vm->bytes_allocated+=sizeof(DiamondFileHandle);return handle;
@@ -1276,7 +1284,7 @@ static DiamondFileHandle *allocate_file_handle(DiamondVm *vm,FILE *stream) {
 
 static DiamondListenerHandle *allocate_listener_handle(DiamondVm *vm,int fd,
         bool nonblocking) {
-    if(vm->stress_gc||vm->bytes_allocated>=vm->next_gc)diamond_vm_collect(vm);
+    maybe_collect(vm);
     DiamondListenerHandle *handle=malloc(sizeof(DiamondListenerHandle));
     if(handle==nullptr)return nullptr;
     *handle=(DiamondListenerHandle){.object={.next=vm->objects,.kind=DIAMOND_OBJECT_LISTENER},
@@ -1285,7 +1293,7 @@ static DiamondListenerHandle *allocate_listener_handle(DiamondVm *vm,int fd,
 }
 
 static DiamondSocketHandle *allocate_socket_handle(DiamondVm *vm,int fd) {
-    if(vm->stress_gc||vm->bytes_allocated>=vm->next_gc)diamond_vm_collect(vm);
+    maybe_collect(vm);
     DiamondSocketHandle *handle=malloc(sizeof(DiamondSocketHandle));
     if(handle==nullptr)return nullptr;
     *handle=(DiamondSocketHandle){.object={.next=vm->objects,.kind=DIAMOND_OBJECT_SOCKET},.fd=fd};
@@ -1293,7 +1301,7 @@ static DiamondSocketHandle *allocate_socket_handle(DiamondVm *vm,int fd) {
 }
 
 static DiamondUdpSocketHandle *allocate_udp_socket_handle(DiamondVm *vm,int fd) {
-    if(vm->stress_gc||vm->bytes_allocated>=vm->next_gc)diamond_vm_collect(vm);
+    maybe_collect(vm);
     DiamondUdpSocketHandle *handle=malloc(sizeof(DiamondUdpSocketHandle));
     if(handle==nullptr)return nullptr;
     *handle=(DiamondUdpSocketHandle){
@@ -1302,7 +1310,7 @@ static DiamondUdpSocketHandle *allocate_udp_socket_handle(DiamondVm *vm,int fd) 
 }
 
 static DiamondTlsSocketHandle *allocate_tls_socket_handle(DiamondVm *vm,SSL *ssl,int fd) {
-    if(vm->stress_gc||vm->bytes_allocated>=vm->next_gc)diamond_vm_collect(vm);
+    maybe_collect(vm);
     DiamondTlsSocketHandle *handle=malloc(sizeof(DiamondTlsSocketHandle));
     if(handle==nullptr)return nullptr;
     *handle=(DiamondTlsSocketHandle){
@@ -1703,7 +1711,7 @@ static bool poll_register_fd(struct pollfd *fds,nfds_t *fd_count,size_t max_fds,
 }
 
 static DiamondRegexp *allocate_regexp_handle(DiamondVm *vm,reginold_regex *compiled) {
-    if(vm->stress_gc||vm->bytes_allocated>=vm->next_gc)diamond_vm_collect(vm);
+    maybe_collect(vm);
     DiamondRegexp *regexp=malloc(sizeof(DiamondRegexp));
     if(regexp==nullptr)return nullptr;
     *regexp=(DiamondRegexp){.object={.next=vm->objects,.kind=DIAMOND_OBJECT_REGEXP},
@@ -1712,7 +1720,7 @@ static DiamondRegexp *allocate_regexp_handle(DiamondVm *vm,reginold_regex *compi
 }
 
 static DiamondSqlite3Handle *allocate_sqlite3_handle(DiamondVm *vm,sqlite3 *db) {
-    if(vm->stress_gc||vm->bytes_allocated>=vm->next_gc)diamond_vm_collect(vm);
+    maybe_collect(vm);
     DiamondSqlite3Handle *handle=malloc(sizeof(DiamondSqlite3Handle));
     if(handle==nullptr)return nullptr;
     *handle=(DiamondSqlite3Handle){.object={.next=vm->objects,.kind=DIAMOND_OBJECT_SQLITE3},
@@ -1722,7 +1730,7 @@ static DiamondSqlite3Handle *allocate_sqlite3_handle(DiamondVm *vm,sqlite3 *db) 
 
 static DiamondSqlite3StatementHandle *allocate_sqlite3_statement_handle(
         DiamondVm *vm,sqlite3_stmt *stmt) {
-    if(vm->stress_gc||vm->bytes_allocated>=vm->next_gc)diamond_vm_collect(vm);
+    maybe_collect(vm);
     DiamondSqlite3StatementHandle *handle=malloc(sizeof(DiamondSqlite3StatementHandle));
     if(handle==nullptr)return nullptr;
     *handle=(DiamondSqlite3StatementHandle){
@@ -1733,7 +1741,7 @@ static DiamondSqlite3StatementHandle *allocate_sqlite3_statement_handle(
 }
 
 static DiamondPostgresHandle *allocate_postgres_handle(DiamondVm *vm,PGconn *conn) {
-    if(vm->stress_gc||vm->bytes_allocated>=vm->next_gc)diamond_vm_collect(vm);
+    maybe_collect(vm);
     DiamondPostgresHandle *handle=malloc(sizeof(DiamondPostgresHandle));
     if(handle==nullptr)return nullptr;
     *handle=(DiamondPostgresHandle){.object={.next=vm->objects,.kind=DIAMOND_OBJECT_POSTGRES},
@@ -1742,7 +1750,7 @@ static DiamondPostgresHandle *allocate_postgres_handle(DiamondVm *vm,PGconn *con
 }
 
 static DiamondMysqlHandle *allocate_mysql_handle(DiamondVm *vm,MYSQL *conn) {
-    if(vm->stress_gc||vm->bytes_allocated>=vm->next_gc)diamond_vm_collect(vm);
+    maybe_collect(vm);
     DiamondMysqlHandle *handle=malloc(sizeof(DiamondMysqlHandle));
     if(handle==nullptr)return nullptr;
     *handle=(DiamondMysqlHandle){.object={.next=vm->objects,.kind=DIAMOND_OBJECT_MYSQL},
@@ -1751,7 +1759,7 @@ static DiamondMysqlHandle *allocate_mysql_handle(DiamondVm *vm,MYSQL *conn) {
 }
 
 static DiamondTime *allocate_time(DiamondVm *vm,double epoch,bool utc) {
-    if(vm->stress_gc||vm->bytes_allocated>=vm->next_gc)diamond_vm_collect(vm);
+    maybe_collect(vm);
     DiamondTime *time=malloc(sizeof(DiamondTime));
     if(time==nullptr)return nullptr;
     *time=(DiamondTime){.object={.next=vm->objects,.kind=DIAMOND_OBJECT_TIME},
@@ -1766,7 +1774,7 @@ static DiamondTime *allocate_time(DiamondVm *vm,double epoch,bool utc) {
  * draining a child process means several further allocations (the two
  * captured-output Strings) that can each trigger a GC. */
 static DiamondProcessResult *allocate_process_result(DiamondVm *vm) {
-    if(vm->stress_gc||vm->bytes_allocated>=vm->next_gc)diamond_vm_collect(vm);
+    maybe_collect(vm);
     DiamondProcessResult *result=malloc(sizeof(DiamondProcessResult));
     if(result==nullptr)return nullptr;
     *result=(DiamondProcessResult){
@@ -2091,7 +2099,7 @@ static DiamondVmStatus compile_method_helper(DiamondVm *vm,const DiamondClass *t
 /* Account for the program container here; dynamically added function records
  * are accounted for by ProgramBuilder#declare_function. */
 static DiamondProgramBuilder *allocate_program_builder(DiamondVm *vm) {
-    if(vm->stress_gc||vm->bytes_allocated>=vm->next_gc)diamond_vm_collect(vm);
+    maybe_collect(vm);
     DiamondProgram *built=calloc(1,sizeof *built);
     if(built==nullptr)return nullptr;
     diamond_program_init(built);
@@ -2715,8 +2723,7 @@ static bool copy_value_into_vm(DiamondVm *dest_vm, DiamondValue value,
         }
         case DIAMOND_OBJECT_BIGNUM: {
             const DiamondBignum *source=(const DiamondBignum *)value.as.object;
-            if(dest_vm->stress_gc||dest_vm->bytes_allocated>=dest_vm->next_gc)
-                diamond_vm_collect(dest_vm);
+            maybe_collect(dest_vm);
             const size_t size=
                 sizeof(DiamondBignum)+source->limb_count*sizeof(uint32_t);
             DiamondBignum *copy=malloc(size);
