@@ -41,6 +41,15 @@
   Also fixed a pre-existing bug found along the way: `compile_method`'s
   `bound_value_count` had no bounds check against these buffers at all.
   See docs/design.md's "No artificial call-argument/parameter ceiling".
+- Extended the same fix to keyword arguments: every keyword-count/keyword-
+  slot buffer, compiler-side (`parse_dynamic_keyword_arguments`,
+  `parse_spread_argument_array`, and each call-parsing site's own locals)
+  and VM-side (`CALL_SINGLETON_KEYWORDS`, `CALL_CLOSURE_KEYWORDS`,
+  `NEW_KEYWORDS`, `INVOKE_KEYWORDS`/`_TYPED_KEYWORDS`, and the shared
+  `merge_keyword_arguments` helper), is now bounded by `DIAMOND_MAX_
+  DECLARED_PARAMETERS` (32) instead of the old 16 -- a keyword can only
+  ever name one of a callee's declared parameter slots, so this matches
+  the declaration-side ceiling rather than the argument-side 255.
 - Tracked stable lexical object identities across direct Array/Hash aliases.
   Mutations and invalidations now update every live alias, including aliases
   captured across anonymous-block compiler frames; rebinding detaches identity.

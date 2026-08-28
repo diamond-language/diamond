@@ -280,6 +280,18 @@ the way: `bound_value_count` (`compile_method`'s own appended arguments) had
 no bounds check against these buffers at all before this. See docs/design.md's
 "No artificial call-argument/parameter ceiling" for the full writeup.
 
+Resolved for keyword arguments, on a follow-up pass: every keyword-count/
+keyword-slot buffer (compiler-side call-parsing and VM-side dispatch alike)
+is now bounded by `DIAMOND_MAX_DECLARED_PARAMETERS` (32) rather than the
+old 16 -- a keyword can only ever name one of a callee's declared parameter
+slots, so this matches the declaration-side ceiling above rather than the
+argument-side 255 (a plain positional/spread call to a variadic function
+still reaches the full 255; a keyword can't, since it's naming a specific
+slot). One narrower scope cut kept rather than chased further: a spread
+argument list combined with keyword overrides (`foo(*array, key: value)`)
+stays bounded to 32 total resolved slots even for a variadic target with a
+longer spread array -- see docs/design.md's own note on this.
+
 Resolved: a class/module/interface (and a type annotation naming one) can
 now be referenced before its own declaration is textually reached later in
 the same source -- `diamond_compile` (`src/compiler.c`) runs the whole

@@ -164,7 +164,7 @@ typedef struct Compiler {
     uint16_t positional_spread_elements[32];
     size_t positional_spread_fixed_count;
     size_t positional_spread_index;
-    uint16_t positional_spread_fixed[16];
+    uint16_t positional_spread_fixed[DIAMOND_MAX_DECLARED_PARAMETERS];
     int current_return_type;
     DiamondSpan current_return_type_span;
     LoopContext *current_loop;
@@ -1869,7 +1869,7 @@ static int32_t homogeneous_spread_expectation(Compiler *compiler,
 static uint16_t parse_dynamic_keyword_arguments(Compiler *compiler,
         DiamondSpan *keyword_names,uint16_t *keyword_values,
         size_t *keyword_count,const DiamondFunction *target) {
-    uint16_t fixed[16];size_t fixed_count=0,spread_index=0;
+    uint16_t fixed[DIAMOND_MAX_DECLARED_PARAMETERS];size_t fixed_count=0,spread_index=0;
     uint16_t spread=0;bool saw_spread=false,seen_keyword=false;
     bool literal_positions=false;size_t literal_first=0,literal_count=0;
     uint16_t literal_elements[32];
@@ -1885,7 +1885,7 @@ static uint16_t parse_dynamic_keyword_arguments(Compiler *compiler,
             diamond_lexer_next(&lookahead).kind==DIAMOND_TOKEN_COLON;
         if(keyword) {
             seen_keyword=true;
-            if(*keyword_count==16) {
+            if(*keyword_count==DIAMOND_MAX_DECLARED_PARAMETERS) {
                 fail(compiler,compiler->current.span,"too many keyword arguments");return 0;
             }
             const DiamondSpan name=compiler->current.span;
@@ -1936,7 +1936,7 @@ static uint16_t parse_dynamic_keyword_arguments(Compiler *compiler,
         } else {
             if(seen_keyword) {fail(compiler,compiler->current.span,
                 "positional argument cannot follow a keyword argument");return 0;}
-            if(fixed_count==16) {fail(compiler,compiler->current.span,
+            if(fixed_count==DIAMOND_MAX_DECLARED_PARAMETERS) {fail(compiler,compiler->current.span,
                 "too many fixed call arguments");return 0;}
             fixed[fixed_count]=parse_expected_argument(compiler,target,
                 fixed_count);
@@ -2029,7 +2029,7 @@ static uint16_t parse_spread_argument_array(Compiler *compiler,
         const DiamondFunction *keyword_function,uint8_t *keyword_slots,
         uint16_t *keyword_registers,size_t *keyword_count,
         const DiamondFunction *expected_function,size_t expected_count) {
-    uint16_t fixed[16];size_t fixed_count=0,spread_index=0;
+    uint16_t fixed[DIAMOND_MAX_DECLARED_PARAMETERS];size_t fixed_count=0,spread_index=0;
     uint16_t spread=0;bool saw_spread=false,seen_keyword=false;
     bool optional_block=false;
     bool literal_positions=false;size_t literal_first=0,literal_count=0;
@@ -2103,7 +2103,7 @@ static uint16_t parse_spread_argument_array(Compiler *compiler,
                 fail(compiler,compiler->current.span,
                     "positional argument cannot follow a keyword argument");return 0;
             }
-            if(fixed_count==16) {
+            if(fixed_count==DIAMOND_MAX_DECLARED_PARAMETERS) {
                 fail(compiler,compiler->current.span,"too many fixed call arguments");
                 return 0;
             }
@@ -2171,7 +2171,7 @@ static uint16_t parse_closure_call_arguments(Compiler *compiler, uint16_t callab
     advance_token(compiler);
     skip_newlines(compiler);
     if(call_arguments_have_keyword(compiler)) {
-        DiamondSpan keyword_names[16];uint16_t keyword_values[16];
+        DiamondSpan keyword_names[DIAMOND_MAX_DECLARED_PARAMETERS];uint16_t keyword_values[DIAMOND_MAX_DECLARED_PARAMETERS];
         size_t keyword_count=0;
         const uint16_t positional=parse_dynamic_keyword_arguments(compiler,
             keyword_names,keyword_values,&keyword_count,nullptr);
@@ -2620,7 +2620,7 @@ static size_t infer_contextual_spread_arguments(Compiler *compiler,
     if(compiler->positional_spread_literal) {
         for(size_t index=0;index<compiler->positional_spread_count;index++) {
             const size_t parameter=compiler->positional_spread_first+index;
-            if(parameter>=parameter_count||parameter>=16)break;
+            if(parameter>=parameter_count||parameter>=DIAMOND_MAX_DECLARED_PARAMETERS)break;
             infer_contextual_argument(compiler,target,parameter,
                 compiler->positional_spread_elements[index],bindings);
         }
@@ -2880,7 +2880,7 @@ static uint16_t parse_call(Compiler *compiler, DiamondSpan name) {
     advance_token(compiler);
     skip_newlines(compiler);
     if(call_arguments_have_spread(compiler)) {
-        uint8_t keyword_slots[16];uint16_t keyword_registers[16];
+        uint8_t keyword_slots[DIAMOND_MAX_DECLARED_PARAMETERS];uint16_t keyword_registers[DIAMOND_MAX_DECLARED_PARAMETERS];
         size_t keyword_count=0;
         uint16_t array_register=parse_spread_argument_array(compiler,
             function,keyword_slots,keyword_registers,&keyword_count,
@@ -2917,7 +2917,7 @@ static uint16_t parse_call(Compiler *compiler, DiamondSpan name) {
                 function,function->arity==0?0:function->arity-1,
                 resolved_arguments,resolved_count);
             if(keyword_count>0) {
-                if(keyword_count==16) {
+                if(keyword_count==DIAMOND_MAX_DECLARED_PARAMETERS) {
                     fail(compiler,compiler->previous.span,
                         "too many keyword arguments");return 0;
                 }
@@ -3423,7 +3423,7 @@ static uint16_t parse_singleton_call(Compiler *compiler,
     advance_token(compiler);
     skip_newlines(compiler);
     if(call_arguments_have_keyword(compiler)) {
-        DiamondSpan keyword_names[16];uint16_t keyword_values[16];
+        DiamondSpan keyword_names[DIAMOND_MAX_DECLARED_PARAMETERS];uint16_t keyword_values[DIAMOND_MAX_DECLARED_PARAMETERS];
         size_t keyword_count=0;
         const uint16_t positional=parse_dynamic_keyword_arguments(compiler,
             keyword_names,keyword_values,&keyword_count,function);
@@ -5242,7 +5242,7 @@ static uint16_t parse_name(Compiler *compiler) {
         advance_token(compiler);
         skip_newlines(compiler);
         if(call_arguments_have_keyword(compiler)) {
-            DiamondSpan keyword_names[16];uint16_t keyword_values[16];
+            DiamondSpan keyword_names[DIAMOND_MAX_DECLARED_PARAMETERS];uint16_t keyword_values[DIAMOND_MAX_DECLARED_PARAMETERS];
             size_t keyword_count=0;
             const uint16_t positional=parse_dynamic_keyword_arguments(compiler,
                 keyword_names,keyword_values,&keyword_count,initializer);
@@ -6543,7 +6543,7 @@ static uint16_t parse_invoke(Compiler *compiler, uint16_t receiver) {
     if(call_arguments_have_keyword(compiler)) {
         if(writer_name) {fail(compiler,compiler->current.span,
             "keyword method calls do not support writers");return 0;}
-        DiamondSpan keyword_names[16];uint16_t keyword_values[16];
+        DiamondSpan keyword_names[DIAMOND_MAX_DECLARED_PARAMETERS];uint16_t keyword_values[DIAMOND_MAX_DECLARED_PARAMETERS];
         size_t keyword_count=0;
         const uint16_t positional=parse_dynamic_keyword_arguments(compiler,
             keyword_names,keyword_values,&keyword_count,contextual_target);

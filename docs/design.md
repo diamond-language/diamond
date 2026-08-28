@@ -1805,6 +1805,35 @@ a possible overflow before this change, just apparently never hit in
 practice. `invoke_resolved_method_helper` now checks `argc+1+bound_value_
 count` against the shared buffer size explicitly before filling it.
 
+**Keyword arguments got the same treatment separately, on a follow-up
+pass, at `DIAMOND_MAX_DECLARED_PARAMETERS` rather than `DIAMOND_MAX_
+ARGUMENTS`.** A keyword can only ever name one of a callee's *declared*
+parameter slots (there's no such thing as a 200th keyword argument to a
+function with 25 parameters -- it would just be "no parameter with this
+name"), so every keyword-count/keyword-slot buffer -- both the compiler's
+own (`parse_dynamic_keyword_arguments`, `parse_spread_argument_array`,
+`parse_call`'s spread-mixed keyword path, and each call-parsing site's own
+`keyword_names[]`/`keyword_values[]` locals) and the VM's own
+(`DIAMOND_OP_CALL_SINGLETON_KEYWORDS`, `CALL_CLOSURE_KEYWORDS`,
+`NEW_KEYWORDS`, `INVOKE_KEYWORDS`/`_TYPED_KEYWORDS`, and the shared
+`merge_keyword_arguments` helper they all route through) -- is bounded by
+32, matching declared-parameter storage rather than the call-argument
+ceiling. Direct top-level function calls resolve keywords entirely at
+compile time (`parse_call`'s own slot-filling into `DIAMOND_MAX_
+ARGUMENTS`-sized `slot_registers`, since a *positional* argument to a
+variadic function has no such 32-slot ceiling) and never reach these
+VM-side opcodes at all -- they exist for calls the compiler can't fully
+resolve statically (instance methods, singleton calls, constructors,
+Callable-value calls). One narrower scope cut kept here rather than chased
+further: a spread argument list *combined with* keyword overrides
+(`foo(*array, key: value)`) stays bounded to 32 total resolved slots even
+when the target is variadic and the spread array is longer than that --
+`merge_keyword_arguments`'s `filled[]` bookkeeping array would need a
+differently-shaped fix (not just a bigger buffer) to track positional
+indices past 32 while keyword names still only resolve against the first
+32 of them; a *plain* spread with no keyword override has no such limit
+(see the "Call-site spread" section above).
+
 ## Deliberate constraints
 
 - No Ruby compatibility guarantee.

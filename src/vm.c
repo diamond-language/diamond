@@ -8865,10 +8865,21 @@ static DiamondVmStatus merge_keyword_arguments(DiamondVm *vm,
         const DiamondValue *registers,size_t public_arity,
         const DiamondValue *block,
         DiamondValue **merged,size_t *merged_count) {
-    if(positional->count>16||public_arity>16)return DIAMOND_VM_ARITY_ERROR;
-    bool filled[16]={0};size_t count=positional->count;
+    /* positional->count could exceed DIAMOND_MAX_DECLARED_PARAMETERS for a
+     * variadic target reached via a large spread combined with keyword
+     * overrides -- narrower than DIAMOND_MAX_ARGUMENTS's own general
+     * ceiling in that one specific combination, a deliberate scope cut
+     * (see docs/design.md) rather than an oversight: keyword names only
+     * ever resolve against a *declared* parameter slot, so widening this
+     * further would need a differently-shaped fix, not just a bigger
+     * buffer. */
+    if(positional->count>DIAMOND_MAX_DECLARED_PARAMETERS||
+       public_arity>DIAMOND_MAX_DECLARED_PARAMETERS)
+        return DIAMOND_VM_ARITY_ERROR;
+    bool filled[DIAMOND_MAX_DECLARED_PARAMETERS]={0};
+    size_t count=positional->count;
     for(size_t index=0;index<count;index++)filled[index]=true;
-    size_t slots[16];
+    size_t slots[DIAMOND_MAX_DECLARED_PARAMETERS];
     for(size_t keyword=0;keyword<keyword_count;keyword++) {
         if((size_t)keyword_names[keyword]>=caller->string_count)
             return DIAMOND_VM_INVALID_BYTECODE;
@@ -10120,11 +10131,11 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     DIAMOND_OP_CALL_KEYWORD_SPREAD||
                     (DiamondOpCode)instruction==
                     DIAMOND_OP_CALL_TYPED_KEYWORD_SPREAD;
-                uint8_t keyword_count=0,keyword_slots[16];
-                uint16_t keyword_registers[16];
+                uint8_t keyword_count=0,keyword_slots[DIAMOND_MAX_DECLARED_PARAMETERS];
+                uint16_t keyword_registers[DIAMOND_MAX_DECLARED_PARAMETERS];
                 if(has_keywords) {
                     READ_BYTE(keyword_count);
-                    if(keyword_count==0||keyword_count>16)
+                    if(keyword_count==0||keyword_count>DIAMOND_MAX_DECLARED_PARAMETERS)
                         VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
                     for(size_t index=0;index<keyword_count;index++) {
                         READ_BYTE(keyword_slots[index]);
@@ -10170,8 +10181,8 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 size_t call_argument_count=spread->count;
                 DiamondValue *merged_arguments=nullptr;
                 if(has_keywords) {
-                    bool filled[16]={0};
-                    if(spread->count>16)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                    bool filled[DIAMOND_MAX_DECLARED_PARAMETERS]={0};
+                    if(spread->count>DIAMOND_MAX_DECLARED_PARAMETERS)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
                     for(size_t index=0;index<spread->count;index++)filled[index]=true;
                     for(size_t index=0;index<keyword_count;index++) {
                         const size_t slot=keyword_slots[index];
@@ -10289,14 +10300,14 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
             case DIAMOND_OP_CALL_TYPED_SINGLETON_KEYWORDS: {
                 uint16_t destination=0,function_index=0,positional_register=0;
                 uint8_t class_index=0,needs_receiver=0,keyword_count=0;
-                uint16_t keyword_names[16],type_arguments[8];uint8_t type_count=0;
-                uint16_t keyword_registers[16];
+                uint16_t keyword_names[DIAMOND_MAX_DECLARED_PARAMETERS],type_arguments[8];uint8_t type_count=0;
+                uint16_t keyword_registers[DIAMOND_MAX_DECLARED_PARAMETERS];
                 READ_SHORT(destination);READ_SHORT(function_index);
                 READ_SHORT(positional_register);READ_BYTE(class_index);
                 READ_BYTE(needs_receiver);READ_BYTE(keyword_count);
                 const bool has_block=(keyword_count&0x80u)!=0;
                 keyword_count&=0x7fu;
-                if((keyword_count==0&&!has_block)||keyword_count>16)
+                if((keyword_count==0&&!has_block)||keyword_count>DIAMOND_MAX_DECLARED_PARAMETERS)
                     VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
                 for(size_t index=0;index<keyword_count;index++) {
                     READ_SHORT(keyword_names[index]);READ_SHORT(keyword_registers[index]);
@@ -10538,13 +10549,13 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
             }
             case DIAMOND_OP_CALL_CLOSURE_KEYWORDS: {
                 uint16_t dest=0,callable=0,positional_register=0;
-                uint8_t keyword_count=0;uint16_t keyword_names[16];
-                uint16_t keyword_registers[16];
+                uint8_t keyword_count=0;uint16_t keyword_names[DIAMOND_MAX_DECLARED_PARAMETERS];
+                uint16_t keyword_registers[DIAMOND_MAX_DECLARED_PARAMETERS];
                 READ_SHORT(dest);READ_SHORT(callable);READ_SHORT(positional_register);
                 READ_BYTE(keyword_count);
                 const bool has_block=(keyword_count&0x80u)!=0;
                 keyword_count&=0x7fu;
-                if((keyword_count==0&&!has_block)||keyword_count>16)
+                if((keyword_count==0&&!has_block)||keyword_count>DIAMOND_MAX_DECLARED_PARAMETERS)
                     VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
                 for(size_t index=0;index<keyword_count;index++) {
                     READ_SHORT(keyword_names[index]);READ_SHORT(keyword_registers[index]);
@@ -10646,15 +10657,15 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
             }
             case DIAMOND_OP_NEW_KEYWORDS: {
                 uint16_t destination=0,positional_register=0;
-                uint8_t class_index=0,keyword_count=0;uint16_t keyword_names[16];
-                uint16_t keyword_registers[16];
+                uint8_t class_index=0,keyword_count=0;uint16_t keyword_names[DIAMOND_MAX_DECLARED_PARAMETERS];
+                uint16_t keyword_registers[DIAMOND_MAX_DECLARED_PARAMETERS];
                 READ_SHORT(destination);READ_BYTE(class_index);
                 READ_SHORT(positional_register);READ_BYTE(keyword_count);
                 const bool has_block=(keyword_count&0x80u)!=0;
                 keyword_count&=0x7fu;
                 if((size_t)class_index>=chunk->class_count||
                    (keyword_count==0&&!has_block)||
-                   keyword_count>16||
+                   keyword_count>DIAMOND_MAX_DECLARED_PARAMETERS||
                    registers[positional_register].kind!=DIAMOND_VALUE_OBJECT||
                    registers[positional_register].as.object->kind!=DIAMOND_OBJECT_ARRAY)
                     VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
@@ -10781,13 +10792,13 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
             case DIAMOND_OP_INVOKE_KEYWORDS:
             case DIAMOND_OP_INVOKE_TYPED_KEYWORDS: {
                 uint16_t dest=0,recv=0,positional_register=0;
-                uint16_t method_name_index=0,keyword_names[16];uint8_t keyword_count=0;
-                uint16_t keyword_registers[16];
+                uint16_t method_name_index=0,keyword_names[DIAMOND_MAX_DECLARED_PARAMETERS];uint8_t keyword_count=0;
+                uint16_t keyword_registers[DIAMOND_MAX_DECLARED_PARAMETERS];
                 READ_SHORT(dest);READ_SHORT(recv);READ_SHORT(method_name_index);
                 READ_SHORT(positional_register);READ_BYTE(keyword_count);
                 const bool has_block=(keyword_count&0x80u)!=0;
                 keyword_count&=0x7fu;
-                if((keyword_count==0&&!has_block)||keyword_count>16||
+                if((keyword_count==0&&!has_block)||keyword_count>DIAMOND_MAX_DECLARED_PARAMETERS||
                    (size_t)method_name_index>=chunk->string_count)
                     VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
                 for(size_t index=0;index<keyword_count;index++) {
