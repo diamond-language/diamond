@@ -376,11 +376,21 @@ identity going into the join is snapshotted, each branch's identity is
 compared against it, and the local's identity after the join is the shared
 value only if every branch agrees -- any disagreement (including a branch that
 never touched the local) detaches it to a fresh identity rather than guessing
-that either branch's object is the one actually live at runtime. A local with
-no binding before the join is outside this snapshot/restore/merge, the same
-way a register first allocated inside one branch is outside the `known_types`
-join -- its identity, like its type, resolves to whichever branch compiled
-last rather than a real join.
+that either branch's object is the one actually live at runtime.
+For `if`/`elsif`/`else` specifically, a local with no binding before the join
+is no longer entirely outside this: a local first bound inside the
+then-branch has its post-then-branch `known_types`/`known_type_sets`/
+alias-identity snapshotted into their own small (`DIAMOND_MAX_LOCALS`-bounded)
+arrays, then reset to Nil before the false-branch compiles -- so a name the
+false branch never binds contributes Nil to the join (matching the VM: that
+register really does read back nil down the untaken path), while a name both
+branches bind merges their real facts together, and a name bound only in the
+false branch (never existing after the then-branch at all) is treated as Nil
+on the then-side symmetrically. `case`/`when` and loop exits have the
+identical gap and remain unfixed: a local first bound inside one `when`
+clause or loop body is still outside their snapshot/restore/merge, so its
+identity, like its type, resolves to whichever branch compiled last rather
+than a real join there.
 A register loaded by exactly one `INDEX_GET` directly off a plain local's own
 register (`x[i]`) records that local as its provenance root -- an expression-
 local fact, not a persistent one like alias identity, since it only bridges

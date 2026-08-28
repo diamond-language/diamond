@@ -656,11 +656,11 @@ read_message >/dev/null
 # and ternaries all expose both possible classes after the join. ---
 
 branch_uri="file:///branch_receiver.di"
-branch_source='class Dog\n  def bark()\n    1\n  end\nend\nclass Cat\n  def meow()\n    2\n  end\nend\ndef inspect_if(flag)\n  pet = if flag\n    Dog.new()\n  else\n    Cat.new()\n  end\n  pet.bark()\nend\ndef inspect_assign(flag)\n  pet = Dog.new()\n  if flag\n    pet = Dog.new()\n  else\n    pet = Cat.new()\n  end\n  pet.bark()\nend\ndef inspect_ternary(flag)\n  pet = flag ? Dog.new() : Cat.new()\n  pet.bark()\nend\ndef inspect_unless(flag)\n  pet = unless flag\n    Dog.new()\n  else\n    Cat.new()\n  end\n  pet.bark()\nend\ndef inspect_elsif(flag, other)\n  pet = if flag\n    Dog.new()\n  elsif other\n    Cat.new()\n  else\n    Dog.new()\n  end\n  pet.bark()\nend\ndef inspect_case(kind)\n  pet = case kind\n  when 1\n    Dog.new()\n  else\n    Cat.new()\n  end\n  pet.bark()\nend\ndef inspect_while(flag)\n  pet = Cat.new()\n  while flag\n    pet = Dog.new()\n    break\n  end\n  pet.bark()\nend\ndef inspect_loop(flag)\n  pet = loop\n    if flag\n      break Dog.new()\n    else\n      break Cat.new()\n    end\n  end\n  pet.bark()\nend'
+branch_source='class Dog\n  def bark()\n    1\n  end\nend\nclass Cat\n  def meow()\n    2\n  end\nend\ndef inspect_if(flag)\n  pet = if flag\n    Dog.new()\n  else\n    Cat.new()\n  end\n  pet.bark()\nend\ndef inspect_assign(flag)\n  pet = Dog.new()\n  if flag\n    pet = Dog.new()\n  else\n    pet = Cat.new()\n  end\n  pet.bark()\nend\ndef inspect_ternary(flag)\n  pet = flag ? Dog.new() : Cat.new()\n  pet.bark()\nend\ndef inspect_unless(flag)\n  pet = unless flag\n    Dog.new()\n  else\n    Cat.new()\n  end\n  pet.bark()\nend\ndef inspect_elsif(flag, other)\n  pet = if flag\n    Dog.new()\n  elsif other\n    Cat.new()\n  else\n    Dog.new()\n  end\n  pet.bark()\nend\ndef inspect_case(kind)\n  pet = case kind\n  when 1\n    Dog.new()\n  else\n    Cat.new()\n  end\n  pet.bark()\nend\ndef inspect_while(flag)\n  pet = Cat.new()\n  while flag\n    pet = Dog.new()\n    break\n  end\n  pet.bark()\nend\ndef inspect_loop(flag)\n  pet = loop\n    if flag\n      break Dog.new()\n    else\n      break Cat.new()\n    end\n  end\n  pet.bark()\nend\ndef inspect_new_in_branch(flag)\n  if flag\n    pet = Dog.new()\n  else\n    pet = Cat.new()\n  end\n  pet.bark()\nend'
 send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$branch_uri"'","text":"'"$branch_source"'"}}}'
 read_message >/dev/null
 
-for request in '140 16' '141 25' '142 29' '143 37' '144 47' '145 56' '146 64' '147 74'; do
+for request in '140 16' '141 25' '142 29' '143 37' '144 47' '145 56' '146 64' '147 74' '148 82'; do
   set -- $request
   send '{"jsonrpc":"2.0","id":'"$1"',"method":"textDocument/completion","params":{"textDocument":{"uri":"'"$branch_uri"'"},"position":{"line":'"$2"',"character":6}}}'
   response="$(read_message)"
@@ -671,6 +671,54 @@ for request in '140 16' '141 25' '142 29' '143 37' '144 47' '145 56' '146 64' '1
 done
 
 send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$branch_uri"'"}}}'
+read_message >/dev/null
+
+# --- a local first bound *inside* an if branch (no binding before the if)
+# now joins across the branches instead of silently keeping whichever
+# branch compiled last: the branch that never binds it contributes Nil,
+# matching what the VM actually leaves there down the untaken path ---
+
+new_local_branch_uri="file:///new_local_branch_hover.di"
+new_local_branch_source='def then_only(cond)
+  if cond
+    value = 1
+  end
+  value
+end
+def else_only(cond)
+  if cond
+  else
+    other = \"hi\"
+  end
+  other
+end
+def both_branches(cond)
+  if cond
+    picked = [1, 2, 3]
+  else
+    picked = [\"a\", \"b\"]
+  end
+  picked
+end'
+send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$new_local_branch_uri"'","text":"'"$new_local_branch_source"'"}}}'
+read_message >/dev/null
+
+send '{"jsonrpc":"2.0","id":149,"method":"textDocument/hover","params":{"textDocument":{"uri":"'"$new_local_branch_uri"'"},"position":{"line":4,"character":3}}}'
+response="$(read_message)"
+[[ "$response" == *'"value":"Int | Nil"'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","id":150,"method":"textDocument/hover","params":{"textDocument":{"uri":"'"$new_local_branch_uri"'"},"position":{"line":11,"character":3}}}'
+response="$(read_message)"
+[[ "$response" == *'"value":"Nil | String"'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","id":151,"method":"textDocument/hover","params":{"textDocument":{"uri":"'"$new_local_branch_uri"'"},"position":{"line":19,"character":3}}}'
+response="$(read_message)"
+[[ "$response" == *'"value":"Array[Int] | Array[String]"'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$new_local_branch_uri"'"}}}'
 read_message >/dev/null
 
 # --- workspace/symbol recursively walks the workspace root (given via

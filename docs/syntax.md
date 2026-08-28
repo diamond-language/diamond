@@ -631,6 +631,12 @@ detaches after the branches join, so a mutation through it afterward does not
 retroactively widen either branch's object -- unless every branch agreed on
 the same object, in which case the shared identity (and mutations through it)
 carry across the join.
+A name assigned inside an `if`/`elsif`/`else` branch, rather than to the
+`if`'s own result, is also inferred as a union across the branches: `if flag
+then x = 1 end; x` is `Int | Nil` (the branch that skips the assignment
+reads back `nil`, same as at runtime), and `if flag then x = 1 else x = "s"
+end; x` is `Int | String`. `case`/`when` and loop bodies don't join a
+branch-local name this way yet -- only `if`/`elsif`/`else` does.
 A mutation through one level of indexing off a plain local (`matrix[0].push(v)`,
 `grid[0][1] = v`) widens that local's own element graph, not just the
 indexed value's -- `matrix[0]` is one element of `matrix`, and `Array[T]`

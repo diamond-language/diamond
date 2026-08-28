@@ -394,10 +394,19 @@ aliases while reassignment detaches the rebound name. `if`/`elsif`/`else`,
 alias identity for a local that already existed before the join: agreement
 keeps the shared identity, disagreement detaches it to a fresh one rather than
 guessing which branch's object survived, mirroring how those same joins
-already treat `known_types`/`known_type_sets`. A local first bound to
-different objects per branch (no binding before the join) inherits that same
-known_types limitation -- its identity, like its type, resolves to whichever
-branch compiled last -- and remains queued.
+already treat `known_types`/`known_type_sets`.
+A local first bound *inside* one `if`/`elsif`/`else` branch (no binding
+before the `if` at all) now joins too, closing what was a `known_types`-level
+gap, not just an alias one: the branch that never binds it contributes Nil
+(confirmed against the VM -- reading such a local down the untaken path
+really does read back `nil`), the same "missing arm is Nil" treatment the
+if-expression's own missing-`else` result already gets. `if flag then x = 1
+end; x` now infers `Int | Nil` instead of silently keeping whichever branch
+compiled last; `if flag then x = 1 else x = "s" end; x` infers `Int |
+String`. Scoped to `if`/`elsif`/`else` only so far -- `case`/`when` and loop
+exits have the identical gap (a `when`-clause-only or loop-body-only local)
+and remain queued, along with dynamically recovered nested receiver
+writeback's own two-level-chaining and Hash-root limitations below.
 A mutation through one level of dynamically recovered nested receiver
 (`x[i].push(v)`, `x[i][k] = v`) now writes the widened element fact back into
 the *root* local `x`'s own nested contract, provided `x` is itself a plain

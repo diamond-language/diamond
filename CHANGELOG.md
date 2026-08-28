@@ -41,6 +41,14 @@
   the fact. Composes with alias identity and reassignment detachment for
   free by reusing the flat mutation path. Scoped to one level off a plain
   local's own register and to Array roots.
+- Joined `known_types`/`known_type_sets`/alias identity across `if`/`elsif`/
+  `else` branches for a local first bound *inside* one branch, not just ones
+  bound before the `if`. The branch that never binds the name now
+  contributes `Nil` to the union, matching the VM's own behavior down the
+  untaken path, instead of silently keeping whichever branch happened to
+  compile last: `if flag then x = 1 end; x` infers `Int | Nil`, and
+  `if flag then x = 1 else x = "s" end; x` infers `Int | String`.
+  `case`/`when` and loop exits have the identical gap and remain open.
 - Added a core-suite audit for duplicate, unclassified, or VM-missing collection
   relay contracts, plus negative hover coverage for dynamic arithmetic relays.
 - Inferred `Array#sum` results for closed numeric element graphs. Int-only
