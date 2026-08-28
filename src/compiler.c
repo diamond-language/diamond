@@ -6271,6 +6271,12 @@ static uint16_t parse_bound_method_reference(Compiler *compiler,uint16_t receive
 }
 
 static uint16_t parse_invoke(Compiler *compiler, uint16_t receiver) {
+    uint16_t mutation_receiver=receiver;
+    if(compiler->previous.kind==DIAMOND_TOKEN_IDENTIFIER) {
+        const int source_local=find_local(compiler,compiler->previous.span);
+        if(source_local>=0&&compiler->locals[(size_t)source_local].captured)
+            mutation_receiver=compiler->locals[(size_t)source_local].reg;
+    }
     const int32_t receiver_set_index=compiler->known_type_sets[receiver];
     advance_token(compiler);
     if (compiler->current.kind != DIAMOND_TOKEN_IDENTIFIER) {
@@ -6377,8 +6383,8 @@ static uint16_t parse_invoke(Compiler *compiler, uint16_t receiver) {
             receiver_set_index,name,keyword_names,keyword_values,keyword_count);
         const int push=find_keyword_argument(compiler,"value",keyword_names,
             keyword_count);
-        if(push>=0)publish_array_push_return_type(compiler,result,receiver,name,
-            &keyword_values[(size_t)push],1);
+        if(push>=0)publish_array_push_return_type(compiler,result,
+            mutation_receiver,name,&keyword_values[(size_t)push],1);
         return result;
     }
     if(call_arguments_have_spread(compiler)) {
@@ -6511,7 +6517,8 @@ static uint16_t parse_invoke(Compiler *compiler, uint16_t receiver) {
         return_target,resolved_arguments,resolved_count);
     publish_collection_argument_return_type(compiler,result,receiver_set_index,
         name,args,count);
-    publish_array_push_return_type(compiler,result,receiver,name,args,count);
+    publish_array_push_return_type(compiler,result,mutation_receiver,name,args,
+        count);
     return result;
 }
 
@@ -8898,7 +8905,7 @@ static DiamondTokenKind postfix_modifier_ahead(const Compiler *compiler) {
 
 static uint16_t compile_index_assignment(Compiler *compiler) {
     const DiamondSpan name=compiler->current.span;
-    uint16_t receiver;
+    uint16_t receiver,mutation_receiver;
     /* @ivar[key] = value / @@cvar[key] = value: unlike the plain local
      * case below, there's no boxed-Cell concern here -- Hash/Array are
      * heap-allocated, mutable-in-place reference objects (confirmed
@@ -8918,15 +8925,18 @@ static uint16_t compile_index_assignment(Compiler *compiler) {
             const int field=field_index(compiler,name,true);
             emit_instruction(compiler,DIAMOND_OP_GET_IVAR,receiver,0,(uint8_t)field,3);
         }
+        mutation_receiver=receiver;
     } else if(compiler->current.kind==DIAMOND_TOKEN_CLASS_VARIABLE) {
         receiver=allocate_register(compiler);
         const int slot=class_variable_index(compiler,name,true);
         emit_instruction(compiler,DIAMOND_OP_GET_CVAR,receiver,
                          (uint8_t)compiler->current_class,(uint8_t)slot,3);
+        mutation_receiver=receiver;
     } else {
         const int local=find_local(compiler,name);
         if(local<0) { fail(compiler,name,"undefined local variable"); return 0; }
         receiver=compiler->locals[(size_t)local].reg;
+        mutation_receiver=receiver;
         if(compiler->locals[(size_t)local].captured) {
             /* See parse_identifier's own BOX_LOCAL re-emission for why this
              * defensive re-box is needed: `captured` doesn't imply this
@@ -8955,6 +8965,7 @@ static uint16_t compile_index_assignment(Compiler *compiler) {
         const uint16_t loaded=allocate_register(compiler);
         emit_instruction(compiler,DIAMOND_OP_INDEX_GET,loaded,receiver,index,3);
         receiver=loaded;
+        mutation_receiver=receiver;
         advance_token(compiler);
         index=parse_expression(compiler);
         if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_BRACKET) {
@@ -8970,7 +8981,7 @@ static uint16_t compile_index_assignment(Compiler *compiler) {
     advance_token(compiler);
     const uint16_t value=parse_expression(compiler);
     emit_instruction(compiler,DIAMOND_OP_INDEX_SET,receiver,index,value,3);
-    update_collection_mutation_type(compiler,receiver,&index,1,&value,1);
+    update_collection_mutation_type(compiler,mutation_receiver,&index,1,&value,1);
     return value;
 }
 
@@ -8989,7 +9000,7 @@ static uint16_t compile_index_assignment(Compiler *compiler) {
  * both today. */
 static uint16_t compile_index_compound_assignment(Compiler *compiler) {
     const DiamondSpan name=compiler->current.span;
-    uint16_t receiver;
+    uint16_t receiver,mutation_receiver;
     if(compiler->current.kind==DIAMOND_TOKEN_INSTANCE_VARIABLE) {
         receiver=allocate_register(compiler);
         if(compiler->current_module>=0&&compiler->current_class<0) {
@@ -8999,15 +9010,18 @@ static uint16_t compile_index_compound_assignment(Compiler *compiler) {
             const int field=field_index(compiler,name,true);
             emit_instruction(compiler,DIAMOND_OP_GET_IVAR,receiver,0,(uint8_t)field,3);
         }
+        mutation_receiver=receiver;
     } else if(compiler->current.kind==DIAMOND_TOKEN_CLASS_VARIABLE) {
         receiver=allocate_register(compiler);
         const int slot=class_variable_index(compiler,name,true);
         emit_instruction(compiler,DIAMOND_OP_GET_CVAR,receiver,
                          (uint8_t)compiler->current_class,(uint8_t)slot,3);
+        mutation_receiver=receiver;
     } else {
         const int local=find_local(compiler,name);
         if(local<0) { fail(compiler,name,"undefined local variable"); return 0; }
         receiver=compiler->locals[(size_t)local].reg;
+        mutation_receiver=receiver;
         if(compiler->locals[(size_t)local].captured) {
             /* See compile_index_assignment's own comment on this exact
              * defensive re-box. */
@@ -9039,7 +9053,7 @@ static uint16_t compile_index_compound_assignment(Compiler *compiler) {
         emit_instruction(compiler,DIAMOND_OP_MOVE,destination,right,0,2);
         patch_jump(compiler,end_jump,compiler->function->code_count);
         emit_instruction(compiler,DIAMOND_OP_INDEX_SET,receiver,index,destination,3);
-        update_collection_mutation_type(compiler,receiver,&index,1,
+        update_collection_mutation_type(compiler,mutation_receiver,&index,1,
             &destination,1);
         return destination;
     }
@@ -9052,7 +9066,8 @@ static uint16_t compile_index_compound_assignment(Compiler *compiler) {
     const uint16_t right=parse_expression(compiler);
     const uint16_t destination=compile_binary_op(compiler,plain_op,left,right);
     emit_instruction(compiler,DIAMOND_OP_INDEX_SET,receiver,index,destination,3);
-    update_collection_mutation_type(compiler,receiver,&index,1,&destination,1);
+    update_collection_mutation_type(compiler,mutation_receiver,&index,1,
+        &destination,1);
     return destination;
 }
 

@@ -398,6 +398,11 @@ Native collection relay classification is now consolidated into one 36-method
 contract table. Receiver, argument, keyword, callback, and mutation phases share
 those categories. An explicit eight-to-nine-arm mutation regression verifies
 that the bounded union ceiling clears the nested fact.
+Direct boxed-local mutation propagation is now implemented. The parser retains
+the source Cell register for fixed/keyword `push`, indexed assignment, and
+compound indexed assignment, then records the widened graph there. Mutation
+performed inside a separately compiled closure and general alias identity remain
+the next ownership problems; neither can be inferred from one caller register.
 
 Expected collection graphs now recurse through nested Array and Hash literals.
 Array elements and Hash keys/values compile against their respective declared

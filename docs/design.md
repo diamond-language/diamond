@@ -344,6 +344,11 @@ the bounded union capacity, the compiler retains only the receiver's outer
 Array/Hash kind. It must discard the nested graph: retaining the pre-mutation
 graph would be unsound for later specialization. The invalidation is itself a
 position-sensitive scope fact.
+For a direct captured-local receiver, invocation and indexed-assignment parsing
+retain the boxed source register alongside the temporary runtime value loaded
+from its Cell. Mutation facts are written back to that source register, so later
+reads and LSP positions observe the widened Array/Hash graph without changing
+Cell bytecode semantics.
 
 Functions and methods may declare scoped type variables after their names, as
 in `def pair[K, V](key: K, value: V) -> Hash[K, V]`. Each compiled function

@@ -26,6 +26,10 @@
 
 ## Language
 
+- Propagated collection mutation facts back to directly referenced boxed local
+  registers. Locals captured by nested closures now retain fixed/keyword
+  `push` and indexed Array/Hash widening after the runtime receiver is loaded
+  through a temporary Cell register.
 - Consolidated all 36 modeled Array/Hash inference relays into one native
   collection contract table shared by receiver-, argument-, keyword-, and
   mutation-dependent result logic. Added an explicit ninth-union-arm regression

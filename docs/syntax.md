@@ -619,6 +619,8 @@ Hash key/value graphs. Empty literals acquire a nested graph from their first
 known write, and subsequent local expressions and LSP hover observe that state.
 If a write is dynamically typed or would exceed the eight-member union ceiling,
 the nested fact is discarded while the outer Array/Hash kind remains known.
+The same widening applies when a directly referenced local has been boxed by a
+nested closure; later reads of that captured local retain the updated graph.
 
 A fixed-arity bound method reference such as `object.convert` retains its
 declared parameter and return contract. Explicit generic references such as

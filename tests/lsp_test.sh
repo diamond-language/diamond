@@ -999,6 +999,19 @@ def inspect_unknown()
   entries = {\"answer\": 42}
   entries[dynamic(:opaque)] = dynamic(true)
   entries
+end
+def captured_mutation()
+  captured = []
+  captured_entries = {}
+  def expose_captured()
+    [captured, captured_entries]
+  end
+  captured.push(42)
+  captured.push(value: \"captured\")
+  captured
+  captured_entries[\"answer\"] = 42
+  captured_entries[:label] = \"captured\"
+  captured_entries
 end'
 send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$collection_mutation_uri"'","text":"'"$collection_mutation_source"'"}}}'
 read_message >/dev/null
@@ -1031,6 +1044,16 @@ count=$((count + 1))
 send '{"jsonrpc":"2.0","id":198,"method":"textDocument/hover","params":{"textDocument":{"uri":"'"$collection_mutation_uri"'"},"position":{"line":19,"character":3}}}'
 response="$(read_message)"
 [[ "$response" == *'"result":null'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","id":200,"method":"textDocument/hover","params":{"textDocument":{"uri":"'"$collection_mutation_uri"'"},"position":{"line":29,"character":3}}}'
+response="$(read_message)"
+[[ "$response" == *'"value":"Array[Int | String]"'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","id":201,"method":"textDocument/hover","params":{"textDocument":{"uri":"'"$collection_mutation_uri"'"},"position":{"line":32,"character":3}}}'
+response="$(read_message)"
+[[ "$response" == *'"value":"Hash[String | Symbol, Int | String]"'* ]]
 count=$((count + 1))
 
 send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$collection_mutation_uri"'"}}}'

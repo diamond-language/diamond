@@ -32,3 +32,19 @@ puts(opaque[1])
 opaque_entries = {"answer": 42}
 opaque_entries[dynamic(:opaque)] = dynamic(true)
 puts(opaque_entries[:opaque])
+
+def captured_mutation()
+  captured = []
+  captured_entries = {}
+  def expose_captured()
+    [captured, captured_entries]
+  end
+  captured.push(42)
+  captured.push(value: "captured")
+  captured_entries["answer"] = 42
+  captured_entries[:label] = "captured"
+  [accept_items(captured)[1], accept_hash(captured_entries)[:label]]
+end
+captured_result = captured_mutation()
+puts(captured_result[0])
+puts(captured_result[1])
