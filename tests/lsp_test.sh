@@ -847,6 +847,21 @@ count=$((count + 1))
 send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$union_return_uri"'"}}}'
 read_message >/dev/null
 
+# --- heterogeneous spread literals bind generic result positions ---
+
+spread_generic_uri="file:///spread_generic_hover.di"
+spread_generic_source='def second[T, U](first: T, second: U) -> U = second\ndef inspect()\n  joined = second(*[\"ignored\", 42])\n  joined\nend'
+send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$spread_generic_uri"'","text":"'"$spread_generic_source"'"}}}'
+read_message >/dev/null
+
+send '{"jsonrpc":"2.0","id":176,"method":"textDocument/hover","params":{"textDocument":{"uri":"'"$spread_generic_uri"'"},"position":{"line":3,"character":4}}}'
+response="$(read_message)"
+[[ "$response" == *'"value":"Int"'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$spread_generic_uri"'"}}}'
+read_message >/dev/null
+
 # --- an unrecognized method gets a JSON-RPC MethodNotFound error ---
 
 send '{"jsonrpc":"2.0","id":2,"method":"textDocument/bogusMethod","params":{}}'

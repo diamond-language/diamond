@@ -1309,6 +1309,10 @@ elements compile one-by-one against the corresponding parameter graphs, with
 the literal's source position adjusted for any fixed prefix. Fixed suffixes do
 not disturb that mapping. Non-literal spreads retain homogeneous inference
 because their runtime length cannot assign elements to heterogeneous slots.
+The parser retains the literal's element registers until call-site generic
+inference completes. Each register is unified against its own parameter graph;
+nested collection bindings and substituted return or block graphs therefore
+retain their position instead of collapsing through the Array element union.
 Statically resolved keyword calls map each supplied name back to the target's
 declared parameter slot and infer from its value before compiling the trailing
 block. Explicit generic arguments remain authoritative and bypass inference.

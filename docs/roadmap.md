@@ -376,9 +376,11 @@ remaining positional contracts also form a temporary expected Array graph for
 spread literals across top-level, singleton, instance-method, and constructor
 calls. A direct heterogeneous spread literal maps each element to its exact
 positional contract, including fixed arguments on either side. Dynamically
-sized heterogeneous spread expressions remain conservative. Context is restored
-after every nested expression and never changes the literal's independently
-inferred runtime constraint.
+sized heterogeneous spread expressions remain conservative. The same literal
+positions now bind distinct generic parameters independently and feed
+substituted call returns and trailing-block context. Context is restored after
+every nested expression and never changes the literal's independently inferred
+runtime constraint.
 
 ### Ruby-like ergonomics without Ruby compatibility
 

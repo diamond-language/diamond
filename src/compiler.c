@@ -125,6 +125,10 @@ typedef struct Compiler {
     int32_t contextual_block_type_sets[16];
     int32_t contextual_block_return_set;
     int32_t expected_expression_type_set;
+    bool positional_spread_literal;
+    size_t positional_spread_first;
+    size_t positional_spread_count;
+    uint16_t positional_spread_elements[32];
     int current_return_type;
     DiamondSpan current_return_type_span;
     LoopContext *current_loop;
@@ -1949,6 +1953,11 @@ static uint16_t parse_spread_argument_array(Compiler *compiler,
     uint16_t fixed[16];size_t fixed_count=0,spread_index=0;
     uint16_t spread=0;bool saw_spread=false,seen_keyword=false;
     bool optional_block=false;
+    bool literal_positions=false;size_t literal_first=0,literal_count=0;
+    uint16_t literal_elements[32];
+    compiler->positional_spread_literal=false;
+    compiler->positional_spread_first=0;
+    compiler->positional_spread_count=0;
     if(keyword_count!=nullptr)*keyword_count=0;
     while(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN&&!compiler->failed) {
         DiamondLexer keyword_lookahead=compiler->lexer;
@@ -1993,6 +2002,12 @@ static uint16_t parse_spread_argument_array(Compiler *compiler,
                 advance_token(compiler);
                 spread=parse_array_literal(compiler,expected_function,
                     fixed_count,expected_count);
+                literal_positions=compiler->positional_spread_literal;
+                literal_first=compiler->positional_spread_first;
+                literal_count=compiler->positional_spread_count;
+                for(size_t index=0;index<literal_count;index++)
+                    literal_elements[index]=
+                        compiler->positional_spread_elements[index];
             } else {
                 const int32_t outer_expected=
                     compiler->expected_expression_type_set;
@@ -2034,6 +2049,11 @@ static uint16_t parse_spread_argument_array(Compiler *compiler,
     if(!saw_spread) {
         fail(compiler,compiler->previous.span,"expected spread argument");return 0;
     }
+    compiler->positional_spread_literal=literal_positions;
+    compiler->positional_spread_first=literal_first;
+    compiler->positional_spread_count=literal_count;
+    for(size_t index=0;index<literal_count;index++)
+        compiler->positional_spread_elements[index]=literal_elements[index];
     if(fixed_count==0)return spread;
     return emit_build_spread_arguments(compiler,fixed,spread_index,spread,
         fixed+spread_index,fixed_count-spread_index,optional_block);
@@ -2495,6 +2515,15 @@ static size_t infer_contextual_spread_arguments(Compiler *compiler,
         uint16_t *bindings) {
     for(size_t index=0;index<8;index++)bindings[index]=DIAMOND_NO_TYPE_SET;
     if(target==nullptr)return 0;
+    if(compiler->positional_spread_literal) {
+        for(size_t index=0;index<compiler->positional_spread_count;index++) {
+            const size_t parameter=compiler->positional_spread_first+index;
+            if(parameter>=parameter_count||parameter>=16)break;
+            infer_contextual_argument(compiler,target,parameter,
+                compiler->positional_spread_elements[index],bindings);
+        }
+        return target->type_variable_count;
+    }
     const int32_t element_set=array_element_type_set(compiler,spread);
     if(element_set<0)return target->type_variable_count;
     for(size_t parameter=0;parameter<parameter_count&&parameter<16;parameter++) {
@@ -6212,6 +6241,13 @@ static uint16_t parse_array_literal(Compiler *compiler,
     compiler->known_types[destination]=DIAMOND_TYPE_ARRAY;
     record_collection_type_set(compiler,destination,DIAMOND_TYPE_ARRAY,
         joined_value_type_set(compiler,elements,count),-1);
+    if(expected_function!=nullptr) {
+        compiler->positional_spread_literal=true;
+        compiler->positional_spread_first=first_parameter;
+        compiler->positional_spread_count=count;
+        for(size_t index=0;index<count;index++)
+            compiler->positional_spread_elements[index]=elements[index];
+    }
     return destination;
 }
 

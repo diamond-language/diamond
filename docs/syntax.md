@@ -621,6 +621,9 @@ remaining positional parameters declare the same type. A direct spread literal
 instead maps each element to its exact positional parameter, so heterogeneous
 Callable contracts can resolve independently. A dynamically sized
 heterogeneous spread expression does not guess element positions.
+Those positions also participate in generic inference. For example,
+`second[T, U](*["ignored", 42]) -> U` resolves `T` as `String` and `U` as
+`Int`, so the result remains `Int` at the call site.
 Only dynamically unresolved bound methods remain conservatively untyped.
 Callable unions retain a return fact when all arms agree structurally.
 
