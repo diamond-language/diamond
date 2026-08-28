@@ -386,11 +386,30 @@ false branch never binds contributes Nil to the join (matching the VM: that
 register really does read back nil down the untaken path), while a name both
 branches bind merges their real facts together, and a name bound only in the
 false branch (never existing after the then-branch at all) is treated as Nil
-on the then-side symmetrically. `case`/`when` and loop exits have the
-identical gap and remain unfixed: a local first bound inside one `when`
-clause or loop body is still outside their snapshot/restore/merge, so its
-identity, like its type, resolves to whichever branch compiled last rather
-than a real join there.
+on the then-side symmetrically.
+`case`/`when` and loop exits have the identical gap, closed the same way but
+with a different shape, since both are N-ary (an arbitrary number of `when`
+clauses; a loop's zero-iteration path, every `break`, and its natural
+loop-back/condition-false path all separately call the same merge point)
+rather than `if`'s fixed two-arm shape. `merge_new_local_facts` is the
+shared join: a slot already reached by an earlier-processed branch/exit-
+point merges normally; a slot reached for the first time either seeds
+directly with this branch's value (this is the very first branch/exit-point
+of the whole construct, so there is no earlier one to have implicitly
+skipped it) or seeds as `merge(Nil, this branch's value)` (every other case:
+some earlier branch/exit-point already ran without this local existing at
+all, so it implicitly contributed Nil down that path). This is why `case
+mode when 1 then picked = 1 when 2 then picked = "s" else picked = 2.5 end`
+infers `Int | String | Float` with no spurious `Nil` -- every arm binds
+`picked`, so no earlier-processed arm ever needed the implicit-Nil seed --
+while a `when`-clause-only or loop-body-only local does pick up `Nil` from
+every branch/exit-point that skips it. `case`/`when` additionally resets
+these locals to Nil at the top of every `when`/`else` clause before that
+clause's own compile (mirroring `if`'s reset-before-the-false-branch step),
+since each clause is a genuinely separate, mutually exclusive body; a loop's
+body compiles once, sequentially, so its exit points need no such reset --
+each one's compile-time state already *is* what a freshly reset state would
+be for a mutually exclusive branch.
 A register loaded by exactly one `INDEX_GET` directly off a plain local's own
 register (`x[i]`) records that local as its provenance root -- an expression-
 local fact, not a persistent one like alias identity, since it only bridges

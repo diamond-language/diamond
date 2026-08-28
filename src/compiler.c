@@ -48,6 +48,21 @@ typedef struct LoopContext {
      * so these travel inline with no malloc dance. */
     size_t flow_local_count;
     uint32_t exit_alias[DIAMOND_MAX_LOCALS];
+    /* A local first bound inside the loop body (no binding before the loop
+     * at all), joined across every exit point (the zero-iteration path
+     * before the body if one exists, every `break`, and the natural
+     * loop-back/condition-false path) the same seed-vs-merge way
+     * merge_case_new_locals joins one across every `when`/`else` clause --
+     * see that function's own comment; merge_loop_exit reuses it as-is. No
+     * reset-before-this-exit step is needed here the way parse_case_
+     * branches needs one before each `when`/`else`: a loop's body compiles
+     * once, sequentially, so each exit point's own compile-time state is
+     * already exactly what a mutually-exclusive branch's freshly-reset
+     * state would be -- correct as found. */
+    size_t new_local_count;
+    uint8_t new_types[DIAMOND_MAX_LOCALS];
+    int32_t new_sets[DIAMOND_MAX_LOCALS];
+    uint32_t new_alias[DIAMOND_MAX_LOCALS];
 } LoopContext;
 
 enum { DIAMOND_MAX_NARROWING_FACTS = 8 };
@@ -7164,6 +7179,54 @@ static void set_index_provenance(Compiler *compiler,uint16_t destination,
     compiler->index_provenance_root[destination]=source_receiver;
 }
 
+/* Joins a local first bound inside *some* branch of a multi-exit-point
+ * construct (a `case`'s `when`/`else` clauses, or a loop's exit points --
+ * the zero-iteration path, every `break`, and the natural loop-back/
+ * condition-false path) -- shared because both need the exact same
+ * seed-vs-merge shape, keyed by `new_local_count`/`new_types`/`new_sets`/
+ * `new_alias` fields living on the caller's own join/loop struct (passed by
+ * pointer/array here since CaseFlowJoin and LoopContext aren't the same
+ * type). Slots [0, *new_local_count) have already been reached by an
+ * earlier-processed branch/exit-point and merge normally; a slot reached
+ * for the first time either seeds directly with this branch's value (this
+ * is the very first branch/exit-point overall, `earlier_branch_exists`
+ * false, so there's no earlier one to have implicitly skipped it) or seeds
+ * as `merge(Nil, this branch's value)` (every other case: some earlier
+ * branch/exit-point already ran without this local existing at all, so it
+ * implicitly contributed Nil down that path). */
+static void merge_new_local_facts(Compiler *compiler,bool earlier_branch_exists,
+        size_t flow_local_count,size_t *new_local_count,uint8_t *new_types,
+        int32_t *new_sets,uint32_t *new_alias) {
+    const size_t current_local_count=compiler->local_count;
+    for(size_t index=flow_local_count;
+        index<current_local_count&&index<DIAMOND_MAX_LOCALS;index++) {
+        const size_t slot=index-flow_local_count;
+        const uint16_t reg=compiler->locals[index].reg;
+        if(slot>=*new_local_count) {
+            if(earlier_branch_exists)
+                merge_flow_types(compiler,DIAMOND_TYPE_NIL,-1,
+                    compiler->known_types[reg],compiler->known_type_sets[reg],
+                    &new_types[slot],&new_sets[slot]);
+            else {
+                new_types[slot]=compiler->known_types[reg];
+                new_sets[slot]=compiler->known_type_sets[reg];
+            }
+            new_alias[slot]=compiler->locals[index].alias_identity;
+        } else {
+            merge_flow_types(compiler,new_types[slot],new_sets[slot],
+                compiler->known_types[reg],compiler->known_type_sets[reg],
+                &new_types[slot],&new_sets[slot]);
+            new_alias[slot]=merge_alias_identity(new_alias[slot],
+                compiler->locals[index].alias_identity);
+        }
+    }
+    if(current_local_count>flow_local_count) {
+        const size_t reached=current_local_count-flow_local_count;
+        if(reached>*new_local_count)
+            *new_local_count=reached<DIAMOND_MAX_LOCALS?reached:DIAMOND_MAX_LOCALS;
+    }
+}
+
 static void merge_loop_exit(Compiler *compiler,LoopContext *loop,
         uint8_t result_type,int32_t result_set) {
     if(!loop->exit_initialized) {
@@ -7173,6 +7236,8 @@ static void merge_loop_exit(Compiler *compiler,LoopContext *loop,
         }
         for(size_t index=0;index<loop->flow_local_count;index++)
             loop->exit_alias[index]=compiler->locals[index].alias_identity;
+        merge_new_local_facts(compiler,false,loop->flow_local_count,
+            &loop->new_local_count,loop->new_types,loop->new_sets,loop->new_alias);
         loop->result_type=result_type;loop->result_set=result_set;
         loop->exit_initialized=true;return;
     }
@@ -7183,6 +7248,8 @@ static void merge_loop_exit(Compiler *compiler,LoopContext *loop,
     for(size_t index=0;index<loop->flow_local_count;index++)
         loop->exit_alias[index]=merge_alias_identity(loop->exit_alias[index],
             compiler->locals[index].alias_identity);
+    merge_new_local_facts(compiler,true,loop->flow_local_count,
+        &loop->new_local_count,loop->new_types,loop->new_sets,loop->new_alias);
     merge_flow_types(compiler,loop->result_type,loop->result_set,
         result_type,result_set,&loop->result_type,&loop->result_set);
 }
@@ -7197,6 +7264,19 @@ static void finish_loop_flow(Compiler *compiler,LoopContext *loop,
         compiler->known_type_sets[index]=loop->exit_sets[index];
         if(register_is_local(compiler,(uint16_t)index))
             record_scope_type_fact(compiler,(uint16_t)index,effective_start);
+    }
+    const size_t final_local_count=compiler->local_count;
+    for(size_t index=loop->flow_local_count;
+        index<final_local_count&&index<DIAMOND_MAX_LOCALS;index++) {
+        const size_t slot=index-loop->flow_local_count;
+        const uint16_t reg=compiler->locals[index].reg;
+        const uint8_t old_type=compiler->known_types[reg];
+        const int32_t old_set=compiler->known_type_sets[reg];
+        compiler->known_types[reg]=loop->new_types[slot];
+        compiler->known_type_sets[reg]=loop->new_sets[slot];
+        compiler->locals[index].alias_identity=loop->new_alias[slot];
+        if(old_type!=loop->new_types[slot]||old_set!=loop->new_sets[slot])
+            record_scope_type_fact(compiler,reg,effective_start);
     }
     compiler->known_types[loop->result_register]=loop->result_type;
     compiler->known_type_sets[loop->result_register]=loop->result_set;
@@ -7895,8 +7975,22 @@ typedef struct CaseFlowJoin {
     uint8_t result_type;
     int32_t result_set;
     /* Bounded by DIAMOND_MAX_LOCALS (64), unlike types/sets/varied above,
-     * so this travels inline with no malloc dance. */
+     * so these travel inline with no malloc dance. */
     uint32_t alias[DIAMOND_MAX_LOCALS];
+    /* A local first bound inside *some* `when`/`else` clause (no binding
+     * before the `case` at all). Slots [0, new_local_count) have been
+     * reached by at least one earlier-compiled branch already and merge
+     * normally from here on; a slot reached for the first time either
+     * seeds directly (this is the very first branch of the whole case
+     * statement, so there's no earlier sibling to have implicitly skipped
+     * it) or seeds as `merge(Nil, this branch's value)` (every other case:
+     * some earlier-compiled branch already ran without this local existing
+     * at all, so it implicitly contributed Nil down that path) -- see
+     * merge_case_new_locals. */
+    size_t new_local_count;
+    uint8_t new_types[DIAMOND_MAX_LOCALS];
+    int32_t new_sets[DIAMOND_MAX_LOCALS];
+    uint32_t new_alias[DIAMOND_MAX_LOCALS];
 } CaseFlowJoin;
 
 typedef enum CaseArrayNodeKind {CASE_ARRAY_GROUP,CASE_ARRAY_VALUE,
@@ -8399,6 +8493,18 @@ static void commit_case_bindings(Compiler *compiler,
             false,false,bindings[binding].reg);
 }
 
+static void merge_case_new_locals(Compiler *compiler,CaseFlowJoin *join,
+        size_t flow_local_count) {
+    /* join->initialized read before this call's own merge_case_branch
+     * caller flips it (the !initialized branch there calls this first,
+     * then sets it true) -- true here means "an earlier when/else clause
+     * already ran in this case statement", which is exactly when a slot
+     * reached for the first time needs an implicit Nil folded in for that
+     * earlier clause. See merge_new_local_facts for the shared logic. */
+    merge_new_local_facts(compiler,join->initialized,flow_local_count,
+        &join->new_local_count,join->new_types,join->new_sets,join->new_alias);
+}
+
 static void merge_case_branch(Compiler *compiler,CaseFlowJoin *join,
         size_t flow_reg_count,size_t flow_local_count,uint16_t branch_result) {
     const uint8_t branch_result_type=compiler->known_types[branch_result];
@@ -8410,6 +8516,7 @@ static void merge_case_branch(Compiler *compiler,CaseFlowJoin *join,
         }
         for(size_t index=0;index<flow_local_count;index++)
             join->alias[index]=compiler->locals[index].alias_identity;
+        merge_case_new_locals(compiler,join,flow_local_count);
         join->result_type=branch_result_type;join->result_set=branch_result_set;
         join->initialized=true;return;
     }
@@ -8423,6 +8530,7 @@ static void merge_case_branch(Compiler *compiler,CaseFlowJoin *join,
     for(size_t index=0;index<flow_local_count;index++)
         join->alias[index]=merge_alias_identity(join->alias[index],
             compiler->locals[index].alias_identity);
+    merge_case_new_locals(compiler,join,flow_local_count);
     merge_flow_types(compiler,join->result_type,join->result_set,
         branch_result_type,branch_result_set,&join->result_type,&join->result_set);
 }
@@ -8438,6 +8546,19 @@ static void finish_case_flow(Compiler *compiler,CaseFlowJoin *join,
     }
     for(size_t index=0;index<flow_local_count;index++)
         compiler->locals[index].alias_identity=join->alias[index];
+    const size_t final_local_count=compiler->local_count;
+    for(size_t index=flow_local_count;
+        index<final_local_count&&index<DIAMOND_MAX_LOCALS;index++) {
+        const size_t slot=index-flow_local_count;
+        const uint16_t reg=compiler->locals[index].reg;
+        const uint8_t old_type=compiler->known_types[reg];
+        const int32_t old_set=compiler->known_type_sets[reg];
+        compiler->known_types[reg]=join->new_types[slot];
+        compiler->known_type_sets[reg]=join->new_sets[slot];
+        compiler->locals[index].alias_identity=join->new_alias[slot];
+        if(old_type!=join->new_types[slot]||old_set!=join->new_sets[slot])
+            record_scope_type_fact(compiler,reg,effective_start);
+    }
     compiler->known_types[destination]=join->result_type;
     compiler->known_type_sets[destination]=join->result_set;
 }
@@ -8470,6 +8591,21 @@ static uint16_t parse_case_branches(Compiler *compiler, uint16_t subject,
     }
     for(size_t index=0;index<flow_local_count;index++)
         compiler->locals[index].alias_identity=entry_alias[index];
+    /* A local bound by an earlier sibling `when`/`else` clause in this same
+     * chain (no binding before the `case` at all) is reset to Nil before
+     * this clause compiles -- it's a different, mutually exclusive branch,
+     * so that local was never actually reached down this path, matching
+     * the VM's own nil-reads-back-on-the-untaken-path behavior. Bounded by
+     * the *current* compiler->local_count, which only grows as earlier
+     * clauses introduce more such locals -- see merge_case_new_locals for
+     * the matching accumulation on the way out. */
+    for(size_t index=flow_local_count;
+        index<compiler->local_count&&index<DIAMOND_MAX_LOCALS;index++) {
+        const uint16_t reg=compiler->locals[index].reg;
+        compiler->known_types[reg]=DIAMOND_TYPE_NIL;
+        compiler->known_type_sets[reg]=-1;
+        compiler->locals[index].alias_identity=0;
+    }
     if(compiler->current.kind==DIAMOND_TOKEN_ELSE) {
         advance_token(compiler);
         if(compiler->current.kind==DIAMOND_TOKEN_NEWLINE)skip_newlines(compiler);

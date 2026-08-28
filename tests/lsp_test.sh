@@ -699,6 +699,52 @@ def both_branches(cond)
     picked = [\"a\", \"b\"]
   end
   picked
+end
+def case_one_arm(mode)
+  case mode
+  when 1
+    value = 1
+  end
+  value
+end
+def case_disagree(mode)
+  case mode
+  when 1
+    picked = 1
+  when 2
+    picked = \"two\"
+  else
+    picked = 2.5
+  end
+  picked
+end
+def case_middle_arm(mode)
+  case mode
+  when 1
+    1
+  when 2
+    middle = 2.5
+  when 3
+    3
+  end
+  middle
+end
+def while_new_local(flag)
+  while flag
+    total = 1
+    flag = false
+  end
+  total
+end
+def loop_break_new_local(flag)
+  loop
+    if flag
+      break
+    end
+    picked = 2.5
+    break
+  end
+  picked
 end'
 send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$new_local_branch_uri"'","text":"'"$new_local_branch_source"'"}}}'
 read_message >/dev/null
@@ -716,6 +762,33 @@ count=$((count + 1))
 send '{"jsonrpc":"2.0","id":151,"method":"textDocument/hover","params":{"textDocument":{"uri":"'"$new_local_branch_uri"'"},"position":{"line":19,"character":3}}}'
 response="$(read_message)"
 [[ "$response" == *'"value":"Array[Int] | Array[String]"'* ]]
+count=$((count + 1))
+
+# --- the identical branch-local join, extended to case/when and loop exits ---
+
+send '{"jsonrpc":"2.0","id":152,"method":"textDocument/hover","params":{"textDocument":{"uri":"'"$new_local_branch_uri"'"},"position":{"line":26,"character":3}}}'
+response="$(read_message)"
+[[ "$response" == *'"value":"Int | Nil"'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","id":153,"method":"textDocument/hover","params":{"textDocument":{"uri":"'"$new_local_branch_uri"'"},"position":{"line":37,"character":3}}}'
+response="$(read_message)"
+[[ "$response" == *'"value":"Int | String | Float"'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","id":154,"method":"textDocument/hover","params":{"textDocument":{"uri":"'"$new_local_branch_uri"'"},"position":{"line":48,"character":3}}}'
+response="$(read_message)"
+[[ "$response" == *'"value":"Nil | Float"'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","id":155,"method":"textDocument/hover","params":{"textDocument":{"uri":"'"$new_local_branch_uri"'"},"position":{"line":55,"character":3}}}'
+response="$(read_message)"
+[[ "$response" == *'"value":"Nil | Int"'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","id":156,"method":"textDocument/hover","params":{"textDocument":{"uri":"'"$new_local_branch_uri"'"},"position":{"line":65,"character":3}}}'
+response="$(read_message)"
+[[ "$response" == *'"value":"Nil | Float"'* ]]
 count=$((count + 1))
 
 send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$new_local_branch_uri"'"}}}'

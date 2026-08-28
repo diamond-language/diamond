@@ -403,10 +403,15 @@ really does read back `nil`), the same "missing arm is Nil" treatment the
 if-expression's own missing-`else` result already gets. `if flag then x = 1
 end; x` now infers `Int | Nil` instead of silently keeping whichever branch
 compiled last; `if flag then x = 1 else x = "s" end; x` infers `Int |
-String`. Scoped to `if`/`elsif`/`else` only so far -- `case`/`when` and loop
-exits have the identical gap (a `when`-clause-only or loop-body-only local)
-and remain queued, along with dynamically recovered nested receiver
-writeback's own two-level-chaining and Hash-root limitations below.
+String`. `case`/`when` and loop exits (the zero-iteration path if one
+exists, every `break`, and the natural loop-back/condition-false path) now
+join the identical way: a `when`-clause-only or loop-body-only local unions
+in `Nil` for every branch/exit-point that doesn't independently bind it,
+without adding a spurious `Nil` when every branch does (`case mode when 1
+then picked = 1 when 2 then picked = "s" else picked = 2.5 end; picked`
+infers `Int | String | Float`, no `Nil`, since every arm binds it). Still
+queued: dynamically recovered nested receiver writeback's own
+two-level-chaining and Hash-root limitations below.
 A mutation through one level of dynamically recovered nested receiver
 (`x[i].push(v)`, `x[i][k] = v`) now writes the widened element fact back into
 the *root* local `x`'s own nested contract, provided `x` is itself a plain

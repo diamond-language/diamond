@@ -48,7 +48,12 @@
   untaken path, instead of silently keeping whichever branch happened to
   compile last: `if flag then x = 1 end; x` infers `Int | Nil`, and
   `if flag then x = 1 else x = "s" end; x` infers `Int | String`.
-  `case`/`when` and loop exits have the identical gap and remain open.
+- Extended the same branch-local join to `case`/`when` and loop exits (the
+  zero-iteration path, every `break`, and the natural loop-back/condition-
+  false path). `Nil` folds in for every branch/exit-point that doesn't
+  independently bind the name, but not when every arm does:
+  `case mode when 1 then picked = 1 when 2 then picked = "s" else picked =
+  2.5 end; picked` infers `Int | String | Float` with no spurious `Nil`.
 - Added a core-suite audit for duplicate, unclassified, or VM-missing collection
   relay contracts, plus negative hover coverage for dynamic arithmetic relays.
 - Inferred `Array#sum` results for closed numeric element graphs. Int-only
