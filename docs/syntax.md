@@ -624,6 +624,9 @@ heterogeneous spread expression does not guess element positions.
 Those positions also participate in generic inference. For example,
 `second[T, U](*["ignored", 42]) -> U` resolves `T` as `String` and `U` as
 `Int`, so the result remains `Int` at the call site.
+Fixed arguments before and after a spread bind their corresponding generic
+parameters as well. A homogeneous non-literal spread contributes only to the
+middle parameter range left between those fixed edges.
 Only dynamically unresolved bound methods remain conservatively untyped.
 Callable unions retain a return fact when all arms agree structurally.
 

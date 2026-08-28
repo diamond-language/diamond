@@ -129,6 +129,9 @@ typedef struct Compiler {
     size_t positional_spread_first;
     size_t positional_spread_count;
     uint16_t positional_spread_elements[32];
+    size_t positional_spread_fixed_count;
+    size_t positional_spread_index;
+    uint16_t positional_spread_fixed[16];
     int current_return_type;
     DiamondSpan current_return_type_span;
     LoopContext *current_loop;
@@ -1958,6 +1961,8 @@ static uint16_t parse_spread_argument_array(Compiler *compiler,
     compiler->positional_spread_literal=false;
     compiler->positional_spread_first=0;
     compiler->positional_spread_count=0;
+    compiler->positional_spread_fixed_count=0;
+    compiler->positional_spread_index=0;
     if(keyword_count!=nullptr)*keyword_count=0;
     while(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN&&!compiler->failed) {
         DiamondLexer keyword_lookahead=compiler->lexer;
@@ -2054,6 +2059,10 @@ static uint16_t parse_spread_argument_array(Compiler *compiler,
     compiler->positional_spread_count=literal_count;
     for(size_t index=0;index<literal_count;index++)
         compiler->positional_spread_elements[index]=literal_elements[index];
+    compiler->positional_spread_fixed_count=fixed_count;
+    compiler->positional_spread_index=spread_index;
+    for(size_t index=0;index<fixed_count;index++)
+        compiler->positional_spread_fixed[index]=fixed[index];
     if(fixed_count==0)return spread;
     return emit_build_spread_arguments(compiler,fixed,spread_index,spread,
         fixed+spread_index,fixed_count-spread_index,optional_block);
@@ -2515,6 +2524,19 @@ static size_t infer_contextual_spread_arguments(Compiler *compiler,
         uint16_t *bindings) {
     for(size_t index=0;index<8;index++)bindings[index]=DIAMOND_NO_TYPE_SET;
     if(target==nullptr)return 0;
+    const size_t prefix_count=compiler->positional_spread_index;
+    for(size_t index=0;index<prefix_count&&index<parameter_count;index++)
+        infer_contextual_argument(compiler,target,index,
+            compiler->positional_spread_fixed[index],bindings);
+    const size_t fixed_count=compiler->positional_spread_fixed_count;
+    const size_t suffix_count=fixed_count>prefix_count?
+        fixed_count-prefix_count:0;
+    if(suffix_count<=parameter_count)
+        for(size_t index=0;index<suffix_count;index++)
+            infer_contextual_argument(compiler,target,
+                parameter_count-suffix_count+index,
+                compiler->positional_spread_fixed[prefix_count+index],
+                bindings);
     if(compiler->positional_spread_literal) {
         for(size_t index=0;index<compiler->positional_spread_count;index++) {
             const size_t parameter=compiler->positional_spread_first+index;
@@ -2526,7 +2548,10 @@ static size_t infer_contextual_spread_arguments(Compiler *compiler,
     }
     const int32_t element_set=array_element_type_set(compiler,spread);
     if(element_set<0)return target->type_variable_count;
-    for(size_t parameter=0;parameter<parameter_count&&parameter<16;parameter++) {
+    const size_t spread_end=parameter_count>=suffix_count?
+        parameter_count-suffix_count:prefix_count;
+    for(size_t parameter=prefix_count;
+        parameter<spread_end&&parameter<16;parameter++) {
         const uint16_t expected=target->parameter_type_sets[parameter];
         if(expected!=DIAMOND_NO_TYPE_SET&&expected<target->type_set_count)
             infer_contextual_type_set(compiler,target,expected,

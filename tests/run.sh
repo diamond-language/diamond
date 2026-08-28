@@ -2322,7 +2322,7 @@ generic_return_dump="$(sed -n '/^== tests\/cases\/generic_return_propagation.di 
 
 actual="$($diamond --dump-bytecode tests/cases/heterogeneous_spread_generic_inference.di)"
 heterogeneous_spread_generic_dump="$(sed -n '/^== tests\/cases\/heterogeneous_spread_generic_inference.di ==$/,/^== min ==$/p' <<<"$actual")"
-[[ "$(grep -c 'ADD_INT' <<<"$heterogeneous_spread_generic_dump")" == "5" ]]
+[[ "$(grep -c 'ADD_INT' <<<"$heterogeneous_spread_generic_dump")" == "9" ]]
 [[ "$(grep -cE '  ADD +r' <<<"$heterogeneous_spread_generic_dump")" == "0" ]]
 
 actual="$($diamond --dump-bytecode tests/cases/generic_union_return_propagation.di)"

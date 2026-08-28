@@ -47,6 +47,9 @@
 - Reused direct spread-literal positions for generic inference, allowing each
   element to bind its corresponding type variable independently and propagate
   substituted scalar, collection, and trailing-block result graphs.
+- Included fixed prefix and suffix registers in spread-call generic inference.
+  Homogeneous dynamic spread inference now applies only to the positional range
+  occupied by the spread, avoiding collisions with fixed-edge bindings.
 - Recursed expected collection contracts through nested Array and Hash literals
   so contextual generic method references resolve at arbitrary literal depth.
 - Stabilized recursive type-graph cloning when the current function's type-set

@@ -381,6 +381,9 @@ positions now bind distinct generic parameters independently and feed
 substituted call returns and trailing-block context. Context is restored after
 every nested expression and never changes the literal's independently inferred
 runtime constraint.
+Fixed arguments surrounding a spread now contribute their own generic bindings.
+For a dynamically sized homogeneous spread, element inference is bounded by the
+fixed prefix and suffix rather than being applied to the entire parameter list.
 
 ### Ruby-like ergonomics without Ruby compatibility
 

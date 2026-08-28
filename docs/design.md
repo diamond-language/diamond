@@ -1313,6 +1313,10 @@ The parser retains the literal's element registers until call-site generic
 inference completes. Each register is unified against its own parameter graph;
 nested collection bindings and substituted return or block graphs therefore
 retain their position instead of collapsing through the Array element union.
+The same transient call-site record retains fixed registers and the spread
+insertion index. Prefix registers unify from the start of the parameter list;
+suffix registers unify backward from its effective end. Homogeneous dynamic
+spread inference is limited to the remaining middle interval.
 Statically resolved keyword calls map each supplied name back to the target's
 declared parameter slot and infer from its value before compiling the trailing
 block. Explicit generic arguments remain authoritative and bypass inference.
