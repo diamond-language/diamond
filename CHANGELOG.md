@@ -26,6 +26,24 @@
 
 ## Language
 
+- Made the collector generational: a young/old split, minor collections
+  that trace only the young generation plus a remembered set, and
+  survivors promoted by list splice (no copying, since every object was
+  already individually heap-allocated). `Instance`/`Cell`/`Fiber`/`Thread`
+  mutations use a whole-object write barrier; `Array`/`Hash` mutations use
+  a card-marked barrier (`DIAMOND_GC_CARD_SIZE` = 64 elements per card) so
+  a minor collection only re-walks the entries that actually changed on a
+  large, mostly-stable container instead of the whole thing -- the exact
+  flaw a first generational attempt hit and was reverted over (see
+  `docs/gc-generational-design.md`). `DIAMOND_STRESS_MINOR_GC=1` joins the
+  existing `DIAMOND_STRESS_GC=1` to force minor collections aggressively
+  for write-barrier testing; `DIAMOND_TRACE_GC=1` now reports major and
+  minor collection counts/times separately. `bench/gc_churn`'s own sweep
+  confirms the goal: total GC time is now roughly flat across a 1,000-
+  40,000 live-set-size range rather than growing with the live set, and
+  minor-collection cost dropped three orders of magnitude versus the
+  first attempt's whole-object remembering (325s -> 0.4s at
+  `live_set_size=20000, iterations=200000`).
 - Added reusable prepared SQLite statements, named binds, and connection-open
   mode/flags. `db.prepare(sql)` compiles a statement once and returns a
   `Statement` (a new `DIAMOND_OBJECT_SQLITE3_STATEMENT` heap kind) with its

@@ -302,14 +302,28 @@ See [object-model.md](object-model.md) for layouts and current limitations.
 
 ## Memory management
 
-Each VM owns a linked list of heap objects. Collection is stop-the-world
-mark/sweep. Active register frames are explicit roots; instances trace fields,
-arrays trace elements, and hashes trace keys and values. Strings are leaf
-objects. `DIAMOND_STRESS_GC=1` collects before every eligible allocation to test
-rooting paths.
+Each VM owns two linked lists of heap objects, young and old. Collection is
+non-moving and comes in two shapes: a *minor* collection traces only the
+young generation (plus the remembered set, below) and promotes every young
+survivor to old by splicing it onto the old list; a *major* collection traces
+and sweeps both lists, exactly like the collector's original single-
+generation design. Active register frames are explicit roots; instances
+trace fields, arrays trace elements, and hashes trace keys and values.
+Strings are leaf objects. `DIAMOND_STRESS_GC=1` forces a major collection
+before every eligible allocation and `DIAMOND_STRESS_MINOR_GC=1` forces a
+minor one, independently, to test rooting paths under each.
 
-The collector is non-generational and non-moving, so mutations do not require a
-write barrier. Object finalizers and weak references do not exist.
+Because a minor collection never traces into the old generation, a write
+barrier records the one case that would otherwise be missed: an old object
+gaining a reference to a young one. `Instance`/`Cell`/`Fiber`/`Thread`
+mutations remember the whole object; `Array`/`Hash` mutations remember at
+the granularity of a fixed-size "card" of the backing storage instead
+(`DIAMOND_GC_CARD_SIZE` elements per card) so that a minor collection only
+has to re-walk the entries that actually changed on a large, mostly-stable
+container, not the whole thing. See
+[gc-generational-design.md](gc-generational-design.md) for the full design
+and the measurements that shaped it. Object finalizers and weak references
+do not exist.
 
 ## Gradual types
 

@@ -26,10 +26,13 @@ with none of that confound.
   DIAMOND_TRACE_GC=1 ./build/diamond bench/gc_churn/pure_churn.di ITERATIONS
   ```
 
-## Results
+## Results: pre-generational baseline
 
 All runs on this machine (12 logical / 6 physical cores), debug build,
-single-threaded, wall time via `/usr/bin/time -f %es`.
+single-threaded, wall time via `/usr/bin/time -f %es`. This section
+predates the generational collector (see "Results: generational GC + card
+marking" below for the current numbers) -- kept as the baseline the
+generational work was measured against.
 
 **Live-set-size sweep** (`session_churn.di`, churn held fixed at 200,000
 iterations, only the size of the persistent session cache varies):
@@ -61,7 +64,72 @@ only the total iteration count varies):
 |    200,000 |      85,718 |   0.49s |     3.87s |    12.6% |
 |    400,000 |     171,433 |   0.98s |     7.65s |    12.8% |
 
+## Results: generational GC + card marking
+
+Same machine, same debug build shape, now with the generational collector
+(see `docs/gc-generational-design.md`) at its tuned nursery threshold
+(`minor_gc_threshold_bytes` = 1MiB). `DIAMOND_TRACE_GC=1` now reports major
+and minor collections separately.
+
+**Live-set-size sweep** (`session_churn.di`, churn held fixed at 200,000
+iterations):
+
+| live set | major coll. | major GC time | minor coll. | minor GC time | total GC time | wall time | GC share |
+|---------:|------------:|---------------:|------------:|---------------:|---------------:|----------:|---------:|
+|    1,000 |         211 |          1.62s |       3,378 |           0.36s |          1.98s |    11.45s |    17.3% |
+|    5,000 |          55 |          2.07s |       3,417 |           0.37s |          2.44s |    12.05s |    20.2% |
+|   10,000 |          36 |          2.07s |       3,437 |           0.38s |          2.45s |    12.24s |    20.0% |
+|   20,000 |          27 |          2.05s |       3,446 |           0.40s |          2.45s |    12.44s |    19.7% |
+|   40,000 |          23 |          2.06s |       3,446 |           0.44s |          2.50s |    12.98s |    19.3% |
+
+The headline result: minor-collection count and cost are now essentially
+flat across a 40x live-set range (~3,400 collections, ~0.4s total, ~0.11-
+0.13ms each) -- unlike the old collector, where *every* collection walked
+the whole live set and individual pause cost grew 7x (15ms -> 103ms) across
+this same sweep. Major-collection cost still scales with live-set size
+(that pass still walks everything, by design), but there are far fewer of
+them relative to the total collection count, so the *typical* pause a
+running program experiences is now bounded regardless of live-set size --
+the actual goal this work targeted.
+
+**Churn-volume sweep** (`session_churn.di`, live set held fixed at 20,000):
+
+| iterations | major coll. | major GC time | minor coll. | minor GC time | total GC time | wall time | GC share |
+|-----------:|------------:|---------------:|------------:|---------------:|---------------:|----------:|---------:|
+|     50,000 |          19 |          0.41s |         859 |           0.10s |          0.51s |     3.48s |    14.6% |
+|    100,000 |          22 |          1.02s |       1,722 |           0.20s |          1.22s |     6.55s |    18.6% |
+|    200,000 |          27 |          2.05s |       3,446 |           0.40s |          2.45s |    12.52s |    19.6% |
+|    400,000 |          37 |          4.13s |       6,896 |           0.81s |          4.94s |    24.46s |    20.2% |
+
+**Control** (`pure_churn.di`, no live set at all -- nothing survives to be
+promoted, so this only ever triggers major collections, same as before the
+generational change):
+
+| iterations | major coll. | major GC time | wall time | GC share |
+|-----------:|------------:|---------------:|----------:|---------:|
+|     50,000 |      18,754 |          0.17s |     2.28s |     7.5% |
+|    100,000 |      37,504 |          0.34s |     4.48s |     7.5% |
+|    200,000 |      75,004 |          0.66s |     8.79s |     7.5% |
+|    400,000 |     150,004 |          1.38s |    17.70s |     7.8% |
+
+Total GC time is now close to the pre-generational baseline's (e.g. 2.45s
+vs. ~2.5s at live_set=20,000/200,000 iterations) -- a dramatic recovery
+from the first (reverted) generational attempt's whole-object-remembering
+regression, which cost 64s of minor-collection time alone at this same
+configuration (see `docs/gc-generational-design.md`'s own comparison
+table). Wall time is still higher than the pre-generational baseline
+(~12.4s vs. ~7.35s at this configuration) -- attributed to the per-object
+bookkeeping now present on every allocation/mutation path plus every minor
+survivor being promoted immediately (no survival threshold); not chased
+further here since bounding pause length, not aggregate wall time, was the
+stated goal.
+
 ## Reading
+
+The analysis below describes the pre-generational collector's own
+behavior (the problem this whole benchmark was built to characterize) --
+see "Results: generational GC + card marking" above for how the shipped
+fix changed these numbers.
 
 Two separate, independent effects show up here, and they matter for
 different reasons:

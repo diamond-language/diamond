@@ -1,78 +1,67 @@
-# Generational GC: design map (not yet implemented)
+# Generational GC: design and outcome (implemented)
 
-This document maps out a design for turning `diamond_vm_collect`
-(`src/vm.c:299`) into a generational collector. It is a plan for whoever
-picks this up, not a description of shipped behavior — nothing here is
-implemented (a first attempt at exactly this design was built, verified
-correct, and reverted — see "Known flaw" immediately below before
-starting another one). The prerequisite long-running workload now exists in
-`bench/gc_churn`; its direct measurements also surfaced the flaw below. See
-`CHANGELOG.md` for the concise history and `docs/roadmap.md` for possible future
-collector directions.
+**Status: implemented.** `diamond_vm_collect`/`diamond_vm_collect_minor`
+(`src/vm.c`) are now a generational collector, on the design below, after
+one prior attempt was built, measured, and reverted because of the flaw
+documented in the next section. This document is kept as the design record
+and the measured before/after evidence — see `CHANGELOG.md` for the
+concise history and `bench/gc_churn/README.md` for the full benchmark
+sweep this design was validated against.
 
-## Known flaw: the write barrier below is the wrong granularity
+## Known flaw in the first attempt: the write barrier was the wrong granularity
 
-The design as originally written (everything from "Object header" on)
-remembers at **container granularity** — `gc_write_barrier(vm, owner)`
-takes the whole `Array`/`Hash`/`Instance`/`Cell` that changed, not the
-specific slot that changed. That's fine for a small object (an `Instance`
-with a handful of fields, the shape most of this doc implicitly reasons
-about) but actively harmful for a large, long-lived, frequently-mutated
-container — exactly `bench/burn_in`'s and `bench/gc_churn`'s own
-motivating workload (a `sessions`-style cache with thousands of entries,
-one of which changes per request). A minor collection has to re-walk
-*every* entry of a remembered container on *every* run
-(`mark_remembered_set` → `mark_object_children`), since there's no
-record of which entry actually changed — cost proportional to container
-size, paid on nearly every minor collection once the container is
-"remembered" continuously (which a frequently-written cache always is).
-Measured on `bench/gc_churn/session_churn.di` at `live_set_size=20000,
-iterations=200000`: 27,901 minor collections costing 64s combined,
-against 2s for 27 major collections — a large net loss versus the
-pre-generational collector's ~2.5s total GC time for a comparable run.
+The first attempt (everything from "Object header" on, below) remembered at
+**container granularity** — `gc_write_barrier(vm, owner)` took the whole
+`Array`/`Hash`/`Instance`/`Cell` that changed, not the specific slot that
+changed. That's fine for a small object (an `Instance` with a handful of
+fields, the shape most of this doc implicitly reasons about) but actively
+harmful for a large, long-lived, frequently-mutated container — exactly
+`bench/burn_in`'s and `bench/gc_churn`'s own motivating workload (a
+`sessions`-style cache with thousands of entries, one of which changes per
+request). A minor collection had to re-walk *every* entry of a remembered
+container on *every* run (`mark_remembered_set` → `mark_object_children`),
+since there was no record of which entry actually changed — cost
+proportional to container size, paid on nearly every minor collection once
+the container was "remembered" continuously (which a frequently-written
+cache always is). Measured on `bench/gc_churn/session_churn.di` at
+`live_set_size=20000, iterations=200000`: 27,901 minor collections costing
+64s combined, against 2s for 27 major collections — a large net loss versus
+the pre-generational collector's ~2.5s total GC time for a comparable run.
 
-**Before implementing the rest of this doc as-is, redesign the write
-barrier to remember at finer granularity** — the standard fix is card
-marking (divide each large container's backing storage into fixed-size
-"cards," and have the barrier record which card was touched rather than
-the whole object, so a minor collection only re-scans the cards that
-actually changed) or an equivalent per-entry/per-index scheme. Everything
-else in this doc (object header, two-list structure, promotion-by-splice,
-minor/major collection shape) held up fine under real measurement and
-doesn't need to change — it's specifically `gc_write_barrier`'s
-container-level granularity and `mark_remembered_set`'s whole-container
-walk that need a different design.
+The fix, implemented as "Card marking" below: divide `Array`/`Hash`'s
+backing storage into fixed-size cards, and have the barrier record which
+card was touched rather than the whole object, so a minor collection only
+re-scans the cards that actually changed. Everything else in the original
+design (object header, two-list structure, promotion-by-splice, minor/
+major collection shape) held up under real measurement and didn't need to
+change.
 
-## Baseline: what exists today
+## Baseline: what existed before this
 
-`diamond_vm_collect` is a single-generation, non-moving, stop-the-world
+`diamond_vm_collect` was a single-generation, non-moving, stop-the-world
 mark-sweep. One intrusive linked list (`vm->objects`), every object
 individually `malloc`'d, a doubling `bytes_allocated`/`next_gc` threshold,
 full root walk and full heap sweep on every collection regardless of how
-much of the live set is actually garbage. `docs/design.md:288` documents
-the collector as "non-generational and non-moving, so mutations do not
-require a write barrier" — that invariant is exactly what this design
-removes, deliberately and narrowly.
+much of the live set was actually garbage.
 
-## The structural fact that makes this tractable
+## The structural fact that made this tractable
 
 Every object here is already individually heap-allocated onto an intrusive
 list — never bump-allocated out of an arena. That means **promotion can be
 a pointer-preserving list splice** (unlink from the young list, relink onto
 the old list) instead of a copying/compacting move.
 
-This matters specifically for this codebase: `docs/design.md:68-70` notes
-that raw C pointers to freshly allocated objects are routinely held across
-subsequent allocation calls before being rooted (e.g. `array =
-allocate_array(...)` followed by more work that can itself trigger a
-collection). A copying nursery would invalidate those pointers on every
-survived collection and require rewriting that rooting discipline across
-most of `vm.c` and the embedding surface (`ProgramBuilder`) — a much
-larger and riskier project than the GC change itself. Staying non-moving
-sidesteps that entirely.
+This mattered specifically for this codebase: raw C pointers to freshly
+allocated objects are routinely held across subsequent allocation calls
+before being rooted (e.g. `array = allocate_array(...)` followed by more
+work that can itself trigger a collection). A copying nursery would have
+invalidated those pointers on every survived collection and required
+rewriting that rooting discipline across most of `vm.c` and the embedding
+surface (`ProgramBuilder`) — a much larger and riskier project than the GC
+change itself. Staying non-moving sidestepped that entirely.
 
 **Non-goal, stated explicitly: no moving/compacting collector.**
-Fragmentation is accepted, exactly as it is today.
+Fragmentation is accepted, exactly as it was before.
 
 ## Object header
 
@@ -88,16 +77,19 @@ typedef struct DiamondObject {
 
 ## Two lists, two thresholds
 
-`vm->objects` splits into `vm->young_objects` / `vm->old_objects`, each
-with its own byte counter. Minor collection triggers off a small nursery
-threshold; major collection keeps today's doubling `next_gc` over total
-bytes. `allocate_*` always allocates young.
+`vm->objects` split into `vm->young_objects` / `vm->old_objects`. Minor
+collection triggers off a small, fixed nursery threshold
+(`vm->minor_gc_threshold_bytes`, checked as a snapshot/delta against
+`vm->bytes_allocated` rather than a separately-incremented counter); major
+collection keeps the original doubling `next_gc` over total bytes.
+`allocate_*` always allocates young.
 
 ## Write barrier
 
 Only **old→young** pointer stores matter: an old object gaining a
 reference to a young one is exactly the case a minor collection's normal
-root walk wouldn't otherwise see. Barrier:
+root walk wouldn't otherwise see. Base barrier (`gc_write_barrier`, used by
+`Instance`/`Cell`/`Fiber`/`Thread` mutation sites):
 
 ```c
 if (owner->old && !owner->remembered) {
@@ -107,39 +99,52 @@ if (owner->old && !owner->remembered) {
 ```
 
 Unconditional on the stored value's own generation — cheaper branch, over-
-remembers old→old writes, an acceptable tradeoff here.
+remembers old→old writes, an acceptable tradeoff.
 
-### Audited mutation sites (current codebase)
+### Card marking (Array/Hash)
 
-- Instance field construction, `vm.c:6436-6437` — target is always
-  freshly allocated (young), **no barrier needed**.
-- Instance field store opcodes, `vm.c:8178`, `vm.c:8206` — **needs
-  barrier**.
-- `array_push`, `vm.c:4545`, and indexed element store, `vm.c:8341` —
-  **needs barrier**.
-- `hash_set`, `vm.c:3739` — **needs barrier**.
-- `fiber->result` / `fiber->resume_value`, `vm.c:709`, `vm.c:726`,
-  `vm.c:8478` — **needs barrier**, see risk note below.
-- `thread->result`, `vm.c:984`, `vm.c:988`, `vm.c:7332` — **needs
-  barrier**, see risk note below.
-- Closure `captures[]`, `vm.c:886` — set exactly once at construction,
-  never mutated afterward. **No barrier needed** — one fewer site to get
-  wrong.
-- **Two real gaps in this list, found during the first implementation
-  attempt, not by design:** `Cell#value`, mutated post-construction by
-  `DIAMOND_OP_SET_CAPTURE` and `DIAMOND_OP_SET_CELL` — **needs barrier**,
-  keyed off the `Cell` object itself. And the `super()`-into-built-in-
-  Exception-constructor path (the fallback in the `SUPER` opcode handler
-  that assigns `self->fields[0]`/`[1]` directly when no user-defined
-  `initialize` exists up the chain) — **needs barrier**, keyed off
-  `self`; unlike `DIAMOND_OP_NEW`'s own exception-class field write
-  (truly always-fresh, no barrier needed, confirmed no allocation
-  happens between construction and that write), this one runs from deep
-  inside a possibly-long-running `initialize` call chain where the
-  receiver may well have already been promoted. Re-audit this list from
-  scratch rather than trusting it as complete — line numbers above are
-  already stale, and if this list missed two sites once, it can miss
-  others.
+`Array`/`Hash` use `gc_write_barrier_index`/`gc_write_barrier_range`
+instead: same remembered-set bookkeeping, plus marking the specific
+`DIAMOND_GC_CARD_SIZE`-element card (64 elements) that the write touched
+dirty in a lazily-allocated `dirty_cards` byte table. `mark_remembered_set`
+then walks only the dirty cards of a remembered `Array`/`Hash` — clearing
+each as it's scanned — instead of every element. `Instance`/`Cell`/`Fiber`/
+`Thread` stay whole-object-remembered: bounded size, no motivating cost.
+
+### Audited mutation sites
+
+- Instance field construction (`DIAMOND_OP_NEW`, `DIAMOND_OP_NEW_SPREAD`'s
+  own default-constructor fallback, `copy_value_into_vm`'s Array/Hash
+  cases via `array_push`/`hash_set`) — target is always freshly allocated
+  (young) with no allocation in between, **no barrier needed**.
+- `DIAMOND_OP_SET_IVAR`, `DIAMOND_OP_SET_IVAR_NAME` — barrier.
+- `array_push`, `DIAMOND_OP_INDEX_SET` (single index and range-write) —
+  index/range barrier (card marking).
+- `hash_set` (both the existing-key-update path and the insert path) —
+  index barrier (card marking).
+- `DIAMOND_OP_SET_CAPTURE`, `DIAMOND_OP_SET_CELL` — barrier, keyed off the
+  `Cell` object.
+- `DIAMOND_OP_SUPER`'s built-in-Exception-constructor fallback
+  (`self->fields[0]`/`[1]` when no user `initialize` exists up the chain)
+  — barrier, keyed off `self`.
+- Fiber `#resume` (`fiber->result`/`resume_value`) and Thread `#join`
+  (`thread->result`) — barrier, keyed off the owning
+  `DiamondFiberHandle`/`DiamondThreadHandle` (see "sharpest risk" below).
+- Closure `captures[]` — set exactly once at construction, never mutated
+  afterward. **No barrier needed.**
+- **Raw C-level field writes outside any opcode**, found during this
+  implementation's own `DIAMOND_STRESS_MINOR_GC=1` + ASan verification
+  (not anticipated by the original design): several helpers root a
+  freshly-allocated object, then call *another* allocator (which can
+  itself trigger a minor GC and promote the now-rooted object) before
+  writing one of its fields directly in C — bypassing the interpreter's
+  own opcode-level barrier entirely. Fixed in `catch_runtime_error`
+  (exception message field), `raise_capture_backtrace_helper` (backtrace
+  field), `copy_value_into_vm`'s Instance-copy loop, the Thread-join
+  internal-failure error path, and `process_run_helper`'s stdout/stderr
+  fields. The pattern to watch for in any future such helper: "allocate
+  object A, root it, allocate object B (can trigger GC), then `A->field =
+  B` directly in C" always needs its own explicit `gc_write_barrier` call.
 
 ### Sharpest risk in the whole design
 
@@ -149,9 +154,13 @@ remembers old→old writes, an acceptable tradeoff here.
 back to the owning `DiamondFiberHandle`/`DiamondThreadHandle` to check
 `old`/`remembered`. A missed barrier here doesn't fail loudly: it's a live
 young object silently reachable only through an old fiber/thread handle,
-collected out from under a running program under load. This is the one
-area worth extra scrutiny (and extra test coverage) whenever this is
-implemented.
+collected out from under a running program under load. Implemented by
+calling the barrier once, on the handle, immediately after
+`diamond_fiber_run`/the thread-join copy — every mutation of these payload
+fields happens strictly within the dynamic extent of that one call, so a
+single barrier call there covers all of them (including a nested
+yield/resume chain, since each nested `.resume()` goes through this same
+call site for its own fiber).
 
 ## Minor collection
 
@@ -163,54 +172,58 @@ pointers are already covered by the remembered set, so don't recurse into
 it). Sweep only `vm->young_objects`.
 
 Survivors promote immediately — list splice to `vm->old_objects`, `old =
-true`. No age counter needed, since promotion is free here (unlike a
-copying collector, there's no cost to promoting too eagerly). If premature
-promotion of medium-lived objects shows up as a real problem once there's
-a benchmark to measure it against, a 1-2 cycle survival threshold can be
-added later; not designed in up front since it's unmotivated without data.
+true`. No age counter: promotion is free here (unlike a copying collector,
+there's no cost to promoting too eagerly).
 
 ## Major collection
 
-Unchanged algorithm, walking both lists — but **do not** unconditionally
-clear the remembered set afterward. That was this doc's own original
-text here, and it's wrong: an old→young edge established before a major
-collection and never written to again has no future write-barrier firing
-to rediscover it, so clearing makes it silently invisible to every later
-minor collection (confirmed as a real bug during the first implementation
-attempt, not just a theoretical concern). Filter instead: after the mark phase,
-keep a remembered entry
-iff its object is still `marked` (about to survive the sweep below);
-drop it otherwise. A surviving old object's own `remembered` bit needs
-no change — whatever young object it still points to was necessarily
-also marked by this same full, unrestricted recursive pass, so it
-survives too. (Also: do this filtering *before* sweeping, not after —
-touching `->remembered` on an entry that sweep already freed is a
-straightforward use-after-free, the other real bug the first attempt
-hit.)
+Unchanged algorithm, walking both lists — but does **not** unconditionally
+clear the remembered set afterward (the first attempt's own bug: an
+old→young edge established before a major collection and never written to
+again has no future write-barrier firing to rediscover it, so clearing
+makes it silently invisible to every later minor collection). Filtered
+instead: after the mark phase, a remembered entry is kept iff its object is
+still `marked` (about to survive the sweep below); dropped otherwise. This
+filtering happens *before* sweeping, not after — touching `->remembered` on
+an entry that sweep already freed would be a straightforward
+use-after-free, the other real bug the first attempt hit.
 
 ## Testing
 
-`DIAMOND_STRESS_GC=1` already forces a (major) collection before every
-eligible allocation. This design needs a nursery-scoped counterpart
-(`DIAMOND_STRESS_MINOR_GC=1` — used under exactly that name in the first
-implementation attempt, worked well, no reason to rename) that forces
-minor collections aggressively. That's specifically to catch missing
-write-barrier sites — the bug class this change introduces that the
-codebase doesn't have today. In practice this worked as intended: it's
-what caught the two mutation-site gaps above, though the two remembered-
-set bugs (see "Major collection") needed `DIAMOND_STRESS_GC=1` combined
-with AddressSanitizer to surface, not `DIAMOND_STRESS_MINOR_GC=1` alone
-— run both stress flags together, and under ASan, not just one or the
-other.
+`DIAMOND_STRESS_GC=1` forces a major collection before every eligible
+allocation; `DIAMOND_STRESS_MINOR_GC=1` forces a minor one. Both, run
+together and under ASan/UBSan, are what actually caught every real bug in
+this implementation (both the two remembered-set bugs the first attempt
+hit, and the raw-C-field-write gaps found this time) — neither stress flag
+alone was sufficient.
 
-## Prerequisite (discharged)
+## Results
 
-This used to call for establishing a long-running benchmark before
-implementing any of this — done: `bench/gc_churn` is exactly that workload,
-short and non-networked
-rather than a live `gremlin` server, and precise enough to have caught
-the write-barrier granularity flaw above directly. Re-run it
-(`bench/gc_churn/session_churn.di`, swept across live-set size) against
-any future implementation before considering it done — it's what will
-show whether a card-marked barrier actually fixes the regression, not
-just whether the collector is correct.
+`bench/gc_churn/session_churn.di` (live_set=20000, iterations=200000),
+compared across all three points in this project's history:
+
+| collector | major collections | major GC time | minor collections | minor GC time |
+|---|---:|---:|---:|---:|
+| pre-generational (baseline) | 27 | ~2.5s (total) | n/a | n/a |
+| first attempt (whole-object remembering, reverted) | 27 | ~2s | 27,901 | 64s |
+| this implementation, before card marking (Phase 2) | 27 | 2.3s | 53,820 | 325s |
+| **this implementation, after card marking (Phase 4)** | 27 | 2.1s | 3,446 | **0.4s** |
+
+Card marking cut minor-collection time by three orders of magnitude versus
+the whole-object-remembering version, and total GC time is now close to
+the pre-generational baseline. More importantly, per the original
+motivation (bounding *pause length*, not aggregate CPU): total GC time is
+now roughly flat (~2.0-2.5s) across a live-set-size sweep from 1,000 to
+40,000 entries, rather than growing with the live set the way a single
+generation's full-heap collection did. See `bench/gc_churn/README.md` for
+the complete sweep and the pre-generational baseline it's compared against.
+
+Wall time is still higher than the pre-generational baseline at comparable
+settings (roughly 12-13s vs. ~7.3-7.9s across the live-set sweep) — some
+combination of the per-object `old`/`remembered` bookkeeping now present on
+every allocation and mutation path, and every minor-collection survivor
+being promoted (so the old generation grows faster than it would with a
+survival threshold). Not chased further here since it wasn't the stated
+goal; a future pass could revisit whether a 1-2 cycle survival threshold
+before promotion (mentioned as a possible follow-up in the original design
+below) recovers some of that gap.
