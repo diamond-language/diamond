@@ -371,12 +371,13 @@ Receiver-determined native collection relays now preserve them beyond indexing:
 Array element reads, filters, ordering operations, and slices retain the joined
 element graph, while Hash `keys`/`values` retain joined key/value graphs.
 
-Native relays whose result depends on an argument remain queued. `first_or`,
-`last_or`, `fetch`, `concat`, and `merge` need argument-aware result joins;
-`map`, `flat_map`, `partition`, `group_by`, `zip`, `each_slice`, `each_cons`,
-`tally`, and `map_values` need callback-return or nested-output construction.
-They are deferred specifically until native-method propagation receives the
-same fixed/spread/keyword argument graph interface used by declared calls.
+Argument-aware native relays are now connected for fixed and fully named
+keyword calls. `first_or`, `last_or`, `fetch`, `concat`, and `merge` join their
+operand graphs. Callback returns and receiver elements now construct `map`,
+`flat_map`, `partition`, `group_by`, `zip`, `each_slice`, `each_cons`, `tally`,
+and `map_values` output graphs. Dynamic spread calls remain queued because an
+arbitrary runtime Array cannot assign its elements to distinct native operand
+roles without positional shape metadata.
 
 Expected collection graphs now recurse through nested Array and Hash literals.
 Array elements and Hash keys/values compile against their respective declared

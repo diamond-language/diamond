@@ -26,6 +26,11 @@
 
 ## Language
 
+- Added argument- and callback-aware native collection result inference.
+  Fallback reads, concatenation, merge, mapping, grouping, zipping, nested
+  slices, tallies, and Hash value transforms now construct caller-owned result
+  graphs across typed collection unions; fixed and keyword arguments are
+  supported where the native contract accepts them.
 - Propagated joined element graphs through native collection relays on typed
   union receivers. `Array#first`, `last`, `reverse`, `uniq`, `compact`, `sort`,
   `sort_by`, `select`, `reject`, `take`, and `drop` now retain their element

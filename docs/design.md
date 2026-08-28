@@ -420,8 +420,12 @@ declared-return path to inspect. The compiler therefore models methods whose
 result follows from the receiver alone. Array `first`/`last` publish the joined
 element graph; element-preserving filters, ordering operations, and slices
 publish `Array[joined elements]`; Hash `keys` and `values` publish arrays of the
-joined key or value graph. Argument- and callback-dependent transforms remain
-dynamic until call arguments can participate in the same native-method model.
+joined key or value graph. A second argument-aware phase joins typed fallback,
+concatenation, and merge operands. Typed Callable returns construct `map`,
+`flat_map`, `group_by`, and `map_values` results, while `partition`, `zip`,
+`each_slice`, `each_cons`, and `tally` synthesize their nested output graphs.
+Fixed arguments, attached blocks, and fully named keyword calls participate;
+dynamically sized spread operands remain conservative.
 
 Statically resolved top-level, singleton, and instance-method calls publish a
 target's declared return graph onto their destination register.

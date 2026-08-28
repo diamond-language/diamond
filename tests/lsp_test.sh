@@ -886,6 +886,60 @@ count=$((count + 1))
 send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$collection_relay_uri"'"}}}'
 read_message >/dev/null
 
+# --- argument and callback collection relays construct nested result graphs ---
+
+collection_transform_uri="file:///collection_transform_hover.di"
+collection_transform_source='def stringify(value: Int | String) -> String = \"mapped\"
+def inspect(arrays: Array[Int] | Array[String], hashes: Hash[String, Int] | Hash[Symbol, String])
+  fallback = arrays.first_or(\"fallback\")
+  fallback
+  concatenated = arrays.concat([\"joined\"])
+  concatenated
+  mapped = arrays.map(stringify)
+  mapped
+  sliced = arrays.each_slice(1)
+  sliced
+  merged = hashes.merge(other: {:joined: \"joined\"})
+  merged
+  transformed = hashes.map_values(stringify)
+  transformed
+end'
+send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$collection_transform_uri"'","text":"'"$collection_transform_source"'"}}}'
+read_message >/dev/null
+
+send '{"jsonrpc":"2.0","id":183,"method":"textDocument/hover","params":{"textDocument":{"uri":"'"$collection_transform_uri"'"},"position":{"line":3,"character":4}}}'
+response="$(read_message)"
+[[ "$response" == *'"value":"Int | String"'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","id":184,"method":"textDocument/hover","params":{"textDocument":{"uri":"'"$collection_transform_uri"'"},"position":{"line":5,"character":6}}}'
+response="$(read_message)"
+[[ "$response" == *'"value":"Array[Int | String]"'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","id":185,"method":"textDocument/hover","params":{"textDocument":{"uri":"'"$collection_transform_uri"'"},"position":{"line":7,"character":4}}}'
+response="$(read_message)"
+[[ "$response" == *'"value":"Array[String]"'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","id":186,"method":"textDocument/hover","params":{"textDocument":{"uri":"'"$collection_transform_uri"'"},"position":{"line":9,"character":4}}}'
+response="$(read_message)"
+[[ "$response" == *'"value":"Array[Array[Int | String]]"'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","id":187,"method":"textDocument/hover","params":{"textDocument":{"uri":"'"$collection_transform_uri"'"},"position":{"line":11,"character":4}}}'
+response="$(read_message)"
+[[ "$response" == *'"value":"Hash[String | Symbol, Int | String]"'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","id":188,"method":"textDocument/hover","params":{"textDocument":{"uri":"'"$collection_transform_uri"'"},"position":{"line":13,"character":5}}}'
+response="$(read_message)"
+[[ "$response" == *'"value":"Hash[String | Symbol, String]"'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$collection_transform_uri"'"}}}'
+read_message >/dev/null
+
 # --- heterogeneous spread literals bind generic result positions ---
 
 spread_generic_uri="file:///spread_generic_hover.di"

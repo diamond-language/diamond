@@ -5778,6 +5778,185 @@ static void publish_collection_method_return_type(Compiler *compiler,
         record_collection_type_set(compiler,reg,DIAMOND_TYPE_ARRAY,second,-1);
 }
 
+static int32_t joined_collection_argument(Compiler *compiler,
+        int32_t collection_set_index,uint8_t collection_type,bool second) {
+    if(collection_set_index<0||
+       (size_t)collection_set_index>=compiler->function->type_set_count)return -1;
+    const DiamondTypeSet collection=
+        compiler->function->type_sets[(size_t)collection_set_index];
+    uint16_t arguments[DIAMOND_MAX_UNION_TYPES];
+    if(collection.count==0)return -1;
+    for(size_t index=0;index<collection.count;index++) {
+        const DiamondTypeMember member=collection.members[index];
+        if(member.id!=collection_type)return -1;
+        arguments[index]=second?member.second_argument_set:member.argument_set;
+        if(arguments[index]==DIAMOND_NO_TYPE_SET)return -1;
+    }
+    int32_t joined=-1;
+    for(size_t index=0;index<collection.count;index++) {
+        joined=joined<0?(int32_t)arguments[index]:
+            join_type_set_indices(compiler,joined,(int32_t)arguments[index]);
+        if(joined<0)return -1;
+    }
+    return joined;
+}
+
+static int32_t joined_callable_return(Compiler *compiler,uint16_t reg) {
+    const int32_t set_index=compiler->known_type_sets[reg];
+    if(set_index<0||(size_t)set_index>=compiler->function->type_set_count)
+        return -1;
+    const DiamondTypeSet callable=
+        compiler->function->type_sets[(size_t)set_index];
+    uint16_t returns[DIAMOND_MAX_UNION_TYPES];
+    if(callable.count==0)return -1;
+    for(size_t index=0;index<callable.count;index++) {
+        const DiamondTypeMember member=callable.members[index];
+        if(member.id!=DIAMOND_TYPE_CALLABLE||
+           member.callable_return_set==DIAMOND_NO_TYPE_SET)return -1;
+        returns[index]=member.callable_return_set;
+    }
+    int32_t joined=-1;
+    for(size_t index=0;index<callable.count;index++) {
+        joined=joined<0?(int32_t)returns[index]:
+            join_type_set_indices(compiler,joined,(int32_t)returns[index]);
+        if(joined<0)return -1;
+    }
+    return joined;
+}
+
+static void publish_nested_array_result(Compiler *compiler,uint16_t reg,
+        int32_t element_set) {
+    record_collection_type_set(compiler,reg,DIAMOND_TYPE_ARRAY,element_set,-1);
+    const int32_t inner=compiler->known_type_sets[reg];
+    if(inner>=0)record_collection_type_set(compiler,reg,DIAMOND_TYPE_ARRAY,
+        inner,-1);
+}
+
+static void publish_collection_argument_return_type(Compiler *compiler,
+        uint16_t reg,int32_t receiver_set_index,DiamondSpan name,
+        const uint16_t *arguments,size_t argument_count) {
+    const int32_t array_elements=joined_collection_argument(compiler,
+        receiver_set_index,DIAMOND_TYPE_ARRAY,false);
+    if(array_elements>=0) {
+        if(argument_count==1&&
+           (name_equals(compiler,"first_or",name,false)||
+            name_equals(compiler,"last_or",name,false))) {
+            const int32_t fallback=joined_value_type_set(compiler,arguments,1);
+            const int32_t joined=join_type_set_indices(compiler,array_elements,
+                fallback);
+            if(joined>=0)publish_known_type_set(compiler,reg,(uint16_t)joined);
+        } else if(argument_count==1&&
+                  name_equals(compiler,"concat",name,false)) {
+            const int32_t other=joined_collection_argument(compiler,
+                compiler->known_type_sets[arguments[0]],DIAMOND_TYPE_ARRAY,
+                false);
+            const int32_t joined=join_type_set_indices(compiler,array_elements,
+                other);
+            if(joined>=0)record_collection_type_set(compiler,reg,
+                DIAMOND_TYPE_ARRAY,joined,-1);
+        } else if(argument_count==1&&
+                  name_equals(compiler,"map",name,false)) {
+            const int32_t mapped=joined_callable_return(compiler,arguments[0]);
+            if(mapped>=0)record_collection_type_set(compiler,reg,
+                DIAMOND_TYPE_ARRAY,mapped,-1);
+        } else if(argument_count==1&&
+                  name_equals(compiler,"flat_map",name,false)) {
+            const int32_t mapped=joined_callable_return(compiler,arguments[0]);
+            const int32_t element=joined_collection_argument(compiler,mapped,
+                DIAMOND_TYPE_ARRAY,false);
+            if(element>=0)record_collection_type_set(compiler,reg,
+                DIAMOND_TYPE_ARRAY,element,-1);
+        } else if(argument_count==1&&
+                  (name_equals(compiler,"partition",name,false)||
+                   name_equals(compiler,"each_slice",name,false)||
+                   name_equals(compiler,"each_cons",name,false))) {
+            publish_nested_array_result(compiler,reg,array_elements);
+        } else if(argument_count==1&&
+                  name_equals(compiler,"group_by",name,false)) {
+            const int32_t key=joined_callable_return(compiler,arguments[0]);
+            if(key>=0) {
+                record_collection_type_set(compiler,reg,DIAMOND_TYPE_ARRAY,
+                    array_elements,-1);
+                const int32_t grouped=compiler->known_type_sets[reg];
+                if(grouped>=0)record_collection_type_set(compiler,reg,
+                    DIAMOND_TYPE_HASH,key,grouped);
+            }
+        } else if(argument_count==1&&
+                  name_equals(compiler,"zip",name,false)) {
+            const int32_t other=joined_collection_argument(compiler,
+                compiler->known_type_sets[arguments[0]],DIAMOND_TYPE_ARRAY,
+                false);
+            const int32_t pair=join_type_set_indices(compiler,array_elements,
+                other);
+            if(pair>=0)publish_nested_array_result(compiler,reg,pair);
+        } else if(argument_count==0&&
+                  name_equals(compiler,"tally",name,false)) {
+            const uint16_t count=concrete_type_set(compiler,DIAMOND_TYPE_INT);
+            if(count!=DIAMOND_NO_TYPE_SET)
+                record_collection_type_set(compiler,reg,DIAMOND_TYPE_HASH,
+                    array_elements,(int32_t)count);
+        }
+        return;
+    }
+    const int32_t hash_keys=joined_collection_argument(compiler,
+        receiver_set_index,DIAMOND_TYPE_HASH,false);
+    const int32_t hash_values=joined_collection_argument(compiler,
+        receiver_set_index,DIAMOND_TYPE_HASH,true);
+    if(hash_keys<0||hash_values<0)return;
+    if(argument_count==2&&name_equals(compiler,"fetch",name,false)) {
+        const int32_t fallback=joined_value_type_set(compiler,&arguments[1],1);
+        const int32_t joined=join_type_set_indices(compiler,hash_values,fallback);
+        if(joined>=0)publish_known_type_set(compiler,reg,(uint16_t)joined);
+    } else if(argument_count==1&&name_equals(compiler,"merge",name,false)) {
+        const int32_t other_set=compiler->known_type_sets[arguments[0]];
+        const int32_t other_keys=joined_collection_argument(compiler,other_set,
+            DIAMOND_TYPE_HASH,false);
+        const int32_t other_values=joined_collection_argument(compiler,other_set,
+            DIAMOND_TYPE_HASH,true);
+        const int32_t keys=join_type_set_indices(compiler,hash_keys,other_keys);
+        const int32_t values=join_type_set_indices(compiler,hash_values,
+            other_values);
+        if(keys>=0&&values>=0)record_collection_type_set(compiler,reg,
+            DIAMOND_TYPE_HASH,keys,values);
+    } else if(argument_count==1&&
+              name_equals(compiler,"map_values",name,false)) {
+        const int32_t mapped=joined_callable_return(compiler,arguments[0]);
+        if(mapped>=0)record_collection_type_set(compiler,reg,
+            DIAMOND_TYPE_HASH,hash_keys,mapped);
+    }
+}
+
+static int find_keyword_argument(const Compiler *compiler,const char *wanted,
+        const DiamondSpan *names,size_t count) {
+    for(size_t index=0;index<count;index++)
+        if(name_equals(compiler,wanted,names[index],false))return (int)index;
+    return -1;
+}
+
+static void publish_collection_keyword_return_type(Compiler *compiler,
+        uint16_t reg,int32_t receiver_set_index,DiamondSpan method_name,
+        const DiamondSpan *names,const uint16_t *values,size_t count) {
+    const char *wanted[2]={nullptr,nullptr};size_t wanted_count=0;
+    if(name_equals(compiler,"first_or",method_name,false)||
+       name_equals(compiler,"last_or",method_name,false)) {
+        wanted[0]="fallback";wanted_count=1;
+    } else if(name_equals(compiler,"concat",method_name,false)) {
+        wanted[0]="other";wanted_count=1;
+    } else if(name_equals(compiler,"merge",method_name,false)) {
+        wanted[0]="other";wanted_count=1;
+    } else if(name_equals(compiler,"fetch",method_name,false)) {
+        wanted[0]="key";wanted[1]="fallback";wanted_count=2;
+    } else return;
+    uint16_t ordered[2];
+    for(size_t index=0;index<wanted_count;index++) {
+        const int found=find_keyword_argument(compiler,wanted[index],names,count);
+        if(found<0)return;
+        ordered[index]=values[(size_t)found];
+    }
+    publish_collection_argument_return_type(compiler,reg,receiver_set_index,
+        method_name,ordered,wanted_count);
+}
+
 static void publish_instance_return_type(Compiler *compiler,uint16_t reg,
         int32_t receiver_set_index,DiamondSpan name,
         const DiamondFunction *matching_target,const uint16_t *bindings,
@@ -6061,6 +6240,8 @@ static uint16_t parse_invoke(Compiler *compiler, uint16_t receiver) {
             type_argument_count,has_block,block);
         publish_instance_return_type(compiler,result,receiver_set_index,name,
             return_target,resolved_arguments,resolved_count);
+        publish_collection_keyword_return_type(compiler,result,
+            receiver_set_index,name,keyword_names,keyword_values,keyword_count);
         return result;
     }
     if(call_arguments_have_spread(compiler)) {
@@ -6191,6 +6372,8 @@ static uint16_t parse_invoke(Compiler *compiler, uint16_t receiver) {
         type_arguments,type_argument_count,args,count);
     publish_instance_return_type(compiler,result,receiver_set_index,name,
         return_target,resolved_arguments,resolved_count);
+    publish_collection_argument_return_type(compiler,result,receiver_set_index,
+        name,args,count);
     return result;
 }
 

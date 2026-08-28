@@ -605,6 +605,10 @@ produce the joined element type; `reverse`, `uniq`, `compact`, `sort`,
 `sort_by`, `select`, `reject`, `take`, and `drop` preserve it inside an Array.
 Hash `keys` and `values` produce Arrays containing the joined key and value
 types respectively.
+Fallback reads, `concat`, and `merge` also join typed argument graphs for fixed
+and named-keyword calls. Typed callback returns determine `map`, `flat_map`,
+`group_by`, and `map_values` results. `partition`, `zip`, `each_slice`,
+`each_cons`, and `tally` retain their nested Array or Hash structure.
 
 A fixed-arity bound method reference such as `object.convert` retains its
 declared parameter and return contract. Explicit generic references such as
