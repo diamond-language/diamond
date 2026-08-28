@@ -78,6 +78,17 @@
   independently bind the name, but not when every arm does:
   `case mode when 1 then picked = 1 when 2 then picked = "s" else picked =
   2.5 end; picked` infers `Int | String | Float` with no spurious `Nil`.
+- Closed two more bypass sites in the loop-capture-staleness fix (see below):
+  `rescue e` bindings and a `def`'s own name (registered as a local in the
+  enclosing scope right after it compiles) are now marked captured at
+  declaration time, the same as `define_local`'s plain-assignment locals
+  already were. Applied defensively rather than from a failing
+  reproduction -- confirmed via `--dump-bytecode` that the pre-fix codegen
+  was genuinely wrong at both sites, but neither turned out to be
+  runtime-observable (the VM rewrites the exception register fresh on every
+  `rescue` catch, and a nested def's own local is rewritten every loop
+  iteration before it's read). See docs/design.md's "Locals captured inside
+  a loop body go stale" section.
 - Added a core-suite audit for duplicate, unclassified, or VM-missing collection
   relay contracts, plus negative hover coverage for dynamic arithmetic relays.
 - Inferred `Array#sum` results for closed numeric element graphs. Int-only

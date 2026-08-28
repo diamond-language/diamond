@@ -1287,13 +1287,39 @@ box-aware from its one and only compilation:
    "freshly declared inside the loop, captured later in the same body"
    case.
 
-No VM/opcode changes. Deliberately narrower than exhaustive: `define_local`
-is the sole site for plain assignment, but seven other, rarer local-
-registration sites exist (destructuring, `rescue error:` bindings,
-parameter binding, and others) that this pass doesn't touch -- a local
-declared via one of those forms inside a capturing loop, then itself
-captured later in the same body, remains unfixed. Confirmed as a real,
-documented remaining gap rather than assumed away.
+No VM/opcode changes. `define_local` is the sole site for plain
+assignment, but several other, rarer sites register locals directly
+against `compiler->locals[]` rather than going through it. Of those,
+two live in the same shared, outer loop-body scope `define_local`
+itself covers, and are now fixed the same way -- each set to
+`.captured = loop_captures_pending` at the point of registration:
+
+- `compile_begin`'s `rescue e` binding.
+- `compile_definition`'s registration of a `def`'s own name as a
+  Callable-value local in the *enclosing* scope, right after the def
+  itself finishes compiling (so a second def/closure declared later in
+  the same loop body can reference the first by name and stay
+  box-aware if captured further).
+
+Applied defensively rather than from a failing reproduction: direct
+attempts to construct one (mirroring the proven pattern from the four
+cases above) produced correct output even without the fix, for reasons
+specific to each site -- the VM rewrites the exception register fresh
+on every `rescue` catch, and a nested `def`'s own local gets rewritten
+every loop iteration before it's read, so neither case has the
+cross-iteration persistence needed to observe staleness even when the
+pre-fix bytecode is provably wrong (confirmed via `--dump-bytecode`:
+the rescue-binding read was a bare `MOVE`, not `BOX_LOCAL`+`GET_CELL`,
+before this fix). Both are covered in
+`tests/cases/loop_capture_staleness.di` as regression/coverage cases
+rather than bug demonstrations.
+
+The remaining bypass sites are all in scopes genuinely isolated from
+the loop body's shared locals, not overlooked instances of the same
+bug: case/when guard bindings are transient and overwritten before any
+closure could reference them, and a block's/def's/closure's/delegate's
+own parameters live in a fresh nested frame with `local_count` reset to
+zero, not the outer loop's frame at all.
 
 ### `exit()`
 

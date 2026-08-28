@@ -125,9 +125,56 @@ def outer_captures_case()
   results
 end
 
+# `rescue e` binds the caught value via a direct locals[] registration
+# that bypasses define_local, same as every case above goes through it.
+# Fixed defensively to also consult loop_captures_pending, even though
+# no observable divergence was found for this specific site: the VM
+# rewrites the exception register fresh on every catch, which happens
+# to mask staleness here. Kept as regression/coverage rather than a
+# bug demonstration.
+def rescue_binding_case(n)
+  results = []
+  i = 0
+  while i < n
+    begin
+      raise "boom"
+    rescue e
+      def grab_it()
+        e
+      end
+      results.push(grab_it())
+    end
+    i += 1
+  end
+  results
+end
+
+# A `def`'s own name is registered as a Callable-value local in the
+# *outer* scope right after it's compiled -- also bypasses define_local.
+# Fixed defensively for the same reason as above: here that name
+# (`show`) is itself captured by a second def declared later in the
+# same loop body.
+def def_as_local_capture_case(n)
+  results = []
+  i = 0
+  while i < n
+    def show()
+      i
+    end
+    def call_show()
+      show()
+    end
+    results.push(call_show())
+    i += 1
+  end
+  results
+end
+
 puts(while_condition_case())
 puts(loop_break_case())
 puts(fresh_local_case())
 puts(loop_control_case())
 puts(inner_captures_case())
 puts(outer_captures_case())
+puts(rescue_binding_case(3))
+puts(def_as_local_capture_case(3))

@@ -9731,7 +9731,8 @@ static uint16_t compile_begin(Compiler *compiler) {
                 return destination;
             }
             compiler->locals[compiler->local_count++]=(Local){
-                .name=compiler->current.span,.reg=exception};
+                .name=compiler->current.span,.reg=exception,
+                .captured=compiler->loop_captures_pending};
             advance_token(compiler);
         }
         uint8_t rescue_types[8];size_t type_count=0;
@@ -11282,7 +11283,8 @@ static uint16_t compile_definition(Compiler *compiler, bool captures_self) {
         emit_opcode(compiler,DIAMOND_OP_CLOSURE);emit_register(compiler,result);
         emit_function_index(compiler,function_index);emit_byte(compiler,(uint8_t)capture_count);
         for(size_t i=0;i<capture_count;i++)emit_register(compiler,captures[i]);
-        compiler->locals[compiler->local_count++]=(Local){.name=name,.reg=result};
+        compiler->locals[compiler->local_count++]=(Local){.name=name,.reg=result,
+            .captured=compiler->loop_captures_pending};
     }
     /* else: top-level def -- no NIL needed. A genuine top-level def's
      * `result` is the sole writer of its (allocated) register, already

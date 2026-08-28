@@ -858,14 +858,17 @@ VM/opcode changes, no changes to `break`/`next`/`redo`'s jump targets
 "Locals captured inside a loop body go stale" section for the full
 mechanism.
 
-**Deliberately narrower than exhaustive, confirmed rather than assumed**:
-covers plain assignment (`define_local`, the sole site for
-`x = value`-style declarations) and pre-existing locals, which are the
-two failure modes actually reproduced. Seven other, rarer local-
-registration sites (destructuring, `rescue error:` bindings, parameter
-binding, and others) aren't touched -- a local declared via one of those
-forms inside a capturing loop, then itself captured later in the same
-body, remains unfixed. Revisit if that shape shows up in practice.
+**Follow-up, done:** two more bypass sites -- `compile_begin`'s
+`rescue e` binding, and `compile_definition`'s registration of a def's
+own name as a Callable-value local in the enclosing scope -- also live
+in the loop body's shared outer scope and are now fixed the same way,
+applied defensively rather than from a failing reproduction (neither
+site's staleness turned out to be runtime-observable, for reasons
+specific to each; confirmed via `--dump-bytecode` that the compile-time
+gap was real regardless). The remaining bypass sites (case/when guard
+bindings; a block's/def's/closure's/delegate's own parameters) are in
+scopes genuinely isolated from the loop body, not overlooked instances
+of this bug -- see `docs/design.md`'s section for the full reasoning.
 
 ### `closure` with declared parameters collided with self capture
 
