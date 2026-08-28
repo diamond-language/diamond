@@ -538,7 +538,7 @@ void diamond_vm_collect(DiamondVm *vm) {
  * of needing to touch all 23 call sites again. Pure refactor for now --
  * still only ever triggers today's single-generation diamond_vm_collect,
  * no behavior change. */
-static void maybe_collect(DiamondVm *vm) {
+void maybe_collect(DiamondVm *vm) {
     if(vm->stress_gc||vm->bytes_allocated>=vm->next_gc)diamond_vm_collect(vm);
 }
 

@@ -1041,6 +1041,12 @@ struct DiamondVm {
 void diamond_vm_init(DiamondVm *vm);
 void diamond_vm_free(DiamondVm *vm);
 void diamond_vm_collect(DiamondVm *vm);
+/* The collection-trigger check every allocate_* helper makes before
+ * actually allocating (src/vm.c) -- declared here, not static, so
+ * src/bignum.c's own bignum_alloc (a separate translation unit) can
+ * share it too, instead of keeping a second copy of the same check out
+ * of sync. */
+void maybe_collect(DiamondVm *vm);
 void diamond_vm_invalidate_method_caches(DiamondVm *vm);
 void diamond_vm_bind_fiber_queue(DiamondVm *vm, const DiamondFiberQueue *queue);
 void diamond_vm_set_argv(DiamondVm *vm, int argc, char *const *argv);
