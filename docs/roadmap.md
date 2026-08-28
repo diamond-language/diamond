@@ -126,40 +126,45 @@ receiver tooling and proves compatible loop-expression return annotations.
 
 ### REPL autocomplete
 
-Not started. `src/repl.c`'s interactive line editor is entirely hand-rolled
-(raw terminal mode, byte-by-byte key handling, its own `redraw_line` --
-no readline/linenoise), so it has no Tab-completion today.
+**Done, in scope.** `src/repl.c`'s interactive line editor (raw terminal
+mode, byte-by-byte key handling) now has Tab-completion, reusing
+`lsp/completion.c` directly rather than reimplementing candidate-list
+logic: `completion_compute` was split into a thin LSP-facing wrapper
+(URI parsing, the open-document-table override -- moved to a new
+`lsp/completion_lsp.c`) and `completion_compute_with_resolver`, the
+reusable core, callable in-process with no subprocess or protocol
+needed. `src/repl.c` links it plus its own transitive dependencies
+(`compile_buffer.c`, `receiver.c`, `json.c`) directly -- see the
+Makefile's `REPL_COMPLETION_SOURCES`.
 
-Investigated feasibility rather than assumed: `lsp/completion.c`'s
-`completion_compute` is a plain C function, not tied to the LSP's
-JSON-RPC transport -- it can be linked and called in-process from the
-REPL binary directly, no subprocess or protocol needed. It already
-covers top-level functions/classes/interfaces/modules, real lexical
-scope locals at a cursor position, and (contrary to a stale claim in
-its own header comment -- worth fixing separately) genuine
-receiver-aware `obj.<partial>` method completion via
-`receiver_resolve_classes`/`push_class_methods`, the same machinery
-`docs/lsp.md`'s "Improve receiver-aware language tooling" section above
-describes. The REPL already keeps an accumulated session-source buffer
-(see its own comment on `ReplBuffer`), which is exactly the "document"
-text `completion_compute` wants, so the data-flow side is a natural
-fit, not a new mechanism.
+Two real problems surfaced during implementation, beyond what the
+original feasibility pass anticipated:
 
-The real remaining work is entirely REPL-side:
+- `completion_compute_with_resolver` requires the whole buffer to
+  compile, and a dangling `.`/partial name at the cursor is a parse
+  error on its own -- confirmed directly against the live LSP binary
+  that `x.` (nothing typed after the dot) returns `null`. Fixed by
+  substituting a placeholder identifier for the word at the cursor
+  before compiling, then querying at the *original* offset (receiver
+  resolution only looks at tokens strictly before the query offset, so
+  this still resolves correctly).
+- The same placeholder breaks a *bare* (non-receiver) completion
+  position, e.g. `Fo<TAB>` as a fresh top-level statement: Diamond
+  statically rejects a bare read of an undefined name, and the
+  placeholder is undefined by construction. Fixed by pre-declaring
+  `__c = nil` as a real local on its own line at the very start of the
+  compiled buffer.
 
-- Tab-key handling and a candidate-list UI in `read_line_interactive`
-  -- single-match auto-insert is simple, but a multi-match menu needs
-  new terminal-drawing logic (rendering below the current line, then
-  restoring/redrawing the prompt line afterward) with nothing existing
-  to build on.
-- `completion_compute` returns nothing (`json_null()`) when the buffer
-  doesn't currently compile cleanly, which is the common case mid-typing
-  a REPL line (`obj.<TAB>` with no closing anything yet). Needs the
-  same trick `completion_compute`'s own doc comment already describes
-  for its LSP callers: strip the trailing partial identifier before
-  compiling, then prefix-filter the returned candidates client-side --
-  `completion_compute` deliberately doesn't do that filtering itself,
-  since every LSP client already does it.
+No interactive multi-match menu in this version -- 2+ matches print
+below the prompt line (the user keeps typing and presses Tab again),
+matching this codebase's "narrowest useful slice" pattern rather than
+building arrow-key navigation now. `completion_compute_with_resolver`
+still doesn't filter by whatever prefix is typed (every caller
+narrows it, per its own doc comment), so `repl_compute_completions`
+(`src/repl.c`, exposed via `src/repl.h` for
+`tests/repl_completion_test.c` to call directly) does that itself.
+Verified end-to-end with a real pty (Python's `pty` module) during
+implementation, not just the unit-style test.
 
 ## Self-hosting: resumed, at parity with the differential corpus
 
