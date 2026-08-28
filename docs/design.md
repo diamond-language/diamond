@@ -336,9 +336,9 @@ its value into the receiver's Array element graph and publishes the widened
 Array as its result. Indexed and compound indexed writes join Array values or
 Hash keys and values. An empty literal with no nested graph acquires one from
 its first statically known write. Direct lexical receivers also record a new
-position-sensitive scope fact for LSP hover and later expressions. Mutations
-through an alias or a dynamically recovered nested receiver remain conservative;
-runtime persistent contracts continue to enforce annotated boundaries.
+position-sensitive scope fact for LSP hover and later expressions. Runtime
+persistent contracts continue to enforce annotated boundaries regardless of
+what these advisory facts do or don't capture.
 If a written key or value has no structural fact, or joining it would exceed
 the bounded union capacity, the compiler retains only the receiver's outer
 Array/Hash kind. It must discard the nested graph: retaining the pre-mutation
@@ -381,6 +381,24 @@ no binding before the join is outside this snapshot/restore/merge, the same
 way a register first allocated inside one branch is outside the `known_types`
 join -- its identity, like its type, resolves to whichever branch compiled
 last rather than a real join.
+A register loaded by exactly one `INDEX_GET` directly off a plain local's own
+register (`x[i]`) records that local as its provenance root -- an expression-
+local fact, not a persistent one like alias identity, since it only bridges
+the single expression/statement that read it (`x[i].push(v)`, `x[i][k] = v`)
+to whatever mutation immediately follows; nothing about it needs a control-
+flow join. Once that mutation widens (or invalidates) `x[i]`'s own flat
+fact, the same post-mutation fact is folded back into `x`'s own element
+contract as the new "every element looks like this" graph, reusing the flat
+mutation path's own record/clear functions -- so it composes for free with
+alias identity (a nested mutation on one alias's root updates every other
+alias) and with reassignment detachment. Provenance only carries through one
+level: `x[a][b]`'s second `INDEX_GET` reads off a temporary (the result of
+the first), not off a tracked local, so a two-level chain simply leaves the
+root's fact untouched rather than attempting it. Only Array roots are
+handled -- a Hash receiver's indexed read already carries a `| Nil` arm,
+which fails the flat mutation step's own single-collection-kind check before
+nested writeback would ever run, so hash-rooted nesting was already a no-op
+before this existed and stays one.
 
 Functions and methods may declare scoped type variables after their names, as
 in `def pair[K, V](key: K, value: V) -> Hash[K, V]`. Each compiled function

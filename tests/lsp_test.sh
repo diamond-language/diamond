@@ -1116,6 +1116,32 @@ def alias_branch_same(cond)
   end
   chosen.push(2.5)
   base
+end
+def nested_push()
+  matrix = [[1, 2, 3]]
+  matrix[0].push(2.5)
+  matrix
+end
+def nested_index_assignment()
+  grid = [[1, 2, 3]]
+  grid[0][1] = \"swap\"
+  grid
+end
+def nested_dynamic_push_degrades_root()
+  matrix = [[1, 2, 3]]
+  matrix[0].push(dynamic(\"opaque\"))
+  matrix
+end
+def nested_alias_composition()
+  matrix = [[1, 2, 3]]
+  matrix_alias = matrix
+  matrix[0].push(2.5)
+  matrix_alias
+end
+def nested_depth_two_out_of_scope()
+  cube = [[[1, 2]]]
+  cube[0][0].push(2.5)
+  cube
 end'
 send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$collection_mutation_uri"'","text":"'"$collection_mutation_source"'"}}}'
 read_message >/dev/null
@@ -1244,6 +1270,39 @@ count=$((count + 1))
 send '{"jsonrpc":"2.0","id":221,"method":"textDocument/hover","params":{"textDocument":{"uri":"'"$collection_mutation_uri"'"},"position":{"line":103,"character":3}}}'
 response="$(read_message)"
 [[ "$response" == *'"value":"Array[Int | Float]"'* ]]
+count=$((count + 1))
+
+# --- a mutation through a dynamically recovered nested receiver (one
+# INDEX_GET off a tracked root local) now writes the widened element fact
+# back into the root's own contract ---
+
+send '{"jsonrpc":"2.0","id":222,"method":"textDocument/hover","params":{"textDocument":{"uri":"'"$collection_mutation_uri"'"},"position":{"line":108,"character":3}}}'
+response="$(read_message)"
+[[ "$response" == *'"value":"Array[Array[Int | Float]]"'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","id":223,"method":"textDocument/hover","params":{"textDocument":{"uri":"'"$collection_mutation_uri"'"},"position":{"line":113,"character":3}}}'
+response="$(read_message)"
+[[ "$response" == *'"value":"Array[Array[Int | String]]"'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","id":224,"method":"textDocument/hover","params":{"textDocument":{"uri":"'"$collection_mutation_uri"'"},"position":{"line":118,"character":3}}}'
+response="$(read_message)"
+[[ "$response" == *'"result":null'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","id":225,"method":"textDocument/hover","params":{"textDocument":{"uri":"'"$collection_mutation_uri"'"},"position":{"line":124,"character":3}}}'
+response="$(read_message)"
+[[ "$response" == *'"value":"Array[Array[Int | Float]]"'* ]]
+count=$((count + 1))
+
+# --- a two-level chain (`cube[0][0]`) stays out of scope: the second
+# INDEX_GET's receiver isn't itself a tracked local, so no provenance
+# carries through and the root's own fact is untouched ---
+
+send '{"jsonrpc":"2.0","id":226,"method":"textDocument/hover","params":{"textDocument":{"uri":"'"$collection_mutation_uri"'"},"position":{"line":129,"character":3}}}'
+response="$(read_message)"
+[[ "$response" == *'"value":"Array[Array[Array[Int]]]"'* ]]
 count=$((count + 1))
 
 send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$collection_mutation_uri"'"}}}'

@@ -118,6 +118,18 @@ typedef struct Compiler {
     bool loop_captures_pending;
     uint8_t known_types[DIAMOND_REGISTER_COUNT];
     int32_t known_type_sets[DIAMOND_REGISTER_COUNT];
+    /* Set when a register was loaded via one INDEX_GET directly off a
+     * tracked local's own register (`x[i]`, one level only -- a chained
+     * `x[a][b]` sees a non-local `receiver` on its second INDEX_GET and
+     * simply doesn't set this again). Lets a mutation through that nested
+     * receiver (`x[i].push(v)`, `x[i][k] = v`) write the widened element
+     * fact back into the *root* local's own nested contract, the same
+     * expression-local bridge a chained `.method()()` or `x[a][b]=v` call
+     * already relies on `receiver`/`mutation_receiver` locals for -- no
+     * cross-statement persistence, so none of the control-flow-join
+     * machinery alias_identity needs applies here. */
+    bool has_index_provenance[DIAMOND_REGISTER_COUNT];
+    uint16_t index_provenance_root[DIAMOND_REGISTER_COUNT];
     bool in_function;
     /* The explicit `&name` parameter for the function currently being
      * compiled. In that lexical context `yield(...)` invokes this Callable;
@@ -6105,6 +6117,33 @@ static void clear_mutated_collection_fact(Compiler *compiler,uint16_t reg,
     propagate_collection_alias_fact(compiler,reg);
 }
 
+/* Mirrors record_mutated_collection_fact/clear_mutated_collection_fact, one
+ * level removed: `mutation_receiver` just finished widening (or losing) its
+ * own element/key/value fact from an ordinary flat mutation. If it was
+ * itself read via one INDEX_GET off a tracked root local (set_index_
+ * provenance, defined further down alongside register_is_local -- this
+ * function only reads the plain arrays it fills in, no ordering issue),
+ * fold that same post-mutation fact back into the root's own element
+ * contract -- root's element type describes *every* element uniformly (an
+ * Array[T] contract, not a per-index one), so this widens unconditionally
+ * rather than trying to track which index changed. Only Array roots are
+ * handled: a Hash receiver's own indexed read already carries a `| Nil` arm
+ * (parse_index's own type_set_with_nil), which fails joined_collection_
+ * argument's single-kind check before this would even be reached, so
+ * hash-rooted nesting stays exactly as conservative as it was before this
+ * existed. */
+static void propagate_nested_mutation_writeback(Compiler *compiler,
+        uint16_t mutation_receiver) {
+    if(!compiler->has_index_provenance[mutation_receiver])return;
+    const uint16_t root=compiler->index_provenance_root[mutation_receiver];
+    if(compiler->known_types[root]!=DIAMOND_TYPE_ARRAY)return;
+    const int32_t new_element_set=compiler->known_type_sets[mutation_receiver];
+    if(new_element_set>=0)
+        record_mutated_collection_fact(compiler,root,DIAMOND_TYPE_ARRAY,
+            new_element_set,-1);
+    else clear_mutated_collection_fact(compiler,root,DIAMOND_TYPE_ARRAY);
+}
+
 static void update_collection_mutation_type(Compiler *compiler,uint16_t receiver,
         const uint16_t *keys,size_t key_count,const uint16_t *values,
         size_t value_count) {
@@ -6159,6 +6198,7 @@ static void publish_array_push_return_type(Compiler *compiler,uint16_t result,
     if(argument_count!=1||
        collection_relay(compiler,name)!=COLLECTION_RELAY_PUSH)return;
     update_collection_mutation_type(compiler,receiver,nullptr,0,arguments,1);
+    propagate_nested_mutation_writeback(compiler,receiver);
     const int32_t set=compiler->known_type_sets[receiver];
     if(set>=0)publish_known_type_set(compiler,result,(uint16_t)set);
 }
@@ -7117,6 +7157,13 @@ static bool register_is_local(const Compiler *compiler,uint16_t reg) {
     return false;
 }
 
+static void set_index_provenance(Compiler *compiler,uint16_t destination,
+        uint16_t source_receiver) {
+    if(!register_is_local(compiler,source_receiver))return;
+    compiler->has_index_provenance[destination]=true;
+    compiler->index_provenance_root[destination]=source_receiver;
+}
+
 static void merge_loop_exit(Compiler *compiler,LoopContext *loop,
         uint8_t result_type,int32_t result_set) {
     if(!loop->exit_initialized) {
@@ -7155,6 +7202,49 @@ static void finish_loop_flow(Compiler *compiler,LoopContext *loop,
     compiler->known_type_sets[loop->result_register]=loop->result_set;
 }
 
+/* Shared by parse_index (`x[i]` as an ordinary expression) and
+ * compile_index_assignment's own chain loop (`x[a][b]... = value`'s
+ * every-group-but-the-last read) -- both emit an INDEX_GET and need the
+ * same "what type is the indexed result" computation on `destination`, or a
+ * later mutation through `destination` (nested writeback, or simply reading
+ * its own hover) starts from an untyped register instead of the element/
+ * value graph it actually just read. */
+static void publish_indexed_result_type(Compiler *compiler,uint16_t destination,
+        uint16_t receiver) {
+    const int32_t receiver_set=compiler->known_type_sets[receiver];
+    if(receiver_set<0)return;
+    const DiamondTypeSet *set=&compiler->function->type_sets[(size_t)receiver_set];
+    uint16_t indexed_sets[DIAMOND_MAX_UNION_TYPES];
+    uint8_t collection_type=TYPE_UNKNOWN;
+    const size_t member_count=set->count;
+    bool compatible=member_count>0;
+    for(size_t member_index=0;member_index<member_count;member_index++) {
+        const DiamondTypeMember member=set->members[member_index];
+        if(member.id!=DIAMOND_TYPE_ARRAY&&member.id!=DIAMOND_TYPE_HASH) {
+            compatible=false;break;
+        }
+        if(collection_type==TYPE_UNKNOWN)collection_type=member.id;
+        else if(collection_type!=member.id) {compatible=false;break;}
+        indexed_sets[member_index]=member.id==DIAMOND_TYPE_ARRAY?
+            member.argument_set:member.second_argument_set;
+        if(indexed_sets[member_index]==DIAMOND_NO_TYPE_SET) {
+            compatible=false;break;
+        }
+    }
+    int32_t indexed=-1;
+    for(size_t member_index=0;compatible&&member_index<member_count;
+        member_index++) {
+        indexed=indexed<0?(int32_t)indexed_sets[member_index]:
+            join_type_set_indices(compiler,indexed,
+                (int32_t)indexed_sets[member_index]);
+        if(indexed<0)compatible=false;
+    }
+    if(compatible&&collection_type==DIAMOND_TYPE_HASH)
+        indexed=type_set_with_nil(compiler,(uint16_t)indexed);
+    if(compatible&&indexed>=0)
+        publish_known_type_set(compiler,destination,(uint16_t)indexed);
+}
+
 static uint16_t parse_index(Compiler *compiler,uint16_t receiver) {
     advance_token(compiler);
     const uint16_t index=parse_expression(compiler);
@@ -7164,39 +7254,8 @@ static uint16_t parse_index(Compiler *compiler,uint16_t receiver) {
     advance_token(compiler);
     const uint16_t destination=allocate_register(compiler);
     emit_instruction(compiler,DIAMOND_OP_INDEX_GET,destination,receiver,index,3);
-    const int32_t receiver_set=compiler->known_type_sets[receiver];
-    if(receiver_set>=0) {
-        const DiamondTypeSet *set=&compiler->function->type_sets[(size_t)receiver_set];
-        uint16_t indexed_sets[DIAMOND_MAX_UNION_TYPES];
-        uint8_t collection_type=TYPE_UNKNOWN;
-        const size_t member_count=set->count;
-        bool compatible=member_count>0;
-        for(size_t member_index=0;member_index<member_count;member_index++) {
-            const DiamondTypeMember member=set->members[member_index];
-            if(member.id!=DIAMOND_TYPE_ARRAY&&member.id!=DIAMOND_TYPE_HASH) {
-                compatible=false;break;
-            }
-            if(collection_type==TYPE_UNKNOWN)collection_type=member.id;
-            else if(collection_type!=member.id) {compatible=false;break;}
-            indexed_sets[member_index]=member.id==DIAMOND_TYPE_ARRAY?
-                member.argument_set:member.second_argument_set;
-            if(indexed_sets[member_index]==DIAMOND_NO_TYPE_SET) {
-                compatible=false;break;
-            }
-        }
-        int32_t indexed=-1;
-        for(size_t member_index=0;compatible&&member_index<member_count;
-            member_index++) {
-            indexed=indexed<0?(int32_t)indexed_sets[member_index]:
-                join_type_set_indices(compiler,indexed,
-                    (int32_t)indexed_sets[member_index]);
-            if(indexed<0)compatible=false;
-        }
-        if(compatible&&collection_type==DIAMOND_TYPE_HASH)
-            indexed=type_set_with_nil(compiler,(uint16_t)indexed);
-        if(compatible&&indexed>=0)
-            publish_known_type_set(compiler,destination,(uint16_t)indexed);
-    }
+    set_index_provenance(compiler,destination,receiver);
+    publish_indexed_result_type(compiler,destination,receiver);
     return destination;
 }
 
@@ -9169,6 +9228,8 @@ static uint16_t compile_index_assignment(Compiler *compiler) {
     while(compiler->current.kind==DIAMOND_TOKEN_LEFT_BRACKET) {
         const uint16_t loaded=allocate_register(compiler);
         emit_instruction(compiler,DIAMOND_OP_INDEX_GET,loaded,receiver,index,3);
+        set_index_provenance(compiler,loaded,receiver);
+        publish_indexed_result_type(compiler,loaded,receiver);
         receiver=loaded;
         mutation_receiver=receiver;
         advance_token(compiler);
@@ -9187,6 +9248,7 @@ static uint16_t compile_index_assignment(Compiler *compiler) {
     const uint16_t value=parse_expression(compiler);
     emit_instruction(compiler,DIAMOND_OP_INDEX_SET,receiver,index,value,3);
     update_collection_mutation_type(compiler,mutation_receiver,&index,1,&value,1);
+    propagate_nested_mutation_writeback(compiler,mutation_receiver);
     return value;
 }
 

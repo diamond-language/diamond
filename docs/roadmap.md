@@ -397,8 +397,22 @@ guessing which branch's object survived, mirroring how those same joins
 already treat `known_types`/`known_type_sets`. A local first bound to
 different objects per branch (no binding before the join) inherits that same
 known_types limitation -- its identity, like its type, resolves to whichever
-branch compiled last -- and remains queued alongside dynamically recovered
-nested receiver writeback.
+branch compiled last -- and remains queued.
+A mutation through one level of dynamically recovered nested receiver
+(`x[i].push(v)`, `x[i][k] = v`) now writes the widened element fact back into
+the *root* local `x`'s own nested contract, provided `x` is itself a plain
+local and the receiver was read via exactly one `INDEX_GET` off `x`'s own
+register. `x`'s element type describes every element uniformly, so this
+widens unconditionally rather than tracking which index changed, the same
+"any write, whole-graph" conservatism flat mutation already uses. A second
+level of chaining (`x[a][b].push(v)`) falls outside this: the second
+`INDEX_GET`'s receiver is itself a temporary, not `x`'s own register, so no
+provenance carries through and `x`'s fact is simply left untouched -- still
+correct, just not widened. Hash-rooted nesting (`h[k].push(v)`) stays exactly
+as conservative as before this existed, for an unrelated pre-existing reason:
+`h[k]`'s own read already carries a `| Nil` arm, which fails the flat
+mutation step's own single-kind check before nested writeback would ever be
+reached.
 Unknown and over-capacity writes now degrade direct receiver facts to an
 unparameterized Array or Hash instead of retaining stale nested unions. The LSP
 reports no structural local hover after that invalidation, including every

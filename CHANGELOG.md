@@ -34,6 +34,13 @@
   shared identity, disagreeing branches detach it instead of guessing which
   branch's object survived, fixing spurious post-join mutation propagation
   into an unrelated branch's object.
+- Wrote a mutation through one level of dynamically recovered nested receiver
+  (`x[i].push(v)`, `x[i][k] = v`) back into the root local's own element
+  contract, so `matrix[0].push(2.5)` now widens `matrix`'s own hover from
+  `Array[Array[Int]]` to `Array[Array[Int | Float]]` instead of discarding
+  the fact. Composes with alias identity and reassignment detachment for
+  free by reusing the flat mutation path. Scoped to one level off a plain
+  local's own register and to Array roots.
 - Added a core-suite audit for duplicate, unclassified, or VM-missing collection
   relay contracts, plus negative hover coverage for dynamic arithmetic relays.
 - Inferred `Array#sum` results for closed numeric element graphs. Int-only

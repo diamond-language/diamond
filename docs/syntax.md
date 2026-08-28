@@ -631,6 +631,13 @@ detaches after the branches join, so a mutation through it afterward does not
 retroactively widen either branch's object -- unless every branch agreed on
 the same object, in which case the shared identity (and mutations through it)
 carry across the join.
+A mutation through one level of indexing off a plain local (`matrix[0].push(v)`,
+`grid[0][1] = v`) widens that local's own element graph, not just the
+indexed value's -- `matrix[0]` is one element of `matrix`, and `Array[T]`
+describes every element the same way, so the editor sees `matrix` itself as
+`Array[Array[T | ...]]` afterward. A second level of indexing
+(`cube[0][0].push(v)`) is out of scope: only `cube`'s own type stays
+tracked, not `cube[0]`'s.
 Native collection blocks infer their parameter graphs from the receiver:
 Array element callbacks, `each_with_index` element/index callbacks, and Hash
 key/value callbacks expose those types to the body and editor hover.
