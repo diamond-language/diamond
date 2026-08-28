@@ -26,6 +26,21 @@
 
 ## Language
 
+- Replaced the arbitrary 16-argument-per-call-site ceiling with the real
+  wire-format limit: `DIAMOND_MAX_ARGUMENTS` (255) now bounds every call
+  form (plain functions, instance methods, constructors, `super`, bound
+  method/Callable-value calls, singleton methods, `Thread.new`), across both
+  the compiler's parsing buffers and the VM's argument-marshaling buffers,
+  sharing one constant so the two sides can't drift. Declared parameters got
+  a separate, deliberately smaller `DIAMOND_MAX_DECLARED_PARAMETERS` (32,
+  up from 16) rather than matching 255, since parameter storage is baked
+  into every function's own struct rather than being cheap register-range
+  bookkeeping. Five VM dispatch sites were factored into helper functions
+  (mirroring `call_closure_helper`) so their larger argument buffers don't
+  add ~19-20KB to every recursive `run_chunk` frame regardless of opcode.
+  Also fixed a pre-existing bug found along the way: `compile_method`'s
+  `bound_value_count` had no bounds check against these buffers at all.
+  See docs/design.md's "No artificial call-argument/parameter ceiling".
 - Tracked stable lexical object identities across direct Array/Hash aliases.
   Mutations and invalidations now update every live alias, including aliases
   captured across anonymous-block compiler frames; rebinding detaches identity.

@@ -779,12 +779,14 @@ feature like this (see `delegate`'s own "bare parameter names only"):
 - must be the *last* parameter, and at most one per parameter list;
 - bare name only — no `: Type` annotation, no `= default` (neither means
   anything for a collected `Array`);
-- a *literal* call site can still only ever supply at most 16 argument
+- a *literal* call site can still only ever supply at most 255 argument
   expressions in total, variadic or not — a pre-existing limit on every
   call form (`"too many call arguments"`), not something specific to
   this feature. Call-site spread (below) isn't subject to it, since a
   spread argument's length is a runtime value, not one argument
-  expression per element.
+  expression per element. A function/method declaration is separately
+  capped at 32 parameters — see docs/design.md's "No artificial
+  call-argument/parameter ceiling" for why the two limits differ.
 
 A variadic parameter widens `Callable[N]` matching too: a variadic
 closure/function satisfies `Callable[N]` for any `N` at or above its own
@@ -805,7 +807,7 @@ def sum(*nums)
   nums.each() do |n| total += n end
   total
 end
-sum(*(1..50).to_a())  # => 1275, no 16-argument-expression limit here
+sum(*(1..50).to_a())  # => 1275, no argument-expression limit here
 ```
 
 `foo(*array)`, `receiver.method(*array)`, `callable(*array)`,
@@ -830,7 +832,7 @@ to a variadic *parameter* above. The supported slice is deliberately narrow:
   elements for a non-variadic target still raises `ArgumentError`, same
   message as any other arity mismatch; a non-`Array` argument raises
   `TypeError`.
-- native receiver spreads share ordinary native invocation's 16-argument bound;
+- native receiver spreads share ordinary native invocation's 255-argument bound;
 
 See docs/design.md's "Call-site spread" section for the full mechanism.
 

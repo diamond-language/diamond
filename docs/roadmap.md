@@ -257,6 +257,29 @@ clones, the disassembler, and the self-hosted parser share the same layout.
 Functions can therefore address up to 65,535 string/name entries without
 restoring the former roughly 64 KiB unconditional allocation per function.
 
+Resolved for call arguments: every call-argument-count ceiling (16, split
+across a dozen independent compiler parsing buffers and VM argument-
+marshaling buffers with no shared constant) is now `DIAMOND_MAX_ARGUMENTS`
+(255) -- the real wire-format limit, since `call_argument_count`/`argc` were
+already plain `uint8_t` operands. Declared-parameter storage got a separate,
+deliberately smaller `DIAMOND_MAX_DECLARED_PARAMETERS` (32 vs. 16) rather
+than matching the full 255: unlike a call argument list, a parameter's name/
+type-set storage is baked directly into every `DiamondFunction`'s own
+already-~152KB struct, so blindly matching 255 would have added roughly
+15 KiB to every function regardless of how many parameters it actually
+declares -- the same unconditional-cost mistake the bytecode/constant-table
+work above already moved away from. Reaching the argument-side 255 safely
+also required factoring five VM dispatch sites (`NEW`, `INVOKE`'s ordinary
+dispatch, `SUPER`, `INVOKE_SELF_METHOD`, and native-primitive-to-prelude
+forwarding) out of `run_chunk`'s own frame into helper functions first, the
+same stack-margin reasoning `call_closure_helper` was already factored out
+for -- growing those buffers in place would have added ~19-20KB to every
+`run_chunk` frame regardless of which opcode executes, multiplied by
+`DIAMOND_MAX_CALL_DEPTH`. Found and fixed one genuine pre-existing bug along
+the way: `bound_value_count` (`compile_method`'s own appended arguments) had
+no bounds check against these buffers at all before this. See docs/design.md's
+"No artificial call-argument/parameter ceiling" for the full writeup.
+
 Resolved: a class/module/interface (and a type annotation naming one) can
 now be referenced before its own declaration is textually reached later in
 the same source -- `diamond_compile` (`src/compiler.c`) runs the whole
@@ -591,7 +614,7 @@ Areas still worth examining include:
   constructs a compact synthetic call frame and re-enters that one dispatch
   matrix. This avoids a divergent copy while preserving universal-method,
   built-in, and source-level collection-extension precedence. Native receiver
-  spreads inherit ordinary native invocation's existing 16-argument bound.
+  spreads inherit ordinary native invocation's existing 255-argument bound.
 - **Done**: bound instance-method references. `receiver.method` captures the
   receiver once in a variadic Callable and forwards through dynamic spread
   invocation; explicit generic bindings, native receivers, inheritance,

@@ -1899,7 +1899,7 @@ static uint16_t parse_dynamic_keyword_arguments(Compiler *compiler,
             advance_token(compiler);advance_token(compiler);
             size_t parameter=SIZE_MAX;
             if(target!=nullptr)
-                for(size_t index=0;index<target->arity&&index<16;index++)
+                for(size_t index=0;index<target->arity&&index<DIAMOND_MAX_DECLARED_PARAMETERS;index++)
                     if(name_equals(compiler,target->parameter_names[index],
                             name,false)) {parameter=index;break;}
             keyword_values[*keyword_count]=parameter==SIZE_MAX?
@@ -2053,7 +2053,7 @@ static uint16_t parse_spread_argument_array(Compiler *compiler,
             }
             seen_keyword=true;advance_token(compiler);advance_token(compiler);
             size_t slot=SIZE_MAX;
-            for(size_t index=0;index<keyword_function->arity&&index<16;index++)
+            for(size_t index=0;index<keyword_function->arity&&index<DIAMOND_MAX_DECLARED_PARAMETERS;index++)
                 if(name_equals(compiler,keyword_function->parameter_names[index],
                                keyword_name,false)) {slot=index;break;}
             if(slot==SIZE_MAX) {
@@ -2227,9 +2227,9 @@ static uint16_t parse_closure_call_arguments(Compiler *compiler, uint16_t callab
         publish_callable_return_type(compiler,destination,callable_type_set);
         return destination;
     }
-    uint16_t arguments[16]; size_t argument_count=0;
+    uint16_t arguments[DIAMOND_MAX_ARGUMENTS]; size_t argument_count=0;
     while(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN && !compiler->failed) {
-        if(argument_count==16){fail(compiler,compiler->current.span,"too many call arguments");return 0;}
+        if(argument_count==DIAMOND_MAX_ARGUMENTS){fail(compiler,compiler->current.span,"too many call arguments");return 0;}
         arguments[argument_count++]=parse_expression(compiler);
         skip_newlines(compiler);
         if(compiler->current.kind!=DIAMOND_TOKEN_COMMA)break;
@@ -2239,7 +2239,7 @@ static uint16_t parse_closure_call_arguments(Compiler *compiler, uint16_t callab
     if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN){fail(compiler,compiler->current.span,"expected ')' after arguments");return 0;}
     advance_token(compiler);
     if(compiler->current.kind==DIAMOND_TOKEN_DO) {
-        if(argument_count==16) {
+        if(argument_count==DIAMOND_MAX_ARGUMENTS) {
             fail(compiler,compiler->current.span,"too many call arguments");return 0;
         }
         const uint16_t callable_snapshot=allocate_register(compiler);
@@ -2425,7 +2425,7 @@ static uint16_t compile_contextual_typed_block(Compiler *compiler,
     compiler->has_contextual_block_types=false;
     compiler->contextual_block_arity=0;
     compiler->contextual_block_return_set=-1;
-    if(target!=nullptr&&parameter_index<16) {
+    if(target!=nullptr&&parameter_index<DIAMOND_MAX_DECLARED_PARAMETERS) {
         const uint16_t set_index=target->parameter_type_sets[parameter_index];
         if(set_index!=DIAMOND_NO_TYPE_SET&&set_index<target->type_set_count) {
             const DiamondTypeSet *set=&target->type_sets[set_index];
@@ -2547,7 +2547,7 @@ static void infer_contextual_type_set(Compiler *compiler,
 static void infer_contextual_argument(Compiler *compiler,
         const DiamondFunction *target,size_t parameter,uint16_t argument,
         uint16_t *bindings) {
-    if(parameter>=16)return;
+    if(parameter>=DIAMOND_MAX_DECLARED_PARAMETERS)return;
     const uint16_t expected=target->parameter_type_sets[parameter];
     if(expected==DIAMOND_NO_TYPE_SET||expected>=target->type_set_count)return;
     int32_t actual=compiler->known_type_sets[argument];
@@ -2589,7 +2589,7 @@ static size_t infer_contextual_type_arguments(Compiler *compiler,
         size_t argument_count,uint16_t *bindings) {
     for(size_t index=0;index<8;index++)bindings[index]=DIAMOND_NO_TYPE_SET;
     if(target==nullptr)return 0;
-    for(size_t parameter=0;parameter<argument_count&&parameter<16;parameter++)
+    for(size_t parameter=0;parameter<argument_count&&parameter<DIAMOND_MAX_DECLARED_PARAMETERS;parameter++)
         infer_contextual_argument(compiler,target,parameter,
             arguments[parameter],bindings);
     return target->type_variable_count;
@@ -2631,7 +2631,7 @@ static size_t infer_contextual_spread_arguments(Compiler *compiler,
     const size_t spread_end=parameter_count>=suffix_count?
         parameter_count-suffix_count:prefix_count;
     for(size_t parameter=prefix_count;
-        parameter<spread_end&&parameter<16;parameter++) {
+        parameter<spread_end&&parameter<DIAMOND_MAX_DECLARED_PARAMETERS;parameter++) {
         const uint16_t expected=target->parameter_type_sets[parameter];
         if(expected!=DIAMOND_NO_TYPE_SET&&expected<target->type_set_count)
             infer_contextual_type_set(compiler,target,expected,
@@ -2645,7 +2645,7 @@ static void infer_contextual_keyword_arguments(Compiler *compiler,
         const uint16_t *values,size_t count,uint16_t *bindings) {
     if(target==nullptr)return;
     for(size_t keyword=0;keyword<count;keyword++)
-        for(size_t parameter=0;parameter<target->arity&&parameter<16;
+        for(size_t parameter=0;parameter<target->arity&&parameter<DIAMOND_MAX_DECLARED_PARAMETERS;
             parameter++)
             if(name_equals(compiler,target->parameter_names[parameter],
                     names[keyword],false)) {
@@ -2957,8 +2957,8 @@ static uint16_t parse_call(Compiler *compiler, DiamondSpan name) {
      * appended, so a keyword can fill any parameter regardless of the order
      * it's written at the call site. Positional arguments still fill slots
      * left-to-right in declaration order. */
-    uint16_t slot_registers[16];
-    bool slot_filled[16]={};
+    uint16_t slot_registers[DIAMOND_MAX_ARGUMENTS];
+    bool slot_filled[DIAMOND_MAX_ARGUMENTS]={};
     size_t next_positional_slot=0;
     bool seen_keyword=false;
     if (compiler->current.kind != DIAMOND_TOKEN_RIGHT_PAREN) {
@@ -2972,7 +2972,7 @@ static uint16_t parse_call(Compiler *compiler, DiamondSpan name) {
                 advance_token(compiler); /* consume the name */
                 advance_token(compiler); /* consume ':' */
                 slot=SIZE_MAX;
-                for(size_t index=0;index<function->arity&&index<16;index++)
+                for(size_t index=0;index<function->arity&&index<DIAMOND_MAX_DECLARED_PARAMETERS;index++)
                     if(name_equals(compiler,function->parameter_names[index],
                                   keyword_name,false)) {slot=index;break;}
                 if(slot==SIZE_MAX) {
@@ -2986,7 +2986,7 @@ static uint16_t parse_call(Compiler *compiler, DiamondSpan name) {
                          "positional argument cannot follow a keyword argument");
                     return 0;
                 }
-                if(next_positional_slot==16) {
+                if(next_positional_slot==DIAMOND_MAX_ARGUMENTS) {
                     fail(compiler,compiler->current.span,"too many call arguments");
                     return 0;
                 }
@@ -3011,7 +3011,7 @@ static uint16_t parse_call(Compiler *compiler, DiamondSpan name) {
     }
     advance_token(compiler);
     size_t argument_count=0;
-    for(size_t index=0;index<16;index++)
+    for(size_t index=0;index<DIAMOND_MAX_ARGUMENTS;index++)
         if(slot_filled[index])argument_count=index+1;
     uint16_t inferred_arguments[8];
     for(size_t index=0;index<8;index++)
@@ -3034,7 +3034,7 @@ static uint16_t parse_call(Compiler *compiler, DiamondSpan name) {
      * block), the ordinary arity check a few lines down catches it, no
      * special-casing needed here. */
     if(compiler->current.kind==DIAMOND_TOKEN_DO) {
-        if(argument_count==16) {
+        if(argument_count==DIAMOND_MAX_ARGUMENTS) {
             fail(compiler,compiler->current.span,"too many arguments");return 0;
         }
         /* Same register-aliasing hazard parse_invoke's own DIAMOND_TOKEN_DO
@@ -3254,13 +3254,13 @@ static uint16_t parse_singleton_reference(Compiler *compiler,
              "generic singleton method reference requires explicit bindings");
         return 0;
     }
-    uint16_t parameter_sets[16];
-    for(size_t index=0;index<16;index++)
+    uint16_t parameter_sets[DIAMOND_MAX_DECLARED_PARAMETERS];
+    for(size_t index=0;index<DIAMOND_MAX_DECLARED_PARAMETERS;index++)
         parameter_sets[index]=DIAMOND_NO_TYPE_SET;
     uint16_t return_set=DIAMOND_NO_TYPE_SET;
     bool resolved=true;
     const size_t original_type_set_count=compiler->function->type_set_count;
-    for(size_t parameter=0;parameter<method->arity&&parameter<16;parameter++) {
+    for(size_t parameter=0;parameter<method->arity&&parameter<DIAMOND_MAX_DECLARED_PARAMETERS;parameter++) {
         const uint16_t source=target->parameter_type_sets[parameter];
         if(source==DIAMOND_NO_TYPE_SET)continue;
         parameter_sets[parameter]=target->type_variable_count>0?
@@ -3308,7 +3308,7 @@ static uint16_t parse_singleton_reference(Compiler *compiler,
     function->declaration_line=(uint32_t)compiler->previous.span.line;
     function->declaration_column=(uint32_t)compiler->previous.span.column;
     function->declaration_start=compiler->previous.span.start;
-    for(size_t index=0;index<16;index++) {
+    for(size_t index=0;index<DIAMOND_MAX_DECLARED_PARAMETERS;index++) {
         function->parameter_type_sets[index]=parameter_sets[index];
         (void)snprintf(function->parameter_names[index],
             DIAMOND_MAX_FUNCTION_NAME,"%s",target->parameter_names[index]);
@@ -3324,7 +3324,7 @@ static uint16_t parse_singleton_reference(Compiler *compiler,
     compiler->local_count=0;
     compiler->in_function=true;
 
-    uint16_t arguments[16];
+    uint16_t arguments[DIAMOND_MAX_DECLARED_PARAMETERS];
     for(size_t index=0;index<method->arity;index++) {
         arguments[index]=allocate_register(compiler);
     }
@@ -3541,9 +3541,9 @@ static uint16_t parse_singleton_call(Compiler *compiler,
             resolved_arguments,resolved_count);
         return destination;
     }
-    uint16_t arguments[16];size_t argument_count=0;
+    uint16_t arguments[DIAMOND_MAX_ARGUMENTS];size_t argument_count=0;
     while(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN&&!compiler->failed) {
-        if(argument_count==16) {
+        if(argument_count==DIAMOND_MAX_ARGUMENTS) {
             fail(compiler,compiler->current.span,"too many call arguments");return 0;
         }
         arguments[argument_count]=parse_expected_argument(compiler,function,
@@ -3578,7 +3578,7 @@ static uint16_t parse_singleton_call(Compiler *compiler,
      * filled in by the call machinery itself when method->needs_receiver,
      * not read from a register here. */
     if(compiler->current.kind==DIAMOND_TOKEN_DO) {
-        if(argument_count==16) {
+        if(argument_count==DIAMOND_MAX_ARGUMENTS) {
             fail(compiler,compiler->current.span,"too many call arguments");return 0;
         }
         for(size_t index=0;index<argument_count;index++) {
@@ -3862,11 +3862,11 @@ static uint16_t parse_thread_new_call(Compiler *compiler) {
     skip_newlines(compiler);
     const uint16_t callable_register=parse_expression(compiler);
     skip_newlines(compiler);
-    uint16_t arguments[16]; size_t argument_count=0;
+    uint16_t arguments[DIAMOND_MAX_ARGUMENTS]; size_t argument_count=0;
     while(compiler->current.kind==DIAMOND_TOKEN_COMMA) {
         advance_token(compiler);
         skip_newlines(compiler);
-        if(argument_count==16) {
+        if(argument_count==DIAMOND_MAX_ARGUMENTS) {
             fail(compiler,compiler->current.span,"too many Thread.new arguments");
             return 0;
         }
@@ -5321,9 +5321,9 @@ static uint16_t parse_name(Compiler *compiler) {
                 (uint8_t)(DIAMOND_TYPE_CLASS_BASE+class_index);
             return destination;
         }
-        uint16_t args[16]; size_t count = 0;
+        uint16_t args[DIAMOND_MAX_ARGUMENTS]; size_t count = 0;
         while (compiler->current.kind != DIAMOND_TOKEN_RIGHT_PAREN && !compiler->failed) {
-            if (count == 16) { fail(compiler, compiler->current.span, "too many arguments"); break; }
+            if (count == DIAMOND_MAX_ARGUMENTS) { fail(compiler, compiler->current.span, "too many arguments"); break; }
             args[count++] = parse_expression(compiler);
             skip_newlines(compiler);
             if (compiler->current.kind != DIAMOND_TOKEN_COMMA) break;
@@ -5336,7 +5336,7 @@ static uint16_t parse_name(Compiler *compiler) {
         }
         advance_token(compiler);
         if(compiler->current.kind==DIAMOND_TOKEN_DO) {
-            if(count==16) {
+            if(count==DIAMOND_MAX_ARGUMENTS) {
                 fail(compiler,compiler->current.span,"too many arguments");return 0;
             }
             uint16_t inferred_arguments[8];
@@ -5651,7 +5651,7 @@ static bool contextual_signatures_equal(const DiamondFunction *left,
     if(left->arity!=right->arity||left->required_arity!=right->required_arity||
        left->has_variadic!=right->has_variadic||
        left->type_variable_count!=right->type_variable_count)return false;
-    for(size_t parameter=0;parameter<left->arity&&parameter<16;parameter++) {
+    for(size_t parameter=0;parameter<left->arity&&parameter<DIAMOND_MAX_DECLARED_PARAMETERS;parameter++) {
         if(strcmp(left->parameter_names[parameter],
                   right->parameter_names[parameter])!=0)return false;
         const uint16_t left_set=left->parameter_type_sets[parameter];
@@ -6327,14 +6327,14 @@ static uint16_t parse_bound_method_reference(Compiler *compiler,uint16_t receive
     const bool typed_wrapper=target!=nullptr&&target->arity>0&&
         (target->type_variable_count==0||
          type_argument_count==target->type_variable_count);
-    uint16_t parameter_sets[16];
-    for(size_t index=0;index<16;index++)
+    uint16_t parameter_sets[DIAMOND_MAX_DECLARED_PARAMETERS];
+    for(size_t index=0;index<DIAMOND_MAX_DECLARED_PARAMETERS;index++)
         parameter_sets[index]=DIAMOND_NO_TYPE_SET;
     uint16_t return_set=DIAMOND_NO_TYPE_SET;
     if(typed_wrapper) {
         bool resolved=true;
         const size_t original_count=compiler->function->type_set_count;
-        for(size_t parameter=0;parameter+1<target->arity&&parameter<16;
+        for(size_t parameter=0;parameter+1<target->arity&&parameter<DIAMOND_MAX_DECLARED_PARAMETERS;
             parameter++) {
             const uint16_t source=target->parameter_type_sets[parameter];
             if(source==DIAMOND_NO_TYPE_SET)continue;
@@ -6354,7 +6354,7 @@ static uint16_t parse_bound_method_reference(Compiler *compiler,uint16_t receive
         if(!resolved) {
             compiler->function->type_set_count=original_count;
             return_set=DIAMOND_NO_TYPE_SET;
-            for(size_t index=0;index<16;index++)
+            for(size_t index=0;index<DIAMOND_MAX_DECLARED_PARAMETERS;index++)
                 parameter_sets[index]=DIAMOND_NO_TYPE_SET;
         }
     }
@@ -6375,7 +6375,7 @@ static uint16_t parse_bound_method_reference(Compiler *compiler,uint16_t receive
     if(wrapper->type_set_count>0)
         memcpy(wrapper->type_sets,compiler->function->type_sets,
             wrapper->type_set_count*sizeof wrapper->type_sets[0]);
-    for(size_t index=0;index<16;index++) {
+    for(size_t index=0;index<DIAMOND_MAX_DECLARED_PARAMETERS;index++) {
         wrapper->parameter_type_sets[index]=parameter_sets[index];
         if(typed_wrapper&&index<wrapper->arity)
             (void)snprintf(wrapper->parameter_names[index],
@@ -6405,7 +6405,7 @@ static uint16_t parse_bound_method_reference(Compiler *compiler,uint16_t receive
         outer_next_register*sizeof *outer_type_sets);
     compiler->function=wrapper;compiler->next_register=0;
     compiler->local_count=0;compiler->in_function=true;
-    uint16_t arguments[16];
+    uint16_t arguments[DIAMOND_MAX_DECLARED_PARAMETERS];
     const size_t argument_count=typed_wrapper?wrapper->arity:1;
     for(size_t index=0;index<argument_count;index++)
         arguments[index]=allocate_register(compiler);
@@ -6648,9 +6648,9 @@ static uint16_t parse_invoke(Compiler *compiler, uint16_t receiver) {
             return_target,resolved_arguments,resolved_count);
         return result;
     }
-    uint16_t args[16]; size_t count = 0;
+    uint16_t args[DIAMOND_MAX_ARGUMENTS]; size_t count = 0;
     while (compiler->current.kind != DIAMOND_TOKEN_RIGHT_PAREN && !compiler->failed) {
-        if (count == 16) { fail(compiler, compiler->current.span, "too many arguments"); break; }
+        if (count == DIAMOND_MAX_ARGUMENTS) { fail(compiler, compiler->current.span, "too many arguments"); break; }
         args[count]=parse_expected_argument(compiler,contextual_target,count);
         count++;
         skip_newlines(compiler);
@@ -6676,7 +6676,7 @@ static uint16_t parse_invoke(Compiler *compiler, uint16_t receiver) {
      * written as a named closure and passed explicitly. See compile_
      * block's own comment for the full design. */
     if(compiler->current.kind==DIAMOND_TOKEN_DO) {
-        if(count==16) {
+        if(count==DIAMOND_MAX_ARGUMENTS) {
             fail(compiler,compiler->current.span,"too many arguments");return 0;
         }
         /* The receiver and every argument above were read before any of
@@ -6760,9 +6760,9 @@ static uint16_t parse_self_class_method_call(Compiler *compiler) {
     }
     advance_token(compiler);
     skip_newlines(compiler);
-    uint16_t args[16];size_t count=0;
+    uint16_t args[DIAMOND_MAX_ARGUMENTS];size_t count=0;
     while(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN&&!compiler->failed) {
-        if(count==16) {fail(compiler,compiler->current.span,"too many arguments");break;}
+        if(count==DIAMOND_MAX_ARGUMENTS) {fail(compiler,compiler->current.span,"too many arguments");break;}
         args[count++]=parse_expression(compiler);
         skip_newlines(compiler);
         if(compiler->current.kind!=DIAMOND_TOKEN_COMMA)break;
@@ -6775,7 +6775,7 @@ static uint16_t parse_self_class_method_call(Compiler *compiler) {
     }
     advance_token(compiler);
     if(compiler->current.kind==DIAMOND_TOKEN_DO) {
-        if(count==16) {fail(compiler,compiler->current.span,"too many arguments");return 0;}
+        if(count==DIAMOND_MAX_ARGUMENTS) {fail(compiler,compiler->current.span,"too many arguments");return 0;}
         for(size_t i=0;i<count;i++) {
             const uint16_t snapshot=allocate_register(compiler);
             emit_instruction(compiler,DIAMOND_OP_MOVE,snapshot,args[i],0,2);
@@ -6824,10 +6824,10 @@ static uint16_t parse_super(Compiler *compiler) {
     }
     advance_token(compiler);
     skip_newlines(compiler);
-    uint16_t arguments[16];
+    uint16_t arguments[DIAMOND_MAX_ARGUMENTS];
     size_t count = 0;
     while (compiler->current.kind != DIAMOND_TOKEN_RIGHT_PAREN && !compiler->failed) {
-        if (count == 16) {
+        if (count == DIAMOND_MAX_ARGUMENTS) {
             fail(compiler, compiler->current.span, "too many arguments");
             return 0;
         }
@@ -9951,7 +9951,7 @@ static uint16_t compile_block(Compiler *compiler) {
         return 0;
     }
     function->return_type_set=DIAMOND_NO_TYPE_SET;
-    for(size_t index=0;index<16;index++)
+    for(size_t index=0;index<DIAMOND_MAX_DECLARED_PARAMETERS;index++)
         function->parameter_type_sets[index]=DIAMOND_NO_TYPE_SET;
     function->owner_class=UINT8_MAX;
     function->nested=true;
@@ -10061,7 +10061,7 @@ static uint16_t compile_block(Compiler *compiler) {
                     fail(compiler,compiler->current.span,"expected block parameter name");
                     break;
                 }
-                if(function->arity==UINT8_MAX||parameter_count==16) {
+                if(function->arity==UINT8_MAX||parameter_count==DIAMOND_MAX_DECLARED_PARAMETERS) {
                     fail(compiler,compiler->current.span,"too many block parameters");
                     break;
                 }
@@ -10406,7 +10406,7 @@ static uint16_t compile_definition(Compiler *compiler, bool captures_self) {
         return 0;
     }
     function->return_type_set=DIAMOND_NO_TYPE_SET;
-    for(size_t index=0;index<16;index++)
+    for(size_t index=0;index<DIAMOND_MAX_DECLARED_PARAMETERS;index++)
         function->parameter_type_sets[index]=DIAMOND_NO_TYPE_SET;
     /* current_class/current_module are compiler-wide "lexically inside a
      * class/module body" flags, true for a nested closure at any depth,
@@ -10719,9 +10719,9 @@ static uint16_t compile_definition(Compiler *compiler, bool captures_self) {
             token=diamond_lexer_next(&lookahead);
         }
     }
-    if(parameter_count>16) {
-        fail(compiler,name,"functions cannot declare more than 16 parameters");
-        parameter_count=16;
+    if(parameter_count>DIAMOND_MAX_DECLARED_PARAMETERS) {
+        fail(compiler,name,"functions cannot declare more than 32 parameters");
+        parameter_count=DIAMOND_MAX_DECLARED_PARAMETERS;
     }
     const uint16_t parameter_base=compiler->next_register;
     for(size_t index=0;index<parameter_count;index++)(void)allocate_register(compiler);
@@ -10774,7 +10774,7 @@ static uint16_t compile_definition(Compiler *compiler, bool captures_self) {
             }
             compiler->locals[compiler->local_count++]=(Local){
                 .name=compiler->current.span,.reg=parameter};
-            if(declared_parameter_count<16) {
+            if(declared_parameter_count<DIAMOND_MAX_DECLARED_PARAMETERS) {
                 const DiamondSpan parameter_name_span=compiler->current.span;
                 size_t parameter_name_length=parameter_name_span.length;
                 if(parameter_name_length>=DIAMOND_MAX_FUNCTION_NAME)
@@ -10843,7 +10843,7 @@ static uint16_t compile_definition(Compiler *compiler, bool captures_self) {
                 parameter_type_span=compiler->current.span;
                 const int type = parse_type_annotation(compiler);
                 parameter_type=type;
-                if(declared_parameter_count<16)
+                if(declared_parameter_count<DIAMOND_MAX_DECLARED_PARAMETERS)
                     function->parameter_type_sets[declared_parameter_count]=
                         (uint8_t)type;
                 if(is_block_parameter) {
@@ -11370,7 +11370,7 @@ static void compile_attribute_named(Compiler *compiler,bool writer,bool predicat
         (uint8_t)compiler->current_class:UINT8_MAX-1;
     function->arity=writer?2:1;function->required_arity=function->arity;
     function->return_type_set=DIAMOND_NO_TYPE_SET;
-    for(size_t index=0;index<16;index++)function->parameter_type_sets[index]=DIAMOND_NO_TYPE_SET;
+    for(size_t index=0;index<DIAMOND_MAX_DECLARED_PARAMETERS;index++)function->parameter_type_sets[index]=DIAMOND_NO_TYPE_SET;
     if(type_set>=0) {
         function->type_set_count=compiler->function->type_set_count;
         if(!diamond_function_reserve_type_sets(function,function->type_set_count)) {
@@ -11729,7 +11729,7 @@ static void compile_delegate(Compiler *compiler) {
     }
     advance_token(compiler);
     skip_newlines(compiler);
-    DiamondSpan parameter_names[16];size_t parameter_count=0;
+    DiamondSpan parameter_names[DIAMOND_MAX_DECLARED_PARAMETERS];size_t parameter_count=0;
     bool variadic=false;
     bool forwards_block=false;
     while(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN&&!compiler->failed) {
@@ -11747,7 +11747,7 @@ static void compile_delegate(Compiler *compiler) {
         if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER) {
             fail(compiler,compiler->current.span,"expected parameter name");return;
         }
-        if(parameter_count==16) {
+        if(parameter_count==DIAMOND_MAX_DECLARED_PARAMETERS) {
             fail(compiler,compiler->current.span,"too many parameters");return;
         }
         parameter_names[parameter_count++]=compiler->current.span;
@@ -11885,7 +11885,7 @@ static void compile_delegate(Compiler *compiler) {
     function->declaration_column=(uint32_t)keyword.column;
     function->declaration_start=keyword.start;
     function->return_type_set=DIAMOND_NO_TYPE_SET;
-    for(size_t index=0;index<16;index++)function->parameter_type_sets[index]=DIAMOND_NO_TYPE_SET;
+    for(size_t index=0;index<DIAMOND_MAX_DECLARED_PARAMETERS;index++)function->parameter_type_sets[index]=DIAMOND_NO_TYPE_SET;
 
     compiler->function=function;
     compiler->local_count=0;
@@ -11902,7 +11902,7 @@ static void compile_delegate(Compiler *compiler) {
 
     (void)allocate_register(compiler); /* self */
     function->arity=1;function->required_arity=1;
-    uint16_t parameter_registers[16];
+    uint16_t parameter_registers[DIAMOND_MAX_DECLARED_PARAMETERS];
     for(size_t index=0;index<parameter_count;index++) {
         parameter_registers[index]=allocate_register(compiler);
         compiler->locals[compiler->local_count++]=(Local){
@@ -12567,7 +12567,7 @@ static uint16_t compile_interface(Compiler *compiler) {
         if(compiler->failed)break;
         DiamondInterfaceMethod *method=&interface->methods[interface->method_count++];
         method->return_type_set=DIAMOND_NO_TYPE_SET;
-        for(size_t index=0;index<16;index++)
+        for(size_t index=0;index<DIAMOND_MAX_DECLARED_PARAMETERS;index++)
             method->parameter_type_sets[index]=DIAMOND_NO_TYPE_SET;
         if(compiler->current.span.length>=DIAMOND_MAX_FUNCTION_NAME) {
             fail(compiler,compiler->current.span,"interface method name is too long");break;
@@ -12582,7 +12582,7 @@ static uint16_t compile_interface(Compiler *compiler) {
         advance_token(compiler);
         skip_newlines(compiler);
         while(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN&&!compiler->failed) {
-            if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER||method->arity==16) {
+            if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER||method->arity==DIAMOND_MAX_DECLARED_PARAMETERS) {
                 fail(compiler,compiler->current.span,"expected interface parameter");break;
             }
             method->arity++;advance_token(compiler);

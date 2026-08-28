@@ -216,7 +216,7 @@ typedef struct DiamondThread {
     DiamondVm *child_vm;
     DiamondProgram *child_program;
     uint16_t function_index;
-    DiamondValue args[17];
+    DiamondValue args[DIAMOND_MAX_ARGUMENTS];
     uint8_t arg_count;
     /* Three, mutually exclusive outcomes once `finished` is true:
      * (1) plain return -- `raised`/`internal_failure` both false, `result`
@@ -6878,11 +6878,14 @@ static DiamondVmStatus call_closure_helper(DiamondVm *vm,const DiamondChunk *chu
      * must compare against the real, un-inflated argc, not the padded
      * argument_count used only to place real arguments correctly. */
     const bool self_via_capture=fn->owner_class==UINT8_MAX-2;
-    DiamondValue call_arguments[17];
+    /* No argc>DIAMOND_MAX_ARGUMENTS guard needed here: argc is a plain
+     * uint8_t (the wire format's own argument-count width), so it can
+     * never exceed DIAMOND_MAX_ARGUMENTS (255) in the first place --
+     * call_arguments[DIAMOND_MAX_ARGUMENTS+1] below always has room. */
+    DiamondValue call_arguments[DIAMOND_MAX_ARGUMENTS+1];
     const DiamondValue *arguments=&registers[base];
     size_t argument_count=argc;
     if(needs_self_slot) {
-        if(argc>16) return DIAMOND_VM_ARITY_ERROR;
         call_arguments[0]=DIAMOND_NIL;
         for(size_t index=0;index<argc;index++)
             call_arguments[index+1]=registers[(size_t)base+index];
@@ -6905,6 +6908,110 @@ static DiamondVmStatus call_closure_helper(DiamondVm *vm,const DiamondChunk *chu
       .parameter_offset=fn->owner_class==UINT8_MAX?0:1,
       .register_count=fn->register_count,.has_variadic=fn->has_variadic};
     return run_chunk(&child,vm,arguments,argument_count,depth+1,called,result);
+}
+
+/* Shared by DIAMOND_OP_INVOKE's Int-primitive (times/upto/downto) and
+ * Array/Hash-collection-extension forwarding arms: both resolve a native
+ * receiver method to an ordinary prelude/user top-level function and call
+ * it with the receiver prepended as its own first argument -- identical
+ * shape, just a different `target` lookup beforehand. Factored out (like
+ * call_closure_helper just above) so the DIAMOND_MAX_ARGUMENTS+1-sized
+ * forwarding buffer doesn't live directly in one of run_chunk's own case
+ * blocks. */
+static DiamondVmStatus forward_to_top_level_helper(DiamondVm *vm,
+        const DiamondChunk *chunk,const DiamondFunction *target,
+        const DiamondValue *registers,uint16_t recv,uint16_t base,uint8_t argc,
+        size_t depth,DiamondValue *result) {
+    const size_t total_argc=(size_t)argc+1;
+    if(total_argc<target->required_arity||total_argc>target->arity)
+        return DIAMOND_VM_ARITY_ERROR;
+    DiamondValue forward_args[DIAMOND_MAX_ARGUMENTS+1];
+    forward_args[0]=registers[recv];
+    for(size_t i=0;i<argc;i++)
+        forward_args[i+1]=registers[(size_t)base+i];
+    const DiamondChunk child={.name=target->name,.code=target->code,
+      .lines=target->lines,.columns=target->columns,
+      .code_count=target->code_count,
+      .constants=target->constants,.constant_count=target->constant_count,
+      .strings=target->strings,.string_count=target->string_count,
+      .type_sets=target->type_sets,.type_set_count=target->type_set_count,
+      .functions=chunk->functions,.function_count=chunk->function_count,
+      .classes=chunk->classes,.class_count=chunk->class_count,
+      .interfaces=chunk->interfaces,.interface_count=chunk->interface_count,
+      .parameter_type_sets=target->parameter_type_sets,
+      .type_variable_count=target->type_variable_count,
+      .parameter_offset=target->owner_class==UINT8_MAX?0:1,
+      .register_count=target->register_count};
+    return run_chunk(&child,vm,forward_args,total_argc,depth+1,nullptr,result);
+}
+
+/* Shared by DIAMOND_OP_NEW's #initialize call, DIAMOND_OP_INVOKE/_MONO/
+ * _TYPED's ordinary Instance method dispatch, and DIAMOND_OP_SUPER: all
+ * three build the same self-plus-arguments-plus-bound-values buffer and
+ * call an already-resolved `method`, differing only in how they got there
+ * (constructor lookup, cache/vtable dispatch, superclass lookup) and
+ * whether explicit generic type arguments are possible (only real
+ * `DIAMOND_OP_INVOKE_TYPED` calls; `typed` false skips that entirely, and
+ * `type_argument_count`/`type_arguments`/`caller_chunk` are then unused).
+ * `self_value` is the receiver placed at args[0]; the caller keeps
+ * whatever separate write it needs to make with its own return value (NEW
+ * discards this call's own result -- `initialize`'s return isn't the
+ * constructed instance -- rather than routing it through here). Factored
+ * out (like call_closure_helper/forward_to_top_level_helper above) so the
+ * DIAMOND_MAX_ARGUMENTS+1-sized buffer doesn't live directly in any of
+ * run_chunk's own case blocks, times three. */
+static DiamondVmStatus invoke_resolved_method_helper(DiamondVm *vm,
+        const DiamondChunk *owner_chunk,const DiamondMethod *method,
+        DiamondValue self_value,const DiamondValue *registers,uint16_t base,
+        uint8_t argc,bool typed,uint8_t type_argument_count,
+        const uint16_t *type_arguments,const DiamondChunk *caller_chunk,
+        size_t depth,DiamondValue *result) {
+    /* bound_value_count is set from an arbitrary compile_method() call's
+     * own bound-values Hash size (src/vm.c's compile_method_helper), with
+     * no independent cap of its own -- unlike argc, which is already
+     * type-bounded to DIAMOND_MAX_ARGUMENTS by being a plain uint8_t, this
+     * needs its own explicit guard against the shared buffer below. */
+    if((size_t)argc+1+method->bound_value_count>(size_t)DIAMOND_MAX_ARGUMENTS+1)
+        return DIAMOND_VM_ARITY_ERROR;
+    DiamondValue args[DIAMOND_MAX_ARGUMENTS+1];args[0]=self_value;
+    for(size_t i=0;i<argc;i++)args[i+1]=registers[(size_t)base+i];
+    /* Trailing parameters compile_method's own synthesized source appended
+     * -- see DiamondMethod.bound_values's own comment (src/vm.h). Not
+     * supplied by the caller, so not part of argc above. */
+    for(size_t i=0;i<method->bound_value_count;i++)
+        args[argc+1+i]=method->bound_values[i];
+    const size_t total_args=(size_t)argc+1+method->bound_value_count;
+    /* A ClassName.compile_method-installed method's bytecode (and the
+     * class/function/interface tables it references by index) lives in
+     * its own chunk, not `owner_chunk` -- see DiamondMethod.source_chunk's
+     * own comment (src/vm.h). */
+    const DiamondChunk *function_chunk=
+        method->source_chunk!=nullptr?method->source_chunk:owner_chunk;
+    const DiamondFunction *fn=function_chunk->functions[method->function_index];
+    if(typed&&type_argument_count!=fn->type_variable_count)
+        return DIAMOND_VM_TYPE_ERROR;
+    DiamondTypeBinding explicit_bindings[8]={};
+    for(size_t index=0;index<type_argument_count;index++) {
+        if((size_t)type_arguments[index]>=caller_chunk->type_set_count)
+            return DIAMOND_VM_INVALID_BYTECODE;
+        (void)binding_node(&explicit_bindings[index]);
+        bind_context_set(&explicit_bindings[index],0,caller_chunk,
+            caller_chunk->type_sets,type_arguments[index]);
+    }
+    const DiamondChunk child={.name=fn->name,.code=fn->code,
+      .lines=fn->lines,.columns=fn->columns,.code_count=fn->code_count,
+      .constants=fn->constants,.constant_count=fn->constant_count,
+      .strings=fn->strings,.string_count=fn->string_count,
+      .type_sets=fn->type_sets,.type_set_count=fn->type_set_count,
+      .functions=function_chunk->functions,.function_count=function_chunk->function_count,
+      .classes=function_chunk->classes,.class_count=function_chunk->class_count,
+      .interfaces=function_chunk->interfaces,.interface_count=function_chunk->interface_count,
+      .parameter_type_sets=fn->parameter_type_sets,
+      .type_variable_count=fn->type_variable_count,
+      .parameter_offset=fn->owner_class==UINT8_MAX?0:1,
+      .type_variable_bindings=type_argument_count==0?nullptr:explicit_bindings,
+      .register_count=fn->register_count,.has_variadic=fn->has_variadic};
+    return run_chunk(&child,vm,args,total_args,depth+1,nullptr,result);
 }
 
 static DiamondVmStatus call_closure_spread_helper(DiamondVm *vm,
@@ -10504,7 +10611,6 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
             case DIAMOND_OP_NEW: {
                 uint16_t dest=0,base=0;uint8_t ci=0,argc=0;
                 READ_SHORT(dest);READ_BYTE(ci);READ_SHORT(base);READ_BYTE(argc);
-                if(argc>16) VM_RETURN(DIAMOND_VM_ARITY_ERROR);
                 if((size_t)ci>=chunk->class_count) VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
                 const DiamondClass *class=&chunk->classes[ci];
                 DiamondInstance *instance=allocate_instance(vm,class,nullptr);
@@ -10516,31 +10622,10 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     if(argc<init->required_arity||
                        (argc>init->arity && !init->has_variadic))
                         VM_RETURN(DIAMOND_VM_ARITY_ERROR);
-                    DiamondValue args[17];args[0]=registers[dest];
-                    for(size_t i=0;i<argc;i++)args[i+1]=registers[(size_t)base+i];
-                    for(size_t i=0;i<init->bound_value_count;i++)
-                        args[argc+1+i]=init->bound_values[i];
-                    const size_t total_args=(size_t)argc+1+init->bound_value_count;
-                    /* See DIAMOND_OP_INVOKE_TYPED's own comment on
-                     * function_chunk -- #initialize itself could be a
-                     * ClassName.compile_method-installed method. */
-                    const DiamondChunk *function_chunk=
-                        init->source_chunk!=nullptr?init->source_chunk:chunk;
-                    const DiamondFunction *fn=function_chunk->functions[init->function_index];
-                    DiamondChunk child={.name=fn->name,.code=fn->code,
-                      .lines=fn->lines,.columns=fn->columns,.code_count=fn->code_count,
-                      .constants=fn->constants,.constant_count=fn->constant_count,
-                      .strings=fn->strings,.string_count=fn->string_count,
-                      .type_sets=fn->type_sets,.type_set_count=fn->type_set_count,
-                      .functions=function_chunk->functions,.function_count=function_chunk->function_count,
-                      .classes=function_chunk->classes,.class_count=function_chunk->class_count,
-                      .interfaces=function_chunk->interfaces,.interface_count=function_chunk->interface_count,
-                      .parameter_type_sets=fn->parameter_type_sets,
-                      .type_variable_count=fn->type_variable_count,
-                      .parameter_offset=fn->owner_class==UINT8_MAX?0:1,
-                      .register_count=fn->register_count,.has_variadic=fn->has_variadic};
                     DiamondValue ignored=DIAMOND_NIL;
-                    DiamondVmStatus s=run_chunk(&child,vm,args,total_args,depth+1,nullptr,&ignored);
+                    const DiamondVmStatus s=invoke_resolved_method_helper(vm,chunk,
+                        init,registers[dest],registers,base,argc,false,0,nullptr,
+                        chunk,depth,&ignored);
                     VM_PROPAGATE(s);
                 } else {
                     bool exception_class=false;const DiamondClass *ancestor=class;
@@ -11015,7 +11100,6 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     for(size_t index=0;index<type_argument_count;index++)
                         READ_SHORT(type_arguments[index]);
                 }
-                if(argc>16) VM_RETURN(DIAMOND_VM_ARITY_ERROR);
                 if((size_t)name>=chunk->string_count) VM_RETURN(DIAMOND_VM_TYPE_ERROR);
                 const DiamondStringConstant *method_name=&chunk->strings[name];
                 /* tap/dup -- universal for every native receiver kind (a
@@ -11153,29 +11237,9 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                             target_name);
                         VM_RETURN(DIAMOND_VM_TYPE_ERROR);
                     }
-                    const size_t total_argc=(size_t)argc+1;
-                    if(total_argc<target->required_arity||total_argc>target->arity)
-                        VM_RETURN(DIAMOND_VM_ARITY_ERROR);
-                    DiamondValue forward_args[17];
-                    forward_args[0]=registers[recv];
-                    for(size_t i=0;i<argc;i++)
-                        forward_args[i+1]=registers[(size_t)base+i];
-                    const DiamondChunk child={.name=target->name,.code=target->code,
-                      .lines=target->lines,.columns=target->columns,
-                      .code_count=target->code_count,
-                      .constants=target->constants,.constant_count=target->constant_count,
-                      .strings=target->strings,.string_count=target->string_count,
-                      .type_sets=target->type_sets,.type_set_count=target->type_set_count,
-                      .functions=chunk->functions,.function_count=chunk->function_count,
-                      .classes=chunk->classes,.class_count=chunk->class_count,
-                      .interfaces=chunk->interfaces,.interface_count=chunk->interface_count,
-                      .parameter_type_sets=target->parameter_type_sets,
-                      .type_variable_count=target->type_variable_count,
-                      .parameter_offset=target->owner_class==UINT8_MAX?0:1,
-                      .register_count=target->register_count};
                     DiamondValue call_result=DIAMOND_NIL;
-                    const DiamondVmStatus status=run_chunk(&child,vm,forward_args,
-                        total_argc,depth+1,nullptr,&call_result);
+                    const DiamondVmStatus status=forward_to_top_level_helper(vm,
+                        chunk,target,registers,recv,base,argc,depth,&call_result);
                     VM_PROPAGATE(status);
                     registers[dest]=call_result;break;
                 }
@@ -11418,29 +11482,10 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                                 VM_RETURN(DIAMOND_VM_TYPE_ERROR);
                         }
                         if(target!=nullptr) {
-                            const size_t total_argc=(size_t)argc+1;
-                            if(total_argc<target->required_arity||total_argc>target->arity)
-                                VM_RETURN(DIAMOND_VM_ARITY_ERROR);
-                            DiamondValue forward_args[17];
-                            forward_args[0]=registers[recv];
-                            for(size_t i=0;i<argc;i++)
-                                forward_args[i+1]=registers[(size_t)base+i];
-                            const DiamondChunk child={.name=target->name,.code=target->code,
-                              .lines=target->lines,.columns=target->columns,
-                              .code_count=target->code_count,
-                              .constants=target->constants,.constant_count=target->constant_count,
-                              .strings=target->strings,.string_count=target->string_count,
-                              .type_sets=target->type_sets,.type_set_count=target->type_set_count,
-                              .functions=chunk->functions,.function_count=chunk->function_count,
-                              .classes=chunk->classes,.class_count=chunk->class_count,
-                              .interfaces=chunk->interfaces,.interface_count=chunk->interface_count,
-                              .parameter_type_sets=target->parameter_type_sets,
-                              .type_variable_count=target->type_variable_count,
-                              .parameter_offset=target->owner_class==UINT8_MAX?0:1,
-                              .register_count=target->register_count};
                             DiamondValue call_result=DIAMOND_NIL;
-                            const DiamondVmStatus status=run_chunk(&child,vm,forward_args,
-                                total_argc,depth+1,nullptr,&call_result);
+                            const DiamondVmStatus status=forward_to_top_level_helper(
+                                vm,chunk,target,registers,recv,base,argc,depth,
+                                &call_result);
                             VM_PROPAGATE(status);
                             registers[dest]=call_result;break;
                         }
@@ -13049,49 +13094,11 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 if(argc<method->required_arity||
                    (argc>method->arity && !method->has_variadic))
                     VM_RETURN(DIAMOND_VM_ARITY_ERROR);
-                DiamondValue args[17];args[0]=registers[recv];
-                for(size_t i=0;i<argc;i++)args[i+1]=registers[(size_t)base+i];
-                /* Trailing parameters compile_method's own synthesized
-                 * source appended -- see DiamondMethod.bound_values's own
-                 * comment (src/vm.h). Not supplied by the caller, so not
-                 * part of argc above. */
-                for(size_t i=0;i<method->bound_value_count;i++)
-                    args[argc+1+i]=method->bound_values[i];
-                const size_t total_args=(size_t)argc+1+method->bound_value_count;
-                /* A ClassName.compile_method-installed method's bytecode
-                 * (and the class/function/interface tables it references
-                 * by index) lives in its own chunk, not `owner` -- see
-                 * DiamondMethod.source_chunk's own comment (src/vm.h). */
-                const DiamondChunk *function_chunk=
-                    method->source_chunk!=nullptr?method->source_chunk:owner;
-                const DiamondFunction *fn=function_chunk->functions[method->function_index];
-                if((DiamondOpCode)instruction==DIAMOND_OP_INVOKE_TYPED&&
-                   type_argument_count!=fn->type_variable_count)
-                    VM_RETURN(DIAMOND_VM_TYPE_ERROR);
-                DiamondTypeBinding explicit_bindings[8]={};
-                for(size_t index=0;index<type_argument_count;index++) {
-                    if((size_t)type_arguments[index]>=chunk->type_set_count)
-                        VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
-                    (void)binding_node(&explicit_bindings[index]);
-                    bind_context_set(&explicit_bindings[index],0,chunk,
-                        chunk->type_sets,type_arguments[index]);
-                }
-                DiamondChunk child={.name=fn->name,.code=fn->code,
-                  .lines=fn->lines,.columns=fn->columns,.code_count=fn->code_count,
-                  .constants=fn->constants,.constant_count=fn->constant_count,
-                  .strings=fn->strings,.string_count=fn->string_count,
-                  .type_sets=fn->type_sets,.type_set_count=fn->type_set_count,
-                  .functions=function_chunk->functions,.function_count=function_chunk->function_count,
-                  .classes=function_chunk->classes,.class_count=function_chunk->class_count,
-                  .interfaces=function_chunk->interfaces,.interface_count=function_chunk->interface_count,
-                  .parameter_type_sets=fn->parameter_type_sets,
-                  .type_variable_count=fn->type_variable_count,
-                  .parameter_offset=fn->owner_class==UINT8_MAX?0:1,
-                  .type_variable_bindings=type_argument_count==0?nullptr:
-                      explicit_bindings,
-                  .register_count=fn->register_count,.has_variadic=fn->has_variadic};
                 DiamondValue call_result=DIAMOND_NIL;
-                DiamondVmStatus s=run_chunk(&child,vm,args,total_args,depth+1,nullptr,&call_result);
+                const DiamondVmStatus s=invoke_resolved_method_helper(vm,owner,
+                    method,registers[recv],registers,base,argc,
+                    (DiamondOpCode)instruction==DIAMOND_OP_INVOKE_TYPED,
+                    type_argument_count,type_arguments,chunk,depth,&call_result);
                 VM_PROPAGATE(s);
                 registers[dest]=call_result;
                 break;
@@ -13100,7 +13107,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 uint16_t dest=0,base=0,name=0;uint8_t owner_index=0,argc=0;
                 READ_SHORT(dest);READ_BYTE(owner_index);READ_SHORT(name);
                 READ_SHORT(base); READ_BYTE(argc);
-                if(argc>16 || (size_t)owner_index>=chunk->class_count ||
+                if((size_t)owner_index>=chunk->class_count ||
                    (size_t)name>=chunk->string_count ||
                    registers[0].kind!=DIAMOND_VALUE_OBJECT ||
                    registers[0].as.object->kind!=DIAMOND_OBJECT_INSTANCE)
@@ -13146,33 +13153,10 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 if(argc<method->required_arity||
                    (argc>method->arity && !method->has_variadic))
                     VM_RETURN(DIAMOND_VM_ARITY_ERROR);
-                DiamondValue args[17]; args[0]=registers[0];
-                for(size_t i=0;i<argc;i++) args[i+1]=registers[(size_t)base+i];
-                for(size_t i=0;i<method->bound_value_count;i++)
-                    args[argc+1+i]=method->bound_values[i];
-                const size_t total_args=(size_t)argc+1+method->bound_value_count;
-                /* See DIAMOND_OP_INVOKE_TYPED's own comment on
-                 * function_chunk -- the superclass method super() resolves
-                 * to could itself be a ClassName.compile_method-installed
-                 * one. */
-                const DiamondChunk *function_chunk=
-                    method->source_chunk!=nullptr?method->source_chunk:chunk;
-                const DiamondFunction *fn=function_chunk->functions[method->function_index];
-                DiamondChunk child={.name=fn->name,.code=fn->code,
-                  .lines=fn->lines,.columns=fn->columns,.code_count=fn->code_count,
-                  .constants=fn->constants,.constant_count=fn->constant_count,
-                  .strings=fn->strings,.string_count=fn->string_count,
-                  .type_sets=fn->type_sets,.type_set_count=fn->type_set_count,
-                  .functions=function_chunk->functions,.function_count=function_chunk->function_count,
-                  .classes=function_chunk->classes,.class_count=function_chunk->class_count,
-                  .interfaces=function_chunk->interfaces,.interface_count=function_chunk->interface_count,
-                  .parameter_type_sets=fn->parameter_type_sets,
-                  .type_variable_count=fn->type_variable_count,
-                  .parameter_offset=fn->owner_class==UINT8_MAX?0:1,
-                  .register_count=fn->register_count,.has_variadic=fn->has_variadic};
                 DiamondValue call_result=DIAMOND_NIL;
-                DiamondVmStatus status=run_chunk(&child,vm,args,total_args,
-                                                  depth+1,nullptr,&call_result);
+                const DiamondVmStatus status=invoke_resolved_method_helper(vm,
+                    chunk,method,registers[0],registers,base,argc,false,0,
+                    nullptr,chunk,depth,&call_result);
                 VM_PROPAGATE(status);
                 registers[dest]=call_result;
                 break;
@@ -14199,38 +14183,14 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 if(argc<method->required_arity||
                    (argc>method->arity && !method->has_variadic))
                     VM_RETURN(DIAMOND_VM_ARITY_ERROR);
-                /* args[] below is a fixed 17-slot buffer (receiver +
-                 * up to 16 explicit arguments) -- non-variadic methods
-                 * already can't reach argc>16 here (method->arity itself
-                 * is capped at 16 by compile_definition, and the check
-                 * above already rejects argc>arity), but a variadic
-                 * method's own upper bound is unbounded, so this needs
-                 * its own explicit guard now that the check above no
-                 * longer implies it. */
-                if(argc>16)
-                    VM_RETURN(DIAMOND_VM_ARITY_ERROR);
                 if((size_t)base+argc>DIAMOND_REGISTER_COUNT)
                     VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
-                DiamondValue args[17];args[0]=registers[0];
-                for(size_t index=0;index<argc;index++)args[index+1]=registers[(size_t)base+index];
                 if((size_t)method->function_index>=chunk->function_count)
                     VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
-                const DiamondFunction *fn=chunk->functions[method->function_index];
-                const DiamondChunk child={.name=fn->name,.code=fn->code,
-                  .lines=fn->lines,.columns=fn->columns,.code_count=fn->code_count,
-                  .constants=fn->constants,.constant_count=fn->constant_count,
-                  .strings=fn->strings,.string_count=fn->string_count,
-                  .type_sets=fn->type_sets,.type_set_count=fn->type_set_count,
-                  .functions=chunk->functions,.function_count=chunk->function_count,
-                  .classes=chunk->classes,.class_count=chunk->class_count,
-                  .interfaces=chunk->interfaces,.interface_count=chunk->interface_count,
-                  .parameter_type_sets=fn->parameter_type_sets,
-                  .type_variable_count=fn->type_variable_count,
-                  .parameter_offset=fn->owner_class==UINT8_MAX?0:1,
-                  .register_count=fn->register_count,.has_variadic=fn->has_variadic};
                 DiamondValue call_result=DIAMOND_NIL;
-                const DiamondVmStatus self_call_status=run_chunk(&child,vm,args,
-                    (size_t)argc+1,depth+1,nullptr,&call_result);
+                const DiamondVmStatus self_call_status=invoke_resolved_method_helper(
+                    vm,chunk,method,registers[0],registers,base,argc,false,0,
+                    nullptr,chunk,depth,&call_result);
                 VM_PROPAGATE(self_call_status);
                 registers[dest]=call_result;break;
             }
@@ -14511,12 +14471,6 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 const DiamondFunction *target_fn=chunk->functions[callable->function_index];
                 if(argc<target_fn->required_arity||
                    (argc>target_fn->arity && !target_fn->has_variadic))
-                    VM_RETURN(DIAMOND_VM_ARITY_ERROR);
-                /* new_thread->args[] below is a fixed 17-slot buffer --
-                 * see DIAMOND_OP_INVOKE_SELF_METHOD's own comment on the
-                 * same shape; needed explicitly now that a variadic
-                 * target_fn's upper bound above is unbounded. */
-                if(argc>16)
                     VM_RETURN(DIAMOND_VM_ARITY_ERROR);
                 if(atomic_load(&diamond_active_thread_count)>=DIAMOND_MAX_THREADS) {
                     snprintf(vm->error,sizeof vm->error,

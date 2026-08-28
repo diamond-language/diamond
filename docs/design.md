@@ -1523,6 +1523,10 @@ call sites (`DIAMOND_OP_INVOKE_SELF_METHOD`, `DIAMOND_OP_THREAD_NEW`)
 had no *explicit* 16-argument guard of their own before this change, so
 each needed one added directly, not just the arity relaxation, to stay
 safe now that a variadic callee's upper bound is no longer implicitly 16.
+(This 16/17 figure was itself later widened to `DIAMOND_MAX_ARGUMENTS`/
+`+1` -- see "No artificial call-argument/parameter ceiling" below for
+what replaced it and why the buffer had to move out of `run_chunk`'s own
+frame first.)
 
 **`redefine_method`**'s existing exact-arity-match check gained a third
 term, `has_variadic`, alongside `arity`/`required_arity` -- a variadic
@@ -1616,14 +1620,16 @@ receiver, spread Array, and method descriptor remain the owning GC roots for
 the complete nested call.
 
 **A second, unrelated benefit, not the point of this feature but worth
-noting:** source-defined spread targets have no 16-argument-expression ceiling
-the way a literal call site does (`compiler.c`'s fixed 16-slot argument-parsing
-buffers, present at every call form) -- a spread `Array` can be any length
-`run_chunk`'s own bounds already tolerate (its `argument_count >
-DIAMOND_REGISTER_COUNT` sanity check, 4096, and the `has_variadic`-aware bounds
-fix from "Splat/variadic parameters" above), since nothing about spread parses
-one argument expression per element. Native receiver spreads deliberately
-inherit ordinary `INVOKE`'s existing 16-argument runtime bound.
+noting:** source-defined spread targets have no argument-*expression* ceiling
+the way a literal call site does (`compiler.c`'s fixed argument-parsing
+buffers, present at every call form, bounded by `DIAMOND_MAX_ARGUMENTS` --
+see "No artificial call-argument/parameter ceiling" below) -- a spread
+`Array` can be any length `run_chunk`'s own bounds already tolerate (its
+`argument_count > DIAMOND_REGISTER_COUNT` sanity check, 4096, and the
+`has_variadic`-aware bounds fix from "Splat/variadic parameters" above),
+since nothing about spread parses one argument expression per element.
+Native receiver spreads inherit ordinary `INVOKE`'s own runtime bound,
+which is now the same `DIAMOND_MAX_ARGUMENTS`.
 
 Typed spread variants carry explicit type-set bindings for generic functions,
 instance methods, and singleton methods. Native receivers dispatch through a
@@ -1731,6 +1737,73 @@ preserving overrides and `method_missing`; native receivers use the same path.
 The receiver is stored in the closure's ordinary Cell capture, making the
 Callable GC-safe but intentionally subject to the existing restriction against
 sending capturing closures to `Thread.new`.
+
+## No artificial call-argument/parameter ceiling
+
+Every call-argument-count and declared-parameter-count limit in the compiler
+and VM used to be an arbitrary 16, unrelated to any real representation
+limit: `call_argument_count`/`argc` (`DIAMOND_OP_CALL`/`INVOKE`/`NEW`/`SUPER`/
+`INVOKE_SELF_METHOD`/`THREAD_NEW`) and `arity`/`required_arity`/
+`bound_value_count` are all plain `uint8_t` bytecode operands, so 255 was
+always representable -- the 16 was just wherever each parsing/marshaling
+buffer's own fixed size happened to stop. `DIAMOND_MAX_ARGUMENTS` (255,
+`src/vm.h`) is now that real ceiling, shared by every compiler-side call-
+argument-list parsing buffer (`src/compiler.c`) and every VM-side argument-
+marshaling buffer (`src/vm.c`) that flows from the same call -- one constant
+so the two sides can't drift out of sync with each other the way the ad hoc
+16s across a dozen sites already had (`DIAMOND_OP_INVOKE_SELF_METHOD` and
+`DIAMOND_OP_THREAD_NEW` had no explicit guard of their own at all, relying
+entirely on a non-variadic callee's `arity` already being capped, per the
+"Splat/variadic parameters" section above).
+
+Declared parameters got a separate, deliberately more modest constant,
+`DIAMOND_MAX_DECLARED_PARAMETERS` (32): unlike a call argument list (cheap
+register-range bookkeeping, freely widened to the full 255), a declared
+parameter's name and type-set storage is baked directly into every
+`DiamondFunction`/`DiamondInterfaceMethod` struct, and `DiamondFunction` is
+already documented elsewhere in this codebase as "already ~152KB, and there
+can be up to `DIAMOND_MAX_FUNCTIONS` of them" -- matching `DIAMOND_MAX_
+ARGUMENTS`'s full 255 there would add roughly 15KB to *every* function
+regardless of how many parameters it actually declares, the exact
+unconditional-cost pattern this codebase already moved away from once,
+for bytecode buffers and the constant table (see "Compiler representation"
+in docs/roadmap.md). A variadic function's effective *argument* count at a
+call site is unaffected by this cap either way -- only how many parameters
+one signature can itself name.
+
+**VM-side stack-safety consequence.** Several VM dispatch sites (`NEW`'s
+`#initialize` call, `INVOKE`'s ordinary Instance-method dispatch, `SUPER`,
+`INVOKE_SELF_METHOD`, and the Int/Array/Hash-primitive-to-prelude-function
+forwarding arms of `INVOKE`) used to build their `self`-plus-arguments
+buffer directly inline in one of `run_chunk`'s own `case` blocks. Growing
+those buffers to `DIAMOND_MAX_ARGUMENTS+1` in place would have added
+roughly 19-20KB to `run_chunk`'s own stack frame regardless of which
+opcode actually executes (at this codebase's usual `-O0` build, the
+compiler doesn't reliably share stack slots across mutually exclusive
+`case` blocks) -- multiplied by `DIAMOND_MAX_CALL_DEPTH` (95, the
+recursion-depth guard sized specifically to bound total stack use), a
+real, avoidable risk of the same kind `call_closure_helper` was already
+factored out of `run_chunk` to avoid once before (see that function's own
+comment). Fixed the same way: each of those five call shapes now builds
+its buffer inside its own helper function (`invoke_resolved_method_helper`,
+shared by `NEW`/`INVOKE`/`SUPER`/`INVOKE_SELF_METHOD` since all four
+build the identical self-plus-args-plus-bound-values shape from an
+already-resolved `DiamondMethod`, differing only in how they got there and
+whether explicit generic type arguments are possible; `forward_to_top_
+level_helper`, shared by the two primitive-forwarding arms), so the large
+buffer's stack cost is paid only when that specific call shape is actually
+on the live recursion chain, not unconditionally on every `run_chunk` call
+regardless of opcode.
+
+**A pre-existing bug found and fixed along the way.** `DiamondMethod.
+bound_value_count` (extra arguments a `ClassName.compile_method`-installed
+method appends after the caller's own explicit ones) was set from an
+arbitrary `compile_method()` call's own bound-values `Hash` size with no
+independent cap of its own, and every one of those buffers added it on top
+of `argc+1` with no bounds check at all against the buffer size -- already
+a possible overflow before this change, just apparently never hit in
+practice. `invoke_resolved_method_helper` now checks `argc+1+bound_value_
+count` against the shared buffer size explicitly before filling it.
 
 ## Deliberate constraints
 

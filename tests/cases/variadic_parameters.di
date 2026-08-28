@@ -21,13 +21,14 @@ def two_required(a, b, *rest)
   a + b + rest.length()
 end
 
-# "16 args at one call site" is the real ceiling here, not an arbitrary
-# round number -- every call-argument-parsing path in the compiler caps
-# at 16 argument expressions per call site regardless of the callee
-# (confirmed directly: a 17th argument fails to compile with "too many
-# call arguments" even against this variadic sum), independent of
-# variadic support. This still meaningfully exercises run_chunk's own
-# bounds fix (src/vm.c): sum's own register_count is far smaller than 16.
+# "16 args at one call site" was once the real ceiling here (every call-
+# argument-parsing path in the compiler capped at 16 argument expressions
+# per call site regardless of the callee, independent of variadic
+# support) -- DIAMOND_MAX_ARGUMENTS (255, see docs/design.md) since
+# replaced it; tests/cases/many_call_arguments.di exercises well past 16
+# across every call shape. Kept here as a smaller, still-meaningful case:
+# sum's own register_count is far smaller than 16, so this still exercises
+# run_chunk's own register-range bounds fix (src/vm.c).
 def sixteen_args_total()
   sum(1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16)
 end

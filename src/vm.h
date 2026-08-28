@@ -28,6 +28,30 @@ enum {
     DIAMOND_MAX_TYPE_SETS = UINT16_MAX,
     DIAMOND_NO_TYPE_SET = UINT16_MAX,
     DIAMOND_MAX_UNION_TYPES = 8,
+    /* The real ceiling: every wire-format argument/parameter count
+     * (DIAMOND_OP_CALL's call_argument_count, INVOKE/NEW/SUPER's argc,
+     * DiamondFunction/DiamondMethod's arity/required_arity, DiamondMethod's
+     * bound_value_count) is a plain uint8_t operand, so 255 is already what
+     * the bytecode itself can carry -- this was previously an arbitrary
+     * compile-time/runtime 16 short of that, not a real representation
+     * limit. Used both for compile-time parameter/argument-list parsing
+     * buffers (src/compiler.c) and for the runtime argument-marshaling
+     * buffers this same call ultimately flows through (src/vm.c) -- one
+     * shared cap so the two sides can't drift out of sync with each other. */
+    DIAMOND_MAX_ARGUMENTS = 255,
+    /* Distinct from DIAMOND_MAX_ARGUMENTS above on purpose: a *call*
+     * argument list only ever needs register-range bookkeeping (cheap to
+     * widen fully, see that constant's own comment), but a *declared*
+     * parameter list's name/type-set storage is baked directly into every
+     * DiamondFunction/DiamondInterfaceMethod struct -- and DiamondFunction
+     * is already documented (its own scope_locals field, below) as
+     * "already ~152KB, and there can be up to DIAMOND_MAX_FUNCTIONS of
+     * them" -- so this stays a deliberately modest fixed bump (16 -> 32)
+     * rather than matching DIAMOND_MAX_ARGUMENTS's full 255 and adding
+     * ~15KB to every function regardless of how many parameters it
+     * actually declares. A variadic function's *effective* argument count
+     * is unaffected by this cap either way -- see DIAMOND_MAX_ARGUMENTS. */
+    DIAMOND_MAX_DECLARED_PARAMETERS = 32,
     DIAMOND_MAX_METHODS = 256,
     DIAMOND_MAX_FIELDS = 64,
     DIAMOND_MAX_NAMESPACE_CONSTANTS = 128,
@@ -452,7 +476,7 @@ typedef struct DiamondMethod {
 typedef struct DiamondInterfaceMethod {
     char name[DIAMOND_MAX_FUNCTION_NAME];
     uint8_t arity;
-    uint16_t parameter_type_sets[16];
+    uint16_t parameter_type_sets[DIAMOND_MAX_DECLARED_PARAMETERS];
     uint16_t return_type_set;
 } DiamondInterfaceMethod;
 
@@ -628,11 +652,11 @@ typedef struct DiamondFunction {
     bool nested;
     uint8_t capture_count;
     uint16_t return_type_set;
-    uint16_t parameter_type_sets[16];
+    uint16_t parameter_type_sets[DIAMOND_MAX_DECLARED_PARAMETERS];
     /* Declared public parameter names. Dynamic keyword calls retain names in
      * bytecode and resolve them here after target selection. Hidden self
      * slots are deliberately excluded. */
-    char parameter_names[16][DIAMOND_MAX_FUNCTION_NAME];
+    char parameter_names[DIAMOND_MAX_DECLARED_PARAMETERS][DIAMOND_MAX_FUNCTION_NAME];
     char type_variables[8][DIAMOND_MAX_FUNCTION_NAME];
     uint8_t type_variable_count;
     bool uses_instance_state;
