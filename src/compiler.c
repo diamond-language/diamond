@@ -6090,6 +6090,85 @@ static void publish_array_push_return_type(Compiler *compiler,uint16_t result,
     if(set>=0)publish_known_type_set(compiler,result,(uint16_t)set);
 }
 
+/* Built-in collection methods have deliberately broad Callable signatures in
+ * core.di, but their runtime callback inputs are still determined by the
+ * receiver's nested graph. Publish that graph while compiling a trailing
+ * anonymous block so its parameters participate in ordinary local inference.
+ * This complements (rather than replaces) declared Callable context: user
+ * methods and class-owned collection wrappers continue through the declared
+ * signature path below. */
+static bool prepare_native_collection_block(Compiler *compiler,
+        int32_t receiver_set,DiamondSpan name) {
+    int32_t parameters[2]={-1,-1};size_t arity=0;
+    const int32_t array_elements=joined_collection_argument(compiler,
+        receiver_set,DIAMOND_TYPE_ARRAY,false);
+    const int32_t hash_keys=joined_collection_argument(compiler,
+        receiver_set,DIAMOND_TYPE_HASH,false);
+    const int32_t hash_values=joined_collection_argument(compiler,
+        receiver_set,DIAMOND_TYPE_HASH,true);
+    const bool each=name_equals(compiler,"each",name,false);
+    const bool one_element=each||name_equals(compiler,"each_until",name,false)||
+        name_equals(compiler,"map",name,false)||
+        name_equals(compiler,"flat_map",name,false)||
+        name_equals(compiler,"select",name,false)||
+        name_equals(compiler,"reject",name,false)||
+        name_equals(compiler,"sort_by",name,false)||
+        name_equals(compiler,"min_by",name,false)||
+        name_equals(compiler,"max_by",name,false)||
+        name_equals(compiler,"find",name,false)||
+        name_equals(compiler,"group_by",name,false)||
+        name_equals(compiler,"partition",name,false);
+    if(array_elements>=0&&one_element) {
+        parameters[0]=array_elements;arity=1;
+    } else if(array_elements>=0&&
+              name_equals(compiler,"each_with_index",name,false)) {
+        parameters[0]=array_elements;
+        const uint16_t integer=concrete_type_set(compiler,DIAMOND_TYPE_INT);
+        if(integer==DIAMOND_NO_TYPE_SET)return false;
+        parameters[1]=(int32_t)integer;arity=2;
+    } else if(hash_keys>=0&&hash_values>=0&&
+              (each||name_equals(compiler,"map",name,false)||
+               name_equals(compiler,"select",name,false)||
+               name_equals(compiler,"reject",name,false))) {
+        parameters[0]=hash_keys;parameters[1]=hash_values;arity=2;
+    } else if(hash_keys>=0&&hash_values>=0&&
+              name_equals(compiler,"map_values",name,false)) {
+        parameters[0]=hash_values;arity=1;
+    } else if(hash_keys>=0&&hash_values>=0&&
+              name_equals(compiler,"each_until",name,false)) {
+        parameters[0]=hash_values;arity=1;
+    } else return false;
+    compiler->has_contextual_block_types=true;
+    compiler->contextual_block_arity=(uint8_t)arity;
+    compiler->contextual_block_return_set=-1;
+    for(size_t index=0;index<arity;index++) {
+        compiler->contextual_block_type_sets[index]=parameters[index];
+        compiler->contextual_block_types[index]=TYPE_UNKNOWN;
+        const DiamondTypeSet *set=&compiler->function->type_sets[
+            (size_t)parameters[index]];
+        if(set->count==1&&set->members[0].id<DIAMOND_TYPE_VARIABLE_BASE)
+            compiler->contextual_block_types[index]=set->members[0].id;
+    }
+    return true;
+}
+
+static uint16_t compile_instance_contextual_block(Compiler *compiler,
+        const DiamondFunction *target,size_t parameter_index,
+        const uint16_t *type_arguments,size_t type_argument_count,
+        int32_t receiver_set,DiamondSpan name) {
+    if(target!=nullptr)return compile_contextual_typed_block(compiler,target,
+        parameter_index,type_arguments,type_argument_count);
+    compiler->has_contextual_block_types=false;
+    compiler->contextual_block_arity=0;
+    compiler->contextual_block_return_set=-1;
+    (void)prepare_native_collection_block(compiler,receiver_set,name);
+    const uint16_t block=compile_block(compiler);
+    compiler->has_contextual_block_types=false;
+    compiler->contextual_block_arity=0;
+    compiler->contextual_block_return_set=-1;
+    return block;
+}
+
 static void publish_instance_return_type(Compiler *compiler,uint16_t reg,
         int32_t receiver_set_index,DiamondSpan name,
         const DiamondFunction *matching_target,const uint16_t *bindings,
@@ -6368,10 +6447,10 @@ static uint16_t parse_invoke(Compiler *compiler, uint16_t receiver) {
                     keyword_values[index],0,2);
                 keyword_values[index]=snapshot;
             }
-            block=compile_contextual_typed_block(compiler,contextual_target,
+            block=compile_instance_contextual_block(compiler,contextual_target,
                 contextual_target==nullptr||contextual_target->arity<=1?0:
                     contextual_target->arity-2,resolved_arguments,
-                resolved_count);
+                resolved_count,receiver_set_index,name);
             has_block=true;
         }
         const uint16_t result=emit_invoke_keywords(compiler,receiver,name,positional,
@@ -6418,11 +6497,11 @@ static uint16_t parse_invoke(Compiler *compiler, uint16_t receiver) {
             emit_instruction(compiler,DIAMOND_OP_MOVE,spread_snapshot,
                 spread,0,2);
             spread=spread_snapshot;
-            const uint16_t block=compile_contextual_typed_block(compiler,
+            const uint16_t block=compile_instance_contextual_block(compiler,
                 contextual_target,
                     contextual_target==nullptr||contextual_target->arity<=1?0:
                     contextual_target->arity-2,resolved_arguments,
-                resolved_count);
+                resolved_count,receiver_set_index,name);
             if(contextual_target!=nullptr) {
                 const uint16_t result=emit_invoke_keywords(compiler,receiver,name,spread,
                     nullptr,nullptr,0,type_arguments,type_argument_count,true,
@@ -6493,11 +6572,11 @@ static uint16_t parse_invoke(Compiler *compiler, uint16_t receiver) {
             emit_instruction(compiler,DIAMOND_OP_MOVE,snapshot,args[i],0,2);
             args[i]=snapshot;
         }
-        const uint16_t block=compile_contextual_typed_block(compiler,
+        const uint16_t block=compile_instance_contextual_block(compiler,
             contextual_target,
             contextual_target==nullptr||contextual_target->arity<=1?0:
                 contextual_target->arity-2,resolved_arguments,
-            resolved_count);
+            resolved_count,receiver_set_index,name);
         const size_t block_slot=
             contextual_target==nullptr||contextual_target->arity<=1?0:
                 (size_t)contextual_target->arity-2;

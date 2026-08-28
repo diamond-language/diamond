@@ -1027,6 +1027,19 @@ def nested_mutation()
     items.push(value: \"nested\")
   end
   items
+end
+def callback_context()
+  [42].each() do |value|
+    value
+  end
+  [\"item\"].each_with_index() do |value, index|
+    value
+    index
+  end
+  {\"answer\": 42}.each() do |key, value|
+    key
+    value
+  end
 end'
 send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$collection_mutation_uri"'","text":"'"$collection_mutation_source"'"}}}'
 read_message >/dev/null
@@ -1071,9 +1084,39 @@ response="$(read_message)"
 [[ "$response" == *'"value":"Hash[String | Symbol, Int | String]"'* ]]
 count=$((count + 1))
 
+send '{"jsonrpc":"2.0","id":202,"method":"textDocument/hover","params":{"textDocument":{"uri":"'"$collection_mutation_uri"'"},"position":{"line":39,"character":3}}}'
+response="$(read_message)"
+[[ "$response" == *'"value":"Array[Int]"'* ]]
+count=$((count + 1))
+
 send '{"jsonrpc":"2.0","id":203,"method":"textDocument/hover","params":{"textDocument":{"uri":"'"$collection_mutation_uri"'"},"position":{"line":47,"character":3}}}'
 response="$(read_message)"
 [[ "$response" == *'"value":"Array[Int | String]"'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","id":204,"method":"textDocument/hover","params":{"textDocument":{"uri":"'"$collection_mutation_uri"'"},"position":{"line":51,"character":5}}}'
+response="$(read_message)"
+[[ "$response" == *'"value":"Int"'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","id":205,"method":"textDocument/hover","params":{"textDocument":{"uri":"'"$collection_mutation_uri"'"},"position":{"line":54,"character":5}}}'
+response="$(read_message)"
+[[ "$response" == *'"value":"String"'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","id":206,"method":"textDocument/hover","params":{"textDocument":{"uri":"'"$collection_mutation_uri"'"},"position":{"line":55,"character":5}}}'
+response="$(read_message)"
+[[ "$response" == *'"value":"Int"'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","id":207,"method":"textDocument/hover","params":{"textDocument":{"uri":"'"$collection_mutation_uri"'"},"position":{"line":58,"character":5}}}'
+response="$(read_message)"
+[[ "$response" == *'"value":"String"'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","id":208,"method":"textDocument/hover","params":{"textDocument":{"uri":"'"$collection_mutation_uri"'"},"position":{"line":59,"character":5}}}'
+response="$(read_message)"
+[[ "$response" == *'"value":"Int"'* ]]
 count=$((count + 1))
 
 send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$collection_mutation_uri"'"}}}'

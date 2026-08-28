@@ -26,6 +26,9 @@
 
 ## Language
 
+- Derived native collection trailing-block parameter graphs from the receiver.
+  Array callbacks receive element types, `each_with_index` receives an `Int`
+  index, and Hash callbacks receive key/value types, including LSP hover facts.
 - Seeded anonymous-block and nested-definition capture Cells with cloned outer
   collection graphs, then conservatively propagated compiled mutation results
   back into the enclosing function. Downstream typed calls now eliminate their

@@ -406,9 +406,10 @@ be inferred from one caller register.
 Mutation inside anonymous blocks and nested definitions now crosses compiler
 frame boundaries. Capture graphs are cloned into the nested table and widened
 post-states are cloned back, allowing downstream typed calls to elide guards.
-Nested-definition LSP hover exposes the result; anonymous-block outer hover
-timeline publication remains queued even though downstream compilation already
-consumes the propagated graph.
+Native collection callbacks now derive anonymous-block parameters from Array
+element, indexed element, and Hash key/value graphs. Anonymous-block mutation
+writeback therefore appears in the enclosing LSP timeline as well as downstream
+compilation.
 
 Expected collection graphs now recurse through nested Array and Hash literals.
 Array elements and Hash keys/values compile against their respective declared

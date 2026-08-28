@@ -355,6 +355,11 @@ its materialized capture Cells. After the body is compiled, mutated graphs are
 cloned back into the outer function. Mutation widening always retains the old
 arms, so applying this possible post-state before a closure is invoked remains
 conservative when control flow later skips the invocation entirely.
+Native collection callbacks additionally derive anonymous-block parameter
+graphs from their receiver. Array callbacks receive the element graph,
+`each_with_index` adds an `Int` index, and Hash callbacks receive key/value
+graphs. This metadata affects compilation and tooling only; runtime dispatch
+and callback arity checks are unchanged.
 
 Functions and methods may declare scoped type variables after their names, as
 in `def pair[K, V](key: K, value: V) -> Hash[K, V]`. Each compiled function
