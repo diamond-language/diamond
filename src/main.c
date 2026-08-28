@@ -11,7 +11,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
-static constexpr char DIAMOND_VERSION[] = "0.1.0-dev";
+static constexpr char DIAMOND_VERSION[] = "0.1.0";
 
 static char *read_file(const char *path) {
     FILE *file = fopen(path, "rb");
