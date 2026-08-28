@@ -387,22 +387,26 @@ overloaded dispatch remain dynamic.
 Collection mutation facts now widen across fixed/keyword `push`, indexed
 assignment, and compound indexed assignment. Empty local collections acquire
 their first nested graph from a known write, and direct lexical receivers expose
-each widened state positionally to the LSP. Alias-wide invalidation and nested
-receiver writeback remain queued because the compiler does not maintain an
-object-identity graph between registers.
+each widened state positionally to the LSP. Direct lexical aliases now share a
+stable object identity, so mutation and invalidation facts propagate across
+aliases while reassignment detaches the rebound name. Dynamically recovered
+nested receiver writeback and control-flow joins between different alias
+identities remain queued.
 Unknown and over-capacity writes now degrade direct receiver facts to an
 unparameterized Array or Hash instead of retaining stale nested unions. The LSP
-reports no structural local hover after that invalidation. Alias-wide handling
-remains the separate object-identity problem described above.
+reports no structural local hover after that invalidation, including every
+tracked direct alias.
 Native collection relay classification is now consolidated into one 37-method
 contract table. Receiver, argument, keyword, callback, and mutation phases share
 those categories. An explicit eight-to-nine-arm mutation regression verifies
-that the bounded union ceiling clears the nested fact.
+that the bounded union ceiling clears the nested fact. The core suite audits
+table uniqueness, enum coverage, and corresponding VM dispatch names; negative
+hover probes guard deliberately dynamic relays.
 Direct boxed-local mutation propagation is now implemented. The parser retains
 the source Cell register for fixed/keyword `push`, indexed assignment, and
 compound indexed assignment, then records the widened graph there. Mutation
-through a separately named alias remains an object-identity problem that cannot
-be inferred from one caller register.
+through a separately named direct lexical alias now updates every binding in
+that identity group.
 Mutation inside anonymous blocks and nested definitions now crosses compiler
 frame boundaries. Capture graphs are cloned into the nested table and widened
 post-states are cloned back, allowing downstream typed calls to elide guards.

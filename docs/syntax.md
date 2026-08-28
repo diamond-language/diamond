@@ -624,6 +624,8 @@ nested closure; later reads of that captured local retain the updated graph.
 Mutations written inside anonymous blocks or nested definitions also widen the
 enclosing local conservatively, whether or not later control flow invokes the
 closure.
+Direct lexical aliases of an Array or Hash share mutation facts. Reassigning
+one name detaches it from aliases that still reference the previous object.
 Native collection blocks infer their parameter graphs from the receiver:
 Array element callbacks, `each_with_index` element/index callbacks, and Hash
 key/value callbacks expose those types to the body and editor hover.

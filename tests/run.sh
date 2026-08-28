@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+bash tests/collection_relay_contracts.sh
+
 diamond=./build/diamond
 diamond_abs="$(realpath "$diamond")"
 run_cases_abs="$(realpath ./build/run_cases)"

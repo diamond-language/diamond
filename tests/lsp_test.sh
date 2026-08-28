@@ -960,6 +960,8 @@ collection_scalar_source='def inspect(arrays: Array[Int] | Array[String], mapper
   float_sum
   mixed_sum = [1, 2.5].sum()
   mixed_sum
+  dynamic_sum = [\"not numeric\"].sum()
+  dynamic_sum
 end'
 send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$collection_scalar_uri"'","text":"'"$collection_scalar_source"'"}}}'
 read_message >/dev/null
@@ -997,6 +999,11 @@ count=$((count + 1))
 send '{"jsonrpc":"2.0","id":211,"method":"textDocument/hover","params":{"textDocument":{"uri":"'"$collection_scalar_uri"'"},"position":{"line":16,"character":4}}}'
 response="$(read_message)"
 [[ "$response" == *'"value":"Int | Float"'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","id":216,"method":"textDocument/hover","params":{"textDocument":{"uri":"'"$collection_scalar_uri"'"},"position":{"line":18,"character":4}}}'
+response="$(read_message)"
+[[ "$response" == *'"result":null'* ]]
 count=$((count + 1))
 
 send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$collection_scalar_uri"'"}}}'
@@ -1066,6 +1073,25 @@ def callback_context()
     key
     value
   end
+end
+def alias_context()
+  items = []
+  items_alias = items
+  items_alias.push(42)
+  items
+  items_alias
+  entries = {}
+  entries_alias = entries
+  entries_alias[\"answer\"] = 42
+  entries
+  entries_alias
+end
+def alias_invalidation()
+  items = [42]
+  items_alias = items
+  items_alias.push(dynamic(\"opaque\"))
+  items
+  items_alias
 end'
 send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$collection_mutation_uri"'","text":"'"$collection_mutation_source"'"}}}'
 read_message >/dev/null
@@ -1143,6 +1169,36 @@ count=$((count + 1))
 send '{"jsonrpc":"2.0","id":208,"method":"textDocument/hover","params":{"textDocument":{"uri":"'"$collection_mutation_uri"'"},"position":{"line":59,"character":5}}}'
 response="$(read_message)"
 [[ "$response" == *'"value":"Int"'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","id":212,"method":"textDocument/hover","params":{"textDocument":{"uri":"'"$collection_mutation_uri"'"},"position":{"line":66,"character":3}}}'
+response="$(read_message)"
+[[ "$response" == *'"value":"Array[Int]"'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","id":213,"method":"textDocument/hover","params":{"textDocument":{"uri":"'"$collection_mutation_uri"'"},"position":{"line":67,"character":3}}}'
+response="$(read_message)"
+[[ "$response" == *'"value":"Array[Int]"'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","id":214,"method":"textDocument/hover","params":{"textDocument":{"uri":"'"$collection_mutation_uri"'"},"position":{"line":71,"character":3}}}'
+response="$(read_message)"
+[[ "$response" == *'"value":"Hash[String, Int]"'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","id":215,"method":"textDocument/hover","params":{"textDocument":{"uri":"'"$collection_mutation_uri"'"},"position":{"line":72,"character":3}}}'
+response="$(read_message)"
+[[ "$response" == *'"value":"Hash[String, Int]"'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","id":217,"method":"textDocument/hover","params":{"textDocument":{"uri":"'"$collection_mutation_uri"'"},"position":{"line":78,"character":3}}}'
+response="$(read_message)"
+[[ "$response" == *'"result":null'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","id":218,"method":"textDocument/hover","params":{"textDocument":{"uri":"'"$collection_mutation_uri"'"},"position":{"line":79,"character":3}}}'
+response="$(read_message)"
+[[ "$response" == *'"result":null'* ]]
 count=$((count + 1))
 
 send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$collection_mutation_uri"'"}}}'

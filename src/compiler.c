@@ -28,6 +28,7 @@ typedef struct Local {
     DiamondSpan name;
     uint16_t reg;
     bool captured;
+    uint32_t alias_identity;
 } Local;
 
 typedef struct LoopContext {
@@ -78,6 +79,7 @@ typedef struct Compiler {
     DiamondDiagnostic *diagnostic;
     Local locals[DIAMOND_MAX_LOCALS];
     size_t local_count;
+    uint32_t next_alias_identity;
     uint16_t next_register;
     int current_class;
     int current_module;
@@ -6034,6 +6036,48 @@ static void publish_collection_keyword_return_type(Compiler *compiler,
         method_name,ordered,wanted_count);
 }
 
+static bool register_holds_collection(const Compiler *compiler,uint16_t reg) {
+    return compiler->known_types[reg]==DIAMOND_TYPE_ARRAY||
+        compiler->known_types[reg]==DIAMOND_TYPE_HASH;
+}
+
+static uint32_t fresh_alias_identity(Compiler *compiler) {
+    compiler->next_alias_identity++;
+    if(compiler->next_alias_identity==0)compiler->next_alias_identity++;
+    return compiler->next_alias_identity;
+}
+
+static uint32_t alias_identity_for_value(Compiler *compiler,uint16_t reg) {
+    if(!register_holds_collection(compiler,reg))return 0;
+    for(size_t index=compiler->local_count;index>0;index--)
+        if(compiler->locals[index-1].reg==reg) {
+            if(compiler->locals[index-1].alias_identity==0)
+                compiler->locals[index-1].alias_identity=
+                    fresh_alias_identity(compiler);
+            return compiler->locals[index-1].alias_identity;
+        }
+    return fresh_alias_identity(compiler);
+}
+
+static void propagate_collection_alias_fact(Compiler *compiler,uint16_t reg) {
+    uint32_t identity=0;
+    for(size_t index=compiler->local_count;index>0;index--)
+        if(compiler->locals[index-1].reg==reg) {
+            if(compiler->locals[index-1].alias_identity==0)
+                compiler->locals[index-1].alias_identity=
+                    fresh_alias_identity(compiler);
+            identity=compiler->locals[index-1].alias_identity;break;
+        }
+    if(identity==0)return;
+    for(size_t index=0;index<compiler->local_count;index++) {
+        Local *local=&compiler->locals[index];
+        if(local->alias_identity!=identity||local->reg==reg)continue;
+        compiler->known_types[local->reg]=compiler->known_types[reg];
+        compiler->known_type_sets[local->reg]=compiler->known_type_sets[reg];
+        record_scope_type_fact(compiler,local->reg,compiler->current.span.start);
+    }
+}
+
 static void record_mutated_collection_fact(Compiler *compiler,uint16_t reg,
         uint8_t collection_type,int32_t first,int32_t second) {
     record_collection_type_set(compiler,reg,collection_type,first,second);
@@ -6042,6 +6086,7 @@ static void record_mutated_collection_fact(Compiler *compiler,uint16_t reg,
             record_scope_type_fact(compiler,reg,compiler->current.span.start);
             break;
         }
+    propagate_collection_alias_fact(compiler,reg);
 }
 
 static void clear_mutated_collection_fact(Compiler *compiler,uint16_t reg,
@@ -6053,6 +6098,7 @@ static void clear_mutated_collection_fact(Compiler *compiler,uint16_t reg,
             record_scope_type_fact(compiler,reg,compiler->current.span.start);
             break;
         }
+    propagate_collection_alias_fact(compiler,reg);
 }
 
 static void update_collection_mutation_type(Compiler *compiler,uint16_t receiver,
@@ -6376,7 +6422,7 @@ static uint16_t parse_invoke(Compiler *compiler, uint16_t receiver) {
     uint16_t mutation_receiver=receiver;
     if(compiler->previous.kind==DIAMOND_TOKEN_IDENTIFIER) {
         const int source_local=find_local(compiler,compiler->previous.span);
-        if(source_local>=0&&compiler->locals[(size_t)source_local].captured)
+        if(source_local>=0)
             mutation_receiver=compiler->locals[(size_t)source_local].reg;
     }
     const int32_t receiver_set_index=compiler->known_type_sets[receiver];
@@ -9797,7 +9843,8 @@ static uint16_t compile_block(Compiler *compiler) {
             const uint16_t cell=allocate_register(compiler);
             emit_instruction(compiler,DIAMOND_OP_GET_CAPTURE_CELL,cell,(uint8_t)i,0,2);
             compiler->locals[compiler->local_count++]=(Local){
-                .name=compiler->enclosing_locals[i].name,.reg=cell,.captured=true};
+                .name=compiler->enclosing_locals[i].name,.reg=cell,.captured=true,
+                .alias_identity=compiler->enclosing_locals[i].alias_identity};
             captured_fact_registers[i]=cell;
             const uint16_t source=compiler->enclosing_locals[i].reg;
             if(source<outer_next_register) {
@@ -10624,7 +10671,8 @@ static uint16_t compile_definition(Compiler *compiler, bool captures_self) {
             const uint16_t cell=allocate_register(compiler);
             emit_instruction(compiler,DIAMOND_OP_GET_CAPTURE_CELL,cell,(uint8_t)i,0,2);
             compiler->locals[compiler->local_count++]=(Local){
-                .name=compiler->enclosing_locals[i].name,.reg=cell,.captured=true};
+                .name=compiler->enclosing_locals[i].name,.reg=cell,.captured=true,
+                .alias_identity=compiler->enclosing_locals[i].alias_identity};
             definition_captured_fact_registers[i]=cell;
             const uint16_t source=compiler->enclosing_locals[i].reg;
             if(source<outer_next_register) {
@@ -12303,6 +12351,8 @@ static uint16_t compile_assignment_store(Compiler *compiler, DiamondSpan name,
         return value;
     }
     int local = find_local(compiler, name);
+    const uint32_t value_alias_identity=
+        alias_identity_for_value(compiler,value);
     if(local>=0 && compiler->locals[(size_t)local].captured) {
         /* See parse_identifier's own BOX_LOCAL re-emission for why this
          * defensive re-box is needed: `captured` doesn't imply this
@@ -12314,6 +12364,7 @@ static uint16_t compile_assignment_store(Compiler *compiler, DiamondSpan name,
         const uint16_t local_register=compiler->locals[(size_t)local].reg;
         compiler->known_types[local_register]=compiler->known_types[value];
         compiler->known_type_sets[local_register]=compiler->known_type_sets[value];
+        compiler->locals[(size_t)local].alias_identity=value_alias_identity;
         record_scope_type_fact(compiler,local_register,compiler->current.span.start);
         return value;
     }
@@ -12337,6 +12388,10 @@ static uint16_t compile_assignment_store(Compiler *compiler, DiamondSpan name,
     emit_instruction(compiler, DIAMOND_OP_MOVE, destination, value, 0, 2);
     compiler->known_types[destination]=compiler->known_types[value];
     compiler->known_type_sets[destination]=compiler->known_type_sets[value];
+    for(size_t index=compiler->local_count;index>0;index--)
+        if(compiler->locals[index-1].reg==destination) {
+            compiler->locals[index-1].alias_identity=value_alias_identity;break;
+        }
     record_scope_type_fact(compiler,destination,compiler->current.span.start);
     return destination;
 }

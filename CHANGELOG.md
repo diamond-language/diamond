@@ -26,6 +26,11 @@
 
 ## Language
 
+- Tracked stable lexical object identities across direct Array/Hash aliases.
+  Mutations and invalidations now update every live alias, including aliases
+  captured across anonymous-block compiler frames; rebinding detaches identity.
+- Added a core-suite audit for duplicate, unclassified, or VM-missing collection
+  relay contracts, plus negative hover coverage for dynamic arithmetic relays.
 - Inferred `Array#sum` results for closed numeric element graphs. Int-only
   arrays remain `Int`; arrays admitting Float produce `Int | Float` to retain
   the empty-array integer-zero path.

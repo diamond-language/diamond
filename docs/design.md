@@ -365,6 +365,14 @@ built-in addition. An Int-only element graph returns Int. A graph containing
 Float returns `Int | Float`, retaining both the empty result and non-empty
 promotion path. Any overloadable or otherwise dynamic element arm disables the
 relay.
+Direct lexical Array/Hash assignments share a stable compiler-only object
+identity. A mutation fact recorded through any binding is copied to every live
+binding in that identity group. Reassignment installs the right-hand value's
+identity and leaves aliases of the previous object detached. These identities
+travel with captured local records, requiring no runtime alias metadata.
+This first identity layer is straight-line and lexical. Joining distinct alias
+identities assigned on separate control-flow arms remains conservative roadmap
+work rather than guessing that either object is uniquely selected.
 
 Functions and methods may declare scoped type variables after their names, as
 in `def pair[K, V](key: K, value: V) -> Hash[K, V]`. Each compiled function
