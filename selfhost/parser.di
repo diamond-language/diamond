@@ -116,19 +116,21 @@ module Opcode
   MATH_UNARY = 87
   MATH_BINARY = 88
   PROGRAM_BUILDER_NEW = 89
-  # 90-97 are THREAD_NEW, GET_CVAR, SET_CVAR, SQLITE3_OPEN,
-  # CHECK_DESTRUCTURE_COUNT, TIME_MONOTONIC, TIME_NOW, and TIME_AT in
-  # src/vm.h's DiamondOpCode enum -- none of them are constructs this
-  # self-hosted parser emits (Thread, class variables, SQLite3,
-  # ProgramBuilder-internal opcodes, and Time literals aren't part of its
-  # supported grammar), so they have no entry of their own here, but
-  # SHIFT_LEFT below had to account for that same 8-opcode gap to match
-  # the real enum value -- same class of bug the comment above
-  # (REGEXP_NEW's own gap) already flags. Confirmed against the real
-  # value with a throwaway C probe (printf("%d",
+  # 90 (THREAD_NEW), 93-97 (SQLITE3_OPEN, CHECK_DESTRUCTURE_COUNT,
+  # TIME_MONOTONIC, TIME_NOW, TIME_AT) in src/vm.h's DiamondOpCode enum
+  # have no entry of their own here -- none of them are constructs this
+  # self-hosted parser emits (Thread, SQLite3, ProgramBuilder-internal
+  # opcodes, and Time literals aren't part of its supported grammar).
+  # 91-92 (GET_CVAR/SET_CVAR) *are* named below: class variables.
+  # SHIFT_LEFT below still has to account for the full original 8-opcode
+  # gap (90-97) to match the real enum value -- same class of bug the
+  # comment above (REGEXP_NEW's own gap) already flags. Confirmed
+  # against the real value with a throwaway C probe (printf("%d",
   # (int)DIAMOND_OP_SHIFT_LEFT)) rather than counted by hand a second
   # time, after counting by hand got it wrong once already (missed
   # SQLITE3_OPEN, landed on 97 instead of 98).
+  GET_CVAR = 91
+  SET_CVAR = 92
   SHIFT_LEFT = 98
   # 99-102 are PROCESS_RUN, DEBUGGER, ARGV, and ENV in src/vm.h's
   # DiamondOpCode enum -- same story again: none are constructs this
@@ -3173,7 +3175,8 @@ class Parser
   end
 
   def assignment_ahead?()
-    return false if @current.kind() != :identifier && @current.kind() != :instance_variable
+    return false if @current.kind() != :identifier && @current.kind() != :instance_variable &&
+      @current.kind() != :class_variable
     lookahead = @lexer.clone()
     lookahead.next_token().kind() == :equal
   end
@@ -3184,15 +3187,13 @@ class Parser
       kind == :or_or_equal || kind == :and_and_equal
   end
 
-  # Same shape as assignment_ahead? above (only identifier/@ivar targets
-  # -- indexed (arr[i] += 1) compound assignment is a deliberate v1 scope
-  # cut, matching the native compiler's own compound_assignment_ahead.
-  # @@cvar targets aren't recognized either, but *not* as a matching
-  # choice on this feature's part -- this parser has no class-variable
-  # support at all yet, in assignment_ahead? above or anywhere else, so
-  # there's nothing "@@cvar += 1" could mean here regardless).
+  # Same shape as assignment_ahead? above (identifier/@ivar/@@cvar
+  # targets only -- indexed (arr[i] += 1) compound assignment is a
+  # deliberate v1 scope cut, matching the native compiler's own
+  # compound_assignment_ahead).
   def compound_assignment_ahead?()
-    return false if @current.kind() != :identifier && @current.kind() != :instance_variable
+    return false if @current.kind() != :identifier && @current.kind() != :instance_variable &&
+      @current.kind() != :class_variable
     lookahead = @lexer.clone()
     self.compound_assignment_token?(lookahead.next_token().kind())
   end
@@ -3237,8 +3238,9 @@ class Parser
     value
   end
 
-  def compile_assignment_store(token, instance_variable, value)
+  def compile_assignment_store(token, instance_variable, class_variable, value)
     return self.compile_ivar_write(token, value) if instance_variable
+    return self.compile_cvar_write(token, value) if class_variable
     name = self.token_text(token)
     existing = self.find_local(name)
     if existing != nil && existing[2]
@@ -3262,26 +3264,31 @@ class Parser
 
   def compile_assignment()
     instance_variable = @current.kind() == :instance_variable
+    class_variable = @current.kind() == :class_variable
     token = @current
     self.advance_token()
     self.advance_token()
     value = self.parse_expression()
-    self.compile_assignment_store(token, instance_variable, value)
+    self.compile_assignment_store(token, instance_variable, class_variable, value)
   end
 
   # `x += y`/.../`x ||= y`/`x &&= y` -- see compiler.c's compile_compound_
   # assignment for the full rationale; this mirrors it exactly, just
   # built from this parser's own read/write primitives (read_local/
-  # compile_ivar_read for the read side, compile_assignment_store for
-  # the write side) instead of a shared parse_prefix dispatch, since
-  # this parser doesn't have one function playing that combined role.
+  # compile_ivar_read/compile_cvar_read for the read side,
+  # compile_assignment_store for the write side) instead of a shared
+  # parse_prefix dispatch, since this parser doesn't have one function
+  # playing that combined role.
   def compile_compound_assignment()
     instance_variable = @current.kind() == :instance_variable
+    class_variable = @current.kind() == :class_variable
     token = @current
     name = self.token_text(token)
     self.advance_token()
     left = if instance_variable
       self.compile_ivar_read(token)
+    elsif class_variable
+      self.compile_cvar_read(token)
     else
       existing = self.find_local(name)
       if existing == nil
@@ -3305,7 +3312,7 @@ class Parser
       right = self.parse_expression()
       self.emit_instruction2(Opcode::MOVE, destination, right)
       self.patch_jump(end_jump, @code_count)
-      return self.compile_assignment_store(token, instance_variable, destination)
+      return self.compile_assignment_store(token, instance_variable, class_variable, destination)
     end
     plain_kind = if op_kind == :plus_equal
       :plus
@@ -3323,7 +3330,7 @@ class Parser
     self.emit_instruction3(self.binary_opcode(plain_kind), destination, left, right)
     result_fact = self.binary_result_fact(plain_kind, left, right)
     self.set_type_fact(destination, result_fact) if result_fact != nil
-    self.compile_assignment_store(token, instance_variable, destination)
+    self.compile_assignment_store(token, instance_variable, class_variable, destination)
   end
 
   def compile_ivar_write(token, value)
@@ -3362,6 +3369,39 @@ class Parser
       field_index = @builder.declare_field(@current_class_index, field_name)
       self.emit_instruction3(Opcode::GET_IVAR, destination, 0, field_index)
     end
+    destination
+  end
+
+  # Class variables are class-only, never module-level (confirmed
+  # directly against the native compiler: `class_variable_index` fails
+  # "class variable used outside a class" whenever current_class < 0,
+  # with no module_field-style alternative the way instance variables
+  # have) -- so unlike compile_ivar_read/compile_ivar_write above, no
+  # module branch here. GET_CVAR/SET_CVAR take (dest_or_value,
+  # current_class_index, slot), the slot coming from the new
+  # ProgramBuilder#declare_class_variable bridge (mirrors #declare_field).
+  def compile_cvar_write(token, value)
+    if @current_class_index == nil
+      self.fail("class variable used outside a class")
+      return 0
+    end
+    variable_text = self.token_text(token)
+    variable_name = variable_text.slice(2, variable_text.length() - 2)
+    slot = @builder.declare_class_variable(@current_class_index, variable_name)
+    self.emit_instruction3(Opcode::SET_CVAR, @current_class_index, slot, value)
+    value
+  end
+
+  def compile_cvar_read(token)
+    if @current_class_index == nil
+      self.fail("class variable used outside a class")
+      return 0
+    end
+    variable_text = self.token_text(token)
+    variable_name = variable_text.slice(2, variable_text.length() - 2)
+    slot = @builder.declare_class_variable(@current_class_index, variable_name)
+    destination = self.allocate_register()
+    self.emit_instruction3(Opcode::GET_CVAR, destination, @current_class_index, slot)
     destination
   end
 
@@ -4219,6 +4259,9 @@ class Parser
     end
     if kind == :instance_variable
       return self.compile_ivar_read(@previous)
+    end
+    if kind == :class_variable
+      return self.compile_cvar_read(@previous)
     end
     if kind == :minus
       operand = self.parse_precedence(Precedence::PREFIX)
