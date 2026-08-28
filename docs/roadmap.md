@@ -161,48 +161,100 @@ The real remaining work is entirely REPL-side:
   `completion_compute` deliberately doesn't do that filtering itself,
   since every LSP client already does it.
 
-## Self-hosting: minimal-compat maintenance mode
+## Self-hosting: resumed, at parity with the differential corpus
 
 The Diamond compiler can compile and run itself (self-parse and self-run
-bootstrap, `tests/self_host_smoke.sh`), but full parity is intentionally
-deferred. The native language is still gaining features, so maintaining a
-second hand-ported frontend in lockstep would repeatedly duplicate work.
-Self-hosting will resume after the native surface has settled, allowing the
-self-hosted compiler to adopt the accumulated syntax, diagnostic, and opcode
-features in one deliberate consolidation pass.
+bootstrap, `tests/self_host_smoke.sh`), and as of this pass the full
+differential corpus (`tests/lexer_diff.sh` + `tests/parser_diff.sh`,
+together `make test-self-host`) passes cleanly: 1244 lexer cases, 253
+parser positive cases, 126 parser error cases, and 22 one-off differential
+scenarios (require-depth, source-map, interpolation, `redefine_method`,
+...) -- 0 failures, full run in ~3.5 minutes.
 
-While paused:
+This pass started from a re-investigation rather than trusting the
+previous "known gaps" list at face value, and found a materially
+different picture:
 
-- forward-reference gaps in the self-hosted frontend may require declaration
-  ordering that the native compiler does not. New prelude types should retain
-  bootstrap-compatible ordering for now; implementing parity immediately is
-  deferred so it can arrive with the planned consolidated language-feature
-  adoption rather than as another isolated compatibility patch;
-- `make test-all` runs only the two bootstrap smoke checks (self-parse,
-  self-run) -- enough to know the self-hosted frontend hasn't gone
-  completely stale, not full parity coverage;
-- the exhaustive differential corpus (`tests/lexer_diff.sh`,
-  `tests/parser_diff.sh`, together `make test-self-host`, ~1400 cases plus
-  one-off scenarios) is opt-in/periodic rather than run on every push -- it
-  used to dominate `make test-all`'s wall time (as much as ~27 of ~43
-  minutes on CI) for a reason unrelated to test-harness inefficiency: the
-  self-hosted parser's own per-case cost is dominated by re-parsing all of
-  `lib/core.di` through the interpreter every time (confirmed by profiling
-  `ProgramBuilder#run` directly -- verify+execute there is ~1ms; the cost is
-  entirely in `parser.compile()` itself), which is inherent to running an
-  interpreter-implemented parser one VM level deep, not something a batching
-  fix resolves;
-- known parity gaps (class-variable syntax and semantics still missing from
-  parts of the self-hosted parser, hand-maintained opcode-number mirrors
-  instead of one generated source of truth, newer native syntax/diagnostics
-  the self-hosted side hasn't picked up) are left as known gaps rather than
-  active work;
-- the internal `ProgramBuilder` API remains explicitly unstable, as before.
+- **A real, previously-undocumented segfault**, not a documented gap:
+  `ProgramBuilder#run` never set a newly-declared interface's
+  `type_sets` pointer (every native compile does, immediately at
+  declaration and again in a post-compile finalization pass -- see
+  `src/compiler.c`'s `diamond_compile`), leaving it null. Any later
+  interface-satisfaction check against a *typed* interface method
+  (`x is SomeInterface` where the interface declares `def m(v: Int)`)
+  dereferenced it and crashed the whole self-hosted pipeline -- silently
+  capping what the differential corpus could even attempt, since a
+  crash mid-batch (`selfhost/parser_positive_suite.di`'s `rescue
+  error: StandardError` can't catch a SIGSEGV) killed every case after
+  it. Fixed in `program_builder_run_helper` (`src/vm.c`) by mirroring
+  the native finalization pass. Along the way, `ProgramBuilder
+  #declare_interface_method`'s own arity/parameter-count bound was
+  found still hardcoded to 16, left over from before the argument-limit
+  work raised `DIAMOND_MAX_DECLARED_PARAMETERS` to 32 (the struct field
+  itself was already sized correctly) -- fixed alongside it.
+- **The lexer differential failures were never a self-hosting gap at
+  all**: `tests/lexer_dump.c` (a native C reference-token-dumper tool)
+  was missing a `case` for `DIAMOND_TOKEN_AMPERSAND`, printing
+  `<unknown>` for every `&`/`&block` -- `selfhost/lexer.di` itself
+  already lexed it correctly. One-line fix, unrelated to `selfhost/`.
+- **Class-variable (`@@name`) support was a real, cleanly-scoped gap**,
+  now closed: a new `ProgramBuilder#declare_class_variable` bridge
+  (mirroring `#declare_field`) plus `compile_cvar_read`/
+  `compile_cvar_write` in `selfhost/parser.di` (mirroring the existing
+  instance-variable path), emitting the already-reserved `GET_CVAR`/
+  `SET_CVAR` opcodes. Confirmed via a native-vs-self-hosted comparison
+  that class variables are class-only (never module-level) and can
+  only be read/written from inside a method, exactly like instance
+  variables -- no class-body-top-level declaration form exists on
+  either side, so no change was needed there.
+- **The opcode mirror is currently in sync** (verified byte-for-byte
+  against `src/vm.h`'s `DiamondOpCode` enum), and the 68 native-compiler
+  commits since the previous self-hosting pass turned out to add *zero*
+  new opcodes -- the large majority were pure compile-time type-
+  inference/LSP-hover machinery with no self-hosting relevance at all.
+- **Two genuine infinite loops in the native compiler itself**, unrelated
+  to self-hosting but only found because running the differential error
+  corpus (`tests/parser_error_cases/*.di`) for the first time in a long
+  while is what exercised them: `call_arguments_have_spread` and
+  `call_arguments_have_keyword` (`src/compiler.c`) each do a lookahead
+  scan for a call's closing `)`/spread/keyword shape via a bare `while
+  (!probe.failed)` loop with no EOF check, unlike every sibling lookahead
+  in the file. An unclosed call at end-of-file (`identity(1<EOF>`, no
+  closing paren) spun forever advancing an already-exhausted lexer --
+  confirmed via `gdb` on a live stuck process (one had burned 46 minutes
+  of CPU by the time it was caught). Fixed with the same `token.kind!=
+  DIAMOND_TOKEN_EOF` guard already used elsewhere; swept the full
+  132-file error corpus afterward with a per-file timeout to confirm no
+  further instances. Two permanent regression cases added
+  (`tests/cases/call_missing_close_paren.di`/
+  `method_call_missing_close_paren.di`) so this is caught by the regular
+  suite, not only the periodic self-hosting run that happened to surface it.
 
-Resuming this work later should start by re-measuring whether re-parsing
-`lib/core.di` per case is still the dominant cost, and whether the self-hosted
-parser can parse it once and reuse that state across cases instead of from
-scratch every time.
+What's still genuinely true from before, not just carried over by habit:
+
+- the hand-maintained opcode-number mirror in `selfhost/parser.di` (a
+  `module Opcode` block of integer constants that must exactly match
+  `src/vm.h`'s enum order) is still hand-maintained, with no generated
+  source of truth -- currently correct, but any future native opcode
+  insertion ahead of an existing entry silently desyncs it again, and
+  nothing catches that except actually running a program through the
+  self-hosted path;
+- forward-reference gaps in the self-hosted frontend may still require
+  declaration ordering the native compiler doesn't -- new prelude types
+  should retain bootstrap-compatible ordering (`lib/core.di` has its
+  own comment on this);
+- the internal `ProgramBuilder` API remains explicitly unstable;
+- `make test-all` still runs only the two bootstrap smoke checks, not
+  the full differential corpus -- kept opt-in/periodic (`make
+  test-self-host`) rather than folded back into the default suite. This
+  pass's own full corpus run measured ~3.5 minutes wall time (`time make
+  test-parser-diff`, this machine, warm build), well under the ~27
+  minutes historically cited for CI -- plausibly because the CI figure
+  covered a larger, differently-composed corpus, or CI's own hardware is
+  slower, or both; not yet apples-to-apples confirmed. If a real CI
+  re-measurement confirms the cost is now genuinely low, promoting this
+  back to `make test-all` is a reasonable follow-up, but that's a
+  separate, deliberate decision from the parity fixes here.
 
 ## Runtime research
 
