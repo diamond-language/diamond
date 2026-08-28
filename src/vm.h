@@ -884,8 +884,13 @@ struct DiamondVm {
      * nursery should stay small and cheap to keep minor collections
      * frequent, unlike the major threshold, which deliberately grows
      * with the live set to avoid re-collecting a large heap too often.
-     * Starting value chosen to be tuned against bench/gc_churn once
-     * card marking lands, not picked and left unmeasured. */
+     * 1MiB, tuned against bench/gc_churn's session_churn.di after card
+     * marking landed: 64KiB (the pre-card-marking placeholder) triggered
+     * a minor collection roughly every 4 iterations of that benchmark's
+     * workload, which dominated wall time even with cheap per-collection
+     * cost; 1MiB cut total minor-collection time by two orders of
+     * magnitude with no further gain from going to 4MiB. See
+     * bench/gc_churn/README.md's own recorded sweep for the numbers. */
     size_t bytes_allocated_at_last_minor_gc;
     size_t minor_gc_threshold_bytes;
     /* Every old object with at least one recorded old->young pointer

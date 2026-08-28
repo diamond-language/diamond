@@ -150,6 +150,13 @@ static void diamond_resume_target_bounds(const DiamondFiber *fiber,
 enum { DIAMOND_MAX_CALL_DEPTH = 95 };
 enum { DIAMOND_INLINE_REGISTER_COUNT = 256 };
 
+/* Card size for the generational GC's Array/Hash write barrier -- see
+ * mark_card_dirty's own comment (below, near gc_write_barrier) for why
+ * only these two kinds need index-granularity remembering. Declared
+ * this early because mark_remembered_set (just below) already needs it
+ * to size its own card-index arithmetic. */
+enum { DIAMOND_GC_CARD_SIZE = 64 };
+
 typedef enum HandlerKind : uint8_t { HANDLER_RESCUE, HANDLER_ENSURE } HandlerKind;
 
 typedef struct UnwindHandler {
@@ -377,10 +384,67 @@ static void mark_fiber(const DiamondFiber *fiber, bool minor) {
  * remembered set); and the "already marked" rule is meaningless here
  * since a minor collection never sets `marked` on an old object at
  * all (mark_object's own guard returns before ever reaching that
- * line), so it would always read false anyway. */
+ * line), so it would always read false anyway.
+ *
+ * Array/Hash are special-cased to scan only their dirty cards (see
+ * mark_card_dirty/gc_write_barrier_index above) instead of every
+ * element -- this is the actual Phase 4 fix: the first generational
+ * attempt remembered these two kinds at whole-container granularity,
+ * which meant re-walking a large, mostly-stable container on *every*
+ * minor collection it survived. A card is cleared once scanned (a
+ * later write re-dirties it for the next pass); dirty_cards==nullptr
+ * means no index write has happened since promotion (or since the last
+ * full scan created it), so there's nothing to walk. Falls back to a
+ * full mark_object_children scan if dirty_cards is somehow null on an
+ * object already in the remembered set (should never happen, since
+ * only gc_write_barrier_index/_range ever call remember() on these two
+ * kinds, and both always mark a card immediately after -- but a missed
+ * scan here would silently free a live young value, so this defaults
+ * to the safe side rather than skipping). */
 static void mark_remembered_set(DiamondVm *vm) {
-    for (size_t index = 0; index < vm->remembered_count; index++)
-        mark_object_children(vm->remembered_set[index], true);
+    for (size_t index = 0; index < vm->remembered_count; index++) {
+        DiamondObject *object = vm->remembered_set[index];
+        if (object->kind == DIAMOND_OBJECT_ARRAY) {
+            DiamondArray *array = (DiamondArray *)object;
+            if (array->dirty_cards == nullptr) {
+                mark_object_children(object, true);
+                continue;
+            }
+            const size_t card_count =
+                (array->capacity + DIAMOND_GC_CARD_SIZE - 1) / DIAMOND_GC_CARD_SIZE;
+            for (size_t card = 0;
+                 card < card_count && card < array->dirty_card_capacity; card++) {
+                if (!array->dirty_cards[card]) continue;
+                const size_t start = card * DIAMOND_GC_CARD_SIZE;
+                const size_t end = start + DIAMOND_GC_CARD_SIZE < array->count ?
+                    start + DIAMOND_GC_CARD_SIZE : array->count;
+                for (size_t i = start; i < end; i++) mark_value(array->values[i], true);
+                array->dirty_cards[card] = 0;
+            }
+        } else if (object->kind == DIAMOND_OBJECT_HASH) {
+            DiamondHash *hash = (DiamondHash *)object;
+            if (hash->dirty_cards == nullptr) {
+                mark_object_children(object, true);
+                continue;
+            }
+            const size_t card_count =
+                (hash->capacity + DIAMOND_GC_CARD_SIZE - 1) / DIAMOND_GC_CARD_SIZE;
+            for (size_t card = 0;
+                 card < card_count && card < hash->dirty_card_capacity; card++) {
+                if (!hash->dirty_cards[card]) continue;
+                const size_t start = card * DIAMOND_GC_CARD_SIZE;
+                const size_t end = start + DIAMOND_GC_CARD_SIZE < hash->count ?
+                    start + DIAMOND_GC_CARD_SIZE : hash->count;
+                for (size_t i = start; i < end; i++) {
+                    mark_value(hash->entries[i].key, true);
+                    mark_value(hash->entries[i].value, true);
+                }
+                hash->dirty_cards[card] = 0;
+            }
+        } else {
+            mark_object_children(object, true);
+        }
+    }
 }
 
 /* Defined near DiamondAdoptedProgram itself (this function is used
@@ -478,14 +542,14 @@ static void sweep_list(DiamondVm *vm, DiamondObject **list_head,
             size=sizeof(DiamondArray)+array->capacity*sizeof(DiamondValue);
             for(size_t index=0;index<array->constraint_count;index++)
                 free(array->constraints[index].type_variable_bindings);
-            free(array->values);
+            free(array->values);free(array->dirty_cards);
         } else if(unreached->kind==DIAMOND_OBJECT_HASH) {
             DiamondHash *hash=(DiamondHash *)unreached;
             size=sizeof(DiamondHash)+hash->capacity*sizeof(DiamondHashEntry)+
                 hash->bucket_capacity*sizeof(size_t);
             for(size_t index=0;index<hash->constraint_count;index++)
                 free(hash->constraints[index].type_variable_bindings);
-            free(hash->entries);free(hash->buckets);
+            free(hash->entries);free(hash->buckets);free(hash->dirty_cards);
         } else if(unreached->kind==DIAMOND_OBJECT_CLOSURE) {
             size=sizeof(DiamondClosure);
         } else if(unreached->kind==DIAMOND_OBJECT_FIBER) {
@@ -631,6 +695,80 @@ static bool gc_write_barrier(DiamondVm *vm, DiamondObject *owner) {
     return true;
 }
 
+/* Marks the card containing `index` dirty on an old Array or Hash,
+ * lazily allocating (or growing) the card table to cover the object's
+ * current capacity if needed -- most old Array/Hash objects are never
+ * index-written again after promotion, so this stays unallocated in the
+ * common case rather than being sized up front for every promotion.
+ * Only ever called (via gc_write_barrier_index/_range below) after the
+ * caller has already confirmed `owner` is old, so it doesn't re-check
+ * that itself. Deliberately not counted in vm->bytes_allocated (unlike
+ * values/entries/buckets, which every realloc site already tracks) --
+ * a handful of cards is negligible next to the container it shadows
+ * (~625 bytes for a 40,000-entry Hash), not worth a second accounting
+ * path for. Returns false only on allocation failure. */
+static bool mark_card_dirty(DiamondObject *owner, size_t index) {
+    uint8_t **dirty_cards;size_t *dirty_card_capacity,capacity;
+    if(owner->kind==DIAMOND_OBJECT_ARRAY) {
+        DiamondArray *array=(DiamondArray *)owner;
+        dirty_cards=&array->dirty_cards;
+        dirty_card_capacity=&array->dirty_card_capacity;
+        capacity=array->capacity;
+    } else {
+        DiamondHash *hash=(DiamondHash *)owner;
+        dirty_cards=&hash->dirty_cards;
+        dirty_card_capacity=&hash->dirty_card_capacity;
+        capacity=hash->capacity;
+    }
+    const size_t needed_cards=
+        (capacity+DIAMOND_GC_CARD_SIZE-1)/DIAMOND_GC_CARD_SIZE;
+    if(*dirty_cards==nullptr) {
+        const size_t initial=needed_cards==0?1:needed_cards;
+        uint8_t *fresh=calloc(initial,1);
+        if(fresh==nullptr)return false;
+        *dirty_cards=fresh;*dirty_card_capacity=initial;
+    } else if(needed_cards>*dirty_card_capacity) {
+        uint8_t *grown=realloc(*dirty_cards,needed_cards);
+        if(grown==nullptr)return false;
+        memset(grown+*dirty_card_capacity,0,needed_cards-*dirty_card_capacity);
+        *dirty_cards=grown;*dirty_card_capacity=needed_cards;
+    }
+    (*dirty_cards)[index/DIAMOND_GC_CARD_SIZE]=1;
+    return true;
+}
+
+/* gc_write_barrier's own Array/Hash-specific sibling: same old-object/
+ * remembered-set bookkeeping, plus marking the one card the write
+ * actually touched dirty (see mark_card_dirty above) so
+ * mark_remembered_set (below) can scan just that card on the next minor
+ * collection instead of the whole container. */
+static bool gc_write_barrier_index(DiamondVm *vm, DiamondObject *owner, size_t index) {
+    if (!owner->old) return true;
+    if (!owner->remembered) {
+        if (!remember(vm, owner)) return false;
+        owner->remembered = true;
+    }
+    return mark_card_dirty(owner, index);
+}
+
+/* gc_write_barrier_index's range-write sibling (DIAMOND_OP_INDEX_SET's
+ * Array range-assignment branch) -- dirties every card touched by
+ * [start, start+count). */
+static bool gc_write_barrier_range(DiamondVm *vm, DiamondObject *owner,
+        size_t start, size_t count) {
+    if (!owner->old) return true;
+    if (!owner->remembered) {
+        if (!remember(vm, owner)) return false;
+        owner->remembered = true;
+    }
+    if (count == 0) return true;
+    const size_t first_card = start / DIAMOND_GC_CARD_SIZE;
+    const size_t last_card = (start + count - 1) / DIAMOND_GC_CARD_SIZE;
+    for (size_t card = first_card; card <= last_card; card++)
+        if (!mark_card_dirty(owner, card * DIAMOND_GC_CARD_SIZE)) return false;
+    return true;
+}
+
 static void diamond_vm_collect_impl(DiamondVm *vm) {
     mark_roots(vm, false);
     /* Filter the remembered set by `marked` *before* sweeping below --
@@ -728,7 +866,7 @@ void maybe_collect(DiamondVm *vm) {
 
 void diamond_vm_init(DiamondVm *vm) {
     *vm = (DiamondVm){.next_gc = 2048,.range_class_index=UINT8_MAX,
-        .minor_gc_threshold_bytes = 65536};
+        .minor_gc_threshold_bytes = 1048576};
     vm->quickening_threshold = 1;
     vm->monomorphic_threshold = 1;
     /* A write(2)/SSL_write to a TCP connection the peer has already reset
@@ -763,12 +901,12 @@ static void free_object_list(DiamondObject *object) {
             DiamondHash *hash=(DiamondHash *)object;
             for(size_t index=0;index<hash->constraint_count;index++)
                 free(hash->constraints[index].type_variable_bindings);
-            free(hash->entries);free(hash->buckets);
+            free(hash->entries);free(hash->buckets);free(hash->dirty_cards);
         } else if(object->kind==DIAMOND_OBJECT_ARRAY) {
             DiamondArray *array=(DiamondArray *)object;
             for(size_t index=0;index<array->constraint_count;index++)
                 free(array->constraints[index].type_variable_bindings);
-            free(array->values);
+            free(array->values);free(array->dirty_cards);
         } else if(object->kind==DIAMOND_OBJECT_FIBER) {
             diamond_fiber_free(((DiamondFiberHandle *)object)->fiber);
         } else if(object->kind==DIAMOND_OBJECT_FILE) {
@@ -1213,6 +1351,7 @@ static DiamondArray *allocate_array(DiamondVm *vm,const DiamondValue *values,
     if(capacity>0&&array->values==nullptr){free(array);return nullptr;}
     array->object=(DiamondObject){.next=vm->young_objects,.kind=DIAMOND_OBJECT_ARRAY};
     array->count=count;array->capacity=capacity;array->constraint_count=0;
+    array->dirty_cards=nullptr;array->dirty_card_capacity=0;
     for(size_t i=0;i<count;i++) array->values[i]=values[i];
     vm->young_objects=&array->object;vm->bytes_allocated+=size;return array;
 }
@@ -4770,7 +4909,7 @@ static bool hash_set(DiamondVm *vm,DiamondHash *hash,DiamondValue key,
     const ptrdiff_t existing=hash_find(hash,key);
     if(existing>=0) {
         hash->entries[(size_t)existing].value=value;
-        return gc_write_barrier(vm,(DiamondObject *)hash);
+        return gc_write_barrier_index(vm,(DiamondObject *)hash,(size_t)existing);
     }
     if(hash->count==hash->capacity) {
         const size_t old_capacity=hash->capacity;
@@ -4795,7 +4934,7 @@ static bool hash_set(DiamondVm *vm,DiamondHash *hash,DiamondValue key,
     size_t slot=(size_t)(key_hash&(hash->bucket_capacity-1));
     while(hash->buckets[slot]!=SIZE_MAX)slot=(slot+1)&(hash->bucket_capacity-1);
     hash->buckets[slot]=new_index;
-    return gc_write_barrier(vm,(DiamondObject *)hash);
+    return gc_write_barrier_index(vm,(DiamondObject *)hash,new_index);
 }
 
 static bool is_truthy(DiamondValue value) {
@@ -6204,8 +6343,9 @@ static bool array_push(DiamondVm *vm,DiamondArray *array,DiamondValue value) {
         array->values=values;array->capacity=capacity;
         vm->bytes_allocated+=(capacity-old_capacity)*sizeof(DiamondValue);
     }
+    const size_t new_index=array->count;
     array->values[array->count++]=value;
-    return gc_write_barrier(vm,(DiamondObject *)array);
+    return gc_write_barrier_index(vm,(DiamondObject *)array,new_index);
 }
 
 static bool hash_entry_satisfies_constraints(DiamondHash *hash,
@@ -14395,7 +14535,8 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     }
                     for(size_t i=0;i<range_length;i++)
                         array->values[range_start+i]=replacement->values[i];
-                    if(!gc_write_barrier(vm,(DiamondObject *)array))
+                    if(!gc_write_barrier_range(vm,(DiamondObject *)array,
+                            range_start,range_length))
                         VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
                     break;
                 }
@@ -14414,7 +14555,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     VM_RETURN(DIAMOND_VM_TYPE_ERROR);
                 }
                 array->values[(size_t)index]=registers[source];
-                if(!gc_write_barrier(vm,(DiamondObject *)array))
+                if(!gc_write_barrier_index(vm,(DiamondObject *)array,(size_t)index))
                     VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
                 break;
             }
