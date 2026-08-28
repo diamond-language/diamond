@@ -44,6 +44,10 @@ typedef struct LoopContext {
     bool exit_initialized;
     uint8_t result_type;
     int32_t result_set;
+    /* Bounded by DIAMOND_MAX_LOCALS (64), unlike exit_types/exit_sets above,
+     * so these travel inline with no malloc dance. */
+    size_t flow_local_count;
+    uint32_t exit_alias[DIAMOND_MAX_LOCALS];
 } LoopContext;
 
 enum { DIAMOND_MAX_NARROWING_FACTS = 8 };
@@ -7096,6 +7100,17 @@ static void merge_flow_types(Compiler *compiler,uint8_t left_type,int32_t left_s
     *result_type=merged.count==1?merged.members[0].id:TYPE_UNKNOWN;
 }
 
+/* Conservatively joins two control-flow alias-identity states for the same
+ * local. Agreeing branches keep the shared identity; disagreeing branches
+ * (including either being unaliased) detach to 0 rather than guessing which
+ * object is actually live -- alias_identity_for_value/
+ * propagate_collection_alias_fact already treat 0 as "assign a fresh identity
+ * lazily on next use", so a detached local still tracks its own future
+ * mutations/aliases correctly, just independently of either branch's object. */
+static uint32_t merge_alias_identity(uint32_t left,uint32_t right) {
+    return left==right?left:0;
+}
+
 static bool register_is_local(const Compiler *compiler,uint16_t reg) {
     for(size_t index=0;index<compiler->local_count;index++)
         if(compiler->locals[index].reg==reg)return true;
@@ -7109,6 +7124,8 @@ static void merge_loop_exit(Compiler *compiler,LoopContext *loop,
             loop->exit_types[index]=compiler->known_types[index];
             loop->exit_sets[index]=compiler->known_type_sets[index];
         }
+        for(size_t index=0;index<loop->flow_local_count;index++)
+            loop->exit_alias[index]=compiler->locals[index].alias_identity;
         loop->result_type=result_type;loop->result_set=result_set;
         loop->exit_initialized=true;return;
     }
@@ -7116,6 +7133,9 @@ static void merge_loop_exit(Compiler *compiler,LoopContext *loop,
         merge_flow_types(compiler,loop->exit_types[index],loop->exit_sets[index],
             compiler->known_types[index],compiler->known_type_sets[index],
             &loop->exit_types[index],&loop->exit_sets[index]);
+    for(size_t index=0;index<loop->flow_local_count;index++)
+        loop->exit_alias[index]=merge_alias_identity(loop->exit_alias[index],
+            compiler->locals[index].alias_identity);
     merge_flow_types(compiler,loop->result_type,loop->result_set,
         result_type,result_set,&loop->result_type,&loop->result_set);
 }
@@ -7123,6 +7143,8 @@ static void merge_loop_exit(Compiler *compiler,LoopContext *loop,
 static void finish_loop_flow(Compiler *compiler,LoopContext *loop,
         size_t effective_start) {
     if(!loop->exit_initialized)return;
+    for(size_t index=0;index<loop->flow_local_count;index++)
+        compiler->locals[index].alias_identity=loop->exit_alias[index];
     for(size_t index=0;index<loop->flow_reg_count;index++) {
         compiler->known_types[index]=loop->exit_types[index];
         compiler->known_type_sets[index]=loop->exit_sets[index];
@@ -7220,6 +7242,8 @@ static uint16_t parse_if(Compiler *compiler,bool inverted) {
         compiler, DIAMOND_OP_JUMP_IF_FALSE, branch_condition);
     const uint16_t destination = allocate_register(compiler);
     const size_t flow_reg_count=compiler->next_register;
+    const size_t flow_local_count=compiler->local_count;
+    uint32_t before_alias[DIAMOND_MAX_LOCALS];uint32_t then_alias[DIAMOND_MAX_LOCALS];
     /* Inline arrays cover the overwhelming majority of if/elsif sites (a
      * function rarely has more than 256 registers live before one) at no
      * heap cost; only a flow_reg_count beyond that -- reachable in real
@@ -7255,6 +7279,8 @@ static uint16_t parse_if(Compiler *compiler,bool inverted) {
         before_types[index]=compiler->known_types[index];
         before_sets[index]=compiler->known_type_sets[index];
     }
+    for(size_t index=0;index<flow_local_count;index++)
+        before_alias[index]=compiler->locals[index].alias_identity;
     if(narrowing.valid)
         apply_narrowing_facts(compiler,
             inverted?narrowing.when_false:narrowing.when_true,
@@ -7266,6 +7292,8 @@ static uint16_t parse_if(Compiler *compiler,bool inverted) {
         then_types[index]=compiler->known_types[index];
         then_sets[index]=compiler->known_type_sets[index];
     }
+    for(size_t index=0;index<flow_local_count;index++)
+        then_alias[index]=compiler->locals[index].alias_identity;
     emit_instruction(compiler, DIAMOND_OP_MOVE, destination, then_result, 0, 2);
     const size_t end_jump = emit_jump(compiler, DIAMOND_OP_JUMP, 0);
     patch_jump(compiler, false_jump, compiler->function->code_count);
@@ -7274,6 +7302,8 @@ static uint16_t parse_if(Compiler *compiler,bool inverted) {
         compiler->known_types[index]=before_types[index];
         compiler->known_type_sets[index]=before_sets[index];
     }
+    for(size_t index=0;index<flow_local_count;index++)
+        compiler->locals[index].alias_identity=before_alias[index];
     if(narrowing.valid)
         apply_narrowing_facts(compiler,
             inverted?narrowing.when_true:narrowing.when_false,
@@ -7312,6 +7342,9 @@ static uint16_t parse_if(Compiler *compiler,bool inverted) {
             record_scope_type_fact(compiler,(uint16_t)index,
                 compiler->current.span.start);
     }
+    for(size_t index=0;index<flow_local_count;index++)
+        compiler->locals[index].alias_identity=merge_alias_identity(
+            then_alias[index],compiler->locals[index].alias_identity);
     free(heap_types);free(heap_sets);
     merge_flow_types(compiler,then_type,then_set,false_result_type,
         false_result_set,&compiler->known_types[destination],
@@ -7400,6 +7433,7 @@ static uint16_t parse_while(Compiler *compiler,bool inverted) {
     const size_t exit_jump = emit_jump(
         compiler, DIAMOND_OP_JUMP_IF_FALSE, branch_condition);
     const size_t flow_reg_count=compiler->next_register;
+    const size_t flow_local_count=compiler->local_count;
     uint8_t *exit_types=malloc(flow_reg_count*sizeof(uint8_t));
     int32_t *exit_sets=malloc(flow_reg_count*sizeof(int32_t));
     if(exit_types==nullptr||exit_sets==nullptr) {
@@ -7416,6 +7450,7 @@ static uint16_t parse_while(Compiler *compiler,bool inverted) {
         .flow_reg_count=flow_reg_count,
         .exit_types=exit_types,
         .exit_sets=exit_sets,
+        .flow_local_count=flow_local_count,
     };
     /* The condition may be false before the first iteration, so the entry
      * state and Nil result are always one real exit path. */
@@ -7460,6 +7495,7 @@ static uint16_t parse_loop(Compiler *compiler) {
     }
     const size_t body_start=compiler->function->code_count;
     const size_t flow_reg_count=compiler->next_register;
+    const size_t flow_local_count=compiler->local_count;
     uint8_t *exit_types=malloc(flow_reg_count*sizeof(uint8_t));
     int32_t *exit_sets=malloc(flow_reg_count*sizeof(int32_t));
     if(exit_types==nullptr||exit_sets==nullptr) {
@@ -7471,7 +7507,8 @@ static uint16_t parse_loop(Compiler *compiler) {
     LoopContext loop={.previous=compiler->current_loop,
         .continue_target=body_start,.redo_target=body_start,
         .result_register=destination,.flow_reg_count=flow_reg_count,
-        .exit_types=exit_types,.exit_sets=exit_sets};
+        .exit_types=exit_types,.exit_sets=exit_sets,
+        .flow_local_count=flow_local_count};
     compiler->current_loop=&loop;
     (void)compile_sequence(compiler);
     compiler->current_loop=loop.previous;
@@ -7745,6 +7782,9 @@ typedef struct CaseFlowJoin {
     bool initialized;
     uint8_t result_type;
     int32_t result_set;
+    /* Bounded by DIAMOND_MAX_LOCALS (64), unlike types/sets/varied above,
+     * so this travels inline with no malloc dance. */
+    uint32_t alias[DIAMOND_MAX_LOCALS];
 } CaseFlowJoin;
 
 typedef enum CaseArrayNodeKind {CASE_ARRAY_GROUP,CASE_ARRAY_VALUE,
@@ -8248,7 +8288,7 @@ static void commit_case_bindings(Compiler *compiler,
 }
 
 static void merge_case_branch(Compiler *compiler,CaseFlowJoin *join,
-        size_t flow_reg_count,uint16_t branch_result) {
+        size_t flow_reg_count,size_t flow_local_count,uint16_t branch_result) {
     const uint8_t branch_result_type=compiler->known_types[branch_result];
     const int32_t branch_result_set=compiler->known_type_sets[branch_result];
     if(!join->initialized) {
@@ -8256,6 +8296,8 @@ static void merge_case_branch(Compiler *compiler,CaseFlowJoin *join,
             join->types[index]=compiler->known_types[index];
             join->sets[index]=compiler->known_type_sets[index];
         }
+        for(size_t index=0;index<flow_local_count;index++)
+            join->alias[index]=compiler->locals[index].alias_identity;
         join->result_type=branch_result_type;join->result_set=branch_result_set;
         join->initialized=true;return;
     }
@@ -8266,18 +8308,24 @@ static void merge_case_branch(Compiler *compiler,CaseFlowJoin *join,
             compiler->known_types[index],compiler->known_type_sets[index],
             &join->types[index],&join->sets[index]);
     }
+    for(size_t index=0;index<flow_local_count;index++)
+        join->alias[index]=merge_alias_identity(join->alias[index],
+            compiler->locals[index].alias_identity);
     merge_flow_types(compiler,join->result_type,join->result_set,
         branch_result_type,branch_result_set,&join->result_type,&join->result_set);
 }
 
 static void finish_case_flow(Compiler *compiler,CaseFlowJoin *join,
-        size_t flow_reg_count,uint16_t destination,size_t effective_start) {
+        size_t flow_reg_count,size_t flow_local_count,uint16_t destination,
+        size_t effective_start) {
     for(size_t index=0;index<flow_reg_count;index++) {
         compiler->known_types[index]=join->types[index];
         compiler->known_type_sets[index]=join->sets[index];
         if(join->varied[index]&&register_is_local(compiler,(uint16_t)index))
             record_scope_type_fact(compiler,(uint16_t)index,effective_start);
     }
+    for(size_t index=0;index<flow_local_count;index++)
+        compiler->locals[index].alias_identity=join->alias[index];
     compiler->known_types[destination]=join->result_type;
     compiler->known_type_sets[destination]=join->result_set;
 }
@@ -8301,18 +8349,21 @@ static void finish_case_flow(Compiler *compiler,CaseFlowJoin *join,
  * unions parse_if uses; a missing else contributes the entry state and Nil. */
 static uint16_t parse_case_branches(Compiler *compiler, uint16_t subject,
         size_t flow_reg_count, const uint8_t *entry_types,
-        const int32_t *entry_sets, uint16_t destination,CaseFlowJoin *join,
+        const int32_t *entry_sets, size_t flow_local_count,
+        const uint32_t *entry_alias, uint16_t destination,CaseFlowJoin *join,
         bool subjectless) {
     for(size_t index=0;index<flow_reg_count;index++) {
         compiler->known_types[index]=entry_types[index];
         compiler->known_type_sets[index]=entry_sets[index];
     }
+    for(size_t index=0;index<flow_local_count;index++)
+        compiler->locals[index].alias_identity=entry_alias[index];
     if(compiler->current.kind==DIAMOND_TOKEN_ELSE) {
         advance_token(compiler);
         if(compiler->current.kind==DIAMOND_TOKEN_NEWLINE)skip_newlines(compiler);
         const uint16_t body_result=compile_sequence(compiler);
         emit_instruction(compiler,DIAMOND_OP_MOVE,destination,body_result,0,2);
-        merge_case_branch(compiler,join,flow_reg_count,body_result);
+        merge_case_branch(compiler,join,flow_reg_count,flow_local_count,body_result);
         if(compiler->current.kind!=DIAMOND_TOKEN_END) {
             fail(compiler,compiler->current.span,
                  "expected 'end' after case expression");
@@ -8320,17 +8371,19 @@ static uint16_t parse_case_branches(Compiler *compiler, uint16_t subject,
         }
         const size_t join_offset=compiler->current.span.start;
         advance_token(compiler);
-        finish_case_flow(compiler,join,flow_reg_count,destination,join_offset);
+        finish_case_flow(compiler,join,flow_reg_count,flow_local_count,
+            destination,join_offset);
         return destination;
     }
     if(compiler->current.kind==DIAMOND_TOKEN_END) {
         emit_instruction(compiler,DIAMOND_OP_NIL,destination,0,0,1);
         compiler->known_types[destination]=DIAMOND_TYPE_NIL;
         compiler->known_type_sets[destination]=-1;
-        merge_case_branch(compiler,join,flow_reg_count,destination);
+        merge_case_branch(compiler,join,flow_reg_count,flow_local_count,destination);
         const size_t join_offset=compiler->current.span.start;
         advance_token(compiler);
-        finish_case_flow(compiler,join,flow_reg_count,destination,join_offset);
+        finish_case_flow(compiler,join,flow_reg_count,flow_local_count,
+            destination,join_offset);
         return destination;
     }
     if(compiler->current.kind!=DIAMOND_TOKEN_WHEN) {
@@ -8463,12 +8516,12 @@ static uint16_t parse_case_branches(Compiler *compiler, uint16_t subject,
     if(array_pattern)commit_case_bindings(compiler,bindings,binding_count);
     const uint16_t body_result=compile_sequence(compiler);
     emit_instruction(compiler,DIAMOND_OP_MOVE,destination,body_result,0,2);
-    merge_case_branch(compiler,join,flow_reg_count,body_result);
+    merge_case_branch(compiler,join,flow_reg_count,flow_local_count,body_result);
     const size_t end_jump=emit_jump(compiler,DIAMOND_OP_JUMP,0);
     patch_jump(compiler,false_jump,compiler->function->code_count);
     const uint16_t result=parse_case_branches(
-        compiler,subject,flow_reg_count,entry_types,entry_sets,destination,join,
-        subjectless);
+        compiler,subject,flow_reg_count,entry_types,entry_sets,flow_local_count,
+        entry_alias,destination,join,subjectless);
     patch_jump(compiler,end_jump,compiler->function->code_count);
     return result;
 }
@@ -8494,6 +8547,10 @@ static uint16_t parse_case(Compiler *compiler) {
     }
     const uint16_t destination=allocate_register(compiler);
     const size_t flow_reg_count=compiler->next_register;
+    const size_t flow_local_count=compiler->local_count;
+    uint32_t entry_alias[DIAMOND_MAX_LOCALS];
+    for(size_t index=0;index<flow_local_count;index++)
+        entry_alias[index]=compiler->locals[index].alias_identity;
     /* Same inline-then-heap fallback as parse_if's before_types/
      * then_types -- see that function's own comment for why, and for the
      * ASan-confirmed bug a fixed [256] array with no bounds check caused
@@ -8531,8 +8588,8 @@ static uint16_t parse_case(Compiler *compiler) {
     CaseFlowJoin join={.types=join_types,.sets=join_sets,.varied=varied,
         .result_type=TYPE_UNKNOWN,.result_set=-1};
     const uint16_t result=parse_case_branches(
-        compiler,subject,flow_reg_count,entry_types,entry_sets,destination,&join,
-        subjectless);
+        compiler,subject,flow_reg_count,entry_types,entry_sets,flow_local_count,
+        entry_alias,destination,&join,subjectless);
     free(heap_types);free(heap_sets);free(heap_varied);
     return result;
 }

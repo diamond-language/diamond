@@ -29,6 +29,11 @@
 - Tracked stable lexical object identities across direct Array/Hash aliases.
   Mutations and invalidations now update every live alias, including aliases
   captured across anonymous-block compiler frames; rebinding detaches identity.
+- Joined alias identity across `if`/`elsif`/`else`, `case`/`when`, and loop
+  exits for a local bound before the branches: agreeing branches keep the
+  shared identity, disagreeing branches detach it instead of guessing which
+  branch's object survived, fixing spurious post-join mutation propagation
+  into an unrelated branch's object.
 - Added a core-suite audit for duplicate, unclassified, or VM-missing collection
   relay contracts, plus negative hover coverage for dynamic arithmetic relays.
 - Inferred `Array#sum` results for closed numeric element graphs. Int-only

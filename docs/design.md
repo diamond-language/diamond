@@ -370,9 +370,17 @@ identity. A mutation fact recorded through any binding is copied to every live
 binding in that identity group. Reassignment installs the right-hand value's
 identity and leaves aliases of the previous object detached. These identities
 travel with captured local records, requiring no runtime alias metadata.
-This first identity layer is straight-line and lexical. Joining distinct alias
-identities assigned on separate control-flow arms remains conservative roadmap
-work rather than guessing that either object is uniquely selected.
+`if`/`elsif`/`else`, `case`/`when`, and loop exits join a local's identity the
+same conservative way they already join `known_types`/`known_type_sets`: the
+identity going into the join is snapshotted, each branch's identity is
+compared against it, and the local's identity after the join is the shared
+value only if every branch agrees -- any disagreement (including a branch that
+never touched the local) detaches it to a fresh identity rather than guessing
+that either branch's object is the one actually live at runtime. A local with
+no binding before the join is outside this snapshot/restore/merge, the same
+way a register first allocated inside one branch is outside the `known_types`
+join -- its identity, like its type, resolves to whichever branch compiled
+last rather than a real join.
 
 Functions and methods may declare scoped type variables after their names, as
 in `def pair[K, V](key: K, value: V) -> Hash[K, V]`. Each compiled function

@@ -1092,6 +1092,30 @@ def alias_invalidation()
   items_alias.push(dynamic(\"opaque\"))
   items
   items_alias
+end
+def alias_branch_join(cond)
+  first = [1, 2, 3]
+  second = [4, 5, 6]
+  chosen = first
+  if cond
+    chosen = first
+  else
+    chosen = second
+  end
+  chosen.push(dynamic(\"detached\"))
+  first
+  second
+end
+def alias_branch_same(cond)
+  base = [1, 2, 3]
+  chosen = base
+  if cond
+    chosen = base
+  else
+    chosen = base
+  end
+  chosen.push(2.5)
+  base
 end'
 send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$collection_mutation_uri"'","text":"'"$collection_mutation_source"'"}}}'
 read_message >/dev/null
@@ -1199,6 +1223,27 @@ count=$((count + 1))
 send '{"jsonrpc":"2.0","id":218,"method":"textDocument/hover","params":{"textDocument":{"uri":"'"$collection_mutation_uri"'"},"position":{"line":79,"character":3}}}'
 response="$(read_message)"
 [[ "$response" == *'"result":null'* ]]
+count=$((count + 1))
+
+# --- branches that alias different objects join to a detached identity:
+# mutating the post-if name must not invalidate either source's hover ---
+
+send '{"jsonrpc":"2.0","id":219,"method":"textDocument/hover","params":{"textDocument":{"uri":"'"$collection_mutation_uri"'"},"position":{"line":91,"character":3}}}'
+response="$(read_message)"
+[[ "$response" == *'"value":"Array[Int]"'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","id":220,"method":"textDocument/hover","params":{"textDocument":{"uri":"'"$collection_mutation_uri"'"},"position":{"line":92,"character":3}}}'
+response="$(read_message)"
+[[ "$response" == *'"value":"Array[Int]"'* ]]
+count=$((count + 1))
+
+# --- branches that alias the same object join to a shared identity:
+# mutating the post-if name must still widen the shared source's hover ---
+
+send '{"jsonrpc":"2.0","id":221,"method":"textDocument/hover","params":{"textDocument":{"uri":"'"$collection_mutation_uri"'"},"position":{"line":103,"character":3}}}'
+response="$(read_message)"
+[[ "$response" == *'"value":"Array[Int | Float]"'* ]]
 count=$((count + 1))
 
 send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$collection_mutation_uri"'"}}}'

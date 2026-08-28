@@ -626,6 +626,11 @@ enclosing local conservatively, whether or not later control flow invokes the
 closure.
 Direct lexical aliases of an Array or Hash share mutation facts. Reassigning
 one name detaches it from aliases that still reference the previous object.
+A name bound to different objects on different `if`/`case`/loop branches
+detaches after the branches join, so a mutation through it afterward does not
+retroactively widen either branch's object -- unless every branch agreed on
+the same object, in which case the shared identity (and mutations through it)
+carry across the join.
 Native collection blocks infer their parameter graphs from the receiver:
 Array element callbacks, `each_with_index` element/index callbacks, and Hash
 key/value callbacks expose those types to the body and editor hover.

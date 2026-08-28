@@ -389,9 +389,16 @@ assignment, and compound indexed assignment. Empty local collections acquire
 their first nested graph from a known write, and direct lexical receivers expose
 each widened state positionally to the LSP. Direct lexical aliases now share a
 stable object identity, so mutation and invalidation facts propagate across
-aliases while reassignment detaches the rebound name. Dynamically recovered
-nested receiver writeback and control-flow joins between different alias
-identities remain queued.
+aliases while reassignment detaches the rebound name. `if`/`elsif`/`else`,
+`case`/`when`, and loop-exit control-flow joins now compare each branch's
+alias identity for a local that already existed before the join: agreement
+keeps the shared identity, disagreement detaches it to a fresh one rather than
+guessing which branch's object survived, mirroring how those same joins
+already treat `known_types`/`known_type_sets`. A local first bound to
+different objects per branch (no binding before the join) inherits that same
+known_types limitation -- its identity, like its type, resolves to whichever
+branch compiled last -- and remains queued alongside dynamically recovered
+nested receiver writeback.
 Unknown and over-capacity writes now degrade direct receiver facts to an
 unparameterized Array or Hash instead of retaining stale nested unions. The LSP
 reports no structural local hover after that invalidation, including every
