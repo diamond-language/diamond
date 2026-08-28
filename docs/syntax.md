@@ -613,6 +613,10 @@ and named-keyword calls. Typed callback returns determine `map`, `flat_map`,
 `delete_at`, and `pop` add `Nil`. A zipped pair includes `Nil` in the other
 Array's position because shorter inputs are padded at runtime. Callable-union
 returns are joined before constructing mapped collection types.
+Collection facts widen after mutation. `push`, indexed assignment, and compound
+indexed assignment join statically known values into Array element graphs or
+Hash key/value graphs. Empty literals acquire a nested graph from their first
+known write, and subsequent local expressions and LSP hover observe that state.
 
 A fixed-arity bound method reference such as `object.convert` retains its
 declared parameter and return contract. Explicit generic references such as

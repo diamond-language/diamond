@@ -26,6 +26,10 @@
 
 ## Language
 
+- Added flow-sensitive collection mutation inference. Empty Arrays acquire an
+  element graph from fixed or keyword `push`; Array and Hash indexed writes and
+  compound writes widen existing graphs; mutation results and later local uses
+  expose the updated structure to compilation and LSP hover.
 - Preserved typed union element graphs through `min`, `max`, `min_by`,
   `max_by`, and `each_with_index`, and published nullable element graphs for
   `find`, `delete_at`, and `pop`. Callback unions now join their declared

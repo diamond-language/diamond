@@ -384,6 +384,12 @@ graphs into transforms. `zip` now models short-input padding rather than
 publishing an unsafely non-null pair element. Aggregate arithmetic such as
 `sum` remains dynamic because its result follows repeated operator dispatch,
 not the collection element graph alone.
+Collection mutation facts now widen across fixed/keyword `push`, indexed
+assignment, and compound indexed assignment. Empty local collections acquire
+their first nested graph from a known write, and direct lexical receivers expose
+each widened state positionally to the LSP. Alias-wide invalidation and nested
+receiver writeback remain queued because the compiler does not maintain an
+object-identity graph between registers.
 
 Expected collection graphs now recurse through nested Array and Hash literals.
 Array elements and Hash keys/values compile against their respective declared

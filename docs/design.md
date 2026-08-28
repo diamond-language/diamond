@@ -331,6 +331,15 @@ indexed insertion or replacement must satisfy every contract already attached
 to the hash. Generic arrays and hashes may nest recursively. Plain `Hash` remains
 dynamic, and a missing-key read still returns `nil`.
 
+Advisory compile-time collection facts widen at mutation sites. `push` joins
+its value into the receiver's Array element graph and publishes the widened
+Array as its result. Indexed and compound indexed writes join Array values or
+Hash keys and values. An empty literal with no nested graph acquires one from
+its first statically known write. Direct lexical receivers also record a new
+position-sensitive scope fact for LSP hover and later expressions. Mutations
+through an alias or a dynamically recovered nested receiver remain conservative;
+runtime persistent contracts continue to enforce annotated boundaries.
+
 Functions and methods may declare scoped type variables after their names, as
 in `def pair[K, V](key: K, value: V) -> Hash[K, V]`. Each compiled function
 retains up to eight variable names, and type members reserve stable variable IDs

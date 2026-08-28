@@ -5974,6 +5974,59 @@ static void publish_collection_keyword_return_type(Compiler *compiler,
         method_name,ordered,wanted_count);
 }
 
+static void record_mutated_collection_fact(Compiler *compiler,uint16_t reg,
+        uint8_t collection_type,int32_t first,int32_t second) {
+    record_collection_type_set(compiler,reg,collection_type,first,second);
+    for(size_t index=0;index<compiler->local_count;index++)
+        if(compiler->locals[index].reg==reg) {
+            record_scope_type_fact(compiler,reg,compiler->current.span.start);
+            break;
+        }
+}
+
+static void update_collection_mutation_type(Compiler *compiler,uint16_t receiver,
+        const uint16_t *keys,size_t key_count,const uint16_t *values,
+        size_t value_count) {
+    if(value_count==0)return;
+    const int32_t added_values=joined_value_type_set(compiler,values,value_count);
+    if(added_values<0)return;
+    const int32_t receiver_set=compiler->known_type_sets[receiver];
+    const int32_t array_elements=joined_collection_argument(compiler,
+        receiver_set,DIAMOND_TYPE_ARRAY,false);
+    if(array_elements>=0||compiler->known_types[receiver]==DIAMOND_TYPE_ARRAY) {
+        const int32_t joined=array_elements<0?added_values:
+            join_type_set_indices(compiler,array_elements,added_values);
+        if(joined>=0)record_mutated_collection_fact(compiler,receiver,
+            DIAMOND_TYPE_ARRAY,joined,-1);
+        return;
+    }
+    if(key_count==0)return;
+    const int32_t added_keys=joined_value_type_set(compiler,keys,key_count);
+    if(added_keys<0)return;
+    const int32_t hash_keys=joined_collection_argument(compiler,receiver_set,
+        DIAMOND_TYPE_HASH,false);
+    const int32_t hash_values=joined_collection_argument(compiler,receiver_set,
+        DIAMOND_TYPE_HASH,true);
+    if((hash_keys<0||hash_values<0)&&
+       compiler->known_types[receiver]!=DIAMOND_TYPE_HASH)return;
+    const int32_t joined_keys=hash_keys<0?added_keys:
+        join_type_set_indices(compiler,hash_keys,added_keys);
+    const int32_t joined_values=hash_values<0?added_values:
+        join_type_set_indices(compiler,hash_values,added_values);
+    if(joined_keys>=0&&joined_values>=0)
+        record_mutated_collection_fact(compiler,receiver,DIAMOND_TYPE_HASH,
+            joined_keys,joined_values);
+}
+
+static void publish_array_push_return_type(Compiler *compiler,uint16_t result,
+        uint16_t receiver,DiamondSpan name,const uint16_t *arguments,
+        size_t argument_count) {
+    if(argument_count!=1||!name_equals(compiler,"push",name,false))return;
+    update_collection_mutation_type(compiler,receiver,nullptr,0,arguments,1);
+    const int32_t set=compiler->known_type_sets[receiver];
+    if(set>=0)publish_known_type_set(compiler,result,(uint16_t)set);
+}
+
 static void publish_instance_return_type(Compiler *compiler,uint16_t reg,
         int32_t receiver_set_index,DiamondSpan name,
         const DiamondFunction *matching_target,const uint16_t *bindings,
@@ -6259,6 +6312,10 @@ static uint16_t parse_invoke(Compiler *compiler, uint16_t receiver) {
             return_target,resolved_arguments,resolved_count);
         publish_collection_keyword_return_type(compiler,result,
             receiver_set_index,name,keyword_names,keyword_values,keyword_count);
+        const int push=find_keyword_argument(compiler,"value",keyword_names,
+            keyword_count);
+        if(push>=0)publish_array_push_return_type(compiler,result,receiver,name,
+            &keyword_values[(size_t)push],1);
         return result;
     }
     if(call_arguments_have_spread(compiler)) {
@@ -6391,6 +6448,7 @@ static uint16_t parse_invoke(Compiler *compiler, uint16_t receiver) {
         return_target,resolved_arguments,resolved_count);
     publish_collection_argument_return_type(compiler,result,receiver_set_index,
         name,args,count);
+    publish_array_push_return_type(compiler,result,receiver,name,args,count);
     return result;
 }
 
@@ -8849,6 +8907,7 @@ static uint16_t compile_index_assignment(Compiler *compiler) {
     advance_token(compiler);
     const uint16_t value=parse_expression(compiler);
     emit_instruction(compiler,DIAMOND_OP_INDEX_SET,receiver,index,value,3);
+    update_collection_mutation_type(compiler,receiver,&index,1,&value,1);
     return value;
 }
 
@@ -8917,6 +8976,8 @@ static uint16_t compile_index_compound_assignment(Compiler *compiler) {
         emit_instruction(compiler,DIAMOND_OP_MOVE,destination,right,0,2);
         patch_jump(compiler,end_jump,compiler->function->code_count);
         emit_instruction(compiler,DIAMOND_OP_INDEX_SET,receiver,index,destination,3);
+        update_collection_mutation_type(compiler,receiver,&index,1,
+            &destination,1);
         return destination;
     }
     const DiamondTokenKind plain_op=
@@ -8928,6 +8989,7 @@ static uint16_t compile_index_compound_assignment(Compiler *compiler) {
     const uint16_t right=parse_expression(compiler);
     const uint16_t destination=compile_binary_op(compiler,plain_op,left,right);
     emit_instruction(compiler,DIAMOND_OP_INDEX_SET,receiver,index,destination,3);
+    update_collection_mutation_type(compiler,receiver,&index,1,&destination,1);
     return destination;
 }
 

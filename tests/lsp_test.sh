@@ -976,6 +976,47 @@ count=$((count + 1))
 send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$collection_scalar_uri"'"}}}'
 read_message >/dev/null
 
+# --- mutable collection locals widen from push and indexed writes ---
+
+collection_mutation_uri="file:///collection_mutation_hover.di"
+collection_mutation_source='def inspect()
+  items = []
+  items.push(42)
+  items
+  items.push(value: \"forty-two\")
+  items
+  entries = {}
+  entries[\"answer\"] = 42
+  entries
+  entries[:label] = \"forty-two\"
+  entries
+end'
+send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$collection_mutation_uri"'","text":"'"$collection_mutation_source"'"}}}'
+read_message >/dev/null
+
+send '{"jsonrpc":"2.0","id":193,"method":"textDocument/hover","params":{"textDocument":{"uri":"'"$collection_mutation_uri"'"},"position":{"line":3,"character":3}}}'
+response="$(read_message)"
+[[ "$response" == *'"value":"Array[Int]"'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","id":194,"method":"textDocument/hover","params":{"textDocument":{"uri":"'"$collection_mutation_uri"'"},"position":{"line":5,"character":3}}}'
+response="$(read_message)"
+[[ "$response" == *'"value":"Array[Int | String]"'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","id":195,"method":"textDocument/hover","params":{"textDocument":{"uri":"'"$collection_mutation_uri"'"},"position":{"line":8,"character":3}}}'
+response="$(read_message)"
+[[ "$response" == *'"value":"Hash[String, Int]"'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","id":196,"method":"textDocument/hover","params":{"textDocument":{"uri":"'"$collection_mutation_uri"'"},"position":{"line":10,"character":3}}}'
+response="$(read_message)"
+[[ "$response" == *'"value":"Hash[String | Symbol, Int | String]"'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$collection_mutation_uri"'"}}}'
+read_message >/dev/null
+
 # --- heterogeneous spread literals bind generic result positions ---
 
 spread_generic_uri="file:///spread_generic_hover.di"
