@@ -11697,9 +11697,10 @@ static void compile_alias_method(Compiler *compiler) {
  * instance variable (no arbitrary expression, no `to: some_method()`);
  * parameters are bare names only (no type annotations or defaults). A final
  * `&block` parameter forwards the trailing block closure through the ordinary
- * last-Callable-argument convention. Splat and block forwarding cannot yet be
- * combined; the forwarded call always uses the same name
- * declared here (no renaming). Valid in both class and module bodies,
+ * last-Callable-argument convention, and composes with a splat parameter
+ * (`delegate emit(prefix, *values, &block), to: @target`); the forwarded
+ * call always uses the same name declared here (no renaming). Valid in
+ * both class and module bodies,
  * mirroring compile_attribute_named's own class/module split just above
  * (field-index GET_IVAR for a class, name-keyed GET_IVAR_NAME for a
  * module, module_field_name already handling that field's registration

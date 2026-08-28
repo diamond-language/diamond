@@ -1863,7 +1863,9 @@ indices past 32 while keyword names still only resolve against the first
 ## Deliberate constraints
 
 - No Ruby compatibility guarantee.
-- No singleton methods or visibility controls.
+- No singleton methods (per-instance, ad-hoc methods on a single object).
+  Private and protected method visibility exist at the class/module level;
+  there is no per-instance override.
 - No native-code generator or JIT.
 - No stable bytecode, embedding API, or package format.
 - `Thread` gives real parallel execution, but each thread runs against a
