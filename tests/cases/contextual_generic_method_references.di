@@ -15,6 +15,16 @@ end
 def apply_spread(first: Callable[[Int], Int], second: Callable[[Int], Int]) -> Int
   first(20) + second(22)
 end
+def apply_mixed_spread(first: Callable[[Int], Int],
+                       second: Callable[[String], String]) -> Int
+  second("diamond")
+  first(42)
+end
+def apply_mixed_edges(prefix: Int, first: Callable[[Int], Int],
+                      second: Callable[[String], String], suffix: Int) -> Int
+  second("diamond")
+  prefix + first(42) + suffix
+end
 
 class ContextualReferenceBox
   def identity[T](value: T) -> T = value
@@ -26,6 +36,16 @@ class ContextualReferenceBox
   end
   def self.accept_spread(first: Callable[[Int], Int], second: Callable[[Int], Int]) -> Int
     first(20) + second(22)
+  end
+  def accept_mixed_spread(first: Callable[[Int], Int],
+                          second: Callable[[String], String]) -> Int
+    second("diamond")
+    first(42)
+  end
+  def self.accept_mixed_spread(first: Callable[[Int], Int],
+                               second: Callable[[String], String]) -> Int
+    second("diamond")
+    first(42)
   end
 end
 
@@ -42,6 +62,18 @@ class ContextualSpreadConsumer
     @second = second
   end
   def run() -> Int = @first(20) + @second(22)
+end
+
+class ContextualMixedSpreadConsumer
+  def initialize(first: Callable[[Int], Int],
+                 second: Callable[[String], String])
+    @first = first
+    @second = second
+  end
+  def run() -> Int
+    @second("diamond")
+    @first(42)
+  end
 end
 
 box = ContextualReferenceBox.new()
@@ -63,6 +95,17 @@ puts(apply_map({"chosen": box.identity}))
 puts(apply_nested_map([{"chosen": ContextualReferenceBox.identity}]))
 puts(apply_nested_map([{"chosen": box.identity}]))
 puts(apply_spread(*[ContextualReferenceBox.identity, box.identity]))
+puts(apply_mixed_spread(*[identity, ContextualReferenceBox.identity]))
+puts(apply_mixed_spread(*[ContextualReferenceBox.identity, box.identity]))
+puts(apply_mixed_edges(0, *[identity, box.identity], 0))
+puts(ContextualReferenceBox.accept_mixed_spread(
+  *[ContextualReferenceBox.identity, box.identity]
+))
+puts(box.accept_mixed_spread(*[ContextualReferenceBox.identity, box.identity]))
+mixed_consumer = ContextualMixedSpreadConsumer.new(
+  *[ContextualReferenceBox.identity, box.identity]
+)
+puts(mixed_consumer.run())
 puts(ContextualReferenceBox.accept_spread(
   *[ContextualReferenceBox.identity, box.identity]
 ))

@@ -40,6 +40,10 @@
   endless bodies, explicit returns, and final multi-line expressions. Bare
   generic top-level, singleton, and bound references now infer bindings there,
   including recursively nested collection literals.
+- Added positional contract mapping for direct heterogeneous spread literals.
+  Each literal element now receives its exact function, singleton, instance,
+  or constructor parameter expectation, including spreads surrounded by fixed
+  arguments; dynamically sized spread expressions remain conservative.
 - Recursed expected collection contracts through nested Array and Hash literals
   so contextual generic method references resolve at arbitrary literal depth.
 - Stabilized recursive type-graph cloning when the current function's type-set

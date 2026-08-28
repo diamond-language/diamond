@@ -617,8 +617,10 @@ The same context recurses through elements of an expected `Array[T]` and the
 keys and values of an expected `Hash[K, V]`. A literal such as
 `[Tools.identity]` can therefore satisfy `Array[Callable[[Int], Int]]` without
 spelling `[Int]` on the reference. A spread Array receives this context when all
-remaining positional parameters declare the same type; heterogeneous spread
-contracts do not guess.
+remaining positional parameters declare the same type. A direct spread literal
+instead maps each element to its exact positional parameter, so heterogeneous
+Callable contracts can resolve independently. A dynamically sized
+heterogeneous spread expression does not guess element positions.
 Only dynamically unresolved bound methods remain conservatively untyped.
 Callable unions retain a return fact when all arms agree structurally.
 

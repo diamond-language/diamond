@@ -1304,6 +1304,11 @@ Spread calls inspect a statically known homogeneous Array element contract and
 apply it to each positional parameter before the block slot. This operates for
 top-level, singleton, instance-method, and constructor calls. Fixed arguments
 merged around the spread preserve that contract only when every value agrees.
+A direct Array literal after `*` has stronger positional information: its
+elements compile one-by-one against the corresponding parameter graphs, with
+the literal's source position adjusted for any fixed prefix. Fixed suffixes do
+not disturb that mapping. Non-literal spreads retain homogeneous inference
+because their runtime length cannot assign elements to heterogeneous slots.
 Statically resolved keyword calls map each supplied name back to the target's
 declared parameter slot and infer from its value before compiling the trailing
 block. Explicit generic arguments remain authoritative and bypass inference.

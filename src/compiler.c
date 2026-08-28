@@ -1817,6 +1817,9 @@ static uint16_t emit_argument_array(Compiler *compiler,const uint16_t *values,
 
 static uint16_t parse_expected_argument(Compiler *compiler,
         const DiamondFunction *target,size_t parameter);
+static uint16_t parse_array_literal(Compiler *compiler,
+        const DiamondFunction *expected_function,size_t first_parameter,
+        size_t parameter_count);
 
 /* Dynamic keyword targets retain names until runtime lookup identifies the
  * concrete DiamondFunction. Positional values are normalized to one Array,
@@ -1985,12 +1988,20 @@ static uint16_t parse_spread_argument_array(Compiler *compiler,
             }
             saw_spread=true;spread_index=fixed_count;
             advance_token(compiler);skip_newlines(compiler);
-            const int32_t outer_expected=compiler->expected_expression_type_set;
-            compiler->expected_expression_type_set=
-                homogeneous_spread_expectation(compiler,expected_function,
+            if(compiler->current.kind==DIAMOND_TOKEN_LEFT_BRACKET&&
+               expected_function!=nullptr) {
+                advance_token(compiler);
+                spread=parse_array_literal(compiler,expected_function,
                     fixed_count,expected_count);
-            spread=parse_expression(compiler);
-            compiler->expected_expression_type_set=outer_expected;
+            } else {
+                const int32_t outer_expected=
+                    compiler->expected_expression_type_set;
+                compiler->expected_expression_type_set=
+                    homogeneous_spread_expectation(compiler,
+                        expected_function,fixed_count,expected_count);
+                spread=parse_expression(compiler);
+                compiler->expected_expression_type_set=outer_expected;
+            }
         } else {
             if(seen_keyword) {
                 fail(compiler,compiler->current.span,
@@ -6152,7 +6163,9 @@ static uint16_t parse_with_expected_set(Compiler *compiler,
     return result;
 }
 
-static uint16_t parse_array(Compiler *compiler) {
+static uint16_t parse_array_literal(Compiler *compiler,
+        const DiamondFunction *expected_function,size_t first_parameter,
+        size_t parameter_count) {
     uint16_t elements[32];
     size_t count=0;
     uint16_t expected_element=DIAMOND_NO_TYPE_SET;
@@ -6171,8 +6184,13 @@ static uint16_t parse_array(Compiler *compiler) {
                 fail(compiler,compiler->current.span,"array literal has too many elements");
                 return 0;
             }
-            elements[count++]=parse_with_expected_set(compiler,
+            if(expected_function!=nullptr&&
+               first_parameter+count<parameter_count)
+                elements[count]=parse_expected_argument(compiler,
+                    expected_function,first_parameter+count);
+            else elements[count]=parse_with_expected_set(compiler,
                 expected_element);
+            count++;
             skip_newlines(compiler);
             if(compiler->current.kind!=DIAMOND_TOKEN_COMMA) break;
             advance_token(compiler);
@@ -6195,6 +6213,10 @@ static uint16_t parse_array(Compiler *compiler) {
     record_collection_type_set(compiler,destination,DIAMOND_TYPE_ARRAY,
         joined_value_type_set(compiler,elements,count),-1);
     return destination;
+}
+
+static uint16_t parse_array(Compiler *compiler) {
+    return parse_array_literal(compiler,nullptr,0,0);
 }
 
 static uint16_t parse_hash(Compiler *compiler) {
