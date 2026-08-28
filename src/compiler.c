@@ -1823,7 +1823,7 @@ static uint16_t emit_build_spread_arguments(Compiler *compiler,
 
 static bool call_arguments_have_keyword(Compiler *compiler) {
     Compiler probe=*compiler;size_t nesting=0;bool argument_start=true;
-    while(!probe.failed) {
+    while(!probe.failed&&probe.current.kind!=DIAMOND_TOKEN_EOF) {
         const DiamondTokenKind kind=probe.current.kind;
         if(nesting==0&&kind==DIAMOND_TOKEN_RIGHT_PAREN)return false;
         if(nesting==0&&argument_start&&kind==DIAMOND_TOKEN_IDENTIFIER) {
@@ -1973,7 +1973,7 @@ static uint16_t parse_dynamic_keyword_arguments(Compiler *compiler,
 static bool call_arguments_have_spread(Compiler *compiler) {
     Compiler probe=*compiler;
     size_t nesting=0;bool argument_start=true;
-    while(!probe.failed) {
+    while(!probe.failed&&probe.current.kind!=DIAMOND_TOKEN_EOF) {
         const DiamondTokenKind kind=probe.current.kind;
         if(nesting==0&&kind==DIAMOND_TOKEN_RIGHT_PAREN)return false;
         if(nesting==0&&argument_start&&kind==DIAMOND_TOKEN_STAR)return true;
