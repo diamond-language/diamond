@@ -2782,6 +2782,22 @@ static bool copy_value_into_vm(DiamondVm *dest_vm, DiamondValue value,
 static DiamondVmStatus program_builder_run_helper(DiamondVm *vm,
         DiamondProgramBuilder *builder, DiamondValue *result) {
     DiamondProgram *built=builder->program;
+    /* Mirrors diamond_compile's own post-compile-pass finalization
+     * (src/compiler.c, end of run_compile_pass's caller) -- every
+     * declare_interface/declare_interface_method call earlier left this
+     * interface's type_sets pointer null (a ProgramBuilder-built
+     * DiamondInterface is calloc-zeroed and there is no per-interface
+     * ProgramBuilder method that ever sets it, unlike the native
+     * compiler which points it at compiler->program->entry.type_sets
+     * immediately at declaration and re-fixes it here, since that array
+     * can still grow/realloc after an interface is declared). Left
+     * unset, any later interface-satisfaction check reaching
+     * runtime_set_satisfies through this interface's own type_sets
+     * dereferences null -- confirmed as a real SEGV (not theoretical)
+     * compiling a self-hosted program that checks `x is SomeInterface`
+     * against a typed interface method. */
+    for(size_t index=0;index<built->interface_count;index++)
+        built->interfaces[index].type_sets=built->entry.type_sets;
     const DiamondChunk built_chunk=diamond_program_chunk(built);
     /* #emit_byte/#patch_byte let Diamond code append raw bytes to a
      * function's code array with no idea what instruction it's building
@@ -2890,6 +2906,17 @@ static DiamondVmStatus program_builder_invoke_helper(DiamondVm *vm,
     const bool declare_field_method=
         method_name->length==sizeof("declare_field")-1&&
         memcmp(method_name->chars,"declare_field",sizeof("declare_field")-1)==0;
+    /* Same find-or-create-by-name shape as declare_field immediately
+     * above, targeting class->class_variables[]/class_variable_count
+     * (src/compiler.c's own class_variable_index uses the same storage
+     * natively) instead of class->fields[]/field_count -- a class
+     * variable is per-class state, not part of an instance's own field
+     * layout, so unlike declare_field this never touches
+     * program_builder_recompute_shapes. */
+    const bool declare_class_variable_method=
+        method_name->length==sizeof("declare_class_variable")-1&&
+        memcmp(method_name->chars,"declare_class_variable",
+            sizeof("declare_class_variable")-1)==0;
     const bool declare_module_field_method=
         method_name->length==sizeof("declare_module_field")-1&&
         memcmp(method_name->chars,"declare_module_field",
@@ -3018,7 +3045,8 @@ static DiamondVmStatus program_builder_invoke_helper(DiamondVm *vm,
        !add_constant_method&&!add_string_method&&
        !set_register_count_method&&!declare_class_method&&
        !declare_module_method&&!declare_namespace_constant_method&&
-       !declare_field_method&&!declare_module_field_method&&!declare_method_method&&
+       !declare_field_method&&!declare_class_variable_method&&
+       !declare_module_field_method&&!declare_method_method&&
        !declare_module_method_method&&
        !declare_class_singleton_method_method&&
        !declare_module_singleton_method_method&&!set_function_owner_class_method&&
@@ -3368,6 +3396,41 @@ static DiamondVmStatus program_builder_invoke_helper(DiamondVm *vm,
         class->fields[class->field_count][fname->length]='\0';
         class->field_count++;
         program_builder_recompute_shapes(class);
+        *result=DIAMOND_INT(new_index);return DIAMOND_VM_OK;
+    }
+    if(declare_class_variable_method) {
+        if(argc!=2)return DIAMOND_VM_ARITY_ERROR;
+        if(registers[base].kind!=DIAMOND_VALUE_INT||
+           registers[(size_t)base+1].kind!=DIAMOND_VALUE_OBJECT||
+           registers[(size_t)base+1].as.object->kind!=DIAMOND_OBJECT_STRING) {
+            snprintf(vm->error,sizeof vm->error,
+                "ProgramBuilder#declare_class_variable arguments must be (Int, String)");
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        DiamondClass *class=
+            program_builder_class(built,registers[base].as.integer);
+        const DiamondString *vname=
+            (const DiamondString *)registers[(size_t)base+1].as.object;
+        if(class==nullptr||vname->length==0||
+           vname->length>=DIAMOND_MAX_FUNCTION_NAME) {
+            snprintf(vm->error,sizeof vm->error,"ProgramBuilder#%s",
+                "declare_class_variable has an invalid class index or variable name");
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        for(size_t index=0;index<class->class_variable_count;index++)
+            if(strlen(class->class_variables[index])==vname->length&&
+               memcmp(class->class_variables[index],vname->chars,vname->length)==0) {
+                *result=DIAMOND_INT((int64_t)index);return DIAMOND_VM_OK;
+            }
+        if(class->class_variable_count==DIAMOND_MAX_FIELDS) {
+            snprintf(vm->error,sizeof vm->error,"class has too many class variables");
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        const int64_t new_index=(int64_t)class->class_variable_count;
+        memcpy(class->class_variables[class->class_variable_count],
+            vname->chars,vname->length);
+        class->class_variables[class->class_variable_count][vname->length]='\0';
+        class->class_variable_count++;
         *result=DIAMOND_INT(new_index);return DIAMOND_VM_OK;
     }
     if(declare_module_field_method) {
@@ -4244,7 +4307,7 @@ static DiamondVmStatus program_builder_invoke_helper(DiamondVm *vm,
         const int64_t return_set=registers[(size_t)base+4].as.integer;
         if(interface_index<0||(uint64_t)interface_index>=built->interface_count||
            name->length==0||name->length>=DIAMOND_MAX_FUNCTION_NAME||
-           arity<0||arity>16||sets->count!=(size_t)arity||
+           arity<0||arity>DIAMOND_MAX_DECLARED_PARAMETERS||sets->count!=(size_t)arity||
            (return_set>=0&&(uint64_t)return_set>=built->entry.type_set_count))
             return DIAMOND_VM_TYPE_ERROR;
         DiamondInterface *interface=&built->interfaces[(size_t)interface_index];
@@ -4254,7 +4317,8 @@ static DiamondVmStatus program_builder_invoke_helper(DiamondVm *vm,
             .return_type_set=return_set<0?DIAMOND_NO_TYPE_SET:(uint16_t)return_set};
         memcpy(method->name,name->chars,name->length);
         method->name[name->length]='\0';
-        for(size_t index=0;index<16;index++)method->parameter_type_sets[index]=DIAMOND_NO_TYPE_SET;
+        for(size_t index=0;index<DIAMOND_MAX_DECLARED_PARAMETERS;index++)
+            method->parameter_type_sets[index]=DIAMOND_NO_TYPE_SET;
         for(size_t index=0;index<sets->count;index++) {
             if(sets->values[index].kind!=DIAMOND_VALUE_INT)return DIAMOND_VM_TYPE_ERROR;
             const int64_t set=sets->values[index].as.integer;
