@@ -163,6 +163,30 @@ builtins), and a ready-made `CookieSession` middleware matching this
 package's own `Callable[3]` contract -- see that package's own README
 for the full story and a `RackChain`-safe usage example.
 
+## Security headers
+
+`SecurityHeaders` (`lib/rack/security_headers.di`) is a middleware built
+into this package (no `packages/cookies` dependency, unlike
+`CookieSession`/`Csrf` above) that adds `X-Frame-Options`,
+`X-Content-Type-Options`, and `Referrer-Policy` to every response, with
+safe defaults and nothing to configure required:
+
+```ruby
+def build_chain()
+  rack_compose([SecurityHeaders.call], app_handler)
+end
+```
+
+`Content-Security-Policy` and `Strict-Transport-Security` are omitted
+unless explicitly turned on via `SecurityHeaders.configure({...})` (an
+app-specific CSP can't be guessed safely, and HSTS is actively harmful to
+set before a service is genuinely served over TLS) -- like
+`CookieSession`, `.configure` writes a class variable, so on
+`gremlin_serve(..., threads: N)` it needs calling inside the same
+`build_chain()`-style function that already runs once per
+`Thread.new`-spawned worker, not just once at the top of the script. See
+the file's own comment for every option.
+
 ## What's deliberately out of scope
 
 - **Routing.** This composes middleware around one handler; it doesn't

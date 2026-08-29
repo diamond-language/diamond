@@ -7,6 +7,14 @@ set -euo pipefail
 diamond="${DIAMOND_BIN:-diamond}"
 cd "$(dirname "$0")"
 
+count=0
+
+run_case() {
+    local script="$1"
+    "$diamond" -e "require \"$(pwd)/lib/rack\"
+$script"
+}
+
 wait_for_port() {
     local port="$1"
     { for _ in $(seq 1 100); do
@@ -86,6 +94,7 @@ kill "$pid" 2>/dev/null || true
 wait "$pid" 2>/dev/null || true
 grep -q "LOG GET /hi -> 200" "$out"
 rm -f "$out"
+count=$((count + 1))
 
 # The auth middleware short-circuits without ever reaching app_handler
 # -- a missing/wrong token gets 401 with the auth middleware's own body,
@@ -110,6 +119,7 @@ kill "$pid" 2>/dev/null || true
 wait "$pid" 2>/dev/null || true
 grep -q "LOG GET /secret -> 401" "$out"
 rm -f "$out"
+count=$((count + 1))
 
 # threads: 3 -- each worker is its own Thread-spawned, fully independent
 # DiamondVm (see docs/threads.md), so RackChain's @@instance memoization
@@ -139,5 +149,73 @@ done
 kill "$pid" 2>/dev/null || true
 wait "$pid" 2>/dev/null || true
 rm -f "$out"
+count=$((count + 1))
 
-echo "3 rack tests passed"
+# --- SecurityHeaders: safe defaults (SAMEORIGIN, nosniff, a referrer
+# --- policy), no CSP/HSTS unless configured, and the app's own headers
+# --- survive alongside the security ones ---
+actual="$(run_case '
+def app(request, context)
+  [200, {"Content-Type": "text/plain"}, "hi"]
+end
+[status, headers, body] = SecurityHeaders.call({}, {}, app)
+"#{headers["X-Frame-Options"]}|#{headers["X-Content-Type-Options"]}|#{headers["Referrer-Policy"]}|#{headers["Content-Security-Policy"]}|#{headers["Strict-Transport-Security"]}|#{headers["Content-Type"]}"
+')"
+[[ "$actual" == 'SAMEORIGIN|nosniff|strict-origin-when-cross-origin|nil|nil|text/plain' ]]
+count=$((count + 1))
+
+# --- SecurityHeaders.configure: frame_options: false omits the header
+# --- entirely, an explicit CSP is passed through, and hsts: true expands
+# --- to a real default value while a literal hsts string passes through
+# --- unchanged ---
+actual="$(run_case '
+def app(request, context)
+  [200, {}, "hi"]
+end
+SecurityHeaders.configure({"frame_options": false, "content_security_policy": "default-src '"'"'self'"'"'", "hsts": true})
+[s1, h1, b1] = SecurityHeaders.call({}, {}, app)
+SecurityHeaders.configure({"hsts": "max-age=60"})
+[s2, h2, b2] = SecurityHeaders.call({}, {}, app)
+"#{h1["X-Frame-Options"]}|#{h1["Content-Security-Policy"]}|#{h1["Strict-Transport-Security"]}|#{h2["Strict-Transport-Security"]}"
+')"
+[[ "$actual" == "nil|default-src 'self'|max-age=31536000; includeSubDomains|max-age=60" ]]
+count=$((count + 1))
+
+# --- SecurityHeaders wired into a real gremlin_serve chain: the
+# --- security headers show up on an actual over-the-wire response,
+# --- alongside app_handler's own Content-Type ---
+port=19423
+timeout 10 "$diamond" -e "$(cat <<SRCEOF
+require "$(pwd)/../gremlin/lib/gremlin"
+require "$(pwd)/lib/rack"
+
+def app_handler(request, context)
+  [200, {"Content-Type": "text/plain"}, "secured"]
+end
+
+def build_chain()
+  rack_compose([SecurityHeaders.call], app_handler)
+end
+
+def rack_app(request, context)
+  rack_run_chain(RackChain.get(build_chain), 0, request, context)
+end
+
+gremlin_serve($port, rack_app)
+SRCEOF
+)" >/dev/null 2>&1 &
+pid=$!
+wait_for_port "$port"
+{ exec 3<&- 3>&-; } 2>/dev/null || true
+
+exec 3<>"/dev/tcp/127.0.0.1/$port"
+printf 'GET / HTTP/1.1\r\nHost: localhost\r\n\r\n' >&3
+response="$(cat <&3)"
+{ exec 3<&- 3>&-; } 2>/dev/null || true
+[[ "$response" == $'HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nX-Frame-Options: SAMEORIGIN\r\nX-Content-Type-Options: nosniff\r\nReferrer-Policy: strict-origin-when-cross-origin\r\nContent-Length: 7\r\n\r\nsecured' ]]
+count=$((count + 1))
+
+kill "$pid" 2>/dev/null || true
+wait "$pid" 2>/dev/null || true
+
+echo "$count rack tests passed"
