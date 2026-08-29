@@ -217,7 +217,8 @@ if own_profile[0] != 200 || own_profile[2].include?("Follow<") || own_profile[2]
 end
 
 before_follow = app(request_with_cookie("GET", "/users/user4", "", follower_cookie), context)
-if before_follow[0] != 200 || !before_follow[2].include?("Follow<") || !before_follow[2].include?("0 following &middot; 0 followers")
+if before_follow[0] != 200 || !before_follow[2].include?("Follow<") ||
+   !before_follow[2].include?("<strong>0</strong> following") || !before_follow[2].include?("<strong>0</strong> followers")
   raise "target profile did not show a Follow button with zero counts before following"
 end
 
@@ -225,11 +226,12 @@ follow = app(request_with_cookie("POST", "/users/user4/follow", "csrf_token=#{fo
 if follow[0] != 302 then raise "follow request failed" end
 
 after_follow = app(request_with_cookie("GET", "/users/user4", "", follower_cookie), context)
-if after_follow[0] != 200 || !after_follow[2].include?("Unfollow<") || !after_follow[2].include?("0 following &middot; 1 followers")
+if after_follow[0] != 200 || !after_follow[2].include?("Unfollow<") ||
+   !after_follow[2].include?("<strong>0</strong> following") || !after_follow[2].include?("<strong>1</strong> followers")
   raise "target profile did not reflect the new follower"
 end
 follower_own_profile = app(request_with_cookie("GET", "/users/user3", "", follower_cookie), context)
-if !follower_own_profile[2].include?("1 following &middot; 0 followers")
+if !follower_own_profile[2].include?("<strong>1</strong> following") || !follower_own_profile[2].include?("<strong>0</strong> followers")
   raise "follower's own profile did not reflect their new following count"
 end
 
@@ -242,7 +244,8 @@ end
 unfollow = app(request_with_cookie("POST", "/users/user4/unfollow", "csrf_token=#{follower_csrf}", follower_cookie), context)
 if unfollow[0] != 302 then raise "unfollow request failed" end
 after_unfollow = app(request_with_cookie("GET", "/users/user4", "", follower_cookie), context)
-if after_unfollow[0] != 200 || !after_unfollow[2].include?("Follow<") || !after_unfollow[2].include?("0 following &middot; 0 followers")
+if after_unfollow[0] != 200 || !after_unfollow[2].include?("Follow<") ||
+   !after_unfollow[2].include?("<strong>0</strong> following") || !after_unfollow[2].include?("<strong>0</strong> followers")
   raise "target profile did not reflect the unfollow"
 end
 

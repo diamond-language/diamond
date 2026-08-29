@@ -1,18 +1,27 @@
 <%# locals: user, skins, db, following_count, followers_count, is_following, current_user, csrf_token %>
-<p><%= following_count %> following &middot; <%= followers_count %> followers</p>
-<% if current_user != nil && current_user.id() != user.id() %>
-<% if is_following %>
-<form method="POST" action="/users/<%= user.username() %>/unfollow">
-  <input type="hidden" name="csrf_token" value="<%= csrf_token %>">
-  <button type="submit">Unfollow</button>
-</form>
-<% else %>
-<form method="POST" action="/users/<%= user.username() %>/follow">
-  <input type="hidden" name="csrf_token" value="<%= csrf_token %>">
-  <button type="submit">Follow</button>
-</form>
-<% end %>
-<% end %>
+<div class="profile-page">
+  <div class="profile-header">
+    <div class="profile-stats">
+      <span><strong><%= following_count %></strong> following</span>
+      <span><strong><%= followers_count %></strong> followers</span>
+      <span><strong><%= skins.length() %></strong> skins</span>
+    </div>
+    <% if current_user != nil && current_user.id() != user.id() %>
+    <div class="profile-actions">
+      <% if is_following %>
+      <form method="POST" action="/users/<%= user.username() %>/unfollow">
+        <input type="hidden" name="csrf_token" value="<%= csrf_token %>">
+        <button type="submit" class="btn btn-ghost">Unfollow</button>
+      </form>
+      <% else %>
+      <form method="POST" action="/users/<%= user.username() %>/follow">
+        <input type="hidden" name="csrf_token" value="<%= csrf_token %>">
+        <button type="submit" class="btn btn-primary">Follow</button>
+      </form>
+      <% end %>
+    </div>
+    <% end %>
+  </div>
 
-<h2>Skins by <%= user.username() %></h2>
-<%== skins_index_html(skins, db) %>
+  <%== skins_index_html(skins, db) %>
+</div>

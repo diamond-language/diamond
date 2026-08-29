@@ -1,15 +1,23 @@
 <%# locals: action, title, description, platform, tags_text, submit, csrf_token, errors, platforms %>
+<div class="form-page">
 <% if errors.length() > 0 %>
-<ul>
-  <% errors.each() do |error| %><li><%= error %></li><% end %>
-</ul>
+<div class="form-errors">
+  <% errors.each() do |error| %><p class="form-error"><%= error %></p><% end %>
+</div>
 <% end %>
 <form method="POST" action="<%= action %>" enctype="multipart/form-data">
   <input type="hidden" name="csrf_token" value="<%= csrf_token %>">
-  <p><label>Title <input name="title" value="<%= title %>" required></label></p>
-  <p><label>Description <textarea name="description" required><%= description %></textarea></label></p>
-  <p><label>Platform
-    <select name="platform" required>
+  <div class="form-group">
+    <label class="form-label" for="title">Title</label>
+    <input class="form-input" id="title" name="title" value="<%= title %>" required>
+  </div>
+  <div class="form-group">
+    <label class="form-label" for="description">Description</label>
+    <textarea class="form-textarea" id="description" name="description" required><%= description %></textarea>
+  </div>
+  <div class="form-group">
+    <label class="form-label" for="platform">Platform</label>
+    <select class="form-select" id="platform" name="platform" required>
       <option value="">Choose one</option>
       <% platforms.each() do |option| %>
         <% if option == platform %>
@@ -19,9 +27,21 @@
         <% end %>
       <% end %>
     </select>
-  </label></p>
-  <p><label>Tags (comma separated) <input name="tags" value="<%= tags_text %>"></label></p>
-  <p><label>Theme file (.zip/.itheme/.deskthemepack) <input type="file" name="theme_file" accept=".zip,.itheme,.deskthemepack"></label></p>
-  <p><label>Preview image (optional) <input type="file" name="preview_image" accept="image/*"></label></p>
-  <button type="submit"><%= submit %></button>
+  </div>
+  <div class="form-group">
+    <label class="form-label" for="tags">Tags (comma separated)</label>
+    <input class="form-input" id="tags" name="tags" value="<%= tags_text %>">
+  </div>
+  <div class="form-group">
+    <label class="form-label" for="theme_file">Theme file (.zip/.itheme/.deskthemepack)</label>
+    <input class="form-input" type="file" id="theme_file" name="theme_file" accept=".zip,.itheme,.deskthemepack">
+  </div>
+  <div class="form-group">
+    <label class="form-label" for="preview_image">Preview image (optional)</label>
+    <input class="form-input" type="file" id="preview_image" name="preview_image" accept="image/*">
+  </div>
+  <div class="form-actions">
+    <button type="submit" class="btn btn-primary"><%= submit %></button>
+  </div>
 </form>
+</div>

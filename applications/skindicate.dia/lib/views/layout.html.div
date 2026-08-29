@@ -1,23 +1,41 @@
 <%# locals: title, content, current_user, csrf_token %>
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
   <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
   <title><%= title %> - Skindicate</title>
   <link rel="stylesheet" href="/css/app.css">
 </head>
 <body>
-  <nav>
-    <a href="/">Skindicate</a>
-    <% if current_user == nil %>
-      | <a href="/login">Sign in</a> | <a href="/signup">Sign up</a>
-    <% else %>
-      | <a href="/skins/new">Submit a skin</a>
-      | Signed in as <%= current_user.username() %>
-      <form method="POST" action="/logout" style="display:inline"><input type="hidden" name="csrf_token" value="<%= csrf_token %>"><button>Sign out</button></form>
-    <% end %>
-  </nav>
-  <h1><%= title %></h1>
-  <%== content %>
+  <header class="site-header">
+    <nav class="nav">
+      <a href="/" class="logo">Skin<strong>dicate</strong></a>
+      <div class="nav-actions">
+        <% if current_user == nil %>
+        <a href="/login" class="btn btn-ghost">Sign in</a>
+        <a href="/signup" class="btn btn-primary">Join</a>
+        <% else %>
+        <a href="/skins/new" class="btn btn-primary">+ Submit</a>
+        <a href="/users/<%= current_user.username() %>" class="nav-user-link">@<%= current_user.username() %></a>
+        <form method="POST" action="/logout" style="display:inline">
+          <input type="hidden" name="csrf_token" value="<%= csrf_token %>">
+          <button type="submit" class="btn-link">Sign out</button>
+        </form>
+        <% end %>
+      </div>
+    </nav>
+  </header>
+
+  <main class="main">
+    <div class="page-header">
+      <h1><%= title %></h1>
+    </div>
+    <%== content %>
+  </main>
+
+  <footer class="site-footer">
+    <p>Skindicate &mdash; reskins and themes. <a href="/">Browse all</a></p>
+  </footer>
 </body>
 </html>

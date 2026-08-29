@@ -1,45 +1,72 @@
 <%# locals: skin, uploader, tags, is_owner, current_user, comments, db, csrf_token %>
-<% if skin.preview_image_path() != nil %>
-<p><img src="/<%= skin.preview_image_path() %>" alt="<%= skin.title() %>" width="480"></p>
-<% end %>
-<p><strong>Platform:</strong> <%= skin.platform() %></p>
-<p><strong>By:</strong> <a href="/users/<%= uploader.username() %>"><%= uploader.username() %></a></p>
-<p><%= skin.description() %></p>
-<p>
-<% tags.each() do |tag| %><a href="/tags/<%= tag.name() %>">#<%= tag.name() %></a> <% end %>
-</p>
-<p><a href="/<%= skin.file_path() %>"><%= skin.original_filename() %></a></p>
-<% if is_owner %>
-<p>
-  <a href="/skins/<%= skin.id() %>/edit">Edit</a>
-  <form method="POST" action="/skins/<%= skin.id() %>/delete" style="display:inline" onsubmit="return confirm('Delete this skin?')">
-    <input type="hidden" name="csrf_token" value="<%= csrf_token %>">
-    <button type="submit">Delete</button>
-  </form>
-</p>
-<% end %>
+<div class="skin-show">
+  <div class="skin-preview-area">
+    <% if skin.preview_image_path() != nil %>
+    <img src="/<%= skin.preview_image_path() %>" alt="<%= skin.title() %>">
+    <% else %>
+    <div class="skin-preview-placeholder"><%= skin.platform() %></div>
+    <% end %>
+  </div>
 
-<h2>Comments</h2>
-<% if comments.length() == 0 %>
-<p>No comments yet.</p>
-<% end %>
-<% comments.each() do |comment| %>
+  <div class="skin-info">
+    <span class="skin-platform-badge"><%= skin.platform() %></span>
+    <p class="skin-description"><%= skin.description() %></p>
+
+    <% if tags.length() > 0 %>
+    <div class="skin-tags">
+    <% tags.each() do |tag| %><a href="/tags/<%= tag.name() %>" class="tag">#<%= tag.name() %></a><% end %>
+    </div>
+    <% end %>
+
+    <a href="/<%= skin.file_path() %>" class="skin-download-link btn btn-primary">&#8595; <%= skin.original_filename() %></a>
+
+    <% if is_owner %>
+    <div class="skin-actions">
+      <a href="/skins/<%= skin.id() %>/edit" class="btn btn-ghost">Edit</a>
+      <form method="POST" action="/skins/<%= skin.id() %>/delete" style="display:inline" onsubmit="return confirm('Delete this skin?')">
+        <input type="hidden" name="csrf_token" value="<%= csrf_token %>">
+        <button type="submit" class="btn btn-danger">Delete</button>
+      </form>
+    </div>
+    <% end %>
+
+    <div class="skin-author-card">
+      <a href="/users/<%= uploader.username() %>">@<%= uploader.username() %></a>
+    </div>
+  </div>
+</div>
+
+<section class="skin-comments">
+  <h2 class="comments-title"><%= comments.length() %> <% if comments.length() == 1 %>Comment<% else %>Comments<% end %></h2>
+  <% if comments.length() == 0 %>
+  <div class="empty-state"><p>No comments yet.</p></div>
+  <% end %>
+  <% comments.each() do |comment| %>
   <div class="comment">
-    <p><strong><a href="/users/<%= comment.user(db).username() %>"><%= comment.user(db).username() %></a>:</strong> <%= comment.body() %></p>
+    <div class="comment-meta">
+      <a href="/users/<%= comment.user(db).username() %>" class="comment-author">@<%= comment.user(db).username() %></a>
+    </div>
+    <p class="comment-text"><%= comment.body() %></p>
     <% if current_user != nil && current_user.id() == comment.user_id() %>
-    <form method="POST" action="/comments/<%= comment.id() %>/delete" style="display:inline" onsubmit="return confirm('Delete this comment?')">
+    <form method="POST" action="/comments/<%= comment.id() %>/delete" class="comment-delete-form" onsubmit="return confirm('Delete this comment?')">
       <input type="hidden" name="csrf_token" value="<%= csrf_token %>">
-      <button type="submit">Delete</button>
+      <button type="submit" class="comment-delete">Delete</button>
     </form>
     <% end %>
   </div>
-<% end %>
-<% if current_user != nil %>
-<form method="POST" action="/skins/<%= skin.id() %>/comments">
-  <input type="hidden" name="csrf_token" value="<%= csrf_token %>">
-  <p><label>Add a comment <textarea name="body" required></textarea></label></p>
-  <button type="submit">Post comment</button>
-</form>
-<% else %>
-<p><a href="/login">Sign in</a> to leave a comment.</p>
-<% end %>
+  <% end %>
+
+  <% if current_user != nil %>
+  <form method="POST" action="/skins/<%= skin.id() %>/comments" class="comment-form">
+    <input type="hidden" name="csrf_token" value="<%= csrf_token %>">
+    <div class="comment-form-input">
+      <textarea class="comment-input" name="body" placeholder="Add a comment&hellip;" required></textarea>
+      <div class="comment-form-actions">
+        <button type="submit" class="btn btn-primary btn-sm">Post</button>
+      </div>
+    </div>
+  </form>
+  <% else %>
+  <p class="comments-sign-in"><a href="/login">Sign in</a> to leave a comment.</p>
+  <% end %>
+</section>
