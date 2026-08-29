@@ -259,6 +259,42 @@ Like `SecurityHeaders`/`RateLimit`, `.configure` is a class-variable
 write -- call it once per worker on `threads: N`, inside the same
 `build_chain()`-style function.
 
+## Static files -- the framework's whole "asset layer"
+
+`StaticFiles` (`lib/rack/static_files.di`) serves plain files straight
+off disk: no bundling, no fingerprinting/cache-busting, no build step.
+Drop a `.js`/`.css`/image/font file under a directory and it's reachable
+at the matching URL path:
+
+```ruby
+def build_chain()
+  StaticFiles.configure({"root": "./public"})
+  rack_compose([StaticFiles.call], app_handler)
+end
+```
+
+With no `"prefix"` configured (the default), `./public/app.css` serves
+at `GET /app.css` -- the plain "public directory" shape. An explicit
+`"prefix"` (e.g. `"/assets"`) namespaces it instead: `./public/app.css`
+serves at `GET /assets/app.css`, and anything outside that prefix falls
+straight through.
+
+Only `GET` is handled; everything else -- a missing file, a directory, a
+permissions error, any non-`GET` method, or a blocked `..` path-traversal
+attempt -- falls through to `forward` unconditionally, so an app's own
+route at the same path still gets a chance to handle the request instead
+of the middleware ever erroring. `Content-Type` is set from a small
+built-in extension table (falling back to `application/octet-stream` for
+anything unrecognized -- see the file's own comment for the full list).
+No directory listing, no automatic `index.html` resolution for a
+directory path -- both deliberately out of scope for now; add them, or a
+real asset pipeline on top (bundling, minification, cache-busting
+filenames), only once a concrete app actually needs one.
+
+Like the other middlewares here, `.configure` is a class-variable write
+-- call it once per worker on `threads: N`, inside the same
+`build_chain()`-style function.
+
 ## What's deliberately out of scope
 
 - **Routing.** This composes middleware around one handler; it doesn't

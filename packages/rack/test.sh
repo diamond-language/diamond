@@ -409,4 +409,93 @@ count=$((count + 1))
 kill "$pid" 2>/dev/null || true
 wait "$pid" 2>/dev/null || true
 
+# --- StaticFiles: serves a real file with the right Content-Type, falls
+# --- through (to the app) for a missing file, a directory, a non-GET
+# --- request, and a blocked path-traversal attempt, and respects an
+# --- explicit "prefix" ---
+static_root="$(mktemp -d)"
+mkdir -p "$static_root/css"
+printf 'body { color: red; }' > "$static_root/css/app.css"
+printf "console.log('hi');" > "$static_root/app.js"
+printf 'secret' > "$(dirname "$static_root")/$(basename "$static_root")-outside.txt"
+
+actual="$(run_case "
+def app(request, context)
+  [404, {}, \"app-fallback\"]
+end
+StaticFiles.configure({\"root\": \"$static_root\"})
+[s1, h1, b1] = StaticFiles.call({\"method\": \"GET\", \"path\": \"/app.js\"}, {}, app)
+[s2, h2, b2] = StaticFiles.call({\"method\": \"GET\", \"path\": \"/css/app.css\"}, {}, app)
+[s3, h3, b3] = StaticFiles.call({\"method\": \"GET\", \"path\": \"/missing.js\"}, {}, app)
+[s4, h4, b4] = StaticFiles.call({\"method\": \"GET\", \"path\": \"/../$(basename "$static_root")-outside.txt\"}, {}, app)
+[s5, h5, b5] = StaticFiles.call({\"method\": \"GET\", \"path\": \"/css\"}, {}, app)
+[s6, h6, b6] = StaticFiles.call({\"method\": \"POST\", \"path\": \"/app.js\"}, {}, app)
+\"#{s1}|#{h1[\"Content-Type\"]}|#{b1}|#{s2}|#{h2[\"Content-Type\"]}|#{s3}|#{b3}|#{s4}|#{s5}|#{s6}\"
+")"
+[[ "$actual" == "200|text/javascript|console.log('hi');|200|text/css|404|app-fallback|404|404|404" ]]
+count=$((count + 1))
+
+actual="$(run_case "
+def app(request, context)
+  [404, {}, \"app-fallback\"]
+end
+StaticFiles.configure({\"root\": \"$static_root\", \"prefix\": \"/assets\"})
+[s1, h1, b1] = StaticFiles.call({\"method\": \"GET\", \"path\": \"/assets/app.js\"}, {}, app)
+[s2, h2, b2] = StaticFiles.call({\"method\": \"GET\", \"path\": \"/app.js\"}, {}, app)
+\"#{s1}|#{s2}\"
+")"
+[[ "$actual" == "200|404" ]]
+count=$((count + 1))
+
+# --- StaticFiles wired into a real gremlin_serve chain: a real GET over
+# --- the wire serves the file with its Content-Type, and a missing path
+# --- falls through to the app instead of erroring ---
+port=19426
+timeout 10 "$diamond" -e "$(cat <<SRCEOF
+require "$(pwd)/../gremlin/lib/gremlin"
+require "$(pwd)/lib/rack"
+
+def app_handler(request, context)
+  [404, {"Content-Type": "text/plain"}, "app-fallback"]
+end
+
+def build_chain()
+  StaticFiles.configure({"root": "$static_root"})
+  rack_compose([StaticFiles.call], app_handler)
+end
+
+def rack_app(request, context)
+  rack_run_chain(RackChain.get(build_chain), 0, request, context)
+end
+
+gremlin_serve($port, rack_app)
+SRCEOF
+)" >/dev/null 2>&1 &
+pid=$!
+wait_for_port "$port"
+{ exec 3<&- 3>&-; } 2>/dev/null || true
+
+exec 3<>"/dev/tcp/127.0.0.1/$port"
+printf 'GET /app.js HTTP/1.1\r\nHost: localhost\r\n\r\n' >&3
+static_response="$(cat <&3)"
+{ exec 3<&- 3>&-; } 2>/dev/null || true
+assert_contains "$static_response" "HTTP/1.1 200 OK"
+count=$((count + 1))
+assert_contains "$static_response" "Content-Type: text/javascript"
+count=$((count + 1))
+assert_contains "$static_response" "console.log('hi');"
+count=$((count + 1))
+
+exec 3<>"/dev/tcp/127.0.0.1/$port"
+printf 'GET /missing.js HTTP/1.1\r\nHost: localhost\r\n\r\n' >&3
+missing_response="$(cat <&3)"
+{ exec 3<&- 3>&-; } 2>/dev/null || true
+assert_contains "$missing_response" "app-fallback"
+count=$((count + 1))
+
+kill "$pid" 2>/dev/null || true
+wait "$pid" 2>/dev/null || true
+
+rm -rf "$static_root" "$(dirname "$static_root")/$(basename "$static_root")-outside.txt"
+
 echo "$count rack tests passed"
