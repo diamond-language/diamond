@@ -28,7 +28,19 @@ class Discussion < ActiveRecord::Model
     @karma = if attributes["karma"] == nil then 0 else attributes["karma"] end
     @max_depth = attributes["max_depth"]
     @karma_floor = attributes["karma_floor"]
-    @locked = if attributes["locked"] == nil then false else attributes["locked"] end
+    # SQLite has no real BOOLEAN column type -- a row loaded back via a
+    # fresh query returns this column as a plain Int (0/1), not the
+    # Bool `true`/`false` a freshly-`.new()`-constructed Discussion (or
+    # one still held in memory right after `#lock!`) carries. Coercing
+    # both shapes here, rather than only checking `== true` in
+    # `#locked?` below, keeps `@locked` a genuine Bool everywhere else
+    # this class reads it internally too. Found via Skindicate's own
+    # discussion-lock UI: `#locked?` looked right immediately after
+    # `#lock!` (same in-memory object, @locked already a real `true`),
+    # but read back false on the very next request's fresh `.where(...)`
+    # load -- this package's own test.sh never caught it because its
+    # lock/unlock assertions never re-queried the row from the database.
+    @locked = attributes["locked"] == true || attributes["locked"] == 1
     @locked_at = attributes["locked_at"]
     @locked_reason = attributes["locked_reason"]
     @cooldown_until = attributes["cooldown_until"]

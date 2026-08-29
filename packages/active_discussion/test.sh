@@ -82,6 +82,23 @@ c = d.create_comment!(db, "bob", "hello again")
 ')"
 assert_eq "$actual" "true true false bob"
 
+# --- locked state survives a real reload from the database (SQLite
+# --- has no BOOLEAN column type -- a fresh query returns this column
+# --- as a plain Int 0/1, not the Bool `true`/`false` an in-memory
+# --- object right after #lock!/#unlock! carries; a naive `@locked ==
+# --- true` would look right on the same object and wrong on reload) ---
+actual="$(run_case '
+db = setup_test_db()
+d = ActiveDiscussion::Discussion.open!(db, "skin-1")
+d.lock!(db, "spam wave")
+reloaded = ActiveDiscussion::Discussion.find(db, d.id())
+locked_after_reload = reloaded.locked?()
+reloaded.unlock!(db)
+reloaded_again = ActiveDiscussion::Discussion.find(db, d.id())
+"#{locked_after_reload} #{reloaded_again.locked?()}"
+')"
+assert_eq "$actual" "true false"
+
 # --- max_depth is enforced per discussion ---
 actual="$(run_case '
 db = setup_test_db()
