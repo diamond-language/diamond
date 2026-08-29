@@ -75,14 +75,22 @@ class Comment < ActiveRecord::Model
     rows.sort_by() do |comment| comment.created_at() * 1000000000 + comment.id() end
   end
 
-  # Every descendant, this comment included -- recursive over
-  # parent_id rather than the Ruby original's materialized-path
-  # subtree query, since there's no path column here to query against
-  # (see the class comment above), delegating to the top-level
-  # collect_subtree_ids (see its own comment, at the bottom of this
-  # file, on why this is recursive rather than an iterative
-  # growing-Array loop).
-  def subtree_ids(db) -> Array = collect_subtree_ids(db, self.id())
+  # Every descendant, this comment included -- a BFS over parent_id
+  # rather than the Ruby original's materialized-path subtree query,
+  # since there's no path column here to query against (see the class
+  # comment above).
+  def subtree_ids(db) -> Array
+    ids = [self.id()]
+    index = 0
+    while index < ids.length()
+      children = Comment.where({"parent_id": ids[index]}).to_a(db)
+      children.each() do |child|
+        ids.push(child.id())
+      end
+      index += 1
+    end
+    ids
+  end
 
   def edit!(db, body: String)
     trimmed = body.strip()
@@ -118,27 +126,4 @@ def build_comment_body_validator()
     ActiveRecord::Validators.presence("body"),
     ActiveRecord::Validators.length("body", 1, 10000),
   ])
-end
-
-# Collects `id` plus every descendant id, recursively -- confirmed
-# directly that the equivalent *iterative* version (seed an Array with
-# the root id, grow it in a while loop via `.push` from each query's
-# own results, re-read it by index for the next query) hits a real
-# compiler bug: a value pushed from a Repository query's own mapped
-# result, later re-read by index and fed into a *second* query in the
-# same loop, trips a spurious runtime "type error" (reproduced with a
-# minimal unrelated model, several array/local-variable variations
-# tried, all failed identically -- see this package's own README for
-# the full repro shape). This recursive shape sidesteps it entirely --
-# every call gets its own fresh local scope instead of one growing
-# shared Array read back across loop iterations -- confirmed working.
-# A genuine top-level function since it needs no `self`; placed here
-# (after the module) since it references ActiveDiscussion::Comment.
-def collect_subtree_ids(db, id)
-  ids = [id]
-  children = ActiveDiscussion::Comment.where({"parent_id": id}).to_a(db)
-  children.each() do |child|
-    ids = ids.concat(collect_subtree_ids(db, child.id()))
-  end
-  ids
 end

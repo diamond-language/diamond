@@ -65,35 +65,6 @@ configured window.
   `#top_level_comments`, `Comment#replies`) combines the keys into one
   numeric value instead: `comment.created_at() * 1000000000 + comment.id()`.
 
-### A real compiler bug, and why subtree collection is recursive
-
-`Comment#subtree_ids` (every descendant id, this comment included) was
-originally written the obvious iterative way: seed an `Array` with the
-root id, walk it with a `while` loop, and for each id already in the
-array, `.where({"parent_id": id}).to_a(db)` for its children and
-`.push()` each child's id onto the same array so the loop picks them up
-too (a standard BFS-via-growing-array).
-
-That pattern triggers a real Diamond compiler bug: a value that was
-**pushed onto an Array from inside a loop, derived from a `Repository`
-query's own mapped results, then read back out of the array by index
-and fed into a *second* query in that same loop** raises a spurious
-runtime "type error" at the second query call -- even though the value
-being passed is a perfectly ordinary `Int`. This was reproduced in
-isolation with a minimal, unrelated `ActiveRecord::Model`, and survived
-every variation tried: extracting the index-read to a local, extracting
-the pushed value to a local, using a `Hash`-based visited-set instead
-of an `Array`. Only switching from **iteration to recursion** --
-a plain top-level function calling itself, so each call gets its own
-fresh local scope instead of one shared array read back across loop
-iterations -- sidesteps it. See `collect_subtree_ids` at the bottom of
-`lib/active_discussion/comment.di` for the working recursive version.
-
-This bug has not been root-caused inside the compiler itself, has not
-been filed, and has no dedicated regression test yet -- it's documented
-here and inline as a code comment because of how easy it would be to
-reintroduce by "simplifying" the recursion back to a loop.
-
 ## Required tables
 
 ```sql
