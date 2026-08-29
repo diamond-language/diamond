@@ -5617,6 +5617,176 @@ static DiamondVmStatus sha256_hex_helper(DiamondVm *vm,DiamondValue key_value,
     return DIAMOND_VM_OK;
 }
 
+/* HMAC.verify(data, key, signature) -- recomputes HMAC-SHA256 over `data`
+ * with `key` (the exact computation sha256_hex_helper's own keyed path
+ * already does) and compares the resulting lowercase-hex digest against
+ * `signature` with CRYPTO_memcmp rather than plain memcmp/strcmp -- the
+ * same constant-time-comparison reasoning bcrypt_verify_helper's own
+ * comment gives. A `signature` of the wrong length, or any argument of
+ * the wrong type, is an ordinary non-match (false) rather than an
+ * exception -- verifying against a bad/foreign signature is a normal
+ * outcome here, not a program error, matching BCrypt.verify. */
+static DiamondVmStatus hmac_verify_helper(DiamondVm *vm,DiamondValue data_value,
+        DiamondValue key_value,DiamondValue signature_value,DiamondValue *out_result) {
+    if(data_value.kind!=DIAMOND_VALUE_OBJECT||
+       data_value.as.object->kind!=DIAMOND_OBJECT_STRING||
+       key_value.kind!=DIAMOND_VALUE_OBJECT||
+       key_value.as.object->kind!=DIAMOND_OBJECT_STRING||
+       signature_value.kind!=DIAMOND_VALUE_OBJECT||
+       signature_value.as.object->kind!=DIAMOND_OBJECT_STRING)
+        return DIAMOND_VM_TYPE_ERROR;
+    DiamondValue computed_value=DIAMOND_NIL;
+    const DiamondVmStatus status=sha256_hex_helper(vm,key_value,data_value,true,
+        &computed_value);
+    if(status!=DIAMOND_VM_OK)return status;
+    const DiamondString *computed=(const DiamondString *)computed_value.as.object;
+    const DiamondString *signature=(const DiamondString *)signature_value.as.object;
+    const bool matches=computed->length==signature->length&&
+        CRYPTO_memcmp(computed->chars,signature->chars,computed->length)==0;
+    *out_result=DIAMOND_BOOL(matches);
+    return DIAMOND_VM_OK;
+}
+
+enum { DIAMOND_CIPHER_KEY_LENGTH = 32, DIAMOND_CIPHER_NONCE_LENGTH = 12,
+       DIAMOND_CIPHER_TAG_LENGTH = 16 };
+
+/* Cipher.encrypt(key, plaintext) -- AES-256-GCM via OpenSSL's EVP_CIPHER
+ * API (EVP_aes_256_gcm(), already linked for TLS -- no new dependency).
+ * `key` must be exactly DIAMOND_CIPHER_KEY_LENGTH raw bytes: AES-256
+ * takes a fixed-size key, and silently truncating/padding a wrong-length
+ * key would be a much worse failure mode than rejecting it outright.
+ * Generates a fresh random DIAMOND_CIPHER_NONCE_LENGTH-byte nonce per
+ * call (RAND_bytes, same as secure_random_bytes_helper) -- GCM's own
+ * security requires never reusing a (key, nonce) pair, and a 96-bit
+ * random nonce makes an accidental collision astronomically unlikely
+ * for any realistic number of cookies one key ever encrypts. Returns one
+ * binary-safe String: nonce, then the GCM authentication tag, then the
+ * ciphertext -- packed together so decrypt only needs the key and this
+ * one blob, no separate nonce/tag bookkeeping at the call site. */
+static DiamondVmStatus aes_gcm_encrypt_helper(DiamondVm *vm,DiamondValue key_value,
+        DiamondValue plaintext_value,DiamondValue *out_result) {
+    if(key_value.kind!=DIAMOND_VALUE_OBJECT||
+       key_value.as.object->kind!=DIAMOND_OBJECT_STRING||
+       plaintext_value.kind!=DIAMOND_VALUE_OBJECT||
+       plaintext_value.as.object->kind!=DIAMOND_OBJECT_STRING)
+        return DIAMOND_VM_TYPE_ERROR;
+    const DiamondString *key=(const DiamondString *)key_value.as.object;
+    if(key->length!=DIAMOND_CIPHER_KEY_LENGTH) {
+        (void)snprintf(vm->error,sizeof vm->error,
+            "Cipher.encrypt key must be exactly %d bytes, got %zu",
+            DIAMOND_CIPHER_KEY_LENGTH,key->length);
+        return DIAMOND_VM_ARITY_ERROR;
+    }
+    const DiamondString *plaintext=(const DiamondString *)plaintext_value.as.object;
+    if(plaintext->length>INT_MAX) {
+        (void)snprintf(vm->error,sizeof vm->error,"Cipher.encrypt plaintext is too large");
+        return DIAMOND_VM_ARITY_ERROR;
+    }
+    unsigned char nonce[DIAMOND_CIPHER_NONCE_LENGTH];
+    if(RAND_bytes(nonce,sizeof nonce)!=1) {
+        (void)snprintf(vm->error,sizeof vm->error,"Cipher.encrypt: RAND_bytes failed");
+        return DIAMOND_VM_PROGRAM_ERROR;
+    }
+    const size_t blob_length=DIAMOND_CIPHER_NONCE_LENGTH+DIAMOND_CIPHER_TAG_LENGTH+
+        plaintext->length;
+    unsigned char *blob=malloc(blob_length>0?blob_length:1);
+    if(blob==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+    memcpy(blob,nonce,sizeof nonce);
+    unsigned char *ciphertext=blob+DIAMOND_CIPHER_NONCE_LENGTH+DIAMOND_CIPHER_TAG_LENGTH;
+    EVP_CIPHER_CTX *ctx=EVP_CIPHER_CTX_new();
+    bool ok=ctx!=nullptr;
+    int written=0,total=0;
+    if(ok)ok=EVP_EncryptInit_ex(ctx,EVP_aes_256_gcm(),nullptr,nullptr,nullptr)==1;
+    if(ok)ok=EVP_CIPHER_CTX_ctrl(ctx,EVP_CTRL_GCM_SET_IVLEN,
+        DIAMOND_CIPHER_NONCE_LENGTH,nullptr)==1;
+    if(ok)ok=EVP_EncryptInit_ex(ctx,nullptr,nullptr,
+        (const unsigned char *)key->chars,nonce)==1;
+    if(ok&&plaintext->length>0)
+        ok=EVP_EncryptUpdate(ctx,ciphertext,&written,
+            (const unsigned char *)plaintext->chars,(int)plaintext->length)==1;
+    total=written;
+    if(ok)ok=EVP_EncryptFinal_ex(ctx,ciphertext+total,&written)==1;
+    total+=written;
+    if(ok)ok=EVP_CIPHER_CTX_ctrl(ctx,EVP_CTRL_GCM_GET_TAG,
+        DIAMOND_CIPHER_TAG_LENGTH,blob+DIAMOND_CIPHER_NONCE_LENGTH)==1;
+    if(ctx!=nullptr)EVP_CIPHER_CTX_free(ctx);
+    if(!ok||(size_t)total!=plaintext->length) {
+        free(blob);
+        (void)snprintf(vm->error,sizeof vm->error,"Cipher.encrypt failed");
+        return DIAMOND_VM_PROGRAM_ERROR;
+    }
+    DiamondString *result=allocate_string(vm,(const char *)blob,blob_length);
+    free(blob);
+    if(result==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+    *out_result=DIAMOND_OBJECT(result);
+    return DIAMOND_VM_OK;
+}
+
+/* Cipher.decrypt(key, blob) -- the inverse of aes_gcm_encrypt_helper
+ * above. Returns nil (not an exception) on any failure -- wrong key, a
+ * tampered or truncated blob, or GCM's own tag check failing -- the same
+ * "bad input is a normal outcome here, not a programmer error" reasoning
+ * BCrypt.verify's own comment already gives for a malformed digest: a
+ * forged/expired/wrong-key cookie is expected to happen in normal
+ * operation, not something calling code should have to rescue. */
+static DiamondVmStatus aes_gcm_decrypt_helper(DiamondVm *vm,DiamondValue key_value,
+        DiamondValue blob_value,DiamondValue *out_result) {
+    if(key_value.kind!=DIAMOND_VALUE_OBJECT||
+       key_value.as.object->kind!=DIAMOND_OBJECT_STRING||
+       blob_value.kind!=DIAMOND_VALUE_OBJECT||
+       blob_value.as.object->kind!=DIAMOND_OBJECT_STRING)
+        return DIAMOND_VM_TYPE_ERROR;
+    const DiamondString *key=(const DiamondString *)key_value.as.object;
+    if(key->length!=DIAMOND_CIPHER_KEY_LENGTH) {
+        (void)snprintf(vm->error,sizeof vm->error,
+            "Cipher.decrypt key must be exactly %d bytes, got %zu",
+            DIAMOND_CIPHER_KEY_LENGTH,key->length);
+        return DIAMOND_VM_ARITY_ERROR;
+    }
+    const DiamondString *blob=(const DiamondString *)blob_value.as.object;
+    const size_t header_length=DIAMOND_CIPHER_NONCE_LENGTH+DIAMOND_CIPHER_TAG_LENGTH;
+    if(blob->length<header_length||blob->length-header_length>INT_MAX) {
+        *out_result=DIAMOND_NIL;
+        return DIAMOND_VM_OK;
+    }
+    const unsigned char *nonce=(const unsigned char *)blob->chars;
+    const unsigned char *tag=(const unsigned char *)blob->chars+DIAMOND_CIPHER_NONCE_LENGTH;
+    const unsigned char *ciphertext=(const unsigned char *)blob->chars+header_length;
+    const size_t ciphertext_length=blob->length-header_length;
+    unsigned char *plaintext=malloc(ciphertext_length>0?ciphertext_length:1);
+    if(plaintext==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+    EVP_CIPHER_CTX *ctx=EVP_CIPHER_CTX_new();
+    bool ok=ctx!=nullptr;
+    int written=0,total=0;
+    if(ok)ok=EVP_DecryptInit_ex(ctx,EVP_aes_256_gcm(),nullptr,nullptr,nullptr)==1;
+    if(ok)ok=EVP_CIPHER_CTX_ctrl(ctx,EVP_CTRL_GCM_SET_IVLEN,
+        DIAMOND_CIPHER_NONCE_LENGTH,nullptr)==1;
+    if(ok)ok=EVP_DecryptInit_ex(ctx,nullptr,nullptr,
+        (const unsigned char *)key->chars,nonce)==1;
+    if(ok&&ciphertext_length>0)
+        ok=EVP_DecryptUpdate(ctx,plaintext,&written,ciphertext,(int)ciphertext_length)==1;
+    total=written;
+    if(ok)ok=EVP_CIPHER_CTX_ctrl(ctx,EVP_CTRL_GCM_SET_TAG,
+        DIAMOND_CIPHER_TAG_LENGTH,(void *)tag)==1;
+    /* EVP_DecryptFinal_ex is where GCM's own tag verification actually
+     * happens -- a tampered ciphertext or tag fails here, inside OpenSSL,
+     * with no separate comparison of our own needed (and so no timing
+     * side-channel exposed to Diamond code either). */
+    if(ok)ok=EVP_DecryptFinal_ex(ctx,plaintext+total,&written)==1;
+    total+=written;
+    if(ctx!=nullptr)EVP_CIPHER_CTX_free(ctx);
+    if(!ok) {
+        free(plaintext);
+        *out_result=DIAMOND_NIL;
+        return DIAMOND_VM_OK;
+    }
+    DiamondString *result=allocate_string(vm,(const char *)plaintext,(size_t)total);
+    free(plaintext);
+    if(result==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+    *out_result=DIAMOND_OBJECT(result);
+    return DIAMOND_VM_OK;
+}
+
 /* exit(code = 0) -- validation only returns; a valid code calls libc
  * exit() directly and never returns at all. This is a hard, immediate,
  * whole-process exit (like Ruby's Kernel#exit!, not Kernel#exit): no
@@ -14325,6 +14495,32 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     registers[key_register],registers[data_register],true,
                     &registers[destination]);
                 VM_PROPAGATE(hmac_status);break;
+            }
+            case DIAMOND_OP_HMAC_VERIFY: {
+                uint16_t destination=0,data_register=0,key_register=0,signature_register=0;
+                READ_SHORT(destination);READ_SHORT(data_register);
+                READ_SHORT(key_register);READ_SHORT(signature_register);
+                const DiamondVmStatus verify_status=hmac_verify_helper(vm,
+                    registers[data_register],registers[key_register],
+                    registers[signature_register],&registers[destination]);
+                VM_PROPAGATE(verify_status);break;
+            }
+            case DIAMOND_OP_CIPHER_ENCRYPT: {
+                uint16_t destination=0,key_register=0,plaintext_register=0;
+                READ_SHORT(destination);READ_SHORT(key_register);
+                READ_SHORT(plaintext_register);
+                const DiamondVmStatus encrypt_status=aes_gcm_encrypt_helper(vm,
+                    registers[key_register],registers[plaintext_register],
+                    &registers[destination]);
+                VM_PROPAGATE(encrypt_status);break;
+            }
+            case DIAMOND_OP_CIPHER_DECRYPT: {
+                uint16_t destination=0,key_register=0,blob_register=0;
+                READ_SHORT(destination);READ_SHORT(key_register);READ_SHORT(blob_register);
+                const DiamondVmStatus decrypt_status=aes_gcm_decrypt_helper(vm,
+                    registers[key_register],registers[blob_register],
+                    &registers[destination]);
+                VM_PROPAGATE(decrypt_status);break;
             }
             case DIAMOND_OP_EXIT: {
                 uint16_t code_register=0;

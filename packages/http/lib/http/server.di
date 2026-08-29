@@ -48,8 +48,25 @@ end
 def http_write_response(conn, response)
   [status, headers, body] = response
   conn.write("HTTP/1.1 #{status} #{http_status_text(status)}\r\n")
+  # A header value is ordinarily a single String, written as one line --
+  # but some headers (Set-Cookie chief among them) legitimately need
+  # several distinct lines with the same name in one response, and
+  # per-HTTP-spec Set-Cookie's own value can contain a comma (its
+  # Expires=... attribute), so the usual "join repeated values with a
+  # comma" trick other headers use doesn't apply here. An Array value
+  # writes one line per element instead of one line for the whole thing;
+  # every existing caller only ever puts a String in `headers`, so this
+  # is purely additive.
   def write_header(name, value)
-    conn.write("#{name}: #{value}\r\n")
+    case value
+    when [*lines]
+      def write_line(line)
+        conn.write("#{name}: #{line}\r\n")
+      end
+      lines.each(write_line)
+    else
+      conn.write("#{name}: #{value}\r\n")
+    end
   end
   headers.each(write_header)
   conn.write("Content-Length: #{body.length()}\r\n")

@@ -154,6 +154,15 @@ to the chain in its place.) This is the same core (`rack_compose`/
 proof this package doesn't actually know or care which server is
 driving it.
 
+## Cookies and sessions
+
+[`packages/cookies`](../cookies/README.md) has cookie parsing/
+serialization, signed and encrypted cookie helpers (`SignedCookies`,
+`EncryptedCookies`, on top of native AES-256-GCM and HMAC-SHA256
+builtins), and a ready-made `CookieSession` middleware matching this
+package's own `Callable[3]` contract -- see that package's own README
+for the full story and a `RackChain`-safe usage example.
+
 ## What's deliberately out of scope
 
 - **Routing.** This composes middleware around one handler; it doesn't

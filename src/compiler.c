@@ -4879,6 +4879,85 @@ static uint16_t parse_bcrypt_call(Compiler *compiler) {
     return 0;
 }
 
+/* Cipher.encrypt(key, plaintext) / Cipher.decrypt(key, blob) -- both
+ * fixed two-argument calls, mirrors parse_bcrypt_hash_call/parse_bcrypt_
+ * verify_call's own shape exactly. */
+static uint16_t parse_cipher_encrypt_call(Compiler *compiler) {
+    if(compiler->current.kind!=DIAMOND_TOKEN_LEFT_PAREN) {
+        fail(compiler,compiler->current.span,"expected '(' after 'Cipher.encrypt'");
+        return 0;
+    }
+    advance_token(compiler);skip_newlines(compiler);
+    const uint16_t key_register=parse_expression(compiler);
+    skip_newlines(compiler);
+    if(compiler->current.kind!=DIAMOND_TOKEN_COMMA) {
+        fail(compiler,compiler->current.span,"expected ',' after Cipher.encrypt key");
+        return 0;
+    }
+    advance_token(compiler);skip_newlines(compiler);
+    const uint16_t plaintext_register=parse_expression(compiler);
+    skip_newlines(compiler);
+    if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
+        fail(compiler,compiler->current.span,"expected ')' after Cipher.encrypt arguments");
+        return 0;
+    }
+    advance_token(compiler);
+    const uint16_t dest=allocate_register(compiler);
+    emit_opcode(compiler,DIAMOND_OP_CIPHER_ENCRYPT);
+    emit_register(compiler,dest);
+    emit_register(compiler,key_register);
+    emit_register(compiler,plaintext_register);
+    compiler->known_types[dest]=DIAMOND_TYPE_STRING;
+    return dest;
+}
+
+static uint16_t parse_cipher_decrypt_call(Compiler *compiler) {
+    if(compiler->current.kind!=DIAMOND_TOKEN_LEFT_PAREN) {
+        fail(compiler,compiler->current.span,"expected '(' after 'Cipher.decrypt'");
+        return 0;
+    }
+    advance_token(compiler);skip_newlines(compiler);
+    const uint16_t key_register=parse_expression(compiler);
+    skip_newlines(compiler);
+    if(compiler->current.kind!=DIAMOND_TOKEN_COMMA) {
+        fail(compiler,compiler->current.span,"expected ',' after Cipher.decrypt key");
+        return 0;
+    }
+    advance_token(compiler);skip_newlines(compiler);
+    const uint16_t blob_register=parse_expression(compiler);
+    skip_newlines(compiler);
+    if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
+        fail(compiler,compiler->current.span,"expected ')' after Cipher.decrypt arguments");
+        return 0;
+    }
+    advance_token(compiler);
+    const uint16_t dest=allocate_register(compiler);
+    emit_opcode(compiler,DIAMOND_OP_CIPHER_DECRYPT);
+    emit_register(compiler,dest);
+    emit_register(compiler,key_register);
+    emit_register(compiler,blob_register);
+    return dest;
+}
+
+static uint16_t parse_cipher_call(Compiler *compiler) {
+    advance_token(compiler); /* consume '.' */
+    if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER) {
+        fail(compiler,compiler->current.span,"expected 'encrypt' or 'decrypt' after 'Cipher'");
+        return 0;
+    }
+    const DiamondSpan method=compiler->current.span;
+    if(name_equals(compiler,"encrypt",method,false)) {
+        advance_token(compiler);
+        return parse_cipher_encrypt_call(compiler);
+    }
+    if(name_equals(compiler,"decrypt",method,false)) {
+        advance_token(compiler);
+        return parse_cipher_decrypt_call(compiler);
+    }
+    fail(compiler,method,"expected 'encrypt' or 'decrypt' after 'Cipher'");
+    return 0;
+}
+
 /* SecureRandom.bytes(n) / SecureRandom.hex(n) -- single fixed argument,
  * mirrors parse_process_run_call's own one-argument shape. */
 static uint16_t parse_secure_random_bytes_call(Compiler *compiler) {
@@ -4975,11 +5054,60 @@ static uint16_t parse_sha256_call(Compiler *compiler,bool keyed) {
     return dest;
 }
 
+/* HMAC.verify(data, key, signature) -- three fixed arguments, mirrors
+ * parse_bcrypt_verify_call's own two-argument comma chain with one more
+ * link. Only reachable when `keyed` (i.e. only under 'HMAC.', not
+ * 'Digest.') -- see parse_crypto_call below. */
+static uint16_t parse_hmac_verify_call(Compiler *compiler) {
+    if(compiler->current.kind!=DIAMOND_TOKEN_LEFT_PAREN) {
+        fail(compiler,compiler->current.span,"expected '(' after 'HMAC.verify'");
+        return 0;
+    }
+    advance_token(compiler);skip_newlines(compiler);
+    const uint16_t data_register=parse_expression(compiler);
+    skip_newlines(compiler);
+    if(compiler->current.kind!=DIAMOND_TOKEN_COMMA) {
+        fail(compiler,compiler->current.span,"expected ',' after HMAC.verify data");
+        return 0;
+    }
+    advance_token(compiler);skip_newlines(compiler);
+    const uint16_t key_register=parse_expression(compiler);
+    skip_newlines(compiler);
+    if(compiler->current.kind!=DIAMOND_TOKEN_COMMA) {
+        fail(compiler,compiler->current.span,"expected ',' after HMAC.verify key");
+        return 0;
+    }
+    advance_token(compiler);skip_newlines(compiler);
+    const uint16_t signature_register=parse_expression(compiler);
+    skip_newlines(compiler);
+    if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
+        fail(compiler,compiler->current.span,"expected ')' after HMAC.verify arguments");
+        return 0;
+    }
+    advance_token(compiler);
+    const uint16_t dest=allocate_register(compiler);
+    emit_opcode(compiler,DIAMOND_OP_HMAC_VERIFY);
+    emit_register(compiler,dest);
+    emit_register(compiler,data_register);
+    emit_register(compiler,key_register);
+    emit_register(compiler,signature_register);
+    return dest;
+}
+
 static uint16_t parse_crypto_call(Compiler *compiler,bool keyed) {
     advance_token(compiler); /* consume '.' */
-    if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER||
-       !name_equals(compiler,"sha256",compiler->current.span,false)) {
+    if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER) {
         fail(compiler,compiler->current.span,"expected 'sha256' after crypto namespace");
+        return 0;
+    }
+    if(keyed&&name_equals(compiler,"verify",compiler->current.span,false)) {
+        advance_token(compiler);
+        return parse_hmac_verify_call(compiler);
+    }
+    if(!name_equals(compiler,"sha256",compiler->current.span,false)) {
+        fail(compiler,compiler->current.span,keyed?
+            "expected 'sha256' or 'verify' after 'HMAC'":
+            "expected 'sha256' after crypto namespace");
         return 0;
     }
     advance_token(compiler);
@@ -5099,6 +5227,10 @@ static uint16_t parse_name(Compiler *compiler) {
        compiler->current.kind==DIAMOND_TOKEN_DOT&&
        name_equals(compiler,"BCrypt",name,false))
         return parse_bcrypt_call(compiler);
+    if(class_index<0&&find_local(compiler,name)<0&&find_function(compiler,name)<0&&
+       compiler->current.kind==DIAMOND_TOKEN_DOT&&
+       name_equals(compiler,"Cipher",name,false))
+        return parse_cipher_call(compiler);
     if(class_index<0&&find_local(compiler,name)<0&&find_function(compiler,name)<0&&
        compiler->current.kind==DIAMOND_TOKEN_DOT&&
        name_equals(compiler,"SecureRandom",name,false))

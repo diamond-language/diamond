@@ -263,6 +263,23 @@ typedef enum DiamondOpCode : uint8_t {
      * SHA-256 via the already-linked OpenSSL libcrypto. */
     DIAMOND_OP_DIGEST_SHA256,
     DIAMOND_OP_HMAC_SHA256,
+    /* HMAC.verify(data, key, signature) -- recomputes the HMAC-SHA256 hex
+     * digest and compares against `signature` with OpenSSL's
+     * CRYPTO_memcmp (constant-time), the same primitive bcrypt_verify_
+     * helper already uses -- for verifying a signed cookie/token without
+     * a timing side-channel on the comparison itself. */
+    DIAMOND_OP_HMAC_VERIFY,
+    /* Cipher.encrypt(key, plaintext) / Cipher.decrypt(key, blob) --
+     * AES-256-GCM via the already-linked OpenSSL EVP_CIPHER API. `key`
+     * must be exactly 32 raw bytes. `encrypt` returns one binary-safe
+     * String: a fresh random 12-byte nonce, the 16-byte GCM tag, then the
+     * ciphertext. `decrypt` returns nil (not an exception) on any
+     * failure -- wrong key, tampered/truncated blob -- matching how a
+     * forged cookie should be handled by calling code, the same
+     * reasoning BCrypt.verify's own comment already gives for a
+     * malformed digest. */
+    DIAMOND_OP_CIPHER_ENCRYPT,
+    DIAMOND_OP_CIPHER_DECRYPT,
     /* ClassName.compile_method(name, params, body_source) -- compiles a
      * new method body from a source string at runtime and returns a
      * Callable, meant to be installed via the existing

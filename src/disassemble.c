@@ -106,6 +106,21 @@ static size_t three_registers(FILE *stream, const DiamondChunk *chunk,
     return offset + 7;
 }
 
+static size_t four_registers(FILE *stream, const DiamondChunk *chunk,
+                             const char *name, size_t offset, bool *valid) {
+    if (!require_bytes(stream, chunk, offset, 9)) return chunk->code_count;
+    const uint16_t first = checked_register(chunk, stream,
+        read_operand(chunk, offset + 1), valid);
+    const uint16_t second = checked_register(chunk, stream,
+        read_operand(chunk, offset + 3), valid);
+    const uint16_t third = checked_register(chunk, stream,
+        read_operand(chunk, offset + 5), valid);
+    const uint16_t fourth = checked_register(chunk, stream,
+        read_operand(chunk, offset + 7), valid);
+    fprintf(stream, "%-18s r%u, r%u, r%u, r%u\n", name, first, second, third, fourth);
+    return offset + 9;
+}
+
 /* Only MYSQL_OPEN needs more than three register operands (dest plus
  * host/user/password/database/port), so this is a one-off rather than a
  * generalized n_registers helper -- same shape as two_registers/
@@ -1145,6 +1160,12 @@ static bool disassemble_chunk(FILE *stream, const char *name,
                 offset=two_registers(stream,chunk,"DIGEST_SHA256",offset,&valid);break;
             case DIAMOND_OP_HMAC_SHA256:
                 offset=three_registers(stream,chunk,"HMAC_SHA256",offset,&valid);break;
+            case DIAMOND_OP_HMAC_VERIFY:
+                offset=four_registers(stream,chunk,"HMAC_VERIFY",offset,&valid);break;
+            case DIAMOND_OP_CIPHER_ENCRYPT:
+                offset=three_registers(stream,chunk,"CIPHER_ENCRYPT",offset,&valid);break;
+            case DIAMOND_OP_CIPHER_DECRYPT:
+                offset=three_registers(stream,chunk,"CIPHER_DECRYPT",offset,&valid);break;
             case DIAMOND_OP_EXIT:
                 offset=one_register(stream,chunk,"EXIT",offset, &valid);break;
             case DIAMOND_OP_DEBUGGER: {
