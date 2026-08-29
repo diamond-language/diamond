@@ -18,5 +18,8 @@ def build_router()
   router.post("/skins", SkinsController.create, [require_authentication, require_csrf])
   router.post("/comments/:id/delete", CommentsController.destroy, [require_authentication, require_comment_ownership, require_csrf])
   router.get("/tags/:name", SkinsController.by_tag)
+  router.post("/users/:username/follow", UsersController.follow, [require_authentication, require_csrf])
+  router.post("/users/:username/unfollow", UsersController.unfollow, [require_authentication, require_csrf])
+  router.get("/users/:username", UsersController.show)
   router
 end

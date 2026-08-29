@@ -189,4 +189,54 @@ if expired[1]["Set-Cookie"] == nil || !expired[1]["Set-Cookie"].include?("Max-Ag
 end
 if Session.find(Database.get(context), session_id) != nil then raise "expired session was not deleted" end
 
+# --- following: a signed-up user can view another's profile, follow
+# --- and unfollow them, and the counts/button state track it ---
+app(request("POST", "/signup", "email=user3%40example.com&username=user3&password=hunter22"), context)
+follower_login = app(request("POST", "/login", "email=user3%40example.com&password=hunter22"), context)
+follower_cookie = follower_login[1]["Set-Cookie"]
+follower_csrf = context["csrf_token"]
+
+app(request("POST", "/signup", "email=user4%40example.com&username=user4&password=hunter22"), context)
+
+anon_profile = app(request("GET", "/users/user4"), context)
+if anon_profile[0] != 200 || anon_profile[2].include?("Follow<") then raise "anonymous profile view failed or showed a follow button" end
+
+missing_profile = app(request("GET", "/users/no-such-user"), context)
+if missing_profile[0] != 404 then raise "a missing user's profile did not 404" end
+
+own_profile = app(request_with_cookie("GET", "/users/user3", "", follower_cookie), context)
+if own_profile[0] != 200 || own_profile[2].include?("Follow<") || own_profile[2].include?("Unfollow<")
+  raise "a user's own profile showed a follow/unfollow button"
+end
+
+before_follow = app(request_with_cookie("GET", "/users/user4", "", follower_cookie), context)
+if before_follow[0] != 200 || !before_follow[2].include?("Follow<") || !before_follow[2].include?("0 following &middot; 0 followers")
+  raise "target profile did not show a Follow button with zero counts before following"
+end
+
+follow = app(request_with_cookie("POST", "/users/user4/follow", "csrf_token=#{follower_csrf}", follower_cookie), context)
+if follow[0] != 302 then raise "follow request failed" end
+
+after_follow = app(request_with_cookie("GET", "/users/user4", "", follower_cookie), context)
+if after_follow[0] != 200 || !after_follow[2].include?("Unfollow<") || !after_follow[2].include?("0 following &middot; 1 followers")
+  raise "target profile did not reflect the new follower"
+end
+follower_own_profile = app(request_with_cookie("GET", "/users/user3", "", follower_cookie), context)
+if !follower_own_profile[2].include?("1 following &middot; 0 followers")
+  raise "follower's own profile did not reflect their new following count"
+end
+
+follow_again = app(request_with_cookie("POST", "/users/user4/follow", "csrf_token=#{follower_csrf}", follower_cookie), context)
+if follow_again[0] != 302 then raise "idempotent re-follow request failed" end
+if ActiveSocial::Follow.followers_count(Database.get(context), User.where({"username": "user4"}).first(Database.get(context)).id()) != 1
+  raise "re-following the same user created a duplicate follow row"
+end
+
+unfollow = app(request_with_cookie("POST", "/users/user4/unfollow", "csrf_token=#{follower_csrf}", follower_cookie), context)
+if unfollow[0] != 302 then raise "unfollow request failed" end
+after_unfollow = app(request_with_cookie("GET", "/users/user4", "", follower_cookie), context)
+if after_unfollow[0] != 200 || !after_unfollow[2].include?("Follow<") || !after_unfollow[2].include?("0 following &middot; 0 followers")
+  raise "target profile did not reflect the unfollow"
+end
+
 JSON.stringify({"timestamp": Time.now().strftime("%Y-%m-%dT%H:%M:%S%z"), "level": "info", "tag": "skindicate_smoke_test", "message": "smoke_test.passed"})

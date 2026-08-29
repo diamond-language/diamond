@@ -3,7 +3,7 @@
 <p><img src="/<%= skin.preview_image_path() %>" alt="<%= skin.title() %>" width="480"></p>
 <% end %>
 <p><strong>Platform:</strong> <%= skin.platform() %></p>
-<p><strong>By:</strong> <%= uploader.username() %></p>
+<p><strong>By:</strong> <a href="/users/<%= uploader.username() %>"><%= uploader.username() %></a></p>
 <p><%= skin.description() %></p>
 <p>
 <% tags.each() do |tag| %><a href="/tags/<%= tag.name() %>">#<%= tag.name() %></a> <% end %>
@@ -25,7 +25,7 @@
 <% end %>
 <% comments.each() do |comment| %>
   <div class="comment">
-    <p><strong><%= comment.user(db).username() %>:</strong> <%= comment.body() %></p>
+    <p><strong><a href="/users/<%= comment.user(db).username() %>"><%= comment.user(db).username() %></a>:</strong> <%= comment.body() %></p>
     <% if current_user != nil && current_user.id() == comment.user_id() %>
     <form method="POST" action="/comments/<%= comment.id() %>/delete" style="display:inline" onsubmit="return confirm('Delete this comment?')">
       <input type="hidden" name="csrf_token" value="<%= csrf_token %>">

@@ -9,7 +9,7 @@
     <a href="/skins/<%= skin.id() %>"><img src="/<%= skin.preview_image_path() %>" alt="<%= skin.title() %>" width="200"></a>
     <% end %>
     <h3><a href="/skins/<%= skin.id() %>"><%= skin.title() %></a></h3>
-    <p><%= skin.platform() %> &middot; by <%= skin.user(db).username() %></p>
+    <p><%= skin.platform() %> &middot; by <a href="/users/<%= skin.user(db).username() %>"><%= skin.user(db).username() %></a></p>
   </div>
 <% end %>
 </div>

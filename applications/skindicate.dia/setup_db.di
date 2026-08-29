@@ -4,6 +4,7 @@ require "./lib/config/environment"
 db = SQLite3.open(SkindicateEnvironment.database_path())
 
 db.execute("PRAGMA foreign_keys = ON")
+db.execute("DROP TABLE IF EXISTS follows")
 db.execute("DROP TABLE IF EXISTS comments")
 db.execute("DROP TABLE IF EXISTS taggings")
 db.execute("DROP TABLE IF EXISTS tags")
@@ -32,11 +33,19 @@ db.execute([
   "FOREIGN KEY(skin_id) REFERENCES skins(id) ON DELETE CASCADE,",
   "FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE)"
 ].join(" "))
+db.execute([
+  "CREATE TABLE follows (id INTEGER PRIMARY KEY, follower_id INTEGER NOT NULL,",
+  "followed_id INTEGER NOT NULL, created_at INTEGER NOT NULL,",
+  "FOREIGN KEY(follower_id) REFERENCES users(id) ON DELETE CASCADE,",
+  "FOREIGN KEY(followed_id) REFERENCES users(id) ON DELETE CASCADE)"
+].join(" "))
 db.execute("CREATE INDEX sessions_user_id_idx ON sessions(user_id)")
 db.execute("CREATE INDEX skins_user_id_idx ON skins(user_id)")
 db.execute("CREATE INDEX taggings_skin_id_idx ON taggings(skin_id)")
 db.execute("CREATE INDEX taggings_tag_id_idx ON taggings(tag_id)")
 db.execute("CREATE INDEX comments_skin_id_idx ON comments(skin_id)")
+db.execute("CREATE UNIQUE INDEX follows_follower_followed_idx ON follows(follower_id, followed_id)")
+db.execute("CREATE INDEX follows_followed_id_idx ON follows(followed_id)")
 
 password_digest = BCrypt.hash("diamond123", 12)
 db.execute("INSERT INTO users (email, username, password_digest) VALUES (?, ?, ?)", ["admin@example.com", "admin", password_digest])

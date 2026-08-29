@@ -1,0 +1,18 @@
+<%# locals: user, skins, db, following_count, followers_count, is_following, current_user, csrf_token %>
+<p><%= following_count %> following &middot; <%= followers_count %> followers</p>
+<% if current_user != nil && current_user.id() != user.id() %>
+<% if is_following %>
+<form method="POST" action="/users/<%= user.username() %>/unfollow">
+  <input type="hidden" name="csrf_token" value="<%= csrf_token %>">
+  <button type="submit">Unfollow</button>
+</form>
+<% else %>
+<form method="POST" action="/users/<%= user.username() %>/follow">
+  <input type="hidden" name="csrf_token" value="<%= csrf_token %>">
+  <button type="submit">Follow</button>
+</form>
+<% end %>
+<% end %>
+
+<h2>Skins by <%= user.username() %></h2>
+<%= skins_index_html(skins, db) %>
