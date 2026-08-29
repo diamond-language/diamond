@@ -242,6 +242,6 @@ end
 ")"
 wait "$fake_server_pid" 2>/dev/null || true
 rm -f "$fake_server_out"
-[[ "$oversized_body_response" == $'response Content-Length 99999999999 exceeds maximum of 10485760\nnil' ]]
+[[ "$oversized_body_response" == $'response Content-Length 99999999999 exceeds maximum of 26214400\nnil' ]]
 
 echo "7 http package tests passed"

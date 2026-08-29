@@ -31,11 +31,16 @@ end
 # peer declare a multi-gigabyte body and force this "deliberately
 # basic" server/client to accumulate that much memory (a request never
 # even has to finish; the accumulation itself is the resource cost).
-# 10 MiB is generous for the plain-text/JSON request and response
-# bodies this package is meant for, comfortably below what would
-# actually pressure memory even under several concurrent connections
+# 25 MiB is generous for the plain-text/JSON bodies this package was
+# originally sized for *and* a real uploaded file (packages/multipart
+# builds real multipart/form-data parsing on top of this same
+# Content-Length-bounded body reading) -- comfortably above a typical
+# icon/sound-theme package while still bounding worst-case
+# per-connection memory the same way this comment always has
 # (http_serve is single-threaded/blocking, so this bounds one
-# connection at a time, not a fleet of them).
+# connection at a time, not a fleet of them). Still a flat, hardcoded
+# cap -- no per-route override exists, or is planned; an app needing a
+# different limit changes this one shared value.
 def http_max_body_size()
-  10485760
+  26214400
 end

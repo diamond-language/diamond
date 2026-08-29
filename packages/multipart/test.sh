@@ -1,0 +1,131 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Requires the diamond binary on PATH, or DIAMOND_BIN pointing at one
+# (e.g. DIAMOND_BIN=../../build/diamond bash test.sh, or `make
+# test-multipart-package` from the repo root, which sets this up
+# already).
+diamond="${DIAMOND_BIN:-diamond}"
+cd "$(dirname "$0")"
+
+count=0
+
+run_case() {
+    local script="$1"
+    "$diamond" -e "require \"$(pwd)/lib/multipart\"
+$script"
+}
+
+# --- a real multipart body: two plain fields and one file field, in
+# --- one request, all three parsed correctly ---
+actual="$(run_case '
+boundary = "----Boundary123"
+body = "--#{boundary}\r\n" +
+  "Content-Disposition: form-data; name=\"title\"\r\n\r\n" +
+  "My Cool Theme\r\n" +
+  "--#{boundary}\r\n" +
+  "Content-Disposition: form-data; name=\"tags\"\r\n\r\n" +
+  "dark, minimal\r\n" +
+  "--#{boundary}\r\n" +
+  "Content-Disposition: form-data; name=\"theme_file\"; filename=\"theme.zip\"\r\n" +
+  "Content-Type: application/zip\r\n\r\n" +
+  "PK-fake-zip-bytes" + "\r\n" +
+  "--#{boundary}--\r\n"
+request = {"headers": {"content-type": "multipart/form-data; boundary=#{boundary}"}, "body": body}
+result = multipart_parse(request)
+file = result["files"]["theme_file"]
+"#{result["fields"]["title"]}|#{result["fields"]["tags"]}|#{file["filename"]}|#{file["content_type"]}|#{file["data"]}"
+')"
+[[ "$actual" == "My Cool Theme|dark, minimal|theme.zip|application/zip|PK-fake-zip-bytes" ]]
+count=$((count + 1))
+
+# --- binary file content (including a NUL byte) round-trips exactly --
+# --- Diamond strings are raw byte buffers, and split()/slice() operate
+# --- on bytes, not text, so this isn't a special case in the parser,
+# --- just worth confirming directly ---
+actual="$(run_case '
+boundary = "----Boundary123"
+binary = "PK" + 1.chr() + "binarydata" + 255.chr() + 254.chr() + 0.chr() + "moretail"
+body = "--#{boundary}\r\n" +
+  "Content-Disposition: form-data; name=\"f\"; filename=\"x.bin\"\r\n" +
+  "Content-Type: application/octet-stream\r\n\r\n" +
+  binary + "\r\n" +
+  "--#{boundary}--\r\n"
+request = {"headers": {"content-type": "multipart/form-data; boundary=#{boundary}"}, "body": body}
+result = multipart_parse(request)
+"#{result["files"]["f"]["data"].length()}|#{result["files"]["f"]["data"] == binary}"
+')"
+[[ "$actual" == "24|true" ]]
+count=$((count + 1))
+
+# --- a filename with spaces and special characters (but no embedded
+# --- quote -- the one documented limitation) round-trips ---
+actual="$(run_case '
+boundary = "----Boundary123"
+body = "--#{boundary}\r\n" +
+  "Content-Disposition: form-data; name=\"f\"; filename=\"my theme (v2) [final].zip\"\r\n\r\n" +
+  "data\r\n--#{boundary}--\r\n"
+request = {"headers": {"content-type": "multipart/form-data; boundary=#{boundary}"}, "body": body}
+multipart_parse(request)["files"]["f"]["filename"]
+')"
+[[ "$actual" == "my theme (v2) [final].zip" ]]
+count=$((count + 1))
+
+# --- a file part with no Content-Type header defaults to
+# --- application/octet-stream ---
+actual="$(run_case '
+boundary = "----Boundary123"
+body = "--#{boundary}\r\nContent-Disposition: form-data; name=\"f\"; filename=\"x\"\r\n\r\ndata\r\n--#{boundary}--\r\n"
+request = {"headers": {"content-type": "multipart/form-data; boundary=#{boundary}"}, "body": body}
+multipart_parse(request)["files"]["f"]["content_type"]
+')"
+[[ "$actual" == "application/octet-stream" ]]
+count=$((count + 1))
+
+# --- fields-only body (no file field at all) parses to an empty
+# --- "files" Hash, not nil or an error ---
+actual="$(run_case '
+boundary = "----Boundary123"
+body = "--#{boundary}\r\nContent-Disposition: form-data; name=\"a\"\r\n\r\n1\r\n--#{boundary}--\r\n"
+request = {"headers": {"content-type": "multipart/form-data; boundary=#{boundary}"}, "body": body}
+result = multipart_parse(request)
+"#{result["fields"].length()}|#{result["files"].length()}"
+')"
+[[ "$actual" == "1|0" ]]
+count=$((count + 1))
+
+# --- multipart_boundary stops at a trailing "; charset=..." parameter
+# --- rather than swallowing it into the boundary value ---
+actual="$(run_case 'multipart_boundary("multipart/form-data; boundary=----X; charset=UTF-8")')"
+[[ "$actual" == "----X" ]]
+count=$((count + 1))
+
+# --- not multipart at all (wrong or missing Content-Type) -> nil, not
+# --- an error, so a caller can fall back to Dials::Params itself ---
+actual="$(run_case 'multipart_parse({"headers": {"content-type": "application/x-www-form-urlencoded"}, "body": "a=1"})')"
+[[ "$actual" == "nil" ]]
+count=$((count + 1))
+
+actual="$(run_case 'multipart_parse({"headers": {}, "body": ""})')"
+[[ "$actual" == "nil" ]]
+count=$((count + 1))
+
+# --- a malformed part -- no Content-Disposition name at all -- fails
+# --- the whole parse (nil), not a partial result ---
+actual="$(run_case '
+boundary = "----Boundary123"
+body = "--#{boundary}\r\nContent-Disposition: form-data\r\n\r\nvalue\r\n--#{boundary}--\r\n"
+multipart_parse({"headers": {"content-type": "multipart/form-data; boundary=#{boundary}"}, "body": body})
+')"
+[[ "$actual" == "nil" ]]
+count=$((count + 1))
+
+# --- the boundary string never actually appearing in the body (wrong
+# --- boundary, or a truncated/corrupted request) -> nil ---
+actual="$(run_case '
+multipart_parse({"headers": {"content-type": "multipart/form-data; boundary=----X"}, "body": "nothing matches this at all"})
+')"
+[[ "$actual" == "nil" ]]
+count=$((count + 1))
+
+echo "$count multipart tests passed"
