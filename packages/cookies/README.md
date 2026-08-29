@@ -137,7 +137,7 @@ end
 
 def build_chain()
   CookieSession.configure(secret: ENV["SESSION_SECRET"])
-  rack_compose([CookieSession.call], app_handler)
+  rack_compose([CookieSession.call, Csrf.call], app_handler)
 end
 
 def rack_app(request, context)
@@ -152,6 +152,55 @@ no `Thread.new` involved at all), calling `.configure` once at the top
 level works too — see `packages/rack`'s own README for the full story on
 why `RackChain`/the `build_chain()` pattern exists in the first place.
 
+## `Csrf` — CSRF protection
+
+A `Callable[3]` middleware for the synchronizer-token pattern, built on
+`CookieSession`'s `request["session"]` — it must run **after**
+`CookieSession` in the chain (`rack_compose([CookieSession.call,
+Csrf.call], app_handler)`, as in the example above), the same ordering
+requirement any session-dependent middleware has.
+
+`Csrf.token(request)` lazily mints one 256-bit token
+(`SecureRandom.hex(32)`) per session and stores it there, so it's stable
+across requests the same way the rest of the session is — call it from
+your own handler to get the value to embed in a form's hidden field, or
+hand to client-side JS to echo back as a request header:
+
+```ruby
+def form_handler(request, context)
+  [200, {"Content-Type": "text/html"},
+    "<input type=\"hidden\" name=\"csrf_token\" value=\"#{Csrf.token(request)}\">"]
+end
+```
+
+`Csrf.call` ensures a token exists on every request (so even the first
+`GET` that renders a form already has one), skips the check entirely for
+`GET`/`HEAD`/`OPTIONS` (methods that must never carry a state-changing
+side effect), and otherwise requires the request's own `X-CSRF-Token`
+header to match the session's token — compared via `constant_time_equal`
+(below), not a plain `==`, to avoid a timing side-channel on the token
+itself — rejecting with `403` if it's missing or doesn't match:
+
+```ruby
+Csrf.call({"method": "POST", "session": {"csrf_token": "abc"},
+  "headers": {"x-csrf-token": "abc"}}, {}, app_handler)   # => calls app_handler
+Csrf.call({"method": "POST", "session": {"csrf_token": "abc"},
+  "headers": {}}, {}, app_handler)                        # => [403, ..., "invalid or missing CSRF token"]
+```
+
+Checking a request header rather than parsing a form body is deliberate
+— this codebase has no built-in form-body parser to hook into (see
+`packages/http`'s own README), and a header is also what an XHR/`fetch`-
+based client sends most naturally. A traditional HTML form submission
+needs its own tiny client-side script to copy the hidden field's value
+into the `X-CSRF-Token` header before submitting.
+
+`constant_time_equal(a, b)` (used by `Csrf.valid?` above) compares two
+`String`s in constant time without a new VM primitive: `HMAC(k, a) ==
+HMAC(k, b)` iff `a == b`, so it reuses the native `HMAC.sha256`/
+`HMAC.verify` (`docs/syntax.md`) with a fixed, non-secret key purely to
+get their constant-time comparison for free.
+
 ## What's deliberately out of scope
 
 - **Cookie signing/verification for arbitrary structured data beyond one
@@ -163,5 +212,8 @@ why `RackChain`/the `build_chain()` pattern exists in the first place.
   key from one app secret, not a multi-key KDF.
 - **Percent-decoding third-party cookie values.** See "Cookie parsing and
   serialization" above.
+- **Parsing a CSRF token out of a submitted form body.** `Csrf` only
+  checks the `X-CSRF-Token` request header — see `Csrf`'s own section
+  above.
 - Everything `packages/rack`'s own README already lists as out of scope
   (routing) applies here too.

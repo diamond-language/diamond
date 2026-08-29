@@ -125,13 +125,74 @@ actual="$(run_case 'EncryptedCookies.decrypt("hand-corrupted-not-real", "topsecr
 [[ "$actual" == "nil" ]]
 count=$((count + 1))
 
-# --- CookieSession middleware, end to end against a real gremlin_serve
-# --- instance: a first request gets a fresh session and a Set-Cookie;
-# --- replaying that cookie on a second request restores the mutated
-# --- session; a third request with a hand-corrupted cookie value falls
-# --- back to a fresh session instead of erroring; an app that already
-# --- sets its own Set-Cookie keeps both (packages/http's own
-# --- multi-Set-Cookie support, exercised here for real).
+# --- constant_time_equal: equal, different-content, and different-
+# --- length pairs all compare correctly ---
+actual="$(run_case '"#{constant_time_equal("abc", "abc")}|#{constant_time_equal("abc", "abd")}|#{constant_time_equal("abc", "ab")}"')"
+[[ "$actual" == "true|false|false" ]]
+count=$((count + 1))
+
+# --- Csrf: .token mints once and is stable across calls on the same
+# --- request/session; .valid? accepts the right token and rejects a
+# --- missing session token, a missing submitted token, and a wrong one
+actual="$(run_case '
+request = {"session": {}}
+first = Csrf.token(request)
+second = Csrf.token(request)
+"#{first == second}|#{first.length()}"
+')"
+[[ "$actual" == "true|64" ]]
+count=$((count + 1))
+
+actual="$(run_case '
+request = {"session": {}}
+token = Csrf.token(request)
+"#{Csrf.valid?(request, token)}|#{Csrf.valid?(request, "wrong")}|#{Csrf.valid?(request, nil)}"
+')"
+[[ "$actual" == "true|false|false" ]]
+count=$((count + 1))
+
+actual="$(run_case 'Csrf.valid?({"session": {}}, "anything")')"
+[[ "$actual" == "false" ]]
+count=$((count + 1))
+
+# --- Csrf.call: GET always passes through and mints a token; POST
+# --- without/with-wrong/with-correct header is rejected/rejected/passed
+actual="$(run_case '
+def app(request, context)
+  "handled:#{request["session"]["csrf_token"] != nil}"
+end
+request = {"method": "GET", "session": {}}
+Csrf.call(request, {}, app)
+')"
+[[ "$actual" == "handled:true" ]]
+count=$((count + 1))
+
+actual="$(run_case '
+def app(request, context)
+  [200, {"Content-Type": "text/plain"}, "handled"]
+end
+session = {}
+request = {"method": "GET", "headers": {}, "session": session}
+Csrf.call(request, {}, app)
+post_no_header = {"method": "POST", "headers": {}, "session": session}
+[status, headers, body] = Csrf.call(post_no_header, {}, app)
+post_wrong = {"method": "POST", "headers": {"x-csrf-token": "wrong"}, "session": session}
+[status_wrong, h2, b2] = Csrf.call(post_wrong, {}, app)
+post_right = {"method": "POST", "headers": {"x-csrf-token": session["csrf_token"]}, "session": session}
+[status_right, h3, body_right] = Csrf.call(post_right, {}, app)
+"#{status}|#{status_wrong}|#{status_right}|#{body_right}"
+')"
+[[ "$actual" == "403|403|200|handled" ]]
+count=$((count + 1))
+
+# --- CookieSession/Csrf middleware, end to end against a real
+# --- gremlin_serve instance: a first request gets a fresh session and a
+# --- Set-Cookie; replaying that cookie on a second request restores the
+# --- mutated session; a third request with a hand-corrupted cookie
+# --- value falls back to a fresh session instead of erroring; an app
+# --- that already sets its own Set-Cookie keeps both (packages/http's
+# --- own multi-Set-Cookie support, exercised here for real); a POST
+# --- without/with the right X-CSRF-Token header is rejected/accepted.
 server_src() {
     local port="$1"
     cat <<SRCEOF
@@ -144,14 +205,24 @@ def app_handler(request, context)
   if request["path"] == "/flash"
     return [200, {"Set-Cookie": "flash=hi; Path=/"}, "ok"]
   end
+  if request["path"] == "/csrf-token"
+    return [200, {"Content-Type": "text/plain"}, "token=#{Csrf.token(request)}"]
+  end
+  if request["path"] == "/csrf-post"
+    return [200, {"Content-Type": "text/plain"}, "posted"]
+  end
   count = request["session"]["count"]
   count = if count == nil then 0 else count end
   request["session"]["count"] = count + 1
   [200, {"Content-Type": "text/plain"}, "count=#{count}"]
 end
 
+def csrf_protected(request, context)
+  Csrf.call(request, context, app_handler)
+end
+
 def rack_app(request, context)
-  CookieSession.call(request, context, app_handler)
+  CookieSession.call(request, context, csrf_protected)
 end
 
 gremlin_serve($port, rack_app)
@@ -200,6 +271,33 @@ response4="$(cat <&3)"
 assert_contains "$response4" $'\r\nSet-Cookie: flash=hi; Path=/\r\n'
 count=$((count + 1))
 assert_contains "$response4" $'\r\nSet-Cookie: _session='
+count=$((count + 1))
+
+# Csrf.call, wired into the same chain, protects POST: a GET first
+# fetches a session cookie and the token minted for it; a POST replaying
+# the cookie but no/wrong X-CSRF-Token header is rejected, and one with
+# the right header (read back out of the GET response body, the way a
+# real page would embed it) is accepted.
+exec 3<>"/dev/tcp/127.0.0.1/$port"
+printf 'GET /csrf-token HTTP/1.1\r\nHost: localhost\r\n\r\n' >&3
+csrf_response="$(cat <&3)"
+{ exec 3<&- 3>&-; } 2>/dev/null || true
+csrf_set_cookie_line="$(grep -o 'Set-Cookie: _session=[^;]*' <<<"$csrf_response")"
+csrf_cookie_pair="${csrf_set_cookie_line#Set-Cookie: }"
+csrf_token="${csrf_response##*token=}"
+
+exec 3<>"/dev/tcp/127.0.0.1/$port"
+printf 'POST /csrf-post HTTP/1.1\r\nHost: localhost\r\nCookie: %s\r\nContent-Length: 0\r\n\r\n' "$csrf_cookie_pair" >&3
+response5="$(cat <&3)"
+{ exec 3<&- 3>&-; } 2>/dev/null || true
+assert_contains "$response5" "403"
+count=$((count + 1))
+
+exec 3<>"/dev/tcp/127.0.0.1/$port"
+printf 'POST /csrf-post HTTP/1.1\r\nHost: localhost\r\nCookie: %s\r\nX-CSRF-Token: %s\r\nContent-Length: 0\r\n\r\n' "$csrf_cookie_pair" "$csrf_token" >&3
+response6="$(cat <&3)"
+{ exec 3<&- 3>&-; } 2>/dev/null || true
+assert_contains "$response6" "posted"
 count=$((count + 1))
 
 kill "$pid" 2>/dev/null || true
