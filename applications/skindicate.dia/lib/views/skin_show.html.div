@@ -1,4 +1,4 @@
-<%# locals: skin, uploader, tags, is_owner, csrf_token %>
+<%# locals: skin, uploader, tags, is_owner, current_user, comments, db, csrf_token %>
 <% if skin.preview_image_path() != nil %>
 <p><img src="/<%= skin.preview_image_path() %>" alt="<%= skin.title() %>" width="480"></p>
 <% end %>
@@ -17,4 +17,29 @@
     <button type="submit">Delete</button>
   </form>
 </p>
+<% end %>
+
+<h2>Comments</h2>
+<% if comments.length() == 0 %>
+<p>No comments yet.</p>
+<% end %>
+<% comments.each() do |comment| %>
+  <div class="comment">
+    <p><strong><%= comment.user(db).username() %>:</strong> <%= comment.body() %></p>
+    <% if current_user != nil && current_user.id() == comment.user_id() %>
+    <form method="POST" action="/comments/<%= comment.id() %>/delete" style="display:inline" onsubmit="return confirm('Delete this comment?')">
+      <input type="hidden" name="csrf_token" value="<%= csrf_token %>">
+      <button type="submit">Delete</button>
+    </form>
+    <% end %>
+  </div>
+<% end %>
+<% if current_user != nil %>
+<form method="POST" action="/skins/<%= skin.id() %>/comments">
+  <input type="hidden" name="csrf_token" value="<%= csrf_token %>">
+  <p><label>Add a comment <textarea name="body" required></textarea></label></p>
+  <button type="submit">Post comment</button>
+</form>
+<% else %>
+<p><a href="/login">Sign in</a> to leave a comment.</p>
 <% end %>

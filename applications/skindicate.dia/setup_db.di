@@ -4,6 +4,7 @@ require "./lib/config/environment"
 db = SQLite3.open(SkindicateEnvironment.database_path())
 
 db.execute("PRAGMA foreign_keys = ON")
+db.execute("DROP TABLE IF EXISTS comments")
 db.execute("DROP TABLE IF EXISTS taggings")
 db.execute("DROP TABLE IF EXISTS tags")
 db.execute("DROP TABLE IF EXISTS skins")
@@ -25,10 +26,17 @@ db.execute([
   "FOREIGN KEY(skin_id) REFERENCES skins(id) ON DELETE CASCADE,",
   "FOREIGN KEY(tag_id) REFERENCES tags(id) ON DELETE CASCADE)"
 ].join(" "))
+db.execute([
+  "CREATE TABLE comments (id INTEGER PRIMARY KEY, skin_id INTEGER NOT NULL,",
+  "user_id INTEGER NOT NULL, body TEXT NOT NULL, created_at INTEGER NOT NULL,",
+  "FOREIGN KEY(skin_id) REFERENCES skins(id) ON DELETE CASCADE,",
+  "FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE)"
+].join(" "))
 db.execute("CREATE INDEX sessions_user_id_idx ON sessions(user_id)")
 db.execute("CREATE INDEX skins_user_id_idx ON skins(user_id)")
 db.execute("CREATE INDEX taggings_skin_id_idx ON taggings(skin_id)")
 db.execute("CREATE INDEX taggings_tag_id_idx ON taggings(tag_id)")
+db.execute("CREATE INDEX comments_skin_id_idx ON comments(skin_id)")
 
 password_digest = BCrypt.hash("diamond123", 12)
 db.execute("INSERT INTO users (email, username, password_digest) VALUES (?, ?, ?)", ["admin@example.com", "admin", password_digest])
@@ -42,6 +50,8 @@ db.execute("INSERT INTO tags (name) VALUES (?)", ["minimal"])
 minimal_tag_id = db.last_insert_row_id()
 db.execute("INSERT INTO taggings (skin_id, tag_id) VALUES (?, ?)", [skin_id, dark_tag_id])
 db.execute("INSERT INTO taggings (skin_id, tag_id) VALUES (?, ?)", [skin_id, minimal_tag_id])
+db.execute("INSERT INTO comments (skin_id, user_id, body, created_at) VALUES (?, ?, ?, ?)",
+  [skin_id, user_id, "Love this one, using it right now.", Time.now().to_i()])
 
 puts(JSON.stringify({"timestamp": Time.now().strftime("%Y-%m-%dT%H:%M:%S%z"), "level": "info", "tag": "skindicate", "message": "database.seeded", "database": SkindicateEnvironment.database_path(), "environment": SkindicateEnvironment.name()}))
 db.close()

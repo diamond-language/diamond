@@ -125,6 +125,27 @@ not_owner_delete = app(multipart_request("POST", "/skins/#{skin.id()}/delete", {
 if not_owner_delete[0] != 404 then raise "a non-owner was allowed to delete another user's skin" end
 if Skin.find(Database.get(context), skin.id()) == nil then raise "a rejected delete somehow removed the skin" end
 
+# --- comments: any signed-in user can post, and it renders; only the
+# --- comment's own author can delete it (404, same not-403 shape) ---
+comment_post = app(request_with_cookie("POST", "/skins/#{skin.id()}/comments", "csrf_token=#{other_csrf}&body=Great+theme", other_cookie), context)
+if comment_post[0] != 302 then raise "comment creation failed" end
+show_with_comment = app(request("GET", "/skins/#{skin.id()}"), context)
+if !show_with_comment[2].include?("Great theme") || !show_with_comment[2].include?("user2")
+  raise "posted comment did not render with its author"
+end
+comments_in_db = Comment.where({"skin_id": skin.id()}).to_a(Database.get(context))
+if comments_in_db.length() != 1 then raise "expected exactly one comment on the skin" end
+comment_id = comments_in_db[0].id()
+
+not_author_delete = app(request_with_cookie("POST", "/comments/#{comment_id}/delete", "csrf_token=#{csrf_token}", cookie), context)
+if not_author_delete[0] != 404 then raise "a non-author was allowed to delete another user's comment" end
+if Comment.find(Database.get(context), comment_id) == nil then raise "a rejected comment delete somehow removed it" end
+
+author_delete = app(request_with_cookie("POST", "/comments/#{comment_id}/delete", "csrf_token=#{other_csrf}", other_cookie), context)
+if author_delete[0] != 302 || Comment.find(Database.get(context), comment_id) != nil
+  raise "the comment's own author could not delete it"
+end
+
 # --- the real owner can edit (keeping the existing file) and delete ---
 owner_edit_form = app(request_with_cookie("GET", "/skins/#{skin.id()}/edit", "", cookie), context)
 if owner_edit_form[0] != 200 || !owner_edit_form[2].include?("dark-mode") || !owner_edit_form[2].include?("minimal")

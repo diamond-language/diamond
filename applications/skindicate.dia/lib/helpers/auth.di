@@ -132,3 +132,21 @@ def require_ownership(request, context, params)
   log_debug(request, context, "authorization.allowed", {"skin_id": skin.id()})
   nil
 end
+
+# Same 404-not-403 shape as require_ownership above, for a comment
+# rather than a skin -- params["id"] here is the comment's own id
+# (see routes.di's "/comments/:id/delete").
+def require_comment_ownership(request, context, params)
+  comment = Comment.find(Database.get(context), params["id"].to_i())
+  if comment == nil
+    log_warn(request, context, "authorization.denied", {"reason": "not_found", "comment_id": params["id"]})
+    return Dials::Response.not_found(request["path"])
+  end
+  if comment.user_id() != context["current_user"].id()
+    log_warn(request, context, "authorization.denied", {"reason": "not_owner", "comment_id": comment.id()})
+    return Dials::Response.not_found(request["path"])
+  end
+  context["current_comment"] = comment
+  log_debug(request, context, "authorization.allowed", {"comment_id": comment.id()})
+  nil
+end

@@ -22,9 +22,10 @@ class SkinsController
     if skin == nil then return Dials::Response.not_found(request["path"]) end
     uploader = skin.user(db)
     tags = skin.tags(db)
+    comments = comments_for_skin(db, skin.id())
     is_owner = context["current_user"] != nil && context["current_user"].id() == skin.user_id()
-    log_debug(request, context, "skin.shown", {"skin_id": skin.id()})
-    content = skin_show_html(skin, uploader, tags, is_owner, context["csrf_token"])
+    log_debug(request, context, "skin.shown", {"skin_id": skin.id(), "comment_count": comments.length()})
+    content = skin_show_html(skin, uploader, tags, is_owner, context["current_user"], comments, db, context["csrf_token"])
     Div.html_response(200, layout_html(skin.title(), content, context["current_user"], context["csrf_token"]))
   end
 
