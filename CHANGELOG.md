@@ -24,6 +24,22 @@
   using GraphSQL lookahead projection and recursive batch preloading for owner,
   player, leaderboard, and score associations.
 
+## Arel
+
+- Added `Arel::PreparedStatements`, a per-connection cache reusing one
+  compiled `SQLite3` `Statement` per distinct SQL text instead of
+  re-preparing it on every call -- `Query#to_a`/`#count` and
+  `Insert`/`Update`/`Delete#execute`/`#to_a` all route through it now,
+  so every `Repository#all`/`#where`/`#find`/`#create`/`#update`/
+  `#delete` and every association load benefits automatically, with no
+  public API change. Falls back to the original uncached
+  `db.query`/`db.execute` path (`Arel::UncachedStatement`) for any
+  connection that doesn't support `#prepare` -- Postgres, MySQL, or a
+  plain decorator like `ActiveRecord::InstrumentedConnection` -- caught
+  once per connection and remembered, not retried on every call.
+  Depended on the `values_equal`/`hash_value` fix below, since it keys
+  its cache by the connection object itself.
+
 ## Language
 
 - Fixed a segfault: `values_equal`/`hash_value`'s `DIAMOND_VALUE_OBJECT`

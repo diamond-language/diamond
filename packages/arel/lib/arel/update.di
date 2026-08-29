@@ -92,11 +92,11 @@ class Update
 
   def execute(db, visitor = nil)
     sql, params = self.to_sql(visitor)
-    db.execute(sql, params)
+    PreparedStatements.for(db, sql).execute(params)
   end
   def to_a(db, visitor = nil)
     sql, params = self.to_sql(visitor)
-    db.query(sql, params)
+    PreparedStatements.for(db, sql).query(params)
   end
 end
 

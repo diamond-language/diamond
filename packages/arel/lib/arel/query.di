@@ -247,12 +247,13 @@ class Query
 
   def to_a(db, visitor = nil)
     sql, params = self.to_sql(visitor)
-    db.query(sql, params)
+    PreparedStatements.for(db, sql).query(params)
   end
 
   def count(db, visitor = nil)
     sql, params = self.to_sql(visitor)
-    rows = db.query("SELECT COUNT(*) AS count FROM (#{sql})", params)
+    count_sql = "SELECT COUNT(*) AS count FROM (#{sql})"
+    rows = PreparedStatements.for(db, count_sql).query(params)
     rows[0]["count"]
   end
 end
