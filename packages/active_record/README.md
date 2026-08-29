@@ -139,7 +139,7 @@ and `after_save` arguments -- there is no `validates`-style class macro here
 the same as `mapper`:
 
 ```diamond
-def validate_author(attributes)
+def validate_author(attributes, exclude_id)
   errors = []
   errors.push("name is required") if attributes["name"] == nil || attributes["name"] == ""
   errors
@@ -341,8 +341,12 @@ choose whether the subscriber writes logs, metrics, traces, or test events.
 ## Validators
 
 `Repository`'s own `validator` argument (above) is any ordinary
-`attributes -> Array[String]` function -- `ActiveRecord::Validators` is a
-small library of reusable ones, so a model doesn't have to hand-roll
+`(attributes, exclude_id) -> Array[String]` function -- `exclude_id` is
+the record's own id on `#update` (`nil` on `#create`), passed so a
+uniqueness-style check can exclude the record's own current row from
+itself; every validator that doesn't care about it just ignores the
+second parameter. `ActiveRecord::Validators` is a small library of
+reusable ones, so a model doesn't have to hand-roll
 `if attributes["name"] == nil || attributes["name"] == "" then ...` every
 time. Each `self.xxx` builds and returns one such function; `#combine`
 concatenates several into one for `Repository.new`'s own `validator` slot:
@@ -376,17 +380,17 @@ explicitly, the same as `mapper`/`before_save`/`after_save` already are.
 - `format(field, pattern, message = nil)` -- `pattern` is an ordinary
   `Regexp`, matched with `#match?`. `nil` fails.
 - `inclusion(field, values, message = nil)` -- `values.include?(value)`.
-- `uniqueness(db, table, field, visitor = nil, message = nil)` -- the one
-  check needing a real query. `Repository`'s own `validator` is called as
-  `@validator(attributes)`, never `(db, attributes)`, so this closes over
-  `db` directly instead (an ordinary captured value, built where `db` is
-  already in scope -- typically `self.configure`), rather than changing
-  `Repository`'s signature. **Only correct for `#create`**: `Repository`'s
-  validator has no access to the row's own `id` (or even whether this is
-  a `#create` or `#update` at all), so on `#update` this will also flag a
-  record whose unique field is unchanged as conflicting with itself -- a
-  real `Repository`-level constraint, not something `uniqueness` works
-  around.
+- `uniqueness(db, table, field, visitor = nil, message = nil, id_column =
+  "id")` -- the one check needing a real query. `Repository`'s own
+  `validator` is called as `@validator(attributes, exclude_id)`, never
+  `(db, attributes)`, so this closes over `db` directly instead (an
+  ordinary captured value, built where `db` is already in scope --
+  typically `self.configure`), rather than changing that part of
+  `Repository`'s signature. On `#update`, `exclude_id` is the row's own
+  id, excluded from the check (`id_column != exclude_id`) so a record
+  whose unique field is unchanged doesn't conflict with itself; a real
+  conflict with a *different* row is still caught. `id_column` only
+  needs overriding if a table's primary key isn't named `"id"`.
 - `combine(validators)` -- runs every validator in `validators` and
   concatenates their error `Array`s, standing in for what several
   `validates` calls would do declaratively in real ActiveRecord.

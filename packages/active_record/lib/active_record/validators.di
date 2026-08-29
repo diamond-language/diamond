@@ -3,11 +3,12 @@ require "../../../arel/lib/arel"
 module ActiveRecord
 
 # Reusable validator building blocks -- ordinary functions returning
-# ordinary functions, matching Repository's own `validator(attributes) ->
-# Array[String]` shape exactly (see repository.di's own comment) so
-# nothing about Repository changes to use these. There is no `validates
-# :field, ...`-style declarative macro here, same as everywhere else in
-# this package: a model wires these up explicitly, e.g.
+# ordinary functions, matching Repository's own `validator(attributes,
+# exclude_id) -> Array[String]` shape exactly (see repository.di's own
+# comment) so nothing about Repository changes to use these. There is
+# no `validates :field, ...`-style declarative macro here, same as
+# everywhere else in this package: a model wires these up explicitly,
+# e.g.
 #
 #   validator = ActiveRecord::Validators.combine([
 #     ActiveRecord::Validators.presence("name"),
@@ -25,9 +26,15 @@ module ActiveRecord
 # `self.foo()` from inside such a closure, which does not work -- see
 # migration.di's own comment for why; none of the closures below need to
 # call back into Validators itself, so that pitfall doesn't apply here).
+#
+# Every `check` takes `(attributes, exclude_id)` -- `exclude_id` is the
+# id of the record being validated on an #update (nil on #create, see
+# repository.di's own Repository#create/#update), threaded through so
+# `uniqueness` below can exclude a record's own row from its own
+# uniqueness check. Every validator except `uniqueness` ignores it.
 class Validators
   def self.presence(field: String, message = nil)
-    def check(attributes)
+    def check(attributes, exclude_id)
       value = attributes[field]
       if value == nil || value == ""
         text = if message == nil then "#{field} is required" else message end
@@ -45,7 +52,7 @@ class Validators
   # values pass #length silently, same "one check, one concern" split
   # real ActiveRecord uses.
   def self.length(field: String, minimum = nil, maximum = nil, message = nil)
-    def check(attributes)
+    def check(attributes, exclude_id)
       value = attributes[field]
       if value == nil
         return []
@@ -72,7 +79,7 @@ class Validators
   # raises TypeError) -- absence is #presence's job, not this one's,
   # matching real ActiveRecord's own default (allow_nil: false).
   def self.numericality(field: String, message = nil)
-    def check(attributes)
+    def check(attributes, exclude_id)
       value = attributes[field]
       valid = true
       begin
@@ -94,7 +101,7 @@ class Validators
   # allocation needed just to check a match). nil fails -- there is
   # nothing for a pattern to match against.
   def self.format(field: String, pattern, message = nil)
-    def check(attributes)
+    def check(attributes, exclude_id)
       value = attributes[field]
       if value == nil || !pattern.match?(value)
         text = if message == nil then "#{field} is invalid" else message end
@@ -107,7 +114,7 @@ class Validators
   end
 
   def self.inclusion(field: String, values: Array, message = nil)
-    def check(attributes)
+    def check(attributes, exclude_id)
       value = attributes[field]
       if values.include?(value)
         []
@@ -119,23 +126,26 @@ class Validators
     check
   end
 
-  # Needs a real DB round trip, which Repository's own validator(attributes)
-  # never receives (confirmed: called as @validator(attributes), no db) --
-  # resolved without any Repository change by closing over `db` directly,
-  # exactly like any other captured value (see migration.di's own note on
-  # what closures here can and can't do). `table`/`visitor` follow
-  # Repository's own constructor shape.
+  # Needs a real DB round trip, which Repository's own validator never
+  # otherwise would -- resolved without any other Repository change by
+  # closing over `db` directly, exactly like any other captured value
+  # (see migration.di's own note on what closures here can and can't
+  # do). `table`/`visitor` follow Repository's own constructor shape.
   #
-  # Only correct for #create. Repository's validator has no access to the
-  # row's own id (or whether this is a #create or #update at all), so on
-  # #update this also flags a record whose unique field is unchanged as
-  # conflicting with itself -- a real Repository-level constraint, not
-  # something this works around. Document this at the call site if a
-  # model actually uses #update with a uniqueness-validated field.
-  def self.uniqueness(db, table: Arel::Table, field: String, visitor = nil, message = nil)
-    def check(attributes)
+  # On #update, Repository passes the record's own id as `exclude_id`
+  # (see repository.di's own Repository#update), which this excludes
+  # from the uniqueness check via `id_column != exclude_id` -- so a
+  # record whose unique field is unchanged no longer conflicts with
+  # itself. `id_column` defaults to "id", matching Repository's own
+  # default; pass the real column name if a table's primary key is
+  # named differently.
+  def self.uniqueness(db, table: Arel::Table, field: String, visitor = nil, message = nil, id_column: String = "id")
+    def check(attributes, exclude_id)
       value = attributes[field]
       predicate = table.column(field).eq(value)
+      unless exclude_id == nil
+        predicate = predicate.and_also(table.column(id_column).not_eq(exclude_id))
+      end
       rows = Arel.from(table).where(predicate).take(1).to_a(db, visitor)
       if rows.length() > 0
         text = if message == nil then "#{field} has already been taken" else message end
@@ -151,12 +161,12 @@ class Validators
   # combinator standing in for what multiple `validates` calls would do
   # declaratively in real ActiveRecord.
   def self.combine(validators: Array)
-    def check(attributes)
+    def check(attributes, exclude_id)
       errors = []
       index = 0
       while index < validators.length()
         validator = validators[index]
-        errors = errors.concat(validator(attributes))
+        errors = errors.concat(validator(attributes, exclude_id))
         index += 1
       end
       errors

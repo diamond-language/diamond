@@ -1,3 +1,9 @@
+# A custom validator here is `Callable[2]` (attributes, exclude_id),
+# not `Callable[1]` -- Repository#validate! passes the record's own id
+# as exclude_id on #update (nil on #create) so a uniqueness check
+# (see ActiveRecord::Validators.uniqueness) can exclude a record's own
+# row from itself; every validator, hand-rolled or from Validators.*,
+# must accept the second parameter even if it ignores it.
 require "../../packages/active_record/lib/active_record"
 require "../../lib/minitest"
 
@@ -26,7 +32,7 @@ def run_tests()
     LibraryAuthor.new(row["id"], row["name"], row["country"])
   end
 
-  def validate_author(attributes)
+  def validate_author(attributes, exclude_id)
     errors = []
     if attributes["name"] == nil || attributes["name"] == ""
       errors.push("name is required")

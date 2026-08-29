@@ -94,11 +94,16 @@ class Repository
     nil
   end
 
-  def validate!(attributes: Hash)
+  # `exclude_id` is nil on #create, and the record's own id on #update
+  # -- threaded through to the validator (see validators.di's own
+  # comment) so a uniqueness check can exclude the record's own
+  # current row instead of always flagging it as conflicting with
+  # itself the moment any field on it is saved again unchanged.
+  def validate!(attributes: Hash, exclude_id = nil)
     if @validator == nil
       return
     end
-    errors = @validator(attributes)
+    errors = @validator(attributes, exclude_id)
     unless errors.empty?()
       raise ValidationError.new(errors)
     end
@@ -166,7 +171,7 @@ class Repository
   end
 
   def update(db, id, attributes: Hash, expected_lock_version = nil)
-    self.validate!(attributes)
+    self.validate!(attributes, id)
     final_attributes = attributes
     unless @before_save == nil
       final_attributes = @before_save(db, attributes, :update)
