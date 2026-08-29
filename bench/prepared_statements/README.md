@@ -111,6 +111,16 @@ than the `Repository`-level one, matching `bench/gc_churn`'s own
 discipline of stating exactly what a number does and doesn't show
 rather than the most flattering one available.
 
+This prediction was checked against real traffic, not just guessed:
+`bench/project_board_http` re-ran its own existing full-stack HTTP
+benchmark after this caching work landed and saw **no measurable
+end-to-end throughput change** (within ~2.4% of its pre-caching
+baseline across four runs -- see that directory's own `RESULTS.md`).
+HTTP parsing, routing/middleware, template rendering, and per-query
+instrumentation overhead swamp the microseconds this cache saves at
+real request volumes -- consistent with, not contradicted by, the
+~40% SQL-layer win measured here.
+
 ## Reproducing
 
 ```

@@ -34,11 +34,24 @@
   `#delete` and every association load benefits automatically, with no
   public API change. Falls back to the original uncached
   `db.query`/`db.execute` path (`Arel::UncachedStatement`) for any
-  connection that doesn't support `#prepare` -- Postgres, MySQL, or a
-  plain decorator like `ActiveRecord::InstrumentedConnection` -- caught
-  once per connection and remembered, not retried on every call.
-  Depended on the `values_equal`/`hash_value` fix below, since it keys
-  its cache by the connection object itself.
+  connection that genuinely doesn't support `#prepare` -- Postgres or
+  MySQL -- caught once per connection and remembered, not retried on
+  every call. Depended on the `values_equal`/`hash_value` fix below,
+  since it keys its cache by the connection object itself.
+  `ActiveRecord::InstrumentedConnection` (used by `examples/
+  project_board` and `applications/pheint.dia` for query logging) got
+  its own `#prepare`, wrapping the result in a new
+  `ActiveRecord::InstrumentedStatement` so a cached call stays exactly
+  as observable as an uncached one -- without it, this decorator would
+  otherwise have silently opted every app using it out of the cache
+  entirely. A real end-to-end HTTP benchmark against `project_board`
+  (`bench/project_board_http`) confirmed the cache doesn't move
+  request throughput measurably at real traffic volumes even with this
+  fix, despite a real, repeatable ~40% reduction at the isolated
+  SQL-execution layer (`bench/prepared_statements`) -- HTTP parsing,
+  routing, template rendering, and per-query instrumentation overhead
+  dominate a real request's cost far more than statement preparation
+  does.
 
 ## Language
 
