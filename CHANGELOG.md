@@ -26,6 +26,19 @@
 
 ## Language
 
+- Added `Cipher.encrypt`/`.decrypt` (AES-256-GCM authenticated
+  encryption, via OpenSSL's already-linked `EVP_CIPHER`) and
+  `HMAC.verify` (constant-time signature comparison via `CRYPTO_memcmp`,
+  the same primitive `BCrypt.verify` already uses) -- wired the same way
+  `BCrypt`/`HMAC.sha256`/`Digest.sha256`/`SecureRandom` already are.
+  `Cipher.decrypt` returns `nil`, not an exception, for a wrong key or a
+  tampered/truncated blob. Added `packages/http`'s own multi-`Set-Cookie`
+  support (a response header value can now be an `Array`, written as one
+  line per element, since `Set-Cookie` can't be comma-joined the way most
+  repeated headers can) and a new `packages/cookies` package built on
+  both: cookie parsing/serialization, pure-Diamond `base64url`/hex
+  codecs, `SignedCookies`, `EncryptedCookies`, and a `CookieSession`
+  Rack middleware. See `docs/syntax.md` and `packages/cookies/README.md`.
 - Made the collector generational: a young/old split, minor collections
   that trace only the young generation plus a remembered set, and
   survivors promoted by list splice (no copying, since every object was
