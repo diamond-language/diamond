@@ -26,6 +26,19 @@
 
 ## Language
 
+- Fixed a segfault: `values_equal`/`hash_value`'s `DIAMOND_VALUE_OBJECT`
+  switch only special-cased `Instance`/`Array`/`Hash` (identity),
+  `Symbol`/`String` (content), `Time` (epoch value), and `Bignum` --
+  every other native object kind (`Closure`, `Fiber`, `File`,
+  `Listener`, `Socket`, `UdpSocket`, `TlsSocket`, `Regexp`,
+  `ProgramBuilder`, `Thread`, `SQLite3`, `SQLite3` `Statement`,
+  `Postgres`, `MySQL`, `ProcessResult`) unconditionally fell through to
+  a final default that read String fields (`chars`/`length`) off the
+  object's own struct -- garbage for anything that isn't actually a
+  String, and a real crash once exercised (`cache[SQLite3.open(...)] =
+  x` segfaulted). Fixed by giving every otherwise-unhandled object kind
+  identity equality/hashing, the same rule `Instance`/`Array`/`Hash`
+  already use. See `tests/cases/native_object_hash_key_identity.di`.
 - Added `Cipher.encrypt`/`.decrypt` (AES-256-GCM authenticated
   encryption, via OpenSSL's already-linked `EVP_CIPHER`) and
   `HMAC.verify` (constant-time signature comparison via `CRYPTO_memcmp`,

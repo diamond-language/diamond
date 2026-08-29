@@ -4777,10 +4777,24 @@ static bool values_equal(DiamondValue left, DiamondValue right) {
                 const DiamondTime *b=(const DiamondTime *)right.as.object;
                 return a->epoch==b->epoch;
             }
-            const DiamondString *a = (const DiamondString *)left.as.object;
-            const DiamondString *b = (const DiamondString *)right.as.object;
-            return a->length == b->length &&
-                   memcmp(a->chars, b->chars, a->length) == 0;
+            if(left.as.object->kind==DIAMOND_OBJECT_STRING) {
+                const DiamondString *a = (const DiamondString *)left.as.object;
+                const DiamondString *b = (const DiamondString *)right.as.object;
+                return a->length == b->length &&
+                       memcmp(a->chars, b->chars, a->length) == 0;
+            }
+            /* Every other native object kind (Closure, Fiber, File,
+             * Listener, Socket, UdpSocket, TlsSocket, Regexp,
+             * ProgramBuilder, Thread, SQLite3, SQLite3 Statement,
+             * Postgres, MySQL, ProcessResult, and any future addition)
+             * has no meaningful value-equality of its own -- compare by
+             * identity, the same rule Instance/Array/Hash above already
+             * use, instead of falling through to reading String fields
+             * (chars/length) off an unrelated struct layout, which was
+             * reading garbage and could crash (confirmed: hashing one of
+             * these as a Hash key via the identical fallback in
+             * hash_value below segfaulted). */
+            return left.as.object == right.as.object;
         }
     }
     return false;
@@ -4860,8 +4874,23 @@ static uint64_t hash_value(DiamondValue value) {
                 const DiamondSymbol *symbol=(const DiamondSymbol *)object;
                 return hash_bytes(symbol->chars,symbol->length);
             }
-            const DiamondString *string=(const DiamondString *)object;
-            return hash_bytes(string->chars,string->length);
+            if(object->kind==DIAMOND_OBJECT_STRING) {
+                const DiamondString *string=(const DiamondString *)object;
+                return hash_bytes(string->chars,string->length);
+            }
+            /* Every other native object kind (Closure, Fiber, File,
+             * Listener, Socket, UdpSocket, TlsSocket, Regexp,
+             * ProgramBuilder, Thread, SQLite3, SQLite3 Statement,
+             * Postgres, MySQL, ProcessResult, and any future addition)
+             * has no meaningful value-equality of its own -- hash by
+             * identity, the same rule Instance/Array/Hash above already
+             * use, instead of falling through to reading String fields
+             * (chars/length) off an unrelated struct layout. This was a
+             * real, reproducible segfault: `cache[SQLite3.open(...)] =
+             * x` read garbage chars/length off the connection struct
+             * and dereferenced them. Must stay consistent with
+             * values_equal's own identical fallback above. */
+            return hash_mix64((uint64_t)(uintptr_t)object);
         }
     }
     return 0;
