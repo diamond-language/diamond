@@ -314,4 +314,99 @@ count=$((count + 1))
 kill "$pid" 2>/dev/null || true
 wait "$pid" 2>/dev/null || true
 
+# --- Cors: wildcard default grants any Origin, no Origin header at all
+# --- (same-origin) gets no CORS headers, and a preflight (OPTIONS with
+# --- its own Access-Control-Request-Method) is answered directly with
+# --- 204 and never reaches the app, echoing the requested headers back ---
+actual="$(run_case '
+def app(request, context)
+  [200, {}, "ok"]
+end
+[s1, h1, b1] = Cors.call({"method": "GET", "headers": {"origin": "https://evil.example"}}, {}, app)
+[s2, h2, b2] = Cors.call({"method": "GET", "headers": {}}, {}, app)
+[s3, h3, b3] = Cors.call({"method": "OPTIONS", "headers": {"origin": "https://app.example", "access-control-request-method": "PUT", "access-control-request-headers": "X-Custom"}}, {}, app)
+"#{h1["Access-Control-Allow-Origin"]}|#{h2["Access-Control-Allow-Origin"]}|#{s3}|#{h3["Access-Control-Allow-Origin"]}|#{h3["Access-Control-Allow-Headers"]}|#{b3}"
+')"
+[[ "$actual" == "*|nil|204|*|X-Custom|" ]]
+count=$((count + 1))
+
+# --- Cors: an ordinary (non-preflight) OPTIONS request -- no
+# --- Access-Control-Request-Method header -- still reaches the app ---
+actual="$(run_case '
+def app(request, context)
+  [200, {}, "handled"]
+end
+[status, headers, body] = Cors.call({"method": "OPTIONS", "headers": {}}, {}, app)
+"#{status}|#{body}"
+')"
+[[ "$actual" == "200|handled" ]]
+count=$((count + 1))
+
+# --- Cors.configure: an explicit allow-list reflects a listed origin
+# --- exactly (never "*", forced by credentials: true) and grants
+# --- nothing to an unlisted one -- whose request still succeeds, since
+# --- CORS is a browser-side grant, not a server-side rejection ---
+actual="$(run_case '
+def app(request, context)
+  [200, {}, "ok"]
+end
+Cors.configure({"origins": ["https://app.example"], "credentials": true, "max_age": 600})
+[s1, h1, b1] = Cors.call({"method": "GET", "headers": {"origin": "https://app.example"}}, {}, app)
+[s2, h2, b2] = Cors.call({"method": "GET", "headers": {"origin": "https://evil.example"}}, {}, app)
+[s3, h3, b3] = Cors.call({"method": "OPTIONS", "headers": {"origin": "https://app.example", "access-control-request-method": "POST"}}, {}, app)
+"#{h1["Access-Control-Allow-Origin"]}|#{h1["Access-Control-Allow-Credentials"]}|#{s2}|#{h2["Access-Control-Allow-Origin"]}|#{h3["Access-Control-Max-Age"]}"
+')"
+[[ "$actual" == "https://app.example|true|200|nil|600" ]]
+count=$((count + 1))
+
+# --- Cors wired into a real gremlin_serve chain: a real preflight over
+# --- the wire gets 204 with the CORS headers and never reaches the app,
+# --- and a real cross-origin GET gets the app's response plus the
+# --- Access-Control-Allow-Origin header ---
+port=19425
+timeout 10 "$diamond" -e "$(cat <<SRCEOF
+require "$(pwd)/../gremlin/lib/gremlin"
+require "$(pwd)/lib/rack"
+
+def app_handler(request, context)
+  [200, {"Content-Type": "text/plain"}, "ok"]
+end
+
+def build_chain()
+  Cors.configure({"origins": ["https://app.example"]})
+  rack_compose([Cors.call], app_handler)
+end
+
+def rack_app(request, context)
+  rack_run_chain(RackChain.get(build_chain), 0, request, context)
+end
+
+gremlin_serve($port, rack_app)
+SRCEOF
+)" >/dev/null 2>&1 &
+pid=$!
+wait_for_port "$port"
+{ exec 3<&- 3>&-; } 2>/dev/null || true
+
+exec 3<>"/dev/tcp/127.0.0.1/$port"
+printf 'OPTIONS / HTTP/1.1\r\nHost: localhost\r\nOrigin: https://app.example\r\nAccess-Control-Request-Method: POST\r\n\r\n' >&3
+preflight_response="$(cat <&3)"
+{ exec 3<&- 3>&-; } 2>/dev/null || true
+assert_contains "$preflight_response" "HTTP/1.1 204"
+count=$((count + 1))
+assert_contains "$preflight_response" "Access-Control-Allow-Origin: https://app.example"
+count=$((count + 1))
+
+exec 3<>"/dev/tcp/127.0.0.1/$port"
+printf 'GET / HTTP/1.1\r\nHost: localhost\r\nOrigin: https://app.example\r\n\r\n' >&3
+cors_get_response="$(cat <&3)"
+{ exec 3<&- 3>&-; } 2>/dev/null || true
+assert_contains "$cors_get_response" "HTTP/1.1 200 OK"
+count=$((count + 1))
+assert_contains "$cors_get_response" "Access-Control-Allow-Origin: https://app.example"
+count=$((count + 1))
+
+kill "$pid" 2>/dev/null || true
+wait "$pid" 2>/dev/null || true
+
 echo "$count rack tests passed"

@@ -1013,8 +1013,15 @@ helper built on top (`Model#secure_password=`/`#authenticate`, no macro --
 same explicit-wiring shape `has_many`/`has_one`/`belongs_to` already use).
 SHA-256 and HMAC-SHA-256 are now exposed as `Digest.sha256` and
 `HMAC.sha256`, returning lowercase hexadecimal strings and preserving raw
-String bytes. Additional algorithms remain demand-driven rather than becoming
-an open-ended crypto-wrapper surface.
+String bytes. `HMAC.verify(data, key, signature)` recomputes and compares
+via `CRYPTO_memcmp` (constant-time), for verifying a signature without a
+timing side-channel on the comparison itself. `Cipher.encrypt(key,
+plaintext)`/`.decrypt(key, blob)` is AES-256-GCM authenticated encryption
+via OpenSSL's already-linked `EVP_CIPHER` -- driven by the same real need
+as the rest of this list, this time building encrypted cookie support
+(`packages/cookies`, `packages/rack`'s `CookieSession`/`Csrf`/
+`SecurityHeaders`/`RateLimit` middlewares). Additional algorithms remain
+demand-driven rather than becoming an open-ended crypto-wrapper surface.
 
 **Done**: reusable prepared SQLite statements, named (`:name`) binds, and
 connection-open mode/flags -- `db.prepare(sql)` returns a `Statement`

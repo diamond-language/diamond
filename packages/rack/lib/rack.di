@@ -44,11 +44,12 @@
 
 # One file per logical grouping: the plain chain-building/running
 # functions (chain_composition), then RackChain, the one real class
-# here (rack_chain), then SecurityHeaders and RateLimit, two independent
-# middlewares. None reference each other, so order between them doesn't
-# matter -- kept in the same order as the original single-file layout
-# for the first two.
+# here (rack_chain), then SecurityHeaders, RateLimit, and Cors, three
+# independent middlewares. None reference each other, so order between
+# them doesn't matter -- kept in the same order as the original
+# single-file layout for the first two.
 require "./rack/chain_composition"
 require "./rack/rack_chain"
 require "./rack/security_headers"
 require "./rack/rate_limit"
+require "./rack/cors"

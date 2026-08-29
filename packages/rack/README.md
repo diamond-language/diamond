@@ -226,6 +226,39 @@ practice. Exactly correct at `threads: 1` (the default) or with
 the fixed-window tradeoff (a client can burst up to 2x the limit across a
 window boundary) and why buckets are never evicted.
 
+## CORS
+
+`Cors` (`lib/rack/cors.di`) handles Cross-Origin Resource Sharing --
+complementary to `SecurityHeaders`/`Csrf` above rather than overlapping
+with them (those are same-origin concerns; CORS is the cross-origin
+half). It's a browser-enforced *grant*, not a server-side access check:
+a request from a disallowed origin still gets an ordinary response --
+`Cors` just withholds the `Access-Control-Allow-*` headers a browser
+needs before letting cross-origin JS read that response, and a
+same-origin request (no `Origin` header at all) is untouched either way.
+
+```ruby
+def build_chain()
+  Cors.configure({"origins": ["https://app.example"], "credentials": true})
+  rack_compose([Cors.call], app_handler)
+end
+```
+
+Defaults to `"origins": "*"` (any origin) with no configuration at all.
+An `OPTIONS` request carrying its own `Access-Control-Request-Method`
+header -- a browser-generated CORS preflight, not an ordinary app-level
+`OPTIONS` handler -- is answered directly with `204` and never reaches
+`forward`, echoing back whatever the browser's own
+`Access-Control-Request-Headers` asked for. `"credentials": true` (for a
+cross-origin request to carry cookies/`Authorization`) forces the
+allowed origin to always be reflected back exactly instead of `"*"`,
+since browsers reject that combination outright per spec. See the
+file's own comment for every option (`"methods"`, `"max_age"`).
+
+Like `SecurityHeaders`/`RateLimit`, `.configure` is a class-variable
+write -- call it once per worker on `threads: N`, inside the same
+`build_chain()`-style function.
+
 ## What's deliberately out of scope
 
 - **Routing.** This composes middleware around one handler; it doesn't
