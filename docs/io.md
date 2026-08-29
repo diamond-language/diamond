@@ -131,6 +131,57 @@ Any operation other than `.close()` on an already-closed handle, or a
 genuine read/write failure (checked via `ferror`, not just a short
 return value), raises a rescuable `IOError`.
 
+## File paths: `File.join`/`.dirname`/`.basename`/`.extname`/`.absolute?`/`.expand_path`
+
+```ruby
+File.join("a", "b", "c")             # => "a/b/c"
+File.join("a/", "/b/", "c")          # => "a/b/c" -- redundant separators collapsed
+File.dirname("/a/b/c")               # => "/a/b"
+File.basename("/a/b/c.rb")           # => "c.rb"
+File.basename("/a/b/c.rb", ".rb")    # => "c"
+File.extname("archive.tar.gz")       # => ".gz"
+File.absolute?("/a/b")               # => true
+File.absolute?("a/b")                # => false
+File.expand_path("../b", "/a/x")     # => "/b"
+File.expand_path("relative/path")    # => cwd + "/relative/path"
+```
+
+Pure String manipulation — none of these touch the filesystem or
+require `path` to actually exist, except `.expand_path` calling
+`getcwd()` when resolving a relative `path` with no `base` (or a
+relative `base`) given. All six are recognized in the compiler the same
+way `File.open`/`Fiber.new` are (shadowable by a local or a top-level
+function of the same name); `.join`'s variable-length argument list
+compiles to `DIAMOND_OP_FILE_JOIN dest, base, count` (the same
+contiguous-register-run shape `Thread.new`'s own argument list uses),
+and the other five share one `DIAMOND_OP_FILE_PATH dest, arg1, arg2,
+selector` instruction (the `DIAMOND_OP_MATH_UNARY`/`_BINARY` "one opcode
++ a selector byte" shape, reused here for `.dirname`/`.extname`, taking
+one argument, and `.basename`/`.expand_path`, taking an optional
+second).
+
+- `.join(*parts)` skips empty-string parts entirely and collapses a
+  redundant `/` at each seam — not bug-for-bug identical to Ruby's own
+  `File.join` (which treats a leading `""` part as still contributing a
+  separator), a deliberately simpler and more predictable rule instead.
+- `.dirname(path)` / `.basename(path, suffix = nil)` / `.extname(path)`
+  follow Ruby's own rules: no separator at all → `"."` for `dirname`;
+  a path made entirely of separators (`"/"`) stays `"/"`, never reduced
+  to `""`; a dotfile's own leading dot(s) never start an `extname`
+  (`".bashrc"` → `""`). `suffix` is stripped from `basename` only on an
+  exact literal match (no Ruby-style `".*"` wildcard support).
+- `.absolute?(path)` is `path` starting with `/` — no drive-letter or
+  UNC handling, since this VM only targets POSIX platforms.
+- `.expand_path(path, base = nil)` resolves `path` to an absolute,
+  lexically-normalized path: an absolute `path` is normalized as-is
+  (`base` is then irrelevant); otherwise `path` is joined onto `base`
+  (itself resolved against the current working directory first if
+  `base` is relative) or directly onto the current working directory
+  when `base` is nil. Normalization then walks the combined path
+  dropping empty and `"."` segments and popping the previous real
+  segment on `".."` — kept literally only when there is nothing left to
+  pop, so this can never climb above the root, matching Ruby.
+
 ## TCP sockets: `TCPSocket.connect`/`TCPServer.listen`/`.accept`
 
 ```ruby

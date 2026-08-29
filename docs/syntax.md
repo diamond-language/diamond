@@ -1785,6 +1785,14 @@ A connected socket (from `.connect` or `.accept()`) is a `File` under the
 hood, so `.read()`/`.read(n)`/`.gets()`/`.write(value)`/`.close()` work
 identically on both.
 
+`File` also has a small family of pure path-string utilities needing no
+open handle: `File.join("a", "b")` (`=> "a/b"`), `.dirname(path)`,
+`.basename(path, suffix = nil)`, `.extname(path)`, `.absolute?(path)`,
+and `.expand_path(path, base = nil)` (resolves and lexically normalizes
+`path` against `base`, or the current working directory when `base` is
+omitted). See `docs/io.md`'s own "File paths" section for the full
+rules.
+
 `ARGV` and `ENV` are plain global values, not calls — `ARGV` is an
 `Array` of `String`s, the script's own trailing command-line arguments
 (`diamond script.di one two` → `ARGV == ["one", "two"]`; `[]` for `-e`/a

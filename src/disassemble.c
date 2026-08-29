@@ -21,6 +21,17 @@ static const char *math_function_name(uint8_t id) {
     }
 }
 
+static const char *file_path_function_name(uint8_t id) {
+    switch((DiamondFilePathFunction)id) {
+        case DIAMOND_FILE_PATH_DIRNAME: return "dirname";
+        case DIAMOND_FILE_PATH_BASENAME: return "basename";
+        case DIAMOND_FILE_PATH_EXTNAME: return "extname";
+        case DIAMOND_FILE_PATH_ABSOLUTE: return "absolute?";
+        case DIAMOND_FILE_PATH_EXPAND: return "expand_path";
+        default: return "<invalid file path function>";
+    }
+}
+
 /* Every operand read here is 2 bytes, big-endian, matching emit_register/
  * emit_instruction's own uniform widening (src/compiler.c) -- including
  * operands that are logically a narrower index (a constant/string/type-set/
@@ -942,6 +953,23 @@ static bool disassemble_chunk(FILE *stream, const char *name,
                     checked_register(chunk,stream,read_operand(chunk,offset+3),&valid),
                     chunk->code[offset+5]);
                 offset+=6;break;
+            case DIAMOND_OP_FILE_JOIN:
+                if(!require_bytes(stream,chunk,offset,6)){valid=false;offset=chunk->code_count;break;}
+                fprintf(stream,"%-18s r%u, r%u, %u args\n","FILE_JOIN",
+                    checked_register(chunk,stream,read_operand(chunk,offset+1),&valid),
+                    checked_register_range(chunk,stream,read_operand(chunk,offset+3),
+                        chunk->code[offset+5],&valid),
+                    chunk->code[offset+5]);
+                offset+=6;break;
+            case DIAMOND_OP_FILE_PATH: {
+                if(!require_bytes(stream,chunk,offset,8)){valid=false;offset=chunk->code_count;break;}
+                fprintf(stream,"%-18s r%u, r%u, r%u, %s\n","FILE_PATH",
+                    checked_register(chunk,stream,read_operand(chunk,offset+1),&valid),
+                    checked_register(chunk,stream,read_operand(chunk,offset+3),&valid),
+                    checked_register(chunk,stream,read_operand(chunk,offset+5),&valid),
+                    file_path_function_name(chunk->code[offset+7]));
+                offset+=8;break;
+            }
             case DIAMOND_OP_GETS:
                 offset=one_register(stream,chunk,"GETS",offset, &valid);break;
             case DIAMOND_OP_FILE_OPEN:

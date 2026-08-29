@@ -7204,6 +7204,203 @@ static DiamondVmStatus array_join_helper(DiamondVm *vm,const DiamondChunk *chunk
     return DIAMOND_VM_OK;
 }
 
+/* File.join(*parts) -- joins every String in `parts` with '/', collapsing
+ * a redundant separator at each seam (a trailing '/' on the left side,
+ * a leading '/' on the right side, or both) into exactly one, and
+ * skipping empty-string parts entirely. Deliberately not bug-for-bug
+ * identical to Ruby's own File.join (which treats a leading "" part as
+ * contributing a separator) -- this package has no other File.join
+ * caller to match, and "skip empty parts" is the more predictable rule
+ * for path-building code that assembles parts conditionally. `parts`
+ * are `count` contiguous registers starting at `base`, the same shape
+ * DIAMOND_OP_THREAD_NEW's own variadic argument list already uses. */
+static DiamondVmStatus file_path_join_helper(DiamondVm *vm,const DiamondValue *parts,
+        size_t count,DiamondValue *out) {
+    StringBuilder builder={};
+    for(size_t index=0;index<count;index++) {
+        const DiamondValue value=parts[index];
+        if(value.kind!=DIAMOND_VALUE_OBJECT||value.as.object->kind!=DIAMOND_OBJECT_STRING) {
+            free(builder.chars);
+            snprintf(vm->error,sizeof vm->error,"File.join arguments must be Strings");
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        const DiamondString *part=(const DiamondString *)value.as.object;
+        if(part->length==0)continue;
+        size_t start=0;
+        bool ok=true;
+        if(builder.length>0) {
+            while(start<part->length&&part->chars[start]=='/')start++;
+            while(builder.length>0&&builder.chars[builder.length-1]=='/')builder.length--;
+            ok=builder_append(&builder,"/",1);
+        }
+        if(ok&&start<part->length)
+            ok=builder_append(&builder,part->chars+start,part->length-start);
+        if(!ok) {free(builder.chars);return DIAMOND_VM_OUT_OF_MEMORY;}
+    }
+    DiamondString *joined=allocate_string(vm,builder.chars?builder.chars:"",builder.length);
+    free(builder.chars);
+    if(joined==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+    *out=DIAMOND_OBJECT(joined);
+    return DIAMOND_VM_OK;
+}
+
+/* File.dirname(path) -- everything before the last real path separator,
+ * matching Ruby: no separator at all -> ".", a single leading separator
+ * -> "/" (never truncated away, so the root stays meaningful), trailing
+ * separators on the input ignored first. Pure string manipulation, no
+ * filesystem access -- `path` need not exist. */
+static DiamondVmStatus file_path_dirname_helper(DiamondVm *vm,const DiamondString *path,
+        DiamondValue *out) {
+    size_t length=path->length;
+    while(length>1&&path->chars[length-1]=='/')length--;
+    size_t last_slash=SIZE_MAX;
+    for(size_t index=length;index>0;index--)
+        if(path->chars[index-1]=='/') {last_slash=index-1;break;}
+    const char *result_chars;size_t result_length;
+    if(last_slash==SIZE_MAX) {result_chars=".";result_length=1;}
+    else if(last_slash==0) {result_chars="/";result_length=1;}
+    else {
+        result_chars=path->chars;result_length=last_slash;
+        while(result_length>1&&result_chars[result_length-1]=='/')result_length--;
+    }
+    DiamondString *dirname=allocate_string(vm,result_chars,result_length);
+    if(dirname==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+    *out=DIAMOND_OBJECT(dirname);
+    return DIAMOND_VM_OK;
+}
+
+/* File.basename(path, suffix = nil) -- the last path component, with
+ * trailing separators on the input ignored first. `path` == "" ->    "",
+ * `path` made entirely of separators (e.g. "/") -> "/". `suffix`, when
+ * given and non-empty, is stripped from the end of the result if it
+ * matches exactly (an exact-literal match, unlike Ruby's own ".*"
+ * wildcard suffix support -- not needed here, kept simple). */
+static DiamondVmStatus file_path_basename_helper(DiamondVm *vm,const DiamondString *path,
+        const DiamondString *suffix,DiamondValue *out) {
+    if(path->length==0) {
+        DiamondString *basename=allocate_string(vm,"",0);
+        if(basename==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+        *out=DIAMOND_OBJECT(basename);return DIAMOND_VM_OK;
+    }
+    size_t length=path->length;
+    while(length>1&&path->chars[length-1]=='/')length--;
+    size_t start=0;
+    for(size_t index=length;index>0;index--)
+        if(path->chars[index-1]=='/') {start=index;break;}
+    const char *result_chars=path->chars+start;
+    size_t result_length=length-start;
+    if(result_length==0) {result_chars="/";result_length=1;}
+    else if(suffix!=nullptr&&suffix->length>0&&suffix->length<result_length&&
+            memcmp(result_chars+result_length-suffix->length,suffix->chars,suffix->length)==0) {
+        result_length-=suffix->length;
+    }
+    DiamondString *basename=allocate_string(vm,result_chars,result_length);
+    if(basename==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+    *out=DIAMOND_OBJECT(basename);
+    return DIAMOND_VM_OK;
+}
+
+/* File.extname(path) -- from the last '.' in the *basename* onward
+ * (a '.' inside a directory component doesn't count), matching Ruby:
+ * a dotfile's own leading dot(s) never start an extension
+ * (".bashrc" -> "", "..bashrc" -> ""), and a dot with nothing after it
+ * has no extension either ("a." -> ""). "" when there is none. */
+static DiamondVmStatus file_path_extname_helper(DiamondVm *vm,const DiamondString *path,
+        DiamondValue *out) {
+    size_t length=path->length;
+    while(length>1&&path->chars[length-1]=='/')length--;
+    size_t start=0;
+    for(size_t index=length;index>0;index--)
+        if(path->chars[index-1]=='/') {start=index;break;}
+    const char *base=path->chars+start;
+    const size_t base_length=length-start;
+    size_t leading_dots=0;
+    while(leading_dots<base_length&&base[leading_dots]=='.')leading_dots++;
+    size_t last_dot=SIZE_MAX;
+    for(size_t index=base_length;index>leading_dots;index--)
+        if(base[index-1]=='.') {last_dot=index-1;break;}
+    const char *result_chars="";size_t result_length=0;
+    if(last_dot!=SIZE_MAX&&last_dot+1<base_length) {
+        result_chars=base+last_dot;result_length=base_length-last_dot;
+    }
+    DiamondString *extname=allocate_string(vm,result_chars,result_length);
+    if(extname==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+    *out=DIAMOND_OBJECT(extname);
+    return DIAMOND_VM_OK;
+}
+
+/* File.expand_path(path, base = nil) -- resolves `path` to an absolute,
+ * lexically-normalized path (no filesystem access beyond `getcwd()`;
+ * none of the intermediate components need to exist). An already-
+ * absolute `path` is normalized as-is (`base` is then irrelevant, same
+ * as Ruby). Otherwise `path` is joined onto `base` -- itself resolved
+ * against the current working directory first if `base` is relative --
+ * or onto the current working directory directly when `base` is nil.
+ * Normalization then walks the combined path splitting on '/', dropping
+ * empty and "." segments, and popping the previous real segment on
+ * ".." (kept literally only when there's nothing left to pop -- this
+ * never climbs above the root, matching Ruby). */
+static DiamondVmStatus file_path_expand_helper(DiamondVm *vm,const DiamondString *path,
+        const DiamondString *base,DiamondValue *out) {
+    StringBuilder combined={};
+    bool ok=true;
+    if(path->length>0&&path->chars[0]=='/') {
+        ok=builder_append(&combined,path->chars,path->length);
+    } else {
+        char cwd_buffer[4096];
+        if((base==nullptr||base->length==0||base->chars[0]!='/')&&
+           getcwd(cwd_buffer,sizeof cwd_buffer)==nullptr) {
+            free(combined.chars);
+            snprintf(vm->error,sizeof vm->error,
+                "cannot determine current directory: %s",strerror(errno));
+            return DIAMOND_VM_IO_ERROR;
+        }
+        if(base!=nullptr&&base->length>0) {
+            if(base->chars[0]=='/') ok=builder_append(&combined,base->chars,base->length);
+            else ok=builder_append(&combined,cwd_buffer,strlen(cwd_buffer))&&
+                    builder_append(&combined,"/",1)&&
+                    builder_append(&combined,base->chars,base->length);
+        } else ok=builder_append(&combined,cwd_buffer,strlen(cwd_buffer));
+        if(ok&&path->length>0)
+            ok=builder_append(&combined,"/",1)&&
+               builder_append(&combined,path->chars,path->length);
+    }
+    if(!ok) {free(combined.chars);return DIAMOND_VM_OUT_OF_MEMORY;}
+    size_t *segment_starts=malloc((combined.length+1)*sizeof(size_t));
+    if(segment_starts==nullptr) {free(combined.chars);return DIAMOND_VM_OUT_OF_MEMORY;}
+    StringBuilder normalized={};
+    ok=builder_append(&normalized,"/",1);
+    size_t segment_count=0,index=0;
+    while(ok&&index<combined.length) {
+        while(index<combined.length&&combined.chars[index]=='/')index++;
+        const size_t segment_start=index;
+        while(index<combined.length&&combined.chars[index]!='/')index++;
+        const size_t segment_length=index-segment_start;
+        if(segment_length==0||(segment_length==1&&combined.chars[segment_start]=='.'))
+            continue;
+        if(segment_length==2&&combined.chars[segment_start]=='.'&&
+           combined.chars[segment_start+1]=='.') {
+            if(segment_count>0) {
+                normalized.length=segment_starts[--segment_count];
+                normalized.chars[normalized.length]='\0';
+            }
+            continue;
+        }
+        const size_t mark=normalized.length;
+        if(normalized.length>1)ok=builder_append(&normalized,"/",1);
+        if(!ok)break;
+        segment_starts[segment_count++]=mark;
+        ok=builder_append(&normalized,combined.chars+segment_start,segment_length);
+    }
+    free(combined.chars);free(segment_starts);
+    if(!ok) {free(normalized.chars);return DIAMOND_VM_OUT_OF_MEMORY;}
+    DiamondString *expanded=allocate_string(vm,normalized.chars,normalized.length);
+    free(normalized.chars);
+    if(expanded==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+    *out=DIAMOND_OBJECT(expanded);
+    return DIAMOND_VM_OK;
+}
+
 static uint8_t runtime_value_type(const DiamondChunk *chunk,DiamondValue value) {
     if(value.kind==DIAMOND_VALUE_NIL)return DIAMOND_TYPE_NIL;
     if(value.kind==DIAMOND_VALUE_BOOL)return DIAMOND_TYPE_BOOL;
@@ -15314,6 +15511,52 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 }
                 registers[dest]=(DiamondValue){.kind=DIAMOND_VALUE_OBJECT,
                     .as.object=(DiamondObject *)handle};
+                break;
+            }
+            case DIAMOND_OP_FILE_JOIN: {
+                uint16_t dest=0,base=0;uint8_t argc=0;
+                READ_SHORT(dest);READ_SHORT(base);READ_BYTE(argc);
+                DiamondValue join_result=DIAMOND_NIL;
+                const DiamondVmStatus join_status=file_path_join_helper(vm,
+                    &registers[base],argc,&join_result);
+                VM_PROPAGATE(join_status);
+                registers[dest]=join_result;
+                break;
+            }
+            case DIAMOND_OP_FILE_PATH: {
+                uint16_t dest=0,arg1=0,arg2=0;uint8_t selector=0;
+                READ_SHORT(dest);READ_SHORT(arg1);READ_SHORT(arg2);READ_BYTE(selector);
+                if(registers[arg1].kind!=DIAMOND_VALUE_OBJECT||
+                   registers[arg1].as.object->kind!=DIAMOND_OBJECT_STRING) {
+                    snprintf(vm->error,sizeof vm->error,"File path argument must be a String");
+                    VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                }
+                const DiamondString *path=(const DiamondString *)registers[arg1].as.object;
+                const bool has_second=registers[arg2].kind!=DIAMOND_VALUE_NIL;
+                if(has_second&&(registers[arg2].kind!=DIAMOND_VALUE_OBJECT||
+                                registers[arg2].as.object->kind!=DIAMOND_OBJECT_STRING)) {
+                    snprintf(vm->error,sizeof vm->error,"File path argument must be a String");
+                    VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                }
+                const DiamondString *second=has_second?
+                    (const DiamondString *)registers[arg2].as.object:nullptr;
+                DiamondValue path_result=DIAMOND_NIL;
+                DiamondVmStatus path_status=DIAMOND_VM_OK;
+                switch((DiamondFilePathFunction)selector) {
+                    case DIAMOND_FILE_PATH_DIRNAME:
+                        path_status=file_path_dirname_helper(vm,path,&path_result);break;
+                    case DIAMOND_FILE_PATH_BASENAME:
+                        path_status=file_path_basename_helper(vm,path,second,&path_result);break;
+                    case DIAMOND_FILE_PATH_EXTNAME:
+                        path_status=file_path_extname_helper(vm,path,&path_result);break;
+                    case DIAMOND_FILE_PATH_ABSOLUTE:
+                        path_result=DIAMOND_BOOL(path->length>0&&path->chars[0]=='/');break;
+                    case DIAMOND_FILE_PATH_EXPAND:
+                        path_status=file_path_expand_helper(vm,path,second,&path_result);break;
+                    default: VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
+                }
+                VM_PROPAGATE(path_status);
+                registers[dest]=path_result;
                 break;
             }
             case DIAMOND_OP_REGEXP_NEW: {

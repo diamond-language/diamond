@@ -365,8 +365,31 @@ typedef enum DiamondOpCode : uint8_t {
     DIAMOND_OP_NEW_KEYWORDS,
     DIAMOND_OP_CALL_SINGLETON_KEYWORDS,
     DIAMOND_OP_CALL_TYPED_SINGLETON_KEYWORDS,
+    /* `File.dirname`/`.basename`/`.extname`/`.absolute?`/`.expand_path`
+     * -- selector byte picks the operation, see DiamondFilePathFunction.
+     * `File.join` is a separate opcode below, not folded in here, since
+     * it alone takes a variable number of String arguments rather than
+     * a fixed one or two. */
+    DIAMOND_OP_FILE_PATH,
+    /* `File.join(*parts)` -- `parts` are `count` contiguous registers
+     * starting at `base`, the same "one opcode, variadic args passed as
+     * a contiguous register run" shape DIAMOND_OP_THREAD_NEW already
+     * uses for its own variadic argument list. */
+    DIAMOND_OP_FILE_JOIN,
     DIAMOND_OP_COUNT,
 } DiamondOpCode;
+
+/* Selector for DIAMOND_OP_FILE_PATH -- one opcode for this small family
+ * of fixed-arity pure path-string utilities, the same "one opcode + a
+ * selector byte" shape DIAMOND_OP_MATH_UNARY/_BINARY already use for
+ * sqrt/sin/cos/tan/pow, rather than one new opcode per method. */
+typedef enum {
+    DIAMOND_FILE_PATH_DIRNAME,
+    DIAMOND_FILE_PATH_BASENAME,
+    DIAMOND_FILE_PATH_EXTNAME,
+    DIAMOND_FILE_PATH_ABSOLUTE,
+    DIAMOND_FILE_PATH_EXPAND,
+} DiamondFilePathFunction;
 
 typedef enum DiamondMathFunction : uint8_t {
     DIAMOND_MATH_SQRT,

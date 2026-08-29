@@ -1486,7 +1486,7 @@ if "$diamond" -e 'File.write("x")' >/dev/null 2>"$error_file"; then
     echo "malformed File.write unexpectedly compiled" >&2
     exit 1
 fi
-grep -q "expected 'open' after 'File'" "$error_file"
+grep -q "unknown File method" "$error_file"
 rm -f "$error_file"
 
 error_file="$(mktemp)"

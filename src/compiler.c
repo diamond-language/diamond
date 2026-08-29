@@ -3889,14 +3889,7 @@ static uint16_t parse_thread_new_call(Compiler *compiler) {
     return dest;
 }
 
-static uint16_t parse_file_open_call(Compiler *compiler) {
-    advance_token(compiler); /* consume '.' */
-    if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER||
-       !name_equals(compiler,"open",compiler->current.span,false)) {
-        fail(compiler,compiler->current.span,"expected 'open' after 'File'");
-        return 0;
-    }
-    advance_token(compiler); /* consume 'open' */
+static uint16_t parse_file_open_arguments(Compiler *compiler) {
     if(compiler->current.kind!=DIAMOND_TOKEN_LEFT_PAREN) {
         fail(compiler,compiler->current.span,"expected '(' after 'File.open'");
         return 0;
@@ -3924,6 +3917,157 @@ static uint16_t parse_file_open_call(Compiler *compiler) {
     emit_register(compiler,path_register);
     emit_register(compiler,mode_register);
     return dest;
+}
+
+/* `File.join(*parts)` -- a variable number of String arguments, moved
+ * into a contiguous register run the same way parse_thread_new_call's
+ * own variadic argument list already is (DIAMOND_OP_FILE_JOIN, not the
+ * fixed-arity DIAMOND_OP_FILE_PATH every other File path method below
+ * shares). */
+static uint16_t parse_file_join_arguments(Compiler *compiler) {
+    if(compiler->current.kind!=DIAMOND_TOKEN_LEFT_PAREN) {
+        fail(compiler,compiler->current.span,"expected '(' after 'File.join'");
+        return 0;
+    }
+    advance_token(compiler);
+    skip_newlines(compiler);
+    uint16_t arguments[DIAMOND_MAX_ARGUMENTS];size_t argument_count=0;
+    if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
+        do {
+            if(argument_count==DIAMOND_MAX_ARGUMENTS) {
+                fail(compiler,compiler->current.span,"too many File.join arguments");
+                return 0;
+            }
+            arguments[argument_count++]=parse_expression(compiler);
+            skip_newlines(compiler);
+            if(compiler->current.kind!=DIAMOND_TOKEN_COMMA)break;
+            advance_token(compiler);
+            skip_newlines(compiler);
+        } while(!compiler->failed);
+    }
+    if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
+        fail(compiler,compiler->current.span,"expected ')' after File.join arguments");
+        return 0;
+    }
+    advance_token(compiler);
+    const uint16_t base=allocate_register(compiler);
+    for(size_t i=1;i<argument_count;i++)(void)allocate_register(compiler);
+    for(size_t i=0;i<argument_count;i++)
+        emit_instruction(compiler,DIAMOND_OP_MOVE,(uint16_t)(base+i),arguments[i],0,2);
+    const uint16_t dest=allocate_register(compiler);
+    emit_opcode(compiler,DIAMOND_OP_FILE_JOIN);
+    emit_register(compiler,dest);emit_register(compiler,base);
+    emit_byte(compiler,(uint8_t)argument_count);
+    compiler->known_types[dest]=DIAMOND_TYPE_STRING;
+    return dest;
+}
+
+/* `File.dirname(path)`/`.extname(path)` -- a single required String
+ * argument, the fixed-arity DIAMOND_OP_FILE_PATH shape (a NIL second
+ * argument register, unused by these two selectors). */
+static uint16_t parse_file_path_unary_call(Compiler *compiler,DiamondFilePathFunction id) {
+    if(compiler->current.kind!=DIAMOND_TOKEN_LEFT_PAREN) {
+        fail(compiler,compiler->current.span,"expected '(' after File path method name");
+        return 0;
+    }
+    advance_token(compiler);
+    skip_newlines(compiler);
+    const uint16_t path_register=parse_expression(compiler);
+    skip_newlines(compiler);
+    if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
+        fail(compiler,compiler->current.span,"expected ')' after File path method argument");
+        return 0;
+    }
+    advance_token(compiler);
+    const uint16_t second_register=allocate_register(compiler);
+    emit_instruction(compiler,DIAMOND_OP_NIL,second_register,0,0,1);
+    const uint16_t dest=allocate_register(compiler);
+    emit_opcode(compiler,DIAMOND_OP_FILE_PATH);
+    emit_register(compiler,dest);emit_register(compiler,path_register);
+    emit_register(compiler,second_register);emit_byte(compiler,(uint8_t)id);
+    compiler->known_types[dest]=id==DIAMOND_FILE_PATH_ABSOLUTE?DIAMOND_TYPE_BOOL:DIAMOND_TYPE_STRING;
+    return dest;
+}
+
+/* `File.basename(path, suffix = nil)`/`.expand_path(path, base = nil)`
+ * -- a required String argument plus an optional second String,
+ * defaulting to a compile-time NIL when omitted (same default-argument
+ * shape parse_sqlite3_open_call's own optional mode uses). */
+static uint16_t parse_file_path_binary_call(Compiler *compiler,DiamondFilePathFunction id) {
+    if(compiler->current.kind!=DIAMOND_TOKEN_LEFT_PAREN) {
+        fail(compiler,compiler->current.span,"expected '(' after File path method name");
+        return 0;
+    }
+    advance_token(compiler);
+    skip_newlines(compiler);
+    const uint16_t path_register=parse_expression(compiler);
+    skip_newlines(compiler);
+    uint16_t second_register;
+    if(compiler->current.kind==DIAMOND_TOKEN_COMMA) {
+        advance_token(compiler);
+        skip_newlines(compiler);
+        second_register=parse_expression(compiler);
+        skip_newlines(compiler);
+    } else {
+        second_register=allocate_register(compiler);
+        emit_instruction(compiler,DIAMOND_OP_NIL,second_register,0,0,1);
+    }
+    if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
+        fail(compiler,compiler->current.span,"expected ')' after File path method arguments");
+        return 0;
+    }
+    advance_token(compiler);
+    const uint16_t dest=allocate_register(compiler);
+    emit_opcode(compiler,DIAMOND_OP_FILE_PATH);
+    emit_register(compiler,dest);emit_register(compiler,path_register);
+    emit_register(compiler,second_register);emit_byte(compiler,(uint8_t)id);
+    compiler->known_types[dest]=DIAMOND_TYPE_STRING;
+    return dest;
+}
+
+/* `File.<method>(...)` dispatcher -- `.open` keeps its own two-required-
+ * argument shape (DIAMOND_OP_FILE_OPEN, unchanged); `.join` is variadic
+ * (DIAMOND_OP_FILE_JOIN); the rest share DIAMOND_OP_FILE_PATH's fixed-
+ * arity shape, one or two String arguments picked apart by
+ * parse_file_path_unary_call/parse_file_path_binary_call above. */
+static uint16_t parse_file_call(Compiler *compiler) {
+    advance_token(compiler); /* consume '.' */
+    if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER) {
+        fail(compiler,compiler->current.span,"expected a method name after 'File.'");
+        return 0;
+    }
+    const DiamondSpan method=compiler->current.span;
+    if(name_equals(compiler,"open",method,false)) {
+        advance_token(compiler);
+        return parse_file_open_arguments(compiler);
+    }
+    if(name_equals(compiler,"join",method,false)) {
+        advance_token(compiler);
+        return parse_file_join_arguments(compiler);
+    }
+    if(name_equals(compiler,"dirname",method,false)) {
+        advance_token(compiler);
+        return parse_file_path_unary_call(compiler,DIAMOND_FILE_PATH_DIRNAME);
+    }
+    if(name_equals(compiler,"extname",method,false)) {
+        advance_token(compiler);
+        return parse_file_path_unary_call(compiler,DIAMOND_FILE_PATH_EXTNAME);
+    }
+    if(name_equals(compiler,"absolute?",method,false)) {
+        advance_token(compiler);
+        return parse_file_path_unary_call(compiler,DIAMOND_FILE_PATH_ABSOLUTE);
+    }
+    if(name_equals(compiler,"basename",method,false)) {
+        advance_token(compiler);
+        return parse_file_path_binary_call(compiler,DIAMOND_FILE_PATH_BASENAME);
+    }
+    if(name_equals(compiler,"expand_path",method,false)) {
+        advance_token(compiler);
+        return parse_file_path_binary_call(compiler,DIAMOND_FILE_PATH_EXPAND);
+    }
+    fail(compiler,method,"unknown File method (expected open/join/dirname/basename/"
+        "extname/absolute?/expand_path)");
+    return 0;
 }
 
 /* `SQLite3.open(path)` or `SQLite3.open(path, mode)`. `mode`, when given,
@@ -5198,7 +5342,7 @@ static uint16_t parse_name(Compiler *compiler) {
     if(class_index<0&&find_local(compiler,name)<0&&find_function(compiler,name)<0&&
        compiler->current.kind==DIAMOND_TOKEN_DOT&&
        name_equals(compiler,"File",name,false))
-        return parse_file_open_call(compiler);
+        return parse_file_call(compiler);
     if(class_index<0&&find_local(compiler,name)<0&&find_function(compiler,name)<0&&
        compiler->current.kind==DIAMOND_TOKEN_DOT&&
        name_equals(compiler,"Regexp",name,false))
