@@ -9,6 +9,11 @@ cd "$(dirname "$0")"
 
 count=0
 
+assert_contains() {
+    local haystack="$1" needle="$2"
+    [[ "$haystack" == *"$needle"* ]]
+}
+
 run_case() {
     local script="$1"
     "$diamond" -e "require \"$(pwd)/lib/rack\"
@@ -213,6 +218,97 @@ printf 'GET / HTTP/1.1\r\nHost: localhost\r\n\r\n' >&3
 response="$(cat <&3)"
 { exec 3<&- 3>&-; } 2>/dev/null || true
 [[ "$response" == $'HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nX-Frame-Options: SAMEORIGIN\r\nX-Content-Type-Options: nosniff\r\nReferrer-Policy: strict-origin-when-cross-origin\r\nContent-Length: 7\r\n\r\nsecured' ]]
+count=$((count + 1))
+
+kill "$pid" 2>/dev/null || true
+wait "$pid" 2>/dev/null || true
+
+# --- RateLimit: allows up to the configured limit per key, rejects with
+# --- 429 + Retry-After past it, and tracks separate keys independently ---
+actual="$(run_case '
+def app(request, context)
+  [200, {}, "ok"]
+end
+def key_by_ip(request)
+  request["headers"]["x-real-ip"]
+end
+RateLimit.configure({"limit": 2, "window": 60, "key": key_by_ip})
+def try_it(ip)
+  [status, headers, body] = RateLimit.call({"headers": {"x-real-ip": ip}}, {}, app)
+  "#{status}|#{headers["Retry-After"]}"
+end
+"#{try_it("1.1.1.1")}|#{try_it("1.1.1.1")}|#{try_it("1.1.1.1")}|#{try_it("2.2.2.2")}"
+')"
+[[ "$actual" == "200|nil|200|nil|429|60|200|nil" ]]
+count=$((count + 1))
+
+# --- RateLimit: a fixed window resets after it elapses ---
+actual="$(run_case '
+def app(request, context)
+  [200, {}, "ok"]
+end
+def key_by_ip(request)
+  request["headers"]["x-real-ip"]
+end
+RateLimit.configure({"limit": 1, "window": 1, "key": key_by_ip})
+def try_it()
+  [status, headers, body] = RateLimit.call({"headers": {"x-real-ip": "1.1.1.1"}}, {}, app)
+  status
+end
+first = try_it()
+second = try_it()
+Process.run(["sleep", "1.2"])
+third = try_it()
+"#{first}|#{second}|#{third}"
+')"
+[[ "$actual" == "200|429|200" ]]
+count=$((count + 1))
+
+# --- RateLimit wired into a real gremlin_serve chain: the 4th request
+# --- from the same key within the window gets a real over-the-wire 429 ---
+port=19424
+timeout 10 "$diamond" -e "$(cat <<SRCEOF
+require "$(pwd)/../gremlin/lib/gremlin"
+require "$(pwd)/lib/rack"
+
+def app_handler(request, context)
+  [200, {"Content-Type": "text/plain"}, "ok"]
+end
+
+def key_by_ip(request)
+  request["headers"]["x-real-ip"]
+end
+
+def build_chain()
+  RateLimit.configure({"limit": 3, "window": 60, "key": key_by_ip})
+  rack_compose([RateLimit.call], app_handler)
+end
+
+def rack_app(request, context)
+  rack_run_chain(RackChain.get(build_chain), 0, request, context)
+end
+
+gremlin_serve($port, rack_app)
+SRCEOF
+)" >/dev/null 2>&1 &
+pid=$!
+wait_for_port "$port"
+{ exec 3<&- 3>&-; } 2>/dev/null || true
+
+for i in 1 2 3; do
+    exec 3<>"/dev/tcp/127.0.0.1/$port"
+    printf 'GET / HTTP/1.1\r\nHost: localhost\r\nX-Real-Ip: 9.9.9.9\r\n\r\n' >&3
+    response="$(cat <&3)"
+    { exec 3<&- 3>&-; } 2>/dev/null || true
+    assert_contains "$response" "HTTP/1.1 200 OK"
+done
+count=$((count + 1))
+
+exec 3<>"/dev/tcp/127.0.0.1/$port"
+printf 'GET / HTTP/1.1\r\nHost: localhost\r\nX-Real-Ip: 9.9.9.9\r\n\r\n' >&3
+limited_response="$(cat <&3)"
+{ exec 3<&- 3>&-; } 2>/dev/null || true
+assert_contains "$limited_response" "HTTP/1.1 429"
 count=$((count + 1))
 
 kill "$pid" 2>/dev/null || true

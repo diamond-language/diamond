@@ -187,6 +187,45 @@ set before a service is genuinely served over TLS) -- like
 `Thread.new`-spawned worker, not just once at the top of the script. See
 the file's own comment for every option.
 
+## Rate limiting
+
+`RateLimit` (`lib/rack/rate_limit.di`) is a fixed-window rate limiter,
+storage-free beyond a per-worker class-variable `Hash` -- like
+`SecurityHeaders`/`CookieSession`, needs `.configure` called once per
+worker on `threads: N`:
+
+```ruby
+def key_by_api_token(request)
+  request["headers"]["authorization"]
+end
+
+def build_chain()
+  RateLimit.configure({"limit": 100, "window": 60, "key": key_by_api_token})
+  rack_compose([RateLimit.call], app_handler)
+end
+```
+
+A request past the limit gets `429` with a `Retry-After: <window>` header
+instead of reaching `forward`. `"key"` (a `Callable[1]`,
+`(request) -> String`, identifying who to limit) is required with no
+default — an IP-carrying header like `X-Forwarded-For` is spoofable
+unless the deployment is genuinely behind a trusted proxy stripping and
+overwriting it, a fact this middleware has no way to know, so it's the
+caller's decision what "identity" means for their own deployment (that
+header, an API key, a session id via `packages/cookies`' `CookieSession`,
+or a constant string for one shared global limit).
+
+Storage being per-worker, not shared, is the same tradeoff
+`SecurityHeaders`/`CookieSession` accept for staying dependency-free: at
+`threads: N`, each `gremlin_serve` worker is already its own fully
+independent `DiamondVm` with no shared memory (`docs/threads.md`), so
+each enforces its own independent limit — a client whose requests land
+across several workers could see up to `N` times the configured limit in
+practice. Exactly correct at `threads: 1` (the default) or with
+`http_serve` (always single-threaded). See the file's own comment for
+the fixed-window tradeoff (a client can burst up to 2x the limit across a
+window boundary) and why buckets are never evicted.
+
 ## What's deliberately out of scope
 
 - **Routing.** This composes middleware around one handler; it doesn't
