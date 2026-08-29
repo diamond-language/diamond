@@ -201,6 +201,13 @@ app(request("POST", "/signup", "email=user4%40example.com&username=user4&passwor
 anon_profile = app(request("GET", "/users/user4"), context)
 if anon_profile[0] != 200 || anon_profile[2].include?("Follow<") then raise "anonymous profile view failed or showed a follow button" end
 
+# --- the embedded skin grid renders as real HTML, not escaped text
+# --- (user1 still owns "Second Skin" from earlier in this test) ---
+user1_profile = app(request("GET", "/users/user1"), context)
+if user1_profile[0] != 200 || !user1_profile[2].include?("class=\"skin-card\"") || !user1_profile[2].include?("Second Skin")
+  raise "profile page's skin grid was escaped instead of rendered as HTML"
+end
+
 missing_profile = app(request("GET", "/users/no-such-user"), context)
 if missing_profile[0] != 404 then raise "a missing user's profile did not 404" end
 
