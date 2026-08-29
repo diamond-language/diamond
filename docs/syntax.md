@@ -1673,6 +1673,51 @@ Digest.sha256("abc")
 HMAC.sha256("secret", "payload")
 ```
 
+`HMAC.verify(data: String, key: String, signature: String) -> Bool`
+recomputes `HMAC.sha256(key, data)` and compares it against `signature`
+with a constant-time comparison (`CRYPTO_memcmp`, the same primitive
+`BCrypt.verify` already uses) rather than a plain `==` on the two hex
+strings — verifying a signature is exactly the kind of comparison a
+timing side-channel matters for, unlike an ordinary string equality
+check. A `signature` of the wrong length, or not really hex at all, is
+an ordinary `false`, not an exception, matching `BCrypt.verify`'s own
+"a bad input here is a normal outcome" reasoning:
+
+```ruby
+signature = HMAC.sha256("secret", "payload")
+HMAC.verify("payload", "secret", signature)   # => true
+HMAC.verify("payload", "secret", "forged")    # => false
+```
+
+`Cipher.encrypt(key: String, plaintext: String) -> String` and
+`Cipher.decrypt(key: String, blob: String) -> String | Nil` are native
+AES-256-GCM authenticated encryption, backed by OpenSSL's `EVP_CIPHER`
+API (already linked for TLS) rather than a vendored implementation.
+`key` must be exactly 32 raw bytes (`SecureRandom.bytes(32)`) —
+`ArgumentError` otherwise, since AES-256 has no meaningful way to
+silently accept a wrong-length key. `.encrypt` generates a fresh random
+12-byte nonce every call and returns one binary-safe `String`: the
+nonce, the 16-byte GCM authentication tag, then the ciphertext, all
+concatenated — `.decrypt` needs nothing but the key and this one blob.
+`.decrypt` returns `nil`, not an exception, for a wrong key, a tampered
+or truncated blob, or anything else that fails GCM's own built-in tag
+check — a forged or expired encrypted cookie is expected to happen in
+normal operation, the same "not a programmer error" reasoning
+`BCrypt.verify`/`HMAC.verify` already use, and there is no separate
+signature step to add: the tag check inside `EVP_DecryptFinal_ex`
+already provides both confidentiality and tamper-evidence in one pass,
+with no comparison of Diamond's own to expose a timing side-channel.
+
+```ruby
+key = SecureRandom.bytes(32)
+blob = Cipher.encrypt(key, "sensitive session data")
+Cipher.decrypt(key, blob)             # => "sensitive session data"
+Cipher.decrypt(SecureRandom.bytes(32), blob)  # => nil (wrong key)
+```
+
+See `packages/cookies` for signed and encrypted cookie helpers built on
+`HMAC.verify`/`Cipher` above.
+
 `array_sort(values: Array[Int])` returns a new sorted array (input
 untouched); `Int` is the only type with a native ordering comparison,
 so this is Int-only, checked up front (`expected Array[Int], got

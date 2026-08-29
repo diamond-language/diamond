@@ -1,0 +1,14 @@
+true
+true
+true
+true
+true
+true
+nil
+nil
+nil
+encrypt key-length ArgumentError
+decrypt key-length ArgumentError
+encrypt plaintext TypeError
+cipher aes-gcm smoke ok
+nil
