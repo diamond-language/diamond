@@ -1,15 +1,15 @@
 # A loop body compiles exactly once; every iteration after the first
 # reaches it via a jump back to that same already-compiled bytecode. If a
-# def/closure captures a local, capturing it boxes that local's register
-# in place -- any reference to the local compiled *before* the capture
-# was discovered (an ordinary raw register read, since the compiler
-# didn't know yet) goes stale: correct on the first iteration (box hasn't
-# happened yet), a type error on every iteration after. Fixed by scanning
-# a loop's own body for a def/closure before compiling anything, and if
-# found, marking every already-visible local -- and every local declared
-# fresh from then on -- captured from the start, so all of this already
-# goes through the existing box-aware codegen. See docs/roadmap.md's
-# "Open design decisions" section.
+# def/closure/do-block captures a local, capturing it boxes that local's
+# register in place -- any reference to the local compiled *before* the
+# capture was discovered (an ordinary raw register read, since the
+# compiler didn't know yet) goes stale: correct on the first iteration
+# (box hasn't happened yet), a type error on every iteration after.
+# Fixed by scanning a loop's own body for a def/closure/do-block before
+# compiling anything, and if found, marking every already-visible local
+# -- and every local declared fresh from then on -- captured from the
+# start, so all of this already goes through the existing box-aware
+# codegen. See docs/roadmap.md's "Open design decisions" section.
 
 def call_it(cb)
   cb()
@@ -170,6 +170,32 @@ def def_as_local_capture_case(n)
   results
 end
 
+# A `do...end` block argument is itself a closure, exactly like def/
+# closure above, but loop_body_may_capture's lookahead originally only
+# checked for DIAMOND_TOKEN_DEF/DIAMOND_TOKEN_CLOSURE -- missing this
+# far more common capture site entirely. Reproduces a real spurious
+# runtime "type error": `ids.length()` in the while condition read a
+# stale un-boxed register once `ids` got boxed for the `.each() do
+# |x| ids.push(x) end` block later in the same loop body (found while
+# porting packages/active_discussion's own BFS-over-parent_id subtree
+# walk). Growing an Array via `.push()` inside a `.each() do...end`
+# block, then reading it back by index to drive the next loop
+# iteration, is the shape that actually broke -- a plain BFS flatten.
+def do_block_case()
+  ids = [1]
+  index = 0
+  while index < ids.length()
+    current = ids[index]
+    if current < 4
+      [current * 2, current * 2 + 1].each() do |child|
+        ids.push(child)
+      end
+    end
+    index += 1
+  end
+  ids
+end
+
 puts(while_condition_case())
 puts(loop_break_case())
 puts(fresh_local_case())
@@ -178,3 +204,4 @@ puts(inner_captures_case())
 puts(outer_captures_case())
 puts(rescue_binding_case(3))
 puts(def_as_local_capture_case(3))
+puts(do_block_case())

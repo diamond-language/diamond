@@ -7704,31 +7704,49 @@ static uint16_t parse_if(Compiler *compiler,bool inverted) {
     return destination;
 }
 
-/* Cheap lookahead: does a def/closure declaration appear anywhere within
- * the loop body about to be compiled -- from the current parse position
- * through *this* loop's own matching `end`, at any nesting depth inside
- * it (a def/closure nested inside an if/case/etc. within the loop still
- * counts, since enclosing_locals/capture threading already works
- * transitively through those) -- without scanning past it into whatever
- * follows. A throwaway DiamondLexer copy, the same zero-cost snapshot
- * idiom postfix_modifier_ahead/others already use for lookahead; never
+/* Cheap lookahead: does a def/closure declaration, or a `do...end` block
+ * argument (`.each() do |x| ... end` and friends -- itself just another
+ * closure, captures and all), appear anywhere within the loop body about
+ * to be compiled -- from the current parse position through *this*
+ * loop's own matching `end`, at any nesting depth inside it (any of
+ * these nested inside an if/case/etc. within the loop still counts,
+ * since enclosing_locals/capture threading already works transitively
+ * through those) -- without scanning past it into whatever follows. A
+ * throwaway DiamondLexer copy, the same zero-cost snapshot idiom
+ * postfix_modifier_ahead/others already use for lookahead; never
  * advances the real parse position. Tracks end-terminated block nesting
  * via the complete set of opener keywords (confirmed against every
  * compiler function that consumes a trailing DIAMOND_TOKEN_END):
  * if/unless/while/until/loop/case/begin/class/module/interface/def/
- * closure. `do`/`then` are decoration, not openers (consume_loop_start/
- * consume_conditional_start); else/elsif/when/rescue/ensure are
- * mid-block separators the *same* opener already accounts for, not new
- * openers of their own. Deliberately doesn't special-case the endless
- * `def foo() = ...`/`closure foo() = ...` form (no matching `end` at
- * all): it returns true the instant it sees the def/closure token,
- * before it would ever need to know whether one exists. */
+ * closure. `then` is decoration, not an opener (consume_conditional_
+ * start); else/elsif/when/rescue/ensure are mid-block separators the
+ * *same* opener already accounts for, not new openers of their own.
+ * Deliberately doesn't special-case the endless `def foo() = ...`/
+ * `closure foo() = ...` form (no matching `end` at all): it returns
+ * true the instant it sees the def/closure/do token, before it would
+ * ever need to know whether one exists.
+ *
+ * `do` is treated the same way even though, unlike def/closure, it can
+ * also be this very loop's own start decorator (`while cond do ... end`,
+ * consume_loop_start) rather than a nested block -- once seen it's
+ * simplest to treat it as a potential capture site regardless of which
+ * one it is: a false positive here only costs some unnecessary (but
+ * always correct) boxing of the loop's own locals, whereas missing a
+ * real `do` block here is the actual bug this function exists to avoid
+ * (a pre-existing outer local read by the loop's own condition, then
+ * captured by a `do` block later in the body, needs that condition read
+ * to already be box-aware -- see mark_locals_captured's own comment;
+ * confirmed via a real spurious runtime "type error" a growing-Array
+ * BFS loop hit, `ids.length()` reading a stale un-boxed register after
+ * `ids` was boxed for a `children.each() do |child| ids.push(...) end`
+ * block later in the same loop body). */
 static bool loop_body_may_capture(const Compiler *compiler) {
     DiamondLexer lookahead=compiler->lexer;
     DiamondToken token=compiler->current;
     size_t depth=0;
     while(token.kind!=DIAMOND_TOKEN_EOF) {
-        if(token.kind==DIAMOND_TOKEN_DEF||token.kind==DIAMOND_TOKEN_CLOSURE)return true;
+        if(token.kind==DIAMOND_TOKEN_DEF||token.kind==DIAMOND_TOKEN_CLOSURE||
+           token.kind==DIAMOND_TOKEN_DO)return true;
         if(token.kind==DIAMOND_TOKEN_IF||token.kind==DIAMOND_TOKEN_UNLESS||
            token.kind==DIAMOND_TOKEN_WHILE||token.kind==DIAMOND_TOKEN_UNTIL||
            token.kind==DIAMOND_TOKEN_LOOP||token.kind==DIAMOND_TOKEN_CASE||

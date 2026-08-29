@@ -7066,6 +7066,46 @@ static bool builder_format_value(StringBuilder *builder,DiamondValue value) {
     return builder_append(builder,"#<Closure>",10);
 }
 
+/* Fills vm->error with "uncaught exception: <detail>" for whatever
+ * value was raised -- shared by every site that re-raises a value
+ * already known to the VM (DIAMOND_OP_RAISE, and DIAMOND_OP_END_ENSURE's
+ * own re-raise of a PENDING_EXCEPTION suspended by an ensure block)
+ * rather than routing through catch_runtime_error (which only handles
+ * status-code-originated errors, e.g. a native TYPE_ERROR, converting
+ * them into a catchable exception instance first -- not applicable
+ * here, since `exception` is already a real raised value). Previously
+ * duplicated ad hoc at each such site; DIAMOND_OP_END_ENSURE's own copy
+ * was missing entirely, so an exception that outlived an ensure block
+ * before going uncaught printed a bare "uncaught exception" with no
+ * class name or detail at all. */
+static void format_uncaught_exception_message(DiamondVm *vm,DiamondValue exception) {
+    if(exception.kind==DIAMOND_VALUE_INT)
+        snprintf(vm->error,sizeof vm->error,"uncaught exception: %" PRId64,
+                 exception.as.integer);
+    else if(exception.kind==DIAMOND_VALUE_BOOL)
+        snprintf(vm->error,sizeof vm->error,"uncaught exception: %s",
+                 exception.as.boolean?"true":"false");
+    else if(exception.kind==DIAMOND_VALUE_NIL)
+        snprintf(vm->error,sizeof vm->error,"uncaught exception: nil");
+    else if(exception.kind==DIAMOND_VALUE_FLOAT) {
+        StringBuilder message_builder={};
+        if(builder_format_value(&message_builder,exception))
+            snprintf(vm->error,sizeof vm->error,"uncaught exception: %.*s",
+                     (int)message_builder.length,message_builder.chars);
+        else
+            snprintf(vm->error,sizeof vm->error,"uncaught exception: <float>");
+        free(message_builder.chars);
+    } else if(exception.as.object->kind==DIAMOND_OBJECT_STRING) {
+        const DiamondString *string=(const DiamondString *)exception.as.object;
+        snprintf(vm->error,sizeof vm->error,"uncaught exception: %.*s",
+                 (int)string->length,string->chars);
+    } else if(exception.as.object->kind==DIAMOND_OBJECT_INSTANCE) {
+        const DiamondInstance *instance=(const DiamondInstance *)exception.as.object;
+        snprintf(vm->error,sizeof vm->error,"uncaught exception: %s",
+                 instance->class->name);
+    } else snprintf(vm->error,sizeof vm->error,"uncaught exception: object");
+}
+
 static DiamondVmStatus stringify_value(DiamondVm *vm,const DiamondChunk *chunk,
                                         size_t depth,DiamondValue value,
                                         DiamondValue *out) {
@@ -14826,31 +14866,20 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 raise_capture_backtrace_helper(vm,chunk);
                 if(catch_exception(vm,chunk,handlers,&handler_count,&pending,
                                    registers,&ip))break;
-                if(vm->exception.kind==DIAMOND_VALUE_INT)
-                    snprintf(vm->error,sizeof vm->error,"uncaught exception: %" PRId64,
-                             vm->exception.as.integer);
-                else if(vm->exception.kind==DIAMOND_VALUE_BOOL)
-                    snprintf(vm->error,sizeof vm->error,"uncaught exception: %s",
-                             vm->exception.as.boolean?"true":"false");
-                else if(vm->exception.kind==DIAMOND_VALUE_NIL)
-                    snprintf(vm->error,sizeof vm->error,"uncaught exception: nil");
-                else if(vm->exception.kind==DIAMOND_VALUE_FLOAT) {
-                    StringBuilder message_builder={};
-                    if(builder_format_value(&message_builder,vm->exception))
-                        snprintf(vm->error,sizeof vm->error,"uncaught exception: %.*s",
-                                 (int)message_builder.length,message_builder.chars);
-                    else
-                        snprintf(vm->error,sizeof vm->error,"uncaught exception: <float>");
-                    free(message_builder.chars);
-                } else if(vm->exception.as.object->kind==DIAMOND_OBJECT_STRING) {
-                    const DiamondString *string=(const DiamondString *)vm->exception.as.object;
-                    snprintf(vm->error,sizeof vm->error,"uncaught exception: %.*s",
-                             (int)string->length,string->chars);
-                } else if(vm->exception.as.object->kind==DIAMOND_OBJECT_INSTANCE) {
-                    const DiamondInstance *instance=(const DiamondInstance *)vm->exception.as.object;
-                    snprintf(vm->error,sizeof vm->error,"uncaught exception: %s",
-                             instance->class->name);
-                } else snprintf(vm->error,sizeof vm->error,"uncaught exception: object");
+                /* Only fill in a message when vm->error is still empty --
+                 * see catch_runtime_error's own identical guard: a raise
+                 * of a value that a *previous*, now-unwound attempt at
+                 * this same statement already recorded a detail for
+                 * (there is no such case today, since a DIAMOND_OP_RAISE
+                 * that reaches here always does so on its first and only
+                 * attempt) should never overwrite that detail. Kept for
+                 * the same reason format_uncaught_exception_message's own
+                 * other call site (DIAMOND_OP_END_ENSURE) needs it: this
+                 * check is what makes the two callers safe to share one
+                 * helper without each needing to reason about the other's
+                 * invariants. */
+                if(vm->error[0]=='\0')
+                    format_uncaught_exception_message(vm,vm->exception);
                 VM_RETURN(DIAMOND_VM_EXCEPTION);
             }
             case DIAMOND_OP_PUSH_RESCUE: {
@@ -14910,6 +14939,26 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     vm->exception=resume.value;vm->has_exception=true;
                     if(catch_exception(vm,chunk,handlers,&handler_count,&pending,
                                        registers,&ip))break;
+                    /* Only fill in a message when vm->error is still
+                     * empty -- see catch_runtime_error's own identical
+                     * guard. A status-code-originated exception (e.g.
+                     * division by zero) that passed through this same
+                     * ensure boundary already had its detailed message +
+                     * true-origin "at ..." frame written by
+                     * catch_runtime_error before ever reaching here;
+                     * overwriting it unconditionally would discard that
+                     * accumulated backtrace and replace it with a fresh,
+                     * frame-less message starting from wherever this
+                     * ensure happens to sit -- exactly the bug
+                     * catch_runtime_error's own guard exists to avoid,
+                     * reintroduced here the first time this call was
+                     * added. A plain `raise`-originated value never has
+                     * this problem (DIAMOND_OP_RAISE's own redirect-to-
+                     * ensure path never touches vm->error in the first
+                     * place), so this guard only ever changes behavior
+                     * for the status-code-originated case. */
+                    if(vm->error[0]=='\0')
+                        format_uncaught_exception_message(vm,vm->exception);
                     VM_RETURN(DIAMOND_VM_EXCEPTION);
                 }
                 VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
