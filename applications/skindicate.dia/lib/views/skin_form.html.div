@@ -1,0 +1,27 @@
+<%# locals: action, title, description, platform, tags_text, submit, csrf_token, errors, platforms %>
+<% if errors.length() > 0 %>
+<ul>
+  <% errors.each() do |error| %><li><%= error %></li><% end %>
+</ul>
+<% end %>
+<form method="POST" action="<%= action %>" enctype="multipart/form-data">
+  <input type="hidden" name="csrf_token" value="<%= csrf_token %>">
+  <p><label>Title <input name="title" value="<%= title %>" required></label></p>
+  <p><label>Description <textarea name="description" required><%= description %></textarea></label></p>
+  <p><label>Platform
+    <select name="platform" required>
+      <option value="">Choose one</option>
+      <% platforms.each() do |option| %>
+        <% if option == platform %>
+        <option value="<%= option %>" selected><%= option %></option>
+        <% else %>
+        <option value="<%= option %>"><%= option %></option>
+        <% end %>
+      <% end %>
+    </select>
+  </label></p>
+  <p><label>Tags (comma separated) <input name="tags" value="<%= tags_text %>"></label></p>
+  <p><label>Theme file (.zip/.itheme/.deskthemepack) <input type="file" name="theme_file" accept=".zip,.itheme,.deskthemepack"></label></p>
+  <p><label>Preview image (optional) <input type="file" name="preview_image" accept="image/*"></label></p>
+  <button type="submit"><%= submit %></button>
+</form>

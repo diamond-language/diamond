@@ -1,0 +1,20 @@
+<%# locals: skin, uploader, tags, is_owner, csrf_token %>
+<% if skin.preview_image_path() != nil %>
+<p><img src="/<%= skin.preview_image_path() %>" alt="<%= skin.title() %>" width="480"></p>
+<% end %>
+<p><strong>Platform:</strong> <%= skin.platform() %></p>
+<p><strong>By:</strong> <%= uploader.username() %></p>
+<p><%= skin.description() %></p>
+<p>
+<% tags.each() do |tag| %><a href="/tags/<%= tag.name() %>">#<%= tag.name() %></a> <% end %>
+</p>
+<p><a href="/<%= skin.file_path() %>"><%= skin.original_filename() %></a></p>
+<% if is_owner %>
+<p>
+  <a href="/skins/<%= skin.id() %>/edit">Edit</a>
+  <form method="POST" action="/skins/<%= skin.id() %>/delete" style="display:inline" onsubmit="return confirm('Delete this skin?')">
+    <input type="hidden" name="csrf_token" value="<%= csrf_token %>">
+    <button type="submit">Delete</button>
+  </form>
+</p>
+<% end %>

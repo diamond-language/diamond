@@ -1,0 +1,28 @@
+body {
+  font-family: sans-serif;
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 1rem;
+}
+
+nav {
+  margin-bottom: 1.5rem;
+}
+
+.skins-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+}
+
+.skin-card {
+  width: 220px;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  padding: 0.5rem;
+}
+
+.skin-card img {
+  max-width: 100%;
+  border-radius: 4px;
+}

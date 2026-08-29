@@ -1,0 +1,15 @@
+<%# locals: skins, db %>
+<% if skins.length() == 0 %>
+<p>No skins here yet.</p>
+<% end %>
+<div class="skins-grid">
+<% skins.each() do |skin| %>
+  <div class="skin-card">
+    <% if skin.preview_image_path() != nil %>
+    <a href="/skins/<%= skin.id() %>"><img src="/<%= skin.preview_image_path() %>" alt="<%= skin.title() %>" width="200"></a>
+    <% end %>
+    <h3><a href="/skins/<%= skin.id() %>"><%= skin.title() %></a></h3>
+    <p><%= skin.platform() %> &middot; by <%= skin.user(db).username() %></p>
+  </div>
+<% end %>
+</div>

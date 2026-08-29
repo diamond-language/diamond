@@ -1,0 +1,12 @@
+<%# locals: errors, email, username %>
+<% if errors.length() > 0 %>
+<ul>
+  <% errors.each() do |error| %><li><%= error %></li><% end %>
+</ul>
+<% end %>
+<form method="POST" action="/signup">
+  <p><label>Email <input type="email" name="email" value="<%= email %>" required></label></p>
+  <p><label>Username <input name="username" value="<%= username %>" required></label></p>
+  <p><label>Password <input type="password" name="password" required></label></p>
+  <button type="submit">Sign up</button>
+</form>
