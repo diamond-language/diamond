@@ -125,26 +125,99 @@ not_owner_delete = app(multipart_request("POST", "/skins/#{skin.id()}/delete", {
 if not_owner_delete[0] != 404 then raise "a non-owner was allowed to delete another user's skin" end
 if Skin.find(Database.get(context), skin.id()) == nil then raise "a rejected delete somehow removed the skin" end
 
-# --- comments: any signed-in user can post, and it renders; only the
-# --- comment's own author can delete it (404, same not-403 shape) ---
-comment_post = app(request_with_cookie("POST", "/skins/#{skin.id()}/comments", "csrf_token=#{other_csrf}&body=Great+theme", other_cookie), context)
-if comment_post[0] != 302 then raise "comment creation failed" end
-show_with_comment = app(request("GET", "/skins/#{skin.id()}"), context)
-if !show_with_comment[2].include?("Great theme") || !show_with_comment[2].include?("user2")
-  raise "posted comment did not render with its author"
-end
-comments_in_db = Comment.where({"skin_id": skin.id()}).to_a(Database.get(context))
-if comments_in_db.length() != 1 then raise "expected exactly one comment on the skin" end
-comment_id = comments_in_db[0].id()
+# --- comments/replies/report/moderation, factored into its own
+# --- function purely to keep this script's own flat top-level local
+# --- count under DIAMOND_MAX_LOCALS (64) -- no other reason for the
+# --- split. `skin` here is "Midnight Blue", owned by `cookie`/
+# --- `csrf_token`'s user (user1); `other_cookie`/`other_csrf` is
+# --- user2. ---
+def test_discussion_features(context, skin, cookie, csrf_token, other_cookie, other_csrf)
+  db = Database.get(context)
+  # --- any signed-in user can post, and it renders; the comment's own
+  # --- author *or* the skin's owner (moderating their own discussion)
+  # --- can delete it; a genuine third party cannot (404, same
+  # --- not-403 shape) ---
+  comment_post = app(request_with_cookie("POST", "/skins/#{skin.id()}/comments", "csrf_token=#{other_csrf}&body=Great+theme", other_cookie), context)
+  if comment_post[0] != 302 then raise "comment creation failed" end
+  show_with_comment = app(request("GET", "/skins/#{skin.id()}"), context)
+  if !show_with_comment[2].include?("Great theme") || !show_with_comment[2].include?("user2")
+    raise "posted comment did not render with its author"
+  end
+  comments_in_db = discussion_for_skin(db, skin.id()).top_level_comments(db)
+  if comments_in_db.length() != 1 then raise "expected exactly one comment on the skin" end
+  comment_id = comments_in_db[0].id()
 
-not_author_delete = app(request_with_cookie("POST", "/comments/#{comment_id}/delete", "csrf_token=#{csrf_token}", cookie), context)
-if not_author_delete[0] != 404 then raise "a non-author was allowed to delete another user's comment" end
-if Comment.find(Database.get(context), comment_id) == nil then raise "a rejected comment delete somehow removed it" end
+  app(request("POST", "/signup", "email=user5%40example.com&username=user5&password=hunter22"), context)
+  third_party_login = app(request("POST", "/login", "email=user5%40example.com&password=hunter22"), context)
+  third_party_cookie = third_party_login[1]["Set-Cookie"]
+  third_party_csrf = context["csrf_token"]
 
-author_delete = app(request_with_cookie("POST", "/comments/#{comment_id}/delete", "csrf_token=#{other_csrf}", other_cookie), context)
-if author_delete[0] != 302 || Comment.find(Database.get(context), comment_id) != nil
-  raise "the comment's own author could not delete it"
+  not_author_delete = app(request_with_cookie("POST", "/comments/#{comment_id}/delete", "csrf_token=#{third_party_csrf}", third_party_cookie), context)
+  if not_author_delete[0] != 404 then raise "a genuine third party was allowed to delete another user's comment" end
+  if ActiveDiscussion::Comment.find(db, comment_id) == nil then raise "a rejected comment delete somehow removed it" end
+
+  owner_moderate_delete = app(request_with_cookie("POST", "/comments/#{comment_id}/delete", "csrf_token=#{csrf_token}", cookie), context)
+  if owner_moderate_delete[0] != 302 || ActiveDiscussion::Comment.find(db, comment_id) != nil
+    raise "the skin owner could not moderate-delete another user's comment on their own skin"
+  end
+
+  second_comment_post = app(request_with_cookie("POST", "/skins/#{skin.id()}/comments", "csrf_token=#{other_csrf}&body=Another+one", other_cookie), context)
+  if second_comment_post[0] != 302 then raise "second comment creation failed" end
+  second_comment_id = discussion_for_skin(db, skin.id()).top_level_comments(db)[0].id()
+  author_delete = app(request_with_cookie("POST", "/comments/#{second_comment_id}/delete", "csrf_token=#{other_csrf}", other_cookie), context)
+  if author_delete[0] != 302 || ActiveDiscussion::Comment.find(db, second_comment_id) != nil
+    raise "the comment's own author could not delete it"
+  end
+
+  # --- replies: threading one level deep, and a reply beyond
+  # --- max_depth (this discussion is capped at 1) is rejected ---
+  top_comment_post = app(request_with_cookie("POST", "/skins/#{skin.id()}/comments", "csrf_token=#{other_csrf}&body=Top+level", other_cookie), context)
+  if top_comment_post[0] != 302 then raise "top-level comment creation for reply test failed" end
+  top_comment = discussion_for_skin(db, skin.id()).top_level_comments(db)[0]
+
+  reply_post = app(request_with_cookie("POST", "/skins/#{skin.id()}/comments", "csrf_token=#{csrf_token}&body=A+reply&parent_id=#{top_comment.id()}", cookie), context)
+  if reply_post[0] != 302 then raise "reply creation failed" end
+  show_with_reply = app(request("GET", "/skins/#{skin.id()}"), context)
+  if !show_with_reply[2].include?("comment-reply") || !show_with_reply[2].include?("A reply")
+    raise "reply did not render as a nested comment-reply"
+  end
+  reply = top_comment.replies(db)[0]
+
+  too_deep_reply = app(request_with_cookie("POST", "/skins/#{skin.id()}/comments", "csrf_token=#{other_csrf}&body=Too+deep&parent_id=#{reply.id()}", other_cookie), context)
+  if too_deep_reply[0] != 302 then raise "a rejected reply-to-a-reply should still redirect, not error" end
+  if reply.replies(db).length() != 0
+    raise "a reply beyond this discussion's max_depth of 1 was not rejected"
+  end
+
+  # --- report: creates a flame signal against the comment's author,
+  # --- discoverable via the package's own API ---
+  report = app(request_with_cookie("POST", "/comments/#{top_comment.id()}/report", "csrf_token=#{csrf_token}", cookie), context)
+  if report[0] != 302 then raise "report request failed" end
+  if discussion_for_skin(db, skin.id()).signals_for(db).length() != 1
+    raise "reporting a comment did not create a flame signal"
+  end
+
+  # --- moderation: the skin owner can lock the discussion (rejecting
+  # --- new comments) and unlock it again ---
+  lock = app(request_with_cookie("POST", "/skins/#{skin.id()}/lock", "csrf_token=#{csrf_token}", cookie), context)
+  if lock[0] != 302 then raise "discussion lock request failed" end
+  locked_show = app(request("GET", "/skins/#{skin.id()}"), context)
+  if !locked_show[2].include?("Discussion locked") then raise "locked discussion did not render its notice" end
+
+  rejected_while_locked = app(request_with_cookie("POST", "/skins/#{skin.id()}/comments", "csrf_token=#{other_csrf}&body=Blocked", other_cookie), context)
+  if rejected_while_locked[0] != 302 then raise "a rejected comment while locked should still redirect, not error" end
+  comment_count_while_locked = discussion_for_skin(db, skin.id()).comment_count(db)
+
+  unlock = app(request_with_cookie("POST", "/skins/#{skin.id()}/unlock", "csrf_token=#{csrf_token}", cookie), context)
+  if unlock[0] != 302 then raise "discussion unlock request failed" end
+  allowed_after_unlock = app(request_with_cookie("POST", "/skins/#{skin.id()}/comments", "csrf_token=#{other_csrf}&body=Allowed+again", other_cookie), context)
+  if allowed_after_unlock[0] != 302 then raise "unlocking the discussion failed" end
+  if discussion_for_skin(db, skin.id()).comment_count(db) != comment_count_while_locked + 1
+    raise "a comment posted after unlocking was not actually admitted"
+  end
 end
+
+test_discussion_features(context, skin, cookie, csrf_token, other_cookie, other_csrf)
 
 # --- the real owner can edit (keeping the existing file) and delete ---
 owner_edit_form = app(request_with_cookie("GET", "/skins/#{skin.id()}/edit", "", cookie), context)

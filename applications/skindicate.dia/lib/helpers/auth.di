@@ -134,15 +134,23 @@ def require_ownership(request, context, params)
 end
 
 # Same 404-not-403 shape as require_ownership above, for a comment
-# rather than a skin -- params["id"] here is the comment's own id
-# (see routes.di's "/comments/:id/delete").
+# rather than a skin -- params["id"] here is the comment's own id (see
+# routes.di's "/comments/:id/delete"). A comment can be deleted by its
+# own author *or* by the skin's owner (a discussion's recording_id is
+# always "#{skin_id}", see comments_controller.di's own comment on this
+# mapping) -- there's no separate discussion-moderator role here.
 def require_comment_ownership(request, context, params)
-  comment = Comment.find(Database.get(context), params["id"].to_i())
+  db = Database.get(context)
+  comment = ActiveDiscussion::Comment.find(db, params["id"].to_i())
   if comment == nil
     log_warn(request, context, "authorization.denied", {"reason": "not_found", "comment_id": params["id"]})
     return Dials::Response.not_found(request["path"])
   end
-  if comment.user_id() != context["current_user"].id()
+  discussion = comment.discussion(db)
+  skin = Skin.find(db, discussion.recording_id().to_i())
+  is_author = comment.persona_handle() == context["current_user"].username()
+  is_skin_owner = skin != nil && skin.user_id() == context["current_user"].id()
+  unless is_author || is_skin_owner
     log_warn(request, context, "authorization.denied", {"reason": "not_owner", "comment_id": comment.id()})
     return Dials::Response.not_found(request["path"])
   end

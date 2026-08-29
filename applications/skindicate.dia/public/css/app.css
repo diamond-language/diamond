@@ -544,7 +544,7 @@ img { max-width: 100%; display: block; }
   margin: 0;
 }
 
-.comment-delete-form { margin-top: 0.5rem; }
+.comment-delete-form { margin: 0; }
 .comment-delete {
   background: none;
   border: none;
@@ -565,3 +565,73 @@ img { max-width: 100%; display: block; }
   color: var(--text-3);
   text-align: center;
 }
+
+/* ── Comments: threading, report, edited marker, mod controls ───────────
+   (modArtist's own app.css has no rules at all for these classes,
+   despite its .erb using them -- confirmed by grep -- so these are new,
+   built from the same design tokens as everything else here, not
+   ported values.) */
+
+.comments-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1.25rem;
+}
+.comments-header .comments-title { margin-bottom: 0; }
+
+.discussion-mod-controls { display: flex; gap: 0.5rem; }
+
+.discussion-notice {
+  padding: 0.7rem 1rem;
+  border-radius: var(--radius);
+  font-size: 0.875rem;
+  margin-bottom: 1.25rem;
+}
+.discussion-notice-locked {
+  background: var(--red-dim);
+  color: var(--red);
+  border: 1px solid var(--red);
+}
+.discussion-notice-cooldown {
+  background: var(--accent-dim);
+  color: var(--accent-h);
+  border: 1px solid var(--accent-dim);
+}
+
+.comment-edited {
+  font-size: 0.75rem;
+  color: var(--text-3);
+}
+
+.comment-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin-left: auto;
+}
+
+.comment-report-form { margin: 0; }
+.comment-action-btn {
+  background: none;
+  border: none;
+  color: var(--text-3);
+  font-size: 0.75rem;
+  cursor: pointer;
+  padding: 0;
+  transition: color 0.15s;
+}
+.comment-action-btn:hover { color: var(--accent); }
+
+.comment-replies {
+  margin-top: 0.75rem;
+  margin-left: 1.5rem;
+  padding-left: 0.875rem;
+  border-left: 2px solid var(--border);
+}
+.comment-reply { border-bottom: none; padding: 0.75rem 0; }
+.comment-reply:not(:last-child) { border-bottom: 1px solid var(--border); }
+
+.reply-form { margin-top: 0.75rem; margin-left: 1.5rem; }
+.reply-form .comment-input { min-height: 3.5rem; }
