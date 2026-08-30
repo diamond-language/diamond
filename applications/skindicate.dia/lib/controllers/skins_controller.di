@@ -20,13 +20,13 @@ class SkinsController
     db = Database.get(context)
     skin = Skin.find(db, params["id"].to_i())
     if skin == nil then return Dials::Response.not_found(request["path"]) end
-    uploader = skin.user(db)
+    skin_entry = skin.entry(db)
+    uploader = User.find(db, skin_entry.user_id())
     tags = skin.tags(db)
-    discussion = discussion_for_skin(db, skin.id())
-    comments = discussion.top_level_comments(db)
-    is_owner = context["current_user"] != nil && context["current_user"].id() == skin.user_id()
-    log_debug(request, context, "skin.shown", {"skin_id": skin.id(), "comment_count": discussion.comment_count(db)})
-    content = skin_show_html(skin, uploader, tags, is_owner, context["current_user"], discussion, comments, db, context["csrf_token"])
+    comment_entries = skin_entry.children(db)
+    is_owner = context["current_user"] != nil && context["current_user"].id() == skin_entry.user_id()
+    log_debug(request, context, "skin.shown", {"skin_id": skin.id(), "comment_count": comment_entries.length()})
+    content = skin_show_html(skin, uploader, tags, is_owner, context["current_user"], skin_entry, comment_entries, db, context["csrf_token"])
     Div.html_response(200, layout_html(skin.title(), content, context["current_user"], context["csrf_token"]))
   end
 
@@ -78,9 +78,9 @@ class SkinsController
     theme_path = save_uploaded_file(theme_file, ["zip", "itheme", "deskthemepack"])
     preview_path = save_uploaded_file(upload["files"]["preview_image"], ["png", "jpg", "jpeg", "gif", "webp"])
     original_filename = if theme_file == nil then nil else theme_file["filename"] end
-    skin = Skin.new({"user_id": context["current_user"].id(), "title": fields["title"], "description": fields["description"], "platform": fields["platform"], "preview_image_path": preview_path, "file_path": theme_path, "original_filename": original_filename})
+    skin = Skin.new({"title": fields["title"], "description": fields["description"], "platform": fields["platform"], "preview_image_path": preview_path, "file_path": theme_path, "original_filename": original_filename})
     begin
-      skin.save(db)
+      create_entry!(db, "Skin", skin, context["current_user"].id())
     rescue error: ActiveRecord::ValidationError
       log_warn(request, context, "skin.create_rejected", {"validation_errors": error.errors()})
       return SkinsController.render_form(request, context, skin, fields["tags"], nil, error.errors(), 422)
@@ -123,9 +123,10 @@ class SkinsController
   end
 
   def self.destroy(request, context, params)
+    db = Database.get(context)
     skin = context["current_skin"]
     skin_id = skin.id()
-    skin.destroy(Database.get(context))
+    skin.entry(db).destroy_subtree!(db)
     log_info(request, context, "skin.deleted", {"skin_id": skin_id, "user_id": context["current_user"].id()})
     Dials::Response.redirect("/", "deleted")
   end

@@ -15,7 +15,8 @@
     <div class="skin-card-meta">
       <a href="/skins/<%= skin.id() %>" class="skin-card-title"><%= skin.title() %></a>
       <span class="skin-card-platform"><%= skin.platform() %></span>
-      <a href="/users/<%= skin.user(db).username() %>" class="skin-card-author">@<%= skin.user(db).username() %></a>
+      <% skin_uploader = User.find(db, skin.entry(db).user_id()) %>
+      <a href="/users/<%= skin_uploader.username() %>" class="skin-card-author">@<%= skin_uploader.username() %></a>
     </div>
   </article>
 <% end %>

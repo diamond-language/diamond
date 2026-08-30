@@ -3,12 +3,26 @@ class CommentsController
     db = Database.get(context)
     skin = Skin.find(db, params["id"].to_i())
     if skin == nil then return Dials::Response.not_found(request["path"]) end
-    discussion = discussion_for_skin(db, skin.id())
-    parent_id = if params["parent_id"] == nil || params["parent_id"] == "" then nil else params["parent_id"].to_i() end
+    skin_entry = skin.entry(db)
+    parent_entry = if params["parent_id"] == nil || params["parent_id"] == "" then skin_entry else Entry.find(db, params["parent_id"].to_i()) end
+    # Replies are capped at one level deep, matching the UI (which only
+    # ever renders "top-level comment + its replies"): a top-level
+    # comment's parent is the skin's own root entry (ancestry_depth 0),
+    # a reply's parent is a top-level comment that must itself be a
+    # direct child of this same skin's entry (not a comment on some
+    # other skin, and not already a reply -- ancestry_depth 2 or
+    # deeper can't take another reply).
+    parent_belongs_to_this_skin = parent_entry != nil &&
+      (parent_entry.id() == skin_entry.id() || parent_entry.parent_id() == skin_entry.id())
+    if !parent_belongs_to_this_skin
+      log_warn(request, context, "comment.create_rejected", {"skin_id": skin.id(), "reason": "invalid or too-deep parent"})
+      return Dials::Response.redirect("/skins/#{skin.id()}", "comment rejected")
+    end
+    comment = Comment.new({"body": params["body"]})
     begin
-      comment = discussion.create_comment!(db, context["current_user"].username(), params["body"], parent_id)
-    rescue error: ActiveRecord::ValidationError | ActiveDiscussion::DiscussionLocked | ActiveDiscussion::CoolingDown | ActiveDiscussion::DepthExceeded | ActiveDiscussion::KarmaInsufficient
-      log_warn(request, context, "comment.create_rejected", {"skin_id": skin.id(), "reason": error.message()})
+      create_entry!(db, "Comment", comment, context["current_user"].id(), parent_entry)
+    rescue error: ActiveRecord::ValidationError
+      log_warn(request, context, "comment.create_rejected", {"skin_id": skin.id(), "validation_errors": error.errors()})
       return Dials::Response.redirect("/skins/#{skin.id()}", "comment rejected")
     end
     log_info(request, context, "comment.created", {"comment_id": comment.id(), "skin_id": skin.id(), "user_id": context["current_user"].id()})
@@ -18,37 +32,11 @@ class CommentsController
   def self.destroy(request, context, params)
     db = Database.get(context)
     comment = context["current_comment"]
-    skin_id = comment.discussion(db).recording_id()
-    comment.delete!(db)
+    comment_entry = comment.entry(db)
+    skin_entry = Entry.find(db, comment_entry.parent_id())
+    skin_id = skin_entry.entryable_id()
+    comment_entry.destroy_subtree!(db)
     log_info(request, context, "comment.deleted", {"comment_id": comment.id(), "user_id": context["current_user"].id()})
     Dials::Response.redirect("/skins/#{skin_id}", "comment deleted")
-  end
-
-  def self.report(request, context, params)
-    db = Database.get(context)
-    comment = ActiveDiscussion::Comment.find(db, params["id"].to_i())
-    if comment == nil then return Dials::Response.not_found(request["path"]) end
-    discussion = comment.discussion(db)
-    discussion.signal!(db, comment.persona_handle(), type: ActiveDiscussion::Signal::REPORT, flagged_by: context["current_user"].username())
-    log_info(request, context, "comment.reported", {"comment_id": comment.id(), "reported_by": context["current_user"].username()})
-    Dials::Response.redirect("/skins/#{discussion.recording_id()}", "reported")
-  end
-
-  def self.lock(request, context, params)
-    db = Database.get(context)
-    skin = context["current_skin"]
-    discussion = discussion_for_skin(db, skin.id())
-    discussion.lock!(db, "locked by owner")
-    log_info(request, context, "discussion.locked", {"skin_id": skin.id()})
-    Dials::Response.redirect("/skins/#{skin.id()}", "locked")
-  end
-
-  def self.unlock(request, context, params)
-    db = Database.get(context)
-    skin = context["current_skin"]
-    discussion = discussion_for_skin(db, skin.id())
-    discussion.unlock!(db)
-    log_info(request, context, "discussion.unlocked", {"skin_id": skin.id()})
-    Dials::Response.redirect("/skins/#{skin.id()}", "unlocked")
   end
 end

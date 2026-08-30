@@ -3,7 +3,8 @@ class UsersController
     db = Database.get(context)
     user = User.where({"username": params["username"]}).first(db)
     if user == nil then return Dials::Response.not_found(request["path"]) end
-    skins = Skin.where({"user_id": user.id()}).to_a(db)
+    skin_entries = Entry.where({"user_id": user.id(), "entryable_type": "Skin"}).to_a(db)
+    skins = skin_entries.map() do |entry| entry.entryable(db) end
     is_following = context["current_user"] != nil &&
       ActiveSocial::Follow.follows?(db, context["current_user"].id(), user.id())
     log_debug(request, context, "user.shown", {"user_id": user.id(), "skin_count": skins.length()})

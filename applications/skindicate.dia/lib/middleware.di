@@ -5,21 +5,18 @@ def ensure_configured(context)
     User.configure(ActiveRecord::Repository.new(Arel.table("users"), build_user, "id", nil, build_user_validator(Database.get(context))))
     Session.configure(ActiveRecord::Repository.new(Arel.table("sessions"), build_session, "id"))
     Skin.configure(ActiveRecord::Repository.new(Arel.table("skins"), build_skin, "id", nil, build_skin_validator()))
+    Comment.configure(ActiveRecord::Repository.new(Arel.table("comments"), build_comment, "id", nil, build_comment_validator()))
+    Entry.configure(ActiveRecord::Repository.new(Arel.table("entries"), build_entry, "id"))
     Tag.configure(ActiveRecord::Repository.new(Arel.table("tags"), build_tag, "id", nil, build_tag_validator()))
     Tagging.configure(ActiveRecord::Repository.new(Arel.table("taggings"), build_tagging, "id"))
     ActiveSocial::Follow.configure(ActiveRecord::Repository.new(Arel.table("follows"), build_follow, "id"))
-    ActiveDiscussion::Discussion.configure(ActiveRecord::Repository.new(Arel.table("active_discussions"), build_discussion, "id"))
-    ActiveDiscussion::Comment.configure(ActiveRecord::Repository.new(Arel.table("active_discussion_comments"), build_comment, "id"))
-    ActiveDiscussion::FlameSignal.configure(ActiveRecord::Repository.new(Arel.table("active_discussion_signals"), build_flame_signal, "id"))
-    ActiveDiscussion::KarmaVote.configure(ActiveRecord::Repository.new(Arel.table("active_discussion_karma_votes"), build_karma_vote, "id"))
-    ActiveDiscussion::Configuration.configure()
     # One shared StaticFiles root for both the framework's own CSS/JS
     # and everything under public/uploads/ (see boot.di's own comment
     # on why this is one root rather than two separately-configured
     # instances).
     StaticFiles.configure({"root": "./public"})
     context["configured"] = true
-    AppLogger.get(context).info("app.configured", {"model_count": 8})
+    AppLogger.get(context).info("app.configured", {"model_count": 7})
   end
 end
 

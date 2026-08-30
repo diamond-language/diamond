@@ -1,4 +1,4 @@
-<%# locals: skin, uploader, tags, is_owner, current_user, discussion, comments, db, csrf_token %>
+<%# locals: skin, uploader, tags, is_owner, current_user, skin_entry, comment_entries, db, csrf_token %>
 <div class="skin-show">
   <div class="skin-preview-area">
     <% if skin.preview_image_path() != nil %>
@@ -37,60 +37,21 @@
 </div>
 
 <section class="skin-comments">
-  <div class="comments-header">
-    <h2 class="comments-title"><%= discussion.comment_count(db) %> <% if discussion.comment_count(db) == 1 %>Comment<% else %>Comments<% end %></h2>
-    <% if is_owner %>
-    <div class="discussion-mod-controls">
-      <% if discussion.locked?() %>
-      <form method="POST" action="/skins/<%= skin.id() %>/unlock" style="display:inline">
-        <input type="hidden" name="csrf_token" value="<%= csrf_token %>">
-        <button type="submit" class="btn btn-ghost btn-sm">Unlock discussion</button>
-      </form>
-      <% elsif discussion.cooling_down?() %>
-      <form method="POST" action="/skins/<%= skin.id() %>/unlock" style="display:inline">
-        <input type="hidden" name="csrf_token" value="<%= csrf_token %>">
-        <button type="submit" class="btn btn-ghost btn-sm">Clear cooldown</button>
-      </form>
-      <% else %>
-      <form method="POST" action="/skins/<%= skin.id() %>/lock" style="display:inline">
-        <input type="hidden" name="csrf_token" value="<%= csrf_token %>">
-        <button type="submit" class="btn btn-ghost btn-sm">Lock discussion</button>
-      </form>
-      <% end %>
-    </div>
-    <% end %>
-  </div>
+  <h2 class="comments-title"><%= comment_entries.length() %> <% if comment_entries.length() == 1 %>Comment<% else %>Comments<% end %></h2>
 
-  <% if discussion.locked?() %>
-  <div class="discussion-notice discussion-notice-locked">
-    <strong>Discussion locked.</strong> <%= discussion.locked_reason() %>
-  </div>
-  <% elsif discussion.cooling_down?() %>
-  <div class="discussion-notice discussion-notice-cooldown">
-    <strong>Cooling down.</strong> New comments are paused for a while after a flood of reports.
-  </div>
-  <% end %>
-
-  <% if comments.length() == 0 %>
+  <% if comment_entries.length() == 0 %>
   <div class="empty-state"><p>No comments yet.</p></div>
   <% end %>
 
-  <% comments.each() do |comment| %>
-  <div class="comment" id="comment-<%= comment.id() %>">
+  <% comment_entries.each() do |comment_entry| %>
+  <% comment = comment_entry.entryable(db) %>
+  <% comment_author = User.find(db, comment_entry.user_id()) %>
+  <div class="comment" id="comment-<%= comment_entry.id() %>">
     <div class="comment-meta">
-      <a href="/users/<%= comment.persona_handle() %>" class="comment-author">@<%= comment.persona_handle() %></a>
-      <time class="comment-time"><%= Time.at(comment.created_at()).strftime("%Y-%m-%d %H:%M") %></time>
-      <% if comment.edited?() %>
-      <span class="comment-edited">(edited)</span>
-      <% end %>
+      <a href="/users/<%= comment_author.username() %>" class="comment-author">@<%= comment_author.username() %></a>
+      <time class="comment-time"><%= Time.at(comment_entry.created_at()).strftime("%Y-%m-%d %H:%M") %></time>
       <span class="comment-actions">
-        <% if current_user != nil && current_user.username() != comment.persona_handle() %>
-        <form method="POST" action="/comments/<%= comment.id() %>/report" class="comment-report-form" title="Report comment">
-          <input type="hidden" name="csrf_token" value="<%= csrf_token %>">
-          <button type="submit" class="comment-action-btn">&#9873; Report</button>
-        </form>
-        <% end %>
-        <% if current_user != nil && (current_user.username() == comment.persona_handle() || is_owner) %>
+        <% if current_user != nil && (current_user.id() == comment_entry.user_id() || is_owner) %>
         <form method="POST" action="/comments/<%= comment.id() %>/delete" class="comment-delete-form" onsubmit="return confirm('Delete this comment?')">
           <input type="hidden" name="csrf_token" value="<%= csrf_token %>">
           <button type="submit" class="comment-delete" title="Delete comment">&#10005;</button>
@@ -100,25 +61,18 @@
     </div>
     <p class="comment-text"><%= comment.body() %></p>
 
-    <% replies = comment.replies(db) %>
+    <% replies = comment_entry.children(db) %>
     <% if replies.length() > 0 %>
     <div class="comment-replies">
-      <% replies.each() do |reply| %>
-      <div class="comment comment-reply" id="comment-<%= reply.id() %>">
+      <% replies.each() do |reply_entry| %>
+      <% reply = reply_entry.entryable(db) %>
+      <% reply_author = User.find(db, reply_entry.user_id()) %>
+      <div class="comment comment-reply" id="comment-<%= reply_entry.id() %>">
         <div class="comment-meta">
-          <a href="/users/<%= reply.persona_handle() %>" class="comment-author">@<%= reply.persona_handle() %></a>
-          <time class="comment-time"><%= Time.at(reply.created_at()).strftime("%Y-%m-%d %H:%M") %></time>
-          <% if reply.edited?() %>
-          <span class="comment-edited">(edited)</span>
-          <% end %>
+          <a href="/users/<%= reply_author.username() %>" class="comment-author">@<%= reply_author.username() %></a>
+          <time class="comment-time"><%= Time.at(reply_entry.created_at()).strftime("%Y-%m-%d %H:%M") %></time>
           <span class="comment-actions">
-            <% if current_user != nil && current_user.username() != reply.persona_handle() %>
-            <form method="POST" action="/comments/<%= reply.id() %>/report" class="comment-report-form" title="Report comment">
-              <input type="hidden" name="csrf_token" value="<%= csrf_token %>">
-              <button type="submit" class="comment-action-btn">&#9873; Report</button>
-            </form>
-            <% end %>
-            <% if current_user != nil && (current_user.username() == reply.persona_handle() || is_owner) %>
+            <% if current_user != nil && (current_user.id() == reply_entry.user_id() || is_owner) %>
             <form method="POST" action="/comments/<%= reply.id() %>/delete" class="comment-delete-form" onsubmit="return confirm('Delete this comment?')">
               <input type="hidden" name="csrf_token" value="<%= csrf_token %>">
               <button type="submit" class="comment-delete" title="Delete comment">&#10005;</button>
@@ -132,11 +86,11 @@
     </div>
     <% end %>
 
-    <% if current_user != nil && discussion.open?() %>
+    <% if current_user != nil %>
     <form method="POST" action="/skins/<%= skin.id() %>/comments" class="reply-form">
       <input type="hidden" name="csrf_token" value="<%= csrf_token %>">
-      <input type="hidden" name="parent_id" value="<%= comment.id() %>">
-      <textarea class="comment-input" name="body" rows="2" placeholder="Reply to @<%= comment.persona_handle() %>&hellip;" required></textarea>
+      <input type="hidden" name="parent_id" value="<%= comment_entry.id() %>">
+      <textarea class="comment-input" name="body" rows="2" placeholder="Reply to @<%= comment_author.username() %>&hellip;" required></textarea>
       <div class="comment-form-actions">
         <button type="submit" class="btn btn-ghost btn-sm">Reply</button>
       </div>
@@ -145,7 +99,6 @@
   </div>
   <% end %>
 
-  <% if discussion.open?() %>
   <% if current_user != nil %>
   <form method="POST" action="/skins/<%= skin.id() %>/comments" class="comment-form">
     <input type="hidden" name="csrf_token" value="<%= csrf_token %>">
@@ -158,6 +111,5 @@
   </form>
   <% else %>
   <p class="comments-sign-in"><a href="/login">Sign in</a> to leave a comment.</p>
-  <% end %>
   <% end %>
 </section>

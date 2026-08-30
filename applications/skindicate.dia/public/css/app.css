@@ -566,44 +566,11 @@ img { max-width: 100%; display: block; }
   text-align: center;
 }
 
-/* ── Comments: threading, report, edited marker, mod controls ───────────
+/* ── Comments: threading ──────────────────────────────────────────────
    (modArtist's own app.css has no rules at all for these classes,
    despite its .erb using them -- confirmed by grep -- so these are new,
    built from the same design tokens as everything else here, not
    ported values.) */
-
-.comments-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
-  margin-bottom: 1.25rem;
-}
-.comments-header .comments-title { margin-bottom: 0; }
-
-.discussion-mod-controls { display: flex; gap: 0.5rem; }
-
-.discussion-notice {
-  padding: 0.7rem 1rem;
-  border-radius: var(--radius);
-  font-size: 0.875rem;
-  margin-bottom: 1.25rem;
-}
-.discussion-notice-locked {
-  background: var(--red-dim);
-  color: var(--red);
-  border: 1px solid var(--red);
-}
-.discussion-notice-cooldown {
-  background: var(--accent-dim);
-  color: var(--accent-h);
-  border: 1px solid var(--accent-dim);
-}
-
-.comment-edited {
-  font-size: 0.75rem;
-  color: var(--text-3);
-}
 
 .comment-actions {
   display: flex;
@@ -611,18 +578,6 @@ img { max-width: 100%; display: block; }
   gap: 0.6rem;
   margin-left: auto;
 }
-
-.comment-report-form { margin: 0; }
-.comment-action-btn {
-  background: none;
-  border: none;
-  color: var(--text-3);
-  font-size: 0.75rem;
-  cursor: pointer;
-  padding: 0;
-  transition: color 0.15s;
-}
-.comment-action-btn:hover { color: var(--accent); }
 
 .comment-replies {
   margin-top: 0.75rem;

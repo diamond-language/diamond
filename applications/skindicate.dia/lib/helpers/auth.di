@@ -117,14 +117,16 @@ end
 # 404s (not 403) on someone else's skin -- avoids confirming to an
 # unauthorized visitor that a given id even exists. Stashes the loaded
 # Skin into context["current_skin"] on success so the controller action
-# doesn't have to look it up a second time.
+# doesn't have to look it up a second time. Ownership lives on the
+# skin's own root Entry now, not on Skin itself (see entry.di).
 def require_ownership(request, context, params)
-  skin = Skin.find(Database.get(context), params["id"].to_i())
+  db = Database.get(context)
+  skin = Skin.find(db, params["id"].to_i())
   if skin == nil
     log_warn(request, context, "authorization.denied", {"reason": "not_found", "skin_id": params["id"]})
     return Dials::Response.not_found(request["path"])
   end
-  if skin.user_id() != context["current_user"].id()
+  if skin.entry(db).user_id() != context["current_user"].id()
     log_warn(request, context, "authorization.denied", {"reason": "not_owner", "skin_id": skin.id()})
     return Dials::Response.not_found(request["path"])
   end
@@ -136,20 +138,21 @@ end
 # Same 404-not-403 shape as require_ownership above, for a comment
 # rather than a skin -- params["id"] here is the comment's own id (see
 # routes.di's "/comments/:id/delete"). A comment can be deleted by its
-# own author *or* by the skin's owner (a discussion's recording_id is
-# always "#{skin_id}", see comments_controller.di's own comment on this
-# mapping) -- there's no separate discussion-moderator role here.
+# own author *or* by the skin's owner (the comment's own Entry's
+# parent_id is the skin's root Entry, since replies are capped at one
+# level -- see comments_controller.di) -- there's no separate
+# moderator role here.
 def require_comment_ownership(request, context, params)
   db = Database.get(context)
-  comment = ActiveDiscussion::Comment.find(db, params["id"].to_i())
+  comment = Comment.find(db, params["id"].to_i())
   if comment == nil
     log_warn(request, context, "authorization.denied", {"reason": "not_found", "comment_id": params["id"]})
     return Dials::Response.not_found(request["path"])
   end
-  discussion = comment.discussion(db)
-  skin = Skin.find(db, discussion.recording_id().to_i())
-  is_author = comment.persona_handle() == context["current_user"].username()
-  is_skin_owner = skin != nil && skin.user_id() == context["current_user"].id()
+  comment_entry = comment.entry(db)
+  skin_entry = Entry.find(db, comment_entry.parent_id())
+  is_author = comment_entry.user_id() == context["current_user"].id()
+  is_skin_owner = skin_entry != nil && skin_entry.user_id() == context["current_user"].id()
   unless is_author || is_skin_owner
     log_warn(request, context, "authorization.denied", {"reason": "not_owner", "comment_id": comment.id()})
     return Dials::Response.not_found(request["path"])

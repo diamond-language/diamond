@@ -1,13 +1,14 @@
 # The core resource: one uploaded reskin/theme submission. Called
 # "Skin" throughout (model, table, routes -- /skins, not /reskins) --
 # "reskin" stays only as the general descriptive word for what the app
-# is about.
+# is about. Ownership/authorship and timestamps live on this Skin's own
+# `Entry` (see entry.di), not here -- a Skin is a pure `entryable`,
+# holding only its own content fields.
 class Skin < ActiveRecord::Model
-  attr_accessor user_id, title: String, description: String, platform: String, preview_image_path, file_path: String, original_filename: String
+  attr_accessor title: String, description: String, platform: String, preview_image_path, file_path: String, original_filename: String
 
   def initialize(attributes: Hash = {})
     super(attributes)
-    @user_id = attributes["user_id"]
     @title = attributes["title"]
     @description = attributes["description"]
     @platform = attributes["platform"]
@@ -16,7 +17,7 @@ class Skin < ActiveRecord::Model
     @original_filename = attributes["original_filename"]
   end
 
-  def to_attributes() = {"user_id": @user_id, "title": @title, "description": @description,
+  def to_attributes() = {"title": @title, "description": @description,
     "platform": @platform, "preview_image_path": @preview_image_path,
     "file_path": @file_path, "original_filename": @original_filename}
   def repository() = @@repository
@@ -25,11 +26,13 @@ class Skin < ActiveRecord::Model
     @@repository = repository
   end
 
-  def user(db) = self.belongs_to(User.repository()).get(db, @user_id)
-
   # A real many-to-many via the `taggings` join table --
   # ActiveRecord::HasManyThrough, not a hand-rolled join query.
   def tags(db) = ActiveRecord::HasManyThrough.new(Tag.repository(), Arel.table("taggings"), "skin_id", "tag_id").all(db, self.id())
+
+  # This skin's own root Entry -- where its author/timestamps/comment
+  # tree actually live (see entry.di's own comment on why).
+  def entry(db) = Entry.where({"entryable_type": "Skin", "entryable_id": self.id()}).first(db)
 end
 
 def build_skin(row) = Skin.new(row)
