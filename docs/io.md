@@ -53,6 +53,24 @@ only for the newline-terminated case, so building up a line
 incrementally via repeated `print` calls doesn't pay a flush cost per
 fragment.
 
+A write failure — most commonly `EPIPE` from a reader that closed its end
+of a pipe — raises a rescuable `IOError` (`"write error: %s"` with
+`strerror(errno)`), the same convention `File#write` already uses,
+instead of being silently dropped or killing the process outright.
+`diamond_vm_init` ignores `SIGPIPE` process-wide (not just for the TLS
+write path elsewhere in this document), so a write past a closed reader
+always surfaces as a plain, catchable error:
+
+```ruby
+begin
+  loop do
+    puts("line")
+  end
+rescue e: IOError
+  # the reader went away
+end
+```
+
 ## stdin: `gets()`
 
 ```ruby

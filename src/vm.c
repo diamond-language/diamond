@@ -10625,9 +10625,18 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     registers[source],&converted);
                 VM_PROPAGATE(status);
                 const DiamondString *text=(const DiamondString *)converted.as.object;
-                fwrite(text->chars,1,text->length,stdout);
+                errno=0;
+                const size_t written=fwrite(text->chars,1,text->length,stdout);
+                if(written!=text->length||ferror(stdout)) {
+                    snprintf(vm->error,sizeof vm->error,"write error: %s",strerror(errno));
+                    VM_RETURN(DIAMOND_VM_IO_ERROR);
+                }
                 if(newline!=0) {
-                    fputc('\n',stdout);
+                    errno=0;
+                    if(fputc('\n',stdout)==EOF||ferror(stdout)) {
+                        snprintf(vm->error,sizeof vm->error,"write error: %s",strerror(errno));
+                        VM_RETURN(DIAMOND_VM_IO_ERROR);
+                    }
                     /* stdout is fully buffered (not line-buffered) once
                      * it isn't a terminal -- redirected to a file, a
                      * pipe, whatever a test harness or `> log` capture
@@ -10646,7 +10655,11 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                      * puts-style, newline-terminated case, matching
                      * ordinary line-buffered-on-a-terminal behavior
                      * unconditionally rather than only when isatty(). */
-                    fflush(stdout);
+                    errno=0;
+                    if(fflush(stdout)==EOF) {
+                        snprintf(vm->error,sizeof vm->error,"write error: %s",strerror(errno));
+                        VM_RETURN(DIAMOND_VM_IO_ERROR);
+                    }
                 }
                 registers[destination]=DIAMOND_NIL;break;
             }

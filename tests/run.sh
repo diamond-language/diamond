@@ -2365,6 +2365,31 @@ fi
 grep -q "to_i argument must be a Float" "$error_file"
 rm -f "$error_file"
 
+# puts/print write failures (a closed pipe reader, EPIPE) now raise a
+# rescuable IOError instead of being silently ignored (the previous
+# behavior: fwrite/fputc/fflush return values were never checked) or
+# killing the process outright (SIGPIPE is already ignored process-wide,
+# not just for the TLS write path -- see docs/io.md -- so a write past a
+# closed pipe reader surfaces as a plain, catchable EPIPE here too).
+error_file="$(mktemp)"
+if "$diamond" -e $'i = 0\nwhile i < 1000000\n  puts("line #{i}")\n  i = i + 1\nend' \
+    2>"$error_file" | head -n1 >/dev/null; then
+    :
+fi
+grep -q "write error:" "$error_file"
+rm -f "$error_file"
+
+error_file="$(mktemp)"
+if "$diamond" -e $'i = 0\ncaught = false\nbegin\n  while i < 1000000\n    puts("line #{i}")\n    i = i + 1\n  end\nrescue e: IOError\n  caught = true\nend\nunless caught\n  raise "not caught"\nend' \
+    2>"$error_file" | head -n1 >/dev/null; then
+    :
+else
+    echo "a stdout write failure inside begin/rescue was not caught as IOError" >&2
+    cat "$error_file" >&2
+    exit 1
+fi
+rm -f "$error_file"
+
 for bad_arg in '0.0 / 0.0' '1.0 / 0.0' '(0.0 - 1.0) / 0.0'; do
     error_file="$(mktemp)"
     if "$diamond" -e "to_i($bad_arg)" >/dev/null 2>"$error_file"; then
