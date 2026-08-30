@@ -1198,6 +1198,10 @@ static bool disassemble_chunk(FILE *stream, const char *name,
                 offset=three_registers(stream,chunk,"CIPHER_ENCRYPT",offset,&valid);break;
             case DIAMOND_OP_CIPHER_DECRYPT:
                 offset=three_registers(stream,chunk,"CIPHER_DECRYPT",offset,&valid);break;
+            case DIAMOND_OP_GZIP_COMPRESS:
+                offset=two_registers(stream,chunk,"GZIP_COMPRESS",offset,&valid);break;
+            case DIAMOND_OP_GZIP_DECOMPRESS:
+                offset=three_registers(stream,chunk,"GZIP_DECOMPRESS",offset,&valid);break;
             case DIAMOND_OP_EXIT:
                 offset=one_register(stream,chunk,"EXIT",offset, &valid);break;
             case DIAMOND_OP_DEBUGGER: {

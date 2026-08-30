@@ -37,6 +37,7 @@
 #include <sqlite3.h>
 #include <libpq-fe.h>
 #include <mysql.h>
+#include <zlib.h>
 #include <sys/mman.h>
 #include <sys/socket.h>
 #include <sys/wait.h>
@@ -6033,6 +6034,142 @@ static DiamondVmStatus aes_gcm_decrypt_helper(DiamondVm *vm,DiamondValue key_val
     }
     DiamondString *result=allocate_string(vm,(const char *)plaintext,(size_t)total);
     free(plaintext);
+    if(result==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+    *out_result=DIAMOND_OBJECT(result);
+    return DIAMOND_VM_OK;
+}
+
+/* Gzip.compress(data) -- gzip-wrapped deflate via zlib (already linked
+ * for the outbound HTTP client's Accept-Encoding support), growing an
+ * output buffer geometrically since a compressed size can't be predicted
+ * exactly up front. `windowBits=15+16` requests a gzip (not raw
+ * zlib-wrapped) header/trailer, matching what every real HTTP server
+ * expects behind Content-Encoding: gzip. */
+static DiamondVmStatus gzip_compress_helper(DiamondVm *vm,DiamondValue data_value,
+        DiamondValue *out_result) {
+    if(data_value.kind!=DIAMOND_VALUE_OBJECT||
+       data_value.as.object->kind!=DIAMOND_OBJECT_STRING)
+        return DIAMOND_VM_TYPE_ERROR;
+    const DiamondString *data=(const DiamondString *)data_value.as.object;
+    z_stream stream={0};
+    if(deflateInit2(&stream,Z_DEFAULT_COMPRESSION,Z_DEFLATED,15+16,8,
+            Z_DEFAULT_STRATEGY)!=Z_OK) {
+        snprintf(vm->error,sizeof vm->error,"cannot initialize gzip compression");
+        return DIAMOND_VM_PROGRAM_ERROR;
+    }
+    stream.next_in=(Bytef *)data->chars;
+    stream.avail_in=(uInt)(data->length>UINT_MAX?UINT_MAX:data->length);
+    size_t capacity=data->length/2+64;
+    unsigned char *output=malloc(capacity);
+    if(output==nullptr) {deflateEnd(&stream);return DIAMOND_VM_OUT_OF_MEMORY;}
+    size_t produced=0;
+    int deflate_status=Z_OK;
+    while(deflate_status!=Z_STREAM_END) {
+        if(produced==capacity) {
+            const size_t grown=capacity*2;
+            unsigned char *bigger=realloc(output,grown);
+            if(bigger==nullptr) {free(output);deflateEnd(&stream);return DIAMOND_VM_OUT_OF_MEMORY;}
+            output=bigger;capacity=grown;
+        }
+        stream.next_out=output+produced;
+        stream.avail_out=(uInt)(capacity-produced>UINT_MAX?UINT_MAX:capacity-produced);
+        const uInt before=stream.avail_out;
+        deflate_status=deflate(&stream,Z_FINISH);
+        produced+=before-stream.avail_out;
+        if(deflate_status==Z_STREAM_ERROR) {
+            free(output);deflateEnd(&stream);
+            snprintf(vm->error,sizeof vm->error,"gzip compression failed");
+            return DIAMOND_VM_PROGRAM_ERROR;
+        }
+    }
+    deflateEnd(&stream);
+    DiamondString *result=allocate_string(vm,(const char *)output,produced);
+    free(output);
+    if(result==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+    *out_result=DIAMOND_OBJECT(result);
+    return DIAMOND_VM_OK;
+}
+
+/* Gzip.decompress(data, max_size) -- the inverse, accepting either a
+ * gzip- or zlib-wrapped stream (`windowBits=15+32` asks zlib to detect
+ * either header automatically -- covers both real-world spellings of
+ * HTTP's Content-Encoding: gzip/deflate, since some servers send
+ * "deflate" as a zlib-wrapped stream despite the RFC's ambiguity about
+ * which). `max_size` is a required cap on the *decompressed* output,
+ * checked incrementally as output grows rather than after the fact --
+ * decompressing a small, attacker-controlled input into an unbounded
+ * output (a "zip bomb") is a real risk for anything that automatically
+ * decompresses a network response, so this never fully materializes an
+ * over-cap buffer in the first place. The caller decides what "too big"
+ * means (the outbound HTTP client passes its own http_max_body_size()) --
+ * there's no single sensible default this native primitive could pick
+ * on its own. */
+static DiamondVmStatus gzip_decompress_helper(DiamondVm *vm,DiamondValue data_value,
+        DiamondValue max_size_value,DiamondValue *out_result) {
+    if(data_value.kind!=DIAMOND_VALUE_OBJECT||
+       data_value.as.object->kind!=DIAMOND_OBJECT_STRING||
+       max_size_value.kind!=DIAMOND_VALUE_INT)
+        return DIAMOND_VM_TYPE_ERROR;
+    if(max_size_value.as.integer<0) {
+        snprintf(vm->error,sizeof vm->error,"Gzip.decompress max_size must not be negative");
+        return DIAMOND_VM_ARITY_ERROR;
+    }
+    const size_t max_size=(size_t)max_size_value.as.integer;
+    const DiamondString *data=(const DiamondString *)data_value.as.object;
+    z_stream stream={0};
+    if(inflateInit2(&stream,15+32)!=Z_OK) {
+        snprintf(vm->error,sizeof vm->error,"cannot initialize gzip decompression");
+        return DIAMOND_VM_PROGRAM_ERROR;
+    }
+    stream.next_in=(Bytef *)data->chars;
+    stream.avail_in=(uInt)(data->length>UINT_MAX?UINT_MAX:data->length);
+    size_t capacity=data->length*3+64;
+    if(capacity>max_size&&max_size>0)capacity=max_size;
+    unsigned char *output=malloc(capacity>0?capacity:1);
+    if(output==nullptr) {inflateEnd(&stream);return DIAMOND_VM_OUT_OF_MEMORY;}
+    size_t produced=0;
+    int inflate_status=Z_OK;
+    while(inflate_status!=Z_STREAM_END) {
+        if(produced==capacity) {
+            if(produced>=max_size) {
+                free(output);inflateEnd(&stream);
+                snprintf(vm->error,sizeof vm->error,
+                    "decompressed data exceeds maximum size of %zu bytes",max_size);
+                return DIAMOND_VM_IO_ERROR;
+            }
+            size_t grown=capacity==0?64:capacity*2;
+            if(grown>max_size)grown=max_size;
+            unsigned char *bigger=realloc(output,grown);
+            if(bigger==nullptr) {free(output);inflateEnd(&stream);return DIAMOND_VM_OUT_OF_MEMORY;}
+            output=bigger;capacity=grown;
+        }
+        stream.next_out=output+produced;
+        stream.avail_out=(uInt)(capacity-produced>UINT_MAX?UINT_MAX:capacity-produced);
+        const uInt before=stream.avail_out;
+        inflate_status=inflate(&stream,Z_NO_FLUSH);
+        produced+=before-stream.avail_out;
+        if(inflate_status==Z_NEED_DICT||inflate_status==Z_DATA_ERROR||
+           inflate_status==Z_MEM_ERROR||inflate_status==Z_STREAM_ERROR) {
+            char detail[256];
+            (void)snprintf(detail,sizeof detail,"%s",
+                stream.msg!=nullptr?stream.msg:"corrupt or truncated gzip stream");
+            free(output);inflateEnd(&stream);
+            snprintf(vm->error,sizeof vm->error,"gzip decompression failed: %s",detail);
+            return DIAMOND_VM_IO_ERROR;
+        }
+        if(inflate_status!=Z_STREAM_END&&stream.avail_in==0&&stream.avail_out!=0) {
+            /* No more input, decoder didn't ask for more output room, and
+             * it isn't reporting the stream as finished -- a truncated
+             * stream, not a bug in the grow loop above. */
+            free(output);inflateEnd(&stream);
+            snprintf(vm->error,sizeof vm->error,
+                "gzip decompression failed: truncated stream");
+            return DIAMOND_VM_IO_ERROR;
+        }
+    }
+    inflateEnd(&stream);
+    DiamondString *result=allocate_string(vm,(const char *)output,produced);
+    free(output);
     if(result==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
     *out_result=DIAMOND_OBJECT(result);
     return DIAMOND_VM_OK;
@@ -15051,6 +15188,21 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     registers[key_register],registers[blob_register],
                     &registers[destination]);
                 VM_PROPAGATE(decrypt_status);break;
+            }
+            case DIAMOND_OP_GZIP_COMPRESS: {
+                uint16_t destination=0,data_register=0;
+                READ_SHORT(destination);READ_SHORT(data_register);
+                const DiamondVmStatus compress_status=gzip_compress_helper(vm,
+                    registers[data_register],&registers[destination]);
+                VM_PROPAGATE(compress_status);break;
+            }
+            case DIAMOND_OP_GZIP_DECOMPRESS: {
+                uint16_t destination=0,data_register=0,max_size_register=0;
+                READ_SHORT(destination);READ_SHORT(data_register);READ_SHORT(max_size_register);
+                const DiamondVmStatus decompress_status=gzip_decompress_helper(vm,
+                    registers[data_register],registers[max_size_register],
+                    &registers[destination]);
+                VM_PROPAGATE(decompress_status);break;
             }
             case DIAMOND_OP_EXIT: {
                 uint16_t code_register=0;

@@ -1,0 +1,9 @@
+true
+true
+true
+size cap raised
+corrupt data raised
+compress type error
+decompress type error
+gzip smoke ok
+nil

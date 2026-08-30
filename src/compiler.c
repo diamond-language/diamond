@@ -5103,6 +5103,75 @@ static uint16_t parse_cipher_decrypt_call(Compiler *compiler) {
     return dest;
 }
 
+static uint16_t parse_gzip_compress_call(Compiler *compiler) {
+    if(compiler->current.kind!=DIAMOND_TOKEN_LEFT_PAREN) {
+        fail(compiler,compiler->current.span,"expected '(' after 'Gzip.compress'");
+        return 0;
+    }
+    advance_token(compiler);skip_newlines(compiler);
+    const uint16_t data_register=parse_expression(compiler);
+    skip_newlines(compiler);
+    if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
+        fail(compiler,compiler->current.span,"expected ')' after Gzip.compress arguments");
+        return 0;
+    }
+    advance_token(compiler);
+    const uint16_t dest=allocate_register(compiler);
+    emit_opcode(compiler,DIAMOND_OP_GZIP_COMPRESS);
+    emit_register(compiler,dest);
+    emit_register(compiler,data_register);
+    compiler->known_types[dest]=DIAMOND_TYPE_STRING;
+    return dest;
+}
+
+static uint16_t parse_gzip_decompress_call(Compiler *compiler) {
+    if(compiler->current.kind!=DIAMOND_TOKEN_LEFT_PAREN) {
+        fail(compiler,compiler->current.span,"expected '(' after 'Gzip.decompress'");
+        return 0;
+    }
+    advance_token(compiler);skip_newlines(compiler);
+    const uint16_t data_register=parse_expression(compiler);
+    skip_newlines(compiler);
+    if(compiler->current.kind!=DIAMOND_TOKEN_COMMA) {
+        fail(compiler,compiler->current.span,"expected ',' after Gzip.decompress data");
+        return 0;
+    }
+    advance_token(compiler);skip_newlines(compiler);
+    const uint16_t max_size_register=parse_expression(compiler);
+    skip_newlines(compiler);
+    if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
+        fail(compiler,compiler->current.span,"expected ')' after Gzip.decompress arguments");
+        return 0;
+    }
+    advance_token(compiler);
+    const uint16_t dest=allocate_register(compiler);
+    emit_opcode(compiler,DIAMOND_OP_GZIP_DECOMPRESS);
+    emit_register(compiler,dest);
+    emit_register(compiler,data_register);
+    emit_register(compiler,max_size_register);
+    compiler->known_types[dest]=DIAMOND_TYPE_STRING;
+    return dest;
+}
+
+static uint16_t parse_gzip_call(Compiler *compiler) {
+    advance_token(compiler); /* consume '.' */
+    if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER) {
+        fail(compiler,compiler->current.span,"expected 'compress' or 'decompress' after 'Gzip'");
+        return 0;
+    }
+    const DiamondSpan method=compiler->current.span;
+    if(name_equals(compiler,"compress",method,false)) {
+        advance_token(compiler);
+        return parse_gzip_compress_call(compiler);
+    }
+    if(name_equals(compiler,"decompress",method,false)) {
+        advance_token(compiler);
+        return parse_gzip_decompress_call(compiler);
+    }
+    fail(compiler,method,"expected 'compress' or 'decompress' after 'Gzip'");
+    return 0;
+}
+
 static uint16_t parse_cipher_call(Compiler *compiler) {
     advance_token(compiler); /* consume '.' */
     if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER) {
@@ -5400,6 +5469,10 @@ static uint16_t parse_name(Compiler *compiler) {
        compiler->current.kind==DIAMOND_TOKEN_DOT&&
        name_equals(compiler,"Cipher",name,false))
         return parse_cipher_call(compiler);
+    if(class_index<0&&find_local(compiler,name)<0&&find_function(compiler,name)<0&&
+       compiler->current.kind==DIAMOND_TOKEN_DOT&&
+       name_equals(compiler,"Gzip",name,false))
+        return parse_gzip_call(compiler);
     if(class_index<0&&find_local(compiler,name)<0&&find_function(compiler,name)<0&&
        compiler->current.kind==DIAMOND_TOKEN_DOT&&
        name_equals(compiler,"SecureRandom",name,false))

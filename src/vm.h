@@ -286,6 +286,13 @@ typedef enum DiamondOpCode : uint8_t {
      * malformed digest. */
     DIAMOND_OP_CIPHER_ENCRYPT,
     DIAMOND_OP_CIPHER_DECRYPT,
+    /* Gzip.compress(data) / Gzip.decompress(data, max_size) -- gzip-
+     * wrapped deflate via the already-linked zlib. `decompress`'s
+     * `max_size` bounds the decompressed output, checked incrementally
+     * (not after the fact) against a "zip bomb" -- a small,
+     * attacker-controlled input decompressing to an unbounded output. */
+    DIAMOND_OP_GZIP_COMPRESS,
+    DIAMOND_OP_GZIP_DECOMPRESS,
     /* ClassName.compile_method(name, params, body_source) -- compiles a
      * new method body from a source string at runtime and returns a
      * Callable, meant to be installed via the existing

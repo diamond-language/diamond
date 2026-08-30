@@ -1722,6 +1722,26 @@ Cipher.decrypt(key, blob)             # => "sensitive session data"
 Cipher.decrypt(SecureRandom.bytes(32), blob)  # => nil (wrong key)
 ```
 
+`Gzip.compress(data: String) -> String` and `Gzip.decompress(data: String,
+max_size: Int) -> String` are gzip-wrapped deflate, backed by the
+already-linked zlib. `.decompress` also accepts a plain zlib-wrapped
+stream (auto-detected) — some servers send `Content-Encoding: deflate`
+as one of these rather than raw deflate, and this covers both real-world
+spellings without the caller needing to know which. `max_size` bounds
+the *decompressed* output, checked as it grows rather than after the
+fact — decompressing a small, untrusted input into an unbounded output
+("zip bomb") is a real risk for anything that automatically decompresses
+a network response, so this raises a rescuable `IOError` instead of ever
+fully materializing an over-cap buffer. Malformed input (corrupt or
+truncated) also raises `IOError`, not `nil` — unlike `Cipher.decrypt`,
+there's no expected-in-normal-operation forged-input case here to justify
+that softer failure mode.
+
+```ruby
+compressed = Gzip.compress("some text")
+Gzip.decompress(compressed, 10 * 1024 * 1024)  # => "some text"
+```
+
 See `packages/cookies` for signed and encrypted cookie helpers built on
 `HMAC.verify`/`Cipher` above.
 

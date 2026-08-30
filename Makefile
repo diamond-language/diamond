@@ -22,7 +22,7 @@ LDFLAGS_SANITIZE := -fsanitize=address,undefined
 # addition to CFLAGS_SANITIZE -- see docs/threads.md and tests/tsan_test.sh.
 CFLAGS_TSAN := $(CFLAGS_DEBUG) -fsanitize=thread
 LDFLAGS_TSAN := -fsanitize=thread
-LDLIBS := -lm $(REGINOLD_DIR)/libreginold.a -lsqlite3 -lpq -lmariadb -ldl -lpthread -lssl -lcrypto -lcrypt
+LDLIBS := -lm $(REGINOLD_DIR)/libreginold.a -lsqlite3 -lpq -lmariadb -ldl -lpthread -lssl -lcrypto -lcrypt -lz
 
 # libFuzzer is a Clang/LLVM feature (-fsanitize=fuzzer isn't recognized by
 # GCC at all) -- the fuzz binary is the one build variant in this Makefile
@@ -248,11 +248,11 @@ test-exit: debug
 
 $(BUILD_DIR)/compile_fuzzer: fuzz/compile_fuzzer.c $(API_SOURCES) $(REGINOLD_LIB)
 	@mkdir -p $(BUILD_DIR)
-	$(CC_FUZZ) $(CPPFLAGS) $(CFLAGS_FUZZ) $(API_SOURCES) $< -lm $(REGINOLD_DIR)/libreginold.a -lsqlite3 -lpq -lmariadb -ldl -lpthread -lssl -lcrypto -lcrypt -o $@
+	$(CC_FUZZ) $(CPPFLAGS) $(CFLAGS_FUZZ) $(API_SOURCES) $< -lm $(REGINOLD_DIR)/libreginold.a -lsqlite3 -lpq -lmariadb -ldl -lpthread -lssl -lcrypto -lcrypt -lz -o $@
 
 $(BUILD_DIR)/execute_fuzzer: fuzz/execute_fuzzer.c $(API_SOURCES) $(REGINOLD_LIB)
 	@mkdir -p $(BUILD_DIR)
-	$(CC_FUZZ) $(CPPFLAGS) $(CFLAGS_FUZZ) $(API_SOURCES) $< -lm $(REGINOLD_DIR)/libreginold.a -lsqlite3 -lpq -lmariadb -ldl -lpthread -lssl -lcrypto -lcrypt -o $@
+	$(CC_FUZZ) $(CPPFLAGS) $(CFLAGS_FUZZ) $(API_SOURCES) $< -lm $(REGINOLD_DIR)/libreginold.a -lsqlite3 -lpq -lmariadb -ldl -lpthread -lssl -lcrypto -lcrypt -lz -o $@
 
 fuzz: $(BUILD_DIR)/compile_fuzzer $(BUILD_DIR)/execute_fuzzer
 

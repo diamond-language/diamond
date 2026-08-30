@@ -994,9 +994,34 @@ The current native APIs intentionally expose useful, narrow slices. Possible
 extensions should be demand-driven:
 
 - asynchronous subprocess handles with polling and termination;
-- TLS ALPN, client certificates, session resumption, and custom trust stores;
-- richer time parsing/timezone support;
-- surfacing stdout write failures as rescuable exceptions.
+- TLS ALPN and session resumption (client certificates and custom trust
+  stores are done -- see below);
+- richer time parsing/timezone support.
+
+**Done**: `TCPSocket.connect`/`TLSSocket.connect` accept an optional
+third `options` Hash -- `connect_timeout_ms`/`read_timeout_ms`/
+`write_timeout_ms` (real socket timeouts, via non-blocking connect+poll
+and `SO_RCVTIMEO`/`SO_SNDTIMEO`) on both, plus `ca_file`/`ca_path` (a
+custom TLS trust store) and `cert`/`key` (a client certificate for mutual
+TLS) on `TLSSocket.connect` specifically -- driven directly by the
+outbound HTTP client below needing all of these. See `docs/io.md`.
+
+**Done**: `Digest.sha1`/`HMAC.sha1`, mirroring the existing `sha256` pair
+-- exists specifically because RFC 6238 TOTP mandates HMAC-SHA1, not as a
+second general-purpose recommendation. See `docs/syntax.md`.
+
+**Done**: `Gzip.compress`/`Gzip.decompress`, gzip-wrapped deflate via a
+newly-linked zlib (this project's second non-vendored external
+dependency after OpenSSL, for the same "don't hand-roll compression"
+reasoning) -- driven directly by the outbound HTTP client's
+`Accept-Encoding`/`Content-Encoding` support below. `.decompress` takes a
+required `max_size` cap, checked incrementally against decompression-bomb
+input rather than after the fact. See `docs/syntax.md`.
+
+**Done**: stdout write failures (`puts`/`print`, most commonly `EPIPE`
+from a closed pipe reader) now raise a rescuable `IOError` instead of
+being silently dropped -- `fwrite`/`fputc`/`fflush` return values were
+simply never checked before. See `docs/io.md`.
 
 **Done**: password hashing and a CSPRNG, driven by a real need (building an
 authentication system on Diamond) rather than speculatively. `BCrypt.hash`/

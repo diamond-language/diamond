@@ -88,12 +88,13 @@ Required system dependencies:
 - GCC 16 with C23 support;
 - OpenSSL development headers and libraries;
 - SQLite3 development headers and libraries;
+- zlib development headers and libraries;
 - POSIX threads and `ucontext`, provided by the target Linux environment.
 
 On Fedora, the non-default development packages are:
 
 ```sh
-sudo dnf install openssl-devel sqlite-devel
+sudo dnf install openssl-devel sqlite-devel zlib-devel
 ```
 
 Build and run:
