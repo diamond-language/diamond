@@ -925,10 +925,10 @@ bytecode, or semantic stability.
   numeric duration units from seconds through weeks, and
   `.ago()`/`.from_now()` helpers; added strict ISO-8601 `Time.parse` for UTC
   and numeric-offset timestamps plus strict UTC/fixed/local calendar-field
-  constructors, round-trippable
-  `Time#iso8601` formatting, and calendar-aware month/year movement with
+  constructors, round-trippable `Time#iso8601` formatting, and calendar-aware
+  month/year movement with
   end-of-month clamping, calendar-aware day/week movement distinct from fixed
-  durations, day/week/month/year boundary helpers that honor local DST, and
+  durations, day/week/month/quarter/year boundary helpers that honor local DST,
   zone-aware relative-date, same-day, instant, and weekday predicates, plus
   DST-aware constant-time next/previous weekday navigation with optional
   business-day counts.

@@ -76,6 +76,9 @@ actual="$(TZ=America/Los_Angeles "$diamond" -e $'start = Time.local(2024, 3, 9, 
 actual="$(TZ=America/Los_Angeles "$diamond" -e $'start = Time.local(2024, 3, 8, 12, 0, 0)\nshifted = start.next_weekday()\n[shifted.iso8601(), shifted - start]')"
 [[ "$actual" == "[2024-03-11T12:00:00-07:00, 255600.0]" ]]
 
+actual="$(TZ=America/Los_Angeles "$diamond" -e $'t = Time.local(2024, 3, 10, 12, 0, 0)\n[t.beginning_of_quarter().iso8601(), t.end_of_quarter().iso8601(6)]')"
+[[ "$actual" == "[2024-01-01T00:00:00-08:00, 2024-03-31T23:59:59.999999-07:00]" ]]
+
 error_file="$(mktemp)"
 if "$diamond" -e '1 + )' 2>"$error_file"; then
     echo "invalid source unexpectedly succeeded" >&2

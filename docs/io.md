@@ -1164,6 +1164,9 @@ generic dispatch every other native type uses:
 - `.beginning_of_year()` / `.end_of_year()` → January 1 through the final
   microsecond of December 31. Week/year boundaries preserve timezone mode and
   follow the same local-DST rules.
+- `.beginning_of_quarter()` / `.end_of_quarter()` → the first instant and final
+  microsecond of the receiver's Jan–Mar, Apr–Jun, Jul–Sep, or Oct–Dec quarter,
+  preserving timezone mode and local-DST behavior
 - `.today?()` → whether the receiver's calendar date is today in its own
   UTC/fixed/local display zone
 - `.yesterday?()` / `.tomorrow?()` → the adjacent calendar dates relative to
