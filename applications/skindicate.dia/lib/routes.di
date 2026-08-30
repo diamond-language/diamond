@@ -21,5 +21,7 @@ def build_router()
   router.post("/users/:username/follow", UsersController.follow, [require_authentication, require_csrf])
   router.post("/users/:username/unfollow", UsersController.unfollow, [require_authentication, require_csrf])
   router.get("/users/:username", UsersController.show)
+  router.get("/admin", AdminController.index, [require_authentication, require_admin])
+  router.post("/admin/users/:id/role", AdminController.update_role, [require_authentication, require_admin, require_csrf])
   router
 end

@@ -125,6 +125,55 @@ not_owner_delete = app(multipart_request("POST", "/skins/#{skin.id()}/delete", {
 if not_owner_delete[0] != 404 then raise "a non-owner was allowed to delete another user's skin" end
 if Skin.find(Database.get(context), skin.id()) == nil then raise "a rejected delete somehow removed the skin" end
 
+# --- admin: setup_db.di already seeds an "admin" user, so by the time
+# --- user1/user2 sign up over HTTP here, the users table is *not*
+# --- empty -- neither should get auto-admin. That's a real edge case
+# --- worth covering, not just "the first HTTP signup is special":
+# --- the seeded admin is genuinely the app's very first user, and the
+# --- logic (checking the current row count, not e.g. a hardcoded
+# --- username) needs to respect that. Uses the seeded admin's own
+# --- login for admin actions. Factored into its own function for the
+# --- same DIAMOND_MAX_LOCALS reason as test_discussion_features below.
+def test_admin_features(context, other_cookie)
+  db = Database.get(context)
+  seed_admin = User.where({"username": "admin"}).first(db)
+  user1 = User.where({"username": "user1"}).first(db)
+  user2 = User.where({"username": "user2"}).first(db)
+  if !seed_admin.admin?() then raise "the seeded admin user lost its admin role" end
+  if user1.admin?() || user2.admin?()
+    raise "a signup was incorrectly granted admin despite the seeded admin already existing"
+  end
+
+  admin_login = app(request("POST", "/login", "email=admin%40example.com&password=diamond123"), context)
+  admin_cookie = admin_login[1]["Set-Cookie"]
+  admin_csrf = context["csrf_token"]
+
+  non_admin_index = app(request_with_cookie("GET", "/admin", "", other_cookie), context)
+  if non_admin_index[0] != 404 then raise "a non-admin was allowed to view the admin panel" end
+
+  admin_index = app(request_with_cookie("GET", "/admin", "", admin_cookie), context)
+  if admin_index[0] != 200 || !admin_index[2].include?("user1") || !admin_index[2].include?("user2")
+    raise "the admin panel did not list every user"
+  end
+
+  self_role_change = app(request_with_cookie("POST", "/admin/users/#{seed_admin.id()}/role", "csrf_token=#{admin_csrf}&role=user", admin_cookie), context)
+  if self_role_change[0] != 302 then raise "self role change request failed" end
+  if !User.find(db, seed_admin.id()).admin?() then raise "an admin was allowed to change their own role" end
+
+  promote = app(request_with_cookie("POST", "/admin/users/#{user2.id()}/role", "csrf_token=#{admin_csrf}&role=admin", admin_cookie), context)
+  if promote[0] != 302 then raise "role promotion request failed" end
+  if !User.find(db, user2.id()).admin?() then raise "promoting a user to admin did not persist" end
+
+  promoted_can_access = app(request_with_cookie("GET", "/admin", "", other_cookie), context)
+  if promoted_can_access[0] != 200 then raise "a newly-promoted admin was still denied the admin panel" end
+
+  demote = app(request_with_cookie("POST", "/admin/users/#{user2.id()}/role", "csrf_token=#{admin_csrf}&role=user", admin_cookie), context)
+  if demote[0] != 302 then raise "role demotion request failed" end
+  if User.find(db, user2.id()).admin?() then raise "demoting a user did not persist" end
+end
+
+test_admin_features(context, other_cookie)
+
 # --- comments/replies, on the new Entry-tree foundation. Factored
 # --- into its own function purely to keep this script's own flat
 # --- top-level local count under DIAMOND_MAX_LOCALS (64) -- no other

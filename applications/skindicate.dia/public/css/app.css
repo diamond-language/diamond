@@ -590,3 +590,23 @@ img { max-width: 100%; display: block; }
 
 .reply-form { margin-top: 0.75rem; margin-left: 1.5rem; }
 .reply-form .comment-input { min-height: 3.5rem; }
+
+/* ── Admin ────────────────────────────────────────────────────────────── */
+
+.admin-users-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.875rem;
+}
+.admin-users-table th {
+  text-align: left;
+  padding: 0.6rem 0.75rem;
+  color: var(--text-2);
+  font-weight: 600;
+  border-bottom: 1px solid var(--border-hi);
+}
+.admin-users-table td {
+  padding: 0.6rem 0.75rem;
+  border-bottom: 1px solid var(--border);
+}
+.admin-self-note { color: var(--text-3); font-size: 0.8rem; }

@@ -17,6 +17,9 @@
         <a href="/signup" class="btn btn-primary">Join</a>
         <% else %>
         <a href="/skins/new" class="btn btn-primary">+ Submit</a>
+        <% if current_user.admin?() %>
+        <a href="/admin" class="nav-user-link">Admin</a>
+        <% end %>
         <a href="/users/<%= current_user.username() %>" class="nav-user-link">@<%= current_user.username() %></a>
         <form method="POST" action="/logout" style="display:inline">
           <input type="hidden" name="csrf_token" value="<%= csrf_token %>">

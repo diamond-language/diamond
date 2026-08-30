@@ -17,7 +17,7 @@ db.execute("DROP TABLE IF EXISTS skins")
 db.execute("DROP TABLE IF EXISTS sessions")
 db.execute("DROP TABLE IF EXISTS users")
 
-db.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, email TEXT NOT NULL UNIQUE, username TEXT NOT NULL UNIQUE, password_digest TEXT NOT NULL)")
+db.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, email TEXT NOT NULL UNIQUE, username TEXT NOT NULL UNIQUE, password_digest TEXT NOT NULL, role TEXT NOT NULL DEFAULT 'user')")
 db.execute("CREATE TABLE sessions (id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL, token TEXT NOT NULL UNIQUE, csrf_token TEXT NOT NULL, expires_at INTEGER NOT NULL, FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE)")
 db.execute([
   "CREATE TABLE skins (id INTEGER PRIMARY KEY,",
@@ -55,7 +55,7 @@ db.execute("CREATE INDEX entries_user_id_idx ON entries(user_id)")
 db.execute("CREATE UNIQUE INDEX entries_entryable_idx ON entries(entryable_type, entryable_id)")
 
 password_digest = BCrypt.hash("diamond123", 12)
-db.execute("INSERT INTO users (email, username, password_digest) VALUES (?, ?, ?)", ["admin@example.com", "admin", password_digest])
+db.execute("INSERT INTO users (email, username, password_digest, role) VALUES (?, ?, ?, 'admin')", ["admin@example.com", "admin", password_digest])
 user_id = db.last_insert_row_id()
 db.execute("INSERT INTO skins (title, description, platform, file_path, original_filename) VALUES (?, ?, ?, ?, ?)",
   ["Midnight Blue Taskbar", "A dark, minimal taskbar reskin for Windows 11.", "windows", "uploads/seed-placeholder.zip", "midnight-blue.zip"])

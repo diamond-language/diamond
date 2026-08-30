@@ -114,6 +114,20 @@ def require_authentication(request, context, params)
   nil
 end
 
+# 404s (not 403), same "don't confirm a privileged thing exists"
+# convention as require_ownership below -- always used after
+# require_authentication in a route's own middleware list (see
+# routes.di), so context["current_user"] is assumed non-nil here.
+def require_admin(request, context, params)
+  user = context["current_user"]
+  unless user.admin?()
+    log_warn(request, context, "authorization.denied", {"reason": "admin_required", "user_id": user.id()})
+    return Dials::Response.not_found(request["path"])
+  end
+  log_debug(request, context, "authorization.allowed", {"user_id": user.id(), "role": "admin"})
+  nil
+end
+
 # 404s (not 403) on someone else's skin -- avoids confirming to an
 # unauthorized visitor that a given id even exists. Stashes the loaded
 # Skin into context["current_skin"] on success so the controller action

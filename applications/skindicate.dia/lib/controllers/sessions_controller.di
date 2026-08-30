@@ -19,7 +19,12 @@ class SessionsController
 
   def self.create_signup(request, context, params)
     db = Database.get(context)
-    attributes = {"email": params["email"], "username": params["username"], "password_digest": BCrypt.hash(if params["password"] == nil then "" else params["password"] end, 12)}
+    # The very first account on a fresh Skindicate install becomes an
+    # admin automatically -- there's no other way to reach the admin
+    # panel otherwise (no separate seed/CLI flow), and this only ever
+    # fires once (every subsequent signup finds a non-empty table).
+    role = if User.all().count(db) == 0 then "admin" else "user" end
+    attributes = {"email": params["email"], "username": params["username"], "password_digest": BCrypt.hash(if params["password"] == nil then "" else params["password"] end, 12), "role": role}
     user = User.new(attributes)
     begin
       user.save(db)
@@ -27,7 +32,7 @@ class SessionsController
       log_warn(request, context, "signup.rejected", {"validation_errors": error.errors()})
       return Div.html_response(422, layout_html("Sign up", signup_form_html(error.errors(), params["email"], params["username"]), nil, nil))
     end
-    log_info(request, context, "signup.succeeded", {"user_id": user.id()})
+    log_info(request, context, "signup.succeeded", {"user_id": user.id(), "role": role})
     SessionsController.start_session(context, user, "/")
   end
 
