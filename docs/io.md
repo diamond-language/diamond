@@ -1154,6 +1154,11 @@ generic dispatch every other native type uses:
 - `.beginning_of_month()` / `.end_of_month()` → the corresponding month
   boundaries. All boundary helpers preserve timezone mode; local boundaries
   follow DST, so a transition day may contain 23 or 25 elapsed hours.
+- `.beginning_of_week()` / `.end_of_week()` → Monday 00:00:00 through the
+  final microsecond of Sunday, matching Rails' default Monday week start
+- `.beginning_of_year()` / `.end_of_year()` → January 1 through the final
+  microsecond of December 31. Week/year boundaries preserve timezone mode and
+  follow the same local-DST rules.
 
 `Int` and `Float` provide singular and plural `.second(s)()`, `.minute(s)()`,
 `.hour(s)()`, `.day(s)()`, and `.week(s)()` helpers. These return numeric

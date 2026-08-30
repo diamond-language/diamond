@@ -7768,7 +7768,8 @@ static DiamondVmStatus time_calendar_shift_helper(DiamondVm *vm,
 }
 
 enum { TIME_BEGINNING_OF_DAY,TIME_END_OF_DAY,TIME_BEGINNING_OF_MONTH,
-    TIME_END_OF_MONTH };
+    TIME_END_OF_MONTH,TIME_BEGINNING_OF_WEEK,TIME_END_OF_WEEK,
+    TIME_BEGINNING_OF_YEAR,TIME_END_OF_YEAR };
 
 /* Wall-clock period boundaries in the receiver's own display zone. End
  * boundaries are the final microsecond before the following boundary, so a
@@ -7780,12 +7781,20 @@ static DiamondVmStatus time_boundary_helper(DiamondVm *vm,const DiamondTime *tar
         snprintf(vm->error,sizeof vm->error,"Time value out of range");
         return DIAMOND_VM_TYPE_ERROR;
     }
-    const bool end=boundary==TIME_END_OF_DAY||boundary==TIME_END_OF_MONTH;
+    const bool end=boundary==TIME_END_OF_DAY||boundary==TIME_END_OF_MONTH||
+        boundary==TIME_END_OF_WEEK||boundary==TIME_END_OF_YEAR;
     parts.tm_hour=0;parts.tm_min=0;parts.tm_sec=0;
-    if(boundary==TIME_BEGINNING_OF_MONTH||boundary==TIME_END_OF_MONTH)
-        parts.tm_mday=1;
     if(boundary==TIME_END_OF_DAY)parts.tm_mday++;
-    else if(boundary==TIME_END_OF_MONTH)parts.tm_mon++;
+    else if(boundary==TIME_BEGINNING_OF_MONTH)parts.tm_mday=1;
+    else if(boundary==TIME_END_OF_MONTH) { parts.tm_mday=1;parts.tm_mon++; }
+    else if(boundary==TIME_BEGINNING_OF_WEEK)
+        parts.tm_mday-=(parts.tm_wday+6)%7;
+    else if(boundary==TIME_END_OF_WEEK)
+        parts.tm_mday+=7-(parts.tm_wday+6)%7;
+    else if(boundary==TIME_BEGINNING_OF_YEAR) { parts.tm_mon=0;parts.tm_mday=1; }
+    else if(boundary==TIME_END_OF_YEAR) {
+        parts.tm_year++;parts.tm_mon=0;parts.tm_mday=1;
+    }
     time_t epoch;
     if(target->zone_mode==DIAMOND_TIME_LOCAL) {
         parts.tm_isdst=-1;epoch=mktime(&parts);
@@ -10498,13 +10507,26 @@ static DiamondVmStatus time_dispatch_helper(DiamondVm *vm,DiamondTime *target,
         memcmp(method_name->chars,"beginning_of_month",18)==0;
     const bool end_of_month_method=method_name->length==12&&
         memcmp(method_name->chars,"end_of_month",12)==0;
+    const bool beginning_of_week_method=method_name->length==17&&
+        memcmp(method_name->chars,"beginning_of_week",17)==0;
+    const bool end_of_week_method=method_name->length==11&&
+        memcmp(method_name->chars,"end_of_week",11)==0;
+    const bool beginning_of_year_method=method_name->length==17&&
+        memcmp(method_name->chars,"beginning_of_year",17)==0;
+    const bool end_of_year_method=method_name->length==11&&
+        memcmp(method_name->chars,"end_of_year",11)==0;
     if(beginning_of_day_method||end_of_day_method||beginning_of_month_method||
-       end_of_month_method) {
+       end_of_month_method||beginning_of_week_method||end_of_week_method||
+       beginning_of_year_method||end_of_year_method) {
         if(argc!=0)return DIAMOND_VM_ARITY_ERROR;
         uint8_t boundary=TIME_BEGINNING_OF_DAY;
         if(end_of_day_method)boundary=TIME_END_OF_DAY;
         else if(beginning_of_month_method)boundary=TIME_BEGINNING_OF_MONTH;
         else if(end_of_month_method)boundary=TIME_END_OF_MONTH;
+        else if(beginning_of_week_method)boundary=TIME_BEGINNING_OF_WEEK;
+        else if(end_of_week_method)boundary=TIME_END_OF_WEEK;
+        else if(beginning_of_year_method)boundary=TIME_BEGINNING_OF_YEAR;
+        else if(end_of_year_method)boundary=TIME_END_OF_YEAR;
         return time_boundary_helper(vm,target,boundary,&registers[dest]);
     }
     const bool to_s_method=method_name->length==4&&
