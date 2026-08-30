@@ -7767,6 +7767,39 @@ static DiamondVmStatus time_calendar_shift_helper(DiamondVm *vm,
     *out_result=DIAMOND_OBJECT(result);return DIAMOND_VM_OK;
 }
 
+enum { TIME_BEGINNING_OF_DAY,TIME_END_OF_DAY,TIME_BEGINNING_OF_MONTH,
+    TIME_END_OF_MONTH };
+
+/* Wall-clock period boundaries in the receiver's own display zone. End
+ * boundaries are the final microsecond before the following boundary, so a
+ * local day naturally follows libc's 23/24/25-hour DST transition rules. */
+static DiamondVmStatus time_boundary_helper(DiamondVm *vm,const DiamondTime *target,
+        uint8_t boundary,DiamondValue *out_result) {
+    struct tm parts;
+    if(!time_struct_tm(target,&parts)) {
+        snprintf(vm->error,sizeof vm->error,"Time value out of range");
+        return DIAMOND_VM_TYPE_ERROR;
+    }
+    const bool end=boundary==TIME_END_OF_DAY||boundary==TIME_END_OF_MONTH;
+    parts.tm_hour=0;parts.tm_min=0;parts.tm_sec=0;
+    if(boundary==TIME_BEGINNING_OF_MONTH||boundary==TIME_END_OF_MONTH)
+        parts.tm_mday=1;
+    if(boundary==TIME_END_OF_DAY)parts.tm_mday++;
+    else if(boundary==TIME_END_OF_MONTH)parts.tm_mon++;
+    time_t epoch;
+    if(target->zone_mode==DIAMOND_TIME_LOCAL) {
+        parts.tm_isdst=-1;epoch=mktime(&parts);
+    } else {
+        epoch=timegm(&parts);
+        if(target->zone_mode==DIAMOND_TIME_FIXED_OFFSET)
+            epoch-=(time_t)target->utc_offset;
+    }
+    DiamondTime *result=allocate_time(vm,(double)epoch-(end?0.000001:0.0),
+        target->zone_mode,target->utc_offset);
+    if(result==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+    *out_result=DIAMOND_OBJECT(result);return DIAMOND_VM_OK;
+}
+
 /* Shared by #to_s and puts/string-interpolation's own stringify path
  * (see builder_format_value/stringify_value) -- one formatting
  * implementation, not two. */
@@ -10456,6 +10489,23 @@ static DiamondVmStatus time_dispatch_helper(DiamondVm *vm,DiamondTime *target,
         return time_calendar_shift_helper(vm,target,registers[base].as.integer,
             years_ago_method||years_from_now_method,
             months_from_now_method||years_from_now_method,&registers[dest]);
+    }
+    const bool beginning_of_day_method=method_name->length==16&&
+        memcmp(method_name->chars,"beginning_of_day",16)==0;
+    const bool end_of_day_method=method_name->length==10&&
+        memcmp(method_name->chars,"end_of_day",10)==0;
+    const bool beginning_of_month_method=method_name->length==18&&
+        memcmp(method_name->chars,"beginning_of_month",18)==0;
+    const bool end_of_month_method=method_name->length==12&&
+        memcmp(method_name->chars,"end_of_month",12)==0;
+    if(beginning_of_day_method||end_of_day_method||beginning_of_month_method||
+       end_of_month_method) {
+        if(argc!=0)return DIAMOND_VM_ARITY_ERROR;
+        uint8_t boundary=TIME_BEGINNING_OF_DAY;
+        if(end_of_day_method)boundary=TIME_END_OF_DAY;
+        else if(beginning_of_month_method)boundary=TIME_BEGINNING_OF_MONTH;
+        else if(end_of_month_method)boundary=TIME_END_OF_MONTH;
+        return time_boundary_helper(vm,target,boundary,&registers[dest]);
     }
     const bool to_s_method=method_name->length==4&&
         memcmp(method_name->chars,"to_s",4)==0;

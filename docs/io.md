@@ -1149,6 +1149,11 @@ generic dispatch every other native type uses:
   seconds, clamp the day to the target month's end (March 31 minus one month
   becomes February 28 or 29), and preserve UTC/fixed/local mode. Process-local
   results use libc's DST rules. Negative `n` reverses the direction.
+- `.beginning_of_day()` / `.end_of_day()` → the first instant or final
+  microsecond of the receiver's calendar day
+- `.beginning_of_month()` / `.end_of_month()` → the corresponding month
+  boundaries. All boundary helpers preserve timezone mode; local boundaries
+  follow DST, so a transition day may contain 23 or 25 elapsed hours.
 
 `Int` and `Float` provide singular and plural `.second(s)()`, `.minute(s)()`,
 `.hour(s)()`, `.day(s)()`, and `.week(s)()` helpers. These return numeric

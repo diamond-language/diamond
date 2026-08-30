@@ -64,6 +64,12 @@ actual="$(FOO_DIAMOND_TEST_VAR=hello "$diamond" -e 'ENV["FOO_DIAMOND_TEST_VAR"]'
 actual="$("$diamond" -e 'ENV["DIAMOND_NONEXISTENT_VAR_XYZ"] == nil')"
 [[ "$actual" == "true" ]]
 
+# Local Time boundaries are calendar-based across DST, not fixed 24-hour
+# arithmetic. TZ is set before process startup (Diamond itself never mutates
+# process-global timezone state).
+actual="$(TZ=America/Los_Angeles "$diamond" -e $'t = Time.local(2024, 3, 10, 12, 0, 0)\n[t.beginning_of_day().iso8601(), t.end_of_day().iso8601(6)]')"
+[[ "$actual" == "[2024-03-10T00:00:00-08:00, 2024-03-10T23:59:59.999999-07:00]" ]]
+
 error_file="$(mktemp)"
 if "$diamond" -e '1 + )' 2>"$error_file"; then
     echo "invalid source unexpectedly succeeded" >&2
