@@ -1112,6 +1112,9 @@ generic dispatch every other native type uses:
 - `.localtime(offset_seconds)` → a new `Time`, same epoch, displayed at a
   fixed UTC offset from `-86399` through `86399`; for example,
   `.localtime(19800)` selects `+05:30`
+- `.localtime(offset_string)` → the same fixed-offset conversion using `"Z"`
+  or a signed ISO-8601-style `"HH:MM"`, such as `.localtime("+05:30")`;
+  named IANA zones are not accepted
 - `.utc_offset()` → the active offset in seconds (including the effective
   DST-aware offset for process-local time)
 - `.utc?()` → `Bool`
@@ -1122,7 +1125,8 @@ seconds, so they compose with ordinary arithmetic and Rails-style `.ago()` and
 `.from_now()` calls. Each relative-time call reads the wall clock and returns a
 process-local `Time`; fractional seconds are supported, while `NaN` and
 infinities are rejected. The result can be converted with `.utc()` or
-`.localtime(offset)`. Months and years are deliberately absent because they
+`.localtime(offset)`, where the offset may be seconds or `"Z"`/`"±HH:MM"`.
+Months and years are deliberately absent because they
 require calendar-relative arithmetic rather than a fixed seconds multiplier.
 
 `+`, `-`, and comparisons (`<`/`<=`/`>`/`>=`/`==`/`!=`) work directly,

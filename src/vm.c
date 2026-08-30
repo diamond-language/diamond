@@ -7552,6 +7552,27 @@ static bool time_struct_tm(const DiamondTime *target,struct tm *out) {
     return true;
 }
 
+/* Parses the deliberately narrow fixed-offset spelling accepted by
+ * Time#localtime: "Z" or a signed ISO-8601-style "HH:MM". Named zones and
+ * process-global TZ mutation remain out of scope. */
+static bool parse_time_utc_offset(const DiamondString *string,int32_t *out_offset) {
+    if(string->length==1&&string->chars[0]=='Z') {
+        *out_offset=0;return true;
+    }
+    if(string->length!=6||(string->chars[0]!='+'&&string->chars[0]!='-')||
+       string->chars[3]!=':'||
+       string->chars[1]<'0'||string->chars[1]>'9'||
+       string->chars[2]<'0'||string->chars[2]>'9'||
+       string->chars[4]<'0'||string->chars[4]>'9'||
+       string->chars[5]<'0'||string->chars[5]>'9')return false;
+    const int hours=(string->chars[1]-'0')*10+(string->chars[2]-'0');
+    const int minutes=(string->chars[4]-'0')*10+(string->chars[5]-'0');
+    if(hours>23||minutes>59)return false;
+    const int seconds=hours*3600+minutes*60;
+    *out_offset=(int32_t)(string->chars[0]=='-'?-seconds:seconds);
+    return true;
+}
+
 /* Shared by #to_s and puts/string-interpolation's own stringify path
  * (see builder_format_value/stringify_value) -- one formatting
  * implementation, not two. */
@@ -10159,18 +10180,28 @@ static DiamondVmStatus time_dispatch_helper(DiamondVm *vm,DiamondTime *target,
         uint8_t zone_mode=utc_method?DIAMOND_TIME_UTC:DIAMOND_TIME_LOCAL;
         int32_t utc_offset=0;
         if(localtime_method&&argc==1) {
-            if(registers[base].kind!=DIAMOND_VALUE_INT) {
+            if(registers[base].kind==DIAMOND_VALUE_OBJECT&&
+               registers[base].as.object->kind==DIAMOND_OBJECT_STRING) {
+                if(!parse_time_utc_offset(
+                    (const DiamondString *)registers[base].as.object,&utc_offset)) {
+                    snprintf(vm->error,sizeof vm->error,
+                        "Time#localtime offset must be 'Z' or a signed 'HH:MM'");
+                    return DIAMOND_VM_TYPE_ERROR;
+                }
+            } else if(registers[base].kind==DIAMOND_VALUE_INT) {
+                const int64_t supplied=registers[base].as.integer;
+                if(supplied<=-86400||supplied>=86400) {
+                    snprintf(vm->error,sizeof vm->error,
+                        "Time#localtime offset must be between -86399 and 86399 seconds");
+                    return DIAMOND_VM_TYPE_ERROR;
+                }
+                utc_offset=(int32_t)supplied;
+            } else {
                 snprintf(vm->error,sizeof vm->error,
-                    "Time#localtime offset must be an Int number of seconds");
+                    "Time#localtime offset must be an Int or String");
                 return DIAMOND_VM_TYPE_ERROR;
             }
-            const int64_t supplied=registers[base].as.integer;
-            if(supplied<=-86400||supplied>=86400) {
-                snprintf(vm->error,sizeof vm->error,
-                    "Time#localtime offset must be between -86399 and 86399 seconds");
-                return DIAMOND_VM_TYPE_ERROR;
-            }
-            zone_mode=DIAMOND_TIME_FIXED_OFFSET;utc_offset=(int32_t)supplied;
+            zone_mode=DIAMOND_TIME_FIXED_OFFSET;
         }
         DiamondTime *copy=allocate_time(vm,target->epoch,zone_mode,utc_offset);
         if(copy==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
