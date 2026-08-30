@@ -5172,6 +5172,67 @@ static uint16_t parse_gzip_call(Compiler *compiler) {
     return 0;
 }
 
+static uint16_t parse_base64_encode_call(Compiler *compiler) {
+    if(compiler->current.kind!=DIAMOND_TOKEN_LEFT_PAREN) {
+        fail(compiler,compiler->current.span,"expected '(' after 'Base64.encode'");
+        return 0;
+    }
+    advance_token(compiler);skip_newlines(compiler);
+    const uint16_t data_register=parse_expression(compiler);
+    skip_newlines(compiler);
+    if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
+        fail(compiler,compiler->current.span,"expected ')' after Base64.encode arguments");
+        return 0;
+    }
+    advance_token(compiler);
+    const uint16_t dest=allocate_register(compiler);
+    emit_opcode(compiler,DIAMOND_OP_BASE64_ENCODE);
+    emit_register(compiler,dest);
+    emit_register(compiler,data_register);
+    compiler->known_types[dest]=DIAMOND_TYPE_STRING;
+    return dest;
+}
+
+static uint16_t parse_base64_decode_call(Compiler *compiler) {
+    if(compiler->current.kind!=DIAMOND_TOKEN_LEFT_PAREN) {
+        fail(compiler,compiler->current.span,"expected '(' after 'Base64.decode'");
+        return 0;
+    }
+    advance_token(compiler);skip_newlines(compiler);
+    const uint16_t data_register=parse_expression(compiler);
+    skip_newlines(compiler);
+    if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
+        fail(compiler,compiler->current.span,"expected ')' after Base64.decode arguments");
+        return 0;
+    }
+    advance_token(compiler);
+    const uint16_t dest=allocate_register(compiler);
+    emit_opcode(compiler,DIAMOND_OP_BASE64_DECODE);
+    emit_register(compiler,dest);
+    emit_register(compiler,data_register);
+    compiler->known_types[dest]=DIAMOND_TYPE_STRING;
+    return dest;
+}
+
+static uint16_t parse_base64_call(Compiler *compiler) {
+    advance_token(compiler); /* consume '.' */
+    if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER) {
+        fail(compiler,compiler->current.span,"expected 'encode' or 'decode' after 'Base64'");
+        return 0;
+    }
+    const DiamondSpan method=compiler->current.span;
+    if(name_equals(compiler,"encode",method,false)) {
+        advance_token(compiler);
+        return parse_base64_encode_call(compiler);
+    }
+    if(name_equals(compiler,"decode",method,false)) {
+        advance_token(compiler);
+        return parse_base64_decode_call(compiler);
+    }
+    fail(compiler,method,"expected 'encode' or 'decode' after 'Base64'");
+    return 0;
+}
+
 static uint16_t parse_cipher_call(Compiler *compiler) {
     advance_token(compiler); /* consume '.' */
     if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER) {
@@ -5473,6 +5534,10 @@ static uint16_t parse_name(Compiler *compiler) {
        compiler->current.kind==DIAMOND_TOKEN_DOT&&
        name_equals(compiler,"Gzip",name,false))
         return parse_gzip_call(compiler);
+    if(class_index<0&&find_local(compiler,name)<0&&find_function(compiler,name)<0&&
+       compiler->current.kind==DIAMOND_TOKEN_DOT&&
+       name_equals(compiler,"Base64",name,false))
+        return parse_base64_call(compiler);
     if(class_index<0&&find_local(compiler,name)<0&&find_function(compiler,name)<0&&
        compiler->current.kind==DIAMOND_TOKEN_DOT&&
        name_equals(compiler,"SecureRandom",name,false))

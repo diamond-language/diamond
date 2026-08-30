@@ -1742,6 +1742,20 @@ compressed = Gzip.compress("some text")
 Gzip.decompress(compressed, 10 * 1024 * 1024)  # => "some text"
 ```
 
+`Base64.encode(data: String) -> String` and `Base64.decode(data: String)
+-> String` are the standard (RFC 4648) alphabet with padding, via
+OpenSSL's `EVP_EncodeBlock`/`EVP_DecodeBlock` (already linked). Needed
+for HTTP Basic auth (`Authorization: Basic <base64>`). `.decode` validates
+the character set itself before decoding (rather than trusting
+`EVP_DecodeBlock`'s own lenience, which varies by OpenSSL version), so a
+malformed input (wrong length, an invalid character, misplaced `=`
+padding) always raises a rescuable `ArgumentError` with a clear message:
+
+```ruby
+Base64.encode("hello world")              # => "aGVsbG8gd29ybGQ="
+Base64.decode("aGVsbG8gd29ybGQ=")          # => "hello world"
+```
+
 See `packages/cookies` for signed and encrypted cookie helpers built on
 `HMAC.verify`/`Cipher` above.
 

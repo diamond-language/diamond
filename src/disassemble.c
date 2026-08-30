@@ -1202,6 +1202,10 @@ static bool disassemble_chunk(FILE *stream, const char *name,
                 offset=two_registers(stream,chunk,"GZIP_COMPRESS",offset,&valid);break;
             case DIAMOND_OP_GZIP_DECOMPRESS:
                 offset=three_registers(stream,chunk,"GZIP_DECOMPRESS",offset,&valid);break;
+            case DIAMOND_OP_BASE64_ENCODE:
+                offset=two_registers(stream,chunk,"BASE64_ENCODE",offset,&valid);break;
+            case DIAMOND_OP_BASE64_DECODE:
+                offset=two_registers(stream,chunk,"BASE64_DECODE",offset,&valid);break;
             case DIAMOND_OP_EXIT:
                 offset=one_register(stream,chunk,"EXIT",offset, &valid);break;
             case DIAMOND_OP_DEBUGGER: {

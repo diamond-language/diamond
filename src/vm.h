@@ -293,6 +293,12 @@ typedef enum DiamondOpCode : uint8_t {
      * attacker-controlled input decompressing to an unbounded output. */
     DIAMOND_OP_GZIP_COMPRESS,
     DIAMOND_OP_GZIP_DECOMPRESS,
+    /* Base64.encode(data) / Base64.decode(data) -- standard (RFC 4648)
+     * alphabet with padding, via the already-linked OpenSSL
+     * EVP_EncodeBlock/EVP_DecodeBlock. Needed for HTTP Basic auth
+     * (`Authorization: Basic <base64>`). */
+    DIAMOND_OP_BASE64_ENCODE,
+    DIAMOND_OP_BASE64_DECODE,
     /* ClassName.compile_method(name, params, body_source) -- compiles a
      * new method body from a source string at runtime and returns a
      * Callable, meant to be installed via the existing

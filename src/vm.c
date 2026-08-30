@@ -6175,6 +6175,87 @@ static DiamondVmStatus gzip_decompress_helper(DiamondVm *vm,DiamondValue data_va
     return DIAMOND_VM_OK;
 }
 
+/* Base64.encode(data) -- RFC 4648 standard alphabet with padding, via
+ * OpenSSL's EVP_EncodeBlock (already linked). Output length for `n`
+ * input bytes is always exactly 4*ceil(n/3); EVP_EncodeBlock's own
+ * return value is trusted rather than independently recomputed. */
+static DiamondVmStatus base64_encode_helper(DiamondVm *vm,DiamondValue data_value,
+        DiamondValue *out_result) {
+    if(data_value.kind!=DIAMOND_VALUE_OBJECT||
+       data_value.as.object->kind!=DIAMOND_OBJECT_STRING)
+        return DIAMOND_VM_TYPE_ERROR;
+    const DiamondString *data=(const DiamondString *)data_value.as.object;
+    if(data->length>(size_t)INT_MAX/4*3) {
+        snprintf(vm->error,sizeof vm->error,"Base64.encode input is too large");
+        return DIAMOND_VM_ARITY_ERROR;
+    }
+    const size_t capacity=(data->length+2)/3*4;
+    unsigned char *output=malloc(capacity>0?capacity:1);
+    if(output==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+    const int written=EVP_EncodeBlock(output,(const unsigned char *)data->chars,
+        (int)data->length);
+    DiamondString *result=allocate_string(vm,(const char *)output,(size_t)written);
+    free(output);
+    if(result==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+    *out_result=DIAMOND_OBJECT(result);
+    return DIAMOND_VM_OK;
+}
+
+/* Base64.decode(data) -- the inverse. Validates the character set itself
+ * (rather than trusting EVP_DecodeBlock's own lenience, which varies by
+ * OpenSSL version) before decoding, so a malformed input always raises a
+ * clear ArgumentError instead of silently decoding to garbage or
+ * behaving differently across environments. `=` padding is only valid in
+ * the final one or two positions, matching RFC 4648. */
+static DiamondVmStatus base64_decode_helper(DiamondVm *vm,DiamondValue data_value,
+        DiamondValue *out_result) {
+    if(data_value.kind!=DIAMOND_VALUE_OBJECT||
+       data_value.as.object->kind!=DIAMOND_OBJECT_STRING)
+        return DIAMOND_VM_TYPE_ERROR;
+    const DiamondString *data=(const DiamondString *)data_value.as.object;
+    if(data->length%4!=0) {
+        snprintf(vm->error,sizeof vm->error,
+            "Base64.decode input length must be a multiple of 4");
+        return DIAMOND_VM_ARITY_ERROR;
+    }
+    for(size_t index=0;index<data->length;index++) {
+        const unsigned char c=(unsigned char)data->chars[index];
+        const bool is_alphabet=(c>='A'&&c<='Z')||(c>='a'&&c<='z')||
+            (c>='0'&&c<='9')||c=='+'||c=='/';
+        const bool is_valid_padding=c=='='&&index>=data->length-2&&data->length>0;
+        if(!is_alphabet&&!is_valid_padding) {
+            snprintf(vm->error,sizeof vm->error,
+                "Base64.decode: invalid character at position %zu",index);
+            return DIAMOND_VM_ARITY_ERROR;
+        }
+    }
+    if(data->length==0) {
+        DiamondString *empty=allocate_string(vm,"",0);
+        if(empty==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+        *out_result=DIAMOND_OBJECT(empty);
+        return DIAMOND_VM_OK;
+    }
+    const size_t capacity=data->length/4*3;
+    unsigned char *output=malloc(capacity);
+    if(output==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+    const int written=EVP_DecodeBlock(output,(const unsigned char *)data->chars,
+        (int)data->length);
+    if(written<0) {
+        free(output);
+        snprintf(vm->error,sizeof vm->error,"Base64.decode: invalid input");
+        return DIAMOND_VM_ARITY_ERROR;
+    }
+    size_t padding=0;
+    if(data->chars[data->length-1]=='=')padding++;
+    if(data->length>=2&&data->chars[data->length-2]=='=')padding++;
+    const size_t real_length=(size_t)written-padding;
+    DiamondString *result=allocate_string(vm,(const char *)output,real_length);
+    free(output);
+    if(result==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+    *out_result=DIAMOND_OBJECT(result);
+    return DIAMOND_VM_OK;
+}
+
 /* exit(code = 0) -- validation only returns; a valid code calls libc
  * exit() directly and never returns at all. This is a hard, immediate,
  * whole-process exit (like Ruby's Kernel#exit!, not Kernel#exit): no
@@ -15203,6 +15284,20 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     registers[data_register],registers[max_size_register],
                     &registers[destination]);
                 VM_PROPAGATE(decompress_status);break;
+            }
+            case DIAMOND_OP_BASE64_ENCODE: {
+                uint16_t destination=0,data_register=0;
+                READ_SHORT(destination);READ_SHORT(data_register);
+                const DiamondVmStatus encode_status=base64_encode_helper(vm,
+                    registers[data_register],&registers[destination]);
+                VM_PROPAGATE(encode_status);break;
+            }
+            case DIAMOND_OP_BASE64_DECODE: {
+                uint16_t destination=0,data_register=0;
+                READ_SHORT(destination);READ_SHORT(data_register);
+                const DiamondVmStatus decode_status=base64_decode_helper(vm,
+                    registers[data_register],&registers[destination]);
+                VM_PROPAGATE(decode_status);break;
             }
             case DIAMOND_OP_EXIT: {
                 uint16_t code_register=0;
