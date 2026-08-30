@@ -4916,11 +4916,47 @@ static uint16_t parse_time_parse_call(Compiler *compiler) {
     return dest;
 }
 
+/* Time.utc(year, month, day, hour, min, sec) and
+ * Time.fixed(offset, year, month, day, hour, min, sec). Arguments are moved
+ * into a contiguous register run so TIME_BUILD stays a compact instruction. */
+static uint16_t parse_time_build_call(Compiler *compiler,bool fixed) {
+    if(compiler->current.kind!=DIAMOND_TOKEN_LEFT_PAREN) {
+        fail(compiler,compiler->current.span,"expected '(' after Time constructor");
+        return 0;
+    }
+    advance_token(compiler);skip_newlines(compiler);
+    const size_t expected=fixed?7:6;uint16_t arguments[7];size_t count=0;
+    while(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
+        if(count==expected) {
+            fail(compiler,compiler->current.span,"too many Time constructor arguments");
+            return 0;
+        }
+        arguments[count++]=parse_expression(compiler);skip_newlines(compiler);
+        if(compiler->current.kind!=DIAMOND_TOKEN_COMMA)break;
+        advance_token(compiler);skip_newlines(compiler);
+    }
+    if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN||count!=expected) {
+        fail(compiler,compiler->current.span,
+            fixed?"Time.fixed expects offset plus six calendar fields":
+                  "Time.utc expects six calendar fields");
+        return 0;
+    }
+    advance_token(compiler);
+    const uint16_t base=allocate_register(compiler);
+    for(size_t index=1;index<count;index++)(void)allocate_register(compiler);
+    for(size_t index=0;index<count;index++)
+        emit_instruction(compiler,DIAMOND_OP_MOVE,(uint16_t)(base+index),arguments[index],0,2);
+    const uint16_t dest=allocate_register(compiler);
+    emit_opcode(compiler,DIAMOND_OP_TIME_BUILD);
+    emit_register(compiler,dest);emit_register(compiler,base);emit_byte(compiler,fixed?1:0);
+    return dest;
+}
+
 static uint16_t parse_time_call(Compiler *compiler) {
     advance_token(compiler); /* consume '.' */
     if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER) {
         fail(compiler,compiler->current.span,
-             "expected 'monotonic', 'now', 'utc_now', 'at', or 'parse' after 'Time'");
+             "expected a Time constructor after 'Time'");
         return 0;
     }
     const DiamondSpan method=compiler->current.span;
@@ -4947,8 +4983,14 @@ static uint16_t parse_time_call(Compiler *compiler) {
         advance_token(compiler);
         return parse_time_parse_call(compiler);
     }
+    if(name_equals(compiler,"utc",method,false)) {
+        advance_token(compiler);return parse_time_build_call(compiler,false);
+    }
+    if(name_equals(compiler,"fixed",method,false)) {
+        advance_token(compiler);return parse_time_build_call(compiler,true);
+    }
     fail(compiler,method,
-        "expected 'monotonic', 'now', 'utc_now', 'at', or 'parse' after 'Time'");
+        "expected a Time constructor after 'Time'");
     return 0;
 }
 

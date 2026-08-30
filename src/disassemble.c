@@ -982,6 +982,13 @@ static bool disassemble_chunk(FILE *stream, const char *name,
                 offset+=6;break;
             case DIAMOND_OP_TIME_PARSE:
                 offset=two_registers(stream,chunk,"TIME_PARSE",offset,&valid);break;
+            case DIAMOND_OP_TIME_BUILD:
+                if(!require_bytes(stream,chunk,offset,6)){valid=false;offset=chunk->code_count;break;}
+                fprintf(stream,"%-18s r%u, r%u, fixed=%u\n","TIME_BUILD",
+                    checked_register(chunk,stream,read_operand(chunk,offset+1),&valid),
+                    checked_register_range(chunk,stream,read_operand(chunk,offset+3),
+                        chunk->code[offset+5]?7:6,&valid),chunk->code[offset+5]);
+                offset+=6;break;
             case DIAMOND_OP_FILE_PATH: {
                 if(!require_bytes(stream,chunk,offset,8)){valid=false;offset=chunk->code_count;break;}
                 fprintf(stream,"%-18s r%u, r%u, r%u, %s\n","FILE_PATH",

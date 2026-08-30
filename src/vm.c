@@ -7639,6 +7639,65 @@ static DiamondVmStatus time_parse_helper(DiamondVm *vm,DiamondValue input,
     *out_result=DIAMOND_OBJECT(time);return DIAMOND_VM_OK;
 }
 
+static DiamondVmStatus time_build_helper(DiamondVm *vm,const DiamondValue *arguments,
+        bool fixed,DiamondValue *out_result) {
+    int32_t utc_offset=0;size_t field_start=0;
+    if(fixed) {
+        field_start=1;
+        if(arguments[0].kind==DIAMOND_VALUE_INT) {
+            const int64_t supplied=arguments[0].as.integer;
+            if(supplied<=-86400||supplied>=86400) {
+                snprintf(vm->error,sizeof vm->error,
+                    "Time.fixed offset must be between -86399 and 86399 seconds");
+                return DIAMOND_VM_TYPE_ERROR;
+            }
+            utc_offset=(int32_t)supplied;
+        } else if(arguments[0].kind==DIAMOND_VALUE_OBJECT&&
+                  arguments[0].as.object->kind==DIAMOND_OBJECT_STRING) {
+            if(!parse_time_utc_offset(
+                (const DiamondString *)arguments[0].as.object,&utc_offset)) {
+                snprintf(vm->error,sizeof vm->error,
+                    "Time.fixed offset must be 'Z' or a signed 'HH:MM'");
+                return DIAMOND_VM_TYPE_ERROR;
+            }
+        } else {
+            snprintf(vm->error,sizeof vm->error,"Time.fixed offset must be an Int or String");
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+    }
+    for(size_t index=0;index<6;index++) {
+        if(arguments[field_start+index].kind!=DIAMOND_VALUE_INT) {
+            snprintf(vm->error,sizeof vm->error,"Time calendar fields must be Int values");
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+    }
+    const int64_t year=arguments[field_start].as.integer;
+    const int64_t month=arguments[field_start+1].as.integer;
+    const int64_t day=arguments[field_start+2].as.integer;
+    const int64_t hour=arguments[field_start+3].as.integer;
+    const int64_t minute=arguments[field_start+4].as.integer;
+    const int64_t second=arguments[field_start+5].as.integer;
+    bool valid=year>=1&&year<=9999&&month>=1&&month<=12&&day>=1&&day<=31&&
+        hour>=0&&hour<=23&&minute>=0&&minute<=59&&second>=0&&second<=59;
+    struct tm calendar={.tm_year=(int)year-1900,.tm_mon=(int)month-1,
+        .tm_mday=(int)day,.tm_hour=(int)hour,.tm_min=(int)minute,
+        .tm_sec=(int)second,.tm_isdst=0};
+    const time_t calendar_epoch=valid?timegm(&calendar):(time_t)0;
+    struct tm round_trip={};
+    if(valid&&(gmtime_r(&calendar_epoch,&round_trip)==nullptr||
+       round_trip.tm_year!=(int)year-1900||round_trip.tm_mon!=(int)month-1||
+       round_trip.tm_mday!=(int)day||round_trip.tm_hour!=(int)hour||
+       round_trip.tm_min!=(int)minute||round_trip.tm_sec!=(int)second))valid=false;
+    if(!valid) {
+        snprintf(vm->error,sizeof vm->error,"invalid Time calendar fields");
+        return DIAMOND_VM_TYPE_ERROR;
+    }
+    DiamondTime *time=allocate_time(vm,(double)calendar_epoch-(double)utc_offset,
+        fixed?DIAMOND_TIME_FIXED_OFFSET:DIAMOND_TIME_UTC,utc_offset);
+    if(time==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+    *out_result=DIAMOND_OBJECT(time);return DIAMOND_VM_OK;
+}
+
 /* Shared by #to_s and puts/string-interpolation's own stringify path
  * (see builder_format_value/stringify_value) -- one formatting
  * implementation, not two. */
@@ -15986,6 +16045,14 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 READ_SHORT(destination);READ_SHORT(string_register);
                 const DiamondVmStatus time_status=time_parse_helper(vm,
                     registers[string_register],&registers[destination]);
+                VM_PROPAGATE(time_status);
+                break;
+            }
+            case DIAMOND_OP_TIME_BUILD: {
+                uint16_t destination=0,base_register=0;uint8_t fixed=0;
+                READ_SHORT(destination);READ_SHORT(base_register);READ_BYTE(fixed);
+                const DiamondVmStatus time_status=time_build_helper(vm,
+                    &registers[base_register],fixed!=0,&registers[destination]);
                 VM_PROPAGATE(time_status);
                 break;
             }
