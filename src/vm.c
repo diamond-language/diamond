@@ -10622,6 +10622,27 @@ static DiamondVmStatus time_dispatch_helper(DiamondVm *vm,DiamondTime *target,
             days_from_now_method||weeks_from_now_method||months_from_now_method||
                 years_from_now_method,&registers[dest]);
     }
+    const bool next_weekday_method=method_name->length==12&&
+        memcmp(method_name->chars,"next_weekday",12)==0;
+    const bool previous_weekday_method=method_name->length==16&&
+        memcmp(method_name->chars,"previous_weekday",16)==0;
+    if(next_weekday_method||previous_weekday_method) {
+        if(argc!=0)return DIAMOND_VM_ARITY_ERROR;
+        if(!time_struct_tm(target,&parts)) {
+            snprintf(vm->error,sizeof vm->error,"Time value out of range");
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        int64_t days=1;
+        if(next_weekday_method) {
+            if(parts.tm_wday==5)days=3;
+            else if(parts.tm_wday==6)days=2;
+        } else {
+            if(parts.tm_wday==1)days=3;
+            else if(parts.tm_wday==0)days=2;
+        }
+        return time_calendar_shift_helper(vm,target,days,TIME_SHIFT_DAYS,
+            next_weekday_method,&registers[dest]);
+    }
     const bool beginning_of_day_method=method_name->length==16&&
         memcmp(method_name->chars,"beginning_of_day",16)==0;
     const bool end_of_day_method=method_name->length==10&&

@@ -1174,6 +1174,9 @@ generic dispatch every other native type uses:
   wall clock
 - `.on_weekend?()` / `.on_weekday?()` → Saturday/Sunday classification or its
   inverse, using the same weekday convention as `.wday()`
+- `.next_weekday()` / `.previous_weekday()` → the next or previous Monday–Friday
+  calendar day, skipping weekends while preserving wall-clock time, fractional
+  seconds, and timezone mode across local DST transitions
 
 `Int` and `Float` provide singular and plural `.second(s)()`, `.minute(s)()`,
 `.hour(s)()`, `.day(s)()`, and `.week(s)()` helpers. These return numeric

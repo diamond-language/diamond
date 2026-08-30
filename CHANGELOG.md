@@ -924,12 +924,13 @@ bytecode, or semantic stability.
   `Z`/`±HH:MM[:SS]` strings), arithmetic, cross-zone comparison,
   numeric duration units from seconds through weeks, and
   `.ago()`/`.from_now()` helpers; added strict ISO-8601 `Time.parse` for UTC
-  and numeric-offset timestamps plus strict `Time.utc`/`Time.fixed`
-  UTC/fixed/local calendar-field constructors, round-trippable
+  and numeric-offset timestamps plus strict UTC/fixed/local calendar-field
+  constructors, round-trippable
   `Time#iso8601` formatting, and calendar-aware month/year movement with
   end-of-month clamping, calendar-aware day/week movement distinct from fixed
   durations, day/week/month/year boundary helpers that honor local DST, and
-  zone-aware relative-date, same-day, instant, and weekday predicates.
+  zone-aware relative-date, same-day, instant, and weekday predicates, plus
+  DST-aware next/previous weekday navigation.
 - Added synchronous subprocess execution with argv isolation and captured
   stdout/stderr/exit status.
 - Added regexp construction, matching, capture results, substitution, and scan
