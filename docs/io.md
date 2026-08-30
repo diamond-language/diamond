@@ -1161,6 +1161,10 @@ generic dispatch every other native type uses:
   follow the same local-DST rules.
 - `.today?()` → whether the receiver's calendar date is today in its own
   UTC/fixed/local display zone
+- `.yesterday?()` / `.tomorrow?()` → the adjacent calendar dates relative to
+  now, evaluated in the receiver's display zone
+- `.same_day?(other)` → whether another `Time` instant falls on the same
+  calendar date after projecting it into the receiver's display zone
 - `.past?()` / `.future?()` → absolute-instant comparisons against the current
   wall clock
 - `.on_weekend?()` / `.on_weekday?()` → Saturday/Sunday classification or its

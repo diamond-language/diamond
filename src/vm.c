@@ -10409,6 +10409,12 @@ static DiamondVmStatus time_dispatch_helper(DiamondVm *vm,DiamondTime *target,
     }
     const bool today_p_method=method_name->length==6&&
         memcmp(method_name->chars,"today?",6)==0;
+    const bool yesterday_p_method=method_name->length==10&&
+        memcmp(method_name->chars,"yesterday?",10)==0;
+    const bool tomorrow_p_method=method_name->length==9&&
+        memcmp(method_name->chars,"tomorrow?",9)==0;
+    const bool same_day_p_method=method_name->length==9&&
+        memcmp(method_name->chars,"same_day?",9)==0;
     const bool past_p_method=method_name->length==5&&
         memcmp(method_name->chars,"past?",5)==0;
     const bool future_p_method=method_name->length==7&&
@@ -10417,7 +10423,27 @@ static DiamondVmStatus time_dispatch_helper(DiamondVm *vm,DiamondTime *target,
         memcmp(method_name->chars,"on_weekend?",11)==0;
     const bool weekday_p_method=method_name->length==11&&
         memcmp(method_name->chars,"on_weekday?",11)==0;
-    if(today_p_method||past_p_method||future_p_method||weekend_p_method||
+    if(same_day_p_method) {
+        if(argc!=1)return DIAMOND_VM_ARITY_ERROR;
+        if(registers[base].kind!=DIAMOND_VALUE_OBJECT||
+           registers[base].as.object->kind!=DIAMOND_OBJECT_TIME) {
+            snprintf(vm->error,sizeof vm->error,"Time#same_day? argument must be a Time");
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        const DiamondTime *other=(const DiamondTime *)registers[base].as.object;
+        const DiamondTime projected={.epoch=other->epoch,
+            .utc_offset=target->utc_offset,.zone_mode=target->zone_mode};
+        struct tm other_parts;
+        if(!time_struct_tm(target,&parts)||!time_struct_tm(&projected,&other_parts)) {
+            snprintf(vm->error,sizeof vm->error,"Time value out of range");
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        registers[dest]=DIAMOND_BOOL(parts.tm_year==other_parts.tm_year&&
+            parts.tm_yday==other_parts.tm_yday);
+        return DIAMOND_VM_OK;
+    }
+    if(today_p_method||yesterday_p_method||tomorrow_p_method||
+       past_p_method||future_p_method||weekend_p_method||
        weekday_p_method) {
         if(argc!=0)return DIAMOND_VM_ARITY_ERROR;
         if(weekend_p_method||weekday_p_method) {
@@ -10443,8 +10469,23 @@ static DiamondVmStatus time_dispatch_helper(DiamondVm *vm,DiamondTime *target,
             snprintf(vm->error,sizeof vm->error,"Time value out of range");
             return DIAMOND_VM_TYPE_ERROR;
         }
-        registers[dest]=DIAMOND_BOOL(parts.tm_year==current_parts.tm_year&&
-            parts.tm_mon==current_parts.tm_mon&&parts.tm_mday==current_parts.tm_mday);
+        int expected_year=current_parts.tm_year;
+        int expected_yday=current_parts.tm_yday;
+        if(yesterday_p_method) {
+            expected_yday--;
+            if(expected_yday<0) {
+                expected_year--;
+                const int year=expected_year+1900;
+                expected_yday=((year%4==0&&year%100!=0)||year%400==0)?365:364;
+            }
+        } else if(tomorrow_p_method) {
+            expected_yday++;
+            const int year=current_parts.tm_year+1900;
+            const int days=((year%4==0&&year%100!=0)||year%400==0)?366:365;
+            if(expected_yday==days) { expected_year++;expected_yday=0; }
+        }
+        registers[dest]=DIAMOND_BOOL(parts.tm_year==expected_year&&
+            parts.tm_yday==expected_yday);
         return DIAMOND_VM_OK;
     }
     const bool to_i_method=method_name->length==4&&
