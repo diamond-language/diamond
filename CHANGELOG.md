@@ -920,7 +920,9 @@ bytecode, or semantic stability.
 - Added SQLite3 connections with positional binds, typed result rows, execution,
   querying, change counts, insert row IDs, and safe close behavior.
 - Added wall-clock and monotonic time APIs, calendar accessors, formatting,
-  timezone mode conversion, arithmetic, and comparison.
+  local/UTC/fixed-offset timezone conversion, arithmetic, cross-zone comparison,
+  numeric duration units from seconds through weeks, and
+  `.ago()`/`.from_now()` helpers.
 - Added synchronous subprocess execution with argv isolation and captured
   stdout/stderr/exit status.
 - Added regexp construction, matching, capture results, substitution, and scan

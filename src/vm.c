@@ -2502,12 +2502,15 @@ static DiamondMysqlHandle *allocate_mysql_handle(DiamondVm *vm,MYSQL *conn) {
     vm->young_objects=&handle->object;vm->bytes_allocated+=sizeof(DiamondMysqlHandle);return handle;
 }
 
-static DiamondTime *allocate_time(DiamondVm *vm,double epoch,bool utc) {
+enum { DIAMOND_TIME_LOCAL,DIAMOND_TIME_UTC,DIAMOND_TIME_FIXED_OFFSET };
+
+static DiamondTime *allocate_time(DiamondVm *vm,double epoch,uint8_t zone_mode,
+        int32_t utc_offset) {
     maybe_collect(vm);
     DiamondTime *time=malloc(sizeof(DiamondTime));
     if(time==nullptr)return nullptr;
     *time=(DiamondTime){.object={.next=vm->young_objects,.kind=DIAMOND_OBJECT_TIME},
-        .epoch=epoch,.utc=utc};
+        .epoch=epoch,.utc_offset=utc_offset,.zone_mode=zone_mode};
     vm->young_objects=&time->object;vm->bytes_allocated+=sizeof(DiamondTime);return time;
 }
 
@@ -5795,7 +5798,7 @@ static DiamondVmStatus add_fallback(DiamondVm *vm,const DiamondChunk *chunk,size
             return DIAMOND_VM_OK;
         }
     }
-    /* Time + Int|Float -> Time (offset forward, same utc flag as the
+    /* Time + Int|Float -> Time (offset forward, same timezone mode as the
      * receiver); Time + Time is a TypeError, matching Ruby -- there's no
      * branch here for a Time right operand, so it simply falls through
      * to the type-error return below. */
@@ -5805,7 +5808,8 @@ static DiamondVmStatus add_fallback(DiamondVm *vm,const DiamondChunk *chunk,size
         const DiamondTime *left_time=(const DiamondTime *)left_value.as.object;
         const double offset=right_value.kind==DIAMOND_VALUE_FLOAT?
             right_value.as.real:(double)right_value.as.integer;
-        DiamondTime *result=allocate_time(vm,left_time->epoch+offset,left_time->utc);
+        DiamondTime *result=allocate_time(vm,left_time->epoch+offset,
+            left_time->zone_mode,left_time->utc_offset);
         if(result==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
         *out_result=DIAMOND_OBJECT(result);
         return DIAMOND_VM_OK;
@@ -5814,7 +5818,7 @@ static DiamondVmStatus add_fallback(DiamondVm *vm,const DiamondChunk *chunk,size
 }
 
 /* Time - Time -> Float seconds; Time - Int|Float -> Time (offset
- * backward, same utc flag). Factored out of run_chunk's own SUBTRACT/
+ * backward, same timezone mode). Factored out of run_chunk's own SUBTRACT/
  * MULTIPLY/DIVIDE case block for the same reason add_fallback already
  * is (see its own comment): every local declared anywhere in run_chunk's
  * switch adds to its one shared per-call stack frame, and run_chunk
@@ -5847,7 +5851,8 @@ static DiamondVmStatus time_subtract_fallback(DiamondVm *vm,
     if (right_value.kind==DIAMOND_VALUE_INT||right_value.kind==DIAMOND_VALUE_FLOAT) {
         const double offset=right_value.kind==DIAMOND_VALUE_FLOAT?
             right_value.as.real:(double)right_value.as.integer;
-        DiamondTime *result=allocate_time(vm,left_time->epoch-offset,left_time->utc);
+        DiamondTime *result=allocate_time(vm,left_time->epoch-offset,
+            left_time->zone_mode,left_time->utc_offset);
         if(result==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
         *out_result=DIAMOND_OBJECT(result);
         return DIAMOND_VM_OK;
@@ -5856,7 +5861,7 @@ static DiamondVmStatus time_subtract_fallback(DiamondVm *vm,
 }
 
 /* Time vs Time only, matching Ruby -- no Time-vs-numeric ordering.
- * Compares epoch, ignoring utc/local. Same stack-frame-budget reasoning
+ * Compares epoch, ignoring each display timezone. Same stack-frame-budget reasoning
  * as time_subtract_fallback above for why this is its own function
  * rather than inline in run_chunk's LESS/LESS_EQUAL/GREATER/GREATER_
  * EQUAL case block, and same reason it writes a ready-to-store
@@ -5890,7 +5895,8 @@ static DiamondVmStatus time_now_helper(DiamondVm *vm,bool utc,DiamondValue *out_
     struct timespec now={};
     clock_gettime(CLOCK_REALTIME,&now);
     const double epoch=(double)now.tv_sec+(double)now.tv_nsec/1e9;
-    DiamondTime *time=allocate_time(vm,epoch,utc);
+    DiamondTime *time=allocate_time(vm,epoch,
+        utc?DIAMOND_TIME_UTC:DIAMOND_TIME_LOCAL,0);
     if(time==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
     *out_result=DIAMOND_OBJECT(time);
     return DIAMOND_VM_OK;
@@ -5903,7 +5909,29 @@ static DiamondVmStatus time_at_helper(DiamondVm *vm,DiamondValue epoch_value,
     const double epoch=epoch_value.kind==DIAMOND_VALUE_FLOAT?
         epoch_value.as.real:(double)epoch_value.as.integer;
     if(isnan(epoch)||isinf(epoch))return DIAMOND_VM_TYPE_ERROR;
-    DiamondTime *time=allocate_time(vm,epoch,false);
+    DiamondTime *time=allocate_time(vm,epoch,DIAMOND_TIME_LOCAL,0);
+    if(time==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+    *out_result=DIAMOND_OBJECT(time);
+    return DIAMOND_VM_OK;
+}
+
+/* ActiveSupport-style Numeric#ago/#from_now, with the numeric receiver
+ * interpreted as seconds. The returned Time is process-local, matching
+ * Time.now(); callers can convert it immutably as usual. */
+static DiamondVmStatus time_relative_now_helper(DiamondVm *vm,DiamondValue duration_value,
+        bool future,DiamondValue *out_result) {
+    const double duration=duration_value.kind==DIAMOND_VALUE_FLOAT?
+        duration_value.as.real:(double)duration_value.as.integer;
+    if(isnan(duration)||isinf(duration)) {
+        snprintf(vm->error,sizeof vm->error,
+            "Time duration must be a finite number of seconds");
+        return DIAMOND_VM_TYPE_ERROR;
+    }
+    struct timespec now={};
+    clock_gettime(CLOCK_REALTIME,&now);
+    const double epoch=(double)now.tv_sec+(double)now.tv_nsec/1e9+
+        (future?duration:-duration);
+    DiamondTime *time=allocate_time(vm,epoch,DIAMOND_TIME_LOCAL,0);
     if(time==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
     *out_result=DIAMOND_OBJECT(time);
     return DIAMOND_VM_OK;
@@ -7504,17 +7532,24 @@ static bool builder_append(StringBuilder *builder,const char *chars,size_t lengt
     builder->length+=length;builder->chars[builder->length]='\0';return true;
 }
 
-/* Breaks a Time's epoch into calendar fields via gmtime_r/localtime_r
- * (chosen by ->utc) -- both are real, DST-aware, system-tzdata-backed
- * libc calls, so "supporting timezones" here is just calling the right
- * one, not hand-rolled timezone logic. Whole-second resolution, same as
+/* Breaks a Time's epoch into calendar fields. UTC and fixed offsets use
+ * gmtime_r (the latter after shifting the epoch); process-local time uses
+ * localtime_r and therefore remains DST-aware and system-tzdata-backed.
+ * Fixed offsets never touch process-global TZ state. Whole-second resolution, same as
  * Ruby/C convention (the fractional part only matters for #to_f). Fails
  * only for a genuinely out-of-range epoch (e.g. far enough in the future
  * to overflow time_t on a 32-bit platform) -- vanishingly unlikely on
  * any 64-bit system, but checked rather than left as UB. */
 static bool time_struct_tm(const DiamondTime *target,struct tm *out) {
-    const time_t seconds=(time_t)floor(target->epoch);
-    return (target->utc?gmtime_r(&seconds,out):localtime_r(&seconds,out))!=nullptr;
+    double calendar_epoch=floor(target->epoch);
+    if(target->zone_mode==DIAMOND_TIME_FIXED_OFFSET)
+        calendar_epoch+=(double)target->utc_offset;
+    const time_t seconds=(time_t)calendar_epoch;
+    if(target->zone_mode==DIAMOND_TIME_LOCAL)
+        return localtime_r(&seconds,out)!=nullptr;
+    if(gmtime_r(&seconds,out)==nullptr)return false;
+    if(target->zone_mode==DIAMOND_TIME_FIXED_OFFSET)out->tm_gmtoff=target->utc_offset;
+    return true;
 }
 
 /* Shared by #to_s and puts/string-interpolation's own stringify path
@@ -7524,7 +7559,7 @@ static bool format_time_default(const DiamondTime *target,StringBuilder *builder
     struct tm parts;
     if(!time_struct_tm(target,&parts))return false;
     char buffer[64];
-    const char *format=target->utc?
+    const char *format=target->zone_mode==DIAMOND_TIME_UTC?
         "%Y-%m-%d %H:%M:%S UTC":"%Y-%m-%d %H:%M:%S %z";
     const size_t length=strftime(buffer,sizeof buffer,format,&parts);
     if(length==0)return false;
@@ -10094,7 +10129,24 @@ static DiamondVmStatus time_dispatch_helper(DiamondVm *vm,DiamondTime *target,
         memcmp(method_name->chars,"utc?",4)==0;
     if(utc_p_method) {
         if(argc!=0)return DIAMOND_VM_ARITY_ERROR;
-        registers[dest]=DIAMOND_BOOL(target->utc);
+        registers[dest]=DIAMOND_BOOL(target->zone_mode==DIAMOND_TIME_UTC);
+        return DIAMOND_VM_OK;
+    }
+    const bool utc_offset_method=method_name->length==10&&
+        memcmp(method_name->chars,"utc_offset",10)==0;
+    if(utc_offset_method) {
+        if(argc!=0)return DIAMOND_VM_ARITY_ERROR;
+        if(target->zone_mode==DIAMOND_TIME_UTC)component_value=0;
+        else if(target->zone_mode==DIAMOND_TIME_FIXED_OFFSET)
+            component_value=target->utc_offset;
+        else {
+            if(!time_struct_tm(target,&parts)) {
+                snprintf(vm->error,sizeof vm->error,"Time value out of range");
+                return DIAMOND_VM_TYPE_ERROR;
+            }
+            component_value=(int)parts.tm_gmtoff;
+        }
+        registers[dest]=DIAMOND_INT(component_value);
         return DIAMOND_VM_OK;
     }
     const bool utc_method=method_name->length==3&&
@@ -10102,8 +10154,25 @@ static DiamondVmStatus time_dispatch_helper(DiamondVm *vm,DiamondTime *target,
     const bool localtime_method=method_name->length==9&&
         memcmp(method_name->chars,"localtime",9)==0;
     if(utc_method||localtime_method) {
-        if(argc!=0)return DIAMOND_VM_ARITY_ERROR;
-        DiamondTime *copy=allocate_time(vm,target->epoch,utc_method);
+        if(utc_method&&argc!=0)return DIAMOND_VM_ARITY_ERROR;
+        if(localtime_method&&argc>1)return DIAMOND_VM_ARITY_ERROR;
+        uint8_t zone_mode=utc_method?DIAMOND_TIME_UTC:DIAMOND_TIME_LOCAL;
+        int32_t utc_offset=0;
+        if(localtime_method&&argc==1) {
+            if(registers[base].kind!=DIAMOND_VALUE_INT) {
+                snprintf(vm->error,sizeof vm->error,
+                    "Time#localtime offset must be an Int number of seconds");
+                return DIAMOND_VM_TYPE_ERROR;
+            }
+            const int64_t supplied=registers[base].as.integer;
+            if(supplied<=-86400||supplied>=86400) {
+                snprintf(vm->error,sizeof vm->error,
+                    "Time#localtime offset must be between -86399 and 86399 seconds");
+                return DIAMOND_VM_TYPE_ERROR;
+            }
+            zone_mode=DIAMOND_TIME_FIXED_OFFSET;utc_offset=(int32_t)supplied;
+        }
+        DiamondTime *copy=allocate_time(vm,target->epoch,zone_mode,utc_offset);
         if(copy==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
         registers[dest]=DIAMOND_OBJECT(copy);
         return DIAMOND_VM_OK;
@@ -13355,7 +13424,67 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                         registers[dest]=DIAMOND_OBJECT(copy);break;
                     }
                 }
-                if(registers[recv].kind==DIAMOND_VALUE_INT) {
+                if(registers[recv].kind==DIAMOND_VALUE_INT||
+                   registers[recv].kind==DIAMOND_VALUE_FLOAT) {
+                    const bool ago_method=method_name->length==3&&
+                        memcmp(method_name->chars,"ago",3)==0;
+                    const bool from_now_method=method_name->length==8&&
+                        memcmp(method_name->chars,"from_now",8)==0;
+                    if(ago_method||from_now_method) {
+                        if(argc!=0)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                        const DiamondVmStatus time_status=time_relative_now_helper(
+                            vm,registers[recv],from_now_method,&registers[dest]);
+                        VM_PROPAGATE(time_status);break;
+                    }
+                    const char *duration_target=nullptr;
+                    if((method_name->length==6&&
+                        memcmp(method_name->chars,"second",6)==0)||
+                       (method_name->length==7&&
+                        memcmp(method_name->chars,"seconds",7)==0))
+                        duration_target="numeric_seconds";
+                    else if((method_name->length==6&&
+                             memcmp(method_name->chars,"minute",6)==0)||
+                            (method_name->length==7&&
+                             memcmp(method_name->chars,"minutes",7)==0))
+                        duration_target="numeric_minutes";
+                    else if((method_name->length==4&&
+                             memcmp(method_name->chars,"hour",4)==0)||
+                            (method_name->length==5&&
+                             memcmp(method_name->chars,"hours",5)==0))
+                        duration_target="numeric_hours";
+                    else if((method_name->length==3&&
+                             memcmp(method_name->chars,"day",3)==0)||
+                            (method_name->length==4&&
+                             memcmp(method_name->chars,"days",4)==0))
+                        duration_target="numeric_days";
+                    else if((method_name->length==4&&
+                             memcmp(method_name->chars,"week",4)==0)||
+                            (method_name->length==5&&
+                             memcmp(method_name->chars,"weeks",5)==0))
+                        duration_target="numeric_weeks";
+                    if(duration_target!=nullptr) {
+                        if(argc!=0)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                        const DiamondFunction *duration_function=find_top_level_function(
+                            chunk,duration_target,strlen(duration_target));
+                        if(duration_function==nullptr) {
+                            snprintf(vm->error,sizeof vm->error,
+                                "internal error: missing standard library function '%s'",
+                                duration_target);
+                            VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                        }
+                        DiamondValue duration_result=DIAMOND_NIL;
+                        const DiamondVmStatus duration_status=forward_to_top_level_helper(
+                            vm,chunk,duration_function,registers,recv,base,argc,depth,
+                            &duration_result);
+                        VM_PROPAGATE(duration_status);
+                        registers[dest]=duration_result;break;
+                    }
+                    if(registers[recv].kind==DIAMOND_VALUE_FLOAT) {
+                        snprintf(vm->error,sizeof vm->error,
+                            "undefined method '%.*s' for %s",
+                            (int)method_name->length,method_name->chars,"Float");
+                        VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                    }
                     /* chr, the inverse of String#ord -- a single byte (0-255),
                      * matching every other String primitive in this VM
                      * staying byte- rather than codepoint-oriented. */

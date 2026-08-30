@@ -471,17 +471,18 @@ typedef struct DiamondMysqlHandle {
 } DiamondMysqlHandle;
 
 /* Simpler still than DiamondRegexp: owns no OS resource and no second
- * allocation either -- just two scalars. Freeing one is `free(pointer)`,
+ * allocation either -- just scalars. Freeing one is `free(pointer)`,
  * nothing else, and there's no mark case since neither field is a
  * DiamondValue. `epoch` (seconds since the Unix epoch, fractional) is
- * the single source of truth; `utc` only chooses gmtime_r vs localtime_r
- * for component accessors/strftime -- it never affects equality,
+ * the single source of truth; `zone_mode` chooses UTC, process-local, or
+ * a fixed UTC offset for component accessors/strftime -- it never affects equality,
  * ordering, or arithmetic (see values_equal/hash_value and the ADD/
  * SUBTRACT/comparison opcode handlers in vm.c). */
 typedef struct DiamondTime {
     DiamondObject object;
     double epoch;
-    bool utc;
+    int32_t utc_offset;
+    uint8_t zone_mode;
 } DiamondTime;
 
 /* Process.run(argv)'s result: captured stdout/stderr (as real DiamondValue

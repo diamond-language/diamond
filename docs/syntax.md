@@ -1587,9 +1587,12 @@ wrapper *around* the already-native `.join()` above rather than
 so it has been removed now that `values.join(separator)` is the only
 spelling.
 
-`Int`/`Float` have no per-value method dispatch (both are scalar
-`DiamondValue`s, not heap objects), so numeric helpers are plain
-functions: `abs(x)`/`min(a, b)`/`max(a, b)`/`mod(a, b)`, all accepting
+`Int`/`Float` are scalar `DiamondValue`s rather than heap objects, but native
+dispatch provides a small method surface. Fixed duration helpers
+`.second(s)()` through `.week(s)()` return numeric seconds, which compose with
+`.ago()`/`.from_now()` to produce wall-clock `Time` values; see `docs/io.md`.
+General numeric helpers remain plain functions:
+`abs(x)`/`min(a, b)`/`max(a, b)`/`mod(a, b)`, all accepting
 `Int | Float` (mixed `Int`/`Float` arguments auto-promote, same as
 arithmetic). `abs` inherits negation's overflow behavior, so `abs` of the
 most negative 64-bit `Int` promotes to an arbitrary-precision `Int`
@@ -1618,9 +1621,8 @@ same philosophy `Float` arithmetic already uses throughout.
 nothing (not a calendar timestamp, not comparable across processes),
 only the difference between two readings does, e.g. `elapsed =
 Time.monotonic() - start` for timing a request in a rack middleware.
-Diamond has no wall-clock/calendar `Time` type yet — no `.year`/
-`.to_s`/parsing — this is deliberately just enough to measure an
-elapsed duration, not a step toward one.
+It is intentionally separate from Diamond's wall-clock/calendar `Time` values;
+see `docs/io.md` for those APIs.
 
 `BCrypt.hash(password: String, cost: Int)` and `BCrypt.verify(password:
 String, digest: String) -> Bool` are native bcrypt password hashing,

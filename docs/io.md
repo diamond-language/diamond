@@ -1068,14 +1068,16 @@ start = Time.now()
 elapsed = Time.now() - start     # => Float seconds
 deadline = Time.now() + 30       # => Time, 30s from now
 Time.now() < deadline            # => true
+last_hour = 1.hour().ago()       # => local Time, one hour ago
+next_week = 1.week().from_now()  # => local Time, one week from now
 ```
 
 A real GC-managed heap object (`DIAMOND_OBJECT_TIME`), wrapping a
-fractional Unix-epoch `Float` plus a `utc`/local flag that only
-controls which of `gmtime_r`/`localtime_r` component accessors and
-`.strftime` use — both are real, DST-aware, system-tzdata-backed libc
-calls, so "supporting timezones" here is just calling the right one,
-not hand-rolled timezone logic.
+fractional Unix-epoch `Float` plus a display mode: UTC, the process's
+local timezone, or a fixed UTC offset. Local mode uses libc's real,
+DST-aware, system-tzdata-backed `localtime_r`; UTC and fixed offsets use
+`gmtime_r`. Fixed offsets are per-object and never mutate the process-global
+`TZ` setting, so independent VMs running on concurrent threads remain safe.
 
 Three constructors, compiling to dedicated opcodes the same way
 `File.open`/`SQLite3.open` do:
@@ -1105,9 +1107,23 @@ generic dispatch every other native type uses:
 - `.to_s()` → `String`, a fixed default format (matches what
   `puts`/string interpolation print for a `Time` too — one formatting
   implementation, not two)
-- `.utc()` / `.localtime()` → a new `Time`, same epoch, `utc` flag
-  flipped (immutable — the receiver is never modified)
+- `.utc()` / `.localtime()` → a new `Time`, same epoch, displayed in UTC
+  or the process-local timezone (immutable — the receiver is never modified)
+- `.localtime(offset_seconds)` → a new `Time`, same epoch, displayed at a
+  fixed UTC offset from `-86399` through `86399`; for example,
+  `.localtime(19800)` selects `+05:30`
+- `.utc_offset()` → the active offset in seconds (including the effective
+  DST-aware offset for process-local time)
 - `.utc?()` → `Bool`
+
+`Int` and `Float` provide singular and plural `.second(s)()`, `.minute(s)()`,
+`.hour(s)()`, `.day(s)()`, and `.week(s)()` helpers. These return numeric
+seconds, so they compose with ordinary arithmetic and Rails-style `.ago()` and
+`.from_now()` calls. Each relative-time call reads the wall clock and returns a
+process-local `Time`; fractional seconds are supported, while `NaN` and
+infinities are rejected. The result can be converted with `.utc()` or
+`.localtime(offset)`. Months and years are deliberately absent because they
+require calendar-relative arithmetic rather than a fixed seconds multiplier.
 
 `+`, `-`, and comparisons (`<`/`<=`/`>`/`>=`/`==`/`!=`) work directly,
 matching Ruby — `Time` is the **one** native (non-`Instance`) type
@@ -1115,8 +1131,8 @@ with real operator support; see `docs/syntax.md`'s "Operator
 overloading" section for why every other native type doesn't get this
 for free:
 
-- `t + n` (`Int`/`Float` seconds) → `Time`, offset forward, same `utc`
-  flag as `t`. `t + t2` is a `TypeError` (Ruby doesn't support adding
+- `t + n` (`Int`/`Float` seconds) → `Time`, offset forward, same timezone
+  display mode as `t`. `t + t2` is a `TypeError` (Ruby doesn't support adding
   two `Time`s either).
 - `t - n` → `Time`, offset backward. `t1 - t2` → `Float` seconds
   between them (Ruby's own dual-purpose `-`).
@@ -1276,9 +1292,9 @@ waiting for exit:
   this convenience layer in pure Diamond code on top of it (including
   `SAVEPOINT`-based nesting), so there's no native gap here to close.
 - **`Time.parse`, named timezones, a separate `Date`-only type**: no
-  parsing a `Time` from a `String`, no picking a timezone other than
-  the process's own local zone or UTC (Ruby itself needs the `tzinfo`
-  gem for that), no date-without-time type distinct from `Time`.
+  parsing a `Time` from a `String`, no named IANA timezone selection
+  (fixed UTC offsets are supported; Ruby itself needs the `tzinfo` gem
+  for named zones), no date-without-time type distinct from `Time`.
 
 Each of these is a plausible next slice, sized independently rather than
 attempted together.

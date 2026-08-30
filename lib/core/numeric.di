@@ -31,6 +31,15 @@ def mod(a: Int | Float, b: Int | Float) -> Int | Float
   end
 end
 
+# Fixed-length duration units, kept numeric so they compose with ordinary
+# arithmetic and Numeric#ago/#from_now. Months and years are deliberately not
+# included because their lengths depend on a calendar reference date.
+def numeric_seconds(value: Int | Float) -> Int | Float = value
+def numeric_minutes(value: Int | Float) -> Int | Float = value * 60
+def numeric_hours(value: Int | Float) -> Int | Float = value * 3600
+def numeric_days(value: Int | Float) -> Int | Float = value * 86400
+def numeric_weeks(value: Int | Float) -> Int | Float = value * 604800
+
 # n.times() / a.upto(b) / a.downto(b) helpers.
 def integer_times(n: Int, callback: Callable[1]) -> Int
   i = 0
