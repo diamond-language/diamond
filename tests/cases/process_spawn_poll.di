@@ -1,0 +1,5 @@
+h = Process.spawn(["sh", "-c", "sleep 0.3; echo hi"])
+ready = IO.poll([h.stdout()], [], -1)
+puts(ready["readable"][0])
+puts(h.stdout().read(100))
+h.wait()

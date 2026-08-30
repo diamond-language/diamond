@@ -199,6 +199,12 @@ typedef enum DiamondOpCode : uint8_t {
     DIAMOND_OP_TIME_AT,
     DIAMOND_OP_SHIFT_LEFT,
     DIAMOND_OP_PROCESS_RUN,
+    /* Process.spawn(argv) -- like Process.run, but returns a live
+     * DIAMOND_OBJECT_PROCESS_HANDLE immediately rather than blocking
+     * until the child exits: no output capture, no wait, just a
+     * spawned child with two O_NONBLOCK stdout/stderr streams and a
+     * pid. See docs/io.md. */
+    DIAMOND_OP_PROCESS_SPAWN,
     DIAMOND_OP_DEBUGGER,
     DIAMOND_OP_ARGV,
     DIAMOND_OP_ENV,

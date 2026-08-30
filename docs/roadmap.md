@@ -993,10 +993,32 @@ collided with self capture" section for the full mechanism.
 The current native APIs intentionally expose useful, narrow slices. Possible
 extensions should be demand-driven:
 
-- asynchronous subprocess handles with polling and termination;
 - TLS ALPN and session resumption (client certificates and custom trust
   stores are done -- see below);
 - richer time parsing/timezone support.
+
+**Done**: `Process.spawn(argv)` -- asynchronous subprocess handles with
+polling and termination, alongside the existing blocking/synchronous
+`Process.run`. Returns a live `Process::Handle` (`pid`, `#wait`,
+`#running?`, `#terminate`/`#kill`) immediately rather than capturing
+output and blocking for exit; `#stdout`/`#stderr` are each a new
+`Process::Stream` object kind, set `O_NONBLOCK` right after spawning so
+they're pollable via the existing `IO.poll` (extended to accept one,
+alongside `Socket`/`Listener`) the same way a non-blocking `Socket`
+already is. `#terminate`/`#kill` are guarded against signaling a
+reaped-and-recycled pid: once a handle has actually observed its child
+exit (`#wait` or a `#running?` that returned false), both raise
+`IOError` rather than risk hitting an unrelated process that has since
+reused that pid -- a still-zombied-but-unreaped child stays safely
+signalable past that point, per POSIX. `#wait` deliberately does not
+drain the streams first (the well-known "wait can deadlock a chatty
+child" gotcha every language's own version of this API has, e.g.
+Python's `subprocess.Popen.wait()`) -- a caller that cares about output
+drains it itself, optionally via `IO.poll`. A handle dropped without
+ever calling `#wait` is reaped non-blockingly at GC sweep time if
+already exited (no zombie pile-up) but a still-running child is simply
+left running, detached, never blocking the sweep itself. See
+`docs/io.md`.
 
 **Done**: `TCPSocket.connect`/`TLSSocket.connect` accept an optional
 third `options` Hash -- `connect_timeout_ms`/`read_timeout_ms`/

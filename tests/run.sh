@@ -2390,6 +2390,31 @@ else
 fi
 rm -f "$error_file"
 
+# Process.spawn under DIAMOND_STRESS_GC=1 -- every allocation triggers a
+# collection, exercising the DIAMOND_OBJECT_PROCESS_HANDLE/
+# DIAMOND_OBJECT_PROCESS_STREAM mark/sweep paths (including the
+# non-blocking reap-on-sweep for a handle nothing ever called #wait on)
+# the same way every other new native object kind gets. Spawns and drops
+# 50 handles, half without ever waiting on them, and confirms none are
+# left behind as zombies afterward.
+zombie_count_before="$(ps -eo stat 2>/dev/null | grep -c '^Z' || true)"
+env DIAMOND_STRESS_GC=1 timeout 30 "$diamond" -e '
+i = 0
+while i < 50
+  h = Process.spawn(["sh", "-c", "echo x"])
+  if i % 2 == 0
+    h.wait()
+  end
+  i = i + 1
+end
+0'
+sleep 0.5
+zombie_count_after="$(ps -eo stat 2>/dev/null | grep -c '^Z' || true)"
+if [[ "$zombie_count_after" -gt "$zombie_count_before" ]]; then
+    echo "Process.spawn left zombie processes behind after GC sweep (before=$zombie_count_before after=$zombie_count_after)" >&2
+    exit 1
+fi
+
 for bad_arg in '0.0 / 0.0' '1.0 / 0.0' '(0.0 - 1.0) / 0.0'; do
     error_file="$(mktemp)"
     if "$diamond" -e "to_i($bad_arg)" >/dev/null 2>"$error_file"; then

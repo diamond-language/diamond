@@ -1,0 +1,6 @@
+h = Process.spawn(["sh", "-c", "echo out; echo err 1>&2; exit 3"])
+code = h.wait()
+puts(h.stdout().read(100))
+puts(h.stderr().read(100))
+puts(code)
+h.running?()

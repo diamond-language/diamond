@@ -330,6 +330,10 @@ static void mark_object_children(DiamondObject *object, bool minor) {
         DiamondProcessResult *result=(DiamondProcessResult *)object;
         mark_value(result->stdout_value,minor);
         mark_value(result->stderr_value,minor);
+    } else if(object->kind==DIAMOND_OBJECT_PROCESS_HANDLE) {
+        DiamondProcessHandle *handle=(DiamondProcessHandle *)object;
+        mark_value(handle->stdout_stream,minor);
+        mark_value(handle->stderr_stream,minor);
     }
 }
 
@@ -642,6 +646,29 @@ static void sweep_list(DiamondVm *vm, DiamondObject **list_head,
              * and reaped the child before ever returning), no separate
              * allocation -- just accounting. */
             size=sizeof(DiamondProcessResult);
+        } else if(unreached->kind==DIAMOND_OBJECT_PROCESS_STREAM) {
+            size=sizeof(DiamondProcessStream);
+            const int fd=((DiamondProcessStream *)unreached)->fd;
+            if(fd>=0)close(fd);
+        } else if(unreached->kind==DIAMOND_OBJECT_PROCESS_HANDLE) {
+            size=sizeof(DiamondProcessHandle);
+            /* Non-blocking reap only -- a handle the caller dropped
+             * without ever calling #wait must not stall this GC pass on
+             * some unrelated, possibly long-lived child. If the child
+             * hasn't exited yet, it's simply left running, detached from
+             * any Diamond-level handle from this point on (same as a
+             * shell backgrounding a job and then exiting) -- not
+             * reachable for #wait/#kill any more, but not killed either.
+             * If it already exited, this reaps it so it doesn't sit
+             * around as a zombie forever just because nothing ever
+             * called #wait/#running? on its own handle. */
+            DiamondProcessHandle *handle=(DiamondProcessHandle *)unreached;
+            if(!handle->reaped) {
+                int reap_status=0;
+                pid_t reap_result=0;
+                do {reap_result=waitpid(handle->pid,&reap_status,WNOHANG);}
+                while(reap_result<0&&errno==EINTR);
+            }
         } else {
             size=sizeof(DiamondCell);
         }
@@ -2180,16 +2207,24 @@ static DiamondVmStatus tls_listen_helper(DiamondVm *vm,int64_t port,
 static DiamondVmStatus pollable_fd(DiamondVm *vm,DiamondValue value,int *out_fd) {
     if(value.kind!=DIAMOND_VALUE_OBJECT||
        (value.as.object->kind!=DIAMOND_OBJECT_LISTENER&&
-        value.as.object->kind!=DIAMOND_OBJECT_SOCKET)) {
-        snprintf(vm->error,sizeof vm->error,
-            "IO.poll arguments must be nonblocking TCPServer listeners or their accepted Sockets");
+        value.as.object->kind!=DIAMOND_OBJECT_SOCKET&&
+        value.as.object->kind!=DIAMOND_OBJECT_PROCESS_STREAM)) {
+        snprintf(vm->error,sizeof vm->error,"IO.poll arguments must be nonblocking "
+            "TCPServer listeners, their accepted Sockets, or a Process.spawn stream");
         return DIAMOND_VM_TYPE_ERROR;
     }
-    const int fd=value.as.object->kind==DIAMOND_OBJECT_LISTENER?
-        ((DiamondListenerHandle *)value.as.object)->fd:
-        ((DiamondSocketHandle *)value.as.object)->fd;
+    int fd=-1;
+    const char *closed_message="cannot poll a closed listener/socket";
+    if(value.as.object->kind==DIAMOND_OBJECT_LISTENER)
+        fd=((DiamondListenerHandle *)value.as.object)->fd;
+    else if(value.as.object->kind==DIAMOND_OBJECT_SOCKET)
+        fd=((DiamondSocketHandle *)value.as.object)->fd;
+    else {
+        fd=((DiamondProcessStream *)value.as.object)->fd;
+        closed_message="cannot poll a closed process stream";
+    }
     if(fd<0) {
-        snprintf(vm->error,sizeof vm->error,"cannot poll a closed listener/socket");
+        snprintf(vm->error,sizeof vm->error,"%s",closed_message);
         return DIAMOND_VM_IO_ERROR;
     }
     *out_fd=fd;
@@ -2291,6 +2326,38 @@ static DiamondProcessResult *allocate_process_result(DiamondVm *vm) {
     vm->young_objects=&result->object;
     vm->bytes_allocated+=sizeof(DiamondProcessResult);
     return result;
+}
+
+static DiamondProcessStream *allocate_process_stream(DiamondVm *vm,int fd) {
+    maybe_collect(vm);
+    DiamondProcessStream *stream=malloc(sizeof(DiamondProcessStream));
+    if(stream==nullptr)return nullptr;
+    *stream=(DiamondProcessStream){
+        .object={.next=vm->young_objects,.kind=DIAMOND_OBJECT_PROCESS_STREAM},.fd=fd};
+    vm->young_objects=&stream->object;
+    vm->bytes_allocated+=sizeof(DiamondProcessStream);
+    return stream;
+}
+
+/* Rooted into the caller's dest register (see DIAMOND_OP_PROCESS_SPAWN)
+ * before either stream is allocated -- same "root the container first"
+ * ordering allocate_process_result's own comment explains, since
+ * allocating each DiamondProcessStream can itself trigger a GC. Both
+ * stream fields start nil; process_spawn_helper fills them in with
+ * explicit gc_write_barrier calls once each stream is actually
+ * allocated, for the same reason process_run_helper's stdout_value/
+ * stderr_value writes need them. */
+static DiamondProcessHandle *allocate_process_handle(DiamondVm *vm,pid_t pid) {
+    maybe_collect(vm);
+    DiamondProcessHandle *handle=malloc(sizeof(DiamondProcessHandle));
+    if(handle==nullptr)return nullptr;
+    *handle=(DiamondProcessHandle){
+        .object={.next=vm->young_objects,.kind=DIAMOND_OBJECT_PROCESS_HANDLE},
+        .pid=pid,.stdout_stream=DIAMOND_NIL,.stderr_stream=DIAMOND_NIL,
+        .reaped=false,.exit_code=0};
+    vm->young_objects=&handle->object;
+    vm->bytes_allocated+=sizeof(DiamondProcessHandle);
+    return handle;
 }
 
 /* Private backing type for DiamondVm.adopted_programs (see its own
@@ -10115,6 +10182,52 @@ static void raise_capture_backtrace_helper(DiamondVm *vm,const DiamondChunk *chu
 
 enum { DIAMOND_PROCESS_MAX_ARGV = 65536 };
 
+/* Shared argv validation/marshaling behind Process.run and Process.spawn:
+ * `owner` is the exact caller name ("Process.run"/"Process.spawn") for
+ * error message prefixing, matching each call site's own existing
+ * message wording. `*out_argv` points directly at each DiamondString's
+ * own null-terminated buffer -- no copying needed, `argv_array` stays
+ * reachable (still live in the caller's own register) for as long as
+ * the resulting argv is used, and posix_spawn/execve never write
+ * through argv despite the non-const `char *const []` signature (a
+ * C89-main-signature-compatibility artifact, not a real mutation
+ * contract). Caller owns freeing `*out_argv` (a plain malloc'd array of
+ * borrowed pointers, not the strings themselves) once done with it. */
+static DiamondVmStatus process_build_argv_helper(DiamondVm *vm,const char *owner,
+        DiamondArray *argv_array,char ***out_argv,const char **out_command_name) {
+    if(argv_array->count==0) {
+        snprintf(vm->error,sizeof vm->error,"%s: argv must not be empty",owner);
+        return DIAMOND_VM_ARITY_ERROR;
+    }
+    if(argv_array->count>DIAMOND_PROCESS_MAX_ARGV) {
+        snprintf(vm->error,sizeof vm->error,
+            "%s: argv has too many elements (max %d)",owner,DIAMOND_PROCESS_MAX_ARGV);
+        return DIAMOND_VM_ARITY_ERROR;
+    }
+    for(size_t index=0;index<argv_array->count;index++) {
+        const DiamondValue element=argv_array->values[index];
+        if(element.kind!=DIAMOND_VALUE_OBJECT||
+           element.as.object->kind!=DIAMOND_OBJECT_STRING) {
+            snprintf(vm->error,sizeof vm->error,"%s: argv must be an Array of Strings",owner);
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        const DiamondString *piece=(const DiamondString *)element.as.object;
+        if(strlen(piece->chars)!=piece->length) {
+            snprintf(vm->error,sizeof vm->error,
+                "%s: argv strings must not contain a NUL byte",owner);
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+    }
+    char **argv=malloc((argv_array->count+1)*sizeof(char *));
+    if(argv==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+    for(size_t index=0;index<argv_array->count;index++)
+        argv[index]=((DiamondString *)argv_array->values[index].as.object)->chars;
+    argv[argv_array->count]=nullptr;
+    *out_argv=argv;
+    *out_command_name=argv[0];
+    return DIAMOND_VM_OK;
+}
+
 /* Process.run(argv): argv-array-only (never a shell string -- there is no
  * injection surface to guard against, by construction, matching the
  * design settled with the user before building this), blocking, full
@@ -10137,43 +10250,10 @@ enum { DIAMOND_PROCESS_MAX_ARGV = 65536 };
  * not this one) would be the natural place to fix that. */
 static DiamondVmStatus process_run_helper(DiamondVm *vm,
         DiamondArray *argv_array,DiamondProcessResult *result) {
-    if(argv_array->count==0) {
-        snprintf(vm->error,sizeof vm->error,"Process.run: argv must not be empty");
-        return DIAMOND_VM_ARITY_ERROR;
-    }
-    if(argv_array->count>DIAMOND_PROCESS_MAX_ARGV) {
-        snprintf(vm->error,sizeof vm->error,
-            "Process.run: argv has too many elements (max %d)",
-            DIAMOND_PROCESS_MAX_ARGV);
-        return DIAMOND_VM_ARITY_ERROR;
-    }
-    for(size_t index=0;index<argv_array->count;index++) {
-        const DiamondValue element=argv_array->values[index];
-        if(element.kind!=DIAMOND_VALUE_OBJECT||
-           element.as.object->kind!=DIAMOND_OBJECT_STRING) {
-            snprintf(vm->error,sizeof vm->error,
-                "Process.run: argv must be an Array of Strings");
-            return DIAMOND_VM_TYPE_ERROR;
-        }
-        const DiamondString *piece=(const DiamondString *)element.as.object;
-        if(strlen(piece->chars)!=piece->length) {
-            snprintf(vm->error,sizeof vm->error,
-                "Process.run: argv strings must not contain a NUL byte");
-            return DIAMOND_VM_TYPE_ERROR;
-        }
-    }
-    /* Points directly at each DiamondString's own null-terminated buffer
-     * -- no copying needed, argv_array stays reachable (still live in the
-     * caller's own register) for this whole call, and posix_spawn/execve
-     * never write through argv despite the non-const `char *const []`
-     * signature (a C89-main-signature-compatibility artifact, not a real
-     * mutation contract). */
-    char **argv=malloc((argv_array->count+1)*sizeof(char *));
-    if(argv==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
-    for(size_t index=0;index<argv_array->count;index++)
-        argv[index]=((DiamondString *)argv_array->values[index].as.object)->chars;
-    argv[argv_array->count]=nullptr;
-    const char *command_name=argv[0];
+    char **argv=nullptr;const char *command_name=nullptr;
+    const DiamondVmStatus argv_status=process_build_argv_helper(vm,"Process.run",
+        argv_array,&argv,&command_name);
+    if(argv_status!=DIAMOND_VM_OK)return argv_status;
 
     int stdout_pipe[2]={-1,-1};
     int stderr_pipe[2]={-1,-1};
@@ -10296,6 +10376,262 @@ static DiamondVmStatus process_run_helper(DiamondVm *vm,
     if(!gc_write_barrier(vm,(DiamondObject *)result))return DIAMOND_VM_OUT_OF_MEMORY;
     result->exit_code=exit_code;
     return DIAMOND_VM_OK;
+}
+
+/* Process.spawn(argv): like Process.run, but doesn't wait -- returns a
+ * live DiamondProcessHandle immediately with two O_NONBLOCK stdout/
+ * stderr streams (DiamondProcessStream, each independently pollable via
+ * IO.poll -- see pollable_fd) and the child's pid, rather than blocking
+ * to capture output and an exit code. No output capture, no reaping
+ * here: the caller drains the streams (optionally via IO.poll) and
+ * calls #wait themselves, on their own schedule. Child's stdin is
+ * /dev/null, the same v1 scope cut Process.run's own comment documents
+ * -- a writable stdin is a real, separate future slice, not this one. */
+static DiamondVmStatus process_spawn_helper(DiamondVm *vm,
+        DiamondArray *argv_array,DiamondProcessHandle *handle) {
+    char **argv=nullptr;const char *command_name=nullptr;
+    const DiamondVmStatus argv_status=process_build_argv_helper(vm,"Process.spawn",
+        argv_array,&argv,&command_name);
+    if(argv_status!=DIAMOND_VM_OK)return argv_status;
+
+    int stdout_pipe[2]={-1,-1};
+    int stderr_pipe[2]={-1,-1};
+    if(pipe(stdout_pipe)!=0||pipe(stderr_pipe)!=0) {
+        const int saved_errno=errno;
+        if(stdout_pipe[0]>=0)close(stdout_pipe[0]);
+        if(stdout_pipe[1]>=0)close(stdout_pipe[1]);
+        if(stderr_pipe[0]>=0)close(stderr_pipe[0]);
+        if(stderr_pipe[1]>=0)close(stderr_pipe[1]);
+        free(argv);
+        snprintf(vm->error,sizeof vm->error,"Process.spawn: pipe: %s",strerror(saved_errno));
+        return DIAMOND_VM_IO_ERROR;
+    }
+
+    posix_spawn_file_actions_t actions;
+    posix_spawn_file_actions_init(&actions);
+    posix_spawn_file_actions_addopen(&actions,STDIN_FILENO,"/dev/null",O_RDONLY,0);
+    posix_spawn_file_actions_adddup2(&actions,stdout_pipe[1],STDOUT_FILENO);
+    posix_spawn_file_actions_adddup2(&actions,stderr_pipe[1],STDERR_FILENO);
+    posix_spawn_file_actions_addclose(&actions,stdout_pipe[0]);
+    posix_spawn_file_actions_addclose(&actions,stdout_pipe[1]);
+    posix_spawn_file_actions_addclose(&actions,stderr_pipe[0]);
+    posix_spawn_file_actions_addclose(&actions,stderr_pipe[1]);
+
+    pid_t pid=0;
+    const int spawn_status=posix_spawnp(&pid,command_name,&actions,nullptr,argv,environ);
+    posix_spawn_file_actions_destroy(&actions);
+    close(stdout_pipe[1]);
+    close(stderr_pipe[1]);
+    if(spawn_status!=0) {
+        close(stdout_pipe[0]);close(stderr_pipe[0]);
+        snprintf(vm->error,sizeof vm->error,"Process.spawn: %s: %s",
+            command_name,strerror(spawn_status));
+        free(argv);
+        return DIAMOND_VM_IO_ERROR;
+    }
+    free(argv);
+
+    /* Neither read end inherits O_NONBLOCK from anywhere -- pipe(2)
+     * always creates blocking fds -- so both are set explicitly here,
+     * the same "accept() never inherits it either" reasoning
+     * TCPServer.listen_nonblocking's own accept() handler already
+     * documents. */
+    int read_fds[2]={stdout_pipe[0],stderr_pipe[0]};
+    for(size_t index=0;index<2;index++) {
+        const int flags=fcntl(read_fds[index],F_GETFL,0);
+        if(flags<0||fcntl(read_fds[index],F_SETFL,flags|O_NONBLOCK)<0) {
+            const int saved_errno=errno;
+            close(stdout_pipe[0]);close(stderr_pipe[0]);
+            snprintf(vm->error,sizeof vm->error,"Process.spawn: %s",strerror(saved_errno));
+            return DIAMOND_VM_IO_ERROR;
+        }
+    }
+
+    handle->pid=pid;
+    /* `handle` is already rooted (assigned to the caller's dest register
+     * before this helper runs -- see DIAMOND_OP_PROCESS_SPAWN), so each
+     * stream field write below needs its own gc_write_barrier call, the
+     * same requirement allocate_process_result's own two field writes
+     * have. */
+    DiamondProcessStream *stdout_stream=allocate_process_stream(vm,stdout_pipe[0]);
+    if(stdout_stream==nullptr) {
+        close(stdout_pipe[0]);close(stderr_pipe[0]);
+        return DIAMOND_VM_OUT_OF_MEMORY;
+    }
+    handle->stdout_stream=DIAMOND_OBJECT(stdout_stream);
+    if(!gc_write_barrier(vm,(DiamondObject *)handle)) {
+        close(stderr_pipe[0]);return DIAMOND_VM_OUT_OF_MEMORY;
+    }
+    DiamondProcessStream *stderr_stream=allocate_process_stream(vm,stderr_pipe[0]);
+    if(stderr_stream==nullptr) {close(stderr_pipe[0]);return DIAMOND_VM_OUT_OF_MEMORY;}
+    handle->stderr_stream=DIAMOND_OBJECT(stderr_stream);
+    if(!gc_write_barrier(vm,(DiamondObject *)handle))return DIAMOND_VM_OUT_OF_MEMORY;
+    return DIAMOND_VM_OK;
+}
+
+/* Reaps `handle`'s child exactly once -- every dispatch path that needs
+ * to know whether the child has exited (#wait, #running?, and the
+ * kill/terminate guard against a recycled pid) funnels through this
+ * rather than calling waitpid directly, so `reaped`/`exit_code` can
+ * never be set twice. `blocking` chooses waitpid's WNOHANG: #wait wants
+ * to actually block until the child exits (blocking=true); #running?
+ * wants an instant answer either way (blocking=false, WNOHANG). Sets
+ * *out_still_running only when !blocking and the child hasn't exited
+ * yet. */
+static DiamondVmStatus process_wait_helper(DiamondVm *vm,DiamondProcessHandle *handle,
+        bool blocking,bool *out_still_running) {
+    if(out_still_running!=nullptr)*out_still_running=false;
+    if(handle->reaped)return DIAMOND_VM_OK;
+    int wait_status=0;
+    pid_t wait_result=0;
+    do {
+        wait_result=waitpid(handle->pid,&wait_status,blocking?0:WNOHANG);
+    } while(wait_result<0&&errno==EINTR);
+    if(wait_result==0) {
+        /* WNOHANG and still running -- not reaped, nothing to cache. */
+        if(out_still_running!=nullptr)*out_still_running=true;
+        return DIAMOND_VM_OK;
+    }
+    if(wait_result<0) {
+        snprintf(vm->error,sizeof vm->error,"Process::Handle#wait: %s",strerror(errno));
+        return DIAMOND_VM_IO_ERROR;
+    }
+    int64_t exit_code=255;
+    if(WIFEXITED(wait_status))exit_code=WEXITSTATUS(wait_status);
+    else if(WIFSIGNALED(wait_status))exit_code=128+WTERMSIG(wait_status);
+    handle->exit_code=exit_code;
+    handle->reaped=true;
+    return DIAMOND_VM_OK;
+}
+
+static DiamondVmStatus process_handle_dispatch_helper(DiamondVm *vm,
+        DiamondProcessHandle *target,const DiamondStringConstant *method_name,
+        DiamondValue *registers,uint8_t argc,uint16_t dest) {
+    if(method_name->length==3&&memcmp(method_name->chars,"pid",3)==0) {
+        if(argc!=0)return DIAMOND_VM_ARITY_ERROR;
+        registers[dest]=DIAMOND_INT((int64_t)target->pid);return DIAMOND_VM_OK;
+    }
+    if(method_name->length==6&&memcmp(method_name->chars,"stdout",6)==0) {
+        if(argc!=0)return DIAMOND_VM_ARITY_ERROR;
+        registers[dest]=target->stdout_stream;return DIAMOND_VM_OK;
+    }
+    if(method_name->length==6&&memcmp(method_name->chars,"stderr",6)==0) {
+        if(argc!=0)return DIAMOND_VM_ARITY_ERROR;
+        registers[dest]=target->stderr_stream;return DIAMOND_VM_OK;
+    }
+    if(method_name->length==4&&memcmp(method_name->chars,"wait",4)==0) {
+        if(argc!=0)return DIAMOND_VM_ARITY_ERROR;
+        /* Deliberately does not drain stdout_stream/stderr_stream first
+         * -- a child that fills the OS pipe buffer while nobody reads
+         * it can deadlock right here, the same well-documented gotcha
+         * every language's own "wait without draining" API has (e.g.
+         * Python's subprocess.Popen.wait()). A caller that cares about
+         * output either drains the streams itself (optionally via
+         * IO.poll) while the child runs, or accepts that #wait can hang
+         * for a chatty child -- see docs/io.md. */
+        const DiamondVmStatus wait_status=process_wait_helper(vm,target,true,nullptr);
+        if(wait_status!=DIAMOND_VM_OK)return wait_status;
+        registers[dest]=DIAMOND_INT(target->exit_code);return DIAMOND_VM_OK;
+    }
+    if(method_name->length==8&&memcmp(method_name->chars,"running?",8)==0) {
+        if(argc!=0)return DIAMOND_VM_ARITY_ERROR;
+        bool still_running=false;
+        const DiamondVmStatus poll_status=
+            process_wait_helper(vm,target,false,&still_running);
+        if(poll_status!=DIAMOND_VM_OK)return poll_status;
+        registers[dest]=DIAMOND_BOOL(still_running);return DIAMOND_VM_OK;
+    }
+    if((method_name->length==9&&memcmp(method_name->chars,"terminate",9)==0)||
+       (method_name->length==4&&memcmp(method_name->chars,"kill",4)==0)) {
+        if(argc!=0)return DIAMOND_VM_ARITY_ERROR;
+        const bool terminate=method_name->length==9;
+        /* Guarded by `reaped`, not just "did waitpid ever run": once a
+         * pid has actually been reaped, the OS is free to recycle it for
+         * an unrelated process, and signaling a stale pid at that point
+         * would hit whatever that pid means now, not this child. A child
+         * that has exited but hasn't been reaped *yet* (a zombie) is
+         * still safe to signal -- POSIX guarantees a zombie's pid stays
+         * reserved until reaped, so this is only a mistake, never a
+         * race, past that point. */
+        if(target->reaped) {
+            snprintf(vm->error,sizeof vm->error,
+                "Process::Handle#%s: process has already exited",
+                terminate?"terminate":"kill");
+            return DIAMOND_VM_IO_ERROR;
+        }
+        if(kill(target->pid,terminate?SIGTERM:SIGKILL)!=0) {
+            snprintf(vm->error,sizeof vm->error,"Process::Handle#%s: %s",
+                terminate?"terminate":"kill",strerror(errno));
+            return DIAMOND_VM_IO_ERROR;
+        }
+        registers[dest]=DIAMOND_NIL;return DIAMOND_VM_OK;
+    }
+    snprintf(vm->error,sizeof vm->error,"undefined method '%.*s' for Process::Handle",
+        (int)method_name->length,method_name->chars);
+    return DIAMOND_VM_TYPE_ERROR;
+}
+
+/* Process::Stream (Process.spawn's #stdout/#stderr) -- read(2) directly
+ * against the raw, already-O_NONBLOCK fd, the exact same shape and
+ * error taxonomy DIAMOND_OBJECT_SOCKET's own read dispatch uses (EAGAIN
+ * -> WouldBlockError, a clean 0-byte read -> nil/EOF), since a
+ * poll-driven caller needs the identical "nothing yet" vs. "nothing
+ * ever again" distinction here too. No #write -- this is a read-only
+ * pipe end; the child's stdin is /dev/null (see process_spawn_helper),
+ * so there is nothing to write to. */
+static DiamondVmStatus process_stream_dispatch_helper(DiamondVm *vm,
+        DiamondProcessStream *target,const DiamondStringConstant *method_name,
+        DiamondValue *registers,uint8_t argc,uint16_t base,uint16_t dest) {
+    const bool read_method=method_name->length==4&&memcmp(method_name->chars,"read",4)==0;
+    const bool close_method=method_name->length==5&&memcmp(method_name->chars,"close",5)==0;
+    if(!read_method&&!close_method) {
+        snprintf(vm->error,sizeof vm->error,"undefined method '%.*s' for Process::Stream",
+            (int)method_name->length,method_name->chars);
+        return DIAMOND_VM_TYPE_ERROR;
+    }
+    if(close_method) {
+        if(argc!=0)return DIAMOND_VM_ARITY_ERROR;
+        if(target->fd>=0) {close(target->fd);target->fd=-1;}
+        registers[dest]=DIAMOND_NIL;return DIAMOND_VM_OK;
+    }
+    if(target->fd<0) {
+        snprintf(vm->error,sizeof vm->error,"process stream is closed");
+        return DIAMOND_VM_IO_ERROR;
+    }
+    if(argc!=1)return DIAMOND_VM_ARITY_ERROR;
+    if(registers[base].kind!=DIAMOND_VALUE_INT||registers[base].as.integer<0) {
+        snprintf(vm->error,sizeof vm->error,
+            "Process::Stream#read argument must be a non-negative Int");
+        return DIAMOND_VM_TYPE_ERROR;
+    }
+    const size_t want=(size_t)registers[base].as.integer;
+    if(want==0) {
+        DiamondString *empty=allocate_string(vm,"",0);
+        if(empty==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+        registers[dest]=DIAMOND_OBJECT(empty);return DIAMOND_VM_OK;
+    }
+    char *buffer=malloc(want);
+    if(buffer==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+    errno=0;
+    const ssize_t read_count=read(target->fd,buffer,want);
+    if(read_count<0) {
+        const int saved_errno=errno;
+        free(buffer);
+        if(saved_errno==EAGAIN||saved_errno==EWOULDBLOCK) {
+            snprintf(vm->error,sizeof vm->error,"read would block");
+            return DIAMOND_VM_WOULD_BLOCK;
+        }
+        snprintf(vm->error,sizeof vm->error,"read error: %s",strerror(saved_errno));
+        return DIAMOND_VM_IO_ERROR;
+    }
+    if(read_count==0) {
+        free(buffer);
+        registers[dest]=DIAMOND_NIL;return DIAMOND_VM_OK;
+    }
+    DiamondString *string=allocate_string(vm,buffer,(size_t)read_count);
+    free(buffer);
+    if(string==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+    registers[dest]=DIAMOND_OBJECT(string);return DIAMOND_VM_OK;
 }
 
 static DiamondVmStatus process_result_dispatch_helper(DiamondVm *vm,
@@ -14590,6 +14926,22 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     VM_PROPAGATE(dispatch_status);
                     break;
                 }
+                if(receiver_kind==DIAMOND_OBJECT_PROCESS_HANDLE) {
+                    if(type_argument_count!=0)VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                    const DiamondVmStatus dispatch_status=process_handle_dispatch_helper(vm,
+                        (DiamondProcessHandle *)registers[recv].as.object,
+                        method_name,registers,argc,dest);
+                    VM_PROPAGATE(dispatch_status);
+                    break;
+                }
+                if(receiver_kind==DIAMOND_OBJECT_PROCESS_STREAM) {
+                    if(type_argument_count!=0)VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                    const DiamondVmStatus dispatch_status=process_stream_dispatch_helper(vm,
+                        (DiamondProcessStream *)registers[recv].as.object,
+                        method_name,registers,argc,base,dest);
+                    VM_PROPAGATE(dispatch_status);
+                    break;
+                }
                 if(receiver_kind==DIAMOND_OBJECT_PROGRAM_BUILDER) {
                     if(type_argument_count!=0)VM_RETURN(DIAMOND_VM_TYPE_ERROR);
                     DiamondValue invoke_result=DIAMOND_NIL;
@@ -15176,6 +15528,26 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 const DiamondVmStatus run_status=process_run_helper(vm,
                     (DiamondArray *)registers[argv_register].as.object,process_result);
                 VM_PROPAGATE(run_status);
+                break;
+            }
+            case DIAMOND_OP_PROCESS_SPAWN: {
+                uint16_t destination=0,argv_register=0;
+                READ_SHORT(destination);READ_SHORT(argv_register);
+                if(registers[argv_register].kind!=DIAMOND_VALUE_OBJECT||
+                   registers[argv_register].as.object->kind!=DIAMOND_OBJECT_ARRAY) {
+                    snprintf(vm->error,sizeof vm->error,
+                        "Process.spawn expects an Array of Strings");
+                    VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                }
+                DiamondProcessHandle *process_handle=allocate_process_handle(vm,0);
+                if(process_handle==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                /* Rooted immediately, before process_spawn_helper's own
+                 * further allocations -- see allocate_process_handle's
+                 * comment. */
+                registers[destination]=DIAMOND_OBJECT(process_handle);
+                const DiamondVmStatus spawn_status=process_spawn_helper(vm,
+                    (DiamondArray *)registers[argv_register].as.object,process_handle);
+                VM_PROPAGATE(spawn_status);
                 break;
             }
             case DIAMOND_OP_BCRYPT_HASH: {

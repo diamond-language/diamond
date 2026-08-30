@@ -4,6 +4,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <sys/types.h>
 
 #include <reginold.h>
 
@@ -69,6 +70,8 @@ typedef enum DiamondObjectKind : uint8_t {
     DIAMOND_OBJECT_MYSQL,
     DIAMOND_OBJECT_TIME,
     DIAMOND_OBJECT_PROCESS_RESULT,
+    DIAMOND_OBJECT_PROCESS_HANDLE,
+    DIAMOND_OBJECT_PROCESS_STREAM,
 } DiamondObjectKind;
 
 typedef struct DiamondObject {
@@ -469,6 +472,41 @@ typedef struct DiamondProcessResult {
     DiamondValue stderr_value;
     int64_t exit_code;
 } DiamondProcessResult;
+
+/* Process.spawn(argv)'s stdout/stderr streams: the *read end* of a pipe
+ * to a still-possibly-running child, set O_NONBLOCK right after
+ * posix_spawn (same reasoning DiamondSocketHandle's own comment gives --
+ * a poll-driven caller needs EAGAIN to actually mean "nothing yet", not
+ * silently be swallowed by libc stdio buffering), so this is a raw fd
+ * with its own read(2)/close(2) dispatch, not DiamondFileHandle's
+ * buffered FILE*. Also why this can be an IO.poll target the same way a
+ * DiamondSocketHandle already is (see pollable_fd, vm.c) -- polling
+ * genuinely needs the same fd-level readiness poll(2) itself checks. */
+typedef struct DiamondProcessStream {
+    DiamondObject object;
+    int fd;
+} DiamondProcessStream;
+
+/* Process.spawn(argv)'s live handle -- unlike DiamondProcessResult
+ * (already-finished, output already captured, child already reaped),
+ * this represents a child that may still be running: `pid` stays valid
+ * until `reaped` (set by #wait or a #running? that observes exit),
+ * `stdout_stream`/`stderr_stream` are each a DiamondProcessStream the
+ * caller drains (optionally via IO.poll) independently of waiting for
+ * exit. `reaped`/`exit_code` cache the one waitpid() call this handle
+ * is allowed to make -- calling waitpid a second time on an already-
+ * reaped pid would either block forever (no such child) or, worse, race
+ * against the OS having already recycled that pid for an unrelated
+ * process, so every dispatch path funnels through the same "have we
+ * already reaped this?" check. */
+typedef struct DiamondProcessHandle {
+    DiamondObject object;
+    pid_t pid;
+    DiamondValue stdout_stream;
+    DiamondValue stderr_stream;
+    bool reaped;
+    int64_t exit_code;
+} DiamondProcessHandle;
 
 /* Forward-declared, not included: DiamondProgram is defined in compiler.h,
  * which itself includes vm.h (and so, transitively, this file) -- a

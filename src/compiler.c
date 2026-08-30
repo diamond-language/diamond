@@ -4944,10 +4944,33 @@ static uint16_t parse_process_run_call(Compiler *compiler) {
     return dest;
 }
 
+/* Process.spawn(argv) -- identical fixed one-argument shape to
+ * Process.run above (same argv Array, different opcode/result type). */
+static uint16_t parse_process_spawn_call(Compiler *compiler) {
+    if(compiler->current.kind!=DIAMOND_TOKEN_LEFT_PAREN) {
+        fail(compiler,compiler->current.span,"expected '(' after 'Process.spawn'");
+        return 0;
+    }
+    advance_token(compiler);
+    skip_newlines(compiler);
+    const uint16_t argv_register=parse_expression(compiler);
+    skip_newlines(compiler);
+    if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
+        fail(compiler,compiler->current.span,"expected ')' after Process.spawn arguments");
+        return 0;
+    }
+    advance_token(compiler);
+    const uint16_t dest=allocate_register(compiler);
+    emit_opcode(compiler,DIAMOND_OP_PROCESS_SPAWN);
+    emit_register(compiler,dest);
+    emit_register(compiler,argv_register);
+    return dest;
+}
+
 static uint16_t parse_process_call(Compiler *compiler) {
     advance_token(compiler); /* consume '.' */
     if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER) {
-        fail(compiler,compiler->current.span,"expected 'run' after 'Process'");
+        fail(compiler,compiler->current.span,"expected 'run' or 'spawn' after 'Process'");
         return 0;
     }
     const DiamondSpan method=compiler->current.span;
@@ -4955,7 +4978,11 @@ static uint16_t parse_process_call(Compiler *compiler) {
         advance_token(compiler);
         return parse_process_run_call(compiler);
     }
-    fail(compiler,method,"expected 'run' after 'Process'");
+    if(name_equals(compiler,"spawn",method,false)) {
+        advance_token(compiler);
+        return parse_process_spawn_call(compiler);
+    }
+    fail(compiler,method,"expected 'run' or 'spawn' after 'Process'");
     return 0;
 }
 

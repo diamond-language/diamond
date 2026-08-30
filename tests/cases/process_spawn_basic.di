@@ -1,0 +1,6 @@
+h = Process.spawn(["echo", "hello"])
+puts(h.pid() > 0)
+puts(h.wait())
+puts(h.stdout().read(100))
+puts(h.stderr().read(100))
+h.running?()

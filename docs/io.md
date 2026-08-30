@@ -348,11 +348,13 @@ that let a fiber's own I/O yield back to a scheduler instead:
   `NonblockingConnection#write`) is expected to retry the remainder.
 - **`IO.poll(readables, writables, timeout_ms)`** — a `poll(2)` wrapper
   accepting two Arrays (of `TCPServer.listen_nonblocking`
-  listeners/`Socket`s — an ordinary blocking listener/File is rejected,
-  since polling a blocking-mode fd is meaningless: nothing in this VM
-  ever puts one in non-blocking mode, so it would always appear either
-  always-ready or never-ready depending on kernel buffering, never the
-  genuine signal a caller needs) and a millisecond timeout (`-1` blocks
+  listeners/`Socket`s, or a `Process.spawn` handle's `Process::Stream`
+  (see the Process section below) — an ordinary blocking listener/File
+  is rejected, since polling a blocking-mode fd is meaningless: nothing
+  in this VM ever puts one in non-blocking mode, so it would always
+  appear either always-ready or never-ready depending on kernel
+  buffering, never the genuine signal a caller needs) and a millisecond
+  timeout (`-1` blocks
   indefinitely, `0` returns immediately). Returns a `Hash`:
   `{"readable": [...], "writable": [...]}`, each an Array of `Bool`s the
   same length and order as the corresponding input — `readable[i]`
@@ -1068,7 +1070,7 @@ for free:
   at the same instant are `==` regardless of which one is `.utc`,
   exactly like Ruby.
 
-## Process: `Process.run`
+## Process: `Process.run`/`Process.spawn`
 
 ```ruby
 result = Process.run(["ls", "-la", dir])
@@ -1103,50 +1105,115 @@ Instance methods on the result, all ordinary `.method()` calls:
   (matching the shell's own convention)
 - `.success?()` → `Bool`, `exit_code() == 0`
 
-**v1 scope, deliberately minimal** (settled with the user before
-building this — a non-blocking `Process.spawn` with a live handle,
-`.wait()`/`.kill()`/streaming output, is a real possible future
-extension, not this one):
+**`Process.run`'s own v1 scope, deliberately minimal**:
 
 - The child's stdin is always `/dev/null` — there is no way to feed it
-  data. A command that tries to read from stdin sees immediate EOF (e.g.
-  `Process.run(["cat"])` returns empty stdout and exit code `0`
-  immediately, rather than hanging).
+  data, on `Process.run` or `Process.spawn` alike. A command that tries
+  to read from stdin sees immediate EOF (e.g. `Process.run(["cat"])`
+  returns empty stdout and exit code `0` immediately, rather than
+  hanging). A writable stdin is a real, separate future slice.
 - Fully blocking/synchronous — no way to run a child in the background,
-  poll it, or kill it early. A long-running or hung child blocks the
-  calling Diamond program for as long as it runs.
+  poll it, or kill it early (`Process.spawn`, below, is exactly that).
+  A long-running or hung child blocks the calling Diamond program for as
+  long as it runs.
 - A trapped `Signal` (see `Signal.trap` above) does not get to run while
   a `Process.run` call is blocked waiting on the child — it runs once the
   child exits and `Process.run` returns, not immediately. (Unlike
-  `IO.poll`, which does handle this — see that section above.)
+  `IO.poll`, which does handle this — see that section above. This
+  applies to `Process.spawn`'s own `#wait` too, for the same reason: it's
+  a plain blocking `waitpid`, not built on `IO.poll`.)
 - Command-not-found and other spawn failures (a bad path, no exec
   permission, ...) raise `IOError` synchronously, the same call that
   fails, rather than exit code `127` the way a real shell reports it.
+  Same for `Process.spawn`.
+
+### `Process.spawn`: a live, non-blocking handle
+
+```ruby
+handle = Process.spawn(["sh", "-c", "sleep 1; echo done"])
+puts(handle.pid())
+
+ready = IO.poll([handle.stdout()], [], -1)   # blocks until output arrives
+puts(ready["readable"][0])                    # => true
+puts(handle.stdout().read(100))               # => "done\n"
+
+puts(handle.wait())                           # blocks until the child exits, => 0
+puts(handle.running?())                       # => false
+```
+
+```ruby
+handle = Process.spawn(["sleep", "30"])
+handle.terminate()   # SIGTERM
+handle.wait()         # => 143 (128 + SIGTERM)
+
+handle.kill()          # raises IOError -- process has already exited
+```
+
+Unlike `Process.run`, `Process.spawn(argv)` (same `argv`-Array-only
+argument, same `PATH` resolution, same `/dev/null` stdin) returns
+immediately with a live `Process::Handle` — no output capture, no
+waiting for exit:
+
+- **`.pid()`** → `Int`, the child's process ID.
+- **`.stdout()`** / **`.stderr()`** → a `Process::Stream` each (a new
+  object kind, `DIAMOND_OBJECT_PROCESS_STREAM`) — the *read end* of a
+  pipe to the child, always the same object across repeated calls. Set
+  `O_NONBLOCK` right after spawning, the same reasoning
+  `TCPServer.listen_nonblocking`'s accepted `Socket`s already have: a
+  poll-driven caller needs a real `EAGAIN`, not libc stdio buffering
+  silently swallowing "nothing yet". `.read(n)` returns a `String` of
+  however many bytes were actually available (up to `n`), `nil` at true
+  EOF, or raises `WouldBlockError` when nothing's ready — exactly
+  `Socket#read`'s own contract (see the non-blocking-sockets section
+  above), and for the same reason: it *is* that contract, on a pipe fd
+  instead of a network one. `.close()` is idempotent. No `.write()` —
+  this is a read-only pipe end (the child's stdin is `/dev/null`).
+  Poll it directly: `IO.poll([handle.stdout(), handle.stderr()], [], timeout_ms)`
+  accepts a `Process::Stream` exactly like a `Socket`.
+- **`.wait()`** → `Int`, the same exit-code convention `Process.run`'s
+  own `.exit_code()` uses (real exit status, or `128 + signal number`).
+  Blocks until the child exits, `waitpid`-style — **does not drain
+  `.stdout()`/`.stderr()` for you first**. A child that writes enough to
+  fill the OS pipe buffer while nobody's reading it can deadlock right
+  here, waiting for a read that will never come while the child itself
+  is blocked writing — the same well-documented gotcha every language's
+  "wait without draining" API has (e.g. Python's own
+  `subprocess.Popen.wait()`). A caller that cares about output drains
+  the streams itself (optionally via `IO.poll`) while the child runs, or
+  accepts that `.wait()` can hang for a sufficiently chatty child.
+  Idempotent — a second `.wait()` call just returns the same cached exit
+  code instead of re-`waitpid`ing (which would either block forever on
+  an already-reaped pid, or, worse, risk observing an unrelated process
+  that has since reused it).
+- **`.running?()`** → `Bool`. A non-blocking check (`waitpid` with
+  `WNOHANG`) — reaps and caches the exit code if the child has already
+  exited, same as `.wait()` would, but never blocks either way.
+- **`.terminate()`** / **`.kill()`** → sends `SIGTERM`/`SIGKILL` to the
+  child. Raises `IOError` if the handle has already observed the child
+  exit (via `.wait()` or a `.running?()` that returned `false`) — once a
+  pid is actually reaped, the OS is free to recycle it for an unrelated
+  process, and signaling a stale pid at that point would hit whatever
+  that pid means *now*. A child that has exited but hasn't been reaped
+  yet (a zombie) is still safe to signal — POSIX guarantees a zombie's
+  pid stays reserved until reaped — so this guard triggers only once
+  this handle has actually reaped it, never preemptively.
+- A handle that's simply dropped, never `.wait()`ed on: GC sweep reaps
+  it with a non-blocking `waitpid` if it has already exited (so it
+  doesn't sit around as a zombie forever), but never blocks the sweep
+  waiting for a still-running child — that child is left running,
+  detached from any Diamond-level handle from that point on, the same
+  way a shell backgrounding a job and then exiting leaves it running.
 
 ## What's deliberately out of scope so far
 
 - **Multiple `print`/`puts` arguments**: `puts(a, b)` (Ruby-style, one
   line per argument) is not supported — exactly one argument, matching
   the narrowest useful slice.
-- **Error handling for stdout write failures**: a failed `fwrite`/`fputc`
-  to stdout (e.g. a broken pipe) is not currently surfaced as a
-  rescuable exception, unlike `File#write`'s own `ferror` check; this
-  mirrors most languages' baseline `print`, but is a known
-  simplification, not a deliberate design stance. It no longer *kills
-  the process* via `SIGPIPE` (see the TLS section's note on
-  `diamond_vm_init` ignoring it process-wide) — a broken stdout pipe now
-  fails each write silently and the program continues, rather than
-  either dying outright or raising.
-- **A custom/pinned TLS trust store**: `TLSSocket.connect` always
-  verifies against the system trust store; there's no way from Diamond
-  code itself to trust an additional/different CA (only the
-  `$SSL_CERT_FILE`/`$SSL_CERT_DIR` environment-variable override
-  OpenSSL's own default-paths lookup already respects). No call site in
-  this codebase needed one yet.
-- **TLS session resumption, client certificates, ALPN**: none of
-  OpenSSL's more advanced connection-negotiation features are exposed —
-  every connection is a fresh, full handshake with no protocol
-  negotiated beyond default TLS.
+- **TLS session resumption and ALPN**: not exposed — every
+  `TLSSocket.connect` is a fresh, full handshake with no protocol
+  negotiated beyond default TLS. (A custom trust store and client
+  certificates *are* supported now — see `TLSSocket.connect`'s own
+  `options` above.)
 - **File mode validation**: `File.open` passes `mode` straight through
   to `fopen` with no Diamond-level checking.
 - **Transactions as a dedicated *native* API**: no `.transaction { ... }`-
