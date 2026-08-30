@@ -1689,6 +1689,13 @@ HMAC.verify("payload", "secret", signature)   # => true
 HMAC.verify("payload", "secret", "forged")    # => false
 ```
 
+`Digest.sha1(data: String) -> String` and `HMAC.sha1(key: String, data:
+String) -> String` are the same pair, using SHA-1 instead (40 lowercase
+hexadecimal characters). SHA-1 is cryptographically weak for new signing
+use — this exists because TOTP (RFC 6238) mandates HMAC-SHA1 by spec, not
+as a second general-purpose recommendation alongside `sha256`. `HMAC.verify`
+has no `sha1` counterpart; it only ever checks against `HMAC.sha256`.
+
 `Cipher.encrypt(key: String, plaintext: String) -> String` and
 `Cipher.decrypt(key: String, blob: String) -> String | Nil` are native
 AES-256-GCM authenticated encryption, backed by OpenSSL's `EVP_CIPHER`

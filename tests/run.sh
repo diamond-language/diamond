@@ -2170,6 +2170,153 @@ wait "$tls_mismatch_server_pid" || true
 rm -f "$tls_mismatch_server_out"
 rm -rf "$tls_dir"
 
+# TCPSocket.connect/TLSSocket.connect's new third `options` Hash argument:
+# connect timeout, read/write timeout, a custom TLS trust store (`ca_file`/
+# `ca_path`, replacing the $SSL_CERT_FILE env-var dance above for callers
+# that want it as an explicit API rather than process-wide state), and a
+# client certificate/key pair for mutual TLS.
+error_file="$(mktemp)"
+if timeout 5 "$diamond" -e \
+    'TCPSocket.connect("10.255.255.1", 81, {"connect_timeout_ms": 300})' \
+    >/dev/null 2>"$error_file"; then
+    echo "TCPSocket.connect to a black-holed address unexpectedly succeeded" >&2
+    exit 1
+fi
+grep -q "cannot connect to" "$error_file"
+rm -f "$error_file"
+
+error_file="$(mktemp)"
+if "$diamond" -e 'TCPSocket.connect("localhost", 80, {"bogus": 1})' \
+    >/dev/null 2>"$error_file"; then
+    echo "TCPSocket.connect with an unrecognized option unexpectedly succeeded" >&2
+    exit 1
+fi
+grep -q "unrecognized connect option 'bogus'" "$error_file"
+rm -f "$error_file"
+
+error_file="$(mktemp)"
+if "$diamond" -e 'TCPSocket.connect("localhost", 80, {"connect_timeout_ms": "slow"})' \
+    >/dev/null 2>"$error_file"; then
+    echo "TCPSocket.connect with a non-Int timeout option unexpectedly succeeded" >&2
+    exit 1
+fi
+grep -q "connect option 'connect_timeout_ms' must be an Int" "$error_file"
+rm -f "$error_file"
+
+error_file="$(mktemp)"
+if "$diamond" -e 'TLSSocket.connect("localhost", 443, {"cert": "only-cert.pem"})' \
+    >/dev/null 2>"$error_file"; then
+    echo "TLSSocket.connect with a lone 'cert' option unexpectedly succeeded" >&2
+    exit 1
+fi
+grep -q "'cert' and 'key' must be given together" "$error_file"
+rm -f "$error_file"
+
+options_dir="$(mktemp -d)"
+openssl req -x509 -newkey rsa:2048 -nodes -keyout "$options_dir/key.pem" \
+    -out "$options_dir/cert.pem" -days 1 -subj "/CN=localhost" \
+    -addext "subjectAltName=DNS:localhost" >/dev/null 2>&1
+openssl req -x509 -newkey rsa:2048 -nodes -keyout "$options_dir/client-key.pem" \
+    -out "$options_dir/client-cert.pem" -days 1 -subj "/CN=diamond-test-client" \
+    >/dev/null 2>&1
+
+# A client that fails to load its own certificate/key never starts a TLS
+# handshake at all -- just a raw TCP connect immediately dropped -- so the
+# server's own accept() (a full server-side handshake, per TLSServer's own
+# contract) fails too once the peer disappears mid-handshake. Same
+# reasoning as the untrusted-certificate/hostname-mismatch tests above:
+# the server script's own exit status is intentionally not checked, and
+# this needs its own single-accept listener rather than sharing one with a
+# test that needs a second, successful connection afterward.
+missing_cert_port=18755
+missing_cert_server_out="$(mktemp)"
+"$diamond" -e "$(printf 'listener = TLSServer.listen(%d, "%s", "%s")
+puts("ready")
+conn = listener.accept()
+conn.close()
+listener.close()
+0' "$missing_cert_port" "$options_dir/cert.pem" "$options_dir/key.pem")" \
+    >"$missing_cert_server_out" 2>&1 &
+missing_cert_server_pid=$!
+for _ in $(seq 1 200); do
+    grep -q '^ready$' "$missing_cert_server_out" && break
+    sleep 0.05
+done
+error_file="$(mktemp)"
+if timeout 10 "$diamond" -e "$(printf 'TLSSocket.connect("localhost", %d, {"ca_file": "%s", "cert": "does-not-exist.pem", "key": "does-not-exist.pem"})' \
+    "$missing_cert_port" "$options_dir/cert.pem")" >/dev/null 2>"$error_file"; then
+    echo "TLSSocket.connect with a missing client certificate file unexpectedly succeeded" >&2
+    exit 1
+fi
+grep -q "cannot load TLS client certificate/key" "$error_file"
+rm -f "$error_file"
+wait "$missing_cert_server_pid" || true
+rm -f "$missing_cert_server_out"
+
+# A real server accepting a connection but never writing back exercises a
+# real read_timeout_ms: without one this would hang forever (the server
+# only closes once the client-side timeout below has already had to fire).
+options_tls_port=18757
+options_tls_server_out="$(mktemp)"
+"$diamond" -e "$(printf 'listener = TLSServer.listen(%d, "%s", "%s")
+puts("ready")
+conn = listener.accept()
+IO.poll([], [], 2000)
+conn.close()
+listener.close()
+0' "$options_tls_port" "$options_dir/cert.pem" "$options_dir/key.pem")" \
+    >"$options_tls_server_out" 2>&1 &
+options_tls_server_pid=$!
+for _ in $(seq 1 200); do
+    grep -q '^ready$' "$options_tls_server_out" && break
+    sleep 0.05
+done
+
+error_file="$(mktemp)"
+if timeout 10 "$diamond" -e "$(printf 'c = TLSSocket.connect("localhost", %d, {"ca_file": "%s", "read_timeout_ms": 200})
+c.read()' "$options_tls_port" "$options_dir/cert.pem")" >/dev/null 2>"$error_file"; then
+    echo "TLSSocket read with read_timeout_ms against a silent peer unexpectedly succeeded" >&2
+    exit 1
+fi
+grep -Eq "Resource temporarily unavailable|timed out" "$error_file"
+rm -f "$error_file"
+wait "$options_tls_server_pid" || true
+rm -f "$options_tls_server_out"
+
+# Same server/cert, but connecting with a client cert/key pair over a
+# server that never asked for one -- proves loading a client certificate
+# doesn't break an ordinary handshake, even though nothing here can
+# observe the server actually receiving it (TLSServer.listen has no
+# client-cert-request option yet).
+options_tls_port2=18756
+options_tls_server2_out="$(mktemp)"
+"$diamond" -e "$(printf 'listener = TLSServer.listen(%d, "%s", "%s")
+puts("ready")
+conn = listener.accept()
+msg = conn.gets()
+conn.write("echo: #{msg}\\n")
+conn.close()
+listener.close()
+0' "$options_tls_port2" "$options_dir/cert.pem" "$options_dir/key.pem")" \
+    >"$options_tls_server2_out" 2>&1 &
+options_tls_server2_pid=$!
+for _ in $(seq 1 200); do
+    grep -q '^ready$' "$options_tls_server2_out" && break
+    sleep 0.05
+done
+options_tls_client_out="$(mktemp)"
+timeout 10 "$diamond" -e "$(printf 'c = TLSSocket.connect("localhost", %d, {"ca_file": "%s", "cert": "%s", "key": "%s"})
+c.write("hello\\n")
+r = c.gets()
+c.close()
+r' "$options_tls_port2" "$options_dir/cert.pem" "$options_dir/client-cert.pem" \
+    "$options_dir/client-key.pem")" >"$options_tls_client_out" 2>&1
+wait "$options_tls_server2_pid"
+[[ "$(tail -n1 "$options_tls_server2_out")" == "0" ]]
+[[ "$(cat "$options_tls_client_out")" == "echo: hello" ]]
+rm -f "$options_tls_server2_out" "$options_tls_client_out"
+rm -rf "$options_dir"
+
 error_file="$(mktemp)"
 if "$diamond" -e '5.abs()' >/dev/null 2>"$error_file"; then
     echo "Int literal .abs() unexpectedly succeeded (Int has no method dispatch)" >&2

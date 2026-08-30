@@ -975,7 +975,7 @@ static bool disassemble_chunk(FILE *stream, const char *name,
             case DIAMOND_OP_FILE_OPEN:
                 offset=three_registers(stream,chunk,"FILE_OPEN",offset, &valid);break;
             case DIAMOND_OP_TCP_CONNECT:
-                offset=three_registers(stream,chunk,"TCP_CONNECT",offset, &valid);break;
+                offset=four_registers(stream,chunk,"TCP_CONNECT",offset, &valid);break;
             case DIAMOND_OP_TCP_LISTEN:
                 offset=three_registers(stream,chunk,"TCP_LISTEN",offset, &valid);break;
             case DIAMOND_OP_TCP_LISTEN_NONBLOCK:
@@ -995,7 +995,7 @@ static bool disassemble_chunk(FILE *stream, const char *name,
             case DIAMOND_OP_SIGNAL_TRAP:
                 offset=three_registers(stream,chunk,"SIGNAL_TRAP",offset, &valid);break;
             case DIAMOND_OP_TLS_CONNECT:
-                offset=three_registers(stream,chunk,"TLS_CONNECT",offset, &valid);break;
+                offset=four_registers(stream,chunk,"TLS_CONNECT",offset, &valid);break;
             case DIAMOND_OP_TLS_LISTEN:
                 if(!require_bytes(stream,chunk,offset,9)){valid=false;offset=chunk->code_count;break;}
                 fprintf(stream,"%-18s r%u, r%u, r%u, r%u\n","TLS_LISTEN",
@@ -1190,6 +1190,10 @@ static bool disassemble_chunk(FILE *stream, const char *name,
                 offset=three_registers(stream,chunk,"HMAC_SHA256",offset,&valid);break;
             case DIAMOND_OP_HMAC_VERIFY:
                 offset=four_registers(stream,chunk,"HMAC_VERIFY",offset,&valid);break;
+            case DIAMOND_OP_DIGEST_SHA1:
+                offset=two_registers(stream,chunk,"DIGEST_SHA1",offset,&valid);break;
+            case DIAMOND_OP_HMAC_SHA1:
+                offset=three_registers(stream,chunk,"HMAC_SHA1",offset,&valid);break;
             case DIAMOND_OP_CIPHER_ENCRYPT:
                 offset=three_registers(stream,chunk,"CIPHER_ENCRYPT",offset,&valid);break;
             case DIAMOND_OP_CIPHER_DECRYPT:

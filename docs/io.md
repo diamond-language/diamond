@@ -206,6 +206,36 @@ or address. A connect/bind/listen failure raises a rescuable `IOError`
 with `strerror(errno)` from the actual failing attempt, even when
 multiple addresses were tried.
 
+`TCPSocket.connect(host, port, options)` also takes an optional third
+`options` Hash (defaulting to `nil`, meaning none of this applies —
+existing calls are unaffected):
+
+```ruby
+client = TCPSocket.connect("example.com", 8080,
+    {"connect_timeout_ms": 5000, "read_timeout_ms": 10000})
+```
+
+- **`connect_timeout_ms`** — bounds only the `connect(2)` step. Applies
+  per candidate address, not as one aggregate deadline across every
+  address `getaddrinfo` returns (an ordinary connection refusal already
+  moves on to the next candidate; a timeout does the same). Implemented
+  by making the socket non-blocking before connecting and `poll`ing for
+  writability, then restoring blocking mode for every operation after —
+  everything past this point behaves exactly as if the socket had always
+  been an ordinary blocking one.
+- **`read_timeout_ms`**/**`write_timeout_ms`** — `SO_RCVTIMEO`/
+  `SO_SNDTIMEO` on the connected socket, applying to every subsequent
+  `.read()`/`.gets()`/`.write()` on it. A timed-out read/write raises the
+  same rescuable `IOError` an ordinary failed read/write already does
+  (`strerror(EAGAIN)`, i.e. "Resource temporarily unavailable") — no new
+  error path, just a new way for the existing one to trigger.
+
+Omitting a key leaves the corresponding OS default (block forever)
+untouched. An unrecognized key, or a value of the wrong type, raises a
+`TypeError` rather than being silently ignored — the same "an
+unrecognized name is a mistake, not a no-op" stance `Signal.trap` already
+takes.
+
 The key design decision: a connected socket — whether from
 `TCPSocket.connect` or from `.accept()` — is `fdopen()`'d and wrapped in
 the *exact same* `DiamondFileHandle` a `File` uses. This means
@@ -517,20 +547,49 @@ most of the rest of this codebase: TLS is exactly the kind of thing where
 work, so this is a deliberate exception to the project's usual
 zero-external-dependencies stance.
 
-- **`TLSSocket.connect(host, port)`** — resolves and connects like
-  `TCPSocket.connect` (reuses the same `getaddrinfo`/try-each-candidate
-  helper), then performs a client-side TLS handshake. **Certificate
-  verification is on unconditionally** — the peer's certificate must
-  chain to a CA in the system trust store (`SSL_CTX_set_default_
-  verify_paths`, which also honors `$SSL_CERT_FILE`/`$SSL_CERT_DIR` —
-  how `tests/run.sh`'s own TLS tests point this at a hermetic test CA
-  instead of the real system store) *and* be valid for `host`
-  (`SSL_set1_host`, SNI via `SSL_set_tlsext_host_name`). There is no
-  `verify: false`-style escape hatch in this API — a connection to an
-  untrusted or misnamed certificate raises a rescuable `IOError` rather
-  than silently succeeding. A custom/pinned trust store (rather than the
-  system default) is a real, deliberate scope cut, not an oversight —
-  see "out of scope" below.
+- **`TLSSocket.connect(host, port, options)`** — resolves and connects
+  like `TCPSocket.connect` (reuses the same `getaddrinfo`/try-each-
+  candidate helper, and accepts the identical `connect_timeout_ms`/
+  `read_timeout_ms`/`write_timeout_ms` in `options`), then performs a
+  client-side TLS handshake. **Certificate verification is on
+  unconditionally** — the peer's certificate must chain to a trusted CA
+  *and* be valid for `host` (`SSL_set1_host`, SNI via
+  `SSL_set_tlsext_host_name`). There is no `verify: false`-style escape
+  hatch in this API — a connection to an untrusted or misnamed
+  certificate raises a rescuable `IOError` rather than silently
+  succeeding.
+
+  The trust anchor itself is a real option, though:
+
+  ```ruby
+  conn = TLSSocket.connect("internal.example.com", 443,
+      {"ca_file": "internal-ca.pem"})
+
+  conn = TLSSocket.connect("example.com", 443,
+      {"cert": "client-cert.pem", "key": "client-key.pem"})
+  ```
+
+  - **`ca_file`**/**`ca_path`** — load a caller-supplied CA bundle file
+    and/or directory (`SSL_CTX_load_verify_locations`) as the trust
+    anchor instead of the system trust store, for an internal CA or a
+    hermetic test server. Neither given keeps the original default
+    (`SSL_CTX_set_default_verify_paths`, honoring `$SSL_CERT_FILE`/
+    `$SSL_CERT_DIR` — how `tests/run.sh`'s own TLS tests point this at a
+    hermetic test CA instead of the real system store). Verification
+    itself is never optional either way — this only changes *which*
+    trust store is consulted, not whether one is.
+  - **`cert`**/**`key`** — a client certificate chain and private key
+    (both PEM files) for mutual TLS, presented only if the server
+    actually requests one during the handshake (ordinary TLS
+    negotiation — this never forces client-cert auth on a server that
+    doesn't ask). Must be given together; a lone `cert` or `key` is a
+    `TypeError`, checked before any network activity. A missing or
+    unreadable file, or a key that doesn't match the certificate, raises
+    a rescuable `IOError`.
+
+  As with `TCPSocket.connect`, an unrecognized `options` key or a value
+  of the wrong type is a `TypeError`, and `options` itself may be `nil`
+  (the default) for the original, unchanged behavior.
 - **`TLSServer.listen(port, cert_path, key_path)`** — binds and listens
   like `TCPServer.listen`, then loads a certificate chain and private key
   (both PEM files) into one `SSL_CTX` reused across every `.accept()` on

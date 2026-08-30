@@ -269,6 +269,12 @@ typedef enum DiamondOpCode : uint8_t {
      * helper already uses -- for verifying a signed cookie/token without
      * a timing side-channel on the comparison itself. */
     DIAMOND_OP_HMAC_VERIFY,
+    /* Digest.sha1(data) / HMAC.sha1(key, data) -- lowercase hex SHA-1,
+     * mirroring the sha256 pair above. SHA-1 is cryptographically weak
+     * for new signing use -- this exists because TOTP (RFC 6238) mandates
+     * HMAC-SHA1 by spec, not as a general-purpose recommendation. */
+    DIAMOND_OP_DIGEST_SHA1,
+    DIAMOND_OP_HMAC_SHA1,
     /* Cipher.encrypt(key, plaintext) / Cipher.decrypt(key, blob) --
      * AES-256-GCM via the already-linked OpenSSL EVP_CIPHER API. `key`
      * must be exactly 32 raw bytes. `encrypt` returns one binary-safe
