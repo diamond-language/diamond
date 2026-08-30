@@ -980,6 +980,8 @@ static bool disassemble_chunk(FILE *stream, const char *name,
                         chunk->code[offset+5],&valid),
                     chunk->code[offset+5]);
                 offset+=6;break;
+            case DIAMOND_OP_TIME_PARSE:
+                offset=two_registers(stream,chunk,"TIME_PARSE",offset,&valid);break;
             case DIAMOND_OP_FILE_PATH: {
                 if(!require_bytes(stream,chunk,offset,8)){valid=false;offset=chunk->code_count;break;}
                 fprintf(stream,"%-18s r%u, r%u, r%u, %s\n","FILE_PATH",

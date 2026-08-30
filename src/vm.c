@@ -7555,22 +7555,88 @@ static bool time_struct_tm(const DiamondTime *target,struct tm *out) {
 /* Parses the deliberately narrow fixed-offset spelling accepted by
  * Time#localtime: "Z" or a signed ISO-8601-style "HH:MM". Named zones and
  * process-global TZ mutation remain out of scope. */
-static bool parse_time_utc_offset(const DiamondString *string,int32_t *out_offset) {
-    if(string->length==1&&string->chars[0]=='Z') {
+static bool parse_time_utc_offset_chars(const char *chars,size_t length,
+        int32_t *out_offset) {
+    if(length==1&&chars[0]=='Z') {
         *out_offset=0;return true;
     }
-    if(string->length!=6||(string->chars[0]!='+'&&string->chars[0]!='-')||
-       string->chars[3]!=':'||
-       string->chars[1]<'0'||string->chars[1]>'9'||
-       string->chars[2]<'0'||string->chars[2]>'9'||
-       string->chars[4]<'0'||string->chars[4]>'9'||
-       string->chars[5]<'0'||string->chars[5]>'9')return false;
-    const int hours=(string->chars[1]-'0')*10+(string->chars[2]-'0');
-    const int minutes=(string->chars[4]-'0')*10+(string->chars[5]-'0');
+    if(length!=6||(chars[0]!='+'&&chars[0]!='-')||chars[3]!=':'||
+       chars[1]<'0'||chars[1]>'9'||chars[2]<'0'||chars[2]>'9'||
+       chars[4]<'0'||chars[4]>'9'||chars[5]<'0'||chars[5]>'9')return false;
+    const int hours=(chars[1]-'0')*10+(chars[2]-'0');
+    const int minutes=(chars[4]-'0')*10+(chars[5]-'0');
     if(hours>23||minutes>59)return false;
     const int seconds=hours*3600+minutes*60;
-    *out_offset=(int32_t)(string->chars[0]=='-'?-seconds:seconds);
+    *out_offset=(int32_t)(chars[0]=='-'?-seconds:seconds);
     return true;
+}
+
+static bool parse_time_utc_offset(const DiamondString *string,int32_t *out_offset) {
+    return parse_time_utc_offset_chars(string->chars,string->length,out_offset);
+}
+
+static int parse_decimal_digits(const char *chars,size_t start,size_t count) {
+    int value=0;
+    for(size_t index=0;index<count;index++) {
+        const char digit=chars[start+index];
+        if(digit<'0'||digit>'9')return -1;
+        value=value*10+(digit-'0');
+    }
+    return value;
+}
+
+/* Strict ISO-8601 calendar timestamps with an explicit zone only:
+ * YYYY-MM-DDTHH:MM:SS[.fraction](Z|+HH:MM|-HH:MM). Parsing the calendar
+ * portion through timegm keeps this independent of process-local TZ state;
+ * the round trip rejects dates libc would otherwise normalize (Feb 30, etc.). */
+static DiamondVmStatus time_parse_helper(DiamondVm *vm,DiamondValue input,
+        DiamondValue *out_result) {
+    if(input.kind!=DIAMOND_VALUE_OBJECT||
+       input.as.object->kind!=DIAMOND_OBJECT_STRING) {
+        snprintf(vm->error,sizeof vm->error,"Time.parse argument must be a String");
+        return DIAMOND_VM_TYPE_ERROR;
+    }
+    const DiamondString *string=(const DiamondString *)input.as.object;
+    const char *chars=string->chars;const size_t length=string->length;
+    bool valid=length>=20&&chars[4]=='-'&&chars[7]=='-'&&chars[10]=='T'&&
+        chars[13]==':'&&chars[16]==':';
+    const int year=valid?parse_decimal_digits(chars,0,4):-1;
+    const int month=valid?parse_decimal_digits(chars,5,2):-1;
+    const int day=valid?parse_decimal_digits(chars,8,2):-1;
+    const int hour=valid?parse_decimal_digits(chars,11,2):-1;
+    const int minute=valid?parse_decimal_digits(chars,14,2):-1;
+    const int second=valid?parse_decimal_digits(chars,17,2):-1;
+    valid=valid&&year>=1&&month>=1&&month<=12&&day>=1&&day<=31&&
+        hour>=0&&hour<=23&&minute>=0&&minute<=59&&second>=0&&second<=59;
+    size_t zone_start=19;double fraction=0.0;
+    if(valid&&zone_start<length&&chars[zone_start]=='.') {
+        zone_start++;const size_t fraction_start=zone_start;double scale=0.1;
+        while(zone_start<length&&chars[zone_start]>='0'&&chars[zone_start]<='9') {
+            fraction+=(double)(chars[zone_start]-'0')*scale;scale*=0.1;zone_start++;
+        }
+        if(zone_start==fraction_start)valid=false;
+    }
+    int32_t utc_offset=0;
+    if(valid&&!parse_time_utc_offset_chars(chars+zone_start,length-zone_start,&utc_offset))
+        valid=false;
+    struct tm calendar={.tm_year=year-1900,.tm_mon=month-1,.tm_mday=day,
+        .tm_hour=hour,.tm_min=minute,.tm_sec=second,.tm_isdst=0};
+    const time_t calendar_epoch=valid?timegm(&calendar):(time_t)0;
+    struct tm round_trip={};
+    if(valid&&(gmtime_r(&calendar_epoch,&round_trip)==nullptr||
+       round_trip.tm_year!=year-1900||round_trip.tm_mon!=month-1||
+       round_trip.tm_mday!=day||round_trip.tm_hour!=hour||
+       round_trip.tm_min!=minute||round_trip.tm_sec!=second))valid=false;
+    if(!valid) {
+        snprintf(vm->error,sizeof vm->error,
+            "Time.parse expects YYYY-MM-DDTHH:MM:SS[.fraction](Z or signed HH:MM)");
+        return DIAMOND_VM_TYPE_ERROR;
+    }
+    const bool explicit_utc=length-zone_start==1;
+    DiamondTime *time=allocate_time(vm,(double)calendar_epoch-(double)utc_offset+fraction,
+        explicit_utc?DIAMOND_TIME_UTC:DIAMOND_TIME_FIXED_OFFSET,utc_offset);
+    if(time==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+    *out_result=DIAMOND_OBJECT(time);return DIAMOND_VM_OK;
 }
 
 /* Shared by #to_s and puts/string-interpolation's own stringify path
@@ -15912,6 +15978,14 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 READ_SHORT(destination);READ_SHORT(epoch_register);
                 const DiamondVmStatus time_status=
                     time_at_helper(vm,registers[epoch_register],&registers[destination]);
+                VM_PROPAGATE(time_status);
+                break;
+            }
+            case DIAMOND_OP_TIME_PARSE: {
+                uint16_t destination=0,string_register=0;
+                READ_SHORT(destination);READ_SHORT(string_register);
+                const DiamondVmStatus time_status=time_parse_helper(vm,
+                    registers[string_register],&registers[destination]);
                 VM_PROPAGATE(time_status);
                 break;
             }

@@ -923,7 +923,8 @@ bytecode, or semantic stability.
   local/UTC/fixed-offset timezone conversion (numeric seconds or `Z`/`±HH:MM`
   strings), arithmetic, cross-zone comparison,
   numeric duration units from seconds through weeks, and
-  `.ago()`/`.from_now()` helpers.
+  `.ago()`/`.from_now()` helpers; added strict ISO-8601 `Time.parse` for UTC
+  and numeric-offset timestamps.
 - Added synchronous subprocess execution with argv isolation and captured
   stdout/stderr/exit status.
 - Added regexp construction, matching, capture results, substitution, and scan

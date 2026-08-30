@@ -1,0 +1,1 @@
+Time.parse(42)

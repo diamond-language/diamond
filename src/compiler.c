@@ -4874,7 +4874,7 @@ static uint16_t parse_time_zero_argument_call(Compiler *compiler,
     return dest;
 }
 
-/* Time.at(epoch) -- the one Time constructor taking an argument;
+/* Time.at(epoch) -- the numeric Time constructor taking an argument;
  * mirrors parse_sqlite3_open_call's own one-argument-constructor shape. */
 static uint16_t parse_time_at_call(Compiler *compiler) {
     if(compiler->current.kind!=DIAMOND_TOKEN_LEFT_PAREN) {
@@ -4897,11 +4897,30 @@ static uint16_t parse_time_at_call(Compiler *compiler) {
     return dest;
 }
 
+static uint16_t parse_time_parse_call(Compiler *compiler) {
+    if(compiler->current.kind!=DIAMOND_TOKEN_LEFT_PAREN) {
+        fail(compiler,compiler->current.span,"expected '(' after 'Time.parse'");
+        return 0;
+    }
+    advance_token(compiler);skip_newlines(compiler);
+    const uint16_t string_register=parse_expression(compiler);
+    skip_newlines(compiler);
+    if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
+        fail(compiler,compiler->current.span,"expected ')' after Time.parse arguments");
+        return 0;
+    }
+    advance_token(compiler);
+    const uint16_t dest=allocate_register(compiler);
+    emit_opcode(compiler,DIAMOND_OP_TIME_PARSE);
+    emit_register(compiler,dest);emit_register(compiler,string_register);
+    return dest;
+}
+
 static uint16_t parse_time_call(Compiler *compiler) {
     advance_token(compiler); /* consume '.' */
     if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER) {
         fail(compiler,compiler->current.span,
-             "expected 'monotonic', 'now', 'utc_now', or 'at' after 'Time'");
+             "expected 'monotonic', 'now', 'utc_now', 'at', or 'parse' after 'Time'");
         return 0;
     }
     const DiamondSpan method=compiler->current.span;
@@ -4924,7 +4943,12 @@ static uint16_t parse_time_call(Compiler *compiler) {
         advance_token(compiler);
         return parse_time_at_call(compiler);
     }
-    fail(compiler,method,"expected 'monotonic', 'now', 'utc_now', or 'at' after 'Time'");
+    if(name_equals(compiler,"parse",method,false)) {
+        advance_token(compiler);
+        return parse_time_parse_call(compiler);
+    }
+    fail(compiler,method,
+        "expected 'monotonic', 'now', 'utc_now', 'at', or 'parse' after 'Time'");
     return 0;
 }
 

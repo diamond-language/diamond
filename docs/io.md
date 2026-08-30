@@ -1057,7 +1057,7 @@ this driver, deliberately, for the same reasons `PostgreSQL`'s own scope
 cuts are: connection pooling and `unix_socket`/`CLIENT_MULTI_STATEMENTS`
 connection options.
 
-## Time: `Time.now`/`.utc_now`/`.at`/`.strftime`/`+`/`-`/comparisons
+## Time: construction/parsing/formatting/arithmetic/comparisons
 
 ```ruby
 t = Time.at(0).utc()
@@ -1070,6 +1070,7 @@ deadline = Time.now() + 30       # => Time, 30s from now
 Time.now() < deadline            # => true
 last_hour = 1.hour().ago()       # => local Time, one hour ago
 next_week = 1.week().from_now()  # => local Time, one week from now
+parsed = Time.parse("2026-08-29T12:30:00-07:00")
 ```
 
 A real GC-managed heap object (`DIAMOND_OBJECT_TIME`), wrapping a
@@ -1079,12 +1080,17 @@ DST-aware, system-tzdata-backed `localtime_r`; UTC and fixed offsets use
 `gmtime_r`. Fixed offsets are per-object and never mutate the process-global
 `TZ` setting, so independent VMs running on concurrent threads remain safe.
 
-Three constructors, compiling to dedicated opcodes the same way
+Four constructors, compiling to dedicated opcodes the same way
 `File.open`/`SQLite3.open` do:
 
 - `Time.now()` — current wall-clock time, local.
 - `Time.utc_now()` — current wall-clock time, UTC.
 - `Time.at(epoch)` — from a given `Int`/`Float` epoch, local.
+- `Time.parse(string)` — strict ISO-8601
+  `YYYY-MM-DDTHH:MM:SS[.fraction](Z|±HH:MM)`. The input must contain an
+  explicit UTC or numeric offset; invalid calendar dates and named zones are
+  rejected. `Z` produces UTC mode, while a signed offset is preserved as the
+  result's fixed-offset display mode.
 
 (`Time.monotonic()`, documented in `docs/syntax.md`'s "Numbers"
 section, is unrelated — a bare duration-only `Float`, not a `Time`.
@@ -1295,10 +1301,10 @@ waiting for exit:
   `ActiveRecord::Transaction.run`/`.run_nested` already builds exactly
   this convenience layer in pure Diamond code on top of it (including
   `SAVEPOINT`-based nesting), so there's no native gap here to close.
-- **`Time.parse`, named timezones, a separate `Date`-only type**: no
-  parsing a `Time` from a `String`, no named IANA timezone selection
-  (fixed UTC offsets are supported; Ruby itself needs the `tzinfo` gem
-  for named zones), no date-without-time type distinct from `Time`.
+- **Named timezones and a separate `Date`-only type**: no named IANA timezone
+  selection (`Time.parse` and `.localtime` support explicit fixed UTC offsets;
+  Ruby itself needs the `tzinfo` gem for named zones), and no date-without-time
+  type distinct from `Time`.
 
 Each of these is a plausible next slice, sized independently rather than
 attempted together.

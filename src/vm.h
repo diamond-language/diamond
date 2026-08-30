@@ -401,6 +401,8 @@ typedef enum DiamondOpCode : uint8_t {
      * a contiguous register run" shape DIAMOND_OP_THREAD_NEW already
      * uses for its own variadic argument list. */
     DIAMOND_OP_FILE_JOIN,
+    /* Time.parse(string), appended to preserve all existing opcode values. */
+    DIAMOND_OP_TIME_PARSE,
     DIAMOND_OP_COUNT,
 } DiamondOpCode;
 
