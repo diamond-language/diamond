@@ -48,8 +48,9 @@ authoritative fine-grained record.
 - Added reusable JSON database configuration for SQLite3, PostgreSQL, MariaDB,
   and MySQL connections, including named environments and environment-backed
   passwords.
-- Added a resource-limited Podman benchmark comparing PostgreSQL, MariaDB, and
-  Oracle MySQL with identical driver-level read and update workloads.
+- Added a database benchmark comparing in-process SQLite with resource-limited
+  Podman PostgreSQL, MariaDB, and Oracle MySQL services using identical
+  driver-level read and update workloads.
 - Added asynchronous `Process.spawn` handles with polling, stream reads,
   termination, and wait support.
 - Expanded HTTP/TLS support with HTTPS clients, redirects, chunked transfer,

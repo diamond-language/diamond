@@ -1,8 +1,8 @@
 # Database driver benchmark
 
-This benchmark compares Diamond's native PostgreSQL and MySQL-compatible
-drivers against isolated, resource-limited Podman services:
+This benchmark compares Diamond's native database drivers using:
 
+- in-process SQLite using a fresh `:memory:` database;
 - PostgreSQL 16 Alpine;
 - MariaDB 11.4; and
 - Oracle MySQL 8.4.
@@ -15,7 +15,8 @@ non-secret and exist only for throwaway loopback-bound containers.
 
 Each run opens a fresh connection, recreates and seeds the same 1,000-row
 table, warms its point-query shape, then measures 5,000 operations in each
-category:
+category. PostgreSQL, MariaDB, and MySQL run in isolated, resource-limited
+Podman services; SQLite runs in the Diamond process:
 
 1. primary-key point reads;
 2. ordered range reads returning at most 20 rows; and
@@ -36,8 +37,8 @@ bash bench/databases/run.sh
 jq -s -f bench/databases/summarize.jq bench/databases/results.jsonl
 ```
 
-The harness runs one database at a time with one CPU, 768 MiB of memory, and
-256 PIDs. It pulls missing images, waits for native readiness probes, captures
+The harness runs one server database at a time with one CPU, 768 MiB of memory,
+and 256 PIDs. It pulls missing images, waits for native readiness probes, captures
 the exact server version, performs three repetitions, and removes each
 container afterward. Set `KEEP_CONTAINERS=1` to retain the active container
 after an interruption, or override `DATABASE_BENCH_CONFIG`,
@@ -45,7 +46,7 @@ after an interruption, or override `DATABASE_BENCH_CONFIG`,
 for example, `DATABASE_BENCH_ENGINES=mysql DATABASE_BENCH_APPEND=1`; engine
 names come from `config.json` and are not accepted from untrusted input.
 
-Do not compare these numbers to an in-process SQLite benchmark: loopback TCP,
-server execution, and native client-library work are intentionally present.
-Also do not interpret MariaDB and MySQL as the same server merely because both
+SQLite is a useful local baseline, not an apples-to-apples server ranking: it
+has no loopback TCP, separate server process, network protocol, or server-side
+authentication. Do not interpret MariaDB and MySQL as the same server merely because both
 use Diamond's `MySQL` client API; the harness reports them independently.

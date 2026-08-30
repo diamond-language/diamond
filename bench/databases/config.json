@@ -28,6 +28,10 @@
       "data_dir": "/var/lib/mysql"
     }
   },
+  "sqlite": {
+    "adapter": "sqlite3",
+    "database": ":memory:"
+  },
   "postgresql": {
     "adapter": "postgresql",
     "host": "127.0.0.1",

@@ -6,7 +6,7 @@ repo_dir="$(cd "$bench_dir/../.." && pwd)"
 config="${DATABASE_BENCH_CONFIG:-$bench_dir/config.json}"
 diamond="${DIAMOND_BIN:-$repo_dir/build/diamond}"
 results="${DATABASE_BENCH_RESULTS:-$bench_dir/results.jsonl}"
-engines="${DATABASE_BENCH_ENGINES:-postgresql mariadb mysql}"
+engines="${DATABASE_BENCH_ENGINES:-sqlite postgresql mariadb mysql}"
 
 for command in podman jq; do
     if ! command -v "$command" >/dev/null 2>&1; then
@@ -116,18 +116,28 @@ server_version() {
 }
 
 for engine in $engines; do
-    start_database "$engine"
-    version="$(server_version "$engine")"
+    if [[ "$engine" == "sqlite" ]]; then
+        version="system libsqlite3 (in-process)"
+        engine_cpus="host"
+        engine_memory="in-process"
+    else
+        start_database "$engine"
+        version="$(server_version "$engine")"
+        engine_cpus="$cpus"
+        engine_memory="$memory"
+    fi
     for run in $(seq 1 "$repeats"); do
         "$diamond" "$bench_dir/benchmark.di" "$config" "$engine" \
             "$rows" "$warmup" "$iterations" \
             | jq -c --arg version "$version" --argjson run "$run" \
-                --arg cpus "$cpus" --arg memory "$memory" \
+                --arg cpus "$engine_cpus" --arg memory "$engine_memory" \
                 '. + {run: $run, server_version: $version, container_cpus: $cpus, container_memory: $memory}' \
             | tee -a "$results"
     done
-    cleanup
-    active_container=""
+    if [[ "$engine" != "sqlite" ]]; then
+        cleanup
+        active_container=""
+    fi
 done
 
 echo "results written to $results" >&2
