@@ -7796,6 +7796,28 @@ static DiamondVmStatus time_calendar_shift_helper(DiamondVm *vm,
     *out_result=DIAMOND_OBJECT(result);return DIAMOND_VM_OK;
 }
 
+/* Number of calendar days needed to move `count` Monday-Friday days. The
+ * closed form keeps large counts O(1); callers separately bound the result to
+ * time_calendar_shift_helper's supported calendar range. */
+static int64_t weekday_calendar_distance(int wday,int64_t count,bool future) {
+    if(count==0)return 0;
+    int64_t days=0;
+    if(future) {
+        if(wday==6) { days=2;count--;wday=1; }
+        else if(wday==0) { days=1;count--;wday=1; }
+        if(count==0)return days;
+        if(count<=5-wday)return days+count;
+        days+=8-wday;count-=6-wday;
+    } else {
+        if(wday==6) { days=1;count--;wday=5; }
+        else if(wday==0) { days=2;count--;wday=5; }
+        if(count==0)return days;
+        if(count<=wday-1)return days+count;
+        days+=wday+2;count-=wday;
+    }
+    return days+(count/5)*7+count%5;
+}
+
 enum { TIME_BEGINNING_OF_DAY,TIME_END_OF_DAY,TIME_BEGINNING_OF_MONTH,
     TIME_END_OF_MONTH,TIME_BEGINNING_OF_WEEK,TIME_END_OF_WEEK,
     TIME_BEGINNING_OF_YEAR,TIME_END_OF_YEAR };
@@ -10627,19 +10649,28 @@ static DiamondVmStatus time_dispatch_helper(DiamondVm *vm,DiamondTime *target,
     const bool previous_weekday_method=method_name->length==16&&
         memcmp(method_name->chars,"previous_weekday",16)==0;
     if(next_weekday_method||previous_weekday_method) {
-        if(argc!=0)return DIAMOND_VM_ARITY_ERROR;
+        if(argc>1)return DIAMOND_VM_ARITY_ERROR;
+        int64_t count=1;
+        if(argc==1) {
+            if(registers[base].kind!=DIAMOND_VALUE_INT) {
+                snprintf(vm->error,sizeof vm->error,
+                    "Time weekday navigation count must be an Int");
+                return DIAMOND_VM_TYPE_ERROR;
+            }
+            count=registers[base].as.integer;
+            if(count<0||count>2610000) {
+                snprintf(vm->error,sizeof vm->error,
+                    "Time weekday navigation count must be between 0 and 2610000");
+                return DIAMOND_VM_TYPE_ERROR;
+            }
+        }
+        if(count==0) { registers[dest]=DIAMOND_OBJECT(target);return DIAMOND_VM_OK; }
         if(!time_struct_tm(target,&parts)) {
             snprintf(vm->error,sizeof vm->error,"Time value out of range");
             return DIAMOND_VM_TYPE_ERROR;
         }
-        int64_t days=1;
-        if(next_weekday_method) {
-            if(parts.tm_wday==5)days=3;
-            else if(parts.tm_wday==6)days=2;
-        } else {
-            if(parts.tm_wday==1)days=3;
-            else if(parts.tm_wday==0)days=2;
-        }
+        const int64_t days=weekday_calendar_distance(parts.tm_wday,count,
+            next_weekday_method);
         return time_calendar_shift_helper(vm,target,days,TIME_SHIFT_DAYS,
             next_weekday_method,&registers[dest]);
     }

@@ -930,7 +930,8 @@ bytecode, or semantic stability.
   end-of-month clamping, calendar-aware day/week movement distinct from fixed
   durations, day/week/month/year boundary helpers that honor local DST, and
   zone-aware relative-date, same-day, instant, and weekday predicates, plus
-  DST-aware next/previous weekday navigation.
+  DST-aware constant-time next/previous weekday navigation with optional
+  business-day counts.
 - Added synchronous subprocess execution with argv isolation and captured
   stdout/stderr/exit status.
 - Added regexp construction, matching, capture results, substitution, and scan
