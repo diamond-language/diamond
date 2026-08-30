@@ -189,18 +189,9 @@ are automated.
 
 ### A real example: `packages/http`
 
-Diamond's runtime has no HTTP support built in on purpose — `lib/http.di`
-used to be bundled with the language and was pulled back out once
-`facet` made "install it as a dependency" a real option. It briefly
-lived as its own standalone sibling repo; it now lives at
-`packages/http` in this same repo instead, kept there (rather than
-folded back into `lib/`) for the same reason it was pulled out of
-`lib/` in the first place: it's a real, ordinary cut — its own
-`diamond.cut`, its own `README.md`, its own `test.sh` — not something
-`require` finds automatically the way `lib/core.di`'s prelude is. It
-just happens to be developed alongside the runtime instead of in a
-separate git history, which buys nothing on its own once a cut has
-no actual dependents outside this repo to keep in sync with.
+HTTP support is an ordinary cut rather than part of the runtime. The bundled
+example at `packages/http` has its own `diamond.cut`, README, and tests, and is
+loaded with `require_cut` rather than discovered by the core `require` path.
 
 To use it from another project the same way any `facet` dependency
 works, either copy `packages/http/` into that project's

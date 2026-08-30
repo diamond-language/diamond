@@ -526,22 +526,14 @@ enclosing `rescue` was active when the interrupted instruction was about
 to run, same as an ordinary exception from that point in the program
 would be.
 
-One non-obvious testing gotcha, worth recording since it cost real time
-to track down: a non-interactive shell (`bash script.sh`, exactly what
-every `tests/run.sh`/`packages/*/test.sh` invocation is) sets `SIGINT`
-and `SIGQUIT` to be *ignored* for an asynchronous (backgrounded, `&`)
-command — well-known bash/POSIX behavior, meant to keep a background job
-alive when the terminal's own Ctrl+C targets the whole foreground
-process group. Since `SIG_IGN` survives `exec(2)`, a `diamond` process
-started as a plain `... &` from inside a script inherits `SIGINT`
-already ignored, and a `kill -INT` sent to it visibly does nothing —
-confirmed by identical code working every time run as a direct ad hoc
-command and reliably failing every time run from inside a script file,
-before the actual cause was traced to bash's own job-control behavior,
-not a bug in `Signal.trap` itself. The fix, now used in
-`tests/run.sh`'s own signal test: wrap the backgrounded command in a
-subshell that does `trap - INT` (reset to default) before `exec`-ing the
-real command, so the child never sees `SIG_IGN` in the first place.
+When testing `Signal.trap` from a shell script, remember that bash starts
+asynchronous commands with `SIGINT` and `SIGQUIT` ignored. That disposition
+survives `exec`, so `kill -INT` will not reach a Diamond handler in a process
+started with a plain `... &`. Reset the signal before executing the program:
+
+```sh
+(trap - INT; exec ./build/diamond signal_test.di) &
+```
 
 ## TLS: `TLSSocket.connect`/`TLSServer.listen`/`.accept`
 

@@ -370,13 +370,14 @@ The implementation is organized as follows:
 - `fuzz/`: compiler and bytecode-execution fuzz targets;
 - `bench/`: performance and GC evidence.
 
-Detailed design documents:
+Language and runtime guides:
 
 - [Design and VM architecture](docs/design.md)
 - [Syntax and standard library](docs/syntax.md)
 - [Object model](docs/object-model.md)
 - [Fibers](docs/fibers.md)
 - [Threads](docs/threads.md)
+- [Concurrency internals](docs/concurrency-internals.md)
 - [Time and calendar](docs/time.md)
 - [I/O and native services](docs/io.md)
 - [Packages](docs/packages.md)

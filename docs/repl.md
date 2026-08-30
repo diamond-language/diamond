@@ -6,15 +6,12 @@ falls back to plain-pipe behavior for scripted use.
 
 ## Multi-line, session-accumulating evaluation
 
-Each round reads one or more physical lines, compiling the whole session
-so far plus the new pending input as a single program (`src/repl.c`,
-`try_compile`). If compilation fails because the diagnostic lands on or
-past the last line of input (heuristically: an unclosed block, not a
-genuine syntax error elsewhere), the REPL prompts for another line
-(`... `) instead of reporting an error. On a successful compile, the
-result is printed and the session buffer grows to include this round's
-source, so later rounds see earlier definitions and variables. This
-predates the work described below and is unchanged by it.
+Each round reads one or more physical lines and compiles the whole session
+plus the pending input as one program. If the diagnostic indicates incomplete
+input, such as an unclosed block, the REPL prompts for another line (`... `)
+instead of reporting an error. After a successful compile, it prints the
+result and retains the source so later rounds see earlier definitions and
+variables.
 
 ## Interactive line editing
 
@@ -89,11 +86,9 @@ out to be common.
 
 When stdin is not a terminal (a pipe, a file redirect, or
 `DIAMOND_FORCE_REPL=1` driving the REPL over a coprocess as
-`tests/repl_test.sh` does), none of the above activates. The REPL falls
-back to the exact prior behavior: print the prompt, then a plain
+`tests/repl_test.sh` does), none of the above activates. The REPL prints the
+prompt and uses a plain
 `getline()` read with no editing, no history, and Ctrl-C handled however
 the shell/kernel already handles it for a backgrounded or piped process.
-This is a deliberate fork, not an incidental one — raw-mode line editing
-against something that isn't a real terminal has no coherent meaning,
-and the test suite depends on the fallback path staying exactly as it
-was.
+Raw-mode line editing is only meaningful for a real terminal, and the plain
+path also makes the REPL predictable in scripts and tests.

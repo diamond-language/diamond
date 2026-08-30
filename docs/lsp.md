@@ -215,24 +215,12 @@ position-mapping div_translate already does for diagnostics, threaded
 through each of those handlers separately — a larger, currently
 unstarted slice.
 
-This is a server-side capability only — a client still has to actually
-send `.div` documents to the server for any of it to run.
-`editors/vscode`'s own extension originally only ever did that for the
-`diamond` language id, itself only ever assigned to `.di` files
-(`package.json`'s `languages` contribution) — a `.div`/`.html.div` file
-opened in the editor never got a `didOpen` at all, so this whole feature
-silently never fired for anyone using that extension specifically (the
-LSP itself, driven directly over stdio, always worked correctly; this
-was purely a client-side wiring gap, found shortly after the feature
-first shipped). Fixed by giving `.div` its own `diamond-template`
-language id (deliberately separate from `diamond`, and with no grammar
-of its own — registering it under `diamond` outright would also apply
-Diamond's own TextMate grammar to a template's HTML content, which
-isn't Diamond syntax) and having `extension.js`'s `didOpen`/`didChange`/
-`didClose` accept either language id, while every other provider
-(`hover`/`definition`/`documentSymbol`/`completion`/`workspace/symbol`)
-stays registered against `diamond` alone, matching the "diagnostics
-only" scope above exactly.
+This is a server-side capability, so clients must send `.div` documents to
+the server. The bundled VS Code extension assigns `.div` and `.html.div` the
+`diamond-template` language id and sends their open, change, and close events.
+It deliberately does not apply Diamond's TextMate grammar to the surrounding
+HTML. Other language providers remain registered only for ordinary `diamond`
+documents, matching the diagnostics-only template support.
 
 Each `.html.div` file is also translated and compiled **in isolation** —
 a call to another template's own generated function (a partial, e.g.
@@ -251,9 +239,8 @@ A document's text is compiled exactly the way `src/main.c`'s own
 `run_source` compiles a file natively: `require`d files resolved and
 bundled in via `diamond_load_program_with_override` (`src/loader.h`),
 then `lib/core.di` prepended and a `#line 1` reset so the prelude's own
-line numbers never leak into a reported diagnostic's position —
-confirmed against `src/lexer.c`'s handling of that exact comment, not
-assumed. A diagnostic's line/column are re-resolved back through
+line numbers never leak into a reported diagnostic's position. A
+diagnostic's line/column are re-resolved back through
 `diamond_load_program`'s own segment table
 (`diamond_resolve_diagnostic_location`, shared with `src/main.c`'s CLI
 diagnostic printing — not a separate reimplementation) so they land on
