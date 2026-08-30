@@ -17,6 +17,15 @@ connection_started = Time.monotonic()
 db = DatabaseConfig.open(config)
 connection_seconds = Time.monotonic() - connection_started
 
+pragmas = config["pragmas"]
+if pragmas != nil
+  pragma_index = 0
+  while pragma_index < pragmas.length()
+    db.execute("PRAGMA #{pragmas[pragma_index]}")
+    pragma_index += 1
+  end
+end
+
 db.execute("DROP TABLE IF EXISTS diamond_benchmark_items")
 db.execute("CREATE TABLE diamond_benchmark_items (id INTEGER PRIMARY KEY, name VARCHAR(100) NOT NULL, value INTEGER NOT NULL)")
 

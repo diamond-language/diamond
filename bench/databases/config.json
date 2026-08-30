@@ -32,6 +32,11 @@
     "adapter": "sqlite3",
     "database": "bench/databases/bench.db"
   },
+  "sqlite_wal": {
+    "adapter": "sqlite3",
+    "database": "bench/databases/bench_wal.db",
+    "pragmas": ["journal_mode=WAL", "synchronous=NORMAL"]
+  },
   "postgresql": {
     "adapter": "postgresql",
     "host": "127.0.0.1",

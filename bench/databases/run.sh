@@ -6,7 +6,7 @@ repo_dir="$(cd "$bench_dir/../.." && pwd)"
 config="${DATABASE_BENCH_CONFIG:-$bench_dir/config.json}"
 diamond="${DIAMOND_BIN:-$repo_dir/build/diamond}"
 results="${DATABASE_BENCH_RESULTS:-$bench_dir/results.jsonl}"
-engines="${DATABASE_BENCH_ENGINES:-sqlite postgresql mariadb mysql}"
+engines="${DATABASE_BENCH_ENGINES:-sqlite sqlite_wal postgresql mariadb mysql}"
 
 # Database paths in config.json are repository-relative, independent of the
 # caller's working directory.
@@ -125,6 +125,10 @@ for engine in $engines; do
         version="system libsqlite3 (file-backed)"
         engine_cpus="host"
         engine_memory="in-process"
+    elif [[ "$engine" == "sqlite_wal" ]]; then
+        version="system libsqlite3 (file-backed, WAL)"
+        engine_cpus="host"
+        engine_memory="in-process"
     else
         start_database "$engine"
         version="$(server_version "$engine")"
@@ -139,7 +143,7 @@ for engine in $engines; do
                 '. + {run: $run, server_version: $version, container_cpus: $cpus, container_memory: $memory}' \
             | tee -a "$results"
     done
-    if [[ "$engine" != "sqlite" ]]; then
+    if [[ "$engine" != "sqlite" && "$engine" != "sqlite_wal" ]]; then
         cleanup
         active_container=""
     fi
