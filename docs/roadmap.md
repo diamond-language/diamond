@@ -1003,8 +1003,9 @@ third `options` Hash -- `connect_timeout_ms`/`read_timeout_ms`/
 `write_timeout_ms` (real socket timeouts, via non-blocking connect+poll
 and `SO_RCVTIMEO`/`SO_SNDTIMEO`) on both, plus `ca_file`/`ca_path` (a
 custom TLS trust store) and `cert`/`key` (a client certificate for mutual
-TLS) on `TLSSocket.connect` specifically -- driven directly by the
-outbound HTTP client below needing all of these. See `docs/io.md`.
+TLS) on `TLSSocket.connect` specifically -- driven directly by
+`packages/http`'s outbound client (below) needing all of these. See
+`docs/io.md`.
 
 **Done**: `Digest.sha1`/`HMAC.sha1`, mirroring the existing `sha256` pair
 -- exists specifically because RFC 6238 TOTP mandates HMAC-SHA1, not as a
@@ -1013,15 +1014,33 @@ second general-purpose recommendation. See `docs/syntax.md`.
 **Done**: `Gzip.compress`/`Gzip.decompress`, gzip-wrapped deflate via a
 newly-linked zlib (this project's second non-vendored external
 dependency after OpenSSL, for the same "don't hand-roll compression"
-reasoning) -- driven directly by the outbound HTTP client's
-`Accept-Encoding`/`Content-Encoding` support below. `.decompress` takes a
-required `max_size` cap, checked incrementally against decompression-bomb
-input rather than after the fact. See `docs/syntax.md`.
+reasoning) -- driven directly by `packages/http`'s outbound client
+`Accept-Encoding`/`Content-Encoding` support (below). `.decompress` takes
+a required `max_size` cap, checked incrementally against
+decompression-bomb input rather than after the fact. See `docs/syntax.md`.
+
+**Done**: `Base64.encode`/`Base64.decode` (RFC 4648, via OpenSSL's
+`EVP_EncodeBlock`/`EVP_DecodeBlock`) -- needed for HTTP Basic auth
+(`Authorization: Basic <base64>`). See `docs/syntax.md`.
 
 **Done**: stdout write failures (`puts`/`print`, most commonly `EPIPE`
 from a closed pipe reader) now raise a rescuable `IOError` instead of
 being silently dropped -- `fwrite`/`fputc`/`fflush` return values were
 simply never checked before. See `docs/io.md`.
+
+**Done**: `packages/http`'s outbound client went from a deliberately
+basic `http://`-only, one-shot, no-redirect slice to a full-featured
+client, built directly on the four native additions just above (plus the
+already-existing `SecureRandom`): `https://` support (`TLSSocket.connect`
+and its new `options`), Transfer-Encoding: chunked decoding,
+`gzip`/`deflate` response decompression (on by default), redirect
+following (opt-in, RFC 7231 method/body rules, `Authorization` stripped
+cross-host), `basic_auth`/`bearer_token`/`json`/`multipart_fields`+
+`multipart_files` request-building options, and a new `HttpSession` class
+(a cookie jar plus per-host connection reuse with retry-on-failure) for
+several calls against the same server. All plain Diamond -- no new native
+VM code of its own, just calls into the four additions above. See
+`packages/http/README.md`.
 
 **Done**: password hashing and a CSPRNG, driven by a real need (building an
 authentication system on Diamond) rather than speculatively. `BCrypt.hash`/
