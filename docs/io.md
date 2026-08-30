@@ -1073,6 +1073,7 @@ next_week = 1.week().from_now()  # => local Time, one week from now
 parsed = Time.parse("2026-08-29T12:30:00-07:00")
 midnight = Time.utc(2026, 8, 29, 0, 0, 0)
 india = Time.fixed("+05:30", 2026, 8, 29, 12, 30, 0)
+local_noon = Time.local(2026, 8, 29, 12, 0, 0)
 ```
 
 A real GC-managed heap object (`DIAMOND_OBJECT_TIME`), wrapping a
@@ -1082,7 +1083,7 @@ DST-aware, system-tzdata-backed `localtime_r`; UTC and fixed offsets use
 `gmtime_r`. Fixed offsets are per-object and never mutate the process-global
 `TZ` setting, so independent VMs running on concurrent threads remain safe.
 
-Six constructors, compiling to dedicated opcodes the same way
+Seven constructors, compiling to dedicated opcodes the same way
 `File.open`/`SQLite3.open` do:
 
 - `Time.now()` — current wall-clock time, local.
@@ -1095,10 +1096,15 @@ Six constructors, compiling to dedicated opcodes the same way
   result's fixed-offset display mode.
 - `Time.utc(year, month, day, hour, min, sec)` — constructs an explicit UTC
   time from six `Int` calendar fields.
+- `Time.local(year, month, day, hour, min, sec)` — constructs process-local
+  time from six `Int` fields. libc resolves DST transitions: nonexistent times
+  may normalize forward and ambiguous times use the platform's local-zone
+  choice. Impossible dates such as April 31 are rejected before conversion.
 - `Time.fixed(offset, year, month, day, hour, min, sec)` — constructs a time
   at an integer-seconds or `"Z"`/`"±HH:MM[:SS]"` fixed offset. `"Z"` here means a
   fixed zero offset, while `Time.utc(...)` is the explicit UTC constructor.
-  Both constructors reject normalized-invalid dates such as February 30.
+  These explicit-zone constructors reject normalized-invalid dates such as
+  February 30.
 
 (`Time.monotonic()`, documented in `docs/syntax.md`'s "Numbers"
 section, is unrelated — a bare duration-only `Float`, not a `Time`.

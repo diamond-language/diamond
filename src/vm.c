@@ -7642,8 +7642,11 @@ static DiamondVmStatus time_parse_helper(DiamondVm *vm,DiamondValue input,
     *out_result=DIAMOND_OBJECT(time);return DIAMOND_VM_OK;
 }
 
+static int days_in_calendar_month(int year,int month);
+
 static DiamondVmStatus time_build_helper(DiamondVm *vm,const DiamondValue *arguments,
-        bool fixed,DiamondValue *out_result) {
+        uint8_t mode,DiamondValue *out_result) {
+    const bool fixed=mode==1;
     int32_t utc_offset=0;size_t field_start=0;
     if(fixed) {
         field_start=1;
@@ -7682,21 +7685,27 @@ static DiamondVmStatus time_build_helper(DiamondVm *vm,const DiamondValue *argum
     const int64_t second=arguments[field_start+5].as.integer;
     bool valid=year>=1&&year<=9999&&month>=1&&month<=12&&day>=1&&day<=31&&
         hour>=0&&hour<=23&&minute>=0&&minute<=59&&second>=0&&second<=59;
+    if(valid&&day>days_in_calendar_month((int)year,(int)month))valid=false;
     struct tm calendar={.tm_year=(int)year-1900,.tm_mon=(int)month-1,
         .tm_mday=(int)day,.tm_hour=(int)hour,.tm_min=(int)minute,
         .tm_sec=(int)second,.tm_isdst=0};
-    const time_t calendar_epoch=valid?timegm(&calendar):(time_t)0;
+    const time_t calendar_epoch=valid?
+        (mode==2?(calendar.tm_isdst=-1,mktime(&calendar)):timegm(&calendar)):(time_t)0;
     struct tm round_trip={};
-    if(valid&&(gmtime_r(&calendar_epoch,&round_trip)==nullptr||
+    struct tm *round_trip_result=mode==2?
+        localtime_r(&calendar_epoch,&round_trip):gmtime_r(&calendar_epoch,&round_trip);
+    if(valid&&(round_trip_result==nullptr||(mode!=2&&(
        round_trip.tm_year!=(int)year-1900||round_trip.tm_mon!=(int)month-1||
        round_trip.tm_mday!=(int)day||round_trip.tm_hour!=(int)hour||
-       round_trip.tm_min!=(int)minute||round_trip.tm_sec!=(int)second))valid=false;
+       round_trip.tm_min!=(int)minute||round_trip.tm_sec!=(int)second))))valid=false;
     if(!valid) {
         snprintf(vm->error,sizeof vm->error,"invalid Time calendar fields");
         return DIAMOND_VM_TYPE_ERROR;
     }
-    DiamondTime *time=allocate_time(vm,(double)calendar_epoch-(double)utc_offset,
-        fixed?DIAMOND_TIME_FIXED_OFFSET:DIAMOND_TIME_UTC,utc_offset);
+    DiamondTime *time=allocate_time(vm,(double)calendar_epoch-
+        (fixed?(double)utc_offset:0.0),
+        fixed?DIAMOND_TIME_FIXED_OFFSET:
+            (mode==2?DIAMOND_TIME_LOCAL:DIAMOND_TIME_UTC),utc_offset);
     if(time==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
     *out_result=DIAMOND_OBJECT(time);return DIAMOND_VM_OK;
 }
@@ -16194,10 +16203,10 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 break;
             }
             case DIAMOND_OP_TIME_BUILD: {
-                uint16_t destination=0,base_register=0;uint8_t fixed=0;
-                READ_SHORT(destination);READ_SHORT(base_register);READ_BYTE(fixed);
+                uint16_t destination=0,base_register=0;uint8_t mode=0;
+                READ_SHORT(destination);READ_SHORT(base_register);READ_BYTE(mode);
                 const DiamondVmStatus time_status=time_build_helper(vm,
-                    &registers[base_register],fixed!=0,&registers[destination]);
+                    &registers[base_register],mode,&registers[destination]);
                 VM_PROPAGATE(time_status);
                 break;
             }

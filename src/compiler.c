@@ -4916,15 +4916,16 @@ static uint16_t parse_time_parse_call(Compiler *compiler) {
     return dest;
 }
 
-/* Time.utc(year, month, day, hour, min, sec) and
+/* Time.utc/local(year, month, day, hour, min, sec) and
  * Time.fixed(offset, year, month, day, hour, min, sec). Arguments are moved
  * into a contiguous register run so TIME_BUILD stays a compact instruction. */
-static uint16_t parse_time_build_call(Compiler *compiler,bool fixed) {
+static uint16_t parse_time_build_call(Compiler *compiler,uint8_t mode) {
     if(compiler->current.kind!=DIAMOND_TOKEN_LEFT_PAREN) {
         fail(compiler,compiler->current.span,"expected '(' after Time constructor");
         return 0;
     }
     advance_token(compiler);skip_newlines(compiler);
+    const bool fixed=mode==1;
     const size_t expected=fixed?7:6;uint16_t arguments[7];size_t count=0;
     while(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
         if(count==expected) {
@@ -4948,7 +4949,7 @@ static uint16_t parse_time_build_call(Compiler *compiler,bool fixed) {
         emit_instruction(compiler,DIAMOND_OP_MOVE,(uint16_t)(base+index),arguments[index],0,2);
     const uint16_t dest=allocate_register(compiler);
     emit_opcode(compiler,DIAMOND_OP_TIME_BUILD);
-    emit_register(compiler,dest);emit_register(compiler,base);emit_byte(compiler,fixed?1:0);
+    emit_register(compiler,dest);emit_register(compiler,base);emit_byte(compiler,mode);
     return dest;
 }
 
@@ -4984,10 +4985,13 @@ static uint16_t parse_time_call(Compiler *compiler) {
         return parse_time_parse_call(compiler);
     }
     if(name_equals(compiler,"utc",method,false)) {
-        advance_token(compiler);return parse_time_build_call(compiler,false);
+        advance_token(compiler);return parse_time_build_call(compiler,0);
     }
     if(name_equals(compiler,"fixed",method,false)) {
-        advance_token(compiler);return parse_time_build_call(compiler,true);
+        advance_token(compiler);return parse_time_build_call(compiler,1);
+    }
+    if(name_equals(compiler,"local",method,false)) {
+        advance_token(compiler);return parse_time_build_call(compiler,2);
     }
     fail(compiler,method,
         "expected a Time constructor after 'Time'");

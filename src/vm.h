@@ -403,7 +403,7 @@ typedef enum DiamondOpCode : uint8_t {
     DIAMOND_OP_FILE_JOIN,
     /* Time.parse(string), appended to preserve all existing opcode values. */
     DIAMOND_OP_TIME_PARSE,
-    /* Time.utc(...) / Time.fixed(...), also appended for opcode stability. */
+    /* Time.utc/local/fixed(...), also appended for opcode stability. */
     DIAMOND_OP_TIME_BUILD,
     DIAMOND_OP_COUNT,
 } DiamondOpCode;

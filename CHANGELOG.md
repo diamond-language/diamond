@@ -925,8 +925,9 @@ bytecode, or semantic stability.
   numeric duration units from seconds through weeks, and
   `.ago()`/`.from_now()` helpers; added strict ISO-8601 `Time.parse` for UTC
   and numeric-offset timestamps plus strict `Time.utc`/`Time.fixed`
-  calendar-field constructors, round-trippable `Time#iso8601` formatting, and
-  calendar-aware month/year movement with end-of-month clamping.
+  UTC/fixed/local calendar-field constructors, round-trippable
+  `Time#iso8601` formatting, and calendar-aware month/year movement with
+  end-of-month clamping.
 - Added synchronous subprocess execution with argv isolation and captured
   stdout/stderr/exit status.
 - Added regexp construction, matching, capture results, substitution, and scan
