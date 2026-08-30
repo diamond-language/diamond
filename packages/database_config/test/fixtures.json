@@ -1,0 +1,14 @@
+{
+  "test": {
+    "adapter": "sqlite3",
+    "database": ":memory:"
+  },
+  "postgres": {
+    "adapter": "postgresql",
+    "host": "db.example",
+    "port": 55432,
+    "database": "diamond test",
+    "user": "diamond",
+    "password_env": "DIAMOND_DATABASE_CONFIG_TEST_PASSWORD"
+  }
+}

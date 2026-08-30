@@ -57,7 +57,7 @@ REPL_COMPLETION_SOURCES := lsp/completion.c lsp/compile_buffer.c \
 REPL_COMPLETION_OBJECTS := $(REPL_COMPLETION_SOURCES:lsp/%.c=$(BUILD_DIR)/lsp-%.o)
 DEPS := $(OBJECTS:.o=.d) $(REPL_COMPLETION_OBJECTS:.o=.d)
 
-.PHONY: all debug sanitize tsan release test test-release test-sanitize test-tsan test-api test-fibers test-fiber-run test-fiber-context test-vm-context test-yield test-continuation test-multi-yield test-scheduler test-scheduler-run-all test-fiber-gc-roots test-fiber-guards test-nested-yield-guard test-stack-overflow test-all test-facet facet test-http-package test-gremlin-package test-rack-package test-cookies-package test-multipart-package test-div-package test-dials-package test-graphql-package test-graphsql-package test-logger-package test-log-viewer-package test-active-karma-package test-active-auth-package test-active-social-package test-active-discussion-package test-pheint-application test-lexer-diff test-parser-diff test-self-host test-self-host-smoke lsp test-lsp test-repl test-repl-completion fuzz test-fuzz clean
+.PHONY: all debug sanitize tsan release test test-release test-sanitize test-tsan test-api test-fibers test-fiber-run test-fiber-context test-vm-context test-yield test-continuation test-multi-yield test-scheduler test-scheduler-run-all test-fiber-gc-roots test-fiber-guards test-nested-yield-guard test-stack-overflow test-all test-facet facet test-database-config-package test-http-package test-gremlin-package test-rack-package test-cookies-package test-multipart-package test-div-package test-dials-package test-graphql-package test-graphsql-package test-logger-package test-log-viewer-package test-active-karma-package test-active-auth-package test-active-social-package test-active-discussion-package test-pheint-application test-lexer-diff test-parser-diff test-self-host test-self-host-smoke lsp test-lsp test-repl test-repl-completion fuzz test-fuzz clean
 
 all: debug
 
@@ -181,6 +181,9 @@ facet: $(BUILD_DIR)/facet
 test-facet: $(BUILD_DIR)/facet
 	bash tests/facet_test.sh
 
+test-database-config-package: $(TARGET)
+	DIAMOND_BIN=$(CURDIR)/$(BUILD_DIR)/diamond bash packages/database_config/test.sh
+
 test-http-package: $(TARGET)
 	DIAMOND_BIN=$(CURDIR)/$(BUILD_DIR)/diamond bash packages/http/test.sh
 
@@ -298,6 +301,7 @@ test-all:
 	$(MAKE) test-nested-yield-guard
 	$(MAKE) test-stack-overflow
 	$(MAKE) test-facet
+	$(MAKE) test-database-config-package
 	$(MAKE) test-http-package
 	$(MAKE) test-gremlin-package
 	$(MAKE) test-rack-package

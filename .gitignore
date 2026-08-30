@@ -1,4 +1,5 @@
 /build/
+/bench/databases/results.jsonl
 *.db
 *.db-shm
 *.db-wal

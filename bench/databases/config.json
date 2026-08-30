@@ -1,0 +1,55 @@
+{
+  "_benchmark": {
+    "rows": 1000,
+    "warmup_iterations": 250,
+    "iterations": 5000,
+    "repeats": 3,
+    "cpus": "1.0",
+    "memory": "768m",
+    "pids_limit": 256
+  },
+  "_containers": {
+    "postgresql": {
+      "image": "docker.io/library/postgres:16-alpine",
+      "container": "diamond-bench-postgresql",
+      "internal_port": 5432,
+      "data_dir": "/var/lib/postgresql/data"
+    },
+    "mariadb": {
+      "image": "docker.io/library/mariadb:11.4",
+      "container": "diamond-bench-mariadb",
+      "internal_port": 3306,
+      "data_dir": "/var/lib/mysql"
+    },
+    "mysql": {
+      "image": "docker.io/library/mysql:8.4",
+      "container": "diamond-bench-mysql",
+      "internal_port": 3306,
+      "data_dir": "/var/lib/mysql"
+    }
+  },
+  "postgresql": {
+    "adapter": "postgresql",
+    "host": "127.0.0.1",
+    "port": 55432,
+    "database": "diamond_bench",
+    "user": "diamond",
+    "password": "diamond-bench-only"
+  },
+  "mariadb": {
+    "adapter": "mariadb",
+    "host": "127.0.0.1",
+    "port": 53306,
+    "database": "diamond_bench",
+    "user": "diamond",
+    "password": "diamond-bench-only"
+  },
+  "mysql": {
+    "adapter": "mysql",
+    "host": "127.0.0.1",
+    "port": 53307,
+    "database": "diamond_bench",
+    "user": "diamond",
+    "password": "diamond-bench-only"
+  }
+}

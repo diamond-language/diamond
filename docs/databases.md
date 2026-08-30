@@ -2,6 +2,11 @@
 
 [I/O and native services](io.md) · Previous: [Networking and signals](networking.md) · Next: [Time](time.md)
 
+Applications can load and open any supported connection from JSON with the
+[`database_config` package](../packages/database_config/README.md). A
+reproducible Podman comparison of the networked drivers lives in the
+[database benchmark](../bench/databases/README.md).
+
 ## SQLite3: `SQLite3.open`/`.execute`/`.query`/`.prepare`/`.last_insert_row_id`/`.close`
 
 ```ruby
