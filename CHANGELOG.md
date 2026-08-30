@@ -6,6 +6,16 @@ authoritative fine-grained record.
 
 ## Unreleased
 
+### Documentation
+
+- Reorganized the monolithic syntax and native-service references into
+  navigable guides for core syntax, callables, classes and modules, types and
+  errors, collections, runtime features, local I/O, networking, databases,
+  time, and processes.
+- Reworked Fiber and Thread documentation around end-user behavior and moved
+  VM, GC, copying, and lifecycle details into a focused concurrency internals
+  document.
+
 ### Time and calendar
 
 - Added GC-managed wall-clock `Time` values backed by fractional Unix epochs.

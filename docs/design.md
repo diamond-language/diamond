@@ -222,7 +222,7 @@ truth — an `include Enumerable` class (`Range`, or any other) pays one
 `to_a()` copy for this group rather than duplicating index-based logic
 generically, the same trade `vm.c`'s own Array-only fast path for
 `sort`/`min`/etc. already makes (see "None of these are defined on `Hash`"
-in `docs/syntax.md`'s Collections section) by not generalizing over `Hash`
+in the [Collections guide](collections.md)) by not generalizing over `Hash`
 either.
 
 `array_each` requires a 1-arity callback; `hash_each` requires a 2-arity

@@ -85,8 +85,8 @@ mode those fields are written at the top level, while `timestamp`, `level`,
 `tag`, and `message` are reserved logger metadata and cannot be overridden by
 caller fields. Values and messages are escaped through `JSON.stringify`.
 
-Every line is timestamped (`Time.now().strftime`, local time — see
-`docs/io.md`'s own "Time" section) and tagged. Text mode uses the format shown
+Every line is timestamped (`Time.now().strftime`, local time — see the
+[Time guide](../../docs/time.md)) and tagged. Text mode uses the format shown
 first; JSON timestamps use `%Y-%m-%dT%H:%M:%S%z`.
 
 ## What's deliberately out of scope

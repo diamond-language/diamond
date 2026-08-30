@@ -267,7 +267,7 @@ repository.update(db, row["id"], dirty.changes()) if dirty.changed?()
 
 Wrap a loaded row (or any `Hash` of known attribute values), mutate it
 through ordinary bracket syntax (`[]`/`[]=` operator overloading -- see
-`docs/syntax.md`'s "Operator overloading" section), then ask
+[Classes, modules, and methods](../../docs/classes-and-modules.md#operator-overloading)), then ask
 `#changed?`/`#attribute_changed?(key)`/`#changes` before deciding
 to call `#update` -- `#changes` returns exactly the `Hash` `#update`
 already expects, and setting a value back to its original leaves it out

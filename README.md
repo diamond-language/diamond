@@ -373,13 +373,19 @@ The implementation is organized as follows:
 Language and runtime guides:
 
 - [Design and VM architecture](docs/design.md)
-- [Syntax and standard library](docs/syntax.md)
+- [Language reference](docs/syntax.md)
+  ([core syntax](docs/core-syntax.md), [callables](docs/callables.md),
+  [classes and modules](docs/classes-and-modules.md),
+  [types and errors](docs/types-and-errors.md),
+  [collections](docs/collections.md))
 - [Object model](docs/object-model.md)
 - [Fibers](docs/fibers.md)
 - [Threads](docs/threads.md)
 - [Concurrency internals](docs/concurrency-internals.md)
 - [Time and calendar](docs/time.md)
 - [I/O and native services](docs/io.md)
+  ([local I/O](docs/local-io.md), [networking](docs/networking.md),
+  [databases](docs/databases.md), [processes](docs/processes.md))
 - [Packages](docs/packages.md)
 - [Language Server](docs/lsp.md)
 - [Fuzzing](docs/fuzzing.md)

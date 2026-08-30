@@ -5,7 +5,7 @@
 [`packages/dials`](../dials/README.md)'s own `Dials::Params` doesn't
 cover (it only ever parses `application/x-www-form-urlencoded` bodies).
 Pure Diamond, no VM changes: Diamond's own `String` is already a raw,
-binary-safe byte buffer (`docs/io.md`), and `String#split` already
+binary-safe byte buffer ([local I/O](../../docs/local-io.md)), and `String#split` already
 handles a multi-byte separator correctly — that's all real multipart
 parsing actually needs.
 
