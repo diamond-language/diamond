@@ -56,7 +56,7 @@ and the `arel_array`/`arel_quote_identifier`/`arel_quote_identifier_backtick`/
 `module Arel` itself) is required before everything else for a different
 reason: those are bare top-level function calls, which -- unlike class
 references -- Diamond still only resolves in source order, not forward
-(`docs/roadmap.md`'s "Forward and mutual calls" section).
+(see [`docs/syntax.md`'s compiler overview](../../docs/syntax.md#no-ast)).
 
 One incidental fix made in passing: a large comment block documenting
 `Arel::MariaDBVisitor`'s design (backtick quoting, its upsert grammar,

@@ -942,7 +942,7 @@ two different problems and aren't interchangeable.
 One real, separate limitation `closure` inherits from plain nested `def`,
 not something this feature fixes: redeclaring either one a second time
 inside the same loop body raises a runtime `TypeError` at the second
-declaration. See `docs/roadmap.md`'s "Open design decisions" section.
+declaration.
 
 ### Reopening
 

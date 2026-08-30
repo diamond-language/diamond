@@ -289,11 +289,14 @@ rows = db.query("SELECT * FROM items WHERE qty >= ?", [1])
 db.close()
 
 response = Process.run(["printf", "hello"])
-now = Time.utc_now()
+meeting = Time.parse("2026-08-30T12:30:00-07:00")
+reminder = meeting.days_ago(1)
 ```
 
 See [docs/io.md](docs/io.md) for files, sockets, polling, signals, TLS, SQLite,
-Time, and Process. See [docs/syntax.md](docs/syntax.md) for the complete syntax
+and Process. See the [Time and calendar guide](docs/time.md) for construction,
+fixed offsets, ISO-8601, arithmetic, DST-aware calendar helpers, and deliberate
+timezone limits. See [docs/syntax.md](docs/syntax.md) for the complete syntax
 and core-library surface.
 
 ## Tooling
@@ -374,6 +377,7 @@ Detailed design documents:
 - [Object model](docs/object-model.md)
 - [Fibers](docs/fibers.md)
 - [Threads](docs/threads.md)
+- [Time and calendar](docs/time.md)
 - [I/O and native services](docs/io.md)
 - [Packages](docs/packages.md)
 - [Language Server](docs/lsp.md)
@@ -386,10 +390,9 @@ Detailed design documents:
   bytecode generation; forward and mutually recursive top-level calls resolve.
 - Bytecode offsets, program tables, call depth, lexical captures, and other VM
   resources have fixed implementation limits.
-- The collector is stop-the-world mark/sweep. Direct benchmarks show that an
-  individual collection pause grows with the live set; a generational attempt
-  was reverted after its remembered-set design failed to improve the measured
-  workload.
+- The collector is generational mark/sweep, but collection is still
+  stop-the-world within a VM. Threads avoid a shared-heap pause by using
+  isolated heaps and copying values across thread boundaries.
 - Threads use isolated heaps. Values are copied across thread boundaries rather
   than sharing mutable objects.
 - There is no protected method visibility and no runtime source evaluator for
@@ -399,6 +402,8 @@ Detailed design documents:
 - `facet` has no hosted registry, version solver, or multi-version dependency
   model.
 - Portability beyond the current Linux/GCC target is deferred.
+- Calendar time supports UTC, the process-local zone, and fixed offsets, but
+  not named IANA timezone selection.
 
 ## License
 

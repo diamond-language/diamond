@@ -1,7 +1,8 @@
 # I/O
 
-This document covers Diamond's I/O and native-service surface. Future
-directions are tracked in `docs/roadmap.md`.
+This document covers Diamond's I/O and native-service surface. Calendar-time
+behavior has a dedicated [end-user guide](time.md). Future directions are
+tracked in the [roadmap](roadmap.md).
 
 ## stdout: `print`/`puts`
 
