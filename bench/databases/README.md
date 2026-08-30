@@ -2,7 +2,7 @@
 
 This benchmark compares Diamond's native database drivers using:
 
-- in-process SQLite using a fresh `:memory:` database;
+- in-process SQLite using `bench/databases/bench.db`;
 - PostgreSQL 16 Alpine;
 - MariaDB 11.4; and
 - Oracle MySQL 8.4.
@@ -16,7 +16,8 @@ non-secret and exist only for throwaway loopback-bound containers.
 Each run opens a fresh connection, recreates and seeds the same 1,000-row
 table, warms its point-query shape, then measures 5,000 operations in each
 category. PostgreSQL, MariaDB, and MySQL run in isolated, resource-limited
-Podman services; SQLite runs in the Diamond process:
+Podman services; SQLite runs in the Diamond process against a real database
+file with its default durability settings:
 
 1. primary-key point reads;
 2. ordered range reads returning at most 20 rows; and
@@ -46,7 +47,9 @@ after an interruption, or override `DATABASE_BENCH_CONFIG`,
 for example, `DATABASE_BENCH_ENGINES=mysql DATABASE_BENCH_APPEND=1`; engine
 names come from `config.json` and are not accepted from untrusted input.
 
-SQLite is a useful local baseline, not an apples-to-apples server ranking: it
-has no loopback TCP, separate server process, network protocol, or server-side
-authentication. Do not interpret MariaDB and MySQL as the same server merely because both
+SQLite is a useful local file-backed baseline, not an apples-to-apples server
+ranking: it has no loopback TCP, separate server process, network protocol, or
+server-side authentication. Its autocommit writes do include the filesystem
+and SQLite's default transaction/durability behavior. Do not interpret MariaDB
+and MySQL as the same server merely because both
 use Diamond's `MySQL` client API; the harness reports them independently.

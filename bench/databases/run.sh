@@ -8,6 +8,10 @@ diamond="${DIAMOND_BIN:-$repo_dir/build/diamond}"
 results="${DATABASE_BENCH_RESULTS:-$bench_dir/results.jsonl}"
 engines="${DATABASE_BENCH_ENGINES:-sqlite postgresql mariadb mysql}"
 
+# Database paths in config.json are repository-relative, independent of the
+# caller's working directory.
+cd "$repo_dir"
+
 for command in podman jq; do
     if ! command -v "$command" >/dev/null 2>&1; then
         echo "$command is required" >&2
@@ -87,7 +91,11 @@ start_database() {
         elif [[ "$engine" == "mariadb" ]]; then
             podman exec "$name" mariadb-admin ping -u"$user" -p"$password" --silent >/dev/null 2>&1 && ready=1
         else
-            podman exec "$name" mysqladmin ping -u"$user" -p"$password" --silent >/dev/null 2>&1 && ready=1
+            # Oracle MySQL briefly runs a socket-only initialization server
+            # before replacing it with the final TCP listener; a plain ping
+            # defaults to the local socket and can succeed against that
+            # temporary process, so force the real TCP path.
+            podman exec "$name" mysqladmin ping -h127.0.0.1 --protocol=TCP -u"$user" -p"$password" --silent >/dev/null 2>&1 && ready=1
         fi
         [[ "$ready" == "1" ]] && break
         sleep 1
@@ -97,10 +105,7 @@ start_database() {
         echo "$engine did not become ready" >&2
         exit 1
     fi
-    # MySQL-compatible images briefly run an initialization server before
-    # replacing it with the final listener. An internal ping can hit that
-    # temporary process, so require a short stable period before benchmarking.
-    sleep 3
+    sleep 1
 }
 
 server_version() {
@@ -117,7 +122,7 @@ server_version() {
 
 for engine in $engines; do
     if [[ "$engine" == "sqlite" ]]; then
-        version="system libsqlite3 (in-process)"
+        version="system libsqlite3 (file-backed)"
         engine_cpus="host"
         engine_memory="in-process"
     else

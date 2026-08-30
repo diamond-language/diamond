@@ -30,7 +30,7 @@
   },
   "sqlite": {
     "adapter": "sqlite3",
-    "database": ":memory:"
+    "database": "bench/databases/bench.db"
   },
   "postgresql": {
     "adapter": "postgresql",
