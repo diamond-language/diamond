@@ -4491,6 +4491,15 @@ static uint16_t parse_tls_listen_call(Compiler *compiler) {
     skip_newlines(compiler);
     const uint16_t key_register=parse_expression(compiler);
     skip_newlines(compiler);
+    uint16_t options_register;
+    if(compiler->current.kind==DIAMOND_TOKEN_COMMA) {
+        advance_token(compiler);skip_newlines(compiler);
+        options_register=parse_expression(compiler);
+        skip_newlines(compiler);
+    } else {
+        options_register=allocate_register(compiler);
+        emit_instruction(compiler,DIAMOND_OP_NIL,options_register,0,0,1);
+    }
     if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
         fail(compiler,compiler->current.span,"expected ')' after TLSServer.listen arguments");
         return 0;
@@ -4502,6 +4511,7 @@ static uint16_t parse_tls_listen_call(Compiler *compiler) {
     emit_register(compiler,port_register);
     emit_register(compiler,cert_register);
     emit_register(compiler,key_register);
+    emit_register(compiler,options_register);
     return dest;
 }
 

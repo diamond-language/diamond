@@ -18,6 +18,7 @@
  * exactly so this typedef and OpenSSL's are the same type. */
 typedef struct ssl_st SSL;
 typedef struct ssl_ctx_st SSL_CTX;
+typedef struct ssl_session_st SSL_SESSION;
 
 /* Forward-declared because object.h is included by vm.h (src/vm.h:5),
  * not the other way around, so DiamondChunk's real definition isn't
@@ -344,6 +345,18 @@ typedef struct DiamondListenerHandle {
      * already-accepted TLS sockets are still alive, since SSL_new gives
      * each of them their own reference-counted hold on it. */
     SSL_CTX *tls_context;
+    /* ALPN wire-format-encoded protocol list (each entry: a 1-byte
+     * length prefix followed by that many bytes) for TLSServer.listen's
+     * optional `alpn` option -- passed as the `arg` to
+     * SSL_CTX_set_alpn_select_cb at listen time, so the callback (fired
+     * once per accepted TLS connection, long after this listener's own
+     * stack frame is gone) can find this listener's own supported-
+     * protocol list without needing per-connection correlation the way
+     * the client-side session-ticket callback does (this API's own `arg`
+     * parameter already threads it through directly). nullptr when ALPN
+     * wasn't requested. Freed alongside tls_context. */
+    unsigned char *alpn_protocols;
+    unsigned int alpn_protocols_length;
 } DiamondListenerHandle;
 
 /* A non-blocking TCP connection, returned only by .accept() on a
@@ -386,6 +399,19 @@ typedef struct DiamondTlsSocketHandle {
     DiamondObject object;
     SSL *ssl;
     int fd;
+    /* Set by tls_new_session_callback (vm.c), registered on every
+     * connection's own SSL_CTX (a fresh, private context per connection
+     * -- see DIAMOND_OP_TLS_CONNECT) via SSL_CTX_sess_set_new_cb. This is
+     * the one reliable way to capture a resumable session under TLS 1.3,
+     * where the server's session ticket arrives as a post-handshake
+     * message processed asynchronously (often during a later #read, not
+     * synchronously inside SSL_connect itself) -- unlike TLS <=1.2, where
+     * the session is already established as part of the handshake, this
+     * callback still fires for both, so it's the one code path #session
+     * needs to consult rather than branching by negotiated TLS version.
+     * Owns a real reference (the callback returns 1, taking ownership);
+     * freed on #close and at GC sweep, same lifetime as `ssl` itself. */
+    SSL_SESSION *received_session;
 } DiamondTlsSocketHandle;
 
 /* A compiled reginold pattern. Unlike DiamondFileHandle/DiamondListenerHandle,

@@ -2317,6 +2317,171 @@ wait "$options_tls_server2_pid"
 rm -f "$options_tls_server2_out" "$options_tls_client_out"
 rm -rf "$options_dir"
 
+# TLS ALPN: server offers ["h2", "http/1.1"] (its own preference order),
+# client offers ["http/1.1", "h2"] -- SSL_select_next_proto picks by the
+# *server's* preference order among what the client also offers, so both
+# sides should agree on "h2" despite the client listing it second.
+alpn_dir="$(mktemp -d)"
+openssl req -x509 -newkey rsa:2048 -nodes -keyout "$alpn_dir/key.pem" \
+    -out "$alpn_dir/cert.pem" -days 1 -subj "/CN=localhost" \
+    -addext "subjectAltName=DNS:localhost" >/dev/null 2>&1
+alpn_port=18757
+alpn_server_out="$(mktemp)"
+"$diamond" -e "$(printf 'listener = TLSServer.listen(%d, "%s", "%s", {"alpn": ["h2", "http/1.1"]})
+puts("ready")
+conn = listener.accept()
+puts(conn.alpn_protocol())
+conn.close()
+listener.close()
+0' "$alpn_port" "$alpn_dir/cert.pem" "$alpn_dir/key.pem")" >"$alpn_server_out" 2>&1 &
+alpn_server_pid=$!
+for _ in $(seq 1 200); do
+    grep -q '^ready$' "$alpn_server_out" && break
+    sleep 0.05
+done
+alpn_client_out="$(timeout 10 "$diamond" -e "$(printf 'c = TLSSocket.connect("localhost", %d, {"ca_file": "%s", "alpn": ["http/1.1", "h2"]})
+r = c.alpn_protocol()
+c.close()
+r' "$alpn_port" "$alpn_dir/cert.pem")")"
+wait "$alpn_server_pid"
+grep -q '^h2$' "$alpn_server_out"
+[[ "$alpn_client_out" == "h2" ]]
+rm -f "$alpn_server_out"
+
+# TLS ALPN: no mutually supported protocol is a fatal handshake failure
+# on both sides, not a silent fallback -- proves the callback's
+# ALERT_FATAL path actually aborts the handshake rather than just
+# returning an unhelpful "no protocol" result.
+alpn_mismatch_port=18758
+alpn_mismatch_server_out="$(mktemp)"
+"$diamond" -e "$(printf 'listener = TLSServer.listen(%d, "%s", "%s", {"alpn": ["h2"]})
+puts("ready")
+conn = listener.accept()
+conn.close()
+listener.close()
+0' "$alpn_mismatch_port" "$alpn_dir/cert.pem" "$alpn_dir/key.pem")" >"$alpn_mismatch_server_out" 2>&1 &
+alpn_mismatch_server_pid=$!
+for _ in $(seq 1 200); do
+    grep -q '^ready$' "$alpn_mismatch_server_out" && break
+    sleep 0.05
+done
+error_file="$(mktemp)"
+if timeout 10 "$diamond" -e "$(printf 'TLSSocket.connect("localhost", %d, {"ca_file": "%s", "alpn": ["http/1.1"]})' \
+    "$alpn_mismatch_port" "$alpn_dir/cert.pem")" >/dev/null 2>"$error_file"; then
+    echo "TLSSocket.connect with no mutually supported ALPN protocol unexpectedly succeeded" >&2
+    exit 1
+fi
+grep -q "cannot connect to" "$error_file"
+rm -f "$error_file"
+# Same reasoning as the untrusted-certificate test earlier in this file:
+# the server's own accept() fails too once the handshake aborts, so its
+# exit status is intentionally not checked here.
+wait "$alpn_mismatch_server_pid" || true
+rm -f "$alpn_mismatch_server_out"
+
+# TLS session resumption: the first connection is a full handshake
+# (#session_reused? false), #session() captures a resumable ticket, and
+# handing that blob to a second, independent TLSSocket.connect call
+# actually resumes (#session_reused? true) -- the one signal that proves
+# resumption really happened, not just that the option was accepted.
+# Each side writes/reads one line before calling #session -- a TLS 1.3
+# session ticket usually arrives as a post-handshake message that OpenSSL
+# only actually processes (firing tls_new_session_callback) during a
+# later read, not synchronously inside SSL_connect/SSL_accept, so
+# #session called with no read at all in between can legitimately still
+# be nil at that point.
+session_port=18759
+session_server_out="$(mktemp)"
+"$diamond" -e "$(printf 'listener = TLSServer.listen(%d, "%s", "%s")
+puts("ready")
+i = 0
+while i < 2
+  conn = listener.accept()
+  conn.write("hi\\n")
+  conn.close()
+  i = i + 1
+end
+listener.close()
+0' "$session_port" "$alpn_dir/cert.pem" "$alpn_dir/key.pem")" >"$session_server_out" 2>&1 &
+session_server_pid=$!
+for _ in $(seq 1 200); do
+    grep -q '^ready$' "$session_server_out" && break
+    sleep 0.05
+done
+session_client_out="$(timeout 10 "$diamond" -e "$(printf 'c1 = TLSSocket.connect("localhost", %d, {"ca_file": "%s"})
+c1.gets()
+first_reused = c1.session_reused?()
+blob = c1.session()
+c1.close()
+c2 = TLSSocket.connect("localhost", %d, {"ca_file": "%s", "session": blob})
+c2.gets()
+second_reused = c2.session_reused?()
+c2.close()
+"#{first_reused},#{blob != nil},#{second_reused}"' \
+    "$session_port" "$alpn_dir/cert.pem" "$session_port" "$alpn_dir/cert.pem")")"
+wait "$session_server_pid"
+[[ "$(tail -n1 "$session_server_out")" == "0" ]]
+[[ "$session_client_out" == "false,true,true" ]]
+rm -f "$session_server_out"
+
+# A malformed/garbage session blob is silently ignored -- resumption is
+# always best-effort, falling back to an ordinary full handshake rather
+# than raising.
+malformed_session_port=18760
+malformed_session_server_out="$(mktemp)"
+"$diamond" -e "$(printf 'listener = TLSServer.listen(%d, "%s", "%s")
+puts("ready")
+conn = listener.accept()
+conn.close()
+listener.close()
+0' "$malformed_session_port" "$alpn_dir/cert.pem" "$alpn_dir/key.pem")" \
+    >"$malformed_session_server_out" 2>&1 &
+malformed_session_server_pid=$!
+for _ in $(seq 1 200); do
+    grep -q '^ready$' "$malformed_session_server_out" && break
+    sleep 0.05
+done
+malformed_session_out="$(timeout 10 "$diamond" -e "$(printf 'c = TLSSocket.connect("localhost", %d, {"ca_file": "%s", "session": "not a real session blob"})
+r = c.session_reused?()
+c.close()
+r' "$malformed_session_port" "$alpn_dir/cert.pem")")"
+wait "$malformed_session_server_pid"
+[[ "$(tail -n1 "$malformed_session_server_out")" == "0" ]]
+[[ "$malformed_session_out" == "false" ]]
+rm -f "$malformed_session_server_out"
+rm -rf "$alpn_dir"
+
+# TLSSocket.connect's alpn option validates before ever touching the
+# network (same reasoning the cert/key-pairing check already gets) --
+# an empty Array or a non-String element is a TypeError, not a wasted
+# connection attempt or a confusing IOError from further down the line.
+error_file="$(mktemp)"
+if "$diamond" -e 'TLSSocket.connect("localhost", 443, {"alpn": []})' \
+    >/dev/null 2>"$error_file"; then
+    echo "TLSSocket.connect with an empty alpn Array unexpectedly succeeded" >&2
+    exit 1
+fi
+grep -q "alpn must not be empty" "$error_file"
+rm -f "$error_file"
+
+error_file="$(mktemp)"
+if "$diamond" -e 'TLSSocket.connect("localhost", 443, {"alpn": [1, 2]})' \
+    >/dev/null 2>"$error_file"; then
+    echo "TLSSocket.connect with a non-String alpn element unexpectedly succeeded" >&2
+    exit 1
+fi
+grep -q "alpn must be an Array of Strings" "$error_file"
+rm -f "$error_file"
+
+error_file="$(mktemp)"
+if "$diamond" -e 'TLSServer.listen(0, "cert.pem", "key.pem", {"bogus": 1})' \
+    >/dev/null 2>"$error_file"; then
+    echo "TLSServer.listen with an unrecognized option unexpectedly succeeded" >&2
+    exit 1
+fi
+grep -q "unrecognized TLSServer.listen option 'bogus'" "$error_file"
+rm -f "$error_file"
+
 error_file="$(mktemp)"
 if "$diamond" -e '5.abs()' >/dev/null 2>"$error_file"; then
     echo "Int literal .abs() unexpectedly succeeded (Int has no method dispatch)" >&2

@@ -993,9 +993,30 @@ collided with self capture" section for the full mechanism.
 The current native APIs intentionally expose useful, narrow slices. Possible
 extensions should be demand-driven:
 
-- TLS ALPN and session resumption (client certificates and custom trust
-  stores are done -- see below);
 - richer time parsing/timezone support.
+
+**Done**: TLS ALPN and session resumption on `TLSSocket.connect`/
+`TLSServer.listen` (client certificates and custom trust stores were
+already done -- see above). `options["alpn"]` (an Array of protocol
+name Strings) on both, negotiated via the standard
+`SSL_select_next_proto` algorithm (the *server's* preference order
+wins among what the client also offered); `#alpn_protocol()` reads back
+the result on either side, and a client/server with nothing in common
+is a fatal handshake failure, not a silent no-op. `options["session"]`
+on `TLSSocket.connect` plus a new `#session()`/`#session_reused?()`
+pair handle resumption -- `#session()` serializes the connection's
+current session (DER, via `i2d_SSL_SESSION`) for a later connection's
+`session` option; resumption is always best-effort (a blob that fails
+to parse is silently ignored, exactly as if the option were never
+given). The one real gotcha found while building this: a TLS 1.3
+session ticket normally arrives as a post-handshake message OpenSSL
+only actually processes during a *later read*, not synchronously
+inside `SSL_connect` itself, so `#session()` can legitimately still be
+`nil` immediately after connecting with no read in between -- caught by
+a real failing test, not theorized, and now documented in `docs/io.md`.
+No server-side option is needed for resumption itself: `TLSServer.listen`
+already reuses one `SSL_CTX` across every `.accept()`, which is the
+entire server-side requirement.
 
 **Done**: `Process.spawn(argv)` -- asynchronous subprocess handles with
 polling and termination, alongside the existing blocking/synchronous

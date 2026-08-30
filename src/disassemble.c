@@ -132,7 +132,26 @@ static size_t four_registers(FILE *stream, const DiamondChunk *chunk,
     return offset + 9;
 }
 
-/* Only MYSQL_OPEN needs more than three register operands (dest plus
+/* TLS_LISTEN needs five (dest, port, cert, key, options). */
+static size_t five_registers(FILE *stream, const DiamondChunk *chunk,
+                             const char *name, size_t offset, bool *valid) {
+    if (!require_bytes(stream, chunk, offset, 11)) return chunk->code_count;
+    const uint16_t first = checked_register(chunk, stream,
+        read_operand(chunk, offset + 1), valid);
+    const uint16_t second = checked_register(chunk, stream,
+        read_operand(chunk, offset + 3), valid);
+    const uint16_t third = checked_register(chunk, stream,
+        read_operand(chunk, offset + 5), valid);
+    const uint16_t fourth = checked_register(chunk, stream,
+        read_operand(chunk, offset + 7), valid);
+    const uint16_t fifth = checked_register(chunk, stream,
+        read_operand(chunk, offset + 9), valid);
+    fprintf(stream, "%-18s r%u, r%u, r%u, r%u, r%u\n", name,
+        first, second, third, fourth, fifth);
+    return offset + 11;
+}
+
+/* Only MYSQL_OPEN needs more than five register operands (dest plus
  * host/user/password/database/port), so this is a one-off rather than a
  * generalized n_registers helper -- same shape as two_registers/
  * three_registers above, just six wide. */
@@ -997,13 +1016,7 @@ static bool disassemble_chunk(FILE *stream, const char *name,
             case DIAMOND_OP_TLS_CONNECT:
                 offset=four_registers(stream,chunk,"TLS_CONNECT",offset, &valid);break;
             case DIAMOND_OP_TLS_LISTEN:
-                if(!require_bytes(stream,chunk,offset,9)){valid=false;offset=chunk->code_count;break;}
-                fprintf(stream,"%-18s r%u, r%u, r%u, r%u\n","TLS_LISTEN",
-                    checked_register(chunk,stream,read_operand(chunk,offset+1),&valid),
-                    checked_register(chunk,stream,read_operand(chunk,offset+3),&valid),
-                    checked_register(chunk,stream,read_operand(chunk,offset+5),&valid),
-                    checked_register(chunk,stream,read_operand(chunk,offset+7),&valid));
-                offset+=9;break;
+                offset=five_registers(stream,chunk,"TLS_LISTEN",offset, &valid);break;
             case DIAMOND_OP_CHR:
                 offset=two_registers(stream,chunk,"CHR",offset, &valid);break;
             case DIAMOND_OP_TO_FLOAT:

@@ -607,16 +607,73 @@ zero-external-dependencies stance.
     unreadable file, or a key that doesn't match the certificate, raises
     a rescuable `IOError`.
 
+  - **`alpn`** — an Array of protocol name Strings (RFC 7301, 1-255 bytes
+    each), offered to the server in preference order for Application-
+    Layer Protocol Negotiation:
+
+    ```ruby
+    conn = TLSSocket.connect("example.com", 443, {"alpn": ["h2", "http/1.1"]})
+    conn.alpn_protocol()   # => "h2", or nil if nothing was negotiated
+    ```
+
+    Validated (non-empty, every element a 1-255-byte String) before any
+    network activity, same as the `cert`/`key` pairing check. Which
+    protocol actually gets picked is the *server's* call
+    (`SSL_select_next_proto`, the standard algorithm both this client and
+    `TLSServer.listen` below use): the first entry in the *server's* own
+    list that the client also offered, not the client's own preference
+    order. A client and server with no protocol in common is a fatal
+    handshake failure (`IOError`), not a silent "no protocol negotiated"
+    — there's nothing left to fall back to once neither side will accept
+    what the other proposed.
+  - **`session`** — a previously-serialized session blob (see `#session`
+    below) to attempt resumption with. Always best-effort: a blob that
+    fails to parse (corrupt, or from an incompatible OpenSSL build or a
+    since-rotated server ticket key) is silently ignored rather than
+    raising — TLS itself transparently falls back to an ordinary full
+    handshake when resumption doesn't happen, exactly the same outcome as
+    if this option had never been given. `#session_reused?` (below) tells
+    the caller which actually happened.
+
   As with `TCPSocket.connect`, an unrecognized `options` key or a value
   of the wrong type is a `TypeError`, and `options` itself may be `nil`
   (the default) for the original, unchanged behavior.
-- **`TLSServer.listen(port, cert_path, key_path)`** — binds and listens
-  like `TCPServer.listen`, then loads a certificate chain and private key
-  (both PEM files) into one `SSL_CTX` reused across every `.accept()` on
-  this listener, so a broken cert/key pair fails loudly at `.listen()`
-  time rather than on whichever connection happens to arrive first, and
-  the (potentially expensive) cert/key parsing happens once, not per
-  connection.
+- **`TLSSocket#alpn_protocol()`** — the negotiated ALPN protocol name as
+  a `String`, or `nil` if ALPN wasn't offered or nothing was negotiated.
+  Works the same way on both a client connection and a
+  `TLSServer.listen` listener's accepted connection.
+- **`TLSSocket#session()`** — serializes the connection's current session
+  (DER-encoded via OpenSSL's `i2d_SSL_SESSION`, an opaque `String` blob)
+  for later resumption via a future `TLSSocket.connect`'s own `session`
+  option, or `nil` if no session is available yet. **Call this only
+  after the connection has done at least one read** (`.gets()`/`.read()`)
+  — a TLS 1.3 session ticket normally arrives as a post-handshake message
+  that OpenSSL only actually processes (via a callback registered
+  internally) during a later read, not synchronously inside
+  `SSL_connect`/`SSL_accept` itself, so `#session` called immediately
+  after connecting, with no read in between, can legitimately still
+  return `nil` even though a ticket is about to arrive.
+- **`TLSSocket#session_reused?()`** — `Bool`, whether this connection
+  actually resumed a previous session (`SSL_session_reused`) rather than
+  performing a full handshake. The one reliable way to confirm resumption
+  worked, since a `session` option that fails to resume (an expired
+  ticket, say) doesn't raise — the connection just silently falls back to
+  a full handshake instead.
+- **`TLSServer.listen(port, cert_path, key_path, options)`** — binds and
+  listens like `TCPServer.listen`, then loads a certificate chain and
+  private key (both PEM files) into one `SSL_CTX` reused across every
+  `.accept()` on this listener, so a broken cert/key pair fails loudly at
+  `.listen()` time rather than on whichever connection happens to arrive
+  first, and the (potentially expensive) cert/key parsing happens once,
+  not per connection. `options` (optional, a `Hash` or `nil`) supports
+  one key so far: **`alpn`** — an Array of protocol name Strings this
+  server is willing to negotiate, in *this server's own* preference
+  order (see `#alpn_protocol` above for how a mismatch is handled).
+  Session resumption needs no server-side option at all: reusing one
+  `SSL_CTX`/session-ticket key across every `.accept()` on a listener,
+  which `TLSServer.listen` already does, is the entire server-side
+  requirement — a returning client's `TLSSocket.connect(..., {"session":
+  ...})` just works against it.
 - **`.accept()`** on a `TLSServer.listen` listener does the same blocking
   `accept()` a plain `TCPServer.listen` listener does (including the
   signal-interruptible retry loop from the Signals section above — a
@@ -1209,11 +1266,6 @@ waiting for exit:
 - **Multiple `print`/`puts` arguments**: `puts(a, b)` (Ruby-style, one
   line per argument) is not supported — exactly one argument, matching
   the narrowest useful slice.
-- **TLS session resumption and ALPN**: not exposed — every
-  `TLSSocket.connect` is a fresh, full handshake with no protocol
-  negotiated beyond default TLS. (A custom trust store and client
-  certificates *are* supported now — see `TLSSocket.connect`'s own
-  `options` above.)
 - **File mode validation**: `File.open` passes `mode` straight through
   to `fopen` with no Diamond-level checking.
 - **Transactions as a dedicated *native* API**: no `.transaction { ... }`-
