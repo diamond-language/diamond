@@ -1144,6 +1144,11 @@ generic dispatch every other native type uses:
 - `.utc?()` → `Bool`
 - `.months_ago(n)` / `.months_from_now(n)` → a new `Time`, shifted by `n`
   calendar months in the receiver's timezone mode
+- `.days_ago(n)` / `.days_from_now(n)` and `.weeks_ago(n)` /
+  `.weeks_from_now(n)` → calendar day/week shifts that preserve local
+  wall-clock time across DST. These deliberately differ from adding fixed
+  numeric `.day()`/`.week()` durations, which are always 86,400/604,800
+  elapsed seconds.
 - `.years_ago(n)` / `.years_from_now(n)` → the corresponding calendar-year
   shifts. Month/year shifts preserve the wall-clock fields and fractional
   seconds, clamp the day to the target month's end (March 31 minus one month

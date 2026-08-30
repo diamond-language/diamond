@@ -7716,14 +7716,19 @@ static int days_in_calendar_month(int year,int month) {
     return days[1]+((year%4==0&&year%100!=0)||year%400==0?1:0);
 }
 
-/* Calendar-aware month/year movement. Unlike numeric day/week durations,
- * this preserves wall-clock fields in the receiver's display zone and clamps
- * the day to the target month's end. Local mode delegates DST resolution to
- * mktime; UTC/fixed modes remain process-state-independent through timegm. */
+enum { TIME_SHIFT_DAYS,TIME_SHIFT_WEEKS,TIME_SHIFT_MONTHS,TIME_SHIFT_YEARS };
+
+/* Calendar-aware movement. Unlike numeric day/week durations, this preserves
+ * wall-clock fields in the receiver's display zone; month/year shifts also
+ * clamp the day to the target month's end. Local mode delegates DST resolution
+ * to mktime; UTC/fixed modes remain process-state-independent through timegm. */
 static DiamondVmStatus time_calendar_shift_helper(DiamondVm *vm,
-        const DiamondTime *target,int64_t amount,bool years,bool future,
+        const DiamondTime *target,int64_t amount,uint8_t unit,bool future,
         DiamondValue *out_result) {
-    const int64_t limit=years?10000:120000;
+    int64_t limit=120000;
+    if(unit==TIME_SHIFT_DAYS)limit=3660000;
+    else if(unit==TIME_SHIFT_WEEKS)limit=522000;
+    else if(unit==TIME_SHIFT_YEARS)limit=10000;
     if(amount < -limit||amount > limit) {
         snprintf(vm->error,sizeof vm->error,"Time calendar shift is out of range");
         return DIAMOND_VM_TYPE_ERROR;
@@ -7734,9 +7739,33 @@ static DiamondVmStatus time_calendar_shift_helper(DiamondVm *vm,
         snprintf(vm->error,sizeof vm->error,"Time value out of range");
         return DIAMOND_VM_TYPE_ERROR;
     }
+    if(unit==TIME_SHIFT_DAYS||unit==TIME_SHIFT_WEEKS) {
+        parts.tm_mday+=(int)(delta*(unit==TIME_SHIFT_WEEKS?7:1));
+        time_t shifted_epoch;
+        if(target->zone_mode==DIAMOND_TIME_LOCAL) {
+            parts.tm_isdst=-1;shifted_epoch=mktime(&parts);
+        } else {
+            shifted_epoch=timegm(&parts);
+            if(target->zone_mode==DIAMOND_TIME_FIXED_OFFSET)
+                shifted_epoch-=(time_t)target->utc_offset;
+        }
+        const double fraction=target->epoch-floor(target->epoch);
+        const DiamondTime shifted={.epoch=(double)shifted_epoch+fraction,
+            .utc_offset=target->utc_offset,.zone_mode=target->zone_mode};
+        struct tm check;
+        if(!time_struct_tm(&shifted,&check)||check.tm_year+1900<1||
+           check.tm_year+1900>9999) {
+            snprintf(vm->error,sizeof vm->error,"Time calendar shift is out of range");
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        DiamondTime *result=allocate_time(vm,shifted.epoch,target->zone_mode,
+            target->utc_offset);
+        if(result==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+        *out_result=DIAMOND_OBJECT(result);return DIAMOND_VM_OK;
+    }
     int64_t shifted_year=(int64_t)parts.tm_year+1900;
     int shifted_month=parts.tm_mon+1;
-    if(years)shifted_year+=delta;
+    if(unit==TIME_SHIFT_YEARS)shifted_year+=delta;
     else {
         const int64_t total=shifted_year*12+(shifted_month-1)+delta;
         if(total<12||total>9999*12+11) {
@@ -10568,17 +10597,30 @@ static DiamondVmStatus time_dispatch_helper(DiamondVm *vm,DiamondTime *target,
         memcmp(method_name->chars,"years_ago",9)==0;
     const bool years_from_now_method=method_name->length==14&&
         memcmp(method_name->chars,"years_from_now",14)==0;
-    if(months_ago_method||months_from_now_method||years_ago_method||
-       years_from_now_method) {
+    const bool days_ago_method=method_name->length==8&&
+        memcmp(method_name->chars,"days_ago",8)==0;
+    const bool days_from_now_method=method_name->length==13&&
+        memcmp(method_name->chars,"days_from_now",13)==0;
+    const bool weeks_ago_method=method_name->length==9&&
+        memcmp(method_name->chars,"weeks_ago",9)==0;
+    const bool weeks_from_now_method=method_name->length==14&&
+        memcmp(method_name->chars,"weeks_from_now",14)==0;
+    if(days_ago_method||days_from_now_method||weeks_ago_method||
+       weeks_from_now_method||months_ago_method||months_from_now_method||
+       years_ago_method||years_from_now_method) {
         if(argc!=1)return DIAMOND_VM_ARITY_ERROR;
         if(registers[base].kind!=DIAMOND_VALUE_INT) {
             snprintf(vm->error,sizeof vm->error,
                 "Time calendar shift amount must be an Int");
             return DIAMOND_VM_TYPE_ERROR;
         }
-        return time_calendar_shift_helper(vm,target,registers[base].as.integer,
-            years_ago_method||years_from_now_method,
-            months_from_now_method||years_from_now_method,&registers[dest]);
+        uint8_t unit=TIME_SHIFT_MONTHS;
+        if(days_ago_method||days_from_now_method)unit=TIME_SHIFT_DAYS;
+        else if(weeks_ago_method||weeks_from_now_method)unit=TIME_SHIFT_WEEKS;
+        else if(years_ago_method||years_from_now_method)unit=TIME_SHIFT_YEARS;
+        return time_calendar_shift_helper(vm,target,registers[base].as.integer,unit,
+            days_from_now_method||weeks_from_now_method||months_from_now_method||
+                years_from_now_method,&registers[dest]);
     }
     const bool beginning_of_day_method=method_name->length==16&&
         memcmp(method_name->chars,"beginning_of_day",16)==0;

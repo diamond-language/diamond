@@ -70,6 +70,9 @@ actual="$("$diamond" -e 'ENV["DIAMOND_NONEXISTENT_VAR_XYZ"] == nil')"
 actual="$(TZ=America/Los_Angeles "$diamond" -e $'t = Time.local(2024, 3, 10, 12, 0, 0)\n[t.beginning_of_day().iso8601(), t.end_of_day().iso8601(6), t.beginning_of_week().iso8601(), t.end_of_week().iso8601(6)]')"
 [[ "$actual" == "[2024-03-10T00:00:00-08:00, 2024-03-10T23:59:59.999999-07:00, 2024-03-04T00:00:00-08:00, 2024-03-10T23:59:59.999999-07:00]" ]]
 
+actual="$(TZ=America/Los_Angeles "$diamond" -e $'start = Time.local(2024, 3, 9, 12, 0, 0)\nshifted = start.days_from_now(1)\n[shifted.iso8601(), shifted - start, (start + 1.day()).iso8601()]')"
+[[ "$actual" == "[2024-03-10T12:00:00-07:00, 82800.0, 2024-03-10T13:00:00-07:00]" ]]
+
 error_file="$(mktemp)"
 if "$diamond" -e '1 + )' 2>"$error_file"; then
     echo "invalid source unexpectedly succeeded" >&2
