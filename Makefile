@@ -14,7 +14,24 @@ CFLAGS_COMMON := -std=c23 -Wall -Wextra -Wpedantic -Wconversion -Wshadow \
 	-Wstrict-prototypes -Werror=implicit-function-declaration
 CFLAGS_DEBUG := -O0 -g3 -DDIAMOND_DEBUG
 CFLAGS_RELEASE := -O3 -DNDEBUG -march=native
-CFLAGS_SANITIZE := $(CFLAGS_DEBUG) -fsanitize=address,undefined \
+# -O1, not CFLAGS_DEBUG's -O0: run_chunk (src/vm.c) is one ~6,600-line
+# function whose giant opcode switch declares its own locals (registers,
+# per-opcode buffers, DiamondTypeBinding[8] arrays for generic-call
+# opcodes, TLS setup buffers, etc.) in dozens of mutually-exclusive case
+# blocks. -O0 disables stack-slot coalescing across non-overlapping
+# lexical scopes, so every one of those locals gets its own permanent
+# slot in one shared frame regardless of which case actually runs --
+# confirmed via -fstack-usage at 105,680 bytes/frame, enough that
+# depth(5000) (the DIAMOND_MAX_CALL_DEPTH regression test) hit a real
+# ASan stack-overflow at ~71 recursive frames, well before
+# DIAMOND_MAX_CALL_DEPTH=95's own guard (src/vm.c) could trip. -O1
+# restores stack-slot coalescing (measured 68,624 bytes/frame, ~35%
+# smaller) while keeping ASan/UBSan instrumentation and frame pointers
+# (-fno-omit-frame-pointer) fully intact for readable backtraces; some
+# locals may show "optimized out" under gdb, an accepted tradeoff scoped
+# to this diagnostic build only -- `debug` stays -O0 for full
+# variable visibility.
+CFLAGS_SANITIZE := -O1 -g3 -DDIAMOND_DEBUG -fsanitize=address,undefined \
 	-fno-omit-frame-pointer
 LDFLAGS_SANITIZE := -fsanitize=address,undefined
 # ThreadSanitizer can't combine with ASan+UBSan above (mutually exclusive
