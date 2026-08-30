@@ -7701,6 +7701,63 @@ static DiamondVmStatus time_build_helper(DiamondVm *vm,const DiamondValue *argum
     *out_result=DIAMOND_OBJECT(time);return DIAMOND_VM_OK;
 }
 
+static int days_in_calendar_month(int year,int month) {
+    static const int days[]={31,28,31,30,31,30,31,31,30,31,30,31};
+    if(month!=2)return days[month-1];
+    return days[1]+((year%4==0&&year%100!=0)||year%400==0?1:0);
+}
+
+/* Calendar-aware month/year movement. Unlike numeric day/week durations,
+ * this preserves wall-clock fields in the receiver's display zone and clamps
+ * the day to the target month's end. Local mode delegates DST resolution to
+ * mktime; UTC/fixed modes remain process-state-independent through timegm. */
+static DiamondVmStatus time_calendar_shift_helper(DiamondVm *vm,
+        const DiamondTime *target,int64_t amount,bool years,bool future,
+        DiamondValue *out_result) {
+    const int64_t limit=years?10000:120000;
+    if(amount < -limit||amount > limit) {
+        snprintf(vm->error,sizeof vm->error,"Time calendar shift is out of range");
+        return DIAMOND_VM_TYPE_ERROR;
+    }
+    const int64_t delta=future?amount:-amount;
+    struct tm parts;
+    if(!time_struct_tm(target,&parts)) {
+        snprintf(vm->error,sizeof vm->error,"Time value out of range");
+        return DIAMOND_VM_TYPE_ERROR;
+    }
+    int64_t shifted_year=(int64_t)parts.tm_year+1900;
+    int shifted_month=parts.tm_mon+1;
+    if(years)shifted_year+=delta;
+    else {
+        const int64_t total=shifted_year*12+(shifted_month-1)+delta;
+        if(total<12||total>9999*12+11) {
+            snprintf(vm->error,sizeof vm->error,"Time calendar shift is out of range");
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        shifted_year=total/12;shifted_month=(int)(total%12)+1;
+    }
+    if(shifted_year<1||shifted_year>9999) {
+        snprintf(vm->error,sizeof vm->error,"Time calendar shift is out of range");
+        return DIAMOND_VM_TYPE_ERROR;
+    }
+    const int last_day=days_in_calendar_month((int)shifted_year,shifted_month);
+    if(parts.tm_mday>last_day)parts.tm_mday=last_day;
+    parts.tm_year=(int)shifted_year-1900;parts.tm_mon=shifted_month-1;
+    time_t shifted_epoch;
+    if(target->zone_mode==DIAMOND_TIME_LOCAL) {
+        parts.tm_isdst=-1;shifted_epoch=mktime(&parts);
+    } else {
+        shifted_epoch=timegm(&parts);
+        if(target->zone_mode==DIAMOND_TIME_FIXED_OFFSET)
+            shifted_epoch-=(time_t)target->utc_offset;
+    }
+    const double fraction=target->epoch-floor(target->epoch);
+    DiamondTime *result=allocate_time(vm,(double)shifted_epoch+fraction,
+        target->zone_mode,target->utc_offset);
+    if(result==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+    *out_result=DIAMOND_OBJECT(result);return DIAMOND_VM_OK;
+}
+
 /* Shared by #to_s and puts/string-interpolation's own stringify path
  * (see builder_format_value/stringify_value) -- one formatting
  * implementation, not two. */
@@ -10254,7 +10311,8 @@ static DiamondVmStatus mysql_dispatch_helper(DiamondVm *vm,DiamondMysqlHandle *t
 }
 
 /* #year/#month/#day/#hour/#min/#sec/#wday/#yday/#to_i/#to_f/#strftime/
- * #iso8601/#to_s/#utc/#localtime/#utc? -- factored out of the INVOKE case body
+ * #iso8601/calendar shifts/#to_s/#utc/#localtime/#utc? -- factored out of
+ * the INVOKE case body
  * for the same stack-frame reason sqlite3_dispatch_helper's own comment
  * explains (immediately above). */
 static DiamondVmStatus time_dispatch_helper(DiamondVm *vm,DiamondTime *target,
@@ -10369,6 +10427,26 @@ static DiamondVmStatus time_dispatch_helper(DiamondVm *vm,DiamondTime *target,
         if(copy==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
         registers[dest]=DIAMOND_OBJECT(copy);
         return DIAMOND_VM_OK;
+    }
+    const bool months_ago_method=method_name->length==10&&
+        memcmp(method_name->chars,"months_ago",10)==0;
+    const bool months_from_now_method=method_name->length==15&&
+        memcmp(method_name->chars,"months_from_now",15)==0;
+    const bool years_ago_method=method_name->length==9&&
+        memcmp(method_name->chars,"years_ago",9)==0;
+    const bool years_from_now_method=method_name->length==14&&
+        memcmp(method_name->chars,"years_from_now",14)==0;
+    if(months_ago_method||months_from_now_method||years_ago_method||
+       years_from_now_method) {
+        if(argc!=1)return DIAMOND_VM_ARITY_ERROR;
+        if(registers[base].kind!=DIAMOND_VALUE_INT) {
+            snprintf(vm->error,sizeof vm->error,
+                "Time calendar shift amount must be an Int");
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        return time_calendar_shift_helper(vm,target,registers[base].as.integer,
+            years_ago_method||years_from_now_method,
+            months_from_now_method||years_from_now_method,&registers[dest]);
     }
     const bool to_s_method=method_name->length==4&&
         memcmp(method_name->chars,"to_s",4)==0;

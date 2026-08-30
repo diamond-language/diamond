@@ -1136,6 +1136,13 @@ generic dispatch every other native type uses:
 - `.utc_offset()` → the active offset in seconds (including the effective
   DST-aware offset for process-local time)
 - `.utc?()` → `Bool`
+- `.months_ago(n)` / `.months_from_now(n)` → a new `Time`, shifted by `n`
+  calendar months in the receiver's timezone mode
+- `.years_ago(n)` / `.years_from_now(n)` → the corresponding calendar-year
+  shifts. Month/year shifts preserve the wall-clock fields and fractional
+  seconds, clamp the day to the target month's end (March 31 minus one month
+  becomes February 28 or 29), and preserve UTC/fixed/local mode. Process-local
+  results use libc's DST rules. Negative `n` reverses the direction.
 
 `Int` and `Float` provide singular and plural `.second(s)()`, `.minute(s)()`,
 `.hour(s)()`, `.day(s)()`, and `.week(s)()` helpers. These return numeric
@@ -1144,8 +1151,9 @@ seconds, so they compose with ordinary arithmetic and Rails-style `.ago()` and
 process-local `Time`; fractional seconds are supported, while `NaN` and
 infinities are rejected. The result can be converted with `.utc()` or
 `.localtime(offset)`, where the offset may be seconds or `"Z"`/`"±HH:MM[:SS]"`.
-Months and years are deliberately absent because they
-require calendar-relative arithmetic rather than a fixed seconds multiplier.
+Numeric month and year duration units are deliberately absent because they
+require calendar-relative arithmetic rather than a fixed seconds multiplier;
+use the calendar-aware methods on a `Time` receiver instead.
 
 `+`, `-`, and comparisons (`<`/`<=`/`>`/`>=`/`==`/`!=`) work directly,
 matching Ruby — `Time` is the **one** native (non-`Instance`) type
