@@ -1159,6 +1159,12 @@ generic dispatch every other native type uses:
 - `.beginning_of_year()` / `.end_of_year()` → January 1 through the final
   microsecond of December 31. Week/year boundaries preserve timezone mode and
   follow the same local-DST rules.
+- `.today?()` → whether the receiver's calendar date is today in its own
+  UTC/fixed/local display zone
+- `.past?()` / `.future?()` → absolute-instant comparisons against the current
+  wall clock
+- `.on_weekend?()` / `.on_weekday?()` → Saturday/Sunday classification or its
+  inverse, using the same weekday convention as `.wday()`
 
 `Int` and `Float` provide singular and plural `.second(s)()`, `.minute(s)()`,
 `.hour(s)()`, `.day(s)()`, and `.week(s)()` helpers. These return numeric

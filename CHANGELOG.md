@@ -928,7 +928,7 @@ bytecode, or semantic stability.
   UTC/fixed/local calendar-field constructors, round-trippable
   `Time#iso8601` formatting, and calendar-aware month/year movement with
   end-of-month clamping plus day/week/month/year boundary helpers that honor
-  local DST.
+  local DST and zone-aware date/instant/weekday predicates.
 - Added synchronous subprocess execution with argv isolation and captured
   stdout/stderr/exit status.
 - Added regexp construction, matching, capture results, substitution, and scan

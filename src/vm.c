@@ -10407,6 +10407,46 @@ static DiamondVmStatus time_dispatch_helper(DiamondVm *vm,DiamondTime *target,
         registers[dest]=DIAMOND_INT(component_value);
         return DIAMOND_VM_OK;
     }
+    const bool today_p_method=method_name->length==6&&
+        memcmp(method_name->chars,"today?",6)==0;
+    const bool past_p_method=method_name->length==5&&
+        memcmp(method_name->chars,"past?",5)==0;
+    const bool future_p_method=method_name->length==7&&
+        memcmp(method_name->chars,"future?",7)==0;
+    const bool weekend_p_method=method_name->length==11&&
+        memcmp(method_name->chars,"on_weekend?",11)==0;
+    const bool weekday_p_method=method_name->length==11&&
+        memcmp(method_name->chars,"on_weekday?",11)==0;
+    if(today_p_method||past_p_method||future_p_method||weekend_p_method||
+       weekday_p_method) {
+        if(argc!=0)return DIAMOND_VM_ARITY_ERROR;
+        if(weekend_p_method||weekday_p_method) {
+            if(!time_struct_tm(target,&parts)) {
+                snprintf(vm->error,sizeof vm->error,"Time value out of range");
+                return DIAMOND_VM_TYPE_ERROR;
+            }
+            const bool weekend=parts.tm_wday==0||parts.tm_wday==6;
+            registers[dest]=DIAMOND_BOOL(weekend_p_method?weekend:!weekend);
+            return DIAMOND_VM_OK;
+        }
+        struct timespec now={};clock_gettime(CLOCK_REALTIME,&now);
+        const double now_epoch=(double)now.tv_sec+(double)now.tv_nsec/1e9;
+        if(past_p_method||future_p_method) {
+            registers[dest]=DIAMOND_BOOL(past_p_method?
+                target->epoch<now_epoch:target->epoch>now_epoch);
+            return DIAMOND_VM_OK;
+        }
+        const DiamondTime current={.epoch=now_epoch,
+            .utc_offset=target->utc_offset,.zone_mode=target->zone_mode};
+        struct tm current_parts;
+        if(!time_struct_tm(target,&parts)||!time_struct_tm(&current,&current_parts)) {
+            snprintf(vm->error,sizeof vm->error,"Time value out of range");
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        registers[dest]=DIAMOND_BOOL(parts.tm_year==current_parts.tm_year&&
+            parts.tm_mon==current_parts.tm_mon&&parts.tm_mday==current_parts.tm_mday);
+        return DIAMOND_VM_OK;
+    }
     const bool to_i_method=method_name->length==4&&
         memcmp(method_name->chars,"to_i",4)==0;
     const bool to_f_method=method_name->length==4&&
