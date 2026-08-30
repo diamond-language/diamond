@@ -1089,14 +1089,14 @@ Six constructors, compiling to dedicated opcodes the same way
 - `Time.utc_now()` — current wall-clock time, UTC.
 - `Time.at(epoch)` — from a given `Int`/`Float` epoch, local.
 - `Time.parse(string)` — strict ISO-8601
-  `YYYY-MM-DDTHH:MM:SS[.fraction](Z|±HH:MM)`. The input must contain an
+  `YYYY-MM-DDTHH:MM:SS[.fraction](Z|±HH:MM[:SS])`. The input must contain an
   explicit UTC or numeric offset; invalid calendar dates and named zones are
   rejected. `Z` produces UTC mode, while a signed offset is preserved as the
   result's fixed-offset display mode.
 - `Time.utc(year, month, day, hour, min, sec)` — constructs an explicit UTC
   time from six `Int` calendar fields.
 - `Time.fixed(offset, year, month, day, hour, min, sec)` — constructs a time
-  at an integer-seconds or `"Z"`/`"±HH:MM"` fixed offset. `"Z"` here means a
+  at an integer-seconds or `"Z"`/`"±HH:MM[:SS]"` fixed offset. `"Z"` here means a
   fixed zero offset, while `Time.utc(...)` is the explicit UTC constructor.
   Both constructors reject normalized-invalid dates such as February 30.
 
@@ -1118,6 +1118,10 @@ generic dispatch every other native type uses:
   — the format string passes straight through, so supported directives
   are whatever the system's `strftime(3)` supports, not a
   Diamond-specific subset
+- `.iso8601(precision = 0)` → canonical ISO-8601 with `Z` for explicit UTC
+  and a colonized numeric offset otherwise. `precision` is an `Int` from 0
+  through 9. A non-minute offset includes seconds (`+05:30:01`), so output
+  always round-trips through `Time.parse` without losing offset information.
 - `.to_s()` → `String`, a fixed default format (matches what
   `puts`/string interpolation print for a `Time` too — one formatting
   implementation, not two)
@@ -1127,7 +1131,7 @@ generic dispatch every other native type uses:
   fixed UTC offset from `-86399` through `86399`; for example,
   `.localtime(19800)` selects `+05:30`
 - `.localtime(offset_string)` → the same fixed-offset conversion using `"Z"`
-  or a signed ISO-8601-style `"HH:MM"`, such as `.localtime("+05:30")`;
+  or a signed ISO-8601-style `"HH:MM[:SS]"`, such as `.localtime("+05:30")`;
   named IANA zones are not accepted
 - `.utc_offset()` → the active offset in seconds (including the effective
   DST-aware offset for process-local time)
@@ -1139,7 +1143,7 @@ seconds, so they compose with ordinary arithmetic and Rails-style `.ago()` and
 `.from_now()` calls. Each relative-time call reads the wall clock and returns a
 process-local `Time`; fractional seconds are supported, while `NaN` and
 infinities are rejected. The result can be converted with `.utc()` or
-`.localtime(offset)`, where the offset may be seconds or `"Z"`/`"±HH:MM"`.
+`.localtime(offset)`, where the offset may be seconds or `"Z"`/`"±HH:MM[:SS]"`.
 Months and years are deliberately absent because they
 require calendar-relative arithmetic rather than a fixed seconds multiplier.
 

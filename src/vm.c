@@ -7553,20 +7553,23 @@ static bool time_struct_tm(const DiamondTime *target,struct tm *out) {
 }
 
 /* Parses the deliberately narrow fixed-offset spelling accepted by
- * Time#localtime: "Z" or a signed ISO-8601-style "HH:MM". Named zones and
+ * Time#localtime: "Z" or a signed ISO-8601-style "HH:MM[:SS]". Named zones and
  * process-global TZ mutation remain out of scope. */
 static bool parse_time_utc_offset_chars(const char *chars,size_t length,
         int32_t *out_offset) {
     if(length==1&&chars[0]=='Z') {
         *out_offset=0;return true;
     }
-    if(length!=6||(chars[0]!='+'&&chars[0]!='-')||chars[3]!=':'||
+    if((length!=6&&length!=9)||(chars[0]!='+'&&chars[0]!='-')||chars[3]!=':'||
        chars[1]<'0'||chars[1]>'9'||chars[2]<'0'||chars[2]>'9'||
-       chars[4]<'0'||chars[4]>'9'||chars[5]<'0'||chars[5]>'9')return false;
+       chars[4]<'0'||chars[4]>'9'||chars[5]<'0'||chars[5]>'9'||
+       (length==9&&(chars[6]!=':'||chars[7]<'0'||chars[7]>'9'||
+                    chars[8]<'0'||chars[8]>'9')))return false;
     const int hours=(chars[1]-'0')*10+(chars[2]-'0');
     const int minutes=(chars[4]-'0')*10+(chars[5]-'0');
-    if(hours>23||minutes>59)return false;
-    const int seconds=hours*3600+minutes*60;
+    const int extra_seconds=length==9?(chars[7]-'0')*10+(chars[8]-'0'):0;
+    if(hours>23||minutes>59||extra_seconds>59)return false;
+    const int seconds=hours*3600+minutes*60+extra_seconds;
     *out_offset=(int32_t)(chars[0]=='-'?-seconds:seconds);
     return true;
 }
@@ -7586,7 +7589,7 @@ static int parse_decimal_digits(const char *chars,size_t start,size_t count) {
 }
 
 /* Strict ISO-8601 calendar timestamps with an explicit zone only:
- * YYYY-MM-DDTHH:MM:SS[.fraction](Z|+HH:MM|-HH:MM). Parsing the calendar
+ * YYYY-MM-DDTHH:MM:SS[.fraction](Z|+HH:MM[:SS]|-HH:MM[:SS]). Parsing the calendar
  * portion through timegm keeps this independent of process-local TZ state;
  * the round trip rejects dates libc would otherwise normalize (Feb 30, etc.). */
 static DiamondVmStatus time_parse_helper(DiamondVm *vm,DiamondValue input,
@@ -7629,7 +7632,7 @@ static DiamondVmStatus time_parse_helper(DiamondVm *vm,DiamondValue input,
        round_trip.tm_min!=minute||round_trip.tm_sec!=second))valid=false;
     if(!valid) {
         snprintf(vm->error,sizeof vm->error,
-            "Time.parse expects YYYY-MM-DDTHH:MM:SS[.fraction](Z or signed HH:MM)");
+            "Time.parse expects YYYY-MM-DDTHH:MM:SS[.fraction](Z or signed HH:MM[:SS])");
         return DIAMOND_VM_TYPE_ERROR;
     }
     const bool explicit_utc=length-zone_start==1;
@@ -7657,7 +7660,7 @@ static DiamondVmStatus time_build_helper(DiamondVm *vm,const DiamondValue *argum
             if(!parse_time_utc_offset(
                 (const DiamondString *)arguments[0].as.object,&utc_offset)) {
                 snprintf(vm->error,sizeof vm->error,
-                    "Time.fixed offset must be 'Z' or a signed 'HH:MM'");
+                    "Time.fixed offset must be 'Z' or a signed 'HH:MM[:SS]'");
                 return DIAMOND_VM_TYPE_ERROR;
             }
         } else {
@@ -7710,6 +7713,40 @@ static bool format_time_default(const DiamondTime *target,StringBuilder *builder
     const size_t length=strftime(buffer,sizeof buffer,format,&parts);
     if(length==0)return false;
     return builder_append(builder,buffer,length);
+}
+
+static bool format_time_iso8601(const DiamondTime *target,int precision,
+        StringBuilder *builder) {
+    struct tm parts;
+    if(!time_struct_tm(target,&parts))return false;
+    char calendar[32];
+    const size_t calendar_length=strftime(calendar,sizeof calendar,
+        "%Y-%m-%dT%H:%M:%S",&parts);
+    if(calendar_length==0||!builder_append(builder,calendar,calendar_length))return false;
+    if(precision>0) {
+        uint64_t scale=1;
+        for(int index=0;index<precision;index++)scale*=10;
+        const double whole=floor(target->epoch);
+        const uint64_t fraction=(uint64_t)((target->epoch-whole)*(double)scale);
+        char fraction_buffer[16];
+        const int length=snprintf(fraction_buffer,sizeof fraction_buffer,".%0*" PRIu64,
+            precision,fraction);
+        if(length<0||!builder_append(builder,fraction_buffer,(size_t)length))return false;
+    }
+    if(target->zone_mode==DIAMOND_TIME_UTC)return builder_append(builder,"Z",1);
+    const int64_t offset=target->zone_mode==DIAMOND_TIME_FIXED_OFFSET?
+        target->utc_offset:(int64_t)parts.tm_gmtoff;
+    const uint64_t absolute=(uint64_t)(offset<0?-offset:offset);
+    const uint64_t hours=absolute/3600;
+    const uint64_t minutes=(absolute%3600)/60;
+    const uint64_t seconds=absolute%60;
+    char zone[24];
+    const int length=seconds==0?
+        snprintf(zone,sizeof zone,"%c%02" PRIu64 ":%02" PRIu64,
+            offset<0?'-':'+',hours,minutes):
+        snprintf(zone,sizeof zone,"%c%02" PRIu64 ":%02" PRIu64 ":%02" PRIu64,
+            offset<0?'-':'+',hours,minutes,seconds);
+    return length>=0&&builder_append(builder,zone,(size_t)length);
 }
 
 /* Reads one line from stream into builder, growing across as many
@@ -10217,7 +10254,7 @@ static DiamondVmStatus mysql_dispatch_helper(DiamondVm *vm,DiamondMysqlHandle *t
 }
 
 /* #year/#month/#day/#hour/#min/#sec/#wday/#yday/#to_i/#to_f/#strftime/
- * #to_s/#utc/#localtime/#utc? -- factored out of the INVOKE case body
+ * #iso8601/#to_s/#utc/#localtime/#utc? -- factored out of the INVOKE case body
  * for the same stack-frame reason sqlite3_dispatch_helper's own comment
  * explains (immediately above). */
 static DiamondVmStatus time_dispatch_helper(DiamondVm *vm,DiamondTime *target,
@@ -10310,7 +10347,7 @@ static DiamondVmStatus time_dispatch_helper(DiamondVm *vm,DiamondTime *target,
                 if(!parse_time_utc_offset(
                     (const DiamondString *)registers[base].as.object,&utc_offset)) {
                     snprintf(vm->error,sizeof vm->error,
-                        "Time#localtime offset must be 'Z' or a signed 'HH:MM'");
+                        "Time#localtime offset must be 'Z' or a signed 'HH:MM[:SS]'");
                     return DIAMOND_VM_TYPE_ERROR;
                 }
             } else if(registers[base].kind==DIAMOND_VALUE_INT) {
@@ -10348,6 +10385,36 @@ static DiamondVmStatus time_dispatch_helper(DiamondVm *vm,DiamondTime *target,
         if(string==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
         registers[dest]=DIAMOND_OBJECT(string);
         return DIAMOND_VM_OK;
+    }
+    const bool iso8601_method=method_name->length==7&&
+        memcmp(method_name->chars,"iso8601",7)==0;
+    if(iso8601_method) {
+        if(argc>1)return DIAMOND_VM_ARITY_ERROR;
+        int precision=0;
+        if(argc==1) {
+            if(registers[base].kind!=DIAMOND_VALUE_INT) {
+                snprintf(vm->error,sizeof vm->error,
+                    "Time#iso8601 precision must be an Int");
+                return DIAMOND_VM_TYPE_ERROR;
+            }
+            const int64_t supplied=registers[base].as.integer;
+            if(supplied<0||supplied>9) {
+                snprintf(vm->error,sizeof vm->error,
+                    "Time#iso8601 precision must be between 0 and 9");
+                return DIAMOND_VM_TYPE_ERROR;
+            }
+            precision=(int)supplied;
+        }
+        StringBuilder builder={};
+        if(!format_time_iso8601(target,precision,&builder)) {
+            free(builder.chars);
+            snprintf(vm->error,sizeof vm->error,"Time value out of range");
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        DiamondString *string=allocate_string(vm,builder.chars,builder.length);
+        free(builder.chars);
+        if(string==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+        registers[dest]=DIAMOND_OBJECT(string);return DIAMOND_VM_OK;
     }
     const bool strftime_method=method_name->length==8&&
         memcmp(method_name->chars,"strftime",8)==0;

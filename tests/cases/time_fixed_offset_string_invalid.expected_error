@@ -1,1 +1,1 @@
-Time#localtime offset must be 'Z' or a signed 'HH:MM'
+Time#localtime offset must be 'Z' or a signed 'HH:MM[:SS]'

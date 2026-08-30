@@ -920,12 +920,13 @@ bytecode, or semantic stability.
 - Added SQLite3 connections with positional binds, typed result rows, execution,
   querying, change counts, insert row IDs, and safe close behavior.
 - Added wall-clock and monotonic time APIs, calendar accessors, formatting,
-  local/UTC/fixed-offset timezone conversion (numeric seconds or `Z`/`±HH:MM`
+  local/UTC/fixed-offset timezone conversion (numeric seconds or
+  `Z`/`±HH:MM[:SS]`
   strings), arithmetic, cross-zone comparison,
   numeric duration units from seconds through weeks, and
   `.ago()`/`.from_now()` helpers; added strict ISO-8601 `Time.parse` for UTC
   and numeric-offset timestamps plus strict `Time.utc`/`Time.fixed`
-  calendar-field constructors.
+  calendar-field constructors and round-trippable `Time#iso8601` formatting.
 - Added synchronous subprocess execution with argv isolation and captured
   stdout/stderr/exit status.
 - Added regexp construction, matching, capture results, substitution, and scan

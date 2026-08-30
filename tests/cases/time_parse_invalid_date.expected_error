@@ -1,1 +1,1 @@
-Time.parse expects YYYY-MM-DDTHH:MM:SS[.fraction](Z or signed HH:MM)
+Time.parse expects YYYY-MM-DDTHH:MM:SS[.fraction](Z or signed HH:MM[:SS])
