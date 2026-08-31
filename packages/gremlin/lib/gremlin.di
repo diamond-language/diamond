@@ -95,4 +95,5 @@ require "../../logger/lib/logger"
 # rely on that when the natural reading order already has the connection
 # wrapper defined before the worker loop that uses it.
 require "./gremlin/nonblocking_connection"
+require "./gremlin/shutdown"
 require "./gremlin/server"

@@ -6,6 +6,23 @@ def gremlin_worker(port, handler)
   # one-object-per-line contract instead of introducing a text-only line.
   log = Logger.new("gremlin", "info", nil, "json")
 
+  # Graceful shutdown on SIGTERM/SIGINT ("someone asked this process to
+  # stop" -- Signal.trap's own motivating use case, docs/networking.md).
+  # State lives in GremlinShutdown's class variables, not a local here --
+  # see that file's own comment for why (gremlin_worker's nested defs
+  # were already right at this codebase's 16-binding lexical-capture
+  # cap). Passed by singleton method reference (no wrapping def needed
+  # here). GremlinShutdown.request both flags the shutdown *and* closes
+  # `listener` itself -- see that method's own comment for why closing
+  # it is required, not optional: IO.poll's EINTR-retry hardening
+  # transparently retries the exact same blocked poll(2) after running
+  # this handler, so without something making that specific poll(2)
+  # actually return, an otherwise-idle server would never notice the
+  # signal at all.
+  GremlinShutdown.register_listener(listener)
+  Signal.trap("TERM", GremlinShutdown.request)
+  Signal.trap("INT", GremlinShutdown.request)
+
   def spawn_connection(client_socket)
     conn = NonblockingConnection.new(client_socket)
     def handle_connection()
@@ -32,7 +49,20 @@ def gremlin_worker(port, handler)
   end
 
   loop do
-    read_list = [listener]
+    if GremlinShutdown.requested?() && connections.length() == 0
+      log.info("server.shutdown_complete", {"forced": false})
+      exit(0)
+    end
+
+    # Once shutdown is requested, `listener` has already been closed (by
+    # GremlinShutdown.request itself) and must not be polled again --
+    # IO.poll rejects a closed listener outright (DIAMOND_VM_IO_ERROR,
+    # src/vm.c's pollable_fd), and there's no reason to accept new
+    # connections during drain anyway. resume_if_ready below reads its
+    # own matching offset back out of GremlinShutdown.requested?()
+    # rather than a captured local, for the same reason as everywhere
+    # else in this function.
+    read_list = if GremlinShutdown.requested?() then [] else [listener] end
     write_list = []
     # A connection only goes into write_list while its own #write is
     # mid-flight (NonblockingConnection#want_write?) -- POLLOUT is
@@ -55,7 +85,18 @@ def gremlin_worker(port, handler)
       end
     end
     connections.each(collect_interest)
-    ready = IO.poll(read_list, write_list, -1)
+    # While shutting down, poll with a bounded timeout instead of -1 so
+    # the loop keeps waking up to re-check the deadline even if nothing
+    # else becomes ready -- otherwise a client that opened a connection
+    # and never sent anything (packages/gremlin's own documented
+    # "nothing evicts it" scope cut) would wedge shutdown forever
+    # waiting on a poll() that never returns.
+    ready = IO.poll(read_list, write_list, if GremlinShutdown.requested?()
+      (GremlinShutdown.deadline() - Time.monotonic() < 0) ? 0 :
+        to_i((GremlinShutdown.deadline() - Time.monotonic()) * 1000.0)
+    else
+      -1
+    end)
 
     # Accepted here, *not* folded into `connections` until after the resume
     # pass below -- `ready`'s own readable/writable arrays are sized and
@@ -67,8 +108,29 @@ def gremlin_worker(port, handler)
     # *doesn't* finish immediately used to throw the very next connection
     # added after it out of alignment with `ready`, an IndexError at
     # random depending on accept timing).
+    #
+    # `ready["readable"][0]` only means "the listener is ready to
+    # accept" while the listener is actually in read_list this tick
+    # (see above) -- reading it when shutting down and read_list was
+    # `[]` instead just reads connections[0]'s own readiness, which the
+    # `&& !GremlinShutdown.requested?()` short-circuit below always
+    # discards without ever calling .accept(), so no closed-listener
+    # access happens either way.
+    #
+    # This guard alone doesn't fully rule out a closed listener inside
+    # the loop below, though: GremlinShutdown.requested?() being false
+    # here only proves the signal hadn't arrived *yet* at this exact
+    # instruction -- Diamond dispatches a pending trapped signal at
+    # up to once per bytecode instruction (docs/networking.md), and
+    # several run between this check and any given .accept() call
+    # inside the loop, so the signal (and the listener close it
+    # triggers) can still land mid-loop. rescue error: IOError below
+    # treats that race the same as the loop's own ordinary termination
+    # (client_socket == nil) -- a real, if narrow, empirically-found
+    # race, not a hypothetical one.
     newly_spawned = []
-    if ready["readable"][0]
+    if ready["readable"][0] && !GremlinShutdown.requested?()
+      begin
       loop do
         client_socket = listener.accept()
         if client_socket == nil
@@ -79,11 +141,26 @@ def gremlin_worker(port, handler)
           newly_spawned.push(entry)
         end
       end
+      rescue error: IOError
+        nil
+      end
     end
 
     still_active = []
     def resume_if_ready(entry, position)
-      readable = ready["readable"][position + 1]
+      # +1 only while read_list actually held the listener at index 0
+      # *when IO.poll ran* -- derived from read_list/connections'
+      # own lengths (both already fixed for this tick) rather than a
+      # fresh GremlinShutdown.requested?() re-check here: the signal
+      # (and the requested-flag flip it causes) can land at any
+      # bytecode instruction between read_list's construction above and
+      # this point, so re-checking live can disagree with what read_list
+      # actually contained when `ready` was computed -- exactly the kind
+      # of misalignment this whole function's own surrounding comments
+      # already warn about, just from a new source (signal timing, not
+      # connection accept timing).
+      readable_offset = read_list.length() - connections.length()
+      readable = ready["readable"][position + readable_offset]
       write_position = write_positions[position]
       writable = if write_position == nil then false else ready["writable"][write_position] end
       if (readable || writable) && entry["fiber"].alive?()
@@ -100,6 +177,16 @@ def gremlin_worker(port, handler)
     end
     connections.each_with_index(resume_if_ready)
     connections = still_active.concat(newly_spawned)
+
+    if GremlinShutdown.requested?() && connections.length() == 0
+      log.info("server.shutdown_complete", {"forced": false})
+      exit(0)
+    end
+    if GremlinShutdown.requested?() && Time.monotonic() >= GremlinShutdown.deadline()
+      log.info("server.shutdown_complete",
+        {"forced": true, "remaining_connections": connections.length()})
+      exit(0)
+    end
   end
 end
 

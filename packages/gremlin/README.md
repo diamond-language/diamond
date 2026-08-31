@@ -95,6 +95,30 @@ makes (own heap, own listener, own connections list) -- `context` isn't
 special, it's just the one piece of that state `handler` actually gets
 to see.
 
+### Graceful shutdown
+
+`gremlin_serve` traps `SIGTERM`/`SIGINT` and drains cleanly: it stops
+accepting new connections, lets every already-in-flight request finish
+and send its real response, then exits `0` -- no `kill`-then-hope, no
+cut-off responses. Nothing to opt into; it's on unconditionally. A
+10-second grace period bounds how long shutdown can take (a stuck or
+slow client can't wedge it forever) -- if connections are still open
+when the deadline passes, the process exits anyway, logging
+`server.shutdown_complete` with `"forced": true` and however many
+connections were still open, rather than hanging indefinitely.
+
+**Verified for `threads: 1` (the default) only.** `Signal.trap`'s own
+pending-signal state is process-wide, not per-VM (`src/vm.c`'s own
+comment on this: "signal delivery is a process-wide OS concept, not a
+per-VM-instance one"), while each `threads: N` worker is a fully
+independent VM/OS thread with no shared state at all otherwise (see
+above). Which worker's own registered handler actually runs when the
+process receives one `SIGTERM`, and whether several independent
+workers' own shutdown sequences interleave safely, isn't something
+this has been tested against -- if you run `threads > 1` today, treat
+shutdown as untested there specifically (everything else about
+`threads > 1` is unaffected).
+
 ## How it works
 
 No OS-level scheduler *within* one worker thread, no changes to

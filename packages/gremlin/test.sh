@@ -134,4 +134,62 @@ kill "$pid" 2>/dev/null || true
 wait "$pid" 2>/dev/null || true
 rm -f "$out"
 
-echo "9 gremlin tests passed"
+# Graceful shutdown, idle case: SIGTERM with zero in-flight connections
+# exits promptly (the fast path -- see GremlinShutdown.requested?() &&
+# connections.length() == 0 in server.di) with a clean exit code, not a
+# bare kill. `timeout` forwards a signal it receives to the process it's
+# monitoring and (when the child exits on its own well within the
+# timeout) reports that child's own exit status, so `$pid` here still
+# refers to the right thing for both `kill -TERM` and `wait`.
+port=19413
+out="$(mktemp)"
+timeout 10 "$diamond" -e "$(server_src "$port")" >"$out" 2>&1 &
+pid=$!
+wait_for_port "$port"
+{ exec 3<&- 3>&-; } 2>/dev/null || true
+
+kill -TERM "$pid"
+wait "$pid"
+status=$?
+[[ "$status" == "0" ]]
+grep -q '"message":"server.shutdown_complete"' "$out"
+grep -q '"forced":false' "$out"
+rm -f "$out"
+
+# Graceful shutdown, in-flight case: SIGTERM arriving while a request is
+# genuinely mid-flight (a connection sitting in gremlin_worker's own
+# `connections`, not yet resumed to completion) must not cut it off --
+# the process should stay alive until that request's own response is
+# fully sent, only then exit cleanly. Deliberately sends an incomplete
+# request line/headers with no terminating blank line first, so
+# http_parse_request is left waiting for more data (WouldBlockError,
+# fiber suspended) at the moment SIGTERM arrives -- a real in-flight
+# connection, not one that already finished before the signal.
+port=19414
+out="$(mktemp)"
+timeout 10 "$diamond" -e "$(server_src "$port")" >"$out" 2>&1 &
+pid=$!
+wait_for_port "$port"
+{ exec 3<&- 3>&-; } 2>/dev/null || true
+
+exec 3<>"/dev/tcp/127.0.0.1/$port"
+printf 'GET /inflight HTTP/1.1\r\nHost: localhost\r\n' >&3
+sleep 0.2
+
+kill -TERM "$pid"
+sleep 0.2
+kill -0 "$pid" 2>/dev/null   # still alive -- draining, hasn't been cut off
+
+printf '\r\n' >&3
+response="$(timeout 3 cat <&3)"
+{ exec 3<&- 3>&-; } 2>/dev/null || true
+[[ "$response" == $'HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 16\r\n\r\nhello, /inflight' ]]
+
+wait "$pid"
+status=$?
+[[ "$status" == "0" ]]
+grep -q '"message":"server.shutdown_complete"' "$out"
+grep -q '"forced":false' "$out"
+rm -f "$out"
+
+echo "11 gremlin tests passed"
