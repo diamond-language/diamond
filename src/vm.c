@@ -5910,11 +5910,19 @@ static DiamondVmStatus time_now_helper(DiamondVm *vm,bool utc,DiamondValue *out_
 
 static DiamondVmStatus time_at_helper(DiamondVm *vm,DiamondValue epoch_value,
         DiamondValue *out_result) {
-    if(epoch_value.kind!=DIAMOND_VALUE_INT&&epoch_value.kind!=DIAMOND_VALUE_FLOAT)
+    if(epoch_value.kind!=DIAMOND_VALUE_INT&&epoch_value.kind!=DIAMOND_VALUE_FLOAT) {
+        char actual[80];
+        format_value_type(actual,sizeof actual,epoch_value);
+        snprintf(vm->error,sizeof vm->error,
+            "Time.at epoch must be an Int or Float, got %s",actual);
         return DIAMOND_VM_TYPE_ERROR;
+    }
     const double epoch=epoch_value.kind==DIAMOND_VALUE_FLOAT?
         epoch_value.as.real:(double)epoch_value.as.integer;
-    if(isnan(epoch)||isinf(epoch))return DIAMOND_VM_TYPE_ERROR;
+    if(isnan(epoch)||isinf(epoch)) {
+        snprintf(vm->error,sizeof vm->error,"Time.at epoch must be a finite number");
+        return DIAMOND_VM_TYPE_ERROR;
+    }
     DiamondTime *time=allocate_time(vm,epoch,DIAMOND_TIME_LOCAL,0);
     if(time==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
     *out_result=DIAMOND_OBJECT(time);
@@ -5958,9 +5966,20 @@ static DiamondVmStatus time_relative_now_helper(DiamondVm *vm,DiamondValue durat
 static DiamondVmStatus bcrypt_hash_helper(DiamondVm *vm,DiamondValue password_value,
         DiamondValue cost_value,DiamondValue *out_result) {
     if(password_value.kind!=DIAMOND_VALUE_OBJECT||
-       password_value.as.object->kind!=DIAMOND_OBJECT_STRING)
+       password_value.as.object->kind!=DIAMOND_OBJECT_STRING) {
+        char actual[80];
+        format_value_type(actual,sizeof actual,password_value);
+        snprintf(vm->error,sizeof vm->error,
+            "BCrypt.hash password must be a String, got %s",actual);
         return DIAMOND_VM_TYPE_ERROR;
-    if(cost_value.kind!=DIAMOND_VALUE_INT)return DIAMOND_VM_TYPE_ERROR;
+    }
+    if(cost_value.kind!=DIAMOND_VALUE_INT) {
+        char actual[80];
+        format_value_type(actual,sizeof actual,cost_value);
+        snprintf(vm->error,sizeof vm->error,
+            "BCrypt.hash cost must be an Int, got %s",actual);
+        return DIAMOND_VM_TYPE_ERROR;
+    }
     const int64_t cost=cost_value.as.integer;
     if(cost<4||cost>31) {
         (void)snprintf(vm->error,sizeof vm->error,
@@ -6002,13 +6021,22 @@ static DiamondVmStatus bcrypt_hash_helper(DiamondVm *vm,DiamondValue password_va
  * program error. */
 static DiamondVmStatus bcrypt_verify_helper(DiamondVm *vm,DiamondValue password_value,
         DiamondValue digest_value,DiamondValue *out_result) {
-    (void)vm;
     if(password_value.kind!=DIAMOND_VALUE_OBJECT||
-       password_value.as.object->kind!=DIAMOND_OBJECT_STRING)
+       password_value.as.object->kind!=DIAMOND_OBJECT_STRING) {
+        char actual[80];
+        format_value_type(actual,sizeof actual,password_value);
+        snprintf(vm->error,sizeof vm->error,
+            "BCrypt.verify password must be a String, got %s",actual);
         return DIAMOND_VM_TYPE_ERROR;
+    }
     if(digest_value.kind!=DIAMOND_VALUE_OBJECT||
-       digest_value.as.object->kind!=DIAMOND_OBJECT_STRING)
+       digest_value.as.object->kind!=DIAMOND_OBJECT_STRING) {
+        char actual[80];
+        format_value_type(actual,sizeof actual,digest_value);
+        snprintf(vm->error,sizeof vm->error,
+            "BCrypt.verify digest must be a String, got %s",actual);
         return DIAMOND_VM_TYPE_ERROR;
+    }
     const DiamondString *password=(const DiamondString *)password_value.as.object;
     const DiamondString *digest=(const DiamondString *)digest_value.as.object;
     struct crypt_data *data=calloc(1,sizeof *data);
@@ -6031,7 +6059,13 @@ static DiamondVmStatus bcrypt_verify_helper(DiamondVm *vm,DiamondValue password_
  * here, unlike .hex below. */
 static DiamondVmStatus secure_random_bytes_helper(DiamondVm *vm,DiamondValue count_value,
         DiamondValue *out_result) {
-    if(count_value.kind!=DIAMOND_VALUE_INT)return DIAMOND_VM_TYPE_ERROR;
+    if(count_value.kind!=DIAMOND_VALUE_INT) {
+        char actual[80];
+        format_value_type(actual,sizeof actual,count_value);
+        snprintf(vm->error,sizeof vm->error,
+            "SecureRandom.bytes count must be an Int, got %s",actual);
+        return DIAMOND_VM_TYPE_ERROR;
+    }
     const int64_t count=count_value.as.integer;
     if(count<0||count>INT32_MAX) {
         (void)snprintf(vm->error,sizeof vm->error,
@@ -6056,7 +6090,13 @@ static DiamondVmStatus secure_random_bytes_helper(DiamondVm *vm,DiamondValue cou
  * encoded into a 2*n-length String. */
 static DiamondVmStatus secure_random_hex_helper(DiamondVm *vm,DiamondValue count_value,
         DiamondValue *out_result) {
-    if(count_value.kind!=DIAMOND_VALUE_INT)return DIAMOND_VM_TYPE_ERROR;
+    if(count_value.kind!=DIAMOND_VALUE_INT) {
+        char actual[80];
+        format_value_type(actual,sizeof actual,count_value);
+        snprintf(vm->error,sizeof vm->error,
+            "SecureRandom.hex count must be an Int, got %s",actual);
+        return DIAMOND_VM_TYPE_ERROR;
+    }
     const int64_t count=count_value.as.integer;
     if(count<0||count>INT32_MAX/2) {
         (void)snprintf(vm->error,sizeof vm->error,
@@ -6091,10 +6131,22 @@ static DiamondVmStatus secure_random_hex_helper(DiamondVm *vm,DiamondValue count
 static DiamondVmStatus sha256_hex_helper(DiamondVm *vm,DiamondValue key_value,
         DiamondValue data_value,bool keyed,DiamondValue *out_result) {
     if(data_value.kind!=DIAMOND_VALUE_OBJECT||
-       data_value.as.object->kind!=DIAMOND_OBJECT_STRING||
-       (keyed&&(key_value.kind!=DIAMOND_VALUE_OBJECT||
-          key_value.as.object->kind!=DIAMOND_OBJECT_STRING)))
+       data_value.as.object->kind!=DIAMOND_OBJECT_STRING) {
+        char actual[80];
+        format_value_type(actual,sizeof actual,data_value);
+        snprintf(vm->error,sizeof vm->error,
+            "%s data must be a String, got %s",keyed?"HMAC.sha256":"Digest.sha256",
+            actual);
         return DIAMOND_VM_TYPE_ERROR;
+    }
+    if(keyed&&(key_value.kind!=DIAMOND_VALUE_OBJECT||
+          key_value.as.object->kind!=DIAMOND_OBJECT_STRING)) {
+        char actual[80];
+        format_value_type(actual,sizeof actual,key_value);
+        snprintf(vm->error,sizeof vm->error,
+            "HMAC.sha256 key must be a String, got %s",actual);
+        return DIAMOND_VM_TYPE_ERROR;
+    }
     const DiamondString *data=(const DiamondString *)data_value.as.object;
     unsigned char digest[EVP_MAX_MD_SIZE];
     unsigned int digest_length=0;
@@ -6135,10 +6187,22 @@ static DiamondVmStatus sha256_hex_helper(DiamondVm *vm,DiamondValue key_value,
 static DiamondVmStatus sha1_hex_helper(DiamondVm *vm,DiamondValue key_value,
         DiamondValue data_value,bool keyed,DiamondValue *out_result) {
     if(data_value.kind!=DIAMOND_VALUE_OBJECT||
-       data_value.as.object->kind!=DIAMOND_OBJECT_STRING||
-       (keyed&&(key_value.kind!=DIAMOND_VALUE_OBJECT||
-          key_value.as.object->kind!=DIAMOND_OBJECT_STRING)))
+       data_value.as.object->kind!=DIAMOND_OBJECT_STRING) {
+        char actual[80];
+        format_value_type(actual,sizeof actual,data_value);
+        snprintf(vm->error,sizeof vm->error,
+            "%s data must be a String, got %s",keyed?"HMAC.sha1":"Digest.sha1",
+            actual);
         return DIAMOND_VM_TYPE_ERROR;
+    }
+    if(keyed&&(key_value.kind!=DIAMOND_VALUE_OBJECT||
+          key_value.as.object->kind!=DIAMOND_OBJECT_STRING)) {
+        char actual[80];
+        format_value_type(actual,sizeof actual,key_value);
+        snprintf(vm->error,sizeof vm->error,
+            "HMAC.sha1 key must be a String, got %s",actual);
+        return DIAMOND_VM_TYPE_ERROR;
+    }
     const DiamondString *data=(const DiamondString *)data_value.as.object;
     unsigned char digest[EVP_MAX_MD_SIZE];
     unsigned int digest_length=0;
@@ -6187,8 +6251,11 @@ static DiamondVmStatus hmac_verify_helper(DiamondVm *vm,DiamondValue data_value,
        key_value.kind!=DIAMOND_VALUE_OBJECT||
        key_value.as.object->kind!=DIAMOND_OBJECT_STRING||
        signature_value.kind!=DIAMOND_VALUE_OBJECT||
-       signature_value.as.object->kind!=DIAMOND_OBJECT_STRING)
+       signature_value.as.object->kind!=DIAMOND_OBJECT_STRING) {
+        snprintf(vm->error,sizeof vm->error,
+            "HMAC.verify data, key, and signature must all be Strings");
         return DIAMOND_VM_TYPE_ERROR;
+    }
     DiamondValue computed_value=DIAMOND_NIL;
     const DiamondVmStatus status=sha256_hex_helper(vm,key_value,data_value,true,
         &computed_value);
@@ -6222,8 +6289,11 @@ static DiamondVmStatus aes_gcm_encrypt_helper(DiamondVm *vm,DiamondValue key_val
     if(key_value.kind!=DIAMOND_VALUE_OBJECT||
        key_value.as.object->kind!=DIAMOND_OBJECT_STRING||
        plaintext_value.kind!=DIAMOND_VALUE_OBJECT||
-       plaintext_value.as.object->kind!=DIAMOND_OBJECT_STRING)
+       plaintext_value.as.object->kind!=DIAMOND_OBJECT_STRING) {
+        snprintf(vm->error,sizeof vm->error,
+            "Cipher.encrypt key and plaintext must both be Strings");
         return DIAMOND_VM_TYPE_ERROR;
+    }
     const DiamondString *key=(const DiamondString *)key_value.as.object;
     if(key->length!=DIAMOND_CIPHER_KEY_LENGTH) {
         (void)snprintf(vm->error,sizeof vm->error,
@@ -6288,8 +6358,11 @@ static DiamondVmStatus aes_gcm_decrypt_helper(DiamondVm *vm,DiamondValue key_val
     if(key_value.kind!=DIAMOND_VALUE_OBJECT||
        key_value.as.object->kind!=DIAMOND_OBJECT_STRING||
        blob_value.kind!=DIAMOND_VALUE_OBJECT||
-       blob_value.as.object->kind!=DIAMOND_OBJECT_STRING)
+       blob_value.as.object->kind!=DIAMOND_OBJECT_STRING) {
+        snprintf(vm->error,sizeof vm->error,
+            "Cipher.decrypt key and blob must both be Strings");
         return DIAMOND_VM_TYPE_ERROR;
+    }
     const DiamondString *key=(const DiamondString *)key_value.as.object;
     if(key->length!=DIAMOND_CIPHER_KEY_LENGTH) {
         (void)snprintf(vm->error,sizeof vm->error,
@@ -6350,8 +6423,13 @@ static DiamondVmStatus aes_gcm_decrypt_helper(DiamondVm *vm,DiamondValue key_val
 static DiamondVmStatus gzip_compress_helper(DiamondVm *vm,DiamondValue data_value,
         DiamondValue *out_result) {
     if(data_value.kind!=DIAMOND_VALUE_OBJECT||
-       data_value.as.object->kind!=DIAMOND_OBJECT_STRING)
+       data_value.as.object->kind!=DIAMOND_OBJECT_STRING) {
+        char actual[80];
+        format_value_type(actual,sizeof actual,data_value);
+        snprintf(vm->error,sizeof vm->error,
+            "Gzip.compress data must be a String, got %s",actual);
         return DIAMOND_VM_TYPE_ERROR;
+    }
     const DiamondString *data=(const DiamondString *)data_value.as.object;
     z_stream stream={0};
     if(deflateInit2(&stream,Z_DEFAULT_COMPRESSION,Z_DEFLATED,15+16,8,
@@ -6409,9 +6487,20 @@ static DiamondVmStatus gzip_compress_helper(DiamondVm *vm,DiamondValue data_valu
 static DiamondVmStatus gzip_decompress_helper(DiamondVm *vm,DiamondValue data_value,
         DiamondValue max_size_value,DiamondValue *out_result) {
     if(data_value.kind!=DIAMOND_VALUE_OBJECT||
-       data_value.as.object->kind!=DIAMOND_OBJECT_STRING||
-       max_size_value.kind!=DIAMOND_VALUE_INT)
+       data_value.as.object->kind!=DIAMOND_OBJECT_STRING) {
+        char actual[80];
+        format_value_type(actual,sizeof actual,data_value);
+        snprintf(vm->error,sizeof vm->error,
+            "Gzip.decompress data must be a String, got %s",actual);
         return DIAMOND_VM_TYPE_ERROR;
+    }
+    if(max_size_value.kind!=DIAMOND_VALUE_INT) {
+        char actual[80];
+        format_value_type(actual,sizeof actual,max_size_value);
+        snprintf(vm->error,sizeof vm->error,
+            "Gzip.decompress max_size must be an Int, got %s",actual);
+        return DIAMOND_VM_TYPE_ERROR;
+    }
     if(max_size_value.as.integer<0) {
         snprintf(vm->error,sizeof vm->error,"Gzip.decompress max_size must not be negative");
         return DIAMOND_VM_ARITY_ERROR;
@@ -6484,8 +6573,13 @@ static DiamondVmStatus gzip_decompress_helper(DiamondVm *vm,DiamondValue data_va
 static DiamondVmStatus base64_encode_helper(DiamondVm *vm,DiamondValue data_value,
         DiamondValue *out_result) {
     if(data_value.kind!=DIAMOND_VALUE_OBJECT||
-       data_value.as.object->kind!=DIAMOND_OBJECT_STRING)
+       data_value.as.object->kind!=DIAMOND_OBJECT_STRING) {
+        char actual[80];
+        format_value_type(actual,sizeof actual,data_value);
+        snprintf(vm->error,sizeof vm->error,
+            "Base64.encode data must be a String, got %s",actual);
         return DIAMOND_VM_TYPE_ERROR;
+    }
     const DiamondString *data=(const DiamondString *)data_value.as.object;
     if(data->length>(size_t)INT_MAX/4*3) {
         snprintf(vm->error,sizeof vm->error,"Base64.encode input is too large");
@@ -6519,8 +6613,13 @@ static DiamondVmStatus base64_encode_helper(DiamondVm *vm,DiamondValue data_valu
 static DiamondVmStatus base64_decode_helper(DiamondVm *vm,DiamondValue data_value,
         DiamondValue *out_result) {
     if(data_value.kind!=DIAMOND_VALUE_OBJECT||
-       data_value.as.object->kind!=DIAMOND_OBJECT_STRING)
+       data_value.as.object->kind!=DIAMOND_OBJECT_STRING) {
+        char actual[80];
+        format_value_type(actual,sizeof actual,data_value);
+        snprintf(vm->error,sizeof vm->error,
+            "Base64.decode data must be a String, got %s",actual);
         return DIAMOND_VM_TYPE_ERROR;
+    }
     const DiamondString *data=(const DiamondString *)data_value.as.object;
     if(data->length%4!=0) {
         snprintf(vm->error,sizeof vm->error,
