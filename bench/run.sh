@@ -32,6 +32,11 @@ declare -A REPEATS=(
     [string_ops]=40
     [closures]=25
     [fiber_switch]=10
+    [exception_handling]=12
+    [iterator_blocks]=5
+    [range_iteration]=20
+    [case_pattern_matching]=7
+    [typed_dispatch]=6
 )
 
 run_pass() {
@@ -61,21 +66,16 @@ if [[ "${1:-}" == "quicken" ]]; then
 fi
 
 # DIAMOND_TRACE_OPCODES prints "opcode[N]: count" using the numeric
-# DiamondOpCode enum value -- this array maps N back to its name,
-# extracted from src/vm.h's enum declaration order.
-OPCODE_NAMES=(
-    CONSTANT STRING NIL BOOL MOVE ADD ADD_INT SUBTRACT MULTIPLY DIVIDE
-    SUBTRACT_INT MULTIPLY_INT DIVIDE_INT LESS LESS_EQUAL GREATER
-    GREATER_EQUAL NEGATE_INT EQUAL NOT_EQUAL EQUAL_INT NOT_EQUAL_INT
-    LESS_INT LESS_EQUAL_INT GREATER_INT GREATER_EQUAL_INT JUMP
-    JUMP_IF_FALSE CALL CALL_TYPED CLOSURE CALL_CLOSURE GET_CAPTURE
-    GET_CAPTURE_CELL SET_CAPTURE BOX_LOCAL GET_CELL SET_CELL NEW INVOKE
-    INVOKE_MONO INVOKE_TYPED SUPER GET_IVAR SET_IVAR GET_IVAR_NAME
-    SET_IVAR_NAME GET_NAMESPACE_CONSTANT SET_NAMESPACE_CONSTANT
-    CHECK_TYPE ARRAY INDEX_GET INDEX_SET HASH NOT JUMP_IF_TRUE RETURN
-    RAISE PUSH_RESCUE POP_RESCUE PUSH_ENSURE RUN_ENSURE END_ENSURE
-    IS_TYPE ARGUMENT_PROVIDED TO_STRING YIELD REDEFINE_METHOD FIBER_NEW
-    PRINT GETS FILE_OPEN TCP_CONNECT TCP_LISTEN CHR
+# DiamondOpCode enum value -- this array maps N back to its name.
+# Extracted directly from src/vm.h's enum declaration order at run
+# time, rather than hand-maintained, so it can never silently desync
+# the way selfhost/parser.di's own hand-maintained opcode mirror once
+# did (a real bug found and fixed 2026-08-31) -- any new opcode just
+# shows up correctly named on the next run, no manual sync step.
+mapfile -t OPCODE_NAMES < <(
+    sed -n '/^typedef enum DiamondOpCode/,/^} DiamondOpCode;/p' src/vm.h \
+        | grep -oP '(?<=    )DIAMOND_OP_\w+' \
+        | sed -e 's/^DIAMOND_OP_//' -e '/^COUNT$/d'
 )
 
 echo
