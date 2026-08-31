@@ -132,21 +132,29 @@ module Opcode
   GET_CVAR = 91
   SET_CVAR = 92
   SHIFT_LEFT = 98
-  # 99-102 are PROCESS_RUN, DEBUGGER, ARGV, and ENV in src/vm.h's
-  # DiamondOpCode enum -- same story again: none are constructs this
-  # self-hosted parser emits (Process.run, debugger()/breakpoint(), and
-  # the ARGV/ENV globals aren't part of its supported grammar), so
-  # MODULO below has to account for that 4-opcode gap on top of
-  # SHIFT_LEFT's own 8-opcode one. Confirmed with the same throwaway C
-  # probe technique as SHIFT_LEFT, not counted by hand.
-  MODULO = 103
+  # 99-103 are PROCESS_RUN, PROCESS_SPAWN, DEBUGGER, ARGV, and ENV in
+  # src/vm.h's DiamondOpCode enum -- same story again: none are
+  # constructs this self-hosted parser emits (Process.run/.spawn,
+  # debugger()/breakpoint(), and the ARGV/ENV globals aren't part of
+  # its supported grammar), so MODULO below has to account for that
+  # 5-opcode gap on top of SHIFT_LEFT's own 8-opcode one. This gap grew
+  # from 4 to 5 when DIAMOND_OP_PROCESS_SPAWN was inserted between
+  # PROCESS_RUN and DEBUGGER (Process.spawn's own native addition) --
+  # exactly the silent-desync failure mode this mirror's own comments
+  # warn about, caught 2026-08-31 by re-verifying with the same
+  # throwaway C probe technique instead of trusting the old hardcoded
+  # value, not by a differential-corpus failure (MODULO/COMPARE happen
+  # to have no dedicated positive-corpus case exercising their exact
+  # opcode byte). Confirmed with the same throwaway C probe technique
+  # as SHIFT_LEFT, not counted by hand.
+  MODULO = 104
   # Appended immediately after MODULO. Later native-only tail opcodes,
   # including CASE_MATCH/CASE_ARRAY_SHAPE/ARRAY_REST and the case Hash
   # predicates, rest/suffix extraction, and object-pattern support, do not
   # shift this
   # value. Still confirmed with the same throwaway C probe technique as
   # SHIFT_LEFT/MODULO above rather than trusting the arithmetic alone.
-  COMPARE = 104
+  COMPARE = 105
 end
 
 module Precedence
