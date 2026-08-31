@@ -261,6 +261,7 @@ static bool array_push(DiamondVm *vm,DiamondArray *array,DiamondValue value);
 static void free_adopted_programs(void *list);
 static void free_thread(DiamondThread *thread);
 static void populate_default_argv_env(DiamondVm *vm);
+static void format_value_type(char *buffer, size_t capacity, DiamondValue value);
 
 /* The per-kind "walk this object's own direct children" switch,
  * deliberately factored out of mark_object below (which adds the
@@ -5814,6 +5815,11 @@ static DiamondVmStatus add_fallback(DiamondVm *vm,const DiamondChunk *chunk,size
         *out_result=DIAMOND_OBJECT(result);
         return DIAMOND_VM_OK;
     }
+    char left_type[80],right_type[80];
+    format_value_type(left_type,sizeof left_type,left_value);
+    format_value_type(right_type,sizeof right_type,right_value);
+    snprintf(vm->error,sizeof vm->error,"%s does not support '+' with %s",
+        left_type,right_type);
     return DIAMOND_VM_TYPE_ERROR;
 }
 
@@ -7502,19 +7508,44 @@ static void format_value_type(char *buffer, size_t capacity,
     else if(value.kind==DIAMOND_VALUE_BOOL) name="Bool";
     else if(value.kind==DIAMOND_VALUE_INT) name="Int";
     else if(value.kind==DIAMOND_VALUE_FLOAT) name="Float";
-    else if(value.as.object->kind==DIAMOND_OBJECT_STRING) name="String";
-    else if(value.as.object->kind==DIAMOND_OBJECT_SYMBOL) name="Symbol";
-    else if(value.as.object->kind==DIAMOND_OBJECT_ARRAY) name="Array";
-    else if(value.as.object->kind==DIAMOND_OBJECT_HASH) name="Hash";
-    else if(value.as.object->kind==DIAMOND_OBJECT_CLOSURE) name="Callable";
-    /* A promoted Int (see object.h's DiamondBignum) is still
-     * conceptually an Int, not a distinct user-facing type -- must be
-     * checked before the catch-all DiamondInstance branch below, or its
-     * memory gets misread through an unrelated struct's layout. */
-    else if(value.as.object->kind==DIAMOND_OBJECT_BIGNUM) name="Int";
-    else {
-        const DiamondInstance *instance=(const DiamondInstance *)value.as.object;
-        name=instance->class->name;
+    /* Every DiamondObject kind (object.h) needs an explicit branch here:
+     * the catch-all below reads the object through DiamondInstance's own
+     * layout, which is only valid for DIAMOND_OBJECT_INSTANCE -- any
+     * other kind reaching it is a null/garbage-pointer read on whatever
+     * that kind's struct happens to place at the same offset as
+     * DiamondInstance's `class` field. */
+    else switch(value.as.object->kind) {
+        case DIAMOND_OBJECT_STRING: name="String"; break;
+        case DIAMOND_OBJECT_SYMBOL: name="Symbol"; break;
+        case DIAMOND_OBJECT_ARRAY: name="Array"; break;
+        case DIAMOND_OBJECT_HASH: name="Hash"; break;
+        case DIAMOND_OBJECT_CLOSURE: name="Callable"; break;
+        /* A promoted Int (see object.h's DiamondBignum) is still
+         * conceptually an Int, not a distinct user-facing type. */
+        case DIAMOND_OBJECT_BIGNUM: name="Int"; break;
+        case DIAMOND_OBJECT_CELL: name="Cell"; break;
+        case DIAMOND_OBJECT_FIBER: name="Fiber"; break;
+        case DIAMOND_OBJECT_FILE: name="File"; break;
+        case DIAMOND_OBJECT_LISTENER: name="Listener"; break;
+        case DIAMOND_OBJECT_SOCKET: name="Socket"; break;
+        case DIAMOND_OBJECT_UDP_SOCKET: name="UDPSocket"; break;
+        case DIAMOND_OBJECT_TLS_SOCKET: name="TLSSocket"; break;
+        case DIAMOND_OBJECT_REGEXP: name="Regexp"; break;
+        case DIAMOND_OBJECT_PROGRAM_BUILDER: name="ProgramBuilder"; break;
+        case DIAMOND_OBJECT_THREAD: name="Thread"; break;
+        case DIAMOND_OBJECT_SQLITE3: name="SQLite3"; break;
+        case DIAMOND_OBJECT_SQLITE3_STATEMENT: name="Statement"; break;
+        case DIAMOND_OBJECT_POSTGRES: name="PostgreSQL"; break;
+        case DIAMOND_OBJECT_MYSQL: name="MySQL"; break;
+        case DIAMOND_OBJECT_TIME: name="Time"; break;
+        case DIAMOND_OBJECT_PROCESS_RESULT: name="ProcessResult"; break;
+        case DIAMOND_OBJECT_PROCESS_HANDLE: name="ProcessHandle"; break;
+        case DIAMOND_OBJECT_PROCESS_STREAM: name="ProcessStream"; break;
+        case DIAMOND_OBJECT_INSTANCE: {
+            const DiamondInstance *instance=(const DiamondInstance *)value.as.object;
+            name=instance->class->name;
+            break;
+        }
     }
     snprintf(buffer,capacity,"%s",name);
 }
@@ -12262,12 +12293,10 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                      * branch above already handles (and returns for) that
                      * case, so it's never a candidate for "+" dispatch
                      * here. */
+                    const char *name=opcode==DIAMOND_OP_SUBTRACT?"-":
+                        opcode==DIAMOND_OP_MULTIPLY?"*":"/";
                     if (registers[left].kind==DIAMOND_VALUE_OBJECT &&
-                        registers[left].as.object->kind==DIAMOND_OBJECT_INSTANCE &&
-                        (opcode==DIAMOND_OP_SUBTRACT||opcode==DIAMOND_OP_MULTIPLY||
-                         opcode==DIAMOND_OP_DIVIDE)) {
-                        const char *name=opcode==DIAMOND_OP_SUBTRACT?"-":
-                            opcode==DIAMOND_OP_MULTIPLY?"*":"/";
+                        registers[left].as.object->kind==DIAMOND_OBJECT_INSTANCE) {
                         bool found=false;DiamondValue op_result=DIAMOND_NIL;
                         const uint8_t *site=chunk->code+instruction_offset;
                         const DiamondVmStatus status=invoke_operator_method(vm,chunk,
@@ -12288,6 +12317,11 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                             registers[left],registers[right],&registers[destination]);
                         if(time_status!=DIAMOND_VM_TYPE_ERROR){VM_PROPAGATE(time_status);break;}
                     }
+                    char left_type[80],right_type[80];
+                    format_value_type(left_type,sizeof left_type,registers[left]);
+                    format_value_type(right_type,sizeof right_type,registers[right]);
+                    snprintf(vm->error,sizeof vm->error,
+                        "%s does not support '%s' with %s",left_type,name,right_type);
                     VM_RETURN(DIAMOND_VM_TYPE_ERROR);
                 }
                 const int64_t left_value = registers[left].as.integer;
@@ -12448,6 +12482,13 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                         registers[destination]=op_result;break;
                     }
                 }
+                {
+                    char left_type[80],right_type[80];
+                    format_value_type(left_type,sizeof left_type,registers[left]);
+                    format_value_type(right_type,sizeof right_type,registers[right]);
+                    snprintf(vm->error,sizeof vm->error,
+                        "%s does not support '%%' with %s",left_type,right_type);
+                }
                 VM_RETURN(DIAMOND_VM_TYPE_ERROR);
             }
             case DIAMOND_OP_NEGATE: {
@@ -12484,6 +12525,10 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     }
                 }
                 if (registers[operand].kind != DIAMOND_VALUE_INT) {
+                    char actual[80];
+                    format_value_type(actual,sizeof actual,registers[operand]);
+                    snprintf(vm->error,sizeof vm->error,
+                        "undefined method 'negate' for %s",actual);
                     VM_RETURN(DIAMOND_VM_TYPE_ERROR);
                 }
                 int64_t result_value = 0;
@@ -12688,6 +12733,16 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     }
                     if(time_comparison_fallback(registers[left],registers[right],
                             opcode,&registers[destination]))break;
+                    {
+                        const char *name=opcode==DIAMOND_OP_LESS?"<":
+                            opcode==DIAMOND_OP_LESS_EQUAL?"<=":
+                            opcode==DIAMOND_OP_GREATER?">":">=";
+                        char left_type[80],right_type[80];
+                        format_value_type(left_type,sizeof left_type,registers[left]);
+                        format_value_type(right_type,sizeof right_type,registers[right]);
+                        snprintf(vm->error,sizeof vm->error,
+                            "%s does not support '%s' with %s",left_type,name,right_type);
+                    }
                     VM_RETURN(DIAMOND_VM_TYPE_ERROR);
                 }
                 const int64_t a = registers[left].as.integer;

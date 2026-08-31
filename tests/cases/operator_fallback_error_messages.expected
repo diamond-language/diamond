@@ -1,0 +1,10 @@
+Int does not support '+' with Nil
+Int does not support '-' with String
+Int does not support '*' with Nil
+Int does not support '/' with Nil
+Int does not support '%' with Nil
+undefined method 'negate' for String
+Int does not support '<' with String
+NoOperators does not support '+' with Int
+Regexp does not support '+' with Int
+nil
