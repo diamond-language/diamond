@@ -11529,7 +11529,46 @@ static uint16_t compile_definition(Compiler *compiler, bool captures_self) {
          * mattering that a descriptor was already speculatively written
          * into singleton_methods[] below -- a failed compilation never
          * produces a runnable program either way. */
-        if(early_module->singleton_method_count==DIAMOND_MAX_METHODS) {
+        /* A sibling module_function method defined *later* in the same
+         * module/file still needs to be callable (qualified) from a
+         * method compiled earlier -- e.g. mutually recursive is_even/
+         * is_odd. diamond_compile's own discovery pass already visits
+         * every def in the module in source order and reaches this same
+         * early-registration code, so every sibling's descriptor exists
+         * in discovery->modules[...].singleton_methods[] by the time
+         * discovery finishes; that whole DiamondModule (a plain,
+         * pointer-free embedded struct) gets bulk-memcpy'd into the real
+         * pass's own program->modules before it starts (see
+         * diamond_compile), so those descriptors -- forward references
+         * included -- would already be usable, IF compile_module's own
+         * module-reopen reset didn't unconditionally wipe
+         * singleton_methods back to empty first (a plain "declared_by_
+         * discovery means stale, zero it" rule that's correct for
+         * module->methods[]/fields[] but not for this table -- see
+         * compile_module's own comment on why it stopped doing that).
+         * function_index carries over correctly unchanged: discovery and
+         * the real pass reserve functions in identical source order (see
+         * diamond_compile's own "Reserve every compiler-created function
+         * at its discovery-pass index" comment), so a discovery-pass
+         * function_index already names the right real-pass slot even
+         * before that slot's body is recompiled.
+         *
+         * Claimed *positionally*, exactly like Compiler's own
+         * next_function_claim, not by name: the real pass visits this
+         * module's declarations in the same source order discovery did,
+         * so early_module->next_singleton_claim (reset once, when
+         * compile_module first re-touches this module) always names the
+         * matching discovery-pass entry to refresh -- arity/required_
+         * arity/has_variadic/name can't actually differ pass-to-pass for
+         * the same source, but overwriting them is free and keeps this
+         * from silently trusting stale data if that ever changes. Once
+         * every discovery-carried-over entry has been claimed, any
+         * further registration is a genuinely new entry (append), same
+         * as it always was. */
+        const bool early_claiming=!compiler->discovery_pass&&
+            early_module->next_singleton_claim<early_module->singleton_method_count;
+        if(!early_claiming&&
+           early_module->singleton_method_count==DIAMOND_MAX_METHODS) {
             fail(compiler,name,"too many module singleton functions");
         } else {
             DiamondMethod exported={0};
@@ -11551,8 +11590,12 @@ static uint16_t compile_definition(Compiler *compiler, bool captures_self) {
             exported.included=false;
             exported.is_private=false;exported.is_protected=false;
             exported.needs_receiver=true;
-            early_module->singleton_methods[
-                early_module->singleton_method_count++]=exported;
+            if(early_claiming)
+                early_module->singleton_methods[
+                    early_module->next_singleton_claim++]=exported;
+            else
+                early_module->singleton_methods[
+                    early_module->singleton_method_count++]=exported;
             module_function_singleton_registered_early=true;
         }
     }
@@ -11814,14 +11857,28 @@ static uint16_t compile_definition(Compiler *compiler, bool captures_self) {
               !compiler->failed&&at_top_level) {
         DiamondModule *module=
             &compiler->program->modules[(size_t)compiler->current_module];
+        /* Same positional claiming as compile_definition's own
+         * module_function early-registration (see that site's comment,
+         * and DiamondModule's next_singleton_claim field, for the full
+         * rationale): a discovery pass that reached this point at all
+         * already ran the duplicate check below and would have failed
+         * compilation on a genuine `def self.x` repeated within the
+         * same module, so the real pass re-visiting an as-yet-unclaimed
+         * carried-over entry can safely skip straight to refreshing it
+         * in place, in source order, with no risk of masking a real
+         * duplicate. */
+        const bool claiming=!compiler->discovery_pass&&
+            module->next_singleton_claim<module->singleton_method_count;
         bool duplicate=false;
-        for(size_t existing=0;existing<module->singleton_method_count;existing++)
-            if(strcmp(module->singleton_methods[existing].name,
-                      function->name)==0)duplicate=true;
-        if(duplicate||module->singleton_method_count==DIAMOND_MAX_METHODS)
+        if(!claiming)
+            for(size_t existing=0;existing<module->singleton_method_count;existing++)
+                if(strcmp(module->singleton_methods[existing].name,
+                          function->name)==0)duplicate=true;
+        if(!claiming&&(duplicate||module->singleton_method_count==DIAMOND_MAX_METHODS))
             fail(compiler,name,"duplicate or excessive module singleton function");
         else {
-            DiamondMethod *method=
+            DiamondMethod *method=claiming?
+                &module->singleton_methods[module->next_singleton_claim++]:
                 &module->singleton_methods[module->singleton_method_count++];
             for(size_t i=0;i<copy_length;i++)method->name[i]=function->name[i];
             method->name[copy_length]='\0';
@@ -12165,18 +12222,35 @@ static void compile_module_function(Compiler *compiler) {
                  "stateful module method cannot become a module_function");
             return;
         }
-        for(size_t index=0;index<module->singleton_method_count;index++)
-            if(strcmp(module->singleton_methods[index].name,source->name)==0) {
-                fail(compiler,name,"module singleton function is already defined");
-                return;
+        /* Same positional claiming as compile_definition's own
+         * module_function early-registration and compile_module's own
+         * `def self.x` handling (see DiamondModule's next_singleton_
+         * claim field for the full rationale): a discovery pass that
+         * reached this `module_function name` line at all already ran
+         * the duplicate check below and would have failed compilation
+         * on a genuine repeat, so the real pass re-visiting an as-yet-
+         * unclaimed carried-over entry can safely skip straight to
+         * refreshing it in place instead of reporting it as a spurious
+         * duplicate of itself. */
+        const bool claiming=!compiler->discovery_pass&&
+            module->next_singleton_claim<module->singleton_method_count;
+        if(!claiming) {
+            for(size_t index=0;index<module->singleton_method_count;index++)
+                if(strcmp(module->singleton_methods[index].name,source->name)==0) {
+                    fail(compiler,name,"module singleton function is already defined");
+                    return;
+                }
+            if(module->singleton_method_count==DIAMOND_MAX_METHODS) {
+                fail(compiler,name,"too many module singleton functions");return;
             }
-        if(module->singleton_method_count==DIAMOND_MAX_METHODS) {
-            fail(compiler,name,"too many module singleton functions");return;
         }
         source->is_private=true;source->is_protected=false;
         DiamondMethod exported=*source;exported.needs_receiver=true;
         exported.is_private=false;exported.is_protected=false;
-        module->singleton_methods[module->singleton_method_count++]=exported;
+        if(claiming)
+            module->singleton_methods[module->next_singleton_claim++]=exported;
+        else
+            module->singleton_methods[module->singleton_method_count++]=exported;
         advance_token(compiler);
         if(writer_name&&compiler->current.kind==DIAMOND_TOKEN_EQUAL)
             advance_token(compiler);
@@ -12866,13 +12940,33 @@ static uint16_t compile_module(Compiler *compiler) {
              * anything else that accumulates into a slot's fields
              * trusting they start at zero) needs truly-empty arrays to
              * rebuild from, not whatever the other pass already left
-             * there. */
+             * there.
+             *
+             * singleton_methods[]/singleton_method_count are deliberately
+             * NOT included in this reset (unlike methods[]/fields[]):
+             * those descriptors (module_function's qualified/exported
+             * form, see compile_definition's own early-registration
+             * comment) are exactly what let a module_function method
+             * compiled *earlier* in the real pass call a sibling defined
+             * *later* -- discovery already found and registered every
+             * sibling in source order, and each entry's function_index
+             * already names the correct real-pass slot (discovery and
+             * the real pass reserve functions in identical order), so
+             * wiping this table here would only throw away already-
+             * correct forward-reference data and reopen exactly the
+             * "undefined module singleton function" gap that used to
+             * make mutual module_function recursion impossible. Both
+             * registration sites (compile_definition's module_function
+             * early-registration, and this function's own `def self.x`
+             * handling) claim these entries positionally as the real
+             * pass reaches them -- next_singleton_claim, reset here,
+             * mirrors Compiler's own next_function_claim exactly (see
+             * that field's own comment). */
             memset(module->methods,0,sizeof module->methods);
-            memset(module->singleton_methods,0,sizeof module->singleton_methods);
             memset(module->fields,0,sizeof module->fields);
             module->method_count=0;
-            module->singleton_method_count=0;
             module->field_count=0;
+            module->next_singleton_claim=0;
             module->declared_by_discovery=false;
         }
         /* else: already owned by this pass (freshly created earlier in

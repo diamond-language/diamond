@@ -577,6 +577,17 @@ typedef struct DiamondModule {
     size_t method_count;
     DiamondMethod singleton_methods[DIAMOND_MAX_METHODS];
     size_t singleton_method_count;
+    /* Mirrors Compiler's own next_function_claim (src/compiler.c), scoped
+     * per-module instead of program-wide: how many of this module's
+     * discovery-pass-populated singleton_methods[] entries (module_
+     * function's exported form, and `def self.x` inside a module) the
+     * real pass has re-visited and refreshed in place so far. Lets an
+     * earlier-compiled module_function sibling see a later one's already-
+     * correct (same source order in both passes) descriptor instead of
+     * an empty table -- see compile_module's own comment on why
+     * singleton_methods, unlike methods[]/fields[], is never wiped on
+     * reopen. Reset to 0 exactly once, alongside that reopen. */
+    size_t next_singleton_claim;
     char fields[DIAMOND_MAX_FIELDS][DIAMOND_MAX_FUNCTION_NAME];
     size_t field_count;
     /* See DiamondInterface's own copy of this field just above. */

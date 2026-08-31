@@ -14115,8 +14115,27 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     VM_PROPAGATE(status);
                     registers[dest]=call_result;break;
                 }
-                if(registers[recv].kind!=DIAMOND_VALUE_OBJECT)
+                if(registers[recv].kind!=DIAMOND_VALUE_OBJECT) {
+                    /* Every native-type "no such method" site above (and
+                     * the DIAMOND_OBJECT_INSTANCE case further down) names
+                     * the method and the receiver's type; this catch-all
+                     * for a primitive receiver (nil, Bool, or an Int/Float
+                     * whose method name didn't match the numeric-method
+                     * dispatch just above) previously fell through silently
+                     * to a bare DIAMOND_VM_TYPE_ERROR with no message, so
+                     * `nil.foo()` (and, notably, `self.foo(...)` called
+                     * from inside a module_function method invoked via its
+                     * qualified form -- self's slot is always nil there,
+                     * see emit_singleton_call's own comment, src/compiler.c
+                     * -- deliberately not given a `self` story) just said
+                     * "runtime error: type error" with no further detail. */
+                    char actual[80];
+                    format_value_type(actual,sizeof actual,registers[recv]);
+                    snprintf(vm->error,sizeof vm->error,
+                        "undefined method '%.*s' for %s",
+                        (int)method_name->length,method_name->chars,actual);
                     VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                }
                 const DiamondObjectKind receiver_kind=registers[recv].as.object->kind;
                 if(receiver_kind==DIAMOND_OBJECT_ARRAY||
                    receiver_kind==DIAMOND_OBJECT_HASH||
