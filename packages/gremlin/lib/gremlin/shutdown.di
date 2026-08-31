@@ -59,7 +59,28 @@ class GremlinShutdown
   # immediate reason to return (a closed fd reports as ready/invalid),
   # not just a flag gremlin_worker won't see until some future readiness
   # event that might never come.
+  #
+  # A *second* SIGTERM/SIGINT (an impatient double Ctrl+C, or an
+  # operator who doesn't want to wait out however much of the 10s grace
+  # period is left) is treated as "stop being nice" -- exits right here,
+  # synchronously inside the handler itself, rather than requiring
+  # gremlin_worker's loop to notice anything. Safe to do from here:
+  # exit() is an immediate, unconditional process termination (flushes
+  # stdout/stderr first, src/vm.c's own exit_helper) with nothing after
+  # it that depends on returning normally, unlike closing the listener
+  # above -- there's no equivalent "something else needs to observe
+  # this cleanly" concern the way there was for that. A fresh
+  # Logger.new(...) here (rather than the one gremlin_worker's own
+  # scope already has) is the same 16-binding-cap reason as everything
+  # else in this file -- this handler can't reach gremlin_worker's
+  # locals at all, only what it's given (@@listener) or constructs
+  # itself.
   def self.request()
+    if @@requested == true
+      Logger.new("gremlin", "info", nil, "json").info(
+        "server.shutdown_forced_by_signal", {})
+      exit(0)
+    end
     @@requested = true
     unless @@listener == nil
       @@listener.close()

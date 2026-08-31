@@ -192,4 +192,56 @@ grep -q '"message":"server.shutdown_complete"' "$out"
 grep -q '"forced":false' "$out"
 rm -f "$out"
 
-echo "11 gremlin tests passed"
+# Graceful shutdown, impatient double-signal case: a second SIGTERM/
+# SIGINT arriving *after* the first has already been processed (draining
+# started, listener already closed -- not two signals racing to arrive
+# before Diamond's dispatch loop ever runs, which the OS can coalesce
+# into a single delivery) must exit immediately, cutting off whatever's
+# still in flight, rather than waiting out the rest of the 10s grace
+# period. The 0.3s gap after the first `kill` is deliberately generous
+# for this reason -- it's there to guarantee the first signal has
+# already been handled, not just a throttle.
+#
+# Deliberately NOT wrapped in `timeout` (unlike every other server
+# invocation in this file): confirmed directly (a standalone trap-based
+# script, not Diamond) that GNU `timeout` only forwards the *first*
+# signal it receives to the process it's monitoring -- a second `kill`
+# sent to `timeout`'s own PID is silently swallowed, never reaching the
+# real child at all. Using it here would make this test unable to ever
+# observe the behavior it's testing, not because of anything wrong with
+# gremlin_serve. The bounded poll loop below (instead of a bare `wait`)
+# is what keeps a genuine bug (a hang) from blocking the whole suite in
+# `timeout`'s place.
+port=19415
+out="$(mktemp)"
+"$diamond" -e "$(server_src "$port")" >"$out" 2>&1 &
+pid=$!
+wait_for_port "$port"
+{ exec 3<&- 3>&-; } 2>/dev/null || true
+
+exec 3<>"/dev/tcp/127.0.0.1/$port"
+printf 'GET /stuck HTTP/1.1\r\nHost: localhost\r\n' >&3
+sleep 0.2
+
+kill -TERM "$pid"
+sleep 0.3
+kill -0 "$pid" 2>/dev/null   # still alive -- draining after the first signal
+
+kill -TERM "$pid"
+exited=1
+for _ in $(seq 1 100); do
+    if ! kill -0 "$pid" 2>/dev/null; then
+        exited=0
+        break
+    fi
+    sleep 0.05
+done
+{ exec 3<&- 3>&-; } 2>/dev/null || true
+[[ "$exited" == "0" ]]
+wait "$pid"
+status=$?
+[[ "$status" == "0" ]]
+grep -q '"message":"server.shutdown_forced_by_signal"' "$out"
+rm -f "$out"
+
+echo "12 gremlin tests passed"
