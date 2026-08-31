@@ -1,10 +1,13 @@
+#define _POSIX_C_SOURCE 200809L
 #include "compiler.h"
 
 #include <errno.h>
 #include <limits.h>
 #include <math.h>
 #include <stdlib.h>
+#include <stdio.h>
 #include <string.h>
+#include <time.h>
 
 enum { TYPE_UNKNOWN = UINT8_MAX };
 
@@ -14834,6 +14837,14 @@ static bool run_compile_pass(const char *source, DiamondProgram *program,
  * compiled, not just known by name, which this doesn't attempt to fix. */
 bool diamond_compile(const char *source, DiamondProgram *program,
                      DiamondDiagnostic *diagnostic) {
+    /* Temporary: docs/roadmap.md's "make programs start faster" first
+     * step ("measure startup and compile-time cost"). DIAMOND_TRACE_
+     * COMPILE, same env-var-gated stderr convention as DIAMOND_TRACE_GC
+     * and friends (src/run_source.c). CLOCK_MONOTONIC, matching every
+     * other wall-time measurement in this codebase. */
+    const bool trace_compile=getenv("DIAMOND_TRACE_COMPILE")!=nullptr;
+    struct timespec trace_start={0},trace_discovery_done={0},trace_end={0};
+    if(trace_compile)clock_gettime(CLOCK_MONOTONIC,&trace_start);
     const bool allow_top_level_redefinition = program->allow_top_level_redefinition;
     diamond_program_free(program);
 
@@ -14843,6 +14854,7 @@ bool diamond_compile(const char *source, DiamondProgram *program,
     DiamondDiagnostic discovery_diagnostic = {0};
     const bool discovered = run_compile_pass(
         source, discovery, &discovery_diagnostic, /*discovery_pass=*/true);
+    if(trace_compile)clock_gettime(CLOCK_MONOTONIC,&trace_discovery_done);
 
     diamond_program_init(program);
     program->allow_top_level_redefinition = allow_top_level_redefinition;
@@ -14919,6 +14931,19 @@ bool diamond_compile(const char *source, DiamondProgram *program,
     if(compiled)
         for(size_t index=0;index<program->interface_count;index++)
             program->interfaces[index].type_sets=program->entry.type_sets;
+    if(trace_compile) {
+        clock_gettime(CLOCK_MONOTONIC,&trace_end);
+        const double discovery_seconds=
+            (double)(trace_discovery_done.tv_sec-trace_start.tv_sec)+
+            (double)(trace_discovery_done.tv_nsec-trace_start.tv_nsec)/1e9;
+        const double real_seconds=
+            (double)(trace_end.tv_sec-trace_discovery_done.tv_sec)+
+            (double)(trace_end.tv_nsec-trace_discovery_done.tv_nsec)/1e9;
+        fprintf(stderr,
+            "compile: discovery %.6fs, real %.6fs, total %.6fs, source %zu bytes\n",
+            discovery_seconds,real_seconds,discovery_seconds+real_seconds,
+            strlen(source));
+    }
     return compiled;
 }
 
