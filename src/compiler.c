@@ -207,7 +207,33 @@ typedef struct Compiler {
     bool discovery_pass;
     /* Real-pass cursor through discovery's pre-reserved function slots. */
     size_t next_function_claim;
+    /* Pending call-site patches for a module_function/`def self.x` method
+     * whose signature a module's own pre-scan already found (letting an
+     * earlier-compiled sibling call it) but whose real function_index
+     * isn't known yet (the def itself hasn't been compiled). Mirrors
+     * emit_jump/patch_jump's own "reserve two placeholder bytes now,
+     * patch them once the real value is known" pattern exactly, just
+     * patching a function_index instead of a jump target, and (unlike a
+     * jump, always within the same function) across function boundaries
+     * -- see DIAMOND_UNRESOLVED_SINGLETON_FUNCTION and
+     * prescan_module_function_signatures's own comment for the full
+     * design. Scoped to the whole compiler, not per-module: simpler, and
+     * a module can only be compiling one at a time regardless. */
+    struct {
+        DiamondFunction *function;
+        size_t operand;
+        char name[DIAMOND_MAX_FUNCTION_NAME];
+    } pending_singleton_fixups[64];
+    size_t pending_singleton_fixup_count;
 } Compiler;
+
+/* Sentinel DiamondMethod.function_index for a module_function/`def self.x`
+ * signature a pre-scan found ahead of the real def -- never a real index
+ * (DIAMOND_MAX_FUNCTIONS itself, one past the last valid slot 0..
+ * DIAMOND_MAX_FUNCTIONS-1, matching how program->function_count is a
+ * strictly-less-than bound on every real function_index everywhere else
+ * in this file). */
+enum { DIAMOND_UNRESOLVED_SINGLETON_FUNCTION = DIAMOND_MAX_FUNCTIONS };
 
 static uint16_t parse_expression(Compiler *compiler);
 static uint16_t compile_sequence(Compiler *compiler);
@@ -1032,6 +1058,63 @@ static void patch_jump(Compiler *compiler, size_t operand, size_t target) {
     }
     compiler->function->code[operand] = (uint8_t)(target >> 8);
     compiler->function->code[operand + 1] = (uint8_t)(target & UINT8_MAX);
+}
+
+/* Same two-byte placeholder as emit_jump's own, but for a forward-
+ * referenced module_function/`def self.x` call site instead of a jump --
+ * unlike a jump target, this patch can land in a *different* function's
+ * own code[] than whatever compiler->function is when the patch actually
+ * happens (the call site is in the earlier sibling's body; the patch
+ * happens once the later sibling's real def compiles), so the fixup
+ * records the exact DiamondFunction* to patch, not just an offset. See
+ * DiamondMethod's own function_index field and
+ * DIAMOND_UNRESOLVED_SINGLETON_FUNCTION for the sentinel this exists to
+ * eventually replace. */
+static void emit_pending_singleton_function_index(Compiler *compiler,
+        DiamondSpan span, const char *name, size_t name_length) {
+    const size_t operand = compiler->function->code_count;
+    emit_byte(compiler, 0);
+    emit_byte(compiler, 0);
+    if (compiler->pending_singleton_fixup_count >=
+        sizeof compiler->pending_singleton_fixups /
+        sizeof compiler->pending_singleton_fixups[0]) {
+        fail(compiler, span,
+            "too many forward-referenced module_function calls pending");
+        return;
+    }
+    if (name_length >= DIAMOND_MAX_FUNCTION_NAME) name_length = DIAMOND_MAX_FUNCTION_NAME - 1;
+    const size_t slot = compiler->pending_singleton_fixup_count++;
+    compiler->pending_singleton_fixups[slot].function = compiler->function;
+    compiler->pending_singleton_fixups[slot].operand = operand;
+    for (size_t index = 0; index < name_length; index++)
+        compiler->pending_singleton_fixups[slot].name[index] = name[index];
+    compiler->pending_singleton_fixups[slot].name[name_length] = '\0';
+}
+
+/* Patches every pending call site recorded by
+ * emit_pending_singleton_function_index for this exact name (there can
+ * be more than one -- several earlier siblings can all forward-reference
+ * the same later one), now that its real function_index is known.
+ * Resolved entries are removed (swap-with-last), same convention as
+ * every other fixed-capacity array removal in this file. */
+static void resolve_pending_singleton_fixups(Compiler *compiler,
+        const char *name, size_t name_length, size_t function_index) {
+    if (name_length >= DIAMOND_MAX_FUNCTION_NAME) name_length = DIAMOND_MAX_FUNCTION_NAME - 1;
+    for (size_t index = 0; index < compiler->pending_singleton_fixup_count; ) {
+        const char *pending_name = compiler->pending_singleton_fixups[index].name;
+        if (strlen(pending_name) == name_length &&
+            memcmp(pending_name, name, name_length) == 0) {
+            DiamondFunction *target = compiler->pending_singleton_fixups[index].function;
+            const size_t operand = compiler->pending_singleton_fixups[index].operand;
+            target->code[operand] = (uint8_t)(function_index >> 8);
+            target->code[operand + 1] = (uint8_t)(function_index & UINT8_MAX);
+            compiler->pending_singleton_fixup_count--;
+            compiler->pending_singleton_fixups[index] =
+                compiler->pending_singleton_fixups[compiler->pending_singleton_fixup_count];
+        } else {
+            index++;
+        }
+    }
 }
 
 static void emit_absolute_jump(Compiler *compiler, size_t target) {
@@ -3165,17 +3248,33 @@ static uint16_t emit_singleton_call(Compiler *compiler,const DiamondMethod *meth
     emit_opcode(compiler,type_argument_count==0?DIAMOND_OP_CALL:
                 DIAMOND_OP_CALL_TYPED);
     emit_register(compiler,destination);
-    emit_function_index(compiler,method->function_index);
+    /* A module's own pre-scan (prescan_module_function_signatures) can
+     * hand back a method whose real function_index isn't known yet --
+     * an earlier sibling forward-referencing a later one. Reserve the
+     * same two placeholder bytes emit_jump's own forward-jump case does
+     * and record a fixup instead of writing a real (nonexistent) index;
+     * resolve_pending_singleton_fixups patches it once the later
+     * sibling's own def actually compiles. See DIAMOND_UNRESOLVED_
+     * SINGLETON_FUNCTION's own comment. */
+    const bool unresolved=
+        method->function_index==DIAMOND_UNRESOLVED_SINGLETON_FUNCTION;
+    if(unresolved)
+        emit_pending_singleton_function_index(compiler,name,
+            method->name,strlen(method->name));
+    else
+        emit_function_index(compiler,method->function_index);
     emit_register(compiler,base);emit_byte(compiler,(uint8_t)call_count);
     if(type_argument_count>0) {
         emit_byte(compiler,(uint8_t)type_argument_count);
         for(size_t index=0;index<type_argument_count;index++)
             emit_register(compiler,type_arguments[index]);
     }
-    const DiamondFunction *target=
-        compiler->program->functions[method->function_index];
-    publish_declared_return_type(compiler,destination,target,
-        type_arguments,type_argument_count);
+    if(!unresolved) {
+        const DiamondFunction *target=
+            compiler->program->functions[method->function_index];
+        publish_declared_return_type(compiler,destination,target,
+            type_arguments,type_argument_count);
+    }
     return destination;
 }
 
@@ -3380,7 +3479,22 @@ static uint16_t parse_singleton_call(Compiler *compiler,
              "expected singleton function after module name");return 0;
     }
     const DiamondSpan name=compiler->current.span;
+    /* A module_function/`def self.x` signature a module's own pre-scan
+     * found ahead of the real def (prescan_module_function_signatures)
+     * has no real function yet -- method->function_index stays
+     * DIAMOND_UNRESOLVED_SINGLETON_FUNCTION until the real def compiles
+     * and resolves the pending call-site fixup this function's own
+     * emit_singleton_call records below. Every consumer of `function`
+     * from here down already tolerates nullptr (the same "statically
+     * unknown callee" case a dynamically dispatched Callable *value*
+     * call already exercises -- parse_expected_argument, publish_
+     * declared_return_type, compile_contextual_typed_block, and
+     * friends), so this degrades to "no contextual type hints for this
+     * call's arguments/return value," not a crash: the callee's own
+     * body still separately declares and enforces its real parameter/
+     * return types regardless of what the caller side could infer. */
     const DiamondFunction *function=
+        method->function_index==DIAMOND_UNRESOLVED_SINGLETON_FUNCTION?nullptr:
         compiler->program->functions[method->function_index];
     advance_token(compiler);
     if(compiler->current.kind==DIAMOND_TOKEN_EQUAL)advance_token(compiler);
@@ -3406,6 +3520,11 @@ static uint16_t parse_singleton_call(Compiler *compiler,
                  "expected ']' after generic arguments");return 0;
         }
         advance_token(compiler);
+        if(function==nullptr) {
+            fail(compiler,name,
+                "explicit generic arguments are not supported on a forward-"
+                "referenced module_function call");return 0;
+        }
         if(type_argument_count!=function->type_variable_count) {
             fail(compiler,name,"wrong number of generic arguments");return 0;
         }
@@ -3422,6 +3541,22 @@ static uint16_t parse_singleton_call(Compiler *compiler,
     }
     advance_token(compiler);
     skip_newlines(compiler);
+    if(function==nullptr&&
+       (call_arguments_have_keyword(compiler)||call_arguments_have_spread(compiler))) {
+        /* Keyword and spread-argument calls both need the real callee's
+         * declared parameter types/count for correct contextual
+         * inference (see e.g. this function's own function->
+         * type_variable_count reads just below, unguarded for good
+         * reason everywhere else in this file -- every *other* caller
+         * always has a real function). A forward-referenced module_
+         * function call only supports plain positional arguments;
+         * reject the rarer shapes with a clear error instead of
+         * building out (and fully auditing) contextual inference for a
+         * callee that doesn't exist yet. */
+        fail(compiler,name,
+            "keyword and spread arguments are not supported on a forward-"
+            "referenced module_function call");return 0;
+    }
     if(call_arguments_have_keyword(compiler)) {
         DiamondSpan keyword_names[DIAMOND_MAX_DECLARED_PARAMETERS];uint16_t keyword_values[DIAMOND_MAX_DECLARED_PARAMETERS];
         size_t keyword_count=0;
@@ -11565,9 +11700,28 @@ static uint16_t compile_definition(Compiler *compiler, bool captures_self) {
          * every discovery-carried-over entry has been claimed, any
          * further registration is a genuinely new entry (append), same
          * as it always was. */
+        /* A prescan_module_function_signatures placeholder (this exact
+         * pass, discovery only -- see that function's own comment) is
+         * claimed by NAME, ahead of (and independent from) positional
+         * next_singleton_claim claiming: it's how an *earlier*-compiled
+         * sibling within this same discovery walk already got a
+         * resolvable qualified call to THIS def, via a pending fixup
+         * (emit_pending_singleton_function_index) that only this exact
+         * moment -- this def's real function_index finally existing --
+         * can resolve. */
+        size_t prescanned=early_module->singleton_method_count;
+        if(compiler->discovery_pass)
+            for(size_t index=0;index<early_module->singleton_method_count;index++)
+                if(early_module->singleton_methods[index].function_index==
+                       DIAMOND_UNRESOLVED_SINGLETON_FUNCTION&&
+                   strncmp(early_module->singleton_methods[index].name,
+                           function->name,copy_length)==0&&
+                   early_module->singleton_methods[index].name[copy_length]=='\0') {
+                    prescanned=index;break;
+                }
         const bool early_claiming=!compiler->discovery_pass&&
             early_module->next_singleton_claim<early_module->singleton_method_count;
-        if(!early_claiming&&
+        if(prescanned==early_module->singleton_method_count&&!early_claiming&&
            early_module->singleton_method_count==DIAMOND_MAX_METHODS) {
             fail(compiler,name,"too many module singleton functions");
         } else {
@@ -11590,7 +11744,11 @@ static uint16_t compile_definition(Compiler *compiler, bool captures_self) {
             exported.included=false;
             exported.is_private=false;exported.is_protected=false;
             exported.needs_receiver=true;
-            if(early_claiming)
+            if(prescanned<early_module->singleton_method_count) {
+                early_module->singleton_methods[prescanned]=exported;
+                resolve_pending_singleton_fixups(compiler,function->name,
+                    copy_length,function_index);
+            } else if(early_claiming)
                 early_module->singleton_methods[
                     early_module->next_singleton_claim++]=exported;
             else
@@ -11867,25 +12025,45 @@ static uint16_t compile_definition(Compiler *compiler, bool captures_self) {
          * carried-over entry can safely skip straight to refreshing it
          * in place, in source order, with no risk of masking a real
          * duplicate. */
+        /* See compile_definition's own module_function early-registration
+         * comment on prescan_module_function_signatures/resolve_pending_
+         * singleton_fixups -- identical name-based claiming for a `def
+         * self.x` signature that scan already found. */
+        size_t prescanned=module->singleton_method_count;
+        if(compiler->discovery_pass)
+            for(size_t index=0;index<module->singleton_method_count;index++)
+                if(module->singleton_methods[index].function_index==
+                       DIAMOND_UNRESOLVED_SINGLETON_FUNCTION&&
+                   strncmp(module->singleton_methods[index].name,
+                           function->name,copy_length)==0&&
+                   module->singleton_methods[index].name[copy_length]=='\0') {
+                    prescanned=index;break;
+                }
         const bool claiming=!compiler->discovery_pass&&
             module->next_singleton_claim<module->singleton_method_count;
         bool duplicate=false;
-        if(!claiming)
+        if(prescanned==module->singleton_method_count&&!claiming)
             for(size_t existing=0;existing<module->singleton_method_count;existing++)
                 if(strcmp(module->singleton_methods[existing].name,
                           function->name)==0)duplicate=true;
-        if(!claiming&&(duplicate||module->singleton_method_count==DIAMOND_MAX_METHODS))
+        if(prescanned==module->singleton_method_count&&!claiming&&
+           (duplicate||module->singleton_method_count==DIAMOND_MAX_METHODS))
             fail(compiler,name,"duplicate or excessive module singleton function");
         else {
-            DiamondMethod *method=claiming?
-                &module->singleton_methods[module->next_singleton_claim++]:
-                &module->singleton_methods[module->singleton_method_count++];
+            DiamondMethod *method=prescanned<module->singleton_method_count?
+                &module->singleton_methods[prescanned]:
+                (claiming?
+                    &module->singleton_methods[module->next_singleton_claim++]:
+                    &module->singleton_methods[module->singleton_method_count++]);
             for(size_t i=0;i<copy_length;i++)method->name[i]=function->name[i];
             method->name[copy_length]='\0';
             method->function_index=(uint16_t)function_index;
             method->arity=function->arity;
             method->required_arity=function->required_arity;
             method->has_variadic=function->has_variadic;
+            if(prescanned<module->singleton_method_count)
+                resolve_pending_singleton_fixups(compiler,function->name,
+                    copy_length,function_index);
         }
     }
     /* A class/module member def's "value" is never read: both call sites
@@ -12903,6 +13081,254 @@ static uint16_t compile_class(Compiler *compiler) {
     return result;
 }
 
+/* Scans one `(...)` parameter list via a throwaway lookahead lexer copy
+ * (never touches compiler->lexer/current/previous), computing just
+ * enough -- arity, required_arity, has_variadic -- to register an
+ * accurate forward-reference placeholder before any body compiles.
+ * Assumes `lookahead` is already positioned to read the token right
+ * after `(` next. Mirrors compile_definition's own parameter loop's
+ * *counting* rules exactly (see that loop's own comments): every
+ * declared parameter (block, variadic, or ordinary) increments arity;
+ * only a non-block, non-variadic parameter with no `=` default
+ * increments required_arity, and only while no earlier parameter had
+ * one (a required parameter after a defaulted one is already a real
+ * compile error compile_definition's own loop reports for real moments
+ * later -- this scanner doesn't need to detect that itself, just avoid
+ * overcounting required_arity for a program that's about to fail
+ * compilation anyway). Returns the token right after the closing `)`
+ * (DIAMOND_TOKEN_EOF on malformed/unterminated input). */
+static DiamondToken prescan_parameter_arity(DiamondLexer *lookahead,
+        uint8_t *arity_out, uint8_t *required_arity_out, bool *has_variadic_out) {
+    uint8_t arity=0,required_arity=0;bool has_variadic=false,saw_default=false;
+    DiamondToken token=diamond_lexer_next(lookahead);
+    size_t nesting=0;
+    while(token.kind!=DIAMOND_TOKEN_EOF&&
+          !(token.kind==DIAMOND_TOKEN_RIGHT_PAREN&&nesting==0)) {
+        bool is_block=false,is_variadic=false;
+        if(token.kind==DIAMOND_TOKEN_AMPERSAND) {
+            is_block=true;token=diamond_lexer_next(lookahead);
+        }
+        if(token.kind==DIAMOND_TOKEN_STAR) {
+            is_variadic=true;token=diamond_lexer_next(lookahead);
+        }
+        if(arity<UINT8_MAX)arity++;
+        bool saw_equal=false;
+        while(token.kind!=DIAMOND_TOKEN_EOF) {
+            if(token.kind==DIAMOND_TOKEN_LEFT_PAREN||
+               token.kind==DIAMOND_TOKEN_LEFT_BRACKET||
+               token.kind==DIAMOND_TOKEN_LEFT_BRACE)nesting++;
+            else if(token.kind==DIAMOND_TOKEN_RIGHT_PAREN) {
+                if(nesting==0)break;
+                nesting--;
+            } else if(token.kind==DIAMOND_TOKEN_RIGHT_BRACKET||
+                      token.kind==DIAMOND_TOKEN_RIGHT_BRACE) {
+                if(nesting>0)nesting--;
+            } else if(token.kind==DIAMOND_TOKEN_COMMA&&nesting==0) {
+                token=diamond_lexer_next(lookahead);break;
+            } else if(token.kind==DIAMOND_TOKEN_EQUAL&&nesting==0) {
+                saw_equal=true;
+            }
+            token=diamond_lexer_next(lookahead);
+        }
+        if(is_variadic)has_variadic=true;
+        else if(saw_equal)saw_default=true;
+        else if(!is_block&&!saw_default&&required_arity<UINT8_MAX)required_arity++;
+    }
+    *arity_out=arity;*required_arity_out=required_arity;*has_variadic_out=has_variadic;
+    return token;
+}
+
+/* Looks ahead through a module_function-style module body -- from right
+ * after consume_block_start to the module's own matching `end` -- and
+ * registers every module_function/`def self.x` method it finds into
+ * module->singleton_methods[] with an accurate arity (prescan_parameter_
+ * arity, above) but function_index left as DIAMOND_UNRESOLVED_SINGLETON_
+ * FUNCTION, before compiling any of their bodies for real. This is what
+ * lets an earlier-compiled sibling forward-reference a later one
+ * (mutual/forward module_function recursion) -- a qualified call to an
+ * unresolved entry gets a placeholder + a pending fixup (see
+ * emit_singleton_call/emit_pending_singleton_function_index) instead of
+ * "undefined module singleton function", and compile_definition's own
+ * early-registration / compile_module's own `def self.x` handling
+ * resolve it (by name, not position -- see resolve_pending_singleton_
+ * fixups) once the real def actually compiles.
+ *
+ * Deliberately does NOT reserve a real function slot up front (unlike
+ * discovery's own whole-program "reserve every function, claim
+ * positionally later" carryover, src/compiler.c's diamond_compile) --
+ * that would desync Compiler's own sequential next_function_claim
+ * counter against whatever *other* declarations this module also
+ * contains (attr_accessor, nested class/module, another plain def) that
+ * reserve slots in between this pre-scan running and the real walk
+ * reaching module_function/def self.x, since this pre-scan necessarily
+ * runs before any of that normal, in-order reservation. Name-based
+ * fixup resolution sidesteps that risk entirely: nothing here ever
+ * calls diamond_program_add_function or otherwise touches function
+ * numbering.
+ *
+ * Only runs during the outer discovery pass (see compile_module's own
+ * call site) -- the real pass relies on cross-pass carryover instead
+ * (DiamondModule's own next_singleton_claim), since by the time
+ * discovery finishes every fixup from *this* mechanism is already
+ * resolved and every entry already has a real (if soon-to-be-discarded)
+ * function_index, carried over like any other discovery-pass data.
+ *
+ * Correctly skips nested `def`/`closure`/`class`/`module`/`interface`/
+ * `if`/`unless`/`case`/`while`/`until`/`loop`/`do`/`begin` bodies via a
+ * keyword-depth counter, closed by `end` -- with one deliberate
+ * exception: `while`/`until`/`loop`'s own OPTIONAL trailing `do`
+ * (`while cond do ... end`, one `end` for the pair -- confirmed real
+ * Diamond syntax, tests/cases/legacy_0298.di) does NOT open a second
+ * scope, unlike a `do` used as a block-call opener (`arr.each do |x|
+ * ... end`, its own `end`) -- disambiguated by whether a newline was
+ * seen since the while/until/loop keyword: the loop-form `do` always
+ * appears before one (same logical line as the condition), a block-call
+ * `do` never does.
+ *
+ * Deliberately conservative rather than exhaustive: only plain-
+ * identifier-named defs are recognized (an operator/index-operator
+ * overload inside module_function is unusual enough to not be worth the
+ * extra parsing here), and any token-level surprise this scanner
+ * doesn't expect just stops registering further entries -- it never
+ * removes or corrupts one already found. A signature this scanner
+ * misses simply doesn't get forward-reference support (falls back to
+ * today's "undefined module singleton function" if something actually
+ * needed it), never a wrong one: the only data it ever writes is a
+ * *new*, additional singleton_methods[] entry with a name this exact
+ * scan just read off a real `def` token, and the real compile (moments
+ * later, unaffected by anything this function does) is what actually
+ * validates and runs the source -- this can only ever add forward-
+ * visibility, never subtract correctness. */
+static void prescan_module_function_signatures(Compiler *compiler,
+        DiamondModule *module) {
+    DiamondLexer lookahead=compiler->lexer;
+    DiamondToken token=compiler->current;
+    size_t depth=0;
+    bool module_function_mode=false;
+    bool pending_loop_do=false;
+    while(token.kind!=DIAMOND_TOKEN_EOF) {
+        if(token.kind==DIAMOND_TOKEN_NEWLINE) {
+            pending_loop_do=false;
+        } else if(token.kind==DIAMOND_TOKEN_WHILE||
+                   token.kind==DIAMOND_TOKEN_UNTIL||
+                   token.kind==DIAMOND_TOKEN_LOOP) {
+            depth++;pending_loop_do=true;
+        } else if(token.kind==DIAMOND_TOKEN_DO) {
+            if(pending_loop_do)pending_loop_do=false;
+            else depth++;
+        } else if(token.kind==DIAMOND_TOKEN_IF||token.kind==DIAMOND_TOKEN_UNLESS||
+                   token.kind==DIAMOND_TOKEN_CASE||token.kind==DIAMOND_TOKEN_BEGIN||
+                   token.kind==DIAMOND_TOKEN_CLASS||token.kind==DIAMOND_TOKEN_INTERFACE||
+                   token.kind==DIAMOND_TOKEN_CLOSURE||token.kind==DIAMOND_TOKEN_MODULE) {
+            depth++;
+        } else if(token.kind==DIAMOND_TOKEN_MODULE_FUNCTION) {
+            if(depth==0) {
+                /* Only the bare `module_function` directive (no args)
+                 * toggles mode -- `module_function(:a, :b)`/`module_function
+                 * a, b` marks already-declared methods explicitly and
+                 * can't itself introduce a forward reference (its own
+                 * targets must already exist as real module->methods[]
+                 * entries), so this scanner only needs to notice whether
+                 * an identifier or '(' follows before treating it as a
+                 * mode toggle rather than the explicit-list form. */
+                DiamondToken next=diamond_lexer_next(&lookahead);
+                if(next.kind!=DIAMOND_TOKEN_LEFT_PAREN&&
+                   next.kind!=DIAMOND_TOKEN_IDENTIFIER)
+                    module_function_mode=true;
+                token=next;continue;
+            }
+        } else if(token.kind==DIAMOND_TOKEN_DEF) {
+            depth++;
+            if(depth==1) {
+                DiamondToken next=diamond_lexer_next(&lookahead);
+                bool is_module_singleton=false;
+                if(next.kind==DIAMOND_TOKEN_SELF) {
+                    DiamondToken dot=diamond_lexer_next(&lookahead);
+                    if(dot.kind==DIAMOND_TOKEN_DOT) {
+                        is_module_singleton=true;
+                        next=diamond_lexer_next(&lookahead);
+                    } else {
+                        /* Not actually `self.name` (malformed -- the real
+                         * compile will report it for real); `dot` is
+                         * already consumed from the lookahead, so resume
+                         * the outer walk from there instead of losing it. */
+                        token=dot;continue;
+                    }
+                }
+                if((is_module_singleton||module_function_mode)&&
+                   next.kind==DIAMOND_TOKEN_IDENTIFIER) {
+                    const DiamondSpan name_span=next.span;
+                    DiamondToken after_name=diamond_lexer_next(&lookahead);
+                    /* `def name[T](...)` -- skip an optional generic
+                     * type-parameter list (nesting-aware, though a
+                     * simple depth counter suffices here: this scanner
+                     * only needs to find the '(' that follows, not
+                     * interpret the type parameters themselves). */
+                    if(after_name.kind==DIAMOND_TOKEN_LEFT_BRACKET) {
+                        size_t bracket_depth=1;
+                        after_name=diamond_lexer_next(&lookahead);
+                        while(after_name.kind!=DIAMOND_TOKEN_EOF&&bracket_depth>0) {
+                            if(after_name.kind==DIAMOND_TOKEN_LEFT_BRACKET)bracket_depth++;
+                            else if(after_name.kind==DIAMOND_TOKEN_RIGHT_BRACKET)bracket_depth--;
+                            if(bracket_depth>0)after_name=diamond_lexer_next(&lookahead);
+                        }
+                        if(after_name.kind!=DIAMOND_TOKEN_EOF)
+                            after_name=diamond_lexer_next(&lookahead);
+                    }
+                    uint8_t arity=0,required_arity=0;bool has_variadic=false;
+                    DiamondToken past_parameters=after_name;
+                    if(after_name.kind==DIAMOND_TOKEN_LEFT_PAREN)
+                        past_parameters=prescan_parameter_arity(&lookahead,
+                            &arity,&required_arity,&has_variadic);
+                    if(module->singleton_method_count<DIAMOND_MAX_METHODS) {
+                        DiamondMethod *entry=
+                            &module->singleton_methods[module->singleton_method_count++];
+                        *entry=(DiamondMethod){0};
+                        size_t length=name_span.length;
+                        if(length>=DIAMOND_MAX_FUNCTION_NAME)
+                            length=DIAMOND_MAX_FUNCTION_NAME-1;
+                        for(size_t index=0;index<length;index++)
+                            entry->name[index]=compiler->source[name_span.start+index];
+                        entry->name[length]='\0';
+                        entry->arity=arity;entry->required_arity=required_arity;
+                        entry->has_variadic=has_variadic;
+                        /* A module_function-mode method's owner_class
+                         * reserves register 0 as an implicit instance-
+                         * mixing receiver (compile_definition's own
+                         * direct_module_member) even for the qualified
+                         * call path, so needs_receiver=true there
+                         * (matching compile_definition's own early-
+                         * registration -- see that site's own
+                         * exported.needs_receiver=true). `def self.x`
+                         * reserves no such slot at all (owner_class
+                         * stays UINT8_MAX, module_singleton excludes
+                         * direct_module_member) -- needs_receiver=true
+                         * there would silently reserve and count an
+                         * extra call-argument slot nothing ever fills,
+                         * inflating call_count by one and failing the
+                         * real def's own (correctly slot-less) arity
+                         * check at runtime. Confirmed the hard way:
+                         * `def self.table(name)` called as
+                         * `Widgets.table("authors")` failed "wrong
+                         * number of arguments" until this matched
+                         * compile_module's own `def self.x` site, which
+                         * never sets this field at all (defaults to
+                         * false). */
+                        entry->needs_receiver=!is_module_singleton;
+                        entry->function_index=DIAMOND_UNRESOLVED_SINGLETON_FUNCTION;
+                    }
+                    token=past_parameters;continue;
+                }
+                token=next;continue;
+            }
+        } else if(token.kind==DIAMOND_TOKEN_END) {
+            if(depth==0)return; /* the module's own terminating end */
+            depth--;
+        }
+        token=diamond_lexer_next(&lookahead);
+    }
+}
+
 static uint16_t compile_module(Compiler *compiler) {
     if(compiler->function!=&compiler->program->entry) {
         fail(compiler,compiler->current.span,
@@ -12987,6 +13413,13 @@ static uint16_t compile_module(Compiler *compiler) {
     module->declaration_start=name.start;
     advance_token(compiler);
     if(!consume_block_start(compiler))return 0;
+    /* Only during discovery -- the real pass relies on cross-pass
+     * carryover instead (module->next_singleton_claim, see this
+     * function's own reopen comment above); see prescan_module_
+     * function_signatures's own comment for the full design and why
+     * that carryover alone can't close this gap on its own. */
+    if(compiler->discovery_pass)
+        prescan_module_function_signatures(compiler,module);
     const int outer=compiler->current_module;compiler->current_module=index;
     const bool outer_private=compiler->methods_private;
     const bool outer_protected=compiler->methods_protected;
@@ -14366,6 +14799,18 @@ static bool run_compile_pass(const char *source, DiamondProgram *program,
             if(strcmp(class->name,"Range")==0)
                 program->range_class_index=(uint8_t)class_index;
         }
+        /* Defensive, not expected to ever actually fire: every
+         * prescan_module_function_signatures placeholder names a real
+         * `def` token this same pass will reach before it ends (see that
+         * function's own comment on why), so every pending fixup should
+         * already be resolved by the time compilation otherwise
+         * succeeds. Catching a leftover one here turns "silently call
+         * whatever function ends up at index 0" into a clean, if
+         * generic, compile error instead. */
+        if(compiler.pending_singleton_fixup_count>0)
+            fail(&compiler,compiler.current.span,
+                "internal error: unresolved forward reference to module "
+                "singleton function");
     }
     return !compiler.failed;
 }

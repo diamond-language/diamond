@@ -10,13 +10,10 @@
 # descriptor as soon as the parameter list (and therefore name/arity)
 # is known, before the body compiles, instead of after.
 #
-# Still NOT supported, a separate and harder problem this fix doesn't
-# attempt (see docs/roadmap.md or ask before assuming it's fixed):
-# mutual recursion between two *different* module_function siblings
-# where the callee is defined later in the same module -- that would
-# need every module_function method's name discovered before any of
-# their bodies compile, not just each one's own name before its own
-# body.
+# Mutual recursion between two *different* module_function/`def self.x`
+# siblings, one calling a sibling defined *later* in the same module,
+# is now also fixed -- see tests/cases/module_function_mutual_recursion.di
+# and src/compiler.c's prescan_module_function_signatures.
 require "../../lib/minitest"
 
 module Factorial
