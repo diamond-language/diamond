@@ -105,7 +105,11 @@ cut-off responses. Nothing to opt into; it's on unconditionally. A
 slow client can't wedge it forever) -- if connections are still open
 when the deadline passes, the process exits anyway, logging
 `server.shutdown_complete` with `"forced": true` and however many
-connections were still open, rather than hanging indefinitely.
+connections were still open, rather than hanging indefinitely. A
+*second* `SIGTERM`/`SIGINT` -- an impatient double Ctrl+C, or an
+operator who doesn't want to wait out the rest of the grace period --
+skips the drain/deadline logic entirely and exits right away, logging
+`server.shutdown_forced_by_signal`.
 
 **Verified for `threads: 1` (the default) only.** `Signal.trap`'s own
 pending-signal state is process-wide, not per-VM (`src/vm.c`'s own
