@@ -13708,14 +13708,14 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     VM_RETURN(DIAMOND_VM_TYPE_ERROR);
                 if(registers[recv].kind!=DIAMOND_VALUE_OBJECT||
                    registers[recv].as.object->kind!=DIAMOND_OBJECT_INSTANCE) {
-                    if(type_count!=0)VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                    const DiamondStringConstant *native_name=
+                        &chunk->strings[method_name_index];
+                    if(type_count!=0)VM_REJECT_TYPE_ARGUMENTS(native_name);
                     if(has_block) {
                         snprintf(vm->error,sizeof vm->error,
                             "native keyword method cannot take a block");
                         VM_RETURN(DIAMOND_VM_ARITY_ERROR);
                     }
-                    const DiamondStringConstant *native_name=
-                        &chunk->strings[method_name_index];
                     const NativeKeywordSignature *signature=
                         native_keyword_signature(native_name);
                     if(signature==nullptr) {snprintf(vm->error,sizeof vm->error,
@@ -14270,8 +14270,14 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                             const char *separator_chars="";size_t separator_length=0;
                             if(argc==1) {
                                 if(registers[base].kind!=DIAMOND_VALUE_OBJECT||
-                                   registers[base].as.object->kind!=DIAMOND_OBJECT_STRING)
+                                   registers[base].as.object->kind!=DIAMOND_OBJECT_STRING) {
+                                    char actual[80];
+                                    format_value_type(actual,sizeof actual,registers[base]);
+                                    snprintf(vm->error,sizeof vm->error,
+                                        "Array#join separator must be a String, got %s",
+                                        actual);
                                     VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                                }
                                 const DiamondString *separator=
                                     (const DiamondString *)registers[base].as.object;
                                 separator_chars=separator->chars;
@@ -16808,8 +16814,13 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
             case DIAMOND_OP_INDEX_GET: {
                 uint16_t destination=0,receiver=0,index_register=0;
                 READ_SHORT(destination);READ_SHORT(receiver);READ_SHORT(index_register);
-                if(registers[receiver].kind!=DIAMOND_VALUE_OBJECT)
+                if(registers[receiver].kind!=DIAMOND_VALUE_OBJECT) {
+                    char actual[80];
+                    format_value_type(actual,sizeof actual,registers[receiver]);
+                    snprintf(vm->error,sizeof vm->error,
+                        "undefined method '[]' for %s",actual);
                     VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                }
                 if(registers[receiver].as.object->kind==DIAMOND_OBJECT_HASH) {
                     DiamondHash *hash=(DiamondHash *)registers[receiver].as.object;
                     const ptrdiff_t found=hash_find(hash,registers[index_register]);
@@ -16818,8 +16829,13 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     break;
                 }
                 if(registers[receiver].as.object->kind==DIAMOND_OBJECT_STRING) {
-                    if(registers[index_register].kind!=DIAMOND_VALUE_INT)
+                    if(registers[index_register].kind!=DIAMOND_VALUE_INT) {
+                        char actual[80];
+                        format_value_type(actual,sizeof actual,registers[index_register]);
+                        snprintf(vm->error,sizeof vm->error,
+                            "String#[] index must be an Int, got %s",actual);
                         VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                    }
                     const DiamondString *source=
                         (const DiamondString *)registers[receiver].as.object;
                     const int64_t index=registers[index_register].as.integer;
@@ -16857,8 +16873,13 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                         break;
                     }
                 }
-                if(registers[receiver].as.object->kind!=DIAMOND_OBJECT_ARRAY)
+                if(registers[receiver].as.object->kind!=DIAMOND_OBJECT_ARRAY) {
+                    char actual[80];
+                    format_value_type(actual,sizeof actual,registers[receiver]);
+                    snprintf(vm->error,sizeof vm->error,
+                        "undefined method '[]' for %s",actual);
                     VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                }
                 DiamondArray *array=(DiamondArray *)registers[receiver].as.object;
                 size_t range_start=0,range_length=0;
                 const int range_result=resolve_array_range(vm,chunk,
@@ -16871,8 +16892,13 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     registers[destination]=DIAMOND_OBJECT(sliced);
                     break;
                 }
-                if(registers[index_register].kind!=DIAMOND_VALUE_INT)
+                if(registers[index_register].kind!=DIAMOND_VALUE_INT) {
+                    char actual[80];
+                    format_value_type(actual,sizeof actual,registers[index_register]);
+                    snprintf(vm->error,sizeof vm->error,
+                        "Array#[] index must be an Int or Range, got %s",actual);
                     VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                }
                 const int64_t index=registers[index_register].as.integer;
                 if(index<0 || (uint64_t)index>=array->count) {
                     snprintf(vm->error,sizeof vm->error,
@@ -16886,8 +16912,13 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
             case DIAMOND_OP_INDEX_SET: {
                 uint16_t receiver=0,index_register=0,source=0;
                 READ_SHORT(receiver);READ_SHORT(index_register);READ_SHORT(source);
-                if(registers[receiver].kind!=DIAMOND_VALUE_OBJECT)
+                if(registers[receiver].kind!=DIAMOND_VALUE_OBJECT) {
+                    char actual[80];
+                    format_value_type(actual,sizeof actual,registers[receiver]);
+                    snprintf(vm->error,sizeof vm->error,
+                        "undefined method '[]=' for %s",actual);
                     VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                }
                 if(registers[receiver].as.object->kind==DIAMOND_OBJECT_HASH) {
                     DiamondHash *hash=(DiamondHash *)registers[receiver].as.object;
                     if(!hash_entry_satisfies_constraints(hash,
@@ -16929,8 +16960,13 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                         break;
                     }
                 }
-                if(registers[receiver].as.object->kind!=DIAMOND_OBJECT_ARRAY)
+                if(registers[receiver].as.object->kind!=DIAMOND_OBJECT_ARRAY) {
+                    char actual[80];
+                    format_value_type(actual,sizeof actual,registers[receiver]);
+                    snprintf(vm->error,sizeof vm->error,
+                        "undefined method '[]=' for %s",actual);
                     VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                }
                 DiamondArray *array=(DiamondArray *)registers[receiver].as.object;
                 size_t range_start=0,range_length=0;
                 const int range_result=resolve_array_range(vm,chunk,
@@ -16969,8 +17005,13 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                         VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
                     break;
                 }
-                if(registers[index_register].kind!=DIAMOND_VALUE_INT)
+                if(registers[index_register].kind!=DIAMOND_VALUE_INT) {
+                    char actual[80];
+                    format_value_type(actual,sizeof actual,registers[index_register]);
+                    snprintf(vm->error,sizeof vm->error,
+                        "Array#[]= index must be an Int or Range, got %s",actual);
                     VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                }
                 const int64_t index=registers[index_register].as.integer;
                 if(index<0 || (uint64_t)index>=array->count) {
                     snprintf(vm->error,sizeof vm->error,
