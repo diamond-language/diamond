@@ -1220,7 +1220,7 @@ fi
 # to: `Fiber` itself now resolves fine (it's the shadowing function,
 # used as a value), and it's `.new(1)` -- invoking a method on a
 # Closure -- that fails, at runtime rather than compile time.
-grep -q "type error" "$error_file"
+grep -q "undefined method 'new' for Callable" "$error_file"
 rm -f "$error_file"
 
 error_file="$(mktemp)"
@@ -1228,7 +1228,7 @@ if "$diamond" -e $'def File()\n 1\nend\nFile.open("x", "r")' >/dev/null 2>"$erro
     echo "File.open on a shadowing top-level function unexpectedly compiled" >&2
     exit 1
 fi
-grep -q "type error" "$error_file"
+grep -q "undefined method 'open' for Callable" "$error_file"
 rm -f "$error_file"
 
 error_file="$(mktemp)"

@@ -6679,7 +6679,13 @@ static DiamondVmStatus base64_decode_helper(DiamondVm *vm,DiamondValue data_valu
  * (see DIAMOND_OP_PRINT) that could otherwise still be sitting
  * unflushed in the C library's buffer. */
 static DiamondVmStatus exit_helper(DiamondVm *vm,DiamondValue code_value) {
-    if(code_value.kind!=DIAMOND_VALUE_INT)return DIAMOND_VM_TYPE_ERROR;
+    if(code_value.kind!=DIAMOND_VALUE_INT) {
+        char actual[80];
+        format_value_type(actual,sizeof actual,code_value);
+        snprintf(vm->error,sizeof vm->error,
+            "exit code must be an Int, got %s",actual);
+        return DIAMOND_VM_TYPE_ERROR;
+    }
     const int64_t code=code_value.as.integer;
     if(code<0||code>255) {
         (void)snprintf(vm->error,sizeof vm->error,
@@ -16124,8 +16130,14 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     VM_PROPAGATE(invoke_status);
                     registers[dest]=invoke_result;break;
                 }
-                if(receiver_kind!=DIAMOND_OBJECT_INSTANCE)
+                if(receiver_kind!=DIAMOND_OBJECT_INSTANCE) {
+                    char actual[80];
+                    format_value_type(actual,sizeof actual,registers[recv]);
+                    snprintf(vm->error,sizeof vm->error,
+                        "undefined method '%.*s' for %s",
+                        (int)method_name->length,method_name->chars,actual);
                     VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                }
                 DiamondInstance *instance=(DiamondInstance *)registers[recv].as.object;
                 const DiamondChunk *owner=instance->owner!=nullptr?instance->owner:vm->root_chunk;
                 /* tap/dup/respond_to? -- same three universal methods the
