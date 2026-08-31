@@ -6486,7 +6486,14 @@ static DiamondVmStatus base64_encode_helper(DiamondVm *vm,DiamondValue data_valu
         return DIAMOND_VM_ARITY_ERROR;
     }
     const size_t capacity=(data->length+2)/3*4;
-    unsigned char *output=malloc(capacity>0?capacity:1);
+    /* +1: EVP_EncodeBlock always NUL-terminates its output on top of the
+     * `capacity` encoded bytes it returns via `written` -- allocating
+     * exactly `capacity` bytes (the previous behavior here) left it
+     * writing one byte past the end of the buffer on every call.
+     * Confirmed with Valgrind memcheck ("Invalid write of size 1 ...
+     * 0 bytes after a block of size 16"); the extra byte itself is
+     * never read (allocate_string below copies only `written` bytes). */
+    unsigned char *output=malloc(capacity+1);
     if(output==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
     const int written=EVP_EncodeBlock(output,(const unsigned char *)data->chars,
         (int)data->length);
