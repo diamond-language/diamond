@@ -11875,6 +11875,23 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
         return vm->has_exception?DIAMOND_VM_EXCEPTION:return_status_;\
     } while (false)
 
+/* Every native/builtin pseudo-method (tap, dup, respond_to?, Regexp#match,
+ * ProgramBuilder's own invoke path, etc.) that doesn't declare any type
+ * variables rejects an explicit generic argument list the same way -- a
+ * real, if unusual, user mistake (`x.dup[Int]()`) rather than a bytecode-
+ * integrity concern, unlike the analogous check against a real
+ * DiamondFunction's type_variable_count (compile_call already rejects a
+ * mismatched count there at compile time, so that check is defense-in-
+ * depth only and doesn't need a message). `method_name_` must be a
+ * `const DiamondStringConstant *` already in scope. */
+#define VM_REJECT_TYPE_ARGUMENTS(method_name_)                            \
+    do {                                                                  \
+        snprintf(vm->error,sizeof vm->error,                              \
+            "'%.*s' does not accept generic type arguments",              \
+            (int)(method_name_)->length,(method_name_)->chars);           \
+        VM_RETURN(DIAMOND_VM_TYPE_ERROR);                                 \
+    } while (false)
+
 #define VM_PROPAGATE(status_)                                      \
     if ((status_) != DIAMOND_VM_OK) {                              \
         if ((status_) == DIAMOND_VM_EXCEPTION &&                  \
@@ -13381,8 +13398,13 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 uint16_t dest=0,callable=0,base=0;uint8_t argc=0;
                 READ_SHORT(dest);READ_SHORT(callable);READ_SHORT(base);READ_BYTE(argc);
                 if(registers[callable].kind!=DIAMOND_VALUE_OBJECT||
-                   registers[callable].as.object->kind!=DIAMOND_OBJECT_CLOSURE)
+                   registers[callable].as.object->kind!=DIAMOND_OBJECT_CLOSURE) {
+                    char actual[80];
+                    format_value_type(actual,sizeof actual,registers[callable]);
+                    snprintf(vm->error,sizeof vm->error,
+                        "undefined method 'call' for %s",actual);
                     VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                }
                 DiamondClosure *called=(DiamondClosure *)registers[callable].as.object;
                 /* A ClassName.compile_method result is scoped to being
                  * passed to define_method (see DIAMOND_OP_DEFINE_METHOD) --
@@ -13421,14 +13443,25 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 if(has_block&&block_register>=DIAMOND_REGISTER_COUNT)
                     VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
                 if(registers[callable].kind!=DIAMOND_VALUE_OBJECT||
-                   registers[callable].as.object->kind!=DIAMOND_OBJECT_CLOSURE||
-                   registers[positional_register].kind!=DIAMOND_VALUE_OBJECT||
-                   registers[positional_register].as.object->kind!=DIAMOND_OBJECT_ARRAY)
+                   registers[callable].as.object->kind!=DIAMOND_OBJECT_CLOSURE) {
+                    snprintf(vm->error,sizeof vm->error,
+                        "spread call receiver must be a Callable");
                     VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                }
+                if(registers[positional_register].kind!=DIAMOND_VALUE_OBJECT||
+                   registers[positional_register].as.object->kind!=DIAMOND_OBJECT_ARRAY) {
+                    snprintf(vm->error,sizeof vm->error,
+                        "spread argument (*expr) must be an Array");
+                    VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                }
                 DiamondClosure *called=(DiamondClosure *)registers[callable].as.object;
-                if(called->foreign_chunk!=nullptr||
-                   called->function_index>=chunk->function_count)
+                if(called->foreign_chunk!=nullptr) {
+                    snprintf(vm->error,sizeof vm->error,
+                        "a compile_method callable can only be passed to define_method");
                     VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                }
+                if(called->function_index>=chunk->function_count)
+                    VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
                 const DiamondFunction *fn=chunk->functions[called->function_index];
                 DiamondValue *merged=nullptr;size_t merged_count=0;
                 const DiamondVmStatus merge_status=merge_keyword_arguments(vm,chunk,
@@ -13727,7 +13760,17 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     &chunk->strings[method_name_index];
                 const DiamondMethod *method=lookup_method(owner,instance->class,
                     method_name->chars,method_name->length);
-                if(method==nullptr)VM_RETURN(DIAMOND_VM_NO_METHOD_ERROR);
+                if(method==nullptr) {
+                    /* Unlike the plain INVOKE opcodes, a keyword call has no
+                     * method_missing fallback: method_missing's own
+                     * `(name, args)` contract has no established shape for
+                     * keyword arguments, so this stays a hard error. */
+                    snprintf(vm->error,sizeof vm->error,
+                        "undefined method '%.*s' for an instance of %s",
+                        (int)method_name->length,method_name->chars,
+                        instance->class->name);
+                    VM_RETURN(DIAMOND_VM_NO_METHOD_ERROR);
+                }
                 const DiamondChunk *function_chunk=method->source_chunk!=nullptr?
                     method->source_chunk:owner;
                 const DiamondFunction *fn=
@@ -13980,7 +14023,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                    registers[recv].as.object->kind!=DIAMOND_OBJECT_INSTANCE) {
                     if(method_name->length==3&&
                        memcmp(method_name->chars,"tap",3)==0) {
-                        if(type_argument_count!=0)VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                        if(type_argument_count!=0)VM_REJECT_TYPE_ARGUMENTS(method_name);
                         if(argc!=1)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
                         if(registers[base].kind!=DIAMOND_VALUE_OBJECT||
                            registers[base].as.object->kind!=DIAMOND_OBJECT_CLOSURE)
@@ -14015,7 +14058,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                         registers[recv].as.object->kind==DIAMOND_OBJECT_HASH;
                     if(dup_defined&&method_name->length==3&&
                        memcmp(method_name->chars,"dup",3)==0) {
-                        if(type_argument_count!=0)VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                        if(type_argument_count!=0)VM_REJECT_TYPE_ARGUMENTS(method_name);
                         if(argc!=0)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
                         if(registers[recv].kind!=DIAMOND_VALUE_OBJECT) {
                             registers[dest]=registers[recv];break;
@@ -14195,7 +14238,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 if(receiver_kind==DIAMOND_OBJECT_ARRAY||
                    receiver_kind==DIAMOND_OBJECT_HASH||
                    receiver_kind==DIAMOND_OBJECT_STRING) {
-                    if(type_argument_count!=0)VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                    if(type_argument_count!=0)VM_REJECT_TYPE_ARGUMENTS(method_name);
                     const bool length_method=method_name->length==6&&
                         memcmp(method_name->chars,"length",6)==0;
                     if(length_method) {
@@ -15063,7 +15106,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     VM_RETURN(DIAMOND_VM_TYPE_ERROR);
                 }
                 if(receiver_kind==DIAMOND_OBJECT_FIBER) {
-                    if(type_argument_count!=0)VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                    if(type_argument_count!=0)VM_REJECT_TYPE_ARGUMENTS(method_name);
                     DiamondFiber *target_fiber=
                         ((DiamondFiberHandle *)registers[recv].as.object)->fiber;
                     const bool resume_method=method_name->length==6&&
@@ -15116,7 +15159,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     registers[dest]=target_fiber->result;break;
                 }
                 if(receiver_kind==DIAMOND_OBJECT_THREAD) {
-                    if(type_argument_count!=0)VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                    if(type_argument_count!=0)VM_REJECT_TYPE_ARGUMENTS(method_name);
                     DiamondThread *target_thread=
                         ((DiamondThreadHandle *)registers[recv].as.object)->thread;
                     const bool join_method=method_name->length==4&&
@@ -15234,7 +15277,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     registers[dest]=target_thread->result;break;
                 }
                 if(receiver_kind==DIAMOND_OBJECT_FILE) {
-                    if(type_argument_count!=0)VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                    if(type_argument_count!=0)VM_REJECT_TYPE_ARGUMENTS(method_name);
                     DiamondFileHandle *target_file=
                         (DiamondFileHandle *)registers[recv].as.object;
                     const bool read_method=method_name->length==4&&
@@ -15331,7 +15374,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     registers[dest]=DIAMOND_NIL;break;
                 }
                 if(receiver_kind==DIAMOND_OBJECT_LISTENER) {
-                    if(type_argument_count!=0)VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                    if(type_argument_count!=0)VM_REJECT_TYPE_ARGUMENTS(method_name);
                     DiamondListenerHandle *listener=
                         (DiamondListenerHandle *)registers[recv].as.object;
                     const bool accept_method=method_name->length==6&&
@@ -15464,7 +15507,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     break;
                 }
                 if(receiver_kind==DIAMOND_OBJECT_SOCKET) {
-                    if(type_argument_count!=0)VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                    if(type_argument_count!=0)VM_REJECT_TYPE_ARGUMENTS(method_name);
                     DiamondSocketHandle *socket_handle=
                         (DiamondSocketHandle *)registers[recv].as.object;
                     const bool read_method=method_name->length==4&&
@@ -15559,7 +15602,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     registers[dest]=DIAMOND_INT((int64_t)written);break;
                 }
                 if(receiver_kind==DIAMOND_OBJECT_UDP_SOCKET) {
-                    if(type_argument_count!=0)VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                    if(type_argument_count!=0)VM_REJECT_TYPE_ARGUMENTS(method_name);
                     DiamondUdpSocketHandle *udp_handle=
                         (DiamondUdpSocketHandle *)registers[recv].as.object;
                     const bool send_method=method_name->length==4&&
@@ -15740,7 +15783,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     break;
                 }
                 if(receiver_kind==DIAMOND_OBJECT_TLS_SOCKET) {
-                    if(type_argument_count!=0)VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                    if(type_argument_count!=0)VM_REJECT_TYPE_ARGUMENTS(method_name);
                     DiamondTlsSocketHandle *tls_handle=
                         (DiamondTlsSocketHandle *)registers[recv].as.object;
                     const bool read_method=method_name->length==4&&
@@ -15878,7 +15921,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     registers[dest]=DIAMOND_NIL;break;
                 }
                 if(receiver_kind==DIAMOND_OBJECT_REGEXP) {
-                    if(type_argument_count!=0)VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                    if(type_argument_count!=0)VM_REJECT_TYPE_ARGUMENTS(method_name);
                     const bool match_method=method_name->length==5&&
                         memcmp(method_name->chars,"match",5)==0;
                     const bool match_p_method=method_name->length==6&&
@@ -15904,7 +15947,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     break;
                 }
                 if(receiver_kind==DIAMOND_OBJECT_SQLITE3) {
-                    if(type_argument_count!=0)VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                    if(type_argument_count!=0)VM_REJECT_TYPE_ARGUMENTS(method_name);
                     const DiamondVmStatus dispatch_status=sqlite3_dispatch_helper(vm,
                         (DiamondSqlite3Handle *)registers[recv].as.object,
                         method_name,registers,base,argc,dest);
@@ -15912,7 +15955,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     break;
                 }
                 if(receiver_kind==DIAMOND_OBJECT_SQLITE3_STATEMENT) {
-                    if(type_argument_count!=0)VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                    if(type_argument_count!=0)VM_REJECT_TYPE_ARGUMENTS(method_name);
                     const DiamondVmStatus dispatch_status=sqlite3_statement_dispatch_helper(vm,
                         (DiamondSqlite3StatementHandle *)registers[recv].as.object,
                         method_name,registers,base,argc,dest);
@@ -15920,7 +15963,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     break;
                 }
                 if(receiver_kind==DIAMOND_OBJECT_POSTGRES) {
-                    if(type_argument_count!=0)VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                    if(type_argument_count!=0)VM_REJECT_TYPE_ARGUMENTS(method_name);
                     const DiamondVmStatus dispatch_status=postgres_dispatch_helper(vm,
                         (DiamondPostgresHandle *)registers[recv].as.object,
                         method_name,registers,base,argc,dest);
@@ -15928,7 +15971,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     break;
                 }
                 if(receiver_kind==DIAMOND_OBJECT_MYSQL) {
-                    if(type_argument_count!=0)VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                    if(type_argument_count!=0)VM_REJECT_TYPE_ARGUMENTS(method_name);
                     const DiamondVmStatus dispatch_status=mysql_dispatch_helper(vm,
                         (DiamondMysqlHandle *)registers[recv].as.object,
                         method_name,registers,base,argc,dest);
@@ -15936,7 +15979,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     break;
                 }
                 if(receiver_kind==DIAMOND_OBJECT_TIME) {
-                    if(type_argument_count!=0)VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                    if(type_argument_count!=0)VM_REJECT_TYPE_ARGUMENTS(method_name);
                     const DiamondVmStatus dispatch_status=time_dispatch_helper(vm,
                         (DiamondTime *)registers[recv].as.object,
                         method_name,registers,base,argc,dest);
@@ -15944,7 +15987,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     break;
                 }
                 if(receiver_kind==DIAMOND_OBJECT_PROCESS_RESULT) {
-                    if(type_argument_count!=0)VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                    if(type_argument_count!=0)VM_REJECT_TYPE_ARGUMENTS(method_name);
                     const DiamondVmStatus dispatch_status=process_result_dispatch_helper(vm,
                         (DiamondProcessResult *)registers[recv].as.object,
                         method_name,registers,argc,dest);
@@ -15952,7 +15995,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     break;
                 }
                 if(receiver_kind==DIAMOND_OBJECT_PROCESS_HANDLE) {
-                    if(type_argument_count!=0)VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                    if(type_argument_count!=0)VM_REJECT_TYPE_ARGUMENTS(method_name);
                     const DiamondVmStatus dispatch_status=process_handle_dispatch_helper(vm,
                         (DiamondProcessHandle *)registers[recv].as.object,
                         method_name,registers,argc,dest);
@@ -15960,7 +16003,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     break;
                 }
                 if(receiver_kind==DIAMOND_OBJECT_PROCESS_STREAM) {
-                    if(type_argument_count!=0)VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                    if(type_argument_count!=0)VM_REJECT_TYPE_ARGUMENTS(method_name);
                     const DiamondVmStatus dispatch_status=process_stream_dispatch_helper(vm,
                         (DiamondProcessStream *)registers[recv].as.object,
                         method_name,registers,argc,base,dest);
@@ -15968,7 +16011,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     break;
                 }
                 if(receiver_kind==DIAMOND_OBJECT_PROGRAM_BUILDER) {
-                    if(type_argument_count!=0)VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                    if(type_argument_count!=0)VM_REJECT_TYPE_ARGUMENTS(method_name);
                     DiamondValue invoke_result=DIAMOND_NIL;
                     const DiamondVmStatus invoke_status=program_builder_invoke_helper(vm,
                         (DiamondProgramBuilder *)registers[recv].as.object,method_name,
@@ -15990,7 +16033,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                  * own method ahead of an inherited Kernel one. */
                 if(method_name->length==3&&memcmp(method_name->chars,"tap",3)==0&&
                    lookup_method(owner,instance->class,"tap",3)==nullptr) {
-                    if(type_argument_count!=0)VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                    if(type_argument_count!=0)VM_REJECT_TYPE_ARGUMENTS(method_name);
                     if(argc!=1)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
                     if(registers[base].kind!=DIAMOND_VALUE_OBJECT||
                        registers[base].as.object->kind!=DIAMOND_OBJECT_CLOSURE)
@@ -16014,7 +16057,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 }
                 if(method_name->length==3&&memcmp(method_name->chars,"dup",3)==0&&
                    lookup_method(owner,instance->class,"dup",3)==nullptr) {
-                    if(type_argument_count!=0)VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                    if(type_argument_count!=0)VM_REJECT_TYPE_ARGUMENTS(method_name);
                     if(argc!=0)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
                     DiamondInstance *copy=allocate_instance(vm,instance->class,instance->owner);
                     if(copy==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
@@ -16038,7 +16081,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 if(method_name->length==11&&
                    memcmp(method_name->chars,"respond_to?",11)==0&&
                    lookup_method(owner,instance->class,"respond_to?",11)==nullptr) {
-                    if(type_argument_count!=0)VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                    if(type_argument_count!=0)VM_REJECT_TYPE_ARGUMENTS(method_name);
                     if(argc!=1)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
                     if(registers[base].kind!=DIAMOND_VALUE_OBJECT||
                        registers[base].as.object->kind!=DIAMOND_OBJECT_SYMBOL)
