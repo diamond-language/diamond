@@ -6,7 +6,3 @@
 /examples/library/server.log
 /examples/library/lib/views/.cache/
 /examples/project_board/lib/views/.cache/
-/applications/skindicate.dia/lib/views/.cache/
-/applications/skindicate.dia/public/uploads/*
-!/applications/skindicate.dia/public/uploads/.gitkeep
-/applications/skindicate.dia/load_test_results_*/
