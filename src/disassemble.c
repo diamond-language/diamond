@@ -1002,6 +1002,8 @@ static bool disassemble_chunk(FILE *stream, const char *name,
                 offset=one_register(stream,chunk,"GETS",offset, &valid);break;
             case DIAMOND_OP_FILE_OPEN:
                 offset=three_registers(stream,chunk,"FILE_OPEN",offset, &valid);break;
+            case DIAMOND_OP_FILE_DELETE:
+                offset=two_registers(stream,chunk,"FILE_DELETE",offset, &valid);break;
             case DIAMOND_OP_TCP_CONNECT:
                 offset=four_registers(stream,chunk,"TCP_CONNECT",offset, &valid);break;
             case DIAMOND_OP_TCP_LISTEN:

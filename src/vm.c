@@ -17632,6 +17632,28 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     .as.object=(DiamondObject *)handle};
                 break;
             }
+            case DIAMOND_OP_FILE_DELETE: {
+                uint16_t dest=0,path_reg=0;
+                READ_SHORT(dest);READ_SHORT(path_reg);
+                if(registers[path_reg].kind!=DIAMOND_VALUE_OBJECT||
+                   registers[path_reg].as.object->kind!=DIAMOND_OBJECT_STRING) {
+                    snprintf(vm->error,sizeof vm->error,"File.delete argument must be a String value");
+                    VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                }
+                const DiamondString *path=(const DiamondString *)registers[path_reg].as.object;
+                errno=0;
+                if(remove(path->chars)!=0) {
+                    if(errno==ENOENT) {
+                        registers[dest]=(DiamondValue){.kind=DIAMOND_VALUE_BOOL,.as.boolean=false};
+                        break;
+                    }
+                    snprintf(vm->error,sizeof vm->error,"cannot delete '%.*s': %s",
+                             (int)path->length,path->chars,strerror(errno));
+                    VM_RETURN(DIAMOND_VM_IO_ERROR);
+                }
+                registers[dest]=(DiamondValue){.kind=DIAMOND_VALUE_BOOL,.as.boolean=true};
+                break;
+            }
             case DIAMOND_OP_FILE_JOIN: {
                 uint16_t dest=0,base=0;uint8_t argc=0;
                 READ_SHORT(dest);READ_SHORT(base);READ_BYTE(argc);

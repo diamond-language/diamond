@@ -4057,6 +4057,36 @@ static uint16_t parse_file_open_arguments(Compiler *compiler) {
     return dest;
 }
 
+/* `File.delete(path)` -- single String argument, returns a Bool (true
+ * if a file was actually removed, false if it didn't exist to begin
+ * with) rather than File.open's raise-on-any-failure shape, since the
+ * one real caller so far (an ingest script cleaning up a downloaded
+ * file after a later step fails) wants "already gone" to be a normal,
+ * checkable outcome, not an exception to rescue around. A real error
+ * (permission denied, path is a directory, etc.) still raises
+ * IOError, matching File.open. */
+static uint16_t parse_file_delete_arguments(Compiler *compiler) {
+    if(compiler->current.kind!=DIAMOND_TOKEN_LEFT_PAREN) {
+        fail(compiler,compiler->current.span,"expected '(' after 'File.delete'");
+        return 0;
+    }
+    advance_token(compiler);
+    skip_newlines(compiler);
+    const uint16_t path_register=parse_expression(compiler);
+    skip_newlines(compiler);
+    if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
+        fail(compiler,compiler->current.span,"expected ')' after File.delete argument");
+        return 0;
+    }
+    advance_token(compiler);
+    const uint16_t dest=allocate_register(compiler);
+    emit_opcode(compiler,DIAMOND_OP_FILE_DELETE);
+    emit_register(compiler,dest);
+    emit_register(compiler,path_register);
+    compiler->known_types[dest]=DIAMOND_TYPE_BOOL;
+    return dest;
+}
+
 /* `File.join(*parts)` -- a variable number of String arguments, moved
  * into a contiguous register run the same way parse_thread_new_call's
  * own variadic argument list already is (DIAMOND_OP_FILE_JOIN, not the
@@ -4179,6 +4209,10 @@ static uint16_t parse_file_call(Compiler *compiler) {
         advance_token(compiler);
         return parse_file_open_arguments(compiler);
     }
+    if(name_equals(compiler,"delete",method,false)) {
+        advance_token(compiler);
+        return parse_file_delete_arguments(compiler);
+    }
     if(name_equals(compiler,"join",method,false)) {
         advance_token(compiler);
         return parse_file_join_arguments(compiler);
@@ -4203,7 +4237,7 @@ static uint16_t parse_file_call(Compiler *compiler) {
         advance_token(compiler);
         return parse_file_path_binary_call(compiler,DIAMOND_FILE_PATH_EXPAND);
     }
-    fail(compiler,method,"unknown File method (expected open/join/dirname/basename/"
+    fail(compiler,method,"unknown File method (expected open/delete/join/dirname/basename/"
         "extname/absolute?/expand_path)");
     return 0;
 }
