@@ -8,7 +8,7 @@ class Database
       db.execute("PRAGMA journal_mode = WAL")
       db.execute("PRAGMA busy_timeout = 5000")
       context["db"] = db
-      AppLogger.get(context).info("database.connection.opened", {"adapter": "sqlite3", "database": Database.path(), "environment": SkindicateEnvironment.name()})
+      RequestLogging.get(context).info("database.connection.opened", {"adapter": "sqlite3", "database": Database.path(), "environment": SkindicateEnvironment.name()})
     end
     db
   end

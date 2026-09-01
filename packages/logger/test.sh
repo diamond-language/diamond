@@ -165,4 +165,100 @@ writer.lines().length()
 [[ "$actual" == "0" ]]
 count=$((count + 1))
 
+# --- RequestLogging.call: mints request_id, logs request.started then
+# --- request.completed (with status/duration_ms) around a successful
+# --- forward, and clears context["log_context"] afterward ---
+actual="$(run_case '
+class CapturingWriter
+  def initialize()
+    @lines = []
+  end
+  def write(value) = @lines.push(value)
+  def lines() = @lines
+end
+writer = CapturingWriter.new()
+RequestLogging.configure(tag: "app", level: "debug", output: writer, format: "json")
+def handler(request, context) = [200, {}, "ok"]
+request = {"method": "GET", "path": "/hello"}
+context = {}
+[status, headers, body] = RequestLogging.call(request, context, handler)
+"#{status}|#{request["request_id"] != nil}|#{writer.lines().length()}|#{writer.lines()[0].index_of("request.started") != nil}|#{writer.lines()[1].index_of("request.completed") != nil}|#{writer.lines()[1].index_of("\"status\":200") != nil}|#{context["log_context"]}"
+')"
+[[ "$actual" == "200|true|2|true|true|true|nil" ]]
+count=$((count + 1))
+
+# --- RequestLogging.call: a forward that raises logs request.failed
+# --- (error_class/error_message/duration_ms), clears log_context, and
+# --- re-raises rather than swallowing the error ---
+actual="$(run_case '
+class CapturingWriter
+  def initialize()
+    @lines = []
+  end
+  def write(value) = @lines.push(value)
+  def lines() = @lines
+end
+writer = CapturingWriter.new()
+RequestLogging.configure(tag: "app", level: "debug", output: writer, format: "json")
+def failing_handler(request, context)
+  raise RuntimeError.new("boom")
+end
+request = {"method": "POST", "path": "/explode"}
+context = {}
+begin
+  RequestLogging.call(request, context, failing_handler)
+  "no exception raised"
+rescue error: RuntimeError
+  "#{error.message()}|#{writer.lines().length()}|#{writer.lines()[1].index_of("request.failed") != nil}|#{writer.lines()[1].index_of("boom") != nil}|#{context["log_context"]}"
+end
+')"
+[[ "$actual" == "boom|2|true|true|nil" ]]
+count=$((count + 1))
+
+# --- RequestLogging.correlation: reflects the in-flight request's
+# --- fields from inside .call's own forward, and is {} once no request
+# --- is in flight (context["log_context"] never set, or already
+# --- cleared) ---
+actual="$(run_case '
+class CapturingWriter
+  def initialize()
+    @lines = []
+  end
+  def write(value) = @lines.push(value)
+end
+RequestLogging.configure(tag: "app", level: "info", output: CapturingWriter.new(), format: "json")
+outside = RequestLogging.correlation({})
+def handler_reading_correlation(request, context)
+  correlation = RequestLogging.correlation(context)
+  [200, {}, "method=#{correlation["method"]} path=#{correlation["path"]}"]
+end
+context = {}
+[status, headers, body] = RequestLogging.call({"method": "GET", "path": "/x"}, context, handler_reading_correlation)
+"#{outside.length()}|#{body}"
+')"
+[[ "$actual" == "0|method=GET path=/x" ]]
+count=$((count + 1))
+
+# --- RequestLogging.debug/.info/.warn: route through the same
+# --- context-memoized Logger .get returns, tagging every call with
+# --- request_id/method/path plus the caller's own fields ---
+actual="$(run_case '
+class CapturingWriter
+  def initialize()
+    @lines = []
+  end
+  def write(value) = @lines.push(value)
+  def lines() = @lines
+end
+writer = CapturingWriter.new()
+RequestLogging.configure(tag: "app", level: "debug", output: writer, format: "json")
+request = {"request_id": "abc123", "method": "GET", "path": "/skins/1"}
+context = {}
+RequestLogging.debug(request, context, "authentication.cookie_absent")
+RequestLogging.warn(request, context, "authorization.denied", {"reason": "not_owner"})
+"#{writer.lines().length()}|#{writer.lines()[0].index_of("\"request_id\":\"abc123\"") != nil}|#{writer.lines()[1].index_of("\"reason\":\"not_owner\"") != nil}"
+')"
+[[ "$actual" == "2|true|true" ]]
+count=$((count + 1))
+
 echo "$count logger tests passed"

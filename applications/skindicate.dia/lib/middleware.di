@@ -2,6 +2,7 @@ def route(request, context) = Dials::RouterHolder.get(build_router).dispatch(req
 
 def ensure_configured(context)
   if context["configured"] == nil
+    RequestLogging.configure(tag: "skindicate", level: SkindicateEnvironment.log_level(), format: "json")
     User.configure(ActiveRecord::Repository.new(Arel.table("users"), build_user, "id", nil, build_user_validator(Database.get(context))))
     Session.configure(ActiveRecord::Repository.new(Arel.table("sessions"), build_session, "id"))
     Skin.configure(ActiveRecord::Repository.new(Arel.table("skins"), build_skin, "id", nil, build_skin_validator()))
@@ -16,24 +17,12 @@ def ensure_configured(context)
     # instances).
     StaticFiles.configure({"root": "./public"})
     context["configured"] = true
-    AppLogger.get(context).info("app.configured", {"model_count": 7})
+    RequestLogging.get(context).info("app.configured", {"model_count": 7})
   end
-end
-
-def logging_middleware(request, context, forward)
-  request["request_id"] = SecureRandom.hex(6)
-  context["log_context"] = request_log_fields(request)
-  start = Time.monotonic()
-  log_info(request, context, "request.started")
-  response = forward(request, context)
-  elapsed_ms = (Time.monotonic() - start) * 1000
-  log_info(request, context, "request.completed", {"status": response[0], "duration_ms": elapsed_ms})
-  context["log_context"] = nil
-  response
 end
 
 def app(request, context)
   ensure_configured(context)
-  chain = rack_compose([StaticFiles.call, logging_middleware, load_current_user_middleware], route)
+  chain = rack_compose([StaticFiles.call, RequestLogging.call, load_current_user_middleware], route)
   rack_run_chain(chain, 0, request, context)
 end

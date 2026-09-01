@@ -89,6 +89,59 @@ Every line is timestamped (`Time.now().strftime`, local time — see the
 [Time guide](../../docs/time.md)) and tagged. Text mode uses the format shown
 first; JSON timestamps use `%Y-%m-%dT%H:%M:%S%z`.
 
+## `RequestLogging` — the request-timing middleware
+
+Generalizes the near-identical `AppLogger`/`logging_middleware`/
+`log_debug`/`log_info`/`log_warn` pattern independently duplicated
+across `applications/skindicate.dia`, `examples/project_board`, and
+`applications/pheint.dia` — a `Callable[3]` matching
+[`packages/rack`](../rack/README.md)'s own middleware contract:
+
+```ruby
+require "/path/to/logger/lib/logger"
+
+RequestLogging.configure(tag: "myapp", level: "info", format: "json")
+
+def app_handler(request, context)
+  RequestLogging.info(request, context, "widget.created", {"widget_id": 42})
+  [200, {"Content-Type": "text/plain"}, "ok"]
+end
+
+def rack_app(request, context)
+  chain = rack_compose([RequestLogging.call], app_handler)
+  rack_run_chain(chain, 0, request, context)
+end
+```
+
+`.call` mints `request["request_id"]` (`SecureRandom.hex(8)`), logs
+`request.started`, then `request.completed` (with `status`/
+`duration_ms`) around `forward` — or, if `forward` raises, logs
+`request.failed` (`error_class`/`error_message`/`duration_ms`) before
+re-raising, rather than letting the exception cross this middleware
+with no record of it at all. Put it outermost in your `rack_compose`
+chain so its timing covers every other middleware's own work too, not
+just the route handler's.
+
+`.debug`/`.info`/`.warn(request, context, event, fields = {})` are for
+your own call sites elsewhere in the app (a controller action, an
+auth check) — they tag every line with the same `request_id`/`method`/
+`path` `.call` itself uses, through the same per-`context`-memoized
+`Logger` (`.get(context)` — matching `Database.get`'s own per-worker
+memoization pattern, needed since each `gremlin_serve(threads: N)`
+worker is a fully independent VM/heap, see `docs/threads.md`).
+
+`.correlation(context)` returns the current request's `request_id`/
+`method`/`path` as a plain `Hash` (`{}` outside a request) — for code
+that wants to tag its own log lines with the same request without
+needing the `request` Hash itself in scope, e.g. an `ActiveRecord`
+query logger correlating `database.query.*` lines with whichever
+request triggered them (see `examples/project_board`'s
+`build_query_logger` for the pattern this generalizes).
+
+`examples/library`'s own `logging_middleware` isn't migrated onto this
+— it's a much smaller `puts`-based two-liner with no `Logger` involved
+at all, nothing this class would simplify.
+
 ## What's deliberately out of scope
 
 - **Custom formatters.** The package supports its built-in text and JSON
