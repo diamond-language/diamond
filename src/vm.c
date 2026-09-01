@@ -3215,6 +3215,56 @@ static DiamondVmStatus regexp_scan_helper(DiamondVm *vm,const DiamondRegexp *reg
     return DIAMOND_VM_OK;
 }
 
+/* String#split(Regexp) -- the counterpart to regexp_scan_helper just
+ * above: same reginold_search loop, but collects the text *between*
+ * matches instead of the matches themselves, then pushes whatever's
+ * left after the last match (or the whole subject, if there was no
+ * match at all) as the final piece. A zero-width match (an empty-
+ * string-matching pattern) is skipped rather than splitting on it --
+ * matching regexp_scan_helper's own zero-width handling (advance past
+ * it by one byte rather than looping forever), not an attempt at
+ * Ruby's own more elaborate zero-width-match split semantics, which
+ * this codebase's one real caller (skindicate.dia's Winamp ingester,
+ * splitting on `\band\b`) never needs. */
+static DiamondVmStatus regexp_split_helper(DiamondVm *vm,const DiamondRegexp *regexp,
+        const DiamondString *subject,DiamondValue *registers,uint16_t dest) {
+    DiamondArray *pieces=allocate_array(vm,nullptr,0);
+    if(pieces==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+    registers[dest]=DIAMOND_OBJECT(pieces);
+    size_t piece_start=0;
+    size_t cursor=0;
+    while(cursor<=subject->length) {
+        reginold_match match_result={0};
+        const reginold_status search_status=reginold_search(regexp->handle,
+            subject->chars,subject->length,cursor,&match_result);
+        if(search_status==REGINOLD_ERROR) {
+            snprintf(vm->error,sizeof vm->error,"regexp match failed");
+            return DIAMOND_VM_REGEXP_ERROR;
+        }
+        if(search_status==REGINOLD_MISMATCH)break;
+        const size_t match_begin=(size_t)match_result.overall.beg;
+        const size_t match_end=(size_t)match_result.overall.end;
+        reginold_match_free(&match_result);
+        if(match_end==match_begin) {
+            cursor=match_end+1;
+            continue;
+        }
+        DiamondString *piece=allocate_string(vm,
+            subject->chars+piece_start,match_begin-piece_start);
+        if(piece==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+        if(!array_push(vm,pieces,DIAMOND_OBJECT(piece)))
+            return DIAMOND_VM_OUT_OF_MEMORY;
+        piece_start=match_end;
+        cursor=match_end;
+    }
+    DiamondString *tail=allocate_string(vm,
+        subject->chars+piece_start,subject->length-piece_start);
+    if(tail==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+    if(!array_push(vm,pieces,DIAMOND_OBJECT(tail)))
+        return DIAMOND_VM_OUT_OF_MEMORY;
+    return DIAMOND_VM_OK;
+}
+
 /* String#tr's from/to specs: c1-c2 ranges and, for the from-spec only, a
  * leading ^ that negates the set. A backslash escapes the very next byte
  * (so \\, \^, and \- can appear as literal data instead of triggering
@@ -14749,10 +14799,18 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                         }
                         if(split_method) {
                             if(argc!=1)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                            if(registers[base].kind==DIAMOND_VALUE_OBJECT&&
+                               registers[base].as.object->kind==DIAMOND_OBJECT_REGEXP) {
+                                const DiamondVmStatus split_status=regexp_split_helper(vm,
+                                    (const DiamondRegexp *)registers[base].as.object,
+                                    source,registers,dest);
+                                VM_PROPAGATE(split_status);
+                                break;
+                            }
                             if(registers[base].kind!=DIAMOND_VALUE_OBJECT||
                                registers[base].as.object->kind!=DIAMOND_OBJECT_STRING) {
                                 snprintf(vm->error,sizeof vm->error,
-                                    "String#split argument must be a String");
+                                    "String#split argument must be a String or Regexp");
                                 VM_RETURN(DIAMOND_VM_TYPE_ERROR);
                             }
                             const DiamondString *separator=
