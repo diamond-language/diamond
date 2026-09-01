@@ -128,4 +128,39 @@ multipart_parse({"headers": {"content-type": "multipart/form-data; boundary=----
 [[ "$actual" == "nil" ]]
 count=$((count + 1))
 
+# --- multipart_file_extension: lowercased, no leading dot, multi-dot
+# --- names use the last extension, no extension at all -> nil ---
+actual="$(run_case '"#{multipart_file_extension("theme.ZIP")}|#{multipart_file_extension("a.b.tar.gz")}|#{multipart_file_extension("noext")}"')"
+[[ "$actual" == "zip|gz|nil" ]]
+count=$((count + 1))
+
+# --- multipart_save_file: writes the file under `directory` with a
+# --- fresh random name (not the submitted filename), returns that
+# --- stored name, and the written bytes round-trip exactly ---
+upload_dir="$(mktemp -d)"
+actual="$(run_case "
+file = {\"filename\": \"theme.zip\", \"content_type\": \"application/zip\", \"data\": \"pretend-zip-bytes\"}
+stored = multipart_save_file(file, [\"zip\"], \"$upload_dir\")
+handle = File.open(\"$upload_dir/#{stored}\", \"r\")
+contents = handle.read()
+handle.close()
+\"#{stored != \"theme.zip\"}|#{stored.end_with?(\".zip\")}|#{contents}\"
+")"
+[[ "$actual" == "true|true|pretend-zip-bytes" ]]
+count=$((count + 1))
+
+# --- multipart_save_file: nil file, and an extension outside
+# --- allowed_extensions, both reject without writing anything ---
+before_count="$(ls -1 "$upload_dir" | wc -l)"
+actual="$(run_case "
+rejected_nil = multipart_save_file(nil, [\"zip\"], \"$upload_dir\")
+rejected_ext = multipart_save_file({\"filename\": \"virus.exe\", \"content_type\": \"application/octet-stream\", \"data\": \"x\"}, [\"zip\"], \"$upload_dir\")
+\"#{rejected_nil}|#{rejected_ext}\"
+")"
+[[ "$actual" == "nil|nil" ]]
+count=$((count + 1))
+after_count="$(ls -1 "$upload_dir" | wc -l)"
+[[ "$before_count" == "$after_count" ]]
+count=$((count + 1))
+
 echo "$count multipart tests passed"

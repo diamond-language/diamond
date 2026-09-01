@@ -153,3 +153,56 @@ def multipart_parse(request)
   end
   {"fields": fields, "files": files}
 end
+
+# Saving a parsed upload to disk -- generalized from
+# applications/skindicate.dia's own upload_extension/save_uploaded_file,
+# unchanged in behavior. Kept in this file rather than split out: two
+# small functions, no new dependency, and multipart_save_file's own
+# `file` parameter is exactly one of multipart_parse's own "files" Hash
+# entries -- the two are one concern (this package's whole job is
+# turning a multipart body into something a route handler can use),
+# not two.
+
+# The lowercased extension of `filename` (no leading "."), or nil if it
+# has none at all -- `"a.b.ZIP"` -> `"zip"`, `"noext"` -> nil.
+def multipart_file_extension(filename)
+  reversed = filename.reverse()
+  dot_from_end = reversed.index_of(".")
+  if dot_from_end == nil
+    return nil
+  end
+  filename.slice(filename.length() - dot_from_end, dot_from_end).downcase()
+end
+
+# Writes one multipart_parse "files" entry to a freshly random name
+# (SecureRandom.hex(16) plus its original extension) under `directory`,
+# returning that stored filename (not the full path -- join it onto
+# whatever URL/directory prefix the caller serves `directory` back out
+# from) on success. Returns nil -- writes nothing -- if `file` is nil
+# (the field wasn't submitted) or its extension isn't in
+# `allowed_extensions`.
+#
+# The extension check is basic abuse prevention on what an upload
+# endpoint accepts, not a sandbox -- pair this with a static-file server
+# that never executes anything it serves (e.g. packages/rack's own
+# StaticFiles) if code execution is a concern at all. The on-disk name
+# is always freshly random, never the submitted original filename --
+# avoiding both collisions between two uploads and any path-traversal
+# surface from a user-controlled name, the same reasoning StaticFiles
+# itself rejects a ".." request path for on the read side. Keep the real
+# original filename (for display/download-name purposes) in your own
+# model/database instead -- it never touches the filesystem here.
+def multipart_save_file(file, allowed_extensions, directory)
+  if file == nil
+    return nil
+  end
+  extension = multipart_file_extension(file["filename"])
+  if extension == nil || !allowed_extensions.include?(extension)
+    return nil
+  end
+  stored_name = "#{SecureRandom.hex(16)}.#{extension}"
+  handle = File.open("#{directory}/#{stored_name}", "w")
+  handle.write(file["data"])
+  handle.close()
+  stored_name
+end

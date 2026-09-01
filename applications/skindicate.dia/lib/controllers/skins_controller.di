@@ -75,8 +75,8 @@ class SkinsController
     fields = upload["fields"]
     db = Database.get(context)
     theme_file = upload["files"]["theme_file"]
-    theme_path = save_uploaded_file(theme_file, ["zip", "itheme", "deskthemepack"])
-    preview_path = save_uploaded_file(upload["files"]["preview_image"], ["png", "jpg", "jpeg", "gif", "webp"])
+    theme_path = skindicate_save_upload(theme_file, ["zip", "itheme", "deskthemepack"])
+    preview_path = skindicate_save_upload(upload["files"]["preview_image"], ["png", "jpg", "jpeg", "gif", "webp"])
     original_filename = if theme_file == nil then nil else theme_file["filename"] end
     skin = Skin.new({"title": fields["title"], "description": fields["description"], "platform": fields["platform"], "preview_image_path": preview_path, "file_path": theme_path, "original_filename": original_filename})
     begin
@@ -99,8 +99,8 @@ class SkinsController
     fields = upload["fields"]
     db = Database.get(context)
     new_theme_file = upload["files"]["theme_file"]
-    new_theme_path = save_uploaded_file(new_theme_file, ["zip", "itheme", "deskthemepack"])
-    new_preview_path = save_uploaded_file(upload["files"]["preview_image"], ["png", "jpg", "jpeg", "gif", "webp"])
+    new_theme_path = skindicate_save_upload(new_theme_file, ["zip", "itheme", "deskthemepack"])
+    new_preview_path = skindicate_save_upload(upload["files"]["preview_image"], ["png", "jpg", "jpeg", "gif", "webp"])
     skin.title = fields["title"]
     skin.description = fields["description"]
     skin.platform = fields["platform"]

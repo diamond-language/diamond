@@ -64,6 +64,36 @@ one hard cap on how large a request body — and therefore an upload —
 can be at all; this package does no size-limiting of its own beyond
 that.
 
+## Saving an uploaded file to disk
+
+Generalized from `applications/skindicate.dia`'s own hand-rolled
+`upload_extension`/`save_uploaded_file` — same behavior, just not tied
+to that app's own upload directory:
+
+```ruby
+file = upload["files"]["theme_file"]
+stored_name = multipart_save_file(file, ["zip", "itheme", "deskthemepack"], "/opt/myapp/public/uploads")
+# => "3f9c2a...e1.zip", already written to
+#    /opt/myapp/public/uploads/3f9c2a...e1.zip -- or nil if `file` is
+#    nil (field wasn't submitted) or its extension isn't allowed
+#    (nothing is written in that case)
+```
+
+The stored filename is always freshly random
+(`SecureRandom.hex(16)` + the original extension), never the submitted
+original filename — avoiding both collisions between two uploads and any
+path-traversal surface from a user-controlled name, the same reasoning
+`packages/rack`'s own `StaticFiles` rejects a `".."` request path for on
+the read side. Keep the real original filename (for display/download
+purposes) in your own model/database instead — it never touches the
+filesystem here. The extension check is basic abuse prevention on what
+an upload endpoint accepts, not a sandbox — pair this with a static-file
+server that never executes anything it serves if code execution is a
+concern at all.
+
+`multipart_file_extension(filename)` is the lowercased extension with no
+leading `.` (`"a.b.ZIP"` -> `"zip"`), or `nil` if there isn't one.
+
 ## What's deliberately out of scope
 
 - **A backslash-escaped quote inside a filename.** `filename="a \"b\"
