@@ -84,7 +84,7 @@ REPL_COMPLETION_SOURCES := lsp/completion.c lsp/compile_buffer.c \
 REPL_COMPLETION_OBJECTS := $(REPL_COMPLETION_SOURCES:lsp/%.c=$(BUILD_DIR)/lsp-%.o)
 DEPS := $(OBJECTS:.o=.d) $(REPL_COMPLETION_OBJECTS:.o=.d)
 
-.PHONY: all debug sanitize tsan release test test-release test-sanitize test-tsan test-api test-fibers test-fiber-run test-fiber-context test-vm-context test-yield test-continuation test-multi-yield test-scheduler test-scheduler-run-all test-fiber-gc-roots test-fiber-guards test-nested-yield-guard test-stack-overflow test-all test-facet facet test-database-config-package test-http-package test-gremlin-package test-rack-package test-cookies-package test-multipart-package test-div-package test-dials-package test-graphql-package test-graphsql-package test-logger-package test-log-viewer-package test-active-karma-package test-active-auth-package test-active-social-package test-active-tagging-package test-active-discussion-package test-pheint-application test-lexer-diff test-parser-diff test-self-host test-self-host-smoke lsp test-lsp test-repl test-repl-completion fuzz test-fuzz clean
+.PHONY: all debug sanitize tsan release test test-release test-sanitize test-tsan test-api test-fibers test-fiber-run test-fiber-context test-vm-context test-yield test-continuation test-multi-yield test-scheduler test-scheduler-run-all test-fiber-gc-roots test-fiber-guards test-nested-yield-guard test-stack-overflow test-all test-facet facet test-database-config-package test-http-package test-gremlin-package test-rack-package test-cookies-package test-multipart-package test-network-safety-package test-div-package test-dials-package test-graphql-package test-graphsql-package test-logger-package test-log-viewer-package test-active-karma-package test-active-auth-package test-active-social-package test-active-tagging-package test-active-discussion-package test-pheint-application test-lexer-diff test-parser-diff test-self-host test-self-host-smoke lsp test-lsp test-repl test-repl-completion fuzz test-fuzz clean
 
 all: debug
 
@@ -226,6 +226,9 @@ test-cookies-package: $(TARGET)
 test-multipart-package: $(TARGET)
 	DIAMOND_BIN=$(CURDIR)/$(BUILD_DIR)/diamond bash packages/multipart/test.sh
 
+test-network-safety-package: $(TARGET)
+	DIAMOND_BIN=$(CURDIR)/$(BUILD_DIR)/diamond bash packages/network_safety/test.sh
+
 test-div-package: $(TARGET)
 	DIAMOND_BIN=$(CURDIR)/$(BUILD_DIR)/diamond bash packages/div/test.sh
 
@@ -337,6 +340,7 @@ test-all:
 	$(MAKE) test-rack-package
 	$(MAKE) test-cookies-package
 	$(MAKE) test-multipart-package
+	$(MAKE) test-network-safety-package
 	$(MAKE) test-div-package
 	$(MAKE) test-dials-package
 	$(MAKE) test-graphql-package
