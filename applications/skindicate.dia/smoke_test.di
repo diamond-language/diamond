@@ -103,7 +103,7 @@ if by_tag[0] != 200 || !by_tag[2].include?("Midnight Blue") then raise "/tags/:n
 # --- a second skin reusing an existing tag doesn't create a duplicate ---
 second_create = app(multipart_request("POST", "/skins", {"title": "Second Skin", "description": "Another one.", "platform": "macos", "tags": "dark-mode", "csrf_token": csrf_token}, {"theme_file": theme_file}, cookie), context)
 if second_create[0] != 302 then raise "second skin creation failed" end
-if Tag.where({"name": "dark-mode"}).to_a(Database.get(context)).length() != 1
+if ActiveTagging::Tag.where({"name": "dark-mode"}).to_a(Database.get(context)).length() != 1
   raise "an existing tag was duplicated instead of reused"
 end
 by_tag_again = app(request("GET", "/tags/dark-mode"), context)

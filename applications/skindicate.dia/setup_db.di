@@ -34,9 +34,14 @@ db.execute([
 ].join(" "))
 db.execute("CREATE TABLE tags (id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE)")
 db.execute([
-  "CREATE TABLE taggings (id INTEGER PRIMARY KEY, skin_id INTEGER NOT NULL,",
-  "tag_id INTEGER NOT NULL, UNIQUE(skin_id, tag_id),",
-  "FOREIGN KEY(skin_id) REFERENCES skins(id) ON DELETE CASCADE,",
+  # taggable_id, not skin_id -- packages/active_tagging's own Tagging
+  # model is generic (no taggable_type column, since Skin is the only
+  # taggable thing here; see that package's README for the tradeoff),
+  # but its column names are fixed, so the schema has to match them.
+  # No FOREIGN KEY on taggable_id itself for the same reason -- it's
+  # opaque to this table, not necessarily a skins.id.
+  "CREATE TABLE taggings (id INTEGER PRIMARY KEY, taggable_id INTEGER NOT NULL,",
+  "tag_id INTEGER NOT NULL, UNIQUE(taggable_id, tag_id),",
   "FOREIGN KEY(tag_id) REFERENCES tags(id) ON DELETE CASCADE)"
 ].join(" "))
 db.execute([
@@ -46,7 +51,7 @@ db.execute([
   "FOREIGN KEY(followed_id) REFERENCES users(id) ON DELETE CASCADE)"
 ].join(" "))
 db.execute("CREATE INDEX sessions_user_id_idx ON sessions(user_id)")
-db.execute("CREATE INDEX taggings_skin_id_idx ON taggings(skin_id)")
+db.execute("CREATE INDEX taggings_taggable_id_idx ON taggings(taggable_id)")
 db.execute("CREATE INDEX taggings_tag_id_idx ON taggings(tag_id)")
 db.execute("CREATE UNIQUE INDEX follows_follower_followed_idx ON follows(follower_id, followed_id)")
 db.execute("CREATE INDEX follows_followed_id_idx ON follows(followed_id)")
@@ -67,8 +72,8 @@ db.execute("INSERT INTO tags (name) VALUES (?)", ["dark"])
 dark_tag_id = db.last_insert_row_id()
 db.execute("INSERT INTO tags (name) VALUES (?)", ["minimal"])
 minimal_tag_id = db.last_insert_row_id()
-db.execute("INSERT INTO taggings (skin_id, tag_id) VALUES (?, ?)", [skin_id, dark_tag_id])
-db.execute("INSERT INTO taggings (skin_id, tag_id) VALUES (?, ?)", [skin_id, minimal_tag_id])
+db.execute("INSERT INTO taggings (taggable_id, tag_id) VALUES (?, ?)", [skin_id, dark_tag_id])
+db.execute("INSERT INTO taggings (taggable_id, tag_id) VALUES (?, ?)", [skin_id, minimal_tag_id])
 db.execute("INSERT INTO comments (body) VALUES (?)", ["Love this one, using it right now."])
 comment_id = db.last_insert_row_id()
 db.execute("INSERT INTO entries (ancestry, ancestry_depth, user_id, entryable_type, entryable_id, created_at) VALUES (?, 1, ?, 'Comment', ?, ?)",

@@ -8,8 +8,8 @@ def ensure_configured(context)
     Skin.configure(ActiveRecord::Repository.new(Arel.table("skins"), build_skin, "id", nil, build_skin_validator()))
     Comment.configure(ActiveRecord::Repository.new(Arel.table("comments"), build_comment, "id", nil, build_comment_validator()))
     Entry.configure(ActiveRecord::Repository.new(Arel.table("entries"), build_entry, "id"))
-    Tag.configure(ActiveRecord::Repository.new(Arel.table("tags"), build_tag, "id", nil, build_tag_validator()))
-    Tagging.configure(ActiveRecord::Repository.new(Arel.table("taggings"), build_tagging, "id"))
+    ActiveTagging::Tag.configure(ActiveRecord::Repository.new(Arel.table("tags"), build_active_tagging_tag, "id", nil, build_active_tagging_tag_validator()))
+    ActiveTagging::Tagging.configure(ActiveRecord::Repository.new(Arel.table("taggings"), build_active_tagging_tagging, "id"))
     ActiveSocial::Follow.configure(ActiveRecord::Repository.new(Arel.table("follows"), build_follow, "id"))
     # One shared StaticFiles root for both the framework's own CSS/JS
     # and everything under public/uploads/ (see boot.di's own comment

@@ -27,8 +27,8 @@ class Skin < ActiveRecord::Model
   end
 
   # A real many-to-many via the `taggings` join table --
-  # ActiveRecord::HasManyThrough, not a hand-rolled join query.
-  def tags(db) = ActiveRecord::HasManyThrough.new(Tag.repository(), Arel.table("taggings"), "skin_id", "tag_id").all(db, self.id())
+  # packages/active_tagging, not a hand-rolled join query.
+  def tags(db) = ActiveTagging::Tagging.tags_for(db, self.id())
 
   # This skin's own root Entry -- where its author/timestamps/comment
   # tree actually live (see entry.di's own comment on why).

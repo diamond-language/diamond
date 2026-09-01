@@ -10,8 +10,18 @@ class SkinsController
 
   def self.by_tag(request, context, params)
     db = Database.get(context)
-    tag = Tag.where({"name": params["name"]}).first(db)
-    skins = if tag == nil then [] else tag.skins(db) end
+    tag = ActiveTagging::Tag.where({"name": params["name"]}).first(db)
+    skins = if tag == nil
+      []
+    else
+      skin_ids = ActiveTagging::Tagging.taggable_ids_for_tag(db, tag.id())
+      matched = []
+      closure collect_skin(id)
+        matched.push(Skin.find(db, id))
+      end
+      skin_ids.each(collect_skin)
+      matched
+    end
     log_debug(request, context, "skins.listed_by_tag", {"tag": params["name"], "count": skins.length()})
     Div.html_response(200, layout_html("Tagged: #{params["name"]}", skins_index_html(skins, db), context["current_user"], context["csrf_token"]))
   end
@@ -52,21 +62,6 @@ class SkinsController
     SkinsController.render_form(request, context, skin, tag_names.join(", "), skin.id(), [], 200)
   end
 
-  def self.parse_tags(text)
-    if text == nil || text.strip() == ""
-      return []
-    end
-    names = []
-    closure collect_name(raw)
-      normalized = normalize_tag_name(raw)
-      if normalized != "" && !names.include?(normalized)
-        names.push(normalized)
-      end
-    end
-    text.split(",").each(collect_name)
-    names
-  end
-
   def self.create(request, context, params)
     upload = multipart_upload(request, context)
     if upload == nil
@@ -85,7 +80,7 @@ class SkinsController
       log_warn(request, context, "skin.create_rejected", {"validation_errors": error.errors()})
       return SkinsController.render_form(request, context, skin, fields["tags"], nil, error.errors(), 422)
     end
-    set_skin_tags(db, skin, SkinsController.parse_tags(fields["tags"]))
+    ActiveTagging::Tagging.set_tags(db, skin.id(), ActiveTagging::Tag.parse_names(fields["tags"]))
     log_info(request, context, "skin.created", {"skin_id": skin.id(), "user_id": context["current_user"].id()})
     Dials::Response.redirect("/skins/#{skin.id()}", "created")
   end
@@ -117,7 +112,7 @@ class SkinsController
       log_warn(request, context, "skin.update_rejected", {"skin_id": skin.id(), "validation_errors": error.errors()})
       return SkinsController.render_form(request, context, skin, fields["tags"], skin.id(), error.errors(), 422)
     end
-    set_skin_tags(db, skin, SkinsController.parse_tags(fields["tags"]))
+    ActiveTagging::Tagging.set_tags(db, skin.id(), ActiveTagging::Tag.parse_names(fields["tags"]))
     log_info(request, context, "skin.updated", {"skin_id": skin.id(), "user_id": context["current_user"].id()})
     Dials::Response.redirect("/skins/#{skin.id()}", "updated")
   end
@@ -126,6 +121,12 @@ class SkinsController
     db = Database.get(context)
     skin = context["current_skin"]
     skin_id = skin.id()
+    # No FOREIGN KEY ... ON DELETE CASCADE from taggings.taggable_id --
+    # unlike the old skin_id column, it's opaque to the taggings table
+    # now (see setup_db.di's own comment), so this has to be explicit,
+    # matching destroy_subtree! below's own explicit (not FK-driven)
+    # cleanup of the entry/comment subtree.
+    ActiveTagging::Tagging.set_tags(db, skin_id, [])
     skin.entry(db).destroy_subtree!(db)
     log_info(request, context, "skin.deleted", {"skin_id": skin_id, "user_id": context["current_user"].id()})
     Dials::Response.redirect("/", "deleted")
