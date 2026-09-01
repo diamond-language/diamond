@@ -9,3 +9,4 @@
 /applications/skindicate.dia/lib/views/.cache/
 /applications/skindicate.dia/public/uploads/*
 !/applications/skindicate.dia/public/uploads/.gitkeep
+/applications/skindicate.dia/load_test_results_*/
