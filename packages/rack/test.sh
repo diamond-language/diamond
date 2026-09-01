@@ -498,4 +498,55 @@ wait "$pid" 2>/dev/null || true
 
 rm -rf "$static_root" "$(dirname "$static_root")/$(basename "$static_root")-outside.txt"
 
+# --- ContentNegotiation: format_from_path ---
+actual="$(run_case "
+\"#{ContentNegotiation.format_from_path(\"/skins/1.json\")}|#{ContentNegotiation.format_from_path(\"/skins/1.HTML\")}|#{ContentNegotiation.format_from_path(\"/skins/1\")}|#{ContentNegotiation.format_from_path(\"/.json\")}|#{ContentNegotiation.format_from_path(\"/skins/1.\")}|#{ContentNegotiation.format_from_path(\"/\")}\"
+")"
+[[ "$actual" == "json|html|nil|nil|nil|nil" ]]
+count=$((count + 1))
+
+# --- ContentNegotiation: negotiate (Accept-header parsing) ---
+actual="$(run_case "
+exact = ContentNegotiation.negotiate(\"application/json\", [\"html\", \"json\"], \"html\")
+q_preference = ContentNegotiation.negotiate(\"text/html;q=0.5, application/json;q=0.9\", [\"html\", \"json\"], \"html\")
+wildcard_any = ContentNegotiation.negotiate(\"*/*\", [\"html\", \"json\"], \"html\")
+wildcard_type = ContentNegotiation.negotiate(\"application/*\", [\"html\", \"json\"], \"html\")
+no_header = ContentNegotiation.negotiate(nil, [\"html\", \"json\"], \"html\")
+no_match = ContentNegotiation.negotiate(\"application/xml\", [\"html\", \"json\"], \"html\")
+\"#{exact}|#{q_preference}|#{wildcard_any}|#{wildcard_type}|#{no_header}|#{no_match}\"
+")"
+[[ "$actual" == "json|json|html|json|html|html" ]]
+count=$((count + 1))
+
+# --- ContentNegotiation: respond_to -- path suffix wins over Accept,
+# --- Accept alone picks when there's no suffix, an unavailable
+# --- explicit format 406s instead of silently falling back, and
+# --- extra_headers merge in on top of Content-Type. Laziness (only
+# --- the *chosen* representation's Callable is ever invoked) is
+# --- proven by giving the unchosen side a builder that raises --
+# --- the whole script would abort before producing any output at all
+# --- if respond_to ever called it by mistake, so reaching the
+# --- expected \$actual string already proves it didn't.
+actual="$(run_case "
+def build_json()
+  \"{}\"
+end
+def build_boom()
+  raise RuntimeError.new(\"should not have been called\")
+end
+
+[s1, h1, b1] = ContentNegotiation.respond_to({\"path\": \"/skins/1.json\", \"headers\": {\"accept\": \"text/html\"}},
+  status: 200, representations: {\"html\": build_boom, \"json\": build_json}, default_format: \"html\")
+[s2, h2, b2] = ContentNegotiation.respond_to({\"path\": \"/skins/1\", \"headers\": {\"accept\": \"application/json\"}},
+  status: 200, representations: {\"html\": build_boom, \"json\": build_json}, default_format: \"html\")
+[s3, h3, b3] = ContentNegotiation.respond_to({\"path\": \"/skins/1\", \"headers\": {\"accept\": \"application/atom+xml\"}},
+  status: 200, representations: {\"xml\": build_boom}, default_format: \"json\")
+[s4, h4, b4] = ContentNegotiation.respond_to({\"path\": \"/skins/1\", \"headers\": {}},
+  status: 200, representations: {\"json\": build_json}, default_format: \"json\", extra_headers: {\"X-Extra\": \"yes\"})
+
+\"#{s1}|#{h1[\"Content-Type\"]}|#{b1}|#{s2}|#{h2[\"Content-Type\"]}|#{b2}|#{s3}|#{s4}|#{h4[\"Content-Type\"]}|#{h4[\"X-Extra\"]}\"
+")"
+[[ "$actual" == "200|application/json|{}|200|application/json|{}|406|200|application/json|yes" ]]
+count=$((count + 1))
+
 echo "$count rack tests passed"

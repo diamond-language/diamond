@@ -295,6 +295,59 @@ Like the other middlewares here, `.configure` is a class-variable write
 -- call it once per worker on `threads: N`, inside the same
 `build_chain()`-style function.
 
+## Content negotiation -- serving more than one representation
+
+`ContentNegotiation` (`lib/rack/content_negotiation.di`) isn't a
+middleware -- it's a response-building helper called directly from a
+handler, the same category as `Dials::Response`'s own helpers, for the
+case where one logical route can answer in more than one format:
+
+```ruby
+def show_skin(request, context, params)
+  skin = Skin.find(Database.get(context), params["id"].to_i())
+
+  ContentNegotiation.respond_to(request, status: 200, default_format: "html", representations: {
+    "html" => -> { Div.html_response(200, skin_show_html(skin, ...))[2] },
+    "json" => -> { JSON.stringify(skin.to_attributes()) },
+  })
+end
+```
+
+(Diamond has no lambda-literal syntax; use a named top-level `def` or an
+enclosing method's `closure` in place of the `->` shown above -- see
+`packages/rack/test.sh`'s own `ContentNegotiation` cases for the real
+syntax.)
+
+Each representation is a zero-arg `Callable`, not a plain value -- only
+the one actually chosen is ever built, so rendering a full HTML page
+*and* a JSON dump of the same data on every single request, just to
+throw one away, never happens. Which one gets chosen is decided in this
+order:
+
+1. **A trailing dot-extension already on the request path** (`.json`,
+   `.html`, ...), checked directly against `request["path"]` -- zero
+   dependency on how (or whether) an app's own router parses a
+   `:format` segment. Pass `strip_path_format: false` for a route whose
+   real identifier might itself contain a dot (a filename, say), so it's
+   never misread as a format suffix.
+2. **The `Accept` header** -- real content negotiation (comma-separated
+   media ranges, `;q=` weights, `*/*`/`type/*` wildcards), not just "does
+   the header contain this substring."
+3. **`default_format`**, if neither of the above named an available
+   representation.
+
+An explicit format (path suffix or `Accept`) that names something
+genuinely absent from `representations` gets a `406`, not a silent
+fallback to `default_format` -- the client asked for something specific
+and this route can't provide it. `mime_type_for`/`format_from_path`/
+`negotiate` are all plain `self.`-methods on the class too, callable
+directly if a caller wants just the format-picking logic without the
+full response-building wrapper.
+
+This module has no dependency on Dials or Div -- same "protocol-generic"
+stance as `Dials::Response` -- so it works from the raw request/response
+convention alone.
+
 ## What's deliberately out of scope
 
 - **Routing.** This composes middleware around one handler; it doesn't

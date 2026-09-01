@@ -47,10 +47,13 @@
 # here (rack_chain), then SecurityHeaders, RateLimit, Cors, and
 # StaticFiles, four independent middlewares. None reference each other,
 # so order between them doesn't matter -- kept in the same order as the
-# original single-file layout for the first two.
+# original single-file layout for the first two. ContentNegotiation
+# isn't a middleware at all (see its own file) -- a response-building
+# helper called from a handler, same category as Dials::Response.
 require "./rack/chain_composition"
 require "./rack/rack_chain"
 require "./rack/security_headers"
 require "./rack/rate_limit"
 require "./rack/cors"
 require "./rack/static_files"
+require "./rack/content_negotiation"
