@@ -13491,8 +13491,18 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
             case DIAMOND_OP_CLOSURE: {
                 uint16_t dest=0;uint8_t count=0;uint16_t index=0;
                 READ_SHORT(dest);READ_SHORT(index);READ_BYTE(count);
-                if(index>=chunk->function_count||count>16)VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
-                DiamondValue captures[16];
+                /* This check is load-bearing, unlike a same-shaped one
+                 * might look for DIAMOND_MAX_ARGUMENTS elsewhere: count
+                 * is a uint8_t (0-255) but DIAMOND_MAX_CAPTURES is only
+                 * 32 (object.h -- DiamondClosure's own captures field is
+                 * a real per-instance runtime cost, not a one-off
+                 * compile-time buffer), so count genuinely can exceed it.
+                 * A first pass of the capture-cap fix this constant is
+                 * part of dropped this check by (wrongly, at the time)
+                 * assuming it -- see object.h's own DIAMOND_MAX_CAPTURES
+                 * comment for exactly what that let happen. */
+                if(index>=chunk->function_count||count>DIAMOND_MAX_CAPTURES)VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
+                DiamondValue captures[DIAMOND_MAX_CAPTURES];
                 for(size_t i=0;i<count;i++){uint16_t reg=0;READ_SHORT(reg);captures[i]=registers[reg];}
                 DiamondClosure *created=allocate_closure(vm,index,captures,count);
                 if(created==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);

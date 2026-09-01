@@ -176,7 +176,7 @@ typedef struct Compiler {
     bool failed;
     Local enclosing_locals[DIAMOND_MAX_LOCALS];
     size_t enclosing_local_count;
-    uint16_t capture_registers[16];
+    uint16_t capture_registers[DIAMOND_MAX_CAPTURES];
     size_t capture_count;
     Narrowing narrowing;
     /* Set by compile_sequence right before it returns, true only when the
@@ -10745,7 +10745,7 @@ static uint16_t compile_block(Compiler *compiler) {
     const size_t outer_enclosing_local_count=compiler->enclosing_local_count;
     for(size_t i=0;i<outer_enclosing_local_count;i++)
         outer_enclosing_locals[i]=compiler->enclosing_locals[i];
-    uint16_t outer_capture_registers[16];
+    uint16_t outer_capture_registers[DIAMOND_MAX_CAPTURES];
     const size_t outer_capture_count=compiler->capture_count;
     for(size_t i=0;i<outer_capture_count;i++)
         outer_capture_registers[i]=compiler->capture_registers[i];
@@ -10795,7 +10795,7 @@ static uint16_t compile_block(Compiler *compiler) {
     for(size_t i=0;i<compiler->enclosing_local_count;i++)
         compiler->enclosing_locals[i]=outer_locals[i];
     compiler->capture_count=0;
-    if(compiler->enclosing_local_count>16) {
+    if(compiler->enclosing_local_count>DIAMOND_MAX_CAPTURES) {
         fail(compiler,compiler->previous.span,"block sees too many lexical bindings");
     } else {
         compiler->capture_count=compiler->enclosing_local_count;
@@ -10965,7 +10965,7 @@ static uint16_t compile_block(Compiler *compiler) {
 
     function->capture_count=(uint8_t)compiler->capture_count;
     function->register_count=compiler->next_register;
-    uint16_t captures[16];
+    uint16_t captures[DIAMOND_MAX_CAPTURES];
     for(size_t i=0;i<compiler->capture_count;i++)captures[i]=compiler->capture_registers[i];
     const size_t capture_count=compiler->capture_count;
     if(!compiler->failed) {
@@ -11333,7 +11333,7 @@ static uint16_t compile_definition(Compiler *compiler, bool captures_self) {
     const size_t outer_enclosing_local_count=compiler->enclosing_local_count;
     for(size_t i=0;i<outer_enclosing_local_count;i++)
         outer_enclosing_locals[i]=compiler->enclosing_locals[i];
-    uint16_t outer_capture_registers[16];
+    uint16_t outer_capture_registers[DIAMOND_MAX_CAPTURES];
     const size_t outer_capture_count=compiler->capture_count;
     for(size_t i=0;i<outer_capture_count;i++)
         outer_capture_registers[i]=compiler->capture_registers[i];
@@ -11417,7 +11417,7 @@ static uint16_t compile_definition(Compiler *compiler, bool captures_self) {
         compiler->enclosing_locals[i]=outer_locals[i];
     compiler->capture_count=0;
     if(!at_top_level) {
-        if(compiler->enclosing_local_count>16) {
+        if(compiler->enclosing_local_count>DIAMOND_MAX_CAPTURES) {
             fail(compiler,name,"nested function sees too many lexical bindings");
         } else {
             compiler->capture_count=compiler->enclosing_local_count;
@@ -11447,7 +11447,7 @@ static uint16_t compile_definition(Compiler *compiler, bool captures_self) {
          * once, before any of its own body compiles. Guaranteed to land
          * in register 0: next_register was just reset to 0 above and
          * nothing else has allocated from it yet on this path. */
-        if(compiler->capture_count==16) {
+        if(compiler->capture_count==DIAMOND_MAX_CAPTURES) {
             fail(compiler,name,"nested function sees too many lexical bindings");
         } else {
             const size_t self_capture_index=compiler->capture_count;
@@ -11890,7 +11890,7 @@ static uint16_t compile_definition(Compiler *compiler, bool captures_self) {
 
     function->capture_count=(uint8_t)compiler->capture_count;
     function->register_count=compiler->next_register;
-    uint16_t captures[16];
+    uint16_t captures[DIAMOND_MAX_CAPTURES];
     for(size_t i=0;i<compiler->capture_count;i++)captures[i]=compiler->capture_registers[i];
     const size_t capture_count=compiler->capture_count;
     if(!compiler->failed) {

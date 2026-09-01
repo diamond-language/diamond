@@ -248,6 +248,36 @@ typedef struct DiamondHash {
     size_t dirty_card_capacity;
 } DiamondHash;
 
+/* How many enclosing-scope locals a block/nested-def/closure can
+ * capture -- defined here (object.h), not alongside DIAMOND_MAX_ARGUMENTS/
+ * DIAMOND_MAX_DECLARED_PARAMETERS in vm.h, purely because vm.h includes
+ * this file and not the reverse, and this is the file whose struct
+ * actually needs it. src/compiler.c's own capture_registers-family
+ * arrays (five of them) and the >/== checks guarding them use this same
+ * constant, so the compile-time and runtime sides can't drift out of
+ * sync with each other -- exactly the failure mode a first pass of this
+ * fix hit: raising only the compiler-side arrays (all cheap, either the
+ * single per-compile-run Compiler struct or a temporary stack buffer)
+ * straight to 255, matching DIAMOND_MAX_ARGUMENTS's own reasoning,
+ * missed that `captures` below is a genuinely different cost shape --
+ * embedded in *every* DiamondClosure ever allocated, for its entire
+ * lifetime, not a one-off or temporary buffer. The compiler happily
+ * generated DIAMOND_OP_CLOSURE bytecode for a >16-capture block once its
+ * own arrays were widened, and the runtime handler (src/vm.c) wrote
+ * captures[16] and beyond straight past this struct's own fixed array
+ * into whatever heap memory followed it -- silent corruption, not a
+ * clean error, that only surfaced as a bizarre "expected Callable[1],
+ * got Callable" a few instructions later and an eventual segfault, with
+ * no compiler or runtime bounds message anywhere pointing at the real
+ * cause. Kept modest (16 -> 32, not 255) for exactly the reason
+ * DIAMOND_MAX_DECLARED_PARAMETERS's own comment already gives for its
+ * own embedded-per-instance array: real block/closure capture counts
+ * found in practice (a Div template needing ~17-20 once a few more
+ * locals got added) fit comfortably inside 32, and every extra slot
+ * here costs sizeof(DiamondValue) on every closure this language ever
+ * allocates, not a one-time or temporary cost. */
+enum { DIAMOND_MAX_CAPTURES = 32 };
+
 typedef struct DiamondClosure {
     DiamondObject object;
     uint16_t function_index;
@@ -257,7 +287,7 @@ typedef struct DiamondClosure {
      * variadic prologues can distinguish an optional block from a final rest
      * argument without overloading positional value kinds. */
     bool is_block;
-    DiamondValue captures[16];
+    DiamondValue captures[DIAMOND_MAX_CAPTURES];
     /* Non-null only for a value returned by ClassName.compile_method
      * (src/vm.c's DIAMOND_OP_COMPILE_METHOD) -- function_index above is
      * relative to *this* chunk, not whichever chunk is ambient when the
