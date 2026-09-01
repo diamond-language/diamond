@@ -6,6 +6,7 @@
 # (module-namespaced classes instead of Ruby's plain top-level ones;
 # an explicit `self.issue` factory instead of a before_create hook).
 require "../../active_record/lib/active_record"
+require "../../cookies/lib/cookies"
 require "./active_auth/configuration"
 require "./active_auth/account"
 require "./active_auth/session"

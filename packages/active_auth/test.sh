@@ -93,6 +93,53 @@ stored_fingerprint_rejected = ActiveAuth::Session.from_token(db, session.token()
 ')"
 assert_eq "$actual" "false true nil nil nil nil"
 
+# --- session.issue mints a csrf_token alongside the session token,
+# distinct per session ---
+actual="$(run_case '
+db = setup_test_db()
+account = create_test_account(db)
+session1, raw1 = ActiveAuth::Session.issue(db, account.id())
+session2, raw2 = ActiveAuth::Session.issue(db, account.id())
+"#{session1.csrf_token().length()} #{session1.csrf_token() == session2.csrf_token()}"
+')"
+assert_eq "$actual" "64 false"
+
+# --- issue_cookie/from_cookie round trip: correct secret resolves back
+# to the same session; wrong secret, a hand-tampered cookie value, and
+# a missing Cookie header all fail closed to nil rather than raising ---
+actual="$(run_case '
+db = setup_test_db()
+account = create_test_account(db)
+session, set_cookie = ActiveAuth::Session.issue_cookie(db, account.id(), secret: "topsecret")
+cookie_pair = set_cookie.slice(0, set_cookie.index_of(";"))
+request = {"headers": {"cookie": cookie_pair}}
+found = ActiveAuth::Session.from_cookie(request, db, secret: "topsecret")
+wrong_secret = ActiveAuth::Session.from_cookie(request, db, secret: "wrong")
+tampered = ActiveAuth::Session.from_cookie({"headers": {"cookie": "session_token=not-a-real-signed-value"}}, db, secret: "topsecret")
+missing = ActiveAuth::Session.from_cookie({"headers": {"cookie": nil}}, db, secret: "topsecret")
+"#{found.id() == session.id()} #{found.csrf_token() == session.csrf_token()} #{wrong_secret} #{tampered} #{missing}"
+')"
+assert_eq "$actual" "true true nil nil nil"
+
+# --- issue_cookie honors a custom cookie_name; from_cookie must be
+# given the same name to find it ---
+actual="$(run_case '
+db = setup_test_db()
+account = create_test_account(db)
+session, set_cookie = ActiveAuth::Session.issue_cookie(db, account.id(), secret: "topsecret", cookie_name: "my_session")
+cookie_pair = set_cookie.slice(0, set_cookie.index_of(";"))
+request = {"headers": {"cookie": cookie_pair}}
+right_name = ActiveAuth::Session.from_cookie(request, db, secret: "topsecret", cookie_name: "my_session")
+wrong_name = ActiveAuth::Session.from_cookie(request, db, secret: "topsecret")
+"#{cookie_pair.index_of("my_session=") == 0} #{right_name.id() == session.id()} #{wrong_name}"
+')"
+assert_eq "$actual" "true true nil"
+
+# --- expired_cookie: Max-Age=0, same path/attrs as issue_cookie so a
+# browser recognizes it as clearing the same cookie ---
+actual="$(run_case 'ActiveAuth::Session.expired_cookie()')"
+assert_eq "$actual" "session_token=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax"
+
 # --- backup codes: generation, matching (with separator variants),
 # and single use ---
 actual="$(run_case '

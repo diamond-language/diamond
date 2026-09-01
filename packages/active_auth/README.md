@@ -20,7 +20,14 @@ user.di` for the closest existing Diamond precedent this mirrors).
 - `ActiveAuth::Session` -- token-based, 30-day expiry. The stored
   `token` column is always a SHA-256 fingerprint, never the raw
   presentable value; `self.issue` returns `[session, raw_token]` once,
-  for the caller to put in a cookie.
+  for the caller to put in a cookie. Also carries a per-session
+  `csrf_token`, and `.issue_cookie`/`.from_cookie`/`.expired_cookie`
+  wrap the raw token in a `packages/cookies` `SignedCookies` envelope
+  for you -- generalized from `applications/skindicate.dia`'s own
+  hand-rolled `SessionsController`/`lib/helpers/auth.di` (still on its
+  own `User` model, not migrated onto `Account` here; this closes the
+  gap between what that app already proved out and what this package
+  offered).
 - `ActiveAuth::BackupCode` -- one-time 2FA recovery codes, bcrypt-
   hashed, accepting common separator variants (`A1B2-C3D4-E5F6`,
   `a1b2 c3d4 e5f6`, `A1B2C3D4E5F6` all match the same code).
@@ -143,6 +150,33 @@ session, raw_token = ActiveAuth::Session.issue(db, account.id(), user_agent, ip_
 session = ActiveAuth::Session.from_token(db, cookie_value)
 current_account = if session == nil then nil else session.account(db) end
 ```
+
+Or let `Session` manage the cookie envelope directly instead of handling
+the raw token yourself:
+
+```ruby
+# on login:
+session, set_cookie = ActiveAuth::Session.issue_cookie(db, account.id(), secret: ENV["SESSION_SECRET"])
+[302, {"Location": "/", "Set-Cookie": set_cookie}, "signed in"]
+
+# on a later request:
+session = ActiveAuth::Session.from_cookie(request, db, secret: ENV["SESSION_SECRET"])
+current_account = if session == nil then nil else session.account(db) end
+# ... embed session.csrf_token() in a form / compare it against a
+# submitted value yourself -- this package mints and stores the token
+# but doesn't check it against a request, unlike packages/cookies' own
+# request["session"]-based Csrf class, which is a different (stateless,
+# encrypted-cookie-backed) pattern this DB-backed Session doesn't share.
+
+# on logout:
+session.destroy(db)
+[302, {"Location": "/", "Set-Cookie": ActiveAuth::Session.expired_cookie()}, "signed out"]
+```
+
+`issue_cookie`/`from_cookie`/`expired_cookie` all default to a
+`"session_token"` cookie name; pass `cookie_name:` to use a different
+one (matching between `issue_cookie` and `from_cookie` calls is on the
+caller -- nothing enforces it).
 
 ## Test
 

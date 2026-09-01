@@ -5,7 +5,7 @@
 def setup_test_db()
   db = SQLite3.open(":memory:")
   db.execute("CREATE TABLE accounts (id INTEGER PRIMARY KEY, email TEXT NOT NULL UNIQUE, username TEXT NOT NULL UNIQUE, password_digest TEXT NOT NULL, email_verified_at INTEGER, role TEXT NOT NULL)")
-  db.execute("CREATE TABLE sessions (id INTEGER PRIMARY KEY, account_id INTEGER NOT NULL, token TEXT NOT NULL UNIQUE, user_agent TEXT, ip_address TEXT, expires_at INTEGER NOT NULL)")
+  db.execute("CREATE TABLE sessions (id INTEGER PRIMARY KEY, account_id INTEGER NOT NULL, token TEXT NOT NULL UNIQUE, csrf_token TEXT NOT NULL, user_agent TEXT, ip_address TEXT, expires_at INTEGER NOT NULL)")
   db.execute("CREATE TABLE backup_codes (id INTEGER PRIMARY KEY, account_id INTEGER NOT NULL, code_digest TEXT NOT NULL, used_at INTEGER)")
   db.execute("CREATE TABLE email_verification_tokens (id INTEGER PRIMARY KEY, account_id INTEGER NOT NULL, token TEXT NOT NULL UNIQUE, expires_at INTEGER NOT NULL)")
   db.execute("CREATE TABLE password_reset_tokens (id INTEGER PRIMARY KEY, account_id INTEGER NOT NULL, token TEXT NOT NULL UNIQUE, expires_at INTEGER NOT NULL, used_at INTEGER)")
