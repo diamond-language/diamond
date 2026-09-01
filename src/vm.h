@@ -21,7 +21,16 @@ enum {
     DIAMOND_MAX_FUNCTIONS = UINT16_MAX,
     DIAMOND_MAX_FUNCTION_NAME = 64,
     DIAMOND_MAX_STRING_CONSTANTS = UINT16_MAX,
-    DIAMOND_MAX_STRING_LENGTH = 255,
+    /* Compile-time literal-constant buffer size only (DiamondStringConstant,
+     * the source-text constant pool) -- unrelated to the runtime String
+     * object's own dynamic allocation (DiamondString), which has no such
+     * cap. Was 255; raised after repeatedly hitting it in practice on
+     * genuinely ordinary literals (a multi-line SQL CREATE TABLE
+     * statement, a GraphQL query) that had to be manually split into an
+     * Array + .join() to work around it -- see skindicate.dia's own
+     * setup_db.di and winamp_api.di for real examples this fix
+     * eliminates the workaround for. */
+    DIAMOND_MAX_STRING_LENGTH = 4095,
     DIAMOND_MAX_CLASSES = 180,
     DIAMOND_MAX_INTERFACES = 32,
     DIAMOND_MAX_MODULES = 32,

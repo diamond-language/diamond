@@ -164,7 +164,7 @@ typedef struct Compiler {
     bool positional_spread_literal;
     size_t positional_spread_first;
     size_t positional_spread_count;
-    uint16_t positional_spread_elements[32];
+    uint16_t positional_spread_elements[DIAMOND_MAX_ARGUMENTS];
     size_t positional_spread_fixed_count;
     size_t positional_spread_index;
     uint16_t positional_spread_fixed[DIAMOND_MAX_DECLARED_PARAMETERS];
@@ -1958,7 +1958,7 @@ static uint16_t parse_dynamic_keyword_arguments(Compiler *compiler,
     uint16_t fixed[DIAMOND_MAX_DECLARED_PARAMETERS];size_t fixed_count=0,spread_index=0;
     uint16_t spread=0;bool saw_spread=false,seen_keyword=false;
     bool literal_positions=false;size_t literal_first=0,literal_count=0;
-    uint16_t literal_elements[32];
+    uint16_t literal_elements[DIAMOND_MAX_ARGUMENTS];
     compiler->positional_spread_literal=false;
     compiler->positional_spread_first=0;
     compiler->positional_spread_count=0;
@@ -2119,7 +2119,7 @@ static uint16_t parse_spread_argument_array(Compiler *compiler,
     uint16_t spread=0;bool saw_spread=false,seen_keyword=false;
     bool optional_block=false;
     bool literal_positions=false;size_t literal_first=0,literal_count=0;
-    uint16_t literal_elements[32];
+    uint16_t literal_elements[DIAMOND_MAX_ARGUMENTS];
     compiler->positional_spread_literal=false;
     compiler->positional_spread_first=0;
     compiler->positional_spread_count=0;
@@ -7622,7 +7622,7 @@ static uint16_t parse_with_expected_set(Compiler *compiler,
 static uint16_t parse_array_literal(Compiler *compiler,
         const DiamondFunction *expected_function,size_t first_parameter,
         size_t parameter_count) {
-    uint16_t elements[32];
+    uint16_t elements[DIAMOND_MAX_ARGUMENTS];
     size_t count=0;
     uint16_t expected_element=DIAMOND_NO_TYPE_SET;
     if(compiler->expected_expression_type_set>=0&&
@@ -7636,7 +7636,7 @@ static uint16_t parse_array_literal(Compiler *compiler,
     skip_newlines(compiler);
     if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_BRACKET) {
         do {
-            if(count==32) {
+            if(count==DIAMOND_MAX_ARGUMENTS) {
                 fail(compiler,compiler->current.span,"array literal has too many elements");
                 return 0;
             }
