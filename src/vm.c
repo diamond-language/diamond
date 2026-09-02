@@ -12845,9 +12845,9 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 }
                 const int64_t a=registers[left].as.integer;
                 const int64_t b=registers[right].as.integer;
-                const int64_t result=bitwise_opcode==DIAMOND_OP_BITWISE_AND?(a&b):
+                const int64_t bitwise_result=bitwise_opcode==DIAMOND_OP_BITWISE_AND?(a&b):
                     bitwise_opcode==DIAMOND_OP_BITWISE_OR?(a|b):(a^b);
-                registers[destination]=DIAMOND_INT(result);
+                registers[destination]=DIAMOND_INT(bitwise_result);
                 break;
             }
             case DIAMOND_OP_MODULO: {

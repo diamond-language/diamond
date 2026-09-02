@@ -58,13 +58,16 @@ set -e
 [[ "$status" != 300 ]]
 count=$((count + 1))
 
-# --- a non-Int code raises TypeError, not a process exit ---
+# --- a non-Int code raises TypeError (an uncaught exception, printed
+# as "runtime error: <message>" -- an uncaught exception's own class
+# name never appears in that text, only its message, so this checks
+# exit_helper's actual message instead of the exception's class name) ---
 set +e
 error_output="$("$diamond" -e 'exit("nope")' 2>&1)"
 status=$?
 set -e
 [[ "$status" != 0 ]]
-[[ "$error_output" == *"type error"* ]]
+[[ "$error_output" == *"exit code must be an Int"* ]]
 count=$((count + 1))
 
 echo "$count exit tests passed"
