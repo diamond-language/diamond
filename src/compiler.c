@@ -4185,7 +4185,9 @@ static uint16_t parse_file_path_unary_call(Compiler *compiler,DiamondFilePathFun
     emit_opcode(compiler,DIAMOND_OP_FILE_PATH);
     emit_register(compiler,dest);emit_register(compiler,path_register);
     emit_register(compiler,second_register);emit_byte(compiler,(uint8_t)id);
-    compiler->known_types[dest]=id==DIAMOND_FILE_PATH_ABSOLUTE?DIAMOND_TYPE_BOOL:DIAMOND_TYPE_STRING;
+    compiler->known_types[dest]=
+        (id==DIAMOND_FILE_PATH_ABSOLUTE||id==DIAMOND_FILE_PATH_DIRECTORY)?
+        DIAMOND_TYPE_BOOL:DIAMOND_TYPE_STRING;
     return dest;
 }
 
@@ -4261,6 +4263,10 @@ static uint16_t parse_file_call(Compiler *compiler) {
         advance_token(compiler);
         return parse_file_path_unary_call(compiler,DIAMOND_FILE_PATH_ABSOLUTE);
     }
+    if(name_equals(compiler,"directory?",method,false)) {
+        advance_token(compiler);
+        return parse_file_path_unary_call(compiler,DIAMOND_FILE_PATH_DIRECTORY);
+    }
     if(name_equals(compiler,"basename",method,false)) {
         advance_token(compiler);
         return parse_file_path_binary_call(compiler,DIAMOND_FILE_PATH_BASENAME);
@@ -4270,7 +4276,7 @@ static uint16_t parse_file_call(Compiler *compiler) {
         return parse_file_path_binary_call(compiler,DIAMOND_FILE_PATH_EXPAND);
     }
     fail(compiler,method,"unknown File method (expected open/delete/join/dirname/basename/"
-        "extname/absolute?/expand_path)");
+        "extname/absolute?/directory?/expand_path)");
     return 0;
 }
 
