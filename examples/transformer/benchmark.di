@@ -4,6 +4,8 @@
 # the underlying Tensor#matmul work actually matters.
 require "./lib/rng"
 require "./lib/tensor_ops"
+require "./lib/var"
+require "./lib/autograd"
 require "./lib/linear"
 require "./lib/attention"
 require "./lib/feed_forward"
@@ -32,7 +34,7 @@ while i < seq_len
 end
 
 t0 = Time.monotonic()
-logits = model.forward(token_ids)
+logits = model.forward(token_ids).tensor()
 t1 = Time.monotonic()
 
 puts("build: #{t_build1 - t_build0}s")

@@ -2,10 +2,16 @@
 # decoder-only transformer and runs one real forward pass through it --
 # proves the whole pipeline (embedding -> N attention+feed-forward
 # blocks -> output projection) actually wires together and produces
-# real logits, on top of examples/../src Tensor. See this directory's
-# own README.md for what is and isn't in scope.
+# real logits, on top of examples/../src Tensor. #forward returns a
+# Var (var.di), not a raw Tensor -- see train.di for the trainable
+# side of this same model (this script never calls backward!, so the
+# autograd graph #forward also builds here is simply unused, harmless
+# overhead). See this directory's own README.md for what is and isn't
+# in scope.
 require "./lib/rng"
 require "./lib/tensor_ops"
+require "./lib/var"
+require "./lib/autograd"
 require "./lib/linear"
 require "./lib/attention"
 require "./lib/feed_forward"
@@ -26,7 +32,7 @@ model = TransformerModel.new(vocab_size, d_model, num_heads, d_ff, num_layers, m
 token_ids = [3, 17, 8, 41, 2, 9]
 
 t0 = Time.monotonic()
-logits = model.forward(token_ids)
+logits = model.forward(token_ids).tensor()
 t1 = Time.monotonic()
 
 puts("model: vocab=#{vocab_size} d_model=#{d_model} heads=#{num_heads} d_ff=#{d_ff} layers=#{num_layers}")

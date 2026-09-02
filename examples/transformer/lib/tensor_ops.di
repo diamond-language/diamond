@@ -5,6 +5,64 @@
 # these are O(n^3) like #matmul itself, so a plain per-element Diamond
 # loop is fine -- no need for more native C surface here.
 
+# A fresh, independent copy -- needed anywhere an in-place mutator
+# (tensor_add!, tensor_scale!, tensor_gelu!, tensor_row_softmax!, ...)
+# is about to be used to compute a *new* forward value from an
+# existing Var's .tensor(): the original must survive unmutated, both
+# because other ops may still read it (a Var can be used as the parent
+# of more than one op) and because several backward passes (gelu,
+# layernorm, softmax) read the *original* pre-op values, not the
+# post-op ones.
+def tensor_clone(x)
+  result = Tensor.zeros(x.rows(), x.cols())
+  i = 0
+  while i < x.rows()
+    j = 0
+    while j < x.cols()
+      result.set(i, j, x.get(i, j))
+      j += 1
+    end
+    i += 1
+  end
+  result
+end
+
+# Sums each column across every row -- a (1 x cols) Tensor. The
+# backward-pass shape for a bias that was broadcast-added to every row
+# in the forward pass (Autograd.add_bias).
+def tensor_column_sums(x)
+  result = Tensor.zeros(1, x.cols())
+  i = 0
+  while i < x.rows()
+    j = 0
+    while j < x.cols()
+      result.set(0, j, result.get(0, j) + x.get(i, j))
+      j += 1
+    end
+    i += 1
+  end
+  result
+end
+
+# Adds src into dest's columns [start, start+src.cols()), in place --
+# the backward-pass shape for tensor_columns's own forward slice
+# (Autograd.columns/#concat_columns): a gradient contribution into a
+# specific column range of a wider Tensor, accumulated (not
+# overwritten) since that range may receive contributions from more
+# than one op.
+def tensor_add_columns!(dest, start, src)
+  i = 0
+  while i < src.rows()
+    j = 0
+    while j < src.cols()
+      dest.set(i, start + j, dest.get(i, start + j) + src.get(i, j))
+      j += 1
+    end
+    i += 1
+  end
+  dest
+end
+
 def tensor_ones(rows, cols)
   result = Tensor.zeros(rows, cols)
   i = 0
