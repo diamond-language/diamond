@@ -8,9 +8,10 @@ module Dials
   class Params
     # -1 for anything that isn't a hex digit -- Params.decode's own signal
     # to treat a "%" that isn't actually followed by two hex digits as a
-    # literal character instead of raising. String has no ordering
-    # comparison (`<`/`>` raise TypeError -- see docs/syntax.md), so this
-    # compares `.ord()` values instead.
+    # literal character instead of raising. Compares `.ord()` values
+    # rather than the characters themselves (String does support
+    # ordering) -- an ASCII byte-range check reads more directly this
+    # way than a lexicographic String comparison would.
     def self.hex_digit_value(ch: String) -> Int
       code = ch.ord()
       if code >= "0".ord() && code <= "9".ord()

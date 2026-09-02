@@ -37,10 +37,10 @@ module ActiveRecord
   # nil (an ordinary missing-key lookup, not an error), and #rollback
   # raises a clear error rather than silently no-opping if it's ever
   # actually needed. "version" only has to be a stable, unique String --
-  # nothing here sorts or compares version values (Diamond's String has no
-  # ordering comparison at all: `<`/`>` raise TypeError, `<=>` returns nil,
-  # confirmed directly), so a Migrator caller's own Array order is the only
-  # order that matters, timestamp-shaped or not.
+  # nothing here sorts or compares version values (a deliberate design
+  # choice, not a language limitation -- String does support ordering
+  # today), so a Migrator caller's own Array order is the only order
+  # that matters, timestamp-shaped or not.
   #
   # Every method below is `self.`-owned, never instantiated -- same as
   # Transaction. #run/#rollback build on Transaction.run itself (a zero-arg
