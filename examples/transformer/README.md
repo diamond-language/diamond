@@ -21,12 +21,20 @@ feature yet (see the branch's own root commit message).
   `Tensor.random` (the actual random fill happens natively in C, not
   in a Diamond loop -- see its own comment for why that distinction
   mattered).
-- `lib/tensor_ops.di` -- elementwise/shape helpers built on the native
-  `#get`/`#set`/`#matmul`/`#transpose`: add, add-bias, scale, row
-  softmax, LayerNorm, column slicing/concatenation (for splitting a
-  projection into per-head slices and reassembling them), GELU. None
-  of these are O(n^3) like `#matmul` itself, so a plain per-element
-  Diamond loop is fine for all of them -- no native C needed here.
+- `lib/tensor_ops.di` -- thin Diamond wrappers around native Tensor
+  methods: add!/scale!/add_bias!/row_softmax!/gelu!/columns/
+  concat_columns/column_sums/clone, plus LayerNorm's forward+backward
+  pair (`#layernorm_forward`/`#layernorm_backward`) and softmax/GELU's
+  own backward passes (`#softmax_backward`/`#gelu_backward`), all in
+  `src/vm.c`. These were *not* native in this scaffold's first pass
+  ("none of these are O(n^3) like #matmul, a plain Diamond loop is
+  fine" -- true for correctness, wrong for speed): one training step
+  measured 5.55s before moving the forward mutators to C, barely
+  improved (7.24s -- noise) until the *backward* passes were moved too,
+  landing at 4.19s -- see autograd.di's own history for the full
+  finding, including why the improvement was more modest than hoped
+  (the remaining cost is Var/Autograd's own per-op bookkeeping --
+  allocation, closures, GC -- not element-wise math anymore).
 - `lib/var.di` -- `Var`: one node in the reverse-mode autodiff graph
   (a Tensor, its accumulated gradient, its parent Vars, and a
   `backward` closure).
@@ -66,9 +74,53 @@ feature yet (see the branch's own root commit message).
   printing loss every 20. Loss goes from ~2.9 to ~0.02 and the model
   gets every prediction right by the end -- the actual proof training
   works end to end, not just that it's wired up.
+- `lib/tokenizer.di` -- `ByteTokenizer`: byte-level (vocab_size always
+  256, every byte value is its own token), no vocabulary-building pass
+  needed, works on any file unchanged including non-ASCII text.
+- `lib/corpus.di` -- `Corpus.load(folder, extensions, max_files,
+  max_stories)`: assembles training text from every matching file
+  under a folder (shells out to `find`, sorted by the numeric part of
+  each filename so "the first N files" means what it sounds like on a
+  numbered dataset like TinyStories' `data00.json`..`data50.json`).
+  `.txt`/`.md` contribute their raw content; `.json` is parsed and
+  walked for TinyStories' own shape (`[{"story": "...", ...}, ...]`,
+  or a plain array of strings) -- and parsing is genuinely slow at
+  real scale (~330ms/MB measured directly against the actual
+  TinyStories_all_data corpus, ~140MB/shard means ~45s just to parse
+  one file), which is what `max_files`/`max_stories` are for: start
+  small while iterating, raise them once you're ready to commit the
+  time.
+- `lib/dataset.di` -- `Dataset.windows(token_ids, seq_len, stride)`:
+  chops a whole tokenized corpus into fixed-length (input, target)
+  training examples (the model has no batching dimension, so this is
+  what "one training example" means against a real corpus rather than
+  a hand-written toy list).
+- `lib/checkpoint.di` -- `Checkpoint.save`/`.load!`: a trained model's
+  weights to/from a plain JSON file (every parameter Tensor, in
+  `model.parameters()`'s own fixed order, as nested arrays via
+  `Tensor#to_a`/`.from_array`) -- round-tripped and verified directly.
+- `train_corpus.di` -- the practical trainer: `Corpus.load` a real
+  folder, `ByteTokenizer.encode`, `Dataset.windows`, one SGD step per
+  window, `Checkpoint.save` after every epoch. Prints an estimated
+  total training time up front (based on a measured seconds/step
+  constant) before committing to a run -- adjust `max_stories`/
+  `epochs` if that number is too long. Usage: `../../build/diamond
+  train_corpus.di <folder> [checkpoint_path] [max_files] [max_stories]`.
+- `generate.di` -- loads a checkpoint and greedily (argmax, no
+  temperature/top-k yet) generates text continuing a prompt, one byte
+  at a time. No K/V cache -- every step re-runs the full forward pass
+  over the whole context so far (clamped to the last `max_seq_len`
+  tokens, since the positional embedding table only has that many
+  rows), fine for a demo, not how a real implementation would do this.
+  Usage: `../../build/diamond generate.di <checkpoint_path> <prompt>
+  [num_tokens]`. Its own model config (d_model/heads/d_ff/layers/
+  seq_len) must exactly match whatever `train_corpus.di` was run
+  with -- `Checkpoint.load!` only checks the parameter *count*, not
+  each Tensor's shape.
 
 Run any of them with `../../build/diamond demo.di` (or `benchmark.di`,
-`gradcheck.di`, `train.di`) from this directory.
+`gradcheck.di`, `train.di`, `train_corpus.di`, `generate.di`) from this
+directory.
 
 ## Scope
 
@@ -98,5 +150,24 @@ implementation -- there's no training to actually benefit from a
 carefully-tuned init distribution, so it only needs to avoid a
 degenerate all-zero or NaN-producing forward pass, which it does.
 
-**No tokenizer.** `demo.di`/`benchmark.di` both feed in already-integer
-token ids (`Array` of `Int`) directly.
+**`demo.di`/`benchmark.di` still feed in already-integer token ids
+directly** (not through `ByteTokenizer`) -- they predate the
+tokenizer/corpus work and were never updated, since their whole point
+is exercising the model shape/timing directly, not the text pipeline
+around it.
+
+**Training throughput is real but modest, not fast.** ~4.2s/step
+measured at this scaffold's actual training config (d_model=128, 4
+layers, seq_len=64) after moving every hot elementwise op (forward
+*and* backward) to native C -- meaningfully better than the ~5.55s/step
+this measured before that work, but nowhere near what the native-op
+speedup alone might suggest, because the remaining cost is Var/
+Autograd's own per-op overhead (a fresh Tensor/Var/closure allocated
+per op, GC pressure), not element-wise math. At that rate, one epoch
+over even a modest few-hundred-story slice of a real corpus is
+measured in hours, and the full TinyStories corpus (51 shards, ~7GB,
+~2.6M stories) is not remotely tractable without either a much smaller
+model/corpus or further work on the per-op overhead itself -- a
+different, harder problem than "which loop should be in C" (batching
+multiple ops together, avoiding the zero-initialized grad allocation
+until a gradient is actually needed, etc.), not yet attempted here.
