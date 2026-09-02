@@ -5997,6 +5997,14 @@ static uint16_t parse_name(Compiler *compiler) {
        compiler->current.kind==DIAMOND_TOKEN_LEFT_PAREN&&
        name_equals(compiler,"pow",name,false))
         return parse_math_binary_call(compiler,DIAMOND_MATH_POW);
+    if(find_local(compiler,name)<0&&find_function(compiler,name)<0&&
+       compiler->current.kind==DIAMOND_TOKEN_LEFT_PAREN&&
+       name_equals(compiler,"exp",name,false))
+        return parse_math_unary_call(compiler,DIAMOND_MATH_EXP);
+    if(find_local(compiler,name)<0&&find_function(compiler,name)<0&&
+       compiler->current.kind==DIAMOND_TOKEN_LEFT_PAREN&&
+       name_equals(compiler,"log",name,false))
+        return parse_math_unary_call(compiler,DIAMOND_MATH_LOG);
     /* ARGV/ENV -- plain values, not calls, so unlike puts/gets/Time/etc.
      * above there's no `current.kind==LEFT_PAREN` gate: `ARGV` alone is
      * already a complete expression. Still shadowable by a local or

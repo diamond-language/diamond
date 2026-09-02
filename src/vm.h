@@ -442,6 +442,8 @@ typedef enum DiamondMathFunction : uint8_t {
     DIAMOND_MATH_COS,
     DIAMOND_MATH_TAN,
     DIAMOND_MATH_POW,
+    DIAMOND_MATH_EXP,
+    DIAMOND_MATH_LOG,
 } DiamondMathFunction;
 
 typedef enum DiamondTypeId : uint8_t {
