@@ -415,6 +415,13 @@ typedef enum DiamondOpCode : uint8_t {
     DIAMOND_OP_TIME_PARSE,
     /* Time.utc/local/fixed(...), also appended for opcode stability. */
     DIAMOND_OP_TIME_BUILD,
+    /* Dir.entries(path) -- every name in a directory (opendir/readdir),
+     * excluding "." and "..", as an Array of Strings. No recursion, no
+     * glob patterns -- just the one primitive Diamond had none of at
+     * all before this (confirmed: no Dir class, nothing in this enum);
+     * build anything more elaborate (a recursive walk, a glob) out of
+     * this in Diamond itself. */
+    DIAMOND_OP_DIR_ENTRIES,
     DIAMOND_OP_COUNT,
 } DiamondOpCode;
 
@@ -436,6 +443,9 @@ typedef enum DiamondMathFunction : uint8_t {
     DIAMOND_MATH_COS,
     DIAMOND_MATH_TAN,
     DIAMOND_MATH_POW,
+    DIAMOND_MATH_EXP,
+    DIAMOND_MATH_LOG,
+    DIAMOND_MATH_TANH,
 } DiamondMathFunction;
 
 typedef enum DiamondTypeId : uint8_t {

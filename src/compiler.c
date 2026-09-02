@@ -4087,6 +4087,38 @@ static uint16_t parse_file_delete_arguments(Compiler *compiler) {
     return dest;
 }
 
+/* `Dir.entries(path)` -- single String argument, mirrors
+ * parse_file_delete_arguments's own single-fixed-argument shape
+ * exactly. */
+static uint16_t parse_dir_entries_call(Compiler *compiler) {
+    advance_token(compiler); /* consume '.' */
+    if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER||
+       !name_equals(compiler,"entries",compiler->current.span,false)) {
+        fail(compiler,compiler->current.span,"expected 'entries' after 'Dir'");
+        return 0;
+    }
+    advance_token(compiler); /* consume 'entries' */
+    if(compiler->current.kind!=DIAMOND_TOKEN_LEFT_PAREN) {
+        fail(compiler,compiler->current.span,"expected '(' after 'Dir.entries'");
+        return 0;
+    }
+    advance_token(compiler);
+    skip_newlines(compiler);
+    const uint16_t path_register=parse_expression(compiler);
+    skip_newlines(compiler);
+    if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
+        fail(compiler,compiler->current.span,"expected ')' after Dir.entries argument");
+        return 0;
+    }
+    advance_token(compiler);
+    const uint16_t dest=allocate_register(compiler);
+    emit_opcode(compiler,DIAMOND_OP_DIR_ENTRIES);
+    emit_register(compiler,dest);
+    emit_register(compiler,path_register);
+    compiler->known_types[dest]=DIAMOND_TYPE_ARRAY;
+    return dest;
+}
+
 /* `File.join(*parts)` -- a variable number of String arguments, moved
  * into a contiguous register run the same way parse_thread_new_call's
  * own variadic argument list already is (DIAMOND_OP_FILE_JOIN, not the
@@ -5779,6 +5811,10 @@ static uint16_t parse_name(Compiler *compiler) {
         return parse_file_call(compiler);
     if(class_index<0&&find_local(compiler,name)<0&&find_function(compiler,name)<0&&
        compiler->current.kind==DIAMOND_TOKEN_DOT&&
+       name_equals(compiler,"Dir",name,false))
+        return parse_dir_entries_call(compiler);
+    if(class_index<0&&find_local(compiler,name)<0&&find_function(compiler,name)<0&&
+       compiler->current.kind==DIAMOND_TOKEN_DOT&&
        name_equals(compiler,"Regexp",name,false))
         return parse_regexp_new_call(compiler);
     if(class_index<0&&find_local(compiler,name)<0&&find_function(compiler,name)<0&&
@@ -5919,6 +5955,18 @@ static uint16_t parse_name(Compiler *compiler) {
        compiler->current.kind==DIAMOND_TOKEN_LEFT_PAREN&&
        name_equals(compiler,"pow",name,false))
         return parse_math_binary_call(compiler,DIAMOND_MATH_POW);
+    if(find_local(compiler,name)<0&&find_function(compiler,name)<0&&
+       compiler->current.kind==DIAMOND_TOKEN_LEFT_PAREN&&
+       name_equals(compiler,"exp",name,false))
+        return parse_math_unary_call(compiler,DIAMOND_MATH_EXP);
+    if(find_local(compiler,name)<0&&find_function(compiler,name)<0&&
+       compiler->current.kind==DIAMOND_TOKEN_LEFT_PAREN&&
+       name_equals(compiler,"log",name,false))
+        return parse_math_unary_call(compiler,DIAMOND_MATH_LOG);
+    if(find_local(compiler,name)<0&&find_function(compiler,name)<0&&
+       compiler->current.kind==DIAMOND_TOKEN_LEFT_PAREN&&
+       name_equals(compiler,"tanh",name,false))
+        return parse_math_unary_call(compiler,DIAMOND_MATH_TANH);
     /* ARGV/ENV -- plain values, not calls, so unlike puts/gets/Time/etc.
      * above there's no `current.kind==LEFT_PAREN` gate: `ARGV` alone is
      * already a complete expression. Still shadowable by a local or
