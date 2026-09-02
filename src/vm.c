@@ -13,6 +13,7 @@
 
 #include <crypt.h>
 #include <ctype.h>
+#include <dirent.h>
 #include <errno.h>
 #include <limits.h>
 #include <math.h>
@@ -263,6 +264,8 @@ static void free_adopted_programs(void *list);
 static void free_thread(DiamondThread *thread);
 static void populate_default_argv_env(DiamondVm *vm);
 static void format_value_type(char *buffer, size_t capacity, DiamondValue value);
+static void format_operator_type_error(DiamondVm *vm,DiamondValue left_value,
+        DiamondValue right_value,const char *op_name);
 
 /* The per-kind "walk this object's own direct children" switch,
  * deliberately factored out of mark_object below (which adds the
@@ -6717,11 +6720,7 @@ static DiamondVmStatus add_fallback(DiamondVm *vm,const DiamondChunk *chunk,size
         *out_result=DIAMOND_OBJECT(result);
         return DIAMOND_VM_OK;
     }
-    char left_type[80],right_type[80];
-    format_value_type(left_type,sizeof left_type,left_value);
-    format_value_type(right_type,sizeof right_type,right_value);
-    snprintf(vm->error,sizeof vm->error,"%s does not support '+' with %s",
-        left_type,right_type);
+    format_operator_type_error(vm,left_value,right_value,"+");
     return DIAMOND_VM_TYPE_ERROR;
 }
 
@@ -6775,6 +6774,23 @@ static DiamondVmStatus time_subtract_fallback(DiamondVm *vm,
  * EQUAL case block, and same reason it writes a ready-to-store
  * DiamondValue into *out_result rather than a bare bool -- the call site
  * needs zero locals of its own this way, just an `if` around the call. */
+/* Plain byte-lexicographic ordering (memcmp on the shared prefix, then
+ * shorter-is-less on a tie) -- the same ordering C's own strcmp/memcmp
+ * and Ruby's String#<=> use. Diamond's String is a raw byte buffer,
+ * not UTF-8-validated (see e.g. examples/transformer/lib/tokenizer.di's
+ * own comment on why that property gets relied on elsewhere), so this
+ * is a byte comparison, not a locale-aware or codepoint-aware one --
+ * matches every other place in this codebase that already treats
+ * String as bytes rather than text. */
+static int diamond_string_compare(const DiamondString *a,const DiamondString *b) {
+    const size_t min_length=a->length<b->length?a->length:b->length;
+    const int result=min_length==0?0:memcmp(a->chars,b->chars,min_length);
+    if(result!=0)return result;
+    if(a->length<b->length)return -1;
+    if(a->length>b->length)return 1;
+    return 0;
+}
+
 static bool time_comparison_fallback(DiamondValue left_value,DiamondValue right_value,
         DiamondOpCode opcode,DiamondValue *out_result) {
     if (left_value.kind!=DIAMOND_VALUE_OBJECT||
@@ -8556,6 +8572,39 @@ static void format_value_type(char *buffer, size_t capacity,
         }
     }
     snprintf(buffer,capacity,"%s",name);
+}
+
+/* "X does not support 'op' with Y" -- shared by every arithmetic/
+ * comparison operator's type-mismatch error site. When either operand
+ * is a Callable, appends a hint: a bare `obj.method` (no parens) is a
+ * method *reference*, not an invocation -- Diamond doesn't error on
+ * that, it silently returns a Callable, so a call site expecting the
+ * method's actual return value only finds out something's wrong here,
+ * often nowhere near the real mistake (found the hard way in this
+ * exact session: a bug that looked like data corruption -- `#<Closure>`
+ * printed where a value should have been -- turned out to be exactly
+ * this). Doesn't change that behavior itself (a bare method reference
+ * is a deliberate, real feature -- singleton method references), only
+ * makes the resulting error easier to actually debug. */
+static void format_operator_type_error(DiamondVm *vm,DiamondValue left_value,
+        DiamondValue right_value,const char *op_name) {
+    char left_type[80],right_type[80];
+    format_value_type(left_type,sizeof left_type,left_value);
+    format_value_type(right_type,sizeof right_type,right_value);
+    const bool either_callable=
+        (left_value.kind==DIAMOND_VALUE_OBJECT&&
+         left_value.as.object->kind==DIAMOND_OBJECT_CLOSURE)||
+        (right_value.kind==DIAMOND_VALUE_OBJECT&&
+         right_value.as.object->kind==DIAMOND_OBJECT_CLOSURE);
+    if(either_callable) {
+        snprintf(vm->error,sizeof vm->error,
+            "%s does not support '%s' with %s (a bare 'obj.method' without "
+            "parens is a method reference, not a call -- did you mean 'obj.method()'?)",
+            left_type,op_name,right_type);
+    } else {
+        snprintf(vm->error,sizeof vm->error,"%s does not support '%s' with %s",
+            left_type,op_name,right_type);
+    }
 }
 
 typedef struct StringBuilder {
@@ -13386,11 +13435,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                             registers[left],registers[right],&registers[destination]);
                         if(time_status!=DIAMOND_VM_TYPE_ERROR){VM_PROPAGATE(time_status);break;}
                     }
-                    char left_type[80],right_type[80];
-                    format_value_type(left_type,sizeof left_type,registers[left]);
-                    format_value_type(right_type,sizeof right_type,registers[right]);
-                    snprintf(vm->error,sizeof vm->error,
-                        "%s does not support '%s' with %s",left_type,name,right_type);
+                    format_operator_type_error(vm,registers[left],registers[right],name);
                     VM_RETURN(DIAMOND_VM_TYPE_ERROR);
                 }
                 const int64_t left_value = registers[left].as.integer;
@@ -13551,13 +13596,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                         registers[destination]=op_result;break;
                     }
                 }
-                {
-                    char left_type[80],right_type[80];
-                    format_value_type(left_type,sizeof left_type,registers[left]);
-                    format_value_type(right_type,sizeof right_type,registers[right]);
-                    snprintf(vm->error,sizeof vm->error,
-                        "%s does not support '%%' with %s",left_type,right_type);
-                }
+                format_operator_type_error(vm,registers[left],registers[right],"%");
                 VM_RETURN(DIAMOND_VM_TYPE_ERROR);
             }
             case DIAMOND_OP_NEGATE: {
@@ -13779,6 +13818,21 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     registers[destination]=DIAMOND_BOOL(float_comparison);
                     break;
                 }
+                if (registers[left].kind==DIAMOND_VALUE_OBJECT&&
+                    registers[left].as.object->kind==DIAMOND_OBJECT_STRING&&
+                    registers[right].kind==DIAMOND_VALUE_OBJECT&&
+                    registers[right].as.object->kind==DIAMOND_OBJECT_STRING) {
+                    const int comparison=diamond_string_compare(
+                        (const DiamondString *)registers[left].as.object,
+                        (const DiamondString *)registers[right].as.object);
+                    bool string_comparison=false;
+                    if(opcode==DIAMOND_OP_LESS)string_comparison=comparison<0;
+                    else if(opcode==DIAMOND_OP_LESS_EQUAL)string_comparison=comparison<=0;
+                    else if(opcode==DIAMOND_OP_GREATER)string_comparison=comparison>0;
+                    else string_comparison=comparison>=0;
+                    registers[destination]=DIAMOND_BOOL(string_comparison);
+                    break;
+                }
                 if (registers[left].kind != DIAMOND_VALUE_INT ||
                     registers[right].kind != DIAMOND_VALUE_INT) {
                     /* By this point opcode is guaranteed one of the four
@@ -13806,11 +13860,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                         const char *name=opcode==DIAMOND_OP_LESS?"<":
                             opcode==DIAMOND_OP_LESS_EQUAL?"<=":
                             opcode==DIAMOND_OP_GREATER?">":">=";
-                        char left_type[80],right_type[80];
-                        format_value_type(left_type,sizeof left_type,registers[left]);
-                        format_value_type(right_type,sizeof right_type,registers[right]);
-                        snprintf(vm->error,sizeof vm->error,
-                            "%s does not support '%s' with %s",left_type,name,right_type);
+                        format_operator_type_error(vm,registers[left],registers[right],name);
                     }
                     VM_RETURN(DIAMOND_VM_TYPE_ERROR);
                 }
@@ -13837,9 +13887,14 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
              * still ends up raising for a genuinely incomparable pair, on
              * the next comparison rather than a bespoke error path here.
              * Deliberately no _INT quickening variant (see this feature's
-             * own design doc) and no String/Time support -- String
-             * doesn't support `<` either today, and Time keeps its own
-             * working comparisons untouched, both explicit scope cuts. */
+             * own design doc). String now supports both `<=>` and
+             * LESS/LESS_EQUAL/GREATER/GREATER_EQUAL (diamond_string_compare,
+             * byte-lexicographic) -- this comment used to note that gap as
+             * a deliberate scope cut; it wasn't sustainable (see e.g.
+             * packages/active_record, packages/graphql, and examples/
+             * transformer's own workarounds sorting by an extracted Int
+             * key instead). Time keeps its own separate working
+             * comparisons untouched. */
             case DIAMOND_OP_COMPARE: {
                 uint16_t destination=0,left=0,right=0;
                 READ_SHORT(destination);READ_SHORT(left);READ_SHORT(right);
@@ -13873,6 +13928,16 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     }
                     registers[destination]=DIAMOND_INT(
                         left_real<right_real?-1:(left_real>right_real?1:0));
+                    break;
+                }
+                if(registers[left].kind==DIAMOND_VALUE_OBJECT&&
+                   registers[left].as.object->kind==DIAMOND_OBJECT_STRING&&
+                   registers[right].kind==DIAMOND_VALUE_OBJECT&&
+                   registers[right].as.object->kind==DIAMOND_OBJECT_STRING) {
+                    const int comparison=diamond_string_compare(
+                        (const DiamondString *)registers[left].as.object,
+                        (const DiamondString *)registers[right].as.object);
+                    registers[destination]=DIAMOND_INT(comparison<0?-1:(comparison>0?1:0));
                     break;
                 }
                 if(registers[left].kind==DIAMOND_VALUE_OBJECT&&
@@ -16176,6 +16241,38 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                         if(argc!=0)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
                         registers[dest]=array->count==0?DIAMOND_NIL:
                             array->values[--array->count];break;
+                    }
+                    /* (start, length) -- same bounds/clamping contract as
+                     * String#slice (see that one's own comment): start
+                     * must be in [0, count] (start==count is a valid,
+                     * always-empty slice), length must be >=0, and the
+                     * actual element count taken clamps to whatever's
+                     * actually available rather than erroring on a
+                     * length that runs past the end. Array had no #slice
+                     * at all before this -- String's own existed, Array's
+                     * didn't, an inconsistency with no principled reason
+                     * behind it. */
+                    if(method_name->length==5&&memcmp(method_name->chars,"slice",5)==0) {
+                        if(argc!=2)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                        if(registers[base].kind!=DIAMOND_VALUE_INT||
+                           registers[(size_t)base+1].kind!=DIAMOND_VALUE_INT) {
+                            snprintf(vm->error,sizeof vm->error,"Array#slice arguments must be Int");
+                            VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                        }
+                        const int64_t start=registers[base].as.integer;
+                        const int64_t requested_length=registers[(size_t)base+1].as.integer;
+                        if(start<0||(uint64_t)start>array->count||requested_length<0) {
+                            snprintf(vm->error,sizeof vm->error,
+                                "index %" PRId64 " out of bounds for Array of length %zu",
+                                start,array->count);
+                            VM_RETURN(DIAMOND_VM_INDEX_ERROR);
+                        }
+                        const size_t available=array->count-(size_t)start;
+                        const size_t take=(size_t)requested_length<available?
+                            (size_t)requested_length:available;
+                        DiamondArray *sliced=allocate_array(vm,array->values+(size_t)start,take);
+                        if(sliced==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                        registers[dest]=DIAMOND_OBJECT(sliced);break;
                     }
                     snprintf(vm->error,sizeof vm->error,"undefined method '%.*s' for %s",
                         (int)method_name->length,method_name->chars,"Array");
@@ -18685,6 +18782,65 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 registers[dest]=(DiamondValue){.kind=DIAMOND_VALUE_BOOL,.as.boolean=true};
                 break;
             }
+            case DIAMOND_OP_DIR_ENTRIES: {
+                uint16_t dest=0,path_reg=0;
+                READ_SHORT(dest);READ_SHORT(path_reg);
+                if(registers[path_reg].kind!=DIAMOND_VALUE_OBJECT||
+                   registers[path_reg].as.object->kind!=DIAMOND_OBJECT_STRING) {
+                    snprintf(vm->error,sizeof vm->error,"Dir.entries argument must be a String value");
+                    VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                }
+                const DiamondString *path=(const DiamondString *)registers[path_reg].as.object;
+                errno=0;
+                DIR *directory=opendir(path->chars);
+                if(directory==nullptr) {
+                    snprintf(vm->error,sizeof vm->error,"cannot open directory '%.*s': %s",
+                             (int)path->length,path->chars,strerror(errno));
+                    VM_RETURN(DIAMOND_VM_IO_ERROR);
+                }
+                /* Rooted immediately -- entries is pushed onto as it
+                 * grows, same "root the outer Array first, every element
+                 * is reachable through it before the next one's own
+                 * allocation" discipline tensor_to_a_helper's own comment
+                 * (earlier in this file) explains in full. */
+                DiamondArray *entries=allocate_array(vm,nullptr,0);
+                if(entries==nullptr) {
+                    closedir(directory);
+                    VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                }
+                registers[dest]=DIAMOND_OBJECT(entries);
+                /* readdir's own error contract: a nullptr return means
+                 * either "no more entries" (errno left unchanged) or a
+                 * genuine read error (errno set) -- indistinguishable
+                 * without resetting errno immediately before every call
+                 * and checking it only once the loop actually stops. */
+                errno=0;
+                struct dirent *entry=readdir(directory);
+                while(entry!=nullptr) {
+                    if(strcmp(entry->d_name,".")!=0&&strcmp(entry->d_name,"..")!=0) {
+                        DiamondString *name=
+                            allocate_string(vm,entry->d_name,strlen(entry->d_name));
+                        if(name==nullptr) {
+                            closedir(directory);
+                            VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                        }
+                        if(!array_push(vm,entries,DIAMOND_OBJECT(name))) {
+                            closedir(directory);
+                            VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                        }
+                    }
+                    errno=0;
+                    entry=readdir(directory);
+                }
+                if(errno!=0) {
+                    snprintf(vm->error,sizeof vm->error,"error reading directory '%.*s': %s",
+                             (int)path->length,path->chars,strerror(errno));
+                    closedir(directory);
+                    VM_RETURN(DIAMOND_VM_IO_ERROR);
+                }
+                closedir(directory);
+                break;
+            }
             case DIAMOND_OP_FILE_JOIN: {
                 uint16_t dest=0,base=0;uint8_t argc=0;
                 READ_SHORT(dest);READ_SHORT(base);READ_BYTE(argc);
@@ -19618,6 +19774,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     case DIAMOND_MATH_TAN: math_result=tan(operand); break;
                     case DIAMOND_MATH_EXP: math_result=exp(operand); break;
                     case DIAMOND_MATH_LOG: math_result=log(operand); break;
+                    case DIAMOND_MATH_TANH: math_result=tanh(operand); break;
                     default: VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
                 }
                 registers[dest]=DIAMOND_FLOAT(math_result);

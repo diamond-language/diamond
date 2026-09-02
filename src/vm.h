@@ -429,6 +429,13 @@ typedef enum DiamondOpCode : uint8_t {
      * millions of elements) was the actual measured bottleneck in
      * examples/transformer, not #matmul itself. */
     DIAMOND_OP_TENSOR_RANDOM,
+    /* Dir.entries(path) -- every name in a directory (opendir/readdir),
+     * excluding "." and "..", as an Array of Strings. No recursion, no
+     * glob patterns -- just the one primitive Diamond had none of at
+     * all before this (confirmed: no Dir class, nothing in this enum);
+     * build anything more elaborate (a recursive walk, a glob) out of
+     * this in Diamond itself. */
+    DIAMOND_OP_DIR_ENTRIES,
     DIAMOND_OP_COUNT,
 } DiamondOpCode;
 
@@ -452,6 +459,7 @@ typedef enum DiamondMathFunction : uint8_t {
     DIAMOND_MATH_POW,
     DIAMOND_MATH_EXP,
     DIAMOND_MATH_LOG,
+    DIAMOND_MATH_TANH,
 } DiamondMathFunction;
 
 typedef enum DiamondTypeId : uint8_t {
