@@ -46,23 +46,31 @@ class JSONCodec
     value
   end
 
-  # BMP-only (0-0xFFFF, the full range four hex digits can express).
-  # Surrogate pairs (astral characters split across two \uXXXX escapes)
-  # are a deliberate scope cut -- see docs/roadmap.md.
+  # A lone surrogate codepoint (0xD800-0xDFFF) reaching here is always
+  # invalid -- real astral characters (emoji, etc.) are combined into a
+  # single codepoint >= 0x10000 by parse_unicode_escape below *before*
+  # utf8_encode ever sees them, so this only fires for a genuinely
+  # malformed/unpaired \uXXXX escape.
   def utf8_encode(codepoint: Int) -> String
     if codepoint >= 55296 && codepoint <= 57343
-      raise JSONError.new("surrogate pair unicode escapes are not supported")
+      raise JSONError.new("lone surrogate codepoint is not valid UTF-8")
     elsif codepoint < 128
       codepoint.chr()
     elsif codepoint < 2048
       byte1 = 192 + codepoint / 64
       byte2 = 128 + mod(codepoint, 64)
       byte1.chr() + byte2.chr()
-    else
+    elsif codepoint < 65536
       byte1 = 224 + codepoint / 4096
       byte2 = 128 + mod(codepoint / 64, 64)
       byte3 = 128 + mod(codepoint, 64)
       byte1.chr() + byte2.chr() + byte3.chr()
+    else
+      byte1 = 240 + codepoint / 262144
+      byte2 = 128 + mod(codepoint / 4096, 64)
+      byte3 = 128 + mod(codepoint / 64, 64)
+      byte4 = 128 + mod(codepoint, 64)
+      byte1.chr() + byte2.chr() + byte3.chr() + byte4.chr()
     end
   end
 
@@ -130,6 +138,40 @@ class JSONCodec
     [value, pos]
   end
 
+  # `pos` points at the "u" of a \uXXXX escape. A high surrogate
+  # (0xD800-0xDBFF) must be immediately followed by a second \uXXXX
+  # escape holding a low surrogate (0xDC00-0xDFFF) -- real JSON
+  # encodes an astral character (outside the BMP, e.g. emoji) as
+  # exactly that pair, per RFC 8259 -- combined here into the single
+  # codepoint >= 0x10000 the pair represents before handing it to
+  # utf8_encode. Returns [encoded_string, pos_of_last_consumed_char],
+  # matching parse_hex4's own "still pointing at the last digit"
+  # convention so the caller's shared `pos += 1` keeps working
+  # unchanged for both the single- and paired-escape cases.
+  def parse_unicode_escape(source: String, pos: Int) -> Array
+    length = source.length()
+    if pos + 4 >= length
+      raise JSONError.new("truncated unicode escape")
+    end
+    code = self.parse_hex4(source, pos + 1)
+    end_pos = pos + 4
+    if code >= 55296 && code <= 56319
+      if end_pos + 6 >= length || source[end_pos + 1] != "\\" || source[end_pos + 2] != "u"
+        raise JSONError.new("unpaired high surrogate in unicode escape")
+      end
+      low = self.parse_hex4(source, end_pos + 3)
+      if low < 56320 || low > 57343
+        raise JSONError.new("high surrogate not followed by a low surrogate in unicode escape")
+      end
+      codepoint = 65536 + (code - 55296) * 1024 + (low - 56320)
+      [self.utf8_encode(codepoint), end_pos + 6]
+    elsif code >= 56320 && code <= 57343
+      raise JSONError.new("unpaired low surrogate in unicode escape")
+    else
+      [self.utf8_encode(code), end_pos]
+    end
+  end
+
   def parse_string(source: String, pos: Int) -> Array
     pos += 1
     length = source.length()
@@ -164,11 +206,9 @@ class JSONCodec
         elsif escape == "f"
           result = result + 12.chr()
         elsif escape == "u"
-          if pos + 4 >= length
-            raise JSONError.new("truncated unicode escape")
-          end
-          result = result + self.utf8_encode(self.parse_hex4(source, pos + 1))
-          pos += 4
+          escape_result = self.parse_unicode_escape(source, pos)
+          result = result + escape_result[0]
+          pos = escape_result[1]
         else
           raise JSONError.new("invalid escape character")
         end
