@@ -259,6 +259,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk, DiamondVm *vm,
 static bool hash_set(DiamondVm *vm,DiamondHash *hash,DiamondValue key,
                      DiamondValue value);
 static bool array_push(DiamondVm *vm,DiamondArray *array,DiamondValue value);
+static ptrdiff_t hash_find(const DiamondHash *hash,DiamondValue key);
 static void free_adopted_programs(void *list);
 static void free_thread(DiamondThread *thread);
 static void populate_default_argv_env(DiamondVm *vm);
@@ -5223,7 +5224,25 @@ static bool numeric_as_double(DiamondValue value, double *out) {
     return false;
 }
 
+/* Shared by values_equal_at_depth and hash_value_at_depth below --
+ * recursion in both is bounded (not by DIAMOND_MAX_CALL_DEPTH -- these
+ * are plain C helpers, never go through the Diamond call stack at all)
+ * specifically so a self-referential Array/Hash (`a = []; a.push(a)`)
+ * can never stack-overflow either one: two structures nested/cyclic
+ * beyond this depth report unequal (or, for hashing, just stop mixing
+ * in any deeper structure) rather than recursing forever. 256 is
+ * generous for any real data (deeply-nested-but-finite data structures
+ * essentially never approach it) while still being a small, bounded
+ * amount of native C stack. */
+enum { DIAMOND_STRUCTURAL_MAX_DEPTH = 256 };
+
+static bool values_equal_at_depth(DiamondValue left,DiamondValue right,int depth);
+
 static bool values_equal(DiamondValue left, DiamondValue right) {
+    return values_equal_at_depth(left,right,0);
+}
+
+static bool values_equal_at_depth(DiamondValue left, DiamondValue right, int depth) {
     /* Bignum-aware equality ahead of everything else: a Float, however
      * large, is deliberately never treated as equal to a bignum (the
      * existing Int/Float cross-equality special-case below only
@@ -5263,10 +5282,59 @@ static bool values_equal(DiamondValue left, DiamondValue right) {
             return left.as.class_index == right.as.class_index;
         case DIAMOND_VALUE_OBJECT: {
             if (left.as.object->kind != right.as.object->kind) return false;
-            if(left.as.object->kind==DIAMOND_OBJECT_INSTANCE ||
-               left.as.object->kind==DIAMOND_OBJECT_ARRAY ||
-               left.as.object->kind==DIAMOND_OBJECT_HASH)
+            /* Instance keeps identity-only equality here (unchanged) --
+             * a `==` method override is checked by the DIAMOND_OP_EQUAL
+             * opcode handler *before* it ever calls this function at
+             * all (see that case's own comment); an Instance reaching
+             * this point genuinely has no override and falls back to
+             * identity, exactly as before Array/Hash below got their
+             * own real structural equality. */
+            if(left.as.object->kind==DIAMOND_OBJECT_INSTANCE)
                 return left.as.object==right.as.object;
+            /* Same object trivially satisfies equality (and, for a
+             * self-referential Array/Hash, is the only way this could
+             * ever legitimately recurse into itself -- checked first so
+             * that case resolves in O(1) instead of by the depth-limit
+             * fallback below). */
+            if(left.as.object==right.as.object)return true;
+            if(left.as.object->kind==DIAMOND_OBJECT_ARRAY) {
+                /* Two different but cyclic/absurdly-deep structures
+                 * (a=[]; a.push(a)) can never finish an element-by-
+                 * element comparison -- the depth guard here is what
+                 * turns that into "not equal" instead of a stack
+                 * overflow. Real, non-cyclic data essentially never
+                 * approaches this bound. */
+                if(depth>=DIAMOND_STRUCTURAL_MAX_DEPTH)return false;
+                const DiamondArray *a=(const DiamondArray *)left.as.object;
+                const DiamondArray *b=(const DiamondArray *)right.as.object;
+                if(a->count!=b->count)return false;
+                for(size_t index=0;index<a->count;index++)
+                    if(!values_equal_at_depth(a->values[index],b->values[index],depth+1))
+                        return false;
+                return true;
+            }
+            if(left.as.object->kind==DIAMOND_OBJECT_HASH) {
+                if(depth>=DIAMOND_STRUCTURAL_MAX_DEPTH)return false;
+                const DiamondHash *a=(const DiamondHash *)left.as.object;
+                const DiamondHash *b=(const DiamondHash *)right.as.object;
+                if(a->count!=b->count)return false;
+                /* Order-independent (a Hash's own equality never cares
+                 * about insertion order): every key in `a` must exist
+                 * in `b` (hash_find does its own key lookup, keyed by
+                 * hash_value + values_equal, exactly the same way any
+                 * ordinary Hash#[] lookup already works) with an equal
+                 * value; matching counts above plus that containment
+                 * check both ways is enough to prove the reverse
+                 * direction too (no key in `b` could be left over). */
+                for(size_t index=0;index<a->count;index++) {
+                    const ptrdiff_t found=hash_find(b,a->entries[index].key);
+                    if(found<0)return false;
+                    if(!values_equal_at_depth(a->entries[index].value,
+                            b->entries[(size_t)found].value,depth+1))
+                        return false;
+                }
+                return true;
+            }
             if(left.as.object->kind==DIAMOND_OBJECT_SYMBOL) {
                 const DiamondSymbol *a=(const DiamondSymbol *)left.as.object;
                 const DiamondSymbol *b=(const DiamondSymbol *)right.as.object;
@@ -5328,9 +5396,16 @@ static uint64_t hash_bytes(const char *data,size_t length) {
 }
 
 /* Must stay consistent with values_equal's exact equality semantics:
- * Int/Bool/Nil by value, String/Symbol by content, Array/Hash/Instance by
- * pointer identity. */
+ * Int/Bool/Nil by value, String/Symbol by content, Array/Hash by
+ * structure (recursively, same as values_equal_at_depth), Instance and
+ * everything else by pointer identity. */
+static uint64_t hash_value_at_depth(DiamondValue value,int depth);
+
 static uint64_t hash_value(DiamondValue value) {
+    return hash_value_at_depth(value,0);
+}
+
+static uint64_t hash_value_at_depth(DiamondValue value, int depth) {
     switch(value.kind) {
         case DIAMOND_VALUE_NIL:return hash_mix64(0);
         case DIAMOND_VALUE_UNDEFINED:return hash_mix64(UINT64_MAX);
@@ -5354,10 +5429,48 @@ static uint64_t hash_value(DiamondValue value) {
         }
         case DIAMOND_VALUE_OBJECT: {
             const DiamondObject *object=value.as.object;
-            if(object->kind==DIAMOND_OBJECT_INSTANCE||
-               object->kind==DIAMOND_OBJECT_ARRAY||
-               object->kind==DIAMOND_OBJECT_HASH)
+            if(object->kind==DIAMOND_OBJECT_INSTANCE)
                 return hash_mix64((uint64_t)(uintptr_t)object);
+            if(object->kind==DIAMOND_OBJECT_ARRAY) {
+                /* Order-sensitive (Array's own equality is): sequential
+                 * mixing, each element's hash folded into the running
+                 * one via hash_mix64, not combined commutatively --
+                 * [1,2] and [2,1] must hash differently, matching that
+                 * they're != each other. Depth-limited past
+                 * DIAMOND_STRUCTURAL_MAX_DEPTH the same way values_equal_
+                 * at_depth's own Array case is (see that one's comment)
+                 * -- stops mixing in anything deeper rather than
+                 * recursing forever; still a valid (if coarser) hash,
+                 * never a correctness problem on its own, since a hash
+                 * collision is always allowed and just falls through to
+                 * hash_find's own values_equal call to confirm a real
+                 * match. */
+                const DiamondArray *array=(const DiamondArray *)object;
+                uint64_t running=hash_mix64((uint64_t)array->count);
+                if(depth<DIAMOND_STRUCTURAL_MAX_DEPTH)
+                    for(size_t index=0;index<array->count;index++)
+                        running=hash_mix64(running^hash_value_at_depth(array->values[index],depth+1));
+                return running;
+            }
+            if(object->kind==DIAMOND_OBJECT_HASH) {
+                /* Order-independent (Hash's own equality is): every
+                 * entry's key^value hash is XORed together (commutative
+                 * -- {"a":1,"b":2} and {"b":2,"a":1} must hash the same
+                 * way, matching that they're == each other), not
+                 * sequentially mixed. Depth-limited the same way the
+                 * Array case above is. */
+                const DiamondHash *hash=(const DiamondHash *)object;
+                uint64_t combined=0;
+                if(depth<DIAMOND_STRUCTURAL_MAX_DEPTH)
+                    for(size_t index=0;index<hash->count;index++) {
+                        const uint64_t key_hash=
+                            hash_value_at_depth(hash->entries[index].key,depth+1);
+                        const uint64_t value_hash=
+                            hash_value_at_depth(hash->entries[index].value,depth+1);
+                        combined^=hash_mix64(key_hash^hash_mix64(value_hash));
+                    }
+                return hash_mix64(combined^(uint64_t)hash->count);
+            }
             /* No consistency requirement with the small-int hash path
              * above: the canonicalization invariant guarantees a
              * bignum and a small Int can never represent the same
