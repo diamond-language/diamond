@@ -66,15 +66,15 @@ end
 
 module ActiveKarma
 
-class Projector
-  def self.project(events: Array) -> PersonaState
-    state = {"trust_level": :normal, "write_permission": :allowed, "visibility": :normal, "locks": []}
-    sorted = events.sort_by() do |event| event["created_at"] end
-    sorted.each() do |event|
-      apply_karma_signal(event["event_type"], state)
+  class Projector
+    def self.project(events: Array) -> PersonaState
+      state = {"trust_level": :normal, "write_permission": :allowed, "visibility": :normal, "locks": []}
+      sorted = events.sort_by() do |event| event["created_at"] end
+      sorted.each() do |event|
+        apply_karma_signal(event["event_type"], state)
+      end
+      PersonaState.new(state["trust_level"], state["write_permission"], state["visibility"], state["locks"])
     end
-    PersonaState.new(state["trust_level"], state["write_permission"], state["visibility"], state["locks"])
   end
-end
 
 end

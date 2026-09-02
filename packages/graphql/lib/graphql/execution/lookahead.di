@@ -19,111 +19,111 @@
 # match -- a real, documented over-approximation, not a silent gap
 # (see ROADMAP.md).
 module GraphQL
-module Execution
+  module Execution
 
-class Lookahead
-  def initialize(selection_set, fragments, coerced_variables)
-    @selection_set = selection_set
-    @fragments = fragments
-    @coerced_variables = coerced_variables
-  end
+    class Lookahead
+      def initialize(selection_set, fragments, coerced_variables)
+        @selection_set = selection_set
+        @fragments = fragments
+        @coerced_variables = coerced_variables
+      end
 
-  # Every Field AST node reachable from this level, after expanding
-  # fragment spreads/inline fragments and honoring @include/@skip --
-  # the shared basis every other method here filters/maps over.
-  def all_fields()
-    result = []
-    self.collect_fields(@selection_set, [], result)
-    result
-  end
+      # Every Field AST node reachable from this level, after expanding
+      # fragment spreads/inline fragments and honoring @include/@skip --
+      # the shared basis every other method here filters/maps over.
+      def all_fields()
+        result = []
+        self.collect_fields(@selection_set, [], result)
+        result
+      end
 
-  def collect_fields(selection_set, visited_fragments, result)
-    index = 0
-    while index < selection_set.length()
-      selection = selection_set[index]
-      case selection
-      when GraphQL::Language::Field
-        if GraphQL::Execution::Directives.included?(selection.directives(), @coerced_variables)
-          result.push(selection)
-        end
-      when GraphQL::Language::FragmentSpread
-        if GraphQL::Execution::Directives.included?(selection.directives(), @coerced_variables) &&
-           !visited_fragments.include?(selection.name())
-          visited_fragments.push(selection.name())
-          fragment = @fragments[selection.name()]
-          unless fragment == nil
-            self.collect_fields(fragment.selection_set(), visited_fragments, result)
+      def collect_fields(selection_set, visited_fragments, result)
+        index = 0
+        while index < selection_set.length()
+          selection = selection_set[index]
+          case selection
+          when GraphQL::Language::Field
+            if GraphQL::Execution::Directives.included?(selection.directives(), @coerced_variables)
+              result.push(selection)
+            end
+          when GraphQL::Language::FragmentSpread
+            if GraphQL::Execution::Directives.included?(selection.directives(), @coerced_variables) &&
+               !visited_fragments.include?(selection.name())
+              visited_fragments.push(selection.name())
+              fragment = @fragments[selection.name()]
+              unless fragment == nil
+                self.collect_fields(fragment.selection_set(), visited_fragments, result)
+              end
+            end
+          when GraphQL::Language::InlineFragment
+            if GraphQL::Execution::Directives.included?(selection.directives(), @coerced_variables)
+              self.collect_fields(selection.selection_set(), visited_fragments, result)
+            end
           end
-        end
-      when GraphQL::Language::InlineFragment
-        if GraphQL::Execution::Directives.included?(selection.directives(), @coerced_variables)
-          self.collect_fields(selection.selection_set(), visited_fragments, result)
+          index += 1
         end
       end
-      index += 1
-    end
-  end
 
-  private collect_fields
+      private collect_fields
 
-  # Every Field AST node at this level named `field_name` (almost
-  # always 0 or 1, more than 1 only when fragments merge into the same
-  # field with different sub-selections -- #selection below merges
-  # those the same way execution/executor.di's own
-  # #merged_selection_set does).
-  def matching_fields(field_name)
-    fields = self.all_fields()
-    result = []
-    index = 0
-    while index < fields.length()
-      if fields[index].name() == field_name
-        result.push(fields[index])
+      # Every Field AST node at this level named `field_name` (almost
+      # always 0 or 1, more than 1 only when fragments merge into the same
+      # field with different sub-selections -- #selection below merges
+      # those the same way execution/executor.di's own
+      # #merged_selection_set does).
+      def matching_fields(field_name)
+        fields = self.all_fields()
+        result = []
+        index = 0
+        while index < fields.length()
+          if fields[index].name() == field_name
+            result.push(fields[index])
+          end
+          index += 1
+        end
+        result
       end
-      index += 1
-    end
-    result
-  end
 
-  # True if `field_name` is selected anywhere at this level (by its
-  # real field name, not a response alias -- "was `books` requested",
-  # not "was it requested as `myBooks`").
-  def selects?(field_name) = self.matching_fields(field_name).length() > 0
+      # True if `field_name` is selected anywhere at this level (by its
+      # real field name, not a response alias -- "was `books` requested",
+      # not "was it requested as `myBooks`").
+      def selects?(field_name) = self.matching_fields(field_name).length() > 0
 
-  # A Lookahead scoped to `field_name`'s own sub-selections -- empty
-  # (so every #selects? underneath it is false) when `field_name`
-  # wasn't selected at all, matching graphql-ruby's own NullLookahead
-  # behavior without a separate class for it.
-  def selection(field_name)
-    matches = self.matching_fields(field_name)
-    merged = []
-    index = 0
-    while index < matches.length()
-      selection_set = matches[index].selection_set()
-      unless selection_set == nil
-        merged = merged.concat(selection_set)
+      # A Lookahead scoped to `field_name`'s own sub-selections -- empty
+      # (so every #selects? underneath it is false) when `field_name`
+      # wasn't selected at all, matching graphql-ruby's own NullLookahead
+      # behavior without a separate class for it.
+      def selection(field_name)
+        matches = self.matching_fields(field_name)
+        merged = []
+        index = 0
+        while index < matches.length()
+          selection_set = matches[index].selection_set()
+          unless selection_set == nil
+            merged = merged.concat(selection_set)
+          end
+          index += 1
+        end
+        GraphQL::Execution::Lookahead.new(merged, @fragments, @coerced_variables)
       end
-      index += 1
-    end
-    GraphQL::Execution::Lookahead.new(merged, @fragments, @coerced_variables)
-  end
 
-  # Every distinct field name selected at this level, first-seen order
-  # -- for a resolver that wants to see everything at once rather than
-  # asking #selects? field by field.
-  def selections()
-    fields = self.all_fields()
-    result = []
-    index = 0
-    while index < fields.length()
-      name = fields[index].name()
-      unless result.include?(name)
-        result.push(name)
+      # Every distinct field name selected at this level, first-seen order
+      # -- for a resolver that wants to see everything at once rather than
+      # asking #selects? field by field.
+      def selections()
+        fields = self.all_fields()
+        result = []
+        index = 0
+        while index < fields.length()
+          name = fields[index].name()
+          unless result.include?(name)
+            result.push(name)
+          end
+          index += 1
+        end
+        result
       end
-      index += 1
     end
-    result
-  end
-end
 
-end
+  end
 end
