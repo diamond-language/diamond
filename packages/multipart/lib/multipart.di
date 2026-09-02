@@ -95,10 +95,19 @@ end
 # The whole request -> {"fields": Hash, "files": Hash} -- or nil if the
 # request isn't a (parseable) multipart/form-data request at all, so a
 # caller can fall back to Dials::Params itself for an ordinary form
-# post. "fields" maps a plain field name to its String value; "files"
+# post. "fields" maps a plain field name to its String value -- except
+# a name ending in "[]" (the standard HTML-forms array convention,
+# e.g. several checkboxes all named "platforms[]"), which maps the
+# "[]"-stripped key to an Array of every value seen for that name, in
+# submission order (a single "platforms[]" part still becomes a
+# one-element Array, not a bare String -- the "[]" suffix is what a
+# caller opts into, not how many parts actually showed up). "files"
 # maps a file field's name to {"filename", "content_type", "data"} (the
 # raw uploaded bytes, "content_type" defaulting to
-# "application/octet-stream" when the part didn't send its own).
+# "application/octet-stream" when the part didn't send its own). Files
+# don't get this same array treatment -- see this function's own
+# "no nested multipart/mixed part" note below for why multiple files
+# under one field name stays out of scope.
 #
 # A malformed body (the boundary never actually appears, or a part is
 # missing its own blank-line header/content separator, or a part has no
@@ -143,7 +152,17 @@ def multipart_parse(request)
     end
     filename = headers["filename"]
     if filename == nil
-      fields[name] = content
+      if name.end_with?("[]")
+        array_name = name.slice(0, name.length() - 2)
+        existing = fields[array_name]
+        if existing == nil
+          fields[array_name] = [content]
+        else
+          existing.push(content)
+        end
+      else
+        fields[name] = content
+      end
     else
       content_type = headers["content_type"]
       content_type = if content_type == nil then "application/octet-stream" else content_type end

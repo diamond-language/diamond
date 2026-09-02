@@ -163,4 +163,49 @@ after_count="$(ls -1 "$upload_dir" | wc -l)"
 [[ "$before_count" == "$after_count" ]]
 count=$((count + 1))
 
+# --- a name ending in "[]" (several checkboxes sharing one name, the
+# --- standard HTML-forms array convention) collects every value into
+# --- an Array under the "[]"-stripped key, in submission order; an
+# --- ordinary field name is completely unaffected (still a bare
+# --- String, still last-value-wins on repetition) ---
+actual="$(run_case '
+boundary = "----Boundary456"
+body = "--#{boundary}\r\n" +
+  "Content-Disposition: form-data; name=\"platforms[]\"\r\n\r\n" +
+  "windows\r\n" +
+  "--#{boundary}\r\n" +
+  "Content-Disposition: form-data; name=\"platforms[]\"\r\n\r\n" +
+  "macos\r\n" +
+  "--#{boundary}\r\n" +
+  "Content-Disposition: form-data; name=\"title\"\r\n\r\n" +
+  "first\r\n" +
+  "--#{boundary}\r\n" +
+  "Content-Disposition: form-data; name=\"title\"\r\n\r\n" +
+  "second\r\n" +
+  "--#{boundary}--\r\n"
+request = {"headers": {"content-type": "multipart/form-data; boundary=#{boundary}"}, "body": body}
+result = multipart_parse(request)
+platforms = result["fields"]["platforms"]
+"#{platforms.length()}|#{platforms[0]}|#{platforms[1]}|#{result["fields"]["title"]}"
+')"
+[[ "$actual" == "2|windows|macos|second" ]]
+count=$((count + 1))
+
+# --- a single "x[]" part still becomes a one-element Array, not a
+# --- bare String -- the "[]" suffix is what opts a field into array
+# --- handling, not how many parts happened to show up ---
+actual="$(run_case '
+boundary = "----Boundary789"
+body = "--#{boundary}\r\n" +
+  "Content-Disposition: form-data; name=\"platforms[]\"\r\n\r\n" +
+  "linux\r\n" +
+  "--#{boundary}--\r\n"
+request = {"headers": {"content-type": "multipart/form-data; boundary=#{boundary}"}, "body": body}
+result = multipart_parse(request)
+platforms = result["fields"]["platforms"]
+"#{platforms.length()}|#{platforms[0]}"
+')"
+[[ "$actual" == "1|linux" ]]
+count=$((count + 1))
+
 echo "$count multipart tests passed"
