@@ -244,4 +244,45 @@ status=$?
 grep -q '"message":"server.shutdown_forced_by_signal"' "$out"
 rm -f "$out"
 
-echo "12 gremlin tests passed"
+# context["gremlin_connection"] escape hatch: a handler that writes its
+# own response directly to the raw connection and returns nil must have
+# that response reach the client verbatim, with handle_connection's own
+# http_write_response never firing a second, conflicting response behind
+# it (the whole point of the nil convention -- see gremlin.di's own
+# "Escape hatch" doc comment). A deliberately non-HTTP-shaped body (no
+# Content-Length, a status line gremlin_serve itself would never
+# generate) is proof the response came from the handler's own write, not
+# from http_write_response reinterpreting it.
+port=19416
+out="$(mktemp)"
+raw_handler_src() {
+    local port="$1"
+    cat <<SRCEOF
+require "$(pwd)/lib/gremlin"
+def run()
+  def handler(request, context)
+    conn = context["gremlin_connection"]
+    conn.write("RAW 200 direct\r\n\r\nhandled-directly")
+    nil
+  end
+  gremlin_serve($port, handler)
+end
+run()
+SRCEOF
+}
+timeout 10 "$diamond" -e "$(raw_handler_src "$port")" >"$out" 2>&1 &
+pid=$!
+wait_for_port "$port"
+{ exec 3<&- 3>&-; } 2>/dev/null || true
+
+exec 3<>"/dev/tcp/127.0.0.1/$port"
+printf 'GET /ws HTTP/1.1\r\nHost: localhost\r\n\r\n' >&3
+response="$(timeout 3 cat <&3)"
+{ exec 3<&- 3>&-; } 2>/dev/null || true
+[[ "$response" == $'RAW 200 direct\r\n\r\nhandled-directly' ]]
+
+kill "$pid" 2>/dev/null || true
+wait "$pid" 2>/dev/null || true
+rm -f "$out"
+
+echo "13 gremlin tests passed"

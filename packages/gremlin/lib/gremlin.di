@@ -49,10 +49,31 @@ require "../../logger/lib/logger"
 # Deliberately basic: no keep-alive (matching http_serve's own scope
 # cut), no request pipelining, no per-connection timeout (a client that
 # opens a connection and never sends anything sits in `connections`
-# until it disconnects or the process exits), and a request/response
-# still goes through packages/http's own http_parse_request/
-# http_write_response entirely unmodified -- the only new code here is
-# the non-blocking connection wrapper and the event loop around it.
+# until it disconnects or the process exits). An ordinary handler's
+# request/response still goes through packages/http's own
+# http_parse_request/http_write_response entirely unmodified -- the only
+# new code here is the non-blocking connection wrapper and the event
+# loop around it. A handler that needs more than that (packages/websocket
+# being the motivating case) can opt out of both ends of that: see
+# "Escape hatch: taking over the raw connection" below.
+#
+# ## Escape hatch: taking over the raw connection
+#
+# `context["gremlin_connection"]` (stashed in fresh every request, before
+# `handler` is called) is this request's own live NonblockingConnection --
+# the same one gremlin_worker itself already read the request off of and
+# will otherwise write the response to. A handler that wants to speak a
+# protocol other than one-response-per-request (a WebSocket upgrade: a
+# 101 handshake response, then arbitrary framed reads/writes for as long
+# as that connection stays open) writes directly to
+# context["gremlin_connection"] itself and then returns nil instead of a
+# [status, headers, body] value -- nil is the signal that tells
+# handle_connection (packages/gremlin/lib/gremlin/server.di) to skip its
+# own http_write_response call, since the handler already fully handled
+# the response itself. This is unconditionally backward-compatible: no
+# handler written before this existed could ever have returned nil (every
+# real response is a 3-element Array), so nothing about ordinary
+# [status, headers, body] handlers changes.
 #
 # ## Per-worker context
 #

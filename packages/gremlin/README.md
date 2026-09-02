@@ -95,6 +95,26 @@ makes (own heap, own listener, own connections list) -- `context` isn't
 special, it's just the one piece of that state `handler` actually gets
 to see.
 
+### Escape hatch: taking over the raw connection
+
+`context["gremlin_connection"]` is stashed in fresh before every call to
+`handler` -- this request's own live `NonblockingConnection`, the same
+one `gremlin_serve` itself already read the request off of and will
+otherwise write the response to. A handler that needs to speak a
+protocol other than one-response-per-request writes directly to
+`context["gremlin_connection"]` itself and returns `nil` instead of a
+`[status, headers, body]` value; `nil` tells `gremlin_serve` the
+handler already fully handled the response, so it skips writing one of
+its own. This is unconditionally backward-compatible -- no handler
+written before this existed could ever have returned `nil` (every real
+response is a 3-element `Array`), so nothing about an ordinary handler
+changes.
+
+[`packages/websocket`](../websocket/README.md) is the motivating case:
+a WebSocket upgrade needs a 101 handshake response, then arbitrary
+framed reads/writes for as long as that connection stays open, neither
+of which fits `gremlin_serve`'s own Rack-style contract.
+
 ### Graceful shutdown
 
 `gremlin_serve` traps `SIGTERM`/`SIGINT` and drains cleanly: it stops
@@ -156,6 +176,9 @@ for the full design.
 [`packages/rack`](../rack/README.md) layers composable middleware
 (logging, auth, etc.) on top of `handler` here -- including a documented
 pattern for `threads > 1` specifically.
+
+[`packages/websocket`](../websocket/README.md) builds RFC 6455
+WebSocket support on top of the escape hatch above.
 
 ## What's deliberately out of scope
 

@@ -28,8 +28,27 @@ def gremlin_worker(port, handler)
     def handle_connection()
       request = http_parse_request(conn)
       unless request == nil
+        # context["gremlin_connection"]: this request's own live
+        # NonblockingConnection -- an escape hatch for a handler that
+        # needs the raw connection itself, not just a [status, headers,
+        # body] response value (a WebSocket upgrade being the motivating
+        # case: packages/websocket writes its own 101 handshake, then
+        # takes over the connection for framed I/O directly, for as
+        # long as that WebSocket stays open). Ordinary request handling
+        # never needs this at all -- it's here purely for a handler
+        # that wants to opt in.
+        context["gremlin_connection"] = conn
         response = handler(request, context)
-        http_write_response(conn, response)
+        # nil is the signal a handler already fully took over `conn`
+        # itself (via context["gremlin_connection"] above) and wrote
+        # its own response directly -- no ordinary handler could
+        # previously return nil (every existing one always returns a
+        # real [status, headers, body]), so this is a new, backward-
+        # compatible meaning, not a reinterpretation of anything that
+        # used to mean something else.
+        unless response == nil
+          http_write_response(conn, response)
+        end
       end
       conn.close()
     end
