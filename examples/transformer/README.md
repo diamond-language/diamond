@@ -79,9 +79,13 @@ feature yet (see the branch's own root commit message).
   needed, works on any file unchanged including non-ASCII text.
 - `lib/corpus.di` -- `Corpus.load(folder, extensions, max_files,
   max_stories)`: assembles training text from every matching file
-  under a folder (shells out to `find`, sorted by the numeric part of
-  each filename so "the first N files" means what it sounds like on a
-  numbered dataset like TinyStories' `data00.json`..`data50.json`).
+  under a folder, walked recursively via `Dir.entries`/`File.
+  directory?` (main branch, this session -- an earlier version of this
+  shelled out to `find` via `Process.run`, since Diamond had neither
+  primitive at the time), sorted byte-lexicographically so "the first
+  N files" means what it sounds like on a numbered dataset like
+  TinyStories' `data00.json`..`data50.json` (only correct for
+  zero-padded numbering -- see the function's own comment).
   `.txt`/`.md` contribute their raw content; `.json` is parsed and
   walked for TinyStories' own shape (`[{"story": "...", ...}, ...]`,
   or a plain array of strings) -- and parsing is genuinely slow at

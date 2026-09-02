@@ -55,14 +55,7 @@ while step < num_tokens
   # recomputing them.
   context = token_ids
   if context.length() > max_seq_len
-    trimmed = []
-    start = context.length() - max_seq_len
-    i = start
-    while i < context.length()
-      trimmed.push(context[i])
-      i += 1
-    end
-    context = trimmed
+    context = context.slice(context.length() - max_seq_len, max_seq_len)
   end
 
   logits = model.forward(context).tensor()

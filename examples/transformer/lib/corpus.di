@@ -1,7 +1,26 @@
-# Assembles training text from a folder. Shells out to `find`
-# (Process.run) rather than needing a Dir/glob facility -- Diamond has
-# no directory-listing builtin at all (confirmed: no Dir class,
-# nothing in DiamondOpCode). Two source shapes:
+# Recursively collects every *file* path under `folder` into `results`,
+# in directory-entry order at each level (Dir.entries has no ordering
+# guarantee of its own -- sorted here, a plain byte-lexicographic
+# String sort_by, same as the caller's own final sort in Corpus.load
+# below). Built directly on Dir.entries + File.directory? -- Diamond
+# had neither at all before this session, forcing every previous
+# version of this function to shell out to `find` via Process.run
+# instead.
+def collect_files_recursive(folder, results)
+  entries = Dir.entries(folder).sort_by() do |name| name end
+  i = 0
+  while i < entries.length()
+    full_path = File.join(folder, entries[i])
+    if File.directory?(full_path)
+      collect_files_recursive(full_path, results)
+    else
+      results.push(full_path)
+    end
+    i += 1
+  end
+end
+
+# Assembles training text from a folder. Two source shapes:
 #
 # - .txt/.md: the whole file's raw bytes, used directly.
 # - .json: parsed (Diamond's own JSON.parse -- pure Diamond, recursive
@@ -25,39 +44,18 @@
 # Both are meant for "start small while getting the model/hyper-
 # parameters right," not a permanent ceiling -- raise or drop them
 # once you actually want the full corpus.
-class PathSort
-  # The numeric substring in a path's basename (e.g. "data03.json" ->
-  # 3), or 0 if it has none -- String has no comparison operator at
-  # all in Diamond (confirmed directly), so sort_by needs an Int key
-  # rather than sorting path strings themselves.
-  def self.numeric_key(path)
-    base = File.basename(path)
-    digits = ""
-    i = 0
-    while i < base.length()
-      ch = base[i]
-      if ch.ord() >= 48 && ch.ord() <= 57
-        digits = digits + ch
-      end
-      i += 1
-    end
-    if digits == "" then 0 else digits.to_i() end
-  end
-end
-
 class Corpus
   def self.load(folder, extensions, max_files, max_stories)
-    result = Process.run(["find", folder, "-type", "f"])
-    if !result.success?()
-      raise IOError.new("find failed for #{folder}: #{result.stderr()}")
-    end
-    # `find`'s own order is filesystem-dependent, not sorted (confirmed
-    # directly: on this machine it returned data22.json before
-    # data00.json) -- sorted here so max_files means "the first N
-    # files in filename order" (data00, data01, ...), matching what
-    # anyone asking for "just the first N shards" of a numbered dataset
-    # actually means.
-    paths = result.stdout().split("\n").sort_by() do |p| PathSort.numeric_key(p) end
+    all_paths = []
+    collect_files_recursive(folder, all_paths)
+    # Byte-lexicographic order -- for TinyStories' own zero-padded
+    # filenames (data00.json..data50.json) this already matches
+    # numeric order (confirmed directly: same-width zero-padded
+    # numbers sort identically both ways); it wouldn't for
+    # non-zero-padded numbering ("data2.json" would sort after
+    # "data10.json"), a real limitation worth knowing if this ever
+    # points at a differently-named dataset.
+    paths = all_paths.sort_by() do |p| p end
 
     text = ""
     file_count = 0
@@ -65,7 +63,7 @@ class Corpus
     i = 0
     while i < paths.length()
       path = paths[i]
-      if path != "" && extensions.include?(File.extname(path))
+      if extensions.include?(File.extname(path))
         if max_files != nil && file_count >= max_files
           i += 1
           next
