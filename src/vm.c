@@ -9423,13 +9423,57 @@ static DiamondVmStatus sqlite3_prepare_helper(DiamondVm *vm,sqlite3 *db,
     return DIAMOND_VM_OK;
 }
 
+/* A PRAGMA statement is exempt from the query-shaped rejection below:
+ * unlike a SELECT, `PRAGMA journal_mode = WAL`/`PRAGMA busy_timeout =
+ * 5000`-style set-pragmas are legitimately run through #execute (they
+ * change connection-level state, not read application data) even
+ * though SQLite also happens to echo the resulting value back as a
+ * one-row, one-column result set -- sqlite3_column_count can't tell
+ * those apart from a real SELECT, so this checks the statement's own
+ * SQL text instead. sqlite3_sql returns the exact text #prepare was
+ * given, not attacker/input-controlled, so a simple prefix scan (skip
+ * leading whitespace, case-insensitive "pragma") is safe and doesn't
+ * need to handle SQL comments or other exotic prefixes no caller here
+ * actually uses. */
+static bool sqlite3_statement_is_pragma_helper(sqlite3_stmt *stmt) {
+    const char *sql=sqlite3_sql(stmt);
+    if(sql==nullptr)return false;
+    while(*sql==' '||*sql=='\t'||*sql=='\n'||*sql=='\r')sql++;
+    static const char keyword[]="pragma";
+    for(size_t index=0;index<sizeof(keyword)-1;index++) {
+        if(sql[index]=='\0')return false;
+        if(tolower((unsigned char)sql[index])!=keyword[index])return false;
+    }
+    return true;
+}
+
 /* Steps an already-prepared, already-bound statement to completion,
  * discarding any rows -- the shared tail of #execute (one-shot, caller
  * finalizes after) and Statement#execute (reusable, caller never
  * finalizes). Returns the number of rows changed (sqlite3_changes),
- * the useful return value for INSERT/UPDATE/DELETE/DDL. */
+ * the useful return value for INSERT/UPDATE/DELETE/DDL.
+ *
+ * A query-shaped statement (SELECT, or any other statement that
+ * produces a result set -- sqlite3_column_count is nonzero once
+ * prepared, regardless of whether it ever actually returns a row) is
+ * rejected outright here rather than silently discarding its rows and
+ * returning sqlite3_changes -- a leftover write-count from whatever
+ * INSERT/UPDATE/DELETE this same connection last ran, completely
+ * unrelated to the query just issued. Found the hard way: an #execute
+ * call on a SELECT looks like it works (returns a plausible small
+ * Int, no error) and returns a *coincidentally* plausible-looking but
+ * wrong answer instead of the query's real result. #query (or
+ * Statement#query) is the call that actually collects rows. PRAGMA is
+ * exempted -- see sqlite3_statement_is_pragma_helper. */
 static DiamondVmStatus sqlite3_run_to_completion_helper(DiamondVm *vm,sqlite3 *db,
         sqlite3_stmt *stmt,DiamondValue *result) {
+    if(sqlite3_column_count(stmt)!=0&&!sqlite3_statement_is_pragma_helper(stmt)) {
+        snprintf(vm->error,sizeof vm->error,
+            "SQLite3#execute can't run a statement that returns rows "
+            "(got %d column(s)) -- use #query instead",
+            sqlite3_column_count(stmt));
+        return DIAMOND_VM_TYPE_ERROR;
+    }
     int rc=sqlite3_step(stmt);
     while(rc==SQLITE_ROW)rc=sqlite3_step(stmt); /* discard any rows */
     if(rc!=SQLITE_DONE) {
