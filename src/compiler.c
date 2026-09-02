@@ -1194,6 +1194,10 @@ static Precedence token_precedence(DiamondTokenKind kind) {
         case DIAMOND_TOKEN_IS:
             return PREC_COMPARISON;
         case DIAMOND_TOKEN_LESS_LESS:
+        case DIAMOND_TOKEN_GREATER_GREATER:
+        case DIAMOND_TOKEN_AMPERSAND:
+        case DIAMOND_TOKEN_PIPE:
+        case DIAMOND_TOKEN_CARET:
             return PREC_SHIFT;
         case DIAMOND_TOKEN_PLUS:
         case DIAMOND_TOKEN_MINUS:
@@ -8656,6 +8660,10 @@ static DiamondOpCode binary_opcode(DiamondTokenKind operator) {
         case DIAMOND_TOKEN_GREATER: return DIAMOND_OP_GREATER;
         case DIAMOND_TOKEN_GREATER_EQUAL: return DIAMOND_OP_GREATER_EQUAL;
         case DIAMOND_TOKEN_LESS_LESS: return DIAMOND_OP_SHIFT_LEFT;
+        case DIAMOND_TOKEN_GREATER_GREATER: return DIAMOND_OP_SHIFT_RIGHT;
+        case DIAMOND_TOKEN_AMPERSAND: return DIAMOND_OP_BITWISE_AND;
+        case DIAMOND_TOKEN_PIPE: return DIAMOND_OP_BITWISE_OR;
+        case DIAMOND_TOKEN_CARET: return DIAMOND_OP_BITWISE_XOR;
         case DIAMOND_TOKEN_PERCENT: return DIAMOND_OP_MODULO;
         case DIAMOND_TOKEN_SPACESHIP: return DIAMOND_OP_COMPARE;
         default: return DIAMOND_OP_ADD;

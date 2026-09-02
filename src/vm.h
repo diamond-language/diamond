@@ -422,6 +422,19 @@ typedef enum DiamondOpCode : uint8_t {
      * build anything more elaborate (a recursive walk, a glob) out of
      * this in Diamond itself. */
     DIAMOND_OP_DIR_ENTRIES,
+    /* Int-only bitwise operators (>>/&/|/^) -- matching DIAMOND_OP_SHIFT_
+     * LEFT's own scope exactly: no bignum support, not user-overloadable
+     * (no invoke_operator_method dispatch), no quickening. `<<` already
+     * existed (also doubling as Array#<<'s append); these four fill out
+     * the rest of the set it was always missing. >> is arithmetic
+     * (sign-extending), matching Ruby's own Integer#>> -- well-defined
+     * for a negative left-hand side under C23 (this project's own
+     * -std=c23), not the classic "implementation-defined" UB concern an
+     * older C standard would have here. */
+    DIAMOND_OP_SHIFT_RIGHT,
+    DIAMOND_OP_BITWISE_AND,
+    DIAMOND_OP_BITWISE_OR,
+    DIAMOND_OP_BITWISE_XOR,
     DIAMOND_OP_COUNT,
 } DiamondOpCode;
 

@@ -377,8 +377,9 @@ DiamondToken diamond_lexer_next(DiamondLexer *lexer) {
             if (match(lexer, '<')) return token(lexer, DIAMOND_TOKEN_LESS_LESS);
             return token(lexer, DIAMOND_TOKEN_LESS);
         case '>':
-            return token(lexer, match(lexer, '=') ? DIAMOND_TOKEN_GREATER_EQUAL
-                                                   : DIAMOND_TOKEN_GREATER);
+            if (match(lexer, '=')) return token(lexer, DIAMOND_TOKEN_GREATER_EQUAL);
+            if (match(lexer, '>')) return token(lexer, DIAMOND_TOKEN_GREATER_GREATER);
+            return token(lexer, DIAMOND_TOKEN_GREATER);
         default:
             return token(lexer, DIAMOND_TOKEN_ERROR);
     }

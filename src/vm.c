@@ -12794,6 +12794,62 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     "'<<' expects an Int shift amount or a value to push onto an Array");
                 VM_RETURN(DIAMOND_VM_TYPE_ERROR);
             }
+            case DIAMOND_OP_SHIFT_RIGHT: {
+                /* Int only -- same scope cut as DIAMOND_OP_SHIFT_LEFT
+                 * (no bignum, not user-overloadable, no quickening; see
+                 * that case's own comment). Arithmetic (sign-extending),
+                 * matching Ruby's own Integer#>>, and well-defined for a
+                 * negative left-hand side under C23 (this project's own
+                 * -std=c23) -- not the "implementation-defined" territory
+                 * an older C standard would put a signed right-shift in. */
+                uint16_t destination=0,left=0,right=0;
+                READ_SHORT(destination);READ_SHORT(left);READ_SHORT(right);
+                if(registers[left].kind!=DIAMOND_VALUE_INT||
+                   registers[right].kind!=DIAMOND_VALUE_INT||
+                   value_is_bignum(registers[left])||value_is_bignum(registers[right])) {
+                    format_operator_type_error(vm,registers[left],registers[right],">>");
+                    VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                }
+                const int64_t shift_amount=registers[right].as.integer;
+                if(shift_amount<0||shift_amount>=64) {
+                    snprintf(vm->error,sizeof vm->error,
+                        "shift amount must be between 0 and 63");
+                    VM_RETURN(DIAMOND_VM_INTEGER_OVERFLOW);
+                }
+                registers[destination]=
+                    DIAMOND_INT(registers[left].as.integer>>(unsigned)shift_amount);
+                break;
+            }
+            case DIAMOND_OP_BITWISE_AND:
+            case DIAMOND_OP_BITWISE_OR:
+            case DIAMOND_OP_BITWISE_XOR: {
+                /* Int only, same scope cut as SHIFT_LEFT/SHIFT_RIGHT
+                 * above. All three share one case body -- the only
+                 * difference between them is which C operator runs.
+                 * `bitwise_opcode` is this local case body's own copy of
+                 * the switch's controlling value (the switch itself
+                 * dispatches on a bare `instruction`, not a variable
+                 * named `opcode` -- unlike DIAMOND_OP_EQUAL's own case,
+                 * which does declare a local `opcode`, this one didn't
+                 * need to until now). */
+                const DiamondOpCode bitwise_opcode=(DiamondOpCode)instruction;
+                uint16_t destination=0,left=0,right=0;
+                READ_SHORT(destination);READ_SHORT(left);READ_SHORT(right);
+                if(registers[left].kind!=DIAMOND_VALUE_INT||
+                   registers[right].kind!=DIAMOND_VALUE_INT||
+                   value_is_bignum(registers[left])||value_is_bignum(registers[right])) {
+                    const char *name=bitwise_opcode==DIAMOND_OP_BITWISE_AND?"&":
+                        bitwise_opcode==DIAMOND_OP_BITWISE_OR?"|":"^";
+                    format_operator_type_error(vm,registers[left],registers[right],name);
+                    VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                }
+                const int64_t a=registers[left].as.integer;
+                const int64_t b=registers[right].as.integer;
+                const int64_t result=bitwise_opcode==DIAMOND_OP_BITWISE_AND?(a&b):
+                    bitwise_opcode==DIAMOND_OP_BITWISE_OR?(a|b):(a^b);
+                registers[destination]=DIAMOND_INT(result);
+                break;
+            }
             case DIAMOND_OP_MODULO: {
                 /* Floored modulo (result takes the divisor's sign),
                  * matching Ruby -- not C's truncating `%` (which takes
