@@ -5506,10 +5506,48 @@ static uint16_t parse_tensor_from_array_call(Compiler *compiler) {
     return dest;
 }
 
+/* Tensor.random(rows, cols, seed) -- three arbitrary Int expressions,
+ * runtime-validated in the DIAMOND_OP_TENSOR_RANDOM handler. */
+static uint16_t parse_tensor_random_call(Compiler *compiler) {
+    if(compiler->current.kind!=DIAMOND_TOKEN_LEFT_PAREN) {
+        fail(compiler,compiler->current.span,"expected '(' after 'Tensor.random'");
+        return 0;
+    }
+    advance_token(compiler);skip_newlines(compiler);
+    const uint16_t rows_register=parse_expression(compiler);
+    skip_newlines(compiler);
+    if(compiler->current.kind!=DIAMOND_TOKEN_COMMA) {
+        fail(compiler,compiler->current.span,"expected ',' after Tensor.random rows argument");
+        return 0;
+    }
+    advance_token(compiler);skip_newlines(compiler);
+    const uint16_t cols_register=parse_expression(compiler);
+    skip_newlines(compiler);
+    if(compiler->current.kind!=DIAMOND_TOKEN_COMMA) {
+        fail(compiler,compiler->current.span,"expected ',' after Tensor.random cols argument");
+        return 0;
+    }
+    advance_token(compiler);skip_newlines(compiler);
+    const uint16_t seed_register=parse_expression(compiler);
+    skip_newlines(compiler);
+    if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
+        fail(compiler,compiler->current.span,"expected ')' after Tensor.random arguments");
+        return 0;
+    }
+    advance_token(compiler);
+    const uint16_t dest=allocate_register(compiler);
+    emit_opcode(compiler,DIAMOND_OP_TENSOR_RANDOM);
+    emit_register(compiler,dest);
+    emit_register(compiler,rows_register);
+    emit_register(compiler,cols_register);
+    emit_register(compiler,seed_register);
+    return dest;
+}
+
 static uint16_t parse_tensor_call(Compiler *compiler) {
     advance_token(compiler); /* consume '.' */
     if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER) {
-        fail(compiler,compiler->current.span,"expected 'zeros' or 'from_array' after 'Tensor'");
+        fail(compiler,compiler->current.span,"expected 'zeros', 'from_array', or 'random' after 'Tensor'");
         return 0;
     }
     const DiamondSpan method=compiler->current.span;
@@ -5521,7 +5559,11 @@ static uint16_t parse_tensor_call(Compiler *compiler) {
         advance_token(compiler);
         return parse_tensor_from_array_call(compiler);
     }
-    fail(compiler,method,"expected 'zeros' or 'from_array' after 'Tensor'");
+    if(name_equals(compiler,"random",method,false)) {
+        advance_token(compiler);
+        return parse_tensor_random_call(compiler);
+    }
+    fail(compiler,method,"expected 'zeros', 'from_array', or 'random' after 'Tensor'");
     return 0;
 }
 
