@@ -450,6 +450,14 @@ typedef enum DiamondOpCode : uint8_t {
     /* Tensor.from_array(nested_array) -- nested_array is an Array of
      * Arrays of Int/Float, all rows the same length. */
     DIAMOND_OP_TENSOR_FROM_ARRAY,
+    /* Tensor.random(rows, cols, seed) -- deterministic (same seed ->
+     * same values) uniform-random Tensor in [-1, 1), generated directly
+     * in C rather than round-tripping through a Diamond-level nested
+     * Array like Tensor.from_array requires -- weight init at any real
+     * model size (a vocab_size x d_model embedding table alone can be
+     * millions of elements) was the actual measured bottleneck in
+     * examples/transformer, not #matmul itself. */
+    DIAMOND_OP_TENSOR_RANDOM,
     DIAMOND_OP_COUNT,
 } DiamondOpCode;
 

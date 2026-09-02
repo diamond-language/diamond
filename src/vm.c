@@ -1697,6 +1697,33 @@ static DiamondVmStatus tensor_from_array_helper(DiamondVm *vm,const DiamondArray
     return DIAMOND_VM_OK;
 }
 
+/* Tensor.random(rows, cols, seed) -- fills a fresh Tensor with
+ * deterministic pseudorandom values in [-1, 1) directly in C, entirely
+ * bypassing the slow path Tensor.from_array requires (build a
+ * Diamond-level nested Array element by element via interpreted
+ * #push, then re-walk and re-validate the whole thing) -- weight init
+ * at any real model size measurably dominated build time in
+ * examples/transformer (a vocab_size x d_model embedding table alone
+ * is easily millions of elements) even though it's the one-time setup
+ * cost, not the hot #matmul path.
+ *
+ * A plain LCG (same recurrence as examples/transformer/lib/rng.di's
+ * own SimpleRng, reimplemented here rather than shared -- this is C,
+ * that's Diamond) -- not cryptographic, doesn't need to be: same seed
+ * always produces the same Tensor, which is all reproducible weight
+ * init actually requires. `state` is uint64_t specifically so the
+ * multiply can't silently wrap/misbehave the way it would in a
+ * narrower type before the modulus brings it back into 31-bit range. */
+static void tensor_random_helper(DiamondTensor *tensor,int64_t seed) {
+    uint64_t state=(uint64_t)seed;
+    const size_t total=tensor->rows*tensor->cols;
+    for(size_t index=0;index<total;index++) {
+        state=(state*1103515245ULL+12345ULL)%2147483648ULL;
+        const double sample=(double)state/2147483648.0;
+        tensor->data[index]=sample*2.0-1.0;
+    }
+}
+
 /* Tensor#rows/#cols/#get/#set/#matmul/#to_a -- every instance method,
  * matching sqlite3_dispatch_helper's own shape (called from the big
  * receiver_kind==DIAMOND_OBJECT_TENSOR case in run_chunk's INVOKE
@@ -18080,6 +18107,29 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 const DiamondVmStatus from_array_status=tensor_from_array_helper(vm,
                     (const DiamondArray *)registers[array_reg].as.object,&registers[dest]);
                 VM_PROPAGATE(from_array_status);
+                break;
+            }
+            case DIAMOND_OP_TENSOR_RANDOM: {
+                uint16_t dest=0,rows_reg=0,cols_reg=0,seed_reg=0;
+                READ_SHORT(dest);READ_SHORT(rows_reg);READ_SHORT(cols_reg);READ_SHORT(seed_reg);
+                if(registers[rows_reg].kind!=DIAMOND_VALUE_INT||
+                   registers[cols_reg].kind!=DIAMOND_VALUE_INT||
+                   registers[seed_reg].kind!=DIAMOND_VALUE_INT) {
+                    snprintf(vm->error,sizeof vm->error,
+                        "Tensor.random's rows/cols/seed arguments must be Ints");
+                    VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                }
+                const int64_t rows=registers[rows_reg].as.integer;
+                const int64_t cols=registers[cols_reg].as.integer;
+                if(rows<=0||cols<=0) {
+                    snprintf(vm->error,sizeof vm->error,
+                        "Tensor.random's rows/cols arguments must be positive");
+                    VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                }
+                DiamondTensor *tensor=allocate_tensor(vm,(size_t)rows,(size_t)cols);
+                if(tensor==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                registers[dest]=DIAMOND_OBJECT(tensor);
+                tensor_random_helper(tensor,registers[seed_reg].as.integer);
                 break;
             }
             case DIAMOND_OP_PROCESS_RUN: {
