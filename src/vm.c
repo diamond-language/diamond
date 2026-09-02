@@ -1617,6 +1617,27 @@ static DiamondVmStatus tensor_to_a_helper(DiamondVm *vm,const DiamondTensor *ten
     return DIAMOND_VM_OK;
 }
 
+/* Tensor#transpose -- a fresh (cols x rows) copy, `*out` under the same
+ * &registers[dest] GC-rooting requirement as tensor_matmul_helper's own
+ * `out`. Not in-place (that's only free for a square Tensor; keeping
+ * one #transpose semantics for every shape, always a fresh copy, is
+ * simpler than a shape-dependent special case) -- needed for attention
+ * (scores = Q.matmul(K.transpose())), not a hot O(n^3) path like matmul
+ * itself, so the plain nested loop here (no blocking/threading) is
+ * fine. */
+static DiamondVmStatus tensor_transpose_helper(DiamondVm *vm,const DiamondTensor *tensor,
+        DiamondValue *out) {
+    DiamondTensor *result=allocate_tensor(vm,tensor->cols,tensor->rows);
+    if(result==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+    *out=DIAMOND_OBJECT(result);
+    for(size_t i=0;i<tensor->rows;i++) {
+        for(size_t j=0;j<tensor->cols;j++) {
+            result->data[j*tensor->rows+i]=tensor->data[i*tensor->cols+j];
+        }
+    }
+    return DIAMOND_VM_OK;
+}
+
 /* Tensor.from_array(nested_array) -- nested_array must be a non-empty
  * Array of non-empty Arrays, every row the same length, every element
  * Int or Float. Two full passes (validate, then fill) rather than
@@ -1690,6 +1711,7 @@ static DiamondVmStatus tensor_dispatch_helper(DiamondVm *vm,DiamondTensor *tenso
     const bool set_method=method_name->length==3&&memcmp(method_name->chars,"set",3)==0;
     const bool matmul_method=method_name->length==6&&memcmp(method_name->chars,"matmul",6)==0;
     const bool to_a_method=method_name->length==4&&memcmp(method_name->chars,"to_a",4)==0;
+    const bool transpose_method=method_name->length==9&&memcmp(method_name->chars,"transpose",9)==0;
     if(rows_method) {
         if(argc!=0)return DIAMOND_VM_ARITY_ERROR;
         registers[dest]=DIAMOND_INT((int64_t)tensor->rows);return DIAMOND_VM_OK;
@@ -1742,6 +1764,10 @@ static DiamondVmStatus tensor_dispatch_helper(DiamondVm *vm,DiamondTensor *tenso
     if(to_a_method) {
         if(argc!=0)return DIAMOND_VM_ARITY_ERROR;
         return tensor_to_a_helper(vm,tensor,&registers[dest]);
+    }
+    if(transpose_method) {
+        if(argc!=0)return DIAMOND_VM_ARITY_ERROR;
+        return tensor_transpose_helper(vm,tensor,&registers[dest]);
     }
     snprintf(vm->error,sizeof vm->error,"undefined method '%.*s' for %s",
         (int)method_name->length,method_name->chars,"Tensor");
