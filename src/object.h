@@ -73,6 +73,7 @@ typedef enum DiamondObjectKind : uint8_t {
     DIAMOND_OBJECT_PROCESS_RESULT,
     DIAMOND_OBJECT_PROCESS_HANDLE,
     DIAMOND_OBJECT_PROCESS_STREAM,
+    DIAMOND_OBJECT_TENSOR,
 } DiamondObjectKind;
 
 typedef struct DiamondObject {
@@ -463,6 +464,26 @@ typedef struct DiamondSqlite3Handle {
     DiamondObject object;
     sqlite3 *db;
 } DiamondSqlite3Handle;
+
+/* A dense, row-major matrix of doubles -- `data[]` is a flexible array
+ * member, one malloc for the whole object (struct + payload), same
+ * layout choice as DiamondString/DiamondSymbol. Unlike DiamondArray
+ * (which stores boxed DiamondValues, each needing its own GC mark),
+ * this holds only raw doubles -- no DiamondValue anywhere inside it,
+ * so mark_object_children needs no DIAMOND_OBJECT_TENSOR case at all;
+ * a plain free(object) in the sweep is the entire lifetime story,
+ * exactly like DIAMOND_OBJECT_TIME (see that case's own comment in
+ * diamond_vm_collect_impl for why "no branch needed" is correct here
+ * too, not an oversight). Prototype scope, existing only to measure
+ * real matmul throughput before committing to a full tensor API
+ * (broadcasting, non-2D shapes, in-place ops, etc. are all deliberately
+ * out of scope for now). */
+typedef struct DiamondTensor {
+    DiamondObject object;
+    size_t rows;
+    size_t cols;
+    double data[];
+} DiamondTensor;
 
 /* A reusable prepared statement, from `SQLite3#prepare`. Same idempotent-
  * close sentinel discipline as DiamondSqlite3Handle: `stmt` is nulled by

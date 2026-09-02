@@ -5451,6 +5451,80 @@ static uint16_t parse_gzip_call(Compiler *compiler) {
     return 0;
 }
 
+/* Tensor.zeros(rows, cols) -- both arguments are arbitrary Int
+ * expressions, runtime-validated in the DIAMOND_OP_TENSOR_ZEROS
+ * handler (compiler has no way to know their runtime type here,
+ * same as SQLite3.open's own path/mode arguments). */
+static uint16_t parse_tensor_zeros_call(Compiler *compiler) {
+    if(compiler->current.kind!=DIAMOND_TOKEN_LEFT_PAREN) {
+        fail(compiler,compiler->current.span,"expected '(' after 'Tensor.zeros'");
+        return 0;
+    }
+    advance_token(compiler);skip_newlines(compiler);
+    const uint16_t rows_register=parse_expression(compiler);
+    skip_newlines(compiler);
+    if(compiler->current.kind!=DIAMOND_TOKEN_COMMA) {
+        fail(compiler,compiler->current.span,"expected ',' after Tensor.zeros rows argument");
+        return 0;
+    }
+    advance_token(compiler);skip_newlines(compiler);
+    const uint16_t cols_register=parse_expression(compiler);
+    skip_newlines(compiler);
+    if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
+        fail(compiler,compiler->current.span,"expected ')' after Tensor.zeros arguments");
+        return 0;
+    }
+    advance_token(compiler);
+    const uint16_t dest=allocate_register(compiler);
+    emit_opcode(compiler,DIAMOND_OP_TENSOR_ZEROS);
+    emit_register(compiler,dest);
+    emit_register(compiler,rows_register);
+    emit_register(compiler,cols_register);
+    return dest;
+}
+
+/* Tensor.from_array(nested_array) -- single Array-of-Arrays argument,
+ * runtime-validated (shape/element-type) in the
+ * DIAMOND_OP_TENSOR_FROM_ARRAY handler. */
+static uint16_t parse_tensor_from_array_call(Compiler *compiler) {
+    if(compiler->current.kind!=DIAMOND_TOKEN_LEFT_PAREN) {
+        fail(compiler,compiler->current.span,"expected '(' after 'Tensor.from_array'");
+        return 0;
+    }
+    advance_token(compiler);skip_newlines(compiler);
+    const uint16_t array_register=parse_expression(compiler);
+    skip_newlines(compiler);
+    if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
+        fail(compiler,compiler->current.span,"expected ')' after Tensor.from_array arguments");
+        return 0;
+    }
+    advance_token(compiler);
+    const uint16_t dest=allocate_register(compiler);
+    emit_opcode(compiler,DIAMOND_OP_TENSOR_FROM_ARRAY);
+    emit_register(compiler,dest);
+    emit_register(compiler,array_register);
+    return dest;
+}
+
+static uint16_t parse_tensor_call(Compiler *compiler) {
+    advance_token(compiler); /* consume '.' */
+    if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER) {
+        fail(compiler,compiler->current.span,"expected 'zeros' or 'from_array' after 'Tensor'");
+        return 0;
+    }
+    const DiamondSpan method=compiler->current.span;
+    if(name_equals(compiler,"zeros",method,false)) {
+        advance_token(compiler);
+        return parse_tensor_zeros_call(compiler);
+    }
+    if(name_equals(compiler,"from_array",method,false)) {
+        advance_token(compiler);
+        return parse_tensor_from_array_call(compiler);
+    }
+    fail(compiler,method,"expected 'zeros' or 'from_array' after 'Tensor'");
+    return 0;
+}
+
 static uint16_t parse_base64_encode_call(Compiler *compiler) {
     if(compiler->current.kind!=DIAMOND_TOKEN_LEFT_PAREN) {
         fail(compiler,compiler->current.span,"expected '(' after 'Base64.encode'");
@@ -5785,6 +5859,10 @@ static uint16_t parse_name(Compiler *compiler) {
        compiler->current.kind==DIAMOND_TOKEN_DOT&&
        name_equals(compiler,"SQLite3",name,false))
         return parse_sqlite3_open_call(compiler);
+    if(class_index<0&&find_local(compiler,name)<0&&find_function(compiler,name)<0&&
+       compiler->current.kind==DIAMOND_TOKEN_DOT&&
+       name_equals(compiler,"Tensor",name,false))
+        return parse_tensor_call(compiler);
     if(class_index<0&&find_local(compiler,name)<0&&find_function(compiler,name)<0&&
        compiler->current.kind==DIAMOND_TOKEN_DOT&&
        name_equals(compiler,"PostgreSQL",name,false))

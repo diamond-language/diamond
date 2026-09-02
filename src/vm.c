@@ -673,6 +673,14 @@ static void sweep_list(DiamondVm *vm, DiamondObject **list_head,
                 do {reap_result=waitpid(handle->pid,&reap_status,WNOHANG);}
                 while(reap_result<0&&errno==EINTR);
             }
+        } else if(unreached->kind==DIAMOND_OBJECT_TENSOR) {
+            /* No owned OS resource, no separate allocation -- payload is
+             * the struct's own flexible array member, one malloc, freed
+             * by the generic free(unreached) below. This branch exists
+             * only for accurate bytes_allocated accounting, same as
+             * DIAMOND_OBJECT_TIME's own. */
+            const DiamondTensor *tensor=(const DiamondTensor *)unreached;
+            size=sizeof(DiamondTensor)+tensor->rows*tensor->cols*sizeof(double);
         } else {
             size=sizeof(DiamondCell);
         }
@@ -1389,6 +1397,351 @@ static DiamondArray *allocate_array(DiamondVm *vm,const DiamondValue *values,
     array->dirty_cards=nullptr;array->dirty_card_capacity=0;
     for(size_t i=0;i<count;i++) array->values[i]=values[i];
     vm->young_objects=&array->object;vm->bytes_allocated+=size;return array;
+}
+
+/* Zero-filled rows x cols DiamondTensor -- struct + payload in one
+ * malloc (DiamondTensor's own flexible array member), same allocation
+ * shape as allocate_string/allocate_symbol. Overflow-checked: rows*cols
+ * (element count) and its *sizeof(double) byte size both go through
+ * size_t, and a pathological rows/cols pair (both runtime Ints, never
+ * validated against any upper bound before reaching here) could
+ * overflow either multiplication on a real -- if rare -- input rather
+ * than just producing a huge-but-correct allocation request. */
+static DiamondTensor *allocate_tensor(DiamondVm *vm,size_t rows,size_t cols) {
+    maybe_collect(vm);
+    if(rows!=0&&cols>SIZE_MAX/rows)return nullptr;
+    const size_t element_count=rows*cols;
+    if(element_count!=0&&sizeof(double)>SIZE_MAX/element_count)return nullptr;
+    const size_t payload_size=element_count*sizeof(double);
+    if(payload_size>SIZE_MAX-sizeof(DiamondTensor))return nullptr;
+    const size_t size=sizeof(DiamondTensor)+payload_size;
+    DiamondTensor *tensor=malloc(size);
+    if(tensor==nullptr)return nullptr;
+    tensor->object=(DiamondObject){.next=vm->young_objects,.kind=DIAMOND_OBJECT_TENSOR};
+    tensor->rows=rows;tensor->cols=cols;
+    memset(tensor->data,0,payload_size);
+    vm->young_objects=&tensor->object;vm->bytes_allocated+=size;return tensor;
+}
+
+/* Computes rows [row_start,row_end) of a (m x k) * b (k x n) -> c (m x
+ * n), c already zero-filled by the caller (allocate_tensor). Two
+ * layering decisions on top of the plain ikj loop order (see this
+ * function's own history/git blame for that first pass, which is
+ * still exactly the innermost triple here):
+ *
+ * 1. k is blocked (block_k rows of `b` at a time) with the *full* row
+ *    range looped inside each block, not the other way around --
+ *    for a fixed k-block, every row in [row_start,row_end) reuses
+ *    that same slice of `b` (block_k*n doubles) before moving to the
+ *    next block, instead of re-streaming the *entire* `b` matrix from
+ *    memory once per row of `a`. block_k is sized (by the caller) so
+ *    that slice comfortably fits in L2 -- without this, a k this
+ *    large (b bigger than cache) means every row of `a` re-pays `b`'s
+ *    full memory latency, which is exactly the FFN-shaped slowdown
+ *    the plain ikj version measured (16 GFLOPS on a cache-resident
+ *    512x512, 6.7 GFLOPS once k/n grow past cache).
+ * 2. This is the per-thread body: the caller (tensor_matmul_helper)
+ *    splits [0,m) into disjoint [row_start,row_end) ranges across
+ *    however many worker threads it decides to use and calls this
+ *    once per thread -- always correct with no locking, since
+ *    distinct row ranges write disjoint rows of `c` and never touch
+ *    each other's rows of `a`/`c` (`b` is read-only and shared).
+ *
+ * Reordering the k-block loop outermost changes the *order* summed
+ * terms are added in, not *which* terms -- standard, expected
+ * floating-point reassociation for a blocked matmul (real BLAS
+ * implementations do the same), not a correctness bug: the result
+ * differs from the unblocked version only in the last ULP or so of
+ * rounding, same as reassociating any other FP sum. */
+static void tensor_matmul_row_range(const double *restrict a,const double *restrict b,
+        double *restrict c,size_t row_start,size_t row_end,size_t k,size_t n,size_t block_k) {
+    for(size_t p0=0;p0<k;p0+=block_k) {
+        const size_t p_end=p0+block_k<k?p0+block_k:k;
+        for(size_t i=row_start;i<row_end;i++) {
+            const double *restrict a_row=a+i*k;
+            double *restrict c_row=c+i*n;
+            for(size_t p=p0;p<p_end;p++) {
+                const double a_ip=a_row[p];
+                const double *restrict b_row=b+p*n;
+                for(size_t j=0;j<n;j++) {
+                    c_row[j]+=a_ip*b_row[j];
+                }
+            }
+        }
+    }
+}
+
+typedef struct TensorMatmulThreadArgs {
+    const double *a,*b; double *c;
+    size_t row_start,row_end,k,n,block_k;
+} TensorMatmulThreadArgs;
+
+static void *tensor_matmul_thread_entry(void *raw_args) {
+    const TensorMatmulThreadArgs *args=(const TensorMatmulThreadArgs *)raw_args;
+    tensor_matmul_row_range(args->a,args->b,args->c,
+        args->row_start,args->row_end,args->k,args->n,args->block_k);
+    return nullptr;
+}
+
+/* Caps how many worker threads a single matmul call will ever spawn --
+ * a real inference/training loop calls #matmul constantly, so this
+ * deliberately doesn't just grab every core sysconf reports every
+ * single call (that's fine for one isolated benchmark, not for a
+ * process also trying to do other work, or for several matmuls
+ * in flight from different Fibers/Threads at once). 8 is a reasonable
+ * fixed ceiling for a prototype; a real deployment-tunable value is a
+ * follow-up, not a hard architectural limit. */
+#define DIAMOND_TENSOR_MATMUL_MAX_THREADS 8
+
+/* a (m x k) * b (k x n) -> a fresh (m x n) DiamondTensor. `*out` MUST be
+ * a pointer into the caller's live registers array (&registers[dest]),
+ * same GC-rooting requirement as sqlite3_query_helper's own `result` --
+ * written immediately after allocate_tensor succeeds, before any
+ * compute happens, even though nothing below allocates (no future
+ * caller of this static function should assume that stays true
+ * forever and drop the immediate-write discipline).
+ *
+ * block_k targets a fixed byte budget per k-block (see
+ * tensor_matmul_row_range's own comment for why blocking k helps) --
+ * TARGET_BLOCK_BYTES is a conservative guess at "comfortably inside
+ * L2 on a typical desktop/server core" (256KB-1MB is common; 128KB
+ * leaves headroom for the a_row/c_row lines simultaneously in flight),
+ * not a measured-on-this-machine value -- tuning it against a real L2
+ * size is a follow-up if the numbers call for it.
+ *
+ * Threading: splits [0,m) into up to DIAMOND_TENSOR_MATMUL_MAX_THREADS
+ * (bounded further by hardware concurrency and by m itself -- no
+ * point spawning more threads than output rows) contiguous, disjoint
+ * row ranges, one call to tensor_matmul_row_range per thread, joined
+ * before returning. Skipped entirely (falls straight through to a
+ * single synchronous call) below DIAMOND_TENSOR_MATMUL_THREAD_FLOOR
+ * total FLOPs -- thread spawn/join overhead would otherwise dominate
+ * a transformer's many small per-head/per-token matmuls, not just the
+ * few big FFN ones. */
+#define DIAMOND_TENSOR_MATMUL_THREAD_FLOOR (1024ULL*1024ULL)
+static DiamondVmStatus tensor_matmul_helper(DiamondVm *vm,const DiamondTensor *a,
+        const DiamondTensor *b,DiamondValue *out) {
+    if(a->cols!=b->rows) {
+        snprintf(vm->error,sizeof vm->error,
+            "Tensor#matmul shape mismatch: %zux%zu * %zux%zu",
+            a->rows,a->cols,b->rows,b->cols);
+        return DIAMOND_VM_TYPE_ERROR;
+    }
+    DiamondTensor *result=allocate_tensor(vm,a->rows,b->cols);
+    if(result==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+    *out=DIAMOND_OBJECT(result);
+    const size_t m=a->rows,k=a->cols,n=b->cols;
+    const size_t target_block_bytes=128*1024;
+    size_t block_k=target_block_bytes/(n*sizeof(double));
+    if(block_k<1)block_k=1;
+    if(block_k>k)block_k=k;
+    size_t thread_count=1;
+    const unsigned long long total_flops=2ULL*(unsigned long long)m*
+        (unsigned long long)k*(unsigned long long)n;
+    if(total_flops>=DIAMOND_TENSOR_MATMUL_THREAD_FLOOR&&m>1) {
+        const long online=sysconf(_SC_NPROCESSORS_ONLN);
+        size_t available=online>0?(size_t)online:1;
+        if(available>DIAMOND_TENSOR_MATMUL_MAX_THREADS)
+            available=DIAMOND_TENSOR_MATMUL_MAX_THREADS;
+        thread_count=available<m?available:m;
+    }
+    if(thread_count<=1) {
+        tensor_matmul_row_range(a->data,b->data,result->data,0,m,k,n,block_k);
+        return DIAMOND_VM_OK;
+    }
+    pthread_t threads[DIAMOND_TENSOR_MATMUL_MAX_THREADS];
+    TensorMatmulThreadArgs thread_args[DIAMOND_TENSOR_MATMUL_MAX_THREADS];
+    const size_t base_rows_per_thread=m/thread_count;
+    const size_t extra_rows=m%thread_count;
+    size_t row_cursor=0;
+    size_t spawned=0;
+    for(size_t index=0;index<thread_count;index++) {
+        const size_t this_thread_rows=base_rows_per_thread+(index<extra_rows?1:0);
+        const size_t row_start=row_cursor;
+        const size_t row_end=row_cursor+this_thread_rows;
+        row_cursor=row_end;
+        thread_args[index]=(TensorMatmulThreadArgs){.a=a->data,.b=b->data,.c=result->data,
+            .row_start=row_start,.row_end=row_end,.k=k,.n=n,.block_k=block_k};
+        /* Last range runs on this thread instead of spawning one more --
+         * avoids paying a spawn+join for a thread_count'th of the work
+         * when this thread is sitting idle waiting for the others
+         * anyway. */
+        if(index+1==thread_count) {
+            tensor_matmul_row_range(a->data,b->data,result->data,row_start,row_end,k,n,block_k);
+            continue;
+        }
+        if(pthread_create(&threads[index],nullptr,
+                tensor_matmul_thread_entry,&thread_args[index])!=0) {
+            /* Spawn failed partway through -- finish this and every
+             * remaining range synchronously on this thread rather than
+             * leaving rows [row_start,m) uncomputed, then join whatever
+             * did successfully spawn before returning. */
+            tensor_matmul_row_range(a->data,b->data,result->data,row_start,m,k,n,block_k);
+            for(size_t joined=0;joined<index;joined++)pthread_join(threads[joined],nullptr);
+            return DIAMOND_VM_OK;
+        }
+        spawned++;
+    }
+    for(size_t index=0;index<spawned;index++)pthread_join(threads[index],nullptr);
+    return DIAMOND_VM_OK;
+}
+
+/* Tensor#to_a -- a nested Array-of-Arrays-of-Float snapshot, for
+ * inspection/interop/tests at small scale (every element is a
+ * separate boxed Float, so this is not meant for the hot path). Same
+ * &registers[dest]-must-be-a-real-GC-root requirement, and same
+ * "root the outer Array immediately, push each row onto it before
+ * populating that row" discipline, as sqlite3_collect_rows_helper's
+ * own comment explains in full -- DIAMOND_FLOAT itself never
+ * allocates (Float lives directly in the tagged union, not as a heap
+ * object), so a row Array stays the only allocation happening while
+ * its own elements are appended. */
+static DiamondVmStatus tensor_to_a_helper(DiamondVm *vm,const DiamondTensor *tensor,
+        DiamondValue *out) {
+    DiamondArray *outer=allocate_array(vm,nullptr,0);
+    if(outer==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+    *out=DIAMOND_OBJECT(outer);
+    for(size_t i=0;i<tensor->rows;i++) {
+        DiamondArray *row=allocate_array(vm,nullptr,0);
+        if(row==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+        if(!array_push(vm,outer,DIAMOND_OBJECT(row)))return DIAMOND_VM_OUT_OF_MEMORY;
+        for(size_t j=0;j<tensor->cols;j++) {
+            if(!array_push(vm,row,DIAMOND_FLOAT(tensor->data[i*tensor->cols+j])))
+                return DIAMOND_VM_OUT_OF_MEMORY;
+        }
+    }
+    return DIAMOND_VM_OK;
+}
+
+/* Tensor.from_array(nested_array) -- nested_array must be a non-empty
+ * Array of non-empty Arrays, every row the same length, every element
+ * Int or Float. Two full passes (validate, then fill) rather than
+ * allocating the Tensor speculatively and unwinding on a later bad
+ * element -- simpler, and this isn't a hot path (unlike matmul, it
+ * runs once per weight/input load, not once per training/inference
+ * step). */
+static DiamondVmStatus tensor_from_array_helper(DiamondVm *vm,const DiamondArray *outer,
+        DiamondValue *out) {
+    if(outer->count==0) {
+        snprintf(vm->error,sizeof vm->error,"Tensor.from_array: outer Array must not be empty");
+        return DIAMOND_VM_TYPE_ERROR;
+    }
+    if(outer->values[0].kind!=DIAMOND_VALUE_OBJECT||
+       outer->values[0].as.object->kind!=DIAMOND_OBJECT_ARRAY) {
+        snprintf(vm->error,sizeof vm->error,"Tensor.from_array: every row must be an Array");
+        return DIAMOND_VM_TYPE_ERROR;
+    }
+    const size_t cols=((const DiamondArray *)outer->values[0].as.object)->count;
+    if(cols==0) {
+        snprintf(vm->error,sizeof vm->error,"Tensor.from_array: rows must not be empty");
+        return DIAMOND_VM_TYPE_ERROR;
+    }
+    for(size_t i=0;i<outer->count;i++) {
+        if(outer->values[i].kind!=DIAMOND_VALUE_OBJECT||
+           outer->values[i].as.object->kind!=DIAMOND_OBJECT_ARRAY) {
+            snprintf(vm->error,sizeof vm->error,"Tensor.from_array: every row must be an Array");
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        const DiamondArray *row=(const DiamondArray *)outer->values[i].as.object;
+        if(row->count!=cols) {
+            snprintf(vm->error,sizeof vm->error,
+                "Tensor.from_array: every row must have the same length (row 0 has %zu, row %zu has %zu)",
+                cols,i,row->count);
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        for(size_t j=0;j<cols;j++) {
+            const DiamondValue element=row->values[j];
+            if(element.kind!=DIAMOND_VALUE_INT&&element.kind!=DIAMOND_VALUE_FLOAT) {
+                snprintf(vm->error,sizeof vm->error,
+                    "Tensor.from_array: every element must be an Int or a Float");
+                return DIAMOND_VM_TYPE_ERROR;
+            }
+        }
+    }
+    DiamondTensor *tensor=allocate_tensor(vm,outer->count,cols);
+    if(tensor==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+    *out=DIAMOND_OBJECT(tensor);
+    for(size_t i=0;i<outer->count;i++) {
+        const DiamondArray *row=(const DiamondArray *)outer->values[i].as.object;
+        for(size_t j=0;j<cols;j++) {
+            const DiamondValue element=row->values[j];
+            tensor->data[i*cols+j]=
+                element.kind==DIAMOND_VALUE_INT?(double)element.as.integer:element.as.real;
+        }
+    }
+    return DIAMOND_VM_OK;
+}
+
+/* Tensor#rows/#cols/#get/#set/#matmul/#to_a -- every instance method,
+ * matching sqlite3_dispatch_helper's own shape (called from the big
+ * receiver_kind==DIAMOND_OBJECT_TENSOR case in run_chunk's INVOKE
+ * handling). #get/#set use IndexError for an out-of-bounds row/col,
+ * matching Array#[] 's own convention. */
+static DiamondVmStatus tensor_dispatch_helper(DiamondVm *vm,DiamondTensor *tensor,
+        const DiamondStringConstant *method_name,DiamondValue *registers,uint16_t base,
+        uint8_t argc,uint16_t dest) {
+    const bool rows_method=method_name->length==4&&memcmp(method_name->chars,"rows",4)==0;
+    const bool cols_method=method_name->length==4&&memcmp(method_name->chars,"cols",4)==0;
+    const bool get_method=method_name->length==3&&memcmp(method_name->chars,"get",3)==0;
+    const bool set_method=method_name->length==3&&memcmp(method_name->chars,"set",3)==0;
+    const bool matmul_method=method_name->length==6&&memcmp(method_name->chars,"matmul",6)==0;
+    const bool to_a_method=method_name->length==4&&memcmp(method_name->chars,"to_a",4)==0;
+    if(rows_method) {
+        if(argc!=0)return DIAMOND_VM_ARITY_ERROR;
+        registers[dest]=DIAMOND_INT((int64_t)tensor->rows);return DIAMOND_VM_OK;
+    }
+    if(cols_method) {
+        if(argc!=0)return DIAMOND_VM_ARITY_ERROR;
+        registers[dest]=DIAMOND_INT((int64_t)tensor->cols);return DIAMOND_VM_OK;
+    }
+    if(get_method||set_method) {
+        const uint8_t expected_argc=get_method?2:3;
+        if(argc!=expected_argc)return DIAMOND_VM_ARITY_ERROR;
+        if(registers[base].kind!=DIAMOND_VALUE_INT||
+           registers[(size_t)base+1].kind!=DIAMOND_VALUE_INT) {
+            snprintf(vm->error,sizeof vm->error,
+                "Tensor#%.*s's row/col arguments must be Ints",
+                (int)method_name->length,method_name->chars);
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        const int64_t row=registers[base].as.integer;
+        const int64_t col=registers[(size_t)base+1].as.integer;
+        if(row<0||col<0||(size_t)row>=tensor->rows||(size_t)col>=tensor->cols) {
+            snprintf(vm->error,sizeof vm->error,
+                "Tensor#%.*s index (%" PRId64 ", %" PRId64 ") out of bounds for %zux%zu Tensor",
+                (int)method_name->length,method_name->chars,row,col,tensor->rows,tensor->cols);
+            return DIAMOND_VM_INDEX_ERROR;
+        }
+        if(get_method) {
+            registers[dest]=DIAMOND_FLOAT(tensor->data[(size_t)row*tensor->cols+(size_t)col]);
+            return DIAMOND_VM_OK;
+        }
+        const DiamondValue value=registers[(size_t)base+2];
+        if(value.kind!=DIAMOND_VALUE_INT&&value.kind!=DIAMOND_VALUE_FLOAT) {
+            snprintf(vm->error,sizeof vm->error,"Tensor#set's value argument must be an Int or a Float");
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        tensor->data[(size_t)row*tensor->cols+(size_t)col]=
+            value.kind==DIAMOND_VALUE_INT?(double)value.as.integer:value.as.real;
+        registers[dest]=DIAMOND_NIL;return DIAMOND_VM_OK;
+    }
+    if(matmul_method) {
+        if(argc!=1)return DIAMOND_VM_ARITY_ERROR;
+        if(registers[base].kind!=DIAMOND_VALUE_OBJECT||
+           registers[base].as.object->kind!=DIAMOND_OBJECT_TENSOR) {
+            snprintf(vm->error,sizeof vm->error,"Tensor#matmul's argument must be a Tensor");
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        return tensor_matmul_helper(vm,tensor,
+            (const DiamondTensor *)registers[base].as.object,&registers[dest]);
+    }
+    if(to_a_method) {
+        if(argc!=0)return DIAMOND_VM_ARITY_ERROR;
+        return tensor_to_a_helper(vm,tensor,&registers[dest]);
+    }
+    snprintf(vm->error,sizeof vm->error,"undefined method '%.*s' for %s",
+        (int)method_name->length,method_name->chars,"Tensor");
+    return DIAMOND_VM_TYPE_ERROR;
 }
 
 static DiamondHash *allocate_hash(DiamondVm *vm) {
@@ -7696,6 +8049,7 @@ static void format_value_type(char *buffer, size_t capacity,
         case DIAMOND_OBJECT_PROCESS_RESULT: name="ProcessResult"; break;
         case DIAMOND_OBJECT_PROCESS_HANDLE: name="ProcessHandle"; break;
         case DIAMOND_OBJECT_PROCESS_STREAM: name="ProcessStream"; break;
+        case DIAMOND_OBJECT_TENSOR: name="Tensor"; break;
         case DIAMOND_OBJECT_INSTANCE: {
             const DiamondInstance *instance=(const DiamondInstance *)value.as.object;
             name=instance->class->name;
@@ -16177,6 +16531,14 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     VM_PROPAGATE(dispatch_status);
                     break;
                 }
+                if(receiver_kind==DIAMOND_OBJECT_TENSOR) {
+                    if(type_argument_count!=0)VM_REJECT_TYPE_ARGUMENTS(method_name);
+                    const DiamondVmStatus dispatch_status=tensor_dispatch_helper(vm,
+                        (DiamondTensor *)registers[recv].as.object,
+                        method_name,registers,base,argc,dest);
+                    VM_PROPAGATE(dispatch_status);
+                    break;
+                }
                 if(receiver_kind==DIAMOND_OBJECT_SQLITE3_STATEMENT) {
                     if(type_argument_count!=0)VM_REJECT_TYPE_ARGUMENTS(method_name);
                     const DiamondVmStatus dispatch_status=sqlite3_statement_dispatch_helper(vm,
@@ -16821,6 +17183,41 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 const DiamondVmStatus time_status=time_build_helper(vm,
                     &registers[base_register],mode,&registers[destination]);
                 VM_PROPAGATE(time_status);
+                break;
+            }
+            case DIAMOND_OP_TENSOR_ZEROS: {
+                uint16_t dest=0,rows_reg=0,cols_reg=0;
+                READ_SHORT(dest);READ_SHORT(rows_reg);READ_SHORT(cols_reg);
+                if(registers[rows_reg].kind!=DIAMOND_VALUE_INT||
+                   registers[cols_reg].kind!=DIAMOND_VALUE_INT) {
+                    snprintf(vm->error,sizeof vm->error,
+                        "Tensor.zeros's rows/cols arguments must be Ints");
+                    VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                }
+                const int64_t rows=registers[rows_reg].as.integer;
+                const int64_t cols=registers[cols_reg].as.integer;
+                if(rows<=0||cols<=0) {
+                    snprintf(vm->error,sizeof vm->error,
+                        "Tensor.zeros's rows/cols arguments must be positive");
+                    VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                }
+                DiamondTensor *tensor=allocate_tensor(vm,(size_t)rows,(size_t)cols);
+                if(tensor==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                registers[dest]=DIAMOND_OBJECT(tensor);
+                break;
+            }
+            case DIAMOND_OP_TENSOR_FROM_ARRAY: {
+                uint16_t dest=0,array_reg=0;
+                READ_SHORT(dest);READ_SHORT(array_reg);
+                if(registers[array_reg].kind!=DIAMOND_VALUE_OBJECT||
+                   registers[array_reg].as.object->kind!=DIAMOND_OBJECT_ARRAY) {
+                    snprintf(vm->error,sizeof vm->error,
+                        "Tensor.from_array's argument must be an Array");
+                    VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                }
+                const DiamondVmStatus from_array_status=tensor_from_array_helper(vm,
+                    (const DiamondArray *)registers[array_reg].as.object,&registers[dest]);
+                VM_PROPAGATE(from_array_status);
                 break;
             }
             case DIAMOND_OP_PROCESS_RUN: {

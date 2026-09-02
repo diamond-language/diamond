@@ -415,6 +415,12 @@ typedef enum DiamondOpCode : uint8_t {
     DIAMOND_OP_TIME_PARSE,
     /* Time.utc/local/fixed(...), also appended for opcode stability. */
     DIAMOND_OP_TIME_BUILD,
+    /* Tensor.zeros(rows, cols) -- a new all-zero DiamondTensor. Prototype
+     * scope: see DiamondTensor's own comment in object.h. */
+    DIAMOND_OP_TENSOR_ZEROS,
+    /* Tensor.from_array(nested_array) -- nested_array is an Array of
+     * Arrays of Int/Float, all rows the same length. */
+    DIAMOND_OP_TENSOR_FROM_ARRAY,
     DIAMOND_OP_COUNT,
 } DiamondOpCode;
 
