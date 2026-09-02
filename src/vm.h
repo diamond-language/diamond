@@ -471,6 +471,13 @@ typedef enum {
     DIAMOND_FILE_PATH_EXTNAME,
     DIAMOND_FILE_PATH_ABSOLUTE,
     DIAMOND_FILE_PATH_EXPAND,
+    /* File.directory?(path) -- unlike ABSOLUTE (a pure string check),
+     * this is real I/O (stat()); a stat() failure (doesn't exist,
+     * permission denied, ...) reads as false, not an error -- matches
+     * Ruby's own File.directory? contract, and is what lets a Diamond-
+     * level recursive directory walk (Dir.entries + this) use it in a
+     * plain condition without needing to rescue anything first. */
+    DIAMOND_FILE_PATH_DIRECTORY,
 } DiamondFilePathFunction;
 
 typedef enum DiamondMathFunction : uint8_t {

@@ -15,6 +15,7 @@
 #include <ctype.h>
 #include <dirent.h>
 #include <errno.h>
+#include <sys/stat.h>
 #include <limits.h>
 #include <math.h>
 #include <stdckdint.h>
@@ -19174,6 +19175,13 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                         path_result=DIAMOND_BOOL(path->length>0&&path->chars[0]=='/');break;
                     case DIAMOND_FILE_PATH_EXPAND:
                         path_status=file_path_expand_helper(vm,path,second,&path_result);break;
+                    case DIAMOND_FILE_PATH_DIRECTORY: {
+                        struct stat path_stat;
+                        const bool is_directory=
+                            stat(path->chars,&path_stat)==0&&S_ISDIR(path_stat.st_mode);
+                        path_result=DIAMOND_BOOL(is_directory);
+                        break;
+                    }
                     default: VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
                 }
                 VM_PROPAGATE(path_status);
