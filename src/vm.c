@@ -258,6 +258,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk, DiamondVm *vm,
 static bool hash_set(DiamondVm *vm,DiamondHash *hash,DiamondValue key,
                      DiamondValue value);
 static bool array_push(DiamondVm *vm,DiamondArray *array,DiamondValue value);
+static bool numeric_as_double(DiamondValue value, double *out);
 static void free_adopted_programs(void *list);
 static void free_thread(DiamondThread *thread);
 static void populate_default_argv_env(DiamondVm *vm);
@@ -1720,6 +1721,275 @@ static void tensor_random_helper(DiamondTensor *tensor,int64_t seed) {
     }
 }
 
+/* Elementwise/shape mutators -- the training-loop counterpart to
+ * #matmul's own native speedup. Found the hard way: at
+ * examples/transformer's real training config (d_model=128, 4 layers,
+ * seq_len=64), matmuls are mostly *too small* to even cross
+ * DIAMOND_TENSOR_MATMUL_THREAD_FLOOR, so #matmul was never the
+ * bottleneck there -- one training step measured 5.55s, and the real
+ * cost was tensor_ops.di's own per-element Diamond loops (layernorm,
+ * softmax, gelu, add_bias, column slicing), each doing thousands of
+ * individual #get/#set native-dispatch round-trips (memcmp method-name
+ * matching, bounds checks, register shuffling) per call instead of one
+ * tight C loop. At that rate a single ~140MB TinyStories shard
+ * (100k stories) would take on the order of 90 days to train one pass
+ * over. These mirror tensor_ops.di's own Diamond functions exactly
+ * (same names/semantics, in-place, returning the mutated Tensor) so
+ * that file can become a thin wrapper delegating to these instead of
+ * rewriting any of autograd.di's own backward-formula math. */
+static void tensor_add_inplace_helper(DiamondTensor *a,const DiamondTensor *b) {
+    const size_t total=a->rows*a->cols;
+    for(size_t index=0;index<total;index++) a->data[index]+=b->data[index];
+}
+
+static void tensor_scale_inplace_helper(DiamondTensor *x,double scalar) {
+    const size_t total=x->rows*x->cols;
+    for(size_t index=0;index<total;index++) x->data[index]*=scalar;
+}
+
+/* bias is always a single row (1 x x->cols), broadcast-added to every
+ * row of x. */
+static void tensor_add_bias_inplace_helper(DiamondTensor *x,const DiamondTensor *bias) {
+    for(size_t row=0;row<x->rows;row++) {
+        double *row_data=x->data+row*x->cols;
+        for(size_t col=0;col<x->cols;col++) row_data[col]+=bias->data[col];
+    }
+}
+
+static void tensor_row_softmax_inplace_helper(DiamondTensor *x) {
+    for(size_t row=0;row<x->rows;row++) {
+        double *row_data=x->data+row*x->cols;
+        double max_value=row_data[0];
+        for(size_t col=1;col<x->cols;col++)
+            if(row_data[col]>max_value)max_value=row_data[col];
+        double sum=0.0;
+        for(size_t col=0;col<x->cols;col++) {
+            row_data[col]=exp(row_data[col]-max_value);
+            sum+=row_data[col];
+        }
+        for(size_t col=0;col<x->cols;col++) row_data[col]/=sum;
+    }
+}
+
+/* GELU, tanh approximation -- same formula as tensor_ops.di's own
+ * tensor_gelu!/scalar_tanh, but using libm's real tanh() directly
+ * (this is C, not a language with no tanh() at all, unlike Diamond --
+ * see scalar_tanh's own comment for why *that* one has to build it out
+ * of exp() by hand). */
+static void tensor_gelu_inplace_helper(DiamondTensor *x) {
+    const size_t total=x->rows*x->cols;
+    for(size_t index=0;index<total;index++) {
+        const double value=x->data[index];
+        const double inner=0.7978845608028654*(value+0.044715*value*value*value);
+        x->data[index]=0.5*value*(1.0+tanh(inner));
+    }
+}
+
+/* Sum of every row, as a fresh (1 x x->cols) DiamondTensor -- the
+ * backward-pass shape for a bias that was broadcast-added to every row
+ * in the forward pass (tensor_add_bias_inplace_helper's own gradient).
+ * `*out` under the same &registers[dest] GC-rooting requirement as
+ * every other allocating Tensor helper (tensor_matmul_helper, etc). */
+static DiamondVmStatus tensor_column_sums_helper(DiamondVm *vm,const DiamondTensor *x,
+        DiamondValue *out) {
+    DiamondTensor *result=allocate_tensor(vm,1,x->cols);
+    if(result==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+    *out=DIAMOND_OBJECT(result);
+    for(size_t row=0;row<x->rows;row++) {
+        const double *row_data=x->data+row*x->cols;
+        for(size_t col=0;col<x->cols;col++) result->data[col]+=row_data[col];
+    }
+    return DIAMOND_VM_OK;
+}
+
+/* Columns [start, start+width) of x, as a fresh Tensor -- splits a QKV
+ * projection's d_model columns into one attention head's own slice
+ * (same semantics as tensor_ops.di's own tensor_columns). */
+static DiamondVmStatus tensor_columns_helper(DiamondVm *vm,const DiamondTensor *x,
+        size_t start,size_t width,DiamondValue *out) {
+    DiamondTensor *result=allocate_tensor(vm,x->rows,width);
+    if(result==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+    *out=DIAMOND_OBJECT(result);
+    for(size_t row=0;row<x->rows;row++) {
+        const double *source_row=x->data+row*x->cols+start;
+        double *dest_row=result->data+row*width;
+        for(size_t col=0;col<width;col++) dest_row[col]=source_row[col];
+    }
+    return DIAMOND_VM_OK;
+}
+
+/* Adds src into dest's columns [start, start+src->cols), in place --
+ * accumulated (not overwritten), since that range may receive
+ * contributions from more than one op (concat_columns's own backward,
+ * where each head's slice could in principle overlap -- it doesn't in
+ * practice here, but this stays correct either way). Same semantics as
+ * tensor_ops.di's own tensor_add_columns!. */
+static void tensor_add_columns_inplace_helper(DiamondTensor *dest,size_t start,
+        const DiamondTensor *src) {
+    for(size_t row=0;row<src->rows;row++) {
+        double *dest_row=dest->data+row*dest->cols+start;
+        const double *src_row=src->data+row*src->cols;
+        for(size_t col=0;col<src->cols;col++) dest_row[col]+=src_row[col];
+    }
+}
+
+/* Backward passes for the ops whose *forward* mutators are above but
+ * whose gradient math still lived in examples/transformer's own
+ * Autograd.softmax/#gelu/#layernorm (autograd.di) as plain Diamond
+ * per-element loops -- moving only the forward mutators native
+ * turned out not to be enough: a training step's own #matmul cost is
+ * usually small at this model's scale (see DIAMOND_TENSOR_MATMUL_
+ * MAX_THREADS's own comment on why), so forward and backward cost
+ * roughly the same, and backward! calls every op's backward closure
+ * exactly once per step just like forward calls its op once -- an
+ * unmoved backward loop is just as much of the total step time as its
+ * matching forward loop was.
+ *
+ * `self` in each of these is *not* always "the same value forward took
+ * self as" -- softmax_backward's self is the softmax's own *output*
+ * (its backward formula only needs that, not the pre-softmax input);
+ * gelu_backward's self is GELU's original *input* (its formula needs
+ * that, not the output) -- see each one's own comment for why.
+ * layernorm's forward/backward pair is the most involved: forward
+ * returns not just its own output but also `normalized` and per-row
+ * `inv_std`, exactly the two things the standard LayerNorm backward
+ * formula needs and that recomputing from scratch during backward
+ * would otherwise cost a second full pass over x for. */
+static DiamondVmStatus tensor_softmax_backward_helper(DiamondVm *vm,
+        const DiamondTensor *softmax_output,const DiamondTensor *grad_output,
+        DiamondValue *out) {
+    DiamondTensor *result=allocate_tensor(vm,softmax_output->rows,softmax_output->cols);
+    if(result==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+    *out=DIAMOND_OBJECT(result);
+    for(size_t row=0;row<softmax_output->rows;row++) {
+        const double *y_row=softmax_output->data+row*softmax_output->cols;
+        const double *dy_row=grad_output->data+row*grad_output->cols;
+        double *dx_row=result->data+row*result->cols;
+        double dot=0.0;
+        for(size_t col=0;col<softmax_output->cols;col++) dot+=dy_row[col]*y_row[col];
+        for(size_t col=0;col<softmax_output->cols;col++)
+            dx_row[col]=y_row[col]*(dy_row[col]-dot);
+    }
+    return DIAMOND_VM_OK;
+}
+
+static DiamondVmStatus tensor_gelu_backward_helper(DiamondVm *vm,
+        const DiamondTensor *x,const DiamondTensor *grad_output,DiamondValue *out) {
+    DiamondTensor *result=allocate_tensor(vm,x->rows,x->cols);
+    if(result==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+    *out=DIAMOND_OBJECT(result);
+    const size_t total=x->rows*x->cols;
+    for(size_t index=0;index<total;index++) {
+        const double value=x->data[index];
+        const double inner=0.7978845608028654*(value+0.044715*value*value*value);
+        const double t=tanh(inner);
+        const double inner_derivative=0.7978845608028654*(1.0+3.0*0.044715*value*value);
+        const double dy_dx=0.5*(1.0+t)+0.5*value*(1.0-t*t)*inner_derivative;
+        result->data[index]=grad_output->data[index]*dy_dx;
+    }
+    return DIAMOND_VM_OK;
+}
+
+/* Returns [output, normalized, inv_std] (inv_std as a rows x 1
+ * Tensor, one value per row) as a Diamond Array. `*out` rooting: same
+ * &registers[dest]-must-be-a-live-GC-root requirement as every other
+ * allocating Tensor helper, and the same "root the outer Array
+ * immediately, push each element onto it before allocating the next"
+ * discipline tensor_to_a_helper's own comment explains in full. */
+static DiamondVmStatus tensor_layernorm_forward_helper(DiamondVm *vm,const DiamondTensor *x,
+        const DiamondTensor *gamma,const DiamondTensor *beta,double eps,DiamondValue *out) {
+    const size_t rows=x->rows,cols=x->cols;
+    DiamondArray *results=allocate_array(vm,nullptr,0);
+    if(results==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+    *out=DIAMOND_OBJECT(results);
+
+    DiamondTensor *output=allocate_tensor(vm,rows,cols);
+    if(output==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+    if(!array_push(vm,results,DIAMOND_OBJECT(output)))return DIAMOND_VM_OUT_OF_MEMORY;
+    DiamondTensor *normalized=allocate_tensor(vm,rows,cols);
+    if(normalized==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+    if(!array_push(vm,results,DIAMOND_OBJECT(normalized)))return DIAMOND_VM_OUT_OF_MEMORY;
+    DiamondTensor *inv_std=allocate_tensor(vm,rows,1);
+    if(inv_std==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+    if(!array_push(vm,results,DIAMOND_OBJECT(inv_std)))return DIAMOND_VM_OUT_OF_MEMORY;
+
+    for(size_t row=0;row<rows;row++) {
+        const double *x_row=x->data+row*cols;
+        double sum=0.0;
+        for(size_t col=0;col<cols;col++) sum+=x_row[col];
+        const double mean=sum/(double)cols;
+        double variance_sum=0.0;
+        for(size_t col=0;col<cols;col++) {
+            const double diff=x_row[col]-mean;
+            variance_sum+=diff*diff;
+        }
+        const double variance=variance_sum/(double)cols;
+        const double inv_std_value=1.0/sqrt(variance+eps);
+        inv_std->data[row]=inv_std_value;
+        double *norm_row=normalized->data+row*cols;
+        double *out_row=output->data+row*cols;
+        for(size_t col=0;col<cols;col++) {
+            const double n=(x_row[col]-mean)*inv_std_value;
+            norm_row[col]=n;
+            out_row[col]=n*gamma->data[col]+beta->data[col];
+        }
+    }
+    return DIAMOND_VM_OK;
+}
+
+/* Returns [grad_x, grad_gamma, grad_beta] as a Diamond Array -- the
+ * standard LayerNorm backward formula (see examples/transformer/lib/
+ * autograd.di's own comment for the Diamond-level derivation this
+ * mirrors exactly; this is the same math, just native). */
+static DiamondVmStatus tensor_layernorm_backward_helper(DiamondVm *vm,
+        const DiamondTensor *gamma,const DiamondTensor *grad_output,
+        const DiamondTensor *normalized,const DiamondTensor *inv_std,DiamondValue *out) {
+    const size_t rows=normalized->rows,cols=normalized->cols;
+    DiamondArray *results=allocate_array(vm,nullptr,0);
+    if(results==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+    *out=DIAMOND_OBJECT(results);
+
+    DiamondTensor *grad_x=allocate_tensor(vm,rows,cols);
+    if(grad_x==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+    if(!array_push(vm,results,DIAMOND_OBJECT(grad_x)))return DIAMOND_VM_OUT_OF_MEMORY;
+    DiamondTensor *grad_gamma=allocate_tensor(vm,1,cols);
+    if(grad_gamma==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+    if(!array_push(vm,results,DIAMOND_OBJECT(grad_gamma)))return DIAMOND_VM_OUT_OF_MEMORY;
+    DiamondTensor *grad_beta=allocate_tensor(vm,1,cols);
+    if(grad_beta==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+    if(!array_push(vm,results,DIAMOND_OBJECT(grad_beta)))return DIAMOND_VM_OUT_OF_MEMORY;
+
+    for(size_t row=0;row<rows;row++) {
+        const double *dy_row=grad_output->data+row*cols;
+        const double *norm_row=normalized->data+row*cols;
+        for(size_t col=0;col<cols;col++) {
+            const double dy=dy_row[col];
+            grad_gamma->data[col]+=dy*norm_row[col];
+            grad_beta->data[col]+=dy;
+        }
+    }
+    for(size_t row=0;row<rows;row++) {
+        const double *dy_row=grad_output->data+row*cols;
+        const double *norm_row=normalized->data+row*cols;
+        double *dx_row=grad_x->data+row*cols;
+        double dnorm_sum=0.0;
+        double dnorm_dot_norm_sum=0.0;
+        for(size_t col=0;col<cols;col++) {
+            const double dnorm=dy_row[col]*gamma->data[col];
+            dnorm_sum+=dnorm;
+            dnorm_dot_norm_sum+=dnorm*norm_row[col];
+        }
+        const double dnorm_mean=dnorm_sum/(double)cols;
+        const double dnorm_dot_norm_mean=dnorm_dot_norm_sum/(double)cols;
+        const double inv_std_value=inv_std->data[row];
+        for(size_t col=0;col<cols;col++) {
+            const double dnorm=dy_row[col]*gamma->data[col];
+            dx_row[col]=inv_std_value*(dnorm-dnorm_mean-norm_row[col]*dnorm_dot_norm_mean);
+        }
+    }
+    return DIAMOND_VM_OK;
+}
+
 /* Tensor#rows/#cols/#get/#set/#matmul/#to_a -- every instance method,
  * matching sqlite3_dispatch_helper's own shape (called from the big
  * receiver_kind==DIAMOND_OBJECT_TENSOR case in run_chunk's INVOKE
@@ -1791,6 +2061,182 @@ static DiamondVmStatus tensor_dispatch_helper(DiamondVm *vm,DiamondTensor *tenso
     if(transpose_method) {
         if(argc!=0)return DIAMOND_VM_ARITY_ERROR;
         return tensor_transpose_helper(vm,tensor,&registers[dest]);
+    }
+    if(method_name->length==4&&memcmp(method_name->chars,"add!",4)==0) {
+        if(argc!=1)return DIAMOND_VM_ARITY_ERROR;
+        if(registers[base].kind!=DIAMOND_VALUE_OBJECT||
+           registers[base].as.object->kind!=DIAMOND_OBJECT_TENSOR) {
+            snprintf(vm->error,sizeof vm->error,"Tensor#add!'s argument must be a Tensor");
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        const DiamondTensor *other=(const DiamondTensor *)registers[base].as.object;
+        if(other->rows!=tensor->rows||other->cols!=tensor->cols) {
+            snprintf(vm->error,sizeof vm->error,
+                "Tensor#add! shape mismatch: %zux%zu + %zux%zu",
+                tensor->rows,tensor->cols,other->rows,other->cols);
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        tensor_add_inplace_helper(tensor,other);
+        registers[dest]=DIAMOND_OBJECT(tensor);return DIAMOND_VM_OK;
+    }
+    if(method_name->length==6&&memcmp(method_name->chars,"scale!",6)==0) {
+        if(argc!=1)return DIAMOND_VM_ARITY_ERROR;
+        double scalar=0.0;
+        if(!numeric_as_double(registers[base],&scalar)) {
+            snprintf(vm->error,sizeof vm->error,"Tensor#scale!'s argument must be an Int or a Float");
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        tensor_scale_inplace_helper(tensor,scalar);
+        registers[dest]=DIAMOND_OBJECT(tensor);return DIAMOND_VM_OK;
+    }
+    if(method_name->length==9&&memcmp(method_name->chars,"add_bias!",9)==0) {
+        if(argc!=1)return DIAMOND_VM_ARITY_ERROR;
+        if(registers[base].kind!=DIAMOND_VALUE_OBJECT||
+           registers[base].as.object->kind!=DIAMOND_OBJECT_TENSOR) {
+            snprintf(vm->error,sizeof vm->error,"Tensor#add_bias!'s argument must be a Tensor");
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        const DiamondTensor *bias=(const DiamondTensor *)registers[base].as.object;
+        if(bias->rows!=1||bias->cols!=tensor->cols) {
+            snprintf(vm->error,sizeof vm->error,
+                "Tensor#add_bias! expects a 1x%zu bias, got %zux%zu",
+                tensor->cols,bias->rows,bias->cols);
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        tensor_add_bias_inplace_helper(tensor,bias);
+        registers[dest]=DIAMOND_OBJECT(tensor);return DIAMOND_VM_OK;
+    }
+    if(method_name->length==12&&memcmp(method_name->chars,"row_softmax!",12)==0) {
+        if(argc!=0)return DIAMOND_VM_ARITY_ERROR;
+        tensor_row_softmax_inplace_helper(tensor);
+        registers[dest]=DIAMOND_OBJECT(tensor);return DIAMOND_VM_OK;
+    }
+    if(method_name->length==5&&memcmp(method_name->chars,"gelu!",5)==0) {
+        if(argc!=0)return DIAMOND_VM_ARITY_ERROR;
+        tensor_gelu_inplace_helper(tensor);
+        registers[dest]=DIAMOND_OBJECT(tensor);return DIAMOND_VM_OK;
+    }
+    if(method_name->length==11&&memcmp(method_name->chars,"column_sums",11)==0) {
+        if(argc!=0)return DIAMOND_VM_ARITY_ERROR;
+        return tensor_column_sums_helper(vm,tensor,&registers[dest]);
+    }
+    if(method_name->length==7&&memcmp(method_name->chars,"columns",7)==0) {
+        if(argc!=2)return DIAMOND_VM_ARITY_ERROR;
+        if(registers[base].kind!=DIAMOND_VALUE_INT||
+           registers[(size_t)base+1].kind!=DIAMOND_VALUE_INT) {
+            snprintf(vm->error,sizeof vm->error,"Tensor#columns's arguments must be Ints");
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        const int64_t start=registers[base].as.integer;
+        const int64_t width=registers[(size_t)base+1].as.integer;
+        if(start<0||width<=0||(size_t)start+(size_t)width>tensor->cols) {
+            snprintf(vm->error,sizeof vm->error,
+                "Tensor#columns(%" PRId64 ", %" PRId64 ") out of bounds for %zux%zu Tensor",
+                start,width,tensor->rows,tensor->cols);
+            return DIAMOND_VM_INDEX_ERROR;
+        }
+        return tensor_columns_helper(vm,tensor,(size_t)start,(size_t)width,&registers[dest]);
+    }
+    if(method_name->length==12&&memcmp(method_name->chars,"add_columns!",12)==0) {
+        if(argc!=2)return DIAMOND_VM_ARITY_ERROR;
+        if(registers[base].kind!=DIAMOND_VALUE_INT) {
+            snprintf(vm->error,sizeof vm->error,"Tensor#add_columns!'s first argument must be an Int");
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        if(registers[(size_t)base+1].kind!=DIAMOND_VALUE_OBJECT||
+           registers[(size_t)base+1].as.object->kind!=DIAMOND_OBJECT_TENSOR) {
+            snprintf(vm->error,sizeof vm->error,"Tensor#add_columns!'s second argument must be a Tensor");
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        const int64_t start=registers[base].as.integer;
+        const DiamondTensor *src=(const DiamondTensor *)registers[(size_t)base+1].as.object;
+        if(start<0||src->rows!=tensor->rows||(size_t)start+src->cols>tensor->cols) {
+            snprintf(vm->error,sizeof vm->error,
+                "Tensor#add_columns!(%" PRId64 ", %zux%zu) out of bounds for %zux%zu Tensor",
+                start,src->rows,src->cols,tensor->rows,tensor->cols);
+            return DIAMOND_VM_INDEX_ERROR;
+        }
+        tensor_add_columns_inplace_helper(tensor,(size_t)start,src);
+        registers[dest]=DIAMOND_OBJECT(tensor);return DIAMOND_VM_OK;
+    }
+    if(method_name->length==5&&memcmp(method_name->chars,"clone",5)==0) {
+        if(argc!=0)return DIAMOND_VM_ARITY_ERROR;
+        DiamondTensor *copy=allocate_tensor(vm,tensor->rows,tensor->cols);
+        if(copy==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+        registers[dest]=DIAMOND_OBJECT(copy);
+        memcpy(copy->data,tensor->data,tensor->rows*tensor->cols*sizeof(double));
+        return DIAMOND_VM_OK;
+    }
+    /* self is the softmax's own *output* (not the pre-softmax input --
+     * see tensor_softmax_backward_helper's own comment). */
+    if(method_name->length==16&&memcmp(method_name->chars,"softmax_backward",16)==0) {
+        if(argc!=1)return DIAMOND_VM_ARITY_ERROR;
+        if(registers[base].kind!=DIAMOND_VALUE_OBJECT||
+           registers[base].as.object->kind!=DIAMOND_OBJECT_TENSOR) {
+            snprintf(vm->error,sizeof vm->error,"Tensor#softmax_backward's argument must be a Tensor");
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        return tensor_softmax_backward_helper(vm,tensor,
+            (const DiamondTensor *)registers[base].as.object,&registers[dest]);
+    }
+    /* self is GELU's original *input* (not its output -- see
+     * tensor_gelu_backward_helper's own comment). */
+    if(method_name->length==13&&memcmp(method_name->chars,"gelu_backward",13)==0) {
+        if(argc!=1)return DIAMOND_VM_ARITY_ERROR;
+        if(registers[base].kind!=DIAMOND_VALUE_OBJECT||
+           registers[base].as.object->kind!=DIAMOND_OBJECT_TENSOR) {
+            snprintf(vm->error,sizeof vm->error,"Tensor#gelu_backward's argument must be a Tensor");
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        return tensor_gelu_backward_helper(vm,tensor,
+            (const DiamondTensor *)registers[base].as.object,&registers[dest]);
+    }
+    /* self is x (the layernorm input). (gamma, beta, eps) -> a Diamond
+     * Array [output, normalized, inv_std] -- see
+     * tensor_layernorm_forward_helper's own comment. */
+    if(method_name->length==17&&memcmp(method_name->chars,"layernorm_forward",17)==0) {
+        if(argc!=3)return DIAMOND_VM_ARITY_ERROR;
+        if(registers[base].kind!=DIAMOND_VALUE_OBJECT||
+           registers[base].as.object->kind!=DIAMOND_OBJECT_TENSOR||
+           registers[(size_t)base+1].kind!=DIAMOND_VALUE_OBJECT||
+           registers[(size_t)base+1].as.object->kind!=DIAMOND_OBJECT_TENSOR) {
+            snprintf(vm->error,sizeof vm->error,
+                "Tensor#layernorm_forward's gamma/beta arguments must be Tensors");
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        double eps=0.0;
+        if(!numeric_as_double(registers[(size_t)base+2],&eps)) {
+            snprintf(vm->error,sizeof vm->error,
+                "Tensor#layernorm_forward's eps argument must be an Int or a Float");
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        return tensor_layernorm_forward_helper(vm,tensor,
+            (const DiamondTensor *)registers[base].as.object,
+            (const DiamondTensor *)registers[(size_t)base+1].as.object,eps,&registers[dest]);
+    }
+    /* self is `normalized` (one of layernorm_forward's own returned
+     * values, not x -- the backward formula never needs x directly,
+     * only normalized/inv_std, both already cached from forward). Args
+     * (gamma, grad_output, inv_std) -> a Diamond Array [grad_x,
+     * grad_gamma, grad_beta] -- see
+     * tensor_layernorm_backward_helper's own comment. */
+    if(method_name->length==18&&memcmp(method_name->chars,"layernorm_backward",18)==0) {
+        if(argc!=3)return DIAMOND_VM_ARITY_ERROR;
+        if(registers[base].kind!=DIAMOND_VALUE_OBJECT||
+           registers[base].as.object->kind!=DIAMOND_OBJECT_TENSOR||
+           registers[(size_t)base+1].kind!=DIAMOND_VALUE_OBJECT||
+           registers[(size_t)base+1].as.object->kind!=DIAMOND_OBJECT_TENSOR||
+           registers[(size_t)base+2].kind!=DIAMOND_VALUE_OBJECT||
+           registers[(size_t)base+2].as.object->kind!=DIAMOND_OBJECT_TENSOR) {
+            snprintf(vm->error,sizeof vm->error,
+                "Tensor#layernorm_backward's arguments must all be Tensors");
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        return tensor_layernorm_backward_helper(vm,
+            (const DiamondTensor *)registers[base].as.object,
+            (const DiamondTensor *)registers[(size_t)base+1].as.object,
+            tensor,
+            (const DiamondTensor *)registers[(size_t)base+2].as.object,&registers[dest]);
     }
     snprintf(vm->error,sizeof vm->error,"undefined method '%.*s' for %s",
         (int)method_name->length,method_name->chars,"Tensor");

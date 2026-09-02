@@ -157,95 +157,33 @@ class Autograd
     result
   end
 
+  # Native forward (Tensor#layernorm_forward) + native backward
+  # (Tensor#layernorm_backward) -- the standard LayerNorm formula
+  # (both directions), moved to C after measuring that the plain
+  # Diamond-loop version of this (still visible in this file's own
+  # history) was as much of a real training step's cost as its
+  # forward-mutator counterparts (add!/scale!/etc) already fixed
+  # turned out to be, once measured directly rather than assumed.
+  # `normalized`/`inv_std` are exactly the two things forward computes
+  # that backward also needs -- caching them here (closed over by
+  # `backward`) avoids recomputing mean/variance a second time.
   def self.layernorm(x, gamma, beta, eps)
-    normalized = Tensor.zeros(x.tensor().rows(), x.tensor().cols())
-    means = []
-    inv_stds = []
-    cols = x.tensor().cols()
-    row = 0
-    while row < x.tensor().rows()
-      sum = 0.0
-      j = 0
-      while j < cols
-        sum += x.tensor().get(row, j)
-        j += 1
-      end
-      mean = sum / cols
-      variance_sum = 0.0
-      j = 0
-      while j < cols
-        diff = x.tensor().get(row, j) - mean
-        variance_sum += diff * diff
-        j += 1
-      end
-      variance = variance_sum / cols
-      inv_std = 1.0 / sqrt(variance + eps)
-      j = 0
-      while j < cols
-        normalized.set(row, j, (x.tensor().get(row, j) - mean) * inv_std)
-        j += 1
-      end
-      means.push(mean)
-      inv_stds.push(inv_std)
-      row += 1
-    end
-    output = Tensor.zeros(x.tensor().rows(), cols)
-    row = 0
-    while row < x.tensor().rows()
-      j = 0
-      while j < cols
-        output.set(row, j, normalized.get(row, j) * gamma.tensor().get(0, j) + beta.tensor().get(0, j))
-        j += 1
-      end
-      row += 1
-    end
+    forward_result = x.tensor().layernorm_forward(gamma.tensor(), beta.tensor(), eps)
+    output = forward_result[0]
+    normalized = forward_result[1]
+    inv_std = forward_result[2]
     result = Var.new(output, [x, gamma, beta], true)
     closure backward()
-      if gamma.requires_grad() || beta.requires_grad()
-        gamma_grad = Tensor.zeros(1, cols)
-        beta_grad = Tensor.zeros(1, cols)
-        row = 0
-        while row < x.tensor().rows()
-          j = 0
-          while j < cols
-            dy = result.grad().get(row, j)
-            gamma_grad.set(0, j, gamma_grad.get(0, j) + dy * normalized.get(row, j))
-            beta_grad.set(0, j, beta_grad.get(0, j) + dy)
-            j += 1
-          end
-          row += 1
+      if x.requires_grad() || gamma.requires_grad() || beta.requires_grad()
+        backward_result = normalized.layernorm_backward(gamma.tensor(), result.grad(), inv_std)
+        if x.requires_grad()
+          tensor_add!(x.grad(), backward_result[0])
         end
         if gamma.requires_grad()
-          tensor_add!(gamma.grad(), gamma_grad)
+          tensor_add!(gamma.grad(), backward_result[1])
         end
         if beta.requires_grad()
-          tensor_add!(beta.grad(), beta_grad)
-        end
-      end
-      if x.requires_grad()
-        row = 0
-        while row < x.tensor().rows()
-          # Standard LayerNorm backward: with dnorm_j = dy_j * gamma_j,
-          # dx_j = inv_std * (dnorm_j - mean(dnorm) - norm_j * mean(dnorm * norm)).
-          dnorm_sum = 0.0
-          dnorm_dot_norm_sum = 0.0
-          j = 0
-          while j < cols
-            dnorm = result.grad().get(row, j) * gamma.tensor().get(0, j)
-            dnorm_sum += dnorm
-            dnorm_dot_norm_sum += dnorm * normalized.get(row, j)
-            j += 1
-          end
-          dnorm_mean = dnorm_sum / cols
-          dnorm_dot_norm_mean = dnorm_dot_norm_sum / cols
-          j = 0
-          while j < cols
-            dnorm = result.grad().get(row, j) * gamma.tensor().get(0, j)
-            dx = inv_stds[row] * (dnorm - dnorm_mean - normalized.get(row, j) * dnorm_dot_norm_mean)
-            x.grad().set(row, j, x.grad().get(row, j) + dx)
-            j += 1
-          end
-          row += 1
+          tensor_add!(beta.grad(), backward_result[2])
         end
       end
     end
@@ -257,58 +195,32 @@ class Autograd
   # attention on raw scores. See loss.di's own softmax_cross_entropy
   # for the *fused* version used at the actual training loss, whose
   # gradient simplifies to probs-minus-one-hot instead of needing this.
+  # Native forward (#row_softmax!) + native backward
+  # (#softmax_backward, which only needs the softmax's own output, not
+  # the pre-softmax input -- see its own comment in src/vm.c).
   def self.softmax(x)
     output = tensor_clone(x.tensor())
     tensor_row_softmax!(output)
     result = Var.new(output, [x], true)
     closure backward()
       if x.requires_grad()
-        cols = output.cols()
-        row = 0
-        while row < output.rows()
-          dot = 0.0
-          j = 0
-          while j < cols
-            dot += result.grad().get(row, j) * output.get(row, j)
-            j += 1
-          end
-          j = 0
-          while j < cols
-            y = output.get(row, j)
-            dx = y * (result.grad().get(row, j) - dot)
-            x.grad().set(row, j, x.grad().get(row, j) + dx)
-            j += 1
-          end
-          row += 1
-        end
+        tensor_add!(x.grad(), output.softmax_backward(result.grad()))
       end
     end
     result.backward_fn = backward
     result
   end
 
+  # Native forward (#gelu!) + native backward (#gelu_backward, which
+  # needs GELU's original *input* -- x.tensor(), unmutated since
+  # #gelu! only ever ran on the cloned `output` -- not its output).
   def self.gelu(x)
     output = tensor_clone(x.tensor())
     tensor_gelu!(output)
     result = Var.new(output, [x], true)
     closure backward()
       if x.requires_grad()
-        cols = x.tensor().cols()
-        row = 0
-        while row < x.tensor().rows()
-          j = 0
-          while j < cols
-            value = x.tensor().get(row, j)
-            inner = 0.7978845608028654 * (value + 0.044715 * value * value * value)
-            t = scalar_tanh(inner)
-            inner_derivative = 0.7978845608028654 * (1.0 + 3.0 * 0.044715 * value * value)
-            dy_dx = 0.5 * (1.0 + t) + 0.5 * value * (1.0 - t * t) * inner_derivative
-            dx = result.grad().get(row, j) * dy_dx
-            x.grad().set(row, j, x.grad().get(row, j) + dx)
-            j += 1
-          end
-          row += 1
-        end
+        tensor_add!(x.grad(), x.tensor().gelu_backward(result.grad()))
       end
     end
     result.backward_fn = backward
