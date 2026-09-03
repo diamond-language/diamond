@@ -10,9 +10,8 @@ module GraphQL
   # built-ins below this is always identity, but a custom scalar (a Time
   # serialized as an ISO8601 String, say) would differ in this direction
   # too. Both are required Callable[1]s -- no default/identity fallback,
-  # so a scalar's coercion behavior is always explicit at the definition
-  # site, matching this package's own no-auto-wiring stance on Field's
-  # resolve.
+  # because a scalar's input and result semantics should remain explicit at
+  # the definition site.
   class ScalarType < Type
     attr_reader coerce_input
     attr_reader coerce_result

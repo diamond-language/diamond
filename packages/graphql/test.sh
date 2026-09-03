@@ -340,6 +340,48 @@ assert_contains "$actual" "Query"
 assert_contains "$actual" "ID"
 count=$((count + 1))
 
+# --- nil resolver defaults to the field's same-named public method ---
+actual="$(run_file '
+class DefaultBook
+  def initialize(title)
+    @title = title
+  end
+  def title() = @title
+end
+module DefaultResolvers
+  module_function
+  def book(object, args, context) = DefaultBook.new("Diamond")
+end
+book_type = GraphQL::ObjectType.new("Book")
+book_type.field("title", GraphQL::ScalarType.string().non_null())
+query_type = GraphQL::ObjectType.new("Query")
+query_type.field("book", book_type.non_null(), DefaultResolvers.book)
+schema = GraphQL::Schema.new().query(query_type)
+puts(schema.execute("{ book { title } }"))
+')"
+assert_contains "$actual" "Diamond"
+count=$((count + 1))
+
+# --- default resolution rejects fields that declare GraphQL arguments ---
+actual="$(run_file '
+class DefaultGreeting
+  def greeting() = "hello"
+end
+module DefaultArgumentResolvers
+  module_function
+  def root(object, args, context) = DefaultGreeting.new()
+end
+greeting_type = GraphQL::ObjectType.new("Greeting")
+greeting_type.field("greeting", GraphQL::ScalarType.string(), nil,
+  [GraphQL::Argument.new("name", GraphQL::ScalarType.string())])
+query_type = GraphQL::ObjectType.new("Query")
+query_type.field("root", greeting_type, DefaultArgumentResolvers.root)
+schema = GraphQL::Schema.new().query(query_type)
+puts(schema.execute("{ root { greeting(name: \"Diamond\") } }"))
+')"
+assert_contains "$actual" "needs an explicit resolver"
+count=$((count + 1))
+
 # --- end-to-end: variables, arguments, nested object + list, aliases ---
 actual="$(run_file '
 module R

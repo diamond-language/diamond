@@ -19,9 +19,9 @@ of `docs/syntax.md`/`docs/design.md`:
   class body and accumulate into shared state, the way every single
   graphql-ruby type definition works.
 - **Runtime-name dispatch was unavailable when v1 was designed.** Diamond now
-  provides visibility-safe `public_send`, so a future schema API could opt
-  into same-named resolver methods. The current explicit `Callable` resolver
-  contract remains intentional and unchanged.
+  provides visibility-safe `public_send`, and an omitted resolver uses it to
+  invoke a same-named public method. Explicit `Callable` resolvers remain for
+  fields that need arguments, context, name translation, or Hash lookup.
 - **Method-call sites can't use keyword-argument syntax.** `obj.foo(x:
   1)` only resolves for a direct call to a top-level `def`, not a
   method call, a call through a `Callable` value, or a constructor --
@@ -29,8 +29,9 @@ of `docs/syntax.md`/`docs/design.md`:
   (required first, then optional-with-defaults), never `name: value`.
 
 Consequence: the schema is built with an instance-level fluent builder
-(`packages/dials`'s `Router#get`/`#post` is the template), and every
-field's resolver is an explicit, required `Callable` -- see `README.md`.
+(`packages/dials`'s `Router#get`/`#post` is the template). Simple model fields
+can use the default same-name resolver; other fields take an explicit
+`Callable` -- see `README.md`.
 
 ## Deliberately out of scope for v1
 

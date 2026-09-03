@@ -1,7 +1,7 @@
 module GraphQL
 
-  # `GraphQL::ObjectType.new("Author").field("id", ID.non_null(), resolver)
-  # .field("name", STRING, resolver2)` -- a fluent builder over an
+  # `GraphQL::ObjectType.new("Author").field("id", ID.non_null())
+  # .field("books", books_type, resolver)` -- a fluent builder over an
   # internal Array, `Router#get`/`#post`'s own shape
   # (packages/dials/lib/dials/router.di), not a class-body macro (Diamond
   # has none).
@@ -15,7 +15,7 @@ module GraphQL
     def name() = @object_name
     def kind() = "OBJECT"
 
-    def field(name, type, resolve, arguments = [], description = nil)
+    def field(name, type, resolve = nil, arguments = [], description = nil)
       @fields << Field.new(name, type, resolve, arguments, description)
       self
     end

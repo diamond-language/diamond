@@ -4,8 +4,8 @@ A from-scratch, spec-inspired GraphQL query engine for
 [Diamond](https://gitlab.com/dmn9180/diamond) -- not a line-by-line
 port of the Ruby [`graphql`](https://github.com/rmosolgo/graphql-ruby)
 gem this package is modeled on. That gem's whole public API is built on
-Ruby metaprogramming Diamond doesn't have (class bodies that execute
-arbitrary macro calls, dispatch-by-runtime-string-name) -- see
+Ruby metaprogramming Diamond doesn't have (principally class bodies that
+execute arbitrary macro calls) -- see
 [`ROADMAP.md`](ROADMAP.md) for the full story on what that means for
 this package's own shape, and why schemas here are built with a fluent
 instance builder (`packages/dials`'s own `Router#get`/`#post` is the
@@ -58,18 +58,18 @@ Schema.query(QueryType)
 ```
 
 `ObjectType.new(name)` builds an empty type; `.field(name, type,
-resolve, arguments = [], description = nil)` registers a field against
+resolve = nil, arguments = [], description = nil)` registers a field against
 it and returns `self`, so repeated calls read like a declaration list
 even though each is an ordinary method call (Diamond has no
 class-body-macro mechanism to make this a single expression the way
 graphql-ruby's own `field :name, String, null: false` is -- see
-`ROADMAP.md`). `resolve` is always required and always an explicit
-`Callable` -- there's no auto-wiring a field to a same-named resolver
-method the way graphql-ruby's own default resolution does, since
-Diamond has no dispatch-by-runtime-string-name at all. A bare `self.`
-singleton method reference (`AuthorResolvers.id`, no call --
-`docs/syntax.md`'s "Bare singleton method references") is the usual
-shape; an inline closure works too.
+`ROADMAP.md`). When `resolve` is omitted, execution calls the field name as a
+public zero-argument method on the runtime object via `public_send`. This is
+the concise path for ordinary model fields such as `id`, `name`, or `title`.
+Pass an explicit `Callable[3]` when resolution needs the GraphQL arguments or
+context, translates the field name, or reads from a Hash. A bare `self.`
+singleton method reference (`AuthorResolvers.id`, no call) or an inline
+closure both work.
 
 `GraphQL::Type` is the common base every concrete kind
 (`ScalarType`/`ObjectType`/`InterfaceType`/`UnionType`/`EnumType`/
