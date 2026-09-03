@@ -62,7 +62,7 @@ response, then returns a `WebSocketConnection` for everything after
 that.
 
 `ws.receive()` returns the next fully-reassembled message as
-`{"opcode": WEBSOCKET_OPCODE_TEXT | WEBSOCKET_OPCODE_BINARY, "data": String}`,
+`{"opcode": websocket_opcode_text() | websocket_opcode_binary(), "data": String}`,
 or `nil` once the close handshake has completed (either side can
 initiate it — see below). Ping/Pong frames and multi-frame
 (fragmented) messages are handled transparently; `#receive` never
@@ -73,6 +73,26 @@ as one already-reassembled `data` String. `ws.send_text(text)` /
 the peer's own Close frame back before closing the underlying
 connection — the same graceful, let-the-peer-finish spirit as
 `GremlinShutdown`'s own SIGTERM handling.
+
+## Broadcasting to other connections
+
+`ws.send_text`/`ws.send_binary` are only safe to call from the fiber
+that actually owns `ws` (the one running its own `#receive` loop) —
+`gremlin_worker`'s poll loop only ever resumes a suspended fiber when
+*that fiber's own* connection becomes ready again, so a blocking write
+issued against connection B from connection A's own fiber (exactly
+what fan-out to a room/topic/channel of subscribers means) would
+suspend the wrong fiber and could never be woken.
+
+`websocket_try_send_text(ws, text)` is the safe alternative for that
+case: a non-blocking, all-or-nothing send. It returns `true` once
+`text` is fully delivered, or `false` if `ws` had to be closed instead
+(RFC 6455 framing can't recover from a partially-sent frame, so any
+backpressure closes the connection outright rather than risk
+desyncing the peer's own frame parser — the same tradeoff a real IRC
+server makes disconnecting a client that can't keep up). A caller doing
+fan-out over a list of subscriber connections should drop any `ws` this
+returns `false` for from that list.
 
 ## What's deliberately out of scope
 

@@ -40,3 +40,4 @@
 require "./websocket/frame"
 require "./websocket/handshake"
 require "./websocket/connection"
+require "./websocket/broadcast"

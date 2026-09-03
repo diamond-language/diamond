@@ -67,6 +67,40 @@ class FakeConn
     @closed = true
   end
   def closed?() = @closed
+  def socket() = @fake_socket
+  def install_socket(fake_socket)
+    @fake_socket = fake_socket
+  end
+end
+
+# A controllable stand-in for the raw native Socket that
+# websocket_try_send_text (broadcast.di) writes to directly, bypassing
+# NonblockingConnection entirely -- so this, unlike FakeConn above,
+# needs to mimic the real Socket#write(data) -> Int contract (bytes
+# actually written, possibly fewer than requested, or a raised
+# WouldBlockError) rather than NonblockingConnection's own
+# never-partial, retry-until-done #write.
+#
+# `block_after`: once this many bytes have been accepted across all
+# calls, every further #write raises WouldBlockError -- nil means never
+# block. `first_chunk`: caps how many bytes a single #write call
+# accepts even when not yet blocked (simulating a real partial write),
+# nil means accept everything asked for.
+class FakeSocket
+  def initialize(block_after = nil, first_chunk = nil)
+    @written = StringBuilder.new()
+    @block_after = block_after
+    @first_chunk = first_chunk
+  end
+  def written() = @written.to_s()
+  def write(data)
+    if @block_after != nil && @written.length() >= @block_after
+      raise WouldBlockError.new("would block")
+    end
+    accepted = if @first_chunk != nil && @first_chunk < data.length() then @first_chunk else data.length() end
+    @written.append(data.slice(0, accepted))
+    accepted
+  end
 end
 
 # RFC 6455 section 1.3's own worked handshake example.
@@ -214,6 +248,80 @@ check(conn.closed?(), "expected the underlying connection to be closed after the
 sent_close = websocket_read_frame_bytes(FakeConn.new(conn.written()))
 check(sent_close["opcode"] == websocket_opcode_close(), "expected this side to have sent its own Close frame first")
 check(sent_close["masked"] == false, "a server-sent Close frame must never be masked")
+
+# websocket_try_send_text: the ordinary case delivers the whole frame
+# in one go and returns true.
+raw_socket = FakeSocket.new()
+conn = FakeConn.new("")
+conn.install_socket(raw_socket)
+ws = WebSocketConnection.new(conn)
+delivered = websocket_try_send_text(ws, "hello room")
+check(delivered, "expected a normal send to succeed")
+sent = websocket_read_frame_bytes(FakeConn.new(raw_socket.written()))
+check(sent["opcode"] == websocket_opcode_text(), "expected a TEXT frame")
+check(sent["masked"] == false, "a server-sent frame must never be masked")
+check(sent["payload"] == "hello room", "payload should round-trip exactly")
+check(!ws.closed?(), "a successful send must not close the connection")
+
+# websocket_try_send_text: a write that would block from the very
+# first byte closes the connection and returns false, rather than
+# retrying/yielding (which would suspend the wrong fiber -- see
+# broadcast.di's own comment).
+raw_socket = FakeSocket.new(0)
+conn = FakeConn.new("")
+conn.install_socket(raw_socket)
+ws = WebSocketConnection.new(conn)
+delivered = websocket_try_send_text(ws, "nobody home")
+check(!delivered, "expected a fully-blocked send to fail")
+check(ws.closed?(), "expected the connection to be force-closed after a blocked send")
+
+# websocket_try_send_text: a write to a socket whose underlying fd is
+# already closed (not merely backpressured) raises a plain IOError, not
+# WouldBlockError -- this must be treated the same way, not left to
+# propagate uncaught. Found via a real bug: a connection's own fiber
+# crashing and being cleaned up by gremlin_worker's own recovery path
+# closes its raw socket directly, with no way to also mark the
+# WebSocketConnection wrapping it closed -- so ws.closed?() alone
+# can't catch this case, only the write attempt itself can.
+class AlreadyClosedSocket
+  def write(data)
+    raise IOError.new("socket is closed")
+  end
+end
+conn = FakeConn.new("")
+conn.install_socket(AlreadyClosedSocket.new())
+ws = WebSocketConnection.new(conn)
+delivered = websocket_try_send_text(ws, "nobody home either")
+check(!delivered, "expected a send to an already-closed raw socket to fail")
+check(ws.closed?(), "expected the connection to be force-closed after an IOError")
+
+# websocket_try_send_text: a write that blocks *partway* through a
+# frame (some bytes already unrecoverably sent) also closes the
+# connection rather than silently leaving a truncated frame on the
+# wire -- a partial WebSocket frame would desync the peer's own frame
+# parser for the rest of the connection's life, worse than just
+# dropping the message and disconnecting outright.
+raw_socket = FakeSocket.new(4, 4)
+conn = FakeConn.new("")
+conn.install_socket(raw_socket)
+ws = WebSocketConnection.new(conn)
+delivered = websocket_try_send_text(ws, "this message is long enough to need a second write")
+check(!delivered, "expected a partially-blocked send to fail")
+check(ws.closed?(), "expected the connection to be force-closed after a partial send blocks")
+
+# websocket_try_send_text: an already-closed connection is skipped
+# outright -- never even touches the raw socket.
+class ExplodingSocket
+  def write(data)
+    raise StandardError.new("should never be called on an already-closed connection")
+  end
+end
+conn = FakeConn.new("")
+conn.install_socket(ExplodingSocket.new())
+ws = WebSocketConnection.new(conn)
+ws.force_close()
+delivered = websocket_try_send_text(ws, "too late")
+check(!delivered, "expected a send to an already-closed connection to fail immediately")
 
 puts("all unit checks passed")
 DIEOF

@@ -23,6 +23,31 @@ class WebSocketConnection
     @conn.write(websocket_encode_frame(opcode, payload))
   end
 
+  def closed?() = @closed
+
+  # The raw, underlying connection (gremlin's own NonblockingConnection,
+  # or any object with the same #read(n)/#write(value)/#close()
+  # surface) -- an escape hatch for websocket_try_send_text
+  # (broadcast.di), which needs to write to *another* connection's
+  # socket directly from a completely different fiber's own call stack.
+  # Not needed for anything else; every ordinary send goes through
+  # #send_text/#send_binary above instead.
+  def raw_socket() = @conn.socket()
+
+  # An immediate, no-handshake close -- unlike #close below, this never
+  # sends a Close frame or waits for one back. Only websocket_try_send_text
+  # (broadcast.di) has a legitimate reason to reach for this: once it's
+  # written part of a frame to this connection from another fiber and
+  # then hit backpressure, this connection's own byte stream is
+  # unrecoverably desynced (RFC 6455 framing has no way to resume mid-
+  # frame), so the only safe thing left to do is close it outright, the
+  # same way a real IRC server disconnects a client that can't keep up
+  # rather than risk a corrupted stream.
+  def force_close()
+    @closed = true
+    @conn.close()
+  end
+
   # One fully reassembled message -- {"opcode": TEXT|BINARY, "data":
   # String} -- or `nil` once the close handshake has completed (the peer
   # sent a Close frame, this side echoed one back, and the underlying
