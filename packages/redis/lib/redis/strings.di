@@ -26,17 +26,17 @@ class RedisConnection
   end
 
   def setex(key, seconds, value) = self.command("SETEX", key, seconds, value)
-  def setnx(key, value) -> Bool = self.command("SETNX", key, value) == 1
+  def setnx(key, value) = self.command("SETNX", key, value) == 1
 
-  def incr(key) -> Int = self.command("INCR", key)
-  def decr(key) -> Int = self.command("DECR", key)
-  def incrby(key, amount) -> Int = self.command("INCRBY", key, amount)
-  def decrby(key, amount) -> Int = self.command("DECRBY", key, amount)
+  def incr(key) = self.command("INCR", key)
+  def decr(key) = self.command("DECR", key)
+  def incrby(key, amount) = self.command("INCRBY", key, amount)
+  def decrby(key, amount) = self.command("DECRBY", key, amount)
 
-  def append(key, value) -> Int = self.command("APPEND", key, value)
-  def strlen(key) -> Int = self.command("STRLEN", key)
+  def append(key, value) = self.command("APPEND", key, value)
+  def strlen(key) = self.command("STRLEN", key)
 
-  def mget(*keys) -> Array = self.command("MGET", *keys)
+  def mget(*keys) = self.command("MGET", *keys)
 
   # MSET key1 value1 key2 value2 ... from an ordinary Diamond Hash --
   # the natural shape to hand this in as, rather than a caller having

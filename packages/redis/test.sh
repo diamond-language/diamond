@@ -244,6 +244,47 @@ rescue error: RedisError
 end
 check(error_raised, "expected a type-mismatched command to raise RedisError")
 
+# --- scan ---
+scan_index = 0
+while scan_index < 25
+  conn.set("scan:#{scan_index}", "v")
+  scan_index += 1
+end
+conn.set("noscan:1", "v")
+first_step = conn.scan("0", "scan:*", 5)
+check(first_step["cursor"] != nil, "SCAN returns a cursor")
+check(first_step["keys"].length() <= 25, "SCAN's own COUNT hint keeps one step bounded")
+found_keys = []
+conn.scan_each("scan:*", 5) do |key|
+  found_keys.push(key)
+end
+check(found_keys.length() == 25, "scan_each found all 25 matching keys, found #{found_keys.length()}")
+check(!found_keys.include?("noscan:1"), "scan_each respected the MATCH pattern")
+
+# --- transactions ---
+conn.set("tx_counter", "0")
+tx_result = conn.multi() do |tx|
+  tx.set("tx_key", "hello")
+  tx.incr("tx_counter")
+  tx.incr("tx_counter")
+end
+check(tx_result == ["OK", 1, 2], "MULTI/EXEC returns each queued command's own real reply, got #{tx_result}")
+check(conn.get("tx_key") == "hello", "a command queued inside MULTI actually applied")
+check(conn.get("tx_counter") == "2", "MULTI/EXEC applied both queued INCRs")
+
+tx_error_raised = false
+begin
+  conn.multi() do |tx|
+    tx.set("never_committed", "x")
+    raise RuntimeError.new("boom")
+  end
+rescue error: RuntimeError
+  tx_error_raised = true
+end
+check(tx_error_raised, "expected the block's own exception to propagate out of #multi")
+check(conn.get("never_committed") == nil, "a block that raises must DISCARD, not partially commit")
+check(conn.command("PING") == "PONG", "the connection must still work normally after a DISCARDed transaction")
+
 conn.close()
 puts("all live checks passed")
 DIEOF

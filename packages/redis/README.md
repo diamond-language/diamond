@@ -67,13 +67,22 @@ A command that fails (a type mismatch, a syntax error, ...) raises
 anything Redis's own server reports as an error reply, the same "one
 class per external system" shape `SQLite3Error` already has.
 
+No command method carries a Diamond return-type annotation (`-> Int`,
+`-> Bool`, ...), even though most really do have one fixed real reply
+type — deliberate, not an oversight: while a connection is inside a
+`#multi` block (below), every queued command's own reply is the plain
+String `"QUEUED"` instead of its real value, and Diamond enforces a
+declared return type at runtime even on a plain passthrough method. An
+annotated `incr` would work normally but raise `TypeError` the moment
+it's called from inside a transaction.
+
 ### Covered commands
 
 - **Strings**: `get`, `set` (with `ex`/`px`/`nx`/`xx`), `setex`,
   `setnx`, `incr`/`decr`/`incrby`/`decrby`, `append`, `strlen`,
   `mget`/`mset`.
 - **Keys**: `del`, `exists`/`exists?`, `expire`, `persist`, `ttl`,
-  `type`, `keys`, `rename`.
+  `type`, `keys`, `rename`, `scan`/`scan_each` (below).
 - **Hashes**: `hget`/`hset`/`hmset`/`hgetall`, `hdel`, `hexists`,
   `hlen`, `hkeys`/`hvals`, `hincrby`, `hmget`.
 - **Lists**: `lpush`/`rpush`, `lpop`/`rpop`, `llen`, `lrange`,
@@ -86,6 +95,50 @@ class per external system" shape `SQLite3Error` already has.
   Redis's own flat reply).
 - **Pub/Sub**: `RedisConnection#publish`, and a separate
   `RedisSubscriber` class (below).
+- **Transactions**: `RedisConnection#multi` (below).
+
+## Scanning a large keyspace
+
+`keys(pattern)` is an O(N) full scan that blocks the (single-threaded)
+server for its whole duration — fine for a small keyspace or an
+offline script, a real problem for a large one in production.
+`scan_each` drives `SCAN`'s own resumable-cursor protocol to
+completion instead, each step bounded by `count` rather than the whole
+keyspace:
+
+```ruby
+conn.scan_each("user:*", 100) do |key|
+  puts(key)
+end
+```
+
+`scan(cursor, match = nil, count = nil)` is the one-step primitive
+underneath it, for a caller that wants to drive the cursor itself (e.g.
+spreading one big scan across several request/response cycles instead
+of one long loop) — returns `{"cursor", "keys"}`; `"0"` coming back as
+the *next* cursor means the iteration is complete, not `"keys"` being
+empty (SCAN can legitimately return no matches on a given step without
+being done).
+
+## Transactions
+
+`MULTI` puts a connection into a mode where every subsequent command is
+*queued*, not executed, until `EXEC` runs them all atomically:
+
+```ruby
+result = conn.multi() do |tx|
+  tx.set("a", "1")
+  tx.incr("counter")
+end
+# result => ["OK", 1] -- EXEC's own reply: each queued command's real
+# reply, in order. Whatever tx.set/tx.incr themselves returned inside
+# the block ("QUEUED") is not it -- ignore those.
+```
+
+A block that raises `DISCARD`s the transaction (so a failure partway
+through queueing doesn't leave the connection stuck inside an open
+`MULTI` forever) and re-raises. `WATCH` (optimistic locking) isn't
+implemented — this is plain `MULTI`/`EXEC` only.
 
 ## Pub/Sub
 
@@ -124,13 +177,9 @@ conn.publish("news", "hello subscribers")  # => number of subscribers that recei
   (RESP3 needs an explicit `HELLO 3` opt-in), and nothing this package
   covers needs RESP3's extra reply types (doubles, booleans, maps,
   sets, big numbers, out-of-band push messages outside pub/sub).
-- **Transactions (`MULTI`/`EXEC`) and scripting (`EVAL`/`EVALSHA`).**
+- **`WATCH` (optimistic locking) and scripting (`EVAL`/`EVALSHA`).**
   Not implemented — reach for `#command(*args)` directly if you need
   them; nothing about the protocol layer prevents it.
-- **`SCAN`'s cursor-based iteration.** `keys(pattern)` covers the
-  direct, commonly-reached-for case; `SCAN`'s own incremental
-  alternative (better for a large keyspace, where `KEYS` can be slow)
-  is a real gap, not a design choice.
 - **Connection pooling, automatic reconnection, Sentinel/Cluster
   support.** One connection, one Redis. Layer pooling/retry on top in
   application code if you need it.

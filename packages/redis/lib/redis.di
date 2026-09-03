@@ -35,6 +35,8 @@
 # mode where ordinary commands no longer work on it, so that lives on
 # its own RedisSubscriber class instead of reopening RedisConnection
 # for everything except #publish (an ordinary command, unaffected).
+# `transactions` (MULTI/EXEC) comes last since it calls ordinary
+# command methods from every family above on the caller's behalf.
 require "./redis/protocol"
 require "./redis/connection"
 require "./redis/keys"
@@ -44,3 +46,4 @@ require "./redis/lists"
 require "./redis/sets"
 require "./redis/sorted_sets"
 require "./redis/pubsub"
+require "./redis/transactions"

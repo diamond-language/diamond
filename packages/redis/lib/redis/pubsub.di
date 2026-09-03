@@ -6,7 +6,7 @@ class RedisConnection
   # `channel` right now -- Redis pub/sub has no queueing or delivery
   # guarantee at all: a message published with nobody subscribed is
   # simply gone).
-  def publish(channel, message) -> Int = self.command("PUBLISH", channel, message)
+  def publish(channel, message) = self.command("PUBLISH", channel, message)
 end
 
 # A dedicated connection for the subscriber side of pub/sub -- kept

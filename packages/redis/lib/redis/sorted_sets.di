@@ -1,8 +1,8 @@
 # Sorted set commands. Reopens RedisConnection (see connection.di).
 class RedisConnection
-  def zadd(key, score, member) -> Int = self.command("ZADD", key, score, member)
-  def zrem(key, *members) -> Int = self.command("ZREM", key, *members)
-  def zcard(key) -> Int = self.command("ZCARD", key)
+  def zadd(key, score, member) = self.command("ZADD", key, score, member)
+  def zrem(key, *members) = self.command("ZREM", key, *members)
+  def zcard(key) = self.command("ZCARD", key)
   def zincrby(key, amount, member) = self.command("ZINCRBY", key, amount, member)
 
   # A String reply (Redis scores are wire-formatted as text regardless
@@ -18,7 +18,7 @@ class RedisConnection
   # Redis's own rank is 0-indexed by ascending score, ties broken by
   # member name -- nil if `member` isn't in the set (matching zscore's
   # own "not present" contract) rather than raising.
-  def zrank(key, member) -> Int = self.command("ZRANK", key, member)
+  def zrank(key, member) = self.command("ZRANK", key, member)
 
   # `withscores`: true returns an Array of [member, score: Float] pairs
   # instead of Redis's own raw flat [member1, score1, member2, score2,
