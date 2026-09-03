@@ -89,7 +89,7 @@ class RequestLogging
       response
     rescue error: StandardError
       duration_ms = (Time.monotonic() - started_at) * 1000
-      RequestLogging.get(context).error("request.failed", RequestLogging.fields(request, {"error_class": "#{error}", "error_message": error.message(), "duration_ms": duration_ms}))
+      RequestLogging.get(context).error("request.failed", RequestLogging.fields(request, {"error_class": error.class(), "error_message": error.message(), "duration_ms": duration_ms}))
       context["log_context"] = nil
       raise error
     end

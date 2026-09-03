@@ -16,8 +16,9 @@
 #   end
 #   run_tests()
 #
-# Diamond has no runtime reflection -- no dynamic dispatch by string
-# name, no first-class Class values (see docs/roadmap.md) -- so tests
+# Diamond has runtime type introspection via `class()`/`is_a?`, but no
+# dynamic dispatch by string name or first-class Class values (see
+# docs/roadmap.md) -- so tests
 # can't be auto-discovered by scanning for a `test_` prefix the way real
 # minitest does; each test is registered explicitly via
 # `test(name, callback)` instead. Each test function also has to be
@@ -274,7 +275,7 @@ class Minitest
         @failures.push("FAIL: #{name}\n  #{error.message()}")
       rescue error: StandardError
         @errored = @errored + 1
-        @failures.push("ERROR: #{name}\n  #{error.message()}")
+        @failures.push("ERROR: #{name} (#{error.class()})\n  #{error.message()}")
       ensure
         unless teardown_hook == nil
           teardown_hook()

@@ -233,10 +233,10 @@ begin
   RequestLogging.call(request, context, failing_handler)
   "no exception raised"
 rescue error: RuntimeError
-  "#{error.message()}|#{writer.lines().length()}|#{writer.lines()[1].index_of("request.failed") != nil}|#{writer.lines()[1].index_of("boom") != nil}|#{context["log_context"]}"
+  "#{error.message()}|#{writer.lines().length()}|#{writer.lines()[1].index_of("request.failed") != nil}|#{writer.lines()[1].index_of("RuntimeError") != nil}|#{writer.lines()[1].index_of("boom") != nil}|#{context["log_context"]}"
 end
 ')"
-[[ "$actual" == "boom|2|true|true|nil" ]]
+[[ "$actual" == "boom|2|true|true|true|nil" ]]
 count=$((count + 1))
 
 # --- RequestLogging.correlation: reflects the in-flight request's

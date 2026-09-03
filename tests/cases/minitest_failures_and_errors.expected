@@ -1,9 +1,9 @@
 FAIL: wrong value
   expected 5, got 4
-ERROR: division by zero
+ERROR: division by zero (ZeroDivisionError)
   division by zero
   at test_division_by_zero:12:9
-ERROR: raises wrong type
+ERROR: raises wrong type (RuntimeError)
   boom
 FAIL: raises not caught
   expected an exception to be raised
