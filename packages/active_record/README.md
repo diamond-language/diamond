@@ -370,11 +370,9 @@ explicitly, the same as `mapper`/`before_save`/`after_save` already are.
 - `length(field, minimum = nil, maximum = nil, message = nil)` -- checks
   `value.length()` (works for `String`/`Array`/`Hash` alike); `nil`
   passes silently (that's `presence`'s job, not this one's).
-- `numericality(field, message = nil)` -- Diamond has no `is_a?`/`class()`
-  runtime type check (confirmed: neither exists), so this is duck-typed
-  instead: `value + 0` inside a `rescue error: TypeError`, the same
-  reasoning `nil`/a `String` both fail this and an `Int`/`Float` both
-  pass it. `nil` fails (matching real ActiveRecord's own
+- `numericality(field, message = nil)` -- accepts values for which
+  `value.is_a?(Int) || value.is_a?(Float)` is true. `nil` fails (matching
+  real ActiveRecord's own
   `allow_nil: false` default) -- pair with `presence` if `nil` should be
   reported as "required" instead of "must be numeric".
 - `format(field, pattern, message = nil)` -- `pattern` is an ordinary

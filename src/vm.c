@@ -12850,6 +12850,16 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 registers[destination]=DIAMOND_INT(bitwise_result);
                 break;
             }
+            case DIAMOND_OP_CLASS_NAME: {
+                uint16_t destination=0,source=0;
+                READ_SHORT(destination);READ_SHORT(source);
+                char name[80];
+                format_value_type(name,sizeof name,registers[source]);
+                DiamondString *class_name=allocate_string(vm,name,strlen(name));
+                if(class_name==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                registers[destination]=DIAMOND_OBJECT(class_name);
+                break;
+            }
             case DIAMOND_OP_MODULO: {
                 /* Floored modulo (result takes the divisor's sign),
                  * matching Ruby -- not C's truncating `%` (which takes

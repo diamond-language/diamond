@@ -435,6 +435,15 @@ typedef enum DiamondOpCode : uint8_t {
     DIAMOND_OP_BITWISE_AND,
     DIAMOND_OP_BITWISE_OR,
     DIAMOND_OP_BITWISE_XOR,
+    /* `value.class()` -- dest, source. Returns a String naming
+     * `source`'s own runtime type (format_value_type's own output,
+     * src/vm.c -- the exact bare name already used in every "expected
+     * X, got Y" type-error message, e.g. "String", "Int",
+     * "RuntimeError" for a user class instance). Compiler-recognized
+     * (src/compiler.c's own parse_invoke), not a real method on any
+     * class -- works uniformly on every value, including native kinds
+     * with no DiamondClass of their own at all. */
+    DIAMOND_OP_CLASS_NAME,
     DIAMOND_OP_COUNT,
 } DiamondOpCode;
 

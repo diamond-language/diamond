@@ -53,10 +53,8 @@ class RedisConnection
   # resp3: true)`) -- a handful of commands whose reply Redis itself
   # restructures under RESP3 (HGETALL, ZRANGE ... WITHSCORES, ...)
   # check this to know which shape to expect back, rather than
-  # inspecting the decoded value's own runtime shape to guess (Diamond
-  # has no `is_a?`/`class()` runtime type check at all -- confirmed
-  # directly, see packages/active_record/lib/active_record/validators.di's
-  # own comment on the same gap). See hashes.di's own #hgetall and
+  # inspecting the decoded value's own runtime shape to guess. See
+  # hashes.di's own #hgetall and
   # sorted_sets.di's own #zrange/#zrangebyscore.
   def resp3?() = @resp3
 

@@ -71,22 +71,13 @@ module ActiveRecord
       check
     end
 
-    # Diamond has no is_a?/class() runtime type check (confirmed directly --
-    # neither exists), so "numeric" is duck-typed instead: `value + 0`
-    # raises TypeError for anything that isn't Int/Float (a String, an
-    # Array, nil, ...), caught here and turned into a validation failure
-    # rather than propagating. nil fails by the same path (`nil + 0` also
-    # raises TypeError) -- absence is #presence's job, not this one's,
-    # matching real ActiveRecord's own default (allow_nil: false).
+    # nil fails along with every nonnumeric runtime type -- absence is
+    # #presence's job, not this one's, matching ActiveRecord's default
+    # (allow_nil: false).
     def self.numericality(field: String, message = nil)
       def check(attributes, exclude_id)
         value = attributes[field]
-        valid = true
-        begin
-          value + 0
-        rescue error: TypeError
-          valid = false
-        end
+        valid = value.is_a?(Int) || value.is_a?(Float)
         if valid
           []
         else

@@ -1344,6 +1344,8 @@ static bool disassemble_chunk(FILE *stream, const char *name,
                 else {fputs("<invalid type>",stream);valid=false;}
                 fputc('\n',stream);offset+=7;break;
             }
+            case DIAMOND_OP_CLASS_NAME:
+                offset=two_registers(stream,chunk,"CLASS_NAME",offset,&valid);break;
             case DIAMOND_OP_ARRAY: {
                 if(!require_bytes(stream,chunk,offset,7)){valid=false;offset=chunk->code_count;break;}
                 const uint16_t items=read_operand(chunk,offset+5);
