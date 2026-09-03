@@ -68,10 +68,23 @@ The native service layer is broad enough to build real applications. Work here
 should now favor consistency, portability, and failure behavior over adding
 unrelated primitives.
 
+A first arity/type/range/closed-resource audit (2026-09) across File,
+Listener, Socket, UDPSocket, TLSSocket, SQLite3/Statement, PostgreSQL,
+MySQL, and Process/Handle/Stream found the surface largely consistent
+already: closed-resource checks are structurally guaranteed (every
+native dispatch checks "is closed" before any method-specific branch),
+arity validation is shared correctly across sibling methods (e.g.
+`Process.run`/`.spawn` share one argv-validation helper), and the one
+real type-consistency question found (PostgreSQL/MySQL rejecting a Hash
+`params` argument that SQLite3 accepts) turned out to be a genuine,
+already-documented driver-level constraint, not an oversight. One real
+range-check inconsistency was found and fixed: `UDPSocket#receive`
+rejected `0` where the read-family methods didn't. Re-run this audit
+periodically as new native surface is added, rather than treating it as
+permanently closed.
+
 Priorities:
 
-- audit native APIs for consistent arity, type, range, and closed-resource
-  errors;
 - continue stress-GC, sanitizer, thread, socket, TLS, subprocess, and database
   coverage;
 - document platform-dependent behavior explicitly;

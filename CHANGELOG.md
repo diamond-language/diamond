@@ -17,6 +17,13 @@ authoritative fine-grained record.
   local, sometimes two deep in one call chain. Heap-allocated now (`src/
   loader.c`/`src/loader.h`), the same fix already applied to `Loader`'s
   own arrays for the identical reason.
+- `UDPSocket#receive` now accepts `0` (an immediate, real datagram-
+  discarding receive, matching `recvfrom`'s own semantics) instead of
+  raising `TypeError`, aligning it with `File#read`/`Socket#read`/
+  `TLSSocket#read`/`Process::Stream#read`, which all already accepted
+  `0`. Found by a native-API consistency audit (docs/roadmap.md); no
+  other inconsistency in arity, type, range, or closed-resource checks
+  was found across the audited native surface.
 
 ### Tooling
 

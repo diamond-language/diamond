@@ -16279,13 +16279,27 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     }
                     if(argc!=1)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
                     if(registers[base].kind!=DIAMOND_VALUE_INT||
-                       registers[base].as.integer<=0) {
+                       registers[base].as.integer<0) {
                         snprintf(vm->error,sizeof vm->error,
-                            "UDPSocket#receive argument must be a positive Int");
+                            "UDPSocket#receive argument must be a non-negative Int");
                         VM_RETURN(DIAMOND_VM_TYPE_ERROR);
                     }
                     const size_t want=(size_t)registers[base].as.integer;
-                    char *buffer=malloc(want);
+                    /* File#read/Socket#read/TLSSocket#read/Process::Stream#read
+                     * all accept 0 (an immediate empty result, no syscall
+                     * needed for those) -- this used to reject 0 outright,
+                     * an undocumented asymmetry with no behavioral reason
+                     * behind it. Allocating at least 1 byte regardless of
+                     * `want` sidesteps malloc(0)'s implementation-defined
+                     * result (may be nullptr, indistinguishable from real
+                     * OOM just below) while still passing the real `want`
+                     * to recvfrom below -- unlike the read family, a UDP
+                     * `.receive(0)` is a meaningful, distinct operation
+                     * (consumes/discards a queued datagram without copying
+                     * any of it), so this fix aligns the *validation* with
+                     * the read family without changing send/receive
+                     * semantics. */
+                    char *buffer=malloc(want==0?1:want);
                     if(buffer==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
                     struct sockaddr_storage source_addr={0};
                     socklen_t source_addr_len=sizeof source_addr;

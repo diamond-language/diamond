@@ -1746,6 +1746,45 @@ fi
 grep -q "undefined method 'nope' for UDPSocket" "$error_file"
 rm -f "$error_file"
 
+error_file="$(mktemp)"
+if "$diamond" -e 's = UDPSocket.open()
+s.receive(-1)' >/dev/null 2>"$error_file"; then
+    echo "UDPSocket#receive with a negative Int unexpectedly succeeded" >&2
+    exit 1
+fi
+grep -q "UDPSocket#receive argument must be a non-negative Int" "$error_file"
+rm -f "$error_file"
+
+# UDPSocket#receive(0) is a real, distinct operation (consumes/discards a
+# queued datagram without copying any of it) rather than an error -- see
+# src/vm.c's own comment on why this used to be rejected outright and no
+# longer is, aligning with File#read/Socket#read/TLSSocket#read/
+# Process::Stream#read's own "0 means an immediate empty result" behavior.
+udp_zero_port=18749
+udp_zero_server_out="$(mktemp)"
+"$diamond" -e "$(printf 'socket = UDPSocket.bind(%d)
+puts("ready")
+result = socket.receive(0)
+socket.send("got: #{result["data"].length()}", result["host"], result["port"])
+socket.close()
+0' "$udp_zero_port")" >"$udp_zero_server_out" 2>&1 &
+udp_zero_server_pid=$!
+for _ in $(seq 1 200); do
+    grep -q '^ready$' "$udp_zero_server_out" && break
+    sleep 0.05
+done
+udp_zero_client_src="$(printf 'client = UDPSocket.open()
+client.send("hello", "127.0.0.1", %d)
+result = client.receive(1024)
+client.close()
+result["data"]' "$udp_zero_port")"
+udp_zero_client_out="$(mktemp)"
+timeout 10 "$diamond" -e "$udp_zero_client_src" >"$udp_zero_client_out" 2>&1
+wait "$udp_zero_server_pid"
+[[ "$(tail -n1 "$udp_zero_server_out")" == "0" ]]
+[[ "$(cat "$udp_zero_client_out")" == "got: 0" ]]
+rm -f "$udp_zero_server_out" "$udp_zero_client_out"
+
 # A real client/server round trip. UDP has no TCPSocket.connect-style
 # "keep retrying until the port's actually listening" signal (there's no
 # handshake to fail cleanly), so the server prints "ready" right after
