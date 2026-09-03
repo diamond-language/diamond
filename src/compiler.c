@@ -7317,12 +7317,14 @@ static uint16_t parse_invoke(Compiler *compiler, uint16_t receiver) {
      * the exact same helper `rescue error: SomeClass` already uses, so
      * `is_a?` inherits that function's own class/interface/generic/
      * Sized handling for free (this is not merely a narrow "same
-     * class" check -- see value_matches_type, src/vm.c). No first-
-     * class Class value exists in Diamond to pass a type as an
-     * ordinary runtime argument instead (confirmed directly: no
-     * DIAMOND_OBJECT_CLASS/DIAMOND_VALUE_CLASS kind exists anywhere in
-     * object.h), so this is the only way `is_a?` could take a type
-     * name as its argument at all. */
+     * class" check -- see value_matches_type, src/vm.c). DIAMOND_VALUE_
+     * CLASS (value.h) does exist, but stays deliberately narrow (self
+     * inside a class-owned singleton method, a bare class name as a
+     * `case`/`when` pattern -- see docs/design.md's own section on it)
+     * and is never constructed here: there is no general first-class
+     * Class value a program could pass as an ordinary runtime argument
+     * instead, so this compile-time resolution is the only way `is_a?`
+     * could take a type name as its argument at all. */
     if(compiler->current.kind==DIAMOND_TOKEN_LEFT_PAREN&&
        name_equals(compiler,"class",name,false)) {
         advance_token(compiler);

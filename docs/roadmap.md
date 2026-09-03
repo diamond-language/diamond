@@ -159,20 +159,6 @@ Areas worth considering:
 - explicit metaprogramming operations with inspectable behavior;
 - better ways to express common typed callback and data-shaping patterns.
 
-### Runtime classes and metaprogramming
-
-Classes are not general heap values, and Diamond has no `eval`-style runtime
-compiler. Existing method definition/replacement APIs operate on already
-compiled callables.
-
-Possible future work:
-
-- decide whether class objects should become ordinary values;
-- define inheritance/cache invalidation rules before expanding runtime method
-  synthesis;
-- consider `method_missing` only with bounded recursion, visibility, cache, and
-  diagnostic semantics.
-
 ### Stable public boundaries
 
 The language, bytecode format, embedding API, and package conventions are still
@@ -218,7 +204,22 @@ second real target, not scattered conditional compilation without validation.
 - free-form runtime source evaluation;
 - a hosted package registry without an operational owner;
 - a JIT without representative profiling evidence;
-- portability claims without continuous testing on the claimed platform.
+- portability claims without continuous testing on the claimed platform;
+- runtime class *synthesis* (decided, 2026-09): `DIAMOND_VALUE_CLASS`
+  stays exactly as narrow as it is today (only `self` inside a
+  class-owned singleton method and a bare class name as a `case`/`when`
+  pattern produce one -- both compile-time-resolved special forms, not
+  general expressions; `.class()` returns a diagnostic `String`, not a
+  Class value, and `is_a?` never touches one either). A class's identity
+  is a `uint8_t class_index` (`DIAMOND_MAX_CLASSES = 180`) sharing the
+  exact byte space the whole static type system uses for `known_type`/
+  type sets/generics -- a class and a compile-time type are the same
+  representation, deliberately. Synthesizing new classes at runtime would
+  force a second, untyped object-model tier outside that system entirely,
+  against "dynamic code and checked code share one object model"
+  (README.md); not worth it without a deeper type-tag redesign no
+  concrete use case currently justifies. See docs/design.md's
+  `DIAMOND_VALUE_CLASS` section for the implementation-level detail.
 
 ## Completion policy
 

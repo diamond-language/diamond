@@ -1039,8 +1039,51 @@ method now, uniformly, whether it needs to be virtual or not.
 Everything above is scoped deliberately narrowly and stops well short of
 making classes first-class runtime values in general: there is still no way
 to pass a class as an ordinary argument, store one as an attribute, or name
-one dynamically by a computed string -- only `self` inside the one context
-above ever produces a Class value.
+one dynamically by a computed string. `self` above is not the *only*
+producer, though -- a bare class name as a `case`/`when` pattern (`when
+Dog`, docs/core-syntax.md, matched by `case_match_value`'s own
+`DIAMOND_VALUE_CLASS` branch) is a second, older, likewise
+compile-time-resolved special form that also loads one; neither is a
+general expression a program can otherwise construct or receive a Class
+value from. Two mechanisms this section's own later work might suggest
+also produce one, but deliberately don't: `.class()` (added afterward,
+see "runtime type introspection" below) returns a diagnostic `String`
+naming the type, never a Class value, and `is_a?`'s type argument is
+resolved entirely at compile time via `resolve_type_name`, never
+constructing or touching a runtime Class value either -- both confirmed
+directly against the bytecode each compiles to (`DIAMOND_OP_CLASS_NAME`,
+`DIAMOND_OP_IS_TYPE`), not assumed from their names. See docs/roadmap.md's
+"Explicitly deferred" section for why runtime class synthesis stays out of
+scope given this representation.
+
+### `value.class()`/`value.is_a?(Type)`
+
+Both are compiler-recognized special forms (`parse_invoke`, src/compiler.c),
+not real methods on any class -- no `DiamondFunction`/method-table entry
+exists for either name anywhere, so they're intercepted before the ordinary
+dynamic-dispatch `INVOKE` path (which would otherwise just fail to find a
+method by that name on most receivers), and only when immediately followed
+by `(` -- a bare `.class`/`.is_a?` with no parens still falls through
+unchanged to ordinary bare-reference handling, matching every other
+`obj.method` (no parens) already being a method *reference*, not a call.
+
+`.class()` compiles to `DIAMOND_OP_CLASS_NAME` (dest, source), whose runtime
+handler is `format_value_type`'s own output -- the exact bare name already
+used in every "expected X, got Y" type-error message -- returned as an
+ordinary `String`. It works uniformly on every value, including native
+kinds with no `DiamondClass` of their own at all (`1.class()` => `"Int"`),
+which is exactly why it can't return a Class value: most of its possible
+results have no `class_index` to hold in the first place.
+
+`is_a?`'s single argument is a type name, not a general expression --
+resolved at compile time via `resolve_type_name`, the exact same helper a
+`rescue error: SomeClass` clause's type already uses, so `is_a?` inherits
+that function's own class/interface/generic/`Sized` handling for free (not
+merely a narrow "same class" check -- see `value_matches_type`, src/vm.c)
+and compiles to `DIAMOND_OP_IS_TYPE` (dest, source, resolved-type-byte).
+Neither special form constructs, reads, or passes a `DIAMOND_VALUE_CLASS`
+at any point -- there remains no first-class Class value in Diamond a
+program could use to pass a type as an ordinary runtime argument instead.
 
 For a direct `value == nil` or `value != nil` condition, the compiler splits a
 union type-set into nil and non-nil branch facts. Facts for locals that existed
