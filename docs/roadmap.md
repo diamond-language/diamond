@@ -15,12 +15,24 @@ The embedded Diamond prelude is compiled with every program. Source selection
 already avoids loading JSON support when it is unused, but the remaining core
 still adds measurable startup cost.
 
+Measured (release build, `DIAMOND_TRACE_STARTUP=1`, warm page cache): a
+trivial `-e '1'` spends ~23ms of its ~24ms total wall time compiling the
+23.7KB non-JSON prelude -- over 95% of process time before the program's own
+code runs at all. Adding JSON (36KB combined) or a require-heavy program
+(`tests/cases/arel_traversal.di`, 202KB combined with its requires) keeps the
+same shape: compile is consistently 90-96% of total wall time and scales
+roughly linearly with combined source size, while `load` (require resolution)
+and `run` (actual execution) stay in the single-digit milliseconds or less.
+Process overhead outside compilation (`diamond -v`) is unmeasurably small.
+This is a fixed tax paid identically on every invocation regardless of
+program size -- most costly for the CLI/test-suite/short-script pattern
+(the 1000+ program end-to-end corpus, for one, pays it 1000+ times over) and
+irrelevant to a long-running server's steady state.
+
 Next investigation:
 
-- measure startup and compile-time cost on representative CLI, test, and server
-  workloads;
 - prototype either a reusable compiled-prelude snapshot or a compiler append
-  mode;
+  mode, now backed by the measurement above rather than a hypothesis;
 - keep the new machinery only if it produces a meaningful measured gain without
   making source maps, diagnostics, or embedding substantially more fragile.
 

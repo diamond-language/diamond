@@ -18,6 +18,12 @@ authoritative fine-grained record.
   loader.c`/`src/loader.h`), the same fix already applied to `Loader`'s
   own arrays for the identical reason.
 
+### Tooling
+
+- Added `DIAMOND_TRACE_STARTUP`, reporting the load/compile/run time split
+  for a process on stderr; used to measure prelude-compilation cost for
+  docs/roadmap.md's startup-time investigation.
+
 ### Language
 
 - Added visibility-safe `public_send` runtime-name dispatch for native and
