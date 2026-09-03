@@ -75,6 +75,27 @@ require "../../logger/lib/logger"
 # real response is a 3-element Array), so nothing about ordinary
 # [status, headers, body] handlers changes.
 #
+# ## Periodic tick
+#
+# `gremlin_serve(port, handler, tick_interval: seconds, on_tick: callable)`
+# runs `on_tick(context)` on every worker roughly every `tick_interval`
+# seconds, whether or not anything else is happening -- the one
+# escape hatch here for work that isn't driven by any connection's own
+# I/O at all. The motivating case is exactly the thing `threads > 1`
+# otherwise has no answer for: fanning a message out to *every* worker
+# rather than just whichever one happens to hold the connection that
+# received it (see docs/threads.md -- workers share no memory
+# whatsoever, so a Hash-based in-process registry, `context` included,
+# can only ever reach connections on its own worker). `on_tick` polling
+# a shared table (a database, most naturally) is the one thing every
+# worker actually *can* see. `on_tick` must be a zero-capture Callable,
+# the same requirement `handler` already has, since it crosses the same
+# `Thread.new` boundary on `threads > 1` -- and, like `context`, runs
+# independently per worker: there is no cross-worker coordination of
+# *when* each tick fires, only that each one fires on its own
+# schedule. Omit both (the default) for zero behavior change --
+# `IO.poll` blocks with its original `-1` exactly as before.
+#
 # ## Per-worker context
 #
 # `context` (gremlin_worker's own local, created once per worker before

@@ -1,10 +1,59 @@
-def gremlin_worker(port, handler)
+# The combined poll(2) timeout (milliseconds, or -1 to block
+# indefinitely) for whichever of shutdown-draining and a configured
+# tick are actually in play right now -- the smaller of the two bounds
+# wins, so neither one can starve the other (a tick due sooner than the
+# shutdown deadline still fires during drain; a shutdown deadline
+# sooner than the next tick still cuts drain off on time). A top-level
+# def, not nested in gremlin_worker, since it captures nothing of its
+# own -- both shutdown state and `next_tick_at` (passed in) are all it
+# needs.
+def gremlin_poll_timeout_ms(next_tick_at)
+  shutdown_bound = if GremlinShutdown.requested?()
+    remaining = GremlinShutdown.deadline() - Time.monotonic()
+    if remaining < 0 then 0 else to_i(remaining * 1000.0) end
+  else
+    nil
+  end
+  tick_bound = if next_tick_at == nil
+    nil
+  else
+    remaining = next_tick_at - Time.monotonic()
+    if remaining < 0 then 0 else to_i(remaining * 1000.0) end
+  end
+  if shutdown_bound == nil && tick_bound == nil
+    -1
+  elsif shutdown_bound == nil
+    tick_bound
+  elsif tick_bound == nil
+    shutdown_bound
+  else
+    if shutdown_bound < tick_bound then shutdown_bound else tick_bound end
+  end
+end
+
+# `tick_interval`/`on_tick`: an optional periodic callback with no
+# connection I/O of its own to hang off of -- the motivating case is
+# fanning a message out to *other* gremlin_serve(threads: N) workers,
+# which (per docs/threads.md) share no memory at all; the only thing
+# every worker can actually see is whatever's outside the process
+# entirely (a database, say). `on_tick(context)` runs on every worker
+# independently, roughly every `tick_interval` seconds, with that
+# worker's own per-worker `context` -- see packages/websocket's own
+# README for a real use of this (cross-worker chat-room fan-out via
+# polling a shared table). `on_tick` must be a zero-capture Callable,
+# the same Thread.new requirement `handler` already has, since it
+# crosses the same thread boundary on `threads > 1`. Both default to
+# `nil`, meaning no tick at all -- IO.poll blocks with its original
+# `-1` (or whatever shutdown alone already bounded it to), exactly
+# today's behavior, unchanged for every existing caller.
+def gremlin_worker(port, handler, tick_interval = nil, on_tick = nil)
   listener = TCPServer.listen_nonblocking(port, reuse_port: true)
   connections = []
   context = {}
   # Server errors share stdout with application logs, so they use the same
   # one-object-per-line contract instead of introducing a text-only line.
   log = Logger.new("gremlin", "info", nil, "json")
+  next_tick_at = if tick_interval == nil then nil else Time.monotonic() + tick_interval end
 
   # Graceful shutdown on SIGTERM/SIGINT ("someone asked this process to
   # stop" -- Signal.trap's own motivating use case, docs/networking.md).
@@ -104,18 +153,16 @@ def gremlin_worker(port, handler)
       end
     end
     connections.each(collect_interest)
-    # While shutting down, poll with a bounded timeout instead of -1 so
-    # the loop keeps waking up to re-check the deadline even if nothing
-    # else becomes ready -- otherwise a client that opened a connection
-    # and never sent anything (packages/gremlin's own documented
-    # "nothing evicts it" scope cut) would wedge shutdown forever
-    # waiting on a poll() that never returns.
-    ready = IO.poll(read_list, write_list, if GremlinShutdown.requested?()
-      (GremlinShutdown.deadline() - Time.monotonic() < 0) ? 0 :
-        to_i((GremlinShutdown.deadline() - Time.monotonic()) * 1000.0)
-    else
-      -1
-    end)
+    # While shutting down, or with a tick configured, poll with a
+    # bounded timeout instead of -1 so the loop keeps waking up to
+    # re-check the deadline/tick even if nothing else becomes ready --
+    # otherwise a client that opened a connection and never sent
+    # anything (packages/gremlin's own documented "nothing evicts it"
+    # scope cut) would wedge shutdown forever waiting on a poll() that
+    # never returns, and a tick would never fire at all on an otherwise
+    # idle worker. See gremlin_poll_timeout_ms's own comment for how the
+    # two bounds combine.
+    ready = IO.poll(read_list, write_list, gremlin_poll_timeout_ms(next_tick_at))
 
     # Accepted here, *not* folded into `connections` until after the resume
     # pass below -- `ready`'s own readable/writable arrays are sized and
@@ -197,6 +244,21 @@ def gremlin_worker(port, handler)
     connections.each_with_index(resume_if_ready)
     connections = still_active.concat(newly_spawned)
 
+    # Checked once per loop iteration rather than on some separate
+    # timer -- gremlin_poll_timeout_ms above already guarantees the
+    # loop wakes up (via IO.poll returning empty) no later than
+    # `next_tick_at`, even with zero connection activity, so this is
+    # never actually late by more than however long one connection's
+    # own resume_if_ready pass just took.
+    if next_tick_at != nil && Time.monotonic() >= next_tick_at
+      begin
+        on_tick(context)
+      rescue error: StandardError
+        log.error("tick.handler_failed", {"error": error.message()})
+      end
+      next_tick_at = Time.monotonic() + tick_interval
+    end
+
     if GremlinShutdown.requested?() && connections.length() == 0
       log.info("server.shutdown_complete", {"forced": false})
       exit(0)
@@ -219,8 +281,21 @@ end
 # across them. `gremlin_worker` is itself a top-level def, and `handler`
 # must be a zero-capture Callable, satisfying Thread.new's requirement for
 # both its primary callable and (as of the reuse_port work) a crossable
-# argument -- see docs/threads.md.
-def gremlin_serve(port, handler: Callable[2], threads = 1)
+# argument -- see docs/threads.md. `tick_interval`/`on_tick` (see
+# gremlin_worker's own doc comment) cross the same way: `on_tick` must
+# also be a zero-capture Callable, and each spawned worker gets its own
+# independent tick, not one shared across `threads > 1` -- exactly the
+# same per-worker-everything story as `context` itself.
+#
+# Pass `threads:` explicitly whenever calling with `tick_interval:`/
+# `on_tick:` (even to just restate the default, `threads: 1`) --
+# Diamond's own keyword-argument rule (docs/callables.md) lets a
+# keyword fill any parameter, but only if every default-valued
+# parameter *before* the highest one actually supplied is *also*
+# supplied; skipping `threads` while naming `tick_interval`/`on_tick`
+# leaves a gap and fails to compile ("missing argument"), not a bug in
+# this function itself.
+def gremlin_serve(port, handler: Callable[2], threads = 1, tick_interval = nil, on_tick = nil)
   if threads < 1
     raise ArgumentError.new("gremlin_serve threads must be at least 1")
   end
@@ -242,8 +317,8 @@ def gremlin_serve(port, handler: Callable[2], threads = 1)
   spawned = []
   i = 1
   while i < threads
-    spawned.push(Thread.new(gremlin_worker, port, handler))
+    spawned.push(Thread.new(gremlin_worker, port, handler, tick_interval, on_tick))
     i += 1
   end
-  gremlin_worker(port, handler)
+  gremlin_worker(port, handler, tick_interval, on_tick)
 end
