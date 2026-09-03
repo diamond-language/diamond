@@ -13,15 +13,52 @@
 # reopened as needed" way). #command(*args) is the one raw primitive
 # every one of those higher-level methods is built on.
 class Redis
-  def self.connect(host, port = 6379, options = nil)
-    RedisConnection.new(TCPSocket.connect(host, port, options))
+  # `resp3: true` sends `HELLO 3` right after connecting, switching
+  # this connection over to RESP3 for the rest of its life (Redis has
+  # no per-command protocol selection -- it's a whole-connection
+  # setting). Defaults `false`: every existing caller keeps today's
+  # plain RESP2 behavior unchanged, and an older-than-Redis-6 server
+  # (no HELLO at all) still works as long as this stays off.
+  #
+  # `resp3:` is a keyword, but skipping `port`/`options` while naming
+  # it still fails to compile ("missing argument") -- the same
+  # Diamond keyword-argument gap rule gremlin_serve's own
+  # tick_interval/on_tick ran into (packages/gremlin/lib/gremlin/server.di):
+  # a keyword can fill any parameter, but only if every default-valued
+  # one *before* the highest one actually supplied is also supplied.
+  # `Redis.connect("127.0.0.1", resp3: true)` won't compile;
+  # `Redis.connect("127.0.0.1", 6379, nil, resp3: true)` (or naming
+  # `port`/`options` too) will.
+  #
+  # A server that doesn't understand `HELLO` (Redis < 6) raises an
+  # ordinary RedisError here rather than silently staying on RESP2 --
+  # asking for RESP3 and not getting it is worth knowing about, not
+  # hiding.
+  def self.connect(host, port = 6379, options = nil, resp3 = false)
+    conn = RedisConnection.new(TCPSocket.connect(host, port, options), resp3)
+    if resp3
+      conn.command("HELLO", "3")
+    end
+    conn
   end
 end
 
 class RedisConnection
-  def initialize(socket)
+  def initialize(socket, resp3 = false)
     @socket = socket
+    @resp3 = resp3
   end
+
+  # Whether this connection negotiated RESP3 (`Redis.connect(...,
+  # resp3: true)`) -- a handful of commands whose reply Redis itself
+  # restructures under RESP3 (HGETALL, ZRANGE ... WITHSCORES, ...)
+  # check this to know which shape to expect back, rather than
+  # inspecting the decoded value's own runtime shape to guess (Diamond
+  # has no `is_a?`/`class()` runtime type check at all -- confirmed
+  # directly, see packages/active_record/lib/active_record/validators.di's
+  # own comment on the same gap). See hashes.di's own #hgetall and
+  # sorted_sets.di's own #zrange/#zrangebyscore.
+  def resp3?() = @resp3
 
   # The raw primitive: sends one RESP2 command (`args` stringified
   # positionally, e.g. `command("SET", "foo", "bar")`) and returns its

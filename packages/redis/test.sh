@@ -108,6 +108,34 @@ rescue error: IOError
 end
 check(mid_reply_error, "expected a truncated bulk string to raise IOError")
 
+# --- RESP3 reply types ---
+check(redis_read_reply(FakeConn.new("_\r\n")) == nil, "RESP3 null")
+check(redis_read_reply(FakeConn.new("#t\r\n")) == true, "RESP3 boolean true")
+check(redis_read_reply(FakeConn.new("#f\r\n")) == false, "RESP3 boolean false")
+check(redis_read_reply(FakeConn.new(",3.14\r\n")) == 3.14, "RESP3 double")
+check(redis_read_reply(FakeConn.new(",1\r\n")) == 1.0, "RESP3 double, integer-valued")
+inf_reply = redis_read_reply(FakeConn.new(",inf\r\n"))
+check(inf_reply > 100000000.0, "RESP3 double +inf: #{inf_reply}")
+neg_inf_reply = redis_read_reply(FakeConn.new(",-inf\r\n"))
+check(neg_inf_reply < -100000000.0, "RESP3 double -inf: #{neg_inf_reply}")
+nan_reply = redis_read_reply(FakeConn.new(",nan\r\n"))
+check(nan_reply != nan_reply, "RESP3 double nan (NaN is the one value unequal to itself): #{nan_reply}")
+check(redis_read_reply(FakeConn.new("(12345678901234567890\r\n")) == "12345678901234567890", "RESP3 big number (kept as a String)")
+check(redis_read_reply(FakeConn.new("=15\r\ntxt:hello world\r\n")) == "hello world", "RESP3 verbatim string (4-byte prefix stripped)")
+check(redis_read_reply(FakeConn.new("%2\r\n$1\r\na\r\n:1\r\n$1\r\nb\r\n:2\r\n")) == {"a": 1, "b": 2}, "RESP3 map")
+check(redis_read_reply(FakeConn.new("~2\r\n:1\r\n:2\r\n")) == [1, 2], "RESP3 set (decoded as an Array)")
+check(redis_read_reply(FakeConn.new(">2\r\n+message\r\n+hi\r\n")) == ["message", "hi"], "RESP3 push (decoded as an Array)")
+
+# RESP3 bulk error raises RedisError, same as RESP2's own simple error.
+bulk_error_raised = false
+begin
+  redis_read_reply(FakeConn.new("!20\r\nSYNTAX invalid input\r\n"))
+rescue error: RedisError
+  bulk_error_raised = true
+  check(error.message() == "SYNTAX invalid input", "RESP3 bulk error message: #{error.message()}")
+end
+check(bulk_error_raised, "expected a RESP3 bulk error to raise RedisError")
+
 puts("all unit checks passed")
 DIEOF
 )" >"$unit_out" 2>&1; then
@@ -284,6 +312,23 @@ end
 check(tx_error_raised, "expected the block's own exception to propagate out of #multi")
 check(conn.get("never_committed") == nil, "a block that raises must DISCARD, not partially commit")
 check(conn.command("PING") == "PONG", "the connection must still work normally after a DISCARDed transaction")
+
+# --- RESP3 ---
+conn3 = Redis.connect("127.0.0.1", $host_port, nil, true)
+check(conn3.resp3?(), "expected a resp3: true connection to report resp3?() == true")
+check(!conn.resp3?(), "expected the ordinary RESP2 connection to report resp3?() == false")
+conn3.command("FLUSHDB")
+conn3.hset("h3", "f1", "v1")
+conn3.hset("h3", "f2", "v2")
+check(conn3.hgetall("h3") == {"f1": "v1", "f2": "v2"}, "HGETALL under RESP3 (a real Map reply, not a flat Array)")
+conn3.zadd("z3", 1, "one")
+conn3.zadd("z3", 2, "two")
+check(conn3.zrange("z3", 0, -1, true) == [["one", 1.0], ["two", 2.0]], "ZRANGE WITHSCORES under RESP3 (already paired, score already a real Float)")
+check(conn3.zscore("z3", "one") == 1.0, "ZSCORE under RESP3 (already a real Float)")
+check(conn3.zscore("z3", "missing") == nil, "ZSCORE under RESP3 on a missing member")
+config = conn3.command("CONFIG", "GET", "maxmemory")
+check(config["maxmemory"] != nil, "CONFIG GET decodes as a real Hash under RESP3, got #{config}")
+conn3.close()
 
 conn.close()
 puts("all live checks passed")

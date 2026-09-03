@@ -21,16 +21,22 @@ class RedisConnection
     self.command(*args)
   end
 
-  # HGETALL's own reply is a flat [field1, value1, field2, value2, ...]
-  # array -- rebuilt into an ordinary Diamond Hash here, since that's
-  # what every caller actually wants back, not a flat list they'd have
-  # to re-pair themselves.
+  # Under RESP2, HGETALL's own reply is a flat [field1, value1, field2,
+  # value2, ...] array -- rebuilt into an ordinary Diamond Hash here,
+  # since that's what every caller actually wants back, not a flat
+  # list they'd have to re-pair themselves. Under RESP3 (see
+  # connection.di's own #resp3?), Redis sends a real Map reply for
+  # this same command instead, which protocol.di's own decoder already
+  # turns into a Diamond Hash directly -- nothing left to rebuild.
   def hgetall(key)
-    flat = self.command("HGETALL", key)
+    reply = self.command("HGETALL", key)
+    if self.resp3?()
+      return reply
+    end
     result = {}
     index = 0
-    while index < flat.length()
-      result[flat[index]] = flat[index + 1]
+    while index < reply.length()
+      result[reply[index]] = reply[index + 1]
       index += 2
     end
     result

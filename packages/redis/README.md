@@ -8,9 +8,10 @@ Pure Diamond, no new C dependency and no VM changes — unlike
 which need a native C binding because the actual database engine (SQL
 parsing, query execution) lives inside that C library, a Redis client
 doesn't have that problem: the real work happens on the Redis *server*,
-and the client's whole job is RESP2 protocol encode/decode over an
+and the client's whole job is RESP protocol encode/decode over an
 ordinary TCP socket — the same shape this project's own HTTP client and
-[`packages/websocket`](../websocket/README.md) already are.
+[`packages/websocket`](../websocket/README.md) already are. Speaks
+RESP2 by default, RESP3 on request (below).
 
 ## Install
 
@@ -171,12 +172,47 @@ message carries the pattern that matched). Publish from any ordinary
 conn.publish("news", "hello subscribers")  # => number of subscribers that received it
 ```
 
+## RESP3
+
+`Redis.connect(host, port, options, resp3: true)` sends `HELLO 3` right
+after connecting, switching that connection to RESP3 for the rest of
+its life (Redis has no per-command protocol selection — it's a
+whole-connection setting; needs Redis 6+, since older servers don't
+know `HELLO` at all). `RedisConnection#resp3?()` reports whether a
+given connection is in RESP3 mode.
+
+```ruby
+conn = Redis.connect("127.0.0.1", 6379, nil, resp3: true)
+```
+
+Most commands reply exactly the same way in both protocols — RESP3
+mainly adds richer *types* for the reply data itself: real booleans
+(`#`) instead of `0`/`1` integers, real doubles (`,`, including
+`inf`/`-inf`/`nan`) instead of stringified numbers, a proper null (`_`)
+unifying RESP2's separate null-bulk-string and null-array forms, plus
+maps (`%`), sets (`~`), big numbers (`(`, kept as a `String` — Diamond
+has no userland arbitrary-precision integer construction from one),
+verbatim strings (`=`), and bulk errors (`!`, raising `RedisError` the
+same as an ordinary error reply). All decoded transparently by the same
+`redis_read_reply` regardless of protocol — `#command(*args)` needs no
+changes at all to benefit.
+
+A handful of commands' reply *shape* genuinely changes under RESP3 —
+Redis sends a real Map instead of a flat array for field-value or
+member-score pairs. This package's own `hgetall` and `zrange`/
+`zrangebyscore` (with `withscores: true`) check `#resp3?()` to know
+which shape to expect back, so they return the identical result either
+way — no code changes needed at a call site switching a connection to
+`resp3: true`.
+
 ## What's deliberately out of scope
 
-- **RESP3.** RESP2 only — every real Redis server still speaks it
-  (RESP3 needs an explicit `HELLO 3` opt-in), and nothing this package
-  covers needs RESP3's extra reply types (doubles, booleans, maps,
-  sets, big numbers, out-of-band push messages outside pub/sub).
+- **RESP3 pub/sub unification.** RESP3's own killer feature is that
+  pub/sub messages arrive as out-of-band push replies interleaved with
+  ordinary command replies on the *same* connection, so one connection
+  can subscribe and run normal commands at once — not implemented here
+  (see the RESP3 section above); `RedisSubscriber`'s own dedicated
+  connection is still required regardless of `resp3:`.
 - **`WATCH` (optimistic locking) and scripting (`EVAL`/`EVALSHA`).**
   Not implemented — reach for `#command(*args)` directly if you need
   them; nothing about the protocol layer prevents it.
