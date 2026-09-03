@@ -412,6 +412,11 @@ Language and runtime guides:
 - Calendar time supports UTC, the process-local zone, and fixed offsets, but
   not named IANA timezone selection.
 
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for build/test workflow, code style,
+and commit and documentation conventions.
+
 ## License
 
 [MIT](LICENSE)
