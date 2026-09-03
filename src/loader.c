@@ -420,7 +420,16 @@ bool diamond_load_program_with_override(const char *name,const char *source,
         (void)snprintf(error,error_capacity,"out of memory loading program sources");
         return false;
     }
-    *bundle=(DiamondSourceBundle){};
+    /* Heap-allocated for the same reason Loader itself just above is --
+     * see DiamondSourceBundle's own `segments` field (src/loader.h) for
+     * the exact stack-overflow history this replaced. */
+    DiamondSourceSegment *segments=malloc(DIAMOND_MAX_SOURCE_SEGMENTS*sizeof *segments);
+    if(segments==nullptr) {
+        (void)snprintf(error,error_capacity,"out of memory loading program sources");
+        free(loader);
+        return false;
+    }
+    *bundle=(DiamondSourceBundle){.segments=segments};
     *loader=(Loader){.bundle=bundle,.error=error,
         .error_capacity=error_capacity,.override=override,.override_data=user_data};
     error[0]='\0';
@@ -430,12 +439,13 @@ bool diamond_load_program_with_override(const char *name,const char *source,
         if(written<0||(size_t)written>=sizeof path) {
             (void)snprintf(error,error_capacity,
                            "source path is too long: '%s'",name);
-            free(loader);return false;
+            free(loader);free(segments);*bundle=(DiamondSourceBundle){};return false;
         }
     }
     if(!expand(loader,path,source,nullptr,0)) {
         if(error[0]=='\0')snprintf(error,error_capacity,"unable to expand program sources");
-        free(loader->buffer);free(loader);return false;
+        free(loader->buffer);free(loader);free(segments);*bundle=(DiamondSourceBundle){};
+        return false;
     }
     bundle->source=loader->buffer;free(loader);return true;
 }
@@ -449,5 +459,6 @@ bool diamond_load_program(const char *name,const char *source,
 
 void diamond_source_bundle_free(DiamondSourceBundle *bundle) {
     free(bundle->source);
+    free(bundle->segments);
     *bundle=(DiamondSourceBundle){};
 }

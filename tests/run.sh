@@ -802,10 +802,9 @@ rm -rf "$depth_dir" "$depth_error"
 # DIAMOND_MAX_LOADED_FILES (src/loader.h) -- 400 as of the packages/
 # websocket work (a real app, applications/skindicate.dia, hit the old
 # 128 outright from ordinary growth, not a cycle or accidental double-
-# require; 400, not a rounder number, is itself an empirically-bisected
-# stack-safety ceiling -- see that constant's own comment); this
-# fixture needs to exceed whatever that constant currently is, not
-# just this test's own memory of an old value.
+# require; see that constant's own comment for why 400, not a rounder
+# number); this fixture needs to exceed whatever that constant
+# currently is, not just this test's own memory of an old value.
 files_dir="$(mktemp -d)"
 : >"$files_dir/main.di"
 for file_index in $(seq 0 407); do

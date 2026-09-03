@@ -6,6 +6,18 @@ authoritative fine-grained record.
 
 ## Unreleased
 
+### Fixes
+
+- Fixed a stack-overflow crash (SIGSEGV) in every `DiamondSourceBundle`
+  consumer -- the CLI, REPL, and every `lsp/` handler -- on an `-O0`
+  debug build, reproducible at zero `require` depth (`make test-lsp`
+  segfaulted outright on its first hover request). Root cause:
+  `DiamondSourceBundle.segments`, a ~1.6MB fixed array, was embedded
+  directly in a struct several call sites declare as a plain stack
+  local, sometimes two deep in one call chain. Heap-allocated now (`src/
+  loader.c`/`src/loader.h`), the same fix already applied to `Loader`'s
+  own arrays for the identical reason.
+
 ### Language
 
 - Added visibility-safe `public_send` runtime-name dispatch for native and

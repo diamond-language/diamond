@@ -16,28 +16,11 @@ enum {
      * "source-file segment limit reached" instead of the file-count
      * error it was actually testing for).
      *
-     * 400, not something rounder like 512: DiamondSourceBundle's own
-     * `segments[DIAMOND_MAX_SOURCE_SEGMENTS]` is still stack-resident
-     * (unlike Loader's own loaded/active arrays below, deliberately
-     * moved to the heap for exactly this reason -- see
-     * diamond_load_program_with_override, src/loader.c) in every
-     * caller that declares a plain `DiamondSourceBundle bundle;` local
-     * (run_source.c and several lsp/ files), and a deeply-nested
-     * require chain (bounded by DIAMOND_MAX_REQUIRE_DEPTH, 128) stacks
-     * a fresh recursive `expand()` frame on top of that same base
-     * frame at every level. Empirically bisected on the debug build
-     * (-O0, the config `make test` actually exercises, with
-     * meaningfully larger per-call frames than an optimized release
-     * build): 480 reliably segfaults a 128-deep require chain, 400
-     * does not, tested via full clean rebuilds each time (an
-     * incremental one can silently keep testing a stale binary against
-     * a just-edited header). Heap-allocating DiamondSourceBundle's own
-     * segments array the same way Loader's arrays were just moved
-     * would remove this ceiling entirely rather than needing an
-     * empirical safety margin at all -- not done here, since it's a
-     * public struct several lsp/ files also declare directly by
-     * value, a wider-reaching change than this fix needed.
-     */
+     * 400, not something rounder like 512: kept equal to
+     * DIAMOND_MAX_LOADED_FILES per this comment's own first paragraph,
+     * not chosen for any remaining stack-budget reason -- see
+     * DiamondSourceBundle's own `segments` field below for why a
+     * segment count this large no longer costs any stack at all. */
     DIAMOND_MAX_SOURCE_SEGMENTS=400,
     DIAMOND_MAX_SOURCE_PATH=4096,
     /* A real, growing app (applications/skindicate.dia -- ~50 files of
@@ -70,7 +53,28 @@ typedef struct DiamondSourceSegment {
 
 typedef struct DiamondSourceBundle {
     char *source;
-    DiamondSourceSegment segments[DIAMOND_MAX_SOURCE_SEGMENTS];
+    /* Heap-allocated (DIAMOND_MAX_SOURCE_SEGMENTS entries, by
+     * diamond_load_program_with_override) rather than embedded, the same
+     * fix already applied to Loader's own loaded/active arrays
+     * (src/loader.c) and for the identical reason: several callers
+     * (run_source.c, repl.c, several lsp/ files) declare a plain
+     * `DiamondSourceBundle bundle;` local, and this field alone used to
+     * be ~1.6MB (400 * sizeof(DiamondSourceSegment), dominated by each
+     * entry's own DIAMOND_MAX_SOURCE_PATH-sized path buffer) --
+     * confirmed as a real stack overflow (SIGSEGV) on an -O0 debug
+     * build even at zero `require` depth, well before
+     * DIAMOND_MAX_REQUIRE_DEPTH's own recursive-expand()-frame concern
+     * ever enters into it (two independent `DiamondSourceBundle bundle`
+     * locals alone -- one in an lsp/ handler, another inside
+     * lsp/compile_buffer.c's own call into it -- were already enough).
+     * nullptr/0 (a zero-initialized DiamondSourceBundle, or one a
+     * caller populated without ever calling
+     * diamond_load_program_with_override, such as
+     * lsp/compile_buffer.c's own path==nullptr branch) is a valid empty
+     * bundle; every reader of this field loops `for(i=0;i<segment_count;
+     * i++)`, so segments is never dereferenced when segment_count is 0.
+     * Freed by diamond_source_bundle_free alongside `source`. */
+    DiamondSourceSegment *segments;
     size_t segment_count;
 } DiamondSourceBundle;
 
