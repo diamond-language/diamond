@@ -23,6 +23,13 @@ authoritative fine-grained record.
 - Added `DIAMOND_TRACE_STARTUP`, reporting the load/compile/run time split
   for a process on stderr; used to measure prelude-compilation cost for
   docs/roadmap.md's startup-time investigation.
+- Added `textDocument/references` to the Language Server: finds every
+  workspace occurrence (call/access site, type position, or declaration
+  header) of a top-level function/class/module/interface name, walking
+  the workspace the same way `workspace/symbol` does. Conservative by
+  construction -- a candidate is dropped unless it sits in a resolvable
+  position and no lexical local of the same name shadows it there. See
+  docs/lsp.md.
 
 ### Language
 

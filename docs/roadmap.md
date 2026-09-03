@@ -43,10 +43,21 @@ including constructors, annotated values, `self`, unions, and selected inferred
 assignments. It still recompiles complete documents and loses precision across
 some dependency and dynamic-flow boundaries.
 
+`textDocument/references` (lsp/references.c) now covers one piece of
+"dependency-aware symbols across a workspace": a workspace-wide,
+conservative, name-based scan for every call/access/type-position/
+declaration occurrence of a top-level function/class/module/interface,
+reusing `workspace/symbol`'s own file-walking. It does not change how a
+single document's own receiver facts are computed -- that per-document
+compile is unaffected, and cross-file precision within one document's own
+`require` closure was already sound (everything required is inlined into
+one compiled unit; Diamond's `require` model has no way to reference a
+class that isn't).
+
 Next steps:
 
-- retain dependency-aware symbols across a workspace;
-- improve receiver facts across imported files;
+- improve receiver facts across imported files (unannotated call chains,
+  control-flow joins across function boundaries);
 - explore incremental compilation only after the compiler has a reusable unit
   boundary that makes incremental synchronization worthwhile;
 - keep editor results conservative when a receiver cannot be proven.

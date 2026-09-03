@@ -110,6 +110,12 @@ static void local_type_at_offset(const DiamondFunction *owner,
     }
 }
 
+bool receiver_name_is_local(const DiamondProgram *program,
+        const DiamondChunk *chunk,const char *name,size_t name_length,size_t offset) {
+    const DiamondFunction *owner=nullptr;
+    return find_scope_local(program,chunk,name,name_length,offset,&owner)!=nullptr;
+}
+
 bool receiver_resolve_local_type_set(const DiamondProgram *program,
         const DiamondChunk *chunk,const char *name,size_t name_length,
         size_t offset,const DiamondFunction **owner,uint16_t *set_index) {

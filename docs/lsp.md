@@ -177,6 +177,28 @@ search over a real (if scoped) lexical symbol table:
   each time is an accepted v1 tradeoff, not an oversight. One file that
   fails to compile doesn't hide every other file's symbols — it's
   silently skipped.
+- `textDocument/references` (`lsp/references.c`) finds every workspace
+  occurrence of the top-level function, class, module, or interface name
+  under the cursor — the same globally-unambiguous declaration kinds
+  hover/definition/documentSymbol already single out — by walking the
+  workspace the same way `workspace/symbol` does and tokenizing each
+  compiled file's own buffer for the name in a resolvable position: a
+  call/access site (immediately followed by `(` or `.`), a type position
+  (immediately preceded by `:`, `|`, or `<`), or a class/module/interface
+  declaration header (immediately preceded by `class`/`module`/
+  `interface`). A candidate is dropped if a lexical local of the same
+  name is in scope there (`receiver_name_is_local`, `lsp/receiver.h`),
+  ruling out a keyword-argument label, a hash key, or a shadowing local —
+  the same conservative bias every other receiver-aware feature here
+  already has. This is deliberately name-based, not a full alias-aware
+  resolver: a bare-name reference with none of those three adjacent
+  shapes (a class passed as a first-class value, say) isn't found — a
+  known, deliberate under-approximation, not a bug (see `lsp/
+  references.h`). Results across files are deduplicated by resolved
+  uri/line/column, since a shared `require`d file's own content is
+  rediscovered once per requiring file scanned. Returns `null` when the
+  cursor isn't on such a name or the origin document doesn't currently
+  compile cleanly, matching hover/definition/completion's own rule.
 - `shutdown` / `exit` — the ordinary LSP lifecycle; `exit`'s process exit
   code is 0 if `shutdown` was requested first, 1 otherwise, per spec.
 - Any other request gets a JSON-RPC `MethodNotFound` (-32601) error;

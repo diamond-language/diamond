@@ -25,7 +25,7 @@
  * fatal if `directory` can't be opened (permission, a broken symlink,
  * a race with something deleting it mid-walk) -- just nothing found
  * there; only an allocation failure returns false. */
-static bool collect_di_files(const char *directory,char ***paths,
+bool collect_di_files(const char *directory,char ***paths,
         size_t *count,size_t *capacity) {
     DIR *dir=opendir(directory);
     if(dir==nullptr)return true;
@@ -66,7 +66,7 @@ static bool collect_di_files(const char *directory,char ***paths,
  * already follows. Returns a malloc'd, null-terminated buffer, or
  * nullptr if `path` can't be read at all (deleted mid-walk, a
  * permission error, ...). */
-static char *read_file_preferring_open(const DocumentTable *documents,const char *path) {
+char *read_file_preferring_open(const DocumentTable *documents,const char *path) {
     char *live=document_resolve_source(path,(void *)documents);
     if(live!=nullptr)return live;
     FILE *file=fopen(path,"rb");

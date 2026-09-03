@@ -864,6 +864,91 @@ count=$((count + 1))
 send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$ws_alpha_uri"'"}}}'
 read_message >/dev/null
 
+# --- textDocument/references finds every workspace occurrence (call/
+# access site, type position, or declaration header) of a top-level
+# function/class name, deduplicated, and stays conservative for a purely
+# local name or a same-named keyword-argument label ---
+
+cat > "$work/ref_helper.di" <<'EOF'
+class RefWidget
+  def initialize(label: String)
+    @label = label
+  end
+end
+
+def label(value: String) -> String = value
+
+def ref_build(label: String) -> RefWidget
+  RefWidget.new(label)
+end
+EOF
+cat > "$work/ref_main.di" <<'EOF'
+require "ref_helper"
+
+def ref_use()
+  w = ref_build("a")
+  label("x")
+end
+
+local_count = 0
+kwarg_user = ref_build(label: "kw")
+EOF
+ref_helper_uri="file://$work/ref_helper.di"
+ref_main_uri="file://$work/ref_main.di"
+send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$ref_helper_uri"'","text":"class RefWidget\n  def initialize(label: String)\n    @label = label\n  end\nend\n\ndef label(value: String) -> String = value\n\ndef ref_build(label: String) -> RefWidget\n  RefWidget.new(label)\nend"}}}'
+read_message >/dev/null
+send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$ref_main_uri"'","text":"require \"ref_helper\"\n\ndef ref_use()\n  w = ref_build(\"a\")\n  label(\"x\")\nend\n\nlocal_count = 0\nkwarg_user = ref_build(label: \"kw\")"}}}'
+read_message >/dev/null
+
+# cursor on ref_build's own declaration (line 8, "def ref_build(...)")
+send '{"jsonrpc":"2.0","id":27,"method":"textDocument/references","params":{"textDocument":{"uri":"'"$ref_helper_uri"'"},"position":{"line":8,"character":6}}}'
+response="$(read_message)"
+# the declaration itself (always followed by its own "(") ...
+[[ "$response" == *"\"uri\":\"$ref_helper_uri\",\"range\":{\"start\":{\"line\":8,\"character\":4}"* ]]
+count=$((count + 1))
+# ... and the one real call site in ref_main.di
+[[ "$response" == *"\"uri\":\"$ref_main_uri\",\"range\":{\"start\":{\"line\":3,\"character\":6}"* ]]
+count=$((count + 1))
+
+# a same-named global function ("label", also every parameter's own
+# "label:" keyword-argument label right next to it) exercises the real
+# false-positive case: an identifier immediately followed by ":" is a
+# binding position (parameter/kwarg label), never a call/access/type
+# site, so it's excluded by construction, not by the local-shadow check
+send '{"jsonrpc":"2.0","id":30,"method":"textDocument/references","params":{"textDocument":{"uri":"'"$ref_helper_uri"'"},"position":{"line":6,"character":6}}}'
+response="$(read_message)"
+[[ "$response" == *"\"uri\":\"$ref_helper_uri\",\"range\":{\"start\":{\"line\":6,\"character\":4}"* ]]
+count=$((count + 1))
+[[ "$response" == *"\"uri\":\"$ref_main_uri\",\"range\":{\"start\":{\"line\":4,\"character\":2}"* ]]
+count=$((count + 1))
+# exactly those two -- none of the four unrelated "label:" occurrences
+# (two parameter declarations, one field write's rhs is a different
+# identifier, one keyword-argument call) leaked in
+matches=$(grep -o '"uri"' <<<"$response" | wc -l)
+[[ "$matches" -eq 2 ]]
+count=$((count + 1))
+
+# cursor on the RefWidget class name (declaration header rule): both its
+# own "class RefWidget" line and the "RefWidget.new(...)" usage
+send '{"jsonrpc":"2.0","id":28,"method":"textDocument/references","params":{"textDocument":{"uri":"'"$ref_helper_uri"'"},"position":{"line":0,"character":8}}}'
+response="$(read_message)"
+[[ "$response" == *"\"line\":0,\"character\":6}"* ]]
+count=$((count + 1))
+[[ "$response" == *"\"line\":9,\"character\":2}"* ]]
+count=$((count + 1))
+
+# a purely local name (not a top-level declaration anywhere) returns
+# null rather than a guess
+send '{"jsonrpc":"2.0","id":29,"method":"textDocument/references","params":{"textDocument":{"uri":"'"$ref_main_uri"'"},"position":{"line":7,"character":2}}}'
+response="$(read_message)"
+[[ "$response" == '{"jsonrpc":"2.0","id":29,"result":null}' ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$ref_helper_uri"'"}}}'
+read_message >/dev/null
+send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$ref_main_uri"'"}}}'
+read_message >/dev/null
+
 # --- a div template (packages/div, any ".div" path) is translated on
 # the fly and diagnosed directly, instead of being run through the
 # compiler as raw text (which would just report the first "<%" as a
