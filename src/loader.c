@@ -402,7 +402,26 @@ bool diamond_load_program_with_override(const char *name,const char *source,
                           DiamondSourceOverride override,void *user_data,
                           DiamondSourceBundle *bundle,char *error,
                           size_t error_capacity) {
-    *bundle=(DiamondSourceBundle){};Loader loader={.bundle=bundle,.error=error,
+    /* Heap-allocated, not a local -- Loader's own `loaded`/`active`
+     * arrays (DIAMOND_MAX_LOADED_FILES/DIAMOND_MAX_REQUIRE_DEPTH, each
+     * DIAMOND_MAX_SOURCE_PATH bytes wide) are several MiB combined, and
+     * this function's own frame sits underneath every recursive
+     * `expand()` call a deeply-nested require chain makes (nesting
+     * itself bounded by DIAMOND_MAX_REQUIRE_DEPTH, but each level still
+     * adds its own frame on top of this one) -- confirmed directly as
+     * a real stack overflow (SIGSEGV) once DIAMOND_MAX_LOADED_FILES
+     * grew past its original, much smaller value: a local `Loader`
+     * here plus a near-max-depth require chain together exceeded a
+     * normal 8MiB thread stack. `expand` already takes `Loader *`, so
+     * nothing about the recursive calls themselves needed to change --
+     * only where the struct itself lives. */
+    Loader *loader=malloc(sizeof *loader);
+    if(loader==nullptr) {
+        (void)snprintf(error,error_capacity,"out of memory loading program sources");
+        return false;
+    }
+    *bundle=(DiamondSourceBundle){};
+    *loader=(Loader){.bundle=bundle,.error=error,
         .error_capacity=error_capacity,.override=override,.override_data=user_data};
     error[0]='\0';
     char path[DIAMOND_MAX_SOURCE_PATH];
@@ -411,14 +430,14 @@ bool diamond_load_program_with_override(const char *name,const char *source,
         if(written<0||(size_t)written>=sizeof path) {
             (void)snprintf(error,error_capacity,
                            "source path is too long: '%s'",name);
-            return false;
+            free(loader);return false;
         }
     }
-    if(!expand(&loader,path,source,nullptr,0)) {
+    if(!expand(loader,path,source,nullptr,0)) {
         if(error[0]=='\0')snprintf(error,error_capacity,"unable to expand program sources");
-        free(loader.buffer);return false;
+        free(loader->buffer);free(loader);return false;
     }
-    bundle->source=loader.buffer;return true;
+    bundle->source=loader->buffer;free(loader);return true;
 }
 
 bool diamond_load_program(const char *name,const char *source,

@@ -5,9 +5,59 @@
 #include <stdbool.h>
 
 enum {
-    DIAMOND_MAX_SOURCE_SEGMENTS=256,
+    /* Kept equal to DIAMOND_MAX_LOADED_FILES below -- a segment is
+     * recorded at least once per loaded file (record_segment,
+     * src/loader.c), so a segment cap lower than the file cap becomes
+     * the real, more confusing bottleneck the moment a program's
+     * files individually contain enough of their own nested requires
+     * to split into more than one segment each (confirmed directly:
+     * raising DIAMOND_MAX_LOADED_FILES alone, without also raising
+     * this, left a large-distinct-file test fixture failing with
+     * "source-file segment limit reached" instead of the file-count
+     * error it was actually testing for).
+     *
+     * 400, not something rounder like 512: DiamondSourceBundle's own
+     * `segments[DIAMOND_MAX_SOURCE_SEGMENTS]` is still stack-resident
+     * (unlike Loader's own loaded/active arrays below, deliberately
+     * moved to the heap for exactly this reason -- see
+     * diamond_load_program_with_override, src/loader.c) in every
+     * caller that declares a plain `DiamondSourceBundle bundle;` local
+     * (run_source.c and several lsp/ files), and a deeply-nested
+     * require chain (bounded by DIAMOND_MAX_REQUIRE_DEPTH, 128) stacks
+     * a fresh recursive `expand()` frame on top of that same base
+     * frame at every level. Empirically bisected on the debug build
+     * (-O0, the config `make test` actually exercises, with
+     * meaningfully larger per-call frames than an optimized release
+     * build): 480 reliably segfaults a 128-deep require chain, 400
+     * does not, tested via full clean rebuilds each time (an
+     * incremental one can silently keep testing a stale binary against
+     * a just-edited header). Heap-allocating DiamondSourceBundle's own
+     * segments array the same way Loader's arrays were just moved
+     * would remove this ceiling entirely rather than needing an
+     * empirical safety margin at all -- not done here, since it's a
+     * public struct several lsp/ files also declare directly by
+     * value, a wider-reaching change than this fix needed.
+     */
+    DIAMOND_MAX_SOURCE_SEGMENTS=400,
     DIAMOND_MAX_SOURCE_PATH=4096,
-    DIAMOND_MAX_LOADED_FILES=128,
+    /* A real, growing app (applications/skindicate.dia -- ~50 files of
+     * its own plus everything require'd transitively across every
+     * package it pulls in, active_record/arel/rack/... included) hit
+     * the old value of 128 outright once packages/websocket joined
+     * that list, with no cycle or accidental double-require involved
+     * -- just ordinary growth. Loader (this file's own Loader struct,
+     * src/loader.c) holds `loaded`/`active` as
+     * [DIAMOND_MAX_LOADED_FILES/DIAMOND_MAX_REQUIRE_DEPTH][DIAMOND_MAX_SOURCE_PATH]
+     * arrays, now heap-allocated (not embedded in the Loader struct
+     * itself) specifically so raising this has no stack cost at all --
+     * see diamond_load_program_with_override's own comment. The actual
+     * ceiling on how far this constant (and DIAMOND_MAX_SOURCE_SEGMENTS
+     * above, kept equal to it) can safely go is instead set by
+     * DiamondSourceBundle's own still-stack-resident segments array --
+     * see that constant's own comment for the empirical bisection this
+     * value came from.
+     */
+    DIAMOND_MAX_LOADED_FILES=400,
     DIAMOND_MAX_REQUIRE_DEPTH=128
 };
 
