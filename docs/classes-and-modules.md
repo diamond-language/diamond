@@ -293,7 +293,7 @@ inside the declaring class hierarchy. Private methods remain restricted to
 the current implicit/self receiver. `respond_to?` reports public and protected
 methods, but not private methods.
 
-### tap / dup / respond_to?
+### tap / dup / respond_to? / public_send
 
 ```ruby
 class Point
@@ -309,6 +309,7 @@ p1 = Point.new(1, 2)
 p2 = p1.dup()          # a distinct instance, same field values
 p1.respond_to?(:x)     # => true
 p1.respond_to?(:zoom)  # => false
+p1.public_send(:x)     # => 1
 
 [1, 2, 3].tap() do |arr|
   puts(arr.length())   # side effect, doesn't change the chain
@@ -337,7 +338,16 @@ rather than an approximate answer — accurately enumerating every method a
 native type actually supports isn't tracked anywhere as one real list.
 
 Like `tap`, a class's own method of the same name always takes priority
-over `dup`/`respond_to?`'s own built-in behavior, checked first.
+over `dup`/`respond_to?`/`public_send`'s own built-in behavior, checked first.
+
+`public_send(name, *arguments)` invokes the method named by a `Symbol` or
+`String`. It follows ordinary dynamic dispatch for native and user-defined
+receivers, including inheritance, overrides, variadic methods, and
+`method_missing`. Only public targets are callable: private and protected
+methods are rejected even when `public_send` itself is called from within the
+target's class hierarchy. Diamond intentionally provides no visibility-
+bypassing `send` counterpart. A user class may define its own `public_send`;
+that method takes priority over the universal behavior.
 
 ## Operator overloading
 

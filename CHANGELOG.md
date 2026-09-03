@@ -6,6 +6,13 @@ authoritative fine-grained record.
 
 ## Unreleased
 
+### Language
+
+- Added visibility-safe `public_send` runtime-name dispatch for native and
+  user-defined receivers, with String/Symbol names, argument forwarding,
+  inheritance, overrides, variadics, and `method_missing`; private and
+  protected targets remain inaccessible.
+
 ### Documentation
 
 - Reorganized the monolithic syntax and native-service references into

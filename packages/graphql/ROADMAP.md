@@ -18,15 +18,10 @@ of `docs/syntax.md`/`docs/design.md`:
   `field :name, String, null: false`-style line to run as code inside a
   class body and accumulate into shared state, the way every single
   graphql-ruby type definition works.
-- **No dynamic dispatch by a runtime name.** No `send`/`public_send`.
-  `method_missing` exists but only fires when a call site's own
-  *literal* method name (written in Diamond source) fails to resolve --
-  it can't be used to invoke "the method named by this string I have in
-  a variable," which is exactly what graphql-ruby's default field-
-  resolution (`obj.public_send(field.method_sym)`) depends on. A GraphQL
-  query's field names only exist as runtime strings (parsed from the
-  query document), so there's no way to auto-wire a field to a
-  same-named resolver method.
+- **Runtime-name dispatch was unavailable when v1 was designed.** Diamond now
+  provides visibility-safe `public_send`, so a future schema API could opt
+  into same-named resolver methods. The current explicit `Callable` resolver
+  contract remains intentional and unchanged.
 - **Method-call sites can't use keyword-argument syntax.** `obj.foo(x:
   1)` only resolves for a direct call to a top-level `def`, not a
   method call, a call through a `Callable` value, or a constructor --

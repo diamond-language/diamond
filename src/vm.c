@@ -11996,6 +11996,70 @@ static const NativeKeywordSignature *native_keyword_signature(
     return nullptr;
 }
 
+/* `receiver.public_send(name, *arguments)` re-enters the ordinary dynamic
+ * INVOKE_SPREAD path with `name` as that synthetic call site's method-name
+ * constant. Keeping the actual dispatch there means native receivers, user
+ * classes, inheritance, variadics, runtime-installed methods, and
+ * method_missing retain one implementation. The synthetic chunk explicitly
+ * has no method self (`parameter_offset=0`): public_send must never inherit
+ * the caller's private/protected access, even when called from inside the
+ * target's own class hierarchy. */
+static DiamondVmStatus public_send_helper(DiamondVm *vm,
+        const DiamondChunk *chunk,DiamondValue receiver,
+        const DiamondValue *arguments,size_t argument_count,size_t depth,
+        DiamondValue *result) {
+    if(argument_count==0)return DIAMOND_VM_ARITY_ERROR;
+    const DiamondValue name_value=arguments[0];
+    if(name_value.kind!=DIAMOND_VALUE_OBJECT||
+       (name_value.as.object->kind!=DIAMOND_OBJECT_SYMBOL&&
+        name_value.as.object->kind!=DIAMOND_OBJECT_STRING)) {
+        snprintf(vm->error,sizeof vm->error,
+            "public_send method name must be a Symbol or String");
+        return DIAMOND_VM_TYPE_ERROR;
+    }
+    const bool symbol_name=name_value.as.object->kind==DIAMOND_OBJECT_SYMBOL;
+    const size_t name_length=symbol_name?
+        ((const DiamondSymbol *)name_value.as.object)->length:
+        ((const DiamondString *)name_value.as.object)->length;
+    const char *name_chars=symbol_name?
+        ((const DiamondSymbol *)name_value.as.object)->chars:
+        ((const DiamondString *)name_value.as.object)->chars;
+    DiamondArray *forwarded=allocate_array(vm,arguments+1,argument_count-1);
+    if(forwarded==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+    const size_t protected_count=vm->gc_protected_count;
+    if(!gc_protect(vm,DIAMOND_OBJECT(forwarded)))
+        return DIAMOND_VM_OUT_OF_MEMORY;
+    DiamondStringConstant *dynamic_name=malloc(sizeof *dynamic_name);
+    if(dynamic_name==nullptr) {
+        gc_unprotect(vm,protected_count);
+        return DIAMOND_VM_OUT_OF_MEMORY;
+    }
+    memcpy(dynamic_name->chars,name_chars,name_length);
+    dynamic_name->chars[name_length]='\0';dynamic_name->length=name_length;
+    uint8_t code[12]={DIAMOND_OP_INVOKE_SPREAD,
+        0,2,0,0,0,0,0,1,DIAMOND_OP_RETURN,0,2};
+    uint32_t locations[12]={0};
+    DiamondChunk synthetic=*chunk;
+    synthetic.name="<public_send>";
+    synthetic.code=code;synthetic.lines=locations;synthetic.columns=locations;
+    synthetic.code_count=sizeof code;synthetic.register_count=3;
+    synthetic.strings=dynamic_name;synthetic.string_count=1;
+    synthetic.parameter_offset=0;
+    DiamondValue call_arguments[2]={receiver,DIAMOND_OBJECT(forwarded)};
+    const DiamondVmStatus status=run_chunk(&synthetic,vm,call_arguments,2,
+        depth+1,nullptr,result);
+    static const char synthetic_frame[]="\n  at <public_send>:0:0";
+    const size_t error_length=strlen(vm->error);
+    const size_t frame_length=sizeof synthetic_frame-1;
+    if(status!=DIAMOND_VM_OK&&error_length>=frame_length&&
+       memcmp(vm->error+error_length-frame_length,synthetic_frame,
+              frame_length)==0)
+        vm->error[error_length-frame_length]='\0';
+    free(dynamic_name);
+    gc_unprotect(vm,protected_count);
+    return status;
+}
+
 static DiamondVmStatus merge_native_keyword_arguments(DiamondVm *vm,
         const DiamondChunk *caller,const NativeKeywordSignature *signature,
         const DiamondArray *positional,const uint16_t *keyword_names,
@@ -12236,7 +12300,8 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
         return vm->has_exception?DIAMOND_VM_EXCEPTION:return_status_;\
     } while (false)
 
-/* Every native/builtin pseudo-method (tap, dup, respond_to?, Regexp#match,
+/* Every native/builtin pseudo-method (tap, dup, respond_to?, public_send,
+ * Regexp#match,
  * ProgramBuilder's own invoke path, etc.) that doesn't declare any type
  * variables rejects an explicit generic argument list the same way -- a
  * real, if unusual, user mistake (`x.dup[Int]()`) rather than a bytecode-
@@ -14287,6 +14352,28 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 }
                 const DiamondArray *spread=(const DiamondArray *)
                     registers[spread_register].as.object;
+                const DiamondStringConstant *method_name=&chunk->strings[name];
+                const bool instance_receiver=registers[recv].kind==DIAMOND_VALUE_OBJECT&&
+                    registers[recv].as.object->kind==DIAMOND_OBJECT_INSTANCE;
+                bool user_public_send=false;
+                if(instance_receiver) {
+                    const DiamondInstance *candidate=
+                        (const DiamondInstance *)registers[recv].as.object;
+                    const DiamondChunk *candidate_owner=candidate->owner!=nullptr?
+                        candidate->owner:vm->root_chunk;
+                    user_public_send=lookup_method(candidate_owner,candidate->class,
+                        "public_send",11)!=nullptr;
+                }
+                if(method_name->length==11&&
+                   memcmp(method_name->chars,"public_send",11)==0&&
+                   !user_public_send) {
+                    if(type_argument_count!=0)VM_REJECT_TYPE_ARGUMENTS(method_name);
+                    DiamondValue sent=DIAMOND_NIL;
+                    const DiamondVmStatus send_status=public_send_helper(vm,chunk,
+                        registers[recv],spread->values,spread->count,depth,&sent);
+                    VM_PROPAGATE(send_status);
+                    registers[dest]=sent;break;
+                }
                 if(registers[recv].kind!=DIAMOND_VALUE_OBJECT||
                    registers[recv].as.object->kind!=DIAMOND_OBJECT_INSTANCE) {
                     /* Native receivers already share one deliberately ordered
@@ -14354,7 +14441,6 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 DiamondInstance *instance=(DiamondInstance *)registers[recv].as.object;
                 const DiamondChunk *owner=
                     instance->owner!=nullptr?instance->owner:vm->root_chunk;
-                const DiamondStringConstant *method_name=&chunk->strings[name];
                 const DiamondMethod *method=lookup_method(owner,instance->class,
                     method_name->chars,method_name->length);
                 if(method==nullptr) {
@@ -14474,6 +14560,15 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                  * why interception order matters there but not here). */
                 if(registers[recv].kind!=DIAMOND_VALUE_OBJECT||
                    registers[recv].as.object->kind!=DIAMOND_OBJECT_INSTANCE) {
+                    if(method_name->length==11&&
+                       memcmp(method_name->chars,"public_send",11)==0) {
+                        if(type_argument_count!=0)VM_REJECT_TYPE_ARGUMENTS(method_name);
+                        DiamondValue sent=DIAMOND_NIL;
+                        const DiamondVmStatus send_status=public_send_helper(vm,chunk,
+                            registers[recv],&registers[base],argc,depth,&sent);
+                        VM_PROPAGATE(send_status);
+                        registers[dest]=sent;break;
+                    }
                     if(method_name->length==3&&
                        memcmp(method_name->chars,"tap",3)==0) {
                         if(type_argument_count!=0)VM_REJECT_TYPE_ARGUMENTS(method_name);
@@ -16528,7 +16623,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 }
                 DiamondInstance *instance=(DiamondInstance *)registers[recv].as.object;
                 const DiamondChunk *owner=instance->owner!=nullptr?instance->owner:vm->root_chunk;
-                /* tap/dup/respond_to? -- same three universal methods the
+                /* tap/dup/respond_to?/public_send -- universal methods the
                  * non-Instance branch above already handles, but gated on
                  * `lookup_method` coming back empty first: unlike a native
                  * type, a class CAN legitimately define its own `dup` (for
@@ -16596,6 +16691,16 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                         probe->chars,probe->length);
                     registers[dest]=DIAMOND_BOOL(probed!=nullptr&&!probed->is_private);
                     break;
+                }
+                if(method_name->length==11&&
+                   memcmp(method_name->chars,"public_send",11)==0&&
+                   lookup_method(owner,instance->class,"public_send",11)==nullptr) {
+                    if(type_argument_count!=0)VM_REJECT_TYPE_ARGUMENTS(method_name);
+                    DiamondValue sent=DIAMOND_NIL;
+                    const DiamondVmStatus send_status=public_send_helper(vm,chunk,
+                        registers[recv],&registers[base],argc,depth,&sent);
+                    VM_PROPAGATE(send_status);
+                    registers[dest]=sent;break;
                 }
                 bool exception_instance=false;
                 const DiamondClass *ancestor=instance->class;
