@@ -25,7 +25,8 @@ search over a real (if scoped) lexical symbol table:
   `hoverProvider: true`, `definitionProvider: true`,
   `documentSymbolProvider: true`, `completionProvider: {}` (no
   `triggerCharacters` — see completion below for why none are needed),
-  and `workspaceSymbolProvider: true`. Also reads `workspaceFolders[0]`/
+  `workspaceSymbolProvider: true`, and `referencesProvider: true`. Also
+  reads `workspaceFolders[0]`/
   `rootUri` from the request's own params (the one place this server
   reads anything from `initialize`'s params at all) to know what
   directory `workspace/symbol` should search.

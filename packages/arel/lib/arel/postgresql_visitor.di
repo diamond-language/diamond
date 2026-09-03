@@ -7,7 +7,7 @@ module Arel
   # NULLS FIRST/LAST, integer bitwise operators) use syntax identical to
   # SQLite's own -- both were modeled on Postgres's own SQL to begin with --
   # verified against a live PostgreSQL container in
-  # tests/cases/arel_postgres_dialect.di, not merely assumed from the
+  # packages/arel/test_postgres_dialect.di, not merely assumed from the
   # similarly-named syntax (see this project's own stated quality bar in
   # ROADMAP.md for why that distinction matters). Two capabilities really
   # are Postgres-only, unlike everything else here: per-column default

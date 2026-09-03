@@ -162,7 +162,7 @@ File.basename("/a/b/c.rb", ".rb")    # => "c"
 File.extname("archive.tar.gz")       # => ".gz"
 File.absolute?("/a/b")               # => true
 File.absolute?("a/b")                # => false
-File.expand_path("../b", "/a/x")     # => "/b"
+File.expand_path("../b", "/a/x")     # => "/a/b"
 File.expand_path("relative/path")    # => cwd + "/relative/path"
 ```
 

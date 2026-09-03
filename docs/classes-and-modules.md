@@ -182,8 +182,14 @@ Model.describe()    # => "model_default"
 `self` also works as an ordinary value with no following call (it holds
 the class itself, comparable with `==` and usable anywhere a value is
 expected) -- but a Class value has no general-purpose literal syntax of
-its own; the only way to obtain one is `self` inside a class-owned
-singleton method.
+its own. `self` inside a class-owned singleton method is one way to
+obtain one; a bare class name as a `case`/`when` pattern (`when Dog`,
+[core syntax](core-syntax.md)) is the other. Neither is a general
+expression -- there is still no way to store a class in a variable
+outside those two positions, pass one as an ordinary argument, or name
+one dynamically by a computed string (see docs/design.md's
+`DIAMOND_VALUE_CLASS` section, and docs/roadmap.md's "Explicitly
+deferred" section for why that stays out of scope).
 
 Only the **explicit** `self.foo(...)` form dispatches this way. A **bare**
 call to a sibling `self.` method (`table_name()` instead of

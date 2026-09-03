@@ -28,8 +28,8 @@ measurement shows that representation density is worth the complexity.
 
 `Float` arithmetic and comparisons live entirely on the generic (non-`_INT`)
 opcode paths — there is no quickened or compiler-specialized `_FLOAT` opcode
-tier. Baseline benchmarking (see `bench/BASELINE.md` on the JIT-experiment
-branch) found the existing `_INT` specialization/quickening tier gives no
+tier. Baseline benchmarking (see `bench/BASELINE.md`) found the existing
+`_INT` specialization/quickening tier gives no
 measurable speedup even in code built specifically to exercise it, since
 call/frame overhead dominates; building an analogous `_FLOAT` tier would have
 meant replicating real complexity (several `_INT` opcodes have no
@@ -122,8 +122,12 @@ discarded and lookup continues outward. Nominal filters accept subclasses;
 unannotated handlers match every raised Diamond value.
 
 Every program includes `Exception`, `StandardError`, `RuntimeError`, `TypeError`,
-`ArgumentError`, `IndexError`, `ZeroDivisionError`, `RangeError`, and
-`SystemStackError`. Rescuable VM failures are materialized as instances of these
+`ArgumentError`, `IndexError`, `ZeroDivisionError`, `RangeError`,
+`SystemStackError`, `FiberError`, `IOError`, `RegexpError`, `WouldBlockError`,
+`ThreadError`, `SQLite3Error`, `PostgreSQLError`, `MySQLError`, and
+`NoMethodError` (`src/compiler.c`'s own `builtins[DIAMOND_BUILTIN_CLASS_COUNT]`
+table is authoritative if this list and that table ever disagree again).
+Rescuable VM failures are materialized as instances of these
 classes, so nominal matching and the ordinary exception unwind path handle both
 runtime failures and explicitly raised values.
 
@@ -1217,7 +1221,7 @@ receiver-slot assumption was baked into the closure's own declared arity,
 not its body.
 
 No VM/opcode changes, no `DiamondClosure` struct field additions, no GC
-changes. Self capture rides in the existing `captures[16]`/`capture_count`
+changes. Self capture rides in the existing `captures[DIAMOND_MAX_CAPTURES]`/`capture_count`
 array like any other captured value, which is also what makes two
 existing invariants keep protecting a `closure` correctly for free: the
 `Thread.new` zero-capture-only check and `copy_value_into_vm`'s cross-heap
@@ -1754,12 +1758,11 @@ it -- the module path does a linear name search over the module's own
 `singleton_methods[]`; the class path walks the named class's own table
 then its superclass chain by name, both entirely at compile time --
 and `parse_singleton_call` bakes the resolved `method->function_index`
-directly into a `DIAMOND_OP_CALL`/`_TYPED` instruction. (`docs/
-roadmap.md`'s "receiver-based method calls resolve dynamically", in the
-"Forward and mutual calls" section, turns out to describe something
-else -- `DIAMOND_OP_INVOKE_SELF_METHOD`'s genuinely runtime-dynamic
-lookup for `self.foo(...)` written *inside* a class-owned method body,
-a different, unrelated mechanism -- not this one.) This is exactly why
+directly into a `DIAMOND_OP_CALL`/`_TYPED` instruction. (Genuinely
+runtime-dynamic receiver lookup does exist elsewhere --
+`DIAMOND_OP_INVOKE_SELF_METHOD` for `self.foo(...)` written *inside* a
+class-owned method body -- but that's a different, unrelated mechanism,
+not this one.) This is exactly why
 the feature needed no VM/opcode changes at all: a synthesized wrapper
 reusing this same already-static compiled shape is exactly as correct
 as any hand-written call site, with no dynamic-override behavior to

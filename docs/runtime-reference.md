@@ -153,10 +153,12 @@ at `Regexp.new` time.
 This is deliberately a small first cut: no `/pattern/` literal syntax yet
 (`/` already means division; telling a leading regex apart from division
 needs the same kind of disambiguation Symbol's `:` got, not yet done for
-`/`), no `String` integration (`"x".match(re)`, `=~`, `.split`/`.gsub`
-taking a `Regexp`), and no richer `MatchData` object (`pre_match`, named
-captures) — the plain-`Array` result covers the common case; `Regexp.new`
-+ `.match`/`.match?` is the whole surface for now.
+`/`), no `"x".match(re)`/`=~` String integration, and no richer
+`MatchData` object (`pre_match`, named captures) — the plain-`Array`
+result covers the common case. `String#split`/`#gsub`/`#scan` do accept
+a `Regexp` (`"a,b,c".split(re)`, `"abc123".gsub(re, "X")`,
+`"abc123".scan(re)`); `Regexp.new` + `.match`/`.match?` plus that String
+trio is the whole surface for now.
 
 ## No AST
 
