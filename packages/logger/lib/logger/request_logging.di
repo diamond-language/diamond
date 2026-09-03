@@ -73,7 +73,18 @@ class RequestLogging
     begin
       response = forward(request, context)
       duration_ms = (Time.monotonic() - started_at) * 1000
-      RequestLogging.info(request, context, "request.completed", {"status": response[0], "duration_ms": duration_ms})
+      # `nil` is gremlin_serve's own "a handler already fully handled
+      # this response itself" signal (see packages/gremlin's own
+      # "Escape hatch: taking over the raw connection" doc comment --
+      # a WebSocket upgrade is the motivating case), not a bare request
+      # this middleware forgot to answer -- response[0] below would
+      # otherwise crash on it, so it gets its own distinct event instead
+      # of a fabricated status.
+      if response == nil
+        RequestLogging.info(request, context, "request.upgraded", {"duration_ms": duration_ms})
+      else
+        RequestLogging.info(request, context, "request.completed", {"status": response[0], "duration_ms": duration_ms})
+      end
       context["log_context"] = nil
       response
     rescue error: StandardError

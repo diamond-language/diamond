@@ -187,6 +187,30 @@ context = {}
 [[ "$actual" == "200|true|2|true|true|true|nil" ]]
 count=$((count + 1))
 
+# --- RequestLogging.call: a nil response (gremlin_serve's own "a
+# --- handler already fully took over the connection itself" signal --
+# --- a WebSocket upgrade being the motivating case, packages/websocket)
+# --- logs request.upgraded instead of crashing on response[0], and
+# --- still passes the nil straight back through ---
+actual="$(run_case '
+class CapturingWriter
+  def initialize()
+    @lines = []
+  end
+  def write(value) = @lines.push(value)
+  def lines() = @lines
+end
+writer = CapturingWriter.new()
+RequestLogging.configure(tag: "app", level: "debug", output: writer, format: "json")
+def upgrading_handler(request, context) = nil
+request = {"method": "GET", "path": "/chat/ws"}
+context = {}
+response = RequestLogging.call(request, context, upgrading_handler)
+"#{response == nil}|#{writer.lines().length()}|#{writer.lines()[1].index_of("request.upgraded") != nil}"
+')"
+[[ "$actual" == "true|2|true" ]]
+count=$((count + 1))
+
 # --- RequestLogging.call: a forward that raises logs request.failed
 # --- (error_class/error_message/duration_ms), clears log_context, and
 # --- re-raises rather than swallowing the error ---
