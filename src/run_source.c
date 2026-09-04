@@ -1,3 +1,5 @@
+#define _DEFAULT_SOURCE
+
 #include "run_source.h"
 
 #include "compiler.h"
@@ -10,8 +12,24 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 static constexpr char DIAMOND_USER_LINE_RESET[] = "\n#line 1\n";
+
+/* DIAMOND_TRACE_STARTUP=1 reports where process time actually goes,
+ * following the DIAMOND_TRACE_GC pattern below (also seconds via
+ * CLOCK_MONOTONIC). "load" is diamond_load_program's require expansion,
+ * "compile" is lexing/parsing/codegen over the prelude+require+user
+ * source combined -- diamond_compile takes one string and doesn't
+ * distinguish prelude from user code internally, so this can't further
+ * split prelude-only cost without a second, throwaway compile call. Kept
+ * as an instrumentation flag rather than always-on output to match every
+ * other DIAMOND_TRACE_* knob's opt-in stderr reporting. */
+static double diamond_monotonic_seconds(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (double)ts.tv_sec + (double)ts.tv_nsec / 1e9;
+}
 
 static void print_diagnostic(const char *name, const char *source,
                              DiamondDiagnostic diagnostic,
@@ -32,10 +50,13 @@ static void print_diagnostic(const char *name, const char *source,
 int diamond_run_source_with_program(const char *name, const char *source,
         bool dump_bytecode, DiamondProgram *program,
         int script_argc, char *const *script_argv) {
+    const bool trace_startup=getenv("DIAMOND_TRACE_STARTUP") != nullptr;
+    const double start_time=trace_startup ? diamond_monotonic_seconds() : 0;
     DiamondSourceBundle bundle;char load_error[768];
     if(!diamond_load_program(name,source,&bundle,load_error,sizeof load_error)) {
         fprintf(stderr,"diamond: %s\n",load_error);return 74;
     }
+    const double loaded_time=trace_startup ? diamond_monotonic_seconds() : 0;
     const bool include_json=diamond_prelude_needs_json(bundle.source);
     const size_t prelude_length=diamond_prelude_length(include_json);
     const size_t source_length=strlen(bundle.source);
@@ -62,6 +83,7 @@ int diamond_run_source_with_program(const char *name, const char *source,
         diamond_source_bundle_free(&bundle);
         return 65;
     }
+    const double compiled_time=trace_startup ? diamond_monotonic_seconds() : 0;
 
     DiamondChunk chunk = diamond_program_chunk(program);
     chunk.name = name;
@@ -165,6 +187,15 @@ int diamond_run_source_with_program(const char *name, const char *source,
         fprintf(stderr,"GC: %zu major (%.6fs), %zu minor (%.6fs)\n",
                 vm.gc_major_collection_count,vm.gc_major_total_seconds,
                 vm.gc_minor_collection_count,vm.gc_minor_total_seconds);
+    if (trace_startup) {
+        const double run_time=diamond_monotonic_seconds();
+        fprintf(stderr,
+            "startup: load %.6fs, compile %.6fs (%zu bytes: %zu prelude + "
+            "%zu user), run %.6fs, total %.6fs\n",
+            loaded_time-start_time,compiled_time-loaded_time,
+            prelude_length+reset_length+source_length,prelude_length,
+            source_length,run_time-compiled_time,run_time-start_time);
+    }
     diamond_vm_free(&vm);
     free(combined);
     diamond_source_bundle_free(&bundle);

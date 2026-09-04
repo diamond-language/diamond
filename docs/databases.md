@@ -240,12 +240,12 @@ than one SQL command per call regardless of parameter count, so unlike
 `sqlite3_prepare_v2`), no separate multi-statement guard is needed here —
 Postgres's own rejection surfaces as an ordinary `PostgreSQLError`.
 
-Out of scope for this driver, deliberately: an Arel dialect visitor for
-Postgres (a separate project once there's a real second dialect to
-validate Arel's grammar seams against — see
-[`packages/arel/ROADMAP.md`](../packages/arel/ROADMAP.md)), prepared/named
-statements, asynchronous/non-blocking connections, connection pooling, and
-binary-format result decoding.
+Out of scope for this driver, deliberately: prepared/named statements,
+asynchronous/non-blocking connections, connection pooling, and
+binary-format result decoding. (An Arel dialect visitor for Postgres is
+*not* out of scope anymore — `Arel::PostgreSQLVisitor` exists and is
+verified against a live PostgreSQL server; see
+[`packages/arel/ROADMAP.md`](../packages/arel/ROADMAP.md).)
 
 ## MySQL: `MySQL.open`/`.execute`/`.query`/`.last_insert_row_id`/`.close`
 
@@ -336,7 +336,7 @@ here is simply a syntax error `mysql_stmt_prepare` itself raises as an
 ordinary `MySQLError`.
 
 An Arel dialect visitor for MySQL now exists --
-`Arel::MySQLVisitor` (`packages/arel/lib/arel.di`), verified against a
+`Arel::MySQLVisitor` (`packages/arel/lib/arel/mysql_visitor.di`), verified against a
 live MySQL 8 server (`packages/arel/README.md`,
 `packages/arel/ROADMAP.md`) -- reusing this driver unchanged, since it
 was never MariaDB-specific at the native layer. Still out of scope for

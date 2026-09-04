@@ -1194,6 +1194,10 @@ static Precedence token_precedence(DiamondTokenKind kind) {
         case DIAMOND_TOKEN_IS:
             return PREC_COMPARISON;
         case DIAMOND_TOKEN_LESS_LESS:
+        case DIAMOND_TOKEN_GREATER_GREATER:
+        case DIAMOND_TOKEN_AMPERSAND:
+        case DIAMOND_TOKEN_PIPE:
+        case DIAMOND_TOKEN_CARET:
             return PREC_SHIFT;
         case DIAMOND_TOKEN_PLUS:
         case DIAMOND_TOKEN_MINUS:
@@ -7399,7 +7403,18 @@ static uint16_t parse_invoke(Compiler *compiler, uint16_t receiver) {
     }
     const int32_t receiver_set_index=compiler->known_type_sets[receiver];
     advance_token(compiler);
-    if (compiler->current.kind != DIAMOND_TOKEN_IDENTIFIER) {
+    /* DIAMOND_TOKEN_CLASS is otherwise the `class Foo ... end` keyword,
+     * but right after '.' it can only ever be a member name (`.class`)
+     * -- a class *declaration* never starts mid-expression after a
+     * dot, so accepting it here is unambiguous. Needed for the
+     * compiler-recognized `value.class()` special form below; nothing
+     * else about method-name parsing changes for it (a `.class` used
+     * any other way, e.g. `obj.class = 5` or a bare reference, falls
+     * through to this function's own ordinary handling exactly like
+     * any other name would, and fails at runtime the normal
+     * "undefined method" way if nothing real answers to it). */
+    if (compiler->current.kind != DIAMOND_TOKEN_IDENTIFIER &&
+        compiler->current.kind != DIAMOND_TOKEN_CLASS) {
         fail(compiler, compiler->current.span, "expected method name after '.'"); return 0;
     }
     const DiamondSpan name = compiler->current.span;
@@ -7408,6 +7423,77 @@ static uint16_t parse_invoke(Compiler *compiler, uint16_t receiver) {
     const DiamondFunction *return_target=
         instance_call_signature(compiler,receiver,name,true);
     advance_token(compiler);
+    /* `value.class()`/`value.is_a?(Type)` -- compiler-recognized special
+     * forms, not real methods on any class (no DiamondFunction/method-
+     * table entry exists for either name anywhere), so they're
+     * intercepted here rather than falling into the ordinary dynamic-
+     * dispatch INVOKE path below, which would just fail to find a
+     * method by that name on most receivers. Checked *after* consuming
+     * the name but *before* everything else in this function (writer
+     * syntax, generic arguments, keyword arguments) since neither
+     * special form supports any of that -- and only when immediately
+     * followed by '(' (a real call), so a bare `.class`/`.is_a?` (no
+     * parens) still falls through unchanged to this function's own
+     * existing bare-reference handling below, matching every other
+     * `obj.method` (no parens) in this language already being a method
+     * *reference*, not a call.
+     *
+     * `is_a?`'s own single argument is a type name, not a general
+     * expression -- resolved at compile time via resolve_type_name,
+     * the exact same helper `rescue error: SomeClass` already uses, so
+     * `is_a?` inherits that function's own class/interface/generic/
+     * Sized handling for free (this is not merely a narrow "same
+     * class" check -- see value_matches_type, src/vm.c). DIAMOND_VALUE_
+     * CLASS (value.h) does exist, but stays deliberately narrow (self
+     * inside a class-owned singleton method, a bare class name as a
+     * `case`/`when` pattern -- see docs/design.md's own section on it)
+     * and is never constructed here: there is no general first-class
+     * Class value a program could pass as an ordinary runtime argument
+     * instead, so this compile-time resolution is the only way `is_a?`
+     * could take a type name as its argument at all. */
+    if(compiler->current.kind==DIAMOND_TOKEN_LEFT_PAREN&&
+       name_equals(compiler,"class",name,false)) {
+        advance_token(compiler);
+        skip_newlines(compiler);
+        if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
+            fail(compiler,compiler->current.span,"class() takes no arguments");
+            return 0;
+        }
+        advance_token(compiler);
+        const uint16_t destination=allocate_register(compiler);
+        emit_instruction(compiler,DIAMOND_OP_CLASS_NAME,destination,receiver,0,2);
+        compiler->known_types[destination]=DIAMOND_TYPE_STRING;
+        return destination;
+    }
+    if(compiler->current.kind==DIAMOND_TOKEN_LEFT_PAREN&&
+       name_equals(compiler,"is_a?",name,false)) {
+        advance_token(compiler);
+        skip_newlines(compiler);
+        if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER) {
+            fail(compiler,compiler->current.span,"expected a type name");
+            return 0;
+        }
+        const DiamondSpan type_span=compiler->current.span;
+        char type_name[DIAMOND_MAX_FUNCTION_NAME];
+        if(!consume_qualified_name(compiler,type_name,sizeof type_name)) {
+            fail(compiler,type_span,"type name is too long");
+            return 0;
+        }
+        const uint8_t resolved_type=(uint8_t)resolve_type_name(
+            compiler,type_name,type_span);
+        skip_newlines(compiler);
+        if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
+            fail(compiler,compiler->current.span,
+                 "expected ')' after is_a? type");
+            return 0;
+        }
+        advance_token(compiler);
+        const uint16_t destination=allocate_register(compiler);
+        emit_instruction(compiler,DIAMOND_OP_IS_TYPE,destination,receiver,
+                         resolved_type,3);
+        compiler->known_types[destination]=DIAMOND_TYPE_BOOL;
+        return destination;
+    }
     bool writer_name=false;
     if(compiler->current.kind==DIAMOND_TOKEN_EQUAL) {
         writer_name=true;advance_token(compiler);
@@ -8782,6 +8868,10 @@ static DiamondOpCode binary_opcode(DiamondTokenKind operator) {
         case DIAMOND_TOKEN_GREATER: return DIAMOND_OP_GREATER;
         case DIAMOND_TOKEN_GREATER_EQUAL: return DIAMOND_OP_GREATER_EQUAL;
         case DIAMOND_TOKEN_LESS_LESS: return DIAMOND_OP_SHIFT_LEFT;
+        case DIAMOND_TOKEN_GREATER_GREATER: return DIAMOND_OP_SHIFT_RIGHT;
+        case DIAMOND_TOKEN_AMPERSAND: return DIAMOND_OP_BITWISE_AND;
+        case DIAMOND_TOKEN_PIPE: return DIAMOND_OP_BITWISE_OR;
+        case DIAMOND_TOKEN_CARET: return DIAMOND_OP_BITWISE_XOR;
         case DIAMOND_TOKEN_PERCENT: return DIAMOND_OP_MODULO;
         case DIAMOND_TOKEN_SPACESHIP: return DIAMOND_OP_COMPARE;
         default: return DIAMOND_OP_ADD;

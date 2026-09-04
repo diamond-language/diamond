@@ -16,8 +16,6 @@ end
 
 module PheintPlayerResolvers
   module_function
-  def id(player, args, context) = player.id()
-  def handle(player, args, context) = player.handle()
   def scores(player, args, context)
     values = if player.association_loaded?("scores")
       player.preloaded_association("scores")
@@ -33,8 +31,6 @@ end
 
 module PheintScoreResolvers
   module_function
-  def id(score, args, context) = score.id()
-  def value(score, args, context) = score.value()
   def leaderboard(score, args, context)
     if score.association_loaded?("leaderboard")
       score.preloaded_association("leaderboard")
@@ -53,8 +49,7 @@ end
 
 module PheintLeaderboardResolvers
   module_function
-  def id(leaderboard, args, context) = leaderboard.id()
-  def name(leaderboard, args, context) = leaderboard.name()
+  # GraphQL's camelCase field name does not match the model method.
   def higher_is_better(leaderboard, args, context) = leaderboard.higher_is_better()
   def game(leaderboard, args, context)
     if leaderboard.association_loaded?("game")
@@ -79,9 +74,6 @@ end
 
 module PheintGameResolvers
   module_function
-  def id(game, args, context) = game.id()
-  def title(game, args, context) = game.title()
-  def description(game, args, context) = game.description()
   def owner(game, args, context)
     if game.association_loaded?("owner")
       game.preloaded_association("owner")
@@ -100,8 +92,6 @@ end
 
 module PheintAccountResolvers
   module_function
-  def id(account, args, context) = account.id()
-  def email(account, args, context) = account.email()
   def player(account, args, context) = account.player(context["db"])
 end
 
@@ -558,31 +548,31 @@ class PheintSchema
         GraphQL::Argument.new("offset", GraphQL::ScalarType.int(), 0, true)
       ]
       player_type = GraphQL::ObjectType.new("Player")
-      player_type.field("id", GraphQL::ScalarType.id().non_null(), PheintPlayerResolvers.id)
-      player_type.field("handle", GraphQL::ScalarType.string().non_null(), PheintPlayerResolvers.handle)
+      player_type.field("id", GraphQL::ScalarType.id().non_null())
+      player_type.field("handle", GraphQL::ScalarType.string().non_null())
 
       account_type = GraphQL::ObjectType.new("Account")
-      account_type.field("id", GraphQL::ScalarType.id().non_null(), PheintAccountResolvers.id)
-      account_type.field("email", GraphQL::ScalarType.string().non_null(), PheintAccountResolvers.email)
+      account_type.field("id", GraphQL::ScalarType.id().non_null())
+      account_type.field("email", GraphQL::ScalarType.string().non_null())
       account_type.field("player", player_type.non_null(), PheintAccountResolvers.player)
 
       score_type = GraphQL::ObjectType.new("Score")
-      score_type.field("id", GraphQL::ScalarType.id().non_null(), PheintScoreResolvers.id)
-      score_type.field("value", GraphQL::ScalarType.int().non_null(), PheintScoreResolvers.value)
+      score_type.field("id", GraphQL::ScalarType.id().non_null())
+      score_type.field("value", GraphQL::ScalarType.int().non_null())
       score_type.field("player", player_type.non_null(), PheintScoreResolvers.player)
 
       leaderboard_type = GraphQL::ObjectType.new("Leaderboard")
-      leaderboard_type.field("id", GraphQL::ScalarType.id().non_null(), PheintLeaderboardResolvers.id)
-      leaderboard_type.field("name", GraphQL::ScalarType.string().non_null(), PheintLeaderboardResolvers.name)
+      leaderboard_type.field("id", GraphQL::ScalarType.id().non_null())
+      leaderboard_type.field("name", GraphQL::ScalarType.string().non_null())
       leaderboard_type.field("higherIsBetter", GraphQL::ScalarType.boolean().non_null(),
         PheintLeaderboardResolvers.higher_is_better)
       leaderboard_type.field("scores", GraphQL::ListType.of(score_type.non_null()).non_null(),
         PheintLeaderboardResolvers.scores, page_arguments)
 
       game_type = GraphQL::ObjectType.new("Game")
-      game_type.field("id", GraphQL::ScalarType.id().non_null(), PheintGameResolvers.id)
-      game_type.field("title", GraphQL::ScalarType.string().non_null(), PheintGameResolvers.title)
-      game_type.field("description", GraphQL::ScalarType.string().non_null(), PheintGameResolvers.description)
+      game_type.field("id", GraphQL::ScalarType.id().non_null())
+      game_type.field("title", GraphQL::ScalarType.string().non_null())
+      game_type.field("description", GraphQL::ScalarType.string().non_null())
       game_type.field("owner", account_type.non_null(), PheintGameResolvers.owner)
       game_type.field("leaderboards", GraphQL::ListType.of(leaderboard_type.non_null()).non_null(), PheintGameResolvers.leaderboards)
 

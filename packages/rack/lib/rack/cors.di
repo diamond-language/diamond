@@ -90,6 +90,14 @@ class Cors
       return Cors.preflight_response(request, allowed)
     end
     response = forward(request, context)
+    # `nil` means a handler already fully took over the connection
+    # itself (see packages/gremlin's own "Escape hatch: taking over the
+    # raw connection" doc comment -- a WebSocket upgrade is the
+    # motivating case) -- there's no [status, headers, body] to add
+    # CORS headers onto, so this passes it straight through.
+    if response == nil
+      return nil
+    end
     [status, headers, body] = response
     cors_headers = {}
     unless allowed == nil

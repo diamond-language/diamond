@@ -186,6 +186,21 @@ SecurityHeaders.configure({"hsts": "max-age=60"})
 [[ "$actual" == "nil|default-src 'self'|max-age=31536000; includeSubDomains|max-age=60" ]]
 count=$((count + 1))
 
+# --- SecurityHeaders passes a nil response straight through untouched
+# --- instead of crashing on it -- nil is gremlin_serve's own signal
+# --- that a handler already fully took over the connection itself (a
+# --- WebSocket upgrade being the motivating case, packages/websocket),
+# --- so there's no [status, headers, body] to add headers onto ---
+actual="$(run_case '
+def app(request, context)
+  nil
+end
+result = SecurityHeaders.call({}, {}, app)
+"#{result == nil}"
+')"
+[[ "$actual" == "true" ]]
+count=$((count + 1))
+
 # --- SecurityHeaders wired into a real gremlin_serve chain: the
 # --- security headers show up on an actual over-the-wire response,
 # --- alongside app_handler's own Content-Type ---
@@ -340,6 +355,20 @@ end
 "#{status}|#{body}"
 ')"
 [[ "$actual" == "200|handled" ]]
+count=$((count + 1))
+
+# --- Cors passes a nil response straight through untouched for an
+# --- ordinary (non-preflight) request, instead of crashing on it -- the
+# --- same gremlin_serve "already fully handled" signal SecurityHeaders
+# --- was just checked for above ---
+actual="$(run_case '
+def app(request, context)
+  nil
+end
+result = Cors.call({"method": "GET", "headers": {"origin": "https://app.example"}}, {}, app)
+"#{result == nil}"
+')"
+[[ "$actual" == "true" ]]
 count=$((count + 1))
 
 # --- Cors.configure: an explicit allow-list reflects a listed origin

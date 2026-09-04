@@ -9,8 +9,8 @@
 # user's own schema uses -- no separate introspection-specific
 # machinery, just ordinary types whose "object" happens to be one of
 # this package's own GraphQL::Type/Field/Argument/Schema values, and
-# whose resolvers call straight through to those values' own
-# already-existing methods.
+# whose fields use ordinary default resolution where their names already
+# match those values' public methods.
 #
 # Not ported: description tracking on types themselves (Field/Argument
 # already carry a description; ObjectType/InterfaceType/UnionType/
@@ -31,8 +31,6 @@ module GraphQL
   # (everything they need arrives via `object`/`args`), so there was
   # never a reason to nest them in the first place.
   class IntrospectionResolvers
-    def self.type_kind(object, args, context) = object.kind()
-    def self.type_name(object, args, context) = object.name()
     def self.type_description(object, args, context) = nil
 
     def self.type_fields(object, args, context)
@@ -88,13 +86,8 @@ module GraphQL
     def self.field_name(object, args, context) = object.name()
     def self.field_description(object, args, context) = object.description()
     def self.field_arguments(object, args, context) = object.arguments()
-    def self.field_type(object, args, context) = object.type()
     def self.field_is_deprecated(object, args, context) = false
     def self.field_deprecation_reason(object, args, context) = nil
-
-    def self.input_value_name(object, args, context) = object.name()
-    def self.input_value_description(object, args, context) = object.description()
-    def self.input_value_type(object, args, context) = object.type()
 
     def self.input_value_default_value(object, args, context)
       if object.has_default?()
@@ -192,8 +185,8 @@ module GraphQL
       type_kind_enum.value("LIST")
       type_kind_enum.value("NON_NULL")
 
-      type_meta.field("kind", type_kind_enum.non_null(), IntrospectionResolvers.type_kind)
-      type_meta.field("name", GraphQL::ScalarType.string(), IntrospectionResolvers.type_name)
+      type_meta.field("kind", type_kind_enum.non_null())
+      type_meta.field("name", GraphQL::ScalarType.string())
       type_meta.field("description", GraphQL::ScalarType.string(), IntrospectionResolvers.type_description)
       type_meta.field("fields", field_meta.list(), IntrospectionResolvers.type_fields)
       type_meta.field("interfaces", type_meta.list(), IntrospectionResolvers.type_interfaces)
@@ -202,16 +195,16 @@ module GraphQL
       type_meta.field("inputFields", input_value_meta.list(), IntrospectionResolvers.type_input_fields)
       type_meta.field("ofType", type_meta, IntrospectionResolvers.type_of_type)
 
-      field_meta.field("name", GraphQL::ScalarType.string().non_null(), IntrospectionResolvers.field_name)
-      field_meta.field("description", GraphQL::ScalarType.string(), IntrospectionResolvers.field_description)
+      field_meta.field("name", GraphQL::ScalarType.string().non_null())
+      field_meta.field("description", GraphQL::ScalarType.string())
       field_meta.field("args", input_value_meta.list().non_null(), IntrospectionResolvers.field_arguments)
-      field_meta.field("type", type_meta.non_null(), IntrospectionResolvers.field_type)
+      field_meta.field("type", type_meta.non_null())
       field_meta.field("isDeprecated", GraphQL::ScalarType.boolean().non_null(), IntrospectionResolvers.field_is_deprecated)
       field_meta.field("deprecationReason", GraphQL::ScalarType.string(), IntrospectionResolvers.field_deprecation_reason)
 
-      input_value_meta.field("name", GraphQL::ScalarType.string().non_null(), IntrospectionResolvers.input_value_name)
-      input_value_meta.field("description", GraphQL::ScalarType.string(), IntrospectionResolvers.input_value_description)
-      input_value_meta.field("type", type_meta.non_null(), IntrospectionResolvers.input_value_type)
+      input_value_meta.field("name", GraphQL::ScalarType.string().non_null())
+      input_value_meta.field("description", GraphQL::ScalarType.string())
+      input_value_meta.field("type", type_meta.non_null())
       input_value_meta.field("defaultValue", GraphQL::ScalarType.string(), IntrospectionResolvers.input_value_default_value)
 
       enum_value_meta.field("name", GraphQL::ScalarType.string().non_null(), IntrospectionResolvers.enum_value_name)

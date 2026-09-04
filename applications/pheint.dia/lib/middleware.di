@@ -15,7 +15,7 @@ def pheint_logging_middleware(request, context, forward)
   rescue error: StandardError
     duration_ms = (Time.monotonic() - started_at) * 1000
     PheintLogger.get(context).error("request.failed", pheint_log_fields(request, {
-      "error_class": "#{error}",
+      "error_class": error.class(),
       "error_message": error.message(),
       "duration_ms": duration_ms
     }))

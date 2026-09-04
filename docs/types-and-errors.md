@@ -61,6 +61,39 @@ of both. The reverse direction of each (the `else` of an `&&`, the
 simple fact about either operand in general, so nothing is narrowed
 there rather than guessing.
 
+`value.class()` returns a `String` naming `value`'s own runtime type —
+`"Int"`, `"String"`, `"RuntimeError"` for a user class instance, and so
+on, the exact same bare name already used in every "expected X, got Y"
+type-error message. It works uniformly on every value, including native
+kinds (`Int`, `Array`, ...) that have no user-defined class of their
+own. `value.is_a?(Type)` is a runtime boolean test against the same rich
+type grammar `is`/`rescue error: Type` already accept — a class name
+(with subclass matching), an interface (structural, same rules as
+above), or a built-in structural type like `Sized`:
+
+```ruby
+class Dog
+end
+
+interface Named
+  def name() -> String
+end
+
+dog = Dog.new()
+puts(dog.class())            # "Dog"
+puts(dog.is_a?(Dog))         # true
+puts(1.is_a?(Sized))         # false
+puts("x".is_a?(Sized))       # true
+```
+
+Neither is a general expression: `Type` in `is_a?(Type)` is a type name
+resolved entirely at compile time, the same way a `rescue error: Type`
+clause's type is — there is no way to obtain a class as an ordinary
+runtime value to pass around, store, or compute `is_a?`'s argument from
+(see docs/design.md's `DIAMOND_VALUE_CLASS` section, and docs/
+roadmap.md's "Explicitly deferred" section for why that stays out of
+scope).
+
 ## Exceptions
 
 ```ruby

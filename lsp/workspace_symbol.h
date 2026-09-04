@@ -4,6 +4,24 @@
 #include "document.h"
 #include "json.h"
 
+#include <stddef.h>
+
+/* Recursively collects every *.di file's own absolute path under
+ * `directory` into `*paths` (grown via `*count`/`*capacity`), skipping
+ * dotfiles/dotdirs. Shared by workspace_symbol.c's own workspace-wide
+ * scan and lsp/references.c's, which needs the identical "every source
+ * file in the workspace" walk. Not fatal if `directory` can't be opened;
+ * only an allocation failure returns false. See workspace_symbol.c for
+ * the full comment. */
+bool collect_di_files(const char *directory,char ***paths,
+    size_t *count,size_t *capacity);
+
+/* `path`'s content, preferring an open document's live (possibly
+ * unsaved) buffer over disk. Shared by workspace_symbol.c and
+ * lsp/references.c. Returns a malloc'd, null-terminated buffer, or
+ * nullptr if `path` can't be read at all. */
+char *read_file_preferring_open(const DocumentTable *documents,const char *path);
+
 /* Computes a workspace/symbol result: every top-level function/class,
  * across every *.di file found by recursively walking `workspace_root`
  * (skipping dotfiles/dotdirs -- .git and friends), whose name contains

@@ -47,6 +47,16 @@ size_t receiver_resolve_classes(const DiamondProgram *program,
         const DiamondChunk *chunk,const char *source,size_t stop_offset,
         size_t *class_indices,size_t max_candidates,bool *is_singleton);
 
+/* True iff a lexical local (or parameter) named `name` is in scope at
+ * `offset` -- the same innermost-shadow-aware lookup
+ * receiver_resolve_local_type_set uses internally, exposed standalone
+ * for a caller (lsp/references.c) that only needs to know whether an
+ * identifier occurrence denotes a local rather than a global
+ * function/class/module/interface of the same name, not the local's
+ * type. */
+bool receiver_name_is_local(const DiamondProgram *program,
+    const DiamondChunk *chunk,const char *name,size_t name_length,size_t offset);
+
 /* Resolves a lexical local at `offset` and returns its position-
  * sensitive structural type-set fact. The returned owner keeps the set index
  * in its proper per-function table; false means there is no structural fact. */

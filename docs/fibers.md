@@ -62,13 +62,15 @@ An uncaught exception inside a fiber is re-raised at the `resume` call and may
 be rescued there:
 
 ```ruby
-fiber = Fiber.new(def()
+def failing()
   raise ArgumentError.new("bad input")
-end)
+end
+
+fiber = Fiber.new(failing)
 
 begin
   fiber.resume()
-rescue ArgumentError => error
+rescue error: ArgumentError
   puts(error.message())
 end
 ```

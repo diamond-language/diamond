@@ -261,6 +261,7 @@ static bool hash_set(DiamondVm *vm,DiamondHash *hash,DiamondValue key,
                      DiamondValue value);
 static bool array_push(DiamondVm *vm,DiamondArray *array,DiamondValue value);
 static bool numeric_as_double(DiamondValue value, double *out);
+static ptrdiff_t hash_find(const DiamondHash *hash,DiamondValue key);
 static void free_adopted_programs(void *list);
 static void free_thread(DiamondThread *thread);
 static void populate_default_argv_env(DiamondVm *vm);
@@ -6076,7 +6077,25 @@ static bool numeric_as_double(DiamondValue value, double *out) {
     return false;
 }
 
+/* Shared by values_equal_at_depth and hash_value_at_depth below --
+ * recursion in both is bounded (not by DIAMOND_MAX_CALL_DEPTH -- these
+ * are plain C helpers, never go through the Diamond call stack at all)
+ * specifically so a self-referential Array/Hash (`a = []; a.push(a)`)
+ * can never stack-overflow either one: two structures nested/cyclic
+ * beyond this depth report unequal (or, for hashing, just stop mixing
+ * in any deeper structure) rather than recursing forever. 256 is
+ * generous for any real data (deeply-nested-but-finite data structures
+ * essentially never approach it) while still being a small, bounded
+ * amount of native C stack. */
+enum { DIAMOND_STRUCTURAL_MAX_DEPTH = 256 };
+
+static bool values_equal_at_depth(DiamondValue left,DiamondValue right,int depth);
+
 static bool values_equal(DiamondValue left, DiamondValue right) {
+    return values_equal_at_depth(left,right,0);
+}
+
+static bool values_equal_at_depth(DiamondValue left, DiamondValue right, int depth) {
     /* Bignum-aware equality ahead of everything else: a Float, however
      * large, is deliberately never treated as equal to a bignum (the
      * existing Int/Float cross-equality special-case below only
@@ -6116,10 +6135,59 @@ static bool values_equal(DiamondValue left, DiamondValue right) {
             return left.as.class_index == right.as.class_index;
         case DIAMOND_VALUE_OBJECT: {
             if (left.as.object->kind != right.as.object->kind) return false;
-            if(left.as.object->kind==DIAMOND_OBJECT_INSTANCE ||
-               left.as.object->kind==DIAMOND_OBJECT_ARRAY ||
-               left.as.object->kind==DIAMOND_OBJECT_HASH)
+            /* Instance keeps identity-only equality here (unchanged) --
+             * a `==` method override is checked by the DIAMOND_OP_EQUAL
+             * opcode handler *before* it ever calls this function at
+             * all (see that case's own comment); an Instance reaching
+             * this point genuinely has no override and falls back to
+             * identity, exactly as before Array/Hash below got their
+             * own real structural equality. */
+            if(left.as.object->kind==DIAMOND_OBJECT_INSTANCE)
                 return left.as.object==right.as.object;
+            /* Same object trivially satisfies equality (and, for a
+             * self-referential Array/Hash, is the only way this could
+             * ever legitimately recurse into itself -- checked first so
+             * that case resolves in O(1) instead of by the depth-limit
+             * fallback below). */
+            if(left.as.object==right.as.object)return true;
+            if(left.as.object->kind==DIAMOND_OBJECT_ARRAY) {
+                /* Two different but cyclic/absurdly-deep structures
+                 * (a=[]; a.push(a)) can never finish an element-by-
+                 * element comparison -- the depth guard here is what
+                 * turns that into "not equal" instead of a stack
+                 * overflow. Real, non-cyclic data essentially never
+                 * approaches this bound. */
+                if(depth>=DIAMOND_STRUCTURAL_MAX_DEPTH)return false;
+                const DiamondArray *a=(const DiamondArray *)left.as.object;
+                const DiamondArray *b=(const DiamondArray *)right.as.object;
+                if(a->count!=b->count)return false;
+                for(size_t index=0;index<a->count;index++)
+                    if(!values_equal_at_depth(a->values[index],b->values[index],depth+1))
+                        return false;
+                return true;
+            }
+            if(left.as.object->kind==DIAMOND_OBJECT_HASH) {
+                if(depth>=DIAMOND_STRUCTURAL_MAX_DEPTH)return false;
+                const DiamondHash *a=(const DiamondHash *)left.as.object;
+                const DiamondHash *b=(const DiamondHash *)right.as.object;
+                if(a->count!=b->count)return false;
+                /* Order-independent (a Hash's own equality never cares
+                 * about insertion order): every key in `a` must exist
+                 * in `b` (hash_find does its own key lookup, keyed by
+                 * hash_value + values_equal, exactly the same way any
+                 * ordinary Hash#[] lookup already works) with an equal
+                 * value; matching counts above plus that containment
+                 * check both ways is enough to prove the reverse
+                 * direction too (no key in `b` could be left over). */
+                for(size_t index=0;index<a->count;index++) {
+                    const ptrdiff_t found=hash_find(b,a->entries[index].key);
+                    if(found<0)return false;
+                    if(!values_equal_at_depth(a->entries[index].value,
+                            b->entries[(size_t)found].value,depth+1))
+                        return false;
+                }
+                return true;
+            }
             if(left.as.object->kind==DIAMOND_OBJECT_SYMBOL) {
                 const DiamondSymbol *a=(const DiamondSymbol *)left.as.object;
                 const DiamondSymbol *b=(const DiamondSymbol *)right.as.object;
@@ -6181,9 +6249,16 @@ static uint64_t hash_bytes(const char *data,size_t length) {
 }
 
 /* Must stay consistent with values_equal's exact equality semantics:
- * Int/Bool/Nil by value, String/Symbol by content, Array/Hash/Instance by
- * pointer identity. */
+ * Int/Bool/Nil by value, String/Symbol by content, Array/Hash by
+ * structure (recursively, same as values_equal_at_depth), Instance and
+ * everything else by pointer identity. */
+static uint64_t hash_value_at_depth(DiamondValue value,int depth);
+
 static uint64_t hash_value(DiamondValue value) {
+    return hash_value_at_depth(value,0);
+}
+
+static uint64_t hash_value_at_depth(DiamondValue value, int depth) {
     switch(value.kind) {
         case DIAMOND_VALUE_NIL:return hash_mix64(0);
         case DIAMOND_VALUE_UNDEFINED:return hash_mix64(UINT64_MAX);
@@ -6207,10 +6282,48 @@ static uint64_t hash_value(DiamondValue value) {
         }
         case DIAMOND_VALUE_OBJECT: {
             const DiamondObject *object=value.as.object;
-            if(object->kind==DIAMOND_OBJECT_INSTANCE||
-               object->kind==DIAMOND_OBJECT_ARRAY||
-               object->kind==DIAMOND_OBJECT_HASH)
+            if(object->kind==DIAMOND_OBJECT_INSTANCE)
                 return hash_mix64((uint64_t)(uintptr_t)object);
+            if(object->kind==DIAMOND_OBJECT_ARRAY) {
+                /* Order-sensitive (Array's own equality is): sequential
+                 * mixing, each element's hash folded into the running
+                 * one via hash_mix64, not combined commutatively --
+                 * [1,2] and [2,1] must hash differently, matching that
+                 * they're != each other. Depth-limited past
+                 * DIAMOND_STRUCTURAL_MAX_DEPTH the same way values_equal_
+                 * at_depth's own Array case is (see that one's comment)
+                 * -- stops mixing in anything deeper rather than
+                 * recursing forever; still a valid (if coarser) hash,
+                 * never a correctness problem on its own, since a hash
+                 * collision is always allowed and just falls through to
+                 * hash_find's own values_equal call to confirm a real
+                 * match. */
+                const DiamondArray *array=(const DiamondArray *)object;
+                uint64_t running=hash_mix64((uint64_t)array->count);
+                if(depth<DIAMOND_STRUCTURAL_MAX_DEPTH)
+                    for(size_t index=0;index<array->count;index++)
+                        running=hash_mix64(running^hash_value_at_depth(array->values[index],depth+1));
+                return running;
+            }
+            if(object->kind==DIAMOND_OBJECT_HASH) {
+                /* Order-independent (Hash's own equality is): every
+                 * entry's key^value hash is XORed together (commutative
+                 * -- {"a":1,"b":2} and {"b":2,"a":1} must hash the same
+                 * way, matching that they're == each other), not
+                 * sequentially mixed. Depth-limited the same way the
+                 * Array case above is. */
+                const DiamondHash *hash=(const DiamondHash *)object;
+                uint64_t combined=0;
+                if(depth<DIAMOND_STRUCTURAL_MAX_DEPTH)
+                    for(size_t index=0;index<hash->count;index++) {
+                        const uint64_t key_hash=
+                            hash_value_at_depth(hash->entries[index].key,depth+1);
+                        const uint64_t value_hash=
+                            hash_value_at_depth(hash->entries[index].value,depth+1);
+                        combined^=hash_mix64(key_hash^hash_mix64(value_hash));
+                    }
+                return hash_mix64(combined^(uint64_t)hash->count);
+            }
             /* No consistency requirement with the small-int hash path
              * above: the canonicalization invariant guarantees a
              * bignum and a small Int can never represent the same
@@ -12737,6 +12850,70 @@ static const NativeKeywordSignature *native_keyword_signature(
     return nullptr;
 }
 
+/* `receiver.public_send(name, *arguments)` re-enters the ordinary dynamic
+ * INVOKE_SPREAD path with `name` as that synthetic call site's method-name
+ * constant. Keeping the actual dispatch there means native receivers, user
+ * classes, inheritance, variadics, runtime-installed methods, and
+ * method_missing retain one implementation. The synthetic chunk explicitly
+ * has no method self (`parameter_offset=0`): public_send must never inherit
+ * the caller's private/protected access, even when called from inside the
+ * target's own class hierarchy. */
+static DiamondVmStatus public_send_helper(DiamondVm *vm,
+        const DiamondChunk *chunk,DiamondValue receiver,
+        const DiamondValue *arguments,size_t argument_count,size_t depth,
+        DiamondValue *result) {
+    if(argument_count==0)return DIAMOND_VM_ARITY_ERROR;
+    const DiamondValue name_value=arguments[0];
+    if(name_value.kind!=DIAMOND_VALUE_OBJECT||
+       (name_value.as.object->kind!=DIAMOND_OBJECT_SYMBOL&&
+        name_value.as.object->kind!=DIAMOND_OBJECT_STRING)) {
+        snprintf(vm->error,sizeof vm->error,
+            "public_send method name must be a Symbol or String");
+        return DIAMOND_VM_TYPE_ERROR;
+    }
+    const bool symbol_name=name_value.as.object->kind==DIAMOND_OBJECT_SYMBOL;
+    const size_t name_length=symbol_name?
+        ((const DiamondSymbol *)name_value.as.object)->length:
+        ((const DiamondString *)name_value.as.object)->length;
+    const char *name_chars=symbol_name?
+        ((const DiamondSymbol *)name_value.as.object)->chars:
+        ((const DiamondString *)name_value.as.object)->chars;
+    DiamondArray *forwarded=allocate_array(vm,arguments+1,argument_count-1);
+    if(forwarded==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+    const size_t protected_count=vm->gc_protected_count;
+    if(!gc_protect(vm,DIAMOND_OBJECT(forwarded)))
+        return DIAMOND_VM_OUT_OF_MEMORY;
+    DiamondStringConstant *dynamic_name=malloc(sizeof *dynamic_name);
+    if(dynamic_name==nullptr) {
+        gc_unprotect(vm,protected_count);
+        return DIAMOND_VM_OUT_OF_MEMORY;
+    }
+    memcpy(dynamic_name->chars,name_chars,name_length);
+    dynamic_name->chars[name_length]='\0';dynamic_name->length=name_length;
+    uint8_t code[12]={DIAMOND_OP_INVOKE_SPREAD,
+        0,2,0,0,0,0,0,1,DIAMOND_OP_RETURN,0,2};
+    uint32_t locations[12]={0};
+    DiamondChunk synthetic=*chunk;
+    synthetic.name="<public_send>";
+    synthetic.code=code;synthetic.lines=locations;synthetic.columns=locations;
+    synthetic.code_count=sizeof code;synthetic.register_count=3;
+    synthetic.strings=dynamic_name;synthetic.string_count=1;
+    synthetic.parameter_offset=0;
+    DiamondValue call_arguments[2]={receiver,DIAMOND_OBJECT(forwarded)};
+    const DiamondVmStatus status=run_chunk(&synthetic,vm,call_arguments,2,
+        depth+1,nullptr,result);
+    static const char synthetic_frame[]="\n  at <public_send>:0:0";
+    const size_t error_length=strlen(vm->error);
+    const size_t frame_length=sizeof synthetic_frame-1;
+    if(status!=DIAMOND_VM_OK&&error_length>=frame_length&&
+       memcmp(vm->error+error_length-frame_length,synthetic_frame,
+              frame_length)==0)
+        vm->error[error_length-frame_length]='\0';
+    free(dynamic_name);
+    gc_unprotect(vm,protected_count);
+    return status;
+}
+
 static DiamondVmStatus merge_native_keyword_arguments(DiamondVm *vm,
         const DiamondChunk *caller,const NativeKeywordSignature *signature,
         const DiamondArray *positional,const uint16_t *keyword_names,
@@ -12977,7 +13154,8 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
         return vm->has_exception?DIAMOND_VM_EXCEPTION:return_status_;\
     } while (false)
 
-/* Every native/builtin pseudo-method (tap, dup, respond_to?, Regexp#match,
+/* Every native/builtin pseudo-method (tap, dup, respond_to?, public_send,
+ * Regexp#match,
  * ProgramBuilder's own invoke path, etc.) that doesn't declare any type
  * variables rejects an explicit generic argument list the same way -- a
  * real, if unusual, user mistake (`x.dup[Int]()`) rather than a bytecode-
@@ -13534,6 +13712,72 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 snprintf(vm->error,sizeof vm->error,
                     "'<<' expects an Int shift amount or a value to push onto an Array");
                 VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+            }
+            case DIAMOND_OP_SHIFT_RIGHT: {
+                /* Int only -- same scope cut as DIAMOND_OP_SHIFT_LEFT
+                 * (no bignum, not user-overloadable, no quickening; see
+                 * that case's own comment). Arithmetic (sign-extending),
+                 * matching Ruby's own Integer#>>, and well-defined for a
+                 * negative left-hand side under C23 (this project's own
+                 * -std=c23) -- not the "implementation-defined" territory
+                 * an older C standard would put a signed right-shift in. */
+                uint16_t destination=0,left=0,right=0;
+                READ_SHORT(destination);READ_SHORT(left);READ_SHORT(right);
+                if(registers[left].kind!=DIAMOND_VALUE_INT||
+                   registers[right].kind!=DIAMOND_VALUE_INT||
+                   value_is_bignum(registers[left])||value_is_bignum(registers[right])) {
+                    format_operator_type_error(vm,registers[left],registers[right],">>");
+                    VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                }
+                const int64_t shift_amount=registers[right].as.integer;
+                if(shift_amount<0||shift_amount>=64) {
+                    snprintf(vm->error,sizeof vm->error,
+                        "shift amount must be between 0 and 63");
+                    VM_RETURN(DIAMOND_VM_INTEGER_OVERFLOW);
+                }
+                registers[destination]=
+                    DIAMOND_INT(registers[left].as.integer>>(unsigned)shift_amount);
+                break;
+            }
+            case DIAMOND_OP_BITWISE_AND:
+            case DIAMOND_OP_BITWISE_OR:
+            case DIAMOND_OP_BITWISE_XOR: {
+                /* Int only, same scope cut as SHIFT_LEFT/SHIFT_RIGHT
+                 * above. All three share one case body -- the only
+                 * difference between them is which C operator runs.
+                 * `bitwise_opcode` is this local case body's own copy of
+                 * the switch's controlling value (the switch itself
+                 * dispatches on a bare `instruction`, not a variable
+                 * named `opcode` -- unlike DIAMOND_OP_EQUAL's own case,
+                 * which does declare a local `opcode`, this one didn't
+                 * need to until now). */
+                const DiamondOpCode bitwise_opcode=(DiamondOpCode)instruction;
+                uint16_t destination=0,left=0,right=0;
+                READ_SHORT(destination);READ_SHORT(left);READ_SHORT(right);
+                if(registers[left].kind!=DIAMOND_VALUE_INT||
+                   registers[right].kind!=DIAMOND_VALUE_INT||
+                   value_is_bignum(registers[left])||value_is_bignum(registers[right])) {
+                    const char *name=bitwise_opcode==DIAMOND_OP_BITWISE_AND?"&":
+                        bitwise_opcode==DIAMOND_OP_BITWISE_OR?"|":"^";
+                    format_operator_type_error(vm,registers[left],registers[right],name);
+                    VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                }
+                const int64_t a=registers[left].as.integer;
+                const int64_t b=registers[right].as.integer;
+                const int64_t bitwise_result=bitwise_opcode==DIAMOND_OP_BITWISE_AND?(a&b):
+                    bitwise_opcode==DIAMOND_OP_BITWISE_OR?(a|b):(a^b);
+                registers[destination]=DIAMOND_INT(bitwise_result);
+                break;
+            }
+            case DIAMOND_OP_CLASS_NAME: {
+                uint16_t destination=0,source=0;
+                READ_SHORT(destination);READ_SHORT(source);
+                char name[80];
+                format_value_type(name,sizeof name,registers[source]);
+                DiamondString *class_name=allocate_string(vm,name,strlen(name));
+                if(class_name==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                registers[destination]=DIAMOND_OBJECT(class_name);
+                break;
             }
             case DIAMOND_OP_MODULO: {
                 /* Floored modulo (result takes the divisor's sign),
@@ -14962,6 +15206,28 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 }
                 const DiamondArray *spread=(const DiamondArray *)
                     registers[spread_register].as.object;
+                const DiamondStringConstant *method_name=&chunk->strings[name];
+                const bool instance_receiver=registers[recv].kind==DIAMOND_VALUE_OBJECT&&
+                    registers[recv].as.object->kind==DIAMOND_OBJECT_INSTANCE;
+                bool user_public_send=false;
+                if(instance_receiver) {
+                    const DiamondInstance *candidate=
+                        (const DiamondInstance *)registers[recv].as.object;
+                    const DiamondChunk *candidate_owner=candidate->owner!=nullptr?
+                        candidate->owner:vm->root_chunk;
+                    user_public_send=lookup_method(candidate_owner,candidate->class,
+                        "public_send",11)!=nullptr;
+                }
+                if(method_name->length==11&&
+                   memcmp(method_name->chars,"public_send",11)==0&&
+                   !user_public_send) {
+                    if(type_argument_count!=0)VM_REJECT_TYPE_ARGUMENTS(method_name);
+                    DiamondValue sent=DIAMOND_NIL;
+                    const DiamondVmStatus send_status=public_send_helper(vm,chunk,
+                        registers[recv],spread->values,spread->count,depth,&sent);
+                    VM_PROPAGATE(send_status);
+                    registers[dest]=sent;break;
+                }
                 if(registers[recv].kind!=DIAMOND_VALUE_OBJECT||
                    registers[recv].as.object->kind!=DIAMOND_OBJECT_INSTANCE) {
                     /* Native receivers already share one deliberately ordered
@@ -15029,7 +15295,6 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 DiamondInstance *instance=(DiamondInstance *)registers[recv].as.object;
                 const DiamondChunk *owner=
                     instance->owner!=nullptr?instance->owner:vm->root_chunk;
-                const DiamondStringConstant *method_name=&chunk->strings[name];
                 const DiamondMethod *method=lookup_method(owner,instance->class,
                     method_name->chars,method_name->length);
                 if(method==nullptr) {
@@ -15149,6 +15414,15 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                  * why interception order matters there but not here). */
                 if(registers[recv].kind!=DIAMOND_VALUE_OBJECT||
                    registers[recv].as.object->kind!=DIAMOND_OBJECT_INSTANCE) {
+                    if(method_name->length==11&&
+                       memcmp(method_name->chars,"public_send",11)==0) {
+                        if(type_argument_count!=0)VM_REJECT_TYPE_ARGUMENTS(method_name);
+                        DiamondValue sent=DIAMOND_NIL;
+                        const DiamondVmStatus send_status=public_send_helper(vm,chunk,
+                            registers[recv],&registers[base],argc,depth,&sent);
+                        VM_PROPAGATE(send_status);
+                        registers[dest]=sent;break;
+                    }
                     if(method_name->length==3&&
                        memcmp(method_name->chars,"tap",3)==0) {
                         if(type_argument_count!=0)VM_REJECT_TYPE_ARGUMENTS(method_name);
@@ -16859,13 +17133,27 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     }
                     if(argc!=1)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
                     if(registers[base].kind!=DIAMOND_VALUE_INT||
-                       registers[base].as.integer<=0) {
+                       registers[base].as.integer<0) {
                         snprintf(vm->error,sizeof vm->error,
-                            "UDPSocket#receive argument must be a positive Int");
+                            "UDPSocket#receive argument must be a non-negative Int");
                         VM_RETURN(DIAMOND_VM_TYPE_ERROR);
                     }
                     const size_t want=(size_t)registers[base].as.integer;
-                    char *buffer=malloc(want);
+                    /* File#read/Socket#read/TLSSocket#read/Process::Stream#read
+                     * all accept 0 (an immediate empty result, no syscall
+                     * needed for those) -- this used to reject 0 outright,
+                     * an undocumented asymmetry with no behavioral reason
+                     * behind it. Allocating at least 1 byte regardless of
+                     * `want` sidesteps malloc(0)'s implementation-defined
+                     * result (may be nullptr, indistinguishable from real
+                     * OOM just below) while still passing the real `want`
+                     * to recvfrom below -- unlike the read family, a UDP
+                     * `.receive(0)` is a meaningful, distinct operation
+                     * (consumes/discards a queued datagram without copying
+                     * any of it), so this fix aligns the *validation* with
+                     * the read family without changing send/receive
+                     * semantics. */
+                    char *buffer=malloc(want==0?1:want);
                     if(buffer==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
                     struct sockaddr_storage source_addr={0};
                     socklen_t source_addr_len=sizeof source_addr;
@@ -17211,7 +17499,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 }
                 DiamondInstance *instance=(DiamondInstance *)registers[recv].as.object;
                 const DiamondChunk *owner=instance->owner!=nullptr?instance->owner:vm->root_chunk;
-                /* tap/dup/respond_to? -- same three universal methods the
+                /* tap/dup/respond_to?/public_send -- universal methods the
                  * non-Instance branch above already handles, but gated on
                  * `lookup_method` coming back empty first: unlike a native
                  * type, a class CAN legitimately define its own `dup` (for
@@ -17279,6 +17567,16 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                         probe->chars,probe->length);
                     registers[dest]=DIAMOND_BOOL(probed!=nullptr&&!probed->is_private);
                     break;
+                }
+                if(method_name->length==11&&
+                   memcmp(method_name->chars,"public_send",11)==0&&
+                   lookup_method(owner,instance->class,"public_send",11)==nullptr) {
+                    if(type_argument_count!=0)VM_REJECT_TYPE_ARGUMENTS(method_name);
+                    DiamondValue sent=DIAMOND_NIL;
+                    const DiamondVmStatus send_status=public_send_helper(vm,chunk,
+                        registers[recv],&registers[base],argc,depth,&sent);
+                    VM_PROPAGATE(send_status);
+                    registers[dest]=sent;break;
                 }
                 bool exception_instance=false;
                 const DiamondClass *ancestor=instance->class;

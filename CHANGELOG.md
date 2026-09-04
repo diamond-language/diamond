@@ -6,6 +6,45 @@ authoritative fine-grained record.
 
 ## Unreleased
 
+### Fixes
+
+- Fixed a stack-overflow crash (SIGSEGV) in every `DiamondSourceBundle`
+  consumer -- the CLI, REPL, and every `lsp/` handler -- on an `-O0`
+  debug build, reproducible at zero `require` depth (`make test-lsp`
+  segfaulted outright on its first hover request). Root cause:
+  `DiamondSourceBundle.segments`, a ~1.6MB fixed array, was embedded
+  directly in a struct several call sites declare as a plain stack
+  local, sometimes two deep in one call chain. Heap-allocated now (`src/
+  loader.c`/`src/loader.h`), the same fix already applied to `Loader`'s
+  own arrays for the identical reason.
+- `UDPSocket#receive` now accepts `0` (an immediate, real datagram-
+  discarding receive, matching `recvfrom`'s own semantics) instead of
+  raising `TypeError`, aligning it with `File#read`/`Socket#read`/
+  `TLSSocket#read`/`Process::Stream#read`, which all already accepted
+  `0`. Found by a native-API consistency audit (docs/roadmap.md); no
+  other inconsistency in arity, type, range, or closed-resource checks
+  was found across the audited native surface.
+
+### Tooling
+
+- Added `DIAMOND_TRACE_STARTUP`, reporting the load/compile/run time split
+  for a process on stderr; used to measure prelude-compilation cost for
+  docs/roadmap.md's startup-time investigation.
+- Added `textDocument/references` to the Language Server: finds every
+  workspace occurrence (call/access site, type position, or declaration
+  header) of a top-level function/class/module/interface name, walking
+  the workspace the same way `workspace/symbol` does. Conservative by
+  construction -- a candidate is dropped unless it sits in a resolvable
+  position and no lexical local of the same name shadows it there. See
+  docs/lsp.md.
+
+### Language
+
+- Added visibility-safe `public_send` runtime-name dispatch for native and
+  user-defined receivers, with String/Symbol names, argument forwarding,
+  inheritance, overrides, variadics, and `method_missing`; private and
+  protected targets remain inaccessible.
+
 ### Documentation
 
 - Reorganized the monolithic syntax and native-service references into

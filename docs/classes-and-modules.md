@@ -182,8 +182,14 @@ Model.describe()    # => "model_default"
 `self` also works as an ordinary value with no following call (it holds
 the class itself, comparable with `==` and usable anywhere a value is
 expected) -- but a Class value has no general-purpose literal syntax of
-its own; the only way to obtain one is `self` inside a class-owned
-singleton method.
+its own. `self` inside a class-owned singleton method is one way to
+obtain one; a bare class name as a `case`/`when` pattern (`when Dog`,
+[core syntax](core-syntax.md)) is the other. Neither is a general
+expression -- there is still no way to store a class in a variable
+outside those two positions, pass one as an ordinary argument, or name
+one dynamically by a computed string (see docs/design.md's
+`DIAMOND_VALUE_CLASS` section, and docs/roadmap.md's "Explicitly
+deferred" section for why that stays out of scope).
 
 Only the **explicit** `self.foo(...)` form dispatches this way. A **bare**
 call to a sibling `self.` method (`table_name()` instead of
@@ -293,7 +299,7 @@ inside the declaring class hierarchy. Private methods remain restricted to
 the current implicit/self receiver. `respond_to?` reports public and protected
 methods, but not private methods.
 
-### tap / dup / respond_to?
+### tap / dup / respond_to? / public_send
 
 ```ruby
 class Point
@@ -309,6 +315,7 @@ p1 = Point.new(1, 2)
 p2 = p1.dup()          # a distinct instance, same field values
 p1.respond_to?(:x)     # => true
 p1.respond_to?(:zoom)  # => false
+p1.public_send(:x)     # => 1
 
 [1, 2, 3].tap() do |arr|
   puts(arr.length())   # side effect, doesn't change the chain
@@ -337,7 +344,16 @@ rather than an approximate answer — accurately enumerating every method a
 native type actually supports isn't tracked anywhere as one real list.
 
 Like `tap`, a class's own method of the same name always takes priority
-over `dup`/`respond_to?`'s own built-in behavior, checked first.
+over `dup`/`respond_to?`/`public_send`'s own built-in behavior, checked first.
+
+`public_send(name, *arguments)` invokes the method named by a `Symbol` or
+`String`. It follows ordinary dynamic dispatch for native and user-defined
+receivers, including inheritance, overrides, variadic methods, and
+`method_missing`. Only public targets are callable: private and protected
+methods are rejected even when `public_send` itself is called from within the
+target's class hierarchy. Diamond intentionally provides no visibility-
+bypassing `send` counterpart. A user class may define its own `public_send`;
+that method takes priority over the universal behavior.
 
 ## Operator overloading
 

@@ -1,7 +1,7 @@
 # Diamond object model
 
-This document distinguishes the implemented object model from planned runtime
-optimizations.
+This document describes the implemented object model and its deliberate
+metaprogramming boundaries.
 
 ## Current representation
 
@@ -16,8 +16,8 @@ An instance contains:
 - a variable-sized array of `DiamondValue` fields.
 
 Class metadata contains a name, optional superclass index, method table, and an
-ordered instance-variable name table. Classes are module metadata, not currently
-first-class Diamond objects.
+ordered instance-variable name table. Classes are module metadata, deliberately
+not first-class Diamond objects -- see "Metaprogramming boundaries" below.
 
 ## Fields
 
@@ -106,19 +106,21 @@ Class variables are VM-owned roots, not reachable through any instance or
 class pointer -- `diamond_vm_collect` traces the whole flat array directly
 (skipped entirely when never allocated).
 
-## Planned evolution
+## Metaprogramming boundaries
 
-- Runtime shapes for objects whose fields evolve dynamically.
-- Monomorphic, then potentially polymorphic, method inline caches.
-- Field caches keyed by shape identity.
-- Classes as ordinary instances of `Class`.
-- Modules/mixins, singleton classes, and visibility are implemented (see
-  `docs/design.md`). Runtime method *redefinition* — repointing an existing
-  method to a different already-compiled function via
-  `ClassName.redefine_method(name, callable)` — is also implemented. Defining
-  genuinely new method bodies at runtime (e.g. from a source string) remains
-  unimplemented and would require a runtime-callable compiler entry point,
-  a materially larger undertaking overlapping with self-hosting.
+Runtime shapes, polymorphic method inline caches, and field caches keyed by
+shape identity (above) are all implemented, not planned. Modules/mixins,
+singleton classes, and visibility are implemented too (see `docs/design.md`).
+Runtime method *redefinition* — repointing an existing method to a different
+already-compiled function via `ClassName.redefine_method(name, callable)` —
+is also implemented. Defining genuinely new method bodies at runtime (e.g.
+from a source string) remains unimplemented and would require a
+runtime-callable compiler entry point, a materially larger undertaking
+overlapping with self-hosting.
+
+Classes becoming ordinary instances of `Class` is not planned — decided
+against; see `docs/roadmap.md`'s "Explicitly deferred" section for why,
+given the representation described above.
 
 Those optimizations should preserve the current receiver convention and source
 semantics, but they are not represented in the current bytecode format.

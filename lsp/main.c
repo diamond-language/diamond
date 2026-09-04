@@ -6,6 +6,7 @@
 #include "document_symbol.h"
 #include "hover.h"
 #include "json.h"
+#include "references.h"
 #include "rpc.h"
 #include "workspace_symbol.h"
 
@@ -187,6 +188,7 @@ static void handle_initialize(const JsonValue *id,const JsonValue *params,
     if(completion_options!=nullptr)
         json_object_set(capabilities,"completionProvider",completion_options);
     json_object_set(capabilities,"workspaceSymbolProvider",json_bool(true));
+    json_object_set(capabilities,"referencesProvider",json_bool(true));
     json_object_set(result,"capabilities",capabilities);
     send_response(id,result);
 }
@@ -317,6 +319,23 @@ static void handle_workspace_symbol(DocumentTable *documents,const char *workspa
     send_response(id,result);
 }
 
+static void handle_references(DocumentTable *documents,const char *workspace_root,
+        const JsonValue *id,const JsonValue *params) {
+    char uri_copy[1024];
+    const char *text=nullptr;
+    size_t text_length=0,line=0,character=0;
+    if(!extract_document_position(documents,id,params,uri_copy,sizeof uri_copy,
+            &text,&text_length,&line,&character))
+        return;
+    JsonValue *result=references_compute(documents,workspace_root,uri_copy,text,
+        text_length,line,character);
+    if(result==nullptr) {
+        send_response(id,json_null());
+        return;
+    }
+    send_response(id,result);
+}
+
 static void handle_did_open(DocumentTable *documents,DependencyTable *dependencies,
         const JsonValue *params) {
     const JsonValue *text_document=json_object_get(params,"textDocument");
@@ -425,6 +444,8 @@ int main(void) {
             handle_completion(documents,id,params);
         } else if(strcmp(method,"workspace/symbol")==0) {
             handle_workspace_symbol(documents,workspace_root,id,params);
+        } else if(strcmp(method,"textDocument/references")==0) {
+            handle_references(documents,workspace_root,id,params);
         } else if(id!=nullptr) {
             send_error(id,-32601,"method not found");
         }

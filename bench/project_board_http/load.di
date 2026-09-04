@@ -98,7 +98,7 @@ def safe_load_worker(worker_id, iterations, base_url)
   begin
     {"stats": load_worker(worker_id, iterations, base_url), "error": nil}
   rescue error
-    {"stats": nil, "error": "#{error}"}
+    {"stats": nil, "error": "#{error.class()}: #{error.message()}"}
   end
 end
 

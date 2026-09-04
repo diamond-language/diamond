@@ -76,7 +76,7 @@ worker = Thread.new(fail_work)
 
 begin
   worker.join()
-rescue ArgumentError => error
+rescue error: ArgumentError
   puts(error.message())
 end
 ```

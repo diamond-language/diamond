@@ -25,7 +25,15 @@ binary = "a" + 0.chr() + "b"
 puts(Cipher.decrypt(key, Cipher.encrypt(key, binary)) == binary)
 
 # A tampered blob fails GCM's own tag check -- nil, not an exception.
-tampered = blob.slice(0, 20) + "X" + blob.slice(21, blob.length())
+# The replacement byte must be guaranteed to differ from the original
+# (a fixed "X" only tampers ~255/256 of the time -- the random tag byte
+# at this position occasionally already equals "X", making it a no-op
+# "tamper" that legitimately round-trips, an intermittent false test
+# failure with no bug behind it, confirmed directly: 500 runs of a
+# fixed-byte version reproduced it once).
+original_byte = blob.slice(20, 21).ord()
+tamper_byte = ((original_byte + 1) % 256).chr()
+tampered = blob.slice(0, 20) + tamper_byte + blob.slice(21, blob.length())
 puts(Cipher.decrypt(key, tampered))
 
 # The wrong key is an ordinary decrypt failure too.

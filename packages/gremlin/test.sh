@@ -244,4 +244,157 @@ status=$?
 grep -q '"message":"server.shutdown_forced_by_signal"' "$out"
 rm -f "$out"
 
-echo "12 gremlin tests passed"
+# context["gremlin_connection"] escape hatch: a handler that writes its
+# own response directly to the raw connection and returns nil must have
+# that response reach the client verbatim, with handle_connection's own
+# http_write_response never firing a second, conflicting response behind
+# it (the whole point of the nil convention -- see gremlin.di's own
+# "Escape hatch" doc comment). A deliberately non-HTTP-shaped body (no
+# Content-Length, a status line gremlin_serve itself would never
+# generate) is proof the response came from the handler's own write, not
+# from http_write_response reinterpreting it.
+port=19416
+out="$(mktemp)"
+raw_handler_src() {
+    local port="$1"
+    cat <<SRCEOF
+require "$(pwd)/lib/gremlin"
+def run()
+  def handler(request, context)
+    conn = context["gremlin_connection"]
+    conn.write("RAW 200 direct\r\n\r\nhandled-directly")
+    nil
+  end
+  gremlin_serve($port, handler)
+end
+run()
+SRCEOF
+}
+timeout 10 "$diamond" -e "$(raw_handler_src "$port")" >"$out" 2>&1 &
+pid=$!
+wait_for_port "$port"
+{ exec 3<&- 3>&-; } 2>/dev/null || true
+
+exec 3<>"/dev/tcp/127.0.0.1/$port"
+printf 'GET /ws HTTP/1.1\r\nHost: localhost\r\n\r\n' >&3
+response="$(timeout 3 cat <&3)"
+{ exec 3<&- 3>&-; } 2>/dev/null || true
+[[ "$response" == $'RAW 200 direct\r\n\r\nhandled-directly' ]]
+
+kill "$pid" 2>/dev/null || true
+wait "$pid" 2>/dev/null || true
+rm -f "$out"
+
+# Periodic tick: fires repeatedly on an otherwise completely idle
+# worker (no client ever connects) -- the property gremlin_poll_timeout_ms
+# exists for, since IO.poll's own -1 timeout would otherwise block
+# forever with nothing to wake it. Ordinary request handling on the
+# same worker still works fine while ticks are firing in the
+# background.
+port=19417
+out="$(mktemp)"
+tick_log="$(mktemp)"
+rm -f "$tick_log"
+cat >"$out.di" <<SRCEOF
+require "$(pwd)/lib/gremlin"
+def run()
+  def handler(request, context)
+    [200, {"Content-Type": "text/plain"}, "hello, #{request["path"]}"]
+  end
+  def on_tick(context)
+    f = File.open("$tick_log", "a")
+    f.write("tick\n")
+    f.close()
+  end
+  gremlin_serve($port, handler, threads: 1, tick_interval: 0.05, on_tick: on_tick)
+end
+run()
+SRCEOF
+timeout 10 "$diamond" "$out.di" >"$out" 2>&1 &
+pid=$!
+wait_for_port "$port"
+{ exec 3<&- 3>&-; } 2>/dev/null || true
+
+sleep 0.5
+tick_count="$(wc -l <"$tick_log")"
+[[ "$tick_count" -ge 3 ]]
+
+exec 3<>"/dev/tcp/127.0.0.1/$port"
+printf 'GET /still-alive HTTP/1.1\r\nHost: localhost\r\n\r\n' >&3
+response="$(timeout 3 cat <&3)"
+{ exec 3<&- 3>&-; } 2>/dev/null || true
+[[ "$response" == $'HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 19\r\n\r\nhello, /still-alive' ]]
+
+kill "$pid" 2>/dev/null || true
+wait "$pid" 2>/dev/null || true
+rm -f "$out" "$out.di" "$tick_log"
+
+# A raising on_tick logs and keeps the worker alive -- doesn't crash
+# the whole server, matching every other per-connection handler failure
+# already caught the same way (resume_if_ready/spawn_connection's own
+# rescue error: StandardError).
+port=19418
+out="$(mktemp)"
+cat >"$out.di" <<SRCEOF
+require "$(pwd)/lib/gremlin"
+def run()
+  def handler(request, context)
+    [200, {"Content-Type": "text/plain"}, "hello, #{request["path"]}"]
+  end
+  def on_tick(context)
+    raise RuntimeError.new("boom")
+  end
+  gremlin_serve($port, handler, threads: 1, tick_interval: 0.05, on_tick: on_tick)
+end
+run()
+SRCEOF
+timeout 10 "$diamond" "$out.di" >"$out" 2>&1 &
+pid=$!
+wait_for_port "$port"
+{ exec 3<&- 3>&-; } 2>/dev/null || true
+
+sleep 0.3
+exec 3<>"/dev/tcp/127.0.0.1/$port"
+printf 'GET /survives HTTP/1.1\r\nHost: localhost\r\n\r\n' >&3
+response="$(timeout 3 cat <&3)"
+{ exec 3<&- 3>&-; } 2>/dev/null || true
+[[ "$response" == $'HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 16\r\n\r\nhello, /survives' ]]
+grep -q '"message":"tick.handler_failed"' "$out"
+
+kill "$pid" 2>/dev/null || true
+wait "$pid" 2>/dev/null || true
+rm -f "$out" "$out.di"
+
+# Graceful shutdown still exits promptly with a tick configured -- the
+# combined gremlin_poll_timeout_ms bound (shutdown deadline vs. next
+# tick) must not let a far-future tick override the shutdown deadline,
+# and must not let the shutdown deadline suppress the tick from ever
+# running during a longer drain either.
+port=19419
+out="$(mktemp)"
+cat >"$out.di" <<SRCEOF
+require "$(pwd)/lib/gremlin"
+def run()
+  def handler(request, context)
+    [200, {"Content-Type": "text/plain"}, "hello, #{request["path"]}"]
+  end
+  def on_tick(context)
+    nil
+  end
+  gremlin_serve($port, handler, threads: 1, tick_interval: 5.0, on_tick: on_tick)
+end
+run()
+SRCEOF
+timeout 10 "$diamond" "$out.di" >"$out" 2>&1 &
+pid=$!
+wait_for_port "$port"
+{ exec 3<&- 3>&-; } 2>/dev/null || true
+
+kill -TERM "$pid"
+wait "$pid"
+status=$?
+[[ "$status" == "0" ]]
+grep -q '"message":"server.shutdown_complete"' "$out"
+rm -f "$out" "$out.di"
+
+echo "16 gremlin tests passed"

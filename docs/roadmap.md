@@ -15,12 +15,24 @@ The embedded Diamond prelude is compiled with every program. Source selection
 already avoids loading JSON support when it is unused, but the remaining core
 still adds measurable startup cost.
 
+Measured (release build, `DIAMOND_TRACE_STARTUP=1`, warm page cache): a
+trivial `-e '1'` spends ~23ms of its ~24ms total wall time compiling the
+23.7KB non-JSON prelude -- over 95% of process time before the program's own
+code runs at all. Adding JSON (36KB combined) or a require-heavy program
+(`tests/cases/arel_traversal.di`, 202KB combined with its requires) keeps the
+same shape: compile is consistently 90-96% of total wall time and scales
+roughly linearly with combined source size, while `load` (require resolution)
+and `run` (actual execution) stay in the single-digit milliseconds or less.
+Process overhead outside compilation (`diamond -v`) is unmeasurably small.
+This is a fixed tax paid identically on every invocation regardless of
+program size -- most costly for the CLI/test-suite/short-script pattern
+(the 1000+ program end-to-end corpus, for one, pays it 1000+ times over) and
+irrelevant to a long-running server's steady state.
+
 Next investigation:
 
-- measure startup and compile-time cost on representative CLI, test, and server
-  workloads;
 - prototype either a reusable compiled-prelude snapshot or a compiler append
-  mode;
+  mode, now backed by the measurement above rather than a hypothesis;
 - keep the new machinery only if it produces a meaningful measured gain without
   making source maps, diagnostics, or embedding substantially more fragile.
 
@@ -31,10 +43,21 @@ including constructors, annotated values, `self`, unions, and selected inferred
 assignments. It still recompiles complete documents and loses precision across
 some dependency and dynamic-flow boundaries.
 
+`textDocument/references` (lsp/references.c) now covers one piece of
+"dependency-aware symbols across a workspace": a workspace-wide,
+conservative, name-based scan for every call/access/type-position/
+declaration occurrence of a top-level function/class/module/interface,
+reusing `workspace/symbol`'s own file-walking. It does not change how a
+single document's own receiver facts are computed -- that per-document
+compile is unaffected, and cross-file precision within one document's own
+`require` closure was already sound (everything required is inlined into
+one compiled unit; Diamond's `require` model has no way to reference a
+class that isn't).
+
 Next steps:
 
-- retain dependency-aware symbols across a workspace;
-- improve receiver facts across imported files;
+- improve receiver facts across imported files (unannotated call chains,
+  control-flow joins across function boundaries);
 - explore incremental compilation only after the compiler has a reusable unit
   boundary that makes incremental synchronization worthwhile;
 - keep editor results conservative when a receiver cannot be proven.
@@ -45,10 +68,23 @@ The native service layer is broad enough to build real applications. Work here
 should now favor consistency, portability, and failure behavior over adding
 unrelated primitives.
 
+A first arity/type/range/closed-resource audit (2026-09) across File,
+Listener, Socket, UDPSocket, TLSSocket, SQLite3/Statement, PostgreSQL,
+MySQL, and Process/Handle/Stream found the surface largely consistent
+already: closed-resource checks are structurally guaranteed (every
+native dispatch checks "is closed" before any method-specific branch),
+arity validation is shared correctly across sibling methods (e.g.
+`Process.run`/`.spawn` share one argv-validation helper), and the one
+real type-consistency question found (PostgreSQL/MySQL rejecting a Hash
+`params` argument that SQLite3 accepts) turned out to be a genuine,
+already-documented driver-level constraint, not an oversight. One real
+range-check inconsistency was found and fixed: `UDPSocket#receive`
+rejected `0` where the read-family methods didn't. Re-run this audit
+periodically as new native surface is added, rather than treating it as
+permanently closed.
+
 Priorities:
 
-- audit native APIs for consistent arity, type, range, and closed-resource
-  errors;
 - continue stress-GC, sanitizer, thread, socket, TLS, subprocess, and database
   coverage;
 - document platform-dependent behavior explicitly;
@@ -123,20 +159,6 @@ Areas worth considering:
 - explicit metaprogramming operations with inspectable behavior;
 - better ways to express common typed callback and data-shaping patterns.
 
-### Runtime classes and metaprogramming
-
-Classes are not general heap values, and Diamond has no `eval`-style runtime
-compiler. Existing method definition/replacement APIs operate on already
-compiled callables.
-
-Possible future work:
-
-- decide whether class objects should become ordinary values;
-- define inheritance/cache invalidation rules before expanding runtime method
-  synthesis;
-- consider `method_missing` only with bounded recursion, visibility, cache, and
-  diagnostic semantics.
-
 ### Stable public boundaries
 
 The language, bytecode format, embedding API, and package conventions are still
@@ -182,7 +204,22 @@ second real target, not scattered conditional compilation without validation.
 - free-form runtime source evaluation;
 - a hosted package registry without an operational owner;
 - a JIT without representative profiling evidence;
-- portability claims without continuous testing on the claimed platform.
+- portability claims without continuous testing on the claimed platform;
+- runtime class *synthesis* (decided, 2026-09): `DIAMOND_VALUE_CLASS`
+  stays exactly as narrow as it is today (only `self` inside a
+  class-owned singleton method and a bare class name as a `case`/`when`
+  pattern produce one -- both compile-time-resolved special forms, not
+  general expressions; `.class()` returns a diagnostic `String`, not a
+  Class value, and `is_a?` never touches one either). A class's identity
+  is a `uint8_t class_index` (`DIAMOND_MAX_CLASSES = 180`) sharing the
+  exact byte space the whole static type system uses for `known_type`/
+  type sets/generics -- a class and a compile-time type are the same
+  representation, deliberately. Synthesizing new classes at runtime would
+  force a second, untyped object-model tier outside that system entirely,
+  against "dynamic code and checked code share one object model"
+  (README.md); not worth it without a deeper type-tag redesign no
+  concrete use case currently justifies. See docs/design.md's
+  `DIAMOND_VALUE_CLASS` section for the implementation-level detail.
 
 ## Completion policy
 

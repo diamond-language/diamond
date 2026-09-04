@@ -1,7 +1,9 @@
 # NaN is unorderable (matches Ruby's Float::NAN <=> 1 => nil), and so is
-# any pair with no defined comparison (an Instance with no `<=>` method,
-# or a native type -- like String -- that `<=>` deliberately isn't
-# extended to). All return Nil, not a raised TypeError.
+# an Instance with no `<=>` method of its own -- both return Nil, not a
+# raised TypeError. String *is* ordered (byte-lexicographic -- see
+# string_comparison.di), so it's no longer a third example of this same
+# "incomparable" case; kept in this test as a positive contrast instead
+# (a real, defined answer, not nil).
 class Plain
   def initialize(x)
     @x = x

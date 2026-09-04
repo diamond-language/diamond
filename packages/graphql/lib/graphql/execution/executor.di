@@ -342,7 +342,16 @@ module GraphQL
             # whichever field resolved most recently, not its own.
             context["lookahead"] = GraphQL::Execution::Lookahead.new(
               self.merged_selection_set(fields), fragments, coerced_variables)
-            resolved_value = schema_field.resolve()(object_value, args, context)
+            resolver = schema_field.resolve()
+            resolved_value = if resolver == nil
+              if schema_field.arguments().length() != 0
+                raise GraphQL::ExecutionError.new(
+                  "Field '#{field_name}' declares arguments and needs an explicit resolver")
+              end
+              object_value.public_send(field_name)
+            else
+              resolver(object_value, args, context)
+            end
           rescue e: StandardError
             @errors.push({"message": e.message(), "path": path})
             if schema_field.type().kind() == "NON_NULL"

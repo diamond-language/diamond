@@ -1,0 +1,3 @@
+[Nil, Bool, Int, Float, String, Symbol, Array, Hash, Dog]
+[true, false, true, true, true, true, true]
+nil

@@ -1,15 +1,10 @@
 module GraphQL
 
-  # `resolve` is a required Callable[3] -- `(object, args, context)` --
-  # never optional/auto-wired by matching method name. Diamond has no
-  # `send`/dispatch-by-runtime-string, and a GraphQL field's name only
-  # exists as a runtime string parsed out of the query document, so
-  # there's no way to look up "the method named by this string" the way
-  # graphql-ruby's own default resolution (`obj.public_send(field.method_sym)`)
-  # does. Every field's resolver is supplied explicitly at registration
-  # time -- typically a bare `self.` singleton method reference
-  # (`SomeModule.resolve_thing`, a zero-capture Callable value) or an
-  # inline closure.
+  # `resolve`, when present, is a Callable[3] -- `(object, args, context)`.
+  # A nil resolver asks the executor to call the field's own name as a public,
+  # zero-argument method on the runtime object. Fields that need arguments,
+  # context, name translation, or Hash lookup still provide an explicit
+  # resolver.
   class Field
     attr_reader name
     attr_reader type
@@ -17,7 +12,7 @@ module GraphQL
     attr_reader arguments
     attr_reader description
 
-    def initialize(name, type, resolve, arguments = [], description = nil)
+    def initialize(name, type, resolve = nil, arguments = [], description = nil)
       @name = name
       @type = type
       @resolve = resolve
