@@ -188,13 +188,29 @@ raises a rescuable `RangeError` instead (from `to_i` rejecting the
 resulting `Infinity`/`NaN` quotient — `Float` division by zero itself
 never raises, only the truncation step does).
 
-`sqrt(x)`, `sin(x)`, `cos(x)`, `tan(x)`, and `pow(base, exponent)` are
-native functions (no bytecode primitive to build on, same reasoning as
-`chr`/`to_f`/`to_i`) accepting `Int | Float` for every argument and
-always returning `Float` — `pow(2, 10)` is `1024.0`, not `1024`, even
-though both arguments are `Int`. No extra validation: results follow
-IEEE-754 directly, so `sqrt(-1.0)` is `NaN` rather than an error, the
+`sqrt(x)`, `sin(x)`, `cos(x)`, `tan(x)`, `exp(x)`, `log(x)`, `tanh(x)`, and
+`pow(base, exponent)` are native functions (no bytecode primitive to build
+on, same reasoning as `chr`/`to_f`/`to_i`) accepting `Int | Float` for every
+argument and always returning `Float` — `pow(2, 10)` is `1024.0`, not
+`1024`, even though both arguments are `Int`. No extra validation: results
+follow IEEE-754 directly, so `sqrt(-1.0)` is `NaN` rather than an error, the
 same philosophy `Float` arithmetic already uses throughout.
+
+`Tensor` is a dense, row-major `Float` matrix — `Tensor.zeros(rows, cols)`,
+`Tensor.from_array(nested_array)` (an `Array` of same-length `Array`s of
+`Int`/`Float`), or `Tensor.random(rows, cols, seed)` (deterministic
+pseudorandom values in `[-1, 1)` from a plain LCG, filled directly in C —
+orders of magnitude faster than building the same values through
+`Tensor.from_array` and a Diamond-level loop, which matters once "rows x
+cols" reaches real model-weight sizes). Instance methods: `#rows()`,
+`#cols()`, `#get(row, col)`, `#set(row, col, value)` (`IndexError` out of
+bounds, matching `Array#[]`), `#matmul(other)` (threaded, k-blocked; shape
+mismatch raises `TypeError`), `#transpose()` (a fresh copy), and
+`#to_a()` (back to an ordinary nested `Array`). Deliberately a narrow
+prototype, not a general tensor library: no broadcasting, no non-2D
+shapes, no in-place ops, no autodiff — it exists to measure real `matmul`
+throughput (`bench/`-style native code, not boxed `DiamondValue` arrays)
+before committing to a fuller API surface.
 
 `Time.monotonic()` returns a `Float` number of seconds from
 `CLOCK_MONOTONIC` — a duration-only clock: the value itself means

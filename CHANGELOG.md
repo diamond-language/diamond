@@ -55,6 +55,18 @@ authoritative fine-grained record.
 
 ### Language
 
+- Added `Tensor`, a native dense row-major `Float` matrix (`Tensor.zeros`/
+  `.from_array`/`.random`, `#rows`/`#cols`/`#get`/`#set`/`#matmul`/
+  `#transpose`/`#to_a`) with a threaded, k-blocked `#matmul` -- extracted
+  from broader from-scratch-transformer experimentation as the
+  general-purpose numeric-computing piece of that work, independent of it.
+  Deliberately a narrow prototype (no broadcasting, non-2D shapes,
+  in-place ops, or autodiff), built to measure real `matmul` throughput
+  against boxed `DiamondValue` `Array`s before committing to a fuller
+  tensor API. See docs/collections.md.
+- Added `exp(x)`/`log(x)`/`tanh(x)` alongside the existing `sqrt`/`sin`/
+  `cos`/`tan`/`pow` native math functions.
+- Added `File.directory?(path) -> Bool`.
 - Added visibility-safe `public_send` runtime-name dispatch for native and
   user-defined receivers, with String/Symbol names, argument forwarding,
   inheritance, overrides, variadics, and `method_missing`; private and
