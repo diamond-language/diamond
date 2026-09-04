@@ -7640,6 +7640,7 @@ static uint8_t exception_class_for_status(DiamondVmStatus status) {
         case DIAMOND_VM_POSTGRES_ERROR: return DIAMOND_CLASS_POSTGRES_ERROR;
         case DIAMOND_VM_MYSQL_ERROR: return DIAMOND_CLASS_MYSQL_ERROR;
         case DIAMOND_VM_NO_METHOD_ERROR: return DIAMOND_CLASS_NO_METHOD_ERROR;
+        case DIAMOND_VM_JSON_ERROR: return DIAMOND_CLASS_JSON_ERROR;
         default: return UINT8_MAX;
     }
 }
@@ -7885,6 +7886,434 @@ static bool builder_append(StringBuilder *builder,const char *chars,size_t lengt
     }
     memcpy(builder->chars+builder->length,chars,length);
     builder->length+=length;builder->chars[builder->length]='\0';return true;
+}
+
+/* Native recursive-descent JSON parser (RFC 8259), replacing lib/core/
+ * json_codec.di's own pure-Diamond JSONCodec#parse for JSON.parse's hot
+ * path -- confirmed directly at ~330ms/MB (interpreted bytecode walking
+ * a String one character/method-call at a time) against a real
+ * training-corpus-scale dataset (examples/transformer/lib/corpus.di's
+ * own comment). Semantics match JSONCodec#parse exactly: same grammar
+ * (no leading '+', no rejection of leading zeros -- neither did the
+ * version this replaces), same surrogate-pair combining, same result
+ * shape (String/Int/Float/Bool/nil/Array/Hash), same JSONError-on-
+ * malformed-input contract -- verified against every tests/cases/
+ * json_parse_*.di case. Diamond String is a raw byte buffer, not UTF-8-
+ * validated (see docs/design.md), so this parses bytes throughout;
+ * \uXXXX escapes are the one place UTF-8 encoding happens, matching
+ * json_codec.di's own utf8_encode exactly.
+ *
+ * GC safety: only *containers* (Array/Hash) are ever gc_protect'd, once
+ * each, for the life of the whole top-level parse (unprotected together,
+ * once, by the String#parse_json call site below) -- a leaf String/Int/
+ * Float/Bool/nil value is never protected individually, since every
+ * call site that receives one immediately either returns it straight up
+ * the recursion (no allocation in between) or pushes/sets it into an
+ * already-protected container with no allocation in between (array_push/
+ * hash_set's own growth uses realloc, never a GC-tracked allocate_*
+ * call, so neither can trigger a collection mid-push/set). The one real
+ * exception is an object's own key: it must survive its *value*'s
+ * parse, which can allocate arbitrarily many times before returning --
+ * json_parse_object roots it as a placeholder entry in the
+ * already-protected Hash first (nil needs no protection of its own),
+ * the same pattern DIAMOND_OP_IO_POLL's own Hash result and
+ * method_missing_helper's own args[]-building already use, overwritten
+ * once the real value is ready. */
+typedef struct JsonParser {
+    DiamondVm *vm;
+    const char *source;
+    size_t length;
+    size_t pos;
+    /* Unlike ordinary Diamond-level recursion (run_chunk's own `depth`,
+     * bounded by DIAMOND_MAX_CALL_DEPTH), array/object nesting here
+     * recurses directly in C with no depth accounting at all otherwise
+     * -- a real, not hypothetical, gap for a corpus-loading parser
+     * specifically: deeply nested real-world JSON would crash the whole
+     * process via a genuine C stack overflow instead of raising a clean
+     * SystemStackError the way every other unbounded-recursion path in
+     * this VM already does. Reuses DIAMOND_MAX_CALL_DEPTH itself rather
+     * than a separate constant: this parser's own per-level C stack
+     * frames are smaller than run_chunk's own (no register file, no
+     * opcode dispatch), so the same bound that's already empirically
+     * proven safe there is safe here too. */
+    size_t depth;
+} JsonParser;
+
+static void json_skip_whitespace(JsonParser *parser) {
+    while(parser->pos<parser->length) {
+        const char c=parser->source[parser->pos];
+        if(c!=' '&&c!='\t'&&c!='\n'&&c!='\r')break;
+        parser->pos++;
+    }
+}
+
+static bool json_utf8_append(StringBuilder *builder,int64_t codepoint) {
+    char bytes[4];size_t count;
+    if(codepoint<0x80) {
+        bytes[0]=(char)codepoint;count=1;
+    } else if(codepoint<0x800) {
+        bytes[0]=(char)(0xC0|(codepoint>>6));
+        bytes[1]=(char)(0x80|(codepoint&0x3F));count=2;
+    } else if(codepoint<0x10000) {
+        bytes[0]=(char)(0xE0|(codepoint>>12));
+        bytes[1]=(char)(0x80|((codepoint>>6)&0x3F));
+        bytes[2]=(char)(0x80|(codepoint&0x3F));count=3;
+    } else {
+        bytes[0]=(char)(0xF0|(codepoint>>18));
+        bytes[1]=(char)(0x80|((codepoint>>12)&0x3F));
+        bytes[2]=(char)(0x80|((codepoint>>6)&0x3F));
+        bytes[3]=(char)(0x80|(codepoint&0x3F));count=4;
+    }
+    return builder_append(builder,bytes,count);
+}
+
+static DiamondVmStatus json_hex4(JsonParser *parser,int *out) {
+    if(parser->pos+4>parser->length) {
+        snprintf(parser->vm->error,sizeof parser->vm->error,"truncated unicode escape");
+        return DIAMOND_VM_JSON_ERROR;
+    }
+    int value=0;
+    for(size_t index=0;index<4;index++) {
+        const char ch=parser->source[parser->pos+index];
+        int digit;
+        if(ch>='0'&&ch<='9')digit=ch-'0';
+        else if(ch>='a'&&ch<='f')digit=ch-'a'+10;
+        else if(ch>='A'&&ch<='F')digit=ch-'A'+10;
+        else {
+            snprintf(parser->vm->error,sizeof parser->vm->error,
+                "invalid unicode escape hex digit");
+            return DIAMOND_VM_JSON_ERROR;
+        }
+        value=value*16+digit;
+    }
+    parser->pos+=4;
+    *out=value;
+    return DIAMOND_VM_OK;
+}
+
+/* Parser is positioned right after the "\u" of a unicode escape. Appends
+ * the decoded UTF-8 bytes to `builder` and advances past the whole
+ * escape -- a high surrogate (0xD800-0xDBFF) consumes a second \uXXXX
+ * low-surrogate escape too, combined per RFC 8259 into the single
+ * codepoint >= 0x10000 the pair represents. */
+static DiamondVmStatus json_unicode_escape(JsonParser *parser,StringBuilder *builder) {
+    int code=0;
+    DiamondVmStatus status=json_hex4(parser,&code);
+    if(status!=DIAMOND_VM_OK)return status;
+    if(code>=0xD800&&code<=0xDBFF) {
+        if(parser->pos+2>parser->length||parser->source[parser->pos]!='\\'||
+           parser->source[parser->pos+1]!='u') {
+            snprintf(parser->vm->error,sizeof parser->vm->error,
+                "unpaired high surrogate in unicode escape");
+            return DIAMOND_VM_JSON_ERROR;
+        }
+        parser->pos+=2;
+        int low=0;
+        status=json_hex4(parser,&low);
+        if(status!=DIAMOND_VM_OK)return status;
+        if(low<0xDC00||low>0xDFFF) {
+            snprintf(parser->vm->error,sizeof parser->vm->error,
+                "high surrogate not followed by a low surrogate in unicode escape");
+            return DIAMOND_VM_JSON_ERROR;
+        }
+        const int64_t codepoint=0x10000+(((int64_t)code-0xD800)*0x400)+(low-0xDC00);
+        return json_utf8_append(builder,codepoint)?DIAMOND_VM_OK:DIAMOND_VM_OUT_OF_MEMORY;
+    }
+    if(code>=0xDC00&&code<=0xDFFF) {
+        snprintf(parser->vm->error,sizeof parser->vm->error,
+            "unpaired low surrogate in unicode escape");
+        return DIAMOND_VM_JSON_ERROR;
+    }
+    return json_utf8_append(builder,code)?DIAMOND_VM_OK:DIAMOND_VM_OUT_OF_MEMORY;
+}
+
+static DiamondVmStatus json_parse_value(JsonParser *parser,DiamondValue *out);
+
+static DiamondVmStatus json_parse_string(JsonParser *parser,DiamondValue *out) {
+    parser->pos++;
+    StringBuilder builder={};
+    while(true) {
+        if(parser->pos>=parser->length) {
+            free(builder.chars);
+            snprintf(parser->vm->error,sizeof parser->vm->error,"unterminated string");
+            return DIAMOND_VM_JSON_ERROR;
+        }
+        const char ch=parser->source[parser->pos];
+        if(ch=='"') {
+            parser->pos++;
+            DiamondString *result=allocate_string(parser->vm,
+                builder.chars!=nullptr?builder.chars:"",builder.length);
+            free(builder.chars);
+            if(result==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+            *out=DIAMOND_OBJECT(result);
+            return DIAMOND_VM_OK;
+        }
+        if(ch=='\\') {
+            parser->pos++;
+            if(parser->pos>=parser->length) {
+                free(builder.chars);
+                snprintf(parser->vm->error,sizeof parser->vm->error,
+                    "unterminated escape sequence");
+                return DIAMOND_VM_JSON_ERROR;
+            }
+            const char escape=parser->source[parser->pos];
+            parser->pos++;
+            bool ok=true;
+            switch(escape) {
+                case '"':ok=builder_append(&builder,"\"",1);break;
+                case '\\':ok=builder_append(&builder,"\\",1);break;
+                case '/':ok=builder_append(&builder,"/",1);break;
+                case 'n':ok=builder_append(&builder,"\n",1);break;
+                case 'r':ok=builder_append(&builder,"\r",1);break;
+                case 't':ok=builder_append(&builder,"\t",1);break;
+                case 'b':{const char b=8;ok=builder_append(&builder,&b,1);break;}
+                case 'f':{const char f=12;ok=builder_append(&builder,&f,1);break;}
+                case 'u':{
+                    const DiamondVmStatus status=json_unicode_escape(parser,&builder);
+                    if(status!=DIAMOND_VM_OK){free(builder.chars);return status;}
+                    break;
+                }
+                default:
+                    free(builder.chars);
+                    snprintf(parser->vm->error,sizeof parser->vm->error,
+                        "invalid escape character");
+                    return DIAMOND_VM_JSON_ERROR;
+            }
+            if(!ok){free(builder.chars);return DIAMOND_VM_OUT_OF_MEMORY;}
+        } else {
+            if(!builder_append(&builder,&ch,1)) {
+                free(builder.chars);return DIAMOND_VM_OUT_OF_MEMORY;
+            }
+            parser->pos++;
+        }
+    }
+}
+
+static DiamondVmStatus json_parse_number(JsonParser *parser,DiamondValue *out) {
+    const size_t start=parser->pos;
+    bool negative=false;
+    if(parser->pos<parser->length&&parser->source[parser->pos]=='-') {
+        negative=true;parser->pos++;
+    }
+    const size_t digit_start=parser->pos;
+    while(parser->pos<parser->length&&
+          parser->source[parser->pos]>='0'&&parser->source[parser->pos]<='9')
+        parser->pos++;
+    if(parser->pos==digit_start) {
+        snprintf(parser->vm->error,sizeof parser->vm->error,
+            "invalid number at position %zu",start);
+        return DIAMOND_VM_JSON_ERROR;
+    }
+    bool is_float=false;
+    if(parser->pos<parser->length&&parser->source[parser->pos]=='.') {
+        is_float=true;parser->pos++;
+        const size_t fraction_start=parser->pos;
+        while(parser->pos<parser->length&&
+              parser->source[parser->pos]>='0'&&parser->source[parser->pos]<='9')
+            parser->pos++;
+        if(parser->pos==fraction_start) {
+            snprintf(parser->vm->error,sizeof parser->vm->error,
+                "invalid number at position %zu",start);
+            return DIAMOND_VM_JSON_ERROR;
+        }
+    }
+    if(parser->pos<parser->length&&
+       (parser->source[parser->pos]=='e'||parser->source[parser->pos]=='E')) {
+        is_float=true;parser->pos++;
+        if(parser->pos<parser->length&&
+           (parser->source[parser->pos]=='+'||parser->source[parser->pos]=='-'))
+            parser->pos++;
+        const size_t exponent_start=parser->pos;
+        while(parser->pos<parser->length&&
+              parser->source[parser->pos]>='0'&&parser->source[parser->pos]<='9')
+            parser->pos++;
+        if(parser->pos==exponent_start) {
+            snprintf(parser->vm->error,sizeof parser->vm->error,
+                "invalid number at position %zu",start);
+            return DIAMOND_VM_JSON_ERROR;
+        }
+    }
+    if(is_float) {
+        char *end=nullptr;
+        const double value=strtod(parser->source+start,&end);
+        *out=DIAMOND_FLOAT(value);
+        return DIAMOND_VM_OK;
+    }
+    int64_t value=0;bool overflowed=false;
+    for(size_t index=digit_start;index<parser->pos&&!overflowed;index++) {
+        int64_t widened=0;
+        if(ckd_mul(&widened,value,(int64_t)10)||
+           ckd_add(&value,widened,(int64_t)(parser->source[index]-'0')))
+            overflowed=true;
+    }
+    if(overflowed) {
+        const DiamondValue bignum_result=diamond_bignum_from_decimal_digits(
+            parser->vm,parser->source+digit_start,parser->pos-digit_start,negative);
+        if(bignum_result.kind==DIAMOND_VALUE_NIL)return DIAMOND_VM_OUT_OF_MEMORY;
+        *out=bignum_result;
+        return DIAMOND_VM_OK;
+    }
+    *out=DIAMOND_INT(negative?-value:value);
+    return DIAMOND_VM_OK;
+}
+
+static DiamondVmStatus json_parse_literal(JsonParser *parser,const char *literal,
+        size_t literal_length,DiamondValue value,DiamondValue *out) {
+    if(parser->pos+literal_length>parser->length||
+       memcmp(parser->source+parser->pos,literal,literal_length)!=0) {
+        snprintf(parser->vm->error,sizeof parser->vm->error,
+            "invalid literal at position %zu",parser->pos);
+        return DIAMOND_VM_JSON_ERROR;
+    }
+    parser->pos+=literal_length;
+    *out=value;
+    return DIAMOND_VM_OK;
+}
+
+static DiamondVmStatus json_parse_array_body(JsonParser *parser,DiamondValue *out) {
+    parser->pos++;
+    json_skip_whitespace(parser);
+    DiamondArray *array=allocate_array(parser->vm,nullptr,0);
+    if(array==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+    if(!gc_protect(parser->vm,DIAMOND_OBJECT(array)))return DIAMOND_VM_OUT_OF_MEMORY;
+    if(parser->pos<parser->length&&parser->source[parser->pos]==']') {
+        parser->pos++;
+        *out=DIAMOND_OBJECT(array);
+        return DIAMOND_VM_OK;
+    }
+    while(true) {
+        DiamondValue element=DIAMOND_NIL;
+        const DiamondVmStatus status=json_parse_value(parser,&element);
+        if(status!=DIAMOND_VM_OK)return status;
+        if(!array_push(parser->vm,array,element))return DIAMOND_VM_OUT_OF_MEMORY;
+        json_skip_whitespace(parser);
+        if(parser->pos>=parser->length) {
+            snprintf(parser->vm->error,sizeof parser->vm->error,"unterminated array");
+            return DIAMOND_VM_JSON_ERROR;
+        }
+        if(parser->source[parser->pos]==',') {
+            parser->pos++;
+            json_skip_whitespace(parser);
+        } else if(parser->source[parser->pos]==']') {
+            parser->pos++;
+            *out=DIAMOND_OBJECT(array);
+            return DIAMOND_VM_OK;
+        } else {
+            snprintf(parser->vm->error,sizeof parser->vm->error,
+                "expected ',' or ']' in array");
+            return DIAMOND_VM_JSON_ERROR;
+        }
+    }
+}
+
+/* Depth-guards json_parse_array_body/json_parse_object_body -- see
+ * JsonParser's own `depth` field comment for why this exists at all.
+ * `parser->depth` counts *current* nesting (incremented on entry,
+ * decremented on every exit), not total containers seen, so a wide
+ * flat array/object never trips this regardless of its element count --
+ * only genuine nesting depth does. */
+static DiamondVmStatus json_parse_array(JsonParser *parser,DiamondValue *out) {
+    if(parser->depth>=DIAMOND_MAX_CALL_DEPTH)return DIAMOND_VM_STACK_OVERFLOW;
+    parser->depth++;
+    const DiamondVmStatus status=json_parse_array_body(parser,out);
+    parser->depth--;
+    return status;
+}
+
+static DiamondVmStatus json_parse_object_body(JsonParser *parser,DiamondValue *out) {
+    parser->pos++;
+    json_skip_whitespace(parser);
+    DiamondHash *hash=allocate_hash(parser->vm);
+    if(hash==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+    if(!gc_protect(parser->vm,DIAMOND_OBJECT(hash)))return DIAMOND_VM_OUT_OF_MEMORY;
+    if(parser->pos<parser->length&&parser->source[parser->pos]=='}') {
+        parser->pos++;
+        *out=DIAMOND_OBJECT(hash);
+        return DIAMOND_VM_OK;
+    }
+    while(true) {
+        json_skip_whitespace(parser);
+        if(parser->pos>=parser->length||parser->source[parser->pos]!='"') {
+            snprintf(parser->vm->error,sizeof parser->vm->error,
+                "expected string key in object");
+            return DIAMOND_VM_JSON_ERROR;
+        }
+        DiamondValue key=DIAMOND_NIL;
+        DiamondVmStatus status=json_parse_string(parser,&key);
+        if(status!=DIAMOND_VM_OK)return status;
+        if(!hash_set(parser->vm,hash,key,DIAMOND_NIL))return DIAMOND_VM_OUT_OF_MEMORY;
+        json_skip_whitespace(parser);
+        if(parser->pos>=parser->length||parser->source[parser->pos]!=':') {
+            snprintf(parser->vm->error,sizeof parser->vm->error,
+                "expected ':' after object key");
+            return DIAMOND_VM_JSON_ERROR;
+        }
+        parser->pos++;
+        json_skip_whitespace(parser);
+        DiamondValue value=DIAMOND_NIL;
+        status=json_parse_value(parser,&value);
+        if(status!=DIAMOND_VM_OK)return status;
+        if(!hash_set(parser->vm,hash,key,value))return DIAMOND_VM_OUT_OF_MEMORY;
+        json_skip_whitespace(parser);
+        if(parser->pos>=parser->length) {
+            snprintf(parser->vm->error,sizeof parser->vm->error,"unterminated object");
+            return DIAMOND_VM_JSON_ERROR;
+        }
+        if(parser->source[parser->pos]==',') {
+            parser->pos++;
+        } else if(parser->source[parser->pos]=='}') {
+            parser->pos++;
+            *out=DIAMOND_OBJECT(hash);
+            return DIAMOND_VM_OK;
+        } else {
+            snprintf(parser->vm->error,sizeof parser->vm->error,
+                "expected ',' or '}' in object");
+            return DIAMOND_VM_JSON_ERROR;
+        }
+    }
+}
+
+static DiamondVmStatus json_parse_object(JsonParser *parser,DiamondValue *out) {
+    if(parser->depth>=DIAMOND_MAX_CALL_DEPTH)return DIAMOND_VM_STACK_OVERFLOW;
+    parser->depth++;
+    const DiamondVmStatus status=json_parse_object_body(parser,out);
+    parser->depth--;
+    return status;
+}
+
+static DiamondVmStatus json_parse_value(JsonParser *parser,DiamondValue *out) {
+    json_skip_whitespace(parser);
+    if(parser->pos>=parser->length) {
+        snprintf(parser->vm->error,sizeof parser->vm->error,"unexpected end of input");
+        return DIAMOND_VM_JSON_ERROR;
+    }
+    const char ch=parser->source[parser->pos];
+    if(ch=='{')return json_parse_object(parser,out);
+    if(ch=='[')return json_parse_array(parser,out);
+    if(ch=='"')return json_parse_string(parser,out);
+    if(ch=='t')return json_parse_literal(parser,"true",4,DIAMOND_BOOL(true),out);
+    if(ch=='f')return json_parse_literal(parser,"false",5,DIAMOND_BOOL(false),out);
+    if(ch=='n')return json_parse_literal(parser,"null",4,DIAMOND_NIL,out);
+    if(ch=='-'||(ch>='0'&&ch<='9'))return json_parse_number(parser,out);
+    snprintf(parser->vm->error,sizeof parser->vm->error,
+        "unexpected character at position %zu",parser->pos);
+    return DIAMOND_VM_JSON_ERROR;
+}
+
+/* Top-level entry: one value, then trailing-content rejection, matching
+ * JSONCodec#parse's own "parsed = parse_value(...); pos =
+ * skip_whitespace(...); pos != length -> error" shape exactly. */
+static DiamondVmStatus json_parse_document(DiamondVm *vm,const char *source,
+        size_t length,DiamondValue *out) {
+    JsonParser parser={.vm=vm,.source=source,.length=length,.pos=0};
+    const DiamondVmStatus status=json_parse_value(&parser,out);
+    if(status!=DIAMOND_VM_OK)return status;
+    json_skip_whitespace(&parser);
+    if(parser.pos!=parser.length) {
+        snprintf(vm->error,sizeof vm->error,"trailing content after JSON value");
+        return DIAMOND_VM_JSON_ERROR;
+    }
+    return DIAMOND_VM_OK;
 }
 
 /* Breaks a Time's epoch into calendar fields. UTC and fixed offsets use
@@ -15109,8 +15538,20 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                             memcmp(method_name->chars,"tr",2)==0;
                         const bool format_method=method_name->length==6&&
                             memcmp(method_name->chars,"format",6)==0;
+                        const bool parse_json_method=method_name->length==10&&
+                            memcmp(method_name->chars,"parse_json",10)==0;
                         const DiamondString *source=
                             (const DiamondString *)registers[recv].as.object;
+                        if(parse_json_method) {
+                            if(argc!=0)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                            const size_t protect_mark=vm->gc_protected_count;
+                            DiamondValue parsed=DIAMOND_NIL;
+                            const DiamondVmStatus parse_status=json_parse_document(
+                                vm,source->chars,source->length,&parsed);
+                            gc_unprotect(vm,protect_mark);
+                            VM_PROPAGATE(parse_status);
+                            registers[dest]=parsed;break;
+                        }
                         if(gsub_method||sub_method) {
                             if(argc!=2)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
                             if(registers[base].kind!=DIAMOND_VALUE_OBJECT||
@@ -19271,6 +19712,8 @@ const char *diamond_vm_status_name(DiamondVmStatus status) {
             return "mysql error";
         case DIAMOND_VM_NO_METHOD_ERROR:
             return "undefined method";
+        case DIAMOND_VM_JSON_ERROR:
+            return "json error";
     }
     return "unknown VM status";
 }

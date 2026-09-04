@@ -14825,6 +14825,7 @@ void diamond_program_init(DiamondProgram *program) {
         [DIAMOND_CLASS_POSTGRES_ERROR]={"PostgreSQLError",DIAMOND_CLASS_STANDARD_ERROR},
         [DIAMOND_CLASS_MYSQL_ERROR]={"MySQLError",DIAMOND_CLASS_STANDARD_ERROR},
         [DIAMOND_CLASS_NO_METHOD_ERROR]={"NoMethodError",DIAMOND_CLASS_STANDARD_ERROR},
+        [DIAMOND_CLASS_JSON_ERROR]={"JSONError",DIAMOND_CLASS_STANDARD_ERROR},
     };
     program->range_class_index=UINT8_MAX;
     program->class_count=DIAMOND_BUILTIN_CLASS_COUNT;

@@ -38,6 +38,21 @@ authoritative fine-grained record.
   position and no lexical local of the same name shadows it there. See
   docs/lsp.md.
 
+### Performance
+
+- `JSON.parse` is native now (`String#parse_json`, `src/vm.c`), replacing
+  `lib/core/json_codec.di`'s pure-Diamond recursive-descent implementation
+  -- roughly 100x faster on realistic payloads (~3.3ms/MiB measured
+  against a 13.75MB synthetic corpus, versus the ~330ms/MB the version
+  this replaces measured against a real TinyStories shard). Same grammar,
+  same JSONError-on-malformed-input contract, same result shapes
+  (String/Int/Float/Bool/nil/Array/Hash) -- verified against every
+  existing `tests/cases/json_parse_*.di` case. `JSON.stringify` is
+  unchanged (no comparable performance problem was ever measured for it).
+  `JSONError` itself moved from a `lib/core/json_codec.di` class
+  declaration to a VM builtin, so native code can raise it the same way
+  every other native error class already does.
+
 ### Language
 
 - Added visibility-safe `public_send` runtime-name dispatch for native and

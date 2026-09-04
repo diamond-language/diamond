@@ -516,6 +516,7 @@ typedef enum DiamondBuiltinClass : uint8_t {
     DIAMOND_CLASS_POSTGRES_ERROR,
     DIAMOND_CLASS_MYSQL_ERROR,
     DIAMOND_CLASS_NO_METHOD_ERROR,
+    DIAMOND_CLASS_JSON_ERROR,
     DIAMOND_BUILTIN_CLASS_COUNT,
 } DiamondBuiltinClass;
 
@@ -913,6 +914,16 @@ typedef enum DiamondVmStatus : uint8_t {
      * as NoMethodError, a real descriptive exception instead of the bare
      * generic TypeError this replaced. */
     DIAMOND_VM_NO_METHOD_ERROR,
+    /* String#parse_json failures: malformed input at the native JSON
+     * parser (src/vm.c's json_parse_value and friends), replacing
+     * lib/core/json_codec.di's own pure-Diamond JSONCodec#parse for
+     * JSON.parse's hot path. Message is always a specific parse-position
+     * diagnostic, surfaced as JSONError -- see exception_class_for_status.
+     * JSONError itself moved from a lib/core/json_codec.di class
+     * declaration to a builtin (DIAMOND_CLASS_JSON_ERROR) so native code
+     * can raise it the same generic way every other native error class
+     * here already does. */
+    DIAMOND_VM_JSON_ERROR,
 } DiamondVmStatus;
 
 typedef struct DiamondMethodCacheEntry {

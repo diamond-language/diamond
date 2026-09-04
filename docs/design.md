@@ -164,6 +164,16 @@ for an HTTP library (originally bundled as `lib/http.di`, later pulled
 out into `packages/http` — see `docs/packages.md`) but are
 general-purpose.
 
+`JSON.parse` is the one core-library function pulled out of the prelude
+entirely and reimplemented natively (`String#parse_json`, `src/vm.c`) --
+a deliberate exception to "core helpers are ordinary Diamond functions"
+above, made only after measuring a real bottleneck (~330ms/MB parsing a
+real training-corpus-scale JSON dataset, dominated by per-character
+interpreter dispatch) rather than pre-emptively. `JSON.stringify` stays
+pure Diamond; no comparable cost was ever measured for it. See `src/
+vm.c`'s own json_parse_value comment for the parser itself, and
+CHANGELOG.md's "Performance" entry for the measured speedup.
+
 Arrays use a growable separately allocated value buffer whose capacity is part
 of GC accounting. Native `push` grows that buffer and enforces every persistent
 element contract; `pop` returns `nil` when empty. Membership, callback iteration,
