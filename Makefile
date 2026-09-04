@@ -23,7 +23,16 @@ CPPFLAGS := -Isrc -Ilsp -I$(REGINOLD_DIR) -I/usr/include/mysql -I/usr/include/my
 CFLAGS_COMMON := -std=c23 -Wall -Wextra -Wpedantic -Wconversion -Wshadow \
 	-Wstrict-prototypes -Werror=implicit-function-declaration
 CFLAGS_DEBUG := -O0 -g3 -DDIAMOND_DEBUG
-CFLAGS_RELEASE := -O3 -DNDEBUG -march=native
+# -march=x86-64, not -native: at least one real deploy target for this
+# runtime is a single-core low-clock cloud droplet, where compiling at
+# all is the expensive part -- -native would tie the resulting binary
+# to that exact CPU's feature set, which is also what stops building
+# release elsewhere (a faster local machine, CI) and just copying the
+# binary over instead. The generic x86-64 baseline runs on any x86_64
+# machine; it costs some missed vectorization on newer CPUs, but this
+# is a bytecode VM (src/vm.c's run_chunk), not numerically-hot code
+# that leans on AVX/FMA, so that cost is small.
+CFLAGS_RELEASE := -O3 -DNDEBUG -march=x86-64
 # -O1, not CFLAGS_DEBUG's -O0: run_chunk (src/vm.c) is one ~6,600-line
 # function whose giant opcode switch declares its own locals (registers,
 # per-opcode buffers, DiamondTypeBinding[8] arrays for generic-call
