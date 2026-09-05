@@ -11,15 +11,37 @@ env:
   ASAN_OPTIONS: detect_leaks=0
 
 jobs:
+  # Full matrix across both distros this project is known to be deployed on
+  # (Fedora dev machine, Ubuntu 26.04 production) and both supported
+  # compilers (GCC, and Clang -- previously exercised only incidentally via
+  # the fuzz targets, never actually built/tested as a real CC=clang build
+  # until a firsthand Ubuntu 26.04 + Clang pass surfaced three real bugs:
+  # see CHANGELOG.md). fail-fast: false so one combination's failure
+  # doesn't hide results from the other three.
   test-all:
     runs-on: ubuntu-latest
     timeout-minutes: 60
-    container: fedora:latest
+    strategy:
+      fail-fast: false
+      matrix:
+        cc: [gcc, clang]
+        os:
+          - name: fedora
+            container: fedora:latest
+          - name: ubuntu
+            container: ubuntu:26.04
+    container: ${{ matrix.os.container }}
     steps:
-      - name: Install dependencies
-        run: dnf install -y gcc clang make git diffutils findutils compiler-rt libasan libubsan libtsan openssl-devel sqlite-devel libpq-devel mariadb-connector-c-devel libxcrypt-devel bc nmap-ncat openssl
+      - name: Install dependencies (Fedora)
+        if: matrix.os.name == 'fedora'
+        run: dnf install -y gcc clang make git diffutils findutils ripgrep compiler-rt libasan libubsan libtsan openssl-devel sqlite-devel libpq-devel mariadb-connector-c-devel libxcrypt-devel bc nmap-ncat openssl
+      - name: Install dependencies (Ubuntu)
+        if: matrix.os.name == 'ubuntu'
+        run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y gcc clang make git diffutils findutils ripgrep libssl-dev libsqlite3-dev libpq-dev zlib1g-dev libmariadb-dev libcrypt-dev bc netcat-openbsd openssl
       - uses: actions/checkout@v7
         with:
           fetch-depth: 1
       - name: make test-all
-        run: make test-all
+        run: make CC=${{ matrix.cc }} test-all

@@ -192,9 +192,18 @@ deferred until real package distribution needs justify their operational cost.
 
 ### Portability
 
-Diamond currently targets Linux with GCC and POSIX facilities. Portability work
-should begin with a documented platform abstraction inventory and CI on a
-second real target, not scattered conditional compilation without validation.
+CI now runs the full test suite across a real 2x2 matrix -- Fedora and Ubuntu
+26.04, each with GCC and Clang (`.github/workflows/ci.yml`) -- after a
+firsthand pass on real Ubuntu 26.04 + Clang surfaced and fixed three genuine
+bugs (Clang's `-O0` giving `run_chunk` a stack frame large enough to defeat
+`DIAMOND_MAX_CALL_DEPTH`'s guard, a Fedora-only MariaDB header path, and
+`libreginold.a` missing `-fPIC`) plus a test-harness assumption baked into
+`timeout`'s exit-status semantics that doesn't hold under Ubuntu's default
+`uutils-coreutils` (see CHANGELOG.md). Remaining portability work: a
+documented platform abstraction inventory (which OS/libc/kernel assumptions
+exist and where), and validation on a third, more different target (e.g. a
+non-glibc libc, or a non-x86_64 architecture) before claiming broader
+portability than "two mainstream glibc/Linux distros on x86_64."
 
 ## Explicitly deferred
 

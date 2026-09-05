@@ -85,17 +85,31 @@ See [CHANGELOG.md](CHANGELOG.md) for completed capability milestones and
 
 Required system dependencies:
 
-- GCC 16 with C23 support;
+- GCC 16 (or Clang, see below) with C23 support;
 - OpenSSL development headers and libraries;
-- SQLite3 development headers and libraries;
-- zlib development headers and libraries;
+- SQLite3, PostgreSQL (`libpq`), and MariaDB/MySQL client development
+  headers and libraries;
+- zlib and libcrypt (`crypt(3)`) development headers and libraries;
 - POSIX threads and `ucontext`, provided by the target Linux environment.
 
-On Fedora, the non-default development packages are:
+On Fedora:
 
 ```sh
-sudo dnf install openssl-devel sqlite-devel zlib-devel
+sudo dnf install gcc openssl-devel sqlite-devel libpq-devel \
+  mariadb-connector-c-devel libxcrypt-devel zlib-devel
 ```
+
+On Debian/Ubuntu (confirmed against a real Ubuntu 26.04 install):
+
+```sh
+sudo apt install gcc libssl-dev libsqlite3-dev libpq-dev libmariadb-dev \
+  libcrypt-dev zlib1g-dev
+```
+
+Clang works as a drop-in `$(CC)` substitute on both (`make CC=clang debug`,
+tested end-to-end on Fedora and Ubuntu 26.04 alongside GCC) and is required
+separately for the fuzz targets (`make fuzz`), which always build with Clang
+regardless of `$(CC)` (`-fsanitize=fuzzer` is Clang/LLVM-only).
 
 Build and run:
 
