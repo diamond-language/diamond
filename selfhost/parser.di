@@ -96,9 +96,23 @@ module Opcode
   PRINT = 70
   GETS = 71
   FILE_OPEN = 72
-  TCP_CONNECT = 73
-  TCP_LISTEN = 74
-  # 75-81 are UDP_BIND, UDP_OPEN, SIGNAL_TRAP, TLS_CONNECT, and TLS_LISTEN
+  # DIAMOND_OP_FILE_DELETE (File.delete's own native addition, landed
+  # 2026-08-31) was inserted directly after FILE_OPEN in the real enum --
+  # not a construct this self-hosted parser emits, so it gets no entry
+  # of its own here, but it silently shifted every single opcode number
+  # below by 1, TCP_CONNECT through COMPARE, on the very same day the
+  # MODULO/COMPARE fix above landed (and after it, so that fix's own
+  # verification never saw this). Exactly the class of bug both that fix
+  # and the "Widened function indices" self-hosting slice already warn
+  # about (docs/roadmap.md) -- caught here by bisecting a real CI
+  # regression (a firsthand Ubuntu 26.04 + Clang portability pass
+  # restored CI far enough to actually run test-self-host-smoke for the
+  # first time in 13+ days) down to this commit, then re-verifying every
+  # single value below with the same throwaway C probe technique against
+  # src/vm.h rather than adjusting the stale ones by hand.
+  TCP_CONNECT = 74
+  TCP_LISTEN = 75
+  # 76-82 are UDP_BIND, UDP_OPEN, SIGNAL_TRAP, TLS_CONNECT, and TLS_LISTEN
   # in src/vm.h's DiamondOpCode enum -- none of them are constructs this
   # self-hosted parser emits (UDPSocket/Signal/TLSSocket/TLSServer aren't
   # part of its supported grammar), so they have no entry of their own
@@ -108,31 +122,31 @@ module Opcode
   # slice already flagged (docs/roadmap.md) -- any native opcode insertion
   # ahead of an entry here silently desyncs it, and nothing catches that
   # except actually running a program through the self-hosted path.
-  REGEXP_NEW = 82
-  CHR = 83
-  TO_FLOAT = 84
-  TO_INT = 85
-  TO_SYMBOL = 86
-  MATH_UNARY = 87
-  MATH_BINARY = 88
-  PROGRAM_BUILDER_NEW = 89
-  # 90 (THREAD_NEW), 93-97 (SQLITE3_OPEN, CHECK_DESTRUCTURE_COUNT,
+  REGEXP_NEW = 83
+  CHR = 84
+  TO_FLOAT = 85
+  TO_INT = 86
+  TO_SYMBOL = 87
+  MATH_UNARY = 88
+  MATH_BINARY = 89
+  PROGRAM_BUILDER_NEW = 90
+  # 91 (THREAD_NEW), 94-98 (SQLITE3_OPEN, CHECK_DESTRUCTURE_COUNT,
   # TIME_MONOTONIC, TIME_NOW, TIME_AT) in src/vm.h's DiamondOpCode enum
   # have no entry of their own here -- none of them are constructs this
   # self-hosted parser emits (Thread, SQLite3, ProgramBuilder-internal
   # opcodes, and Time literals aren't part of its supported grammar).
-  # 91-92 (GET_CVAR/SET_CVAR) *are* named below: class variables.
+  # 92-93 (GET_CVAR/SET_CVAR) *are* named below: class variables.
   # SHIFT_LEFT below still has to account for the full original 8-opcode
-  # gap (90-97) to match the real enum value -- same class of bug the
+  # gap (91-98) to match the real enum value -- same class of bug the
   # comment above (REGEXP_NEW's own gap) already flags. Confirmed
   # against the real value with a throwaway C probe (printf("%d",
   # (int)DIAMOND_OP_SHIFT_LEFT)) rather than counted by hand a second
   # time, after counting by hand got it wrong once already (missed
   # SQLITE3_OPEN, landed on 97 instead of 98).
-  GET_CVAR = 91
-  SET_CVAR = 92
-  SHIFT_LEFT = 98
-  # 99-103 are PROCESS_RUN, PROCESS_SPAWN, DEBUGGER, ARGV, and ENV in
+  GET_CVAR = 92
+  SET_CVAR = 93
+  SHIFT_LEFT = 99
+  # 100-104 are PROCESS_RUN, PROCESS_SPAWN, DEBUGGER, ARGV, and ENV in
   # src/vm.h's DiamondOpCode enum -- same story again: none are
   # constructs this self-hosted parser emits (Process.run/.spawn,
   # debugger()/breakpoint(), and the ARGV/ENV globals aren't part of
@@ -147,14 +161,14 @@ module Opcode
   # to have no dedicated positive-corpus case exercising their exact
   # opcode byte). Confirmed with the same throwaway C probe technique
   # as SHIFT_LEFT, not counted by hand.
-  MODULO = 104
+  MODULO = 105
   # Appended immediately after MODULO. Later native-only tail opcodes,
   # including CASE_MATCH/CASE_ARRAY_SHAPE/ARRAY_REST and the case Hash
   # predicates, rest/suffix extraction, and object-pattern support, do not
   # shift this
   # value. Still confirmed with the same throwaway C probe technique as
   # SHIFT_LEFT/MODULO above rather than trusting the arithmetic alone.
-  COMPARE = 105
+  COMPARE = 106
 end
 
 module Precedence
@@ -719,6 +733,28 @@ class Parser
     return ["FiberError", 9, 1, []] if name == "FiberError"
     return ["IOError", 10, 1, []] if name == "IOError"
     return ["RegexpError", 11, 1, []] if name == "RegexpError"
+    # 12-18 (WouldBlockError..JSONError) are the same kind of silent
+    # mirror desync the Opcode module's own comments already warn
+    # about (see MODULO/COMPARE's fix) -- this list stopped at
+    # RegexpError while src/vm.h's DiamondBuiltinClass enum grew seven
+    # more entries. JSONError specifically became a builtin (previously
+    # a lib/core/json_codec.di class declaration this parser could
+    # already see) when JSON.parse went native, which is what actually
+    # surfaced this: lib/core/json_codec.di's own `raise JSONError.new(...)`
+    # started failing to self-parse with "undefined local variable" --
+    # find_class (line ~692) falls through to find_builtin_class for any
+    # bare capitalized name it can't resolve as a user-declared class,
+    # and this returning nil for JSONError sent that fallthrough to
+    # local-variable lookup instead, which is what actually raised the
+    # error. Verified against src/vm.h's DiamondBuiltinClass enum
+    # directly (plain sequential enum, no gaps), not counted by hand.
+    return ["WouldBlockError", 12, 1, []] if name == "WouldBlockError"
+    return ["ThreadError", 13, 1, []] if name == "ThreadError"
+    return ["SQLite3Error", 14, 1, []] if name == "SQLite3Error"
+    return ["PostgreSQLError", 15, 1, []] if name == "PostgreSQLError"
+    return ["MySQLError", 16, 1, []] if name == "MySQLError"
+    return ["NoMethodError", 17, 1, []] if name == "NoMethodError"
+    return ["JSONError", 18, 1, []] if name == "JSONError"
     nil
   end
 
