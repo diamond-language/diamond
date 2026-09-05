@@ -10,15 +10,22 @@ module Dials
       @routes = []
     end
 
-    def get(pattern: String, handler: Callable[3], filters: Array = [])
-      @routes << {"verb": "GET", "segments": pattern.split("/"), "handler": handler, "filters": filters}
+    def get(pattern: String, handler: Callable[3], filters: Array = [], name = nil)
+      @routes << {"verb": "GET", "segments": pattern.split("/"), "handler": handler, "filters": filters, "name": name}
       self
     end
 
-    def post(pattern: String, handler: Callable[3], filters: Array = [])
-      @routes << {"verb": "POST", "segments": pattern.split("/"), "handler": handler, "filters": filters}
+    def post(pattern: String, handler: Callable[3], filters: Array = [], name = nil)
+      @routes << {"verb": "POST", "segments": pattern.split("/"), "handler": handler, "filters": filters, "name": name}
       self
     end
+
+    # Every registered route, in registration order -- lets an external
+    # tool (Dials::PathHelpers' own generator script, in whichever app
+    # embeds this package) introspect the fully-built route table
+    # without this class needing to know anything about path-helper
+    # generation itself.
+    def routes() = @routes
 
     # nil if `path_segments` doesn't match this route's own pattern
     # segments (wrong length, or a literal segment differs); otherwise the

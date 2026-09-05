@@ -151,6 +151,63 @@ target class as a compile-time constant, capturing nothing), the same
 constraint every other Thread.new-safe handler in this codebase already
 works within.
 
+## Named routes and path helpers
+
+An optional fourth positional argument to `.get`/`.post` names the route:
+
+```ruby
+router.get("/authors/:id", AuthorsController.show, [], name: "author")
+router.post("/authors/:id", AuthorsController.update, [require_user], name: "author")
+```
+
+Two routes can share one name -- the GET show and POST update above both
+resolve to one `author_path` helper, the same way Rails' own `resources`
+gives you one `author_path` covering show/update/destroy on the same path.
+
+Diamond has no way to synthesize a real top-level function
+(`author_path(id)`) at runtime: `ClassName.compile_method`/`.define_method`
+only attach **instance** methods (`docs/design.md`'s own scoping note), and
+there's no `self.method_missing`. So path helpers are generated *offline*
+into a real, checked-in `.di` file -- `Dials::PathHelpers.generate_source
+(router.routes())` turns every named route into a function definition:
+
+```ruby
+require "path/to/dials/lib/dials"
+
+router = build_router() # your own app's function, as above
+File.open("lib/routes/path_helpers.di", "w").write(
+  Dials::PathHelpers.generate_source(router.routes())
+).close()
+```
+
+For `router.get("/authors/:id", ..., name: "author")` this generates:
+
+```ruby
+def author_path(id, query: Hash = {}) = "/authors/#{id}" + Dials::PathHelpers.query_suffix(query)
+```
+
+Every generated helper takes an optional trailing `query:` Hash for a
+percent-encoded `?key=value&...` suffix: `author_path(5, query: {"tab":
+"books"})` -> `"/authors/5?tab=books"`.
+
+**Commit the generated file** -- it isn't a gitignored build artifact like
+a `packages/div` template's compiled `.cache/*.di` output. Generating it
+needs your app's `build_router()` actually running, which needs your whole
+controller/model graph loaded, i.e. the generator itself needs `require
+"./boot"` (or equivalent) to succeed -- if your own boot chain in turn
+unconditionally required this generated file, a fresh clone could never
+bootstrap far enough to run the generator that creates it in the first
+place. Regenerate and re-commit whenever your route table changes, the
+same "generate, review the diff, commit" workflow as any other checked-in
+generated code. See `skindicate.dia`'s own `generate_route_helpers.di` +
+`compile_routes.sh` for a complete driver-script example.
+
+`Dials::PathHelpers.query_suffix`/the generated helpers' own `query:` kwarg
+both go through `url_encode` (`lib/dials/url_encoding.di`), a small
+percent-encoder this package also exposes as a bare top-level function
+(not `Dials`-scoped, so it reads the same whether you're inside this
+package or calling it from your own view templates).
+
 ## `Dials::Response`
 
 ```ruby

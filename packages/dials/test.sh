@@ -174,4 +174,87 @@ assert_contains "$actual" '[200, {Content-Type: text/plain}, public]'
 assert_contains "$actual" '[403, {Content-Type: text/plain}, denied]'
 count=$((count + 1))
 
+# --- a named route is readable back via Router#routes() ---
+actual="$(run_case '
+def show(request, context, params) = Dials::Response.text(200, "shown")
+router = Dials::Router.new()
+router.get("/authors/:id", show, [], name: "author")
+puts(router.routes()[0]["name"])
+')"
+assert_contains "$actual" "author"
+count=$((count + 1))
+
+# --- an unnamed route still works exactly as before (name defaults to nil, no crash) ---
+actual="$(run_case '
+def show(request, context, params) = Dials::Response.text(200, "id=#{params["id"]}")
+router = Dials::Router.new()
+router.get("/authors/:id", show)
+puts(router.dispatch({"path": "/authors/9", "method": "GET", "body": ""}, {}))
+puts(router.routes()[0]["name"])
+')"
+assert_contains "$actual" "id=9"
+assert_contains "$actual" "nil"
+count=$((count + 1))
+
+# --- PathHelpers.generate_source: params, root path, query kwarg, and
+# same-name/different-verb dedup all in one fixture route table ---
+actual="$(run_case '
+def noop(request, context, params) = nil
+router = Dials::Router.new()
+router.get("/", noop, [], name: "home")
+router.get("/authors/:id", noop, [], name: "author")
+router.post("/authors/:id", noop, [], name: "author")
+router.get("/authors/:id/books/:book_id", noop, [], name: "author_book")
+router.get("/unnamed", noop)
+source = Dials::PathHelpers.generate_source(router.routes())
+puts(source)
+')"
+assert_contains "$actual" 'def home_path(query: Hash = {}) = "/" + Dials::PathHelpers.query_suffix(query)'
+assert_contains "$actual" 'def author_path(id, query: Hash = {}) = "/authors/#{id}" + Dials::PathHelpers.query_suffix(query)'
+assert_contains "$actual" 'def author_book_path(id, book_id, query: Hash = {}) = "/authors/#{id}/books/#{book_id}" + Dials::PathHelpers.query_suffix(query)'
+count=$((count + 1))
+
+# --- generated helpers actually work once loaded: root, a param, and
+# a query: suffix. "author" is registered twice (GET show + POST
+# update) but shares one name, so it dedupes to a single def -- 2
+# unique names (home, author) -> 2 defs total, not 3. Written to a real
+# file and required, matching how a real app consumes this -- not a
+# dynamic-eval shortcut. ---
+generated="$work/generated_paths.di"
+actual="$(run_case "
+def noop(request, context, params) = nil
+router = Dials::Router.new()
+router.get(\"/\", noop, [], name: \"home\")
+router.get(\"/authors/:id\", noop, [], name: \"author\")
+router.post(\"/authors/:id\", noop, [], name: \"author\")
+source = Dials::PathHelpers.generate_source(router.routes())
+def_count = source.split(\"def \").length() - 1
+output = File.open(\"$generated\", \"w\")
+output.write(source)
+output.close()
+puts(\"def_count=#{def_count}\")
+")"
+assert_contains "$actual" "def_count=2"
+count=$((count + 1))
+
+actual="$(run_case "
+require \"$generated\"
+puts(home_path())
+puts(author_path(5))
+puts(author_path(5, query: {\"tab\": \"books\"}))
+")"
+assert_contains "$actual" "/"
+assert_contains "$actual" "/authors/5"
+assert_contains "$actual" "/authors/5?tab=books"
+count=$((count + 1))
+
+# --- query_suffix: empty Hash -> "", non-empty -> encoded "?k=v&..." ---
+actual="$(run_case '
+puts("[#{Dials::PathHelpers.query_suffix({})}]")
+puts(Dials::PathHelpers.query_suffix({"q": "a b", "sort": "newest"}))
+')"
+assert_contains "$actual" "[]"
+assert_contains "$actual" "?q=a+b&sort=newest"
+count=$((count + 1))
+
 echo "$count dials tests passed"

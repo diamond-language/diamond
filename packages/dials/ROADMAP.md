@@ -60,11 +60,20 @@ Each of these was considered and explicitly deferred, not overlooked:
   dynamic to get wrong. Routes here now pass `AuthorsController.show`
   directly; see README's "Controllers".
 
+- **Named routes / path helpers.** `skindicate.dia` hit exactly the
+  "real, repeated pain point" this section used to wait for -- the same
+  route shapes (`/skins/:id`, `/users/:username/followers`, `/admin*`)
+  hand-interpolated 3-10+ times each across its own controllers and view
+  templates. `.get`/`.post` now take an optional `name:` (`lib/dials/
+  router.di`), `Router#routes()` exposes the built table, and
+  `Dials::PathHelpers.generate_source` (`lib/dials/path_helpers.di`)
+  turns it into real `#{name}_path(...)` functions -- see README's
+  "Named routes and path helpers". Not built: a `_url` host-aware
+  variant (every consumer so far is same-origin-relative-path-only) and
+  no `resources`-style macro tying route registration to name derivation
+  automatically (still fully explicit, per this file's own "Deliberately
+  out of scope for v1" above) -- naming stays a per-route opt-in.
+
 ## Open questions
 
-- **Named routes / URL generation.** Nothing here builds a path back
-  *from* a route name (`authors_path(id: 5)`-style) -- every response
-  that needs a URL builds it by hand (`"/authors/#{id}"`, as
-  `examples/library`'s own controllers already do). Worth adding once
-  building URLs by hand becomes a real, repeated pain point, not
-  preemptively.
+Nothing open right now.
