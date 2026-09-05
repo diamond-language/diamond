@@ -140,6 +140,18 @@ smoke tests, and a self-hosting bootstrap smoke check. It is thorough and
 correspondingly slow; CI is the normal place to run it after a focused local
 test.
 
+`make sanitize`/`test-sanitize` run with LeakSanitizer enabled
+(`ASAN_OPTIONS=detect_leaks=1`) by default -- real, working leak detection on
+a normal Linux machine. Under ptrace-restricted containers, including
+GitHub's own CI runners, set `ASAN_OPTIONS=detect_leaks=0` in the
+environment before invoking `make test-sanitize` (an already-set
+`ASAN_OPTIONS` always wins over the Makefile's own default, never the other
+way around; see ci.yml). Even with leak detection disabled, `test-sanitize`
+has been observed to fail intermittently on GitHub's runners with no
+diagnostic output and no local reproduction on a real (non-container) Linux
+box -- consistent with the runners' own virtualization rather than a real
+bug, which is why CI retries this one step once before failing the job.
+
 Self-hosting is in minimal-compat maintenance mode (see docs/roadmap.md):
 `test-all` only confirms the self-hosted frontend still parses and runs
 itself, not full parity. The exhaustive lexer/parser differential corpus
