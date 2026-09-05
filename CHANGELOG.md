@@ -55,6 +55,14 @@ authoritative fine-grained record.
 
 ### Language
 
+- Added `ClassName.compile_method(name, params, body_source, bound_values)`,
+  compiling a method body from a source string at runtime into a `Callable`
+  for `define_method` to install -- the missing piece behind
+  `active_record`'s `has_many`-style associative helpers. Runs the source
+  through the ordinary compiler into an isolated throwaway program (field
+  references are validated against the target class's existing fields;
+  `bound_values` threads in already-evaluated values the snippet has no way
+  to name). See docs/classes-and-modules.md.
 - Added `Tensor`, a native dense row-major `Float` matrix (`Tensor.zeros`/
   `.from_array`/`.random`, `#rows`/`#cols`/`#get`/`#set`/`#matmul`/
   `#transpose`/`#to_a`) with a threaded, k-blocked `#matmul` -- extracted

@@ -58,7 +58,7 @@ The implementation includes:
   collection helpers, and a small Minitest-style test library;
 - files, blocking and nonblocking TCP, UDP, TLS, signals, SQLite3, calendar time,
   subprocesses, and stdin/stdout primitives;
-- a stop-the-world mark/sweep collector with stress-GC modes;
+- a generational, stop-the-world mark/sweep collector with stress-GC modes;
 - source-mapped diagnostics, stack traces, bytecode disassembly, inline caches,
   runtime object shapes, and opt-in opcode quickening.
 

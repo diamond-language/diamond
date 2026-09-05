@@ -43,12 +43,18 @@ A connected socket (from `.connect` or `.accept()`) is a `File` under the
 hood, so `.read()`/`.read(n)`/`.gets()`/`.write(value)`/`.close()` work
 identically on both.
 
-`File` also has a small family of pure path-string utilities needing no
-open handle: `File.join("a", "b")` (`=> "a/b"`), `.dirname(path)`,
-`.basename(path, suffix = nil)`, `.extname(path)`, `.absolute?(path)`,
-and `.expand_path(path, base = nil)` (resolves and lexically normalizes
+`File` also has a small family of path utilities needing no open handle:
+`File.join("a", "b")` (`=> "a/b"`), `.dirname(path)`, `.basename(path,
+suffix = nil)`, `.extname(path)`, `.absolute?(path)`, and
+`.expand_path(path, base = nil)` (resolves and lexically normalizes
 `path` against `base`, or the current working directory when `base` is
-omitted). See [Local I/O](local-io.md#file-paths-filejoindirnamebasenameextnameabsoluteexpandpath)
+omitted) are all pure string manipulation, needing no filesystem access.
+`.directory?(path)` is the one exception — real `stat()`-backed I/O, `true`
+only if `path` exists and is a directory; any `stat()` failure (missing
+path, permission denied, ...) reads as an ordinary `false` rather than
+raising, matching Ruby's `File.directory?` so a recursive directory walk
+can use it in a plain condition with nothing to rescue. See [Local
+I/O](local-io.md#file-paths-filejoindirnamebasenameextnameabsoluteexpandpath)
 for the full rules.
 
 `ARGV` and `ENV` are plain global values, not calls — `ARGV` is an
@@ -155,10 +161,12 @@ This is deliberately a small first cut: no `/pattern/` literal syntax yet
 needs the same kind of disambiguation Symbol's `:` got, not yet done for
 `/`), no `"x".match(re)`/`=~` String integration, and no richer
 `MatchData` object (`pre_match`, named captures) — the plain-`Array`
-result covers the common case. `String#split`/`#gsub`/`#scan` do accept
-a `Regexp` (`"a,b,c".split(re)`, `"abc123".gsub(re, "X")`,
-`"abc123".scan(re)`); `Regexp.new` + `.match`/`.match?` plus that String
-trio is the whole surface for now.
+result covers the common case. `String#split`/`#sub`/`#gsub`/`#scan` do
+accept a `Regexp` (`"a,b,c".split(re)`, `"abc123".sub(re, "X")`,
+`"abc123".gsub(re, "X")`, `"abc123".scan(re)`), each with backreference
+and capture-group handling of its own — see the
+[Collections guide](collections.md) for those; `Regexp.new` +
+`.match`/`.match?` plus that String quartet is the whole surface for now.
 
 ## No AST
 

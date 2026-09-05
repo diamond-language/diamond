@@ -201,7 +201,11 @@ second real target, not scattered conditional compilation without validation.
 - Ruby compatibility as a goal;
 - named IANA timezone parsing bundled into the VM;
 - shared mutable heaps between OS threads;
-- free-form runtime source evaluation;
+- free-form runtime source evaluation (`ClassName.compile_method` compiles a
+  source string into a single capture-free method for `define_method` --
+  see docs/classes-and-modules.md -- but that's not a general `eval`: no
+  calling-scope closures, no naming other classes, and no arbitrary
+  expression evaluation outside a method body);
 - a hosted package registry without an operational owner;
 - a JIT without representative profiling evidence;
 - portability claims without continuous testing on the claimed platform;

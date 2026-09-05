@@ -110,10 +110,13 @@ end
 name` binds the raised value unconditionally; `rescue error: Type1 | Type2`
 matches nominally (up to eight types, with subclass matching) before
 binding. `ensure` provides cleanup that runs on normal completion,
-exceptions, and explicit `return` alike. Built-in exception classes:
-`Exception`, `StandardError`, `RuntimeError`, `TypeError`, `ArgumentError`,
-`IndexError`, `ZeroDivisionError`, `RangeError`, `SystemStackError`,
-`FiberError`, and `IOError`.
+exceptions, and explicit `return` alike. Built-in exception classes, all
+under `StandardError` except `SystemStackError` (direct `Exception`
+subclass): `RuntimeError`, `TypeError`, `ArgumentError`, `IndexError`,
+`ZeroDivisionError`, `RangeError`, `FiberError`, `IOError`, `RegexpError`,
+`WouldBlockError`, `ThreadError`, `NoMethodError`, `JSONError`, and the
+native database drivers' `SQLite3Error`, `PostgreSQLError`, and
+`MySQLError`.
 
 `Exception.new(message, cause)` takes up to two positional arguments
 (both optional), readable back via `.message()`/`.cause()`. A subclass

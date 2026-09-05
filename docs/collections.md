@@ -111,6 +111,51 @@ since making the `*` operator polymorphic over String would need a
 new deoptimization mechanism for the compiler's Int-only fast path
 (`MULTIPLY_INT`) that doesn't otherwise exist for it.
 
+`.start_with?(prefix)`/`.end_with?(suffix)` are plain literal String
+checks (no `Regexp` support). `.ljust(width, padding)`/`.rjust(width,
+padding)` pad the receiver on the right/left with `padding` (repeated
+and truncated as needed) until it reaches `width`, or return the
+receiver unchanged if it's already at least `width` long; a negative
+`width` or an empty `padding` both raise a rescuable `ArgumentError`
+rather than looping forever. `.tr(from, to)` is Ruby-style
+character-set translation: `from`/`to` support `a-z`-style ranges and a
+leading `^` to negate `from`, with `\` escaping a literal `-` or `^`;
+each character in the receiver found in `from` is replaced by the
+character at the same position in `to` (a shorter `to` maps every
+remaining `from` character onto its own last character, matching
+Ruby), or deleted outright when `to` is `""`. An empty `from` raises
+`ArgumentError`; a non-`String` argument to any of these raises
+`TypeError`.
+
+```ruby
+"hello".start_with?("he")          # => true
+"abc".ljust(6, "-")                # => "abc---"
+"abc".rjust(6, "-")                # => "---abc"
+"hello".tr("el", "ip")             # => "hippo"
+"hello".tr("aeiou", "*")           # => "h*ll*"
+```
+
+`.sub(pattern, replacement)`/`.gsub(pattern, replacement)` replace the
+first/every match of `pattern` (a `Regexp` -- a `String` pattern raises
+`TypeError`, there's no implicit `Regexp.new` coercion) with
+`replacement`, which may contain Ruby-style backreferences (`\0` the
+whole match, `\1`.. a capture group; a literal backslash is `\\`).
+`.scan(pattern)` (`Regexp` only, same `TypeError` on a `String`) returns
+an `Array` of every match: the matched `String` itself when `pattern`
+has no capture groups, or an `Array` of that match's captures when it
+does -- never a mix of both across one call, since a given `Regexp`
+either has groups or doesn't:
+
+```ruby
+"hello world".gsub(Regexp.new("o"), "0")                  # => "hell0 w0rld"
+"2024-01-15".gsub(Regexp.new("(\\d+)-(\\d+)-(\\d+)"), "\\3/\\2/\\1")  # => "15/01/2024"
+"a1 b22 c333".scan(Regexp.new("[0-9]+"))                   # => ["1", "22", "333"]
+"key1=val1;key2=val2".scan(Regexp.new("([a-z0-9]+)=([a-z0-9]+)"))
+# => [["key1", "val1"], ["key2", "val2"]]
+```
+
+See the [Regexp guide](runtime-reference.md#regexp) for pattern/option syntax.
+
 `.each(callback)`, and the `Enumerable` methods derived from it —
 `.select`/`.count`/`.any?`/`.all?`/`.reduce`/`.map` — work as receiver
 syntax on both arrays and hashes (a hash's Enumerable operates over
@@ -143,17 +188,30 @@ those, rather than re-deriving each one generically over `each()`.
 
 A handful of further Array/Hash conveniences work as receiver syntax too,
 forwarding the same way the Enumerable set above does:
-`values.reverse()` returns a new array in reverse order;
-`values.concat(other)` returns a new array with `other`'s elements
-appended; `values.compact()` returns a new array with any `nil` elements
-dropped; `values.uniq()` returns a new array with only the first
-occurrence of each distinct (`==`) element, order preserved;
+`values.first()`/`values.last()` return the first/last element (an empty
+array's `IndexError` propagates straight from the underlying `[]`);
+`values.first_or(fallback)`/`values.last_or(fallback)` are the safe form,
+returning `fallback` instead when `values` is empty; `values.empty?()`
+returns whether the array has zero elements; `values.include?(needle)`
+returns whether any element `==` `needle`; `values.reverse()` returns a new
+array in reverse order; `values.concat(other)` returns a new array with
+`other`'s elements appended; `values.compact()` returns a new array with
+any `nil` elements dropped; `values.uniq()` returns a new array with only
+the first occurrence of each distinct (`==`) element, order preserved;
 `values.flatten()` returns a new array with nested arrays fully
 flattened (recursively, matching Ruby's default);
 `values.delete_at(index)` mutates `values` in place (like the native
 `.push`/`.pop`), removing and returning the element at `index`, or `nil`
-without mutating if `index` is out of bounds; `hash.merge(other)` returns
-a new `Hash` with the receiver's pairs then `other`'s applied on top
+without mutating if `index` is out of bounds.
+
+`hash.fetch(key, fallback)` returns the value at `key`, or `fallback`
+(not raising) when `key` is absent; `hash.keys()`/`hash.values()` return
+an `Array` of the hash's keys/values respectively, both in insertion
+order; `hash.include_key?(needle)` returns whether `needle` is a key;
+`hash.map_values(callback)` returns a new `Hash` with the same keys and
+each value passed through `callback`; `hash.empty?()` returns whether the
+hash has zero pairs (same name and meaning as Array's own); `hash.merge(other)`
+returns a new `Hash` with the receiver's pairs then `other`'s applied on top
 (`other` wins on key conflicts). Like the rest of the Enumerable set,
 `vm.c`'s native dispatch resolves each of these receiver calls to a
 same-named top-level prelude function (`array_reverse`, `array_concat`,

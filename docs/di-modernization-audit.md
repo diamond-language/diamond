@@ -40,7 +40,9 @@ own "Truthiness and `unless`" section uses as its worked example — that
 example is now the real `array_compact`/`array_uniq` source, not a
 hypothetical. `array_map_int`, `array_map_string`, `array_map_typed`, and
 `array_sort` were deliberately left as free functions per the caveats
-below (typed contracts, not drop-in receiver renames). Enumerable is next.
+below (typed contracts, not drop-in receiver renames). Enumerable (step 3,
+described next) is also done, not still pending -- see the paragraph below
+and the "Enumerable candidates" section.
 
 Compound assignment (step 4) and the `unless`/truthiness rewrite (step 5)
 have landed in `packages/arel/lib/arel.di`, and now also in `lib/core.di`,
@@ -126,10 +128,12 @@ here.
 
 ## High-Value Receiver Migrations
 
-### Array candidates
+### Array candidates (done)
 
-These functions have an Array receiver as their first argument and are strong
-candidates for methods:
+These functions have an Array receiver as their first argument. Per Status
+above, every one of them already has a matching receiver method, forwarded
+to by `vm.c`'s name-forwarding table -- this list is now a record of which
+free functions back which method, not outstanding work:
 
 - `array_first`, `array_first_or`, `array_last`, `array_last_or`
 - `array_empty`, `array_include`, `array_each`, `array_map`
@@ -141,7 +145,8 @@ candidates for methods:
 - `array_flat_map`, `array_partition`, `array_group_by`, `array_zip`
 - `array_each_slice`, `array_each_cons`, `array_tally`
 
-The intended end state is familiar receiver syntax such as:
+The end state is exactly the familiar receiver syntax this implies, already
+real today:
 
 ```diamond
 values.map(callback)
@@ -153,15 +158,19 @@ values.group_by(callback)
 `array_join` was removed (see Status above): `Array#join` is already native
 and the free function was only a compatibility wrapper, unlike the rest of
 this list, whose free functions remain vm.c's actual dispatch targets.
-`array_sort` in `lib/core/numeric.di` is also a special case: it is typed
-specifically for
-`Array[Int]` and should either become an Array method with a deliberate typed
-contract or be replaced by the existing native sorting surface, not blindly
-renamed.
+`array_map_int`/`array_map_string`/`array_map_typed` were deliberately left
+as free functions (typed contracts, not drop-in receiver renames -- see
+Status). `array_sort` in `lib/core/numeric.di` is also a special case: it is
+typed specifically for `Array[Int]` and should either become an Array
+method with a deliberate typed contract or be replaced by the existing
+native sorting surface, not blindly renamed.
 
-### Hash candidates
+### Hash candidates (done)
 
-These functions have a Hash receiver and should become Hash methods:
+These functions have a Hash receiver. Per Status above, every one already
+has a matching receiver method (`fetch`, `empty?`, `each`, `keys`, `values`,
+`include_key?`, `map_values`, `merge`), forwarded to by the same `vm.c`
+table:
 
 - `hash_fetch`
 - `hash_empty`
@@ -172,7 +181,7 @@ These functions have a Hash receiver and should become Hash methods:
 - `hash_map_values`
 - `hash_merge`
 
-Likely target forms:
+Already real today:
 
 ```diamond
 options.fetch("port", 8080)
@@ -181,14 +190,17 @@ options.values()
 options.merge(overrides)
 ```
 
-`hash_find` appears in the broader code inventory and should be checked against
-native Hash behavior before adding another method; do not create two subtly
-different lookup contracts.
+Note: a `hash_find` also appears in the broader code inventory, but it's
+`src/vm.c`'s own internal `static ptrdiff_t hash_find(...)` C helper (a
+key-lookup routine used by hash equality/merge/indexing) -- an unrelated,
+same-named symbol in the native runtime, not a `lib/core.di` free function
+in this naming family. Nothing to reconcile here.
 
-### Enumerable candidates
+### Enumerable candidates (done)
 
-These are protocol operations and belong on `Enumerable`, or on the concrete
-receiver if the runtime already provides a native fast path:
+These are protocol operations that belong on `Enumerable`, or on the concrete
+receiver if the runtime already provides a native fast path. Per Status
+above, `module Enumerable` in `lib/core.di` now defines all of them:
 
 - `enumerable_select`, `enumerable_count`, `enumerable_any`, `enumerable_all`
 - `enumerable_map`, `enumerable_reduce`

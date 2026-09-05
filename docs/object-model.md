@@ -113,10 +113,15 @@ shape identity (above) are all implemented, not planned. Modules/mixins,
 singleton classes, and visibility are implemented too (see `docs/design.md`).
 Runtime method *redefinition* — repointing an existing method to a different
 already-compiled function via `ClassName.redefine_method(name, callable)` —
-is also implemented. Defining genuinely new method bodies at runtime (e.g.
-from a source string) remains unimplemented and would require a
-runtime-callable compiler entry point, a materially larger undertaking
-overlapping with self-hosting.
+is also implemented, as is adding a brand-new method slot via
+`ClassName.define_method(name, callable)`. Defining a method body from a
+runtime source string is implemented too, via
+`ClassName.compile_method(name, params, body_source, bound_values)`, which
+compiles into a throwaway satellite program and returns a `Callable` for
+`define_method` to install — see `docs/classes-and-modules.md` and
+`docs/design.md`'s "Runtime method synthesis" section. There is still no
+general `eval`: `compile_method` only ever produces a capture-free method
+body, not arbitrary code running in the calling scope.
 
 Classes becoming ordinary instances of `Class` is not planned — decided
 against; see `docs/roadmap.md`'s "Explicitly deferred" section for why,

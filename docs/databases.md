@@ -339,7 +339,11 @@ An Arel dialect visitor for MySQL now exists --
 `Arel::MySQLVisitor` (`packages/arel/lib/arel/mysql_visitor.di`), verified against a
 live MySQL 8 server (`packages/arel/README.md`,
 `packages/arel/ROADMAP.md`) -- reusing this driver unchanged, since it
-was never MariaDB-specific at the native layer. Still out of scope for
+was never MariaDB-specific at the native layer. MariaDB gets its own
+`Arel::MariaDBVisitor` (`packages/arel/lib/arel/mariadb_visitor.di`),
+not a `MySQLVisitor` alias: it diverges enough (MariaDB-only `RETURNING`,
+different upsert and pagination rendering) to need real per-statement
+overrides, verified against a live MariaDB 11 server. Still out of scope for
 this driver, deliberately, for the same reasons `PostgreSQL`'s own scope
 cuts are: connection pooling and `unix_socket`/`CLIENT_MULTI_STATEMENTS`
 connection options.

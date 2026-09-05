@@ -405,6 +405,33 @@ target's class hierarchy. Diamond intentionally provides no visibility-
 bypassing `send` counterpart. A user class may define its own `public_send`;
 that method takes priority over the universal behavior.
 
+### `method_missing`
+
+```ruby
+class Ghost
+  def method_missing(name, args)
+    "called #{name} with #{args.length()} args"
+  end
+end
+
+g = Ghost.new()
+g.anything()        # => "called anything with 0 args"
+```
+
+`def method_missing(name, args)` on a class is consulted whenever ordinary
+instance-method dispatch finds no method by that name anywhere on the
+receiver's class or its ancestors -- `name` is the attempted method as a
+`Symbol`, `args` an `Array` of the call's own arguments (the receiver
+itself isn't included). A real method of that name always wins first, on
+any ancestor, so `method_missing` can never intercept a call to something
+the class actually defines. Without one, a dispatch miss raises
+`NoMethodError`, same as before this feature existed; if `method_missing`
+itself doesn't take exactly two required parameters, a miss raises
+`ArgumentError` instead. It's found via ordinary inherited lookup, so one
+defined on a superclass covers every subclass too. Scoped to this one
+dispatch site only -- not operator overloading, `to_s`, `super`, or
+`self.`-singleton calls, each of which already has its own fallback.
+
 ## Operator overloading
 
 ```ruby

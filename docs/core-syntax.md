@@ -61,11 +61,10 @@ inclusion, a `Regexp` searches a String subject, and a user class name matches
 instances of that class or its subclasses. Other patterns use equality, with
 the pattern as receiver, so a user instance can customize matching through
 `def ==(value)`. Native type names such as `String` are not class-pattern
-values because Diamond's native types are not reified classes. There is still
-no subject-less boolean form (Ruby's `case` with no
-expression, where each `when`'s own value is tested for truthiness
-instead of compared against a subject) — `case` always requires a
-subject in Diamond today.
+values because Diamond's native types are not reified classes. A subject-less
+boolean form (Ruby's `case` with no expression, where each `when`'s own value
+is tested for truthiness instead of compared against a subject) is also
+supported — see below.
 
 Array patterns can match a nested shape and bind lowercase names:
 
@@ -244,8 +243,8 @@ count` would treat it.
 
 The target can be a plain local, an `@ivar`, or a `@@cvar` — same three
 targets plain `=` and multiple assignment accept. Indexed targets
-(`arr[i] += 1`, `hash[k] ||= default`) aren't supported yet; write the
-indexed read and assignment out separately.
+(`arr[i] += 1`, `hash[k] ||= default`) are also supported — see "Indexed
+compound assignment" under Ranges below.
 
 ## Writer-call assignment sugar
 
