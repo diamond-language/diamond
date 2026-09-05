@@ -1956,7 +1956,20 @@ kill -INT "$signal_pid"
 sleep 0.3
 exec 3<>"/dev/tcp/127.0.0.1/$signal_port"
 { exec 3<&- 3>&-; } 2>/dev/null || true
-wait "$signal_pid"
+# `|| true`, not a bare `wait`: $signal_pid is `timeout`'s own PID (the
+# subshell above execs into it), and GNU coreutils' timeout transparently
+# relays a signal it receives to its child, then exits with the child's
+# real exit status once the child (diamond, having trapped and survived
+# the signal) finishes normally -- status 0 here. Ubuntu 26.04's default
+# `timeout` is uutils-coreutils (a distro-picked alternative to GNU
+# coreutils, confirmed via `timeout --version`), which relays the signal
+# identically but then reports the relayed signal's own 128+signal status
+# regardless of the child's real outcome -- confirmed directly: the exact
+# same diamond process, run without the `timeout` wrapper at all, always
+# reports the correct `wait` status of 0. Real correctness is verified by
+# $actual below either way, so `wait`'s own status here is deliberately
+# not load-bearing.
+wait "$signal_pid" || true
 actual="$(cat "$signal_out")"
 [[ "$actual" == $'ready\ncaught INT\naccepted\nnil' ]]
 rm -f "$signal_out"

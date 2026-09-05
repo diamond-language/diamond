@@ -2,9 +2,10 @@ CC := gcc
 REGINOLD_DIR := reginold
 REGINOLD_LIB := $(REGINOLD_DIR)/libreginold.a
 # -I/usr/include/mysql(/mysql): mariadb_config --cflags's own include path
-# for MariaDB Connector/C (libmysqlclient-API-compatible) -- mysql.h isn't
-# installed directly under /usr/include, so an explicit -I is required to
-# find it, on every distro tested so far.
+# for MariaDB Connector/C (libmysqlclient-API-compatible) on Fedora, where
+# libmariadb-devel installs mysql.h under /usr/include/mysql. Debian/Ubuntu's
+# libmariadb-dev instead installs it under /usr/include/mariadb (confirmed
+# against a real Ubuntu 26.04 container) -- hence the third -I below.
 # -I/usr/include/postgresql: libpq-fe.h's location is itself distro-
 # dependent, confirmed the hard way deploying to a real Ubuntu box after
 # every prior build/test of this project happened on Fedora -- Fedora's
@@ -12,17 +13,34 @@ REGINOLD_LIB := $(REGINOLD_DIR)/libreginold.a
 # was previously believed unnecessary, per this comment's own prior
 # wording), but Debian/Ubuntu's libpq-dev installs it under
 # /usr/include/postgresql instead. Harmless to add unconditionally on
-# distros where it's not needed -- gcc silently ignores a nonexistent -I
-# path -- so there's no reason to special-case this per platform.
+# distros where it's not needed -- gcc/clang silently ignore a nonexistent
+# -I path -- so there's no reason to special-case any of these per platform.
 # -Ilsp: src/repl.c includes lsp/completion.h/json.h directly for
 # Tab-completion (see REPL_COMPLETION_SOURCES below) -- global rather
 # than scoped to just that one file's own compile step, since no
 # src/*.h/lsp/*.h basename collision exists to make that a risk.
 CPPFLAGS := -Isrc -Ilsp -I$(REGINOLD_DIR) -I/usr/include/mysql -I/usr/include/mysql/mysql \
-	-I/usr/include/postgresql
+	-I/usr/include/mariadb -I/usr/include/postgresql
 CFLAGS_COMMON := -std=c23 -Wall -Wextra -Wpedantic -Wconversion -Wshadow \
 	-Wstrict-prototypes -Werror=implicit-function-declaration
+# CC=clang needs debug's own optimization level bumped from -O0 to -O1,
+# GCC doesn't -- see CFLAGS_SANITIZE's own -O1-vs-O0 comment below for the
+# same underlying cause (run_chunk's giant per-opcode-case local set not
+# getting stack-slot-coalesced at -O0). Measured via -fstack-usage: GCC's
+# plain -O0 run_chunk frame is 60,176 bytes, comfortably clear of the
+# depth(5000)/DIAMOND_MAX_CALL_DEPTH=95 guard the comment below describes
+# tripping under GCC's *ASan-instrumented* -O0 build (105,680 bytes/frame)
+# -- but Clang's plain, non-sanitized -O0 frame for the same function is
+# 143,064 bytes, worse than that ASan case, and segfaults past the OS
+# stack limit around 58 native frames, well before the depth-95 guard can
+# trip. Clang's -O1 measures 23,144 bytes/frame (smaller than even GCC's
+# -O0), so only Clang's `debug` build trades away full -O0 variable
+# visibility under a debugger; GCC's is unaffected.
+ifeq ($(findstring clang,$(CC)),clang)
+CFLAGS_DEBUG := -O1 -g3 -DDIAMOND_DEBUG
+else
 CFLAGS_DEBUG := -O0 -g3 -DDIAMOND_DEBUG
+endif
 # -march=x86-64, not -native: at least one real deploy target for this
 # runtime is a single-core low-clock cloud droplet, where compiling at
 # all is the expensive part -- -native would tie the resulting binary
@@ -48,8 +66,9 @@ CFLAGS_RELEASE := -O3 -DNDEBUG -march=x86-64
 # smaller) while keeping ASan/UBSan instrumentation and frame pointers
 # (-fno-omit-frame-pointer) fully intact for readable backtraces; some
 # locals may show "optimized out" under gdb, an accepted tradeoff scoped
-# to this diagnostic build only -- `debug` stays -O0 for full
-# variable visibility.
+# to this diagnostic build only -- GCC's `debug` stays -O0 for full
+# variable visibility (Clang's own `debug` build needs the same -O1
+# bump for a different reason -- see CFLAGS_DEBUG above).
 CFLAGS_SANITIZE := -O1 -g3 -DDIAMOND_DEBUG -fsanitize=address,undefined \
 	-fno-omit-frame-pointer
 LDFLAGS_SANITIZE := -fsanitize=address,undefined

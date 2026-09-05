@@ -9,7 +9,14 @@ REGINOLD_DIR = .
 ONIGMO_DIR = $(REGINOLD_DIR)/vendor/onigmo
 UNICODE_DIR = $(ONIGMO_DIR)/enc/unicode/17.0.0
 
-CFLAGS = -Wall -Wextra -std=c11 -g
+# -fPIC: libreginold.a's objects get linked into diamond's own PIE
+# executable. Fedora's toolchain tolerates the resulting text relocations
+# in a PIE binary; Ubuntu 26.04's stricter default ld.bfd doesn't --
+# "relocation R_X86_64_32 against symbol `OnigSyntaxRuby' can not be used
+# when making a PIE object" (confirmed against a real Ubuntu 26.04
+# container). -fPIC fixes it on both, so it's unconditional rather than
+# distro-gated.
+CFLAGS = -Wall -Wextra -std=c11 -g -fPIC
 
 # ONIGMO_CFLAGS is INTERNAL to reginold's build only.
 # It is never needed by consumers — they include only reginold.h,
