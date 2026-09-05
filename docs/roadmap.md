@@ -29,12 +29,34 @@ program size -- most costly for the CLI/test-suite/short-script pattern
 (the 1000+ program end-to-end corpus, for one, pays it 1000+ times over) and
 irrelevant to a long-running server's steady state.
 
-Next investigation:
+Prototyped the "compiler append mode" half of this (`diamond_compile_incremental`,
+src/compiler.c): compiles new source against an already-compiled `template`
+program (e.g. the prelude, compiled once) by seeding both of `diamond_compile`'s
+own discovery/real passes with template's classes/interfaces/modules/functions
+before either pass runs, instead of re-lexing/re-parsing template's own source
+text every call. `tests/run_cases.c` (the 1285-case batch corpus runner) is the
+first real consumer: compiles the prelude once at process start instead of on
+every one of its ~1285 cases, cutting its own wall-clock time ~25% (measured:
+31.0s -> 23.3s, three-run average each, same machine/build). Verified against
+the entire existing corpus (1428/1428 tests, byte-identical output) plus a
+dedicated regression test (`make test-incremental-compile`) covering prelude-
+function/class calls, rejecting a redefined prelude function, sequential reuse
+against the same template, forward references within the incremental source
+alone, and diagnostic positions matching plain `diamond_compile` exactly.
 
-- prototype either a reusable compiled-prelude snapshot or a compiler append
-  mode, now backed by the measurement above rather than a hypothesis;
-- keep the new machinery only if it produces a meaningful measured gain without
-  making source maps, diagnostics, or embedding substantially more fragile.
+Deliberately scoped narrow so far: only wired into the batch test runner, which
+runs many independent programs per process -- not the `diamond` CLI itself
+(one program per process, so there's no in-process template to amortize a
+compile against). Fixing the CLI's own cold-start cost (the actual pain point
+above) needs the "reusable compiled-prelude snapshot" half instead: generating
+`template`'s compiled state once at build time (not runtime) and embedding it
+in the binary, skipping prelude-source-parsing entirely rather than doing it
+once per process. That needs real (de)serialization for `DiamondProgram`'s
+pointer-based parts (function code/constant/string arrays) plus a two-stage
+build, neither of which `diamond_compile_incremental` needed (it only ever
+seeds an in-memory `DiamondProgram` from another one, no serialization
+boundary crossed) -- worth prototyping next now that the underlying seeding
+mechanism is proven, but a materially bigger lift.
 
 ### Improve receiver-aware tooling
 

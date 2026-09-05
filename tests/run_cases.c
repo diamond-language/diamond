@@ -23,6 +23,7 @@
 
 #define _DEFAULT_SOURCE
 
+#include "prelude.h"
 #include "run_source.h"
 
 #include <errno.h>
@@ -210,6 +211,47 @@ static bool run_one_case(const char *cases_dir, const char *output_dir, const ch
         return false;
     }
 
+    /* The prelude, compiled exactly once for the whole run and reused
+     * as a diamond_compile_incremental template by every case below --
+     * see compiler.c's own doc comment on that function. Every case
+     * gets the same JSON-inclusive prelude regardless of whether its
+     * own source needs JSON: cheap (a handful of otherwise-unused
+     * functions/one otherwise-unused class), and building two
+     * templates (with/without JSON) to save that would need per-case
+     * template selection for no measured benefit. This is the actual
+     * point of this whole file's own top-of-file rationale (run every
+     * case in one process instead of spawning a fresh `diamond`): the
+     * corpus was already paying to re-lex/re-parse the ~24-36KB prelude
+     * on all ~1285 cases before this, not just process-spawn overhead. */
+    static DiamondProgram *prelude_template = nullptr;
+    if (prelude_template == nullptr) {
+        prelude_template = calloc(1,sizeof *prelude_template);
+        if (prelude_template == nullptr) {
+            fprintf(stderr, "run_cases: out of memory allocating prelude template\n");
+            free(source);
+            return false;
+        }
+        const size_t prelude_length = diamond_prelude_length(true);
+        char *prelude_source = malloc(prelude_length + 1);
+        if (prelude_source == nullptr) {
+            fprintf(stderr, "run_cases: out of memory building prelude template source\n");
+            free(source);
+            return false;
+        }
+        diamond_prelude_write(prelude_source, true);
+        prelude_source[prelude_length] = '\0';
+        DiamondDiagnostic template_diagnostic;
+        const bool template_compiled =
+            diamond_compile(prelude_source, prelude_template, &template_diagnostic);
+        free(prelude_source);
+        if (!template_compiled) {
+            fprintf(stderr, "run_cases: prelude template failed to compile: %s\n",
+                template_diagnostic.message);
+            free(source);
+            return false;
+        }
+    }
+
     /* One zero-initialized DiamondProgram reused for every case. Compilation
      * releases and rebuilds its dynamically sized function storage, exercising
      * the same ownership path repeatedly without reallocating the container. */
@@ -237,7 +279,8 @@ static bool run_one_case(const char *cases_dir, const char *output_dir, const ch
         return false;
     }
 
-    const int exit_code = diamond_run_source_with_program(di_path, source, dump_bytecode, program, 0, nullptr);
+    const int exit_code = diamond_run_source_with_template(
+        di_path, source, dump_bytecode, program, prelude_template, 0, nullptr);
     free(source);
 
     restore_fd(STDOUT_FILENO, saved_stdout);

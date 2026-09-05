@@ -65,6 +65,12 @@ bool diamond_function_copy(DiamondFunction *destination,
                            const DiamondFunction *source);
 bool diamond_compile(const char *source, DiamondProgram *program,
                      DiamondDiagnostic *diagnostic);
+/* See its own doc comment in compiler.c: compiles `source` against an
+ * already-compiled `template` program (e.g. the prelude alone) without
+ * re-parsing whatever produced `template`. */
+bool diamond_compile_incremental(const char *source, DiamondProgram *program,
+                                 const DiamondProgram *template,
+                                 DiamondDiagnostic *diagnostic);
 DiamondChunk diamond_program_chunk(const DiamondProgram *program);
 
 typedef struct DiamondResolvedLocation {

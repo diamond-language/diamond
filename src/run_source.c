@@ -47,45 +47,25 @@ static void print_diagnostic(const char *name, const char *source,
     fputs("^\n", stderr);
 }
 
-int diamond_run_source_with_program(const char *name, const char *source,
-        bool dump_bytecode, DiamondProgram *program,
-        int script_argc, char *const *script_argv) {
-    const bool trace_startup=getenv("DIAMOND_TRACE_STARTUP") != nullptr;
-    const double start_time=trace_startup ? diamond_monotonic_seconds() : 0;
-    DiamondSourceBundle bundle;char load_error[768];
-    if(!diamond_load_program(name,source,&bundle,load_error,sizeof load_error)) {
-        fprintf(stderr,"diamond: %s\n",load_error);return 74;
-    }
-    const double loaded_time=trace_startup ? diamond_monotonic_seconds() : 0;
-    const bool include_json=diamond_prelude_needs_json(bundle.source);
-    const size_t prelude_length=diamond_prelude_length(include_json);
-    const size_t source_length=strlen(bundle.source);
-    const size_t reset_length=sizeof(DIAMOND_USER_LINE_RESET)-1;
-    if(source_length > SIZE_MAX - prelude_length - reset_length - 1) {
-        fprintf(stderr,"diamond: expanded source is too large\n");
-        diamond_source_bundle_free(&bundle);
-        return 74;
-    }
-    char *combined=malloc(prelude_length+reset_length+source_length+1);
-    if(combined==nullptr) {
-        fprintf(stderr,"diamond: out of memory building expanded source\n");
-        diamond_source_bundle_free(&bundle);
-        return 74;
-    }
-    size_t offset=diamond_prelude_write(combined,include_json);
-    memcpy(combined+offset,DIAMOND_USER_LINE_RESET,reset_length);offset+=reset_length;
-    memcpy(combined+offset,bundle.source,source_length+1);
-    DiamondDiagnostic diagnostic;
-    diamond_program_free(program);
-    if (!diamond_compile(combined, program, &diagnostic)) {
-        print_diagnostic(name,combined,diagnostic,&bundle,prelude_length+reset_length);
-        free(combined);
-        diamond_source_bundle_free(&bundle);
-        return 65;
-    }
-    const double compiled_time=trace_startup ? diamond_monotonic_seconds() : 0;
-
-    DiamondChunk chunk = diamond_program_chunk(program);
+/* Everything shared by diamond_run_source_with_program and
+ * diamond_run_source_with_template once compilation has already
+ * succeeded: run `chunk`, apply every DIAMOND_*-env-var-driven
+ * tracing/stress knob, print the result, and report DIAMOND_TRACE_
+ * STARTUP's own summary line -- identical either way, since neither
+ * the VM nor any of those knobs know or care how `chunk`'s program got
+ * compiled. `owned_buffer` (freed here, may be nullptr) is
+ * diamond_run_source_with_program's own concatenated prelude+user
+ * text; diamond_run_source_with_template has no equivalent allocation
+ * of its own to free, since diamond_compile_incremental compiles
+ * `bundle`'s own source directly. `prelude_bytes`/`user_bytes` feed
+ * only the trace line's own byte breakdown -- diamond_run_source_
+ * with_template passes 0/total, having reprocessed no prelude text at
+ * all rather than some nonzero-but-not-actually-recompiled amount. */
+static int run_compiled_chunk(const char *name, DiamondChunk chunk, bool dump_bytecode,
+        int script_argc, char *const *script_argv,
+        bool trace_startup, double start_time, double loaded_time, double compiled_time,
+        size_t total_bytes, size_t prelude_bytes, size_t user_bytes,
+        char *owned_buffer, DiamondSourceBundle *bundle) {
     chunk.name = name;
     if (dump_bytecode) {
         (void)diamond_disassemble(stdout, name, &chunk);
@@ -139,8 +119,8 @@ int diamond_run_source_with_program(const char *name, const char *source,
         fprintf(stderr, "%s: runtime error: %s\n", name,
                 detail != nullptr ? detail : diamond_vm_status_name(status));
         diamond_vm_free(&vm);
-        free(combined);
-        diamond_source_bundle_free(&bundle);
+        free(owned_buffer);
+        diamond_source_bundle_free(bundle);
         return 70;
     }
 
@@ -193,13 +173,82 @@ int diamond_run_source_with_program(const char *name, const char *source,
             "startup: load %.6fs, compile %.6fs (%zu bytes: %zu prelude + "
             "%zu user), run %.6fs, total %.6fs\n",
             loaded_time-start_time,compiled_time-loaded_time,
-            prelude_length+reset_length+source_length,prelude_length,
-            source_length,run_time-compiled_time,run_time-start_time);
+            total_bytes,prelude_bytes,user_bytes,run_time-compiled_time,run_time-start_time);
     }
     diamond_vm_free(&vm);
-    free(combined);
-    diamond_source_bundle_free(&bundle);
+    free(owned_buffer);
+    diamond_source_bundle_free(bundle);
     return 0;
+}
+
+int diamond_run_source_with_program(const char *name, const char *source,
+        bool dump_bytecode, DiamondProgram *program,
+        int script_argc, char *const *script_argv) {
+    const bool trace_startup=getenv("DIAMOND_TRACE_STARTUP") != nullptr;
+    const double start_time=trace_startup ? diamond_monotonic_seconds() : 0;
+    DiamondSourceBundle bundle;char load_error[768];
+    if(!diamond_load_program(name,source,&bundle,load_error,sizeof load_error)) {
+        fprintf(stderr,"diamond: %s\n",load_error);return 74;
+    }
+    const double loaded_time=trace_startup ? diamond_monotonic_seconds() : 0;
+    const bool include_json=diamond_prelude_needs_json(bundle.source);
+    const size_t prelude_length=diamond_prelude_length(include_json);
+    const size_t source_length=strlen(bundle.source);
+    const size_t reset_length=sizeof(DIAMOND_USER_LINE_RESET)-1;
+    if(source_length > SIZE_MAX - prelude_length - reset_length - 1) {
+        fprintf(stderr,"diamond: expanded source is too large\n");
+        diamond_source_bundle_free(&bundle);
+        return 74;
+    }
+    char *combined=malloc(prelude_length+reset_length+source_length+1);
+    if(combined==nullptr) {
+        fprintf(stderr,"diamond: out of memory building expanded source\n");
+        diamond_source_bundle_free(&bundle);
+        return 74;
+    }
+    size_t offset=diamond_prelude_write(combined,include_json);
+    memcpy(combined+offset,DIAMOND_USER_LINE_RESET,reset_length);offset+=reset_length;
+    memcpy(combined+offset,bundle.source,source_length+1);
+    DiamondDiagnostic diagnostic;
+    diamond_program_free(program);
+    if (!diamond_compile(combined, program, &diagnostic)) {
+        print_diagnostic(name,combined,diagnostic,&bundle,prelude_length+reset_length);
+        free(combined);
+        diamond_source_bundle_free(&bundle);
+        return 65;
+    }
+    const double compiled_time=trace_startup ? diamond_monotonic_seconds() : 0;
+
+    return run_compiled_chunk(name, diamond_program_chunk(program), dump_bytecode,
+        script_argc, script_argv, trace_startup, start_time, loaded_time, compiled_time,
+        prelude_length+reset_length+source_length, prelude_length, source_length,
+        combined, &bundle);
+}
+
+int diamond_run_source_with_template(const char *name, const char *source,
+        bool dump_bytecode, DiamondProgram *program, const DiamondProgram *template,
+        int script_argc, char *const *script_argv) {
+    const bool trace_startup=getenv("DIAMOND_TRACE_STARTUP") != nullptr;
+    const double start_time=trace_startup ? diamond_monotonic_seconds() : 0;
+    DiamondSourceBundle bundle;char load_error[768];
+    if(!diamond_load_program(name,source,&bundle,load_error,sizeof load_error)) {
+        fprintf(stderr,"diamond: %s\n",load_error);return 74;
+    }
+    const double loaded_time=trace_startup ? diamond_monotonic_seconds() : 0;
+    const size_t source_length=strlen(bundle.source);
+    DiamondDiagnostic diagnostic;
+    diamond_program_free(program);
+    if (!diamond_compile_incremental(bundle.source, program, template, &diagnostic)) {
+        print_diagnostic(name,bundle.source,diagnostic,&bundle,0);
+        diamond_source_bundle_free(&bundle);
+        return 65;
+    }
+    const double compiled_time=trace_startup ? diamond_monotonic_seconds() : 0;
+
+    return run_compiled_chunk(name, diamond_program_chunk(program), dump_bytecode,
+        script_argc, script_argv, trace_startup, start_time, loaded_time, compiled_time,
+        source_length, 0, source_length,
+        nullptr, &bundle);
 }
 
 /* The ordinary entry point (used by the CLI and everything else that

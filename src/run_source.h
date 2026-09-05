@@ -38,4 +38,23 @@ int diamond_run_source_with_program(const char *name, const char *source,
     bool dump_bytecode, DiamondProgram *program,
     int script_argc, char *const *script_argv);
 
+/* Same as diamond_run_source_with_program, except `program` is compiled
+ * via diamond_compile_incremental against `template` (an already-
+ * compiled prelude program, see compiler.c's own doc comment on that
+ * function) instead of the ordinary prelude-source-concatenated
+ * diamond_compile -- skips re-lexing/re-parsing the prelude's own
+ * source on every call, the dominant cost `DIAMOND_TRACE_STARTUP=1`
+ * measures for an otherwise-trivial program (see docs/roadmap.md).
+ * Meant for a caller that runs many independent programs in one
+ * process against the same template, e.g. tests/run_cases.c's batch
+ * corpus runner -- not the ordinary `diamond` CLI (src/main.c), which
+ * only ever runs one program per process and has no template to
+ * amortize a compile against. `source` must not redeclare any name
+ * `template` already declares (see diamond_compile_incremental's own
+ * comment); an ordinary Diamond program never has reason to name a
+ * prelude function/class, so this is not a real practical constraint. */
+int diamond_run_source_with_template(const char *name, const char *source,
+    bool dump_bytecode, DiamondProgram *program, const DiamondProgram *template,
+    int script_argc, char *const *script_argv);
+
 #endif

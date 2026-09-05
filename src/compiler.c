@@ -15055,7 +15055,8 @@ size_t diamond_resolve_source_position(const char *path,const char *combined,
  * both passes need that same prologue against their own separate
  * program, so it stays there rather than duplicated in here. */
 static bool run_compile_pass(const char *source, DiamondProgram *program,
-                             DiamondDiagnostic *diagnostic, bool discovery_pass) {
+                             DiamondDiagnostic *diagnostic, bool discovery_pass,
+                             size_t function_claim_start) {
     *diagnostic = (DiamondDiagnostic){};
     Compiler compiler = {
         .source = source,
@@ -15070,6 +15071,7 @@ static bool run_compile_pass(const char *source, DiamondProgram *program,
         .current_retry_target = SIZE_MAX,
         .diagnostic = diagnostic,
         .discovery_pass = discovery_pass,
+        .next_function_claim = function_claim_start,
     };
     diamond_lexer_init(&compiler.lexer, source);
     compiler.current = diamond_lexer_next(&compiler.lexer);
@@ -15134,8 +15136,44 @@ static bool run_compile_pass(const char *source, DiamondProgram *program,
  * exactly as strict as before in both passes (see compile_class's own
  * comment on `claiming`): that needs the referenced class already fully
  * compiled, not just known by name, which this doesn't attempt to fix. */
-bool diamond_compile(const char *source, DiamondProgram *program,
-                     DiamondDiagnostic *diagnostic) {
+/* Seeds `destination` (just diamond_program_init'd, otherwise empty)
+ * with `template`'s already-fully-compiled classes/interfaces/modules/
+ * functions, so a later compile pass over *additional* source can
+ * reference them by name without ever re-parsing the source that
+ * declared them. Marked declared_by_discovery=false throughout (unlike
+ * the discovery-pass merge below, which marks its own fresh finds
+ * true): these entries are already real and finished, not pending
+ * slots for the upcoming pass to claim and refill -- compile_class/
+ * compile_module/compile_interface's own claiming checks (see their
+ * comments) read that flag to tell the two cases apart. Safe against
+ * every one of those claiming paths for the same reason: `destination`
+ * only ever gets compiled against source that doesn't redeclare any of
+ * template's own names, so compile_class et al. never even look these
+ * slots up except by an ordinary, successful by-name reference. */
+static bool seed_program_from_template(DiamondProgram *destination,
+                                       const DiamondProgram *template) {
+    memcpy(destination->classes,template->classes,sizeof destination->classes);
+    destination->class_count=template->class_count;
+    memcpy(destination->interfaces,template->interfaces,sizeof destination->interfaces);
+    destination->interface_count=template->interface_count;
+    memcpy(destination->modules,template->modules,sizeof destination->modules);
+    destination->module_count=template->module_count;
+    destination->range_class_index=template->range_class_index;
+    for(size_t index=0;index<template->function_count;index++) {
+        DiamondFunction *copy=diamond_program_add_function(destination);
+        if(copy==nullptr)return false;
+        if(!diamond_function_copy(copy,template->functions[index]))return false;
+        copy->declared_by_discovery=false;
+    }
+    return true;
+}
+
+/* Shared by diamond_compile (template=nullptr, today's exact behavior)
+ * and diamond_compile_incremental (template!=nullptr): see each
+ * public wrapper's own comment for what `template` buys and costs. */
+static bool diamond_compile_impl(const char *source, DiamondProgram *program,
+                                 const DiamondProgram *template,
+                                 DiamondDiagnostic *diagnostic) {
     /* Temporary: docs/roadmap.md's "make programs start faster" first
      * step ("measure startup and compile-time cost"). DIAMOND_TRACE_
      * COMPILE, same env-var-gated stderr convention as DIAMOND_TRACE_GC
@@ -15147,12 +15185,21 @@ bool diamond_compile(const char *source, DiamondProgram *program,
     const bool allow_top_level_redefinition = program->allow_top_level_redefinition;
     diamond_program_free(program);
 
+    const size_t function_claim_start=
+        template!=nullptr?template->function_count:0;
+
     DiamondProgram *discovery = calloc(1, sizeof *discovery);
     diamond_program_init(discovery);
     discovery->allow_top_level_redefinition = allow_top_level_redefinition;
+    if(template!=nullptr&&!seed_program_from_template(discovery,template)) {
+        diamond_program_free(discovery);free(discovery);
+        *diagnostic=(DiamondDiagnostic){.message="out of memory"};
+        return false;
+    }
     DiamondDiagnostic discovery_diagnostic = {0};
     const bool discovered = run_compile_pass(
-        source, discovery, &discovery_diagnostic, /*discovery_pass=*/true);
+        source, discovery, &discovery_diagnostic, /*discovery_pass=*/true,
+        function_claim_start);
     if(trace_compile)clock_gettime(CLOCK_MONOTONIC,&trace_discovery_done);
 
     diamond_program_init(program);
@@ -15161,6 +15208,11 @@ bool diamond_compile(const char *source, DiamondProgram *program,
         *diagnostic = discovery_diagnostic;
         diamond_program_free(discovery);
         free(discovery);
+        return false;
+    }
+    if(template!=nullptr&&!seed_program_from_template(program,template)) {
+        diamond_program_free(discovery);free(discovery);
+        *diagnostic=(DiamondDiagnostic){.message="out of memory"};
         return false;
     }
 
@@ -15173,7 +15225,13 @@ bool diamond_compile(const char *source, DiamondProgram *program,
      * ownership to transfer. compile_class/compile_module/
      * compile_interface's own claiming logic (see their comments) is
      * what makes the second pass treat every copied entry as its own
-     * pre-reserved slot instead of a duplicate declaration. */
+     * pre-reserved slot instead of a duplicate declaration. Safe to
+     * copy the *entire* array unconditionally even when `template`
+     * already seeded a prefix of it into both `program` and `discovery`
+     * moments ago: that prefix is byte-identical in both (the same
+     * template, copied the same way), so re-copying it here is
+     * redundant, not wrong -- unlike the function loop just below,
+     * where "copy again" means "append a second time". */
     memcpy(program->classes, discovery->classes, sizeof program->classes);
     program->class_count = discovery->class_count;
     memcpy(program->interfaces, discovery->interfaces, sizeof program->interfaces);
@@ -15183,9 +15241,15 @@ bool diamond_compile(const char *source, DiamondProgram *program,
 
     /* Reserve every compiler-created function at its discovery-pass index.
      * The real pass claims the slots in the same source order, preserving
-     * both early top-level calls and copied class/module method indices. */
+     * both early top-level calls and copied class/module method indices.
+     * Starts at function_claim_start (0 with no template), not 0
+     * unconditionally: `discovery`'s own [0, function_claim_start) range
+     * is template's own functions, already present in `program` via
+     * seed_program_from_template above -- re-copying them here would
+     * append duplicates rather than harmlessly overwrite, unlike the
+     * fixed-size class/interface/module arrays just above. */
     if(!allow_top_level_redefinition) {
-        for(size_t index=0;index<discovery->function_count;index++) {
+        for(size_t index=function_claim_start;index<discovery->function_count;index++) {
             const DiamondFunction *discovered_function=discovery->functions[index];
             DiamondFunction *reserved=diamond_program_add_function(program);
             if(reserved==nullptr) {
@@ -15216,17 +15280,22 @@ bool diamond_compile(const char *source, DiamondProgram *program,
      * DIAMOND_BUILTIN_CLASS_COUNT of them, registered identically by
      * both programs' own diamond_program_init and never re-declared by
      * user code) are skipped -- nothing ever "reopens" them through this
-     * path, so there's nothing to mark stale. */
-    for(size_t index=DIAMOND_BUILTIN_CLASS_COUNT;index<program->class_count;index++)
+     * path, so there's nothing to mark stale; with a template, its own
+     * classes/modules are skipped the same way and for the same reason
+     * (already real, never re-touched by a compile that never mentions
+     * their names). */
+    for(size_t index=template!=nullptr?template->class_count:DIAMOND_BUILTIN_CLASS_COUNT;
+        index<program->class_count;index++)
         program->classes[index].declared_by_discovery=true;
-    for(size_t index=0;index<program->module_count;index++)
+    for(size_t index=template!=nullptr?template->module_count:0;
+        index<program->module_count;index++)
         program->modules[index].declared_by_discovery=true;
 
     diamond_program_free(discovery);
     free(discovery);
 
     const bool compiled=run_compile_pass(
-        source,program,diagnostic,/*discovery_pass=*/false);
+        source,program,diagnostic,/*discovery_pass=*/false,function_claim_start);
     if(compiled)
         for(size_t index=0;index<program->interface_count;index++)
             program->interfaces[index].type_sets=program->entry.type_sets;
@@ -15244,6 +15313,42 @@ bool diamond_compile(const char *source, DiamondProgram *program,
             strlen(source));
     }
     return compiled;
+}
+
+bool diamond_compile(const char *source, DiamondProgram *program,
+                     DiamondDiagnostic *diagnostic) {
+    return diamond_compile_impl(source,program,nullptr,diagnostic);
+}
+
+/* Compiles `source` against a `template` program (itself the result of
+ * an earlier, ordinary diamond_compile call, e.g. over just the
+ * prelude) instead of from scratch: every one of template's classes,
+ * interfaces, modules, and top-level functions is available to
+ * `source` by name, exactly as if `source` had been compiled as
+ * template_source + source concatenated the way diamond_run_source
+ * (src/run_source.c) does today -- without re-lexing/re-parsing
+ * template_source, which is the actual cost being avoided (see
+ * docs/roadmap.md's "make programs start faster": the embedded prelude
+ * dominates every single invocation's compile time today).
+ *
+ * `template` itself is read-only here and never modified or freed --
+ * the caller owns its lifetime and can reuse the same compiled
+ * template across many calls to this function, which is the entire
+ * point. `program` is the same in/out parameter diamond_compile always
+ * takes (freed and reinitialized internally regardless of its prior
+ * state).
+ *
+ * `source` must not itself redeclare any name template already
+ * declares -- doing so hits the same "already defined" compile error
+ * template_source + source concatenated would have produced, not a
+ * silent divergence (see seed_program_from_template's own comment). It
+ * *can* freely reference and call into anything template declared, in
+ * either direction size doesn't matter here: template is always fully
+ * compiled before `source` is ever parsed. */
+bool diamond_compile_incremental(const char *source, DiamondProgram *program,
+                                 const DiamondProgram *template,
+                                 DiamondDiagnostic *diagnostic) {
+    return diamond_compile_impl(source,program,template,diagnostic);
 }
 
 DiamondChunk diamond_program_chunk(const DiamondProgram *program) {

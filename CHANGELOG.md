@@ -40,6 +40,16 @@ authoritative fine-grained record.
 
 ### Performance
 
+- Added `diamond_compile_incremental` (`src/compiler.c`), a native
+  embedding entry point that compiles source against an already-compiled
+  `DiamondProgram` template (e.g. the prelude, compiled once) instead of
+  re-lexing/re-parsing the template's own source text on every call.
+  `tests/run_cases.c` (the 1285-case batch test corpus runner) is the
+  first consumer: compiles the prelude once per process instead of once
+  per case, cutting the runner's own wall-clock time ~25% (measured:
+  31.0s -> 23.3s). See docs/roadmap.md's "Make programs start faster" for
+  the full design and what's still needed to bring the same win to the
+  `diamond` CLI's own cold-start case.
 - `JSON.parse` is native now (`String#parse_json`, `src/vm.c`), replacing
   `lib/core/json_codec.di`'s pure-Diamond recursive-descent implementation
   -- roughly 100x faster on realistic payloads (~3.3ms/MiB measured
