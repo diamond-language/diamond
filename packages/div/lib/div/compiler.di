@@ -29,8 +29,15 @@
 # compiled to the same fixed name would collide the moment an app
 # `require`s more than one of them together, and that's exactly the
 # common case (a page template requiring a partial). Two different
-# input files sharing a basename in different directories still collide
-# -- a deliberate, narrow v1 scope cut, not a general namespacing system.
+# input files sharing a basename in different directories used to
+# collide the same way -- resolved by function_name_for_relative below,
+# used whenever the caller (bin/divc_all.sh, walking a template tree)
+# knows the file's path relative to that tree's own root; a bare
+# basename-only function_name_for(path) call, from someone invoking
+# bin/divc.di directly on a single file with no meaningful root, is
+# unaffected and still collides the old way -- not a namespacing system
+# on its own, just what divc_all.sh's own root-relative path buys for
+# free once it's passed through.
 module Div
   module_function
 
@@ -42,21 +49,27 @@ module Div
     150
   end
 
-  # Diamond identifiers can't contain "." or "-" -- the two characters
-  # most likely to show up in a real template filename
-  # ("index.html.div" via the stripped-".div" base "index.html", or a
-  # hyphenated name). Anything else is passed through unchanged; a
-  # filename using other non-identifier characters is a known, narrow
-  # scope cut here, not a general sanitizer.
+  # Any byte outside [A-Za-z0-9_] becomes "_" -- originally scoped to
+  # just "." and "-" (the two characters most likely in a plain
+  # filename: "index.html.div" via its stripped-".div" base
+  # "index.html", or a hyphenated name), widened to a real character
+  # class once function_name_for_relative started feeding whole
+  # directory segments through here too, not just basenames -- a
+  # directory name is far more likely to carry a character (a space,
+  # say -- see test.sh's own "nested folder" fixture) that would
+  # otherwise land in a generated `def` line as an outright syntax
+  # error, not just an unconventional identifier.
   def sanitize_identifier(text)
     sb = StringBuilder.new()
     i = 0
     while i < text.length()
       ch = text[i]
-      if ch == "." || ch == "-"
-        sb.append("_")
-      else
+      code = ch.ord()
+      is_safe = (code >= 97 && code <= 122) || (code >= 65 && code <= 90) || (code >= 48 && code <= 57) || ch == "_"
+      if is_safe
         sb.append(ch)
+      else
+        sb.append("_")
       end
       i += 1
     end
@@ -74,6 +87,27 @@ module Div
       base = base.slice(0, base.length() - 4)
     end
     Div.sanitize_identifier(base)
+  end
+
+  # Like function_name_for, but qualifies the name with every directory
+  # segment of `path` instead of just the basename -- "skins/show.html.div"
+  # -> "skins_show_html", not "show_html". `path` here is expected to
+  # already be relative to whatever root the caller considers meaningful
+  # (bin/divc_all.sh passes each file's path relative to the tree root it
+  # was told to walk); a path with no "/" at all (a file directly under
+  # that root) produces exactly the same name function_name_for would,
+  # so this is a strict superset, not a different scheme, for anything
+  # not actually nested in a subdirectory.
+  def function_name_for_relative(path)
+    parts = path.split("/")
+    last_index = parts.length() - 1
+    base = parts[last_index]
+    if base.length() > 4 && base.slice(base.length() - 4, 4) == ".div"
+      base = base.slice(0, base.length() - 4)
+    end
+    parts[last_index] = base
+    sanitized = parts.map() do |part| Div.sanitize_identifier(part) end
+    sanitized.join("_")
   end
 
   # Scans `source` into an ordered Array of ["text", content] / ["tag",
@@ -258,11 +292,18 @@ module Div
     out.join("\n") + "\n"
   end
 
-  def compile_file(input_path, output_path)
+  # `name_path`, when given, is used instead of `input_path` to derive
+  # the generated function's own name -- via function_name_for_relative,
+  # not function_name_for, so a caller passing one actually gets
+  # directory-qualified naming rather than the same basename-only result
+  # either function would give a path with no "/" in it. Omitted (the
+  # default), this is exactly the old behavior: name derived from
+  # `input_path`'s own basename only.
+  def compile_file(input_path, output_path, name_path = nil)
     input = File.open(input_path, "r")
     source = input.read()
     input.close()
-    function_name = Div.function_name_for(input_path)
+    function_name = if name_path == nil then Div.function_name_for(input_path) else Div.function_name_for_relative(name_path) end
     generated = Div.compile_source(source, function_name)
     output = File.open(output_path, "w")
     output.write(generated)

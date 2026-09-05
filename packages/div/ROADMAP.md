@@ -17,11 +17,6 @@ Each of these was considered and explicitly deferred, not overlooked:
   literal substring (inside a nested string literal, say) terminates
   early. Matches real ERB's own historical simplicity; revisit only if a
   real template needs it.
-- **A general filename sanitizer.** `function_name_for` only replaces
-  `.` and `-` (the two characters realistically found in a template
-  filename: the stripped `.div` extension leaving `.html`, and
-  hyphenated names). Other non-identifier characters in a filename are
-  an unhandled, narrow scope cut.
 
 ## Resolved
 
@@ -79,12 +74,29 @@ Each of these was considered and explicitly deferred, not overlooked:
   of `facet`/Make because neither build system needs a new extension point to
   provide the actual shared behavior.
 
+- **Cross-directory basename collisions.** `skindicate.dia` hit exactly
+  the "if this shows up in practice" case this used to wait for,
+  reorganizing its views into one subdirectory per controller.
+  `function_name_for_relative` (`lib/div/compiler.di`) qualifies the
+  generated name by every directory segment between a template-tree
+  root and the file itself -- `views/users/show.html.div` ->
+  `users_show_html`, `views/skins/show.html.div` -> `skins_show_html` --
+  and `bin/divc_all.sh` now passes each file's own root-relative path
+  through for exactly this, so the directory-derived prefix option this
+  section used to name is what got built. A file directly under the
+  root is unaffected (same name either function gives it), and
+  `bin/divc.di` invoked directly on one file with no known root falls
+  back to the old basename-only name -- see README's own naming
+  discussion for the full picture.
+
+- **A general filename sanitizer.** `sanitize_identifier` used to only
+  replace `.` and `-`, an intentionally narrow scope cut for plain
+  filenames. Directory names are a real source of other non-identifier
+  characters (a space, confirmed by test.sh's own pre-existing "nested
+  folder" fixture) now that they feed into a generated name too, so this
+  widened to replace any byte outside `[A-Za-z0-9_]`, not an enumerated
+  list of two characters.
+
 ## Open questions
 
-- **Cross-directory basename collisions.** Two input files sharing a
-  basename in different directories (`views/users/show.html.div` and
-  `views/posts/show.html.div`, say) still generate the same function
-  name and collide if both are `require`d into one program. A real fix
-  needs either a directory-derived prefix or a genuine namespacing
-  mechanism -- neither implemented; revisit if this shows up in practice
-  rather than solving it preemptively.
+Nothing open right now.

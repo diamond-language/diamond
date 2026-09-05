@@ -194,4 +194,67 @@ assert_contains "$actual" "compiled 2 templates under"
 [[ ! -f "$work/batch/views/nested folder/.cache/stale.html.di" ]]
 count=$((count + 1))
 
+# --- directory-qualified naming: two files sharing a basename in
+# different subdirectories no longer collide once divc_all.sh's own
+# root-relative path reaches function_name_for_relative, and a file
+# directly under the root is completely unaffected (same name either
+# function would give it) ---
+mkdir -p "$work/qualified/views/skins" "$work/qualified/views/users"
+cat >"$work/qualified/views/skins/show.html.div" <<'DRBEOF'
+<%# locals: name %>
+<p>skin show: <%= name %></p>
+DRBEOF
+cat >"$work/qualified/views/users/show.html.div" <<'DRBEOF'
+<%# locals: name %>
+<p>user show: <%= name %></p>
+DRBEOF
+cat >"$work/qualified/views/pagination.html.div" <<'DRBEOF'
+<%# locals: page %>
+<p>page <%= page %></p>
+DRBEOF
+DIAMOND_BIN="$diamond" bin/divc_all.sh "$work/qualified/views" >/dev/null
+
+cat >"$work/qualified_driver.di" <<DRIVEREOF
+require "$work/qualified/views/skins/.cache/show.html"
+require "$work/qualified/views/users/.cache/show.html"
+require "$work/qualified/views/.cache/pagination.html"
+puts(skins_show_html("Aero"))
+puts(users_show_html("alice"))
+puts(pagination_html(3))
+DRIVEREOF
+actual="$("$diamond" "$work/qualified_driver.di")"
+assert_contains "$actual" "skin show: Aero"
+assert_contains "$actual" "user show: alice"
+assert_contains "$actual" "page 3"
+count=$((count + 1))
+
+# --- a space in a directory name (a real, already-tested divc_all.sh
+# fixture -- see "nested folder" above) sanitizes to "_" in the
+# generated name instead of producing a syntax error in the output file ---
+mkdir -p "$work/spacedir/views/nested folder"
+cat >"$work/spacedir/views/nested folder/child.html.div" <<'DRBEOF'
+<p>child</p>
+DRBEOF
+DIAMOND_BIN="$diamond" bin/divc_all.sh "$work/spacedir/views" >/dev/null
+cat >"$work/spacedir_driver.di" <<DRIVEREOF
+require "$work/spacedir/views/nested folder/.cache/child.html"
+puts(nested_folder_child_html())
+DRIVEREOF
+actual="$("$diamond" "$work/spacedir_driver.di")"
+assert_contains "$actual" "<p>child</p>"
+count=$((count + 1))
+
+# --- divc.di invoked directly with just input+output (no name_path,
+# the two-argument form every existing caller/test above already uses)
+# keeps the old basename-only name -- adding name_path support didn't
+# change the default ---
+mkdir -p "$work/legacy/sub"
+cat >"$work/legacy/sub/show.html.div" <<'DRBEOF'
+<p>legacy</p>
+DRBEOF
+"$diamond" bin/divc.di "$work/legacy/sub/show.html.div" "$work/legacy_show.html.di" >/dev/null
+actual="$(cat "$work/legacy_show.html.di")"
+assert_contains "$actual" "def show_html()"
+count=$((count + 1))
+
 echo "$count div tests passed"

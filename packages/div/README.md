@@ -59,16 +59,24 @@ directories. This prevents generated files for renamed or deleted templates
 from lingering. Paths containing spaces are supported, and `/` is rejected
 as an input to prevent an accidentally broad clean.
 
-The generated function is named after the *input file's own basename*,
-not a fixed `render` -- `views/index.html.div` compiles to
-`def index_html(...)`, `views/greeting.html.div` to
-`def greeting_html(...)`. This matters the moment an app `require`s more
-than one compiled template together (a page requiring a partial, say):
-`require`'s compile-time expansion merges every required file into one
-flat, shared top-level function namespace, so two templates compiled to
-the same fixed name would collide. Two different input files that share
-a basename in different directories still collide -- a deliberate,
-narrow scope cut, not a general namespacing system.
+The generated function is named after the input file's own path, not a
+fixed `render` -- `views/index.html.div` compiles to `def index_html(...)`,
+`views/greeting.html.div` to `def greeting_html(...)`. This matters the
+moment an app `require`s more than one compiled template together (a page
+requiring a partial, say): `require`'s compile-time expansion merges every
+required file into one flat, shared top-level function namespace, so two
+templates compiled to the same fixed name would collide.
+
+`bin/divc_all.sh` qualifies that name by every directory segment between
+the template-tree root you give it and the file itself, so two files
+sharing a basename in different subdirectories no longer collide:
+`views/users/show.html.div` -> `def users_show_html(...)`,
+`views/skins/show.html.div` -> `def skins_show_html(...)`. A file directly
+under the root you gave `divc_all.sh` (no subdirectory) gets exactly the
+same name it always did -- this is a superset of the old behavior, not a
+different scheme, so an existing flat `views/` tree is unaffected.
+Invoking `bin/divc.di` directly on a single file, with no root-relative
+path known, still falls back to the plain basename-only name.
 
 ## Tag syntax
 
