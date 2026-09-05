@@ -402,8 +402,9 @@ Language and runtime guides:
   isolated heaps and copying values across thread boundaries.
 - Threads use isolated heaps. Values are copied across thread boundaries rather
   than sharing mutable objects.
-- There is no protected method visibility and no runtime source evaluator for
-  defining new method bodies.
+- There is no general `eval`: `ClassName.compile_method` compiles a method
+  body from a source string, but only into a capture-free method installed
+  via `define_method`, not arbitrary code in the calling scope.
 - The LSP recompiles complete documents and cannot generally resolve a method
   name through an arbitrary receiver type.
 - `facet` has no hosted registry, version solver, or multi-version dependency

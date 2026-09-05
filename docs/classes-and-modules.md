@@ -61,6 +61,56 @@ instance immediately, including ones already constructed before the
 call, since dispatch looks the method up by class and name at call time
 rather than snapshotting anything at construction time.
 
+### `compile_method`
+
+`ClassName.compile_method(name, params, body_source, bound_values)` closes
+the one gap `define_method` leaves: its callable normally has to be an
+already-compiled nested `def`, physically written in the source, so there's
+no way to build a method body from a runtime string. `compile_method` does
+that -- it compiles `body_source` as if it were a method on `ClassName` and
+returns a `Callable` ready to hand to `define_method`, the same as the
+factory idiom above:
+
+```ruby
+class Greeter
+  attr_accessor name: String
+
+  def initialize(name: String)
+    @name = name
+  end
+end
+
+callable = Greeter.compile_method("greeting", ["prefix"], "prefix + self.name()", {})
+Greeter.define_method("greeting", callable)
+
+Greeter.new("Ada").greeting("Hello, ")  # => "Hello, Ada"
+```
+
+`params` is a plain list of parameter names (`String`s) -- no types,
+defaults, splats, or block parameters. `body_source` can reference `self`,
+call other methods on it, and read/write the class's *existing* `@fields`,
+but it can't grow the class's field layout: referencing a field the class
+doesn't already have fails with `ArgumentError` before anything is
+installed, as does a syntax error in `body_source`. It also can't name
+another class directly (`body_source` compiles in its own isolated
+program, which doesn't know any class but `ClassName` exists) or close over
+the calling scope's locals -- `bound_values`, a `Hash` of already-evaluated
+values (capped at 8 entries), is how you thread those in instead; they're
+spliced on as trailing parameters the installed method's own callers never
+supply:
+
+```ruby
+callable = Other.compile_method("boxed_label", [], "formatter.wrap(self.label())",
+  {"formatter": formatter})
+```
+
+Out of scope for now: `self.`-owned singleton methods (instance methods
+only) and any sandboxing -- `body_source` runs as ordinary compiled
+bytecode with full language access, the same trust level Ruby's own
+`class_eval`/`define_method` assume. Meant for programmer-authored
+metaprogramming (see `packages/active_record`'s `has_many`), not for
+compiling untrusted input.
+
 ### `closure name() ... end`
 
 A plain nested `def`, as above, is built for exactly one job: a detached
