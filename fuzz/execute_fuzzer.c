@@ -127,8 +127,21 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     data++;
     size--;
     if (size > DIAMOND_MAX_CODE) size = DIAMOND_MAX_CODE;
-    memcpy(program->entry.code, data, size);
+    /* `entry.code` is `uint8_t *`, not an inline array -- diamond_program_
+     * init's memset leaves it null, same as every other DiamondProgram
+     * field a real compile pass would malloc into (see compiler.c's own
+     * `destination->code=malloc(...)`) rather than write through
+     * directly. Never caught until a real Ubuntu 26.04 + Clang test-all
+     * run finally got far enough to run this harness (see CHANGELOG.md);
+     * a 6-byte input reliably reproduces it on Fedora too, so this was
+     * always a harness bug, not anything platform-specific. */
+    if (size > 0) {
+        program->entry.code = malloc(size);
+        if (program->entry.code == nullptr) return 0;
+        memcpy(program->entry.code, data, size);
+    }
     program->entry.code_count = size;
+    program->entry.code_capacity = size;
     program->entry.register_count = register_count;
 
     const DiamondChunk chunk = diamond_program_chunk(program);
