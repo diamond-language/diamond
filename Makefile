@@ -160,8 +160,19 @@ test: debug
 test-release: release
 	bash tests/run.sh
 
+# $${VAR:-default}, not a bare VAR=value prefix: a bare prefix always
+# wins over anything the caller already exported, which used to
+# silently defeat CI's own ASAN_OPTIONS=detect_leaks=0 (see ci.yml) --
+# set globally there specifically because LeakSanitizer's ptrace-based
+# scan is unreliable under GitHub's container runners (intermittent,
+# not a clean startup refusal: confirmed the hard way as a silent,
+# no-diagnostic mid-suite death under test-sanitize, 3 of 4 real CI
+# runs, never reproducing locally on a real non-container Linux box).
+# Falls back to detect_leaks=1 only when the caller hasn't set
+# ASAN_OPTIONS at all, preserving real leak detection for a local
+# `make test-sanitize`.
 test-sanitize: sanitize
-	ASAN_OPTIONS=detect_leaks=1 UBSAN_OPTIONS=print_stacktrace=1 bash tests/run.sh
+	ASAN_OPTIONS="$${ASAN_OPTIONS:-detect_leaks=1}" UBSAN_OPTIONS="$${UBSAN_OPTIONS:-print_stacktrace=1}" bash tests/run.sh
 
 test-tsan: tsan
 	bash tests/tsan_test.sh
