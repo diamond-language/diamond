@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+trap 'echo "DIAGNOSTIC: failed at line $LINENO: $BASH_COMMAND" >&2' ERR
 
 bash tests/collection_relay_contracts.sh
 
