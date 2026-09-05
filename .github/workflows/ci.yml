@@ -30,7 +30,15 @@ jobs:
             container: fedora:latest
           - name: ubuntu
             container: ubuntu:26.04
-    container: ${{ matrix.os.container }}
+    # options: --init: without a real init process reaping them, orphaned
+    # zombie children from other tests accumulate for the rest of the job
+    # -- confirmed directly (Process.spawn's own zombie-reaping test false-
+    # failed on both Ubuntu jobs the first time this matrix ran in real CI:
+    # "Process.spawn left zombie processes behind after GC sweep" against
+    # zombies from an *earlier*, unrelated test, not its own).
+    container:
+      image: ${{ matrix.os.container }}
+      options: --init
     steps:
       - name: Install dependencies (Fedora)
         if: matrix.os.name == 'fedora'
