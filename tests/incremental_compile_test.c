@@ -15,6 +15,10 @@
  * (see CFLAGS_DEBUG's own comment) -- confirmed the hard way here too,
  * as a segfault at main()'s very first statement before this fix. */
 
+/* See src/bignum.c's own identical comment: needed transitively for
+ * vm.h's <ucontext.h> use, only under musl (docs/roadmap.md's
+ * "Portability"). */
+#define _DEFAULT_SOURCE
 #include "compiler.h"
 #include "prelude.h"
 #include "value.h"

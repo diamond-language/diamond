@@ -11,6 +11,10 @@
  * compiled_prelude.bin rule); its output is #embed'd by
  * src/compiled_prelude_data.c. */
 
+/* See src/bignum.c's own identical comment: needed transitively for
+ * vm.h's <ucontext.h> use (via compiler.h), only under musl
+ * (docs/roadmap.md's "Portability"). */
+#define _DEFAULT_SOURCE
 #include "compiled_prelude.h"
 #include "compiler.h"
 #include "prelude.h"

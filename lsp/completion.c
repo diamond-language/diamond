@@ -1,3 +1,9 @@
+/* See src/bignum.c's own identical comment: needed transitively for
+ * vm.h's <ucontext.h> use (via compiler.h), only under musl
+ * (docs/roadmap.md's "Portability"). Must precede this file's own
+ * first #include -- document.h (pulled in by completion.h) may reach a
+ * libc header before compiler.h otherwise. */
+#define _DEFAULT_SOURCE
 #include "completion.h"
 
 #include "compile_buffer.h"

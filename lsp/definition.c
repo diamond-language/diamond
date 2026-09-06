@@ -1,3 +1,5 @@
+/* See lsp/completion.c's own identical comment. */
+#define _DEFAULT_SOURCE
 #include "definition.h"
 
 #include "compile_buffer.h"

@@ -733,8 +733,6 @@ static bool append_repl_pending(ReplBuffer *destination, const ReplBuffer *pendi
 }
 
 int diamond_repl_run(void) {
-    printf("diamond REPL -- Ctrl-D, exit, or quit to leave\n");
-
     FILE *capture = tmpfile();
     if (capture == nullptr) {
         fprintf(stderr, "diamond: cannot create temporary file for REPL output capture\n");
@@ -753,6 +751,26 @@ int diamond_repl_run(void) {
         fclose(capture);
         return 74;
     }
+    /* real_stdout, not a plain printf on stdout: every other line this
+     * function ever writes to the real terminal (prompts, echoed
+     * results) goes through real_stdout with an explicit flush right
+     * after, since stdout itself gets fully buffered (no tty attached)
+     * under exactly the harness this REPL is also tested through
+     * (tests/repl_test.sh's own bash coproc, a pipe, not a real pty).
+     * A plain `printf` here used to leave this banner sitting unflushed
+     * in stdout's own separate buffer until process exit -- invisible to
+     * a real interactive user for the length of the whole session, and
+     * masked in the test harness by its own banner check being a bare
+     * "ends with the prompt" wildcard match that never actually looked
+     * for the banner text's own arrival time. Surfaced by, not caused
+     * by, this file's own later dup2-based output-capture fix
+     * (docs/roadmap.md's "Portability") -- once *something* finally
+     * flushed stdout's long-stuck buffer (that fix's own fflush(stdout)
+     * before its first redirect), the banner suddenly appeared, but
+     * interleaved into the middle of the first evaluated expression's
+     * own output instead of at the top where it belongs. */
+    fputs("diamond REPL -- Ctrl-D, exit, or quit to leave\n", real_stdout);
+    fflush(real_stdout);
 
     ReplBuffer session;
     buffer_init(&session);
@@ -940,8 +958,22 @@ int diamond_repl_run(void) {
         if (ftruncate(fileno(capture), 0) != 0) {
             fprintf(stderr, "diamond: cannot reset output capture\n");
         }
-        FILE *saved_stdout_stream = stdout;
-        stdout = capture;
+        /* dup2 onto STDOUT_FILENO, not a direct `stdout = capture`
+         * assignment: `stdout` is a plain, reassignable `FILE *` global
+         * on glibc, but POSIX only guarantees it names *some* `FILE *`
+         * expression -- musl's own <stdio.h> defines it as a non-
+         * assignable macro, so the direct-assignment form doesn't even
+         * compile there (docs/roadmap.md's "Portability"). Redirecting
+         * the underlying file descriptor instead works identically on
+         * both: every write through the untouched `stdout` FILE*
+         * (puts/print/etc., including inside the user's own running
+         * code) still targets fd 1, which now happens to point at
+         * `capture`'s file. real_stdout_fd (already a dup of the
+         * original fd 1, taken above) is what restores it afterward. */
+        fflush(stdout);
+        if (dup2(fileno(capture), STDOUT_FILENO) < 0) {
+            fprintf(stderr, "diamond: cannot redirect stdout for output capture\n");
+        }
 
         DiamondValue result = DIAMOND_NIL;
         DiamondVm result_vm;
@@ -950,9 +982,24 @@ int diamond_repl_run(void) {
                           &run_error,
                                           error_message, sizeof error_message);
 
-        fflush(capture);
-        stdout = saved_stdout_stream;
+        fflush(stdout);
+        if (dup2(real_stdout_fd, STDOUT_FILENO) < 0) {
+            fprintf(stderr, "diamond: cannot restore stdout after output capture\n");
+        }
 
+        /* Every byte the candidate wrote went through fd 1 while it
+         * aliased `capture` (above) -- via `stdout`'s own FILE*, never
+         * through `capture`'s own FILE* at all. `capture`'s own stream
+         * position is therefore stale (still wherever ftruncate/rewind
+         * left it, unaware that a *different* FILE* wrote to the same
+         * underlying file through the shared fd) until explicitly
+         * resynced with the kernel's real file offset -- ftell here
+         * without this would silently return 0 (or whatever stale value
+         * capture's own buffering last cached), not what was actually
+         * written. */
+        if (fseek(capture, 0, SEEK_END) != 0) {
+            fprintf(stderr, "diamond: cannot resync output capture\n");
+        }
         const long captured_length = ftell(capture);
         char *captured = nullptr;
         if (captured_length > 0) {

@@ -6582,6 +6582,7 @@ static DiamondVmStatus bcrypt_hash_helper(DiamondVm *vm,DiamondValue password_va
         return DIAMOND_VM_ARITY_ERROR;
     }
     const DiamondString *password=(const DiamondString *)password_value.as.object;
+#ifdef CRYPT_GENSALT_IMPLEMENTS_AUTO_ENTROPY
     char salt[CRYPT_GENSALT_OUTPUT_SIZE];
     if(crypt_gensalt_rn("$2b$",(unsigned long)cost,nullptr,0,salt,sizeof salt)==nullptr) {
         (void)snprintf(vm->error,sizeof vm->error,"BCrypt.hash: failed to generate a salt");
@@ -6600,6 +6601,23 @@ static DiamondVmStatus bcrypt_hash_helper(DiamondVm *vm,DiamondValue password_va
     if(result==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
     *out_result=DIAMOND_OBJECT(result);
     return DIAMOND_VM_OK;
+#else
+    /* No libxcrypt (CRYPT_GENSALT_IMPLEMENTS_AUTO_ENTROPY, defined by
+     * libxcrypt's own crypt.h, is this codebase's established way of
+     * detecting it -- see this function's own top comment) -- musl's
+     * <crypt.h>, for one, has crypt_r but neither this salt-generation
+     * convenience function nor bcrypt ($2b$) support in crypt_r itself
+     * at all (confirmed directly: crypt_r("x","$2b$04$...",&data)
+     * returns "*", libcrypt's own "unsupported algorithm" signal, on
+     * musl -- not a missing-symbol problem alone). See docs/roadmap.md's
+     * "Portability" for the full finding; a truly portable BCrypt would
+     * need to bundle its own implementation rather than delegate to the
+     * system crypt(3), which is real, separate work. */
+    (void)password;(void)cost;(void)out_result;
+    (void)snprintf(vm->error,sizeof vm->error,
+        "BCrypt.hash is not supported on this platform's crypt() implementation");
+    return DIAMOND_VM_PROGRAM_ERROR;
+#endif
 }
 
 /* BCrypt.verify(password, digest) -- re-hashes `password` against

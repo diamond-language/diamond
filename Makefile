@@ -21,8 +21,18 @@ REGINOLD_LIB := $(REGINOLD_DIR)/libreginold.a
 # src/*.h/lsp/*.h basename collision exists to make that a risk.
 CPPFLAGS := -Isrc -Ilsp -I$(REGINOLD_DIR) -I/usr/include/mysql -I/usr/include/mysql/mysql \
 	-I/usr/include/mariadb -I/usr/include/postgresql
+# -fPIE: explicit, not left to the compiler's own default. Fedora/Ubuntu's
+# gcc default to a consistent compile/link PIE pairing either way, so this
+# was invisible there, but Alpine's musl-targeting gcc defaults to `-pie`
+# at link time without defaulting `-fPIE` at compile time -- an object
+# compiled under that mismatched default fails to link at all ("relocation
+# R_X86_64_32 against `.rodata' can not be used when making a PIE object").
+# Forcing -fPIE here makes every object agree regardless of a given
+# toolchain's own default pairing; gcc's own driver adds the matching
+# `-pie` at link time once it sees PIE-compiled objects, no separate
+# LDFLAGS needed. See docs/roadmap.md's "Portability".
 CFLAGS_COMMON := -std=c23 -Wall -Wextra -Wpedantic -Wconversion -Wshadow \
-	-Wstrict-prototypes -Werror=implicit-function-declaration
+	-Wstrict-prototypes -Werror=implicit-function-declaration -fPIE
 # CC=clang needs debug's own optimization level bumped from -O0 to -O1,
 # GCC doesn't -- see CFLAGS_SANITIZE's own -O1-vs-O0 comment below for the
 # same underlying cause (run_chunk's giant per-opcode-case local set not

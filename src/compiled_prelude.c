@@ -44,6 +44,10 @@
  * leaves in a deserialized class's own shapes[] is always overwritten
  * before anything ever reads it. */
 
+/* See bignum.c's own identical comment: needed transitively for vm.h's
+ * <ucontext.h> use (via compiler.h), only under musl (docs/roadmap.md's
+ * "Portability"). */
+#define _DEFAULT_SOURCE
 #include "compiled_prelude.h"
 
 #include <assert.h>

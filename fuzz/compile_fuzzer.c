@@ -1,3 +1,7 @@
+/* See src/bignum.c's own identical comment: needed transitively for
+ * vm.h's <ucontext.h> use, only under musl (docs/roadmap.md's
+ * "Portability"). */
+#define _DEFAULT_SOURCE
 #include "compiler.h"
 
 #include <stdint.h>
