@@ -51,12 +51,65 @@ compile against). Fixing the CLI's own cold-start cost (the actual pain point
 above) needs the "reusable compiled-prelude snapshot" half instead: generating
 `template`'s compiled state once at build time (not runtime) and embedding it
 in the binary, skipping prelude-source-parsing entirely rather than doing it
-once per process. That needs real (de)serialization for `DiamondProgram`'s
-pointer-based parts (function code/constant/string arrays) plus a two-stage
-build, neither of which `diamond_compile_incremental` needed (it only ever
-seeds an in-memory `DiamondProgram` from another one, no serialization
-boundary crossed) -- worth prototyping next now that the underlying seeding
-mechanism is proven, but a materially bigger lift.
+once per process.
+
+Prototyped and measured (`src/compiled_prelude.{h,c}`, `tools/gen_compiled_
+prelude.c`, `src/compiled_prelude_data.c`): a same-build-only binary
+serialization of a compiled `DiamondProgram`, generated at build time by a
+throwaway host tool and `#embed`'d into a new source file, deserialized via
+`diamond_program_read_compiled` into an ordinary, independently-owned
+`DiamondProgram` suitable as a `diamond_compile_incremental` template --
+verified byte-for-byte round-trip correct (`make test-compiled-prelude`) and,
+once wired into `diamond_run_source`, functionally correct against the full
+1428-case corpus.
+
+Wiring it into the CLI turned out to be a net wash, not a win, so that wiring
+was reverted (the serialization/generator/embedding infrastructure above is
+kept, since it's independently correct and may still pay off after the fix
+described below). Measured directly (`DIAMOND_TRACE_STARTUP`, release build,
+repeated samples): deserializing the embedded template costs ~8ms in a fresh
+process (vs. ~0.7ms once the allocator/page tables are already warm later in
+the same process -- confirmed by isolating the two), and feeding it through
+`diamond_compile_incremental` costs another ~17-18ms, for a ~25-26ms total --
+slightly *worse* than the ~23ms the existing live `diamond_compile` over
+prelude+source text already took. Root cause: both the deserializer
+(`read_function`, one call per prelude function) and `diamond_compile_
+incremental`'s own `seed_program_from_template` (which clones the template's
+functions into *both* the discovery and the real pass's program) go through
+`diamond_function_copy`, which does 6 separate small `malloc` calls per
+function (code/lines/columns/constants/strings/type_sets). For the prelude's
+156 functions that's on the order of 2,800 individual allocations for a
+single trivial `-e` invocation, and a cold process's allocator/page-table
+setup makes each of those disproportionately expensive -- expensive enough to
+cancel out the lexing/parsing work actually saved. This didn't show up in
+`tests/run_cases.c`'s own incremental-compile use (25% faster, see above)
+because that runner pays the allocation cost once per *process* (1285 cases
+share one already-warm template and one already-warm allocator), not once per
+case.
+
+Also fixed along the way, kept regardless of the above: `seed_program_from_
+template` and `diamond_compile_impl`'s own post-discovery tail both used to
+`memcpy` the *entire* fixed-size `classes`/`interfaces`/`modules` arrays
+(`DIAMOND_MAX_CLASSES`=180/`DIAMOND_MAX_INTERFACES`=32/`DIAMOND_MAX_MODULES`=32
+slots, ~14MB combined) on every single `diamond_compile`/`diamond_compile_
+incremental` call, regardless of how many of those slots were actually in use
+-- now copies only each table's own used-count prefix. Unconditionally
+cheaper, no behavior change, covered by the existing corpus and `make
+test-incremental-compile`.
+
+The actual next step here, if this is revisited, is collapsing `DiamondFunction`'s
+6 separate dynamic-array allocations into one combined buffer (single `malloc`
+sized to fit all 6 arrays, pointers computed by offset) to cut the allocation
+count ~6x wherever `diamond_function_copy` runs -- Thread.new's own program
+clone (`clone_program_from_chunk`, `src/vm.c`) and `ClassName.define_method`
+would benefit the same way. Bigger and riskier than this prelude-snapshot work
+alone (touches every `diamond_function_copy` caller), which is why it wasn't
+attempted in the same pass. Note also that keeping the embedding infrastructure in place costs real binary
+size even unused today: `src/compiled_prelude_data.c` (holding the embedded,
+uncompressed serialized prelude, currently ~2.5MB) is swept into every target
+that builds `$(SOURCES)`/`$(API_SOURCES)` (the Makefile's own wildcard over
+`src/*.c`), which grows the release `diamond` binary from ~2.6MB to ~5.1MB
+even though nothing currently calls into it.
 
 ### Improve receiver-aware tooling
 

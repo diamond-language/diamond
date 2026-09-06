@@ -15152,11 +15152,23 @@ static bool run_compile_pass(const char *source, DiamondProgram *program,
  * slots up except by an ordinary, successful by-name reference. */
 static bool seed_program_from_template(DiamondProgram *destination,
                                        const DiamondProgram *template) {
-    memcpy(destination->classes,template->classes,sizeof destination->classes);
+    /* Only template's own *used* prefix of each fixed-size table, not
+     * the whole DIAMOND_MAX_CLASSES=180/DIAMOND_MAX_INTERFACES=32/
+     * DIAMOND_MAX_MODULES=32-sized array (~14MB combined, dwarfing
+     * anything diamond_compile_incremental saves by skipping the
+     * template's own lex/parse/codegen -- measured directly, not
+     * assumed): `destination` was just diamond_program_init'd, whose own
+     * memset already leaves every slot past what's copied here in
+     * exactly the same all-zero state a full-array copy would have left
+     * them in anyway, since template's own unused suffix is zero too. */
+    memcpy(destination->classes,template->classes,
+        template->class_count*sizeof destination->classes[0]);
     destination->class_count=template->class_count;
-    memcpy(destination->interfaces,template->interfaces,sizeof destination->interfaces);
+    memcpy(destination->interfaces,template->interfaces,
+        template->interface_count*sizeof destination->interfaces[0]);
     destination->interface_count=template->interface_count;
-    memcpy(destination->modules,template->modules,sizeof destination->modules);
+    memcpy(destination->modules,template->modules,
+        template->module_count*sizeof destination->modules[0]);
     destination->module_count=template->module_count;
     destination->range_class_index=template->range_class_index;
     for(size_t index=0;index<template->function_count;index++) {
@@ -15232,11 +15244,23 @@ static bool diamond_compile_impl(const char *source, DiamondProgram *program,
      * template, copied the same way), so re-copying it here is
      * redundant, not wrong -- unlike the function loop just below,
      * where "copy again" means "append a second time". */
-    memcpy(program->classes, discovery->classes, sizeof program->classes);
+    /* Only discovery's own *used* prefix -- see seed_program_from_
+     * template's own identical comment just above on why a full
+     * DIAMOND_MAX_CLASSES/_INTERFACES/_MODULES-sized copy here would be
+     * both far more expensive and no more correct (program was just
+     * diamond_program_init'd, so its own unused suffix is already zero,
+     * matching discovery's own zeroed suffix exactly). This path runs on
+     * *every* diamond_compile/diamond_compile_incremental call, template
+     * or not -- unlike seed_program_from_template, which only runs when
+     * a template is given. */
+    memcpy(program->classes, discovery->classes,
+        discovery->class_count*sizeof program->classes[0]);
     program->class_count = discovery->class_count;
-    memcpy(program->interfaces, discovery->interfaces, sizeof program->interfaces);
+    memcpy(program->interfaces, discovery->interfaces,
+        discovery->interface_count*sizeof program->interfaces[0]);
     program->interface_count = discovery->interface_count;
-    memcpy(program->modules, discovery->modules, sizeof program->modules);
+    memcpy(program->modules, discovery->modules,
+        discovery->module_count*sizeof program->modules[0]);
     program->module_count = discovery->module_count;
 
     /* Reserve every compiler-created function at its discovery-pass index.

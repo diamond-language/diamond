@@ -50,6 +50,20 @@ authoritative fine-grained record.
   31.0s -> 23.3s). See docs/roadmap.md's "Make programs start faster" for
   the full design and what's still needed to bring the same win to the
   `diamond` CLI's own cold-start case.
+- Fixed `seed_program_from_template` and `diamond_compile_impl`'s own
+  post-discovery tail (`src/compiler.c`) copying entire fixed-size
+  `classes`/`interfaces`/`modules` arrays (~14MB combined) on every
+  `diamond_compile`/`diamond_compile_incremental` call regardless of how
+  many slots were actually in use -- now copies only each table's own
+  used-count prefix. No behavior change, unconditionally cheaper.
+- Prototyped a build-time embedded, pre-compiled prelude snapshot for the
+  `diamond` CLI's own cold-start case (`src/compiled_prelude.{h,c}`,
+  `tools/gen_compiled_prelude.c`); not wired in after measurement showed
+  it was a net wash for that case (deserializing plus incremental-compile's
+  own per-function cloning currently costs about as much, in allocator
+  overhead, as the lexing/parsing it replaces). See docs/roadmap.md's
+  "Make programs start faster" for the measurements and what a real fix
+  would need.
 - `JSON.parse` is native now (`String#parse_json`, `src/vm.c`), replacing
   `lib/core/json_codec.di`'s pure-Diamond recursive-descent implementation
   -- roughly 100x faster on realistic payloads (~3.3ms/MiB measured

@@ -112,7 +112,7 @@ REPL_COMPLETION_SOURCES := lsp/completion.c lsp/compile_buffer.c \
 REPL_COMPLETION_OBJECTS := $(REPL_COMPLETION_SOURCES:lsp/%.c=$(BUILD_DIR)/lsp-%.o)
 DEPS := $(OBJECTS:.o=.d) $(REPL_COMPLETION_OBJECTS:.o=.d)
 
-.PHONY: all debug sanitize tsan release test test-release test-sanitize test-tsan test-api test-incremental-compile test-fibers test-fiber-run test-fiber-context test-vm-context test-yield test-continuation test-multi-yield test-scheduler test-scheduler-run-all test-fiber-gc-roots test-fiber-guards test-nested-yield-guard test-stack-overflow test-all test-facet facet test-database-config-package test-http-package test-gremlin-package test-websocket-package test-redis-package test-rack-package test-cookies-package test-multipart-package test-network-safety-package test-div-package test-dials-package test-graphql-package test-graphsql-package test-logger-package test-log-viewer-package test-active-karma-package test-active-auth-package test-active-social-package test-active-tagging-package test-active-discussion-package test-pheint-application test-lexer-diff test-parser-diff test-self-host test-self-host-smoke lsp test-lsp test-repl test-repl-completion fuzz test-fuzz clean
+.PHONY: all debug sanitize tsan release test test-release test-sanitize test-tsan test-api test-incremental-compile test-compiled-prelude test-fibers test-fiber-run test-fiber-context test-vm-context test-yield test-continuation test-multi-yield test-scheduler test-scheduler-run-all test-fiber-gc-roots test-fiber-guards test-nested-yield-guard test-stack-overflow test-all test-facet facet test-database-config-package test-http-package test-gremlin-package test-websocket-package test-redis-package test-rack-package test-cookies-package test-multipart-package test-network-safety-package test-div-package test-dials-package test-graphql-package test-graphsql-package test-logger-package test-log-viewer-package test-active-karma-package test-active-auth-package test-active-social-package test-active-tagging-package test-active-discussion-package test-pheint-application test-lexer-diff test-parser-diff test-self-host test-self-host-smoke lsp test-lsp test-repl test-repl-completion fuzz test-fuzz clean
 
 all: debug
 
@@ -150,7 +150,7 @@ $(BUILD_DIR)/lsp-%.o: lsp/%.c
 # built, and needs run_cases to match (see docs/roadmap.md for why this
 # exists: running every tests/cases/*.di case in this one process
 # instead of tests/run.sh spawning a fresh `diamond` per case).
-$(BUILD_DIR)/run_cases: tests/run_cases.c $(SOURCES) lib/core.di $(REGINOLD_LIB)
+$(BUILD_DIR)/run_cases: tests/run_cases.c $(SOURCES) lib/core.di $(REGINOLD_LIB) | $(PRELUDE_BIN)
 	@mkdir -p $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(API_SOURCES) $< $(LDFLAGS) $(LDLIBS) -o $@
 
@@ -198,21 +198,63 @@ test-tsan: tsan
 # that would otherwise see repl.c's unused-by-them references to it.
 API_SOURCES := $(filter-out src/main.c src/repl.c,$(SOURCES))
 
-$(BUILD_DIR)/api_invalidation: tests/api_invalidation.c $(API_SOURCES) $(REGINOLD_LIB)
+# Build-time embedded prelude snapshot (docs/roadmap.md's "Make programs
+# start faster"): src/compiled_prelude_data.c's own #embed points at
+# this generated .bin, not a checked-in source file, so (unlike
+# src/prelude.c's lib/*.di #embeds) nothing here is tracked by a `.c`
+# file's own mtime -- every target below that compiles
+# src/compiled_prelude_data.c as one of $(API_SOURCES) needs
+# $(PRELUDE_BIN) listed as an explicit (order-only) prerequisite of its
+# own, or a clean build would try to #embed a file that doesn't exist
+# yet. GEN_PRELUDE_SOURCES excludes compiled_prelude_data.c itself from
+# the generator's own link: gen_compiled_prelude doesn't need the
+# embedded blob (it's what *produces* it), and linking it back in would
+# make $(PRELUDE_BIN) depend on its own prior output. src/run_source.c
+# is excluded too -- its own diamond_run_source now calls
+# diamond_compiled_prelude_data/_size (src/compiled_prelude_data.c), so
+# linking it here would reintroduce the same cycle one level removed;
+# nothing the generator needs (diamond_compile,
+# diamond_program_write_compiled, diamond_prelude_*) lives in
+# run_source.c anyway.
+PRELUDE_BIN := $(BUILD_DIR)/compiled_prelude.bin
+GEN_PRELUDE_SOURCES := $(filter-out src/compiled_prelude_data.c src/run_source.c,$(API_SOURCES))
+
+$(BUILD_DIR)/gen_compiled_prelude: tools/gen_compiled_prelude.c $(GEN_PRELUDE_SOURCES) $(REGINOLD_LIB)
+	@mkdir -p $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS_COMMON) $(CFLAGS_DEBUG) $(GEN_PRELUDE_SOURCES) $< $(LDLIBS) -o $@
+
+$(PRELUDE_BIN): $(BUILD_DIR)/gen_compiled_prelude
+	$(BUILD_DIR)/gen_compiled_prelude $@
+
+# Normal (not order-only) prerequisite: -MMD -MP's own generated .d file
+# for this object (once it exists) already tracks $(PRELUDE_BIN) as a
+# dependency via its #embed, exactly like every other src/%.o already
+# tracks its own #include'd headers -- this line only matters for the
+# very first build, before that .d file exists yet.
+$(BUILD_DIR)/compiled_prelude_data.o: $(PRELUDE_BIN)
+
+$(BUILD_DIR)/compiled_prelude_test: tests/compiled_prelude_test.c $(API_SOURCES) $(REGINOLD_LIB) | $(PRELUDE_BIN)
+	@mkdir -p $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS_COMMON) $(CFLAGS_DEBUG) $(API_SOURCES) $< $(LDLIBS) -o $@
+
+test-compiled-prelude: $(BUILD_DIR)/compiled_prelude_test
+	$(BUILD_DIR)/compiled_prelude_test
+
+$(BUILD_DIR)/api_invalidation: tests/api_invalidation.c $(API_SOURCES) $(REGINOLD_LIB) | $(PRELUDE_BIN)
 	@mkdir -p $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS_COMMON) $(CFLAGS_DEBUG) $(API_SOURCES) $< $(LDLIBS) -o $@
 
 test-api: $(BUILD_DIR)/api_invalidation
 	$(BUILD_DIR)/api_invalidation
 
-$(BUILD_DIR)/incremental_compile_test: tests/incremental_compile_test.c $(API_SOURCES) $(REGINOLD_LIB)
+$(BUILD_DIR)/incremental_compile_test: tests/incremental_compile_test.c $(API_SOURCES) $(REGINOLD_LIB) | $(PRELUDE_BIN)
 	@mkdir -p $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS_COMMON) $(CFLAGS_DEBUG) $(API_SOURCES) $< $(LDLIBS) -o $@
 
 test-incremental-compile: $(BUILD_DIR)/incremental_compile_test
 	$(BUILD_DIR)/incremental_compile_test
 
-$(BUILD_DIR)/fiber_states: tests/fiber_states.c $(API_SOURCES) $(REGINOLD_LIB)
+$(BUILD_DIR)/fiber_states: tests/fiber_states.c $(API_SOURCES) $(REGINOLD_LIB) | $(PRELUDE_BIN)
 	@mkdir -p $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS_COMMON) $(CFLAGS_DEBUG) $(API_SOURCES) $< $(LDLIBS) -o $@
 
@@ -220,7 +262,7 @@ test-fibers: $(BUILD_DIR)/fiber_states
 	$(BUILD_DIR)/fiber_states
 
 $(BUILD_DIR)/repl_completion_test: tests/repl_completion_test.c src/repl.c \
-		$(API_SOURCES) $(REPL_COMPLETION_SOURCES) $(REGINOLD_LIB)
+		$(API_SOURCES) $(REPL_COMPLETION_SOURCES) $(REGINOLD_LIB) | $(PRELUDE_BIN)
 	@mkdir -p $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS_COMMON) $(CFLAGS_DEBUG) src/repl.c $(API_SOURCES) \
 		$(REPL_COMPLETION_SOURCES) $< $(LDLIBS) -o $@
@@ -232,7 +274,7 @@ test-fiber-guards: test-fibers
 
 test-fiber-context: test-fibers
 
-$(BUILD_DIR)/fiber_run: tests/fiber_run.c $(API_SOURCES) $(REGINOLD_LIB)
+$(BUILD_DIR)/fiber_run: tests/fiber_run.c $(API_SOURCES) $(REGINOLD_LIB) | $(PRELUDE_BIN)
 	@mkdir -p $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS_COMMON) $(CFLAGS_DEBUG) $(API_SOURCES) $< $(LDLIBS) -o $@
 
@@ -257,7 +299,7 @@ test-nested-yield-guard: test-fiber-run
 
 test-stack-overflow: test-fiber-run
 
-$(BUILD_DIR)/facet: tools/facet.c $(API_SOURCES) $(REGINOLD_LIB)
+$(BUILD_DIR)/facet: tools/facet.c $(API_SOURCES) $(REGINOLD_LIB) | $(PRELUDE_BIN)
 	@mkdir -p $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS_COMMON) $(CFLAGS_DEBUG) $(API_SOURCES) $< $(LDLIBS) -o $@
 
@@ -331,7 +373,7 @@ test-pheint-application: $(TARGET)
 
 LSP_SOURCES := $(wildcard lsp/*.c)
 
-$(BUILD_DIR)/diamond-lsp: $(LSP_SOURCES) $(API_SOURCES) $(REGINOLD_LIB)
+$(BUILD_DIR)/diamond-lsp: $(LSP_SOURCES) $(API_SOURCES) $(REGINOLD_LIB) | $(PRELUDE_BIN)
 	@mkdir -p $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) -Ilsp $(CFLAGS_COMMON) $(CFLAGS_DEBUG) $(API_SOURCES) $(LSP_SOURCES) $(LDLIBS) -o $@
 
@@ -346,11 +388,11 @@ test-repl: debug
 test-exit: debug
 	bash tests/exit_test.sh
 
-$(BUILD_DIR)/compile_fuzzer: fuzz/compile_fuzzer.c $(API_SOURCES) $(REGINOLD_LIB)
+$(BUILD_DIR)/compile_fuzzer: fuzz/compile_fuzzer.c $(API_SOURCES) $(REGINOLD_LIB) | $(PRELUDE_BIN)
 	@mkdir -p $(BUILD_DIR)
 	$(CC_FUZZ) $(CPPFLAGS) $(CFLAGS_FUZZ) $(API_SOURCES) $< -lm $(REGINOLD_DIR)/libreginold.a -lsqlite3 -lpq -lmariadb -ldl -lpthread -lssl -lcrypto -lcrypt -lz -o $@
 
-$(BUILD_DIR)/execute_fuzzer: fuzz/execute_fuzzer.c $(API_SOURCES) $(REGINOLD_LIB)
+$(BUILD_DIR)/execute_fuzzer: fuzz/execute_fuzzer.c $(API_SOURCES) $(REGINOLD_LIB) | $(PRELUDE_BIN)
 	@mkdir -p $(BUILD_DIR)
 	$(CC_FUZZ) $(CPPFLAGS) $(CFLAGS_FUZZ) $(API_SOURCES) $< -lm $(REGINOLD_DIR)/libreginold.a -lsqlite3 -lpq -lmariadb -ldl -lpthread -lssl -lcrypto -lcrypt -lz -o $@
 
@@ -389,6 +431,7 @@ test-all:
 	$(MAKE) test-tsan
 	$(MAKE) test-api
 	$(MAKE) test-incremental-compile
+	$(MAKE) test-compiled-prelude
 	$(MAKE) test-fibers
 	$(MAKE) test-fiber-guards
 	$(MAKE) test-fiber-run
