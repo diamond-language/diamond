@@ -487,6 +487,25 @@ require "./migrate/20260102093000_create_books"
 ActiveRecord::Migrator.run(db, [create_authors_migration(), create_books_migration()])
 ```
 
+### Generating a migration file
+
+`bin/generate_migration.di` writes a new, correctly-shaped migration
+file for you -- one less thing to get right by hand each time:
+
+```sh
+diamond packages/active_record/bin/generate_migration.di db/migrate create_authors
+# created db/migrate/20260906143022_create_authors.di
+```
+
+The first argument is the directory to write into (your project's own
+`db/migrate/`, matching the layout above); the second is the migration's
+own name, reused for its generated `_up`/`_down`/`_migration` function
+names. The version prefix is the current UTC time (`YYYYMMDDHHMMSS`) --
+purely for sorting migrations chronologically at a glance, since
+`Migrator` itself never sorts or compares version strings (see above).
+Fill in the generated file's two `db.execute("...")` stubs and add one
+`require` line for it to your project's own `db/migrate.di`.
+
 ## Concurrency and connections
 
 `packages/gremlin`'s `threads: N` already gives each worker its own

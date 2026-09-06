@@ -225,6 +225,13 @@ authoritative fine-grained record.
   own `request["session"]` (a one-request rotation `CookieSession.call`
   now does before `forward` runs) -- no new middleware, no separate
   cookie. See `packages/cookies/README.md`.
+- Added `bin/generate_migration.di` (`packages/active_record`): a
+  Rails-`rails generate migration`-style CLI that writes a correctly-
+  shaped, timestamp-versioned migration file (`up`/`down`/`_migration()`
+  stubs matching `ActiveRecord::Migrator`'s own existing file
+  convention exactly) so a new migration needs no hand-copied
+  boilerplate. See `packages/active_record/README.md`'s "Generating a
+  migration file".
 
 ## 0.2.0 development milestones
 
