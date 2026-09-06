@@ -74,3 +74,59 @@ jobs:
           fetch-depth: 1
       - name: make test-all
         run: make CC=${{ matrix.cc }} test-all
+
+  # A third, genuinely different target -- musl, not just another distro
+  # (fedora/ubuntu above are both glibc). Its own job, not another
+  # matrix.os entry above: needs a different package manager, an extra
+  # link dependency (-lucontext), GCC only (never validated against
+  # musl+Clang), and a narrower set of test targets -- test-all itself
+  # runs sanitizer/tsan builds and every package-specific test (database,
+  # HTTP, GraphQL, ...) that this validation has not actually checked
+  # against musl, so claiming that coverage here would be dishonest, not
+  # just broader. See docs/portability.md for the full inventory of what
+  # building and testing against musl actually required.
+  test-musl:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    container:
+      image: alpine:edge
+      options: --init # see test-all's own identical comment above
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+      - name: Install dependencies (Alpine)
+        run: |
+          apk update
+          apk add --no-cache gcc musl-dev make git diffutils findutils \
+            ripgrep bc netcat-openbsd openssl openssl-dev sqlite-dev \
+            libpq-dev mariadb-connector-c-dev zlib-dev libucontext \
+            libucontext-dev tzdata bash coreutils procps sed gawk
+      # BCrypt.hash has no bcrypt algorithm to call into on musl at all
+      # (docs/portability.md) -- a real, documented libc limitation, not
+      # a bug, so every case exercising it is excluded here rather than
+      # left to fail the corpus run (tests/run_cases.c's own case loop
+      # stops at the first failure -- `grep -rl 'BCrypt\.' tests/cases/
+      # *.di` is what actually found both of these, not trial and error
+      # one case at a time). Moved aside rather than deleted only so the
+      # exclusion is visibly reversible in this step's own log; the
+      # container itself is discarded once the job ends either way.
+      - name: Exclude the known BCrypt/musl limitation
+        run: |
+          mkdir -p /tmp/excluded-cases
+          mv tests/cases/active_record_secure_password.di \
+             tests/cases/active_record_secure_password.expected \
+             tests/cases/bcrypt.di \
+             tests/cases/bcrypt.expected \
+             /tmp/excluded-cases/
+      - name: make test (musl)
+        run: make CC=gcc LDLIBS_EXTRA=-lucontext test
+      - name: Focused test targets (musl)
+        run: |
+          make CC=gcc LDLIBS_EXTRA=-lucontext test-api
+          make CC=gcc LDLIBS_EXTRA=-lucontext test-incremental-compile
+          make CC=gcc LDLIBS_EXTRA=-lucontext test-compiled-prelude
+          make CC=gcc LDLIBS_EXTRA=-lucontext test-fibers
+          make CC=gcc LDLIBS_EXTRA=-lucontext test-fiber-run
+          make CC=gcc LDLIBS_EXTRA=-lucontext test-lsp
+          make CC=gcc LDLIBS_EXTRA=-lucontext test-repl

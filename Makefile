@@ -87,7 +87,18 @@ LDFLAGS_SANITIZE := -fsanitize=address,undefined
 # addition to CFLAGS_SANITIZE -- see docs/threads.md and tests/tsan_test.sh.
 CFLAGS_TSAN := $(CFLAGS_DEBUG) -fsanitize=thread
 LDFLAGS_TSAN := -fsanitize=thread
-LDLIBS := -lm $(REGINOLD_DIR)/libreginold.a -lsqlite3 -lpq -lmariadb -ldl -lpthread -lssl -lcrypto -lcrypt -lz
+# LDLIBS_EXTRA: empty by default, appended into LDLIBS below so every
+# target that already links against $(LDLIBS) (there's no separate list
+# to keep in sync) picks up a platform-specific addition without any
+# other change. Its one real use today: `make LDLIBS_EXTRA=-lucontext`
+# on musl (Alpine), whose shipped libc.so declares ucontext_t/
+# swapcontext/getcontext/makecontext in its headers but doesn't
+# implement them at all -- libucontext (`apk add libucontext-dev`)
+# provides all four under their standard names. Never needed on
+# glibc (Fedora/Ubuntu), which implements them natively -- see
+# docs/portability.md.
+LDLIBS_EXTRA :=
+LDLIBS := -lm $(REGINOLD_DIR)/libreginold.a -lsqlite3 -lpq -lmariadb -ldl -lpthread -lssl -lcrypto -lcrypt -lz $(LDLIBS_EXTRA)
 
 # libFuzzer is a Clang/LLVM feature (-fsanitize=fuzzer isn't recognized by
 # GCC at all) -- the fuzz binary is the one build variant in this Makefile

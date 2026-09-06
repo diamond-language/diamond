@@ -318,36 +318,17 @@ deferred until real package distribution needs justify their operational cost.
 
 ### Portability
 
-CI now runs the full test suite across a real 2x2 matrix -- Fedora and Ubuntu
-26.04, each with GCC and Clang (`.github/workflows/ci.yml`) -- after a
-firsthand pass on real Ubuntu 26.04 + Clang surfaced and fixed three genuine
-bugs (Clang's `-O0` giving `run_chunk` a stack frame large enough to defeat
-`DIAMOND_MAX_CALL_DEPTH`'s guard, a Fedora-only MariaDB header path, and
-`libreginold.a` missing `-fPIC`) plus a test-harness assumption baked into
-`timeout`'s exit-status semantics that doesn't hold under Ubuntu's default
-`uutils-coreutils` (see CHANGELOG.md).
+CI covers Fedora, Ubuntu 26.04, and Alpine (musl) -- two libcs, not just two
+distros -- across GCC and (for the two glibc targets) Clang
+(`.github/workflows/ci.yml`, `test-all`/`test-musl` jobs). Full inventory of
+every OS/libc/kernel/toolchain assumption checked, fixed, or found absent:
+docs/portability.md.
 
-Both remaining items from this section are done: a full platform abstraction
-inventory now lives in docs/portability.md (every OS/libc/kernel/toolchain
-assumption found, where it lives, and what's been verified versus assumed),
-and a third target -- Alpine (musl), a genuinely different libc, not just a
-different distro -- has been validated manually: 1284/1285 corpus cases pass,
-the one failure being a real, now-documented libc limitation (`BCrypt.hash`
-has no bcrypt implementation to call into on musl), not a bug. Getting there
-found and fixed four real, distinct issues (a musl feature-test-macro gap
-needing a `#define` in 15 more `.c` files beyond the ones that already had
-one for their own reasons, a missing `ucontext.h` *implementation*, not just
-declaration, on Alpine specifically, an unassignable global `stdout` on
-musl, and a `-fPIE`/`-pie` default mismatch in Alpine's own gcc) -- full
-detail in docs/portability.md, which is the right home for this level of
-detail going forward rather than growing this section further.
-
-Not yet validated, and worth being honest about rather than letting "we
-checked musl" imply more: a non-x86_64 architecture, and any BSD or Darwin
-libc. The musl validation itself was also manual (a local container, not
-CI) -- making it continuous (a third CI matrix leg) is the natural next
-step if musl support is meant to be an ongoing guarantee rather than a
-point-in-time check.
+Remaining, genuinely open: no non-x86_64 architecture and no BSD or Darwin
+libc has been validated at all. The musl job is also narrower than the
+glibc one on purpose (GCC only, no sanitizer/tsan builds, no package-
+specific tests) -- widening it needs those actually checked first, not
+just enabled.
 
 ## Explicitly deferred
 

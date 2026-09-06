@@ -9,14 +9,21 @@ enough POSIX-adjacent surface area to matter here.
 
 ## Validated platforms
 
-- **Fedora and Ubuntu 26.04, GCC and Clang, x86_64 (glibc)** -- the
-  continuous target: CI runs the full test suite across this 2x2 matrix on
-  every push (`.github/workflows/ci.yml`).
-- **Alpine (musl), GCC, x86_64** -- validated manually (2026-09), not yet
-  continuous. 1284 of 1285 `tests/cases/*.di` corpus cases pass; the one
-  failure is a real, documented libc limitation (BCrypt, below), not a bug.
-  See "musl-specific findings" below for exactly what building there
-  required.
+- **Fedora and Ubuntu 26.04, GCC and Clang, x86_64 (glibc)** -- CI runs the
+  full test suite (`make test-all`) across this 2x2 matrix on every push
+  (`.github/workflows/ci.yml`, `test-all` job).
+- **Alpine (musl), GCC, x86_64** -- CI runs `make test` plus a curated set
+  of focused targets (`test-musl` job, same workflow) on every push. 1283
+  of 1285 `tests/cases/*.di` corpus cases pass; the two known failures
+  (`bcrypt.di`, `active_record_secure_password.di`) are excluded from the
+  CI run itself rather than left to fail it -- both are the same real,
+  documented libc limitation (BCrypt, below), not a bug. Narrower than
+  `test-all`: GCC only (Clang-on-musl has not been checked), and no
+  sanitizer/tsan builds or package-specific tests (database, HTTP,
+  GraphQL, ...), since those have not actually been validated against
+  musl either -- see the `test-musl` job's own comment for why extending
+  its scope to match `test-all` isn't done casually. See "musl-specific
+  findings" below for exactly what building there required.
 
 Not yet validated: a non-x86_64 architecture, and any BSD or Darwin libc.
 Portability claims should not extend past what's actually been checked --

@@ -28,22 +28,30 @@ authoritative fine-grained record.
 ### Tooling
 
 - Validated Diamond against a genuinely different libc (Alpine/musl, not
-  just a different distro) for the first time: 1284/1285 corpus cases
-  pass. Fixed four real issues found along the way (a musl feature-test-
-  macro gap needing an explicit `#define _DEFAULT_SOURCE` in 15 more
-  `.c` files, a missing `ucontext.h` *implementation* on Alpine
-  specifically -- resolved by linking `libucontext` -- an unassignable
-  global `stdout` on musl in the REPL's own output-capture code, fixed
-  with `dup2` instead, and a `-fPIE`/`-pie` default mismatch in Alpine's
-  gcc, fixed by making `-fPIE` explicit in `Makefile`'s `CFLAGS_COMMON`
-  for every platform). The one remaining failure is a real, documented
-  libc limitation, not a bug: musl's own `crypt_r` has no bcrypt
-  algorithm at all, so `BCrypt.hash` now returns a clear runtime error
-  there instead of failing to compile, and `BCrypt.verify` already
-  degraded safely (always reports no match) without any change needed.
-  Full inventory of every OS/libc/kernel/toolchain assumption Diamond's
-  native implementation depends on, what's verified where: new
-  docs/portability.md. See docs/roadmap.md's "Portability".
+  just a different distro) for the first time, and wired it into CI as a
+  continuous third target (`test-musl` job, `.github/workflows/ci.yml`):
+  1283/1285 corpus cases pass. Fixed four real issues found along the way
+  (a musl feature-test-macro gap needing an explicit
+  `#define _DEFAULT_SOURCE` in 15 more `.c` files, a missing
+  `ucontext.h` *implementation* on Alpine specifically -- resolved by
+  linking `libucontext` -- an unassignable global `stdout` on musl in the
+  REPL's own output-capture code, fixed with `dup2` instead, and a
+  `-fPIE`/`-pie` default mismatch in Alpine's gcc, fixed by making
+  `-fPIE` explicit in `Makefile`'s `CFLAGS_COMMON` for every platform,
+  plus a new `LDLIBS_EXTRA` Makefile variable so the musl-only
+  `-lucontext` link requirement doesn't touch any other platform's own
+  link line). The two remaining failures (`bcrypt.di`,
+  `active_record_secure_password.di`, both excluded from the CI run
+  itself) are the same real, documented libc limitation, not a bug:
+  musl's own `crypt_r` has no bcrypt algorithm at all, so `BCrypt.hash`
+  now returns a clear runtime error there instead of failing to compile,
+  and `BCrypt.verify` already degraded safely (always reports no match)
+  without any change needed. The `test-musl` job is deliberately narrower
+  than the glibc `test-all` matrix (GCC only, no sanitizer/tsan builds,
+  no package-specific tests) -- those haven't actually been checked
+  against musl either. Full inventory of every OS/libc/kernel/toolchain
+  assumption Diamond's native implementation depends on, what's verified
+  where: new docs/portability.md. See docs/roadmap.md's "Portability".
 - Added `DIAMOND_TRACE_STARTUP`, reporting the load/compile/run time split
   for a process on stderr; used to measure prelude-compilation cost for
   docs/roadmap.md's startup-time investigation.
