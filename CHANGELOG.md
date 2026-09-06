@@ -216,6 +216,16 @@ authoritative fine-grained record.
   session resumption.
 - Added Base64 and gzip primitives.
 
+### Packages
+
+- Added `Flash` (`packages/cookies`), a Rails-`flash[:notice]`-style
+  message that survives exactly one redirect: `Flash.set(request, key,
+  value)` stashes a value readable via `Flash.get`/`Flash.all` on the
+  *next* request only, then gone. Built entirely on `CookieSession`'s
+  own `request["session"]` (a one-request rotation `CookieSession.call`
+  now does before `forward` runs) -- no new middleware, no separate
+  cookie. See `packages/cookies/README.md`.
+
 ## 0.2.0 development milestones
 
 ### Language

@@ -185,6 +185,62 @@ post_right = {"method": "POST", "headers": {"x-csrf-token": session["csrf_token"
 [[ "$actual" == "403|403|200|handled" ]]
 count=$((count + 1))
 
+# --- Flash: a message set on one request is readable on the next one
+# --- (via CookieSession's own rotation), then gone on the one after
+# --- that; reading it back within the *same* request that set it stays
+# --- nil, matching Rails' own flash[]= (not flash.now) behavior.
+actual="$(run_case '
+CookieSession.configure(secret: "flash-test-secret")
+
+def set_and_read_same_request(request, context)
+  Flash.set(request, "notice", "created!")
+  same_request = Flash.get(request, "notice")
+  [200, {}, "same_request=#{same_request}"]
+end
+def read_notice(request, context)
+  [200, {}, "msg=#{Flash.get(request, "notice")}"]
+end
+
+req1 = {"headers": {}}
+[status1, headers1, body1] = CookieSession.call(req1, {}, set_and_read_same_request)
+cookie_pair = headers1["Set-Cookie"][0].split(";")[0]
+
+req2 = {"headers": {"cookie": cookie_pair}}
+[status2, headers2, body2] = CookieSession.call(req2, {}, read_notice)
+cookie_pair2 = headers2["Set-Cookie"][0].split(";")[0]
+
+req3 = {"headers": {"cookie": cookie_pair2}}
+[status3, headers3, body3] = CookieSession.call(req3, {}, read_notice)
+
+"#{body1}|#{body2}|#{body3}"
+')"
+[[ "$actual" == "same_request=nil|msg=created!|msg=nil" ]]
+count=$((count + 1))
+
+# --- Flash.all: every key set on the previous request, as a plain Hash
+actual="$(run_case '
+CookieSession.configure(secret: "flash-all-secret")
+
+def set_two(request, context)
+  Flash.set(request, "notice", "a")
+  Flash.set(request, "error", "b")
+  [200, {}, "ok"]
+end
+def read_all(request, context)
+  all = Flash.all(request)
+  [200, {}, "#{all["notice"]}|#{all["error"]}|#{all["missing"]}"]
+end
+
+req1 = {"headers": {}}
+[status1, headers1, body1] = CookieSession.call(req1, {}, set_two)
+cookie_pair = headers1["Set-Cookie"][0].split(";")[0]
+req2 = {"headers": {"cookie": cookie_pair}}
+[status2, headers2, body2] = CookieSession.call(req2, {}, read_all)
+body2
+')"
+[[ "$actual" == "a|b|nil" ]]
+count=$((count + 1))
+
 # --- CookieSession/Csrf middleware, end to end against a real
 # --- gremlin_serve instance: a first request gets a fresh session and a
 # --- Set-Cookie; replaying that cookie on a second request restores the
