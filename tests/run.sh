@@ -1372,7 +1372,19 @@ actual="$($diamond -e $'begin\n TCPSocket.connect("127.0.0.1", 1)\nrescue error:
 
 socket_port=18734
 server_out="$(mktemp)"
+# `puts("ready")` + poll, not the client's own blind connect-retry loop
+# this replaced: a tight, unbounded (well, 2000-attempt) retry loop with
+# no backoff races the server's own listen() startup with no margin
+# accounting for a slower environment -- confirmed the hard way as a
+# real, intermittent CI-only failure (this exact command timing out on
+# GitHub's own runners under the sanitize build specifically, never
+# reproducing locally), caught only once a permanent ERR trap in this
+# script's own preamble finally surfaced which command was actually
+# failing. Every sibling network test in this file (UDP, the Signal.trap
+# test) already uses this same ready-poll idiom for the identical race;
+# this one predated that pattern and never got updated to match.
 timeout 10 "$diamond" -e "$(printf 'server = TCPServer.listen(%d)
+puts("ready")
 conn = server.accept()
 msg = conn.gets()
 conn.write("echo: #{msg}\\n")
@@ -1380,19 +1392,11 @@ conn.close()
 server.close()
 0' "$socket_port")" >"$server_out" 2>&1 &
 socket_server_pid=$!
-client_src="$(printf 'c = nil
-attempts = 0
-while c == nil
- c = begin
-  TCPSocket.connect("127.0.0.1", %d)
- rescue error: IOError
-  attempts = attempts + 1
-  if attempts > 2000
-   raise "giving up"
-  end
-  nil
- end
-end
+for _ in $(seq 1 200); do
+    grep -q '^ready$' "$server_out" && break
+    sleep 0.05
+done
+client_src="$(printf 'c = TCPSocket.connect("127.0.0.1", %d)
 c.write("hello\\n")
 response = c.gets()
 c.close()
@@ -1400,7 +1404,7 @@ response' "$socket_port")"
 client_out="$(mktemp)"
 timeout 10 "$diamond" -e "$client_src" >"$client_out" 2>&1
 wait "$socket_server_pid"
-[[ "$(cat "$server_out")" == "0" ]]
+[[ "$(tail -n1 "$server_out")" == "0" ]]
 [[ "$(cat "$client_out")" == "echo: hello" ]]
 rm -f "$server_out" "$client_out"
 
