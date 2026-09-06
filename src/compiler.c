@@ -1,6 +1,7 @@
 #define _POSIX_C_SOURCE 200809L
 #include "compiler.h"
 
+#include <assert.h>
 #include <errno.h>
 #include <limits.h>
 #include <math.h>
@@ -1443,6 +1444,12 @@ static bool name_equals(const Compiler *compiler, const char *candidate,
     return true;
 }
 
+/* Defined near diamond_program_free below; frees `function`'s own
+ * dynamic arrays without freeing `function` itself, correctly handling
+ * a combined-allocated function (diamond_function_copy's own
+ * owns_combined_buffer, see its comment in src/vm.h). */
+static void diamond_function_free_arrays(DiamondFunction *function);
+
 static DiamondFunction *compiler_add_function(Compiler *compiler,
                                                size_t *function_index) {
     if(!compiler->discovery_pass&&
@@ -1451,10 +1458,12 @@ static DiamondFunction *compiler_add_function(Compiler *compiler,
            ->declared_by_discovery) {
         *function_index=compiler->next_function_claim++;
         DiamondFunction *function=compiler->program->functions[*function_index];
-        free(function->code);free(function->lines);free(function->columns);
-        free(function->constants);
-        free(function->strings);
-        free(function->type_sets);
+        /* This slot was populated moments ago by diamond_compile_impl's
+         * own "reserve every compiler-created function" loop, which
+         * clones it from `discovery` via diamond_function_copy -- always
+         * combined-allocated, template or not -- so this must go through
+         * the combined-aware free, not raw free() on each field. */
+        diamond_function_free_arrays(function);
         memset(function,0,sizeof *function);
         return function;
     }
@@ -14772,6 +14781,10 @@ DiamondFunction *diamond_program_add_function(DiamondProgram *program) {
 }
 
 bool diamond_function_reserve_code(DiamondFunction *function,size_t capacity) {
+    /* See DiamondFunction.owns_combined_buffer's own comment (src/vm.h):
+     * a combined-allocated function's code/lines/columns are interior
+     * pointers into one shared block, never independently reallocable. */
+    assert(!function->owns_combined_buffer);
     if(capacity<=function->code_capacity)return true;
     if(capacity>DIAMOND_MAX_CODE)return false;
     uint8_t *code=malloc(capacity*sizeof *code);
@@ -14793,6 +14806,7 @@ bool diamond_function_reserve_code(DiamondFunction *function,size_t capacity) {
 
 bool diamond_function_reserve_constants(DiamondFunction *function,
                                          size_t capacity) {
+    assert(!function->owns_combined_buffer);
     if(capacity<=function->constant_capacity)return true;
     if(capacity>DIAMOND_MAX_CONSTANTS)return false;
     DiamondValue *constants=realloc(function->constants,
@@ -14803,6 +14817,7 @@ bool diamond_function_reserve_constants(DiamondFunction *function,
 }
 
 bool diamond_function_reserve_strings(DiamondFunction *function,size_t capacity) {
+    assert(!function->owns_combined_buffer);
     if(capacity<=function->string_capacity)return true;
     if(capacity>DIAMOND_MAX_STRING_CONSTANTS)return false;
     const size_t previous_capacity=function->string_capacity;
@@ -14816,6 +14831,7 @@ bool diamond_function_reserve_strings(DiamondFunction *function,size_t capacity)
 }
 
 bool diamond_function_reserve_type_sets(DiamondFunction *function,size_t capacity) {
+    assert(!function->owns_combined_buffer);
     if(capacity<=function->type_set_capacity)return true;
     if(capacity>DIAMOND_MAX_TYPE_SETS)return false;
     const size_t previous_capacity=function->type_set_capacity;
@@ -14828,6 +14844,34 @@ bool diamond_function_reserve_type_sets(DiamondFunction *function,size_t capacit
     return true;
 }
 
+/* Rounds `offset` up to `alignof(max_align_t)` -- diamond_function_copy's
+ * own combined-buffer sub-arrays (code/lines/columns/constants/strings/
+ * type_sets, each a different element type/alignment) each start at
+ * such a boundary, the same margin malloc itself already guarantees for
+ * the block's own base address. A few bytes of padding per boundary
+ * (at most 5 boundaries) is nothing next to what this buys: one malloc
+ * instead of 6 per function copied. */
+static size_t align_up_max(size_t offset) {
+    const size_t alignment=alignof(max_align_t);
+    return (offset+alignment-1)&~(alignment-1);
+}
+
+/* Deep-copies `source` into `destination` (already-valid contents
+ * overwritten, not freed -- every caller passes a fresh/zeroed
+ * destination). Every dynamic array (code/lines/columns/constants/
+ * strings/type_sets) is copied into ONE combined malloc'd block instead
+ * of 6 separate ones, with `destination->code` as that block's real
+ * base pointer and the other 5 fields as interior pointers into the
+ * same allocation (see DiamondFunction.owns_combined_buffer's own
+ * comment, src/vm.h, for why this is safe and what it costs: the result
+ * can never be independently regrown, only freed as a whole). This
+ * matters wherever many functions get cloned per call --
+ * seed_program_from_template, clone_program_from_chunk (Thread.new),
+ * diamond_program_read_compiled -- since 1 malloc instead of 6 per
+ * function is the difference between a few hundred and a few thousand
+ * allocations for a prelude-sized template; measured directly against a
+ * cold process, not assumed (docs/roadmap.md's "Make programs start
+ * faster"). */
 bool diamond_function_copy(DiamondFunction *destination,
                            const DiamondFunction *source) {
     *destination=*source;
@@ -14836,82 +14880,104 @@ bool diamond_function_copy(DiamondFunction *destination,
     destination->constants=nullptr;destination->constant_capacity=0;
     destination->strings=nullptr;destination->string_capacity=0;
     destination->type_sets=nullptr;destination->type_set_capacity=0;
+    destination->owns_combined_buffer=false;
+
+    size_t code_offset=0,lines_offset=0,columns_offset=0;
+    size_t constants_offset=0,strings_offset=0,type_sets_offset=0;
+    size_t size=0;
     if(source->code_count>0) {
-        destination->code=malloc(source->code_count*sizeof *destination->code);
-        destination->lines=malloc(source->code_count*sizeof *destination->lines);
-        destination->columns=malloc(source->code_count*sizeof *destination->columns);
+        code_offset=size;size+=source->code_count*sizeof *destination->code;
+        size=align_up_max(size);
+        lines_offset=size;size+=source->code_count*sizeof *destination->lines;
+        size=align_up_max(size);
+        columns_offset=size;size+=source->code_count*sizeof *destination->columns;
+        size=align_up_max(size);
     }
-    if(source->constant_count>0)
-        destination->constants=malloc(
-            source->constant_count*sizeof *destination->constants);
-    if(source->string_count>0)
-        destination->strings=malloc(
-            source->string_count*sizeof *destination->strings);
-    if(source->type_set_count>0)
-        destination->type_sets=malloc(
-            source->type_set_count*sizeof *destination->type_sets);
-    if((source->code_count>0&&(destination->code==nullptr||
-       destination->lines==nullptr||destination->columns==nullptr))||
-       (source->constant_count>0&&destination->constants==nullptr)||
-       (source->string_count>0&&destination->strings==nullptr)||
-       (source->type_set_count>0&&destination->type_sets==nullptr)) {
-        free(destination->code);free(destination->lines);
-        free(destination->columns);free(destination->constants);
-        free(destination->strings);
-        free(destination->type_sets);
-        destination->code=nullptr;destination->lines=nullptr;
-        destination->columns=nullptr;destination->constants=nullptr;
-        destination->strings=nullptr;destination->code_count=0;
-        destination->type_sets=nullptr;
-        destination->constant_count=0;destination->string_count=0;
-        return false;
+    if(source->constant_count>0) {
+        constants_offset=size;
+        size+=source->constant_count*sizeof *destination->constants;
+        size=align_up_max(size);
     }
+    if(source->string_count>0) {
+        strings_offset=size;
+        size+=source->string_count*sizeof *destination->strings;
+        size=align_up_max(size);
+    }
+    if(source->type_set_count>0) {
+        type_sets_offset=size;
+        size+=source->type_set_count*sizeof *destination->type_sets;
+    }
+    if(size==0)return true;
+
+    uint8_t *block=malloc(size);
+    if(block==nullptr)return false;
+
     if(source->code_count>0) {
+        destination->code=block+code_offset;
+        destination->lines=(uint32_t *)(void *)(block+lines_offset);
+        destination->columns=(uint32_t *)(void *)(block+columns_offset);
         memcpy(destination->code,source->code,
             source->code_count*sizeof *destination->code);
         memcpy(destination->lines,source->lines,
             source->code_count*sizeof *destination->lines);
         memcpy(destination->columns,source->columns,
             source->code_count*sizeof *destination->columns);
+        destination->code_capacity=source->code_count;
     }
-    if(source->constant_count>0)
+    if(source->constant_count>0) {
+        destination->constants=(DiamondValue *)(void *)(block+constants_offset);
         memcpy(destination->constants,source->constants,
             source->constant_count*sizeof *destination->constants);
-    if(source->string_count>0)
+        destination->constant_capacity=source->constant_count;
+    }
+    if(source->string_count>0) {
+        destination->strings=(DiamondStringConstant *)(void *)(block+strings_offset);
         memcpy(destination->strings,source->strings,
             source->string_count*sizeof *destination->strings);
-    if(source->type_set_count>0)
+        destination->string_capacity=source->string_count;
+    }
+    if(source->type_set_count>0) {
+        destination->type_sets=(DiamondTypeSet *)(void *)(block+type_sets_offset);
         memcpy(destination->type_sets,source->type_sets,
             source->type_set_count*sizeof *destination->type_sets);
-    destination->code_capacity=source->code_count;
-    destination->constant_capacity=source->constant_count;
-    destination->string_capacity=source->string_count;
-    destination->type_set_capacity=source->type_set_count;
+        destination->type_set_capacity=source->type_set_count;
+    }
+    destination->owns_combined_buffer=true;
     return true;
+}
+
+/* Frees `function`'s own dynamic arrays (but not `function` itself --
+ * callers own that separately, see diamond_program_free below). A
+ * combined-allocated function (diamond_function_copy's own
+ * owns_combined_buffer, see its comment in src/vm.h) has only one real
+ * allocation, `code`; the other 5 fields are interior pointers into
+ * that same block and must never be passed to free() themselves. */
+static void diamond_function_free_arrays(DiamondFunction *function) {
+    if(function->owns_combined_buffer) {
+        free(function->code);
+    } else {
+        free(function->code);free(function->lines);free(function->columns);
+        free(function->constants);
+        free(function->strings);
+        free(function->type_sets);
+    }
+    function->code=nullptr;function->lines=nullptr;
+    function->columns=nullptr;function->code_count=0;
+    function->code_capacity=0;
+    function->constants=nullptr;function->constant_count=0;
+    function->constant_capacity=0;
+    function->strings=nullptr;function->string_count=0;
+    function->string_capacity=0;
+    function->type_sets=nullptr;function->type_set_count=0;
+    function->type_set_capacity=0;
+    function->owns_combined_buffer=false;
 }
 
 void diamond_program_free(DiamondProgram *program) {
     if(program==nullptr)return;
-    free(program->entry.code);free(program->entry.lines);
-    free(program->entry.columns);free(program->entry.constants);
-    free(program->entry.strings);
-    free(program->entry.type_sets);
-    program->entry.code=nullptr;program->entry.lines=nullptr;
-    program->entry.columns=nullptr;program->entry.code_count=0;
-    program->entry.code_capacity=0;
-    program->entry.constants=nullptr;program->entry.constant_count=0;
-    program->entry.constant_capacity=0;
-    program->entry.strings=nullptr;program->entry.string_count=0;
-    program->entry.string_capacity=0;
-    program->entry.type_sets=nullptr;program->entry.type_set_count=0;
-    program->entry.type_set_capacity=0;
+    diamond_function_free_arrays(&program->entry);
     for(size_t index=0;index<program->function_count;index++) {
-        free(program->functions[index]->code);
-        free(program->functions[index]->lines);
-        free(program->functions[index]->columns);
-        free(program->functions[index]->constants);
-        free(program->functions[index]->strings);
-        free(program->functions[index]->type_sets);
+        diamond_function_free_arrays(program->functions[index]);
         free(program->functions[index]);
     }
     free(program->functions);

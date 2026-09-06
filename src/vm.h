@@ -784,6 +784,22 @@ typedef struct DiamondFunction {
     DiamondTypeSet *type_sets;
     size_t type_set_count;
     size_t type_set_capacity;
+    /* True only for a function built by diamond_function_copy (src/
+     * compiler.c) -- code/lines/columns/constants/strings/type_sets
+     * above all point into ONE combined malloc'd block instead of 6
+     * separate ones (that function's own comment explains why: cuts a
+     * clone from 6 small allocations to 1, which matters wherever many
+     * functions get cloned per call -- seed_program_from_template,
+     * clone_program_from_chunk for Thread.new, diamond_program_read_
+     * compiled). Only `code` is the block's real, freeable base pointer
+     * in that case; the other 5 are interior pointers realloc()/free()
+     * must never see directly. diamond_program_free checks this before
+     * freeing a function's arrays, and diamond_function_reserve_code/
+     * _constants/_strings/_type_sets assert it's false before ever
+     * growing one of these arrays in place -- a combined-allocated
+     * function is a fixed-size, immutable snapshot for its entire
+     * lifetime, never grown after diamond_function_copy returns. */
+    bool owns_combined_buffer;
     uint8_t arity;
     uint8_t required_arity;
     /* Set only by a `*name` parameter. It occupies the final slot unless a
