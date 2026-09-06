@@ -33,6 +33,15 @@ module Div
     sb.to_s()
   end
 
+  # `<input type="hidden">` tag, both `name` and `value` escaped. Small
+  # enough to earn its keep on its own (CSRF tokens are the main use:
+  # `<%== Div.hidden_field_tag("csrf_token", csrf_token) %>`), and general
+  # rather than CSRF-specific since the escaping it needs has nothing to
+  # do with what the field holds.
+  def hidden_field_tag(name, value)
+    "<input type=\"hidden\" name=\"#{Div.escape_html(name)}\" value=\"#{Div.escape_html(value)}\">"
+  end
+
   # Wraps a rendered template body into the [status, headers, body] shape
   # packages/rack (and http_serve/gremlin_serve directly) already expect --
   # packages/rack itself stays untouched and dependency-free; div adapts to

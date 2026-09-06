@@ -232,6 +232,11 @@ authoritative fine-grained record.
   convention exactly) so a new migration needs no hand-copied
   boilerplate. See `packages/active_record/README.md`'s "Generating a
   migration file".
+- Added `Div.hidden_field_tag(name, value)` (`packages/div`): a
+  `<input type="hidden">` tag with both `name` and `value` escaped,
+  collapsing the repeated-by-hand version of that markup (a CSRF token
+  field being the main case) to one call. See `packages/div/README.md`'s
+  "Runtime helpers".
 
 ## 0.2.0 development milestones
 

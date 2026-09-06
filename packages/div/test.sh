@@ -257,4 +257,15 @@ actual="$(cat "$work/legacy_show.html.di")"
 assert_contains "$actual" "def show_html()"
 count=$((count + 1))
 
+# --- Div.hidden_field_tag escapes both name and value ---
+cat >"$work/driver_hidden_field.di" <<DRIVEREOF
+require "$(pwd)/lib/div/runtime"
+puts(Div.hidden_field_tag("csrf_token", "abc123"))
+puts(Div.hidden_field_tag("weird\"name", "tom & jerry's"))
+DRIVEREOF
+actual="$("$diamond" "$work/driver_hidden_field.di")"
+assert_contains "$actual" '<input type="hidden" name="csrf_token" value="abc123">'
+assert_contains "$actual" '<input type="hidden" name="weird&quot;name" value="tom &amp; jerry&#39;s">'
+count=$((count + 1))
+
 echo "$count div tests passed"

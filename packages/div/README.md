@@ -178,8 +178,17 @@ each other directly.
 require "path/to/div/lib/div/runtime"
 
 Div.escape_html(value)                    # same escaping <%= %> uses
+Div.hidden_field_tag(name, value)         # <input type="hidden" name="..." value="...">, both escaped
 Div.html_response(200, body)              # -> [200, {"Content-Type": "text/html"}, body]
 Div.html_response(200, body, extra_headers)
+```
+
+`Div.hidden_field_tag` is a plain string helper, not a tag `divc.di` knows
+about -- use it from a template with raw output so its own `<input>` tag
+isn't escaped a second time:
+
+```erb
+<%== Div.hidden_field_tag("csrf_token", csrf_token) %>
 ```
 
 `Div.html_response` is the whole extent of the Rack integration --
