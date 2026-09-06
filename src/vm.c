@@ -1922,7 +1922,12 @@ static atomic_size_t diamond_active_thread_count = 0;
 static DiamondProgram *clone_program_from_chunk(const DiamondChunk *chunk) {
     DiamondProgram *clone=calloc(1,sizeof *clone);
     if(clone==nullptr)return nullptr;
-    diamond_program_init(clone);
+    /* _fresh, not diamond_program_init: `clone` is freshly calloc'd right
+     * above (already all-zero) and never reused across calls -- a new
+     * Thread.new spawn always gets its own brand-new clone -- so
+     * diamond_program_init's own memset would just re-zero memory
+     * calloc already zeroed. See its own comment (src/compiler.c). */
+    diamond_program_init_fresh(clone);
     if(chunk->type_set_count>0) {
         if(!diamond_function_reserve_type_sets(&clone->entry,
                 chunk->type_set_count)) {
@@ -3293,7 +3298,11 @@ static DiamondProgramBuilder *allocate_program_builder(DiamondVm *vm) {
     maybe_collect(vm);
     DiamondProgram *built=calloc(1,sizeof *built);
     if(built==nullptr)return nullptr;
-    diamond_program_init(built);
+    /* _fresh, not diamond_program_init: `built` is freshly calloc'd right
+     * above and never reused -- each ProgramBuilder gets its own new
+     * DiamondProgram. See diamond_program_init_fresh's own comment
+     * (src/compiler.c). */
+    diamond_program_init_fresh(built);
     DiamondProgramBuilder *handle=malloc(sizeof(DiamondProgramBuilder));
     if(handle==nullptr){diamond_program_free(built);free(built);return nullptr;}
     *handle=(DiamondProgramBuilder){

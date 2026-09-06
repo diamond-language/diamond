@@ -53,6 +53,16 @@ typedef struct DiamondDiagnostic {
  * ProgramBuilder native bridge (src/vm.c), which needs the same baseline
  * without going through the parser at all. See docs/roadmap.md. */
 void diamond_program_init(DiamondProgram *program);
+/* Same as diamond_program_init, but skips its memset -- ONLY safe when
+ * `program` is already all-zero (a freshly calloc'd DiamondProgram
+ * calloc's own zero-fill already guarantees this; anything else, e.g.
+ * a struct diamond_program_free was just called on for reuse, does
+ * NOT and must go through diamond_program_init instead). See
+ * diamond_program_init_builtins's own comment (src/compiler.c) for
+ * measurements: that memset alone costs several milliseconds per call
+ * purely from first-touch page faults across DiamondProgram's ~14MB,
+ * paid for nothing when the memory was already zero. */
+void diamond_program_init_fresh(DiamondProgram *program);
 void diamond_program_free(DiamondProgram *program);
 /* Appends one zeroed, independently allocated function record, growing the
  * stable pointer table geometrically without moving existing records. */

@@ -53,63 +53,114 @@ above) needs the "reusable compiled-prelude snapshot" half instead: generating
 in the binary, skipping prelude-source-parsing entirely rather than doing it
 once per process.
 
-Prototyped and measured (`src/compiled_prelude.{h,c}`, `tools/gen_compiled_
-prelude.c`, `src/compiled_prelude_data.c`): a same-build-only binary
-serialization of a compiled `DiamondProgram`, generated at build time by a
-throwaway host tool and `#embed`'d into a new source file, deserialized via
+Implemented and shipped (`src/compiled_prelude.{h,c}`, `tools/gen_compiled_
+prelude.c`, `src/compiled_prelude_data.c`, wired into `diamond_run_source`,
+`src/run_source.c`): a same-build-only binary serialization of a compiled
+`DiamondProgram`, generated at build time by a throwaway host tool and
+`#embed`'d into the `diamond` binary, deserialized via
 `diamond_program_read_compiled` into an ordinary, independently-owned
-`DiamondProgram` suitable as a `diamond_compile_incremental` template --
-verified byte-for-byte round-trip correct (`make test-compiled-prelude`) and,
-once wired into `diamond_run_source`, functionally correct against the full
-1428-case corpus.
+`DiamondProgram` used as a `diamond_compile_incremental` template. The common
+case (a program that doesn't need JSON, `diamond_prelude_needs_json`) now
+skips lexing/parsing/codegening the prelude's own source entirely on every
+`diamond` invocation; a program that does need JSON falls back to the exact
+live-compile path this function always used, unchanged (the embedded template
+always includes JSON, so using it unconditionally would make a JSON class
+name collide with a same-named top-level declaration in a program that never
+mentions JSON at all).
 
-Wiring it into the CLI turned out to be a net wash, not a win, so that wiring
-was reverted (the serialization/generator/embedding infrastructure above is
-kept, since it's independently correct and may still pay off after the fix
-described below). Measured directly (`DIAMOND_TRACE_STARTUP`, release build,
-repeated samples): deserializing the embedded template costs ~8ms in a fresh
-process (vs. ~0.7ms once the allocator/page tables are already warm later in
-the same process -- confirmed by isolating the two), and feeding it through
-`diamond_compile_incremental` costs another ~17-18ms, for a ~25-26ms total --
-slightly *worse* than the ~23ms the existing live `diamond_compile` over
-prelude+source text already took. Root cause: both the deserializer
-(`read_function`, one call per prelude function) and `diamond_compile_
-incremental`'s own `seed_program_from_template` (which clones the template's
-functions into *both* the discovery and the real pass's program) go through
-`diamond_function_copy`, which does 6 separate small `malloc` calls per
-function (code/lines/columns/constants/strings/type_sets). For the prelude's
-156 functions that's on the order of 2,800 individual allocations for a
-single trivial `-e` invocation, and a cold process's allocator/page-table
-setup makes each of those disproportionately expensive -- expensive enough to
-cancel out the lexing/parsing work actually saved. This didn't show up in
-`tests/run_cases.c`'s own incremental-compile use (25% faster, see above)
-because that runner pays the allocation cost once per *process* (1285 cases
-share one already-warm template and one already-warm allocator), not once per
-case.
+Getting this to actually pay off took two follow-up fixes, both found by
+measuring rather than assuming a first working version was good enough:
 
-Also fixed along the way, kept regardless of the above: `seed_program_from_
+- **First attempt was a net wash.** Wiring the embedded template into the CLI
+  the first time made things slightly *worse* (~25-26ms vs. the ~23ms plain
+  live compile already took), because `diamond_program_read_compiled` and
+  `diamond_compile_incremental`'s own `seed_program_from_template` (which
+  clones the template's functions into *both* the discovery and the real
+  pass's program) each went through `diamond_function_copy`, which did 6
+  separate small `malloc` calls per function -- ~2,800 individual allocations
+  for the prelude's 156 functions on a single trivial `-e` invocation. Fixed
+  by collapsing those 6 allocations into 1 combined buffer per function
+  (`DiamondFunction.owns_combined_buffer`, `src/vm.h`; `diamond_function_copy`,
+  `src/compiler.c`) -- but measured again afterward and this alone didn't
+  close the gap. Allocation *count* wasn't actually the bottleneck.
+- **The real bottleneck: `diamond_program_init`'s own full-struct `memset`.**
+  Isolated by timing a *plain* `diamond_compile("1\n", ...)` with no template,
+  no prelude, nothing: still ~13-14ms, entirely inside `diamond_program_init`
+  being called twice (once for `diamond_compile_impl`'s own throwaway
+  `discovery` program, once for the caller's `program`) -- each call's
+  `memset(program, 0, sizeof *program)` alone costs ~6.3ms (release build),
+  purely from first-touch page faults committing `DiamondProgram`'s ~14.2MB.
+  This is a fixed tax on *every* `diamond_compile`/`diamond_compile_
+  incremental` call in the entire system, unrelated to source size, template
+  use, or anything this feature was originally trying to fix -- it had been
+  silently folded into the original "~23ms compiling the prelude" measurement
+  all along. Fixed narrowly and safely: `discovery` is always a local
+  `calloc(1, sizeof *discovery)` created fresh for exactly one compile call
+  and never reused, so `calloc`'s own zero-fill already satisfies
+  `diamond_program_init`'s precondition -- its memset there is pure waste.
+  Split the memset out from the cheap builtin-class-table setup
+  (`diamond_program_init_fresh`, callable directly when the caller can prove
+  `program` is freshly `calloc`'d) and used it for `discovery`, plus two other
+  always-fresh-never-reused call sites found the same way:
+  `clone_program_from_chunk` (Thread.new's own program clone, `src/vm.c`) and
+  `allocate_program_builder` (`ClassName.compile_method`/`define_method`'s own
+  backing store, `src/vm.c`). `diamond_program_init` itself is untouched for
+  every other caller (`tests/run_cases.c`'s own batch loop reuses one
+  `DiamondProgram` across 1285+ calls and genuinely needs the full wipe every
+  time) -- this was deliberately the *narrow, provably-safe* half of a bigger
+  possible fix (see below), not a wholesale rewrite of what needs
+  zero-initializing.
+
+Net result (release build, `DIAMOND_TRACE_STARTUP=1`, cold process, repeated
+samples): a trivial `-e '1'` (the common, non-JSON case) dropped from ~23-24ms
+to ~11.5-13ms total -- roughly a 47-50% cut. The memset fix alone, independent
+of the embedded template, also cut the JSON/fallback path (and every other
+`diamond_compile` caller in the codebase) from ~23ms to ~15-16ms, a ~35%
+reduction that has nothing to do with this feature specifically. Verified
+against the full 1428-case corpus, `make test-compiled-prelude`, `make
+test-incremental-compile`, `make test-api`, `make test-lsp`, `make test-repl`,
+and the fiber/thread suite (`clone_program_from_chunk` changed) -- all pass.
+
+One more real bug surfaced along the way: `compiler_add_function`'s "reopen a
+discovery-claimed slot" path (`src/compiler.c`) used to free a function's 6
+dynamic arrays individually, but the slot it reopens is always populated
+moments earlier by `diamond_compile_impl`'s own "reserve every compiler-
+created function" loop -- which, once `diamond_function_copy` started
+combining allocations, made that slot combined-allocated on *every* compile,
+template or not. Freeing 3 of those 6 pointers as independently owned crashed
+immediately (`munmap_chunk: invalid pointer`) the moment the combined
+allocation existed. Fixed by routing through a combined-aware free helper
+(`diamond_function_free_arrays`).
+
+Also fixed along the way, independent of everything above: `seed_program_from_
 template` and `diamond_compile_impl`'s own post-discovery tail both used to
 `memcpy` the *entire* fixed-size `classes`/`interfaces`/`modules` arrays
 (`DIAMOND_MAX_CLASSES`=180/`DIAMOND_MAX_INTERFACES`=32/`DIAMOND_MAX_MODULES`=32
 slots, ~14MB combined) on every single `diamond_compile`/`diamond_compile_
-incremental` call, regardless of how many of those slots were actually in use
--- now copies only each table's own used-count prefix. Unconditionally
-cheaper, no behavior change, covered by the existing corpus and `make
-test-incremental-compile`.
+incremental` call, regardless of how many of those slots were actually in
+use -- now copies only each table's own used-count prefix.
 
-The actual next step here, if this is revisited, is collapsing `DiamondFunction`'s
-6 separate dynamic-array allocations into one combined buffer (single `malloc`
-sized to fit all 6 arrays, pointers computed by offset) to cut the allocation
-count ~6x wherever `diamond_function_copy` runs -- Thread.new's own program
-clone (`clone_program_from_chunk`, `src/vm.c`) and `ClassName.define_method`
-would benefit the same way. Bigger and riskier than this prelude-snapshot work
-alone (touches every `diamond_function_copy` caller), which is why it wasn't
-attempted in the same pass. Note also that keeping the embedding infrastructure in place costs real binary
-size even unused today: `src/compiled_prelude_data.c` (holding the embedded,
-uncompressed serialized prelude, currently ~2.5MB) is swept into every target
-that builds `$(SOURCES)`/`$(API_SOURCES)` (the Makefile's own wildcard over
-`src/*.c`), which grows the release `diamond` binary from ~2.6MB to ~5.1MB
-even though nothing currently calls into it.
+Real remaining cost, not chased further here: keeping the embedding
+infrastructure means `src/compiled_prelude_data.c` (holding the embedded,
+uncompressed serialized prelude, ~2.5MB) is swept into every target that
+builds `$(SOURCES)`/`$(API_SOURCES)` (the Makefile's own wildcard over
+`src/*.c`), which grows the release `diamond` binary from ~2.6MB to ~5.1MB.
+
+The next real lead if this is revisited again: `diamond_program_init`'s
+memset is still paid in full for the *caller-supplied* `program` on every
+compile (the half deliberately left alone above, since that struct's
+zero-state isn't guaranteed the way `discovery`'s local `calloc` is -- `tests/
+run_cases.c` genuinely reuses one across 1285+ calls). Removing the need for
+that memset entirely -- rather than just skipping it where already-zero can
+be proven -- would mean auditing every class/module/interface/function
+creation site to confirm each one explicitly zeroes its own new slot's fields
+(checked directly for `compile_class`'s "brand new class" branch while
+investigating this: it currently does *not*, relying entirely on
+`diamond_program_init`'s memset for `method_count`/`field_count`/`class_
+variables`/etc. -- removing the memset without first fixing that would
+silently reintroduce use of uninitialized, potentially-reused-and-dirty
+memory). A bigger, riskier lift than anything done in this pass, deliberately
+not attempted here.
 
 ### Improve receiver-aware tooling
 

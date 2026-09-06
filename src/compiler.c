@@ -14986,15 +14986,27 @@ void diamond_program_free(DiamondProgram *program) {
     program->function_capacity=0;
 }
 
-void diamond_program_init(DiamondProgram *program) {
-    /* memset rather than `*program = (DiamondProgram){};`: a compound-literal
-     * assignment materializes a full temporary DiamondProgram (3MB+) on this
-     * function's own stack frame regardless of where `program` itself points,
-     * which is unsafe for any caller running at nontrivial stack depth (e.g.
-     * a required package's manifest, compiled from inside expand()'s own
-     * recursive call chain, while the top-level program's own DiamondProgram
-     * is still live further up the stack in main.c's run_source). */
-    memset(program, 0, sizeof *program);
+/* The non-memset half of diamond_program_init: populate `program`'s
+ * builtin exception classes and entry.name. Requires `program` to
+ * already be all-zero -- diamond_program_init itself guarantees that
+ * via its own memset just before calling this; diamond_compile_impl's
+ * own `discovery` program (src/compiler.c) calls this directly instead,
+ * skipping that memset, because it's always a local `calloc(1, sizeof
+ * *discovery)` created fresh for exactly one compile call and never
+ * reused -- calloc's own zero-fill already satisfies this function's
+ * precondition, so diamond_program_init's memset would just be
+ * re-zeroing memory that was already zero. Confirmed to matter, not
+ * assumed: memset(program,0,sizeof *program) alone measured ~6.3ms
+ * (release build, cold process) purely from the first-touch page faults
+ * committing DiamondProgram's ~14.2MB, on every single diamond_compile/
+ * diamond_compile_incremental call regardless of source size -- see
+ * docs/roadmap.md's "Make programs start faster". Never call this
+ * directly on a `program` that might carry a previous compile's
+ * leftover data (tests/run_cases.c's own batch loop reuses one
+ * DiamondProgram across 1285+ calls) -- only diamond_program_init
+ * itself is safe there, since its memset is what actually wipes stale
+ * content in that case, not redundant waste. */
+void diamond_program_init_fresh(DiamondProgram *program) {
     static const struct {
         const char *name;
         uint8_t superclass;
@@ -15042,6 +15054,18 @@ void diamond_program_init(DiamondProgram *program) {
         }
     }
     snprintf(program->entry.name, sizeof(program->entry.name), "<main>");
+}
+
+void diamond_program_init(DiamondProgram *program) {
+    /* memset rather than `*program = (DiamondProgram){};`: a compound-literal
+     * assignment materializes a full temporary DiamondProgram (3MB+) on this
+     * function's own stack frame regardless of where `program` itself points,
+     * which is unsafe for any caller running at nontrivial stack depth (e.g.
+     * a required package's manifest, compiled from inside expand()'s own
+     * recursive call chain, while the top-level program's own DiamondProgram
+     * is still live further up the stack in main.c's run_source). */
+    memset(program, 0, sizeof *program);
+    diamond_program_init_fresh(program);
 }
 
 DiamondResolvedLocation diamond_resolve_diagnostic_location(
@@ -15267,7 +15291,12 @@ static bool diamond_compile_impl(const char *source, DiamondProgram *program,
         template!=nullptr?template->function_count:0;
 
     DiamondProgram *discovery = calloc(1, sizeof *discovery);
-    diamond_program_init(discovery);
+    /* diamond_program_init_fresh, not diamond_program_init: `discovery`
+     * is freshly calloc'd right above (already all-zero) and never reused
+     * across calls, so diamond_program_init's own memset would just
+     * re-zero memory calloc already zeroed -- see that function's own
+     * comment. */
+    diamond_program_init_fresh(discovery);
     discovery->allow_top_level_redefinition = allow_top_level_redefinition;
     if(template!=nullptr&&!seed_program_from_template(discovery,template)) {
         diamond_program_free(discovery);free(discovery);

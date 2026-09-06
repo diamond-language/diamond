@@ -56,14 +56,26 @@ authoritative fine-grained record.
   `diamond_compile`/`diamond_compile_incremental` call regardless of how
   many slots were actually in use -- now copies only each table's own
   used-count prefix. No behavior change, unconditionally cheaper.
-- Prototyped a build-time embedded, pre-compiled prelude snapshot for the
-  `diamond` CLI's own cold-start case (`src/compiled_prelude.{h,c}`,
-  `tools/gen_compiled_prelude.c`); not wired in after measurement showed
-  it was a net wash for that case (deserializing plus incremental-compile's
-  own per-function cloning currently costs about as much, in allocator
-  overhead, as the lexing/parsing it replaces). See docs/roadmap.md's
-  "Make programs start faster" for the measurements and what a real fix
-  would need.
+- Cut `diamond` CLI cold-start compile time roughly in half for the common
+  case (~23-24ms -> ~11.5-13ms, release build) via a build-time embedded,
+  pre-compiled prelude snapshot (`src/compiled_prelude.{h,c}`, `tools/
+  gen_compiled_prelude.c`, `src/compiled_prelude_data.c`), wired into
+  `diamond_run_source` (`src/run_source.c`): the common (non-JSON) case now
+  skips lexing/parsing/codegening the prelude's own source on every
+  invocation. A program needing JSON still falls back to a live compile,
+  unchanged. Getting this to actually pay off (a first attempt was a net
+  *loss*) also fixed two real, independent problems: `diamond_function_copy`
+  collapsed from 6 small `malloc`s per function to 1 (`DiamondFunction.
+  owns_combined_buffer`, `src/vm.h`), and `diamond_program_init`'s full
+  ~14.2MB `memset` (paid twice per compile call, ~6.3ms each, regardless of
+  source size) skipped wherever it's provably redundant --
+  `diamond_program_init_fresh`, used for `diamond_compile_impl`'s own
+  always-fresh `discovery` program, Thread.new's own program clone
+  (`clone_program_from_chunk`), and `compile_method`/`define_method`'s own
+  backing store (`allocate_program_builder`) -- which alone cuts ~35% off
+  *every* `diamond_compile`/`diamond_compile_incremental` call in the whole
+  system, not just this feature. See docs/roadmap.md's "Make programs start
+  faster" for the full measurements and the real remaining lead.
 - `JSON.parse` is native now (`String#parse_json`, `src/vm.c`), replacing
   `lib/core/json_codec.di`'s pure-Diamond recursive-descent implementation
   -- roughly 100x faster on realistic payloads (~3.3ms/MiB measured
