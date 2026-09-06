@@ -40,6 +40,27 @@ jobs:
       image: ${{ matrix.os.container }}
       options: --init
     steps:
+      # Diagnostic for the still-unexplained test-sanitize flake (fails
+      # silently, roughly half of real runs, on both distros/compilers,
+      # never once locally on a real non-container Linux box) -- ASan's
+      # shadow-memory mapping is sensitive to host-kernel ASLR entropy
+      # (mmap_rnd_bits), and this container shares whatever kernel the
+      # actual GitHub Actions runner VM boots, not anything pinned by
+      # the fedora:latest/ubuntu:26.04 image itself. Confirmed the local
+      # baseline to compare this against directly: a real (non-container)
+      # Fedora 44 desktop reports mmap_rnd_bits=28, ptrace_scope=0.
+      - name: Diagnostic environment facts (test-sanitize flake investigation)
+        run: |
+          echo "=== uname ==="; uname -a
+          echo "=== mmap_rnd_bits ==="; cat /proc/sys/vm/mmap_rnd_bits 2>&1 || echo "(unreadable)"
+          echo "=== mmap_rnd_compat_bits ==="; cat /proc/sys/vm/mmap_rnd_compat_bits 2>&1 || echo "(unreadable)"
+          echo "=== randomize_va_space ==="; cat /proc/sys/kernel/randomize_va_space 2>&1 || echo "(unreadable)"
+          echo "=== ptrace_scope ==="; cat /proc/sys/kernel/yama/ptrace_scope 2>&1 || echo "(not present)"
+          echo "=== ulimits ==="; ulimit -a
+          echo "=== cgroup fs type ==="; stat -fc %T /sys/fs/cgroup 2>&1 || echo "(unreadable)"
+          echo "=== cgroup ==="; cat /proc/self/cgroup 2>&1
+          echo "=== nproc/mem ==="; nproc; free -h 2>&1 || cat /proc/meminfo 2>&1 | head -3
+          echo "=== id ==="; id
       - name: Install dependencies (Fedora)
         if: matrix.os.name == 'fedora'
         run: dnf install -y gcc clang make git diffutils findutils ripgrep compiler-rt libasan libubsan libtsan openssl-devel sqlite-devel libpq-devel mariadb-connector-c-devel libxcrypt-devel bc nmap-ncat openssl

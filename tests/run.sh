@@ -1,5 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
+# Permanent, not a one-off: a `set -e` death inside this script is almost
+# always inside a `$(...)` command substitution whose own stderr got
+# captured into a shell variable rather than printed, so the real cause
+# is otherwise invisible in a CI log (confirmed directly chasing a real
+# self-hosted-parser regression, and separately an as-yet-unexplained
+# test-sanitize flake on GitHub's own runners that has never reproduced
+# locally -- see docs/roadmap.md/CHANGELOG.md). Zero cost on any passing
+# run: fires only at the exact point `set -e` was already about to abort.
+trap 'echo "DIAGNOSTIC: failed at line $LINENO: $BASH_COMMAND" >&2' ERR
 
 bash tests/collection_relay_contracts.sh
 
