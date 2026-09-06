@@ -72,9 +72,7 @@ authoritative fine-grained record.
   `tests/run_cases.c` (the 1285-case batch test corpus runner) is the
   first consumer: compiles the prelude once per process instead of once
   per case, cutting the runner's own wall-clock time ~25% (measured:
-  31.0s -> 23.3s). See docs/roadmap.md's "Make programs start faster" for
-  the full design and what's still needed to bring the same win to the
-  `diamond` CLI's own cold-start case.
+  31.0s -> 23.3s).
 - Fixed `seed_program_from_template` and `diamond_compile_impl`'s own
   post-discovery tail (`src/compiler.c`) copying entire fixed-size
   `classes`/`interfaces`/`modules` arrays (~14MB combined) on every
@@ -99,8 +97,33 @@ authoritative fine-grained record.
   (`clone_program_from_chunk`), and `compile_method`/`define_method`'s own
   backing store (`allocate_program_builder`) -- which alone cuts ~35% off
   *every* `diamond_compile`/`diamond_compile_incremental` call in the whole
-  system, not just this feature. See docs/roadmap.md's "Make programs start
-  faster" for the full measurements and the real remaining lead.
+  system, not just this feature.
+- Cut `diamond` CLI cold-start compile time further still: the embedded-
+  template case from ~11.5-13ms to ~6.6-7.3ms, and the JSON/fallback path
+  (and every other `diamond_compile` caller) to ~11.5-12.9ms, by removing
+  the *other* half of `diamond_program_init`'s own memset -- the one still
+  paid in full for the caller-supplied `program` (left alone in the
+  previous entry above, since that struct's zero state isn't guaranteed
+  the way a fresh `calloc` is: `tests/run_cases.c`'s own batch loop reuses
+  one `DiamondProgram` across 1285+ calls). Doing this safely meant
+  auditing every class/module/interface creation site
+  (`compile_class`/`compile_module`/`compile_interface`, `src/compiler.c`)
+  to confirm each one explicitly resets its own newly-claimed slot's
+  fields, rather than relying on the slot already being zero -- found and
+  fixed the exact gap this risked: each one's "genuinely new slot" branch
+  set only a couple of fields, leaving `methods`/`fields`/`class_
+  variables`/every count to leak a *previous* compile's own leftover data
+  into a reused `DiamondProgram`. `diamond_program_init_fresh` needed the
+  identical fix for the built-in exception classes themselves (`class
+  Exception ... end` reopening one to add a method is ordinary, allowed
+  monkey-patching, so their own tables can carry stale state too). With
+  every creation site self-sufficient, `diamond_program_init` now skips
+  memset-ing `classes`/`interfaces`/`modules` (~14.2MB together) entirely,
+  doing two small `offsetof`-bounded memsets around them instead. Verified
+  against the full 1428-case corpus (`tests/run_cases.c`'s own reused-
+  program batch loop is exactly the scenario this needed to get right),
+  three dedicated standalone reuse-safety probes built clean under
+  ASan+UBSan, and a musl (Alpine) rebuild.
 - `JSON.parse` is native now (`String#parse_json`, `src/vm.c`), replacing
   `lib/core/json_codec.di`'s pure-Diamond recursive-descent implementation
   -- roughly 100x faster on realistic payloads (~3.3ms/MiB measured

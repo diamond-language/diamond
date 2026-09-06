@@ -17,8 +17,8 @@
  * CLI itself (one program per process, so it has no earlier in-process
  * compile to amortize against, unlike tests/run_cases.c's own
  * diamond_compile_incremental use) skip lexing/parsing the ~24-36KB
- * embedded prelude on every single invocation -- see docs/roadmap.md's
- * "Make programs start faster".
+ * embedded prelude on every single invocation -- see CHANGELOG.md's
+ * "Performance".
  *
  * Writes to `file` (already open for binary writing); returns false on
  * any I/O failure, leaving `file`'s contents unspecified. Used only by

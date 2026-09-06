@@ -5,6 +5,7 @@
 #include <errno.h>
 #include <limits.h>
 #include <math.h>
+#include <stddef.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
@@ -13259,6 +13260,26 @@ static uint16_t compile_class(Compiler *compiler) {
         }
         index=(int)compiler->program->class_count++;
         class=&compiler->program->classes[(size_t)index];
+        /* Explicit reset, not reliance on this slot already being zero:
+         * see the declared_by_discovery branch's own identical reset
+         * just above, and compile_module's own copy of this comment.
+         * `program` isn't guaranteed freshly calloc'd/memset -- this
+         * exact slot can hold a *different*, unrelated class's own
+         * leftover methods/fields/class-variables from an earlier
+         * compile of a reused DiamondProgram (tests/run_cases.c's own
+         * batch loop). This is what makes diamond_program_init's own
+         * memset(program,0,...) safe to skip for `classes[]` -- see
+         * that function's own comment (src/compiler.c). */
+        memset(class->methods,0,sizeof class->methods);
+        memset(class->singleton_methods,0,sizeof class->singleton_methods);
+        memset(class->fields,0,sizeof class->fields);
+        memset(class->field_type_status,0,sizeof class->field_type_status);
+        memset(class->field_known_class,0,sizeof class->field_known_class);
+        memset(class->class_variables,0,sizeof class->class_variables);
+        class->method_count=0;
+        class->singleton_method_count=0;
+        class->field_count=0;
+        class->class_variable_count=0;
         class->declared_by_discovery=false;
         class->superclass=UINT8_MAX;
         superclass_decided=false;
@@ -13715,6 +13736,26 @@ static uint16_t compile_module(Compiler *compiler) {
         }
         index=(int)compiler->program->module_count++;
         module=&compiler->program->modules[(size_t)index];
+        /* Explicit reset, not reliance on this slot already being zero:
+         * `program` isn't guaranteed freshly calloc'd/memset -- a caller
+         * reusing one DiamondProgram across many compiles (tests/
+         * run_cases.c's own batch loop) can hand this exact slot back
+         * still holding a *different*, unrelated module's own leftover
+         * methods/fields/singleton-claim state from an earlier compile.
+         * Unlike the reopen branch above (which deliberately keeps
+         * singleton_methods/singleton_method_count -- see its own
+         * comment on why), a genuinely new slot has no same-pass history
+         * worth preserving, so everything resets here. This is what
+         * makes diamond_program_init's own memset(program,0,...) safe to
+         * skip for `modules[]` -- see that function's own comment
+         * (src/compiler.c) and CHANGELOG.md's "Performance". */
+        memset(module->methods,0,sizeof module->methods);
+        memset(module->singleton_methods,0,sizeof module->singleton_methods);
+        memset(module->fields,0,sizeof module->fields);
+        module->method_count=0;
+        module->singleton_method_count=0;
+        module->field_count=0;
+        module->next_singleton_claim=0;
         module->declared_by_discovery=false;
     }
     (void)snprintf(module->name,sizeof module->name,"%s",stored_name);
@@ -13907,6 +13948,16 @@ static uint16_t compile_interface(Compiler *compiler) {
         interface->method_count=0;
         interface->declared_by_discovery=false;
     } else {
+        /* Explicit reset, not reliance on this slot already being zero:
+         * see compile_class's own identical comment. `program` isn't
+         * guaranteed freshly calloc'd/memset -- this exact slot can hold
+         * a *different*, unrelated interface's own leftover methods from
+         * an earlier compile of a reused DiamondProgram (tests/
+         * run_cases.c's own batch loop). This is what makes
+         * diamond_program_init's own memset(program,0,...) safe to skip
+         * for `interfaces[]` -- see that function's own comment. */
+        memset(interface->methods,0,sizeof interface->methods);
+        interface->method_count=0;
         interface->declared_by_discovery=compiler->discovery_pass;
     }
     interface->type_sets=compiler->program->entry.type_sets;
@@ -15000,7 +15051,7 @@ void diamond_program_free(DiamondProgram *program) {
  * (release build, cold process) purely from the first-touch page faults
  * committing DiamondProgram's ~14.2MB, on every single diamond_compile/
  * diamond_compile_incremental call regardless of source size -- see
- * docs/roadmap.md's "Make programs start faster". Never call this
+ * CHANGELOG.md's "Performance". Never call this
  * directly on a `program` that might carry a previous compile's
  * leftover data (tests/run_cases.c's own batch loop reuses one
  * DiamondProgram across 1285+ calls) -- only diamond_program_init
@@ -15033,8 +15084,37 @@ void diamond_program_init_fresh(DiamondProgram *program) {
     };
     program->range_class_index=UINT8_MAX;
     program->class_count=DIAMOND_BUILTIN_CLASS_COUNT;
+    /* Explicit here too, not just class_count above: diamond_program_init
+     * (below) no longer memsets classes[]/interfaces[]/modules[] at all
+     * (see its own comment) -- these two are the only fields in that
+     * skipped region besides class_count that this function doesn't
+     * otherwise set unconditionally. */
+    program->interface_count=0;
+    program->module_count=0;
     for(size_t index=0;index<DIAMOND_BUILTIN_CLASS_COUNT;index++) {
         DiamondClass *class=&program->classes[index];
+        /* A builtin class can be reopened by user code (`class Exception
+         * ... end` adding a method is ordinary, allowed monkey-patching,
+         * same as any other class -- compile_class's own comment on
+         * "a class can always be reopened") -- so unlike the fields
+         * below this loop already always overwrites unconditionally,
+         * methods/singleton_methods/class_variables genuinely can be
+         * non-empty here already, left over from an earlier reopen *of a
+         * previous compile*, if `program` is being reused (tests/
+         * run_cases.c's own batch loop) rather than freshly calloc'd.
+         * Explicit full reset, matching compile_class's own reopen-
+         * branch reset of a claimed slot, for the same reason: nothing
+         * else ever clears a builtin class's own tables between
+         * compiles now that the big memset below is gone. */
+        memset(class->methods,0,sizeof class->methods);
+        memset(class->singleton_methods,0,sizeof class->singleton_methods);
+        memset(class->field_type_status,0,sizeof class->field_type_status);
+        memset(class->field_known_class,0,sizeof class->field_known_class);
+        memset(class->class_variables,0,sizeof class->class_variables);
+        class->method_count=0;
+        class->singleton_method_count=0;
+        class->class_variable_count=0;
+        class->declared_by_discovery=false;
         (void)snprintf(class->name,sizeof class->name,"%s",builtins[index].name);
         class->superclass=builtins[index].superclass;
         class->field_count=3;
@@ -15063,8 +15143,32 @@ void diamond_program_init(DiamondProgram *program) {
      * which is unsafe for any caller running at nontrivial stack depth (e.g.
      * a required package's manifest, compiled from inside expand()'s own
      * recursive call chain, while the top-level program's own DiamondProgram
-     * is still live further up the stack in main.c's run_source). */
-    memset(program, 0, sizeof *program);
+     * is still live further up the stack in main.c's run_source).
+     *
+     * Two memsets, not one covering the whole struct: `classes`/
+     * `interfaces`/`modules` (and the class_count/interface_count/
+     * module_count fields sitting between them) are deliberately
+     * skipped, since they're ~14.2MB of DiamondProgram's own ~14.2MB
+     * total size -- confirmed directly (`sizeof(DiamondProgram)`), and a
+     * full memset of that scale measured at several milliseconds per
+     * call, every single diamond_compile/diamond_compile_incremental
+     * call regardless of source size (see diamond_program_init_fresh's
+     * own comment and CHANGELOG.md's "Performance").
+     * This is provably safe now, not merely fast: every place that
+     * claims a genuinely new class/module/interface slot
+     * (compile_class/compile_module/compile_interface, src/compiler.c)
+     * explicitly resets that exact slot's own methods/fields/counts
+     * itself, rather than relying on ambient pre-zeroed memory --
+     * verified directly for each, not assumed, since `program` here
+     * might be a struct tests/run_cases.c's own batch loop is reusing
+     * across 1285+ compiles, not a fresh calloc. class_count/
+     * interface_count/module_count themselves are reset explicitly by
+     * diamond_program_init_fresh below (which also finishes resetting
+     * every builtin class's own methods/fields for the identical
+     * reuse-safety reason -- see its own comment). */
+    memset(program, 0, offsetof(DiamondProgram, classes));
+    memset(&program->namespace_constants, 0,
+        sizeof *program - offsetof(DiamondProgram, namespace_constants));
     diamond_program_init_fresh(program);
 }
 

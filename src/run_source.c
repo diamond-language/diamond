@@ -283,7 +283,7 @@ int diamond_run_source_with_template(const char *name, const char *source,
  * #embed'd compiled prelude (src/compiled_prelude_data.c) -- the
  * diamond_program_read_compiled deserialize is what replaces a live
  * lex/parse/codegen of the prelude source on every `diamond` CLI
- * invocation (see docs/roadmap.md's "Make programs start faster").
+ * invocation (see CHANGELOG.md's "Performance").
  * diamond_program_init_fresh, not diamond_program_init: `template` is
  * freshly calloc'd right here and never reused, so the ordinary
  * function's own memset would just re-zero memory calloc already
