@@ -6,6 +6,8 @@ authoritative fine-grained record.
 
 ## Unreleased
 
+## 0.2.1
+
 ### Tooling
 
 - The Language Server now resolves call-chain receivers through
