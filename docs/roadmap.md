@@ -19,11 +19,18 @@ resolver, still with no hosted registry (cut identity stays a git URL;
 "resolving is fetching" stays true) since a git-tag-based resolver needs
 none of that operational cost:
 
-- **Semver type**: MAJOR.MINOR.PATCH[-prerelease][+build] parsing and
-  ordering, plus range/constraint syntax (`^1.2.3`, `~1.2.3`, `>=1.0.0
-  <2.0.0`, an exact `1.2.3`) -- a standalone piece with no dependency on
-  `facet` itself, since it's also generally useful on its own (a
-  package's own `diamond.cut` `version` field finally means something).
+- **Semver type (done)**: `tools/semver.c`/`tools/semver.h` --
+  MAJOR.MINOR.PATCH[-prerelease][+build] parsing (strict semver.org
+  grammar, no leading zeros, an optional leading `v`/`V` for real-world
+  git tags) and precedence ordering, plus range/constraint syntax
+  (`^1.2.3`, `~1.2.3`, `>=1.0.0 <2.0.0`, an exact `1.2.3`),
+  satisfaction checks, and range intersection (for the resolver, next).
+  Standalone -- no dependency on `facet` itself or the Diamond compiler/
+  VM, since it's also generally useful on its own (a package's own
+  `diamond.cut` `version` field finally means something). Not yet wired
+  into `facet` itself -- see the manifest/resolver/lockfile bullets
+  below, all still open. `make test-semver` (80 cases) covers parsing,
+  ordering, ranges, satisfaction, and intersection.
 - **Version discovery without a registry**: a dependency's available
   versions come from `git ls-remote --tags` against its own repo,
   filtered to tags that parse as semver (with or without a leading `v`).

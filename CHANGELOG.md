@@ -6,6 +6,14 @@ authoritative fine-grained record.
 
 ## Unreleased
 
+### Tooling
+
+- Added a standalone semver library (`tools/semver.c`/`tools/semver.h`):
+  parsing, precedence ordering, `^`/`~`/comparator range syntax,
+  satisfaction checks, and range intersection -- the first slice of
+  0.3's real dependency resolution for `facet` (see docs/roadmap.md).
+  Not yet wired into `facet` itself.
+
 ## 0.2.1
 
 ### Tooling
