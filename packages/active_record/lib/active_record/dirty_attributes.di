@@ -24,12 +24,8 @@ module ActiveRecord
     def initialize(original: Hash)
       @original = original
       @current = {}
-      keys = original.keys()
-      index = 0
-      while index < keys.length()
-        key = keys[index]
+      original.keys().each() do |key|
         @current[key] = original[key]
-        index += 1
       end
     end
 
@@ -42,41 +38,25 @@ module ActiveRecord
     def attribute_changed?(key) -> Bool = @original[key] != @current[key]
 
     def changed_keys() -> Array
-      keys = @current.keys()
-      result = []
-      index = 0
-      while index < keys.length()
-        key = keys[index]
-        if self.attribute_changed?(key)
-          result.push(key)
-        end
-        index += 1
+      @current.keys().select() do |key|
+        self.attribute_changed?(key)
       end
-      result
     end
 
     def changed?() -> Bool = self.changed_keys().length() > 0
 
     def changes() -> Hash
       result = {}
-      changed = self.changed_keys()
-      index = 0
-      while index < changed.length()
-        key = changed[index]
+      self.changed_keys().each() do |key|
         result[key] = @current[key]
-        index += 1
       end
       result
     end
 
     def to_h() -> Hash
       copy = {}
-      keys = @current.keys()
-      index = 0
-      while index < keys.length()
-        key = keys[index]
+      @current.keys().each() do |key|
         copy[key] = @current[key]
-        index += 1
       end
       copy
     end

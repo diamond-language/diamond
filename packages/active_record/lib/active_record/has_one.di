@@ -34,16 +34,11 @@ module ActiveRecord
         table.column(@foreign_key).in_list(owner_ids)).to_a(db, @repository.visitor())
       mapper = @repository.mapper()
       grouped = {}
-      index = 0
-      while index < owner_ids.length()
-        grouped[owner_ids[index]] = nil
-        index += 1
+      owner_ids.each() do |owner_id|
+        grouped[owner_id] = nil
       end
-      row_index = 0
-      while row_index < rows.length()
-        row = rows[row_index]
+      rows.each() do |row|
         grouped[row[@foreign_key]] = mapper(row)
-        row_index += 1
       end
       grouped
     end

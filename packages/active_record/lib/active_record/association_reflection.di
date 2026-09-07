@@ -36,17 +36,15 @@ module ActiveRecord
         return records
       end
       keys = []
-      index = 0
-      while index < records.length()
+      records.each() do |record|
         key = if self.belongs_to?()
-          records[index].read_attribute(@foreign_key)
+          record.read_attribute(@foreign_key)
         else
-          records[index].read_attribute(@owner_key)
+          record.read_attribute(@owner_key)
         end
         if key != nil && !keys.include?(key)
           keys.push(key)
         end
-        index += 1
       end
 
       targets = []
@@ -57,26 +55,19 @@ module ActiveRecord
         targets = target_scope.where(table.column(lookup_column).in_list(keys)).to_a(db)
       end
 
-      index = 0
-      while index < records.length()
-        record = records[index]
+      records.each() do |record|
         owner_value = if self.belongs_to?()
           record.read_attribute(@foreign_key)
         else
           record.read_attribute(@owner_key)
         end
-        matches = []
-        target_index = 0
-        while target_index < targets.length()
+        matches = targets.select() do |target|
           target_value = if self.belongs_to?()
-            targets[target_index].read_attribute(@owner_key)
+            target.read_attribute(@owner_key)
           else
-            targets[target_index].read_attribute(@foreign_key)
+            target.read_attribute(@foreign_key)
           end
-          if target_value == owner_value
-            matches.push(targets[target_index])
-          end
-          target_index += 1
+          target_value == owner_value
         end
         value = if self.has_many?()
           matches
@@ -86,7 +77,6 @@ module ActiveRecord
           matches[0]
         end
         record.set_preloaded_association(@name, value)
-        index += 1
       end
       records
     end
