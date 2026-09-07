@@ -591,7 +591,8 @@ read_message >/dev/null
 
 # --- explicitly typed call results can themselves be receivers, recursively.
 # Cover top-level functions, singleton factories, constructors, several links,
-# and a union return. An inferred/unannotated function remains conservative. ---
+# a union return, and an unannotated single-expression body (inferred). A
+# non-class arm in an explicit union remains conservative. ---
 
 chained_uri="file:///chained_receiver.di"
 chained_source='class Leaf\n  def ping() -> Int\n    1\n  end\nend\nclass Branch\n  def leaf() -> Leaf\n    Leaf.new()\n  end\nend\nclass AlternateBranch\n  def leaf() -> Leaf\n    Leaf.new()\n  end\nend\nclass Factory\n  def self.build() -> Branch\n    Branch.new()\n  end\nend\ndef make_branch() -> Branch\n  Branch.new()\nend\ndef choose_branch(flag) -> Branch | AlternateBranch\n  if flag\n    Branch.new()\n  else\n    AlternateBranch.new()\n  end\nend\ndef infer_branch()\n  Branch.new()\nend\ndef inspect()\n  make_branch().leaf().ping()\n  Factory.build().leaf().ping()\n  Branch.new().leaf().ping()\n  choose_branch(true).leaf().ping()\n  infer_branch().leaf()\n  maybe_branch(true).leaf()\nend\ndef maybe_branch(flag) -> Branch | Nil\n  flag ? Branch.new() : nil\nend'
@@ -635,11 +636,21 @@ response="$(read_message)"
 [[ "$response" == *'"label":"ping","kind":3'* ]]
 count=$((count + 1))
 
-# No source annotation means no call-result type claim, even when the body
-# happens to return a constructor at runtime.
+# No source annotation, but the body is a single unambiguous
+# `Branch.new()` -- compile_definition's own inference (src/compiler.c,
+# mirroring compile_block's identical fallback) now populates
+# inferred_return_type_set for exactly this case, so the call-chain
+# resolves the same as an explicitly-annotated one; lsp/receiver.c's own
+# function_return_classes only consults it when there's no explicit
+# `-> Type` (which always wins when present).
 send '{"jsonrpc":"2.0","id":137,"method":"textDocument/completion","params":{"textDocument":{"uri":"'"$chained_uri"'"},"position":{"line":38,"character":17}}}'
 response="$(read_message)"
-[[ "$response" != *'"label":"leaf","kind":3'* ]]
+[[ "$response" == *'"label":"leaf","kind":3'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","id":139,"method":"textDocument/hover","params":{"textDocument":{"uri":"'"$chained_uri"'"},"position":{"line":38,"character":18}}}'
+response="$(read_message)"
+[[ "$response" == *'"value":"def leaf() -> Leaf"'* ]]
 count=$((count + 1))
 
 # A non-class arm in a declared union is equally unsafe for method lookup.

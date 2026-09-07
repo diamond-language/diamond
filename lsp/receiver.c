@@ -146,9 +146,15 @@ static size_t append_class(size_t *classes,size_t count,size_t capacity,size_t v
 
 static size_t function_return_classes(const DiamondChunk *chunk,
         const DiamondFunction *function,size_t *classes,size_t capacity) {
-    if(function->return_type_set==DIAMOND_NO_TYPE_SET||
-       function->return_type_set>=function->type_set_count)return 0;
-    const DiamondTypeSet *set=&function->type_sets[function->return_type_set];
+    /* return_type_set (an explicit `-> Type` annotation) wins when
+     * present; inferred_return_type_set (compile_definition's own
+     * best-effort inference from an unannotated body's last expression)
+     * is only ever consulted as a fallback, so an explicit annotation
+     * always takes precedence over what the compiler guessed. */
+    uint16_t return_set=function->return_type_set;
+    if(return_set==DIAMOND_NO_TYPE_SET)return_set=function->inferred_return_type_set;
+    if(return_set==DIAMOND_NO_TYPE_SET||return_set>=function->type_set_count)return 0;
+    const DiamondTypeSet *set=&function->type_sets[return_set];
     size_t count=0;
     for(size_t index=0;index<set->count;index++) {
         size_t class_index;

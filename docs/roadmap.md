@@ -27,10 +27,26 @@ compile is unaffected, and cross-file precision within one document's own
 one compiled unit; Diamond's `require` model has no way to reference a
 class that isn't).
 
+Unannotated call chains (`def make_branch() = Branch.new()` used as
+`make_branch().leaf()`) are now resolved too: `compile_definition` (src/
+compiler.c) infers a function's own return type from its body_result the
+same way `compile_block` already did for blocks, into a new
+`inferred_return_type_set` kept deliberately separate from
+`return_type_set` itself (which real compile-time semantics -- interface
+conformance, generics -- depend on) so this stays a pure, zero-risk
+tooling improvement. See docs/lsp.md's receiver-chain paragraph.
+
 Next steps:
 
-- improve receiver facts across imported files (unannotated call chains,
-  control-flow joins across function boundaries);
+- control-flow joins across function boundaries: a function whose body
+  branches into more than one class with no shared annotation (an
+  unannotated `if`/`case` returning different classes per arm) still has
+  no single inferable body-result type and stays unresolved -- the local-
+  variable version of this (an `if`/ternary assigned to a local) already
+  synthesizes a union; doing the same for a whole function's own inferred
+  return type is the natural next slice, not yet attempted;
+- improve receiver facts across imported files further where they still
+  lose precision (dynamic-flow boundaries this pass didn't touch);
 - explore incremental compilation only after the compiler has a reusable unit
   boundary that makes incremental synchronization worthwhile;
 - keep editor results conservative when a receiver cannot be proven.

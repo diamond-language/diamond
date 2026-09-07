@@ -125,12 +125,26 @@ search over a real (if scoped) lexical symbol table:
     candidate rather than guessing. Call results can be receivers recursively:
     `Branch.new().leaf().ping()`, a top-level `make_branch().leaf()`, and a
     singleton factory such as `Factory.build().leaf()` resolve through each
-    link's explicit class or class-union return annotation
-    (`DiamondFunction.return_type_set`). `Class.new()` is the one intrinsic
-    return rule. Every arm of a union receiver must define a link with a usable
-    annotated class return, so one uncertain arm makes the rest of the chain
-    unresolved. Unannotated results and any other receiver this can't resolve
-    fall back to the ordinary "not found" result instead of a guess. All three
+    link's return type, preferring an explicit class or class-union
+    annotation (`DiamondFunction.return_type_set`) and falling back to a
+    same-shaped *inferred* one (`DiamondFunction.inferred_return_type_set`)
+    when the function has no annotation at all but its own body is simple
+    enough to have a known type at compile time (a single-expression
+    `def make_branch() = Branch.new()`, say) -- the identical inference
+    `compile_block` already does for an unannotated block's own return
+    type, just also applied to `compile_definition`. This inferred field
+    exists purely for this resolution; unlike the explicit one, it plays
+    no part in real compile-time semantics (structural interface
+    conformance, generic instantiation) precisely so this stays a pure
+    tooling improvement with zero behavior-changing risk. `Class.new()` is
+    the one intrinsic return rule. Every arm of a union receiver must
+    define a link with a usable (explicit or inferred) class return, so
+    one uncertain arm makes the rest of the chain unresolved -- a body
+    whose control flow branches into more than one class (an `if`/`case`
+    with no shared annotation) has no single body-result type to infer
+    from and stays unresolved the same as before. Any other receiver this
+    can't resolve falls back to the ordinary "not found" result instead of
+    a guess. All three
     require the *document* to currently compile cleanly — otherwise they return `null`/empty
     rather than a stale result; the document's own diagnostics already
     say why.

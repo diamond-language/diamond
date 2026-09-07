@@ -812,6 +812,19 @@ typedef struct DiamondFunction {
     bool nested;
     uint8_t capture_count;
     uint16_t return_type_set;
+    /* LSP-only best-effort return type, inferred from an unannotated
+     * function/method's own body_result (compile_definition, src/
+     * compiler.c) the same way compile_block already infers a block's
+     * return_type_set when it has no explicit `-> Type` annotation.
+     * Deliberately a *separate* field rather than folding into
+     * return_type_set itself: that field is load-bearing for real
+     * compile-time semantics (structural interface conformance, generic
+     * instantiation/substitution -- see its own call sites), so widening
+     * when it gets populated would risk changing what type-checks,
+     * not just what an editor can show. inferred_return_type_set has
+     * exactly one reader: lsp/receiver.c's call-chain resolution, as a
+     * fallback when return_type_set itself is DIAMOND_NO_TYPE_SET. */
+    uint16_t inferred_return_type_set;
     uint16_t parameter_type_sets[DIAMOND_MAX_DECLARED_PARAMETERS];
     /* Declared public parameter names. Dynamic keyword calls retain names in
      * bytecode and resolve them here after target selection. Hidden self

@@ -10983,6 +10983,7 @@ static uint16_t compile_block(Compiler *compiler) {
         return 0;
     }
     function->return_type_set=DIAMOND_NO_TYPE_SET;
+    function->inferred_return_type_set=DIAMOND_NO_TYPE_SET;
     for(size_t index=0;index<DIAMOND_MAX_DECLARED_PARAMETERS;index++)
         function->parameter_type_sets[index]=DIAMOND_NO_TYPE_SET;
     function->owner_class=UINT8_MAX;
@@ -11438,6 +11439,7 @@ static uint16_t compile_definition(Compiler *compiler, bool captures_self) {
         return 0;
     }
     function->return_type_set=DIAMOND_NO_TYPE_SET;
+    function->inferred_return_type_set=DIAMOND_NO_TYPE_SET;
     for(size_t index=0;index<DIAMOND_MAX_DECLARED_PARAMETERS;index++)
         function->parameter_type_sets[index]=DIAMOND_NO_TYPE_SET;
     /* current_class/current_module are compiler-wide "lexically inside a
@@ -12153,6 +12155,36 @@ static uint16_t compile_definition(Compiler *compiler, bool captures_self) {
         if (return_type >= 0 && !body_diverges) {
             emit_type_check(compiler,body_result,(uint8_t)return_type,
                             return_type_span);
+        } else if(return_type<0&&!body_diverges) {
+            /* No explicit `-> Type`: best-effort inference for lsp/
+             * receiver.c's call-chain resolution only (inferred_return_
+             * type_set, not return_type_set itself -- see that field's
+             * own comment in vm.h for why they're kept separate).
+             * Mirrors compile_block's own identical fallback for a
+             * block with no explicit return annotation. !body_diverges
+             * guards against inferring from a body_result register a
+             * body that always raises/returns early never actually
+             * produces. */
+            if(compiler->known_type_sets[body_result]>=0) {
+                function->inferred_return_type_set=
+                    (uint16_t)compiler->known_type_sets[body_result];
+            } else if(compiler->known_types[body_result]!=TYPE_UNKNOWN&&
+                      reserve_type_sets(compiler,1)) {
+                const size_t return_set=function->type_set_count++;
+                DiamondTypeSet *set=&function->type_sets[return_set];
+                set->count=1;set->inferred=true;
+                set->members[0]=(DiamondTypeMember){
+                    .id=compiler->known_types[body_result],
+                    .argument_set=DIAMOND_NO_TYPE_SET,
+                    .second_argument_set=DIAMOND_NO_TYPE_SET,
+                    .callable_arity=UINT8_MAX,
+                    .callable_return_set=DIAMOND_NO_TYPE_SET,
+                    .callable_parameters_typed=false};
+                for(size_t parameter=0;parameter<16;parameter++)
+                    set->members[0].callable_parameter_sets[parameter]=
+                        DIAMOND_NO_TYPE_SET;
+                function->inferred_return_type_set=(uint16_t)return_set;
+            }
         }
         emit_instruction(compiler, DIAMOND_OP_RETURN, body_result, 0, 0, 1);
         if (!endless&&compiler->current.kind != DIAMOND_TOKEN_END) {
@@ -12503,6 +12535,7 @@ static void compile_attribute_named(Compiler *compiler,bool writer,bool predicat
         (uint8_t)compiler->current_class:UINT8_MAX-1;
     function->arity=writer?2:1;function->required_arity=function->arity;
     function->return_type_set=DIAMOND_NO_TYPE_SET;
+    function->inferred_return_type_set=DIAMOND_NO_TYPE_SET;
     for(size_t index=0;index<DIAMOND_MAX_DECLARED_PARAMETERS;index++)function->parameter_type_sets[index]=DIAMOND_NO_TYPE_SET;
     if(type_set>=0) {
         function->type_set_count=compiler->function->type_set_count;
@@ -13036,6 +13069,7 @@ static void compile_delegate(Compiler *compiler) {
     function->declaration_column=(uint32_t)keyword.column;
     function->declaration_start=keyword.start;
     function->return_type_set=DIAMOND_NO_TYPE_SET;
+    function->inferred_return_type_set=DIAMOND_NO_TYPE_SET;
     for(size_t index=0;index<DIAMOND_MAX_DECLARED_PARAMETERS;index++)function->parameter_type_sets[index]=DIAMOND_NO_TYPE_SET;
 
     compiler->function=function;
