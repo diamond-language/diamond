@@ -6,6 +6,15 @@ authoritative fine-grained record.
 
 ## Unreleased
 
+### Language
+
+- Anonymous `do ... end` blocks now capture `self` inside an instance or
+  singleton method, the same way a named nested `closure` already did.
+  Previously `self` inside such a block resolved to garbage (typically
+  the block's own first argument) rather than the enclosing method's
+  receiver -- a silent correctness bug, not a compile-time error. See
+  docs/callables.md.
+
 ### Tooling
 
 - Added a standalone semver library (`tools/semver.c`/`tools/semver.h`):

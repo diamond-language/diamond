@@ -10986,7 +10986,21 @@ static uint16_t compile_block(Compiler *compiler) {
     function->inferred_return_type_set=DIAMOND_NO_TYPE_SET;
     for(size_t index=0;index<DIAMOND_MAX_DECLARED_PARAMETERS;index++)
         function->parameter_type_sets[index]=DIAMOND_NO_TYPE_SET;
-    function->owner_class=UINT8_MAX;
+    /* UINT8_MAX-2, compile_definition's own "self via capture" sentinel
+     * (see its own extensive comment on this exact value), when this
+     * block is written somewhere `self` already exists -- materialized
+     * into its own register 0 below, the same way a `closure name()
+     * ... end` (captures_self) already does; call_closure_helper
+     * (src/vm.c) already shifts real arguments to register 1+ for any
+     * owner_class!=UINT8_MAX callable, so reusing that exact sentinel
+     * here needs no further runtime changes at all. compiler->in_method
+     * is deliberately left untouched anywhere in this function (still
+     * whatever the enclosing function had) -- that's already why `self`
+     * was never a *compile-time* error inside a block written in a
+     * method; only *which* value ended up in register 0 was wrong
+     * before this fix (the block's own first real parameter, since
+     * nothing reserved register 0 for self at all). */
+    function->owner_class=compiler->in_method?UINT8_MAX-2:UINT8_MAX;
     function->nested=true;
     static const char block_name[]="<block>";
     for(size_t index=0;index<sizeof(block_name);index++)
@@ -11051,6 +11065,21 @@ static uint16_t compile_block(Compiler *compiler) {
     for(size_t index=0;index<DIAMOND_MAX_LOCALS;index++)
         captured_fact_registers[index]=DIAMOND_NO_TYPE_SET;
 
+    /* Copy self into a fresh register of the *enclosing* function and box
+     * that copy, exactly mirroring compile_definition's own captures_self
+     * handling (see its own comment for why a copy, not boxing register 0
+     * itself in place: every self/@ivar access elsewhere in the enclosing
+     * method hardcodes literal register 0 unconditionally, so boxing it
+     * directly would corrupt every one of those). Still in the enclosing
+     * function's own compiler state here -- compiler->function hasn't
+     * switched yet. */
+    uint16_t self_copy_register=0;
+    if(compiler->in_method) {
+        self_copy_register=allocate_register(compiler);
+        emit_instruction(compiler,DIAMOND_OP_MOVE,self_copy_register,0,0,2);
+        emit_instruction(compiler,DIAMOND_OP_BOX_LOCAL,self_copy_register,0,0,1);
+    }
+
     compiler->function = function;
     uint16_t declared_return_set=DIAMOND_NO_TYPE_SET;
     if(contextual_return_set>=0&&
@@ -11076,6 +11105,26 @@ static uint16_t compile_block(Compiler *compiler) {
         compiler->capture_count=compiler->enclosing_local_count;
         for(size_t i=0;i<compiler->capture_count;i++)
             compiler->capture_registers[i]=compiler->enclosing_locals[i].reg;
+    }
+    /* Materialize the captured self (see self_copy_register above) into
+     * this block's own register 0 -- guaranteed to land there since
+     * next_register was just reset to 0 above and nothing else has
+     * allocated from it yet, exactly mirroring compile_definition's own
+     * captures_self materialization (see its own comment). Every self/
+     * @ivar/self.foo() code path (parse_prefix's DIAMOND_TOKEN_SELF/
+     * INSTANCE_VARIABLE, DIAMOND_OP_INVOKE_SELF_METHOD) hardcodes literal
+     * register 0 unconditionally, so this is what makes all of those work
+     * unmodified inside a block body too. */
+    if(function->owner_class==UINT8_MAX-2) {
+        if(compiler->capture_count==DIAMOND_MAX_CAPTURES) {
+            fail(compiler,compiler->previous.span,"block sees too many lexical bindings");
+        } else {
+            const size_t self_capture_index=compiler->capture_count;
+            compiler->capture_registers[compiler->capture_count++]=self_copy_register;
+            const uint16_t self_register=allocate_register(compiler);
+            emit_instruction(compiler,DIAMOND_OP_GET_CAPTURE,self_register,
+                             (uint8_t)self_capture_index,0,2);
+        }
     }
 
     /* `|x, y|` -- bare identifiers only, no type annotations, no default

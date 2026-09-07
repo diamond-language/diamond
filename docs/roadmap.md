@@ -213,27 +213,6 @@ insufficient.
 
 ## Language directions
 
-### Anonymous blocks don't capture `self`
-
-Found during a codebase-wide sweep for places package code could adopt
-newer collection/dispatch idioms (2026-09): a named nested `closure`
-correctly captures the enclosing instance method's `self` (docs/
-classes-and-modules.md), including when passed elsewhere as a Callable
--- but an anonymous `do ... end` block does not, even via `yield`. Both
-are documented as compiling to "the same underlying CLOSURE value"
-(docs/callables.md), so this reads as an inconsistency rather than a
-deliberate scope cut with its own rationale on record anywhere. The
-established workaround (capture `self` into an ordinary local before
-the block, matching a pattern packages/arel's own visitor.di already
-used pre-dating this investigation) is real and fine to keep using, but
-worth a real look at whether blocks *should* thread `self` through the
-same way nested closures do -- would remove a sharp, easy-to-trip-over
-edge for exactly the kind of `array.map() do |x| self.foo(x) end`
-idiom Ruby-familiarity otherwise invites. Not attempted here: this is a
-compiler/self-binding change, a different scope and risk profile than
-the docs/package-level fixes this sweep otherwise made (see
-docs/callables.md's own note on the current behavior in the meantime).
-
 ### Ergonomics without compatibility chasing
 
 Ruby-inspired syntax should remain familiar, but Diamond is not a Ruby
