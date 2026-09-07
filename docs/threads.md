@@ -90,4 +90,4 @@ handler from multiple threads replaces the previous handler rather than
 creating one handler per VM.
 
 Implementation details, copy semantics, and lifecycle invariants are
-documented in [Concurrency internals](concurrency-internals.md).
+documented in [Concurrency internals](internal/concurrency-internals.md).

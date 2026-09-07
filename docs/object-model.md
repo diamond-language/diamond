@@ -110,7 +110,7 @@ class pointer -- `diamond_vm_collect` traces the whole flat array directly
 
 Runtime shapes, polymorphic method inline caches, and field caches keyed by
 shape identity (above) are all implemented, not planned. Modules/mixins,
-singleton classes, and visibility are implemented too (see `docs/design.md`).
+singleton classes, and visibility are implemented too (see `docs/internal/design.md`).
 Runtime method *redefinition* — repointing an existing method to a different
 already-compiled function via `ClassName.redefine_method(name, callable)` —
 is also implemented, as is adding a brand-new method slot via
@@ -119,7 +119,7 @@ runtime source string is implemented too, via
 `ClassName.compile_method(name, params, body_source, bound_values)`, which
 compiles into a throwaway satellite program and returns a `Callable` for
 `define_method` to install — see `docs/classes-and-modules.md` and
-`docs/design.md`'s "Runtime method synthesis" section. There is still no
+`docs/internal/design.md`'s "Runtime method synthesis" section. There is still no
 general `eval`: `compile_method` only ever produces a capture-free method
 body, not arbitrary code running in the calling scope.
 

@@ -93,10 +93,10 @@ already named as "the existing asymmetry" before this pass closed it.
 `partition`, `group_by`, `zip`, `each_slice`, `each_cons`, and `tally`,
 each delegating to the existing Array-typed `array_*`/`enumerable_*`
 function on that materialized copy rather than re-deriving index-based
-logic generically (see `docs/design.md`'s Enumerable section for the
+logic generically (see `docs/internal/design.md`'s Enumerable section for the
 full reasoning). Verified against both `Range` and a custom `each`-only
 class, plus the pre-existing `legacy_0362`/`0363`/`0364` Enumerable
-fixtures. `docs/syntax.md` and `docs/design.md` updated to match.
+fixtures. `docs/syntax.md` and `docs/internal/design.md` updated to match.
 
 Step 6 (removing compatibility wrappers) turned out to be far narrower
 than its "one deliberate cleanup release" framing implied, once checked

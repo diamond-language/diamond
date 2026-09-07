@@ -12,9 +12,10 @@ a hosted package registry, a JIT without profiling evidence, ...). A change
 that fights the roadmap's own stated direction needs a reason, not just an
 implementation.
 
-For anything beyond a small fix, skim [docs/design.md](docs/design.md) and
-the relevant topic guide under `docs/` before touching `src/` or `lib/
-core.di` -- the architecture section of README.md links the full set.
+For anything beyond a small fix, skim
+[docs/internal/design.md](docs/internal/design.md) and the relevant topic
+guide under `docs/` before touching `src/` or `lib/core.di` -- the
+architecture section of README.md links the full set.
 
 ## Build and test
 
@@ -57,7 +58,7 @@ result, a specific prior bug, or a specific alternative considered and
 rejected.
 
 Diamond-language style (`lib/`, `packages/`, `selfhost/`) follows
-[docs/di-modernization-audit.md](docs/di-modernization-audit.md)'s
+[docs/internal/di-modernization-audit.md](docs/internal/di-modernization-audit.md)'s
 findings: prefer receiver syntax (`values.map(f)`) over the equivalent
 free function (`array_map(values, f)`) at any call site being touched
 anyway, compound assignment over `x = x + 1`, and `unless`/truthiness

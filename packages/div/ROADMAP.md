@@ -30,7 +30,7 @@ Each of these was considered and explicitly deferred, not overlooked:
   `src/lexer.c`), so it was never reusable as a placeholder name in the
   first place, and (true when this was written; both `def foo(*rest)`
   variadic parameter *definitions* and `foo(*array)` call-site *spread*
-  exist now, see docs/design.md's "Splat/variadic parameters" and
+  exist now, see docs/internal/design.md's "Splat/variadic parameters" and
   "Call-site spread" -- but spread's own first version only calls a
   statically-named top-level function, not an arbitrary `Callable`
   *value*, which is exactly what a generic "call whichever layout

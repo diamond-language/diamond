@@ -52,7 +52,7 @@ Each of these was considered and explicitly deferred, not overlooked:
   concluded "revisit only if the language itself grows a way to
   reference a `self.` method as a value." It did: `ClassName.method`/
   `ModuleName.method` with no call is now a `Callable` value (see
-  `docs/design.md`'s "Bare singleton method references" and `docs/
+  `docs/internal/design.md`'s "Bare singleton method references" and `docs/
   syntax.md`'s section of the same name) -- turned out buildable with no
   VM/opcode changes at all, since `ClassName.method(...)` was already
   fully resolved at compile time, never runtime-dispatched, so a

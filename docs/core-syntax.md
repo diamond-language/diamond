@@ -5,7 +5,7 @@
 Ruby-like surface syntax, but expression-oriented and gradually typed — no
 separate "typed" object model, just optional annotations on top of dynamic
 dispatch. This document is a tour of the surface syntax; see
-[Design and VM architecture](design.md) for how it compiles and executes,
+[Design and VM architecture](internal/design.md) for how it compiles and executes,
 [Object model](object-model.md), [Fibers](fibers.md), and
 [I/O and native services](io.md) for focused guides.
 Diamond's runtime intentionally has no HTTP support built in — see
@@ -486,7 +486,7 @@ Ruby, where `Symbol` is interned and pointer-equal. Diamond deliberately
 scoped Symbol this way: interning would mean every Symbol ever created lives
 for the rest of the process (Ruby's own tradeoff), and this codebase defers
 that kind of complexity until profiling shows it's actually worth it (see
-`docs/design.md`'s note on why NaN-boxing is likewise deferred).
+`docs/internal/design.md`'s note on why NaN-boxing is likewise deferred).
 
 `to_sym(string)` converts a `String` to a `Symbol`; the reverse direction
 goes through `puts`/string interpolation/a class's `to_s` method, all of

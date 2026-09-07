@@ -10,7 +10,7 @@ duplicated here.
 Confirmed directly before designing anything (not assumed), by reading
 `packages/active_record`'s own `Model` class first -- this codebase's
 closest precedent for a metaprogrammed DSL -- and the relevant sections
-of `docs/syntax.md`/`docs/design.md`:
+of `docs/syntax.md`/`docs/internal/design.md`:
 
 - **Diamond class bodies can't execute arbitrary statements.** They're
   a fixed, static declaration list (`def`, `attr_accessor`/`reader`/

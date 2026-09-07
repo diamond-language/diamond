@@ -90,7 +90,7 @@ Neither is a general expression: `Type` in `is_a?(Type)` is a type name
 resolved entirely at compile time, the same way a `rescue error: Type`
 clause's type is — there is no way to obtain a class as an ordinary
 runtime value to pass around, store, or compute `is_a?`'s argument from
-(see docs/design.md's `DIAMOND_VALUE_CLASS` section, and docs/
+(see docs/internal/design.md's `DIAMOND_VALUE_CLASS` section, and docs/
 roadmap.md's "Explicitly deferred" section for why that stays out of
 scope).
 

@@ -94,7 +94,7 @@ the feature-test-macro gap above:
 1. **`ucontext_t`/`swapcontext`/`getcontext`/`makecontext` are declared by
    musl's headers but not implemented in Alpine's shipped `libc.so`** --
    confirmed directly (`nm -D` on `libc.so` shows none of the three
-   functions). Fibers (`src/vm.c`, see docs/concurrency-internals.md) are
+   functions). Fibers (`src/vm.c`, see docs/internal/concurrency-internals.md) are
    built entirely on this POSIX API, and `run_chunk`'s own yield-opcode
    handler references it unconditionally, so the whole binary fails to
    *link*, not merely to run fibers, once the feature-test-macro gap above

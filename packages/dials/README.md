@@ -166,7 +166,7 @@ gives you one `author_path` covering show/update/destroy on the same path.
 
 Diamond has no way to synthesize a real top-level function
 (`author_path(id)`) at runtime: `ClassName.compile_method`/`.define_method`
-only attach **instance** methods (`docs/design.md`'s own scoping note), and
+only attach **instance** methods (`docs/internal/design.md`'s own scoping note), and
 there's no `self.method_missing`. So path helpers are generated *offline*
 into a real, checked-in `.di` file -- `Dials::PathHelpers.generate_source
 (router.routes())` turns every named route into a function definition:

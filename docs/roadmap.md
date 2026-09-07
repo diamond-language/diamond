@@ -203,7 +203,7 @@ just enabled.
   force a second, untyped object-model tier outside that system entirely,
   against "dynamic code and checked code share one object model"
   (README.md); not worth it without a deeper type-tag redesign no
-  concrete use case currently justifies. See docs/design.md's
+  concrete use case currently justifies. See docs/internal/design.md's
   `DIAMOND_VALUE_CLASS` section for the implementation-level detail.
 
 ## Completion policy

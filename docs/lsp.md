@@ -87,7 +87,7 @@ search over a real (if scoped) lexical symbol table:
     reached through `receiver.method(...)`, for the receiver forms
     resolvable without real type inference: a literal class name
     (`Author.find`), `self` inside an instance method or a class-owned
-    `def self.x` (wall 2's `DIAMOND_VALUE_CLASS`, `docs/design.md`), a
+    `def self.x` (wall 2's `DIAMOND_VALUE_CLASS`, `docs/internal/design.md`), a
     local variable known at the cursor position to hold
     `ClassName.new(...)` — `DiamondScopeLocal.known_type` (`src/vm.h`),
     the compiler's own `known_types[reg]`, supplemented by ordered

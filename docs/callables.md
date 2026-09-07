@@ -248,7 +248,7 @@ Keyword arguments work for top-level functions, user-defined instance
 methods, Callable values, constructors with a Diamond-defined `initialize`,
 and class/module singleton methods. Dynamic calls retain keyword names until
 runtime target selection. Native C-backed receiver methods use the central
-signature registry documented in `docs/design.md`.
+signature registry documented in `docs/internal/design.md`.
 
 ### Variadic parameters
 
@@ -284,12 +284,12 @@ feature like this (see `delegate`'s own "bare parameter names only"):
   this feature. Call-site spread (below) isn't subject to it, since a
   spread argument's length is a runtime value, not one argument
   expression per element. A function/method declaration is separately
-  capped at 32 parameters — see docs/design.md's "No artificial
+  capped at 32 parameters — see docs/internal/design.md's "No artificial
   call-argument/parameter ceiling" for why the two limits differ.
 
 A variadic parameter widens `Callable[N]` matching too: a variadic
 closure/function satisfies `Callable[N]` for any `N` at or above its own
-required-argument count, not just an exact match — see docs/design.md's
+required-argument count, not just an exact match — see docs/internal/design.md's
 "Splat/variadic parameters" section for the full mechanism.
 
 ### Call-site spread
@@ -333,4 +333,4 @@ to a variadic *parameter* above. The supported slice is deliberately narrow:
   `TypeError`.
 - native receiver spreads share ordinary native invocation's 255-argument bound;
 
-See docs/design.md's "Call-site spread" section for the full mechanism.
+See docs/internal/design.md's "Call-site spread" section for the full mechanism.

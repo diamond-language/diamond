@@ -91,4 +91,4 @@ fiber blocks every fiber on that OS thread. Use non-blocking I/O with explicit
 yields, or move CPU work to a Thread.
 
 Implementation details and GC invariants are documented in
-[Concurrency internals](concurrency-internals.md).
+[Concurrency internals](internal/concurrency-internals.md).

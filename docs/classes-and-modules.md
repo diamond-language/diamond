@@ -237,7 +237,7 @@ obtain one; a bare class name as a `case`/`when` pattern (`when Dog`,
 [core syntax](core-syntax.md)) is the other. Neither is a general
 expression -- there is still no way to store a class in a variable
 outside those two positions, pass one as an ordinary argument, or name
-one dynamically by a computed string (see docs/design.md's
+one dynamically by a computed string (see docs/internal/design.md's
 `DIAMOND_VALUE_CLASS` section, and docs/roadmap.md's "Explicitly
 deferred" section for why that stays out of scope).
 

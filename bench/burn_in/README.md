@@ -1,7 +1,7 @@
 # bench/burn_in
 
 The long-running, multi-threaded workload motivated by
-`docs/gc-generational-design.md`: a real `gremlin_serve(..., threads: 4)` HTTP server (see
+`docs/internal/gc-generational-design.md`: a real `gremlin_serve(..., threads: 4)` HTTP server (see
 `packages/gremlin`) under sustained `ab` load, standing in for the
 fiber-per-connection production shape that entry names as the actual
 motivating case for a generational collector -- not started until there
@@ -66,7 +66,7 @@ comments):
   live set the roadmap's GC entry is actually worried about, and it's
   also under continuous mutation -- every touch is an old-generation
   Hash (`sessions`) gaining a fresh young value, exactly the old-to-young
-  write `docs/gc-generational-design.md`'s write barrier section is
+  write `docs/internal/gc-generational-design.md`'s write barrier section is
   written against.
 
 Getting the session cache to exist at all took a real detour: `handler`
@@ -118,7 +118,7 @@ than the request-scoped-only baseline (a few hundred MB there vs. several
 GB here for a session cache that's logically maybe a few hundred MB of
 data). That gap is real and worth being precise about: it's consistent
 with per-object `malloc` overhead and the current collector's
-non-compacting, individually-`malloc`'d design (`docs/gc-generational-design.md`
+non-compacting, individually-`malloc`'d design (`docs/internal/gc-generational-design.md`
 explicitly scopes out moving/compacting as a non-goal, for unrelated
 reasons -- see that doc's "structural fact" section), not necessarily
 something a generational collector specifically would fix. What
