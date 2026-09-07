@@ -169,6 +169,16 @@ module Opcode
   # value. Still confirmed with the same throwaway C probe technique as
   # SHIFT_LEFT/MODULO above rather than trusting the arithmetic alone.
   COMPARE = 106
+  # `>>` (DIAMOND_OP_SHIFT_RIGHT) was added natively well after this list
+  # was last verified -- 55 opcodes past COMPARE, not adjacent to
+  # SHIFT_LEFT the way the token pair's own lexing is. This lexer/parser
+  # mirror had no `>>` support at all until this entry (lexer.di's own
+  # `>` branch never checked for a second `>`, so `1 >> 2` silently
+  # lexed as two `greater` tokens) -- found by tests/lexer_diff.sh
+  # failing on tests/cases/bitwise_operators.di, not by hand-auditing.
+  # Confirmed with the same throwaway C probe technique as SHIFT_LEFT
+  # above, not counted by hand.
+  SHIFT_RIGHT = 161
 end
 
 module Precedence
@@ -4114,7 +4124,7 @@ class Parser
     return Precedence::EQUALITY if kind == :equal_equal || kind == :bang_equal ||
       kind == :is || kind == :spaceship
     return Precedence::COMPARISON if kind == :less || kind == :less_equal || kind == :greater || kind == :greater_equal
-    return Precedence::SHIFT if kind == :less_less
+    return Precedence::SHIFT if kind == :less_less || kind == :greater_greater
     return Precedence::TERM if kind == :plus || kind == :minus
     return Precedence::FACTOR if kind == :star || kind == :slash || kind == :percent
     Precedence::NONE
@@ -4133,6 +4143,7 @@ class Parser
     return Opcode::GREATER if kind == :greater
     return Opcode::GREATER_EQUAL if kind == :greater_equal
     return Opcode::COMPARE if kind == :spaceship
+    return Opcode::SHIFT_RIGHT if kind == :greater_greater
     Opcode::SHIFT_LEFT
   end
 

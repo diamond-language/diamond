@@ -227,6 +227,7 @@ class Lexer
     end
     if code == ">".ord()
       return self.make_token(:greater_equal) if self.match?("=".ord())
+      return self.make_token(:greater_greater) if self.match?(">".ord())
       return self.make_token(:greater)
     end
     self.make_token(:error)
