@@ -781,7 +781,11 @@ int diamond_repl_run(void) {
     buffer_init(&previous_output);
     char *line = nullptr;
     size_t line_capacity = 0;
-    char error_message[512];
+    /* Matches try_compile's own load_error[768] -- smaller and a long
+     * diamond_load_program error could truncate (still safe, snprintf
+     * never overflows, just triggers -Wformat-truncation for a real,
+     * if harmless, possibility). */
+    char error_message[768];
 
     /* Raw-mode line editing (history navigation, in-place cursor
      * movement/backspace, Ctrl-C aborting the current input instead of

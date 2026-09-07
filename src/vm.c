@@ -752,6 +752,20 @@ static bool gc_write_barrier(DiamondVm *vm, DiamondObject *owner) {
  * a handful of cards is negligible next to the container it shadows
  * (~625 bytes for a 40,000-entry Hash), not worth a second accounting
  * path for. Returns false only on allocation failure. */
+/* DiamondArray and DiamondHash lay out dirty_cards/dirty_card_capacity at
+ * different offsets (object.h) -- fine at runtime, since owner->kind
+ * always picks the matching branch below, but when this function gets
+ * inlined at -O3 into a call site where the concrete object is
+ * statically known to be one specific (smaller) allocation size, e.g.
+ * diamond_vm_set_argv's own Array-only construction, GCC's -Warray-bounds
+ * still evaluates the *other*, provably-unreachable-there branch's
+ * hash->dirty_cards/hash->capacity access against that size and reports
+ * a false positive. Confirmed false: the two branches are never
+ * conflated at runtime, only during this particular inlined analysis. */
+#if defined(__GNUC__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Warray-bounds"
+#endif
 static bool mark_card_dirty(DiamondObject *owner, size_t index) {
     uint8_t **dirty_cards;size_t *dirty_card_capacity,capacity;
     if(owner->kind==DIAMOND_OBJECT_ARRAY) {
@@ -781,6 +795,9 @@ static bool mark_card_dirty(DiamondObject *owner, size_t index) {
     (*dirty_cards)[index/DIAMOND_GC_CARD_SIZE]=1;
     return true;
 }
+#if defined(__GNUC__)
+#pragma GCC diagnostic pop
+#endif
 
 /* gc_write_barrier's own Array/Hash-specific sibling: same old-object/
  * remembered-set bookkeeping, plus marking the one card the write

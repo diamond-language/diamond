@@ -29,6 +29,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <glob.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -37,6 +38,23 @@
 #include <unistd.h>
 
 enum { PATH_BUFFER_SIZE = 4096 };
+
+/* snprintf wrapper that reports truncation as a genuine failure instead
+ * of silently formatting a shortened path -- PATH_BUFFER_SIZE (4096)
+ * comfortably covers any real cases_dir/output_dir/case name this tool
+ * is ever invoked with, so truncation here would only mean something
+ * is already very wrong; still cheap to catch outright here rather than
+ * let a caller silently operate on the wrong path and fail somewhere
+ * else with a much less obvious error (also what lets the compiler see
+ * every one of these format calls as checked, not a potential
+ * -Wformat-truncation). */
+static bool format_path(char *buffer, size_t size, const char *format, ...) {
+    va_list args;
+    va_start(args, format);
+    const int written = vsnprintf(buffer, size, format, args);
+    va_end(args);
+    return written >= 0 && (size_t)written < size;
+}
 
 /* Every DIAMOND_* environment variable diamond_run_source or the VM it
  * drives ever reads (src/run_source.c, src/vm.h) -- cleared before each
@@ -194,9 +212,12 @@ static void restore_fd(int target, int saved) {
  * just against these files instead of a fresh process's own output. */
 static bool run_one_case(const char *cases_dir, const char *output_dir, const char *name) {
     char di_path[PATH_BUFFER_SIZE], env_path[PATH_BUFFER_SIZE], flags_path[PATH_BUFFER_SIZE];
-    snprintf(di_path, sizeof di_path, "%s/%s.di", cases_dir, name);
-    snprintf(env_path, sizeof env_path, "%s/%s.env", cases_dir, name);
-    snprintf(flags_path, sizeof flags_path, "%s/%s.flags", cases_dir, name);
+    if (!format_path(di_path, sizeof di_path, "%s/%s.di", cases_dir, name) ||
+        !format_path(env_path, sizeof env_path, "%s/%s.env", cases_dir, name) ||
+        !format_path(flags_path, sizeof flags_path, "%s/%s.flags", cases_dir, name)) {
+        fprintf(stderr, "run_cases: path too long for case %s\n", name);
+        return false;
+    }
 
     for (size_t index = 0; index < DIAMOND_ENV_VAR_COUNT; index++)
         unsetenv(DIAMOND_ENV_VARS[index]);
@@ -266,8 +287,12 @@ static bool run_one_case(const char *cases_dir, const char *output_dir, const ch
     }
 
     char stdout_path[PATH_BUFFER_SIZE], stderr_path[PATH_BUFFER_SIZE];
-    snprintf(stdout_path, sizeof stdout_path, "%s/%s.stdout", output_dir, name);
-    snprintf(stderr_path, sizeof stderr_path, "%s/%s.stderr", output_dir, name);
+    if (!format_path(stdout_path, sizeof stdout_path, "%s/%s.stdout", output_dir, name) ||
+        !format_path(stderr_path, sizeof stderr_path, "%s/%s.stderr", output_dir, name)) {
+        fprintf(stderr, "run_cases: path too long for case %s\n", name);
+        free(source);
+        return false;
+    }
 
     const int saved_stdout = redirect_fd(STDOUT_FILENO, stdout_path);
     const int saved_stderr = redirect_fd(STDERR_FILENO, stderr_path);
@@ -297,8 +322,8 @@ static bool run_one_case(const char *cases_dir, const char *output_dir, const ch
             memcpy(combined, stdout_content, stdout_length);
             memcpy(combined + stdout_length, stderr_content, stderr_length);
             char combined_path[PATH_BUFFER_SIZE];
-            snprintf(combined_path, sizeof combined_path, "%s/%s.combined", output_dir, name);
-            ok = write_whole_file(combined_path, combined, stdout_length + stderr_length);
+            ok = format_path(combined_path, sizeof combined_path, "%s/%s.combined", output_dir, name) &&
+                write_whole_file(combined_path, combined, stdout_length + stderr_length);
         }
         free(combined);
     }
@@ -310,9 +335,9 @@ static bool run_one_case(const char *cases_dir, const char *output_dir, const ch
     }
 
     char exitcode_path[PATH_BUFFER_SIZE], exitcode_text[16];
-    snprintf(exitcode_path, sizeof exitcode_path, "%s/%s.exitcode", output_dir, name);
     const int written = snprintf(exitcode_text, sizeof exitcode_text, "%d", exit_code);
     if (written < 0 || (size_t)written >= sizeof exitcode_text ||
+        !format_path(exitcode_path, sizeof exitcode_path, "%s/%s.exitcode", output_dir, name) ||
         !write_whole_file(exitcode_path, exitcode_text, (size_t)written)) {
         fprintf(stderr, "run_cases: cannot write exit code for %s\n", name);
         return false;
@@ -333,11 +358,11 @@ static bool should_run_case(const char *cases_dir, const char *name) {
     };
     for (size_t index = 0; index < sizeof(suffixes) / sizeof(suffixes[0]); index++) {
         char path[PATH_BUFFER_SIZE];
-        snprintf(path, sizeof path, "%s/%s%s", cases_dir, name, suffixes[index]);
-        if (file_exists(path)) return true;
+        if (format_path(path, sizeof path, "%s/%s%s", cases_dir, name, suffixes[index]) &&
+            file_exists(path)) return true;
     }
     char source_path[PATH_BUFFER_SIZE];
-    snprintf(source_path, sizeof source_path, "%s/%s.di", cases_dir, name);
+    if (!format_path(source_path, sizeof source_path, "%s/%s.di", cases_dir, name)) return false;
     char *source=read_whole_file(source_path,nullptr);
     if(source==nullptr)return false;
     const bool uses_exit_status=strstr(source,"suite.run!()")!=nullptr;
