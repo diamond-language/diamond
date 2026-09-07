@@ -100,13 +100,9 @@ module ActiveTagging
     # Every Tag currently attached to `taggable_id`.
     def self.tags_for(db, taggable_id)
       taggings = Tagging.where({"taggable_id": taggable_id}).to_a(db)
-      tags = []
-      index = 0
-      while index < taggings.length()
-        tags.push(Tag.find(db, taggings[index].tag_id()))
-        index += 1
+      taggings.map() do |tagging|
+        Tag.find(db, tagging.tag_id())
       end
-      tags
     end
 
     # The raw taggable_ids currently tagged with `tag_id` -- map these
@@ -114,13 +110,9 @@ module ActiveTagging
     # this package has no way to know which class taggable_id refers to.
     def self.taggable_ids_for_tag(db, tag_id)
       taggings = Tagging.where({"tag_id": tag_id}).to_a(db)
-      ids = []
-      index = 0
-      while index < taggings.length()
-        ids.push(taggings[index].taggable_id())
-        index += 1
+      taggings.map() do |tagging|
+        tagging.taggable_id()
       end
-      ids
     end
 
     # Finds/creates each name in `tag_names` (already-normalized or not
@@ -131,16 +123,12 @@ module ActiveTagging
     # only ever adding new ones.
     def self.set_tags(db, taggable_id, tag_names)
       existing = Tagging.where({"taggable_id": taggable_id}).to_a(db)
-      index = 0
-      while index < existing.length()
-        existing[index].destroy(db)
-        index += 1
+      existing.each() do |tagging|
+        tagging.destroy(db)
       end
-      index = 0
-      while index < tag_names.length()
-        tag = Tag.find_or_create(db, tag_names[index])
+      tag_names.each() do |name|
+        tag = Tag.find_or_create(db, name)
         Tagging.create(db, {"taggable_id": taggable_id, "tag_id": tag.id()})
-        index += 1
       end
     end
   end

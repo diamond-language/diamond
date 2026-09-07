@@ -38,13 +38,9 @@ module ActiveDiscussion
     def self.recent_count(db, discussion_id, window_seconds) -> Int
       cutoff = Time.now().to_i() - window_seconds
       rows = FlameSignal.where({"discussion_id": discussion_id}).to_a(db)
-      count = 0
-      rows.each() do |signal|
-        if signal.created_at() >= cutoff
-          count += 1
-        end
+      rows.count() do |signal|
+        signal.created_at() >= cutoff
       end
-      count
     end
   end
 

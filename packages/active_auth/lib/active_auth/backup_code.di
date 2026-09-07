@@ -31,16 +31,9 @@ module ActiveAuth
     def self.normalize_code(raw: String) -> String
       letters = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
       upper = raw.upcase()
-      chars = []
-      index = 0
-      while index < upper.length()
-        ch = upper.slice(index, 1)
-        if letters.include?(ch)
-          chars.push(ch)
-        end
-        index += 1
-      end
-      chars.join("")
+      upper.split("").select() do |ch|
+        letters.include?(ch)
+      end.join("")
     end
 
     # Ruby's own #match? also checks a second, more weakly-normalized
@@ -83,10 +76,8 @@ module ActiveAuth
       existing = BackupCode.where({"account_id": account_id}).to_a(db)
       existing.each() do |code| code.destroy(db) end
       raw_codes = []
-      index = 0
-      while index < BackupCode.batch_size()
+      BackupCode.batch_size().times() do |index|
         raw_codes.push("#{SecureRandom.hex(2).upcase()}-#{SecureRandom.hex(2).upcase()}-#{SecureRandom.hex(2).upcase()}")
-        index += 1
       end
       raw_codes.each() do |raw|
         BackupCode.create(db, {"account_id": account_id, "code_digest": BCrypt.hash(BackupCode.normalize_code(raw), 12)})
